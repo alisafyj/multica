@@ -19,7 +19,7 @@
 name: multica
 
 services:
-  postgres:
+  multica-postgres:
     image: pgvector/pgvector:pg17
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-multica}
@@ -37,14 +37,14 @@ services:
   backend:
     image: ${MULTICA_BACKEND_IMAGE:-ghcr.io/multica-ai/multica-backend}:${MULTICA_IMAGE_TAG:-latest}
     depends_on:
-      postgres:
+      multica-postgres:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${BACKEND_PORT:-${API_PORT:-${SERVER_PORT:-${PORT:-8080}}}}:8080"
+      - "0.0.0.0:${BACKEND_PORT:-${API_PORT:-${SERVER_PORT:-${PORT:-8080}}}}:8080"
     volumes:
       - backend_uploads:/app/data/uploads
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-multica}:${POSTGRES_PASSWORD:-multica}@postgres:5432/${POSTGRES_DB:-multica}?sslmode=disable
+      DATABASE_URL: postgres://${POSTGRES_USER:-multica}:${POSTGRES_PASSWORD:-multica}@multica-postgres:5432/${POSTGRES_DB:-multica}?sslmode=disable
       PORT: "8080"
       METRICS_ADDR: ${METRICS_ADDR:-}
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
@@ -96,7 +96,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+      - "0.0.0.0:${FRONTEND_PORT:-3000}:3000"
     environment:
       HOSTNAME: "0.0.0.0"
     restart: unless-stopped
