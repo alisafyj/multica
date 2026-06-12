@@ -25,20 +25,24 @@ function runtimeNeedsUpdate(
   latestVersion: string,
   userId: string,
 ): boolean {
-  if (rt.runtime_mode !== "local") return false;
-  // Only show to the user who owns this runtime.
-  if (rt.owner_id !== userId) return false;
-  // Desktop-managed runtimes are updated by the Desktop app's own auto-updater;
-  // the platform should not surface CLI update prompts for them.
-  if (rt.metadata && rt.metadata.launched_by === "desktop") {
-    return false;
-  }
+  if (!shouldCheckRuntimeUpdate(rt, userId)) return false;
   const cliVersion =
     rt.metadata && typeof rt.metadata.cli_version === "string"
       ? rt.metadata.cli_version
       : null;
   if (!cliVersion) return false;
   return isNewer(latestVersion, cliVersion);
+}
+
+function shouldCheckRuntimeUpdate(rt: AgentRuntime, userId: string | undefined): boolean {
+  if (!userId) return false;
+  if (rt.runtime_mode !== "local") return false;
+  // Only show to the user who owns this runtime.
+  if (rt.owner_id !== userId) return false;
+  // Desktop-managed runtimes are updated by the Desktop app's own auto-updater;
+  // the platform should not surface CLI update prompts for them.
+  if (rt.metadata && rt.metadata.launched_by === "desktop") return false;
+  return !!(rt.metadata && typeof rt.metadata.cli_version === "string" && rt.metadata.cli_version);
 }
 
 /**
@@ -51,7 +55,11 @@ export function useMyRuntimesNeedUpdate(wsId: string | undefined): boolean {
     ...runtimeListOptions(wsId ?? ""),
     enabled: !!wsId,
   });
-  const { data: latestVersion } = useQuery(latestCliVersionOptions());
+  const shouldFetchLatestVersion = !!runtimes?.some((rt) => shouldCheckRuntimeUpdate(rt, userId));
+  const { data: latestVersion } = useQuery({
+    ...latestCliVersionOptions(),
+    enabled: shouldFetchLatestVersion,
+  });
 
   if (!runtimes || !latestVersion || !userId) return false;
 
@@ -68,7 +76,11 @@ export function useUpdatableRuntimeIds(wsId: string | undefined): Set<string> {
     ...runtimeListOptions(wsId ?? ""),
     enabled: !!wsId,
   });
-  const { data: latestVersion } = useQuery(latestCliVersionOptions());
+  const shouldFetchLatestVersion = !!runtimes?.some((rt) => shouldCheckRuntimeUpdate(rt, userId));
+  const { data: latestVersion } = useQuery({
+    ...latestCliVersionOptions(),
+    enabled: shouldFetchLatestVersion,
+  });
 
   return useMemo(() => {
     if (!runtimes || !latestVersion || !userId) return new Set<string>();

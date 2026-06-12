@@ -514,7 +514,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	// issue (comment-triggered or assignment-triggered). Chat / quick-create /
 	// run-only autopilot don't carry an issue id and would just generate a
 	// failed `metadata list` call on every entry.
-	hasIssueContext := ctx.ChatSessionID == "" && ctx.QuickCreatePrompt == "" && ctx.AutopilotRunID == ""
+	hasIssueContext := ctx.ChatSessionID == "" && ctx.QuickCreatePrompt == "" && ctx.UIDraftCreateContext == "" && ctx.DesignRestoreContext == "" && ctx.AutopilotRunID == ""
 	if hasIssueContext {
 		b.WriteString("## Issue Metadata\n\n")
 		b.WriteString("Each issue carries a small KV `metadata` bag — a high-signal scratchpad where agents pin the handful of facts that future runs on this same issue will look up over and over (the PR URL, the deploy URL, what we're blocked on). It is NOT a place to record every fact you discover — that's what comments and the description are for. Most runs write **zero** new keys; that's the expected case, not a failure.\n\n")
@@ -551,6 +551,18 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- Run exactly one `multica issue create` invocation, then exit.\n")
 		b.WriteString("- Do NOT call `multica issue get`, `multica issue status`, or `multica issue comment add` for this task — there is no issue to query, transition, or comment on. The platform writes the user's success/failure inbox notification automatically based on whether `multica issue create` succeeded.\n")
 		b.WriteString("- If the CLI returns an error, exit with that error as the only output. Do not retry.\n\n")
+	} else if ctx.UIDraftCreateContext != "" {
+		b.WriteString("**This task was triggered by Gallery Native UI draft generation.** There is NO existing Multica issue. Follow the JSON-only output contract in the user message you just received; ignore the default assignment-task workflow.\n\n")
+		b.WriteString("Hard guardrails (apply even if the user message is missing):\n")
+		b.WriteString("- Do NOT call `multica issue get`, `multica issue status`, or `multica issue comment add` for this task.\n")
+		b.WriteString("- Do NOT edit files or create design files directly. The platform will create a reviewable DesignDraft from your final JSON output.\n")
+		b.WriteString("- Final output must be a single JSON object with `title`, `requirement_core`, `slot_values`, and `patch`.\n\n")
+	} else if ctx.DesignRestoreContext != "" {
+		b.WriteString("**This task was triggered by a Gallery Native restore task.** Use the design restore context in the user message and `.agent_context/task.md` as the source of truth.\n\n")
+		b.WriteString("Hard guardrails:\n")
+		b.WriteString("- If the context includes an issue_id, read that issue first.\n")
+		b.WriteString("- Implement the smallest safe frontend code change; do not change backend unless explicitly required.\n")
+		b.WriteString("- Post final results as an issue comment when issue_id is present; otherwise final stdout is captured by the platform.\n\n")
 	} else if ctx.AutopilotRunID != "" {
 		// Autopilot run_only task: no issue exists, so the agent must not
 		// follow the assignment/comment workflow.
@@ -629,7 +641,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	// `done`, and the agent has nothing to do or avoid on that path.
 	// Section is skipped for chat, quick-create, and run-only autopilot
 	// runs (no parent/child semantics there).
-	if ctx.IssueID != "" && ctx.ChatSessionID == "" && ctx.QuickCreatePrompt == "" && ctx.AutopilotRunID == "" {
+	if ctx.IssueID != "" && ctx.ChatSessionID == "" && ctx.QuickCreatePrompt == "" && ctx.UIDraftCreateContext == "" && ctx.DesignRestoreContext == "" && ctx.AutopilotRunID == "" {
 		b.WriteString("## Sub-issue Creation\n\n")
 		b.WriteString("**Choosing `--status` when creating sub-issues.** `--status todo` = **start now** (the default — an agent assignee fires immediately). `--status backlog` = **wait** (assignee is set but no trigger fires; promote later with `multica issue status <child-id> todo`). Parallel children: all `--status todo`. Strict serial Step 1→2→3: only Step 1 is `todo`; Steps 2/3 are `--status backlog` from the start, promoted in turn.\n\n")
 	}
@@ -708,6 +720,12 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- Do NOT call `multica issue comment add` — the issue you just created has no conversation context for this run.\n")
 		b.WriteString("- Print exactly one final line: `Created <identifier-or-id>: <title>` after a successful `multica issue create`. Use the created issue's `identifier` from JSON output when available; otherwise use its `id`. Do not assume any workspace issue prefix such as `MUL-`; workspaces can use custom prefixes.\n")
 		b.WriteString("- On CLI failure, exit with the CLI error as the only output. The platform translates that into a `quick_create_failed` inbox item carrying the original prompt for the user.\n")
+	case ctx.UIDraftCreateContext != "":
+		b.WriteString("This is a UI draft generation task. There is NO existing issue to comment on. Your final stdout is parsed automatically into a reviewable Gallery Native DesignDraft.\n\n")
+		b.WriteString("- Output exactly one JSON object, no markdown or prose.\n")
+		b.WriteString("- Prefer `slot_values`; keep `patch` empty unless safe metadata/text changes are necessary.\n")
+	case ctx.DesignRestoreContext != "":
+		b.WriteString("This is a Gallery Native restore task. Your final stdout is captured automatically; if issue_id is present, also post a concise issue comment with changed files, checks, blockers, and restore mapping.\n")
 	default:
 		if ctx.IsSquadLeader {
 			b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`** — unless your outcome is `no_action`. When you evaluate a trigger and decide no action is needed, calling `multica squad activity <issue-id> no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment that announces no_action, acknowledges another agent, or says you are exiting silently — such comments are noise. For all other outcomes (`action`, `failed`), a comment is still mandatory.\n\n")

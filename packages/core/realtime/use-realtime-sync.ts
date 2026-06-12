@@ -11,6 +11,7 @@ import { defaultStorage } from "../platform/storage";
 import { getCurrentWsId, getCurrentSlug } from "../platform/workspace-storage";
 import { issueKeys } from "../issues/queries";
 import { projectKeys } from "../projects/queries";
+import { designKeys } from "../designs/keys";
 import { pinKeys } from "../pins/queries";
 import { autopilotKeys } from "../autopilots/queries";
 import { runtimeKeys } from "../runtimes/queries";
@@ -74,6 +75,7 @@ import type {
   ChatPendingTask,
   ChatMessagesPage,
   InvitationCreatedPayload,
+  DesignReadyPayload,
 } from "../types";
 
 const chatWsLogger = createLogger("chat.ws");
@@ -527,6 +529,23 @@ export function useRealtimeSync(
       });
     });
 
+    const invalidateDesignReady = (p: unknown) => {
+      const payload = p as DesignReadyPayload;
+      const wsId = getCurrentWsId();
+      if (!wsId || !payload?.design_file_id) return;
+      qc.invalidateQueries({ queryKey: designKeys.files(wsId) });
+      qc.invalidateQueries({ queryKey: designKeys.file(wsId, payload.design_file_id) });
+      qc.invalidateQueries({ queryKey: designKeys.revisions(wsId, payload.design_file_id) });
+      qc.invalidateQueries({ queryKey: designKeys.fileContext(wsId, payload.design_file_id) });
+      if (payload.ready_type === "template" || payload.template) {
+        qc.invalidateQueries({ queryKey: designKeys.templates(wsId) });
+        qc.invalidateQueries({ queryKey: designKeys.drafts(wsId) });
+      }
+    };
+
+    const unsubDesignReady = ws.on("design:ready", invalidateDesignReady);
+    const unsubDesignTemplateReady = ws.on("design_template:ready", invalidateDesignReady);
+
     // --- Timeline event handlers (global fallback) ---
     // These events are also handled granularly by useIssueTimeline when
     // IssueDetail is mounted. This global handler exists to mark the
@@ -974,6 +993,8 @@ export function useRealtimeSync(
       unsubIssueLabelsChanged();
       unsubIssueMetadataChanged();
       unsubInboxNew();
+      unsubDesignReady();
+      unsubDesignTemplateReady();
       unsubCommentCreated();
       unsubCommentUpdated();
       unsubCommentDeleted();

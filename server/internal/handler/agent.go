@@ -216,6 +216,8 @@ type AgentTaskResponse struct {
 	AutopilotSource         string               `json:"autopilot_source,omitempty"`          // manual, schedule, webhook, or api
 	AutopilotTriggerPayload json.RawMessage      `json:"autopilot_trigger_payload,omitempty"` // optional trigger payload for webhook/api runs
 	QuickCreatePrompt       string               `json:"quick_create_prompt,omitempty"`       // user's natural-language input for quick-create tasks
+	UIDraftCreateContext    json.RawMessage      `json:"ui_draft_create_context,omitempty"`   // typed context for design draft generation tasks
+	DesignRestoreContext    json.RawMessage      `json:"design_restore_context,omitempty"`    // typed context for Gallery Native restore execution tasks
 	SquadID                 string               `json:"squad_id,omitempty"`                  // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
 	SquadName               string               `json:"squad_name,omitempty"`                // display name for the picker squad
 	ParentIssueID           string               `json:"parent_issue_id,omitempty"`           // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
@@ -228,7 +230,7 @@ type AgentTaskResponse struct {
 	// is empty.
 	RequestingUserName               string `json:"requesting_user_name,omitempty"`
 	RequestingUserProfileDescription string `json:"requesting_user_profile_description,omitempty"`
-	Kind                             string `json:"kind"` // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
+	Kind                             string `json:"kind"` // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "design_restore" | "direct" — used by the activity row to label tasks that have no linked issue
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request
@@ -419,8 +421,9 @@ func basename(p string) string {
 // to choose how to render a task row. Computed from the existing FK shape so
 // no extra DB lookup is needed: chat / autopilot / comment-on-issue (any
 // triggered task with both an issue_id and trigger_comment_id) / quick_create
-// (no linked source — the agent is creating the issue itself) / direct
-// (assignee-driven task on an existing issue).
+// (no linked source — the agent is creating the issue itself) / design_restore
+// (Gallery Native restore context) / direct (assignee-driven task on an
+// existing issue).
 func computeTaskKind(t db.AgentTaskQueue) string {
 	if uuidToString(t.ChatSessionID) != "" {
 		return "chat"
@@ -429,6 +432,10 @@ func computeTaskKind(t db.AgentTaskQueue) string {
 		return "autopilot"
 	}
 	if uuidToString(t.IssueID) == "" {
+		var restoreCtx service.DesignRestoreTaskContext
+		if len(t.Context) > 0 && json.Unmarshal(t.Context, &restoreCtx) == nil && restoreCtx.Type == service.DesignRestoreTaskContextType {
+			return "design_restore"
+		}
 		return "quick_create"
 	}
 	if uuidToString(t.TriggerCommentID) != "" {

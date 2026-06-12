@@ -78,6 +78,8 @@ type TaskContextForEnv struct {
 	AutopilotSource         string
 	AutopilotTriggerPayload string
 	QuickCreatePrompt       string // non-empty for quick-create tasks
+	UIDraftCreateContext    string // non-empty for UI design draft generation tasks
+	DesignRestoreContext    string // non-empty for Gallery Native restore execution tasks
 	IsSquadLeader           bool   // true when the agent is acting as a squad leader (may exit silently on no_action)
 	// WorkspaceContext is the workspace-level system prompt (workspace.context
 	// in the DB). Rendered into the brief as `## Workspace Context` when
@@ -431,10 +433,11 @@ func hydrateCodexSkills(codexHome string, workspaceSkills []SkillContextForEnv, 
 type GCMetaKind string
 
 const (
-	GCKindIssue        GCMetaKind = "issue"
-	GCKindChat         GCMetaKind = "chat"
-	GCKindAutopilotRun GCMetaKind = "autopilot_run"
-	GCKindQuickCreate  GCMetaKind = "quick_create"
+	GCKindIssue         GCMetaKind = "issue"
+	GCKindChat          GCMetaKind = "chat"
+	GCKindAutopilotRun  GCMetaKind = "autopilot_run"
+	GCKindQuickCreate   GCMetaKind = "quick_create"
+	GCKindDesignRestore GCMetaKind = "design_restore"
 )
 
 // GCMeta is persisted to .gc_meta.json inside the env root so the GC loop

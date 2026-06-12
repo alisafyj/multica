@@ -645,6 +645,41 @@ type QuickCreateContext struct {
 // QuickCreateContextType marks a task as a quick-create job.
 const QuickCreateContextType = "quick_create"
 
+const UIDraftCreateContextType = "ui_agent_draft_create"
+
+const DesignRestoreTaskContextType = "design_restore_task_execute"
+
+type UIDraftCreateContext struct {
+	Type               string          `json:"type"`
+	Prompt             string          `json:"prompt"`
+	RequesterID        string          `json:"requester_id"`
+	WorkspaceID        string          `json:"workspace_id"`
+	AgentID            string          `json:"agent_id"`
+	CatalogTemplateID  string          `json:"catalog_template_id"`
+	TemplateRevisionID string          `json:"template_revision_id"`
+	DesignRevisionID   string          `json:"design_revision_id"`
+	Title              string          `json:"title"`
+	RequirementCore    json.RawMessage `json:"requirement_core"`
+	SlotSchema         json.RawMessage `json:"slot_schema"`
+	OutputPolicy       json.RawMessage `json:"output_policy"`
+}
+
+type DesignRestoreTaskContext struct {
+	Type          string          `json:"type"`
+	Prompt        string          `json:"prompt"`
+	RequesterID   string          `json:"requester_id"`
+	WorkspaceID   string          `json:"workspace_id"`
+	AgentID       string          `json:"agent_id"`
+	IssueID       string          `json:"issue_id,omitempty"`
+	RestoreTaskID string          `json:"restore_task_id"`
+	DesignFileID  string          `json:"design_file_id"`
+	RevisionID    string          `json:"revision_id"`
+	Input         json.RawMessage `json:"input"`
+	ItemContexts  json.RawMessage `json:"item_contexts,omitempty"`
+	RestorePolicy json.RawMessage `json:"restore_policy,omitempty"`
+	OutputPolicy  json.RawMessage `json:"output_policy"`
+}
+
 // EnqueueQuickCreateTask creates a queued task that has no issue / chat /
 // autopilot link — the user's natural-language prompt is stored in the
 // task's context JSONB and the agent is expected to translate it into a
@@ -2017,6 +2052,12 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 	if qc, ok := s.parseQuickCreateContext(task); ok {
 		return qc.WorkspaceID
 	}
+	if dc, ok := s.parseUIDraftCreateContext(task); ok {
+		return dc.WorkspaceID
+	}
+	if rc, ok := s.parseDesignRestoreTaskContext(task); ok {
+		return rc.WorkspaceID
+	}
 	return ""
 }
 
@@ -2208,6 +2249,40 @@ func (s *TaskService) parseQuickCreateContext(task db.AgentTaskQueue) (QuickCrea
 		return QuickCreateContext{}, false
 	}
 	return qc, true
+}
+
+func (s *TaskService) parseUIDraftCreateContext(task db.AgentTaskQueue) (UIDraftCreateContext, bool) {
+	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid {
+		return UIDraftCreateContext{}, false
+	}
+	if len(task.Context) == 0 {
+		return UIDraftCreateContext{}, false
+	}
+	var dc UIDraftCreateContext
+	if err := json.Unmarshal(task.Context, &dc); err != nil {
+		return UIDraftCreateContext{}, false
+	}
+	if dc.Type != UIDraftCreateContextType {
+		return UIDraftCreateContext{}, false
+	}
+	return dc, true
+}
+
+func (s *TaskService) parseDesignRestoreTaskContext(task db.AgentTaskQueue) (DesignRestoreTaskContext, bool) {
+	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid {
+		return DesignRestoreTaskContext{}, false
+	}
+	if len(task.Context) == 0 {
+		return DesignRestoreTaskContext{}, false
+	}
+	var rc DesignRestoreTaskContext
+	if err := json.Unmarshal(task.Context, &rc); err != nil {
+		return DesignRestoreTaskContext{}, false
+	}
+	if rc.Type != DesignRestoreTaskContextType {
+		return DesignRestoreTaskContext{}, false
+	}
+	return rc, true
 }
 
 // notifyQuickCreateCompleted writes a success inbox notification to the

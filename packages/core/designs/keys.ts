@@ -1,0 +1,18 @@
+export const designKeys = {
+  all: (wsId: string) => ["designs", wsId] as const,
+  folders: (wsId: string) => ["designs", wsId, "folders"] as const,
+  files: (wsId: string) => ["designs", wsId, "files"] as const,
+  file: (wsId: string, id: string) => ["designs", wsId, "files", id] as const,
+  fileContext: (wsId: string, id: string) => ["designs", wsId, "files", id, "context"] as const,
+  frameContext: (wsId: string, fileId: string, frameId: string) => ["designs", wsId, "files", fileId, "frames", frameId, "context"] as const,
+  selectionContext: (wsId: string, fileId: string, frameId: string, input: unknown) => ["designs", wsId, "files", fileId, "frames", frameId, "selection-context", input] as const,
+  revisions: (wsId: string, fileId: string) => ["designs", wsId, "files", fileId, "revisions"] as const,
+  revision: (wsId: string, revisionId: string) => ["designs", wsId, "revisions", revisionId] as const,
+  templates: (wsId: string, params?: unknown) => ["designs", wsId, "templates", params ?? {}] as const,
+  template: (wsId: string, id: string) => ["designs", wsId, "templates", id] as const,
+  drafts: (wsId: string) => ["designs", wsId, "drafts"] as const,
+  draft: (wsId: string, id: string) => ["designs", wsId, "drafts", id] as const,
+  restoreTasks: (wsId: string) => ["designs", wsId, "restore-tasks"] as const,
+  restoreTask: (wsId: string, id: string) => ["designs", wsId, "restore-tasks", id] as const,
+  restoreTaskItemContext: (wsId: string, taskId: string, itemId: string) => ["designs", wsId, "restore-tasks", taskId, "items", itemId, "context"] as const,
+};

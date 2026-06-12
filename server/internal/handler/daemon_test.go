@@ -18,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -29,6 +30,88 @@ import (
 // PopPending path is never reached because HasPending returns an error, not
 // true.
 type slowProbeLocalSkillListStore struct{ LocalSkillListStore }
+
+func TestDesignRestoreFullFramePreviewViolation(t *testing.T) {
+	ctx := service.DesignRestoreTaskContext{
+		RestorePolicy: json.RawMessage(`{"restoreMode":"strict-structure","allowFullFramePreview":false}`),
+		ItemContexts: json.RawMessage(`[
+			{"context":{"frame":{"width":375,"height":812},"assets":{
+				"frame_preview-frame-1":{"id":"frame_preview-frame-1","kind":"frame_preview","width":375,"height":812},
+				"frame_thumbnail-frame-1":{"id":"frame_thumbnail-frame-1","kind":"frame_thumbnail","width":375,"height":812},
+				"slice-0-651-0":{"id":"slice-0-651-0","kind":"slice","width":375,"height":812},
+				"slice-0-656-0":{"id":"slice-0-656-0","kind":"slice","width":345,"height":120}
+			}}}
+		]`),
+	}
+	if got := designRestoreFullFramePreviewViolation(ctx, "used asset frame_preview-frame-1"); got != "full_frame_preview_forbidden: frame_preview-frame-1" {
+		t.Fatalf("preview violation = %q", got)
+	}
+	if got := designRestoreFullFramePreviewViolation(ctx, "used asset slice-0-651-0"); got != "full_frame_preview_forbidden: slice-0-651-0" {
+		t.Fatalf("full-frame slice violation = %q", got)
+	}
+	if got := designRestoreFullFramePreviewViolation(ctx, "used asset slice-0-656-0 and usedFullFramePreview: false"); got != "" {
+		t.Fatalf("local slice should be allowed, got violation %q", got)
+	}
+	if got := designRestoreFullFramePreviewViolation(ctx, `{"usedFullFramePreview":true}`); got != "full_frame_preview_forbidden" {
+		t.Fatalf("explicit full-frame preview flag violation = %q", got)
+	}
+}
+
+func TestParseDesignRestoreResultSummary(t *testing.T) {
+	output := "done\nRESTORE_RESULT_JSON:\n```json\n{\"status\":\"completed\",\"files\":[\"fengchenDoc/demo.html\"],\"usedAssetIds\":[\"slice-1\"],\"usedFullFramePreview\":false}\n```"
+	summary := parseDesignRestoreResultSummary(output)
+	if summary.Status != "completed" || len(summary.Files) != 1 || summary.Files[0] != "fengchenDoc/demo.html" || len(summary.UsedAssetIDs) != 1 || summary.UsedAssetIDs[0] != "slice-1" || summary.UsedFullFramePreview {
+		t.Fatalf("unexpected summary: %+v", summary)
+	}
+}
+
+func TestComputeTaskKindDesignRestore(t *testing.T) {
+	ctx, err := json.Marshal(service.DesignRestoreTaskContext{Type: service.DesignRestoreTaskContextType, RestoreTaskID: "restore-1"})
+	if err != nil {
+		t.Fatalf("marshal restore context: %v", err)
+	}
+	if got := computeTaskKind(db.AgentTaskQueue{Context: ctx}); got != "design_restore" {
+		t.Fatalf("computeTaskKind design restore = %q", got)
+	}
+	if got := computeTaskKind(db.AgentTaskQueue{Context: []byte(`{"type":"quick_create"}`)}); got != "quick_create" {
+		t.Fatalf("computeTaskKind quick create fallback = %q", got)
+	}
+}
+
+func TestDesignRestorePolicyViolationPrefersSummary(t *testing.T) {
+	ctx := service.DesignRestoreTaskContext{
+		RestorePolicy: json.RawMessage(`{"restoreMode":"strict-structure","allowFullFramePreview":false}`),
+		ItemContexts:  json.RawMessage(`[{"context":{"frame":{"width":375,"height":812},"assets":{"frame_preview-frame-1":{"id":"frame_preview-frame-1","kind":"frame_preview","width":375,"height":812}}}}]`),
+	}
+	if got := designRestorePolicyViolation(ctx, "", designRestoreResultSummary{UsedAssetIDs: []string{"frame_preview-frame-1"}}); got != "full_frame_preview_forbidden: frame_preview-frame-1" {
+		t.Fatalf("summary asset violation = %q", got)
+	}
+	if got := designRestorePolicyViolation(ctx, "", designRestoreResultSummary{UsedFullFramePreview: true}); got != "full_frame_preview_forbidden" {
+		t.Fatalf("summary flag violation = %q", got)
+	}
+}
+
+func TestDesignRestorePolicyViolationRequiresQualityFields(t *testing.T) {
+	ctx := service.DesignRestoreTaskContext{RestorePolicy: json.RawMessage(`{"restoreMode":"strict-structure","allowFullFramePreview":false}`)}
+	if got := designRestorePolicyViolation(ctx, "", designRestoreResultSummary{}); got != "missing_restore_result_json" {
+		t.Fatalf("missing json violation = %q", got)
+	}
+	if got := designRestorePolicyViolation(ctx, "", designRestoreResultSummary{Status: "completed"}); got != "completed_result_missing_files" {
+		t.Fatalf("missing files violation = %q", got)
+	}
+	if got := designRestorePolicyViolation(ctx, "", designRestoreResultSummary{Status: "completed", Files: []string{"demo.html"}}); got != "completed_result_missing_restore_mapping" {
+		t.Fatalf("missing mapping violation = %q", got)
+	}
+	if got := designRestorePolicyViolation(ctx, "", designRestoreResultSummary{Status: "completed", Files: []string{"demo.html"}, RestoreMapping: []map[string]any{{"itemId": "item-1"}}}); got != "completed_result_missing_used_layer_ids" {
+		t.Fatalf("missing layers violation = %q", got)
+	}
+	if got := designRestorePolicyViolation(ctx, "", designRestoreResultSummary{Status: "blocked"}); got != "blocked_result_missing_blockers" {
+		t.Fatalf("blocked missing blockers violation = %q", got)
+	}
+	if got := designRestorePolicyViolation(ctx, "", designRestoreResultSummary{Status: "completed", Files: []string{"demo.html"}, RestoreMapping: []map[string]any{{"itemId": "item-1"}}, UsedLayerIDs: []string{"layer-1"}}); got != "" {
+		t.Fatalf("valid completed summary violation = %q", got)
+	}
+}
 
 func (s slowProbeLocalSkillListStore) HasPending(ctx context.Context, _ string) (bool, error) {
 	<-ctx.Done()

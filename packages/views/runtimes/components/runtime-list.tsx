@@ -94,7 +94,17 @@ export function RuntimeList({
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-  const { data: latestCliVersion = null } = useQuery(latestCliVersionOptions());
+  const shouldFetchLatestCliVersion = runtimes.some(
+    (runtime) =>
+      runtime.runtime_mode === "local" &&
+      runtime.metadata?.launched_by !== "desktop" &&
+      typeof runtime.metadata?.cli_version === "string" &&
+      runtime.metadata.cli_version,
+  );
+  const { data: latestCliVersion = null } = useQuery({
+    ...latestCliVersionOptions(),
+    enabled: shouldFetchLatestCliVersion,
+  });
 
   const currentMember = user
     ? members.find((m) => m.user_id === user.id)

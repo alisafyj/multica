@@ -1424,10 +1424,12 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Quick-create task: no issue / chat / autopilot link — workspace and
-	// prompt come from the task's context JSONB. Resolve workspace from
-	// there so the isolation check below has something to compare.
+	// Context-backed task: no issue / chat / autopilot link — workspace and
+	// task-specific prompt/context come from the task's context JSONB. Resolve
+	// workspace from there so the isolation check below has something to compare.
 	hasQuickCreate := false
+	hasUIDraftCreate := false
+	hasDesignRestore := false
 	if task.Context != nil && !task.IssueID.Valid && !task.ChatSessionID.Valid && !task.AutopilotRunID.Valid {
 		var qc service.QuickCreateContext
 		if json.Unmarshal(task.Context, &qc) == nil && qc.Type == service.QuickCreateContextType {
@@ -1548,6 +1550,59 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+
+		var draftCtx service.UIDraftCreateContext
+		if json.Unmarshal(task.Context, &draftCtx) == nil && draftCtx.Type == service.UIDraftCreateContextType {
+			hasUIDraftCreate = true
+			resp.WorkspaceID = draftCtx.WorkspaceID
+			resp.UIDraftCreateContext = json.RawMessage(task.Context)
+		}
+
+		var restoreCtx service.DesignRestoreTaskContext
+		if json.Unmarshal(task.Context, &restoreCtx) == nil && restoreCtx.Type == service.DesignRestoreTaskContextType {
+			hasDesignRestore = true
+			resp.WorkspaceID = restoreCtx.WorkspaceID
+			resp.DesignRestoreContext = json.RawMessage(task.Context)
+			var restoreInput struct {
+				ProjectID string `json:"projectId"`
+			}
+			if json.Unmarshal(restoreCtx.Input, &restoreInput) == nil && strings.TrimSpace(restoreInput.ProjectID) != "" {
+				projectUUID, err := util.ParseUUID(restoreInput.ProjectID)
+				if err == nil {
+					resp.ProjectID = restoreInput.ProjectID
+					if proj, err := h.Queries.GetProject(r.Context(), projectUUID); err == nil {
+						resp.ProjectTitle = proj.Title
+					}
+					var projectRepos []RepoData
+					if rows := h.listProjectResourcesForProject(r.Context(), projectUUID); len(rows) > 0 {
+						out := make([]ProjectResourceData, 0, len(rows))
+						for _, row := range rows {
+							label := ""
+							if row.Label.Valid {
+								label = row.Label.String
+							}
+							ref := json.RawMessage(row.ResourceRef)
+							if len(ref) == 0 {
+								ref = json.RawMessage("{}")
+							}
+							out = append(out, ProjectResourceData{ID: uuidToString(row.ID), ResourceType: row.ResourceType, ResourceRef: ref, Label: label})
+							if row.ResourceType == "github_repo" {
+								var payload struct {
+									URL string `json:"url"`
+								}
+								if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
+									projectRepos = append(projectRepos, RepoData{URL: payload.URL})
+								}
+							}
+						}
+						resp.ProjectResources = out
+					}
+					if len(projectRepos) > 0 {
+						resp.Repos = projectRepos
+					}
+				}
+			}
+		}
 	}
 
 	// Workspace isolation check: the daemon uses this response's workspace_id
@@ -1569,6 +1624,8 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			"has_chat", task.ChatSessionID.Valid,
 			"has_autopilot_run", task.AutopilotRunID.Valid,
 			"has_quick_create", hasQuickCreate,
+			"has_ui_draft_create", hasUIDraftCreate,
+			"has_design_restore", hasDesignRestore,
 		)
 		if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
 			slog.Error("task claim: cancel after workspace check failed",
@@ -1793,6 +1850,14 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.emitIssueExecutedOnFirstCompletion(r, task)
+	if draft, draftErr := h.createDesignDraftFromAgentTaskOutput(r.Context(), *task, req.Output); draftErr != nil {
+		slog.Warn("ui agent draft completion: failed to create draft", "task_id", taskID, "error", draftErr)
+	} else if draft != nil {
+		slog.Info("ui agent draft created from task", "task_id", taskID, "draft_id", uuidToString(draft.ID))
+	}
+	if err := h.updateDesignRestoreTaskFromAgentCompletion(r.Context(), *task, req); err != nil {
+		slog.Warn("design restore task completion: failed to update restore task", "task_id", taskID, "error", err)
+	}
 
 	// Best-effort revoke of any agent task token minted at claim time.
 	// The token would naturally expire at the 24h watermark and is also
@@ -1806,6 +1871,187 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("task completed", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
+}
+
+func (h *Handler) updateDesignRestoreTaskFromAgentCompletion(ctx context.Context, task db.AgentTaskQueue, req TaskCompleteRequest) error {
+	var restoreCtx service.DesignRestoreTaskContext
+	if err := json.Unmarshal(task.Context, &restoreCtx); err != nil || restoreCtx.Type != service.DesignRestoreTaskContextType {
+		return nil
+	}
+	restoreTask, err := h.Queries.GetDesignRestoreTaskByAgentTask(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	summary := parseDesignRestoreResultSummary(req.Output)
+	status := "completed"
+	if summary.Status == "blocked" || summary.Status == "failed" || strings.Contains(strings.ToLower(req.Output), "blocked") || strings.Contains(strings.ToLower(req.Output), "阻塞") {
+		status = "failed"
+	}
+	policyViolation := designRestorePolicyViolation(restoreCtx, req.Output, summary)
+	if policyViolation != "" {
+		status = "failed"
+	}
+	result := map[string]any{
+		"output":           req.Output,
+		"summary":          summary,
+		"pr_url":           req.PRURL,
+		"session_id":       req.SessionID,
+		"work_dir":         req.WorkDir,
+		"policy_violation": policyViolation,
+	}
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	_, err = h.Queries.UpdateDesignRestoreTask(ctx, db.UpdateDesignRestoreTaskParams{
+		ID:          restoreTask.ID,
+		WorkspaceID: restoreTask.WorkspaceID,
+		Status:      pgtype.Text{String: status, Valid: true},
+		Result:      resultJSON,
+		Error:       pgtype.Text{Valid: false},
+	})
+	return err
+}
+
+type designRestoreResultSummary struct {
+	Status               string           `json:"status"`
+	Summary              string           `json:"summary"`
+	Files                []string         `json:"files"`
+	Checks               []string         `json:"checks"`
+	Blockers             []string         `json:"blockers"`
+	RestoreMapping       []map[string]any `json:"restoreMapping"`
+	UsedLayerIDs         []string         `json:"usedLayerIds"`
+	UsedAssetIDs         []string         `json:"usedAssetIds"`
+	UsedFullFramePreview bool             `json:"usedFullFramePreview"`
+	PolicyViolation      string           `json:"policyViolation"`
+}
+
+func parseDesignRestoreResultSummary(output string) designRestoreResultSummary {
+	const marker = "RESTORE_RESULT_JSON:"
+	idx := strings.LastIndex(output, marker)
+	if idx < 0 {
+		return designRestoreResultSummary{}
+	}
+	candidate := strings.TrimSpace(output[idx+len(marker):])
+	if strings.HasPrefix(candidate, "```") {
+		candidate = strings.TrimPrefix(candidate, "```")
+		candidate = strings.TrimPrefix(strings.TrimSpace(candidate), "json")
+		if end := strings.Index(candidate, "```"); end >= 0 {
+			candidate = candidate[:end]
+		}
+	}
+	start := strings.Index(candidate, "{")
+	end := strings.LastIndex(candidate, "}")
+	if start < 0 || end < start {
+		return designRestoreResultSummary{}
+	}
+	var summary designRestoreResultSummary
+	if err := json.Unmarshal([]byte(candidate[start:end+1]), &summary); err != nil {
+		return designRestoreResultSummary{}
+	}
+	summary.Status = strings.ToLower(strings.TrimSpace(summary.Status))
+	return summary
+}
+
+func designRestorePolicyViolation(ctx service.DesignRestoreTaskContext, output string, summary designRestoreResultSummary) string {
+	if strings.TrimSpace(summary.PolicyViolation) != "" {
+		return strings.TrimSpace(summary.PolicyViolation)
+	}
+	if summary.UsedFullFramePreview {
+		return "full_frame_preview_forbidden"
+	}
+	if len(summary.UsedAssetIDs) > 0 {
+		forbidden := designRestoreForbiddenFullFrameAssetIDs(ctx.ItemContexts)
+		forbiddenSet := make(map[string]bool, len(forbidden))
+		for _, id := range forbidden {
+			forbiddenSet[strings.ToLower(id)] = true
+		}
+		for _, id := range summary.UsedAssetIDs {
+			if forbiddenSet[strings.ToLower(strings.TrimSpace(id))] {
+				return "full_frame_preview_forbidden: " + id
+			}
+		}
+	}
+	if len(ctx.RestorePolicy) > 0 {
+		if summary.Status == "" {
+			return "missing_restore_result_json"
+		}
+		if summary.Status == "completed" {
+			switch {
+			case len(summary.Files) == 0:
+				return "completed_result_missing_files"
+			case len(summary.RestoreMapping) == 0:
+				return "completed_result_missing_restore_mapping"
+			case len(summary.UsedLayerIDs) == 0:
+				return "completed_result_missing_used_layer_ids"
+			}
+		}
+		if summary.Status == "blocked" && len(summary.Blockers) == 0 {
+			return "blocked_result_missing_blockers"
+		}
+	}
+	return designRestoreFullFramePreviewViolation(ctx, output)
+}
+
+func designRestoreFullFramePreviewViolation(ctx service.DesignRestoreTaskContext, output string) string {
+	if len(ctx.RestorePolicy) == 0 || !strings.Contains(string(ctx.RestorePolicy), `"allowFullFramePreview":false`) {
+		return ""
+	}
+	forbidden := designRestoreForbiddenFullFrameAssetIDs(ctx.ItemContexts)
+	if len(forbidden) == 0 {
+		return ""
+	}
+	lowerOutput := strings.ToLower(output)
+	for _, id := range forbidden {
+		if strings.Contains(lowerOutput, strings.ToLower(id)) {
+			return "full_frame_preview_forbidden: " + id
+		}
+	}
+	if strings.Contains(lowerOutput, "usedfullframepreview: true") || strings.Contains(lowerOutput, `"usedfullframepreview":true`) {
+		return "full_frame_preview_forbidden"
+	}
+	return ""
+}
+
+func designRestoreForbiddenFullFrameAssetIDs(itemContexts json.RawMessage) []string {
+	if len(itemContexts) == 0 {
+		return nil
+	}
+	var items []struct {
+		Context struct {
+			Frame struct {
+				Width  float64 `json:"width"`
+				Height float64 `json:"height"`
+			} `json:"frame"`
+			Assets map[string]struct {
+				ID     string  `json:"id"`
+				Kind   string  `json:"kind"`
+				Width  float64 `json:"width"`
+				Height float64 `json:"height"`
+			} `json:"assets"`
+		} `json:"context"`
+	}
+	if err := json.Unmarshal(itemContexts, &items); err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var ids []string
+	for _, item := range items {
+		for key, asset := range item.Context.Assets {
+			id := asset.ID
+			if strings.TrimSpace(id) == "" {
+				id = key
+			}
+			kind := strings.ToLower(asset.Kind)
+			isFrameAsset := kind == "frame_preview" || kind == "frame_thumbnail"
+			isFullFrameSlice := kind == "slice" && item.Context.Frame.Width > 0 && item.Context.Frame.Height > 0 && asset.Width == item.Context.Frame.Width && asset.Height == item.Context.Frame.Height
+			if (isFrameAsset || isFullFrameSlice) && id != "" && !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
 }
 
 // emitIssueExecutedOnFirstCompletion atomically flips issue.first_executed_at

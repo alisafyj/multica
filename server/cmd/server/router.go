@@ -442,6 +442,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// only forward the bytes + the Stripe-Signature header; see
 	// HandleCloudBillingStripeWebhook for the rationale).
 	r.Post("/api/webhooks/stripe", h.HandleCloudBillingStripeWebhook)
+	r.Post("/api/design-files/imports/figma", h.ImportFigmaDesignFile)
+	r.Post("/api/design-plugin/figma/auth-sessions", h.CreateFigmaPluginAuthSession)
+	r.Get("/api/design-plugin/figma/auth-sessions/{sessionId}", h.PollFigmaPluginAuthSession)
+	r.Get("/api/design-plugin/figma/context", h.GetFigmaPluginContext)
+	r.Post("/api/design-plugin/figma/folders", h.CreateFigmaPluginDesignFolder)
+	r.Post("/api/design-plugin/figma/assets", h.UploadFigmaDesignAssetWithPluginToken)
+	r.Post("/api/design-plugin/figma/imports", h.ImportFigmaDesignWithPluginToken)
 
 	// Daemon API routes (require daemon token or valid user token)
 	r.Route("/api/daemon", func(r chi.Router) {
@@ -501,6 +508,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
+		r.Post("/api/design-plugin/figma/auth-sessions/{sessionId}/authorize", h.AuthorizeFigmaPluginAuthSession)
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
@@ -701,6 +709,40 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/resources/{resourceId}", h.DeleteProjectResource)
 				})
 			})
+
+			// Gallery Native design files
+			r.Get("/api/design-folders", h.ListDesignFolders)
+			r.Post("/api/design-folders", h.CreateDesignFolder)
+			r.Delete("/api/design-folders/{id}", h.DeleteDesignFolder)
+			r.Route("/api/design-files", func(r chi.Router) {
+				r.Post("/figma-connections", h.CreateFigmaImportConnection)
+				r.Get("/", h.ListDesignFiles)
+				r.Post("/", h.CreateDesignFile)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetDesignFile)
+					r.Get("/context", h.GetDesignFileContext)
+					r.Delete("/", h.DeleteDesignFile)
+					r.Delete("/frames/{frameId}", h.DeleteDesignFrame)
+					r.Get("/frames/{frameId}/context", h.GetDesignFrameContext)
+					r.Post("/frames/{frameId}/selection-context", h.GetDesignSelectionContext)
+					r.Post("/layers/{layerId}/lightweight-edit", h.UpdateDesignLayerLightweight)
+					r.Get("/revisions", h.ListDesignRevisions)
+				})
+			})
+			r.Get("/api/design-revisions/{revisionId}", h.GetDesignRevision)
+			r.Post("/api/design-revisions/{revisionId}/publish-template", h.PublishDesignRevisionAsTemplate)
+			r.Get("/api/design-templates", h.ListDesignCatalogTemplates)
+			r.Get("/api/design-templates/{id}", h.GetDesignCatalogTemplate)
+			r.Get("/api/design-drafts", h.ListDesignDrafts)
+			r.Post("/api/design-drafts", h.CreateDesignDraft)
+			r.Post("/api/design-drafts/agent-tasks", h.CreateDesignDraftAgentTask)
+			r.Get("/api/design-drafts/{id}", h.GetDesignDraft)
+			r.Post("/api/design-drafts/{id}/materialize", h.MaterializeDesignDraft)
+			r.Post("/api/design-restore-tasks", h.CreateDesignRestoreTask)
+			r.Get("/api/design-restore-tasks", h.ListDesignRestoreTasks)
+			r.Get("/api/design-restore-tasks/{id}", h.GetDesignRestoreTask)
+			r.Post("/api/design-restore-tasks/{id}/dispatch", h.DispatchDesignRestoreTask)
+			r.Get("/api/design-restore-tasks/{id}/items/{itemId}/context", h.GetDesignRestoreTaskItemContext)
 
 			// Squads
 			r.Route("/api/squads", func(r chi.Router) {

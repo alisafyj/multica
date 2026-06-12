@@ -57,22 +57,31 @@ export function runtimeListOptions(wsId: string, owner?: "me") {
 
 const GITHUB_RELEASES_URL =
   "https://api.github.com/repos/multica-ai/multica/releases/latest";
+const LATEST_VERSION_TIMEOUT_MS = 2500;
 
 export function latestCliVersionOptions() {
   return queryOptions({
     queryKey: runtimeKeys.latestVersion(),
     queryFn: async (): Promise<string | null> => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), LATEST_VERSION_TIMEOUT_MS);
       try {
         const resp = await fetch(GITHUB_RELEASES_URL, {
           headers: { Accept: "application/vnd.github+json" },
+          signal: controller.signal,
         });
         if (!resp.ok) return null;
         const data = await resp.json();
         return (data.tag_name as string) ?? null;
       } catch {
         return null;
+      } finally {
+        clearTimeout(timeout);
       }
     },
     staleTime: 10 * 60 * 1000, // 10 minutes
+    gcTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: false,
   });
 }

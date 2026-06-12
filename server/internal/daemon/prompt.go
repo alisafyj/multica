@@ -27,11 +27,59 @@ func BuildPrompt(task Task, provider string) string {
 	if task.QuickCreatePrompt != "" {
 		return buildQuickCreatePrompt(task)
 	}
+	if len(task.UIDraftCreateContext) > 0 {
+		return buildUIDraftCreatePrompt(task)
+	}
+	if len(task.DesignRestoreContext) > 0 {
+		return buildDesignRestorePrompt(task)
+	}
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). On long-running issues use `--recent 20 --output json` to read the 20 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
+	return b.String()
+}
+
+func buildDesignRestorePrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a Gallery Native frontend restore agent for a Multica workspace.\n\n")
+	b.WriteString("Use ONLY the Multica design restore context JSON below as the design source of truth. If issue_id is present, also run `multica issue get <issue_id> --output json` before editing.\n\n")
+	b.WriteString("Your job is to implement the smallest safe frontend code change that matches the restore task.\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- The embedded `item_contexts` are snapshots from Multica `/api/design-files/{design_file_id}/frames/{frame_id}/context`; treat them as authoritative.\n")
+	b.WriteString("- Default restore mode is `strict-structure`: produce visible HTML/CSS/component structure from layers, not a pasted screenshot.\n")
+	b.WriteString("- Do NOT call sy-gallery_* tools or use an external Gallery MCP current session/sketch as source material. Those may point at a different design and must be ignored for this task.\n")
+	b.WriteString("- Do NOT invent business copy, names, phone numbers, tabs, or components that are absent from `item_contexts`/assets.\n")
+	b.WriteString("- Do NOT use full-frame preview, thumbnail, or full-frame slice assets as the primary result. Forbidden examples: `frame_preview-*`, `frame_thumbnail-*`, and a frame-sized slice.\n")
+	b.WriteString("- If structural reconstruction is insufficient, do not fake completion by pasting the screenshot. Either return blocked with a concrete reason, or create a clearly marked centered placeholder saying `缺少可结构化 UI 稿` plus the reason.\n")
+	b.WriteString("- Use restore_task_id/design_file_id/revision_id only to cross-check identity; do not substitute another sketch/design ID.\n")
+	b.WriteString("- Prefer existing packages/views and packages/ui components. Respect package boundaries.\n")
+	b.WriteString("- Do not change backend unless the issue explicitly requires it.\n")
+	b.WriteString("- Run the relevant typecheck/test command before final response.\n")
+	b.WriteString("- Final response must summarize changed files, checks run, blockers, restore mapping, exact layer text/asset IDs used, and explicitly state `usedFullFramePreview: false` unless blocked.\n")
+	b.WriteString("- End your final response with a machine-readable JSON block prefixed by exactly `RESTORE_RESULT_JSON:`. Shape: {\"status\":\"completed|blocked|failed\",\"summary\":string,\"files\":string[],\"checks\":string[],\"blockers\":string[],\"restoreMapping\":array,\"usedLayerIds\":string[],\"usedAssetIds\":string[],\"usedFullFramePreview\":boolean,\"policyViolation\":string}.\n\n")
+	b.WriteString("Design restore context JSON:\n")
+	b.Write(task.DesignRestoreContext)
+	b.WriteString("\n")
+	return b.String()
+}
+
+func buildUIDraftCreatePrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a UI design draft generation agent for a Multica workspace.\n\n")
+	b.WriteString("There is NO existing issue to read. Use the UI draft context JSON below as the source of truth.\n\n")
+	b.WriteString("Your job is to generate controlled DesignDraft data for human review, not to create or edit design files directly.\n\n")
+	b.WriteString("Return your final answer as a single JSON object only, with this shape:\n")
+	b.WriteString("{\"title\": string, \"requirement_core\": object, \"slot_values\": object, \"patch\": array}\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- Prefer slot_values. Use patch only for safe non-layout metadata/text changes.\n")
+	b.WriteString("- Do not patch layout/tree paths or segments: x, y, width, height, children.\n")
+	b.WriteString("- Match every required slot in slot_schema and respect primitive types.\n")
+	b.WriteString("- Do not output markdown fences, prose, comments, or extra text.\n\n")
+	b.WriteString("UI draft context JSON:\n")
+	b.Write(task.UIDraftCreateContext)
+	b.WriteString("\n")
 	return b.String()
 }
 

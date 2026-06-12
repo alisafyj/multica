@@ -1,0 +1,387 @@
+-- Gallery Native design files and revisions
+
+-- name: ListDesignFolders :many
+SELECT * FROM design_folder
+WHERE workspace_id = $1
+  AND project_id = $2
+ORDER BY parent_id NULLS FIRST, position ASC, name ASC;
+
+-- name: ListDesignFoldersInWorkspace :many
+SELECT * FROM design_folder
+WHERE workspace_id = $1
+ORDER BY project_id, parent_id NULLS FIRST, position ASC, name ASC;
+
+-- name: GetDesignFolderInProject :one
+SELECT * FROM design_folder
+WHERE id = $1 AND workspace_id = $2 AND project_id = $3;
+
+-- name: CreateDesignFolder :one
+INSERT INTO design_folder (workspace_id, project_id, parent_id, name, position, created_by)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING *;
+
+-- name: ListDesignFiles :many
+SELECT * FROM design_file
+WHERE workspace_id = $1
+ORDER BY updated_at DESC, created_at DESC;
+
+-- name: ListDesignFilesByProject :many
+SELECT * FROM design_file
+WHERE workspace_id = $1
+  AND project_id = $2
+  AND (sqlc.narg('folder_id')::uuid IS NULL OR folder_id = sqlc.narg('folder_id'))
+ORDER BY updated_at DESC, created_at DESC;
+
+-- name: GetDesignFile :one
+SELECT * FROM design_file
+WHERE id = $1;
+
+-- name: GetDesignFileInWorkspace :one
+SELECT * FROM design_file
+WHERE id = $1 AND workspace_id = $2;
+
+-- name: GetDesignFileBySourceKeyForUpdate :one
+SELECT * FROM design_file
+WHERE workspace_id = $1
+  AND project_id = $2
+  AND folder_id IS NOT DISTINCT FROM sqlc.narg('folder_id')::uuid
+  AND source_type = $3
+  AND source_ref->>'source_key' = sqlc.arg('source_key')::text
+FOR UPDATE;
+
+-- name: CreateDesignFile :one
+INSERT INTO design_file (workspace_id, project_id, folder_id, title, description, source_type, source_ref, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING *;
+
+-- name: UpdateDesignFile :one
+UPDATE design_file SET
+    title = COALESCE(sqlc.narg('title'), title),
+    description = sqlc.narg('description'),
+    project_id = COALESCE(sqlc.narg('project_id'), project_id),
+    folder_id = sqlc.narg('folder_id'),
+    source_ref = COALESCE(sqlc.narg('source_ref'), source_ref),
+    current_revision_id = sqlc.narg('current_revision_id'),
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING *;
+
+-- name: DeleteDesignFile :exec
+DELETE FROM design_file WHERE id = $1 AND workspace_id = $2;
+
+-- name: ListDesignRevisions :many
+SELECT id, file_id, workspace_id, revision_number, status, validation_errors, created_by, created_at FROM design_revision
+WHERE file_id = $1
+ORDER BY revision_number DESC;
+
+-- name: ListDesignRevisionsWithNativeJSON :many
+SELECT * FROM design_revision
+WHERE file_id = $1
+ORDER BY revision_number DESC;
+
+-- name: GetDesignRevision :one
+SELECT * FROM design_revision
+WHERE id = $1;
+
+-- name: GetDesignRevisionInWorkspace :one
+SELECT * FROM design_revision
+WHERE id = $1 AND workspace_id = $2;
+
+-- name: CreateDesignRevision :one
+INSERT INTO design_revision (
+    file_id, workspace_id, revision_number, status, native_json, validation_errors, created_by
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7
+)
+RETURNING *;
+
+-- name: GetNextDesignRevisionNumber :one
+SELECT COALESCE(MAX(revision_number), 0)::int + 1 AS next_revision_number
+FROM design_revision
+WHERE file_id = $1;
+
+-- name: SetDesignFileCurrentRevision :one
+UPDATE design_file SET
+    current_revision_id = $3,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING *;
+
+-- name: CreateDesignImportCode :one
+INSERT INTO design_import_code (workspace_id, user_id, provider, code_hash, expires_at)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
+-- name: GetValidDesignImportCodeByHashForUpdate :one
+SELECT * FROM design_import_code
+WHERE code_hash = $1
+  AND provider = $2
+  AND consumed_at IS NULL
+  AND expires_at > now()
+FOR UPDATE;
+
+-- name: ConsumeDesignImportCode :exec
+UPDATE design_import_code
+SET consumed_at = now()
+WHERE id = $1;
+
+-- name: MarkDesignImportCodeFailed :exec
+UPDATE design_import_code
+SET failed_attempts = failed_attempts + 1,
+    last_failed_at = now()
+WHERE code_hash = $1;
+
+-- name: ListDesignAssets :many
+SELECT * FROM design_asset
+WHERE file_id = $1
+ORDER BY created_at ASC;
+
+-- name: UpsertDesignAsset :one
+INSERT INTO design_asset (
+    file_id, revision_id, workspace_id, asset_key, kind, url, content_type, size_bytes, metadata, created_by
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+)
+ON CONFLICT (file_id, asset_key) DO UPDATE SET
+    revision_id = EXCLUDED.revision_id,
+    kind = EXCLUDED.kind,
+    url = EXCLUDED.url,
+    content_type = EXCLUDED.content_type,
+    size_bytes = EXCLUDED.size_bytes,
+    metadata = EXCLUDED.metadata
+RETURNING *;
+
+-- Gallery Native templates and slots
+
+-- name: ListDesignTemplates :many
+SELECT * FROM design_template
+WHERE workspace_id = $1 OR (workspace_id IS NULL AND is_system = TRUE)
+ORDER BY is_system DESC, category ASC, name ASC;
+
+-- name: GetDesignTemplate :one
+SELECT * FROM design_template
+WHERE id = $1;
+
+-- name: GetDesignTemplateByKey :one
+SELECT * FROM design_template
+WHERE (workspace_id = $1 OR (workspace_id IS NULL AND is_system = TRUE))
+  AND key = $2
+ORDER BY workspace_id NULLS LAST
+LIMIT 1;
+
+-- name: CreateDesignTemplate :one
+INSERT INTO design_template (
+    workspace_id, key, name, description, category, native_json, slot_schema, metadata, is_system, created_by
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+)
+RETURNING *;
+
+-- name: ListDesignTemplateSlots :many
+SELECT * FROM design_template_slot
+WHERE template_id = $1
+ORDER BY position ASC, slot_key ASC;
+
+-- name: UpsertDesignTemplateSlot :one
+INSERT INTO design_template_slot (
+    template_id, slot_key, label, slot_type, required, default_value, constraints, description, position
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
+)
+ON CONFLICT (template_id, slot_key) DO UPDATE SET
+    label = EXCLUDED.label,
+    slot_type = EXCLUDED.slot_type,
+    required = EXCLUDED.required,
+    default_value = EXCLUDED.default_value,
+    constraints = EXCLUDED.constraints,
+    description = EXCLUDED.description,
+    position = EXCLUDED.position
+RETURNING *;
+
+-- Gallery Native drafts and restore tasks
+
+-- name: ListDesignDrafts :many
+SELECT * FROM design_draft
+WHERE workspace_id = $1
+ORDER BY updated_at DESC, created_at DESC;
+
+-- name: GetDesignDraftInWorkspace :one
+SELECT * FROM design_draft
+WHERE id = $1 AND workspace_id = $2;
+
+-- name: CreateDesignDraft :one
+INSERT INTO design_draft (
+    workspace_id, template_id, catalog_template_id, template_revision_id, file_id, revision_id, issue_id, title,
+    requirement_core, slot_values, patch, status, validation_errors, created_by
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+)
+RETURNING *;
+
+-- name: UpdateDesignDraft :one
+UPDATE design_draft SET
+    template_id = sqlc.narg('template_id'),
+    catalog_template_id = sqlc.narg('catalog_template_id'),
+    template_revision_id = sqlc.narg('template_revision_id'),
+    file_id = sqlc.narg('file_id'),
+    revision_id = sqlc.narg('revision_id'),
+    generated_file_id = sqlc.narg('generated_file_id'),
+    generated_revision_id = sqlc.narg('generated_revision_id'),
+    issue_id = sqlc.narg('issue_id'),
+    title = COALESCE(sqlc.narg('title'), title),
+    requirement_core = COALESCE(sqlc.narg('requirement_core'), requirement_core),
+    slot_values = COALESCE(sqlc.narg('slot_values'), slot_values),
+    patch = COALESCE(sqlc.narg('patch'), patch),
+    status = COALESCE(sqlc.narg('status'), status),
+    validation_errors = COALESCE(sqlc.narg('validation_errors'), validation_errors),
+    materialized_at = COALESCE(sqlc.narg('materialized_at'), materialized_at),
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING *;
+
+-- name: CreateDesignRestoreTask :one
+INSERT INTO design_restore_task (
+    workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+)
+RETURNING *;
+
+-- name: UpdateDesignRestoreTask :one
+UPDATE design_restore_task SET
+    status = COALESCE(sqlc.narg('status'), status),
+    issue_id = COALESCE(sqlc.narg('issue_id'), issue_id),
+    agent_task_id = COALESCE(sqlc.narg('agent_task_id'), agent_task_id),
+    result = COALESCE(sqlc.narg('result'), result),
+    error = sqlc.narg('error'),
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING *;
+
+-- name: GetDesignRestoreTaskInWorkspace :one
+SELECT * FROM design_restore_task
+WHERE id = $1 AND workspace_id = $2;
+
+-- name: GetDesignRestoreTaskByAgentTask :one
+SELECT * FROM design_restore_task
+WHERE agent_task_id = $1;
+
+-- name: ListDesignRestoreTasks :many
+SELECT * FROM design_restore_task
+WHERE workspace_id = $1
+ORDER BY created_at DESC
+LIMIT 50;
+
+-- name: ListDesignRestoreMappings :many
+SELECT * FROM design_restore_mapping
+WHERE restore_task_id = $1
+ORDER BY created_at ASC;
+
+-- name: CreateDesignRestoreMapping :one
+INSERT INTO design_restore_mapping (
+    restore_task_id, workspace_id, layer_id, target_path, target_kind, confidence, metadata
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7
+)
+RETURNING *;
+
+-- name: EnsureDesignTemplateLibrary :one
+INSERT INTO design_template_library (workspace_id, key, name, description, metadata, created_by)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (workspace_id, key) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = COALESCE(design_template_library.description, EXCLUDED.description),
+    updated_at = now()
+RETURNING *;
+
+-- name: GetDesignTemplateLibraryByKey :one
+SELECT * FROM design_template_library
+WHERE workspace_id = $1 AND key = $2;
+
+-- name: CreateDesignCatalogTemplate :one
+INSERT INTO design_catalog_template (
+    workspace_id, library_id, key, name, description, category, metadata, created_by
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8
+)
+RETURNING *;
+
+-- name: GetDesignCatalogTemplateByKey :one
+SELECT * FROM design_catalog_template
+WHERE workspace_id = $1 AND library_id = $2 AND key = $3;
+
+-- name: CreateDesignTemplateRevision :one
+INSERT INTO design_template_revision (
+    workspace_id, template_id, design_revision_id, revision_number, status, slot_schema, metadata, created_by
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8
+)
+RETURNING *;
+
+-- name: GetDesignTemplateRevisionInWorkspace :one
+SELECT * FROM design_template_revision
+WHERE id = $1 AND workspace_id = $2;
+
+-- name: GetNextDesignTemplateRevisionNumber :one
+SELECT COALESCE(MAX(revision_number), 0)::int + 1 AS next_revision_number
+FROM design_template_revision
+WHERE template_id = $1;
+
+-- name: UpdateDesignCatalogTemplateCurrentRevision :one
+UPDATE design_catalog_template
+SET current_revision_id = $3, updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING *;
+
+-- name: ListDesignCatalogTemplates :many
+SELECT
+    t.id,
+    t.workspace_id,
+    t.library_id,
+    t.key,
+    t.name,
+    t.description,
+    t.category,
+    t.current_revision_id,
+    t.metadata,
+    t.created_by,
+    t.created_at,
+    t.updated_at,
+    tr.design_revision_id,
+    tr.revision_number AS template_revision_number,
+    tr.slot_schema AS slot_schema,
+    dr.file_id AS design_file_id,
+    df.title AS design_file_title
+FROM design_catalog_template t
+LEFT JOIN design_template_revision tr ON tr.id = t.current_revision_id
+LEFT JOIN design_revision dr ON dr.id = tr.design_revision_id
+LEFT JOIN design_file df ON df.id = dr.file_id
+WHERE t.workspace_id = $1
+  AND ($2::uuid IS NULL OR t.library_id = $2)
+  AND ($3::text = '' OR t.category = $3)
+ORDER BY t.updated_at DESC, t.created_at DESC;
+
+-- name: GetDesignCatalogTemplate :one
+SELECT
+    t.id,
+    t.workspace_id,
+    t.library_id,
+    t.key,
+    t.name,
+    t.description,
+    t.category,
+    t.current_revision_id,
+    t.metadata,
+    t.created_by,
+    t.created_at,
+    t.updated_at,
+    tr.design_revision_id,
+    tr.revision_number AS template_revision_number,
+    tr.slot_schema AS slot_schema,
+    dr.file_id AS design_file_id,
+    df.title AS design_file_title
+FROM design_catalog_template t
+LEFT JOIN design_template_revision tr ON tr.id = t.current_revision_id
+LEFT JOIN design_revision dr ON dr.id = tr.design_revision_id
+LEFT JOIN design_file df ON df.id = dr.file_id
+WHERE t.id = $1 AND t.workspace_id = $2;

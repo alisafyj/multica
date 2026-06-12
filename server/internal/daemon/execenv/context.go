@@ -408,6 +408,12 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 	if ctx.QuickCreatePrompt != "" {
 		return renderQuickCreateContext(ctx)
 	}
+	if ctx.UIDraftCreateContext != "" {
+		return renderUIDraftCreateContext(ctx)
+	}
+	if ctx.DesignRestoreContext != "" {
+		return renderDesignRestoreContext(ctx)
+	}
 
 	var b strings.Builder
 
@@ -455,6 +461,34 @@ func renderQuickCreateContext(ctx TaskContextForEnv) string {
 		}
 		b.WriteString("\n")
 	}
+	return b.String()
+}
+
+func renderUIDraftCreateContext(ctx TaskContextForEnv) string {
+	var b strings.Builder
+	b.WriteString("# UI Draft Generation\n\n")
+	b.WriteString("**Trigger:** Gallery Native template-assisted draft generation\n\n")
+	b.WriteString("## Draft context JSON\n\n")
+	b.WriteString("```json\n")
+	b.WriteString(ctx.UIDraftCreateContext)
+	b.WriteString("\n```\n\n")
+	if len(ctx.AgentSkills) > 0 {
+		b.WriteString("## Agent Skills\n\n")
+		for _, skill := range ctx.AgentSkills {
+			fmt.Fprintf(&b, "- **%s**\n", skill.Name)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func renderDesignRestoreContext(ctx TaskContextForEnv) string {
+	var b strings.Builder
+	b.WriteString("## Design Restore Context\n\n")
+	b.WriteString("This task was created from a Gallery Native restore task. Use this JSON as the primary design/context payload.\n\n")
+	b.WriteString("```json\n")
+	b.WriteString(ctx.DesignRestoreContext)
+	b.WriteString("\n```\n")
 	return b.String()
 }
 

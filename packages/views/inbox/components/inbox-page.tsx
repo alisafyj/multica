@@ -149,6 +149,12 @@ export function InboxPage() {
     setSelectedKey(item.issue_id ?? item.id);
   };
 
+  const openSelectedDesign = () => {
+    const designFileId = selected?.details?.design_file_id;
+    if (!designFileId) return;
+    replace(wsPaths.designDetail(designFileId));
+  };
+
   const handleArchive = (id: string) => {
     const idx = items.findIndex((i) => i.id === id);
     const archived = idx >= 0 ? items[idx] : null;
@@ -350,6 +356,11 @@ export function InboxPage() {
             }}
           >
             {t(($) => $.detail.edit_advanced)}
+          </Button>
+        )}
+        {selected.type === "design_ready" && selected.details?.design_file_id && (
+          <Button size="sm" onClick={openSelectedDesign}>
+            {selected.details.ready_type === "template" ? t(($) => $.detail.open_template_design) : t(($) => $.detail.open_design)}
           </Button>
         )}
         <Button

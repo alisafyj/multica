@@ -116,6 +116,37 @@ import type {
   CreateBillingCheckoutSessionResponse,
   BillingCheckoutSessionStatus,
   CreateBillingPortalSessionResponse,
+  CreateDesignDraftAgentTaskRequest,
+  CreateDesignDraftAgentTaskResponse,
+  CreateDesignDraftRequest,
+  CreateDesignFileRequest,
+  CreateDesignFolderRequest,
+  CreateDesignRestoreTaskRequest,
+  DesignCatalogTemplate,
+  DesignContext,
+  DesignDraft,
+  DesignDraftMaterializeResponse,
+  DesignFileDetailResponse,
+  DesignFolder,
+  DesignFrameContext,
+  DesignLayerLightweightEditRequest,
+  DesignRevision,
+  DesignRestoreTask,
+  DesignRestoreTaskItemContextResponse,
+  DispatchDesignRestoreTaskRequest,
+  DispatchDesignRestoreTaskResponse,
+  DesignSelectionContext,
+  DesignSelectionInput,
+  FigmaImportConnection,
+  FigmaPluginAuthSession,
+  FigmaPluginAuthStatus,
+  ListDesignFoldersResponse,
+  ListDesignDraftsResponse,
+  ListDesignFilesResponse,
+  ListDesignRevisionsResponse,
+  ListDesignRestoreTasksResponse,
+  ListDesignTemplatesResponse,
+  PublishDesignTemplateRequest,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type {
@@ -1770,6 +1801,168 @@ export class ApiClient {
   ): Promise<void> {
     await this.fetch(`/api/projects/${projectId}/resources/${resourceId}`, {
       method: "DELETE",
+    });
+  }
+
+  // Gallery Native design files
+  async listDesignFiles(): Promise<ListDesignFilesResponse> {
+    return this.fetch("/api/design-files");
+  }
+
+  async listDesignFolders(projectId?: string): Promise<ListDesignFoldersResponse> {
+    const search = new URLSearchParams();
+    if (projectId) search.set("project_id", projectId);
+    const suffix = search.toString();
+    return this.fetch(`/api/design-folders${suffix ? `?${suffix}` : ""}`);
+  }
+
+  async createDesignFolder(data: CreateDesignFolderRequest): Promise<DesignFolder> {
+    return this.fetch("/api/design-folders", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteDesignFolder(id: string): Promise<void> {
+    await this.fetch(`/api/design-folders/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async createDesignFile(data: CreateDesignFileRequest): Promise<DesignFileDetailResponse> {
+    return this.fetch("/api/design-files", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async createFigmaImportConnection(): Promise<FigmaImportConnection> {
+    return this.fetch("/api/design-files/figma-connections", { method: "POST" });
+  }
+
+  async getDesignFile(id: string): Promise<DesignFileDetailResponse> {
+    return this.fetch(`/api/design-files/${encodeURIComponent(id)}`);
+  }
+
+  async getDesignFileContext(id: string): Promise<DesignContext> {
+    return this.fetch(`/api/design-files/${encodeURIComponent(id)}/context`);
+  }
+
+  async getDesignFrameContext(fileId: string, frameId: string): Promise<DesignFrameContext> {
+    return this.fetch(`/api/design-files/${encodeURIComponent(fileId)}/frames/${encodeURIComponent(frameId)}/context`);
+  }
+
+  async getDesignSelectionContext(fileId: string, frameId: string, input: DesignSelectionInput): Promise<DesignSelectionContext> {
+    return this.fetch(`/api/design-files/${encodeURIComponent(fileId)}/frames/${encodeURIComponent(frameId)}/selection-context`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async updateDesignLayerLightweight(fileId: string, layerId: string, data: DesignLayerLightweightEditRequest): Promise<DesignFileDetailResponse> {
+    return this.fetch(`/api/design-files/${encodeURIComponent(fileId)}/layers/${encodeURIComponent(layerId)}/lightweight-edit`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteDesignFile(id: string): Promise<void> {
+    await this.fetch(`/api/design-files/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async deleteDesignFrame(fileId: string, frameId: string): Promise<void> {
+    await this.fetch(`/api/design-files/${encodeURIComponent(fileId)}/frames/${encodeURIComponent(frameId)}`, { method: "DELETE" });
+  }
+
+  async listDesignRevisions(fileId: string): Promise<ListDesignRevisionsResponse> {
+    return this.fetch(`/api/design-files/${encodeURIComponent(fileId)}/revisions`);
+  }
+
+  async getDesignRevision(revisionId: string): Promise<DesignRevision> {
+    return this.fetch(`/api/design-revisions/${encodeURIComponent(revisionId)}`);
+  }
+
+  async publishDesignRevisionAsTemplate(revisionId: string, data: PublishDesignTemplateRequest = {}): Promise<DesignCatalogTemplate> {
+    return this.fetch(`/api/design-revisions/${encodeURIComponent(revisionId)}/publish-template`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listDesignTemplates(params: { library_id?: string; category?: string } = {}): Promise<ListDesignTemplatesResponse> {
+    const search = new URLSearchParams();
+    if (params.library_id) search.set("library_id", params.library_id);
+    if (params.category) search.set("category", params.category);
+    const suffix = search.toString();
+    return this.fetch(`/api/design-templates${suffix ? `?${suffix}` : ""}`);
+  }
+
+  async getDesignTemplate(id: string): Promise<DesignCatalogTemplate> {
+    return this.fetch(`/api/design-templates/${encodeURIComponent(id)}`);
+  }
+
+  async listDesignDrafts(): Promise<ListDesignDraftsResponse> {
+    return this.fetch("/api/design-drafts");
+  }
+
+  async createDesignDraft(data: CreateDesignDraftRequest): Promise<DesignDraft> {
+    return this.fetch("/api/design-drafts", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async createDesignDraftAgentTask(data: CreateDesignDraftAgentTaskRequest): Promise<CreateDesignDraftAgentTaskResponse> {
+    return this.fetch("/api/design-drafts/agent-tasks", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getDesignDraft(id: string): Promise<DesignDraft> {
+    return this.fetch(`/api/design-drafts/${encodeURIComponent(id)}`);
+  }
+
+  async materializeDesignDraft(id: string): Promise<DesignDraftMaterializeResponse> {
+    return this.fetch(`/api/design-drafts/${encodeURIComponent(id)}/materialize`, { method: "POST" });
+  }
+
+  async createDesignRestoreTask(data: CreateDesignRestoreTaskRequest): Promise<DesignRestoreTask> {
+    return this.fetch("/api/design-restore-tasks", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listDesignRestoreTasks(): Promise<ListDesignRestoreTasksResponse> {
+    return this.fetch("/api/design-restore-tasks");
+  }
+
+  async getDesignRestoreTask(id: string): Promise<DesignRestoreTask> {
+    return this.fetch(`/api/design-restore-tasks/${encodeURIComponent(id)}`);
+  }
+
+  async dispatchDesignRestoreTask(id: string, data: DispatchDesignRestoreTaskRequest): Promise<DispatchDesignRestoreTaskResponse> {
+    return this.fetch(`/api/design-restore-tasks/${encodeURIComponent(id)}/dispatch`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getDesignRestoreTaskItemContext(taskId: string, itemId: string): Promise<DesignRestoreTaskItemContextResponse> {
+    return this.fetch(`/api/design-restore-tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/context`);
+  }
+
+  async createFigmaPluginAuthSession(): Promise<FigmaPluginAuthSession> {
+    return this.fetch("/api/design-plugin/figma/auth-sessions", { method: "POST" });
+  }
+
+  async pollFigmaPluginAuthSession(sessionId: string): Promise<FigmaPluginAuthStatus> {
+    return this.fetch(`/api/design-plugin/figma/auth-sessions/${encodeURIComponent(sessionId)}`);
+  }
+
+  async authorizeFigmaPluginAuthSession(sessionId: string, workspaceId: string): Promise<{ status: string; session_id: string }> {
+    return this.fetch(`/api/design-plugin/figma/auth-sessions/${encodeURIComponent(sessionId)}/authorize`, {
+      method: "POST",
+      body: JSON.stringify({ workspace_id: workspaceId }),
     });
   }
 

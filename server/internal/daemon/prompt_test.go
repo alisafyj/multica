@@ -508,3 +508,26 @@ func TestBuildPromptResumedNoDeltaDoesNotForceThreadRead(t *testing.T) {
 		t.Errorf("resumed/no-delta prompt must not use the cold-start forced-read wording, got:\n%s", out)
 	}
 }
+
+func TestBuildPromptDesignRestoreUsesMulticaContextOnly(t *testing.T) {
+	prompt := BuildPrompt(Task{DesignRestoreContext: []byte(`{"type":"design_restore_task_execute","item_contexts":[{"item":{"itemId":"item-1"},"context":{"frame":{"id":"frame-main"}}}]}`)}, "opencode")
+	for _, want := range []string{
+		"Use ONLY the Multica design restore context JSON below as the design source of truth",
+		"The embedded `item_contexts` are snapshots from Multica",
+		"Default restore mode is `strict-structure`",
+		"Do NOT call sy-gallery_* tools",
+		"Do NOT invent business copy",
+		"Do NOT use full-frame preview",
+		"缺少可结构化 UI 稿",
+		"usedFullFramePreview: false",
+		"RESTORE_RESULT_JSON:",
+		"usedAssetIds",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("design restore prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+	if !strings.Contains(prompt, "item_contexts") || !strings.Contains(prompt, "frame-main") {
+		t.Fatalf("design restore prompt did not embed Multica item contexts\n--- prompt ---\n%s", prompt)
+	}
+}

@@ -1,0 +1,712 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; overflow: hidden; }
+      body { margin: 0; background: var(--figma-color-bg); color: var(--figma-color-text); font-size: 12px; }
+      button, input, select { font: inherit; }
+      .app { display: flex; width: 100%; height: 100%; min-width: 0; flex-direction: column; background: var(--figma-color-bg); }
+      .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: 0 0 auto; padding: 12px 14px; border-bottom: 1px solid var(--figma-color-border); }
+      .title { margin: 0; font-size: 15px; line-height: 20px; font-weight: 750; }
+      .subtitle, .muted { color: var(--figma-color-text-secondary); }
+      .subtitle { margin-top: 2px; font-size: 11px; }
+      .page { display: flex; flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 14px; }
+      .stack { display: grid; gap: 12px; }
+      .card { border: 1px solid var(--figma-color-border); border-radius: 16px; background: var(--figma-color-bg-secondary); padding: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+      .card-inner { border: 1px solid var(--figma-color-border); border-radius: 12px; background: var(--figma-color-bg); padding: 12px; }
+      .label { display: block; margin: 0 0 6px; color: var(--figma-color-text-secondary); font-size: 11px; font-weight: 600; }
+      .field { width: 100%; min-width: 0; border: 1px solid var(--figma-color-border); border-radius: 11px; padding: 9px 11px; background: var(--figma-color-bg); color: var(--figma-color-text); outline: none; }
+      .field:focus { border-color: var(--figma-color-bg-brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--figma-color-bg-brand) 16%, transparent); }
+      select.field { appearance: none; padding-right: 30px; background-image: linear-gradient(45deg, transparent 50%, var(--figma-color-text-secondary) 50%), linear-gradient(135deg, var(--figma-color-text-secondary) 50%, transparent 50%); background-position: calc(100% - 16px) 15px, calc(100% - 11px) 15px; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+      .btn { border: 0; border-radius: 11px; padding: 9px 12px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+      .btn-primary { background: var(--figma-color-bg-brand); color: var(--figma-color-text-onbrand); }
+      .btn-secondary { border: 1px solid var(--figma-color-border); background: var(--figma-color-bg-secondary); color: var(--figma-color-text); }
+      .btn:disabled { opacity: .45; cursor: default; }
+      .login-note { margin: 6px 0 0; color: var(--figma-color-text-secondary); font-size: 12px; line-height: 1.55; }
+      .account { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      .avatar { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 40px; overflow: hidden; border-radius: 999px; background: var(--figma-color-bg-brand); color: var(--figma-color-text-onbrand); font-size: 14px; font-weight: 800; }
+      .avatar img { width: 100%; height: 100%; object-fit: cover; }
+      .account-main { min-width: 0; flex: 1; }
+      .account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 750; }
+      .account-email { margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--figma-color-text-secondary); font-size: 11px; }
+      .kv { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--figma-color-border); margin-top: 12px; padding-top: 12px; }
+      .kv strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+      .form-grid { display: grid; gap: 12px; }
+      .scope-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+      .radio-card { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; border: 1px solid var(--figma-color-border); border-radius: 12px; background: var(--figma-color-bg); padding: 10px; }
+      .radio-card input { display: none; }
+      .radio-dot { width: 16px; height: 16px; flex: 0 0 16px; border-radius: 999px; border: 1px solid var(--figma-color-border); background: var(--figma-color-bg); }
+      .radio-card:has(input:checked) { border-color: var(--figma-color-bg-brand); background: color-mix(in srgb, var(--figma-color-bg-brand) 10%, var(--figma-color-bg)); }
+      .radio-card input:checked + .radio-dot { border-color: var(--figma-color-bg-brand); box-shadow: inset 0 0 0 4px var(--figma-color-bg), inset 0 0 0 9px var(--figma-color-bg-brand); }
+      .radio-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .count { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; border-radius: 999px; padding: 2px 7px; background: var(--figma-color-bg-tertiary); color: var(--figma-color-text-secondary); font-size: 10px; }
+      .boards { max-height: 168px; overflow: auto; margin-top: 12px; border: 1px solid var(--figma-color-border); border-radius: 12px; background: var(--figma-color-bg); }
+      .board { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--figma-color-border); padding: 9px 10px; }
+      .board:last-child { border-bottom: 0; }
+      .board-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+      .board-size { flex: 0 0 auto; border-radius: 999px; padding: 2px 7px; background: var(--figma-color-bg-tertiary); color: var(--figma-color-text-secondary); font-size: 10px; }
+      .empty { padding: 28px 14px; text-align: center; color: var(--figma-color-text-secondary); line-height: 1.55; }
+      #uploadPanel { flex: 1 1 auto; min-height: 0; }
+      .upload-scroll { min-height: 0; overflow: auto; padding-bottom: 8px; }
+      .actions { display: grid; grid-template-columns: .9fr 1.1fr; gap: 8px; flex: 0 0 auto; border-top: 1px solid var(--figma-color-border); background: var(--figma-color-bg); padding-top: 10px; }
+      .progress { display: none; position: fixed; inset: 0; z-index: 50; align-items: center; justify-content: center; padding: 24px; background: color-mix(in srgb, var(--figma-color-bg) 72%, transparent); backdrop-filter: blur(6px); }
+      .progress.on { display: flex; }
+      .progress-card { width: min(280px, 100%); border: 1px solid var(--figma-color-border); border-radius: 22px; background: var(--figma-color-bg-secondary); padding: 24px 20px 20px; box-shadow: 0 24px 60px rgba(0,0,0,.22); text-align: center; }
+      .ring { --pct: 0; display: grid; place-items: center; width: 132px; height: 132px; margin: 0 auto; border-radius: 999px; background: conic-gradient(var(--figma-color-bg-brand) calc(var(--pct) * 1%), var(--figma-color-bg-tertiary) 0); position: relative; }
+      .ring::after { content: ""; position: absolute; inset: 12px; border-radius: inherit; background: var(--figma-color-bg-secondary); }
+      .ring-value { position: relative; z-index: 1; font-size: 24px; line-height: 1; font-weight: 800; }
+      .progress-label { margin-top: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--figma-color-text); font-weight: 700; }
+      .progress-desc { margin-top: 6px; color: var(--figma-color-text-secondary); font-size: 11px; line-height: 1.45; }
+      .status { min-height: 18px; margin-top: 12px; color: var(--figma-color-text-secondary); white-space: pre-wrap; }
+      .status.ok { color: var(--figma-color-text-success); }
+      .status.err { color: var(--figma-color-text-danger); }
+      .pick-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; border: 0; border-top: 1px solid var(--figma-color-border); background: transparent; color: var(--figma-color-text); padding: 12px 0; cursor: pointer; text-align: left; }
+      .pick-row:first-child { border-top: 0; }
+      .pick-row:disabled { opacity: .45; cursor: default; }
+      .pick-main { display: flex; min-width: 0; flex: 1; align-items: center; justify-content: space-between; gap: 14px; }
+      .pick-label { flex: 0 0 auto; color: var(--figma-color-text-secondary); font-size: 12px; font-weight: 650; }
+      .pick-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; font-weight: 650; }
+      .drawer { display: none; position: fixed; inset: 0; z-index: 60; background: color-mix(in srgb, var(--figma-color-bg) 55%, transparent); }
+      .drawer.on { display: block; }
+      .drawer-panel { position: absolute; inset: auto 0 0; height: max(60vh, 430px); max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; border-top: 1px solid var(--figma-color-border); border-radius: 20px 20px 0 0; background: var(--figma-color-bg); box-shadow: 0 -20px 50px rgba(0,0,0,.22); }
+      .drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--figma-color-border); font-weight: 750; }
+      .drawer-body { display: grid; align-content: start; gap: 8px; min-height: 0; flex: 1; overflow: auto; padding: 12px; }
+      .drawer-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; border: 1px solid var(--figma-color-border); border-radius: 12px; background: var(--figma-color-bg-secondary); color: var(--figma-color-text); padding: 10px 11px; text-align: left; }
+      .drawer-item.active { border-color: var(--figma-color-bg-brand); background: color-mix(in srgb, var(--figma-color-bg-brand) 10%, var(--figma-color-bg)); }
+      .modal { display: none; position: fixed; inset: 0; z-index: 70; align-items: center; justify-content: center; padding: 18px; background: color-mix(in srgb, var(--figma-color-bg) 62%, transparent); }
+      .modal.on { display: flex; }
+      .modal-card { width: min(360px, 100%); border: 1px solid var(--figma-color-border); border-radius: 18px; background: var(--figma-color-bg); padding: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.24); }
+      .modal-title { font-weight: 750; margin-bottom: 12px; }
+      .modal-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+      .hidden { display: none !important; }
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-thumb { background: var(--figma-color-border); border-radius: 999px; }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="top">
+        <div style="min-width:0">
+          <h1 class="title">Multica 设计稿上传</h1>
+          <div class="subtitle" id="loginState">未连接</div>
+        </div>
+        <button class="btn btn-secondary" id="logoutBtn" style="display:none">退出登录</button>
+      </header>
+
+      <main class="page">
+        <section id="loginPanel" class="card">
+          <div class="card-inner">
+            <div style="font-size:14px;font-weight:750">连接 Multica</div>
+            <p class="login-note">登录后可把当前 Figma 画板上传到 Multica 设计库。插件会保存专用上传凭证。</p>
+          </div>
+          <div style="margin-top:12px">
+            <label class="label">API 基础 URL</label>
+            <input class="field" id="apiBase" value="http://localhost:8080" />
+          </div>
+          <button class="btn btn-primary" id="loginBtn" style="width:100%;margin-top:12px">登 录</button>
+        </section>
+
+        <section id="uploadPanel" class="stack" style="display:none">
+          <div class="upload-scroll stack">
+            <div>
+              <label class="label">API 基础 URL</label>
+              <input class="field" id="apiBaseAuthed" value="http://localhost:8080" />
+            </div>
+
+            <section class="card">
+            <div class="account">
+              <div class="avatar" id="avatar">M</div>
+              <div class="account-main">
+                <div class="account-name" id="userName">-</div>
+                <div class="account-email" id="userEmail">-</div>
+              </div>
+            </div>
+            <div class="kv"><span class="muted">团队</span><strong id="workspaceName">Multica 工作区</strong></div>
+            <button class="pick-row" id="projectPicker" type="button">
+              <span class="pick-main"><span class="pick-label">项目</span><span class="pick-value" id="projectValue">未选择</span></span>
+              <span>›</span>
+            </button>
+            </section>
+
+            <section class="card form-grid">
+            <div style="grid-column:1/-1">
+              <label class="label">上传类型</label>
+              <div class="scope-grid" style="margin-top:6px">
+                <label class="radio-card">
+                  <input type="radio" name="uploadMode" value="design" checked />
+                  <span class="radio-dot"></span>
+                  <span class="radio-label">业务设计稿</span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="uploadMode" value="template" />
+                  <span class="radio-dot"></span>
+                  <span class="radio-label">模板资产</span>
+                </label>
+              </div>
+            </div>
+            <div id="designOptions" style="display:grid;gap:12px;grid-column:1/-1">
+              <button class="pick-row" id="folderPicker" type="button">
+                <span class="pick-main"><span class="pick-label">文件夹</span><span class="pick-value" id="folderValue">未分组</span></span>
+                <span>›</span>
+              </button>
+              <button class="pick-row" id="designFilePicker" type="button">
+                <span class="pick-main"><span class="pick-label">设计稿项目</span><span class="pick-value" id="designFileValue">未选择</span></span>
+                <span>›</span>
+              </button>
+            </div>
+            <div id="templateOptions" style="display:none;grid-column:1/-1">
+              <label class="label">模板名称</label>
+              <input class="field" id="templateName" placeholder="默认使用设计稿名称" />
+              <div class="muted" style="margin-top:6px;font-size:12px">模板资产进入当前项目的模板库，不归属文件夹。</div>
+            </div>
+            </section>
+
+            <section class="card">
+            <div class="kv" style="border-top:0;margin-top:0;padding-top:0"><span class="muted">Figma 页面</span><strong id="pageName">-</strong></div>
+            <div class="scope-grid">
+              <label class="radio-card">
+                <input type="radio" name="scope" value="selected" checked />
+                <span class="radio-dot"></span>
+                <span class="radio-label">选中画板</span>
+                <span class="count" id="selectedCount">0</span>
+              </label>
+              <label class="radio-card">
+                <input type="radio" name="scope" value="page" />
+                <span class="radio-dot"></span>
+                <span class="radio-label">当前页面</span>
+                <span class="count" id="pageCount">0</span>
+              </label>
+            </div>
+            <div id="boards" class="boards"><div class="empty">在 Figma 中选择画板后会自动显示在这里</div></div>
+            </section>
+
+            <section class="progress" id="progressBox">
+              <div class="progress-card">
+                <div class="ring" id="progressRing"><div class="ring-value" id="progressPct">0%</div></div>
+                <div class="progress-label" id="progressLabel">准备中</div>
+                <div class="progress-desc">请不要关闭插件窗口，正在处理画板资源。</div>
+              </div>
+            </section>
+          </div>
+
+          <div class="actions">
+            <button class="btn btn-secondary" id="refreshBtn">刷新选择</button>
+            <button class="btn btn-primary" id="uploadBtn" disabled>读取并上传</button>
+          </div>
+        </section>
+
+        <div id="status" class="status"></div>
+      </main>
+      <div class="drawer" id="pickerDrawer">
+        <div class="drawer-panel">
+          <div class="drawer-head"><span id="drawerTitle">选择</span><div style="display:flex;gap:8px"><button class="btn btn-primary" id="drawerNew" type="button" style="display:none">新建</button><button class="btn btn-secondary" id="drawerClose" type="button">关闭</button></div></div>
+          <div style="padding:12px 12px 0"><input class="field" id="drawerSearch" placeholder="搜索" /></div>
+          <div class="drawer-body" id="drawerBody"></div>
+        </div>
+      </div>
+      <div class="modal" id="createModal">
+        <div class="modal-card">
+          <div class="modal-title" id="createModalTitle">新建</div>
+          <input class="field" id="createModalInput" placeholder="请输入名称" />
+          <div class="modal-actions"><button class="btn btn-secondary" id="createModalCancel" type="button">取消</button><button class="btn btn-primary" id="createModalConfirm" type="button">确定</button></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const uploadBtn = document.getElementById('uploadBtn');
+      const refreshBtn = document.getElementById('refreshBtn');
+      const statusEl = document.getElementById('status');
+      const loginBtn = document.getElementById('loginBtn');
+      const logoutBtn = document.getElementById('logoutBtn');
+      const loginPanel = document.getElementById('loginPanel');
+      const uploadPanel = document.getElementById('uploadPanel');
+      const loginState = document.getElementById('loginState');
+      const boards = document.getElementById('boards');
+      const progressBox = document.getElementById('progressBox');
+      const progressLabel = document.getElementById('progressLabel');
+      const progressPct = document.getElementById('progressPct');
+      const progressRing = document.getElementById('progressRing');
+      let exported = null;
+      let pluginToken = '';
+      let pollTimer = null;
+      let pluginContext = null;
+      let selection = { scope: 'selected', selected: [], page: [], active: [], pageName: '-' };
+      let busy = false;
+      let selectedProjectId = '';
+      let selectedFolderId = '';
+      let selectedDesignFileId = '__new';
+      let pendingDesignFileTitle = '';
+      let drawerKind = '';
+      let createKind = '';
+
+      function setStatus(text, kind) {
+        statusEl.className = 'status ' + (kind || '');
+        statusEl.textContent = text;
+      }
+
+      function setProgress(on, label, percent) {
+        progressBox.className = 'progress ' + (on ? 'on' : '');
+        progressLabel.textContent = label || '';
+        const pct = Math.max(0, Math.min(100, Math.round(percent || 0)));
+        progressPct.textContent = pct + '%';
+        progressRing.style.setProperty('--pct', pct);
+      }
+
+      function apiBase() {
+        return (document.getElementById('apiBaseAuthed').value || document.getElementById('apiBase').value).replace(/\/$/, '');
+      }
+
+      function currentScope() {
+        const checked = document.querySelector('input[name="scope"]:checked');
+        return checked ? checked.value : 'selected';
+      }
+
+      function uploadMode() {
+        const checked = document.querySelector('input[name="uploadMode"]:checked');
+        return checked ? checked.value : 'design';
+      }
+
+      function isTemplateUpload() {
+        return uploadMode() === 'template';
+      }
+
+      function currentProject() {
+        return (pluginContext?.projects || []).find((project) => project.id === selectedProjectId) || null;
+      }
+
+      function currentFolder() {
+        const project = currentProject();
+        return (project?.folders || []).find((folder) => folder.id === selectedFolderId) || null;
+      }
+
+      function currentDesignFile() {
+        const project = currentProject();
+        return (project?.design_files || []).find((file) => file.id === selectedDesignFileId) || null;
+      }
+
+      function designFilesForCurrentFolder() {
+        const project = currentProject();
+        return (project?.design_files || []).filter((file) => (file.folder_id || '') === selectedFolderId);
+      }
+
+      function activeBoards() {
+        return currentScope() === 'page' ? selection.page : selection.selected;
+      }
+
+      function updateUploadEnabled() {
+        const templateMode = isTemplateUpload();
+        const needsDesignFileName = !templateMode && selectedDesignFileId === '__new';
+        uploadBtn.disabled = busy || !pluginToken || !selectedProjectId || (!templateMode && !selectedDesignFileId) || (needsDesignFileName && !pendingDesignFileTitle.trim()) || activeBoards().length === 0;
+      }
+
+      function escapeHtml(value) {
+        return String(value || '').replace(/[&<>'"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[ch]));
+      }
+
+      function renderBoards() {
+        document.getElementById('pageName').textContent = selection.pageName || '-';
+        document.getElementById('selectedCount').textContent = selection.selected.length;
+        document.getElementById('pageCount').textContent = selection.page.length;
+        const list = activeBoards();
+        if (!list.length) {
+          boards.innerHTML = `<div class="empty">${currentScope() === 'page' ? '当前页面没有可上传画板' : '未选中画板，请在 Figma 中选择一个或多个画板'}</div>`;
+        } else {
+          boards.innerHTML = list.map((frame) => `<div class="board"><span class="board-name">${escapeHtml(frame.name)}</span><span class="board-size">${Math.round(frame.width)}×${Math.round(frame.height)}</span></div>`).join('');
+        }
+        exported = null;
+        updateUploadEnabled();
+      }
+
+      function renderPickers() {
+        const project = currentProject();
+        const folder = currentFolder();
+        const file = currentDesignFile();
+        const templateMode = isTemplateUpload();
+        document.getElementById('projectValue').textContent = project?.title || '未选择';
+        document.getElementById('folderValue').textContent = folder?.name || '未分组';
+        document.getElementById('designFileValue').textContent = selectedDesignFileId === '__new' ? (pendingDesignFileTitle || '请新建或选择') : (file?.title || '未选择');
+        document.getElementById('designOptions').style.display = templateMode ? 'none' : 'grid';
+        document.getElementById('templateOptions').style.display = templateMode ? 'block' : 'none';
+        uploadBtn.textContent = templateMode ? '读取并上传模板' : '读取并上传设计稿';
+        updateUploadEnabled();
+      }
+
+      function openDrawer(kind) {
+        drawerKind = kind;
+        document.getElementById('drawerSearch').value = '';
+        renderDrawer();
+        document.getElementById('pickerDrawer').className = 'drawer on';
+      }
+
+      function closeDrawer() {
+        document.getElementById('pickerDrawer').className = 'drawer';
+        drawerKind = '';
+      }
+
+      function renderDrawer() {
+        const query = document.getElementById('drawerSearch').value.trim().toLowerCase();
+        const body = document.getElementById('drawerBody');
+        const title = document.getElementById('drawerTitle');
+        let items = [];
+        if (drawerKind === 'project') {
+          title.textContent = '选择项目';
+          document.getElementById('drawerNew').style.display = 'none';
+          items = (pluginContext?.projects || []).map((project) => ({ id: project.id, label: project.title, active: project.id === selectedProjectId }));
+        } else if (drawerKind === 'folder') {
+          title.textContent = '选择文件夹';
+          document.getElementById('drawerNew').style.display = 'block';
+          items = [{ id: '', label: '未分组', active: selectedFolderId === '' }, ...((currentProject()?.folders || []).map((folder) => ({ id: folder.id, label: folder.name, active: folder.id === selectedFolderId })))];
+        } else if (drawerKind === 'designFile') {
+          title.textContent = '选择设计稿项目';
+          document.getElementById('drawerNew').style.display = 'block';
+          items = designFilesForCurrentFolder().map((file) => ({ id: file.id, label: file.title, active: file.id === selectedDesignFileId }));
+        }
+        items = items.filter((item) => !query || item.label.toLowerCase().includes(query));
+        body.innerHTML = items.length ? items.map((item) => `<button class="drawer-item ${item.active ? 'active' : ''}" data-id="${escapeHtml(item.id)}" type="button"><span>${escapeHtml(item.label)}</span><span>${item.active ? '✓' : ''}</span></button>`).join('') : '<div class="empty">没有匹配结果</div>';
+        body.querySelectorAll('.drawer-item').forEach((button) => {
+          button.onclick = () => {
+            const id = button.dataset.id || '';
+            if (drawerKind === 'project') {
+              selectedProjectId = id;
+              selectedFolderId = '';
+              selectedDesignFileId = '__new';
+              pendingDesignFileTitle = '';
+            } else if (drawerKind === 'folder') {
+              selectedFolderId = id;
+              selectedDesignFileId = '__new';
+              pendingDesignFileTitle = '';
+            } else if (drawerKind === 'designFile') {
+              selectedDesignFileId = id;
+              pendingDesignFileTitle = '';
+            }
+            closeDrawer();
+            renderPickers();
+          };
+        });
+      }
+
+      function openCreateModal(kind) {
+        createKind = kind;
+        document.getElementById('createModalTitle').textContent = kind === 'folder' ? '新建文件夹' : '新建设计稿项目';
+        document.getElementById('createModalInput').value = '';
+        document.getElementById('createModalInput').placeholder = kind === 'folder' ? '请输入文件夹名称' : '请输入设计稿项目名称';
+        document.getElementById('createModal').className = 'modal on';
+        setTimeout(() => document.getElementById('createModalInput').focus(), 0);
+      }
+
+      function closeCreateModal() {
+        document.getElementById('createModal').className = 'modal';
+        createKind = '';
+      }
+
+      async function confirmCreateModal() {
+        const name = document.getElementById('createModalInput').value.trim();
+        if (!name) return setStatus('请输入名称。', 'err');
+        if (createKind === 'designFile') {
+          selectedDesignFileId = '__new';
+          pendingDesignFileTitle = name;
+          closeCreateModal();
+          closeDrawer();
+          renderPickers();
+          return;
+        }
+        if (createKind === 'folder') {
+          const res = await fetch(`${apiBase()}/api/design-plugin/figma/folders`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${pluginToken}` },
+            body: JSON.stringify({ project_id: selectedProjectId, name }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || data.message || `HTTP ${res.status}`);
+          await loadContext();
+          selectedFolderId = data.id;
+          selectedDesignFileId = '__new';
+          pendingDesignFileTitle = '';
+          closeCreateModal();
+          closeDrawer();
+          renderPickers();
+        }
+      }
+
+      document.querySelectorAll('input[name="scope"]').forEach((radio) => {
+        radio.onchange = () => {
+          parent.postMessage({ pluginMessage: { type: 'get-selection', scope: currentScope() } }, '*');
+          renderBoards();
+        };
+      });
+
+      document.querySelectorAll('input[name="uploadMode"]').forEach((radio) => {
+        radio.onchange = () => {
+          renderPickers();
+        };
+      });
+      document.getElementById('projectPicker').onclick = () => openDrawer('project');
+      document.getElementById('folderPicker').onclick = () => openDrawer('folder');
+      document.getElementById('designFilePicker').onclick = () => openDrawer('designFile');
+      document.getElementById('drawerClose').onclick = closeDrawer;
+      document.getElementById('drawerNew').onclick = () => openCreateModal(drawerKind === 'folder' ? 'folder' : 'designFile');
+      document.getElementById('pickerDrawer').onclick = (event) => { if (event.target.id === 'pickerDrawer') closeDrawer(); };
+      document.getElementById('drawerSearch').oninput = renderDrawer;
+      document.getElementById('createModalCancel').onclick = closeCreateModal;
+      document.getElementById('createModalConfirm').onclick = () => confirmCreateModal().catch((error) => setStatus(error.message || String(error), 'err'));
+      document.getElementById('createModal').onclick = (event) => { if (event.target.id === 'createModal') closeCreateModal(); };
+
+      refreshBtn.onclick = () => parent.postMessage({ pluginMessage: { type: 'get-selection', scope: currentScope() } }, '*');
+
+      function setToken(token) {
+        pluginToken = token || '';
+        loginPanel.style.display = pluginToken ? 'none' : 'block';
+        uploadPanel.style.display = pluginToken ? 'grid' : 'none';
+        logoutBtn.style.display = pluginToken ? 'block' : 'none';
+        loginState.textContent = pluginToken ? '已连接' : '未连接';
+        if (pluginToken) {
+          loadContext().catch((error) => setStatus(error.message || String(error), 'err'));
+          parent.postMessage({ pluginMessage: { type: 'get-selection', scope: currentScope() } }, '*');
+        }
+      }
+
+      async function loadContext() {
+        const res = await fetch(`${apiBase()}/api/design-plugin/figma/context`, { headers: { Authorization: `Bearer ${pluginToken}` } });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        pluginContext = data;
+        document.getElementById('workspaceName').textContent = data.workspace?.name || 'Multica 工作区';
+        document.getElementById('userName').textContent = data.user?.name || data.user?.email || 'Multica 用户';
+        document.getElementById('userEmail').textContent = data.user?.email || '';
+        const avatar = document.getElementById('avatar');
+        if (data.user?.avatar_url) avatar.innerHTML = `<img src="${escapeHtml(data.user.avatar_url)}" alt="" />`;
+        else avatar.textContent = (data.user?.name || data.user?.email || 'M').slice(0, 1).toUpperCase();
+        const projects = data.projects || [];
+        if (!selectedProjectId || !projects.some((project) => project.id === selectedProjectId)) selectedProjectId = projects[0]?.id || '';
+        renderPickers();
+      }
+
+      async function startLogin() {
+        const base = document.getElementById('apiBase').value.replace(/\/$/, '');
+        setStatus('正在创建登录会话…');
+        const res = await fetch(`${base}/api/design-plugin/figma/auth-sessions`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        const session = await res.json();
+        if (!res.ok) throw new Error(session.error || `HTTP ${res.status}`);
+        parent.postMessage({ pluginMessage: { type: 'open-auth', url: session.authorize_url } }, '*');
+        setStatus(`请在浏览器授权。Code: ${session.user_code}`);
+        clearInterval(pollTimer);
+        pollTimer = setInterval(async () => {
+          const poll = await fetch(`${base}/api/design-plugin/figma/auth-sessions/${session.session_id}`);
+          const data = await poll.json();
+          if (data.status === 'approved' && data.token) {
+            clearInterval(pollTimer);
+            parent.postMessage({ pluginMessage: { type: 'store-token', token: data.token } }, '*');
+            setStatus('登录成功，可以上传。', 'ok');
+          } else if (data.status === 'expired' || data.status === 'consumed' || data.status === 'denied') {
+            clearInterval(pollTimer);
+            setStatus(`登录状态：${data.status}。`, 'err');
+          }
+        }, 2500);
+      }
+
+      loginBtn.onclick = () => startLogin().catch((error) => setStatus(error.message || String(error), 'err'));
+      logoutBtn.onclick = () => parent.postMessage({ pluginMessage: { type: 'logout' } }, '*');
+
+      uploadBtn.onclick = async () => {
+        const projectId = selectedProjectId;
+        if (!projectId) return setStatus('请选择项目后再上传。', 'err');
+        if (!isTemplateUpload() && selectedDesignFileId === '__new' && !pendingDesignFileTitle.trim()) return setStatus('请先在设计稿项目抽屉中新建或选择设计稿项目。', 'err');
+        if (!activeBoards().length) return setStatus('请先选择要上传的画板。', 'err');
+        busy = true;
+        exported = null;
+        updateUploadEnabled();
+        setStatus('读取 Figma 画板中…');
+        setProgress(true, '读取画板', 5);
+        parent.postMessage({ pluginMessage: { type: 'export', scope: currentScope() } }, '*');
+      };
+
+      async function uploadExported(nativeJson) {
+        const projectId = selectedProjectId;
+        const templateMode = isTemplateUpload();
+        removeUnsafeBinaryFields(nativeJson);
+        setStatus(templateMode ? '上传模板到 Multica…' : '上传到 Multica…');
+        setProgress(true, templateMode ? '上传模板' : '上传设计稿', 85);
+        const res = await fetch(`${apiBase()}/api/design-plugin/figma/imports`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${pluginToken}` },
+          body: JSON.stringify({
+            title: nativeJson.file.title,
+            description: '从 Figma 插件导入',
+            project_id: projectId,
+            folder_id: templateMode ? undefined : (selectedFolderId || undefined),
+            target_design_file_id: !templateMode && selectedDesignFileId !== '__new' ? selectedDesignFileId : undefined,
+            design_file_title: !templateMode && selectedDesignFileId === '__new' ? pendingDesignFileTitle.trim() : undefined,
+            publish_as_template: templateMode,
+            template_library_key: 'figma',
+            template_name: document.getElementById('templateName').value || nativeJson.file.title,
+            template_category: 'figma',
+            source_ref: {
+              tool: 'figma',
+              plugin: 'multica-gallery-native-importer-dev',
+              file_name: nativeJson.file.title,
+              file_key: nativeJson.source?.fileKey,
+              page_id: nativeJson.source?.pageId,
+              scope: nativeJson.source?.scope || currentScope(),
+              source_key: nativeJson.source?.sourceKey || nativeJson.file.sourceKey,
+              node_ids: nativeJson.source?.nodeIds || [],
+              project_id: projectId,
+              folder_id: templateMode ? undefined : (selectedFolderId || undefined),
+              design_file_id: !templateMode && selectedDesignFileId !== '__new' ? selectedDesignFileId : undefined,
+            },
+            native_json: nativeJson,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || data.message || `HTTP ${res.status}`);
+        setProgress(true, '上传完成', 100);
+        window.setTimeout(() => setProgress(false, '', 0), 450);
+        setStatus(templateMode ? `模板上传成功：${data.template?.name || nativeJson.file.title}` : `上传成功：${data.file?.title || nativeJson.file.title}`, 'ok');
+      }
+
+      function fileFromUpload(upload) {
+        const bytes = new Uint8Array(upload.bytes || []);
+        return new File([bytes], upload.name || `slice.${upload.format || 'png'}`, { type: upload.contentType || 'image/png' });
+      }
+
+      function removeUnsafeBinaryFields(value) {
+        if (!value || typeof value !== 'object') return;
+        if (Array.isArray(value)) {
+          value.forEach(removeUnsafeBinaryFields);
+          return;
+        }
+        delete value.buffer;
+        delete value.bytes;
+        for (const key of Object.keys(value)) {
+          if (typeof value[key] === 'string' && /^data:image\/.+;base64,/i.test(value[key])) delete value[key];
+        }
+        Object.keys(value).forEach((key) => removeUnsafeBinaryFields(value[key]));
+      }
+
+      async function uploadDesignAsset(upload) {
+        const form = new FormData();
+        form.append('file', fileFromUpload(upload));
+        form.append('kind', upload.kind || 'slice');
+        if (upload.layerId) form.append('layer_id', upload.layerId);
+        if (upload.frameId) form.append('frame_id', upload.frameId);
+        if (upload.sourceNodeId) form.append('source_node_id', upload.sourceNodeId);
+        const res = await fetch(`${apiBase()}/api/design-plugin/figma/assets`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${pluginToken}` },
+          body: form,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || data.message || `资产上传失败：HTTP ${res.status}`);
+        return data;
+      }
+
+      function absoluteAssetUrl(value) {
+        if (!value) return '';
+        try {
+          return new URL(String(value), apiBase() + '/').href;
+        } catch (_error) {
+          return String(value);
+        }
+      }
+
+      function collectFrameAssetUploads(nativeJson) {
+        const uploads = [];
+        const assets = nativeJson.assets || {};
+        for (const asset of Object.values(assets)) {
+          if (!asset || !asset.bytes || !String(asset.kind || '').startsWith('frame_')) continue;
+          uploads.push({
+            assetId: asset.id,
+            kind: asset.kind,
+            name: `${asset.id || 'frame-preview'}.png`,
+            format: 'png',
+            contentType: asset.contentType || 'image/png',
+            width: asset.width,
+            height: asset.height,
+            bytes: asset.bytes,
+            frameId: asset.frameId,
+            sourceNodeId: asset.sourceNodeId,
+            metadata: asset.metadata || {},
+          });
+        }
+        return uploads;
+      }
+
+      async function uploadNativeJsonAssets(nativeJson, sliceUploads) {
+        const uploads = [...collectFrameAssetUploads(nativeJson), ...(sliceUploads || [])];
+        if (!uploads.length) return nativeJson;
+        nativeJson.assets = nativeJson.assets || {};
+        for (let index = 0; index < uploads.length; index += 1) {
+          const upload = uploads[index];
+          const isSlice = (upload.kind || 'slice') === 'slice';
+          setProgress(true, `${isSlice ? '上传切片' : '上传画板预览'}：${upload.name || ''}`, 70 + Math.round(((index + 1) / uploads.length) * 24));
+          const asset = await uploadDesignAsset(upload);
+          const assetId = upload.assetId || asset.id;
+          nativeJson.assets[assetId] = {
+            id: assetId,
+            kind: upload.kind || 'slice',
+            url: absoluteAssetUrl(asset.url),
+            contentType: asset.content_type || upload.contentType,
+            width: upload.width,
+            height: upload.height,
+            sizeBytes: asset.size_bytes,
+            sourceNodeId: upload.sourceNodeId,
+            frameId: upload.frameId,
+            metadata: { ...(upload.metadata || {}), filename: asset.filename, format: upload.format },
+          };
+          if (isSlice) {
+            const layer = nativeJson.layers && nativeJson.layers[upload.layerId];
+            if (layer && Array.isArray(layer.exportable)) {
+              layer.exportable = layer.exportable.map((item) => {
+                if ((item.assetId || item.id) !== upload.assetId) return item;
+                const url = absoluteAssetUrl(asset.url);
+                const next = { ...item, assetId, url, path: url, name: asset.filename || upload.name, format: upload.format };
+                delete next.buffer;
+                delete next.bytes;
+                return next;
+              });
+            }
+          }
+        }
+        removeUnsafeBinaryFields(nativeJson);
+        return nativeJson;
+      }
+
+      async function uploadSliceAssets(nativeJson, sliceUploads) {
+        return uploadNativeJsonAssets(nativeJson, sliceUploads);
+      }
+
+      window.onmessage = (event) => {
+        const msg = event.data.pluginMessage;
+        if (!msg) return;
+        if (msg.type === 'selection-changed') {
+          selection = msg.summary || selection;
+          renderBoards();
+        }
+        if (msg.type === 'export-progress') {
+          const pct = msg.total ? 5 + (msg.current / msg.total) * 75 : 20;
+          setProgress(true, `读取：${msg.name || ''}`, pct);
+        }
+        if (msg.type === 'exported') {
+          exported = msg.nativeJson;
+          uploadSliceAssets(exported, msg.sliceUploads).then(uploadExported).catch((error) => {
+            setProgress(false, '', 0);
+            setStatus(error.message || String(error), 'err');
+          }).finally(() => {
+            busy = false;
+            updateUploadEnabled();
+          });
+        }
+        if (msg.type === 'stored-token') setToken(msg.token || '');
+        if (msg.type === 'error') {
+          busy = false;
+          updateUploadEnabled();
+          setProgress(false, '', 0);
+          setStatus(msg.error, 'err');
+        }
+      };
+    </script>
+  </body>
+</html>

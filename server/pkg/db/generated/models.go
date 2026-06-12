@@ -257,6 +257,221 @@ type DaemonToken struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type DesignAsset struct {
+	ID          pgtype.UUID        `json:"id"`
+	FileID      pgtype.UUID        `json:"file_id"`
+	RevisionID  pgtype.UUID        `json:"revision_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	AssetKey    string             `json:"asset_key"`
+	Kind        string             `json:"kind"`
+	Url         string             `json:"url"`
+	ContentType pgtype.Text        `json:"content_type"`
+	SizeBytes   pgtype.Int8        `json:"size_bytes"`
+	Metadata    []byte             `json:"metadata"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type DesignCatalogTemplate struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	LibraryID         pgtype.UUID        `json:"library_id"`
+	Key               string             `json:"key"`
+	Name              string             `json:"name"`
+	Description       pgtype.Text        `json:"description"`
+	Category          string             `json:"category"`
+	CurrentRevisionID pgtype.UUID        `json:"current_revision_id"`
+	Metadata          []byte             `json:"metadata"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DesignDraft struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	TemplateID          pgtype.UUID        `json:"template_id"`
+	FileID              pgtype.UUID        `json:"file_id"`
+	RevisionID          pgtype.UUID        `json:"revision_id"`
+	IssueID             pgtype.UUID        `json:"issue_id"`
+	Title               string             `json:"title"`
+	RequirementCore     []byte             `json:"requirement_core"`
+	SlotValues          []byte             `json:"slot_values"`
+	Patch               []byte             `json:"patch"`
+	Status              string             `json:"status"`
+	ValidationErrors    []byte             `json:"validation_errors"`
+	CreatedBy           pgtype.UUID        `json:"created_by"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	CatalogTemplateID   pgtype.UUID        `json:"catalog_template_id"`
+	TemplateRevisionID  pgtype.UUID        `json:"template_revision_id"`
+	GeneratedFileID     pgtype.UUID        `json:"generated_file_id"`
+	GeneratedRevisionID pgtype.UUID        `json:"generated_revision_id"`
+	MaterializedAt      pgtype.Timestamptz `json:"materialized_at"`
+}
+
+type DesignFile struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	FolderID          pgtype.UUID        `json:"folder_id"`
+	Title             string             `json:"title"`
+	Description       pgtype.Text        `json:"description"`
+	SourceType        string             `json:"source_type"`
+	SourceRef         []byte             `json:"source_ref"`
+	CurrentRevisionID pgtype.UUID        `json:"current_revision_id"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DesignFolder struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	ParentID    pgtype.UUID        `json:"parent_id"`
+	Name        string             `json:"name"`
+	Position    int32              `json:"position"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DesignImportCode struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	Provider       string             `json:"provider"`
+	CodeHash       string             `json:"code_hash"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	ConsumedAt     pgtype.Timestamptz `json:"consumed_at"`
+	FailedAttempts int32              `json:"failed_attempts"`
+	LastFailedAt   pgtype.Timestamptz `json:"last_failed_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type DesignPluginAuthSession struct {
+	ID          pgtype.UUID        `json:"id"`
+	Provider    string             `json:"provider"`
+	UserCode    string             `json:"user_code"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ApprovedAt  pgtype.Timestamptz `json:"approved_at"`
+	ConsumedAt  pgtype.Timestamptz `json:"consumed_at"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type DesignPluginToken struct {
+	ID          pgtype.UUID        `json:"id"`
+	Provider    string             `json:"provider"`
+	TokenHash   string             `json:"token_hash"`
+	TokenPrefix string             `json:"token_prefix"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Scope       string             `json:"scope"`
+	Name        string             `json:"name"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type DesignRestoreMapping struct {
+	ID            pgtype.UUID        `json:"id"`
+	RestoreTaskID pgtype.UUID        `json:"restore_task_id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	LayerID       string             `json:"layer_id"`
+	TargetPath    string             `json:"target_path"`
+	TargetKind    string             `json:"target_kind"`
+	Confidence    float32            `json:"confidence"`
+	Metadata      []byte             `json:"metadata"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type DesignRestoreTask struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	FileID      pgtype.UUID        `json:"file_id"`
+	RevisionID  pgtype.UUID        `json:"revision_id"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	AgentTaskID pgtype.UUID        `json:"agent_task_id"`
+	Status      string             `json:"status"`
+	Input       []byte             `json:"input"`
+	Result      []byte             `json:"result"`
+	Error       pgtype.Text        `json:"error"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DesignRevision struct {
+	ID               pgtype.UUID        `json:"id"`
+	FileID           pgtype.UUID        `json:"file_id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	RevisionNumber   int32              `json:"revision_number"`
+	Status           string             `json:"status"`
+	NativeJson       []byte             `json:"native_json"`
+	ValidationErrors []byte             `json:"validation_errors"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type DesignTemplate struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Key         string             `json:"key"`
+	Name        string             `json:"name"`
+	Description pgtype.Text        `json:"description"`
+	Category    string             `json:"category"`
+	NativeJson  []byte             `json:"native_json"`
+	SlotSchema  []byte             `json:"slot_schema"`
+	Metadata    []byte             `json:"metadata"`
+	IsSystem    bool               `json:"is_system"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DesignTemplateLibrary struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Key         string             `json:"key"`
+	Name        string             `json:"name"`
+	Description pgtype.Text        `json:"description"`
+	Metadata    []byte             `json:"metadata"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DesignTemplateRevision struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	TemplateID       pgtype.UUID        `json:"template_id"`
+	DesignRevisionID pgtype.UUID        `json:"design_revision_id"`
+	RevisionNumber   int32              `json:"revision_number"`
+	Status           string             `json:"status"`
+	SlotSchema       []byte             `json:"slot_schema"`
+	Metadata         []byte             `json:"metadata"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type DesignTemplateSlot struct {
+	ID           pgtype.UUID        `json:"id"`
+	TemplateID   pgtype.UUID        `json:"template_id"`
+	SlotKey      string             `json:"slot_key"`
+	Label        string             `json:"label"`
+	SlotType     string             `json:"slot_type"`
+	Required     bool               `json:"required"`
+	DefaultValue []byte             `json:"default_value"`
+	Constraints  []byte             `json:"constraints"`
+	Description  pgtype.Text        `json:"description"`
+	Position     int32              `json:"position"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type Feedback struct {
 	ID          pgtype.UUID        `json:"id"`
 	UserID      pgtype.UUID        `json:"user_id"`
@@ -453,7 +668,6 @@ type LarkInstallation struct {
 	AppSecretEncrypted []byte             `json:"app_secret_encrypted"`
 	TenantKey          pgtype.Text        `json:"tenant_key"`
 	BotOpenID          string             `json:"bot_open_id"`
-	BotUnionID         pgtype.Text        `json:"bot_union_id"`
 	InstallerUserID    pgtype.UUID        `json:"installer_user_id"`
 	Status             string             `json:"status"`
 	WsLeaseToken       pgtype.Text        `json:"ws_lease_token"`
@@ -461,6 +675,7 @@ type LarkInstallation struct {
 	InstalledAt        pgtype.Timestamptz `json:"installed_at"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	BotUnionID         pgtype.Text        `json:"bot_union_id"`
 }
 
 type LarkOutboundCardMessage struct {
