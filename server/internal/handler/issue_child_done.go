@@ -2,11 +2,13 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -66,6 +68,7 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	if parent.Status == "done" || parent.Status == "cancelled" {
 		return
 	}
+	h.notifyFrontendRestoreSiblingsDesignReady(ctx, issue, parent)
 	// Human-assigned parents read their own timeline; an automated system
 	// comment is just noise and there is no agent task to trigger. Skip the
 	// whole notification (comment + mention + inbox row) — MUL-2538.
@@ -123,6 +126,103 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	// title inert and gives the platform a single place to apply the loop
 	// and idempotency guards.
 	h.dispatchParentAssigneeTrigger(ctx, parent, issue, comment, actorType, actorID)
+}
+
+func (h *Handler) notifyFrontendRestoreSiblingsDesignReady(ctx context.Context, completedChild, parent db.Issue) {
+	if !looksLikeUIDesignIssue(completedChild.Title) {
+		return
+	}
+	projectID := parent.ProjectID
+	if !projectID.Valid {
+		projectID = completedChild.ProjectID
+	}
+	if !projectID.Valid {
+		return
+	}
+	designFiles, err := h.Queries.ListDesignFilesByProject(ctx, db.ListDesignFilesByProjectParams{WorkspaceID: parent.WorkspaceID, ProjectID: projectID, FolderID: pgtype.UUID{Valid: false}})
+	if err != nil || len(designFiles) == 0 {
+		return
+	}
+	designFile := designFiles[0]
+	if !designFile.CurrentRevisionID.Valid {
+		return
+	}
+	revision, err := h.Queries.GetDesignRevisionInWorkspace(ctx, db.GetDesignRevisionInWorkspaceParams{ID: designFile.CurrentRevisionID, WorkspaceID: parent.WorkspaceID})
+	if err != nil {
+		return
+	}
+	items := designRestoreItemsFromRevision(designFile, revision)
+	if len(items) == 0 {
+		return
+	}
+	children, err := h.Queries.ListChildIssues(ctx, parent.ID)
+	if err != nil {
+		return
+	}
+	for _, child := range children {
+		if child.ID == completedChild.ID || !looksLikeFrontendDevIssue(child.Title) || !child.AssigneeType.Valid || child.AssigneeType.String != "agent" {
+			continue
+		}
+		if existing, err := h.Queries.GetReusableDesignRestoreTaskByIssue(ctx, db.GetReusableDesignRestoreTaskByIssueParams{WorkspaceID: child.WorkspaceID, IssueID: child.ID}); err == nil {
+			h.createDesignRestoreIssueSystemComment(ctx, child.ID, fmt.Sprintf("UI 设计已完成，设计稿 `%s` 已就绪。请在右侧「设计稿还原」卡片继续确认 Restore Plan。", designFile.Title))
+			slog.Info("design ready: reuse existing restore task", "issue_id", uuidToString(child.ID), "restore_task_id", uuidToString(existing.ID))
+			continue
+		} else if err != pgx.ErrNoRows {
+			slog.Warn("design ready: failed to check existing restore task", "issue_id", uuidToString(child.ID), "error", err)
+			continue
+		}
+		input, err := json.Marshal(map[string]any{"version": "1.0", "projectId": uuidToString(projectID), "sourceIssueId": uuidToString(child.ID), "purpose": "frontend_restore", "items": items})
+		if err != nil {
+			continue
+		}
+		task, err := h.Queries.CreateDesignRestoreTask(ctx, db.CreateDesignRestoreTaskParams{
+			WorkspaceID: child.WorkspaceID,
+			FileID:      designFile.ID,
+			RevisionID:  revision.ID,
+			IssueID:     child.ID,
+			AgentTaskID: pgtype.UUID{Valid: false},
+			Status:      "queued",
+			Input:       input,
+			Result:      []byte(`{}`),
+			Error:       pgtype.Text{Valid: false},
+			CreatedBy:   completedChild.CreatorID,
+		})
+		if err != nil {
+			slog.Warn("design ready: failed to create restore task", "issue_id", uuidToString(child.ID), "error", err)
+			continue
+		}
+		h.createDesignRestoreIssueSystemComment(ctx, child.ID, fmt.Sprintf("UI 设计已完成，设计稿 `%s` 已就绪。已创建 Restore Task `%s`，请在右侧「设计稿还原」卡片生成/确认 Restore Plan。", designFile.Title, uuidToString(task.ID)))
+	}
+}
+
+func looksLikeUIDesignIssue(title string) bool {
+	title = strings.ToLower(strings.TrimSpace(title))
+	return strings.Contains(title, "ui") || strings.Contains(title, "设计")
+}
+
+func looksLikeFrontendDevIssue(title string) bool {
+	title = strings.ToLower(strings.TrimSpace(title))
+	return strings.Contains(title, "前端") || strings.Contains(title, "frontend")
+}
+
+func designRestoreItemsFromRevision(file db.DesignFile, revision db.DesignRevision) []DesignRestoreTaskItemInput {
+	var native struct {
+		Frames []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"frames"`
+	}
+	if err := json.Unmarshal(revision.NativeJson, &native); err != nil {
+		return nil
+	}
+	items := make([]DesignRestoreTaskItemInput, 0, len(native.Frames))
+	for index, frame := range native.Frames {
+		if strings.TrimSpace(frame.ID) == "" {
+			continue
+		}
+		items = append(items, DesignRestoreTaskItemInput{ItemID: fmt.Sprintf("frame-%d", index+1), Order: index + 1, DesignFileID: uuidToString(file.ID), RevisionID: uuidToString(revision.ID), FrameID: frame.ID, FrameName: frame.Name, Source: "frame", Note: "UI 设计子 Issue 完成后自动创建：前端 Agent 整页设计稿还原。"})
+	}
+	return items
 }
 
 // sanitizeChildTitleForSystemComment removes mention-style markdown from a

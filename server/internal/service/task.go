@@ -675,6 +675,7 @@ type DesignRestoreTaskContext struct {
 	DesignFileID  string          `json:"design_file_id"`
 	RevisionID    string          `json:"revision_id"`
 	Input         json.RawMessage `json:"input"`
+	RestorePlan   json.RawMessage `json:"restore_plan,omitempty"`
 	ItemContexts  json.RawMessage `json:"item_contexts,omitempty"`
 	RestorePolicy json.RawMessage `json:"restore_policy,omitempty"`
 	OutputPolicy  json.RawMessage `json:"output_policy"`

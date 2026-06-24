@@ -180,6 +180,36 @@ type DesignRestoreTaskResponse struct {
 	UpdatedAt   string          `json:"updated_at"`
 }
 
+type DesignRestoreMappingResponse struct {
+	ID            string          `json:"id"`
+	RestoreTaskID string          `json:"restore_task_id"`
+	WorkspaceID   string          `json:"workspace_id"`
+	LayerID       string          `json:"layer_id"`
+	TargetPath    string          `json:"target_path"`
+	TargetKind    string          `json:"target_kind"`
+	Confidence    float32         `json:"confidence"`
+	Metadata      json.RawMessage `json:"metadata"`
+	CreatedAt     string          `json:"created_at"`
+}
+
+type DesignRestoreMappingListResponse struct {
+	Mappings []DesignRestoreMappingResponse `json:"mappings"`
+}
+
+type DesignRestorePlanResponse struct {
+	ID            string          `json:"id"`
+	WorkspaceID   string          `json:"workspace_id"`
+	RestoreTaskID string          `json:"restore_task_id"`
+	Status        string          `json:"status"`
+	Plan          json.RawMessage `json:"plan"`
+	ReviewNotes   *string         `json:"review_notes"`
+	ApprovedBy    *string         `json:"approved_by"`
+	ApprovedAt    *string         `json:"approved_at"`
+	CreatedBy     *string         `json:"created_by"`
+	CreatedAt     string          `json:"created_at"`
+	UpdatedAt     string          `json:"updated_at"`
+}
+
 type DesignRestoreTaskListResponse struct {
 	Tasks []DesignRestoreTaskResponse `json:"tasks"`
 }
@@ -283,8 +313,9 @@ type CreateDesignRestoreTaskRequest struct {
 }
 
 type DesignRestoreTaskInputV1 struct {
-	Version string                       `json:"version"`
-	Items   []DesignRestoreTaskItemInput `json:"items"`
+	Version   string                       `json:"version"`
+	ProjectID string                       `json:"projectId"`
+	Items     []DesignRestoreTaskItemInput `json:"items"`
 }
 
 type DesignRestoreTaskItemInput struct {
@@ -310,9 +341,15 @@ type DesignRestoreTaskItemContextResponse struct {
 }
 
 type DispatchDesignRestoreTaskRequest struct {
-	AgentID string `json:"agent_id"`
-	IssueID string `json:"issue_id"`
-	Prompt  string `json:"prompt"`
+	AgentID  string `json:"agent_id"`
+	IssueID  string `json:"issue_id"`
+	Prompt   string `json:"prompt"`
+	SkipPlan bool   `json:"skip_plan"`
+}
+
+type UpdateDesignRestorePlanRequest struct {
+	Plan        json.RawMessage `json:"plan"`
+	ReviewNotes string          `json:"review_notes"`
 }
 
 type DispatchDesignRestoreTaskResponse struct {
@@ -531,6 +568,44 @@ func designRestoreTaskToResponse(task db.DesignRestoreTask) DesignRestoreTaskRes
 		CreatedAt:   timestampToString(task.CreatedAt),
 		UpdatedAt:   timestampToString(task.UpdatedAt),
 	}
+}
+
+func designRestoreMappingToResponse(mapping db.DesignRestoreMapping) DesignRestoreMappingResponse {
+	return DesignRestoreMappingResponse{
+		ID:            uuidToString(mapping.ID),
+		RestoreTaskID: uuidToString(mapping.RestoreTaskID),
+		WorkspaceID:   uuidToString(mapping.WorkspaceID),
+		LayerID:       mapping.LayerID,
+		TargetPath:    mapping.TargetPath,
+		TargetKind:    mapping.TargetKind,
+		Confidence:    mapping.Confidence,
+		Metadata:      json.RawMessage(mapping.Metadata),
+		CreatedAt:     timestampToString(mapping.CreatedAt),
+	}
+}
+
+func designRestorePlanToResponse(plan db.DesignRestorePlan) DesignRestorePlanResponse {
+	return DesignRestorePlanResponse{
+		ID:            uuidToString(plan.ID),
+		WorkspaceID:   uuidToString(plan.WorkspaceID),
+		RestoreTaskID: uuidToString(plan.RestoreTaskID),
+		Status:        plan.Status,
+		Plan:          json.RawMessage(plan.Plan),
+		ReviewNotes:   textToPtr(plan.ReviewNotes),
+		ApprovedBy:    uuidToPtr(plan.ApprovedBy),
+		ApprovedAt:    timestampToPtr(plan.ApprovedAt),
+		CreatedBy:     uuidToPtr(plan.CreatedBy),
+		CreatedAt:     timestampToString(plan.CreatedAt),
+		UpdatedAt:     timestampToString(plan.UpdatedAt),
+	}
+}
+
+func restorePlanReviewNotes(value string) pgtype.Text {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return pgtype.Text{Valid: false}
+	}
+	return pgtype.Text{String: value, Valid: true}
 }
 
 func designSourceKey(sourceRef json.RawMessage) string {
@@ -1303,6 +1378,15 @@ func (h *Handler) CreateDesignRestoreTask(w http.ResponseWriter, r *http.Request
 		if !ok {
 			return
 		}
+		existing, err := h.Queries.GetReusableDesignRestoreTaskByIssue(r.Context(), db.GetReusableDesignRestoreTaskByIssueParams{WorkspaceID: wsUUID, IssueID: issueUUID})
+		if err == nil {
+			writeJSON(w, http.StatusOK, designRestoreTaskToResponse(existing))
+			return
+		}
+		if err != pgx.ErrNoRows {
+			writeError(w, http.StatusInternalServerError, "failed to check existing design restore task")
+			return
+		}
 	}
 	input := req.Input
 	if len(input) == 0 {
@@ -1328,7 +1412,39 @@ func (h *Handler) CreateDesignRestoreTask(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to create design restore task")
 		return
 	}
+	h.createDesignRestoreIssueSystemComment(r.Context(), task.IssueID, fmt.Sprintf("设计稿还原任务已创建：Restore Task `%s`。", uuidToString(task.ID)))
 	writeJSON(w, http.StatusCreated, designRestoreTaskToResponse(task))
+}
+
+func (h *Handler) createDesignRestoreIssueSystemComment(ctx context.Context, issueID pgtype.UUID, content string) {
+	if !issueID.Valid || strings.TrimSpace(content) == "" {
+		return
+	}
+	issue, err := h.Queries.GetIssue(ctx, issueID)
+	if err != nil {
+		slog.Warn("design restore issue comment: failed to load issue", "issue_id", uuidToString(issueID), "error", err)
+		return
+	}
+	comment, err := h.Queries.CreateComment(ctx, db.CreateCommentParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		AuthorType:  "system",
+		AuthorID:    pgtype.UUID{Valid: true},
+		Content:     content,
+		Type:        "system",
+		ParentID:    pgtype.UUID{Valid: false},
+	})
+	if err != nil {
+		slog.Warn("design restore issue comment: failed to create comment", "issue_id", uuidToString(issue.ID), "error", err)
+		return
+	}
+	h.publish(protocol.EventCommentCreated, uuidToString(issue.WorkspaceID), "system", "", map[string]any{
+		"comment":             commentToResponse(comment, nil, nil),
+		"issue_title":         issue.Title,
+		"issue_assignee_type": textToPtr(issue.AssigneeType),
+		"issue_assignee_id":   uuidToPtr(issue.AssigneeID),
+		"issue_status":        issue.Status,
+	})
 }
 
 func (h *Handler) ListDesignRestoreTasks(w http.ResponseWriter, r *http.Request) {
@@ -1365,6 +1481,216 @@ func (h *Handler) GetDesignRestoreTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, designRestoreTaskToResponse(task))
+}
+
+func (h *Handler) ListDesignRestoreMappings(w http.ResponseWriter, r *http.Request) {
+	taskID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "restore task id")
+	if !ok {
+		return
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	if _, err := h.Queries.GetDesignRestoreTaskInWorkspace(r.Context(), db.GetDesignRestoreTaskInWorkspaceParams{ID: taskID, WorkspaceID: wsUUID}); err != nil {
+		writeError(w, http.StatusNotFound, "design restore task not found")
+		return
+	}
+	mappings, err := h.Queries.ListDesignRestoreMappings(r.Context(), taskID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list design restore mappings")
+		return
+	}
+	resp := make([]DesignRestoreMappingResponse, 0, len(mappings))
+	for _, mapping := range mappings {
+		if mapping.WorkspaceID == wsUUID {
+			resp = append(resp, designRestoreMappingToResponse(mapping))
+		}
+	}
+	writeJSON(w, http.StatusOK, DesignRestoreMappingListResponse{Mappings: resp})
+}
+
+func (h *Handler) GetDesignRestorePlan(w http.ResponseWriter, r *http.Request) {
+	taskID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "restore task id")
+	if !ok {
+		return
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	plan, err := h.Queries.GetDesignRestorePlanByTask(r.Context(), db.GetDesignRestorePlanByTaskParams{RestoreTaskID: taskID, WorkspaceID: wsUUID})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "design restore plan not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load design restore plan")
+		return
+	}
+	writeJSON(w, http.StatusOK, designRestorePlanToResponse(plan))
+}
+
+func (h *Handler) GenerateDesignRestorePlan(w http.ResponseWriter, r *http.Request) {
+	taskID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "restore task id")
+	if !ok {
+		return
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	userUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
+	if !ok {
+		return
+	}
+	task, err := h.Queries.GetDesignRestoreTaskInWorkspace(r.Context(), db.GetDesignRestoreTaskInWorkspaceParams{ID: taskID, WorkspaceID: wsUUID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "design restore task not found")
+		return
+	}
+	planJSON, err := h.buildDefaultDesignRestorePlan(r.Context(), task)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate design restore plan")
+		return
+	}
+	existing, err := h.Queries.GetDesignRestorePlanByTask(r.Context(), db.GetDesignRestorePlanByTaskParams{RestoreTaskID: task.ID, WorkspaceID: wsUUID})
+	if err == nil {
+		if existing.Status != "draft" {
+			writeError(w, http.StatusConflict, "approved restore plan cannot be regenerated")
+			return
+		}
+		updated, err := h.Queries.UpdateDesignRestorePlan(r.Context(), db.UpdateDesignRestorePlanParams{ID: existing.ID, WorkspaceID: wsUUID, Status: pgtype.Text{String: "draft", Valid: true}, Plan: planJSON, ReviewNotes: existing.ReviewNotes})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update design restore plan")
+			return
+		}
+		h.createDesignRestoreIssueSystemComment(r.Context(), task.IssueID, "Restore Plan 已重新生成，待确认目标路径和批准。")
+		writeJSON(w, http.StatusOK, designRestorePlanToResponse(updated))
+		return
+	}
+	if err != pgx.ErrNoRows {
+		writeError(w, http.StatusInternalServerError, "failed to load design restore plan")
+		return
+	}
+	plan, err := h.Queries.CreateDesignRestorePlan(r.Context(), db.CreateDesignRestorePlanParams{WorkspaceID: wsUUID, RestoreTaskID: task.ID, Status: "draft", Plan: planJSON, ReviewNotes: pgtype.Text{Valid: false}, CreatedBy: userUUID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create design restore plan")
+		return
+	}
+	h.createDesignRestoreIssueSystemComment(r.Context(), task.IssueID, "Restore Plan 已生成，待确认目标路径和批准。")
+	writeJSON(w, http.StatusCreated, designRestorePlanToResponse(plan))
+}
+
+func (h *Handler) UpdateDesignRestorePlan(w http.ResponseWriter, r *http.Request) {
+	var req UpdateDesignRestorePlanRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.Plan) == 0 || !json.Valid(req.Plan) {
+		writeError(w, http.StatusBadRequest, "plan must be valid JSON")
+		return
+	}
+	taskID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "restore task id")
+	if !ok {
+		return
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	plan, err := h.Queries.GetDesignRestorePlanByTask(r.Context(), db.GetDesignRestorePlanByTaskParams{RestoreTaskID: taskID, WorkspaceID: wsUUID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "design restore plan not found")
+		return
+	}
+	if plan.Status != "draft" {
+		writeError(w, http.StatusConflict, "approved restore plan cannot be edited")
+		return
+	}
+	updated, err := h.Queries.UpdateDesignRestorePlan(r.Context(), db.UpdateDesignRestorePlanParams{ID: plan.ID, WorkspaceID: wsUUID, Status: pgtype.Text{String: "draft", Valid: true}, Plan: req.Plan, ReviewNotes: restorePlanReviewNotes(req.ReviewNotes)})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update design restore plan")
+		return
+	}
+	writeJSON(w, http.StatusOK, designRestorePlanToResponse(updated))
+}
+
+func (h *Handler) ApproveDesignRestorePlan(w http.ResponseWriter, r *http.Request) {
+	taskID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "restore task id")
+	if !ok {
+		return
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	userUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
+	if !ok {
+		return
+	}
+	plan, err := h.Queries.GetDesignRestorePlanByTask(r.Context(), db.GetDesignRestorePlanByTaskParams{RestoreTaskID: taskID, WorkspaceID: wsUUID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "design restore plan not found")
+		return
+	}
+	if plan.Status == "dispatched" {
+		writeError(w, http.StatusConflict, "dispatched restore plan cannot be approved")
+		return
+	}
+	if message := validateDesignRestorePlanForApproval(plan.Plan); message != "" {
+		writeError(w, http.StatusConflict, message)
+		return
+	}
+	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	updated, err := h.Queries.UpdateDesignRestorePlan(r.Context(), db.UpdateDesignRestorePlanParams{ID: plan.ID, WorkspaceID: wsUUID, Status: pgtype.Text{String: "approved", Valid: true}, Plan: plan.Plan, ReviewNotes: plan.ReviewNotes, ApprovedBy: userUUID, ApprovedAt: now})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to approve design restore plan")
+		return
+	}
+	if task, err := h.Queries.GetDesignRestoreTaskInWorkspace(r.Context(), db.GetDesignRestoreTaskInWorkspaceParams{ID: taskID, WorkspaceID: wsUUID}); err == nil {
+		h.createDesignRestoreIssueSystemComment(r.Context(), task.IssueID, "Restore Plan 已批准，可以交给前端 Agent 执行。")
+	}
+	writeJSON(w, http.StatusOK, designRestorePlanToResponse(updated))
+}
+
+func validateDesignRestorePlanForApproval(raw json.RawMessage) string {
+	var plan map[string]any
+	if err := json.Unmarshal(raw, &plan); err != nil {
+		return "restore plan JSON is invalid"
+	}
+	repo, _ := plan["repo"].(map[string]any)
+	if repo["mode"] != "production_candidate" {
+		return ""
+	}
+	targets, _ := plan["targets"].(map[string]any)
+	selected, _ := targets["selected"].(map[string]any)
+	selectedPath, _ := selected["path"].(string)
+	if strings.TrimSpace(selectedPath) == "" || targets["needsUserSelection"] == true {
+		return "production restore plan requires a selected target before approval"
+	}
+	execution, _ := plan["execution"].(map[string]any)
+	if execution["allowPrototypeHtml"] == true {
+		return "production restore plan cannot allow prototype HTML"
+	}
+	if values, ok := execution["allowedPaths"].([]any); !ok || len(values) == 0 {
+		return "production restore plan requires execution.allowedPaths"
+	}
+	return ""
 }
 
 func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Request) {
@@ -1425,10 +1751,36 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 	}
 	restorePolicy := json.RawMessage(`{"restoreMode":"strict-structure","allowFullFramePreview":false,"forbidFullFramePreviewAsResult":true,"onInsufficientStructure":"blocked_placeholder_or_fail","allowedImageUse":"local component assets only; full frame preview/thumbnail/full-frame slice forbidden as primary result"}`)
 	outputPolicy := json.RawMessage(`{"result":{"files":"string[]","restoreMapping":"array","summary":"string","blockers":"string[]","usedLayerIds":"string[]","usedAssetIds":"string[]","usedFullFramePreview":"boolean"}}`)
+	var approvedPlan *db.DesignRestorePlan
+	plan, err := h.Queries.GetDesignRestorePlanByTask(r.Context(), db.GetDesignRestorePlanByTaskParams{RestoreTaskID: task.ID, WorkspaceID: wsUUID})
+	if err == nil {
+		if plan.Status == "approved" {
+			if message := validateDesignRestorePlanForApproval(plan.Plan); message != "" {
+				writeError(w, http.StatusConflict, "approved restore plan is invalid: "+message)
+				return
+			}
+			approvedPlan = &plan
+		} else if plan.Status == "draft" && !req.SkipPlan {
+			writeError(w, http.StatusConflict, "restore plan must be approved before dispatch")
+			return
+		}
+	} else if err == pgx.ErrNoRows {
+		if !req.SkipPlan {
+			writeError(w, http.StatusConflict, "restore plan is required before dispatch")
+			return
+		}
+	} else {
+		writeError(w, http.StatusInternalServerError, "failed to load design restore plan")
+		return
+	}
 	itemContexts, err := h.buildDesignRestoreTaskItemContexts(r.Context(), task)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to build restore task item contexts")
 		return
+	}
+	restorePlanJSON := json.RawMessage(nil)
+	if approvedPlan != nil {
+		restorePlanJSON = json.RawMessage(approvedPlan.Plan)
 	}
 	contextPayload := service.DesignRestoreTaskContext{
 		Type:          service.DesignRestoreTaskContextType,
@@ -1441,6 +1793,7 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 		DesignFileID:  uuidToString(task.FileID),
 		RevisionID:    uuidToString(task.RevisionID),
 		Input:         json.RawMessage(task.Input),
+		RestorePlan:   restorePlanJSON,
 		ItemContexts:  itemContexts,
 		RestorePolicy: restorePolicy,
 		OutputPolicy:  outputPolicy,
@@ -1458,7 +1811,7 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 	updated, err := h.Queries.UpdateDesignRestoreTask(r.Context(), db.UpdateDesignRestoreTaskParams{
 		ID:          task.ID,
 		WorkspaceID: wsUUID,
-		Status:      pgtype.Text{String: "running", Valid: true},
+		Status:      pgtype.Text{String: "queued", Valid: true},
 		IssueID:     issueUUID,
 		AgentTaskID: agentTask.ID,
 		Result:      []byte(`{}`),
@@ -1468,6 +1821,19 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to update design restore task")
 		return
 	}
+	if issueUUID.Valid {
+		if _, err := h.Queries.UpdateIssueStatus(r.Context(), db.UpdateIssueStatusParams{ID: issueUUID, WorkspaceID: wsUUID, Status: "in_progress"}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update issue status")
+			return
+		}
+	}
+	if approvedPlan != nil {
+		if _, err := h.Queries.MarkDesignRestorePlanDispatched(r.Context(), db.MarkDesignRestorePlanDispatchedParams{ID: approvedPlan.ID, WorkspaceID: wsUUID}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to mark restore plan dispatched")
+			return
+		}
+	}
+	h.createDesignRestoreIssueSystemComment(r.Context(), updated.IssueID, fmt.Sprintf("前端 Agent 已开始执行设计稿还原：Agent Task `%s`。", uuidToString(agentTask.ID)))
 	writeJSON(w, http.StatusCreated, DispatchDesignRestoreTaskResponse{Task: designRestoreTaskToResponse(updated), AgentTaskID: uuidToString(agentTask.ID)})
 }
 
@@ -1511,6 +1877,104 @@ func (h *Handler) buildDesignRestoreTaskItemContexts(ctx context.Context, task d
 		contexts = append(contexts, map[string]any{"item": item, "context": itemContext})
 	}
 	return json.Marshal(contexts)
+}
+
+func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.DesignRestoreTask) (json.RawMessage, error) {
+	var input DesignRestoreTaskInputV1
+	if err := json.Unmarshal(task.Input, &input); err != nil {
+		return nil, err
+	}
+	repoBlock := map[string]any{"status": "missing", "mode": "prototype", "note": "No completed design repo analysis was found; current plan remains a prototype target."}
+	targetsBlock := map[string]any{"selected": nil, "candidates": []any{}, "needsUserSelection": false}
+	executionBlock := map[string]any{
+		"allowedPaths":        []string{"fengchenDoc/gallery-native-agent-test"},
+		"forbiddenPaths":      []string{"server", "packages/core"},
+		"commands":            []string{"pnpm --filter @multica/views exec tsc --noEmit --pretty false"},
+		"allowPrototypeHtml":  true,
+		"prototypeTargetRoot": "fengchenDoc/gallery-native-agent-test",
+	}
+	if strings.TrimSpace(input.ProjectID) != "" {
+		if projectUUID, err := util.ParseUUID(input.ProjectID); err == nil {
+			analysis, err := h.ensureDesignRepoAnalysisForProject(ctx, task.WorkspaceID, projectUUID)
+			if err == nil && analysis.Status == "completed" {
+				repoBlock = designRepoAnalysisPlanBlock(analysis)
+				targetsBlock = map[string]any{"selected": nil, "candidates": jsonRawToAny(analysis.TargetCandidates, []any{}), "needsUserSelection": true}
+				executionBlock = map[string]any{
+					"allowedPaths":       jsonRawFieldToAny(analysis.Boundaries, "allowedPaths", []any{}),
+					"forbiddenPaths":     jsonRawFieldToAny(analysis.Boundaries, "forbiddenPaths", []any{}),
+					"commands":           jsonRawFieldToAny(analysis.Commands, "typecheck", []any{}),
+					"allowPrototypeHtml": false,
+				}
+			} else if err != nil {
+				repoBlock = map[string]any{"status": "unavailable", "mode": "prototype", "note": err.Error()}
+			}
+		}
+	}
+	items := make([]map[string]any, 0, len(input.Items))
+	for _, item := range input.Items {
+		usedLayerIDs := item.LayerIDs
+		if len(usedLayerIDs) == 0 && strings.TrimSpace(item.FrameID) != "" {
+			revisionID := task.RevisionID
+			if strings.TrimSpace(item.RevisionID) != "" {
+				parsed, err := util.ParseUUID(item.RevisionID)
+				if err != nil {
+					return nil, err
+				}
+				revisionID = parsed
+			}
+			revision, err := h.Queries.GetDesignRevisionInWorkspace(ctx, db.GetDesignRevisionInWorkspaceParams{ID: revisionID, WorkspaceID: task.WorkspaceID})
+			if err == nil && revision.FileID == task.FileID {
+				if contextMap, err := designFrameContextFromNativeJSON(revision, item.FrameID); err == nil {
+					if layers, ok := contextMap["layers"].(map[string]any); ok {
+						usedLayerIDs = make([]string, 0, len(layers))
+						for layerID := range layers {
+							usedLayerIDs = append(usedLayerIDs, layerID)
+						}
+						sort.Strings(usedLayerIDs)
+					}
+				}
+			}
+		}
+		items = append(items, map[string]any{
+			"itemId":         item.ItemID,
+			"frameId":        item.FrameID,
+			"frameName":      item.FrameName,
+			"source":         item.Source,
+			"restoreScope":   "strict-structure",
+			"targetKind":     "file",
+			"targetPath":     fmt.Sprintf("fengchenDoc/gallery-native-agent-test/restore-%s.html", strings.ReplaceAll(uuidToString(task.ID), "-", "")[:12]),
+			"layerIds":       usedLayerIDs,
+			"implementation": "Build visible HTML/CSS/component structure from Multica item_contexts; do not paste full-frame preview assets.",
+		})
+	}
+	plan := map[string]any{
+		"version":       "1.0",
+		"restoreTaskId": uuidToString(task.ID),
+		"designFileId":  uuidToString(task.FileID),
+		"revisionId":    uuidToString(task.RevisionID),
+		"mode":          "strict-structure",
+		"targetRoot":    "fengchenDoc/gallery-native-agent-test",
+		"repo":          repoBlock,
+		"targets":       targetsBlock,
+		"execution":     executionBlock,
+		"dispatchPolicy": map[string]any{
+			"requireApproval":                true,
+			"allowSkipPlanForDevelopment":    true,
+			"forbidFullFramePreviewAsResult": true,
+		},
+		"steps": []string{
+			"Read the approved Restore Plan and Multica item_contexts.",
+			"Implement the smallest safe frontend restore output in the planned target file.",
+			"Run relevant typecheck/test command.",
+			"Return RESTORE_RESULT_JSON with files, checks, blockers, restoreMapping, usedLayerIds, usedAssetIds, and usedFullFramePreview=false.",
+		},
+		"items": items,
+		"risks": []string{
+			"If item_contexts lack structure, return blocked or a clearly marked 缺少可结构化 UI 稿 placeholder.",
+			"Do not use sy-gallery_* current session or full-frame preview/thumbnail as implementation source.",
+		},
+	}
+	return json.Marshal(plan)
 }
 
 func (h *Handler) GetDesignRestoreTaskItemContext(w http.ResponseWriter, r *http.Request) {

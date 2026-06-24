@@ -131,6 +131,9 @@ import type {
   DesignFrameContext,
   DesignLayerLightweightEditRequest,
   DesignRevision,
+  CreateDesignRepoAnalysisRequest,
+  DesignRepoAnalysis,
+  DesignRestorePlan,
   DesignRestoreTask,
   DesignRestoreTaskItemContextResponse,
   DispatchDesignRestoreTaskRequest,
@@ -144,9 +147,12 @@ import type {
   ListDesignDraftsResponse,
   ListDesignFilesResponse,
   ListDesignRevisionsResponse,
+  ListDesignRepoAnalysesResponse,
+  ListDesignRestoreMappingsResponse,
   ListDesignRestoreTasksResponse,
   ListDesignTemplatesResponse,
   PublishDesignTemplateRequest,
+  UpdateDesignRestorePlanRequest,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type {
@@ -1938,6 +1944,48 @@ export class ApiClient {
 
   async getDesignRestoreTask(id: string): Promise<DesignRestoreTask> {
     return this.fetch(`/api/design-restore-tasks/${encodeURIComponent(id)}`);
+  }
+
+  async listDesignRestoreMappings(taskId: string): Promise<ListDesignRestoreMappingsResponse> {
+    return this.fetch(`/api/design-restore-tasks/${encodeURIComponent(taskId)}/mappings`);
+  }
+
+  async listDesignRepoAnalyses(projectId: string): Promise<ListDesignRepoAnalysesResponse> {
+    return this.fetch(`/api/design-repo-analysis?project_id=${encodeURIComponent(projectId)}`);
+  }
+
+  async createDesignRepoAnalysis(data: CreateDesignRepoAnalysisRequest): Promise<DesignRepoAnalysis> {
+    return this.fetch("/api/design-repo-analysis", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getDesignRepoAnalysis(id: string): Promise<DesignRepoAnalysis> {
+    return this.fetch(`/api/design-repo-analysis/${encodeURIComponent(id)}`);
+  }
+
+  async rerunDesignRepoAnalysis(id: string): Promise<DesignRepoAnalysis> {
+    return this.fetch(`/api/design-repo-analysis/${encodeURIComponent(id)}/rerun`, { method: "POST" });
+  }
+
+  async getDesignRestorePlan(taskId: string): Promise<DesignRestorePlan> {
+    return this.fetch(`/api/design-restore-tasks/${encodeURIComponent(taskId)}/plan`);
+  }
+
+  async generateDesignRestorePlan(taskId: string): Promise<DesignRestorePlan> {
+    return this.fetch(`/api/design-restore-tasks/${encodeURIComponent(taskId)}/plan/generate`, { method: "POST" });
+  }
+
+  async updateDesignRestorePlan(taskId: string, data: UpdateDesignRestorePlanRequest): Promise<DesignRestorePlan> {
+    return this.fetch(`/api/design-restore-tasks/${encodeURIComponent(taskId)}/plan`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async approveDesignRestorePlan(taskId: string): Promise<DesignRestorePlan> {
+    return this.fetch(`/api/design-restore-tasks/${encodeURIComponent(taskId)}/plan/approve`, { method: "POST" });
   }
 
   async dispatchDesignRestoreTask(id: string, data: DispatchDesignRestoreTaskRequest): Promise<DispatchDesignRestoreTaskResponse> {

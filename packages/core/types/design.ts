@@ -338,8 +338,78 @@ export interface DesignRestoreTask {
   updated_at: string;
 }
 
+export type DesignRestorePlanStatus = "draft" | "approved" | "dispatched" | "archived";
+
+export interface DesignRestorePlan {
+  id: string;
+  workspace_id: string;
+  restore_task_id: string;
+  status: DesignRestorePlanStatus;
+  plan: Record<string, unknown>;
+  review_notes: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DesignRestoreMappingRecord {
+  id: string;
+  restore_task_id: string;
+  workspace_id: string;
+  layer_id: string;
+  target_path: string;
+  target_kind: DesignRestoreTargetKind;
+  confidence: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export type DesignRepoAnalysisStatus = "pending" | "running" | "completed" | "failed" | "stale";
+
+export interface DesignRepoAnalysis {
+  id: string;
+  workspace_id: string;
+  project_id: string;
+  project_resource_id: string;
+  status: DesignRepoAnalysisStatus;
+  schema_version: string;
+  source_fingerprint: string | null;
+  framework: string | null;
+  language: string | null;
+  package_manager: string | null;
+  app_type: string | null;
+  routing: Record<string, unknown>;
+  styling: Record<string, unknown>;
+  directories: Record<string, unknown>;
+  commands: Record<string, unknown>;
+  boundaries: Record<string, unknown>;
+  target_candidates: Array<Record<string, unknown>>;
+  confidence: number;
+  summary: string | null;
+  raw_result: Record<string, unknown>;
+  error: string | null;
+  analyzed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateDesignRepoAnalysisRequest {
+  project_id: string;
+  project_resource_id: string;
+}
+
+export interface ListDesignRepoAnalysesResponse {
+  analyses: DesignRepoAnalysis[];
+}
+
 export interface ListDesignRestoreTasksResponse {
   tasks: DesignRestoreTask[];
+}
+
+export interface ListDesignRestoreMappingsResponse {
+  mappings: DesignRestoreMappingRecord[];
 }
 
 export interface DesignRestoreMapping {
@@ -528,6 +598,12 @@ export interface DispatchDesignRestoreTaskRequest {
   agent_id: string;
   issue_id?: string;
   prompt?: string;
+  skip_plan?: boolean;
+}
+
+export interface UpdateDesignRestorePlanRequest {
+  plan: Record<string, unknown>;
+  review_notes?: string;
 }
 
 export interface DispatchDesignRestoreTaskResponse {

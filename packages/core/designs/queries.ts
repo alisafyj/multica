@@ -69,6 +69,31 @@ export function designRestoreTaskDetailOptions(wsId: string, taskId: string) {
   });
 }
 
+export function designRestoreMappingsOptions(wsId: string, taskId: string) {
+  return queryOptions({
+    queryKey: designKeys.restoreMappings(wsId, taskId),
+    queryFn: () => api.listDesignRestoreMappings(taskId),
+    select: (data) => data.mappings,
+  });
+}
+
+export function designRepoAnalysesOptions(wsId: string, projectId: string) {
+  return queryOptions({
+    queryKey: designKeys.repoAnalyses(wsId, projectId),
+    queryFn: () => api.listDesignRepoAnalyses(projectId),
+    select: (data) => data.analyses,
+    enabled: !!projectId,
+  });
+}
+
+export function designRestorePlanOptions(wsId: string, taskId: string) {
+  return queryOptions({
+    queryKey: designKeys.restorePlan(wsId, taskId),
+    queryFn: () => api.getDesignRestorePlan(taskId),
+    retry: false,
+  });
+}
+
 export function designRestoreTaskListOptions(wsId: string) {
   return queryOptions({
     queryKey: designKeys.restoreTasks(wsId),

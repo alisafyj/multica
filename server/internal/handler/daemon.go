@@ -1740,9 +1740,31 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := h.markDesignRestoreTaskRunning(r.Context(), *task); err != nil {
+		slog.Warn("design restore task start: failed to mark restore task running", "task_id", taskID, "error", err)
+	}
 
 	slog.Info("task started", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
+}
+
+func (h *Handler) markDesignRestoreTaskRunning(ctx context.Context, task db.AgentTaskQueue) error {
+	var restoreCtx service.DesignRestoreTaskContext
+	if err := json.Unmarshal(task.Context, &restoreCtx); err != nil || restoreCtx.Type != service.DesignRestoreTaskContextType {
+		return nil
+	}
+	restoreTask, err := h.Queries.GetDesignRestoreTaskByAgentTask(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	_, err = h.Queries.UpdateDesignRestoreTask(ctx, db.UpdateDesignRestoreTaskParams{
+		ID:          restoreTask.ID,
+		WorkspaceID: restoreTask.WorkspaceID,
+		Status:      pgtype.Text{String: "running", Valid: true},
+		Result:      restoreTask.Result,
+		Error:       restoreTask.Error,
+	})
+	return err
 }
 
 // TaskWaitLocalDirectoryRequest is the body the daemon POSTs when it parks
@@ -1910,7 +1932,160 @@ func (h *Handler) updateDesignRestoreTaskFromAgentCompletion(ctx context.Context
 		Result:      resultJSON,
 		Error:       pgtype.Text{Valid: false},
 	})
+	if err != nil {
+		return err
+	}
+	if err := h.replaceDesignRestoreMappingsFromSummary(ctx, restoreTask, summary); err != nil {
+		return err
+	}
+	if err := h.advanceIssueAfterDesignRestoreCompletion(ctx, restoreTask, status); err != nil {
+		return err
+	}
+	h.createDesignRestoreIssueSystemComment(ctx, restoreTask.IssueID, designRestoreCompletionComment(status, policyViolation, summary))
+	return nil
+}
+
+func (h *Handler) advanceIssueAfterDesignRestoreCompletion(ctx context.Context, restoreTask db.DesignRestoreTask, restoreStatus string) error {
+	if !restoreTask.IssueID.Valid {
+		return nil
+	}
+	issue, err := h.Queries.GetIssue(ctx, restoreTask.IssueID)
+	if err != nil {
+		return err
+	}
+	if issue.Status == "done" || issue.Status == "cancelled" {
+		return nil
+	}
+	nextStatus := "in_review"
+	if restoreStatus != "completed" {
+		nextStatus = "blocked"
+	}
+	_, err = h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID, Status: nextStatus})
 	return err
+}
+
+func designRestoreCompletionComment(status, policyViolation string, summary designRestoreResultSummary) string {
+	var b strings.Builder
+	if status == "completed" {
+		b.WriteString("前端 Agent 已完成设计稿还原。")
+	} else {
+		b.WriteString("前端 Agent 设计稿还原未完成，需要处理。")
+	}
+	if summary.Summary != "" {
+		b.WriteString("\n\n摘要：")
+		b.WriteString(summary.Summary)
+	}
+	if len(summary.Files) > 0 {
+		b.WriteString("\n\n变更文件：")
+		for _, file := range summary.Files {
+			b.WriteString("\n- `")
+			b.WriteString(file)
+			b.WriteString("`")
+		}
+	}
+	if len(summary.Checks) > 0 {
+		b.WriteString("\n\n检查：")
+		for _, check := range summary.Checks {
+			b.WriteString("\n- `")
+			b.WriteString(check)
+			b.WriteString("`")
+		}
+	}
+	if len(summary.Blockers) > 0 {
+		b.WriteString("\n\n阻塞项：")
+		for _, blocker := range summary.Blockers {
+			b.WriteString("\n- ")
+			b.WriteString(blocker)
+		}
+	}
+	if len(summary.RestoreMapping) > 0 {
+		b.WriteString(fmt.Sprintf("\n\nRestore Mapping：%d 条", len(summary.RestoreMapping)))
+	}
+	if policyViolation == "" {
+		policyViolation = "无"
+	}
+	b.WriteString("\n\n策略违规：")
+	b.WriteString(policyViolation)
+	b.WriteString("\n整图 preview：")
+	if summary.UsedFullFramePreview {
+		b.WriteString("已使用")
+	} else {
+		b.WriteString("未使用")
+	}
+	return b.String()
+}
+
+func (h *Handler) replaceDesignRestoreMappingsFromSummary(ctx context.Context, task db.DesignRestoreTask, summary designRestoreResultSummary) error {
+	if err := h.Queries.DeleteDesignRestoreMappingsByTask(ctx, db.DeleteDesignRestoreMappingsByTaskParams{RestoreTaskID: task.ID, WorkspaceID: task.WorkspaceID}); err != nil {
+		return err
+	}
+	for _, item := range summary.RestoreMapping {
+		layerID := firstNonEmptyString(item, "layerId", "layer_id", "sourceLayerId", "source_layer_id", "source")
+		targetPath := firstNonEmptyString(item, "targetPath", "target_path", "file", "path", "target")
+		if layerID == "" || targetPath == "" {
+			continue
+		}
+		targetKind := firstNonEmptyString(item, "targetKind", "target_kind", "kind")
+		if !validDesignRestoreTargetKind(targetKind) {
+			targetKind = "unknown"
+		}
+		confidence := float32(0.8)
+		if value, ok := item["confidence"]; ok {
+			confidence = float32FromAny(value, confidence)
+		}
+		metadata, err := json.Marshal(item)
+		if err != nil {
+			metadata = []byte(`{}`)
+		}
+		if _, err := h.Queries.CreateDesignRestoreMapping(ctx, db.CreateDesignRestoreMappingParams{
+			RestoreTaskID: task.ID,
+			WorkspaceID:   task.WorkspaceID,
+			LayerID:       layerID,
+			TargetPath:    targetPath,
+			TargetKind:    targetKind,
+			Confidence:    confidence,
+			Metadata:      metadata,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func firstNonEmptyString(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := values[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func validDesignRestoreTargetKind(kind string) bool {
+	switch kind {
+	case "component", "file", "symbol", "route", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func float32FromAny(value any, fallback float32) float32 {
+	switch v := value.(type) {
+	case float64:
+		if v >= 0 && v <= 1 {
+			return float32(v)
+		}
+	case float32:
+		if v >= 0 && v <= 1 {
+			return v
+		}
+	case int:
+		if v >= 0 && v <= 1 {
+			return float32(v)
+		}
+	}
+	return fallback
 }
 
 type designRestoreResultSummary struct {

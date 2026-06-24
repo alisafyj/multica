@@ -377,6 +377,33 @@ type DesignPluginToken struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type DesignRepoAnalysis struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
+	Status            string             `json:"status"`
+	SchemaVersion     string             `json:"schema_version"`
+	SourceFingerprint pgtype.Text        `json:"source_fingerprint"`
+	Framework         pgtype.Text        `json:"framework"`
+	Language          pgtype.Text        `json:"language"`
+	PackageManager    pgtype.Text        `json:"package_manager"`
+	AppType           pgtype.Text        `json:"app_type"`
+	Routing           []byte             `json:"routing"`
+	Styling           []byte             `json:"styling"`
+	Directories       []byte             `json:"directories"`
+	Commands          []byte             `json:"commands"`
+	Boundaries        []byte             `json:"boundaries"`
+	TargetCandidates  []byte             `json:"target_candidates"`
+	Confidence        float32            `json:"confidence"`
+	Summary           pgtype.Text        `json:"summary"`
+	RawResult         []byte             `json:"raw_result"`
+	Error             pgtype.Text        `json:"error"`
+	AnalyzedAt        pgtype.Timestamptz `json:"analyzed_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type DesignRestoreMapping struct {
 	ID            pgtype.UUID        `json:"id"`
 	RestoreTaskID pgtype.UUID        `json:"restore_task_id"`
@@ -387,6 +414,20 @@ type DesignRestoreMapping struct {
 	Confidence    float32            `json:"confidence"`
 	Metadata      []byte             `json:"metadata"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type DesignRestorePlan struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	RestoreTaskID pgtype.UUID        `json:"restore_task_id"`
+	Status        string             `json:"status"`
+	Plan          []byte             `json:"plan"`
+	ReviewNotes   pgtype.Text        `json:"review_notes"`
+	ApprovedBy    pgtype.UUID        `json:"approved_by"`
+	ApprovedAt    pgtype.Timestamptz `json:"approved_at"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type DesignRestoreTask struct {

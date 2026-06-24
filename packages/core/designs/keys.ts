@@ -12,7 +12,11 @@ export const designKeys = {
   template: (wsId: string, id: string) => ["designs", wsId, "templates", id] as const,
   drafts: (wsId: string) => ["designs", wsId, "drafts"] as const,
   draft: (wsId: string, id: string) => ["designs", wsId, "drafts", id] as const,
+  repoAnalyses: (wsId: string, projectId: string) => ["designs", wsId, "repo-analyses", projectId] as const,
+  repoAnalysis: (wsId: string, id: string) => ["designs", wsId, "repo-analysis", id] as const,
   restoreTasks: (wsId: string) => ["designs", wsId, "restore-tasks"] as const,
   restoreTask: (wsId: string, id: string) => ["designs", wsId, "restore-tasks", id] as const,
+  restoreMappings: (wsId: string, taskId: string) => ["designs", wsId, "restore-tasks", taskId, "mappings"] as const,
+  restorePlan: (wsId: string, taskId: string) => ["designs", wsId, "restore-tasks", taskId, "plan"] as const,
   restoreTaskItemContext: (wsId: string, taskId: string, itemId: string) => ["designs", wsId, "restore-tasks", taskId, "items", itemId, "context"] as const,
 };

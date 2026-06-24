@@ -266,6 +266,20 @@ WHERE id = $1 AND workspace_id = $2;
 SELECT * FROM design_restore_task
 WHERE agent_task_id = $1;
 
+-- name: GetReusableDesignRestoreTaskByIssue :one
+SELECT * FROM design_restore_task
+WHERE workspace_id = $1
+  AND issue_id = $2
+  AND status <> 'cancelled'
+ORDER BY
+  CASE
+    WHEN agent_task_id IS NOT NULL THEN 0
+    WHEN status IN ('running', 'completed', 'failed') THEN 1
+    ELSE 2
+  END,
+  created_at DESC
+LIMIT 1;
+
 -- name: ListDesignRestoreTasks :many
 SELECT * FROM design_restore_task
 WHERE workspace_id = $1
@@ -276,6 +290,77 @@ LIMIT 50;
 SELECT * FROM design_restore_mapping
 WHERE restore_task_id = $1
 ORDER BY created_at ASC;
+
+-- name: DeleteDesignRestoreMappingsByTask :exec
+DELETE FROM design_restore_mapping
+WHERE restore_task_id = $1 AND workspace_id = $2;
+
+-- name: CreateDesignRestorePlan :one
+INSERT INTO design_restore_plan (
+    workspace_id, restore_task_id, status, plan, review_notes, created_by
+) VALUES (
+    $1, $2, $3, $4, $5, $6
+)
+RETURNING *;
+
+-- name: GetDesignRestorePlanByTask :one
+SELECT * FROM design_restore_plan
+WHERE restore_task_id = $1 AND workspace_id = $2
+  AND status IN ('draft', 'approved', 'dispatched')
+ORDER BY updated_at DESC
+LIMIT 1;
+
+-- name: UpdateDesignRestorePlan :one
+UPDATE design_restore_plan SET
+    status = COALESCE(sqlc.narg('status'), status),
+    plan = COALESCE(sqlc.narg('plan'), plan),
+    review_notes = sqlc.narg('review_notes'),
+    approved_by = COALESCE(sqlc.narg('approved_by'), approved_by),
+    approved_at = COALESCE(sqlc.narg('approved_at'), approved_at),
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING *;
+
+-- name: MarkDesignRestorePlanDispatched :one
+UPDATE design_restore_plan SET
+    status = 'dispatched',
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND status = 'approved'
+RETURNING *;
+
+-- name: CreateDesignRepoAnalysis :one
+INSERT INTO design_repo_analysis (
+    workspace_id, project_id, project_resource_id, status, schema_version, source_fingerprint,
+    framework, language, package_manager, app_type, routing, styling, directories,
+    commands, boundaries, target_candidates, confidence, summary, raw_result, error, analyzed_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6,
+    $7, $8, $9, $10, $11, $12, $13,
+    $14, $15, $16, $17, $18, $19, $20, $21
+)
+RETURNING *;
+
+-- name: ListDesignRepoAnalysesByProject :many
+SELECT * FROM design_repo_analysis
+WHERE workspace_id = $1 AND project_id = $2
+ORDER BY updated_at DESC
+LIMIT 20;
+
+-- name: GetDesignRepoAnalysisInWorkspace :one
+SELECT * FROM design_repo_analysis
+WHERE id = $1 AND workspace_id = $2;
+
+-- name: GetLatestCompletedDesignRepoAnalysisForProject :one
+SELECT * FROM design_repo_analysis
+WHERE workspace_id = $1 AND project_id = $2 AND status = 'completed'
+ORDER BY analyzed_at DESC NULLS LAST, updated_at DESC
+LIMIT 1;
+
+-- name: GetLatestCompletedDesignRepoAnalysisForResource :one
+SELECT * FROM design_repo_analysis
+WHERE workspace_id = $1 AND project_resource_id = $2 AND status = 'completed'
+ORDER BY analyzed_at DESC NULLS LAST, updated_at DESC
+LIMIT 1;
 
 -- name: CreateDesignRestoreMapping :one
 INSERT INTO design_restore_mapping (

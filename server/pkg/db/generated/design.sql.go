@@ -264,6 +264,97 @@ func (q *Queries) CreateDesignImportCode(ctx context.Context, arg CreateDesignIm
 	return i, err
 }
 
+const createDesignRepoAnalysis = `-- name: CreateDesignRepoAnalysis :one
+INSERT INTO design_repo_analysis (
+    workspace_id, project_id, project_resource_id, status, schema_version, source_fingerprint,
+    framework, language, package_manager, app_type, routing, styling, directories,
+    commands, boundaries, target_candidates, confidence, summary, raw_result, error, analyzed_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6,
+    $7, $8, $9, $10, $11, $12, $13,
+    $14, $15, $16, $17, $18, $19, $20, $21
+)
+RETURNING id, workspace_id, project_id, project_resource_id, status, schema_version, source_fingerprint, framework, language, package_manager, app_type, routing, styling, directories, commands, boundaries, target_candidates, confidence, summary, raw_result, error, analyzed_at, created_at, updated_at
+`
+
+type CreateDesignRepoAnalysisParams struct {
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
+	Status            string             `json:"status"`
+	SchemaVersion     string             `json:"schema_version"`
+	SourceFingerprint pgtype.Text        `json:"source_fingerprint"`
+	Framework         pgtype.Text        `json:"framework"`
+	Language          pgtype.Text        `json:"language"`
+	PackageManager    pgtype.Text        `json:"package_manager"`
+	AppType           pgtype.Text        `json:"app_type"`
+	Routing           []byte             `json:"routing"`
+	Styling           []byte             `json:"styling"`
+	Directories       []byte             `json:"directories"`
+	Commands          []byte             `json:"commands"`
+	Boundaries        []byte             `json:"boundaries"`
+	TargetCandidates  []byte             `json:"target_candidates"`
+	Confidence        float32            `json:"confidence"`
+	Summary           pgtype.Text        `json:"summary"`
+	RawResult         []byte             `json:"raw_result"`
+	Error             pgtype.Text        `json:"error"`
+	AnalyzedAt        pgtype.Timestamptz `json:"analyzed_at"`
+}
+
+func (q *Queries) CreateDesignRepoAnalysis(ctx context.Context, arg CreateDesignRepoAnalysisParams) (DesignRepoAnalysis, error) {
+	row := q.db.QueryRow(ctx, createDesignRepoAnalysis,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.ProjectResourceID,
+		arg.Status,
+		arg.SchemaVersion,
+		arg.SourceFingerprint,
+		arg.Framework,
+		arg.Language,
+		arg.PackageManager,
+		arg.AppType,
+		arg.Routing,
+		arg.Styling,
+		arg.Directories,
+		arg.Commands,
+		arg.Boundaries,
+		arg.TargetCandidates,
+		arg.Confidence,
+		arg.Summary,
+		arg.RawResult,
+		arg.Error,
+		arg.AnalyzedAt,
+	)
+	var i DesignRepoAnalysis
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.ProjectResourceID,
+		&i.Status,
+		&i.SchemaVersion,
+		&i.SourceFingerprint,
+		&i.Framework,
+		&i.Language,
+		&i.PackageManager,
+		&i.AppType,
+		&i.Routing,
+		&i.Styling,
+		&i.Directories,
+		&i.Commands,
+		&i.Boundaries,
+		&i.TargetCandidates,
+		&i.Confidence,
+		&i.Summary,
+		&i.RawResult,
+		&i.Error,
+		&i.AnalyzedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createDesignRestoreMapping = `-- name: CreateDesignRestoreMapping :one
 INSERT INTO design_restore_mapping (
     restore_task_id, workspace_id, layer_id, target_path, target_kind, confidence, metadata
@@ -304,6 +395,50 @@ func (q *Queries) CreateDesignRestoreMapping(ctx context.Context, arg CreateDesi
 		&i.Confidence,
 		&i.Metadata,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createDesignRestorePlan = `-- name: CreateDesignRestorePlan :one
+INSERT INTO design_restore_plan (
+    workspace_id, restore_task_id, status, plan, review_notes, created_by
+) VALUES (
+    $1, $2, $3, $4, $5, $6
+)
+RETURNING id, workspace_id, restore_task_id, status, plan, review_notes, approved_by, approved_at, created_by, created_at, updated_at
+`
+
+type CreateDesignRestorePlanParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	RestoreTaskID pgtype.UUID `json:"restore_task_id"`
+	Status        string      `json:"status"`
+	Plan          []byte      `json:"plan"`
+	ReviewNotes   pgtype.Text `json:"review_notes"`
+	CreatedBy     pgtype.UUID `json:"created_by"`
+}
+
+func (q *Queries) CreateDesignRestorePlan(ctx context.Context, arg CreateDesignRestorePlanParams) (DesignRestorePlan, error) {
+	row := q.db.QueryRow(ctx, createDesignRestorePlan,
+		arg.WorkspaceID,
+		arg.RestoreTaskID,
+		arg.Status,
+		arg.Plan,
+		arg.ReviewNotes,
+		arg.CreatedBy,
+	)
+	var i DesignRestorePlan
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RestoreTaskID,
+		&i.Status,
+		&i.Plan,
+		&i.ReviewNotes,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -518,6 +653,21 @@ type DeleteDesignFileParams struct {
 
 func (q *Queries) DeleteDesignFile(ctx context.Context, arg DeleteDesignFileParams) error {
 	_, err := q.db.Exec(ctx, deleteDesignFile, arg.ID, arg.WorkspaceID)
+	return err
+}
+
+const deleteDesignRestoreMappingsByTask = `-- name: DeleteDesignRestoreMappingsByTask :exec
+DELETE FROM design_restore_mapping
+WHERE restore_task_id = $1 AND workspace_id = $2
+`
+
+type DeleteDesignRestoreMappingsByTaskParams struct {
+	RestoreTaskID pgtype.UUID `json:"restore_task_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) DeleteDesignRestoreMappingsByTask(ctx context.Context, arg DeleteDesignRestoreMappingsByTaskParams) error {
+	_, err := q.db.Exec(ctx, deleteDesignRestoreMappingsByTask, arg.RestoreTaskID, arg.WorkspaceID)
 	return err
 }
 
@@ -836,6 +986,80 @@ func (q *Queries) GetDesignFolderInProject(ctx context.Context, arg GetDesignFol
 	return i, err
 }
 
+const getDesignRepoAnalysisInWorkspace = `-- name: GetDesignRepoAnalysisInWorkspace :one
+SELECT id, workspace_id, project_id, project_resource_id, status, schema_version, source_fingerprint, framework, language, package_manager, app_type, routing, styling, directories, commands, boundaries, target_candidates, confidence, summary, raw_result, error, analyzed_at, created_at, updated_at FROM design_repo_analysis
+WHERE id = $1 AND workspace_id = $2
+`
+
+type GetDesignRepoAnalysisInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetDesignRepoAnalysisInWorkspace(ctx context.Context, arg GetDesignRepoAnalysisInWorkspaceParams) (DesignRepoAnalysis, error) {
+	row := q.db.QueryRow(ctx, getDesignRepoAnalysisInWorkspace, arg.ID, arg.WorkspaceID)
+	var i DesignRepoAnalysis
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.ProjectResourceID,
+		&i.Status,
+		&i.SchemaVersion,
+		&i.SourceFingerprint,
+		&i.Framework,
+		&i.Language,
+		&i.PackageManager,
+		&i.AppType,
+		&i.Routing,
+		&i.Styling,
+		&i.Directories,
+		&i.Commands,
+		&i.Boundaries,
+		&i.TargetCandidates,
+		&i.Confidence,
+		&i.Summary,
+		&i.RawResult,
+		&i.Error,
+		&i.AnalyzedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getDesignRestorePlanByTask = `-- name: GetDesignRestorePlanByTask :one
+SELECT id, workspace_id, restore_task_id, status, plan, review_notes, approved_by, approved_at, created_by, created_at, updated_at FROM design_restore_plan
+WHERE restore_task_id = $1 AND workspace_id = $2
+  AND status IN ('draft', 'approved', 'dispatched')
+ORDER BY updated_at DESC
+LIMIT 1
+`
+
+type GetDesignRestorePlanByTaskParams struct {
+	RestoreTaskID pgtype.UUID `json:"restore_task_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetDesignRestorePlanByTask(ctx context.Context, arg GetDesignRestorePlanByTaskParams) (DesignRestorePlan, error) {
+	row := q.db.QueryRow(ctx, getDesignRestorePlanByTask, arg.RestoreTaskID, arg.WorkspaceID)
+	var i DesignRestorePlan
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RestoreTaskID,
+		&i.Status,
+		&i.Plan,
+		&i.ReviewNotes,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getDesignRestoreTaskByAgentTask = `-- name: GetDesignRestoreTaskByAgentTask :one
 SELECT id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at FROM design_restore_task
 WHERE agent_task_id = $1
@@ -1057,6 +1281,94 @@ func (q *Queries) GetDesignTemplateRevisionInWorkspace(ctx context.Context, arg 
 	return i, err
 }
 
+const getLatestCompletedDesignRepoAnalysisForProject = `-- name: GetLatestCompletedDesignRepoAnalysisForProject :one
+SELECT id, workspace_id, project_id, project_resource_id, status, schema_version, source_fingerprint, framework, language, package_manager, app_type, routing, styling, directories, commands, boundaries, target_candidates, confidence, summary, raw_result, error, analyzed_at, created_at, updated_at FROM design_repo_analysis
+WHERE workspace_id = $1 AND project_id = $2 AND status = 'completed'
+ORDER BY analyzed_at DESC NULLS LAST, updated_at DESC
+LIMIT 1
+`
+
+type GetLatestCompletedDesignRepoAnalysisForProjectParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetLatestCompletedDesignRepoAnalysisForProject(ctx context.Context, arg GetLatestCompletedDesignRepoAnalysisForProjectParams) (DesignRepoAnalysis, error) {
+	row := q.db.QueryRow(ctx, getLatestCompletedDesignRepoAnalysisForProject, arg.WorkspaceID, arg.ProjectID)
+	var i DesignRepoAnalysis
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.ProjectResourceID,
+		&i.Status,
+		&i.SchemaVersion,
+		&i.SourceFingerprint,
+		&i.Framework,
+		&i.Language,
+		&i.PackageManager,
+		&i.AppType,
+		&i.Routing,
+		&i.Styling,
+		&i.Directories,
+		&i.Commands,
+		&i.Boundaries,
+		&i.TargetCandidates,
+		&i.Confidence,
+		&i.Summary,
+		&i.RawResult,
+		&i.Error,
+		&i.AnalyzedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLatestCompletedDesignRepoAnalysisForResource = `-- name: GetLatestCompletedDesignRepoAnalysisForResource :one
+SELECT id, workspace_id, project_id, project_resource_id, status, schema_version, source_fingerprint, framework, language, package_manager, app_type, routing, styling, directories, commands, boundaries, target_candidates, confidence, summary, raw_result, error, analyzed_at, created_at, updated_at FROM design_repo_analysis
+WHERE workspace_id = $1 AND project_resource_id = $2 AND status = 'completed'
+ORDER BY analyzed_at DESC NULLS LAST, updated_at DESC
+LIMIT 1
+`
+
+type GetLatestCompletedDesignRepoAnalysisForResourceParams struct {
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	ProjectResourceID pgtype.UUID `json:"project_resource_id"`
+}
+
+func (q *Queries) GetLatestCompletedDesignRepoAnalysisForResource(ctx context.Context, arg GetLatestCompletedDesignRepoAnalysisForResourceParams) (DesignRepoAnalysis, error) {
+	row := q.db.QueryRow(ctx, getLatestCompletedDesignRepoAnalysisForResource, arg.WorkspaceID, arg.ProjectResourceID)
+	var i DesignRepoAnalysis
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.ProjectResourceID,
+		&i.Status,
+		&i.SchemaVersion,
+		&i.SourceFingerprint,
+		&i.Framework,
+		&i.Language,
+		&i.PackageManager,
+		&i.AppType,
+		&i.Routing,
+		&i.Styling,
+		&i.Directories,
+		&i.Commands,
+		&i.Boundaries,
+		&i.TargetCandidates,
+		&i.Confidence,
+		&i.Summary,
+		&i.RawResult,
+		&i.Error,
+		&i.AnalyzedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getNextDesignRevisionNumber = `-- name: GetNextDesignRevisionNumber :one
 SELECT COALESCE(MAX(revision_number), 0)::int + 1 AS next_revision_number
 FROM design_revision
@@ -1081,6 +1393,47 @@ func (q *Queries) GetNextDesignTemplateRevisionNumber(ctx context.Context, templ
 	var next_revision_number int32
 	err := row.Scan(&next_revision_number)
 	return next_revision_number, err
+}
+
+const getReusableDesignRestoreTaskByIssue = `-- name: GetReusableDesignRestoreTaskByIssue :one
+SELECT id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at FROM design_restore_task
+WHERE workspace_id = $1
+  AND issue_id = $2
+  AND status <> 'cancelled'
+ORDER BY
+  CASE
+    WHEN agent_task_id IS NOT NULL THEN 0
+    WHEN status IN ('running', 'completed', 'failed') THEN 1
+    ELSE 2
+  END,
+  created_at DESC
+LIMIT 1
+`
+
+type GetReusableDesignRestoreTaskByIssueParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+}
+
+func (q *Queries) GetReusableDesignRestoreTaskByIssue(ctx context.Context, arg GetReusableDesignRestoreTaskByIssueParams) (DesignRestoreTask, error) {
+	row := q.db.QueryRow(ctx, getReusableDesignRestoreTaskByIssue, arg.WorkspaceID, arg.IssueID)
+	var i DesignRestoreTask
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.FileID,
+		&i.RevisionID,
+		&i.IssueID,
+		&i.AgentTaskID,
+		&i.Status,
+		&i.Input,
+		&i.Result,
+		&i.Error,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getValidDesignImportCodeByHashForUpdate = `-- name: GetValidDesignImportCodeByHashForUpdate :one
@@ -1462,6 +1815,63 @@ func (q *Queries) ListDesignFoldersInWorkspace(ctx context.Context, workspaceID 
 	return items, nil
 }
 
+const listDesignRepoAnalysesByProject = `-- name: ListDesignRepoAnalysesByProject :many
+SELECT id, workspace_id, project_id, project_resource_id, status, schema_version, source_fingerprint, framework, language, package_manager, app_type, routing, styling, directories, commands, boundaries, target_candidates, confidence, summary, raw_result, error, analyzed_at, created_at, updated_at FROM design_repo_analysis
+WHERE workspace_id = $1 AND project_id = $2
+ORDER BY updated_at DESC
+LIMIT 20
+`
+
+type ListDesignRepoAnalysesByProjectParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+func (q *Queries) ListDesignRepoAnalysesByProject(ctx context.Context, arg ListDesignRepoAnalysesByProjectParams) ([]DesignRepoAnalysis, error) {
+	rows, err := q.db.Query(ctx, listDesignRepoAnalysesByProject, arg.WorkspaceID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DesignRepoAnalysis{}
+	for rows.Next() {
+		var i DesignRepoAnalysis
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.ProjectResourceID,
+			&i.Status,
+			&i.SchemaVersion,
+			&i.SourceFingerprint,
+			&i.Framework,
+			&i.Language,
+			&i.PackageManager,
+			&i.AppType,
+			&i.Routing,
+			&i.Styling,
+			&i.Directories,
+			&i.Commands,
+			&i.Boundaries,
+			&i.TargetCandidates,
+			&i.Confidence,
+			&i.Summary,
+			&i.RawResult,
+			&i.Error,
+			&i.AnalyzedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDesignRestoreMappings = `-- name: ListDesignRestoreMappings :many
 SELECT id, restore_task_id, workspace_id, layer_id, target_path, target_kind, confidence, metadata, created_at FROM design_restore_mapping
 WHERE restore_task_id = $1
@@ -1713,6 +2123,38 @@ func (q *Queries) MarkDesignImportCodeFailed(ctx context.Context, codeHash strin
 	return err
 }
 
+const markDesignRestorePlanDispatched = `-- name: MarkDesignRestorePlanDispatched :one
+UPDATE design_restore_plan SET
+    status = 'dispatched',
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND status = 'approved'
+RETURNING id, workspace_id, restore_task_id, status, plan, review_notes, approved_by, approved_at, created_by, created_at, updated_at
+`
+
+type MarkDesignRestorePlanDispatchedParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) MarkDesignRestorePlanDispatched(ctx context.Context, arg MarkDesignRestorePlanDispatchedParams) (DesignRestorePlan, error) {
+	row := q.db.QueryRow(ctx, markDesignRestorePlanDispatched, arg.ID, arg.WorkspaceID)
+	var i DesignRestorePlan
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RestoreTaskID,
+		&i.Status,
+		&i.Plan,
+		&i.ReviewNotes,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const setDesignFileCurrentRevision = `-- name: SetDesignFileCurrentRevision :one
 UPDATE design_file SET
     current_revision_id = $3,
@@ -1914,6 +2356,55 @@ func (q *Queries) UpdateDesignFile(ctx context.Context, arg UpdateDesignFilePara
 		&i.SourceType,
 		&i.SourceRef,
 		&i.CurrentRevisionID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateDesignRestorePlan = `-- name: UpdateDesignRestorePlan :one
+UPDATE design_restore_plan SET
+    status = COALESCE($3, status),
+    plan = COALESCE($4, plan),
+    review_notes = $5,
+    approved_by = COALESCE($6, approved_by),
+    approved_at = COALESCE($7, approved_at),
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING id, workspace_id, restore_task_id, status, plan, review_notes, approved_by, approved_at, created_by, created_at, updated_at
+`
+
+type UpdateDesignRestorePlanParams struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Status      pgtype.Text        `json:"status"`
+	Plan        []byte             `json:"plan"`
+	ReviewNotes pgtype.Text        `json:"review_notes"`
+	ApprovedBy  pgtype.UUID        `json:"approved_by"`
+	ApprovedAt  pgtype.Timestamptz `json:"approved_at"`
+}
+
+func (q *Queries) UpdateDesignRestorePlan(ctx context.Context, arg UpdateDesignRestorePlanParams) (DesignRestorePlan, error) {
+	row := q.db.QueryRow(ctx, updateDesignRestorePlan,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.Status,
+		arg.Plan,
+		arg.ReviewNotes,
+		arg.ApprovedBy,
+		arg.ApprovedAt,
+	)
+	var i DesignRestorePlan
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RestoreTaskID,
+		&i.Status,
+		&i.Plan,
+		&i.ReviewNotes,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,

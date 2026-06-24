@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func createProjectForDesignTest(t *testing.T, title string) string {
@@ -25,6 +29,20 @@ func createProjectForDesignTest(t *testing.T, title string) string {
 		t.Fatalf("insert project: %v", err)
 	}
 	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, id) })
+	return id
+}
+
+func createIssueForDesignTest(t *testing.T, title string, projectID string) string {
+	t.Helper()
+	var id string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, project_id)
+		VALUES ($1, $2, 'todo', 'medium', 'member', $3, $4)
+		RETURNING id
+	`, testWorkspaceID, title, testUserID, projectID).Scan(&id); err != nil {
+		t.Fatalf("insert issue: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, id) })
 	return id
 }
 
@@ -1401,6 +1419,167 @@ func TestCreateDesignRestoreTaskUsesCurrentRevisionAndStoresInput(t *testing.T) 
 	}
 }
 
+func TestCreateDesignRestoreTaskAddsIssueTimelineComment(t *testing.T) {
+	created := createDesignFileForTest(t, "Restore Task Issue Timeline Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	projectID := createProjectForDesignTest(t, "Restore Task Issue Timeline Project")
+	issueID := createIssueForDesignTest(t, "Restore Task Issue Timeline", projectID)
+	req := newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, map[string]any{
+		"file_id":  created.File.ID,
+		"issue_id": issueID,
+		"input": map[string]any{
+			"version":       "1.0",
+			"projectId":     projectID,
+			"sourceIssueId": issueID,
+			"purpose":       "frontend_restore",
+			"items": []map[string]any{{
+				"itemId":       "issue-timeline-frame",
+				"order":        1,
+				"designFileId": created.File.ID,
+				"revisionId":   created.CurrentRevision.ID,
+				"frameId":      "frame-main",
+				"source":       "frame",
+			}},
+		},
+	})
+	w := httptest.NewRecorder()
+	testHandler.CreateDesignRestoreTask(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateDesignRestoreTask: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var commentCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM comment
+		WHERE issue_id = $1 AND author_type = 'system' AND type = 'system' AND content LIKE '%设计稿还原任务已创建%'
+	`, issueID).Scan(&commentCount); err != nil {
+		t.Fatalf("count system comments: %v", err)
+	}
+	if commentCount != 1 {
+		t.Fatalf("system comment count = %d, want 1", commentCount)
+	}
+}
+
+func TestCreateDesignRestoreTaskReusesExistingIssueTask(t *testing.T) {
+	created := createDesignFileForTest(t, "Restore Task Reuse Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	projectID := createProjectForDesignTest(t, "Restore Task Reuse Project")
+	issueID := createIssueForDesignTest(t, "Restore Task Reuse Issue", projectID)
+	body := map[string]any{
+		"file_id":  created.File.ID,
+		"issue_id": issueID,
+		"input": map[string]any{
+			"version":       "1.0",
+			"projectId":     projectID,
+			"sourceIssueId": issueID,
+			"purpose":       "frontend_restore",
+			"items": []map[string]any{{
+				"itemId":       "reuse-frame",
+				"order":        1,
+				"designFileId": created.File.ID,
+				"revisionId":   created.CurrentRevision.ID,
+				"frameId":      "frame-main",
+				"source":       "frame",
+			}},
+		},
+	}
+	firstW := httptest.NewRecorder()
+	testHandler.CreateDesignRestoreTask(firstW, newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, body))
+	if firstW.Code != http.StatusCreated {
+		t.Fatalf("first CreateDesignRestoreTask: expected 201, got %d: %s", firstW.Code, firstW.Body.String())
+	}
+	var first DesignRestoreTaskResponse
+	if err := json.NewDecoder(firstW.Body).Decode(&first); err != nil {
+		t.Fatalf("decode first task: %v", err)
+	}
+
+	secondW := httptest.NewRecorder()
+	testHandler.CreateDesignRestoreTask(secondW, newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, body))
+	if secondW.Code != http.StatusOK {
+		t.Fatalf("second CreateDesignRestoreTask: expected 200 reuse, got %d: %s", secondW.Code, secondW.Body.String())
+	}
+	var second DesignRestoreTaskResponse
+	if err := json.NewDecoder(secondW.Body).Decode(&second); err != nil {
+		t.Fatalf("decode second task: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("reused task id = %s, want %s", second.ID, first.ID)
+	}
+	var taskCount int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM design_restore_task WHERE issue_id = $1`, issueID).Scan(&taskCount); err != nil {
+		t.Fatalf("count restore tasks: %v", err)
+	}
+	if taskCount != 1 {
+		t.Fatalf("restore task count = %d, want 1", taskCount)
+	}
+}
+
+func TestUIDesignDoneCreatesFrontendRestoreTask(t *testing.T) {
+	created := createDesignFileForTest(t, "UI Done Restore Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, contextDesignNativeJSON("UI Done Restore Design"))
+	projectID := createProjectForDesignTest(t, "UI Done Restore Project")
+	if _, err := testPool.Exec(context.Background(), `UPDATE design_file SET project_id = $1 WHERE id = $2`, projectID, created.File.ID); err != nil {
+		t.Fatalf("attach design file to project: %v", err)
+	}
+	agentID := createHandlerTestAgent(t, "UI Done Frontend Agent", []byte("[]"))
+	createParentW := httptest.NewRecorder()
+	testHandler.CreateIssue(createParentW, newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{"title": "个人资料页", "status": "todo", "project_id": projectID}))
+	if createParentW.Code != http.StatusCreated {
+		t.Fatalf("create parent issue: expected 201, got %d: %s", createParentW.Code, createParentW.Body.String())
+	}
+	var parent IssueResponse
+	if err := json.NewDecoder(createParentW.Body).Decode(&parent); err != nil {
+		t.Fatalf("decode parent issue: %v", err)
+	}
+	createUIW := httptest.NewRecorder()
+	testHandler.CreateIssue(createUIW, newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{"title": "UI设计", "status": "todo", "parent_issue_id": parent.ID}))
+	if createUIW.Code != http.StatusCreated {
+		t.Fatalf("create ui issue: expected 201, got %d: %s", createUIW.Code, createUIW.Body.String())
+	}
+	var uiIssue IssueResponse
+	if err := json.NewDecoder(createUIW.Body).Decode(&uiIssue); err != nil {
+		t.Fatalf("decode ui issue: %v", err)
+	}
+	createFEW := httptest.NewRecorder()
+	testHandler.CreateIssue(createFEW, newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{"title": "前端开发", "status": "backlog", "parent_issue_id": parent.ID, "assignee_type": "agent", "assignee_id": agentID}))
+	if createFEW.Code != http.StatusCreated {
+		t.Fatalf("create frontend issue: expected 201, got %d: %s", createFEW.Code, createFEW.Body.String())
+	}
+	var frontendIssue IssueResponse
+	if err := json.NewDecoder(createFEW.Body).Decode(&frontendIssue); err != nil {
+		t.Fatalf("decode frontend issue: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id IN ($1, $2, $3)`, parent.ID, uiIssue.ID, frontendIssue.ID)
+	})
+	updateW := httptest.NewRecorder()
+	updateReq := withURLParam(newRequest("PUT", "/api/issues/"+uiIssue.ID, map[string]any{"status": "done"}), "id", uiIssue.ID)
+	testHandler.UpdateIssue(updateW, updateReq)
+	if updateW.Code != http.StatusOK {
+		t.Fatalf("UpdateIssue UI done: expected 200, got %d: %s", updateW.Code, updateW.Body.String())
+	}
+	var taskCount int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM design_restore_task WHERE issue_id = $1`, frontendIssue.ID).Scan(&taskCount); err != nil {
+		t.Fatalf("count frontend restore tasks: %v", err)
+	}
+	if taskCount != 1 {
+		t.Fatalf("frontend restore task count = %d, want 1", taskCount)
+	}
+	var commentCount int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM comment WHERE issue_id = $1 AND author_type = 'system' AND content LIKE '%设计稿%已就绪%'`, frontendIssue.ID).Scan(&commentCount); err != nil {
+		t.Fatalf("count frontend system comments: %v", err)
+	}
+	if commentCount != 1 {
+		t.Fatalf("frontend system comment count = %d, want 1", commentCount)
+	}
+}
+
 func TestGetDesignRestoreTaskReturnsTaskInWorkspace(t *testing.T) {
 	created := createDesignFileForTest(t, "Get Restore Task Design")
 	if created.CurrentRevision == nil {
@@ -1506,9 +1685,15 @@ func TestDispatchDesignRestoreTaskCreatesAgentTask(t *testing.T) {
 	}
 	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, contextDesignNativeJSON("Dispatch Restore Task Design"))
 	agentID := createHandlerTestAgent(t, "Dispatch Restore Agent", []byte("[]"))
+	projectID := createProjectForDesignTest(t, "Dispatch Restore Project")
+	issueID := createIssueForDesignTest(t, "Dispatch Restore Issue", projectID)
+	if _, err := testPool.Exec(context.Background(), `UPDATE issue SET status = 'backlog' WHERE id = $1`, issueID); err != nil {
+		t.Fatalf("set issue backlog: %v", err)
+	}
 
 	createReq := newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, map[string]any{
-		"file_id": created.File.ID,
+		"file_id":  created.File.ID,
+		"issue_id": issueID,
 		"input": map[string]any{
 			"version": "1.0",
 			"items": []map[string]any{{
@@ -1535,8 +1720,10 @@ func TestDispatchDesignRestoreTaskCreatesAgentTask(t *testing.T) {
 	})
 
 	req := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/dispatch?workspace_id="+testWorkspaceID, map[string]any{
-		"agent_id": agentID,
-		"prompt":   "restore this frame",
+		"agent_id":  agentID,
+		"issue_id":  issueID,
+		"prompt":    "restore this frame",
+		"skip_plan": true,
 	}), "id", createdTask.ID)
 	w := httptest.NewRecorder()
 	testHandler.DispatchDesignRestoreTask(w, req)
@@ -1556,8 +1743,15 @@ func TestDispatchDesignRestoreTaskCreatesAgentTask(t *testing.T) {
 	if resp.Task.AgentTaskID == nil || *resp.Task.AgentTaskID != resp.AgentTaskID {
 		t.Fatalf("restore task agent_task_id = %v, want %s", resp.Task.AgentTaskID, resp.AgentTaskID)
 	}
-	if resp.Task.Status != "running" {
-		t.Fatalf("restore task status = %q, want running", resp.Task.Status)
+	if resp.Task.Status != "queued" {
+		t.Fatalf("restore task status = %q, want queued until daemon starts agent task", resp.Task.Status)
+	}
+	var issueStatus string
+	if err := testPool.QueryRow(context.Background(), `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&issueStatus); err != nil {
+		t.Fatalf("load issue status: %v", err)
+	}
+	if issueStatus != "in_progress" {
+		t.Fatalf("issue status = %q, want in_progress", issueStatus)
 	}
 	var queuedContextRaw []byte
 	if err := testPool.QueryRow(context.Background(), `SELECT context FROM agent_task_queue WHERE id = $1`, resp.AgentTaskID).Scan(&queuedContextRaw); err != nil {
@@ -1583,6 +1777,311 @@ func TestDispatchDesignRestoreTaskCreatesAgentTask(t *testing.T) {
 	frame := contextPayload["frame"].(map[string]any)
 	if frame["id"] != "frame-main" {
 		t.Fatalf("embedded frame context id = %v, want frame-main", frame["id"])
+	}
+}
+
+func TestDesignRestorePlanGenerateApproveDispatch(t *testing.T) {
+	created := createDesignFileForTest(t, "Restore Plan Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, contextDesignNativeJSON("Restore Plan Design"))
+	agentID := createHandlerTestAgent(t, "Restore Plan Agent", []byte("[]"))
+
+	createReq := newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, map[string]any{
+		"file_id": created.File.ID,
+		"input": map[string]any{
+			"version": "1.0",
+			"items": []map[string]any{{
+				"itemId":       "plan-frame-1",
+				"order":        1,
+				"designFileId": created.File.ID,
+				"revisionId":   created.CurrentRevision.ID,
+				"frameId":      "frame-main",
+				"frameName":    "Main",
+				"source":       "frame",
+			}},
+		},
+	})
+	createW := httptest.NewRecorder()
+	testHandler.CreateDesignRestoreTask(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateDesignRestoreTask: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+	var createdTask DesignRestoreTaskResponse
+	if err := json.NewDecoder(createW.Body).Decode(&createdTask); err != nil {
+		t.Fatalf("decode CreateDesignRestoreTask: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, createdTask.ID)
+	})
+
+	blockedReq := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/dispatch?workspace_id="+testWorkspaceID, map[string]any{"agent_id": agentID}), "id", createdTask.ID)
+	blockedW := httptest.NewRecorder()
+	testHandler.DispatchDesignRestoreTask(blockedW, blockedReq)
+	if blockedW.Code != http.StatusConflict {
+		t.Fatalf("Dispatch without plan: expected 409, got %d: %s", blockedW.Code, blockedW.Body.String())
+	}
+
+	generateReq := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/plan/generate?workspace_id="+testWorkspaceID, nil), "id", createdTask.ID)
+	generateW := httptest.NewRecorder()
+	testHandler.GenerateDesignRestorePlan(generateW, generateReq)
+	if generateW.Code != http.StatusCreated {
+		t.Fatalf("GenerateDesignRestorePlan: expected 201, got %d: %s", generateW.Code, generateW.Body.String())
+	}
+	var generatedPlan DesignRestorePlanResponse
+	if err := json.NewDecoder(generateW.Body).Decode(&generatedPlan); err != nil {
+		t.Fatalf("decode GenerateDesignRestorePlan: %v", err)
+	}
+	if generatedPlan.Status != "draft" || !strings.Contains(string(generatedPlan.Plan), "fengchenDoc/gallery-native-agent-test") {
+		t.Fatalf("generated plan = %#v, want draft plan targeting fengchenDoc", generatedPlan)
+	}
+
+	approveReq := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/plan/approve?workspace_id="+testWorkspaceID, nil), "id", createdTask.ID)
+	approveW := httptest.NewRecorder()
+	testHandler.ApproveDesignRestorePlan(approveW, approveReq)
+	if approveW.Code != http.StatusOK {
+		t.Fatalf("ApproveDesignRestorePlan: expected 200, got %d: %s", approveW.Code, approveW.Body.String())
+	}
+
+	dispatchReq := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/dispatch?workspace_id="+testWorkspaceID, map[string]any{
+		"agent_id": agentID,
+		"prompt":   "restore using approved plan",
+	}), "id", createdTask.ID)
+	dispatchW := httptest.NewRecorder()
+	testHandler.DispatchDesignRestoreTask(dispatchW, dispatchReq)
+	if dispatchW.Code != http.StatusCreated {
+		t.Fatalf("DispatchDesignRestoreTask: expected 201, got %d: %s", dispatchW.Code, dispatchW.Body.String())
+	}
+	var dispatchResp DispatchDesignRestoreTaskResponse
+	if err := json.NewDecoder(dispatchW.Body).Decode(&dispatchResp); err != nil {
+		t.Fatalf("decode DispatchDesignRestoreTask: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, dispatchResp.AgentTaskID)
+	})
+
+	var queuedContextRaw []byte
+	if err := testPool.QueryRow(context.Background(), `SELECT context FROM agent_task_queue WHERE id = $1`, dispatchResp.AgentTaskID).Scan(&queuedContextRaw); err != nil {
+		t.Fatalf("load queued task context: %v", err)
+	}
+	var queuedContext map[string]any
+	if err := json.Unmarshal(queuedContextRaw, &queuedContext); err != nil {
+		t.Fatalf("decode queued context: %v", err)
+	}
+	if _, ok := queuedContext["restore_plan"].(map[string]any); !ok {
+		t.Fatalf("queued context restore_plan = %#v, want object", queuedContext["restore_plan"])
+	}
+}
+
+func TestGenerateDesignRestorePlanCreatesRepoAnalysisFromLocalDirectoryProject(t *testing.T) {
+	created := createDesignFileForTest(t, "Restore Plan Local Repo Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, contextDesignNativeJSON("Restore Plan Local Repo Design"))
+	agentID := createHandlerTestAgent(t, "Restore Plan Local Repo Agent", []byte("[]"))
+	projectID := createProjectForDesignTest(t, "Restore Plan Local Repo Project")
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	repoRoot = strings.TrimSuffix(repoRoot, "/server/internal/handler")
+	resourceRef, err := json.Marshal(localDirectoryRef{LocalPath: repoRoot, DaemonID: "restore-plan-test-daemon", Label: "Repository root"})
+	if err != nil {
+		t.Fatalf("marshal local directory ref: %v", err)
+	}
+	var resourceID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, label, position, created_by)
+		VALUES ($1, $2, 'local_directory', $3::jsonb, 'Repository root', 0, $4)
+		RETURNING id
+	`, projectID, testWorkspaceID, resourceRef, testUserID).Scan(&resourceID); err != nil {
+		t.Fatalf("insert project_resource: %v", err)
+	}
+	createReq := newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, map[string]any{
+		"file_id": created.File.ID,
+		"input": map[string]any{
+			"version":   "1.0",
+			"projectId": projectID,
+			"items": []map[string]any{{
+				"itemId":       "plan-local-repo-frame-1",
+				"order":        1,
+				"designFileId": created.File.ID,
+				"revisionId":   created.CurrentRevision.ID,
+				"frameId":      "frame-main",
+				"frameName":    "Main",
+				"source":       "frame",
+			}},
+		},
+	})
+	createW := httptest.NewRecorder()
+	testHandler.CreateDesignRestoreTask(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateDesignRestoreTask: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+	var createdTask DesignRestoreTaskResponse
+	if err := json.NewDecoder(createW.Body).Decode(&createdTask); err != nil {
+		t.Fatalf("decode CreateDesignRestoreTask: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, createdTask.ID)
+	})
+
+	generateReq := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/plan/generate?workspace_id="+testWorkspaceID, nil), "id", createdTask.ID)
+	generateW := httptest.NewRecorder()
+	testHandler.GenerateDesignRestorePlan(generateW, generateReq)
+	if generateW.Code != http.StatusCreated {
+		t.Fatalf("GenerateDesignRestorePlan: expected 201, got %d: %s", generateW.Code, generateW.Body.String())
+	}
+	var generatedPlan DesignRestorePlanResponse
+	if err := json.NewDecoder(generateW.Body).Decode(&generatedPlan); err != nil {
+		t.Fatalf("decode GenerateDesignRestorePlan: %v", err)
+	}
+	var analysisCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM design_repo_analysis
+		WHERE workspace_id = $1 AND project_id = $2 AND project_resource_id = $3 AND status = 'completed'
+	`, testWorkspaceID, projectID, resourceID).Scan(&analysisCount); err != nil {
+		t.Fatalf("count design repo analysis: %v", err)
+	}
+	if analysisCount != 1 {
+		t.Fatalf("completed design_repo_analysis count = %d, want 1", analysisCount)
+	}
+	var plan map[string]any
+	if err := json.Unmarshal(generatedPlan.Plan, &plan); err != nil {
+		t.Fatalf("decode generated plan: %v", err)
+	}
+	repo := plan["repo"].(map[string]any)
+	if repo["mode"] != "production_candidate" || repo["framework"] != "" || repo["language"] != "JavaScript" || repo["packageManager"] != "pnpm" {
+		t.Fatalf("plan repo = %#v, want production_candidate JavaScript pnpm", repo)
+	}
+	execution := plan["execution"].(map[string]any)
+	if execution["allowPrototypeHtml"] != false {
+		t.Fatalf("execution.allowPrototypeHtml = %#v, want false", execution["allowPrototypeHtml"])
+	}
+
+	blockedApproveReq := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/plan/approve?workspace_id="+testWorkspaceID, nil), "id", createdTask.ID)
+	blockedApproveW := httptest.NewRecorder()
+	testHandler.ApproveDesignRestorePlan(blockedApproveW, blockedApproveReq)
+	if blockedApproveW.Code != http.StatusConflict {
+		t.Fatalf("ApproveDesignRestorePlan without selected target: expected 409, got %d: %s", blockedApproveW.Code, blockedApproveW.Body.String())
+	}
+	targets := plan["targets"].(map[string]any)
+	candidates := targets["candidates"].([]any)
+	if len(candidates) == 0 {
+		t.Fatal("expected target candidates")
+	}
+	foundFileCandidate := false
+	for _, candidate := range candidates {
+		candidateMap := candidate.(map[string]any)
+		kind, _ := candidateMap["kind"].(string)
+		path, _ := candidateMap["path"].(string)
+		if strings.HasSuffix(kind, "_file") && strings.Contains(path, ".") {
+			foundFileCandidate = true
+			break
+		}
+	}
+	if !foundFileCandidate {
+		t.Fatalf("expected file-level target candidate, got %#v", candidates)
+	}
+	targets["selected"] = candidates[0]
+	targets["needsUserSelection"] = false
+	updateReq := withURLParam(newRequest("PUT", "/api/design-restore-tasks/"+createdTask.ID+"/plan?workspace_id="+testWorkspaceID, map[string]any{
+		"plan":         plan,
+		"review_notes": "selected target",
+	}), "id", createdTask.ID)
+	updateW := httptest.NewRecorder()
+	testHandler.UpdateDesignRestorePlan(updateW, updateReq)
+	if updateW.Code != http.StatusOK {
+		t.Fatalf("UpdateDesignRestorePlan selected target: expected 200, got %d: %s", updateW.Code, updateW.Body.String())
+	}
+	approveReq := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/plan/approve?workspace_id="+testWorkspaceID, nil), "id", createdTask.ID)
+	approveW := httptest.NewRecorder()
+	testHandler.ApproveDesignRestorePlan(approveW, approveReq)
+	if approveW.Code != http.StatusOK {
+		t.Fatalf("ApproveDesignRestorePlan with selected target: expected 200, got %d: %s", approveW.Code, approveW.Body.String())
+	}
+	targets["selected"] = nil
+	targets["needsUserSelection"] = true
+	brokenPlan, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatalf("marshal broken plan: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE design_restore_plan
+		SET plan = $1::jsonb
+		WHERE restore_task_id = $2 AND workspace_id = $3
+	`, brokenPlan, createdTask.ID, testWorkspaceID); err != nil {
+		t.Fatalf("break approved plan: %v", err)
+	}
+	dispatchReq := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/dispatch?workspace_id="+testWorkspaceID, map[string]any{
+		"agent_id": agentID,
+		"prompt":   "restore using approved production plan",
+	}), "id", createdTask.ID)
+	dispatchW := httptest.NewRecorder()
+	testHandler.DispatchDesignRestoreTask(dispatchW, dispatchReq)
+	if dispatchW.Code != http.StatusConflict {
+		t.Fatalf("DispatchDesignRestoreTask with invalid approved production plan: expected 409, got %d: %s", dispatchW.Code, dispatchW.Body.String())
+	}
+}
+
+func TestDesignRestoreMappingsPersistFromAgentSummary(t *testing.T) {
+	created := createDesignFileForTest(t, "Restore Mapping Persist Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	createReq := newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, map[string]any{
+		"file_id": created.File.ID,
+		"input": map[string]any{
+			"version": "1.0",
+			"items": []map[string]any{{
+				"itemId":       "mapping-frame-1",
+				"order":        1,
+				"designFileId": created.File.ID,
+				"revisionId":   created.CurrentRevision.ID,
+				"frameId":      "frame-main",
+				"source":       "frame",
+			}},
+		},
+	})
+	createW := httptest.NewRecorder()
+	testHandler.CreateDesignRestoreTask(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateDesignRestoreTask: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+	var createdTask DesignRestoreTaskResponse
+	if err := json.NewDecoder(createW.Body).Decode(&createdTask); err != nil {
+		t.Fatalf("decode CreateDesignRestoreTask: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, createdTask.ID)
+	})
+	task, err := testHandler.Queries.GetDesignRestoreTaskInWorkspace(context.Background(), db.GetDesignRestoreTaskInWorkspaceParams{ID: util.MustParseUUID(createdTask.ID), WorkspaceID: util.MustParseUUID(testWorkspaceID)})
+	if err != nil {
+		t.Fatalf("load restore task: %v", err)
+	}
+	err = testHandler.replaceDesignRestoreMappingsFromSummary(context.Background(), task, designRestoreResultSummary{RestoreMapping: []map[string]any{{
+		"source":     "main-title",
+		"target":     "packages/views/designs/example.tsx",
+		"targetKind": "file",
+		"confidence": 0.91,
+	}}})
+	if err != nil {
+		t.Fatalf("replaceDesignRestoreMappingsFromSummary: %v", err)
+	}
+	listReq := withURLParam(newRequest("GET", "/api/design-restore-tasks/"+createdTask.ID+"/mappings?workspace_id="+testWorkspaceID, nil), "id", createdTask.ID)
+	listW := httptest.NewRecorder()
+	testHandler.ListDesignRestoreMappings(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("ListDesignRestoreMappings: expected 200, got %d: %s", listW.Code, listW.Body.String())
+	}
+	var resp DesignRestoreMappingListResponse
+	if err := json.NewDecoder(listW.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode mappings: %v", err)
+	}
+	if len(resp.Mappings) != 1 || resp.Mappings[0].LayerID != "main-title" || resp.Mappings[0].TargetPath != "packages/views/designs/example.tsx" {
+		t.Fatalf("unexpected mappings: %+v", resp.Mappings)
 	}
 }
 

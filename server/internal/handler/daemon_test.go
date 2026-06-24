@@ -113,6 +113,47 @@ func TestDesignRestorePolicyViolationRequiresQualityFields(t *testing.T) {
 	}
 }
 
+func TestAdvanceIssueAfterDesignRestoreCompletion(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
+		VALUES ($1, 'design restore completion fixture', 'in_progress', 'none', $2, 'member', 91801, 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	restoreTask := db.DesignRestoreTask{IssueID: parseUUID(issueID), WorkspaceID: parseUUID(testWorkspaceID)}
+	if err := testHandler.advanceIssueAfterDesignRestoreCompletion(ctx, restoreTask, "completed"); err != nil {
+		t.Fatalf("advance completed issue: %v", err)
+	}
+	var status string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&status); err != nil {
+		t.Fatalf("read completed issue status: %v", err)
+	}
+	if status != "in_review" {
+		t.Fatalf("completed restore issue status = %q, want in_review", status)
+	}
+
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET status = 'in_progress' WHERE id = $1`, issueID); err != nil {
+		t.Fatalf("reset issue status: %v", err)
+	}
+	if err := testHandler.advanceIssueAfterDesignRestoreCompletion(ctx, restoreTask, "failed"); err != nil {
+		t.Fatalf("advance failed issue: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&status); err != nil {
+		t.Fatalf("read failed issue status: %v", err)
+	}
+	if status != "blocked" {
+		t.Fatalf("failed restore issue status = %q, want blocked", status)
+	}
+}
+
 func (s slowProbeLocalSkillListStore) HasPending(ctx context.Context, _ string) (bool, error) {
 	<-ctx.Done()
 	return false, ctx.Err()
@@ -1794,6 +1835,62 @@ func TestStartTask_AutopilotRunOnlyTask_ResolvesWorkspace(t *testing.T) {
 	}
 	if status != "running" {
 		t.Fatalf("expected task status 'running' after StartTask, got %q", status)
+	}
+}
+
+func TestStartTaskMarksDesignRestoreTaskRunning(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx, `SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("setup: get agent: %v", err)
+	}
+
+	var taskID string
+	contextJSON := fmt.Sprintf(`{"type":"%s","workspace_id":"%s","agent_id":"%s","restore_task_id":"00000000-0000-0000-0000-000000000000"}`, service.DesignRestoreTaskContextType, testWorkspaceID, agentID)
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, context)
+		VALUES ($1, $2, 'dispatched', 0, $3::jsonb)
+		RETURNING id
+	`, agentID, runtimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("setup: create agent task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	created := createDesignFileForTest(t, "Start Restore Task Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	var restoreTaskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO design_restore_task (workspace_id, file_id, revision_id, agent_task_id, status, input, result, created_by)
+		VALUES ($1, $2, $3, $4, 'queued', '{}'::jsonb, '{}'::jsonb, $5)
+		RETURNING id
+	`, testWorkspaceID, created.File.ID, created.CurrentRevision.ID, taskID, testUserID).Scan(&restoreTaskID); err != nil {
+		t.Fatalf("setup: create restore task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, restoreTaskID)
+	})
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/start", nil, testWorkspaceID, "legit-daemon")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("taskId", taskID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	testHandler.StartTask(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("StartTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var restoreStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM design_restore_task WHERE id = $1`, restoreTaskID).Scan(&restoreStatus); err != nil {
+		t.Fatalf("read restore task status: %v", err)
+	}
+	if restoreStatus != "running" {
+		t.Fatalf("restore task status = %q, want running after StartTask", restoreStatus)
 	}
 }
 
