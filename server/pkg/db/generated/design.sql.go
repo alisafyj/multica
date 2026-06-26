@@ -1399,7 +1399,7 @@ const getReusableDesignRestoreTaskByIssue = `-- name: GetReusableDesignRestoreTa
 SELECT id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at FROM design_restore_task
 WHERE workspace_id = $1
   AND issue_id = $2
-  AND status <> 'cancelled'
+  AND status NOT IN ('cancelled', 'failed')
 ORDER BY
   CASE
     WHEN agent_task_id IS NOT NULL THEN 0

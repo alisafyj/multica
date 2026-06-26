@@ -53,6 +53,10 @@ function resultSummary(task: DesignRestoreTask | null): Record<string, unknown> 
   return summary && typeof summary === "object" && !Array.isArray(summary) ? summary as Record<string, unknown> : null;
 }
 
+function isUiDesignIssue(title: string) {
+  return /ui/i.test(title) || title.includes("设计");
+}
+
 type DesignRestoreFlowStatus = "design_ready" | "restore_task_created" | "plan_generated" | "target_selected" | "plan_approved" | "running" | "completed" | "failed" | "blocked";
 
 function flowStatus(task: DesignRestoreTask | null, plan: DesignRestorePlan | undefined, agentTaskStatus?: string): DesignRestoreFlowStatus {
@@ -70,15 +74,15 @@ function flowStatus(task: DesignRestoreTask | null, plan: DesignRestorePlan | un
 
 function statusCopy(status: DesignRestoreFlowStatus) {
   switch (status) {
-    case "design_ready": return { label: "准备就绪", hint: "交给 Agent 后会自动准备 Restore Plan 和目标路径。" };
-    case "restore_task_created": return { label: "可继续", hint: "还原任务已创建，继续后会自动生成 Restore Plan。" };
-    case "plan_generated": return { label: "可继续", hint: "已生成 Restore Plan，继续后会自动选择默认目标。" };
-    case "target_selected": return { label: "可继续", hint: "目标路径已确认，继续后会自动批准 Restore Plan。" };
-    case "plan_approved": return { label: "等待 Agent", hint: "任务已派发，正在等待本地 Agent 领取。" };
-    case "running": return { label: "Agent 执行中", hint: "结果会自动刷新，不需要重复操作。" };
-    case "completed": return { label: "已完成", hint: "可以查看还原结果，也可打开完整 Restore Plan。" };
+    case "design_ready": return { label: "待交付", hint: "设计稿已上传后，可交给 Agent 还原。" };
+    case "restore_task_created": return { label: "待交付", hint: "设计稿已上传后，可交给 Agent 还原。" };
+    case "plan_generated": return { label: "待交付", hint: "设计稿已上传后，可交给 Agent 还原。" };
+    case "target_selected": return { label: "待交付", hint: "设计稿已上传后，可交给 Agent 还原。" };
+    case "plan_approved": return { label: "已派发", hint: "已派发，等待 Agent 领取。" };
+    case "running": return { label: "还原中", hint: "Agent 正在还原设计稿。" };
+    case "completed": return { label: "已完成", hint: "设计交付完成，正在/已经解锁前端开发。" };
     case "blocked": return { label: "已阻塞", hint: "请打开完整 Restore Plan 查看阻塞原因。" };
-    case "failed": return { label: "执行失败", hint: "请打开完整 Restore Plan 查看失败原因。" };
+    case "failed": return { label: "还原失败", hint: "Agent 还原失败，可重试。" };
   }
 }
 
@@ -87,6 +91,7 @@ function isLockedStatus(status: DesignRestoreFlowStatus) {
 }
 
 export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreSectionProps) {
+  const showDesignDelivery = isUiDesignIssue(issue.title);
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
@@ -147,9 +152,9 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const summary = resultSummary(activeRestoreTask);
   const currentStatus = flowStatus(activeRestoreTask, restorePlan, agentTask?.status);
   const currentStatusCopy = statusCopy(currentStatus);
-  const controlsLocked = isLockedStatus(currentStatus) || currentStatus === "failed";
+  const controlsLocked = isLockedStatus(currentStatus);
   const primaryAgent = selectedAgent;
-  const primaryActionLabel = currentStatus === "plan_approved" && !activeRestoreTask?.agent_task_id ? "交给 Agent" : activeRestoreTask ? "继续还原" : issue.assignee_type === "agent" ? "交给 Agent" : "开始还原";
+  const primaryActionLabel = currentStatus === "failed" ? "重新交给 Agent" : "交给 Agent 还原";
 
   useEffect(() => {
     if (!restoreTask && existingIssueRestoreTask) {
@@ -198,8 +203,9 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
     }
     setIsOrchestrating(true);
     try {
-      let task = activeRestoreTask;
-      let plan = restorePlan;
+      const retryingFailedTask = activeRestoreTask?.status === "failed" || activeRestoreTask?.status === "cancelled";
+      let task = retryingFailedTask ? null : activeRestoreTask;
+      let plan = retryingFailedTask ? undefined : restorePlan;
       if (!task) {
         if (!selectedFileDetail?.current_revision?.id || !selectedFrame) throw new Error("请选择有效设计稿和画板");
         task = await createRestoreTask.mutateAsync();
@@ -227,7 +233,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
         plan = await api.approveDesignRestorePlan(task.id);
         await queryClient.invalidateQueries({ queryKey: designKeys.restorePlan(wsId, task.id) });
       }
-      if (task.agent_task_id) {
+      if (!retryingFailedTask && task.agent_task_id) {
         toast.info("任务已派发，等待 Agent 领取");
         return;
       }
@@ -250,13 +256,15 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   };
   const primaryActionPending = createRestoreTask.isPending || isOrchestrating;
 
+  if (!showDesignDelivery) return null;
+
   return (
     <section className="rounded-lg border bg-card p-3 text-xs">
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-sm font-medium"><FileJson className="size-4 text-muted-foreground" />设计稿还原</div>
+        <div className="flex items-center gap-2 text-sm font-medium"><FileJson className="size-4 text-muted-foreground" />设计交付</div>
         <Badge variant={currentStatus === "completed" ? "secondary" : currentStatus === "failed" || currentStatus === "blocked" ? "destructive" : "outline"}>{currentStatusCopy.label}</Badge>
       </div>
-      <p className="mt-1 text-muted-foreground">Issue 内触发前端 Agent 整页设计稿还原。</p>
+      <p className="mt-1 text-muted-foreground">1 上传设计稿 · 2 Agent 还原设计稿</p>
       <div className="mt-3 space-y-2">
         <div className="rounded-md border bg-background p-3">
           <div className="flex items-start justify-between gap-3">
@@ -269,7 +277,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
         </div>
         {!controlsLocked ? (
           <details className="rounded-md border bg-background/60">
-            <summary className="cursor-pointer list-none px-2 py-1.5 text-muted-foreground hover:text-foreground">调整设计稿 / Agent</summary>
+            <summary className="cursor-pointer list-none px-2 py-1.5 text-muted-foreground hover:text-foreground">调整上传设计稿 / Agent</summary>
             <div className="space-y-2 border-t p-2">
               <select value={selectedFileId} onChange={(event) => { setFileId(event.target.value); setFrameId(""); }} className="h-8 w-full rounded-md border bg-background px-2">
                 {projectDesignFiles.length ? projectDesignFiles.map((file) => <option key={file.id} value={file.id}>{file.title}</option>) : <option value="">当前项目暂无设计稿</option>}
@@ -284,12 +292,12 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
           </details>
         ) : null}
         {!availableAgents.length ? <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">当前没有绑定 runtime 的可用 Agent。请先创建/恢复 Agent，否则无法派发。</div> : null}
-        {!controlsLocked && !activeRestoreTask?.agent_task_id ? <Button size="sm" className="w-full" disabled={!selectedFileId || !selectedFrameId || primaryActionPending || !primaryAgent} onClick={() => void runRestoreFlow()}><WandSparkles className="size-3.5" />{primaryActionPending ? "正在准备…" : primaryActionLabel}</Button> : null}
+        {!controlsLocked && (!activeRestoreTask?.agent_task_id || currentStatus === "failed") ? <Button size="sm" className="w-full" disabled={!selectedFileId || !selectedFrameId || primaryActionPending || !primaryAgent} onClick={() => void runRestoreFlow()}><WandSparkles className="size-3.5" />{primaryActionPending ? "正在准备…" : primaryActionLabel}</Button> : null}
         {activeRestoreTask ? (
           <>
             {restorePlan ? (
               <details className="rounded-md border bg-background/60">
-                <summary className="cursor-pointer list-none px-2 py-1.5 text-muted-foreground hover:text-foreground">查看 Restore Plan</summary>
+                <summary className="cursor-pointer list-none px-2 py-1.5 text-muted-foreground hover:text-foreground">高级：Restore Plan</summary>
                 <div className="space-y-2 border-t p-2">
                   <div className="text-muted-foreground">状态：{restorePlan.status}{planNeedsTarget(restorePlan) ? " · 等待默认目标" : ""}</div>
                   {planSelectedTarget ? <div className="text-muted-foreground">目标：<span className="font-mono text-foreground">{label(planSelectedTarget.path)}</span></div> : null}
@@ -310,8 +318,8 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
                 </div>
               </details>
             ) : null}
-            {currentStatus === "plan_approved" && activeRestoreTask.agent_task_id ? <div className="rounded-md bg-muted p-2 text-muted-foreground">已派发，等待本地 Agent 领取。若长时间无变化，请检查 daemon/runtime 是否在线。</div> : null}
-            {currentStatus === "running" ? <div className="rounded-md bg-muted p-2 text-muted-foreground">Agent 正在执行，结果会自动刷新。</div> : null}
+            {currentStatus === "plan_approved" && activeRestoreTask.agent_task_id ? <div className="rounded-md bg-muted p-2 text-muted-foreground">已派发，等待 Agent 领取。</div> : null}
+            {currentStatus === "running" ? <div className="rounded-md bg-muted p-2 text-muted-foreground">Agent 正在还原设计稿。</div> : null}
             {summary ? (
               <div className="rounded-md border p-2 text-muted-foreground">
                 <div>执行结果：<Badge variant={summary.status === "completed" ? "secondary" : "outline"}>{label(summary.status)}</Badge></div>

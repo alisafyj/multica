@@ -1517,7 +1517,114 @@ func TestCreateDesignRestoreTaskReusesExistingIssueTask(t *testing.T) {
 	}
 }
 
-func TestUIDesignDoneCreatesFrontendRestoreTask(t *testing.T) {
+func TestCreateDesignRestoreTaskDoesNotReuseFailedIssueTask(t *testing.T) {
+	created := createDesignFileForTest(t, "Restore Task Failed Retry Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	projectID := createProjectForDesignTest(t, "Restore Task Failed Retry Project")
+	issueID := createIssueForDesignTest(t, "Restore Task Failed Retry Issue", projectID)
+	var failedTaskID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_restore_task (workspace_id, file_id, revision_id, issue_id, status, input, result, created_by)
+		VALUES ($1, $2, $3, $4, 'failed', '{}'::jsonb, '{}'::jsonb, $5)
+		RETURNING id
+	`, testWorkspaceID, created.File.ID, created.CurrentRevision.ID, issueID, testUserID).Scan(&failedTaskID); err != nil {
+		t.Fatalf("insert failed restore task: %v", err)
+	}
+	body := map[string]any{
+		"file_id":  created.File.ID,
+		"issue_id": issueID,
+		"input": map[string]any{
+			"version":       "1.0",
+			"projectId":     projectID,
+			"sourceIssueId": issueID,
+			"purpose":       "frontend_restore",
+			"items": []map[string]any{{
+				"itemId":       "retry-frame",
+				"order":        1,
+				"designFileId": created.File.ID,
+				"revisionId":   created.CurrentRevision.ID,
+				"frameId":      "frame-main",
+				"source":       "frame",
+			}},
+		},
+	}
+	w := httptest.NewRecorder()
+	testHandler.CreateDesignRestoreTask(w, newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, body))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateDesignRestoreTask retry: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var createdTask DesignRestoreTaskResponse
+	if err := json.NewDecoder(w.Body).Decode(&createdTask); err != nil {
+		t.Fatalf("decode created task: %v", err)
+	}
+	if createdTask.ID == failedTaskID {
+		t.Fatalf("retry reused failed task %s", failedTaskID)
+	}
+}
+
+func TestCompactDesignRestoreAgentContextShrinksLargePayload(t *testing.T) {
+	layers := map[string]any{}
+	for i := 0; i < 500; i++ {
+		id := fmt.Sprintf("layer-%03d", i)
+		layers[id] = map[string]any{
+			"id":       id,
+			"name":     fmt.Sprintf("Layer %03d", i),
+			"type":     "text",
+			"x":        float64(i % 20),
+			"y":        float64(i * 4),
+			"width":    float64(120),
+			"height":   float64(24),
+			"frameId":  "frame-main",
+			"parentId": "root",
+			"text": map[string]any{
+				"characters":    strings.Repeat("内容", 20),
+				"fontFamily":    "PingFang SC",
+				"fontSize":      float64(14),
+				"fontWeight":    float64(400),
+				"lineHeight":    "AUTO",
+				"letterSpacing": float64(0),
+				"color":         map[string]any{"hex": "#111111", "css": "rgba(17, 17, 17, 1)", "r": float64(17), "g": float64(17), "b": float64(17), "a": float64(1)},
+			},
+			"style": map[string]any{
+				"fills": []any{map[string]any{"type": "solid", "color": map[string]any{"hex": "#FFFFFF", "css": "rgba(255,255,255,1)", "r": float64(255), "g": float64(255), "b": float64(255), "a": float64(1)}}},
+			},
+			"exportable": []any{map[string]any{"id": "slice-" + id, "assetId": "asset-" + id, "url": strings.Repeat("https://example.com/asset/", 5)}},
+		}
+	}
+	context := map[string]any{
+		"designFileId": "file-1",
+		"revisionId":   "revision-1",
+		"frame":        map[string]any{"id": "frame-main", "name": "Main", "width": float64(375), "height": float64(812), "children": []any{"layer-001"}},
+		"rootLayerId":  "root",
+		"layers":       layers,
+		"colors":       make([]any, 500),
+		"text":         make([]any, 500),
+		"exportables":  make([]any, 500),
+		"assets":       map[string]any{"asset-1": map[string]any{"id": "asset-1", "bytes": strings.Repeat("x", 100000), "url": "https://example.com/asset.png"}},
+	}
+	raw, err := json.Marshal(context)
+	if err != nil {
+		t.Fatalf("marshal raw context: %v", err)
+	}
+	compact := compactDesignRestoreAgentContext(context)
+	encoded, err := json.Marshal(compact)
+	if err != nil {
+		t.Fatalf("marshal compact context: %v", err)
+	}
+	if len(encoded) >= len(raw)/2 {
+		t.Fatalf("compact context size = %d, want less than half raw %d", len(encoded), len(raw))
+	}
+	if len(encoded) > 220000 {
+		t.Fatalf("compact context size = %d, want <= 220000", len(encoded))
+	}
+	if _, ok := compact["compaction"]; !ok {
+		t.Fatal("expected compaction metadata")
+	}
+}
+
+func TestUIDesignDonePromotesFrontendIssue(t *testing.T) {
 	created := createDesignFileForTest(t, "UI Done Restore Design")
 	if created.CurrentRevision == nil {
 		t.Fatal("expected current revision")
@@ -1555,7 +1662,16 @@ func TestUIDesignDoneCreatesFrontendRestoreTask(t *testing.T) {
 	if err := json.NewDecoder(createFEW.Body).Decode(&frontendIssue); err != nil {
 		t.Fatalf("decode frontend issue: %v", err)
 	}
+	var restoreTaskID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_restore_task (workspace_id, file_id, revision_id, issue_id, status, input, result, created_by)
+		VALUES ($1, $2, $3, $4, 'completed', '{}'::jsonb, '{}'::jsonb, $5)
+		RETURNING id
+	`, testWorkspaceID, created.File.ID, created.CurrentRevision.ID, uiIssue.ID, testUserID).Scan(&restoreTaskID); err != nil {
+		t.Fatalf("insert completed ui restore task: %v", err)
+	}
 	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, restoreTaskID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id IN ($1, $2, $3)`, parent.ID, uiIssue.ID, frontendIssue.ID)
 	})
 	updateW := httptest.NewRecorder()
@@ -1564,15 +1680,22 @@ func TestUIDesignDoneCreatesFrontendRestoreTask(t *testing.T) {
 	if updateW.Code != http.StatusOK {
 		t.Fatalf("UpdateIssue UI done: expected 200, got %d: %s", updateW.Code, updateW.Body.String())
 	}
+	var frontendStatus string
+	if err := testPool.QueryRow(context.Background(), `SELECT status FROM issue WHERE id = $1`, frontendIssue.ID).Scan(&frontendStatus); err != nil {
+		t.Fatalf("load frontend issue status: %v", err)
+	}
+	if frontendStatus != "todo" {
+		t.Fatalf("frontend issue status = %q, want todo", frontendStatus)
+	}
 	var taskCount int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM design_restore_task WHERE issue_id = $1`, frontendIssue.ID).Scan(&taskCount); err != nil {
 		t.Fatalf("count frontend restore tasks: %v", err)
 	}
-	if taskCount != 1 {
-		t.Fatalf("frontend restore task count = %d, want 1", taskCount)
+	if taskCount != 0 {
+		t.Fatalf("frontend restore task count = %d, want 0", taskCount)
 	}
 	var commentCount int
-	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM comment WHERE issue_id = $1 AND author_type = 'system' AND content LIKE '%设计稿%已就绪%'`, frontendIssue.ID).Scan(&commentCount); err != nil {
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM comment WHERE issue_id = $1 AND author_type = 'system' AND content LIKE '%前端开发已进入待办%'`, frontendIssue.ID).Scan(&commentCount); err != nil {
 		t.Fatalf("count frontend system comments: %v", err)
 	}
 	if commentCount != 1 {
@@ -1960,14 +2083,19 @@ func TestGenerateDesignRestorePlanCreatesRepoAnalysisFromLocalDirectoryProject(t
 	if execution["allowPrototypeHtml"] != false {
 		t.Fatalf("execution.allowPrototypeHtml = %#v, want false", execution["allowPrototypeHtml"])
 	}
-
-	blockedApproveReq := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/plan/approve?workspace_id="+testWorkspaceID, nil), "id", createdTask.ID)
-	blockedApproveW := httptest.NewRecorder()
-	testHandler.ApproveDesignRestorePlan(blockedApproveW, blockedApproveReq)
-	if blockedApproveW.Code != http.StatusConflict {
-		t.Fatalf("ApproveDesignRestorePlan without selected target: expected 409, got %d: %s", blockedApproveW.Code, blockedApproveW.Body.String())
+	allowedPaths := execution["allowedPaths"].([]any)
+	if len(allowedPaths) < 3 {
+		t.Fatalf("execution.allowedPaths = %#v, want page/component/router paths", allowedPaths)
 	}
+
 	targets := plan["targets"].(map[string]any)
+	selected := targets["selected"].(map[string]any)
+	if selected["kind"] != "page_with_route_and_components" || !strings.Contains(selected["path"].(string), "design-restore") || selected["routePath"] == "" || selected["componentRoot"] == "" {
+		t.Fatalf("selected target = %#v, want design-restore page route and components", selected)
+	}
+	if targets["needsUserSelection"] != false {
+		t.Fatalf("targets.needsUserSelection = %#v, want false", targets["needsUserSelection"])
+	}
 	candidates := targets["candidates"].([]any)
 	if len(candidates) == 0 {
 		t.Fatal("expected target candidates")
@@ -1985,22 +2113,11 @@ func TestGenerateDesignRestorePlanCreatesRepoAnalysisFromLocalDirectoryProject(t
 	if !foundFileCandidate {
 		t.Fatalf("expected file-level target candidate, got %#v", candidates)
 	}
-	targets["selected"] = candidates[0]
-	targets["needsUserSelection"] = false
-	updateReq := withURLParam(newRequest("PUT", "/api/design-restore-tasks/"+createdTask.ID+"/plan?workspace_id="+testWorkspaceID, map[string]any{
-		"plan":         plan,
-		"review_notes": "selected target",
-	}), "id", createdTask.ID)
-	updateW := httptest.NewRecorder()
-	testHandler.UpdateDesignRestorePlan(updateW, updateReq)
-	if updateW.Code != http.StatusOK {
-		t.Fatalf("UpdateDesignRestorePlan selected target: expected 200, got %d: %s", updateW.Code, updateW.Body.String())
-	}
 	approveReq := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/plan/approve?workspace_id="+testWorkspaceID, nil), "id", createdTask.ID)
 	approveW := httptest.NewRecorder()
 	testHandler.ApproveDesignRestorePlan(approveW, approveReq)
 	if approveW.Code != http.StatusOK {
-		t.Fatalf("ApproveDesignRestorePlan with selected target: expected 200, got %d: %s", approveW.Code, approveW.Body.String())
+		t.Fatalf("ApproveDesignRestorePlan with default page target: expected 200, got %d: %s", approveW.Code, approveW.Body.String())
 	}
 	targets["selected"] = nil
 	targets["needsUserSelection"] = true

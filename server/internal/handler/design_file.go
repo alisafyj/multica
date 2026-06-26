@@ -1822,7 +1822,7 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if issueUUID.Valid {
-		if _, err := h.Queries.UpdateIssueStatus(r.Context(), db.UpdateIssueStatusParams{ID: issueUUID, WorkspaceID: wsUUID, Status: "in_progress"}); err != nil {
+		if err := h.updateIssueStatusAndPublish(r.Context(), issueUUID, wsUUID, "in_progress", "member", userID); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to update issue status")
 			return
 		}
@@ -1874,9 +1874,311 @@ func (h *Handler) buildDesignRestoreTaskItemContexts(ctx context.Context, task d
 		if itemContext == nil {
 			return nil, fmt.Errorf("restore task item frame %q not found", item.FrameID)
 		}
+		itemContext = compactDesignRestoreAgentContext(itemContext)
 		contexts = append(contexts, map[string]any{"item": item, "context": itemContext})
 	}
 	return json.Marshal(contexts)
+}
+
+func compactDesignRestoreAgentContext(context map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{"designFileId", "revisionId", "frameId", "rootLayerId", "bounds", "warnings"} {
+		if value, ok := context[key]; ok {
+			out[key] = value
+		}
+	}
+	if frame, ok := context["frame"].(map[string]any); ok {
+		out["frame"] = compactDesignLayer(frame)
+	}
+	if layers, ok := context["layers"].(map[string]any); ok {
+		out["layers"] = compactDesignLayers(layers)
+		out["layerCount"] = len(layers)
+		if len(layers) > 220 {
+			out["layersTruncated"] = len(layers) - 220
+		}
+	}
+	if text, ok := context["text"].([]any); ok {
+		out["text"] = limitAnySlice(text, 120)
+		out["textCount"] = len(text)
+	}
+	if colors, ok := context["colors"].([]any); ok {
+		out["colors"] = compactDesignColors(colors, 120)
+		out["colorCount"] = len(colors)
+	}
+	if exportables, ok := context["exportables"].([]any); ok {
+		out["exportables"] = compactDesignExportables(exportables, 80)
+		out["exportableCount"] = len(exportables)
+	}
+	if assets, ok := context["assets"].(map[string]any); ok {
+		out["assets"] = compactDesignAssets(assets, 80)
+		out["assetCount"] = len(assets)
+	}
+	if annotations, ok := context["annotations"].([]any); ok && len(annotations) > 0 {
+		out["annotations"] = limitAnySlice(annotations, 40)
+	}
+	out["compaction"] = map[string]any{"mode": "agent_budget", "note": "Large raw design context was compacted for model context window. Use Restore Task detail APIs for full debug context."}
+	return out
+}
+
+func compactDesignLayers(layers map[string]any) map[string]any {
+	ids := make([]string, 0, len(layers))
+	for id := range layers {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		li, _ := layers[ids[i]].(map[string]any)
+		lj, _ := layers[ids[j]].(map[string]any)
+		yi, yj := float64Field(li, "y"), float64Field(lj, "y")
+		if yi != yj {
+			return yi < yj
+		}
+		xi, xj := float64Field(li, "x"), float64Field(lj, "x")
+		if xi != xj {
+			return xi < xj
+		}
+		return ids[i] < ids[j]
+	})
+	out := make(map[string]any, minInt(len(ids), 220))
+	for _, id := range ids {
+		layer, ok := layers[id].(map[string]any)
+		if !ok {
+			continue
+		}
+		out[id] = compactDesignLayer(layer)
+		if len(out) >= 220 {
+			break
+		}
+	}
+	return out
+}
+
+func compactDesignLayer(layer map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{"id", "name", "type", "frameId", "parentId", "rootLayerId", "sourceNodeId"} {
+		if value := stringField(layer, key); value != "" {
+			out[key] = value
+		}
+	}
+	for _, key := range []string{"x", "y", "width", "height", "opacity"} {
+		if value, ok := numericField(layer, key); ok {
+			out[key] = value
+		}
+	}
+	if visible, ok := layer["visible"].(bool); ok {
+		out["visible"] = visible
+	}
+	if children, ok := layer["children"].([]any); ok && len(children) > 0 {
+		out["children"] = limitAnySlice(children, 80)
+		if len(children) > 80 {
+			out["childrenTruncated"] = len(children) - 80
+		}
+	}
+	if text, ok := layer["text"].(map[string]any); ok {
+		out["text"] = compactDesignText(text)
+	}
+	if style, ok := layer["style"].(map[string]any); ok {
+		out["style"] = compactDesignStyle(style)
+	}
+	if semantic, ok := layer["semantic"].(map[string]any); ok {
+		out["semantic"] = sanitizeContextPayload(semantic)
+	}
+	if image, ok := layer["image"].(map[string]any); ok {
+		out["image"] = map[string]any{"assetId": stringField(image, "assetId")}
+	}
+	if exportable, ok := layer["exportable"].([]any); ok && len(exportable) > 0 {
+		out["exportable"] = compactDesignExportables(exportable, 4)
+	}
+	return out
+}
+
+func compactDesignText(text map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{"characters", "fontFamily", "fontStyle", "fontWeight", "lineHeight", "textAlignHorizontal", "textAlignVertical"} {
+		if value, ok := text[key]; ok {
+			out[key] = value
+		}
+	}
+	for _, key := range []string{"fontSize", "letterSpacing"} {
+		if value, ok := numericField(text, key); ok {
+			out[key] = value
+		}
+	}
+	if color, ok := text["color"].(map[string]any); ok {
+		out["color"] = compactDesignColor(color)
+	}
+	return out
+}
+
+func compactDesignStyle(style map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{"opacity", "cornerRadius"} {
+		if value, ok := numericField(style, key); ok {
+			out[key] = value
+		}
+	}
+	if fills, ok := style["fills"].([]any); ok && len(fills) > 0 {
+		out["fills"] = compactDesignPaints(fills, 3)
+	}
+	if strokes, ok := style["strokes"].([]any); ok && len(strokes) > 0 {
+		out["strokes"] = compactDesignPaints(strokes, 3)
+	}
+	return out
+}
+
+func compactDesignPaints(paints []any, limit int) []any {
+	out := make([]any, 0, minInt(len(paints), limit))
+	for _, raw := range paints {
+		paint, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		item := map[string]any{"type": stringField(paint, "type")}
+		if color, ok := paint["color"].(map[string]any); ok {
+			item["color"] = compactDesignColor(color)
+		}
+		if opacity, ok := numericField(paint, "opacity"); ok {
+			item["opacity"] = opacity
+		}
+		out = append(out, item)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func compactDesignColors(colors []any, limit int) []any {
+	seen := map[string]struct{}{}
+	out := []any{}
+	for _, raw := range colors {
+		color, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		compact := compactDesignColor(color)
+		key := fmt.Sprint(compact)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, compact)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func compactDesignColor(color map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{"hex", "css"} {
+		if value := stringField(color, key); value != "" {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func compactDesignAssets(assets map[string]any, limit int) map[string]any {
+	ids := make([]string, 0, len(assets))
+	for id := range assets {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := map[string]any{}
+	for _, id := range ids {
+		asset, ok := assets[id].(map[string]any)
+		if !ok {
+			continue
+		}
+		out[id] = compactDesignAsset(asset)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func compactDesignAsset(asset map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{"id", "kind", "name", "format", "path", "url"} {
+		if value := stringField(asset, key); value != "" {
+			out[key] = value
+		}
+	}
+	for _, key := range []string{"width", "height"} {
+		if value, ok := numericField(asset, key); ok {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func compactDesignExportables(exportables []any, limit int) []any {
+	out := []any{}
+	for _, raw := range exportables {
+		exportable, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		item := map[string]any{}
+		for _, key := range []string{"id", "assetId", "kind", "name", "format", "suffix", "path", "url"} {
+			if value := stringField(exportable, key); value != "" {
+				item[key] = value
+			}
+		}
+		out = append(out, item)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func limitAnySlice(values []any, limit int) []any {
+	if len(values) <= limit {
+		return values
+	}
+	return values[:limit]
+}
+
+func numericField(m map[string]any, key string) (any, bool) {
+	if m == nil {
+		return nil, false
+	}
+	switch value := m[key].(type) {
+	case float64, float32, int, int32, int64:
+		return value, true
+	default:
+		return nil, false
+	}
+}
+
+func float64Field(m map[string]any, key string) float64 {
+	if m == nil {
+		return 0
+	}
+	switch value := m[key].(type) {
+	case float64:
+		return value
+	case float32:
+		return float64(value)
+	case int:
+		return float64(value)
+	case int32:
+		return float64(value)
+	case int64:
+		return float64(value)
+	default:
+		return 0
+	}
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.DesignRestoreTask) (json.RawMessage, error) {
@@ -1898,12 +2200,18 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 			analysis, err := h.ensureDesignRepoAnalysisForProject(ctx, task.WorkspaceID, projectUUID)
 			if err == nil && analysis.Status == "completed" {
 				repoBlock = designRepoAnalysisPlanBlock(analysis)
-				targetsBlock = map[string]any{"selected": nil, "candidates": jsonRawToAny(analysis.TargetCandidates, []any{}), "needsUserSelection": true}
+				artifactTarget := defaultDesignRestorePageTarget(analysis, task)
+				candidates := []any{artifactTarget}
+				if existingCandidates, ok := jsonRawToAny(analysis.TargetCandidates, []any{}).([]any); ok {
+					candidates = append(candidates, existingCandidates...)
+				}
+				targetsBlock = map[string]any{"selected": artifactTarget, "candidates": candidates, "needsUserSelection": false, "defaultMode": "page_with_route_and_components"}
 				executionBlock = map[string]any{
-					"allowedPaths":       jsonRawFieldToAny(analysis.Boundaries, "allowedPaths", []any{}),
+					"allowedPaths":       artifactTarget["allowedPaths"],
 					"forbiddenPaths":     jsonRawFieldToAny(analysis.Boundaries, "forbiddenPaths", []any{}),
 					"commands":           jsonRawFieldToAny(analysis.Commands, "typecheck", []any{}),
 					"allowPrototypeHtml": false,
+					"defaultWriteMode":   "create_or_update_page_route_and_components",
 				}
 			} else if err != nil {
 				repoBlock = map[string]any{"status": "unavailable", "mode": "prototype", "note": err.Error()}
@@ -1944,7 +2252,7 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 			"targetKind":     "file",
 			"targetPath":     fmt.Sprintf("fengchenDoc/gallery-native-agent-test/restore-%s.html", strings.ReplaceAll(uuidToString(task.ID), "-", "")[:12]),
 			"layerIds":       usedLayerIDs,
-			"implementation": "Build visible HTML/CSS/component structure from Multica item_contexts; do not paste full-frame preview assets.",
+			"implementation": "Build visible component structure from Multica item_contexts; infer or create the page route, split reusable sections into components, and do not paste full-frame preview assets.",
 		})
 	}
 	plan := map[string]any{
@@ -1964,7 +2272,7 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 		},
 		"steps": []string{
 			"Read the approved Restore Plan and Multica item_contexts.",
-			"Implement the smallest safe frontend restore output in the planned target file.",
+			"Implement a navigable frontend page from the approved target: infer or create the page, wire routing when needed, and split large UI sections into components instead of dumping everything into one file.",
 			"Run relevant typecheck/test command.",
 			"Return RESTORE_RESULT_JSON with files, checks, blockers, restoreMapping, usedLayerIds, usedAssetIds, and usedFullFramePreview=false.",
 		},
@@ -1975,6 +2283,32 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 		},
 	}
 	return json.Marshal(plan)
+}
+
+func defaultDesignRestorePageTarget(analysis db.DesignRepoAnalysis, task db.DesignRestoreTask) map[string]any {
+	shortID := strings.ReplaceAll(uuidToString(task.ID), "-", "")[:12]
+	pagePath := "src/pages/design-restore/restore-" + shortID + ".tsx"
+	componentRoot := "src/components/design-restore/restore-" + shortID
+	routeOwner := "src/router"
+	routePath := "/design-restore/" + shortID
+	allowedPaths := []string{"src/pages/design-restore", componentRoot, routeOwner}
+	framework := strings.ToLower(strings.TrimSpace(analysis.Framework.String))
+	if strings.Contains(framework, "vue") {
+		pagePath = "src/views/design-restore/Restore" + shortID + "View.vue"
+		componentRoot = "src/components/design-restore/restore-" + shortID
+		allowedPaths = []string{"src/views/design-restore", componentRoot, routeOwner}
+	}
+	return map[string]any{
+		"kind":          "page_with_route_and_components",
+		"path":          pagePath,
+		"pagePath":      pagePath,
+		"componentRoot": componentRoot,
+		"routeOwner":    routeOwner,
+		"routePath":     routePath,
+		"allowedPaths":  allowedPaths,
+		"reason":        "UI设计阶段交付一个可访问页面：自主新建或推断页面、补充 router，并按项目结构拆分组件，避免堆叠到单一业务入口文件。",
+		"confidence":    0.95,
+	}
 }
 
 func (h *Handler) GetDesignRestoreTaskItemContext(w http.ResponseWriter, r *http.Request) {

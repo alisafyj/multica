@@ -1913,6 +1913,7 @@ func (h *Handler) updateDesignRestoreTaskFromAgentCompletion(ctx context.Context
 	if policyViolation != "" {
 		status = "failed"
 	}
+	policyWarning := designRestorePolicyWarning(restoreCtx, summary)
 	result := map[string]any{
 		"output":           req.Output,
 		"summary":          summary,
@@ -1920,6 +1921,7 @@ func (h *Handler) updateDesignRestoreTaskFromAgentCompletion(ctx context.Context
 		"session_id":       req.SessionID,
 		"work_dir":         req.WorkDir,
 		"policy_violation": policyViolation,
+		"policy_warning":   policyWarning,
 	}
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
@@ -1941,7 +1943,7 @@ func (h *Handler) updateDesignRestoreTaskFromAgentCompletion(ctx context.Context
 	if err := h.advanceIssueAfterDesignRestoreCompletion(ctx, restoreTask, status); err != nil {
 		return err
 	}
-	h.createDesignRestoreIssueSystemComment(ctx, restoreTask.IssueID, designRestoreCompletionComment(status, policyViolation, summary))
+	h.createDesignRestoreIssueSystemComment(ctx, restoreTask.IssueID, designRestoreCompletionComment(status, policyViolation, policyWarning, summary))
 	return nil
 }
 
@@ -1957,14 +1959,35 @@ func (h *Handler) advanceIssueAfterDesignRestoreCompletion(ctx context.Context, 
 		return nil
 	}
 	nextStatus := "in_review"
-	if restoreStatus != "completed" {
+	if restoreStatus == "completed" && looksLikeUIDesignIssue(issue.Title) {
+		nextStatus = "done"
+	} else if restoreStatus != "completed" {
 		nextStatus = "blocked"
 	}
-	_, err = h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID, Status: nextStatus})
-	return err
+	if err := h.updateIssueStatusAndPublish(ctx, issue.ID, issue.WorkspaceID, nextStatus, "system", ""); err != nil {
+		return err
+	}
+	if nextStatus == "done" && issue.ParentIssueID.Valid {
+		if parent, err := h.Queries.GetIssue(ctx, issue.ParentIssueID); err == nil {
+			h.promoteFrontendSiblingsAfterDesignDone(ctx, issue, parent)
+		}
+	}
+	return nil
 }
 
-func designRestoreCompletionComment(status, policyViolation string, summary designRestoreResultSummary) string {
+func (h *Handler) updateIssueStatusAndPublish(ctx context.Context, issueID, workspaceID pgtype.UUID, status, actorType, actorID string) error {
+	updated, err := h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{ID: issueID, WorkspaceID: workspaceID, Status: status})
+	if err != nil {
+		return err
+	}
+	prefix := h.getIssuePrefix(ctx, updated.WorkspaceID)
+	h.publish(protocol.EventIssueUpdated, uuidToString(updated.WorkspaceID), actorType, actorID, map[string]any{
+		"issue": issueToResponse(updated, prefix),
+	})
+	return nil
+}
+
+func designRestoreCompletionComment(status, policyViolation, policyWarning string, summary designRestoreResultSummary) string {
 	var b strings.Builder
 	if status == "completed" {
 		b.WriteString("前端 Agent 已完成设计稿还原。")
@@ -2006,6 +2029,10 @@ func designRestoreCompletionComment(status, policyViolation string, summary desi
 	}
 	b.WriteString("\n\n策略违规：")
 	b.WriteString(policyViolation)
+	if policyWarning != "" {
+		b.WriteString("\n策略警告：")
+		b.WriteString(policyWarning)
+	}
 	b.WriteString("\n整图 preview：")
 	if summary.UsedFullFramePreview {
 		b.WriteString("已使用")
@@ -2148,9 +2175,6 @@ func designRestorePolicyViolation(ctx service.DesignRestoreTaskContext, output s
 		}
 	}
 	if len(ctx.RestorePolicy) > 0 {
-		if summary.Status == "" {
-			return "missing_restore_result_json"
-		}
 		if summary.Status == "completed" {
 			switch {
 			case len(summary.Files) == 0:
@@ -2166,6 +2190,13 @@ func designRestorePolicyViolation(ctx service.DesignRestoreTaskContext, output s
 		}
 	}
 	return designRestoreFullFramePreviewViolation(ctx, output)
+}
+
+func designRestorePolicyWarning(ctx service.DesignRestoreTaskContext, summary designRestoreResultSummary) string {
+	if len(ctx.RestorePolicy) > 0 && summary.Status == "" {
+		return "missing_restore_result_json"
+	}
+	return ""
 }
 
 func designRestoreFullFramePreviewViolation(ctx service.DesignRestoreTaskContext, output string) string {
@@ -2361,6 +2392,9 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := h.updateDesignRestoreTaskFromAgentFailure(r.Context(), *task, req); err != nil {
+		slog.Warn("design restore task failure: failed to update restore task", "task_id", taskID, "error", err)
+	}
 
 	// Best-effort revoke of the mat_ task token minted at claim. Same
 	// rationale as CompleteTask — eager deletion shrinks the post-
@@ -2371,6 +2405,42 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("task failed", "task_id", taskID, "agent_id", uuidToString(task.AgentID), "task_error", req.Error, "failure_reason", req.FailureReason)
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
+}
+
+func (h *Handler) updateDesignRestoreTaskFromAgentFailure(ctx context.Context, task db.AgentTaskQueue, req TaskFailRequest) error {
+	var restoreCtx service.DesignRestoreTaskContext
+	if err := json.Unmarshal(task.Context, &restoreCtx); err != nil || restoreCtx.Type != service.DesignRestoreTaskContextType {
+		return nil
+	}
+	restoreTask, err := h.Queries.GetDesignRestoreTaskByAgentTask(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	result := map[string]any{
+		"error":          req.Error,
+		"session_id":     req.SessionID,
+		"work_dir":       req.WorkDir,
+		"failure_reason": req.FailureReason,
+	}
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	_, err = h.Queries.UpdateDesignRestoreTask(ctx, db.UpdateDesignRestoreTaskParams{
+		ID:          restoreTask.ID,
+		WorkspaceID: restoreTask.WorkspaceID,
+		Status:      pgtype.Text{String: "failed", Valid: true},
+		Result:      resultJSON,
+		Error:       pgtype.Text{String: req.Error, Valid: strings.TrimSpace(req.Error) != ""},
+	})
+	if err != nil {
+		return err
+	}
+	if err := h.advanceIssueAfterDesignRestoreCompletion(ctx, restoreTask, "failed"); err != nil {
+		return err
+	}
+	h.createDesignRestoreIssueSystemComment(ctx, restoreTask.IssueID, designRestoreCompletionComment("failed", "Agent 执行失败", "", designRestoreResultSummary{Status: "failed", Blockers: []string{req.Error}}))
+	return nil
 }
 
 // ---------------------------------------------------------------------------

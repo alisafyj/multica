@@ -93,8 +93,11 @@ func TestDesignRestorePolicyViolationPrefersSummary(t *testing.T) {
 
 func TestDesignRestorePolicyViolationRequiresQualityFields(t *testing.T) {
 	ctx := service.DesignRestoreTaskContext{RestorePolicy: json.RawMessage(`{"restoreMode":"strict-structure","allowFullFramePreview":false}`)}
-	if got := designRestorePolicyViolation(ctx, "", designRestoreResultSummary{}); got != "missing_restore_result_json" {
-		t.Fatalf("missing json violation = %q", got)
+	if got := designRestorePolicyViolation(ctx, "", designRestoreResultSummary{}); got != "" {
+		t.Fatalf("missing json should be warning, got violation %q", got)
+	}
+	if got := designRestorePolicyWarning(ctx, designRestoreResultSummary{}); got != "missing_restore_result_json" {
+		t.Fatalf("missing json warning = %q", got)
 	}
 	if got := designRestorePolicyViolation(ctx, "", designRestoreResultSummary{Status: "completed"}); got != "completed_result_missing_files" {
 		t.Fatalf("missing files violation = %q", got)
@@ -151,6 +154,68 @@ func TestAdvanceIssueAfterDesignRestoreCompletion(t *testing.T) {
 	}
 	if status != "blocked" {
 		t.Fatalf("failed restore issue status = %q, want blocked", status)
+	}
+}
+
+func TestAdvanceUIDesignRestoreCompletionPromotesFrontendSibling(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	var parentID, uiIssueID, frontendIssueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
+		VALUES ($1, '发布', 'in_progress', 'none', $2, 'member', 91811, 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&parentID); err != nil {
+		t.Fatalf("create parent issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM issue WHERE id IN ($1, $2, $3)`, parentID, uiIssueID, frontendIssueID)
+	})
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position, parent_issue_id)
+		VALUES ($1, 'UI设计', 'in_progress', 'none', $2, 'member', 91812, 0, $3)
+		RETURNING id
+	`, testWorkspaceID, testUserID, parentID).Scan(&uiIssueID); err != nil {
+		t.Fatalf("create ui issue: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position, parent_issue_id)
+		VALUES ($1, '前端开发', 'backlog', 'none', $2, 'member', 91813, 0, $3)
+		RETURNING id
+	`, testWorkspaceID, testUserID, parentID).Scan(&frontendIssueID); err != nil {
+		t.Fatalf("create frontend issue: %v", err)
+	}
+	created := createDesignFileForTest(t, "UI Restore Completion Promotion Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	var restoreTaskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO design_restore_task (workspace_id, file_id, revision_id, issue_id, status, input, result, created_by)
+		VALUES ($1, $2, $3, $4, 'completed', '{}'::jsonb, '{}'::jsonb, $5)
+		RETURNING id
+	`, testWorkspaceID, created.File.ID, created.CurrentRevision.ID, uiIssueID, testUserID).Scan(&restoreTaskID); err != nil {
+		t.Fatalf("create completed restore task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM design_restore_task WHERE id = $1`, restoreTaskID) })
+	restoreTask := db.DesignRestoreTask{IssueID: parseUUID(uiIssueID), WorkspaceID: parseUUID(testWorkspaceID)}
+	if err := testHandler.advanceIssueAfterDesignRestoreCompletion(ctx, restoreTask, "completed"); err != nil {
+		t.Fatalf("advance ui design restore completion: %v", err)
+	}
+	var uiStatus, frontendStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, uiIssueID).Scan(&uiStatus); err != nil {
+		t.Fatalf("read ui issue status: %v", err)
+	}
+	if uiStatus != "done" {
+		t.Fatalf("ui issue status = %q, want done", uiStatus)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, frontendIssueID).Scan(&frontendStatus); err != nil {
+		t.Fatalf("read frontend issue status: %v", err)
+	}
+	if frontendStatus != "todo" {
+		t.Fatalf("frontend issue status = %q, want todo", frontendStatus)
 	}
 }
 
@@ -1891,6 +1956,73 @@ func TestStartTaskMarksDesignRestoreTaskRunning(t *testing.T) {
 	}
 	if restoreStatus != "running" {
 		t.Fatalf("restore task status = %q, want running after StartTask", restoreStatus)
+	}
+}
+
+func TestFailTaskMarksDesignRestoreTaskAndIssueBlocked(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx, `SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("setup: get agent: %v", err)
+	}
+	created := createDesignFileForTest(t, "Fail Restore Task Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	projectID := createProjectForDesignTest(t, "Fail Restore Task Project")
+	issueID := createIssueForDesignTest(t, "Fail Restore Task Issue", projectID)
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET status = 'in_progress' WHERE id = $1`, issueID); err != nil {
+		t.Fatalf("set issue in_progress: %v", err)
+	}
+
+	contextJSON := fmt.Sprintf(`{"type":"%s","workspace_id":"%s","agent_id":"%s","issue_id":"%s","restore_task_id":"00000000-0000-0000-0000-000000000000"}`, service.DesignRestoreTaskContextType, testWorkspaceID, agentID, issueID)
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, context)
+		VALUES ($1, $2, $3, 'running', 0, now(), $4::jsonb)
+		RETURNING id
+	`, agentID, runtimeID, issueID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("setup: create agent task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	var restoreTaskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO design_restore_task (workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, created_by)
+		VALUES ($1, $2, $3, $4, $5, 'running', '{}'::jsonb, '{}'::jsonb, $6)
+		RETURNING id
+	`, testWorkspaceID, created.File.ID, created.CurrentRevision.ID, issueID, taskID, testUserID).Scan(&restoreTaskID); err != nil {
+		t.Fatalf("setup: create restore task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, restoreTaskID)
+	})
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/fail", map[string]any{"error": "agent crashed", "failure_reason": "agent_error"}, testWorkspaceID, "legit-daemon")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("taskId", taskID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	testHandler.FailTask(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("FailTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var restoreStatus, issueStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM design_restore_task WHERE id = $1`, restoreTaskID).Scan(&restoreStatus); err != nil {
+		t.Fatalf("read restore status: %v", err)
+	}
+	if restoreStatus != "failed" {
+		t.Fatalf("restore task status = %q, want failed", restoreStatus)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&issueStatus); err != nil {
+		t.Fatalf("read issue status: %v", err)
+	}
+	if issueStatus != "blocked" {
+		t.Fatalf("issue status = %q, want blocked", issueStatus)
 	}
 }
 
