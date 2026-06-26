@@ -1,5 +1,5 @@
 import type { DesignLayer, GalleryNativeJson } from "@multica/core/types";
-import { firstFillBackground, firstStroke, layerImageUrl, styleArray } from "./style";
+import { firstFillBackground, firstStroke, layerFallbackAssetUrl, layerImageUrl, styleArray } from "./style";
 
 type InspectFrame = GalleryNativeJson["frames"][number];
 
@@ -43,6 +43,7 @@ function hasUnuploadedImageFill(layer: DesignLayer) {
 }
 
 function hasAssetFallback(nativeJson: GalleryNativeJson, layer: DesignLayer) {
+  if (layerFallbackAssetUrl(nativeJson, layer)) return true;
   if (layer.exportable?.length) return true;
   if (layer.image?.assetId && nativeJson.assets[layer.image.assetId]) return true;
   return styleArray<{ assetId?: string; imageHash?: string; type?: string }>(layer.style, "fills").some((paint) => {
@@ -74,6 +75,7 @@ export function classifyLayerFidelity(nativeJson: GalleryNativeJson, layer: Desi
 
   if (layer.type === "frame" || layer.type === "group" || layer.type === "component" || layer.type === "instance") {
     const source = layerSource(layer);
+    if (layerFallbackAssetUrl(nativeJson, layer)) return { layerId: layer.id, status: "fallback", reason: "使用局部兜底图呈现" };
     if (source.isMask) return { layerId: layer.id, status: "fallback", reason: "包含蒙版信息，当前以结构容器呈现" };
     if (source.clipsContent) return { layerId: layer.id, status: "native", reason: "裁切容器可原生渲染" };
     if (layerAutoLayout(layer)?.layoutMode || source.layoutMode) return { layerId: layer.id, status: "native", reason: "Auto Layout 已识别，当前按结构容器呈现" };
@@ -83,6 +85,7 @@ export function classifyLayerFidelity(nativeJson: GalleryNativeJson, layer: Desi
   }
 
   if (layer.type === "vector" || layer.type === "slice" || layer.type === "custom") {
+    if (layerFallbackAssetUrl(nativeJson, layer)) return { layerId: layer.id, status: "fallback", reason: `${layer.type === "vector" ? "矢量" : layer.type === "slice" ? "切片" : "自定义图层"}使用局部兜底图呈现` };
     return { layerId: layer.id, status: "fallback", reason: `${layer.type === "vector" ? "矢量" : layer.type === "slice" ? "切片" : "自定义图层"}暂以占位呈现` };
   }
 

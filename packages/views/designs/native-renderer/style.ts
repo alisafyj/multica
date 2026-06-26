@@ -87,6 +87,13 @@ export function layerImageUrl(nativeJson: GalleryNativeJson | undefined, layer: 
   return null;
 }
 
+export function layerFallbackAssetUrl(nativeJson: GalleryNativeJson | undefined, layer: DesignLayer) {
+  const fallbackAssetId = typeof layer.style?.fallbackAssetId === "string" ? layer.style.fallbackAssetId : null;
+  if (!fallbackAssetId) return null;
+  const url = nativeJson?.assets?.[fallbackAssetId]?.url ?? null;
+  return url && !url.startsWith("figma-image-hash://") ? url : null;
+}
+
 export function layerImageFit(layer: DesignLayer): CSSProperties["objectFit"] {
   switch (layerImageScaleMode(layer)) {
     case "FIT":

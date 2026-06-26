@@ -229,6 +229,22 @@ function buildLayer(node, frameId, parentId, layers, frameBox, assets) {
   }
   const exportable = exportableValue(node);
   if (exportable) layer.exportable = exportable;
+  if (layer.type === "vector" || layer.type === "slice" || layer.type === "custom" || node.isMask) {
+    const fallbackAssetId = `fallback-${id}`;
+    layer.style = { ...(layer.style || {}), fallbackAssetId };
+    if (!assets[fallbackAssetId]) {
+      assets[fallbackAssetId] = {
+        id: fallbackAssetId,
+        kind: "image",
+        url: "",
+        sourceNodeId: node.id,
+        frameId,
+        width: box.width,
+        height: box.height,
+        metadata: { fallbackForLayerId: id, fallbackForLayerType: layer.type, reason: node.isMask ? "mask" : layer.type },
+      };
+    }
+  }
   layer.source = {
     tool: "figma",
     nodeId: node.id,
@@ -451,6 +467,39 @@ async function collectImageFillUploads(nativeJson) {
   return uploads;
 }
 
+async function collectFallbackLayerUploads(nativeJson) {
+  const uploads = [];
+  const layers = Object.values(nativeJson.layers || {});
+  for (const layer of layers) {
+    const fallbackAssetId = layer && layer.style && layer.style.fallbackAssetId;
+    if (!fallbackAssetId || !layer.sourceNodeId) continue;
+    const asset = nativeJson.assets && nativeJson.assets[fallbackAssetId];
+    if (!asset || asset.url) continue;
+    try {
+      const node = await figma.getNodeByIdAsync(layer.sourceNodeId);
+      if (!node || typeof node.exportAsync !== 'function') continue;
+      const bytes = await node.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } });
+      uploads.push({
+        assetId: fallbackAssetId,
+        kind: 'image',
+        layerId: layer.id,
+        frameId: layer.frameId,
+        sourceNodeId: layer.sourceNodeId,
+        name: `${safeName({ name: layer.name })}-fallback.png`,
+        format: 'png',
+        contentType: 'image/png',
+        width: layer.width,
+        height: layer.height,
+        bytes: Array.from(bytes),
+        metadata: { ...(asset.metadata || {}), exportedFallback: true },
+      });
+    } catch (error) {
+      console.warn('[multica-figma] fallback layer export failed', layer.name, error);
+    }
+  }
+  return uploads;
+}
+
 figma.ui.onmessage = (message) => {
   if (!message) return;
   if (message.type === 'open-auth' && message.url) {
@@ -476,8 +525,8 @@ figma.ui.onmessage = (message) => {
   if (message.type !== "export") return;
   try {
     exportNativeJson(message.scope || 'selected').then((nativeJson) => {
-      Promise.all([collectImageFillUploads(nativeJson), collectSliceUploads(nativeJson)]).then(([imageUploads, sliceUploads]) => {
-        figma.ui.postMessage({ type: "exported", nativeJson, title: nativeJson.file.title, sliceUploads: [...imageUploads, ...sliceUploads] });
+      Promise.all([collectImageFillUploads(nativeJson), collectFallbackLayerUploads(nativeJson), collectSliceUploads(nativeJson)]).then(([imageUploads, fallbackUploads, sliceUploads]) => {
+        figma.ui.postMessage({ type: "exported", nativeJson, title: nativeJson.file.title, sliceUploads: [...imageUploads, ...fallbackUploads, ...sliceUploads] });
       }).catch((error) => {
         figma.ui.postMessage({ type: "error", error: error instanceof Error ? error.message : String(error) });
       });
