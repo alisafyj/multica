@@ -27,7 +27,10 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
-import { NativeFramePreview } from "./native-preview";
+import { LayerTree } from "./layer-tree";
+import { NativeFramePreview } from "./native-renderer";
+import { analyzeFrameFidelity } from "./native-renderer/fidelity";
+import type { FrameFidelityReport, LayerFidelity, LayerFidelityStatus } from "./native-renderer/fidelity";
 
 type InspectFrame = GalleryNativeJson["frames"][number];
 type Paint = { type?: string; color?: unknown; opacity?: number; stops?: Array<{ position?: number; color?: unknown }>; assetId?: string; imageHash?: string; scaleMode?: string };
@@ -51,7 +54,7 @@ type LightweightEditSummary = { layerId?: string; layerName?: string; frameId?: 
 type DrawerKind = "history" | "colors" | "slices" | null;
 type CodeKind = "css" | "rn" | "android" | "ios";
 type FrameDetailToolMenuState = { x: number; y: number } | null;
-type FrameRenderMode = "image" | "native";
+type FrameRenderMode = "native" | "image" | "overlay";
 const MIN_FRAME_ZOOM = 0.2;
 const MAX_FRAME_ZOOM = 4;
 
@@ -505,6 +508,54 @@ function ShadowRows({ shadows }: { shadows: Shadow[] }) {
   return <div className="space-y-2">{shadows.map((shadow, index) => <div key={index} className="space-y-2 rounded-lg border p-2"><Field label="类型" value={shadow.type} /><Field label="偏移" value={`${unitText(shadow.offsetX, "px")} / ${unitText(shadow.offsetY, "px")}`} /><Field label="模糊" value={unitText(shadow.blur, "px")} /><Field label="扩展" value={unitText(shadow.spread, "px")} /><ColorRow label="颜色" color={cssColor(shadow.color)} /></div>)}</div>;
 }
 
+const FIDELITY_LABELS: Record<LayerFidelityStatus, string> = {
+  native: "原生",
+  fallback: "占位",
+  unsupported: "缺失",
+};
+
+const FIDELITY_BADGE_CLASS: Record<LayerFidelityStatus, string> = {
+  native: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  fallback: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  unsupported: "border-destructive/30 bg-destructive/10 text-destructive",
+};
+
+function FidelityBadge({ status }: { status: LayerFidelityStatus }) {
+  return <Badge variant="outline" className={`h-5 px-1.5 text-[10px] ${FIDELITY_BADGE_CLASS[status]}`}>{FIDELITY_LABELS[status]}</Badge>;
+}
+
+function FidelityReportSection({ report, selectedFidelity }: { report: FrameFidelityReport; selectedFidelity?: LayerFidelity }) {
+  return (
+    <InspectorSection title="渲染质量" icon={<Sparkles className="h-3.5 w-3.5" />}>
+      <div className="space-y-3 text-xs">
+        <div className="rounded-xl border bg-muted/30 p-3">
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <div className="text-2xl font-semibold tabular-nums">{report.nativePercent}%</div>
+              <div className="text-muted-foreground">原生可渲染</div>
+            </div>
+            <div className="text-right text-muted-foreground">{report.total} 个可见图层</div>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-1.5">
+            <div className="rounded-lg bg-background p-2"><div className="font-mono text-sm text-emerald-600">{report.native}</div><div className="text-[11px] text-muted-foreground">原生</div></div>
+            <div className="rounded-lg bg-background p-2"><div className="font-mono text-sm text-amber-600">{report.fallback}</div><div className="text-[11px] text-muted-foreground">占位</div></div>
+            <div className="rounded-lg bg-background p-2"><div className="font-mono text-sm text-destructive">{report.unsupported}</div><div className="text-[11px] text-muted-foreground">缺失</div></div>
+          </div>
+        </div>
+        {selectedFidelity ? (
+          <div className="flex items-start justify-between gap-3 rounded-lg border p-2.5">
+            <div className="min-w-0">
+              <div className="font-medium">当前图层</div>
+              <div className="mt-1 text-muted-foreground">{selectedFidelity.reason}</div>
+            </div>
+            <FidelityBadge status={selectedFidelity.status} />
+          </div>
+        ) : null}
+      </div>
+    </InspectorSection>
+  );
+}
+
 export function DesignFramePage({ designId, frameId }: { designId: string; frameId: string }) {
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
@@ -523,7 +574,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const [toolMenu, setToolMenu] = useState<FrameDetailToolMenuState>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [frameZoom, setFrameZoom] = useState(1);
-  const [renderMode, setRenderMode] = useState<FrameRenderMode>("image");
+  const [renderMode, setRenderMode] = useState<FrameRenderMode>("native");
   const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
   const [marquee, setMarquee] = useState<MarqueeState>(null);
   const [selectionBounds, setSelectionBounds] = useState<Rect | null>(null);
@@ -560,6 +611,8 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const shadows = styleArray<Shadow>(style, "shadows");
   const colors = useMemo(() => colorEntries(nativeJson, layers), [nativeJson, layers]);
   const slices = useMemo(() => sliceEntries(layers), [layers]);
+  const fidelityReport = useMemo(() => nativeJson && frame ? analyzeFrameFidelity(nativeJson, frame) : null, [nativeJson, frame]);
+  const selectedFidelity = selectedLayer?.id ? fidelityReport?.byLayerId[selectedLayer.id] : undefined;
   const code = codeVariants(selectedLayer, frame);
   const textContent = selectedLayer?.text?.characters ?? selectedLayer?.text?.text ?? "";
   useEffect(() => {
@@ -732,7 +785,8 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
           <Button size="sm" variant="outline" onClick={() => navigation.push(paths.designDetail(designId))}>返回设计文件</Button>
         </div>
       ) : (
-        <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_380px] gap-4 p-4">
+        <main className="grid min-h-0 flex-1 grid-cols-[280px_minmax(680px,1fr)_380px] gap-4 overflow-auto p-4">
+          <LayerTree nativeJson={nativeJson} frame={frame} selectedLayerId={selectedLayer?.id ?? null} hoveredLayerId={hoveredLayerId} fidelityReport={fidelityReport ?? undefined} onSelectLayer={selectLayer} onHoverLayer={setHoveredLayerId} />
           <section className="min-h-0 overflow-auto rounded-2xl border bg-background p-8">
             <TopInspectBar revisionCount={revisions.length} unit="px" sliceCount={slices.length} colors={colors} onOpenDrawer={setActiveDrawer} />
             <div className="mb-4 flex items-center justify-between gap-3">
@@ -741,7 +795,16 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                 <p className="text-xs text-muted-foreground">{Math.round(frame.width)} × {Math.round(frame.height)} · 点击、Shift 点击或拖拽以选择元数据</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <Button size="sm" variant="outline" onClick={() => setRenderMode((mode) => mode === "image" ? "native" : "image")}>{renderMode === "image" ? "原生预览" : "背景图"}</Button>
+                <div className="flex rounded-md border bg-muted/40 p-0.5">
+                  {([
+                    ["native", "真实图层"],
+                    ["image", "原图"],
+                    ["overlay", "叠加对照"],
+                  ] satisfies Array<[FrameRenderMode, string]>).map(([mode, label]) => (
+                    <Button key={mode} type="button" size="sm" variant={renderMode === mode ? "secondary" : "ghost"} className="h-7 px-2.5 text-xs" onClick={() => setRenderMode(mode)}>{label}</Button>
+                  ))}
+                </div>
+                {fidelityReport ? <Badge variant="outline" className="h-8 px-2 text-xs">原生 {fidelityReport.nativePercent}%</Badge> : null}
                 <Button size="sm" variant="outline" disabled={copyingFrameContext} onClick={() => void copyFrameContext()}><Copy className="h-3.5 w-3.5" />{copyingFrameContext ? "复制中…" : "复制画板上下文"}</Button>
                 <Badge variant="secondary">版本 {data?.current_revision?.revision_number ?? "—"}</Badge>
               </div>
@@ -789,7 +852,14 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                   setMeasuringFrame(false);
                 }}
               >
-                {renderMode === "native" ? <NativeFramePreview nativeJson={nativeJson} frame={frame} className="pointer-events-none absolute inset-0 overflow-hidden bg-background" /> : (previewUrl ? <img src={previewUrl} alt={frame.name} className="h-full w-full object-fill" draggable={false} /> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">暂无预览图片</div>)}
+                {renderMode === "native" ? <NativeFramePreview nativeJson={nativeJson} frame={frame} className="pointer-events-none absolute inset-0 overflow-hidden bg-background" /> : null}
+                {renderMode === "image" ? (previewUrl ? <img src={previewUrl} alt={frame.name} className="h-full w-full object-fill" draggable={false} /> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">暂无原图预览，请切换到真实图层查看。</div>) : null}
+                {renderMode === "overlay" ? (
+                  <>
+                    <NativeFramePreview nativeJson={nativeJson} frame={frame} className="pointer-events-none absolute inset-0 overflow-hidden bg-background" />
+                    {previewUrl ? <img src={previewUrl} alt={frame.name} className="pointer-events-none absolute inset-0 h-full w-full object-fill opacity-45" draggable={false} /> : null}
+                  </>
+                ) : null}
                 <LayerOverlay frame={frame} layers={layers} selectedLayerId={selectedLayer?.id ?? null} selectedLayerIds={selectedLayerIds} hoveredLayerId={hoveredLayerId} measuringFrame={measuringFrame && !hoveredLayerId} marqueeBounds={activeMarqueeBounds} suppressNextClickRef={suppressNextLayerClickRef} onSelectLayer={selectLayer} onHoverLayer={(layerId) => { setHoveredLayerId(layerId); setMeasuringFrame(false); }} />
               </div>
             </div>
@@ -801,6 +871,8 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
               <p className="mt-1 truncate text-xs text-muted-foreground">{selectedLayer?.name ?? frame.name}</p>
             </div>
             <div className="space-y-4 p-4">
+              {fidelityReport ? <FidelityReportSection report={fidelityReport} selectedFidelity={selectedFidelity} /> : null}
+
               <InspectorSection title="属性" icon={<Layers className="h-3.5 w-3.5" />}>
                 <Field label="名称" value={selectedLayer?.name ?? frame.name} />
                 <Field label="类型" value={selectedLayer?.type ?? "frame"} />

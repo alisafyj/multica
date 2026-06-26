@@ -87,9 +87,17 @@ function paintsValue(paints, assets, owner) {
 function strokesValue(node) {
   if (!node || !Array.isArray(node.strokes)) return undefined;
   const width = typeof node.strokeWeight === "number" ? node.strokeWeight : undefined;
+  const dashPattern = Array.isArray(node.dashPattern) && node.dashPattern.length > 0 ? node.dashPattern : undefined;
   const mapped = node.strokes
     .filter((stroke) => stroke && stroke.type === "SOLID" && stroke.visible !== false)
-    .map((stroke) => ({ color: colorValue(stroke.color, stroke.opacity), width: width || 1, position: String(node.strokeAlign || "CENTER").toLowerCase() }));
+    .map((stroke) => ({
+      color: colorValue(stroke.color, stroke.opacity),
+      width: width || 1,
+      position: String(node.strokeAlign || "CENTER").toLowerCase(),
+      cap: typeof node.strokeCap === "string" ? node.strokeCap.toLowerCase() : undefined,
+      join: typeof node.strokeJoin === "string" ? node.strokeJoin.toLowerCase() : undefined,
+      dashPattern,
+    }));
   return mapped.length > 0 ? mapped : undefined;
 }
 
@@ -134,6 +142,11 @@ function textValue(node, assets) {
   if (node.letterSpacing && node.letterSpacing !== figma.mixed && node.letterSpacing.unit === "PIXELS") text.letterSpacing = node.letterSpacing.value;
   if (typeof node.textAlignHorizontal === "string") text.textAlignHorizontal = node.textAlignHorizontal.toLowerCase();
   if (typeof node.textAlignVertical === "string") text.textAlignVertical = node.textAlignVertical.toLowerCase();
+  if (typeof node.textAutoResize === "string") text.textAutoResize = node.textAutoResize.toLowerCase();
+  if (typeof node.paragraphSpacing === "number") text.paragraphSpacing = node.paragraphSpacing;
+  if (typeof node.paragraphIndent === "number") text.paragraphIndent = node.paragraphIndent;
+  if (typeof node.textCase === "string") text.textCase = node.textCase.toLowerCase();
+  if (typeof node.textDecoration === "string") text.textDecoration = node.textDecoration.toLowerCase();
   if (fills && fills[0] && fills[0].type === "solid") text.color = fills[0].color;
   return text;
 }
@@ -150,6 +163,21 @@ function layerStyle(node, assets) {
   if (cornerRadius !== undefined) style.cornerRadius = cornerRadius;
   if (typeof node.opacity === "number") style.opacity = node.opacity;
   if (typeof node.blendMode === "string") style.blendMode = node.blendMode;
+  if (node.constraints) style.constraints = node.constraints;
+  if (node.layoutMode) {
+    style.autoLayout = {
+      layoutMode: node.layoutMode,
+      primaryAxisSizingMode: node.primaryAxisSizingMode,
+      counterAxisSizingMode: node.counterAxisSizingMode,
+      primaryAxisAlignItems: node.primaryAxisAlignItems,
+      counterAxisAlignItems: node.counterAxisAlignItems,
+      itemSpacing: node.itemSpacing,
+      paddingLeft: node.paddingLeft,
+      paddingRight: node.paddingRight,
+      paddingTop: node.paddingTop,
+      paddingBottom: node.paddingBottom,
+    };
+  }
   return Object.keys(style).length > 0 ? style : undefined;
 }
 
@@ -191,6 +219,10 @@ function buildLayer(node, frameId, parentId, layers, frameBox, assets) {
     layer.text = text;
     layer.semantic = { role: "text" };
   }
+  if (layer.type === "shape") {
+    const shapeType = String(node.type || "rectangle").toLowerCase();
+    layer.shape = { shapeType: shapeType === "ellipse" ? "ellipse" : shapeType === "line" ? "line" : shapeType === "rectangle" ? "rectangle" : "custom" };
+  }
   if (style && style.fills && style.fills.some((fill) => fill.type === "image" && fill.assetId)) {
     const fill = style.fills.find((item) => item.type === "image" && item.assetId);
     layer.image = { assetId: fill.assetId, alt: safeName(node) };
@@ -203,6 +235,9 @@ function buildLayer(node, frameId, parentId, layers, frameBox, assets) {
     nodeType: node.type,
     componentId: node.componentId,
     mainComponentId: node.type === "INSTANCE" && node.mainComponent ? node.mainComponent.id : undefined,
+    layoutMode: node.layoutMode,
+    clipsContent: node.clipsContent,
+    isMask: node.isMask,
   };
 
   if ("children" in node && node.children && node.children.length > 0) {
@@ -387,6 +422,35 @@ async function collectSliceUploads(nativeJson) {
   return uploads;
 }
 
+async function collectImageFillUploads(nativeJson) {
+  const uploads = [];
+  const assets = Object.values(nativeJson.assets || {});
+  for (const asset of assets) {
+    const imageHash = asset && asset.metadata && asset.metadata.imageHash;
+    if (!imageHash || !String(asset.url || '').startsWith('figma-image-hash://')) continue;
+    try {
+      const image = figma.getImageByHash(imageHash);
+      if (!image || typeof image.getBytesAsync !== 'function') continue;
+      const bytes = await image.getBytesAsync();
+      uploads.push({
+        assetId: asset.id,
+        kind: 'image',
+        name: `${asset.id || 'figma-image-fill'}.png`,
+        format: 'png',
+        contentType: 'image/png',
+        width: asset.width,
+        height: asset.height,
+        bytes: Array.from(bytes),
+        sourceNodeId: asset.sourceNodeId,
+        metadata: { ...(asset.metadata || {}), exportedFromImageHash: true },
+      });
+    } catch (error) {
+      console.warn('[multica-figma] image fill export failed', asset.id, error);
+    }
+  }
+  return uploads;
+}
+
 figma.ui.onmessage = (message) => {
   if (!message) return;
   if (message.type === 'open-auth' && message.url) {
@@ -412,8 +476,8 @@ figma.ui.onmessage = (message) => {
   if (message.type !== "export") return;
   try {
     exportNativeJson(message.scope || 'selected').then((nativeJson) => {
-      collectSliceUploads(nativeJson).then((sliceUploads) => {
-        figma.ui.postMessage({ type: "exported", nativeJson, title: nativeJson.file.title, sliceUploads });
+      Promise.all([collectImageFillUploads(nativeJson), collectSliceUploads(nativeJson)]).then(([imageUploads, sliceUploads]) => {
+        figma.ui.postMessage({ type: "exported", nativeJson, title: nativeJson.file.title, sliceUploads: [...imageUploads, ...sliceUploads] });
       }).catch((error) => {
         figma.ui.postMessage({ type: "error", error: error instanceof Error ? error.message : String(error) });
       });

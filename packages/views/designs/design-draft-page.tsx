@@ -13,7 +13,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
-import { NativeDesignPreview } from "./native-preview";
+import { NativeDesignPreview } from "./native-renderer";
 import type { GalleryNativeJson } from "@multica/core/types";
 
 function JsonBlock({ title, value }: { title: string; value: unknown }) {

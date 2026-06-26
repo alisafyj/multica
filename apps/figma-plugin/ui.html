@@ -641,7 +641,8 @@
         for (let index = 0; index < uploads.length; index += 1) {
           const upload = uploads[index];
           const isSlice = (upload.kind || 'slice') === 'slice';
-          setProgress(true, `${isSlice ? '上传切片' : '上传画板预览'}：${upload.name || ''}`, 70 + Math.round(((index + 1) / uploads.length) * 24));
+          const isImage = (upload.kind || '') === 'image';
+          setProgress(true, `${isSlice ? '上传切片' : isImage ? '上传图片填充' : '上传画板预览'}：${upload.name || ''}`, 70 + Math.round(((index + 1) / uploads.length) * 24));
           const asset = await uploadDesignAsset(upload);
           const assetId = upload.assetId || asset.id;
           nativeJson.assets[assetId] = {
