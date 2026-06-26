@@ -13,6 +13,8 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import type { DesignLayer, GalleryNativeJson } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { Checkbox } from "@multica/ui/components/ui/checkbox";
+import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import {
@@ -31,6 +33,7 @@ import { LayerTree } from "./layer-tree";
 import { NativeFramePreview } from "./native-renderer";
 import { analyzeFrameFidelity } from "./native-renderer/fidelity";
 import type { FrameFidelityReport, LayerFidelity, LayerFidelityStatus } from "./native-renderer/fidelity";
+import { layerFallbackAsset } from "./native-renderer/style";
 
 type InspectFrame = GalleryNativeJson["frames"][number];
 type Paint = { type?: string; color?: unknown; opacity?: number; stops?: Array<{ position?: number; color?: unknown }>; assetId?: string; imageHash?: string; scaleMode?: string };
@@ -524,7 +527,7 @@ function FidelityBadge({ status }: { status: LayerFidelityStatus }) {
   return <Badge variant="outline" className={`h-5 px-1.5 text-[10px] ${FIDELITY_BADGE_CLASS[status]}`}>{FIDELITY_LABELS[status]}</Badge>;
 }
 
-function FidelityReportSection({ report, selectedFidelity }: { report: FrameFidelityReport; selectedFidelity?: LayerFidelity }) {
+function FidelityReportSection({ report, selectedFidelity, fallbackAsset }: { report: FrameFidelityReport; selectedFidelity?: LayerFidelity; fallbackAsset?: GalleryNativeJson["assets"][string] | null }) {
   return (
     <InspectorSection title="渲染质量" icon={<Sparkles className="h-3.5 w-3.5" />}>
       <div className="space-y-3 text-xs">
@@ -543,15 +546,64 @@ function FidelityReportSection({ report, selectedFidelity }: { report: FrameFide
           </div>
         </div>
         {selectedFidelity ? (
-          <div className="flex items-start justify-between gap-3 rounded-lg border p-2.5">
-            <div className="min-w-0">
-              <div className="font-medium">当前图层</div>
-              <div className="mt-1 text-muted-foreground">{selectedFidelity.reason}</div>
+          <div className="space-y-2 rounded-lg border p-2.5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-medium">当前图层</div>
+                <div className="mt-1 text-muted-foreground">{selectedFidelity.reason}</div>
+              </div>
+              <FidelityBadge status={selectedFidelity.status} />
             </div>
-            <FidelityBadge status={selectedFidelity.status} />
+            {fallbackAsset?.url ? (
+              <div className="rounded-lg bg-muted/40 p-2">
+                <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                  <span>局部兜底资产</span>
+                  <span className="font-mono">{String(fallbackAsset.contentType ?? fallbackAsset.metadata?.format ?? "image")}</span>
+                </div>
+                <div className="overflow-hidden rounded-md border bg-background">
+                  <img src={fallbackAsset.url} alt="局部兜底资产预览" className="max-h-32 w-full object-contain" />
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
+    </InspectorSection>
+  );
+}
+
+function autoLayoutInfo(layer: DesignLayer | null) {
+  if (!layer) return null;
+  const source = (layer.source ?? {}) as Record<string, unknown>;
+  const autoLayout = (layer.style?.autoLayout ?? null) as Record<string, unknown> | null;
+  if (!autoLayout && !source.layoutMode) return null;
+  return {
+    layoutMode: autoLayout?.layoutMode ?? source.layoutMode,
+    itemSpacing: autoLayout?.itemSpacing ?? source.itemSpacing,
+    paddingLeft: autoLayout?.paddingLeft ?? source.paddingLeft,
+    paddingRight: autoLayout?.paddingRight ?? source.paddingRight,
+    paddingTop: autoLayout?.paddingTop ?? source.paddingTop,
+    paddingBottom: autoLayout?.paddingBottom ?? source.paddingBottom,
+    primaryAxisSizingMode: autoLayout?.primaryAxisSizingMode ?? source.primaryAxisSizingMode,
+    counterAxisSizingMode: autoLayout?.counterAxisSizingMode ?? source.counterAxisSizingMode,
+    primaryAxisAlignItems: autoLayout?.primaryAxisAlignItems ?? source.primaryAxisAlignItems,
+    counterAxisAlignItems: autoLayout?.counterAxisAlignItems ?? source.counterAxisAlignItems,
+  };
+}
+
+function AutoLayoutSection({ layer }: { layer: DesignLayer | null }) {
+  const info = autoLayoutInfo(layer);
+  if (!info) return null;
+  return (
+    <InspectorSection title="自动布局" icon={<Layers className="h-3.5 w-3.5" />}>
+      <Field label="方向" value={String(info.layoutMode ?? "—")} />
+      <Field label="间距" value={info.itemSpacing !== undefined ? unitText(Number(info.itemSpacing), "px") : undefined} />
+      <Field label="内边距" value={[info.paddingTop, info.paddingRight, info.paddingBottom, info.paddingLeft].map((value) => value === undefined ? "—" : numberText(Number(value))).join(" / ")} />
+      <Field label="主轴尺寸" value={info.primaryAxisSizingMode !== undefined ? String(info.primaryAxisSizingMode) : undefined} />
+      <Field label="交叉尺寸" value={info.counterAxisSizingMode !== undefined ? String(info.counterAxisSizingMode) : undefined} />
+      <Field label="主轴对齐" value={info.primaryAxisAlignItems !== undefined ? String(info.primaryAxisAlignItems) : undefined} />
+      <Field label="交叉对齐" value={info.counterAxisAlignItems !== undefined ? String(info.counterAxisAlignItems) : undefined} />
+      <p className="mt-2 text-xs text-muted-foreground">仅展示 Figma Auto Layout 元数据；当前不会修改布局。</p>
     </InspectorSection>
   );
 }
@@ -581,6 +633,8 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const suppressNextLayerClickRef = useRef(false);
   const [taskQueue, setTaskQueue] = useState<LocalRestoreTaskItem[]>([]);
   const [editText, setEditText] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editVisible, setEditVisible] = useState(true);
   const [copyingFrameContext, setCopyingFrameContext] = useState(false);
   const selectedLayer = layers.find((layer) => layer.id === selectedLayerId) ?? layers.find((layer) => layer.id === frame?.rootLayerId) ?? null;
   const activeMarqueeBounds = normalizedRect(marquee);
@@ -613,11 +667,15 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const slices = useMemo(() => sliceEntries(layers), [layers]);
   const fidelityReport = useMemo(() => nativeJson && frame ? analyzeFrameFidelity(nativeJson, frame) : null, [nativeJson, frame]);
   const selectedFidelity = selectedLayer?.id ? fidelityReport?.byLayerId[selectedLayer.id] : undefined;
+  const selectedFallbackAsset = nativeJson && selectedLayer ? layerFallbackAsset(nativeJson, selectedLayer) : null;
   const code = codeVariants(selectedLayer, frame);
   const textContent = selectedLayer?.text?.characters ?? selectedLayer?.text?.text ?? "";
+  const hasLayerEditChanges = !!selectedLayer && selectedLayer.id !== frame?.rootLayerId && (editName.trim() !== selectedLayer.name || editVisible !== (selectedLayer.visible !== false) || (selectedLayer.type === "text" && editText !== textContent));
   useEffect(() => {
     setEditText(selectedLayer?.text?.characters ?? selectedLayer?.text?.text ?? "");
-  }, [selectedLayer?.id, selectedLayer?.text?.characters, selectedLayer?.text?.text]);
+    setEditName(selectedLayer?.name ?? "");
+    setEditVisible(selectedLayer?.visible !== false);
+  }, [selectedLayer?.id, selectedLayer?.name, selectedLayer?.visible, selectedLayer?.text?.characters, selectedLayer?.text?.text]);
   const selectLayer = (layerId: string, additive = false) => {
     setSelectionBounds(null);
     setSelectedLayerId(layerId);
@@ -744,9 +802,13 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const saveLayerEdit = useMutation({
     mutationFn: () => {
       if (!selectedLayer) throw new Error("未选中图层");
+      const name = editName.trim();
+      if (!name) throw new Error("图层名称不能为空");
       return api.updateDesignLayerLightweight(designId, selectedLayer.id, {
         revision_id: data?.current_revision?.id,
-        text: selectedLayer.type === "text" ? editText : undefined,
+        text: selectedLayer.type === "text" && editText !== (selectedLayer.text?.characters ?? selectedLayer.text?.text ?? "") ? editText : undefined,
+        name: name !== selectedLayer.name ? name : undefined,
+        visible: editVisible !== (selectedLayer.visible !== false) ? editVisible : undefined,
       });
     },
     onSuccess: async () => {
@@ -871,7 +933,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
               <p className="mt-1 truncate text-xs text-muted-foreground">{selectedLayer?.name ?? frame.name}</p>
             </div>
             <div className="space-y-4 p-4">
-              {fidelityReport ? <FidelityReportSection report={fidelityReport} selectedFidelity={selectedFidelity} /> : null}
+              {fidelityReport ? <FidelityReportSection report={fidelityReport} selectedFidelity={selectedFidelity} fallbackAsset={selectedFallbackAsset} /> : null}
 
               <InspectorSection title="属性" icon={<Layers className="h-3.5 w-3.5" />}>
                 <Field label="名称" value={selectedLayer?.name ?? frame.name} />
@@ -890,16 +952,26 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
               <InspectorSection title="选区编辑" icon={<Sparkles className="h-3.5 w-3.5" />}>
                 <div className="space-y-3">
                   {editSummary ? <div className="rounded-lg bg-muted p-2 text-xs text-muted-foreground">当前 JSON：{editSummary.summary ?? "已更新设计元数据"}</div> : null}
+                  <div className="space-y-1.5">
+                    <div className="text-xs font-medium text-muted-foreground">图层名称</div>
+                    <Input value={editName} className="h-8 text-xs" onChange={(event) => setEditName(event.target.value)} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} />
+                  </div>
+                  <label className="flex items-center gap-2 rounded-lg border p-2 text-xs">
+                    <Checkbox checked={editVisible} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} onCheckedChange={(checked) => setEditVisible(checked === true)} />
+                    <span>显示图层</span>
+                  </label>
                   {selectedLayer?.type === "text" ? (
                     <div className="space-y-1.5">
                       <div className="text-xs font-medium text-muted-foreground">文本内容</div>
                       <Textarea value={editText} className="min-h-24 resize-none text-xs" onChange={(event) => setEditText(event.target.value)} />
                     </div>
                   ) : null}
-                  <p className="text-xs text-muted-foreground">当前 P0 只支持轻量文本编辑并写入当前 JSON；布局、层级、资产和语义标签由后续分析流程处理。</p>
-                  <Button size="sm" className="w-full" disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId || saveLayerEdit.isPending} onClick={() => saveLayerEdit.mutate()}>{saveLayerEdit.isPending ? "保存中…" : "保存到当前 JSON"}</Button>
+                  <p className="text-xs text-muted-foreground">当前只支持名称、显隐与文本内容等轻量编辑；几何、布局、层级和资产不在此处修改。</p>
+                  <Button size="sm" className="w-full" disabled={!hasLayerEditChanges || saveLayerEdit.isPending} onClick={() => saveLayerEdit.mutate()}>{saveLayerEdit.isPending ? "保存中…" : "保存到当前 JSON"}</Button>
                 </div>
               </InspectorSection>
+
+              <AutoLayoutSection layer={selectedLayer} />
 
               <InspectorSection title="填充" icon={<Droplets className="h-3.5 w-3.5" />}>
                 <PaintRows paints={fills} />

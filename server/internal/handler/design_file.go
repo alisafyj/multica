@@ -373,6 +373,8 @@ type DesignSelectionContextRequest struct {
 type DesignLayerLightweightEditRequest struct {
 	RevisionID string            `json:"revision_id"`
 	Text       *string           `json:"text"`
+	Name       *string           `json:"name"`
+	Visible    *bool             `json:"visible"`
 	Semantic   map[string]string `json:"semantic"`
 }
 
@@ -3387,6 +3389,20 @@ func applyDesignLayerLightweightEdit(raw json.RawMessage, layerID string, req De
 			changedFields = append(changedFields, "semantic."+key)
 		}
 	}
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			return nil, false, nil, errBadRequest("layer name must not be empty")
+		}
+		layer["name"] = name
+		changed = true
+		changedFields = append(changedFields, "name")
+	}
+	if req.Visible != nil {
+		layer["visible"] = *req.Visible
+		changed = true
+		changedFields = append(changedFields, "visible")
+	}
 	if changed {
 		source, _ := doc["source"].(map[string]any)
 		if source == nil {
@@ -3403,6 +3419,10 @@ func applyDesignLayerLightweightEdit(raw json.RawMessage, layerID string, req De
 		}
 	}
 	next, err := json.Marshal(doc)
+	if err != nil {
+		return nil, false, nil, err
+	}
+	next, err = annotateImportFidelityReport(next)
 	return next, changed, changedFields, err
 }
 

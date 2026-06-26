@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronRight, Search, X } from "lucide-react";
 import type { DesignLayer, GalleryNativeJson } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
@@ -88,6 +88,38 @@ function visibleNodeCount(node: LayerTreeNode | null): number {
   return 1 + node.children.reduce((sum, child) => sum + visibleNodeCount(child), 0);
 }
 
+function nodeMatchesQuery(node: LayerTreeNode, query: string) {
+  if (!query) return true;
+  const lower = query.toLowerCase();
+  return node.name.toLowerCase().includes(lower) || node.type.toLowerCase().includes(lower) || (TYPE_LABELS[node.type] ?? "").includes(query);
+}
+
+function nodeMatchesStatus(node: LayerTreeNode, status: LayerFidelityStatus | "all", fidelityReport?: FrameFidelityReport) {
+  if (status === "all") return true;
+  return fidelityReport?.byLayerId[node.id]?.status === status;
+}
+
+function filterLayerTree(node: LayerTreeNode | null, query: string, status: LayerFidelityStatus | "all", fidelityReport?: FrameFidelityReport): LayerTreeNode | null {
+  if (!node) return null;
+  const trimmed = query.trim();
+  if (!trimmed && status === "all") return node;
+  const children = node.children.map((child) => filterLayerTree(child, trimmed, status, fidelityReport)).filter((child): child is LayerTreeNode => !!child);
+  const matchesQuery = !trimmed || nodeMatchesQuery(node, trimmed);
+  const matchesStatus = nodeMatchesStatus(node, status, fidelityReport);
+  if ((matchesQuery && matchesStatus) || children.length) return { ...node, children };
+  return null;
+}
+
+function findAncestorIds(node: LayerTreeNode | null, targetId: string | null, path: string[] = []): string[] {
+  if (!node || !targetId) return [];
+  if (node.id === targetId) return path;
+  for (const child of node.children) {
+    const result = findAncestorIds(child, targetId, [...path, node.id]);
+    if (result.length) return result;
+  }
+  return [];
+}
+
 function LayerTreeRow({
   node,
   depth,
@@ -109,15 +141,22 @@ function LayerTreeRow({
   onSelectLayer: (layerId: string) => void;
   onHoverLayer: (layerId: string | null) => void;
 }) {
+  const rowRef = useRef<HTMLDivElement | null>(null);
   const isOpen = expanded.has(node.id);
   const hasChildren = node.children.length > 0 && (depth === 0 || canExpand(node.layer));
   const isSelected = selectedLayerId === node.id;
   const isHovered = hoveredLayerId === node.id;
   const fidelity = fidelityReport?.byLayerId[node.id];
 
+  useEffect(() => {
+    if (!isSelected) return;
+    rowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [isSelected]);
+
   return (
     <div className="min-w-max">
       <div
+        ref={rowRef}
         className={cn(
           "group flex h-8 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-lg pr-2 text-left text-xs transition-colors",
           isSelected && "bg-primary text-primary-foreground shadow-sm",
@@ -177,13 +216,19 @@ function LayerTreeRow({
 
 export function LayerTree({ nativeJson, frame, selectedLayerId, hoveredLayerId, fidelityReport, onSelectLayer, onHoverLayer }: LayerTreeProps) {
   const tree = useMemo(() => buildLayerTree(nativeJson, frame), [nativeJson, frame]);
-  const expandableIds = useMemo(() => collectExpandableIds(tree), [tree]);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<LayerFidelityStatus | "all">("all");
+  const filteredTree = useMemo(() => filterLayerTree(tree, query, statusFilter, fidelityReport), [fidelityReport, tree, query, statusFilter]);
+  const hasFilter = query.trim().length > 0 || statusFilter !== "all";
+  const expandableIds = useMemo(() => collectExpandableIds(hasFilter ? filteredTree : tree), [filteredTree, hasFilter, tree]);
   const totalCount = useMemo(() => visibleNodeCount(tree), [tree]);
+  const filteredCount = useMemo(() => visibleNodeCount(filteredTree), [filteredTree]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(expandableIds));
 
   useEffect(() => {
-    setExpanded(new Set(expandableIds));
-  }, [expandableIds]);
+    const selectedAncestors = findAncestorIds(tree, selectedLayerId);
+    setExpanded(new Set([...expandableIds, ...selectedAncestors]));
+  }, [expandableIds, selectedLayerId, tree]);
 
   const toggle = (layerId: string) => {
     setExpanded((current) => {
@@ -200,17 +245,59 @@ export function LayerTree({ nativeJson, frame, selectedLayerId, hoveredLayerId, 
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <div className="text-sm font-semibold">图层</div>
-            <p className="mt-1 truncate text-xs text-muted-foreground">可见图层 · {totalCount} 项</p>
+            <p className="mt-1 truncate text-xs text-muted-foreground">可见图层 · {hasFilter ? `${filteredCount}/${totalCount}` : totalCount} 项</p>
           </div>
-          <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setExpanded(new Set(expandableIds))}>
-            展开
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setExpanded(new Set(expandableIds))}>
+              展开
+            </Button>
+            <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setExpanded(new Set(findAncestorIds(tree, selectedLayerId)))}>
+              收起
+            </Button>
+          </div>
         </div>
+        <div className="mt-3 flex h-8 items-center gap-2 rounded-lg border bg-muted/30 px-2 text-xs">
+          <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索图层名称或类型"
+            className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
+          />
+          {query ? (
+            <button type="button" className="rounded-sm p-0.5 text-muted-foreground hover:bg-background hover:text-foreground" onClick={() => setQuery("")} aria-label="清空搜索">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+        {fidelityReport ? (
+          <div className="mt-2 grid grid-cols-4 gap-1 rounded-lg bg-muted/40 p-1 text-[11px]">
+            {([
+              ["all", "全部", fidelityReport.total],
+              ["native", "原生", fidelityReport.native],
+              ["fallback", "兜底", fidelityReport.fallback],
+              ["unsupported", "缺失", fidelityReport.unsupported],
+            ] satisfies Array<[LayerFidelityStatus | "all", string, number]>).map(([status, label, count]) => (
+              <button
+                key={status}
+                type="button"
+                onClick={() => setStatusFilter(status)}
+                className={cn(
+                  "rounded-md px-1.5 py-1 font-medium transition-colors",
+                  statusFilter === status ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <span>{label}</span>
+                <span className="ml-1 font-mono opacity-70">{count}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
       <div className="h-full overflow-auto p-2">
-        {tree ? (
+        {filteredTree ? (
           <LayerTreeRow
-            node={tree}
+            node={filteredTree}
             depth={0}
             expanded={expanded}
             selectedLayerId={selectedLayerId}
@@ -221,7 +308,7 @@ export function LayerTree({ nativeJson, frame, selectedLayerId, hoveredLayerId, 
             onHoverLayer={onHoverLayer}
           />
         ) : (
-          <div className="rounded-xl border border-dashed p-4 text-xs text-muted-foreground">暂无可见图层。</div>
+          <div className="rounded-xl border border-dashed p-4 text-xs text-muted-foreground">{hasFilter ? "没有匹配的图层。" : "暂无可见图层。"}</div>
         )}
       </div>
     </aside>

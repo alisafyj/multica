@@ -94,6 +94,24 @@ export function layerFallbackAssetUrl(nativeJson: GalleryNativeJson | undefined,
   return url && !url.startsWith("figma-image-hash://") ? url : null;
 }
 
+export function layerFallbackAsset(nativeJson: GalleryNativeJson | undefined, layer: DesignLayer) {
+  const fallbackAssetId = typeof layer.style?.fallbackAssetId === "string" ? layer.style.fallbackAssetId : null;
+  return fallbackAssetId ? nativeJson?.assets?.[fallbackAssetId] ?? null : null;
+}
+
+export function isMaskLayer(layer: DesignLayer) {
+  return (layer.source as { isMask?: unknown } | undefined)?.isMask === true;
+}
+
+function layerClipsContent(layer: DesignLayer, fill: string | null) {
+  const source = (layer.source ?? {}) as { clipsContent?: unknown; layoutMode?: unknown };
+  if (source.clipsContent === true) return true;
+  if (source.clipsContent === false) return false;
+  const isContainer = layer.type === "frame" || layer.type === "group" || layer.type === "component" || layer.type === "instance";
+  if (isContainer && !styleRadius(layer.style) && !fill && !layer.style?.autoLayout && !source.layoutMode) return false;
+  return Boolean(styleRadius(layer.style) || fill || !isContainer);
+}
+
 export function layerImageFit(layer: DesignLayer): CSSProperties["objectFit"] {
   switch (layerImageScaleMode(layer)) {
     case "FIT":
@@ -135,6 +153,6 @@ export function nativeLayerStyle(layer: DesignLayer, options?: { transparent?: b
     background: fill ?? undefined,
     border: stroke ? `${stroke.width}px ${stroke.dashed ? "dashed" : "solid"} ${stroke.color}` : undefined,
     boxShadow: layerBoxShadow(layer),
-    overflow: "hidden",
+    overflow: layerClipsContent(layer, fill) ? "hidden" : "visible",
   };
 }

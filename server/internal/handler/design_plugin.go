@@ -471,6 +471,10 @@ func (h *Handler) importPluginDesignFileRevision(r *http.Request, workspaceID pg
 				return zeroFile, zeroRevision, err
 			}
 		}
+		revisionJSON, err = annotateImportFidelityReport(revisionJSON)
+		if err != nil {
+			return zeroFile, zeroRevision, err
+		}
 		revisionNumber, err = qtx.GetNextDesignRevisionNumber(r.Context(), file.ID)
 		if err != nil {
 			return zeroFile, zeroRevision, err
@@ -480,6 +484,10 @@ func (h *Handler) importPluginDesignFileRevision(r *http.Request, workspaceID pg
 			title = "Figma import"
 		}
 		file, err = qtx.CreateDesignFile(r.Context(), db.CreateDesignFileParams{WorkspaceID: workspaceID, ProjectID: projectID, FolderID: folderID, Title: title, Description: description, SourceType: "import", SourceRef: []byte(sourceRef), CreatedBy: userID})
+		if err != nil {
+			return zeroFile, zeroRevision, err
+		}
+		revisionJSON, err = annotateImportFidelityReport(revisionJSON)
 		if err != nil {
 			return zeroFile, zeroRevision, err
 		}

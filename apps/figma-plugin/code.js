@@ -478,20 +478,23 @@ async function collectFallbackLayerUploads(nativeJson) {
     try {
       const node = await figma.getNodeByIdAsync(layer.sourceNodeId);
       if (!node || typeof node.exportAsync !== 'function') continue;
-      const bytes = await node.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } });
+      const fallbackFormat = layer.type === 'vector' ? 'SVG' : 'PNG';
+      const exportOptions = fallbackFormat === 'SVG' ? { format: 'SVG' } : { format: 'PNG', constraint: { type: 'SCALE', value: 1 } };
+      const bytes = await node.exportAsync(exportOptions);
+      const extension = fallbackFormat === 'SVG' ? 'svg' : 'png';
       uploads.push({
         assetId: fallbackAssetId,
         kind: 'image',
         layerId: layer.id,
         frameId: layer.frameId,
         sourceNodeId: layer.sourceNodeId,
-        name: `${safeName({ name: layer.name })}-fallback.png`,
-        format: 'png',
-        contentType: 'image/png',
+        name: `${safeName({ name: layer.name })}-fallback.${extension}`,
+        format: extension,
+        contentType: fallbackFormat === 'SVG' ? 'image/svg+xml' : 'image/png',
         width: layer.width,
         height: layer.height,
         bytes: Array.from(bytes),
-        metadata: { ...(asset.metadata || {}), exportedFallback: true },
+        metadata: { ...(asset.metadata || {}), exportedFallback: true, exportFormat: fallbackFormat },
       });
     } catch (error) {
       console.warn('[multica-figma] fallback layer export failed', layer.name, error);

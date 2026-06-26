@@ -585,6 +585,8 @@ export interface CreateDesignRestoreTaskRequest {
 export interface DesignLayerLightweightEditRequest {
   revision_id?: string;
   text?: string;
+  name?: string;
+  visible?: boolean;
   semantic?: Partial<Record<"role" | "moduleKey" | "stateKey" | "slotKey", string>>;
 }
 

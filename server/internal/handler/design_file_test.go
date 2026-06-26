@@ -1183,6 +1183,19 @@ func assertLightweightEditChangedFieldsForTest(t *testing.T, lastEdit map[string
 	}
 }
 
+func importFidelityReportFromNativeJSONForTest(t *testing.T, doc map[string]any) map[string]any {
+	t.Helper()
+	source, ok := doc["source"].(map[string]any)
+	if !ok {
+		t.Fatalf("native_json source type = %T", doc["source"])
+	}
+	report, ok := source["importFidelityReport"].(map[string]any)
+	if !ok {
+		t.Fatalf("source.importFidelityReport type = %T", source["importFidelityReport"])
+	}
+	return report
+}
+
 func TestUpdateDesignLayerLightweightTextMutatesCurrentRevisionAndPreservesStyle(t *testing.T) {
 	created := createDesignFileForTest(t, "Lightweight Text Edit Design")
 	if created.CurrentRevision == nil {
@@ -1319,6 +1332,48 @@ func TestUpdateDesignLayerLightweightSemanticUpdatesKeys(t *testing.T) {
 		t.Fatalf("lastLightweightEdit.summary = %v, want semantic summary", lastEdit["summary"])
 	}
 	assertLightweightEditChangedFieldsForTest(t, lastEdit, []string{"semantic.role", "semantic.moduleKey", "semantic.stateKey", "semantic.slotKey"})
+}
+
+func TestUpdateDesignLayerLightweightNameVisibleAndFidelityReport(t *testing.T) {
+	created := createDesignFileForTest(t, "Lightweight Name Visible Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, contextDesignNativeJSON("Lightweight Name Visible Design"))
+
+	w := postDesignLayerLightweightEditForTest(t, created.File.ID, "main-image", map[string]any{
+		"revision_id": created.CurrentRevision.ID,
+		"name":        "Hero Media",
+		"visible":     false,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateDesignLayerLightweight name/visible: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp DesignFileDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode lightweight edit response: %v", err)
+	}
+	if resp.CurrentRevision == nil {
+		t.Fatal("expected current revision response")
+	}
+	doc := decodeDesignRevisionNativeJSONForTest(t, resp.CurrentRevision.NativeJSON)
+	layer := layerFromNativeJSONForTest(t, doc, "main-image")
+	if layer["name"] != "Hero Media" {
+		t.Fatalf("layer.name = %v, want Hero Media", layer["name"])
+	}
+	if layer["visible"] != false {
+		t.Fatalf("layer.visible = %v, want false", layer["visible"])
+	}
+	lastEdit := lastLightweightEditFromNativeJSONForTest(t, doc)
+	assertLightweightEditChangedFieldsForTest(t, lastEdit, []string{"name", "visible"})
+	report := importFidelityReportFromNativeJSONForTest(t, doc)
+	if report["updatedAt"] == "" {
+		t.Fatalf("importFidelityReport.updatedAt missing: %+v", report)
+	}
+	byFrameID, ok := report["byFrameId"].(map[string]any)
+	if !ok || byFrameID["frame-main"] == nil {
+		t.Fatalf("importFidelityReport.byFrameId missing frame-main: %+v", report)
+	}
 }
 
 func TestUpdateDesignLayerLightweightRejectsMismatchedRevision(t *testing.T) {
@@ -2665,6 +2720,13 @@ func TestFigmaPluginImportWithProjectAndFolder(t *testing.T) {
 	if resp.File.Title != "Plugin Import Design File Title" {
 		t.Fatalf("title = %q, want Plugin Import Design File Title", resp.File.Title)
 	}
+	if resp.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	doc := decodeDesignRevisionNativeJSONForTest(t, resp.CurrentRevision.NativeJSON)
+	if report := importFidelityReportFromNativeJSONForTest(t, doc); report["byFrameId"] == nil {
+		t.Fatalf("missing fidelity byFrameId: %+v", report)
+	}
 	var afterCount int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM design_file WHERE workspace_id = $1 AND project_id = $2 AND folder_id = $3`, testWorkspaceID, projectID, folderID).Scan(&afterCount); err != nil {
 		t.Fatalf("count design files after import: %v", err)
@@ -2742,6 +2804,10 @@ func TestFigmaPluginImportTargetDesignFileMergesNewSourceNode(t *testing.T) {
 	}
 	if got := frameCountFromNativeJSONForTest(t, merged.CurrentRevision.NativeJSON); got != 5 {
 		t.Fatalf("merged frame count = %d, want 5", got)
+	}
+	mergedDoc := decodeDesignRevisionNativeJSONForTest(t, merged.CurrentRevision.NativeJSON)
+	if report := importFidelityReportFromNativeJSONForTest(t, mergedDoc); report["byFrameId"] == nil {
+		t.Fatalf("missing merged fidelity byFrameId: %+v", report)
 	}
 	var afterCount int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM design_file WHERE workspace_id = $1 AND project_id = $2 AND folder_id = $3`, testWorkspaceID, projectID, folderID).Scan(&afterCount); err != nil {

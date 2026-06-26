@@ -1,5 +1,5 @@
 import type { DesignLayer, GalleryNativeJson } from "@multica/core/types";
-import { firstFillBackground, firstStroke, layerFallbackAssetUrl, layerImageUrl, styleArray } from "./style";
+import { firstFillBackground, firstStroke, layerFallbackAsset, layerFallbackAssetUrl, layerImageUrl, styleArray } from "./style";
 
 type InspectFrame = GalleryNativeJson["frames"][number];
 
@@ -85,7 +85,11 @@ export function classifyLayerFidelity(nativeJson: GalleryNativeJson, layer: Desi
   }
 
   if (layer.type === "vector" || layer.type === "slice" || layer.type === "custom") {
-    if (layerFallbackAssetUrl(nativeJson, layer)) return { layerId: layer.id, status: "fallback", reason: `${layer.type === "vector" ? "矢量" : layer.type === "slice" ? "切片" : "自定义图层"}使用局部兜底图呈现` };
+    const fallbackAsset = layerFallbackAsset(nativeJson, layer);
+    if (layerFallbackAssetUrl(nativeJson, layer)) {
+      const isSvg = fallbackAsset?.contentType === "image/svg+xml" || fallbackAsset?.metadata?.exportFormat === "SVG";
+      return { layerId: layer.id, status: "fallback", reason: `${layer.type === "vector" ? "矢量" : layer.type === "slice" ? "切片" : "自定义图层"}使用局部${isSvg ? " SVG" : "兜底图"}呈现` };
+    }
     return { layerId: layer.id, status: "fallback", reason: `${layer.type === "vector" ? "矢量" : layer.type === "slice" ? "切片" : "自定义图层"}暂以占位呈现` };
   }
 
