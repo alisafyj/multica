@@ -529,6 +529,7 @@
       async function uploadExported(nativeJson) {
         const projectId = selectedProjectId;
         const templateMode = isTemplateUpload();
+        removeUnuploadedAssetReferences(nativeJson);
         removeUnsafeBinaryFields(nativeJson);
         setStatus(templateMode ? '上传模板到 Multica…' : '上传到 Multica…');
         setProgress(true, templateMode ? '上传模板' : '上传设计稿', 85);
@@ -586,6 +587,48 @@
           if (typeof value[key] === 'string' && /^data:image\/.+;base64,/i.test(value[key])) delete value[key];
         }
         Object.keys(value).forEach((key) => removeUnsafeBinaryFields(value[key]));
+      }
+
+      function isUploadedAsset(asset) {
+        const url = asset && typeof asset.url === 'string' ? asset.url.trim() : '';
+        return !!url && !/^figma-image-hash:\/\//i.test(url);
+      }
+
+      function removeUnuploadedAssetReferences(nativeJson) {
+        if (!nativeJson || typeof nativeJson !== 'object') return;
+        const assets = nativeJson.assets || {};
+        const removed = {};
+        Object.keys(assets).forEach((assetId) => {
+          if (isUploadedAsset(assets[assetId])) return;
+          removed[assetId] = true;
+          delete assets[assetId];
+        });
+        if (nativeJson.frames) {
+          nativeJson.frames.forEach((frame) => {
+            if (frame && removed[frame.previewAssetId]) delete frame.previewAssetId;
+            if (frame && removed[frame.thumbnailAssetId]) delete frame.thumbnailAssetId;
+          });
+        }
+        const layers = nativeJson.layers || {};
+        Object.keys(layers).forEach((layerId) => {
+          const layer = layers[layerId];
+          if (!layer) return;
+          if (layer.image && removed[layer.image.assetId]) delete layer.image;
+          if (layer.style && removed[layer.style.fallbackAssetId]) delete layer.style.fallbackAssetId;
+          if (layer.style && Array.isArray(layer.style.fills)) {
+            layer.style.fills = layer.style.fills.filter((fill) => !(fill && fill.assetId && removed[fill.assetId]));
+            if (layer.style.fills.length === 0) delete layer.style.fills;
+          }
+          if (Array.isArray(layer.exportable)) {
+            layer.exportable = layer.exportable.map((item) => {
+              if (!item || !removed[item.assetId || item.id]) return item;
+              const next = Object.assign({}, item);
+              delete next.url;
+              delete next.path;
+              return next;
+            });
+          }
+        });
       }
 
       async function uploadDesignAsset(upload) {
