@@ -371,13 +371,15 @@ type DesignSelectionContextRequest struct {
 }
 
 type DesignLayerLightweightEditRequest struct {
-	RevisionID string            `json:"revision_id"`
-	Text       *string           `json:"text"`
-	Name       *string           `json:"name"`
-	Visible    *bool             `json:"visible"`
-	FillColor  *string           `json:"fill_color"`
-	TextColor  *string           `json:"text_color"`
-	Semantic   map[string]string `json:"semantic"`
+	RevisionID  string            `json:"revision_id"`
+	Text        *string           `json:"text"`
+	Name        *string           `json:"name"`
+	Visible     *bool             `json:"visible"`
+	FillColor   *string           `json:"fill_color"`
+	TextColor   *string           `json:"text_color"`
+	StrokeColor *string           `json:"stroke_color"`
+	StrokeWidth *float64          `json:"stroke_width"`
+	Semantic    map[string]string `json:"semantic"`
 }
 
 type CreateDesignFileRequest struct {
@@ -3432,6 +3434,22 @@ func applyDesignLayerLightweightEdit(raw json.RawMessage, layerID string, req De
 		changed = true
 		changedFields = append(changedFields, "text_color")
 	}
+	if req.StrokeColor != nil {
+		color, err := parseLightweightHexColor(*req.StrokeColor)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		applyLayerStrokeColor(layer, color)
+		changed = true
+		changedFields = append(changedFields, "stroke_color")
+	}
+	if req.StrokeWidth != nil {
+		if err := applyLayerStrokeWidth(layer, *req.StrokeWidth); err != nil {
+			return nil, false, nil, err
+		}
+		changed = true
+		changedFields = append(changedFields, "stroke_width")
+	}
 	if changed {
 		source, _ := doc["source"].(map[string]any)
 		if source == nil {
@@ -3507,6 +3525,51 @@ func applyLayerFillColor(layer map[string]any, color map[string]any) {
 	if _, ok := style["backgroundColor"]; ok {
 		style["backgroundColor"] = color
 	}
+}
+
+func applyLayerStrokeColor(layer map[string]any, color map[string]any) {
+	style, _ := layer["style"].(map[string]any)
+	if style == nil {
+		style = map[string]any{}
+		layer["style"] = style
+	}
+	strokes, _ := style["strokes"].([]any)
+	if len(strokes) == 0 {
+		strokes = []any{map[string]any{"width": float64(1)}}
+	}
+	stroke, _ := strokes[0].(map[string]any)
+	if stroke == nil {
+		stroke = map[string]any{"width": float64(1)}
+		strokes[0] = stroke
+	}
+	stroke["color"] = color
+	style["strokes"] = strokes
+	if _, ok := style["stroke"]; ok {
+		style["stroke"] = color
+	}
+}
+
+func applyLayerStrokeWidth(layer map[string]any, width float64) error {
+	if width < 0 || width > 100 {
+		return errBadRequest("stroke_width must be between 0 and 100")
+	}
+	style, _ := layer["style"].(map[string]any)
+	if style == nil {
+		style = map[string]any{}
+		layer["style"] = style
+	}
+	strokes, _ := style["strokes"].([]any)
+	if len(strokes) == 0 {
+		strokes = []any{map[string]any{}}
+	}
+	stroke, _ := strokes[0].(map[string]any)
+	if stroke == nil {
+		stroke = map[string]any{}
+		strokes[0] = stroke
+	}
+	stroke["width"] = width
+	style["strokes"] = strokes
+	return nil
 }
 
 func validateNativeJSONNoEmbeddedBinary(raw json.RawMessage) error {

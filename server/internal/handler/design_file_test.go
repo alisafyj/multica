@@ -1433,6 +1433,42 @@ func TestUpdateDesignLayerLightweightFillAndTextColor(t *testing.T) {
 	assertLightweightEditChangedFieldsForTest(t, lastLightweightEditFromNativeJSONForTest(t, doc), []string{"text_color"})
 }
 
+func TestUpdateDesignLayerLightweightStrokeColorAndWidth(t *testing.T) {
+	created := createDesignFileForTest(t, "Lightweight Stroke Edit Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	nativeJSON := contextDesignNativeJSON("Lightweight Stroke Edit Design")
+	layers := nativeJSON["layers"].(map[string]any)
+	layers["main-image"].(map[string]any)["style"] = map[string]any{"strokes": []map[string]any{{"color": map[string]any{"css": "#111111", "hex": "#111111"}, "width": float64(1)}}}
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, nativeJSON)
+
+	w := postDesignLayerLightweightEditForTest(t, created.File.ID, "main-image", map[string]any{
+		"revision_id":  created.CurrentRevision.ID,
+		"stroke_color": "#abc",
+		"stroke_width": 2,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateDesignLayerLightweight stroke edit: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp DesignFileDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	doc := decodeDesignRevisionNativeJSONForTest(t, resp.CurrentRevision.NativeJSON)
+	style := layerFromNativeJSONForTest(t, doc, "main-image")["style"].(map[string]any)
+	strokes := style["strokes"].([]any)
+	stroke := strokes[0].(map[string]any)
+	color := stroke["color"].(map[string]any)
+	if color["hex"] != "#AABBCC" || color["css"] != "#AABBCC" {
+		t.Fatalf("stroke color = %+v, want #AABBCC", color)
+	}
+	if stroke["width"] != float64(2) {
+		t.Fatalf("stroke width = %v, want 2", stroke["width"])
+	}
+	assertLightweightEditChangedFieldsForTest(t, lastLightweightEditFromNativeJSONForTest(t, doc), []string{"stroke_color", "stroke_width"})
+}
+
 func TestUpdateDesignLayerLightweightRejectsMismatchedRevision(t *testing.T) {
 	created := createDesignFileForTest(t, "Lightweight Stale Revision Design")
 	if created.CurrentRevision == nil {
