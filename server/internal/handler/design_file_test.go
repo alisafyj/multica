@@ -1376,6 +1376,63 @@ func TestUpdateDesignLayerLightweightNameVisibleAndFidelityReport(t *testing.T) 
 	}
 }
 
+func TestUpdateDesignLayerLightweightFillAndTextColor(t *testing.T) {
+	created := createDesignFileForTest(t, "Lightweight Color Edit Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	nativeJSON := contextDesignNativeJSON("Lightweight Color Edit Design")
+	layers := nativeJSON["layers"].(map[string]any)
+	layers["main-image"].(map[string]any)["style"] = map[string]any{"fills": []map[string]any{{"type": "solid", "color": map[string]any{"css": "#111111", "hex": "#111111"}}}}
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, nativeJSON)
+
+	fillW := postDesignLayerLightweightEditForTest(t, created.File.ID, "main-image", map[string]any{
+		"revision_id": created.CurrentRevision.ID,
+		"fill_color":  "#0f0",
+	})
+	if fillW.Code != http.StatusOK {
+		t.Fatalf("UpdateDesignLayerLightweight fill_color: expected 200, got %d: %s", fillW.Code, fillW.Body.String())
+	}
+	var fillResp DesignFileDetailResponse
+	if err := json.NewDecoder(fillW.Body).Decode(&fillResp); err != nil {
+		t.Fatalf("decode fill edit response: %v", err)
+	}
+	doc := decodeDesignRevisionNativeJSONForTest(t, fillResp.CurrentRevision.NativeJSON)
+	style := layerFromNativeJSONForTest(t, doc, "main-image")["style"].(map[string]any)
+	fills := style["fills"].([]any)
+	color := fills[0].(map[string]any)["color"].(map[string]any)
+	if color["hex"] != "#00FF00" || color["css"] != "#00FF00" {
+		t.Fatalf("fill color = %+v, want #00FF00", color)
+	}
+	assertLightweightEditChangedFieldsForTest(t, lastLightweightEditFromNativeJSONForTest(t, doc), []string{"fill_color"})
+
+	textW := postDesignLayerLightweightEditForTest(t, created.File.ID, "main-title", map[string]any{
+		"revision_id": fillResp.CurrentRevision.ID,
+		"text_color":  "#336699",
+	})
+	if textW.Code != http.StatusOK {
+		t.Fatalf("UpdateDesignLayerLightweight text_color: expected 200, got %d: %s", textW.Code, textW.Body.String())
+	}
+	var textResp DesignFileDetailResponse
+	if err := json.NewDecoder(textW.Body).Decode(&textResp); err != nil {
+		t.Fatalf("decode text color edit response: %v", err)
+	}
+	doc = decodeDesignRevisionNativeJSONForTest(t, textResp.CurrentRevision.NativeJSON)
+	textLayer := layerFromNativeJSONForTest(t, doc, "main-title")
+	text := textLayer["text"].(map[string]any)
+	textColor := text["color"].(map[string]any)
+	if textColor["hex"] != "#336699" || textColor["css"] != "#336699" {
+		t.Fatalf("text color = %+v, want #336699", textColor)
+	}
+	textStyle := textLayer["style"].(map[string]any)
+	textFills := textStyle["fills"].([]any)
+	textFillColor := textFills[0].(map[string]any)["color"].(map[string]any)
+	if textFillColor["hex"] != "#336699" {
+		t.Fatalf("text fill color = %+v, want #336699", textFillColor)
+	}
+	assertLightweightEditChangedFieldsForTest(t, lastLightweightEditFromNativeJSONForTest(t, doc), []string{"text_color"})
+}
+
 func TestUpdateDesignLayerLightweightRejectsMismatchedRevision(t *testing.T) {
 	created := createDesignFileForTest(t, "Lightweight Stale Revision Design")
 	if created.CurrentRevision == nil {

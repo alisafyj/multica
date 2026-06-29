@@ -159,6 +159,20 @@ function cssColor(value: unknown) {
   return null;
 }
 
+function hexColor(value: unknown) {
+  const color = cssColor(value);
+  if (!color) return "";
+  if (/^#[0-9a-fA-F]{6}$/.test(color)) return color.toUpperCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(color)) return `#${color.slice(1).split("").map((part) => part + part).join("")}`.toUpperCase();
+  return "";
+}
+
+function primaryFillHex(layer: DesignLayer | null) {
+  if (!layer) return "";
+  const fill = styleArray<Paint>(layer.style, "fills")[0];
+  return hexColor(fill?.color ?? layer.style?.fill ?? layer.style?.backgroundColor);
+}
+
 function styleArray<T>(style: Record<string, unknown> | undefined, key: string): T[] {
   const value = style?.[key];
   return Array.isArray(value) ? (value as T[]) : [];
@@ -534,8 +548,8 @@ function FidelityReportSection({ report, selectedFidelity, fallbackAsset }: { re
         <div className="rounded-xl border bg-muted/30 p-3">
           <div className="flex items-end justify-between gap-3">
             <div>
-              <div className="text-2xl font-semibold tabular-nums">{report.nativePercent}%</div>
-              <div className="text-muted-foreground">原生可渲染</div>
+              <div className="text-2xl font-semibold tabular-nums">{report.renderQualityPercent}%</div>
+              <div className="text-muted-foreground">渲染还原度</div>
             </div>
             <div className="text-right text-muted-foreground">{report.total} 个可见图层</div>
           </div>
@@ -635,6 +649,8 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const [editText, setEditText] = useState("");
   const [editName, setEditName] = useState("");
   const [editVisible, setEditVisible] = useState(true);
+  const [editFillColor, setEditFillColor] = useState("");
+  const [editTextColor, setEditTextColor] = useState("");
   const [copyingFrameContext, setCopyingFrameContext] = useState(false);
   const selectedLayer = layers.find((layer) => layer.id === selectedLayerId) ?? layers.find((layer) => layer.id === frame?.rootLayerId) ?? null;
   const activeMarqueeBounds = normalizedRect(marquee);
@@ -670,12 +686,16 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const selectedFallbackAsset = nativeJson && selectedLayer ? layerFallbackAsset(nativeJson, selectedLayer) : null;
   const code = codeVariants(selectedLayer, frame);
   const textContent = selectedLayer?.text?.characters ?? selectedLayer?.text?.text ?? "";
-  const hasLayerEditChanges = !!selectedLayer && selectedLayer.id !== frame?.rootLayerId && (editName.trim() !== selectedLayer.name || editVisible !== (selectedLayer.visible !== false) || (selectedLayer.type === "text" && editText !== textContent));
+  const currentFillColor = primaryFillHex(selectedLayer);
+  const currentTextColor = selectedLayer?.text ? hexColor(selectedLayer.text.color) : "";
+  const hasLayerEditChanges = !!selectedLayer && selectedLayer.id !== frame?.rootLayerId && (editName.trim() !== selectedLayer.name || editVisible !== (selectedLayer.visible !== false) || (selectedLayer.type === "text" && editText !== textContent) || (!!editFillColor && editFillColor !== currentFillColor) || (selectedLayer.type === "text" && !!editTextColor && editTextColor !== currentTextColor));
   useEffect(() => {
     setEditText(selectedLayer?.text?.characters ?? selectedLayer?.text?.text ?? "");
     setEditName(selectedLayer?.name ?? "");
     setEditVisible(selectedLayer?.visible !== false);
-  }, [selectedLayer?.id, selectedLayer?.name, selectedLayer?.visible, selectedLayer?.text?.characters, selectedLayer?.text?.text]);
+    setEditFillColor(primaryFillHex(selectedLayer));
+    setEditTextColor(selectedLayer?.text ? hexColor(selectedLayer.text.color) : "");
+  }, [selectedLayer?.id, selectedLayer?.name, selectedLayer?.visible, selectedLayer?.style, selectedLayer?.text?.characters, selectedLayer?.text?.text, selectedLayer?.text?.color]);
   const selectLayer = (layerId: string, additive = false) => {
     setSelectionBounds(null);
     setSelectedLayerId(layerId);
@@ -809,6 +829,8 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
         text: selectedLayer.type === "text" && editText !== (selectedLayer.text?.characters ?? selectedLayer.text?.text ?? "") ? editText : undefined,
         name: name !== selectedLayer.name ? name : undefined,
         visible: editVisible !== (selectedLayer.visible !== false) ? editVisible : undefined,
+        fill_color: editFillColor && editFillColor !== currentFillColor ? editFillColor : undefined,
+        text_color: selectedLayer.type === "text" && editTextColor && editTextColor !== currentTextColor ? editTextColor : undefined,
       });
     },
     onSuccess: async () => {
@@ -866,7 +888,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                     <Button key={mode} type="button" size="sm" variant={renderMode === mode ? "secondary" : "ghost"} className="h-7 px-2.5 text-xs" onClick={() => setRenderMode(mode)}>{label}</Button>
                   ))}
                 </div>
-                {fidelityReport ? <Badge variant="outline" className="h-8 px-2 text-xs">原生 {fidelityReport.nativePercent}%</Badge> : null}
+                {fidelityReport ? <Badge variant="outline" className="h-8 px-2 text-xs">还原度 {fidelityReport.renderQualityPercent}%</Badge> : null}
                 <Button size="sm" variant="outline" disabled={copyingFrameContext} onClick={() => void copyFrameContext()}><Copy className="h-3.5 w-3.5" />{copyingFrameContext ? "复制中…" : "复制画板上下文"}</Button>
                 <Badge variant="secondary">版本 {data?.current_revision?.revision_number ?? "—"}</Badge>
               </div>
@@ -960,6 +982,24 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                     <Checkbox checked={editVisible} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} onCheckedChange={(checked) => setEditVisible(checked === true)} />
                     <span>显示图层</span>
                   </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="space-y-1.5 rounded-lg border p-2 text-xs">
+                      <span className="font-medium text-muted-foreground">填充色</span>
+                      <div className="flex items-center gap-2">
+                        <input type="color" value={editFillColor || "#000000"} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} className="h-7 w-9 rounded border bg-transparent" onChange={(event) => setEditFillColor(event.target.value.toUpperCase())} />
+                        <span className="font-mono text-[11px] text-muted-foreground">{editFillColor || "—"}</span>
+                      </div>
+                    </label>
+                    {selectedLayer?.type === "text" ? (
+                      <label className="space-y-1.5 rounded-lg border p-2 text-xs">
+                        <span className="font-medium text-muted-foreground">文本色</span>
+                        <div className="flex items-center gap-2">
+                          <input type="color" value={editTextColor || "#000000"} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} className="h-7 w-9 rounded border bg-transparent" onChange={(event) => setEditTextColor(event.target.value.toUpperCase())} />
+                          <span className="font-mono text-[11px] text-muted-foreground">{editTextColor || "—"}</span>
+                        </div>
+                      </label>
+                    ) : null}
+                  </div>
                   {selectedLayer?.type === "text" ? (
                     <div className="space-y-1.5">
                       <div className="text-xs font-medium text-muted-foreground">文本内容</div>

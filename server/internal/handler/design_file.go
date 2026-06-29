@@ -375,6 +375,8 @@ type DesignLayerLightweightEditRequest struct {
 	Text       *string           `json:"text"`
 	Name       *string           `json:"name"`
 	Visible    *bool             `json:"visible"`
+	FillColor  *string           `json:"fill_color"`
+	TextColor  *string           `json:"text_color"`
 	Semantic   map[string]string `json:"semantic"`
 }
 
@@ -3403,6 +3405,33 @@ func applyDesignLayerLightweightEdit(raw json.RawMessage, layerID string, req De
 		changed = true
 		changedFields = append(changedFields, "visible")
 	}
+	if req.FillColor != nil {
+		color, err := parseLightweightHexColor(*req.FillColor)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		applyLayerFillColor(layer, color)
+		changed = true
+		changedFields = append(changedFields, "fill_color")
+	}
+	if req.TextColor != nil {
+		if stringField(layer, "type") != "text" {
+			return nil, false, nil, errBadRequest("text color edits are only allowed on text layers")
+		}
+		color, err := parseLightweightHexColor(*req.TextColor)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		text, _ := layer["text"].(map[string]any)
+		if text == nil {
+			text = map[string]any{}
+			layer["text"] = text
+		}
+		text["color"] = color
+		applyLayerFillColor(layer, color)
+		changed = true
+		changedFields = append(changedFields, "text_color")
+	}
 	if changed {
 		source, _ := doc["source"].(map[string]any)
 		if source == nil {
@@ -3424,6 +3453,60 @@ func applyDesignLayerLightweightEdit(raw json.RawMessage, layerID string, req De
 	}
 	next, err = annotateImportFidelityReport(next)
 	return next, changed, changedFields, err
+}
+
+func parseLightweightHexColor(raw string) (map[string]any, error) {
+	value := strings.TrimSpace(raw)
+	if strings.HasPrefix(value, "#") {
+		value = value[1:]
+	}
+	if len(value) == 3 {
+		value = string([]byte{value[0], value[0], value[1], value[1], value[2], value[2]})
+	}
+	if len(value) != 6 {
+		return nil, errBadRequest("color must be #RGB or #RRGGBB")
+	}
+	bytes, err := hex.DecodeString(value)
+	if err != nil || len(bytes) != 3 {
+		return nil, errBadRequest("color must be #RGB or #RRGGBB")
+	}
+	hexColor := "#" + strings.ToUpper(value)
+	return map[string]any{
+		"css": hexColor,
+		"hex": hexColor,
+		"r":   float64(bytes[0]) / 255,
+		"g":   float64(bytes[1]) / 255,
+		"b":   float64(bytes[2]) / 255,
+		"a":   1,
+	}, nil
+}
+
+func applyLayerFillColor(layer map[string]any, color map[string]any) {
+	style, _ := layer["style"].(map[string]any)
+	if style == nil {
+		style = map[string]any{}
+		layer["style"] = style
+	}
+	fills, _ := style["fills"].([]any)
+	if len(fills) == 0 {
+		fills = []any{map[string]any{"type": "solid"}}
+	}
+	fill, _ := fills[0].(map[string]any)
+	if fill == nil {
+		fill = map[string]any{"type": "solid"}
+		fills[0] = fill
+	}
+	if strings.TrimSpace(stringAny(fill["type"])) == "" {
+		fill["type"] = "solid"
+	}
+	fill["color"] = color
+	style["fills"] = fills
+	if _, ok := style["fill"]; ok {
+		style["fill"] = color
+	}
+	if _, ok := style["backgroundColor"]; ok {
+		style["backgroundColor"] = color
+	}
 }
 
 func validateNativeJSONNoEmbeddedBinary(raw json.RawMessage) error {

@@ -53,12 +53,15 @@ func annotateImportFidelityReport(raw json.RawMessage) (json.RawMessage, error) 
 	byFrameID := map[string]any{}
 	for _, frame := range doc.Frames {
 		total, native, fallback, unsupported := 0, 0, 0, 0
+		qualityScore := 0.0
 		for _, layer := range doc.Layers {
 			if layer.FrameID != frame.ID || layer.ID == frame.RootLayerID || (layer.Visible != nil && !*layer.Visible) {
 				continue
 			}
 			total++
-			switch classifyImportFidelityLayer(doc, layer) {
+			classification := classifyImportFidelityLayer(doc, layer)
+			qualityScore += importRenderQualityScore(classification)
+			switch classification {
 			case "native":
 				native++
 			case "unsupported":
@@ -71,10 +74,25 @@ func annotateImportFidelityReport(raw json.RawMessage) (json.RawMessage, error) 
 		if total > 0 {
 			nativePercent = int(math.Round(float64(native) / float64(total) * 100))
 		}
-		byFrameID[frame.ID] = map[string]any{"total": total, "native": native, "fallback": fallback, "unsupported": unsupported, "nativePercent": nativePercent}
+		renderQualityPercent := 100
+		if total > 0 {
+			renderQualityPercent = int(math.Round(qualityScore / float64(total) * 100))
+		}
+		byFrameID[frame.ID] = map[string]any{"total": total, "native": native, "fallback": fallback, "unsupported": unsupported, "nativePercent": nativePercent, "renderQualityPercent": renderQualityPercent}
 	}
 	source["importFidelityReport"] = map[string]any{"byFrameId": byFrameID, "updatedAt": time.Now().UTC().Format(time.RFC3339)}
 	return json.Marshal(root)
+}
+
+func importRenderQualityScore(classification string) float64 {
+	switch classification {
+	case "native":
+		return 1
+	case "unsupported":
+		return 0
+	default:
+		return 0.7
+	}
 }
 
 func classifyImportFidelityLayer(doc importFidelityDoc, layer importFidelityLayer) string {

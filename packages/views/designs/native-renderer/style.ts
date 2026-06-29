@@ -87,11 +87,51 @@ export function layerImageUrl(nativeJson: GalleryNativeJson | undefined, layer: 
   return null;
 }
 
+export function layerHasImageFill(layer: DesignLayer) {
+  if (layer.image?.assetId) return true;
+  return styleArray<Paint>(layer.style, "fills").some((paint) => Boolean(paint.assetId) || paint.type === "image");
+}
+
+export function framePreviewAsset(nativeJson: GalleryNativeJson | undefined, frameId: string | undefined) {
+  const frame = nativeJson?.frames.find((item) => item.id === frameId);
+  const assetId = frame?.previewAssetId ?? frame?.thumbnailAssetId;
+  const asset = assetId ? nativeJson?.assets?.[assetId] : null;
+  return asset?.url && !asset.url.startsWith("figma-image-hash://") ? { frame, asset } : null;
+}
+
+export function layerPreviewCrop(nativeJson: GalleryNativeJson | undefined, layer: DesignLayer, maxAreaRatio = 0.03) {
+  const preview = framePreviewAsset(nativeJson, layer.frameId);
+  const frameArea = preview?.frame ? preview.frame.width * preview.frame.height : 0;
+  const layerArea = layer.width * layer.height;
+  if (!preview?.frame || frameArea <= 0 || layerArea <= 0 || layerArea / frameArea > maxAreaRatio) return null;
+  return {
+    url: preview.asset.url,
+    frame: preview.frame,
+    style: {
+      backgroundImage: `url(${preview.asset.url})`,
+      backgroundPosition: `${-layer.x}px ${-layer.y}px`,
+      backgroundSize: `${preview.frame.width}px ${preview.frame.height}px`,
+      backgroundRepeat: "no-repeat",
+    } satisfies CSSProperties,
+  };
+}
+
 export function layerFallbackAssetUrl(nativeJson: GalleryNativeJson | undefined, layer: DesignLayer) {
   const fallbackAssetId = typeof layer.style?.fallbackAssetId === "string" ? layer.style.fallbackAssetId : null;
   if (!fallbackAssetId) return null;
   const url = nativeJson?.assets?.[fallbackAssetId]?.url ?? null;
   return url && !url.startsWith("figma-image-hash://") ? url : null;
+}
+
+export function layerExportableAssetUrl(nativeJson: GalleryNativeJson | undefined, layer: DesignLayer) {
+  for (const item of layer.exportable ?? []) {
+    const direct = typeof item.url === "string" ? item.url : typeof item.path === "string" ? item.path : null;
+    if (direct && !direct.startsWith("figma-image-hash://")) return direct;
+    const assetId = typeof item.assetId === "string" ? item.assetId : typeof item.id === "string" ? item.id : null;
+    const url = assetId ? nativeJson?.assets?.[assetId]?.url ?? null : null;
+    if (url && !url.startsWith("figma-image-hash://")) return url;
+  }
+  return null;
 }
 
 export function layerFallbackAsset(nativeJson: GalleryNativeJson | undefined, layer: DesignLayer) {
