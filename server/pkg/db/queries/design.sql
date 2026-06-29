@@ -270,11 +270,13 @@ WHERE agent_task_id = $1;
 SELECT * FROM design_restore_task
 WHERE workspace_id = $1
   AND issue_id = $2
-  AND status NOT IN ('cancelled', 'failed')
+  AND file_id = $3
+  AND revision_id = $4
+  AND status IN ('queued', 'running')
 ORDER BY
   CASE
     WHEN agent_task_id IS NOT NULL THEN 0
-    WHEN status IN ('running', 'completed', 'failed') THEN 1
+    WHEN status = 'running' THEN 1
     ELSE 2
   END,
   created_at DESC

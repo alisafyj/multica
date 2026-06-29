@@ -2047,14 +2047,9 @@ func (h *Handler) replaceDesignRestoreMappingsFromSummary(ctx context.Context, t
 		return err
 	}
 	for _, item := range summary.RestoreMapping {
-		layerID := firstNonEmptyString(item, "layerId", "layer_id", "sourceLayerId", "source_layer_id", "source")
-		targetPath := firstNonEmptyString(item, "targetPath", "target_path", "file", "path", "target")
+		layerID, targetPath, targetKind := designRestoreMappingFields(item)
 		if layerID == "" || targetPath == "" {
 			continue
-		}
-		targetKind := firstNonEmptyString(item, "targetKind", "target_kind", "kind")
-		if !validDesignRestoreTargetKind(targetKind) {
-			targetKind = "unknown"
 		}
 		confidence := float32(0.8)
 		if value, ok := item["confidence"]; ok {
@@ -2077,6 +2072,19 @@ func (h *Handler) replaceDesignRestoreMappingsFromSummary(ctx context.Context, t
 		}
 	}
 	return nil
+}
+
+func designRestoreMappingFields(item map[string]any) (string, string, string) {
+	layerID := firstNonEmptyString(item, "layerId", "layer_id", "sourceLayerId", "source_layer_id", "sketchId", "sketch_id", "source")
+	targetPath := firstNonEmptyString(item, "targetPath", "target_path", "targetFile", "target_file", "file", "path", "target")
+	targetKind := firstNonEmptyString(item, "targetKind", "target_kind", "kind")
+	if targetKind == "" && firstNonEmptyString(item, "targetFile", "target_file", "file", "path") != "" {
+		targetKind = "file"
+	}
+	if !validDesignRestoreTargetKind(targetKind) {
+		targetKind = "unknown"
+	}
+	return layerID, targetPath, targetKind
 }
 
 func firstNonEmptyString(values map[string]any, keys ...string) string {

@@ -65,6 +65,24 @@ func TestParseDesignRestoreResultSummary(t *testing.T) {
 	}
 }
 
+func TestDesignRestoreMappingFieldsAcceptsRestoreResultSchema(t *testing.T) {
+	layerID, targetPath, targetKind := designRestoreMappingFields(map[string]any{
+		"itemId":          "issue-f1d40329-frame-0-468",
+		"sketchId":        "frame-0-468",
+		"targetFile":      "src/views/design-restore/RestoreView.vue",
+		"targetComponent": "RestoreView",
+	})
+	if layerID != "frame-0-468" {
+		t.Fatalf("layerID = %q, want sketchId fallback", layerID)
+	}
+	if targetPath != "src/views/design-restore/RestoreView.vue" {
+		t.Fatalf("targetPath = %q, want targetFile", targetPath)
+	}
+	if targetKind != "file" {
+		t.Fatalf("targetKind = %q, want file", targetKind)
+	}
+}
+
 func TestComputeTaskKindDesignRestore(t *testing.T) {
 	ctx, err := json.Marshal(service.DesignRestoreTaskContext{Type: service.DesignRestoreTaskContextType, RestoreTaskID: "restore-1"})
 	if err != nil {

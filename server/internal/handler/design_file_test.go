@@ -1781,6 +1781,116 @@ func TestCreateDesignRestoreTaskDoesNotReuseFailedIssueTask(t *testing.T) {
 	}
 }
 
+func TestCreateDesignRestoreTaskDoesNotReuseCompletedIssueTask(t *testing.T) {
+	created := createDesignFileForTest(t, "Restore Task Completed Retry Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	projectID := createProjectForDesignTest(t, "Restore Task Completed Retry Project")
+	issueID := createIssueForDesignTest(t, "Restore Task Completed Retry Issue", projectID)
+	var completedTaskID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_restore_task (workspace_id, file_id, revision_id, issue_id, status, input, result, created_by)
+		VALUES ($1, $2, $3, $4, 'completed', '{}'::jsonb, '{}'::jsonb, $5)
+		RETURNING id
+	`, testWorkspaceID, created.File.ID, created.CurrentRevision.ID, issueID, testUserID).Scan(&completedTaskID); err != nil {
+		t.Fatalf("insert completed restore task: %v", err)
+	}
+	body := map[string]any{
+		"file_id":  created.File.ID,
+		"issue_id": issueID,
+		"input": map[string]any{
+			"version":       "1.0",
+			"projectId":     projectID,
+			"sourceIssueId": issueID,
+			"purpose":       "frontend_restore",
+			"items": []map[string]any{{
+				"itemId":       "completed-retry-frame",
+				"order":        1,
+				"designFileId": created.File.ID,
+				"revisionId":   created.CurrentRevision.ID,
+				"frameId":      "frame-main",
+				"source":       "frame",
+			}},
+		},
+	}
+	w := httptest.NewRecorder()
+	testHandler.CreateDesignRestoreTask(w, newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, body))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateDesignRestoreTask retry: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var createdTask DesignRestoreTaskResponse
+	if err := json.NewDecoder(w.Body).Decode(&createdTask); err != nil {
+		t.Fatalf("decode created task: %v", err)
+	}
+	if createdTask.ID == completedTaskID {
+		t.Fatalf("retry reused completed task %s", completedTaskID)
+	}
+}
+
+func TestCreateDesignRestoreTaskDoesNotReuseStaleQueuedIssueTask(t *testing.T) {
+	created := createDesignFileForTest(t, "Restore Task Stale Revision Retry Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	projectID := createProjectForDesignTest(t, "Restore Task Stale Revision Retry Project")
+	issueID := createIssueForDesignTest(t, "Restore Task Stale Revision Retry Issue", projectID)
+	oldRevisionID := created.CurrentRevision.ID
+	var newRevisionID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_revision (file_id, workspace_id, revision_number, status, native_json, validation_errors, created_by)
+		VALUES ($1, $2, 2, 'valid', $3::jsonb, '[]'::jsonb, $4)
+		RETURNING id
+	`, created.File.ID, testWorkspaceID, minimalDesignNativeJSON(created.File.Title), testUserID).Scan(&newRevisionID); err != nil {
+		t.Fatalf("insert new revision: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `UPDATE design_file SET current_revision_id = $1 WHERE id = $2`, newRevisionID, created.File.ID); err != nil {
+		t.Fatalf("update current revision: %v", err)
+	}
+	var queuedTaskID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_restore_task (workspace_id, file_id, revision_id, issue_id, status, input, result, created_by)
+		VALUES ($1, $2, $3, $4, 'queued', '{}'::jsonb, '{}'::jsonb, $5)
+		RETURNING id
+	`, testWorkspaceID, created.File.ID, oldRevisionID, issueID, testUserID).Scan(&queuedTaskID); err != nil {
+		t.Fatalf("insert stale queued restore task: %v", err)
+	}
+	body := map[string]any{
+		"file_id":     created.File.ID,
+		"revision_id": newRevisionID,
+		"issue_id":    issueID,
+		"input": map[string]any{
+			"version":       "1.0",
+			"projectId":     projectID,
+			"sourceIssueId": issueID,
+			"purpose":       "frontend_restore",
+			"items": []map[string]any{{
+				"itemId":       "stale-queued-retry-frame",
+				"order":        1,
+				"designFileId": created.File.ID,
+				"revisionId":   newRevisionID,
+				"frameId":      "frame-main",
+				"source":       "frame",
+			}},
+		},
+	}
+	w := httptest.NewRecorder()
+	testHandler.CreateDesignRestoreTask(w, newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, body))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateDesignRestoreTask retry: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var createdTask DesignRestoreTaskResponse
+	if err := json.NewDecoder(w.Body).Decode(&createdTask); err != nil {
+		t.Fatalf("decode created task: %v", err)
+	}
+	if createdTask.ID == queuedTaskID {
+		t.Fatalf("retry reused stale queued task %s", queuedTaskID)
+	}
+	if createdTask.RevisionID != newRevisionID {
+		t.Fatalf("created task revision = %s, want %s", createdTask.RevisionID, newRevisionID)
+	}
+}
+
 func TestCompactDesignRestoreAgentContextShrinksLargePayload(t *testing.T) {
 	layers := map[string]any{}
 	for i := 0; i < 500; i++ {

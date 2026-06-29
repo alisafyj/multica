@@ -53,6 +53,16 @@ function resultSummary(task: DesignRestoreTask | null): Record<string, unknown> 
   return summary && typeof summary === "object" && !Array.isArray(summary) ? summary as Record<string, unknown> : null;
 }
 
+export function selectIssueRestoreTask(tasks: DesignRestoreTask[], issueId: string, currentRevisionId?: string) {
+  const issueTasks = tasks.filter((task) => task.issue_id === issueId);
+  const candidates = currentRevisionId ? issueTasks.filter((task) => task.revision_id === currentRevisionId) : issueTasks;
+  return candidates.find((task) => task.status === "running")
+    ?? candidates.find((task) => task.status === "queued")
+    ?? candidates.find((task) => task.agent_task_id)
+    ?? candidates[0]
+    ?? null;
+}
+
 function isUiDesignIssue(title: string) {
   return /ui/i.test(title) || title.includes("设计");
 }
@@ -115,13 +125,11 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const availableAgents = useMemo(() => agents.filter((agent) => !agent.archived_at && agent.runtime_id), [agents]);
   const assignedAvailableAgent = issue.assignee_type === "agent" ? availableAgents.find((agent) => agent.id === issue.assignee_id) : undefined;
   const selectedAgent = availableAgents.find((agent) => agent.id === agentId) ?? assignedAvailableAgent ?? availableAgents[0];
+  const selectedRevisionId = selectedFileDetail?.current_revision?.id;
   const existingIssueRestoreTask = useMemo(() => {
-    const issueTasks = restoreTasks.filter((task) => task.issue_id === issue.id);
-    return issueTasks.find((task) => task.status === "running")
-      ?? issueTasks.find((task) => task.agent_task_id)
-      ?? issueTasks[0]
-      ?? null;
-  }, [restoreTasks, issue.id]);
+    if (!selectedRevisionId) return null;
+    return selectIssueRestoreTask(restoreTasks, issue.id, selectedRevisionId);
+  }, [restoreTasks, issue.id, selectedRevisionId]);
   const restoreTaskId = restoreTask?.id || existingIssueRestoreTask?.id || "";
   const { data: restorePlan } = useQuery({
     ...designRestorePlanOptions(wsId, restoreTaskId),
@@ -157,10 +165,14 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const primaryActionLabel = currentStatus === "failed" ? "重新交给 Agent" : "交给 Agent 还原";
 
   useEffect(() => {
+    if (restoreTask && selectedRevisionId && restoreTask.revision_id !== selectedRevisionId) {
+      setRestoreTask(existingIssueRestoreTask);
+      return;
+    }
     if (!restoreTask && existingIssueRestoreTask) {
       setRestoreTask(existingIssueRestoreTask);
     }
-  }, [existingIssueRestoreTask, restoreTask]);
+  }, [existingIssueRestoreTask, restoreTask, selectedRevisionId]);
 
   const createRestoreTask = useMutation({
     mutationFn: async () => {

@@ -1386,7 +1386,7 @@ func (h *Handler) CreateDesignRestoreTask(w http.ResponseWriter, r *http.Request
 		if !ok {
 			return
 		}
-		existing, err := h.Queries.GetReusableDesignRestoreTaskByIssue(r.Context(), db.GetReusableDesignRestoreTaskByIssueParams{WorkspaceID: wsUUID, IssueID: issueUUID})
+		existing, err := h.Queries.GetReusableDesignRestoreTaskByIssue(r.Context(), db.GetReusableDesignRestoreTaskByIssueParams{WorkspaceID: wsUUID, IssueID: issueUUID, FileID: file.ID, RevisionID: revision.ID})
 		if err == nil {
 			writeJSON(w, http.StatusOK, designRestoreTaskToResponse(existing))
 			return
