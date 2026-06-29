@@ -179,6 +179,23 @@ function primaryStroke(layer: DesignLayer | null) {
   return { color: hexColor(stroke?.color ?? layer.style?.stroke ?? layer.style?.borderColor), width: stroke?.width !== undefined ? String(stroke.width) : "" };
 }
 
+function primaryImageAssetId(layer: DesignLayer | null) {
+  if (!layer) return "";
+  const fill = styleArray<Paint>(layer.style, "fills")[0];
+  return layer.image?.assetId ?? fill?.assetId ?? "";
+}
+
+function layerSupportsImageURL(layer: DesignLayer | null) {
+  if (!layer) return false;
+  if (layer.type === "image" || layer.image) return true;
+  return styleArray<Paint>(layer.style, "fills").some((fill) => fill.type === "image" || !!fill.assetId || !!fill.imageHash);
+}
+
+function currentLayerImageUrl(nativeJson: GalleryNativeJson | undefined, layer: DesignLayer | null) {
+  const assetId = primaryImageAssetId(layer);
+  return assetId ? nativeJson?.assets?.[assetId]?.url ?? "" : "";
+}
+
 function styleArray<T>(style: Record<string, unknown> | undefined, key: string): T[] {
   const value = style?.[key];
   return Array.isArray(value) ? (value as T[]) : [];
@@ -659,6 +676,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const [editTextColor, setEditTextColor] = useState("");
   const [editStrokeColor, setEditStrokeColor] = useState("");
   const [editStrokeWidth, setEditStrokeWidth] = useState("");
+  const [editImageUrl, setEditImageUrl] = useState("");
   const [copyingFrameContext, setCopyingFrameContext] = useState(false);
   const selectedLayer = layers.find((layer) => layer.id === selectedLayerId) ?? layers.find((layer) => layer.id === frame?.rootLayerId) ?? null;
   const activeMarqueeBounds = normalizedRect(marquee);
@@ -697,11 +715,15 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const currentFillColor = primaryFillHex(selectedLayer);
   const currentTextColor = selectedLayer?.text ? hexColor(selectedLayer.text.color) : "";
   const currentStroke = primaryStroke(selectedLayer);
+  const selectedLayerSupportsImageURL = layerSupportsImageURL(selectedLayer);
+  const currentImageUrl = currentLayerImageUrl(nativeJson, selectedLayer);
   const strokeWidthInput = editStrokeWidth.trim();
   const parsedStrokeWidth = strokeWidthInput ? Number(strokeWidthInput) : undefined;
   const strokeWidthValidationMessage = parsedStrokeWidth !== undefined && !Number.isFinite(parsedStrokeWidth) ? "描边宽度必须是数字" : parsedStrokeWidth !== undefined && (parsedStrokeWidth < 0 || parsedStrokeWidth > 100) ? "描边宽度必须在 0 到 100 之间" : null;
   const hasStrokeWidthEdit = strokeWidthInput !== "" && !strokeWidthValidationMessage && String(parsedStrokeWidth) !== currentStroke.width;
-  const hasLayerEditChanges = !!selectedLayer && selectedLayer.id !== frame?.rootLayerId && (editName.trim() !== selectedLayer.name || editVisible !== (selectedLayer.visible !== false) || (selectedLayer.type === "text" && editText !== textContent) || (!!editFillColor && editFillColor !== currentFillColor) || (selectedLayer.type === "text" && !!editTextColor && editTextColor !== currentTextColor) || (!!editStrokeColor && editStrokeColor !== currentStroke.color) || hasStrokeWidthEdit);
+  const imageUrlInput = editImageUrl.trim();
+  const hasImageUrlEdit = selectedLayerSupportsImageURL && imageUrlInput !== "" && imageUrlInput !== currentImageUrl;
+  const hasLayerEditChanges = !!selectedLayer && selectedLayer.id !== frame?.rootLayerId && (editName.trim() !== selectedLayer.name || editVisible !== (selectedLayer.visible !== false) || (selectedLayer.type === "text" && editText !== textContent) || (!!editFillColor && editFillColor !== currentFillColor) || (selectedLayer.type === "text" && !!editTextColor && editTextColor !== currentTextColor) || (!!editStrokeColor && editStrokeColor !== currentStroke.color) || hasStrokeWidthEdit || hasImageUrlEdit);
   useEffect(() => {
     setEditText(selectedLayer?.text?.characters ?? selectedLayer?.text?.text ?? "");
     setEditName(selectedLayer?.name ?? "");
@@ -711,7 +733,8 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
     const stroke = primaryStroke(selectedLayer);
     setEditStrokeColor(stroke.color);
     setEditStrokeWidth(stroke.width);
-  }, [selectedLayer?.id, selectedLayer?.name, selectedLayer?.visible, selectedLayer?.style, selectedLayer?.text?.characters, selectedLayer?.text?.text, selectedLayer?.text?.color]);
+    setEditImageUrl(currentLayerImageUrl(nativeJson, selectedLayer));
+  }, [selectedLayer?.id, selectedLayer?.name, selectedLayer?.visible, selectedLayer?.style, selectedLayer?.text?.characters, selectedLayer?.text?.text, selectedLayer?.text?.color, nativeJson?.assets]);
   const selectLayer = (layerId: string, additive = false) => {
     setSelectionBounds(null);
     setSelectedLayerId(layerId);
@@ -855,6 +878,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
         text_color: selectedLayer.type === "text" && editTextColor && editTextColor !== currentTextColor ? editTextColor : undefined,
         stroke_color: editStrokeColor && editStrokeColor !== currentStroke.color ? editStrokeColor : undefined,
         stroke_width: hasStrokeWidthEdit ? parsedStrokeWidth : undefined,
+        image_url: hasImageUrlEdit ? imageUrlInput : undefined,
       });
     },
     onSuccess: async () => {
@@ -1043,6 +1067,12 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                     <div className="space-y-1.5">
                       <div className="text-xs font-medium text-muted-foreground">文本内容</div>
                       <Textarea value={editText} className="min-h-24 resize-none text-xs" onChange={(event) => setEditText(event.target.value)} />
+                    </div>
+                  ) : null}
+                  {selectedLayerSupportsImageURL ? (
+                    <div className="space-y-1.5">
+                      <div className="text-xs font-medium text-muted-foreground">替换图片 URL</div>
+                      <Input value={editImageUrl} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} placeholder="https://..." onChange={(event) => setEditImageUrl(event.target.value)} />
                     </div>
                   ) : null}
                   <p className="text-xs text-muted-foreground">当前只支持名称、显隐与文本内容等轻量编辑；几何、布局、层级和资产不在此处修改。</p>

@@ -380,6 +380,7 @@ type DesignLayerLightweightEditRequest struct {
 	StrokeColor *string           `json:"stroke_color"`
 	StrokeWidth *float64          `json:"stroke_width"`
 	UndoLast    *bool             `json:"undo_last"`
+	ImageURL    *string           `json:"image_url"`
 	Semantic    map[string]string `json:"semantic"`
 }
 
@@ -3481,6 +3482,17 @@ func applyDesignLayerLightweightEdit(raw json.RawMessage, layerID string, req De
 		changed = true
 		changedFields = append(changedFields, "stroke_width")
 	}
+	if req.ImageURL != nil {
+		imageURL, err := parseLightweightImageURL(*req.ImageURL)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		if err := applyLayerImageURL(doc, layerID, layer, imageURL); err != nil {
+			return nil, false, nil, err
+		}
+		changed = true
+		changedFields = append(changedFields, "image_url")
+	}
 	if changed {
 		source, _ := doc["source"].(map[string]any)
 		if source == nil {
@@ -3544,6 +3556,17 @@ func parseLightweightHexColor(raw string) (map[string]any, error) {
 		"b":   float64(bytes[2]) / 255,
 		"a":   1,
 	}, nil
+}
+
+func parseLightweightImageURL(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", errBadRequest("image_url is required")
+	}
+	if !(strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "/uploads/")) {
+		return "", errBadRequest("image_url must be http(s) or an uploaded asset path")
+	}
+	return value, nil
 }
 
 func applyLayerFillColor(layer map[string]any, color map[string]any) {
@@ -3617,6 +3640,56 @@ func applyLayerStrokeWidth(layer map[string]any, width float64) error {
 	stroke["width"] = width
 	style["strokes"] = strokes
 	return nil
+}
+
+func applyLayerImageURL(doc map[string]any, layerID string, layer map[string]any, imageURL string) error {
+	if stringField(layer, "type") != "image" && !layerHasImageFillForEdit(layer) {
+		return errBadRequest("image_url edits are only allowed on image layers or image-fill layers")
+	}
+	assets, _ := doc["assets"].(map[string]any)
+	if assets == nil {
+		assets = map[string]any{}
+		doc["assets"] = assets
+	}
+	image, _ := layer["image"].(map[string]any)
+	if image == nil {
+		image = map[string]any{}
+		layer["image"] = image
+	}
+	assetID := strings.TrimSpace(stringAny(image["assetId"]))
+	if assetID == "" {
+		assetID = "manual-image-" + strings.ReplaceAll(layerID, ":", "-")
+		image["assetId"] = assetID
+	}
+	assets[assetID] = map[string]any{"id": assetID, "kind": "image", "url": imageURL, "sourceNodeId": stringAny(layer["sourceNodeId"]), "frameId": stringAny(layer["frameId"])}
+	style, _ := layer["style"].(map[string]any)
+	if style == nil {
+		style = map[string]any{}
+		layer["style"] = style
+	}
+	fills, _ := style["fills"].([]any)
+	if len(fills) == 0 {
+		fills = []any{map[string]any{"type": "image"}}
+	}
+	fill, _ := fills[0].(map[string]any)
+	if fill == nil {
+		fill = map[string]any{"type": "image"}
+		fills[0] = fill
+	}
+	fill["type"] = "image"
+	fill["assetId"] = assetID
+	style["fills"] = fills
+	return nil
+}
+
+func layerHasImageFillForEdit(layer map[string]any) bool {
+	style, _ := layer["style"].(map[string]any)
+	for _, fill := range objectSliceFromAny(style["fills"]) {
+		if stringAny(fill["type"]) == "image" || stringAny(fill["assetId"]) != "" || stringAny(fill["imageHash"]) != "" {
+			return true
+		}
+	}
+	return layer["image"] != nil
 }
 
 func validateNativeJSONNoEmbeddedBinary(raw json.RawMessage) error {

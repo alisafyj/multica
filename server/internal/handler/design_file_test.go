@@ -1507,6 +1507,37 @@ func TestUpdateDesignLayerLightweightUndoLastEdit(t *testing.T) {
 	assertLightweightEditChangedFieldsForTest(t, lastLightweightEditFromNativeJSONForTest(t, doc), []string{"undo_last"})
 }
 
+func TestUpdateDesignLayerLightweightImageURL(t *testing.T) {
+	created := createDesignFileForTest(t, "Lightweight Image Replace Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	nativeJSON := contextDesignNativeJSON("Lightweight Image Replace Design")
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, nativeJSON)
+
+	w := postDesignLayerLightweightEditForTest(t, created.File.ID, "main-image", map[string]any{
+		"revision_id": created.CurrentRevision.ID,
+		"image_url":   "https://example.com/replacement.png",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("image_url edit expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp DesignFileDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	doc := decodeDesignRevisionNativeJSONForTest(t, resp.CurrentRevision.NativeJSON)
+	layer := layerFromNativeJSONForTest(t, doc, "main-image")
+	image := layer["image"].(map[string]any)
+	assetID := image["assetId"].(string)
+	assets := doc["assets"].(map[string]any)
+	asset := assets[assetID].(map[string]any)
+	if asset["url"] != "https://example.com/replacement.png" {
+		t.Fatalf("asset url = %v", asset["url"])
+	}
+	assertLightweightEditChangedFieldsForTest(t, lastLightweightEditFromNativeJSONForTest(t, doc), []string{"image_url"})
+}
+
 func TestUpdateDesignLayerLightweightRejectsMismatchedRevision(t *testing.T) {
 	created := createDesignFileForTest(t, "Lightweight Stale Revision Design")
 	if created.CurrentRevision == nil {
