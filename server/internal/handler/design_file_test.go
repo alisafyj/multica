@@ -1469,6 +1469,44 @@ func TestUpdateDesignLayerLightweightStrokeColorAndWidth(t *testing.T) {
 	assertLightweightEditChangedFieldsForTest(t, lastLightweightEditFromNativeJSONForTest(t, doc), []string{"stroke_color", "stroke_width"})
 }
 
+func TestUpdateDesignLayerLightweightUndoLastEdit(t *testing.T) {
+	created := createDesignFileForTest(t, "Lightweight Undo Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, contextDesignNativeJSON("Lightweight Undo Design"))
+
+	editW := postDesignLayerLightweightEditForTest(t, created.File.ID, "main-title", map[string]any{
+		"revision_id": created.CurrentRevision.ID,
+		"name":        "Edited title",
+	})
+	if editW.Code != http.StatusOK {
+		t.Fatalf("edit expected 200, got %d: %s", editW.Code, editW.Body.String())
+	}
+	var editResp DesignFileDetailResponse
+	if err := json.NewDecoder(editW.Body).Decode(&editResp); err != nil {
+		t.Fatalf("decode edit response: %v", err)
+	}
+
+	undoW := postDesignLayerLightweightEditForTest(t, created.File.ID, "main-title", map[string]any{
+		"revision_id": editResp.CurrentRevision.ID,
+		"undo_last":   true,
+	})
+	if undoW.Code != http.StatusOK {
+		t.Fatalf("undo expected 200, got %d: %s", undoW.Code, undoW.Body.String())
+	}
+	var undoResp DesignFileDetailResponse
+	if err := json.NewDecoder(undoW.Body).Decode(&undoResp); err != nil {
+		t.Fatalf("decode undo response: %v", err)
+	}
+	doc := decodeDesignRevisionNativeJSONForTest(t, undoResp.CurrentRevision.NativeJSON)
+	layer := layerFromNativeJSONForTest(t, doc, "main-title")
+	if layer["name"] == "Edited title" {
+		t.Fatalf("expected undo to restore previous name")
+	}
+	assertLightweightEditChangedFieldsForTest(t, lastLightweightEditFromNativeJSONForTest(t, doc), []string{"undo_last"})
+}
+
 func TestUpdateDesignLayerLightweightRejectsMismatchedRevision(t *testing.T) {
 	created := createDesignFileForTest(t, "Lightweight Stale Revision Design")
 	if created.CurrentRevision == nil {

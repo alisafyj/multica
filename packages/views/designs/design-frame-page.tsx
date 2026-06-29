@@ -10,7 +10,7 @@ import { designKeys } from "@multica/core/designs/keys";
 import { designFileDetailOptions, designRevisionListOptions, designSelectionContextOptions } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
-import type { DesignLayer, GalleryNativeJson } from "@multica/core/types";
+import type { DesignLayer, DesignLayerLightweightEditRequest, GalleryNativeJson } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
@@ -836,8 +836,14 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
     },
   });
   const saveLayerEdit = useMutation({
-    mutationFn: () => {
+    mutationFn: (payload?: DesignLayerLightweightEditRequest) => {
       if (!selectedLayer) throw new Error("未选中图层");
+      if (payload?.undo_last) {
+        return api.updateDesignLayerLightweight(designId, selectedLayer.id, {
+          revision_id: data?.current_revision?.id,
+          undo_last: true,
+        });
+      }
       const name = editName.trim();
       if (!name) throw new Error("图层名称不能为空");
       return api.updateDesignLayerLightweight(designId, selectedLayer.id, {
@@ -992,6 +998,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
               <InspectorSection title="选区编辑" icon={<Sparkles className="h-3.5 w-3.5" />}>
                 <div className="space-y-3">
                   {editSummary ? <div className="rounded-lg bg-muted p-2 text-xs text-muted-foreground">当前 JSON：{editSummary.summary ?? "已更新设计元数据"}</div> : null}
+                  {editSummary ? <Button size="sm" variant="outline" className="w-full" disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId || saveLayerEdit.isPending} onClick={() => saveLayerEdit.mutate({ undo_last: true })}>撤销上次轻编辑</Button> : null}
                   <div className="space-y-1.5">
                     <div className="text-xs font-medium text-muted-foreground">图层名称</div>
                     <Input value={editName} className="h-8 text-xs" onChange={(event) => setEditName(event.target.value)} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} />
@@ -1039,7 +1046,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                     </div>
                   ) : null}
                   <p className="text-xs text-muted-foreground">当前只支持名称、显隐与文本内容等轻量编辑；几何、布局、层级和资产不在此处修改。</p>
-                  <Button size="sm" className="w-full" disabled={!hasLayerEditChanges || !!strokeWidthValidationMessage || saveLayerEdit.isPending} onClick={() => saveLayerEdit.mutate()}>{saveLayerEdit.isPending ? "保存中…" : "保存到当前 JSON"}</Button>
+                  <Button size="sm" className="w-full" disabled={!hasLayerEditChanges || !!strokeWidthValidationMessage || saveLayerEdit.isPending} onClick={() => saveLayerEdit.mutate(undefined)}>{saveLayerEdit.isPending ? "保存中…" : "保存到当前 JSON"}</Button>
                 </div>
               </InspectorSection>
 

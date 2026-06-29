@@ -379,6 +379,7 @@ type DesignLayerLightweightEditRequest struct {
 	TextColor   *string           `json:"text_color"`
 	StrokeColor *string           `json:"stroke_color"`
 	StrokeWidth *float64          `json:"stroke_width"`
+	UndoLast    *bool             `json:"undo_last"`
 	Semantic    map[string]string `json:"semantic"`
 }
 
@@ -3356,6 +3357,36 @@ func applyDesignLayerLightweightEdit(raw json.RawMessage, layerID string, req De
 	if !ok {
 		return nil, false, nil, errBadRequest("design layer is invalid")
 	}
+	if req.UndoLast != nil && *req.UndoLast {
+		source, _ := doc["source"].(map[string]any)
+		if source == nil {
+			return nil, false, nil, errBadRequest("no lightweight edits to undo")
+		}
+		lightweightEdits, _ := source["lightweightEdits"].([]any)
+		for i := len(lightweightEdits) - 1; i >= 0; i-- {
+			edit, _ := lightweightEdits[i].(map[string]any)
+			if edit == nil || stringAny(edit["layerId"]) != layerID {
+				continue
+			}
+			before, _ := edit["before"].(map[string]any)
+			if before == nil {
+				continue
+			}
+			beforeUndo := cloneJSONMap(layer)
+			restored := cloneJSONMap(before)
+			layers[layerID] = restored
+			changedFields := []string{"undo_last"}
+			appendLightweightEdit(source, layerID, restored, changedFields, beforeUndo)
+			next, err := json.Marshal(doc)
+			if err != nil {
+				return nil, false, nil, err
+			}
+			next, err = annotateImportFidelityReport(next)
+			return next, true, changedFields, err
+		}
+		return nil, false, nil, errBadRequest("no lightweight edits to undo")
+	}
+	beforeLayer := cloneJSONMap(layer)
 	changed := false
 	changedFields := []string{}
 	if req.Text != nil {
@@ -3456,14 +3487,7 @@ func applyDesignLayerLightweightEdit(raw json.RawMessage, layerID string, req De
 			source = map[string]any{}
 			doc["source"] = source
 		}
-		source["lastLightweightEdit"] = map[string]any{
-			"layerId":       layerID,
-			"layerName":     stringField(layer, "name"),
-			"frameId":       stringField(layer, "frameId"),
-			"summary":       lightweightEditSummary(layer, changedFields),
-			"changedFields": changedFields,
-			"editedAt":      time.Now().UTC().Format(time.RFC3339),
-		}
+		appendLightweightEdit(source, layerID, layer, changedFields, beforeLayer)
 	}
 	next, err := json.Marshal(doc)
 	if err != nil {
@@ -3471,6 +3495,29 @@ func applyDesignLayerLightweightEdit(raw json.RawMessage, layerID string, req De
 	}
 	next, err = annotateImportFidelityReport(next)
 	return next, changed, changedFields, err
+}
+
+func cloneJSONMap(input map[string]any) map[string]any {
+	raw, _ := json.Marshal(input)
+	var out map[string]any
+	_ = json.Unmarshal(raw, &out)
+	return out
+}
+
+func appendLightweightEdit(source map[string]any, layerID string, layer map[string]any, changedFields []string, before map[string]any) {
+	edit := map[string]any{
+		"layerId":       layerID,
+		"layerName":     stringField(layer, "name"),
+		"frameId":       stringField(layer, "frameId"),
+		"summary":       lightweightEditSummary(layer, changedFields),
+		"changedFields": changedFields,
+		"editedAt":      time.Now().UTC().Format(time.RFC3339),
+		"before":        before,
+		"after":         cloneJSONMap(layer),
+	}
+	source["lastLightweightEdit"] = edit
+	lightweightEdits, _ := source["lightweightEdits"].([]any)
+	source["lightweightEdits"] = append(lightweightEdits, edit)
 }
 
 func parseLightweightHexColor(raw string) (map[string]any, error) {

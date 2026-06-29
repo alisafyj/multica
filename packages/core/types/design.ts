@@ -591,6 +591,7 @@ export interface DesignLayerLightweightEditRequest {
   text_color?: string;
   stroke_color?: string;
   stroke_width?: number;
+  undo_last?: boolean;
   semantic?: Partial<Record<"role" | "moduleKey" | "stateKey" | "slotKey", string>>;
 }
 
