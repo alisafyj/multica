@@ -697,7 +697,11 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const currentFillColor = primaryFillHex(selectedLayer);
   const currentTextColor = selectedLayer?.text ? hexColor(selectedLayer.text.color) : "";
   const currentStroke = primaryStroke(selectedLayer);
-  const hasLayerEditChanges = !!selectedLayer && selectedLayer.id !== frame?.rootLayerId && (editName.trim() !== selectedLayer.name || editVisible !== (selectedLayer.visible !== false) || (selectedLayer.type === "text" && editText !== textContent) || (!!editFillColor && editFillColor !== currentFillColor) || (selectedLayer.type === "text" && !!editTextColor && editTextColor !== currentTextColor) || (!!editStrokeColor && editStrokeColor !== currentStroke.color) || (!!editStrokeWidth && editStrokeWidth !== currentStroke.width));
+  const strokeWidthInput = editStrokeWidth.trim();
+  const parsedStrokeWidth = strokeWidthInput ? Number(strokeWidthInput) : undefined;
+  const strokeWidthValidationMessage = parsedStrokeWidth !== undefined && !Number.isFinite(parsedStrokeWidth) ? "描边宽度必须是数字" : parsedStrokeWidth !== undefined && (parsedStrokeWidth < 0 || parsedStrokeWidth > 100) ? "描边宽度必须在 0 到 100 之间" : null;
+  const hasStrokeWidthEdit = strokeWidthInput !== "" && !strokeWidthValidationMessage && String(parsedStrokeWidth) !== currentStroke.width;
+  const hasLayerEditChanges = !!selectedLayer && selectedLayer.id !== frame?.rootLayerId && (editName.trim() !== selectedLayer.name || editVisible !== (selectedLayer.visible !== false) || (selectedLayer.type === "text" && editText !== textContent) || (!!editFillColor && editFillColor !== currentFillColor) || (selectedLayer.type === "text" && !!editTextColor && editTextColor !== currentTextColor) || (!!editStrokeColor && editStrokeColor !== currentStroke.color) || hasStrokeWidthEdit);
   useEffect(() => {
     setEditText(selectedLayer?.text?.characters ?? selectedLayer?.text?.text ?? "");
     setEditName(selectedLayer?.name ?? "");
@@ -844,7 +848,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
         fill_color: editFillColor && editFillColor !== currentFillColor ? editFillColor : undefined,
         text_color: selectedLayer.type === "text" && editTextColor && editTextColor !== currentTextColor ? editTextColor : undefined,
         stroke_color: editStrokeColor && editStrokeColor !== currentStroke.color ? editStrokeColor : undefined,
-        stroke_width: editStrokeWidth && editStrokeWidth !== currentStroke.width ? Number(editStrokeWidth) : undefined,
+        stroke_width: hasStrokeWidthEdit ? parsedStrokeWidth : undefined,
       });
     },
     onSuccess: async () => {
@@ -1025,6 +1029,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                     <label className="space-y-1.5 rounded-lg border p-2 text-xs">
                       <span className="font-medium text-muted-foreground">描边宽度</span>
                       <Input value={editStrokeWidth} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} inputMode="decimal" placeholder="0" onChange={(event) => setEditStrokeWidth(event.target.value)} />
+                      {strokeWidthValidationMessage ? <span className="text-[11px] text-destructive">{strokeWidthValidationMessage}</span> : null}
                     </label>
                   </div>
                   {selectedLayer?.type === "text" ? (
@@ -1034,7 +1039,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                     </div>
                   ) : null}
                   <p className="text-xs text-muted-foreground">当前只支持名称、显隐与文本内容等轻量编辑；几何、布局、层级和资产不在此处修改。</p>
-                  <Button size="sm" className="w-full" disabled={!hasLayerEditChanges || saveLayerEdit.isPending} onClick={() => saveLayerEdit.mutate()}>{saveLayerEdit.isPending ? "保存中…" : "保存到当前 JSON"}</Button>
+                  <Button size="sm" className="w-full" disabled={!hasLayerEditChanges || !!strokeWidthValidationMessage || saveLayerEdit.isPending} onClick={() => saveLayerEdit.mutate()}>{saveLayerEdit.isPending ? "保存中…" : "保存到当前 JSON"}</Button>
                 </div>
               </InspectorSection>
 
