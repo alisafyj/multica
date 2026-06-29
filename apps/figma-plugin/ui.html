@@ -242,6 +242,8 @@
       let pendingDesignFileTitle = '';
       let drawerKind = '';
       let createKind = '';
+      let uploadChain = Promise.resolve();
+      let streamedUploadCount = 0;
 
       function setStatus(text, kind) {
         statusEl.className = 'status ' + (kind || '');
@@ -612,72 +614,56 @@
         }
       }
 
-      function collectFrameAssetUploads(nativeJson) {
-        const uploads = [];
-        const assets = nativeJson.assets || {};
-        for (const asset of Object.values(assets)) {
-          if (!asset || !asset.bytes || !String(asset.kind || '').startsWith('frame_')) continue;
-          uploads.push({
-            assetId: asset.id,
-            kind: asset.kind,
-            name: `${asset.id || 'frame-preview'}.png`,
-            format: 'png',
-            contentType: asset.contentType || 'image/png',
-            width: asset.width,
-            height: asset.height,
-            bytes: asset.bytes,
-            frameId: asset.frameId,
-            sourceNodeId: asset.sourceNodeId,
-            metadata: asset.metadata || {},
-          });
-        }
-        return uploads;
-      }
-
-      async function uploadNativeJsonAssets(nativeJson, sliceUploads) {
-        const uploads = [...collectFrameAssetUploads(nativeJson), ...(sliceUploads || [])];
-        if (!uploads.length) return nativeJson;
+      async function uploadNativeJsonAsset(nativeJson, upload) {
+        if (!upload) return nativeJson;
         nativeJson.assets = nativeJson.assets || {};
-        for (let index = 0; index < uploads.length; index += 1) {
-          const upload = uploads[index];
-          const isSlice = (upload.kind || 'slice') === 'slice';
-          const isImage = (upload.kind || '') === 'image';
-          const isFallback = !!(upload.metadata && upload.metadata.exportedFallback);
-          setProgress(true, `${isSlice ? '上传切片' : isFallback ? '上传局部兜底图' : isImage ? '上传图片填充' : '上传画板预览'}：${upload.name || ''}`, 70 + Math.round(((index + 1) / uploads.length) * 24));
-          const asset = await uploadDesignAsset(upload);
-          const assetId = upload.assetId || asset.id;
-          nativeJson.assets[assetId] = {
-            id: assetId,
-            kind: upload.kind || 'slice',
-            url: absoluteAssetUrl(asset.url),
-            contentType: asset.content_type || upload.contentType,
-            width: upload.width,
-            height: upload.height,
-            sizeBytes: asset.size_bytes,
-            sourceNodeId: upload.sourceNodeId,
-            frameId: upload.frameId,
-            metadata: { ...(upload.metadata || {}), filename: asset.filename, format: upload.format },
-          };
-          if (isSlice) {
-            const layer = nativeJson.layers && nativeJson.layers[upload.layerId];
-            if (layer && Array.isArray(layer.exportable)) {
-              layer.exportable = layer.exportable.map((item) => {
-                if ((item.assetId || item.id) !== upload.assetId) return item;
-                const url = absoluteAssetUrl(asset.url);
-                const next = { ...item, assetId, url, path: url, name: asset.filename || upload.name, format: upload.format };
-                delete next.buffer;
-                delete next.bytes;
-                return next;
-              });
-            }
+        streamedUploadCount += 1;
+        const isSlice = (upload.kind || 'slice') === 'slice';
+        const isImage = (upload.kind || '') === 'image';
+        const isFallback = !!(upload.metadata && upload.metadata.exportedFallback);
+        setProgress(true, `${isSlice ? '上传切片' : isFallback ? '上传局部兜底图' : isImage ? '上传图片填充' : '上传画板预览'}：${upload.name || ''}`, Math.min(94, 70 + streamedUploadCount));
+        const asset = await uploadDesignAsset(upload);
+        const assetId = upload.assetId || asset.id;
+        nativeJson.assets[assetId] = {
+          id: assetId,
+          kind: upload.kind || 'slice',
+          url: absoluteAssetUrl(asset.url),
+          contentType: asset.content_type || upload.contentType,
+          width: upload.width,
+          height: upload.height,
+          sizeBytes: asset.size_bytes,
+          sourceNodeId: upload.sourceNodeId,
+          frameId: upload.frameId,
+          metadata: Object.assign({}, upload.metadata || {}, { filename: asset.filename, format: upload.format }),
+        };
+        if (isSlice) {
+          const layer = nativeJson.layers && nativeJson.layers[upload.layerId];
+          if (layer && Array.isArray(layer.exportable)) {
+            layer.exportable = layer.exportable.map((item) => {
+              if ((item.assetId || item.id) !== upload.assetId) return item;
+              const url = absoluteAssetUrl(asset.url);
+              const next = Object.assign({}, item, { assetId: assetId, url: url, path: url, name: asset.filename || upload.name, format: upload.format });
+              delete next.buffer;
+              delete next.bytes;
+              return next;
+            });
           }
         }
-        removeUnsafeBinaryFields(nativeJson);
         return nativeJson;
       }
 
-      async function uploadSliceAssets(nativeJson, sliceUploads) {
-        return uploadNativeJsonAssets(nativeJson, sliceUploads);
+      function finishStreamedUpload() {
+        uploadChain = uploadChain.then(() => {
+          if (!exported) return null;
+          removeUnsafeBinaryFields(exported);
+          return uploadExported(exported);
+        }).catch((error) => {
+          setProgress(false, '', 0);
+          setStatus(error.message || String(error), 'err');
+        }).finally(() => {
+          busy = false;
+          updateUploadEnabled();
+        });
       }
 
       window.onmessage = (event) => {
@@ -693,13 +679,25 @@
         }
         if (msg.type === 'exported') {
           exported = msg.nativeJson;
-          uploadSliceAssets(exported, msg.sliceUploads).then(uploadExported).catch((error) => {
+          streamedUploadCount = 0;
+          uploadChain = Promise.resolve();
+          setProgress(true, '准备上传资产…', 65);
+        }
+        if (msg.type === 'asset-upload') {
+          const upload = msg.upload;
+          uploadChain = uploadChain.then(() => uploadNativeJsonAsset(exported, upload)).then(() => {
+            parent.postMessage({ pluginMessage: { type: 'asset-uploaded' } }, '*');
+          }).catch((error) => {
+            const message = error && error.message ? error.message : String(error);
+            parent.postMessage({ pluginMessage: { type: 'asset-upload-error', error: message } }, '*');
             setProgress(false, '', 0);
-            setStatus(error.message || String(error), 'err');
-          }).finally(() => {
+            setStatus(message, 'err');
             busy = false;
             updateUploadEnabled();
           });
+        }
+        if (msg.type === 'asset-uploads-complete') {
+          finishStreamedUpload();
         }
         if (msg.type === 'stored-token') setToken(msg.token || '');
         if (msg.type === 'error') {

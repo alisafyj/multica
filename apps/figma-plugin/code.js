@@ -300,27 +300,21 @@ function buildSourceKey(scope, roots) {
 }
 
 figma.on('selectionchange', () => postSelectionSummary('selected'));
+let pendingAssetUploadAck = null;
 
-async function exportFrameAsset(node, frameId, kind, constraint) {
+function frameAssetDescriptor(node, frameId, kind, constraint) {
   if (!node || typeof node.exportAsync !== 'function') return undefined;
-  try {
-    const bytes = await node.exportAsync({ format: 'PNG', constraint });
-    return {
-      id: `${kind}-${frameId}`,
-      kind,
-      url: '',
-      contentType: 'image/png',
-      width: typeof node.width === 'number' ? node.width : undefined,
-      height: typeof node.height === 'number' ? node.height : undefined,
-      sizeBytes: bytes.length,
-      sourceNodeId: node.id,
-      frameId,
-      bytes: Array.from(bytes),
-      metadata: { exportFormat: 'PNG', constraint },
-    };
-  } catch (_error) {
-    return undefined;
-  }
+  return {
+    id: `${kind}-${frameId}`,
+    kind,
+    url: '',
+    contentType: 'image/png',
+    width: typeof node.width === 'number' ? node.width : undefined,
+    height: typeof node.height === 'number' ? node.height : undefined,
+    sourceNodeId: node.id,
+    frameId,
+    metadata: { exportFormat: 'PNG', constraint },
+  };
 }
 
 async function exportNativeJson(scope) {
@@ -340,8 +334,9 @@ async function exportNativeJson(scope) {
     const box = rect(root, { x: 0, y: 0, width: 1440, height: 900 });
     const frameBox = root.absoluteBoundingBox || { x: box.x, y: box.y, width: box.width, height: box.height };
     const rootLayerId = buildLayer(root, frameId, undefined, layers, frameBox, assets);
-    const previewAsset = await exportFrameAsset(root, frameId, 'frame_preview', { type: 'SCALE', value: 1 });
-    const thumbnailAsset = await exportFrameAsset(root, frameId, 'frame_thumbnail', { type: 'WIDTH', value: 600 });
+    const previewWidth = Math.min(1600, Math.max(600, Math.round(box.width || 1440)));
+    const previewAsset = frameAssetDescriptor(root, frameId, 'frame_preview', { type: 'WIDTH', value: previewWidth });
+    const thumbnailAsset = frameAssetDescriptor(root, frameId, 'frame_thumbnail', { type: 'WIDTH', value: 600 });
     if (previewAsset) assets[previewAsset.id] = previewAsset;
     if (thumbnailAsset) assets[thumbnailAsset.id] = thumbnailAsset;
     frames.push({
@@ -406,7 +401,6 @@ function fileExtension(format) {
 }
 
 async function collectSliceUploads(nativeJson) {
-  const uploads = [];
   const layers = Object.values(nativeJson.layers || {});
   for (const layer of layers) {
     if (!Array.isArray(layer.exportable) || !layer.exportable.length || !layer.sourceNodeId) continue;
@@ -416,9 +410,10 @@ async function collectSliceUploads(nativeJson) {
       const item = layer.exportable[index];
       const format = exportFormat(item.format);
       if (format === 'PDF') continue;
+      let upload;
       try {
         const bytes = await node.exportAsync({ format, constraint: item.constraint });
-        uploads.push({
+        upload = {
           assetId: item.assetId || item.id || `slice-${cleanId(layer.sourceNodeId)}-${index}`,
           layerId: layer.id,
           frameId: layer.frameId,
@@ -428,27 +423,28 @@ async function collectSliceUploads(nativeJson) {
           contentType: format === 'SVG' ? 'image/svg+xml' : format === 'JPG' ? 'image/jpeg' : 'image/png',
           width: layer.width,
           height: layer.height,
-          bytes: Array.from(bytes),
-        });
+          bytes: bytes,
+        };
       } catch (error) {
         console.warn('[multica-figma] slice export failed', layer.name, error);
+        continue;
       }
+      await postAssetUpload(upload);
     }
   }
-  return uploads;
 }
 
 async function collectImageFillUploads(nativeJson) {
-  const uploads = [];
   const assets = Object.values(nativeJson.assets || {});
   for (const asset of assets) {
     const imageHash = asset && asset.metadata && asset.metadata.imageHash;
     if (!imageHash || !String(asset.url || '').startsWith('figma-image-hash://')) continue;
+    let upload;
     try {
       const image = figma.getImageByHash(imageHash);
       if (!image || typeof image.getBytesAsync !== 'function') continue;
       const bytes = await image.getBytesAsync();
-      uploads.push({
+      upload = {
         assetId: asset.id,
         kind: 'image',
         name: `${asset.id || 'figma-image-fill'}.png`,
@@ -456,25 +452,26 @@ async function collectImageFillUploads(nativeJson) {
         contentType: 'image/png',
         width: asset.width,
         height: asset.height,
-        bytes: Array.from(bytes),
+        bytes: bytes,
         sourceNodeId: asset.sourceNodeId,
         metadata: Object.assign({}, asset.metadata || {}, { exportedFromImageHash: true }),
-      });
+      };
     } catch (error) {
       console.warn('[multica-figma] image fill export failed', asset.id, error);
+      continue;
     }
+    await postAssetUpload(upload);
   }
-  return uploads;
 }
 
 async function collectFallbackLayerUploads(nativeJson) {
-  const uploads = [];
   const layers = Object.values(nativeJson.layers || {});
   for (const layer of layers) {
     const fallbackAssetId = layer && layer.style && layer.style.fallbackAssetId;
     if (!fallbackAssetId || !layer.sourceNodeId) continue;
     const asset = nativeJson.assets && nativeJson.assets[fallbackAssetId];
     if (!asset || asset.url) continue;
+    let upload;
     try {
       const node = await figma.getNodeByIdAsync(layer.sourceNodeId);
       if (!node || typeof node.exportAsync !== 'function') continue;
@@ -482,7 +479,7 @@ async function collectFallbackLayerUploads(nativeJson) {
       const exportOptions = fallbackFormat === 'SVG' ? { format: 'SVG' } : { format: 'PNG', constraint: { type: 'SCALE', value: 1 } };
       const bytes = await node.exportAsync(exportOptions);
       const extension = fallbackFormat === 'SVG' ? 'svg' : 'png';
-      uploads.push({
+      upload = {
         assetId: fallbackAssetId,
         kind: 'image',
         layerId: layer.id,
@@ -493,18 +490,82 @@ async function collectFallbackLayerUploads(nativeJson) {
         contentType: fallbackFormat === 'SVG' ? 'image/svg+xml' : 'image/png',
         width: layer.width,
         height: layer.height,
-        bytes: Array.from(bytes),
+        bytes: bytes,
         metadata: Object.assign({}, asset.metadata || {}, { exportedFallback: true, exportFormat: fallbackFormat }),
-      });
+      };
     } catch (error) {
       console.warn('[multica-figma] fallback layer export failed', layer.name, error);
+      continue;
     }
+    await postAssetUpload(upload);
   }
-  return uploads;
+}
+
+async function collectFrameAssetUploads(nativeJson) {
+  const assets = Object.values(nativeJson.assets || {});
+  for (const asset of assets) {
+    if (!asset || !String(asset.kind || '').startsWith('frame_') || !asset.sourceNodeId) continue;
+    let upload;
+    try {
+      const node = await figma.getNodeByIdAsync(asset.sourceNodeId);
+      if (!node || typeof node.exportAsync !== 'function') continue;
+      const constraint = asset.metadata && asset.metadata.constraint ? asset.metadata.constraint : { type: 'WIDTH', value: 600 };
+      const bytes = await node.exportAsync({ format: 'PNG', constraint });
+      upload = {
+        assetId: asset.id,
+        kind: asset.kind,
+        name: `${asset.id || 'frame-preview'}.png`,
+        format: 'png',
+        contentType: asset.contentType || 'image/png',
+        width: asset.width,
+        height: asset.height,
+        bytes: bytes,
+        frameId: asset.frameId,
+        sourceNodeId: asset.sourceNodeId,
+        metadata: asset.metadata || {},
+      };
+    } catch (error) {
+      console.warn('[multica-figma] frame asset export failed', asset.id, error);
+      continue;
+    }
+    await postAssetUpload(upload);
+  }
+}
+
+function postAssetUpload(upload) {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      if (pendingAssetUploadAck && pendingAssetUploadAck.resolve === wrappedResolve) {
+        pendingAssetUploadAck = null;
+        reject(new Error('资产上传等待超时'));
+      }
+    }, 120000);
+    const wrappedResolve = () => {
+      clearTimeout(timeoutId);
+      resolve();
+    };
+    const wrappedReject = (error) => {
+      clearTimeout(timeoutId);
+      reject(error);
+    };
+    pendingAssetUploadAck = { resolve: wrappedResolve, reject: wrappedReject };
+    figma.ui.postMessage({ type: 'asset-upload', upload: upload });
+  });
 }
 
 figma.ui.onmessage = (message) => {
   if (!message) return;
+  if (message.type === 'asset-uploaded') {
+    if (pendingAssetUploadAck) pendingAssetUploadAck.resolve();
+    pendingAssetUploadAck = null;
+    return;
+  }
+  if (message.type === 'asset-upload-error') {
+    const error = new Error(message.error || '资产上传失败');
+    if (pendingAssetUploadAck) pendingAssetUploadAck.reject(error);
+    pendingAssetUploadAck = null;
+    return;
+  }
   if (message.type === 'open-auth' && message.url) {
     figma.openExternal(message.url);
     return;
@@ -528,8 +589,9 @@ figma.ui.onmessage = (message) => {
   if (message.type !== "export") return;
   try {
     exportNativeJson(message.scope || 'selected').then((nativeJson) => {
-      Promise.all([collectImageFillUploads(nativeJson), collectFallbackLayerUploads(nativeJson), collectSliceUploads(nativeJson)]).then(([imageUploads, fallbackUploads, sliceUploads]) => {
-        figma.ui.postMessage({ type: "exported", nativeJson: nativeJson, title: nativeJson.file.title, sliceUploads: imageUploads.concat(fallbackUploads, sliceUploads) });
+      figma.ui.postMessage({ type: "exported", nativeJson: nativeJson, title: nativeJson.file.title });
+      Promise.resolve().then(() => collectFrameAssetUploads(nativeJson)).then(() => collectImageFillUploads(nativeJson)).then(() => collectFallbackLayerUploads(nativeJson)).then(() => collectSliceUploads(nativeJson)).then(() => {
+        figma.ui.postMessage({ type: "asset-uploads-complete" });
       }).catch((error) => {
         figma.ui.postMessage({ type: "error", error: error instanceof Error ? error.message : String(error) });
       });
