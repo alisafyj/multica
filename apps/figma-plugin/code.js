@@ -231,7 +231,7 @@ function buildLayer(node, frameId, parentId, layers, frameBox, assets) {
   if (exportable) layer.exportable = exportable;
   if (layer.type === "vector" || layer.type === "slice" || layer.type === "custom" || node.isMask) {
     const fallbackAssetId = `fallback-${id}`;
-    layer.style = { ...(layer.style || {}), fallbackAssetId };
+    layer.style = Object.assign({}, layer.style || {}, { fallbackAssetId: fallbackAssetId });
     if (!assets[fallbackAssetId]) {
       assets[fallbackAssetId] = {
         id: fallbackAssetId,
@@ -458,7 +458,7 @@ async function collectImageFillUploads(nativeJson) {
         height: asset.height,
         bytes: Array.from(bytes),
         sourceNodeId: asset.sourceNodeId,
-        metadata: { ...(asset.metadata || {}), exportedFromImageHash: true },
+        metadata: Object.assign({}, asset.metadata || {}, { exportedFromImageHash: true }),
       });
     } catch (error) {
       console.warn('[multica-figma] image fill export failed', asset.id, error);
@@ -494,7 +494,7 @@ async function collectFallbackLayerUploads(nativeJson) {
         width: layer.width,
         height: layer.height,
         bytes: Array.from(bytes),
-        metadata: { ...(asset.metadata || {}), exportedFallback: true, exportFormat: fallbackFormat },
+        metadata: Object.assign({}, asset.metadata || {}, { exportedFallback: true, exportFormat: fallbackFormat }),
       });
     } catch (error) {
       console.warn('[multica-figma] fallback layer export failed', layer.name, error);
@@ -529,7 +529,7 @@ figma.ui.onmessage = (message) => {
   try {
     exportNativeJson(message.scope || 'selected').then((nativeJson) => {
       Promise.all([collectImageFillUploads(nativeJson), collectFallbackLayerUploads(nativeJson), collectSliceUploads(nativeJson)]).then(([imageUploads, fallbackUploads, sliceUploads]) => {
-        figma.ui.postMessage({ type: "exported", nativeJson, title: nativeJson.file.title, sliceUploads: [...imageUploads, ...fallbackUploads, ...sliceUploads] });
+        figma.ui.postMessage({ type: "exported", nativeJson: nativeJson, title: nativeJson.file.title, sliceUploads: imageUploads.concat(fallbackUploads, sliceUploads) });
       }).catch((error) => {
         figma.ui.postMessage({ type: "error", error: error instanceof Error ? error.message : String(error) });
       });
