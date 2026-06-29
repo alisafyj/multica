@@ -173,6 +173,12 @@ function primaryFillHex(layer: DesignLayer | null) {
   return hexColor(fill?.color ?? layer.style?.fill ?? layer.style?.backgroundColor);
 }
 
+function primaryStroke(layer: DesignLayer | null) {
+  if (!layer) return { color: "", width: "" };
+  const stroke = styleArray<Stroke>(layer.style, "strokes")[0];
+  return { color: hexColor(stroke?.color ?? layer.style?.stroke ?? layer.style?.borderColor), width: stroke?.width !== undefined ? String(stroke.width) : "" };
+}
+
 function styleArray<T>(style: Record<string, unknown> | undefined, key: string): T[] {
   const value = style?.[key];
   return Array.isArray(value) ? (value as T[]) : [];
@@ -651,6 +657,8 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const [editVisible, setEditVisible] = useState(true);
   const [editFillColor, setEditFillColor] = useState("");
   const [editTextColor, setEditTextColor] = useState("");
+  const [editStrokeColor, setEditStrokeColor] = useState("");
+  const [editStrokeWidth, setEditStrokeWidth] = useState("");
   const [copyingFrameContext, setCopyingFrameContext] = useState(false);
   const selectedLayer = layers.find((layer) => layer.id === selectedLayerId) ?? layers.find((layer) => layer.id === frame?.rootLayerId) ?? null;
   const activeMarqueeBounds = normalizedRect(marquee);
@@ -688,13 +696,17 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const textContent = selectedLayer?.text?.characters ?? selectedLayer?.text?.text ?? "";
   const currentFillColor = primaryFillHex(selectedLayer);
   const currentTextColor = selectedLayer?.text ? hexColor(selectedLayer.text.color) : "";
-  const hasLayerEditChanges = !!selectedLayer && selectedLayer.id !== frame?.rootLayerId && (editName.trim() !== selectedLayer.name || editVisible !== (selectedLayer.visible !== false) || (selectedLayer.type === "text" && editText !== textContent) || (!!editFillColor && editFillColor !== currentFillColor) || (selectedLayer.type === "text" && !!editTextColor && editTextColor !== currentTextColor));
+  const currentStroke = primaryStroke(selectedLayer);
+  const hasLayerEditChanges = !!selectedLayer && selectedLayer.id !== frame?.rootLayerId && (editName.trim() !== selectedLayer.name || editVisible !== (selectedLayer.visible !== false) || (selectedLayer.type === "text" && editText !== textContent) || (!!editFillColor && editFillColor !== currentFillColor) || (selectedLayer.type === "text" && !!editTextColor && editTextColor !== currentTextColor) || (!!editStrokeColor && editStrokeColor !== currentStroke.color) || (!!editStrokeWidth && editStrokeWidth !== currentStroke.width));
   useEffect(() => {
     setEditText(selectedLayer?.text?.characters ?? selectedLayer?.text?.text ?? "");
     setEditName(selectedLayer?.name ?? "");
     setEditVisible(selectedLayer?.visible !== false);
     setEditFillColor(primaryFillHex(selectedLayer));
     setEditTextColor(selectedLayer?.text ? hexColor(selectedLayer.text.color) : "");
+    const stroke = primaryStroke(selectedLayer);
+    setEditStrokeColor(stroke.color);
+    setEditStrokeWidth(stroke.width);
   }, [selectedLayer?.id, selectedLayer?.name, selectedLayer?.visible, selectedLayer?.style, selectedLayer?.text?.characters, selectedLayer?.text?.text, selectedLayer?.text?.color]);
   const selectLayer = (layerId: string, additive = false) => {
     setSelectionBounds(null);
@@ -831,6 +843,8 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
         visible: editVisible !== (selectedLayer.visible !== false) ? editVisible : undefined,
         fill_color: editFillColor && editFillColor !== currentFillColor ? editFillColor : undefined,
         text_color: selectedLayer.type === "text" && editTextColor && editTextColor !== currentTextColor ? editTextColor : undefined,
+        stroke_color: editStrokeColor && editStrokeColor !== currentStroke.color ? editStrokeColor : undefined,
+        stroke_width: editStrokeWidth && editStrokeWidth !== currentStroke.width ? Number(editStrokeWidth) : undefined,
       });
     },
     onSuccess: async () => {
@@ -999,6 +1013,19 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                         </div>
                       </label>
                     ) : null}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="space-y-1.5 rounded-lg border p-2 text-xs">
+                      <span className="font-medium text-muted-foreground">描边色</span>
+                      <div className="flex items-center gap-2">
+                        <input type="color" value={editStrokeColor || "#000000"} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} className="h-7 w-9 rounded border bg-transparent" onChange={(event) => setEditStrokeColor(event.target.value.toUpperCase())} />
+                        <span className="font-mono text-[11px] text-muted-foreground">{editStrokeColor || "—"}</span>
+                      </div>
+                    </label>
+                    <label className="space-y-1.5 rounded-lg border p-2 text-xs">
+                      <span className="font-medium text-muted-foreground">描边宽度</span>
+                      <Input value={editStrokeWidth} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} inputMode="decimal" placeholder="0" onChange={(event) => setEditStrokeWidth(event.target.value)} />
+                    </label>
                   </div>
                   {selectedLayer?.type === "text" ? (
                     <div className="space-y-1.5">
