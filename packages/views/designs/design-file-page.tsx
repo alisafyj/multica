@@ -26,14 +26,10 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
-import { DesignQualitySummary } from "./components/design-quality-summary";
-import { analyzeFrameFidelity } from "./native-renderer/fidelity";
-import type { FrameFidelityReport } from "./native-renderer/fidelity";
 
 type BoardFrame = GalleryNativeJson["frames"][number] & { board?: { x?: number; y?: number; order?: number } };
 type Camera = { x: number; y: number; zoom: number };
 type FramePositionMap = Record<string, { x: number; y: number }>;
-type FrameFidelityReportMap = Record<string, FrameFidelityReport>;
 type GuideLine = { orientation: "vertical" | "horizontal"; value: number };
 type FrameToolMenuState = { x: number; y: number; frame: BoardFrame } | null;
 
@@ -218,7 +214,7 @@ function PixiBoard({ nativeJson, frames, positions, camera, selectedFrameId, fil
   return <div ref={hostRef} className="absolute inset-0" />;
 }
 
-function FloatingFrameTree({ frameReports, frames, selectedFrameId, collapsed, onToggle, onSelect, query, onQueryChange }: { frameReports: FrameFidelityReportMap; frames: BoardFrame[]; selectedFrameId: string | null; collapsed: boolean; onToggle: () => void; onSelect: (frameId: string) => void; query: string; onQueryChange: (query: string) => void }) {
+function FloatingFrameTree({ frames, selectedFrameId, collapsed, onToggle, onSelect, query, onQueryChange }: { frames: BoardFrame[]; selectedFrameId: string | null; collapsed: boolean; onToggle: () => void; onSelect: (frameId: string) => void; query: string; onQueryChange: (query: string) => void }) {
   const filtered = frames.filter((frame) => frame.name.toLowerCase().includes(query.trim().toLowerCase()));
   if (collapsed) {
     return (
@@ -243,11 +239,9 @@ function FloatingFrameTree({ frameReports, frames, selectedFrameId, collapsed, o
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {filtered.map((frame) => {
           const active = frame.id === selectedFrameId;
-          const report = frameReports[frame.id];
           return (
             <button key={frame.id} type="button" onClick={() => onSelect(frame.id)} className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs ${active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}>
               <span className="min-w-0 flex-1 truncate">{frame.name}</span>
-              {report ? <Badge variant="outline" className={`h-6 shrink-0 border-current/25 px-1.5 text-[10px] ${active ? "text-primary-foreground" : "text-foreground"}`}>还原度 {report.renderQualityPercent}%</Badge> : null}
               <span className="shrink-0 font-mono opacity-70">{Math.round(frame.width)}×{Math.round(frame.height)}</span>
             </button>
           );
@@ -282,10 +276,6 @@ function DesignBoard({ nativeJson, selectedFrameId, filePreviewUrl, onSelectFram
   const [query, setQuery] = useState("");
 
   const bounds = useMemo(() => frameBounds(frames, positions), [frames, positions]);
-  const frameReports = useMemo(() => {
-    if (!nativeJson) return {};
-    return Object.fromEntries(frames.map((frame) => [frame.id, analyzeFrameFidelity(nativeJson, frame)]));
-  }, [nativeJson, frames]);
   const fitAll = () => {
     const host = hostRef.current;
     if (!host || !bounds) return;
@@ -366,7 +356,7 @@ function DesignBoard({ nativeJson, selectedFrameId, filePreviewUrl, onSelectFram
   return (
     <div ref={hostRef} className="relative h-full min-h-[680px] overflow-hidden bg-[radial-gradient(circle_at_1px_1px,hsl(var(--muted-foreground)/0.18)_1px,transparent_0)] [background-size:24px_24px]" onWheel={handleWheel} onPointerDown={handlePanStart} onPointerMove={(event) => { handlePanMove(event); moveFrame(event); }} onPointerUp={clearDrag} onPointerCancel={clearDrag}>
       <PixiBoard nativeJson={nativeJson} frames={frames} positions={positions} camera={camera} selectedFrameId={selectedFrameId} filePreviewUrl={filePreviewUrl} />
-      <FloatingFrameTree frameReports={frameReports} frames={frames} selectedFrameId={selectedFrameId} collapsed={treeCollapsed} onToggle={() => setTreeCollapsed((value) => !value)} onSelect={onSelectFrame} query={query} onQueryChange={setQuery} />
+      <FloatingFrameTree frames={frames} selectedFrameId={selectedFrameId} collapsed={treeCollapsed} onToggle={() => setTreeCollapsed((value) => !value)} onSelect={onSelectFrame} query={query} onQueryChange={setQuery} />
       <div className="absolute left-0 top-0 origin-top-left" style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})` }}>
         {frames.map((frame) => {
           const pos = positionedFrame(frame, positions);
@@ -553,7 +543,6 @@ export function DesignFilePage({ designId }: { designId: string }) {
       ) : (
         <main className="min-h-0 flex-1 p-4">
           <div className="flex h-full min-h-[720px] flex-col gap-4">
-            <DesignQualitySummary nativeJson={nativeJson} />
             <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border bg-background">
               <DesignBoard nativeJson={nativeJson} selectedFrameId={selectedFrame?.id ?? null} filePreviewUrl={filePreviewUrl} onSelectFrame={setSelectedFrameId} onOpenFrame={(frameId) => navigation.push(paths.designFrameDetail(designId, frameId))} onOpenFrameTools={openFrameTools} />
             </div>

@@ -74,11 +74,13 @@ export function classifyLayerFidelity(nativeJson: GalleryNativeJson, layer: Desi
   }
 
   if (layer.type === "shape") {
+    if (layerImageUrl(nativeJson, layer)) return { layerId: layer.id, status: "native", reason: "图片填充可原生渲染" };
+    if (layerFallbackAssetUrl(nativeJson, layer)) return { layerId: layer.id, status: "fallback", reason: "形状使用局部兜底图呈现" };
     if (layer.shape?.shapeType === "line") return { layerId: layer.id, status: "native", reason: "线条可原生渲染" };
     if (layer.shape?.shapeType === "ellipse") return { layerId: layer.id, status: "native", reason: "椭圆可原生渲染" };
     if (firstFillBackground(layer.style) || firstStroke(layer.style)) return { layerId: layer.id, status: "native", reason: "形状样式可原生渲染" };
     if (hasAssetFallback(nativeJson, layer)) return { layerId: layer.id, status: "fallback", reason: "形状缺少可渲染样式，暂以占位呈现" };
-    return { layerId: layer.id, status: "unsupported", reason: "形状缺少填充或描边" };
+    return { layerId: layer.id, status: "native", reason: "透明辅助形状无独立视觉输出" };
   }
 
   if (layer.type === "frame" || layer.type === "group" || layer.type === "component" || layer.type === "instance") {
@@ -148,7 +150,7 @@ function layerRenderQualityScore(fidelity?: LayerFidelity) {
   if (!fidelity) return 0;
   if (fidelity.status === "native") return 1;
   if (fidelity.status === "unsupported") return 0;
-  if (fidelity.reason.includes("局部") || fidelity.reason.includes("导出切片") || fidelity.reason.includes("裁切")) return 0.9;
   if (fidelity.reason.includes("占位")) return 0.35;
+  if (fidelity.reason.includes("局部") || fidelity.reason.includes("导出切片") || fidelity.reason.includes("裁切")) return 0.98;
   return 0.7;
 }

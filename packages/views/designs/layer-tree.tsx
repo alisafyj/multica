@@ -24,6 +24,7 @@ type LayerTreeProps = {
   selectedLayerId: string | null;
   hoveredLayerId: string | null;
   fidelityReport?: FrameFidelityReport;
+  onClose?: () => void;
   onSelectLayer: (layerId: string) => void;
   onHoverLayer: (layerId: string | null) => void;
 };
@@ -158,7 +159,7 @@ function LayerTreeRow({
       <div
         ref={rowRef}
         className={cn(
-          "group flex h-8 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-lg pr-2 text-left text-xs transition-colors",
+          "group flex h-8 w-max min-w-full cursor-pointer items-center gap-1.5 rounded-lg pr-2 text-left text-xs transition-colors",
           isSelected && "bg-primary text-primary-foreground shadow-sm",
           !isSelected && isHovered && "bg-muted text-foreground",
           !isSelected && !isHovered && "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
@@ -189,7 +190,7 @@ function LayerTreeRow({
           {TYPE_LABELS[node.type] ?? "层"}
         </Badge>
         {fidelity ? <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", STATUS_DOT_CLASS[fidelity.status])} title={fidelity.reason} /> : null}
-        <span className="truncate font-medium">{node.name || "未命名图层"}</span>
+        <span className="whitespace-nowrap font-medium">{node.name || "未命名图层"}</span>
         {node.children.length ? <span className="ml-auto shrink-0 text-[10px] opacity-60">{node.children.length}</span> : null}
       </div>
       {hasChildren && isOpen ? (
@@ -214,7 +215,7 @@ function LayerTreeRow({
   );
 }
 
-export function LayerTree({ nativeJson, frame, selectedLayerId, hoveredLayerId, fidelityReport, onSelectLayer, onHoverLayer }: LayerTreeProps) {
+export function LayerTree({ nativeJson, frame, selectedLayerId, hoveredLayerId, fidelityReport, onClose, onSelectLayer, onHoverLayer }: LayerTreeProps) {
   const tree = useMemo(() => buildLayerTree(nativeJson, frame), [nativeJson, frame]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<LayerFidelityStatus | "all">("all");
@@ -240,7 +241,8 @@ export function LayerTree({ nativeJson, frame, selectedLayerId, hoveredLayerId, 
   };
 
   return (
-    <aside className="min-h-0 overflow-hidden rounded-2xl border bg-background shadow-sm">
+    <aside className="flex h-full min-h-0 overflow-hidden rounded-2xl border bg-background shadow-sm">
+      <div className="flex min-h-0 flex-1 flex-col">
       <div className="sticky top-0 z-10 border-b bg-background/95 p-4 backdrop-blur">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
@@ -254,6 +256,11 @@ export function LayerTree({ nativeJson, frame, selectedLayerId, hoveredLayerId, 
             <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setExpanded(new Set(findAncestorIds(tree, selectedLayerId)))}>
               收起
             </Button>
+            {onClose ? (
+              <Button type="button" size="icon" variant="ghost" className="h-7 w-7" onClick={onClose} aria-label="收起图层面板">
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            ) : null}
           </div>
         </div>
         <div className="mt-3 flex h-8 items-center gap-2 rounded-lg border bg-muted/30 px-2 text-xs">
@@ -310,6 +317,7 @@ export function LayerTree({ nativeJson, frame, selectedLayerId, hoveredLayerId, 
         ) : (
           <div className="rounded-xl border border-dashed p-4 text-xs text-muted-foreground">{hasFilter ? "没有匹配的图层。" : "暂无可见图层。"}</div>
         )}
+      </div>
       </div>
     </aside>
   );
