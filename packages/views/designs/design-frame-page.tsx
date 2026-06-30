@@ -32,6 +32,7 @@ import { useNavigation } from "../navigation";
 import { LayerTree } from "./layer-tree";
 import { NativeFramePreview } from "./native-renderer";
 import { analyzeFrameFidelity } from "./native-renderer/fidelity";
+import { overlayRevealStyle } from "./overlay-comparison";
 
 type InspectFrame = GalleryNativeJson["frames"][number];
 type Paint = { type?: string; color?: unknown; opacity?: number; stops?: Array<{ position?: number; color?: unknown }>; assetId?: string; imageHash?: string; scaleMode?: string };
@@ -602,6 +603,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const [frameZoom, setFrameZoom] = useState(1);
   const [layerPanelCollapsed, setLayerPanelCollapsed] = useState(false);
   const [renderMode, setRenderMode] = useState<FrameRenderMode>("native");
+  const [overlayRevealPercent, setOverlayRevealPercent] = useState(50);
   const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
   const [marquee, setMarquee] = useState<MarqueeState>(null);
   const [selectionBounds, setSelectionBounds] = useState<Rect | null>(null);
@@ -880,6 +882,21 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                     <Button key={mode} type="button" size="sm" variant={renderMode === mode ? "secondary" : "ghost"} className="h-7 px-2.5 text-xs" onClick={() => setRenderMode(mode)}>{label}</Button>
                   ))}
                 </div>
+                {renderMode === "overlay" ? (
+                  <label className="flex items-center gap-2 rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground">
+                    <span>原图</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={overlayRevealPercent}
+                      aria-label="调整原图揭示比例"
+                      className="h-5 w-28 accent-primary"
+                      onChange={(event) => setOverlayRevealPercent(Number(event.target.value))}
+                    />
+                    <span className="w-8 text-right tabular-nums">{overlayRevealPercent}%</span>
+                  </label>
+                ) : null}
                 <Button size="sm" variant="outline" disabled={copyingFrameContext} onClick={() => void copyFrameContext()}><Copy className="h-3.5 w-3.5" />{copyingFrameContext ? "复制中…" : "复制画板上下文"}</Button>
                 <Badge variant="secondary">版本 {data?.current_revision?.revision_number ?? "—"}</Badge>
               </div>
@@ -932,7 +949,12 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                 {renderMode === "overlay" ? (
                   <>
                     <NativeFramePreview nativeJson={nativeJson} frame={frame} className="pointer-events-none absolute inset-0 overflow-hidden bg-background" />
-                    {previewUrl ? <img src={previewUrl} alt={frame.name} className="pointer-events-none absolute inset-0 h-full w-full object-fill opacity-45" draggable={false} /> : null}
+                    {previewUrl ? (
+                      <>
+                        <img src={previewUrl} alt={frame.name} className="pointer-events-none absolute inset-0 h-full w-full object-fill" draggable={false} style={overlayRevealStyle(overlayRevealPercent)} />
+                        <div className="pointer-events-none absolute inset-y-0 w-px bg-primary/80 shadow-[0_0_0_1px_hsl(var(--background)/0.7)]" style={{ left: `${overlayRevealPercent}%` }} />
+                      </>
+                    ) : null}
                   </>
                 ) : null}
                 <LayerOverlay frame={frame} layers={layers} selectedLayerId={selectedLayer?.id ?? null} selectedLayerIds={selectedLayerIds} hoveredLayerId={hoveredLayerId} measuringFrame={measuringFrame && !hoveredLayerId} marqueeBounds={activeMarqueeBounds} suppressNextClickRef={suppressNextLayerClickRef} onSelectLayer={selectLayer} onHoverLayer={(layerId) => { setHoveredLayerId(layerId); setMeasuringFrame(false); }} />
