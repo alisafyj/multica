@@ -65,6 +65,66 @@ func TestParseDesignRestoreResultSummary(t *testing.T) {
 	}
 }
 
+func TestParseDesignRestoreResultSummaryKeepsVisualReview(t *testing.T) {
+	output := "done\nRESTORE_RESULT_JSON:\n```json\n{\"status\":\"completed\",\"visualFidelityScore\":87,\"visualReview\":{\"implementedRoute\":\"/service-record\",\"designScreenshot\":\"/tmp/design.png\",\"implementationScreenshot\":\"/tmp/impl.png\",\"comparisonScreenshot\":\"/tmp/compare.png\",\"remainingDiffs\":[\"头图裁切仍有轻微差异\"],\"notes\":\"二轮视觉 QA 后可验收\"}}\n```"
+	summary := parseDesignRestoreResultSummary(output)
+	if summary.VisualFidelityScore == nil || *summary.VisualFidelityScore != 87 {
+		t.Fatalf("visualFidelityScore = %v, want 87", summary.VisualFidelityScore)
+	}
+	if summary.VisualReview.ImplementedRoute != "/service-record" {
+		t.Fatalf("implementedRoute = %q", summary.VisualReview.ImplementedRoute)
+	}
+	if summary.VisualReview.DesignScreenshot != "/tmp/design.png" || summary.VisualReview.ImplementationScreenshot != "/tmp/impl.png" || summary.VisualReview.ComparisonScreenshot != "/tmp/compare.png" {
+		t.Fatalf("unexpected visual screenshots: %+v", summary.VisualReview)
+	}
+	if len(summary.VisualReview.RemainingDiffs) != 1 || summary.VisualReview.RemainingDiffs[0] != "头图裁切仍有轻微差异" {
+		t.Fatalf("remaining diffs = %+v", summary.VisualReview.RemainingDiffs)
+	}
+	if summary.VisualReview.Notes != "二轮视觉 QA 后可验收" {
+		t.Fatalf("notes = %q", summary.VisualReview.Notes)
+	}
+
+	resultJSON, err := json.Marshal(map[string]any{"summary": summary})
+	if err != nil {
+		t.Fatalf("marshal result summary: %v", err)
+	}
+	var stored struct {
+		Summary struct {
+			VisualFidelityScore *float64                   `json:"visualFidelityScore"`
+			VisualReview        *designRestoreVisualReview `json:"visualReview"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(resultJSON, &stored); err != nil {
+		t.Fatalf("unmarshal stored result summary: %v", err)
+	}
+	if stored.Summary.VisualFidelityScore == nil || *stored.Summary.VisualFidelityScore != 87 || stored.Summary.VisualReview == nil || stored.Summary.VisualReview.ComparisonScreenshot != "/tmp/compare.png" {
+		t.Fatalf("stored visual review lost fields: %s", string(resultJSON))
+	}
+}
+
+func TestDesignRestoreAgentLabelFromInput(t *testing.T) {
+	if got := designRestoreAgentLabelFromInput([]byte(`{"version":"1.0","purpose":"ui_generation"}`)); got != "UI Agent" {
+		t.Fatalf("ui_generation label = %q, want UI Agent", got)
+	}
+	if got := designRestoreAgentLabelFromInput([]byte(`{"version":"1.0","purpose":"frontend_restore"}`)); got != "前端 Agent" {
+		t.Fatalf("frontend_restore label = %q, want 前端 Agent", got)
+	}
+	if got := designRestoreAgentLabelFromInput([]byte(`{"version":"1.0"}`)); got != "前端 Agent" {
+		t.Fatalf("missing purpose label = %q, want legacy frontend label", got)
+	}
+}
+
+func TestDesignRestoreCompletionCommentUsesAgentLabel(t *testing.T) {
+	uiComment := designRestoreCompletionComment("UI Agent", "completed", "", "", designRestoreResultSummary{})
+	if !strings.Contains(uiComment, "UI Agent 已完成设计稿还原。") {
+		t.Fatalf("UI completion comment = %q", uiComment)
+	}
+	frontendComment := designRestoreCompletionComment("前端 Agent", "failed", "Agent 执行失败", "", designRestoreResultSummary{})
+	if !strings.Contains(frontendComment, "前端 Agent 设计稿还原未完成，需要处理。") {
+		t.Fatalf("frontend failure comment = %q", frontendComment)
+	}
+}
+
 func TestDesignRestoreMappingFieldsAcceptsRestoreResultSchema(t *testing.T) {
 	layerID, targetPath, targetKind := designRestoreMappingFields(map[string]any{
 		"itemId":          "issue-f1d40329-frame-0-468",
@@ -111,8 +171,8 @@ func TestDesignRestorePolicyViolationPrefersSummary(t *testing.T) {
 
 func TestDesignRestorePolicyViolationRequiresQualityFields(t *testing.T) {
 	ctx := service.DesignRestoreTaskContext{RestorePolicy: json.RawMessage(`{"restoreMode":"strict-structure","allowFullFramePreview":false}`)}
-	if got := designRestorePolicyViolation(ctx, "", designRestoreResultSummary{}); got != "" {
-		t.Fatalf("missing json should be warning, got violation %q", got)
+	if got := designRestorePolicyViolation(ctx, "", designRestoreResultSummary{}); got != "missing_restore_result_json" {
+		t.Fatalf("missing json violation = %q", got)
 	}
 	if got := designRestorePolicyWarning(ctx, designRestoreResultSummary{}); got != "missing_restore_result_json" {
 		t.Fatalf("missing json warning = %q", got)

@@ -1943,7 +1943,8 @@ func (h *Handler) updateDesignRestoreTaskFromAgentCompletion(ctx context.Context
 	if err := h.advanceIssueAfterDesignRestoreCompletion(ctx, restoreTask, status); err != nil {
 		return err
 	}
-	h.createDesignRestoreIssueSystemComment(ctx, restoreTask.IssueID, designRestoreCompletionComment(status, policyViolation, policyWarning, summary))
+	agentLabel := designRestoreAgentLabelFromInput(restoreTask.Input)
+	h.createDesignRestoreIssueSystemComment(ctx, restoreTask.IssueID, designRestoreCompletionComment(agentLabel, status, policyViolation, policyWarning, summary))
 	return nil
 }
 
@@ -1959,7 +1960,7 @@ func (h *Handler) advanceIssueAfterDesignRestoreCompletion(ctx context.Context, 
 		return nil
 	}
 	nextStatus := "in_review"
-	if restoreStatus == "completed" && looksLikeUIDesignIssue(issue.Title) {
+	if restoreStatus == "completed" && isUIDesignIssue(issue) {
 		nextStatus = "done"
 	} else if restoreStatus != "completed" {
 		nextStatus = "blocked"
@@ -1987,12 +1988,27 @@ func (h *Handler) updateIssueStatusAndPublish(ctx context.Context, issueID, work
 	return nil
 }
 
-func designRestoreCompletionComment(status, policyViolation, policyWarning string, summary designRestoreResultSummary) string {
+func designRestoreAgentLabelFromInput(input []byte) string {
+	var payload struct {
+		Purpose string `json:"purpose"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "前端 Agent"
+	}
+	if payload.Purpose == "ui_generation" {
+		return "UI Agent"
+	}
+	return "前端 Agent"
+}
+
+func designRestoreCompletionComment(agentLabel, status, policyViolation, policyWarning string, summary designRestoreResultSummary) string {
 	var b strings.Builder
 	if status == "completed" {
-		b.WriteString("前端 Agent 已完成设计稿还原。")
+		b.WriteString(agentLabel)
+		b.WriteString(" 已完成设计稿还原。")
 	} else {
-		b.WriteString("前端 Agent 设计稿还原未完成，需要处理。")
+		b.WriteString(agentLabel)
+		b.WriteString(" 设计稿还原未完成，需要处理。")
 	}
 	if summary.Summary != "" {
 		b.WriteString("\n\n摘要：")
@@ -2124,16 +2140,33 @@ func float32FromAny(value any, fallback float32) float32 {
 }
 
 type designRestoreResultSummary struct {
-	Status               string           `json:"status"`
-	Summary              string           `json:"summary"`
-	Files                []string         `json:"files"`
-	Checks               []string         `json:"checks"`
-	Blockers             []string         `json:"blockers"`
-	RestoreMapping       []map[string]any `json:"restoreMapping"`
-	UsedLayerIDs         []string         `json:"usedLayerIds"`
-	UsedAssetIDs         []string         `json:"usedAssetIds"`
-	UsedFullFramePreview bool             `json:"usedFullFramePreview"`
-	PolicyViolation      string           `json:"policyViolation"`
+	Status                   string                     `json:"status"`
+	Summary                  string                     `json:"summary"`
+	Files                    []string                   `json:"files"`
+	Checks                   []string                   `json:"checks"`
+	Blockers                 []string                   `json:"blockers"`
+	RestoreMapping           []map[string]any           `json:"restoreMapping"`
+	UsedLayerIDs             []string                   `json:"usedLayerIds"`
+	UsedAssetIDs             []string                   `json:"usedAssetIds"`
+	UsedFullFramePreview     bool                       `json:"usedFullFramePreview"`
+	PolicyViolation          string                     `json:"policyViolation"`
+	VisualFidelityScore      *float64                   `json:"visualFidelityScore,omitempty"`
+	VisualReview             *designRestoreVisualReview `json:"visualReview,omitempty"`
+	ImplementedRoute         string                     `json:"implementedRoute,omitempty"`
+	DesignScreenshot         string                     `json:"designScreenshot,omitempty"`
+	ImplementationScreenshot string                     `json:"implementationScreenshot,omitempty"`
+	ComparisonScreenshot     string                     `json:"comparisonScreenshot,omitempty"`
+	RemainingDiffs           []string                   `json:"remainingDiffs,omitempty"`
+	Notes                    string                     `json:"notes,omitempty"`
+}
+
+type designRestoreVisualReview struct {
+	ImplementedRoute         string   `json:"implementedRoute,omitempty"`
+	DesignScreenshot         string   `json:"designScreenshot,omitempty"`
+	ImplementationScreenshot string   `json:"implementationScreenshot,omitempty"`
+	ComparisonScreenshot     string   `json:"comparisonScreenshot,omitempty"`
+	RemainingDiffs           []string `json:"remainingDiffs,omitempty"`
+	Notes                    string   `json:"notes,omitempty"`
 }
 
 func parseDesignRestoreResultSummary(output string) designRestoreResultSummary {
@@ -2183,6 +2216,9 @@ func designRestorePolicyViolation(ctx service.DesignRestoreTaskContext, output s
 		}
 	}
 	if len(ctx.RestorePolicy) > 0 {
+		if summary.Status == "" {
+			return "missing_restore_result_json"
+		}
 		if summary.Status == "completed" {
 			switch {
 			case len(summary.Files) == 0:
@@ -2447,7 +2483,8 @@ func (h *Handler) updateDesignRestoreTaskFromAgentFailure(ctx context.Context, t
 	if err := h.advanceIssueAfterDesignRestoreCompletion(ctx, restoreTask, "failed"); err != nil {
 		return err
 	}
-	h.createDesignRestoreIssueSystemComment(ctx, restoreTask.IssueID, designRestoreCompletionComment("failed", "Agent 执行失败", "", designRestoreResultSummary{Status: "failed", Blockers: []string{req.Error}}))
+	agentLabel := designRestoreAgentLabelFromInput(restoreTask.Input)
+	h.createDesignRestoreIssueSystemComment(ctx, restoreTask.IssueID, designRestoreCompletionComment(agentLabel, "failed", "Agent 执行失败", "", designRestoreResultSummary{Status: "failed", Blockers: []string{req.Error}}))
 	return nil
 }
 

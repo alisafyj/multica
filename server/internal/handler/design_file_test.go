@@ -36,8 +36,8 @@ func createIssueForDesignTest(t *testing.T, title string, projectID string) stri
 	t.Helper()
 	var id string
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, project_id)
-		VALUES ($1, $2, 'todo', 'medium', 'member', $3, $4)
+		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, project_id, number)
+		VALUES ($1, $2, 'todo', 'medium', 'member', $3, $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id = $1), 0) + 1)
 		RETURNING id
 	`, testWorkspaceID, title, testUserID, projectID).Scan(&id); err != nil {
 		t.Fatalf("insert issue: %v", err)
@@ -294,6 +294,28 @@ func updateDesignRevisionNativeJSONForTest(t *testing.T, revisionID string, nati
 	if _, err := testPool.Exec(context.Background(), `UPDATE design_revision SET native_json = $1 WHERE id = $2`, raw, revisionID); err != nil {
 		t.Fatalf("update design revision native json: %v", err)
 	}
+}
+
+func createDesignRevisionForTest(t *testing.T, fileID string, revisionNumber int, nativeJSON map[string]any, makeCurrent bool) string {
+	t.Helper()
+	raw, err := json.Marshal(nativeJSON)
+	if err != nil {
+		t.Fatalf("marshal native json: %v", err)
+	}
+	var revisionID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_revision (file_id, workspace_id, revision_number, status, native_json, validation_errors, created_by)
+		VALUES ($1, $2, $3, 'valid', $4::jsonb, '[]'::jsonb, $5)
+		RETURNING id
+	`, fileID, testWorkspaceID, revisionNumber, raw, testUserID).Scan(&revisionID); err != nil {
+		t.Fatalf("insert design revision: %v", err)
+	}
+	if makeCurrent {
+		if _, err := testPool.Exec(context.Background(), `UPDATE design_file SET current_revision_id = $1 WHERE id = $2`, revisionID, fileID); err != nil {
+			t.Fatalf("update current revision: %v", err)
+		}
+	}
+	return revisionID
 }
 
 func withDesignURLParams(req *http.Request, kv ...string) *http.Request {
@@ -1080,6 +1102,75 @@ func TestGetDesignSelectionContextWithBoundsReturnsIntersectingLayers(t *testing
 	text := resp["text"].([]any)
 	if len(text) != 1 || text[0].(map[string]any)["layerId"] != "main-title" {
 		t.Fatalf("unexpected selection text context: %+v", text)
+	}
+}
+
+func TestDesignContextsCanReadRequestedHistoricalRevision(t *testing.T) {
+	created := createDesignFileForTest(t, "Historical Requested Context Design")
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, contextDesignNativeJSON("Historical Requested Context Design"))
+	currentRevisionID := createDesignRevisionForTest(t, created.File.ID, 2, minimalDesignNativeJSON("Current Context Design"), true)
+	historicalRevisionID := created.CurrentRevision.ID
+
+	fileReq := withURLParam(newRequest("GET", "/api/design-files/"+created.File.ID+"/context?workspace_id="+testWorkspaceID+"&revision_id="+historicalRevisionID, nil), "id", created.File.ID)
+	fileW := httptest.NewRecorder()
+	testHandler.GetDesignFileContext(fileW, fileReq)
+	if fileW.Code != http.StatusOK {
+		t.Fatalf("GetDesignFileContext historical: expected 200, got %d: %s", fileW.Code, fileW.Body.String())
+	}
+	var fileResp map[string]any
+	if err := json.NewDecoder(fileW.Body).Decode(&fileResp); err != nil {
+		t.Fatalf("decode file context response: %v", err)
+	}
+	if fileResp["revisionId"] != historicalRevisionID {
+		t.Fatalf("file context revisionId = %v, want %s", fileResp["revisionId"], historicalRevisionID)
+	}
+	if fileResp["name"] != "Historical Requested Context Design" {
+		t.Fatalf("file context name = %v, want historical title", fileResp["name"])
+	}
+
+	frameReq := withDesignURLParams(newRequest("GET", "/api/design-files/"+created.File.ID+"/frames/frame-main/context?workspace_id="+testWorkspaceID+"&revision_id="+historicalRevisionID, nil), "id", created.File.ID, "frameId", "frame-main")
+	frameW := httptest.NewRecorder()
+	testHandler.GetDesignFrameContext(frameW, frameReq)
+	if frameW.Code != http.StatusOK {
+		t.Fatalf("GetDesignFrameContext historical: expected 200, got %d: %s", frameW.Code, frameW.Body.String())
+	}
+	var frameResp map[string]any
+	if err := json.NewDecoder(frameW.Body).Decode(&frameResp); err != nil {
+		t.Fatalf("decode frame context response: %v", err)
+	}
+	if frameResp["revisionId"] != historicalRevisionID {
+		t.Fatalf("frame context revisionId = %v, want %s", frameResp["revisionId"], historicalRevisionID)
+	}
+	frame := frameResp["frame"].(map[string]any)
+	if frame["id"] != "frame-main" {
+		t.Fatalf("frame id = %v, want historical frame-main", frame["id"])
+	}
+
+	selectionReq := withDesignURLParams(newRequest("POST", "/api/design-files/"+created.File.ID+"/frames/frame-main/selection-context?workspace_id="+testWorkspaceID+"&revision_id="+historicalRevisionID, map[string]any{
+		"layerIds": []string{"main-title"},
+	}), "id", created.File.ID, "frameId", "frame-main")
+	selectionW := httptest.NewRecorder()
+	testHandler.GetDesignSelectionContext(selectionW, selectionReq)
+	if selectionW.Code != http.StatusOK {
+		t.Fatalf("GetDesignSelectionContext historical: expected 200, got %d: %s", selectionW.Code, selectionW.Body.String())
+	}
+	var selectionResp map[string]any
+	if err := json.NewDecoder(selectionW.Body).Decode(&selectionResp); err != nil {
+		t.Fatalf("decode selection context response: %v", err)
+	}
+	if selectionResp["revisionId"] != historicalRevisionID {
+		t.Fatalf("selection context revisionId = %v, want %s", selectionResp["revisionId"], historicalRevisionID)
+	}
+	layers := selectionResp["layers"].(map[string]any)
+	if _, ok := layers["main-title"]; !ok {
+		t.Fatal("selection context should include historical main-title layer")
+	}
+
+	currentFrameReq := withDesignURLParams(newRequest("GET", "/api/design-files/"+created.File.ID+"/frames/frame-main/context?workspace_id="+testWorkspaceID, nil), "id", created.File.ID, "frameId", "frame-main")
+	currentFrameW := httptest.NewRecorder()
+	testHandler.GetDesignFrameContext(currentFrameW, currentFrameReq)
+	if currentFrameW.Code != http.StatusNotFound {
+		t.Fatalf("GetDesignFrameContext current: expected 404 for old frame on current revision %s, got %d: %s", currentRevisionID, currentFrameW.Code, currentFrameW.Body.String())
 	}
 }
 
@@ -2467,6 +2558,115 @@ func TestGenerateDesignRestorePlanCreatesRepoAnalysisFromLocalDirectoryProject(t
 	testHandler.DispatchDesignRestoreTask(dispatchW, dispatchReq)
 	if dispatchW.Code != http.StatusConflict {
 		t.Fatalf("DispatchDesignRestoreTask with invalid approved production plan: expected 409, got %d: %s", dispatchW.Code, dispatchW.Body.String())
+	}
+}
+
+func TestGenerateDesignRestorePlanTargetsBusinessModuleFromParentIssue(t *testing.T) {
+	created := createDesignFileForTest(t, "服务记录")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, contextDesignNativeJSON("服务记录"))
+	projectID := createProjectForDesignTest(t, "Gallery Test")
+	parentIssueID := createIssueForDesignTest(t, "服务记录开发", projectID)
+	uiIssueID := createIssueForDesignTest(t, "UI设计", projectID)
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE issue
+		SET parent_issue_id = $1
+		WHERE id = $2
+	`, parentIssueID, uiIssueID); err != nil {
+		t.Fatalf("link child issue to parent: %v", err)
+	}
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	repoRoot = strings.TrimSuffix(repoRoot, "/server/internal/handler")
+	resourceRef, err := json.Marshal(localDirectoryRef{LocalPath: repoRoot, DaemonID: "business-module-test-daemon", Label: "Repository root"})
+	if err != nil {
+		t.Fatalf("marshal local directory ref: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, label, position, created_by)
+		VALUES ($1, $2, 'local_directory', $3::jsonb, 'Repository root', 0, $4)
+	`, projectID, testWorkspaceID, resourceRef, testUserID); err != nil {
+		t.Fatalf("insert project_resource: %v", err)
+	}
+
+	createReq := newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, map[string]any{
+		"file_id":  created.File.ID,
+		"issue_id": uiIssueID,
+		"input": map[string]any{
+			"version":   "1.0",
+			"projectId": projectID,
+			"items": []map[string]any{{
+				"itemId":       "business-module-frame-1",
+				"order":        1,
+				"designFileId": created.File.ID,
+				"revisionId":   created.CurrentRevision.ID,
+				"frameId":      "frame-main",
+				"frameName":    "服务记录",
+				"source":       "frame",
+			}},
+		},
+	})
+	createW := httptest.NewRecorder()
+	testHandler.CreateDesignRestoreTask(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateDesignRestoreTask: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+	var createdTask DesignRestoreTaskResponse
+	if err := json.NewDecoder(createW.Body).Decode(&createdTask); err != nil {
+		t.Fatalf("decode CreateDesignRestoreTask: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, createdTask.ID)
+	})
+
+	generateReq := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/plan/generate?workspace_id="+testWorkspaceID, nil), "id", createdTask.ID)
+	generateW := httptest.NewRecorder()
+	testHandler.GenerateDesignRestorePlan(generateW, generateReq)
+	if generateW.Code != http.StatusCreated {
+		t.Fatalf("GenerateDesignRestorePlan: expected 201, got %d: %s", generateW.Code, generateW.Body.String())
+	}
+	var generatedPlan DesignRestorePlanResponse
+	if err := json.NewDecoder(generateW.Body).Decode(&generatedPlan); err != nil {
+		t.Fatalf("decode GenerateDesignRestorePlan: %v", err)
+	}
+	var plan map[string]any
+	if err := json.Unmarshal(generatedPlan.Plan, &plan); err != nil {
+		t.Fatalf("decode generated plan: %v", err)
+	}
+	targets := plan["targets"].(map[string]any)
+	selected := targets["selected"].(map[string]any)
+	if selected["moduleSlug"] != "service-record" {
+		t.Fatalf("selected.moduleSlug = %#v, want service-record; selected=%#v", selected["moduleSlug"], selected)
+	}
+	if selected["moduleName"] != "服务记录" {
+		t.Fatalf("selected.moduleName = %#v, want 服务记录", selected["moduleName"])
+	}
+	for _, field := range []string{"path", "pagePath", "componentRoot", "routePath"} {
+		value, _ := selected[field].(string)
+		if !strings.Contains(value, "service-record") {
+			t.Fatalf("selected.%s = %q, want service-record module target", field, value)
+		}
+		if strings.Contains(value, "design-restore") {
+			t.Fatalf("selected.%s = %q, should not target design-restore sandbox", field, value)
+		}
+	}
+	strategy := plan["targetStrategy"].(map[string]any)
+	if strategy["mode"] != "business_module" || strategy["sourceIssueTitle"] != "服务记录开发" {
+		t.Fatalf("targetStrategy = %#v, want business_module from parent issue", strategy)
+	}
+	execution := plan["execution"].(map[string]any)
+	if execution["allowPrototypeHtml"] != false {
+		t.Fatalf("execution.allowPrototypeHtml = %#v, want false", execution["allowPrototypeHtml"])
+	}
+	allowedPaths := execution["allowedPaths"].([]any)
+	for _, path := range allowedPaths {
+		if strings.Contains(path.(string), "design-restore") {
+			t.Fatalf("allowedPaths = %#v, should not include design-restore sandbox", allowedPaths)
+		}
 	}
 }
 

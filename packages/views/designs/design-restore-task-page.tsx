@@ -19,6 +19,8 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
+import { readDesignRestoreVisualReview } from "./design-restore-result";
+import { DesignRestoreVisualReviewPanel } from "./design-restore-visual-review-panel";
 import type { DesignRestorePlan, DesignRestoreTaskInputV1, DesignRestoreTaskItemInput } from "@multica/core/types";
 
 function isRestoreTaskInput(value: unknown): value is DesignRestoreTaskInputV1 {
@@ -188,6 +190,7 @@ export function DesignRestoreTaskPage({ taskId }: { taskId: string }) {
   const restoreMapping = unknownList(resultSummary?.restoreMapping);
   const resultStatus = typeof resultSummary?.status === "string" ? resultSummary.status : task?.status;
   const resultText = typeof resultSummary?.summary === "string" ? resultSummary.summary : "";
+  const visualReview = readDesignRestoreVisualReview(resultSummary);
   const availableAgents = useMemo(() => agents.filter((agent) => !agent.archived_at && agent.runtime_id), [agents]);
   const dispatchAgentId = selectedAgentId || availableAgents[0]?.id || "";
   const hasApprovedPlan = restorePlan?.status === "approved" || restorePlan?.status === "dispatched";
@@ -357,7 +360,7 @@ export function DesignRestoreTaskPage({ taskId }: { taskId: string }) {
                             {item.note ? <p className="mt-2 text-xs text-muted-foreground">{item.note}</p> : null}
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
-                            <Button size="sm" variant="outline" onClick={() => navigation.push(paths.designFrameDetail(item.designFileId, item.frameId))}><ExternalLink className="h-3.5 w-3.5" />打开画板</Button>
+                            <Button size="sm" variant="outline" onClick={() => navigation.push(paths.designFrameDetail(item.designFileId, item.frameId, { revisionId: item.revisionId }))}><ExternalLink className="h-3.5 w-3.5" />打开画板</Button>
                             <Button size="sm" onClick={() => void copyItemContext(item)} disabled={!item.itemId || copyingItemId === key}><Copy className="h-3.5 w-3.5" />{copyingItemId === key ? "复制中…" : "复制上下文"}</Button>
                           </div>
                         </div>
@@ -524,6 +527,7 @@ export function DesignRestoreTaskPage({ taskId }: { taskId: string }) {
                       ) : restoreMapping.length ? <JsonBlock title="Restore Mapping" value={restoreMapping} /> : null}
                     </div>
                   </section>
+                  <DesignRestoreVisualReviewPanel review={visualReview} />
                   <section className="rounded-lg border bg-background p-3">
                     <div className="text-sm font-medium">策略校验</div>
                     <div className="mt-3 space-y-2 text-xs text-muted-foreground">

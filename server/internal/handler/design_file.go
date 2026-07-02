@@ -170,6 +170,7 @@ type DesignRestoreTaskResponse struct {
 	FileID      string          `json:"file_id"`
 	RevisionID  string          `json:"revision_id"`
 	IssueID     *string         `json:"issue_id"`
+	DeliveryID  *string         `json:"delivery_id"`
 	AgentTaskID *string         `json:"agent_task_id"`
 	Status      string          `json:"status"`
 	Input       json.RawMessage `json:"input"`
@@ -212,6 +213,42 @@ type DesignRestorePlanResponse struct {
 
 type DesignRestoreTaskListResponse struct {
 	Tasks []DesignRestoreTaskResponse `json:"tasks"`
+}
+
+type DesignDeliveryResponse struct {
+	ID            string          `json:"id"`
+	WorkspaceID   string          `json:"workspace_id"`
+	ProjectID     *string         `json:"project_id"`
+	SourceIssueID string          `json:"source_issue_id"`
+	TargetIssueID string          `json:"target_issue_id"`
+	FileID        string          `json:"file_id"`
+	RevisionID    string          `json:"revision_id"`
+	Scope         json.RawMessage `json:"scope"`
+	Status        string          `json:"status"`
+	DeliveredBy   *string         `json:"delivered_by"`
+	DeliveredAt   string          `json:"delivered_at"`
+	CancelledBy   *string         `json:"cancelled_by"`
+	CancelledAt   *string         `json:"cancelled_at"`
+	CancelReason  *string         `json:"cancel_reason"`
+	AuditMetadata json.RawMessage `json:"audit_metadata"`
+	CreatedAt     string          `json:"created_at"`
+	UpdatedAt     string          `json:"updated_at"`
+}
+
+type DesignDeliveryListResponse struct {
+	Deliveries []DesignDeliveryResponse `json:"deliveries"`
+}
+
+type CreateDesignDeliveryRequest struct {
+	SourceIssueID string          `json:"source_issue_id"`
+	TargetIssueID string          `json:"target_issue_id"`
+	FileID        string          `json:"file_id"`
+	RevisionID    string          `json:"revision_id"`
+	Scope         json.RawMessage `json:"scope"`
+}
+
+type CancelDesignDeliveryRequest struct {
+	Reason *string `json:"reason,omitempty"`
 }
 
 type DesignCatalogTemplateResponse struct {
@@ -309,12 +346,14 @@ type CreateDesignRestoreTaskRequest struct {
 	FileID     string          `json:"file_id"`
 	RevisionID string          `json:"revision_id"`
 	IssueID    string          `json:"issue_id"`
+	DeliveryID string          `json:"delivery_id"`
 	Input      json.RawMessage `json:"input"`
 }
 
 type DesignRestoreTaskInputV1 struct {
 	Version   string                       `json:"version"`
 	ProjectID string                       `json:"projectId"`
+	Purpose   string                       `json:"purpose"`
 	Items     []DesignRestoreTaskItemInput `json:"items"`
 }
 
@@ -567,6 +606,7 @@ func designRestoreTaskToResponse(task db.DesignRestoreTask) DesignRestoreTaskRes
 		FileID:      uuidToString(task.FileID),
 		RevisionID:  uuidToString(task.RevisionID),
 		IssueID:     uuidToPtr(task.IssueID),
+		DeliveryID:  uuidToPtr(task.DeliveryID),
 		AgentTaskID: uuidToPtr(task.AgentTaskID),
 		Status:      task.Status,
 		Input:       json.RawMessage(task.Input),
@@ -1146,7 +1186,7 @@ func (h *Handler) GetDesignFileContext(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	file, revision, ok := h.currentDesignRevision(w, r, idUUID, wsUUID)
+	file, revision, ok := h.requestedDesignRevision(w, r, idUUID, wsUUID)
 	if !ok {
 		return
 	}
@@ -1168,7 +1208,7 @@ func (h *Handler) GetDesignFrameContext(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "frame id is required")
 		return
 	}
-	_, revision, ok := h.currentDesignRevision(w, r, idUUID, wsUUID)
+	_, revision, ok := h.requestedDesignRevision(w, r, idUUID, wsUUID)
 	if !ok {
 		return
 	}
@@ -1199,7 +1239,7 @@ func (h *Handler) GetDesignSelectionContext(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	_, revision, ok := h.currentDesignRevision(w, r, idUUID, wsUUID)
+	_, revision, ok := h.requestedDesignRevision(w, r, idUUID, wsUUID)
 	if !ok {
 		return
 	}
@@ -1299,6 +1339,37 @@ func (h *Handler) currentDesignRevision(w http.ResponseWriter, r *http.Request, 
 	return file, revision, true
 }
 
+func (h *Handler) requestedDesignRevision(w http.ResponseWriter, r *http.Request, fileID pgtype.UUID, workspaceID pgtype.UUID) (db.DesignFile, db.DesignRevision, bool) {
+	file, err := h.Queries.GetDesignFileInWorkspace(r.Context(), db.GetDesignFileInWorkspaceParams{ID: fileID, WorkspaceID: workspaceID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "design file not found")
+		return db.DesignFile{}, db.DesignRevision{}, false
+	}
+	revisionID := strings.TrimSpace(r.URL.Query().Get("revision_id"))
+	if revisionID == "" {
+		if !file.CurrentRevisionID.Valid {
+			writeError(w, http.StatusNotFound, "design revision not found")
+			return db.DesignFile{}, db.DesignRevision{}, false
+		}
+		revision, err := h.Queries.GetDesignRevisionInWorkspace(r.Context(), db.GetDesignRevisionInWorkspaceParams{ID: file.CurrentRevisionID, WorkspaceID: workspaceID})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "design revision not found")
+			return db.DesignFile{}, db.DesignRevision{}, false
+		}
+		return file, revision, true
+	}
+	revisionUUID, ok := parseUUIDOrBadRequest(w, revisionID, "revision_id")
+	if !ok {
+		return db.DesignFile{}, db.DesignRevision{}, false
+	}
+	revision, err := h.Queries.GetDesignRevisionInWorkspace(r.Context(), db.GetDesignRevisionInWorkspaceParams{ID: revisionUUID, WorkspaceID: workspaceID})
+	if err != nil || revision.FileID != file.ID {
+		writeError(w, http.StatusNotFound, "design revision not found")
+		return db.DesignFile{}, db.DesignRevision{}, false
+	}
+	return file, revision, true
+}
+
 func (h *Handler) ListDesignRevisions(w http.ResponseWriter, r *http.Request) {
 	idUUID, wsUUID, ok := h.parseDesignFileAndWorkspaceIDs(w, r)
 	if !ok {
@@ -1386,6 +1457,45 @@ func (h *Handler) CreateDesignRestoreTask(w http.ResponseWriter, r *http.Request
 		if !ok {
 			return
 		}
+	}
+	deliveryID := pgtype.UUID{Valid: false}
+	if strings.TrimSpace(req.DeliveryID) != "" {
+		deliveryID, ok = parseUUIDOrBadRequest(w, strings.TrimSpace(req.DeliveryID), "delivery_id")
+		if !ok {
+			return
+		}
+		delivery, err := h.Queries.GetDesignDeliveryInWorkspace(r.Context(), db.GetDesignDeliveryInWorkspaceParams{ID: deliveryID, WorkspaceID: wsUUID})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "design delivery not found")
+			return
+		}
+		if delivery.Status != "active" {
+			writeError(w, http.StatusBadRequest, "design delivery is not active")
+			return
+		}
+		if delivery.FileID != file.ID || delivery.RevisionID != revision.ID {
+			writeError(w, http.StatusBadRequest, "design delivery does not match design file revision")
+			return
+		}
+		if issueUUID.Valid {
+			if delivery.TargetIssueID != issueUUID {
+				writeError(w, http.StatusBadRequest, "design delivery target issue does not match issue_id")
+				return
+			}
+		} else {
+			issueUUID = delivery.TargetIssueID
+		}
+		existing, err := h.Queries.GetReusableDesignRestoreTaskByDelivery(r.Context(), db.GetReusableDesignRestoreTaskByDeliveryParams{WorkspaceID: wsUUID, DeliveryID: deliveryID})
+		if err == nil {
+			writeJSON(w, http.StatusOK, designRestoreTaskToResponse(existing))
+			return
+		}
+		if err != pgx.ErrNoRows {
+			writeError(w, http.StatusInternalServerError, "failed to check existing design restore task")
+			return
+		}
+	}
+	if issueUUID.Valid && !deliveryID.Valid {
 		existing, err := h.Queries.GetReusableDesignRestoreTaskByIssue(r.Context(), db.GetReusableDesignRestoreTaskByIssueParams{WorkspaceID: wsUUID, IssueID: issueUUID, FileID: file.ID, RevisionID: revision.ID})
 		if err == nil {
 			writeJSON(w, http.StatusOK, designRestoreTaskToResponse(existing))
@@ -1409,6 +1519,7 @@ func (h *Handler) CreateDesignRestoreTask(w http.ResponseWriter, r *http.Request
 		FileID:      file.ID,
 		RevisionID:  revision.ID,
 		IssueID:     issueUUID,
+		DeliveryID:  deliveryID,
 		AgentTaskID: pgtype.UUID{Valid: false},
 		Status:      "queued",
 		Input:       input,
@@ -1671,7 +1782,8 @@ func (h *Handler) ApproveDesignRestorePlan(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if task, err := h.Queries.GetDesignRestoreTaskInWorkspace(r.Context(), db.GetDesignRestoreTaskInWorkspaceParams{ID: taskID, WorkspaceID: wsUUID}); err == nil {
-		h.createDesignRestoreIssueSystemComment(r.Context(), task.IssueID, "Restore Plan 已批准，可以交给前端 Agent 执行。")
+		agentLabel := designRestoreAgentLabelFromInput(task.Input)
+		h.createDesignRestoreIssueSystemComment(r.Context(), task.IssueID, fmt.Sprintf("Restore Plan 已批准，可以交给 %s 执行。", agentLabel))
 	}
 	writeJSON(w, http.StatusOK, designRestorePlanToResponse(updated))
 }
@@ -1841,7 +1953,8 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	h.createDesignRestoreIssueSystemComment(r.Context(), updated.IssueID, fmt.Sprintf("前端 Agent 已开始执行设计稿还原：Agent Task `%s`。", uuidToString(agentTask.ID)))
+	agentLabel := designRestoreAgentLabelFromInput(task.Input)
+	h.createDesignRestoreIssueSystemComment(r.Context(), updated.IssueID, fmt.Sprintf("%s 已开始执行设计稿还原：Agent Task `%s`。", agentLabel, uuidToString(agentTask.ID)))
 	writeJSON(w, http.StatusCreated, DispatchDesignRestoreTaskResponse{Task: designRestoreTaskToResponse(updated), AgentTaskID: uuidToString(agentTask.ID)})
 }
 
@@ -2196,6 +2309,7 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 	}
 	repoBlock := map[string]any{"status": "missing", "mode": "prototype", "note": "No completed design repo analysis was found; current plan remains a prototype target."}
 	targetsBlock := map[string]any{"selected": nil, "candidates": []any{}, "needsUserSelection": false}
+	targetStrategyBlock := map[string]any{"mode": "sandbox_fallback", "fallbackMode": "prototype_html", "note": "No production repo analysis is available; use isolated prototype target only."}
 	executionBlock := map[string]any{
 		"allowedPaths":        []string{"fengchenDoc/gallery-native-agent-test"},
 		"forbiddenPaths":      []string{"server", "packages/core"},
@@ -2208,22 +2322,32 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 			analysis, err := h.ensureDesignRepoAnalysisForProject(ctx, task.WorkspaceID, projectUUID)
 			if err == nil && analysis.Status == "completed" {
 				repoBlock = designRepoAnalysisPlanBlock(analysis)
-				artifactTarget := defaultDesignRestorePageTarget(analysis, task)
+				targetStrategy := h.inferDesignRestoreTargetStrategy(ctx, task, input)
+				targetStrategyBlock = targetStrategy.toPlanBlock()
+				artifactTarget := defaultDesignRestorePageTarget(analysis, task, targetStrategy)
 				candidates := []any{artifactTarget}
 				if existingCandidates, ok := jsonRawToAny(analysis.TargetCandidates, []any{}).([]any); ok {
 					candidates = append(candidates, existingCandidates...)
 				}
-				targetsBlock = map[string]any{"selected": artifactTarget, "candidates": candidates, "needsUserSelection": false, "defaultMode": "page_with_route_and_components"}
+				targetsBlock = map[string]any{"selected": artifactTarget, "candidates": candidates, "needsUserSelection": false, "defaultMode": artifactTarget["kind"]}
 				executionBlock = map[string]any{
 					"allowedPaths":       artifactTarget["allowedPaths"],
 					"forbiddenPaths":     jsonRawFieldToAny(analysis.Boundaries, "forbiddenPaths", []any{}),
 					"commands":           jsonRawFieldToAny(analysis.Commands, "typecheck", []any{}),
 					"allowPrototypeHtml": false,
-					"defaultWriteMode":   "create_or_update_page_route_and_components",
+					"defaultWriteMode":   artifactTarget["writeMode"],
 				}
 			} else if err != nil {
 				repoBlock = map[string]any{"status": "unavailable", "mode": "prototype", "note": err.Error()}
 			}
+		}
+	}
+	selectedTargetPath := fmt.Sprintf("fengchenDoc/gallery-native-agent-test/restore-%s.html", strings.ReplaceAll(uuidToString(task.ID), "-", "")[:12])
+	if selected, ok := targetsBlock["selected"].(map[string]any); ok {
+		if pagePath, ok := selected["pagePath"].(string); ok && strings.TrimSpace(pagePath) != "" {
+			selectedTargetPath = pagePath
+		} else if path, ok := selected["path"].(string); ok && strings.TrimSpace(path) != "" {
+			selectedTargetPath = path
 		}
 	}
 	items := make([]map[string]any, 0, len(input.Items))
@@ -2258,21 +2382,22 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 			"source":         item.Source,
 			"restoreScope":   "strict-structure",
 			"targetKind":     "file",
-			"targetPath":     fmt.Sprintf("fengchenDoc/gallery-native-agent-test/restore-%s.html", strings.ReplaceAll(uuidToString(task.ID), "-", "")[:12]),
+			"targetPath":     selectedTargetPath,
 			"layerIds":       usedLayerIDs,
 			"implementation": "Build visible component structure from Multica item_contexts; infer or create the page route, split reusable sections into components, and do not paste full-frame preview assets.",
 		})
 	}
 	plan := map[string]any{
-		"version":       "1.0",
-		"restoreTaskId": uuidToString(task.ID),
-		"designFileId":  uuidToString(task.FileID),
-		"revisionId":    uuidToString(task.RevisionID),
-		"mode":          "strict-structure",
-		"targetRoot":    "fengchenDoc/gallery-native-agent-test",
-		"repo":          repoBlock,
-		"targets":       targetsBlock,
-		"execution":     executionBlock,
+		"version":        "1.0",
+		"restoreTaskId":  uuidToString(task.ID),
+		"designFileId":   uuidToString(task.FileID),
+		"revisionId":     uuidToString(task.RevisionID),
+		"mode":           "strict-structure",
+		"targetRoot":     "fengchenDoc/gallery-native-agent-test",
+		"repo":           repoBlock,
+		"targetStrategy": targetStrategyBlock,
+		"targets":        targetsBlock,
+		"execution":      executionBlock,
 		"dispatchPolicy": map[string]any{
 			"requireApproval":                true,
 			"allowSkipPlanForDevelopment":    true,
@@ -2293,20 +2418,222 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 	return json.Marshal(plan)
 }
 
-func defaultDesignRestorePageTarget(analysis db.DesignRepoAnalysis, task db.DesignRestoreTask) map[string]any {
+type designRestoreTargetStrategy struct {
+	Mode             string
+	ModuleName       string
+	ModuleSlug       string
+	SourceIssueID    string
+	SourceIssueTitle string
+	Source           string
+	FallbackMode     string
+	Note             string
+}
+
+func (s designRestoreTargetStrategy) toPlanBlock() map[string]any {
+	block := map[string]any{
+		"mode":         fallback(s.Mode, "sandbox_fallback"),
+		"fallbackMode": fallback(s.FallbackMode, "design_restore_sandbox"),
+	}
+	if strings.TrimSpace(s.ModuleName) != "" {
+		block["moduleName"] = s.ModuleName
+	}
+	if strings.TrimSpace(s.ModuleSlug) != "" {
+		block["moduleSlug"] = s.ModuleSlug
+	}
+	if strings.TrimSpace(s.SourceIssueID) != "" {
+		block["sourceIssueId"] = s.SourceIssueID
+	}
+	if strings.TrimSpace(s.SourceIssueTitle) != "" {
+		block["sourceIssueTitle"] = s.SourceIssueTitle
+	}
+	if strings.TrimSpace(s.Source) != "" {
+		block["source"] = s.Source
+	}
+	if strings.TrimSpace(s.Note) != "" {
+		block["note"] = s.Note
+	}
+	return block
+}
+
+func (h *Handler) inferDesignRestoreTargetStrategy(ctx context.Context, task db.DesignRestoreTask, input DesignRestoreTaskInputV1) designRestoreTargetStrategy {
+	candidates := []struct {
+		Title   string
+		IssueID string
+		Source  string
+	}{}
+	if task.IssueID.Valid {
+		issue, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: task.IssueID, WorkspaceID: task.WorkspaceID})
+		if err == nil {
+			if issue.ParentIssueID.Valid {
+				if parent, parentErr := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issue.ParentIssueID, WorkspaceID: task.WorkspaceID}); parentErr == nil {
+					candidates = append(candidates, struct {
+						Title   string
+						IssueID string
+						Source  string
+					}{Title: parent.Title, IssueID: uuidToString(parent.ID), Source: "parent_issue"})
+				}
+			}
+			candidates = append(candidates, struct {
+				Title   string
+				IssueID string
+				Source  string
+			}{Title: issue.Title, IssueID: uuidToString(issue.ID), Source: "issue"})
+		}
+	}
+	for _, item := range input.Items {
+		if strings.TrimSpace(item.ModuleKey) != "" {
+			candidates = append(candidates, struct {
+				Title   string
+				IssueID string
+				Source  string
+			}{Title: item.ModuleKey, Source: "item_module_key"})
+		}
+		if strings.TrimSpace(item.FrameName) != "" {
+			candidates = append(candidates, struct {
+				Title   string
+				IssueID string
+				Source  string
+			}{Title: item.FrameName, Source: "frame_name"})
+		}
+	}
+	if strings.TrimSpace(input.Purpose) != "" {
+		candidates = append(candidates, struct {
+			Title   string
+			IssueID string
+			Source  string
+		}{Title: input.Purpose, Source: "restore_purpose"})
+	}
+	for _, candidate := range candidates {
+		moduleName := normalizeDesignRestoreModuleName(candidate.Title)
+		moduleSlug := designRestoreModuleSlug(moduleName)
+		if moduleName == "" || moduleSlug == "" || isGenericDesignRestoreModuleName(moduleName) {
+			continue
+		}
+		return designRestoreTargetStrategy{
+			Mode:             "business_module",
+			ModuleName:       moduleName,
+			ModuleSlug:       moduleSlug,
+			SourceIssueID:    candidate.IssueID,
+			SourceIssueTitle: candidate.Title,
+			Source:           candidate.Source,
+			FallbackMode:     "design_restore_sandbox",
+			Note:             "Prefer normal business module files derived from issue/design context; use sandbox only when this target conflicts with repo constraints.",
+		}
+	}
+	return designRestoreTargetStrategy{
+		Mode:         "sandbox_fallback",
+		FallbackMode: "design_restore_sandbox",
+		Note:         "Could not infer a specific business module from issue or design names.",
+	}
+}
+
+func normalizeDesignRestoreModuleName(title string) string {
+	name := strings.TrimSpace(title)
+	if name == "" {
+		return ""
+	}
+	replacers := []string{
+		"页面开发", "页面设计", "前端开发", "前端实现", "UI设计", "UI 设计", "ui设计", "ui 设计",
+		"开发", "设计", "还原", "实现", "页面", "模块", "功能", "子任务", "任务",
+	}
+	for _, old := range replacers {
+		name = strings.ReplaceAll(name, old, "")
+	}
+	name = strings.Trim(name, " -_/|:：[]【】()（）")
+	name = strings.Join(strings.Fields(name), " ")
+	return strings.TrimSpace(name)
+}
+
+func isGenericDesignRestoreModuleName(name string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(name), " ", ""))
+	switch normalized {
+	case "", "ui", "uidesign", "design", "frontend", "front-end", "main", "index", "home", "page", "前端", "界面", "页面", "主页":
+		return true
+	default:
+		return false
+	}
+}
+
+func designRestoreModuleSlug(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	known := []struct {
+		Contains string
+		Slug     string
+	}{
+		{"服务记录", "service-record"},
+		{"服务", "service"},
+		{"记录", "record"},
+		{"个人资料", "profile"},
+		{"资料", "profile"},
+		{"订单", "order"},
+		{"支付", "payment"},
+		{"登录", "login"},
+		{"注册", "signup"},
+		{"首页", "home"},
+	}
+	for _, item := range known {
+		if strings.Contains(name, item.Contains) {
+			return item.Slug
+		}
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(name) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if b.Len() > 0 && !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if slug != "" {
+		return slug
+	}
+	return "business-module"
+}
+
+func defaultDesignRestorePageTarget(analysis db.DesignRepoAnalysis, task db.DesignRestoreTask, strategy designRestoreTargetStrategy) map[string]any {
 	shortID := strings.ReplaceAll(uuidToString(task.ID), "-", "")[:12]
 	pagePath := "src/pages/design-restore/restore-" + shortID + ".tsx"
 	componentRoot := "src/components/design-restore/restore-" + shortID
 	routeOwner := "src/router"
 	routePath := "/design-restore/" + shortID
 	allowedPaths := []string{"src/pages/design-restore", componentRoot, routeOwner}
+	kind := "page_with_route_and_components"
+	writeMode := "create_or_update_page_route_and_components"
 	framework := strings.ToLower(strings.TrimSpace(analysis.Framework.String))
-	if strings.Contains(framework, "vue") {
+	if strategy.Mode == "business_module" && strings.TrimSpace(strategy.ModuleSlug) != "" {
+		moduleSlug := strategy.ModuleSlug
+		modulePascal := designRestorePascalName(moduleSlug)
+		routePath = "/" + moduleSlug
+		routeOwner = designRestoreRouteOwner(analysis)
+		if strings.Contains(framework, "vue") {
+			pagePath = "src/views/" + moduleSlug + "/" + modulePascal + "View.vue"
+			componentRoot = "src/components/" + moduleSlug
+			allowedPaths = []string{"src/views/" + moduleSlug, componentRoot, routeOwner}
+		} else if strings.Contains(framework, "next") {
+			pagePath = designRestoreNextPagePath(analysis, moduleSlug)
+			componentRoot = designRestoreComponentRoot(analysis, moduleSlug)
+			allowedPaths = []string{pagePath, componentRoot}
+		} else {
+			pageRoot := designRestorePageRoot(analysis)
+			componentRoot = designRestoreComponentRoot(analysis, moduleSlug)
+			pagePath = pageRoot + "/" + moduleSlug + "/" + modulePascal + "Page.tsx"
+			allowedPaths = []string{pageRoot + "/" + moduleSlug, componentRoot, routeOwner}
+		}
+	} else if strings.Contains(framework, "vue") {
 		pagePath = "src/views/design-restore/Restore" + shortID + "View.vue"
 		componentRoot = "src/components/design-restore/restore-" + shortID
 		allowedPaths = []string{"src/views/design-restore", componentRoot, routeOwner}
 	}
-	return map[string]any{
+	target := map[string]any{
 		"kind":          "page_with_route_and_components",
 		"path":          pagePath,
 		"pagePath":      pagePath,
@@ -2314,9 +2641,106 @@ func defaultDesignRestorePageTarget(analysis db.DesignRepoAnalysis, task db.Desi
 		"routeOwner":    routeOwner,
 		"routePath":     routePath,
 		"allowedPaths":  allowedPaths,
-		"reason":        "UI设计阶段交付一个可访问页面：自主新建或推断页面、补充 router，并按项目结构拆分组件，避免堆叠到单一业务入口文件。",
+		"writeMode":     writeMode,
+		"reason":        "UI设计阶段交付一个可访问页面：像正常程序员一样优先创建或更新业务模块，补充 router，并按项目结构拆分组件，避免堆叠到单一入口文件。",
 		"confidence":    0.95,
 	}
+	if strategy.Mode == "business_module" {
+		target["kind"] = kind
+		target["targetStrategy"] = "business_module"
+		target["moduleName"] = strategy.ModuleName
+		target["moduleSlug"] = strategy.ModuleSlug
+		target["source"] = strategy.Source
+		if strategy.SourceIssueID != "" {
+			target["sourceIssueId"] = strategy.SourceIssueID
+		}
+		if strategy.SourceIssueTitle != "" {
+			target["sourceIssueTitle"] = strategy.SourceIssueTitle
+		}
+	}
+	return target
+}
+
+func designRestorePascalName(slug string) string {
+	parts := strings.Split(slug, "-")
+	var b strings.Builder
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		b.WriteString(strings.ToUpper(part[:1]))
+		if len(part) > 1 {
+			b.WriteString(part[1:])
+		}
+	}
+	if b.Len() == 0 {
+		return "BusinessModule"
+	}
+	return b.String()
+}
+
+func designRestoreRouteOwner(analysis db.DesignRepoAnalysis) string {
+	owners := jsonStringSliceField(analysis.Routing, "owners")
+	for _, owner := range owners {
+		if owner == "src/router" || owner == "src/routes" {
+			return owner
+		}
+	}
+	if len(owners) > 0 {
+		return owners[0]
+	}
+	return "src/router"
+}
+
+func designRestorePageRoot(analysis db.DesignRepoAnalysis) string {
+	views := jsonStringSliceField(analysis.Directories, "businessViews")
+	for _, view := range views {
+		if view == "src/views" || view == "src/pages" || view == "packages/views" {
+			return view
+		}
+	}
+	if len(views) > 0 {
+		return views[0]
+	}
+	return "src/pages"
+}
+
+func designRestoreComponentRoot(analysis db.DesignRepoAnalysis, moduleSlug string) string {
+	components := jsonStringSliceField(analysis.Directories, "uiComponents")
+	for _, root := range components {
+		if root == "src/components" || root == "components" || root == "packages/ui" {
+			return root + "/" + moduleSlug
+		}
+	}
+	if len(components) > 0 {
+		return components[0] + "/" + moduleSlug
+	}
+	return "src/components/" + moduleSlug
+}
+
+func designRestoreNextPagePath(analysis db.DesignRepoAnalysis, moduleSlug string) string {
+	for _, owner := range jsonStringSliceField(analysis.Routing, "owners") {
+		switch owner {
+		case "apps/web/app", "app", "src/app":
+			return owner + "/" + moduleSlug + "/page.tsx"
+		}
+	}
+	return "src/app/" + moduleSlug + "/page.tsx"
+}
+
+func jsonStringSliceField(raw []byte, field string) []string {
+	var value map[string]any
+	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
+		return nil
+	}
+	items, _ := value[field].([]any)
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (h *Handler) GetDesignRestoreTaskItemContext(w http.ResponseWriter, r *http.Request) {

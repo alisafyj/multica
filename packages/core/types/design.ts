@@ -328,6 +328,7 @@ export interface DesignRestoreTask {
   file_id: string;
   revision_id: string;
   issue_id: string | null;
+  delivery_id: string | null;
   agent_task_id: string | null;
   status: DesignRestoreTaskStatus;
   input: Record<string, unknown>;
@@ -402,6 +403,44 @@ export interface CreateDesignRepoAnalysisRequest {
 
 export interface ListDesignRepoAnalysesResponse {
   analyses: DesignRepoAnalysis[];
+}
+
+export type DesignDeliveryStatus = "active" | "superseded" | "cancelled";
+
+export interface DesignDelivery {
+  id: string;
+  workspace_id: string;
+  project_id: string | null;
+  source_issue_id: string;
+  target_issue_id: string;
+  file_id: string;
+  revision_id: string;
+  scope: Record<string, unknown>;
+  status: DesignDeliveryStatus;
+  delivered_by: string | null;
+  delivered_at: string;
+  cancelled_by: string | null;
+  cancelled_at: string | null;
+  cancel_reason: string | null;
+  audit_metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateDesignDeliveryRequest {
+  source_issue_id: string;
+  target_issue_id: string;
+  file_id: string;
+  revision_id: string;
+  scope: Record<string, unknown>;
+}
+
+export interface CancelDesignDeliveryRequest {
+  reason?: string;
+}
+
+export interface ListDesignDeliveriesResponse {
+  deliveries: DesignDelivery[];
 }
 
 export interface ListDesignRestoreTasksResponse {
@@ -579,6 +618,7 @@ export interface CreateDesignRestoreTaskRequest {
   file_id: string;
   revision_id?: string;
   issue_id?: string;
+  delivery_id?: string;
   input: DesignRestoreTaskInputV1;
 }
 

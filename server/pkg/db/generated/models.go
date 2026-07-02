@@ -287,6 +287,26 @@ type DesignCatalogTemplate struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
+type DesignDelivery struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	SourceIssueID pgtype.UUID        `json:"source_issue_id"`
+	TargetIssueID pgtype.UUID        `json:"target_issue_id"`
+	FileID        pgtype.UUID        `json:"file_id"`
+	RevisionID    pgtype.UUID        `json:"revision_id"`
+	Scope         []byte             `json:"scope"`
+	Status        string             `json:"status"`
+	DeliveredBy   pgtype.UUID        `json:"delivered_by"`
+	DeliveredAt   pgtype.Timestamptz `json:"delivered_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	CancelledBy   pgtype.UUID        `json:"cancelled_by"`
+	CancelledAt   pgtype.Timestamptz `json:"cancelled_at"`
+	CancelReason  pgtype.Text        `json:"cancel_reason"`
+	AuditMetadata []byte             `json:"audit_metadata"`
+}
+
 type DesignDraft struct {
 	ID                  pgtype.UUID        `json:"id"`
 	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
@@ -444,6 +464,7 @@ type DesignRestoreTask struct {
 	CreatedBy   pgtype.UUID        `json:"created_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	DeliveryID  pgtype.UUID        `json:"delivery_id"`
 }
 
 type DesignRevision struct {

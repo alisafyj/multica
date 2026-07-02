@@ -34,24 +34,32 @@ export function designRevisionListOptions(wsId: string, fileId: string) {
   });
 }
 
-export function designFileContextOptions(wsId: string, id: string) {
+export function designRevisionDetailOptions(wsId: string, revisionId: string) {
   return queryOptions({
-    queryKey: designKeys.fileContext(wsId, id),
-    queryFn: () => api.getDesignFileContext(id),
+    queryKey: designKeys.revision(wsId, revisionId),
+    queryFn: () => api.getDesignRevision(revisionId),
+    enabled: !!revisionId,
   });
 }
 
-export function designFrameContextOptions(wsId: string, fileId: string, frameId: string) {
+export function designFileContextOptions(wsId: string, id: string, options: { revisionId?: string } = {}) {
   return queryOptions({
-    queryKey: designKeys.frameContext(wsId, fileId, frameId),
-    queryFn: () => api.getDesignFrameContext(fileId, frameId),
+    queryKey: designKeys.fileContext(wsId, id, options.revisionId),
+    queryFn: () => api.getDesignFileContext(id, options),
   });
 }
 
-export function designSelectionContextOptions(wsId: string, fileId: string, frameId: string, input: DesignSelectionInput) {
+export function designFrameContextOptions(wsId: string, fileId: string, frameId: string, options: { revisionId?: string } = {}) {
   return queryOptions({
-    queryKey: designKeys.selectionContext(wsId, fileId, frameId, input),
-    queryFn: () => api.getDesignSelectionContext(fileId, frameId, input),
+    queryKey: designKeys.frameContext(wsId, fileId, frameId, options.revisionId),
+    queryFn: () => api.getDesignFrameContext(fileId, frameId, options),
+  });
+}
+
+export function designSelectionContextOptions(wsId: string, fileId: string, frameId: string, input: DesignSelectionInput, options: { revisionId?: string } = {}) {
+  return queryOptions({
+    queryKey: designKeys.selectionContext(wsId, fileId, frameId, input, options.revisionId),
+    queryFn: () => api.getDesignSelectionContext(fileId, frameId, input, options),
   });
 }
 
@@ -83,6 +91,15 @@ export function designRepoAnalysesOptions(wsId: string, projectId: string) {
     queryFn: () => api.listDesignRepoAnalyses(projectId),
     select: (data) => data.analyses,
     enabled: !!projectId,
+  });
+}
+
+export function designDeliveriesByIssueOptions(wsId: string, issueId: string) {
+  return queryOptions({
+    queryKey: designKeys.deliveriesByIssue(wsId, issueId),
+    queryFn: () => api.listDesignDeliveries(issueId),
+    select: (data) => data.deliveries,
+    enabled: !!issueId,
   });
 }
 

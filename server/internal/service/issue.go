@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -65,6 +67,7 @@ type IssueCreateParams struct {
 	DueDate        pgtype.Date
 	OriginType     pgtype.Text
 	OriginID       pgtype.UUID
+	Metadata       []byte
 	AttachmentIDs  []pgtype.UUID
 	AllowDuplicate bool
 }
@@ -145,7 +148,7 @@ type IssueCreateResult struct {
 //  8. Publish EventIssueCreated to the bus (payload via opts.BroadcastPayload).
 //  9. Capture the IssueCreated analytics event.
 //  10. Enqueue an agent task or trigger the squad leader when the issue is
-//      assigned and not in `backlog`.
+//     assigned and not in `backlog`.
 //
 // Validation that lives in the service (parent existence, project
 // workspace membership, parent → project back-fill) is enforced here so
@@ -219,6 +222,11 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		return IssueCreateResult{}, fmt.Errorf("next top position: %w", err)
 	}
 
+	metadata := p.Metadata
+	if len(metadata) == 0 && p.ParentIssueID.Valid {
+		metadata = inferDesignRoleMetadata(p.Title)
+	}
+
 	var issue db.Issue
 	if p.OriginType.Valid {
 		issue, err = qtx.CreateIssueWithOrigin(ctx, db.CreateIssueWithOriginParams{
@@ -239,6 +247,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			ProjectID:     projectID,
 			OriginType:    p.OriginType,
 			OriginID:      p.OriginID,
+			Metadata:      metadata,
 		})
 	} else {
 		issue, err = qtx.CreateIssue(ctx, db.CreateIssueParams{
@@ -257,6 +266,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			DueDate:       p.DueDate,
 			Number:        issueNumber,
 			ProjectID:     projectID,
+			Metadata:      metadata,
 		})
 	}
 	if err != nil {
@@ -279,6 +289,38 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID)
 
 	return IssueCreateResult{Issue: issue, Attachments: attachments}, nil
+}
+
+const (
+	issueDesignRoleMetadataKey = "design_role"
+	issueDesignRoleUI          = "ui_design"
+	issueDesignRoleFrontend    = "frontend_dev"
+)
+
+func inferDesignRoleMetadata(title string) []byte {
+	role := inferIssueDesignRoleFromTitle(title)
+	if role == "" {
+		return nil
+	}
+	b, err := json.Marshal(map[string]string{issueDesignRoleMetadataKey: role})
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+func inferIssueDesignRoleFromTitle(title string) string {
+	normalized := strings.ToLower(strings.TrimSpace(title))
+	if normalized == "" {
+		return ""
+	}
+	if strings.Contains(normalized, "ui") || strings.Contains(normalized, "设计") {
+		return issueDesignRoleUI
+	}
+	if strings.Contains(normalized, "前端") || strings.Contains(normalized, "frontend") {
+		return issueDesignRoleFrontend
+	}
+	return ""
 }
 
 // linkAttachments links the given attachment IDs to the newly created

@@ -1,5 +1,7 @@
 import type {
   Issue,
+  IssueMetadata,
+  BatchUpdateIssuesResponse,
   CreateIssueRequest,
   UpdateIssueRequest,
   GroupedIssuesResponse,
@@ -116,14 +118,17 @@ import type {
   CreateBillingCheckoutSessionResponse,
   BillingCheckoutSessionStatus,
   CreateBillingPortalSessionResponse,
+  CancelDesignDeliveryRequest,
   CreateDesignDraftAgentTaskRequest,
   CreateDesignDraftAgentTaskResponse,
   CreateDesignDraftRequest,
+  CreateDesignDeliveryRequest,
   CreateDesignFileRequest,
   CreateDesignFolderRequest,
   CreateDesignRestoreTaskRequest,
   DesignCatalogTemplate,
   DesignContext,
+  DesignDelivery,
   DesignDraft,
   DesignDraftMaterializeResponse,
   DesignFileDetailResponse,
@@ -145,6 +150,7 @@ import type {
   FigmaPluginAuthStatus,
   ListDesignFoldersResponse,
   ListDesignDraftsResponse,
+  ListDesignDeliveriesResponse,
   ListDesignFilesResponse,
   ListDesignRevisionsResponse,
   ListDesignRepoAnalysesResponse,
@@ -168,6 +174,8 @@ import {
   AgentTemplateSchema,
   AgentTemplateSummaryListSchema,
   AttachmentResponseSchema,
+  BatchDeleteIssuesResponseSchema,
+  BatchUpdateIssuesResponseSchema,
   ChildIssuesResponseSchema,
   CommentsListSchema,
   CloudRuntimeNodeListSchema,
@@ -181,6 +189,8 @@ import {
   EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
   EMPTY_APP_CONFIG,
   EMPTY_ATTACHMENT,
+  EMPTY_BATCH_DELETE_ISSUES_RESPONSE,
+  EMPTY_BATCH_UPDATE_ISSUES_RESPONSE,
   EMPTY_CLOUD_RUNTIME_NODE,
   EMPTY_CLOUD_RUNTIME_NODE_LIST,
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
@@ -225,6 +235,16 @@ import {
   EMPTY_CREATE_BILLING_CHECKOUT_SESSION_RESPONSE,
   EMPTY_BILLING_CHECKOUT_SESSION_STATUS,
   EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE,
+  DesignDeliverySchema,
+  DesignRestoreTaskSchema,
+  DispatchDesignRestoreTaskResponseSchema,
+  EMPTY_DESIGN_DELIVERY,
+  EMPTY_DESIGN_RESTORE_TASK,
+  EMPTY_DISPATCH_DESIGN_RESTORE_TASK_RESPONSE,
+  ListDesignDeliveriesResponseSchema,
+  ListDesignRestoreTasksResponseSchema,
+  EMPTY_LIST_DESIGN_DELIVERIES_RESPONSE,
+  EMPTY_LIST_DESIGN_RESTORE_TASKS_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -622,6 +642,13 @@ export class ApiClient {
     });
   }
 
+  async setIssueMetadataKey(id: string, key: string, value: string | number | boolean): Promise<{ metadata: IssueMetadata }> {
+    return this.fetch(`/api/issues/${encodeURIComponent(id)}/metadata/${encodeURIComponent(key)}`, {
+      method: "PUT",
+      body: JSON.stringify({ value }),
+    });
+  }
+
   async listChildIssues(id: string): Promise<{ issues: Issue[] }> {
     const raw = await this.fetch<unknown>(`/api/issues/${id}/children`);
     return parseWithFallback(raw, ChildIssuesResponseSchema, { issues: [] }, {
@@ -650,17 +677,23 @@ export class ApiClient {
     await this.fetch(`/api/issues/${id}`, { method: "DELETE" });
   }
 
-  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest): Promise<{ updated: number }> {
-    return this.fetch("/api/issues/batch-update", {
+  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest): Promise<BatchUpdateIssuesResponse> {
+    const raw = await this.fetch<unknown>("/api/issues/batch-update", {
       method: "POST",
       body: JSON.stringify({ issue_ids: issueIds, updates }),
+    });
+    return parseWithFallback(raw, BatchUpdateIssuesResponseSchema, EMPTY_BATCH_UPDATE_ISSUES_RESPONSE, {
+      endpoint: "POST /api/issues/batch-update",
     });
   }
 
   async batchDeleteIssues(issueIds: string[]): Promise<{ deleted: number }> {
-    return this.fetch("/api/issues/batch-delete", {
+    const raw = await this.fetch<unknown>("/api/issues/batch-delete", {
       method: "POST",
       body: JSON.stringify({ issue_ids: issueIds }),
+    });
+    return parseWithFallback(raw, BatchDeleteIssuesResponseSchema, EMPTY_BATCH_DELETE_ISSUES_RESPONSE, {
+      endpoint: "POST /api/issues/batch-delete",
     });
   }
 
@@ -1848,16 +1881,25 @@ export class ApiClient {
     return this.fetch(`/api/design-files/${encodeURIComponent(id)}`);
   }
 
-  async getDesignFileContext(id: string): Promise<DesignContext> {
-    return this.fetch(`/api/design-files/${encodeURIComponent(id)}/context`);
+  async getDesignFileContext(id: string, options: { revisionId?: string } = {}): Promise<DesignContext> {
+    const search = new URLSearchParams();
+    if (options.revisionId) search.set("revision_id", options.revisionId);
+    const suffix = search.toString();
+    return this.fetch(`/api/design-files/${encodeURIComponent(id)}/context${suffix ? `?${suffix}` : ""}`);
   }
 
-  async getDesignFrameContext(fileId: string, frameId: string): Promise<DesignFrameContext> {
-    return this.fetch(`/api/design-files/${encodeURIComponent(fileId)}/frames/${encodeURIComponent(frameId)}/context`);
+  async getDesignFrameContext(fileId: string, frameId: string, options: { revisionId?: string } = {}): Promise<DesignFrameContext> {
+    const search = new URLSearchParams();
+    if (options.revisionId) search.set("revision_id", options.revisionId);
+    const suffix = search.toString();
+    return this.fetch(`/api/design-files/${encodeURIComponent(fileId)}/frames/${encodeURIComponent(frameId)}/context${suffix ? `?${suffix}` : ""}`);
   }
 
-  async getDesignSelectionContext(fileId: string, frameId: string, input: DesignSelectionInput): Promise<DesignSelectionContext> {
-    return this.fetch(`/api/design-files/${encodeURIComponent(fileId)}/frames/${encodeURIComponent(frameId)}/selection-context`, {
+  async getDesignSelectionContext(fileId: string, frameId: string, input: DesignSelectionInput, options: { revisionId?: string } = {}): Promise<DesignSelectionContext> {
+    const search = new URLSearchParams();
+    if (options.revisionId) search.set("revision_id", options.revisionId);
+    const suffix = search.toString();
+    return this.fetch(`/api/design-files/${encodeURIComponent(fileId)}/frames/${encodeURIComponent(frameId)}/selection-context${suffix ? `?${suffix}` : ""}`, {
       method: "POST",
       body: JSON.stringify(input),
     });
@@ -1931,19 +1973,55 @@ export class ApiClient {
     return this.fetch(`/api/design-drafts/${encodeURIComponent(id)}/materialize`, { method: "POST" });
   }
 
-  async createDesignRestoreTask(data: CreateDesignRestoreTaskRequest): Promise<DesignRestoreTask> {
-    return this.fetch("/api/design-restore-tasks", {
+  async listDesignDeliveries(issueId: string): Promise<ListDesignDeliveriesResponse> {
+    const raw = await this.fetch<unknown>(`/api/design-deliveries?issue_id=${encodeURIComponent(issueId)}`);
+    return parseWithFallback(raw, ListDesignDeliveriesResponseSchema, EMPTY_LIST_DESIGN_DELIVERIES_RESPONSE, {
+      endpoint: "GET /api/design-deliveries",
+    });
+  }
+
+  async createDesignDelivery(data: CreateDesignDeliveryRequest): Promise<DesignDelivery> {
+    const raw = await this.fetch<unknown>("/api/design-deliveries", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignDeliverySchema, EMPTY_DESIGN_DELIVERY, {
+      endpoint: "POST /api/design-deliveries",
+    });
+  }
+
+  async cancelDesignDelivery(id: string, data: CancelDesignDeliveryRequest = {}): Promise<DesignDelivery> {
+    const raw = await this.fetch<unknown>(`/api/design-deliveries/${encodeURIComponent(id)}/cancel`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignDeliverySchema, { ...EMPTY_DESIGN_DELIVERY, id, status: "cancelled" }, {
+      endpoint: "POST /api/design-deliveries/:id/cancel",
+    });
+  }
+
+  async createDesignRestoreTask(data: CreateDesignRestoreTaskRequest): Promise<DesignRestoreTask> {
+    const raw = await this.fetch<unknown>("/api/design-restore-tasks", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignRestoreTaskSchema, EMPTY_DESIGN_RESTORE_TASK, {
+      endpoint: "POST /api/design-restore-tasks",
     });
   }
 
   async listDesignRestoreTasks(): Promise<ListDesignRestoreTasksResponse> {
-    return this.fetch("/api/design-restore-tasks");
+    const raw = await this.fetch<unknown>("/api/design-restore-tasks");
+    return parseWithFallback(raw, ListDesignRestoreTasksResponseSchema, EMPTY_LIST_DESIGN_RESTORE_TASKS_RESPONSE, {
+      endpoint: "GET /api/design-restore-tasks",
+    });
   }
 
   async getDesignRestoreTask(id: string): Promise<DesignRestoreTask> {
-    return this.fetch(`/api/design-restore-tasks/${encodeURIComponent(id)}`);
+    const raw = await this.fetch<unknown>(`/api/design-restore-tasks/${encodeURIComponent(id)}`);
+    return parseWithFallback(raw, DesignRestoreTaskSchema, { ...EMPTY_DESIGN_RESTORE_TASK, id }, {
+      endpoint: "GET /api/design-restore-tasks/:id",
+    });
   }
 
   async listDesignRestoreMappings(taskId: string): Promise<ListDesignRestoreMappingsResponse> {
@@ -1989,9 +2067,12 @@ export class ApiClient {
   }
 
   async dispatchDesignRestoreTask(id: string, data: DispatchDesignRestoreTaskRequest): Promise<DispatchDesignRestoreTaskResponse> {
-    return this.fetch(`/api/design-restore-tasks/${encodeURIComponent(id)}/dispatch`, {
+    const raw = await this.fetch<unknown>(`/api/design-restore-tasks/${encodeURIComponent(id)}/dispatch`, {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DispatchDesignRestoreTaskResponseSchema, EMPTY_DISPATCH_DESIGN_RESTORE_TASK_RESPONSE, {
+      endpoint: "POST /api/design-restore-tasks/:id/dispatch",
     });
   }
 

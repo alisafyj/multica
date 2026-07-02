@@ -32,6 +32,11 @@ describe("paths.workspace(slug)", () => {
   it("URL-encodes special characters in ids", () => {
     expect(ws.issueDetail("id with space")).toBe("/acme/issues/id%20with%20space");
   });
+
+  it("can pin design paths to a revision", () => {
+    expect(ws.designDetail("d 1", { revisionId: "rev 1" })).toBe("/acme/designs/d%201?revision_id=rev+1");
+    expect(ws.designFrameDetail("d 1", "frame/1", { revisionId: "rev 1" })).toBe("/acme/designs/d%201/frames/frame%2F1?revision_id=rev+1");
+  });
 });
 
 describe("paths (global)", () => {

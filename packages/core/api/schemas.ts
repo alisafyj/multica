@@ -20,6 +20,12 @@ import type {
   TimelineEntry,
   User,
   WebhookDelivery,
+  DesignDelivery,
+  DesignRestoreTask,
+  DispatchDesignRestoreTaskResponse,
+  BatchUpdateIssuesResponse,
+  ListDesignDeliveriesResponse,
+  ListDesignRestoreTasksResponse,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 
@@ -245,6 +251,31 @@ export const EMPTY_GROUPED_ISSUES_RESPONSE: GroupedIssuesResponse = {
   groups: [],
 };
 
+const BatchUpdateIssueSkippedSchema = z.object({
+  issue_id: z.string(),
+  identifier: z.string().default(""),
+  title: z.string().default(""),
+  reason: z.string().default(""),
+}).loose();
+
+export const BatchUpdateIssuesResponseSchema = z.object({
+  updated: z.number().default(0),
+  skipped: z.array(BatchUpdateIssueSkippedSchema).default([]),
+}).loose();
+
+export const EMPTY_BATCH_UPDATE_ISSUES_RESPONSE: BatchUpdateIssuesResponse = {
+  updated: 0,
+  skipped: [],
+};
+
+export const BatchDeleteIssuesResponseSchema = z.object({
+  deleted: z.number().default(0),
+}).loose();
+
+export const EMPTY_BATCH_DELETE_ISSUES_RESPONSE = {
+  deleted: 0,
+};
+
 const SubscriberSchema = z.object({
   issue_id: z.string(),
   user_type: z.string(),
@@ -258,6 +289,106 @@ export const SubscribersListSchema = z.array(SubscriberSchema);
 export const ChildIssuesResponseSchema = z.object({
   issues: z.array(IssueSchema).default([]),
 }).loose();
+
+export const DesignDeliverySchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  project_id: z.string().nullable().default(null),
+  source_issue_id: z.string(),
+  target_issue_id: z.string(),
+  file_id: z.string(),
+  revision_id: z.string(),
+  scope: z.record(z.string(), z.unknown()).default({}),
+  status: z.string(),
+  delivered_by: z.string().nullable().default(null),
+  delivered_at: z.string(),
+  cancelled_by: z.string().nullable().default(null),
+  cancelled_at: z.string().nullable().default(null),
+  cancel_reason: z.string().nullable().default(null),
+  audit_metadata: z.record(z.string(), z.unknown()).default({}),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const EMPTY_DESIGN_DELIVERY: DesignDelivery = {
+  id: "",
+  workspace_id: "",
+  project_id: null,
+  source_issue_id: "",
+  target_issue_id: "",
+  file_id: "",
+  revision_id: "",
+  scope: {},
+  status: "cancelled",
+  delivered_by: null,
+  delivered_at: "",
+  cancelled_by: null,
+  cancelled_at: null,
+  cancel_reason: null,
+  audit_metadata: {},
+  created_at: "",
+  updated_at: "",
+};
+
+export const ListDesignDeliveriesResponseSchema = z.object({
+  deliveries: z.array(DesignDeliverySchema).default([]),
+}).loose();
+
+export const EMPTY_LIST_DESIGN_DELIVERIES_RESPONSE: ListDesignDeliveriesResponse = {
+  deliveries: [],
+};
+
+export const DesignRestoreTaskSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  file_id: z.string(),
+  revision_id: z.string(),
+  issue_id: z.string().nullable().default(null),
+  delivery_id: z.string().nullable().default(null),
+  agent_task_id: z.string().nullable().default(null),
+  status: z.string().default("queued"),
+  input: z.record(z.string(), z.unknown()).default({}),
+  result: z.record(z.string(), z.unknown()).default({}),
+  error: z.string().nullable().default(null),
+  created_by: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const EMPTY_DESIGN_RESTORE_TASK: DesignRestoreTask = {
+  id: "",
+  workspace_id: "",
+  file_id: "",
+  revision_id: "",
+  issue_id: null,
+  delivery_id: null,
+  agent_task_id: null,
+  status: "queued",
+  input: {},
+  result: {},
+  error: null,
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const ListDesignRestoreTasksResponseSchema = z.object({
+  tasks: z.array(DesignRestoreTaskSchema).default([]),
+}).loose();
+
+export const EMPTY_LIST_DESIGN_RESTORE_TASKS_RESPONSE: ListDesignRestoreTasksResponse = {
+  tasks: [],
+};
+
+export const DispatchDesignRestoreTaskResponseSchema = z.object({
+  task: DesignRestoreTaskSchema,
+  agent_task_id: z.string().default(""),
+}).loose();
+
+export const EMPTY_DISPATCH_DESIGN_RESTORE_TASK_RESPONSE: DispatchDesignRestoreTaskResponse = {
+  task: EMPTY_DESIGN_RESTORE_TASK,
+  agent_task_id: "",
+};
 
 export const CloudRuntimeNodeSchema = z.object({
   id: z.string(),

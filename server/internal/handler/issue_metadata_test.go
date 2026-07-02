@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -242,6 +243,72 @@ func TestNewIssueDefaultsToEmptyMetadata(t *testing.T) {
 	}
 	if len(got.Metadata) != 0 {
 		t.Fatalf("Metadata: expected empty, got %v", got.Metadata)
+	}
+}
+
+func TestCreateChildIssueAutoSeedsDesignRoleMetadata(t *testing.T) {
+	parentID := createMetadataTestIssue(t, "服务记录开发")
+
+	cases := []struct {
+		title string
+		role  string
+	}{
+		{"UI设计", "ui_design"},
+		{"前端开发", "frontend_dev"},
+	}
+	for _, c := range cases {
+		t.Run(c.title, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+				"title":           c.title,
+				"status":          "todo",
+				"priority":        "medium",
+				"parent_issue_id": parentID,
+			})
+			testHandler.CreateIssue(w, req)
+			if w.Code != http.StatusCreated {
+				t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+			}
+			var issue IssueResponse
+			if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+				t.Fatalf("decode issue: %v", err)
+			}
+			if got := issue.Metadata["design_role"]; got != c.role {
+				t.Fatalf("response design_role: expected %q, got %T %v", c.role, got, got)
+			}
+
+			var raw []byte
+			if err := testPool.QueryRow(context.Background(), `SELECT metadata FROM issue WHERE id = $1`, issue.ID).Scan(&raw); err != nil {
+				t.Fatalf("select metadata: %v", err)
+			}
+			var metadata map[string]any
+			if err := json.Unmarshal(raw, &metadata); err != nil {
+				t.Fatalf("decode db metadata: %v", err)
+			}
+			if got := metadata["design_role"]; got != c.role {
+				t.Fatalf("db design_role: expected %q, got %T %v", c.role, got, got)
+			}
+		})
+	}
+}
+
+func TestCreateTopLevelIssueDoesNotAutoSeedDesignRoleMetadata(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":    "UI设计 top-level metadata test",
+		"status":   "todo",
+		"priority": "medium",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue: %v", err)
+	}
+	if got, ok := issue.Metadata["design_role"]; ok {
+		t.Fatalf("top-level issue should not get design_role, got %T %v", got, got)
 	}
 }
 

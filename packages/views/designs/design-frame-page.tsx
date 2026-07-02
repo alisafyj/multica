@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
-import { designFileDetailOptions, designRevisionListOptions, designSelectionContextOptions } from "@multica/core/designs/queries";
+import { designFileDetailOptions, designRevisionDetailOptions, designRevisionListOptions, designSelectionContextOptions } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { DesignLayer, DesignLayerLightweightEditRequest, GalleryNativeJson } from "@multica/core/types";
@@ -453,13 +453,13 @@ function lastLightweightEdit(nativeJson: GalleryNativeJson | undefined, frameId:
   return summary;
 }
 
-function FrameDetailToolMenu({ state, deleting, onClose, onCopyImage, onDelete }: { state: FrameDetailToolMenuState; deleting: boolean; onClose: () => void; onCopyImage: () => void; onDelete: () => void }) {
+function FrameDetailToolMenu({ state, deleting, canDelete, onClose, onCopyImage, onDelete }: { state: FrameDetailToolMenuState; deleting: boolean; canDelete: boolean; onClose: () => void; onCopyImage: () => void; onDelete: () => void }) {
   if (!state) return null;
   return (
     <div className="fixed inset-0 z-50" onClick={onClose} onContextMenu={(event) => { event.preventDefault(); onClose(); }}>
       <div className="absolute min-w-40 overflow-hidden rounded-xl border bg-popover p-1 text-popover-foreground shadow-xl" style={{ left: state.x, top: state.y }} onClick={(event) => event.stopPropagation()}>
         <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-accent" onClick={onCopyImage}><Copy className="h-4 w-4" />复制图片</button>
-        <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10" disabled={deleting} onClick={onDelete}><Trash2 className="h-4 w-4" />{deleting ? "删除中…" : "删除"}</button>
+        <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50" disabled={!canDelete || deleting} onClick={onDelete}><Trash2 className="h-4 w-4" />{!canDelete ? "历史版本不可删除" : deleting ? "删除中…" : "删除"}</button>
       </div>
     </div>
   );
@@ -588,9 +588,23 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
   const queryClient = useQueryClient();
+  const urlRevisionId = navigation.searchParams.get("revision_id") ?? "";
   const { data, isLoading, error, refetch } = useQuery(designFileDetailOptions(wsId, designId));
   const { data: revisions = [] } = useQuery({ ...designRevisionListOptions(wsId, designId), enabled: !!data?.file.id });
-  const nativeJson = data?.current_revision?.native_json;
+  const currentRevision = data?.current_revision ?? null;
+  const activeRevisionId = urlRevisionId || currentRevision?.id || "";
+  const {
+    data: selectedRevision,
+    isLoading: selectedRevisionLoading,
+    error: selectedRevisionError,
+  } = useQuery({
+    ...designRevisionDetailOptions(wsId, activeRevisionId),
+    enabled: !!activeRevisionId && activeRevisionId !== currentRevision?.id,
+  });
+  const activeRevision = activeRevisionId === currentRevision?.id ? currentRevision : selectedRevision ?? null;
+  const isHistoricalRevision = !!activeRevision?.id && activeRevision.id !== data?.file.current_revision_id;
+  const canEditActiveRevision = !!activeRevision?.id && !isHistoricalRevision;
+  const nativeJson = activeRevision?.native_json;
   const frame = nativeJson?.frames.find((item) => item.id === frameId) ?? null;
   const layers = useMemo(() => frameLayers(nativeJson, frameId), [nativeJson, frameId]);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
@@ -630,9 +644,10 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
     };
   }, [selectionLayerIds, selectionBounds]);
   const { data: selectionContext, isFetching: selectionContextLoading } = useQuery({
-    ...designSelectionContextOptions(wsId, designId, frameId, selectionInput ?? { layerIds: [] }),
-    enabled: !!selectionInput && !!data?.file.id,
+    ...designSelectionContextOptions(wsId, designId, frameId, selectionInput ?? { layerIds: [] }, { revisionId: activeRevision?.id }),
+    enabled: !!selectionInput && !!data?.file.id && !!activeRevision?.id,
   });
+  const activeSelectionContext = selectionContext;
   const frames = nativeJson?.frames ?? [];
   const frameIndex = frames.findIndex((item) => item.id === frameId);
   const previousFrame = frameIndex > 0 ? frames[frameIndex - 1] : null;
@@ -649,6 +664,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const slices = useMemo(() => sliceEntries(layers), [layers]);
   const fidelityReport = useMemo(() => nativeJson && frame ? analyzeFrameFidelity(nativeJson, frame) : null, [nativeJson, frame]);
   const code = codeVariants(selectedLayer, frame);
+  const designDetailPath = paths.designDetail(designId, { revisionId: activeRevision?.id });
   const textContent = selectedLayer?.text?.characters ?? selectedLayer?.text?.text ?? "";
   const currentFillColor = primaryFillHex(selectedLayer);
   const currentTextColor = selectedLayer?.text ? hexColor(selectedLayer.text.color) : "";
@@ -662,6 +678,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const imageUrlInput = editImageUrl.trim();
   const hasImageUrlEdit = selectedLayerSupportsImageURL && imageUrlInput !== "" && imageUrlInput !== currentImageUrl;
   const hasLayerEditChanges = !!selectedLayer && selectedLayer.id !== frame?.rootLayerId && (editName.trim() !== selectedLayer.name || editVisible !== (selectedLayer.visible !== false) || (selectedLayer.type === "text" && editText !== textContent) || (!!editFillColor && editFillColor !== currentFillColor) || (selectedLayer.type === "text" && !!editTextColor && editTextColor !== currentTextColor) || (!!editStrokeColor && editStrokeColor !== currentStroke.color) || hasStrokeWidthEdit || hasImageUrlEdit);
+  const layerEditDisabled = !canEditActiveRevision || !selectedLayer || selectedLayer.id === frame?.rootLayerId;
   useEffect(() => {
     setEditText(selectedLayer?.text?.characters ?? selectedLayer?.text?.text ?? "");
     setEditName(selectedLayer?.name ?? "");
@@ -706,7 +723,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   };
   const addSelectionToTaskQueue = () => {
     if (!frame) return;
-    const resolvedLayerIds = selectionContext?.resolvedLayerIds ?? selectionLayerIds;
+    const resolvedLayerIds = activeSelectionContext?.resolvedLayerIds ?? selectionLayerIds;
     const layerIds = selectionLayerIds.length ? selectionLayerIds : resolvedLayerIds;
     const source: LocalRestoreTaskItem["source"] = selectionBounds ? "selection_bounds" : layerIds.length ? "selected_layers" : "frame";
     const item: LocalRestoreTaskItem = {
@@ -724,9 +741,13 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
     toast.success("已加入设计任务队列");
   };
   const copyFrameContext = async () => {
+    if (!activeRevision?.id) {
+      toast.info("设计版本未加载，无法复制上下文。");
+      return;
+    }
     setCopyingFrameContext(true);
     try {
-      const context = await api.getDesignFrameContext(designId, frameId);
+      const context = await api.getDesignFrameContext(designId, frameId, { revisionId: activeRevision.id });
       await navigator.clipboard?.writeText(JSON.stringify(context, null, 2));
       toast.success("已复制画板上下文 JSON");
     } catch (error) {
@@ -756,7 +777,10 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
     });
   };
   const deleteFrame = useMutation({
-    mutationFn: () => api.deleteDesignFrame(designId, frameId),
+    mutationFn: () => {
+      if (!canEditActiveRevision) throw new Error("历史版本不可删除画板，请切换到当前版本。");
+      return api.deleteDesignFrame(designId, frameId);
+    },
     onSuccess: async () => {
       setToolMenu(null);
       setDeleteOpen(false);
@@ -766,30 +790,34 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
       toast.success("已删除画板及历史版本");
       navigation.push(paths.designDetail(designId));
     },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "删除画板失败"),
   });
   const saveRestoreTask = useMutation({
-    mutationFn: () => api.createDesignRestoreTask({
-      file_id: designId,
-      revision_id: data?.current_revision?.id,
-      input: {
-        version: "1.0",
-        projectId: data?.file.project_id ?? undefined,
-        folderId: data?.file.folder_id ?? undefined,
-        purpose: "frontend_restore",
-        items: taskQueue.map((item) => ({
-          itemId: item.itemId,
-          order: item.order,
-          designFileId: designId,
-          revisionId: data?.current_revision?.id,
-          frameId: item.frameId,
-          frameName: item.frameName,
-          source: item.source,
-          layerIds: item.layerIds,
-          selectionBounds: item.selectionBounds ? { x: rectX(item.selectionBounds), y: rectY(item.selectionBounds), width: item.selectionBounds.width, height: item.selectionBounds.height } : undefined,
-          note: item.note || undefined,
-        })),
-      },
-    }),
+    mutationFn: () => {
+      if (!activeRevision?.id) throw new Error("设计版本未加载，无法保存任务");
+      return api.createDesignRestoreTask({
+        file_id: designId,
+        revision_id: activeRevision.id,
+        input: {
+          version: "1.0",
+          projectId: data?.file.project_id ?? undefined,
+          folderId: data?.file.folder_id ?? undefined,
+          purpose: "frontend_restore",
+          items: taskQueue.map((item) => ({
+            itemId: item.itemId,
+            order: item.order,
+            designFileId: designId,
+            revisionId: activeRevision.id,
+            frameId: item.frameId,
+            frameName: item.frameName,
+            source: item.source,
+            layerIds: item.layerIds,
+            selectionBounds: item.selectionBounds ? { x: rectX(item.selectionBounds), y: rectY(item.selectionBounds), width: item.selectionBounds.width, height: item.selectionBounds.height } : undefined,
+            note: item.note || undefined,
+          })),
+        },
+      });
+    },
     onSuccess: (task) => {
       toast.success(`已保存设计任务 ${task.id.slice(0, 8)}`);
       void queryClient.invalidateQueries({ queryKey: designKeys.restoreTasks(wsId) });
@@ -799,16 +827,17 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   const saveLayerEdit = useMutation({
     mutationFn: (payload?: DesignLayerLightweightEditRequest) => {
       if (!selectedLayer) throw new Error("未选中图层");
+      if (!canEditActiveRevision) throw new Error("历史版本不可直接编辑，请切换到当前版本。");
       if (payload?.undo_last) {
         return api.updateDesignLayerLightweight(designId, selectedLayer.id, {
-          revision_id: data?.current_revision?.id,
+          revision_id: activeRevision?.id,
           undo_last: true,
         });
       }
       const name = editName.trim();
       if (!name) throw new Error("图层名称不能为空");
       return api.updateDesignLayerLightweight(designId, selectedLayer.id, {
-        revision_id: data?.current_revision?.id,
+        revision_id: activeRevision?.id,
         text: selectedLayer.type === "text" && editText !== (selectedLayer.text?.characters ?? selectedLayer.text?.text ?? "") ? editText : undefined,
         name: name !== selectedLayer.name ? name : undefined,
         visible: editVisible !== (selectedLayer.visible !== false) ? editVisible : undefined,
@@ -832,27 +861,29 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-muted/20">
       <BreadcrumbHeader
-        segments={[{ href: paths.designs(), label: "设计库" }, { href: paths.designDetail(designId), label: data?.file.title ?? "设计稿" }]}
+        segments={[{ href: paths.designs(), label: "设计库" }, { href: designDetailPath, label: data?.file.title ?? "设计稿" }]}
         leaf={<span className="truncate font-medium">{frame?.name ?? "画板"}</span>}
         actions={(
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => navigation.push(paths.designDetail(designId))}><ArrowLeft className="h-3.5 w-3.5" />关闭</Button>
+            <Button size="sm" variant="outline" onClick={() => navigation.push(designDetailPath)}><ArrowLeft className="h-3.5 w-3.5" />关闭</Button>
           </div>
         )}
       />
 
       {isLoading ? (
         <div className="grid flex-1 grid-cols-[1fr_360px] gap-4 p-4"><Skeleton className="h-full min-h-[720px]" /><Skeleton className="h-full min-h-[720px]" /></div>
-      ) : error ? (
+      ) : error || selectedRevisionError ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
           <p className="text-sm font-medium">无法加载此画板</p>
           <p className="text-sm text-muted-foreground">它可能已被删除，或你没有访问权限。</p>
           <Button size="sm" variant="outline" onClick={() => void refetch()}>重试</Button>
         </div>
+      ) : selectedRevisionLoading ? (
+        <div className="grid flex-1 grid-cols-[1fr_360px] gap-4 p-4"><Skeleton className="h-full min-h-[720px]" /><Skeleton className="h-full min-h-[720px]" /></div>
       ) : !nativeJson || !frame ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
           <p className="text-sm font-medium">未找到画板</p>
-          <Button size="sm" variant="outline" onClick={() => navigation.push(paths.designDetail(designId))}>返回设计文件</Button>
+          <Button size="sm" variant="outline" onClick={() => navigation.push(designDetailPath)}>返回设计文件</Button>
         </div>
       ) : (
         <main className="relative grid min-h-0 flex-1 grid-cols-[minmax(680px,1fr)_380px] gap-4 overflow-auto p-4">
@@ -897,8 +928,8 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                     <span className="w-8 text-right tabular-nums">{overlayRevealPercent}%</span>
                   </label>
                 ) : null}
-                <Button size="sm" variant="outline" disabled={copyingFrameContext} onClick={() => void copyFrameContext()}><Copy className="h-3.5 w-3.5" />{copyingFrameContext ? "复制中…" : "复制画板上下文"}</Button>
-                <Badge variant="secondary">版本 {data?.current_revision?.revision_number ?? "—"}</Badge>
+                <Button size="sm" variant="outline" disabled={copyingFrameContext || !activeRevision?.id} onClick={() => void copyFrameContext()}><Copy className="h-3.5 w-3.5" />{copyingFrameContext ? "复制中…" : "复制画板上下文"}</Button>
+                <Badge variant={isHistoricalRevision ? "outline" : "secondary"}>版本 {activeRevision?.revision_number ?? "—"}{isHistoricalRevision ? " · 历史" : ""}</Badge>
               </div>
             </div>
             {editSummary ? (
@@ -985,20 +1016,21 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
               <InspectorSection title="选区编辑" icon={<Sparkles className="h-3.5 w-3.5" />}>
                 <div className="space-y-3">
                   {editSummary ? <div className="rounded-lg bg-muted p-2 text-xs text-muted-foreground">当前 JSON：{editSummary.summary ?? "已更新设计元数据"}</div> : null}
-                  {editSummary ? <Button size="sm" variant="outline" className="w-full" disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId || saveLayerEdit.isPending} onClick={() => saveLayerEdit.mutate({ undo_last: true })}>撤销上次轻编辑</Button> : null}
+                  {isHistoricalRevision ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">历史版本仅供查看和创建还原任务，不支持直接编辑。</div> : null}
+                  {editSummary ? <Button size="sm" variant="outline" className="w-full" disabled={!canEditActiveRevision || !selectedLayer || selectedLayer.id === frame.rootLayerId || saveLayerEdit.isPending} onClick={() => saveLayerEdit.mutate({ undo_last: true })}>撤销上次轻编辑</Button> : null}
                   <div className="space-y-1.5">
                     <div className="text-xs font-medium text-muted-foreground">图层名称</div>
-                    <Input value={editName} className="h-8 text-xs" onChange={(event) => setEditName(event.target.value)} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} />
+                    <Input value={editName} className="h-8 text-xs" onChange={(event) => setEditName(event.target.value)} disabled={!canEditActiveRevision || !selectedLayer || selectedLayer.id === frame.rootLayerId} />
                   </div>
                   <label className="flex items-center gap-2 rounded-lg border p-2 text-xs">
-                    <Checkbox checked={editVisible} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} onCheckedChange={(checked) => setEditVisible(checked === true)} />
+                    <Checkbox checked={editVisible} disabled={!canEditActiveRevision || !selectedLayer || selectedLayer.id === frame.rootLayerId} onCheckedChange={(checked) => setEditVisible(checked === true)} />
                     <span>显示图层</span>
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     <label className="space-y-1.5 rounded-lg border p-2 text-xs">
                       <span className="font-medium text-muted-foreground">填充色</span>
                       <div className="flex items-center gap-2">
-                        <input type="color" value={editFillColor || "#000000"} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} className="h-7 w-9 rounded border bg-transparent" onChange={(event) => setEditFillColor(event.target.value.toUpperCase())} />
+                        <input type="color" value={editFillColor || "#000000"} disabled={layerEditDisabled} className="h-7 w-9 rounded border bg-transparent" onChange={(event) => setEditFillColor(event.target.value.toUpperCase())} />
                         <span className="font-mono text-[11px] text-muted-foreground">{editFillColor || "—"}</span>
                       </div>
                     </label>
@@ -1006,7 +1038,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                       <label className="space-y-1.5 rounded-lg border p-2 text-xs">
                         <span className="font-medium text-muted-foreground">文本色</span>
                         <div className="flex items-center gap-2">
-                          <input type="color" value={editTextColor || "#000000"} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} className="h-7 w-9 rounded border bg-transparent" onChange={(event) => setEditTextColor(event.target.value.toUpperCase())} />
+                          <input type="color" value={editTextColor || "#000000"} disabled={layerEditDisabled} className="h-7 w-9 rounded border bg-transparent" onChange={(event) => setEditTextColor(event.target.value.toUpperCase())} />
                           <span className="font-mono text-[11px] text-muted-foreground">{editTextColor || "—"}</span>
                         </div>
                       </label>
@@ -1016,30 +1048,30 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                     <label className="space-y-1.5 rounded-lg border p-2 text-xs">
                       <span className="font-medium text-muted-foreground">描边色</span>
                       <div className="flex items-center gap-2">
-                        <input type="color" value={editStrokeColor || "#000000"} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} className="h-7 w-9 rounded border bg-transparent" onChange={(event) => setEditStrokeColor(event.target.value.toUpperCase())} />
+                        <input type="color" value={editStrokeColor || "#000000"} disabled={layerEditDisabled} className="h-7 w-9 rounded border bg-transparent" onChange={(event) => setEditStrokeColor(event.target.value.toUpperCase())} />
                         <span className="font-mono text-[11px] text-muted-foreground">{editStrokeColor || "—"}</span>
                       </div>
                     </label>
                     <label className="space-y-1.5 rounded-lg border p-2 text-xs">
                       <span className="font-medium text-muted-foreground">描边宽度</span>
-                      <Input value={editStrokeWidth} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} inputMode="decimal" placeholder="0" onChange={(event) => setEditStrokeWidth(event.target.value)} />
+                      <Input value={editStrokeWidth} disabled={layerEditDisabled} inputMode="decimal" placeholder="0" onChange={(event) => setEditStrokeWidth(event.target.value)} />
                       {strokeWidthValidationMessage ? <span className="text-[11px] text-destructive">{strokeWidthValidationMessage}</span> : null}
                     </label>
                   </div>
                   {selectedLayer?.type === "text" ? (
                     <div className="space-y-1.5">
                       <div className="text-xs font-medium text-muted-foreground">文本内容</div>
-                      <Textarea value={editText} className="min-h-24 resize-none text-xs" onChange={(event) => setEditText(event.target.value)} />
+                      <Textarea value={editText} className="min-h-24 resize-none text-xs" disabled={layerEditDisabled} onChange={(event) => setEditText(event.target.value)} />
                     </div>
                   ) : null}
                   {selectedLayerSupportsImageURL ? (
                     <div className="space-y-1.5">
                       <div className="text-xs font-medium text-muted-foreground">替换图片 URL</div>
-                      <Input value={editImageUrl} disabled={!selectedLayer || selectedLayer.id === frame.rootLayerId} placeholder="https://..." onChange={(event) => setEditImageUrl(event.target.value)} />
+                      <Input value={editImageUrl} disabled={layerEditDisabled} placeholder="https://..." onChange={(event) => setEditImageUrl(event.target.value)} />
                     </div>
                   ) : null}
                   <p className="text-xs text-muted-foreground">当前只支持名称、显隐与文本内容等轻量编辑；几何、布局、层级和资产不在此处修改。</p>
-                  <Button size="sm" className="w-full" disabled={!hasLayerEditChanges || !!strokeWidthValidationMessage || saveLayerEdit.isPending} onClick={() => saveLayerEdit.mutate(undefined)}>{saveLayerEdit.isPending ? "保存中…" : "保存到当前 JSON"}</Button>
+                  <Button size="sm" className="w-full" disabled={!canEditActiveRevision || !hasLayerEditChanges || !!strokeWidthValidationMessage || saveLayerEdit.isPending} onClick={() => saveLayerEdit.mutate(undefined)}>{saveLayerEdit.isPending ? "保存中…" : "保存到当前 JSON"}</Button>
                 </div>
               </InspectorSection>
 
@@ -1089,10 +1121,10 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
               <InspectorSection title="选区上下文" icon={<MousePointer2 className="h-3.5 w-3.5" />}>
                 <div className="space-y-2 text-xs">
                   <div className="flex items-center justify-between rounded-lg bg-muted p-2"><span className="text-muted-foreground">显式图层</span><span className="font-mono">{selectionLayerIds.length}</span></div>
-                  <div className="flex items-center justify-between rounded-lg bg-muted p-2"><span className="text-muted-foreground">解析后图层</span><span className="font-mono">{selectionContextLoading ? "…" : selectionContext?.resolvedLayerIds.length ?? selectionLayerIds.length}</span></div>
+                  <div className="flex items-center justify-between rounded-lg bg-muted p-2"><span className="text-muted-foreground">解析后图层</span><span className="font-mono">{selectionContextLoading ? "…" : activeSelectionContext?.resolvedLayerIds.length ?? selectionLayerIds.length}</span></div>
                   {selectionBounds ? <div className="rounded-lg bg-muted p-2 font-mono text-[11px] text-muted-foreground">bounds · x {numberText(rectX(selectionBounds))} · y {numberText(rectY(selectionBounds))} · {numberText(selectionBounds.width)} × {numberText(selectionBounds.height)}</div> : null}
-                  {selectionContext?.resolvedLayerIds.length ? <div className="max-h-28 overflow-auto rounded-lg border p-2 font-mono text-[11px] text-muted-foreground">{selectionContext.resolvedLayerIds.slice(0, 20).join("\n")}</div> : <p className="text-xs text-muted-foreground">按住 Shift 点击多个图层，或在画板上拖拽，预览内部智能体选区上下文。</p>}
-                  <Button size="sm" variant="outline" className="mt-2 w-full" onClick={() => selectionContext && copyWithToast(JSON.stringify(selectionContext, null, 2), "已复制选区上下文 JSON")} disabled={!selectionContext || selectionContextLoading}>
+                  {activeSelectionContext?.resolvedLayerIds.length ? <div className="max-h-28 overflow-auto rounded-lg border p-2 font-mono text-[11px] text-muted-foreground">{activeSelectionContext.resolvedLayerIds.slice(0, 20).join("\n")}</div> : <p className="text-xs text-muted-foreground">按住 Shift 点击多个图层，或在画板上拖拽，预览内部智能体选区上下文。</p>}
+                  <Button size="sm" variant="outline" className="mt-2 w-full" onClick={() => activeSelectionContext && copyWithToast(JSON.stringify(activeSelectionContext, null, 2), "已复制选区上下文 JSON")} disabled={!activeSelectionContext || selectionContextLoading}>
                     <Copy className="h-3.5 w-3.5" />复制选区上下文
                   </Button>
                   <Button size="sm" className="mt-2 w-full" onClick={addSelectionToTaskQueue} disabled={selectionContextLoading}>
@@ -1147,6 +1179,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
           <FrameDetailToolMenu
             state={toolMenu}
             deleting={deleteFrame.isPending}
+            canDelete={canEditActiveRevision}
             onClose={() => setToolMenu(null)}
             onCopyImage={() => {
               if (!previewUrl) {
@@ -1163,8 +1196,8 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
             <div className="min-w-14 text-center text-xs tabular-nums text-muted-foreground">{Math.round(frameZoom * 100)}%</div>
             <Button size="icon" variant="ghost" className="h-8 w-8" disabled={frameZoom >= MAX_FRAME_ZOOM} onClick={() => setFrameZoom((value) => Math.min(MAX_FRAME_ZOOM, value * 1.2))}>+</Button>
             <span className="mx-1 h-5 w-px bg-border" />
-            <Button size="sm" variant="ghost" className="h-8 px-2 text-xs" disabled={!previousFrame} onClick={() => previousFrame && navigation.push(paths.designFrameDetail(designId, previousFrame.id))}>上一页</Button>
-            <Button size="sm" variant="ghost" className="h-8 px-2 text-xs" disabled={!nextFrame} onClick={() => nextFrame && navigation.push(paths.designFrameDetail(designId, nextFrame.id))}>下一页</Button>
+            <Button size="sm" variant="ghost" className="h-8 px-2 text-xs" disabled={!previousFrame} onClick={() => previousFrame && navigation.push(paths.designFrameDetail(designId, previousFrame.id, { revisionId: activeRevision?.id }))}>上一页</Button>
+            <Button size="sm" variant="ghost" className="h-8 px-2 text-xs" disabled={!nextFrame} onClick={() => nextFrame && navigation.push(paths.designFrameDetail(designId, nextFrame.id, { revisionId: activeRevision?.id }))}>下一页</Button>
           </div>
           <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
             <AlertDialogContent>
@@ -1174,7 +1207,7 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel disabled={deleteFrame.isPending}>取消</AlertDialogCancel>
-                <AlertDialogAction variant="destructive" disabled={deleteFrame.isPending} onClick={() => deleteFrame.mutate()}>{deleteFrame.isPending ? "删除中…" : "删除"}</AlertDialogAction>
+                <AlertDialogAction variant="destructive" disabled={!canEditActiveRevision || deleteFrame.isPending} onClick={() => deleteFrame.mutate()}>{deleteFrame.isPending ? "删除中…" : "删除"}</AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>

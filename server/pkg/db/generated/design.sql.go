@@ -11,6 +11,61 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelDesignDelivery = `-- name: CancelDesignDelivery :one
+UPDATE design_delivery SET
+    status = 'cancelled',
+    cancelled_by = $3,
+    cancelled_at = now(),
+    cancel_reason = NULLIF(btrim($4::text), ''),
+    audit_metadata = jsonb_strip_nulls(jsonb_build_object(
+        'cancel_reason', NULLIF(btrim($4::text), ''),
+        'cancelled_by', $3::uuid,
+        'cancelled_at', now()
+    )),
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status = 'active'
+RETURNING id, workspace_id, project_id, source_issue_id, target_issue_id, file_id, revision_id, scope, status, delivered_by, delivered_at, created_at, updated_at, cancelled_by, cancelled_at, cancel_reason, audit_metadata
+`
+
+type CancelDesignDeliveryParams struct {
+	ID           pgtype.UUID `json:"id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	CancelledBy  pgtype.UUID `json:"cancelled_by"`
+	CancelReason pgtype.Text `json:"cancel_reason"`
+}
+
+func (q *Queries) CancelDesignDelivery(ctx context.Context, arg CancelDesignDeliveryParams) (DesignDelivery, error) {
+	row := q.db.QueryRow(ctx, cancelDesignDelivery,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.CancelledBy,
+		arg.CancelReason,
+	)
+	var i DesignDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.SourceIssueID,
+		&i.TargetIssueID,
+		&i.FileID,
+		&i.RevisionID,
+		&i.Scope,
+		&i.Status,
+		&i.DeliveredBy,
+		&i.DeliveredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CancelledBy,
+		&i.CancelledAt,
+		&i.CancelReason,
+		&i.AuditMetadata,
+	)
+	return i, err
+}
+
 const consumeDesignImportCode = `-- name: ConsumeDesignImportCode :exec
 UPDATE design_import_code
 SET consumed_at = now()
@@ -67,6 +122,65 @@ func (q *Queries) CreateDesignCatalogTemplate(ctx context.Context, arg CreateDes
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createDesignDelivery = `-- name: CreateDesignDelivery :one
+INSERT INTO design_delivery (
+    id, workspace_id, project_id, source_issue_id, target_issue_id, file_id, revision_id,
+    scope, status, delivered_by
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+)
+RETURNING id, workspace_id, project_id, source_issue_id, target_issue_id, file_id, revision_id, scope, status, delivered_by, delivered_at, created_at, updated_at, cancelled_by, cancelled_at, cancel_reason, audit_metadata
+`
+
+type CreateDesignDeliveryParams struct {
+	ID            pgtype.UUID `json:"id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	SourceIssueID pgtype.UUID `json:"source_issue_id"`
+	TargetIssueID pgtype.UUID `json:"target_issue_id"`
+	FileID        pgtype.UUID `json:"file_id"`
+	RevisionID    pgtype.UUID `json:"revision_id"`
+	Scope         []byte      `json:"scope"`
+	Status        string      `json:"status"`
+	DeliveredBy   pgtype.UUID `json:"delivered_by"`
+}
+
+func (q *Queries) CreateDesignDelivery(ctx context.Context, arg CreateDesignDeliveryParams) (DesignDelivery, error) {
+	row := q.db.QueryRow(ctx, createDesignDelivery,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.SourceIssueID,
+		arg.TargetIssueID,
+		arg.FileID,
+		arg.RevisionID,
+		arg.Scope,
+		arg.Status,
+		arg.DeliveredBy,
+	)
+	var i DesignDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.SourceIssueID,
+		&i.TargetIssueID,
+		&i.FileID,
+		&i.RevisionID,
+		&i.Scope,
+		&i.Status,
+		&i.DeliveredBy,
+		&i.DeliveredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CancelledBy,
+		&i.CancelledAt,
+		&i.CancelReason,
+		&i.AuditMetadata,
 	)
 	return i, err
 }
@@ -445,11 +559,11 @@ func (q *Queries) CreateDesignRestorePlan(ctx context.Context, arg CreateDesignR
 
 const createDesignRestoreTask = `-- name: CreateDesignRestoreTask :one
 INSERT INTO design_restore_task (
-    workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by
+    workspace_id, file_id, revision_id, issue_id, delivery_id, agent_task_id, status, input, result, error, created_by
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 )
-RETURNING id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at
+RETURNING id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at, delivery_id
 `
 
 type CreateDesignRestoreTaskParams struct {
@@ -457,6 +571,7 @@ type CreateDesignRestoreTaskParams struct {
 	FileID      pgtype.UUID `json:"file_id"`
 	RevisionID  pgtype.UUID `json:"revision_id"`
 	IssueID     pgtype.UUID `json:"issue_id"`
+	DeliveryID  pgtype.UUID `json:"delivery_id"`
 	AgentTaskID pgtype.UUID `json:"agent_task_id"`
 	Status      string      `json:"status"`
 	Input       []byte      `json:"input"`
@@ -471,6 +586,7 @@ func (q *Queries) CreateDesignRestoreTask(ctx context.Context, arg CreateDesignR
 		arg.FileID,
 		arg.RevisionID,
 		arg.IssueID,
+		arg.DeliveryID,
 		arg.AgentTaskID,
 		arg.Status,
 		arg.Input,
@@ -493,6 +609,7 @@ func (q *Queries) CreateDesignRestoreTask(ctx context.Context, arg CreateDesignR
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeliveryID,
 	)
 	return i, err
 }
@@ -821,6 +938,41 @@ func (q *Queries) GetDesignCatalogTemplateByKey(ctx context.Context, arg GetDesi
 	return i, err
 }
 
+const getDesignDeliveryInWorkspace = `-- name: GetDesignDeliveryInWorkspace :one
+SELECT id, workspace_id, project_id, source_issue_id, target_issue_id, file_id, revision_id, scope, status, delivered_by, delivered_at, created_at, updated_at, cancelled_by, cancelled_at, cancel_reason, audit_metadata FROM design_delivery
+WHERE id = $1 AND workspace_id = $2
+`
+
+type GetDesignDeliveryInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetDesignDeliveryInWorkspace(ctx context.Context, arg GetDesignDeliveryInWorkspaceParams) (DesignDelivery, error) {
+	row := q.db.QueryRow(ctx, getDesignDeliveryInWorkspace, arg.ID, arg.WorkspaceID)
+	var i DesignDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.SourceIssueID,
+		&i.TargetIssueID,
+		&i.FileID,
+		&i.RevisionID,
+		&i.Scope,
+		&i.Status,
+		&i.DeliveredBy,
+		&i.DeliveredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CancelledBy,
+		&i.CancelledAt,
+		&i.CancelReason,
+		&i.AuditMetadata,
+	)
+	return i, err
+}
+
 const getDesignDraftInWorkspace = `-- name: GetDesignDraftInWorkspace :one
 SELECT id, workspace_id, template_id, file_id, revision_id, issue_id, title, requirement_core, slot_values, patch, status, validation_errors, created_by, created_at, updated_at, catalog_template_id, template_revision_id, generated_file_id, generated_revision_id, materialized_at FROM design_draft
 WHERE id = $1 AND workspace_id = $2
@@ -1061,7 +1213,7 @@ func (q *Queries) GetDesignRestorePlanByTask(ctx context.Context, arg GetDesignR
 }
 
 const getDesignRestoreTaskByAgentTask = `-- name: GetDesignRestoreTaskByAgentTask :one
-SELECT id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at FROM design_restore_task
+SELECT id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at, delivery_id FROM design_restore_task
 WHERE agent_task_id = $1
 `
 
@@ -1082,12 +1234,13 @@ func (q *Queries) GetDesignRestoreTaskByAgentTask(ctx context.Context, agentTask
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeliveryID,
 	)
 	return i, err
 }
 
 const getDesignRestoreTaskInWorkspace = `-- name: GetDesignRestoreTaskInWorkspace :one
-SELECT id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at FROM design_restore_task
+SELECT id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at, delivery_id FROM design_restore_task
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -1113,6 +1266,7 @@ func (q *Queries) GetDesignRestoreTaskInWorkspace(ctx context.Context, arg GetDe
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeliveryID,
 	)
 	return i, err
 }
@@ -1281,6 +1435,45 @@ func (q *Queries) GetDesignTemplateRevisionInWorkspace(ctx context.Context, arg 
 	return i, err
 }
 
+const getLatestActiveDesignDeliveryBySourceIssue = `-- name: GetLatestActiveDesignDeliveryBySourceIssue :one
+SELECT id, workspace_id, project_id, source_issue_id, target_issue_id, file_id, revision_id, scope, status, delivered_by, delivered_at, created_at, updated_at, cancelled_by, cancelled_at, cancel_reason, audit_metadata FROM design_delivery
+WHERE workspace_id = $1
+  AND source_issue_id = $2
+  AND status = 'active'
+ORDER BY delivered_at DESC
+LIMIT 1
+`
+
+type GetLatestActiveDesignDeliveryBySourceIssueParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	SourceIssueID pgtype.UUID `json:"source_issue_id"`
+}
+
+func (q *Queries) GetLatestActiveDesignDeliveryBySourceIssue(ctx context.Context, arg GetLatestActiveDesignDeliveryBySourceIssueParams) (DesignDelivery, error) {
+	row := q.db.QueryRow(ctx, getLatestActiveDesignDeliveryBySourceIssue, arg.WorkspaceID, arg.SourceIssueID)
+	var i DesignDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.SourceIssueID,
+		&i.TargetIssueID,
+		&i.FileID,
+		&i.RevisionID,
+		&i.Scope,
+		&i.Status,
+		&i.DeliveredBy,
+		&i.DeliveredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CancelledBy,
+		&i.CancelledAt,
+		&i.CancelReason,
+		&i.AuditMetadata,
+	)
+	return i, err
+}
+
 const getLatestCompletedDesignRepoAnalysisForProject = `-- name: GetLatestCompletedDesignRepoAnalysisForProject :one
 SELECT id, workspace_id, project_id, project_resource_id, status, schema_version, source_fingerprint, framework, language, package_manager, app_type, routing, styling, directories, commands, boundaries, target_candidates, confidence, summary, raw_result, error, analyzed_at, created_at, updated_at FROM design_repo_analysis
 WHERE workspace_id = $1 AND project_id = $2 AND status = 'completed'
@@ -1395,12 +1588,55 @@ func (q *Queries) GetNextDesignTemplateRevisionNumber(ctx context.Context, templ
 	return next_revision_number, err
 }
 
+const getReusableDesignRestoreTaskByDelivery = `-- name: GetReusableDesignRestoreTaskByDelivery :one
+SELECT id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at, delivery_id FROM design_restore_task
+WHERE workspace_id = $1
+  AND delivery_id = $2
+  AND status IN ('queued', 'running')
+ORDER BY
+  CASE
+    WHEN agent_task_id IS NOT NULL THEN 0
+    WHEN status = 'running' THEN 1
+    ELSE 2
+  END,
+  created_at DESC
+LIMIT 1
+`
+
+type GetReusableDesignRestoreTaskByDeliveryParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	DeliveryID  pgtype.UUID `json:"delivery_id"`
+}
+
+func (q *Queries) GetReusableDesignRestoreTaskByDelivery(ctx context.Context, arg GetReusableDesignRestoreTaskByDeliveryParams) (DesignRestoreTask, error) {
+	row := q.db.QueryRow(ctx, getReusableDesignRestoreTaskByDelivery, arg.WorkspaceID, arg.DeliveryID)
+	var i DesignRestoreTask
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.FileID,
+		&i.RevisionID,
+		&i.IssueID,
+		&i.AgentTaskID,
+		&i.Status,
+		&i.Input,
+		&i.Result,
+		&i.Error,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeliveryID,
+	)
+	return i, err
+}
+
 const getReusableDesignRestoreTaskByIssue = `-- name: GetReusableDesignRestoreTaskByIssue :one
-SELECT id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at FROM design_restore_task
+SELECT id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at, delivery_id FROM design_restore_task
 WHERE workspace_id = $1
   AND issue_id = $2
   AND file_id = $3
   AND revision_id = $4
+  AND delivery_id IS NULL
   AND status IN ('queued', 'running')
 ORDER BY
   CASE
@@ -1441,6 +1677,7 @@ func (q *Queries) GetReusableDesignRestoreTaskByIssue(ctx context.Context, arg G
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeliveryID,
 	)
 	return i, err
 }
@@ -1598,6 +1835,62 @@ func (q *Queries) ListDesignCatalogTemplates(ctx context.Context, arg ListDesign
 			&i.SlotSchema,
 			&i.DesignFileID,
 			&i.DesignFileTitle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDesignDeliveriesByIssue = `-- name: ListDesignDeliveriesByIssue :many
+SELECT id, workspace_id, project_id, source_issue_id, target_issue_id, file_id, revision_id, scope, status, delivered_by, delivered_at, created_at, updated_at, cancelled_by, cancelled_at, cancel_reason, audit_metadata FROM design_delivery
+WHERE workspace_id = $1
+  AND (source_issue_id = $2 OR target_issue_id = $2)
+ORDER BY
+  CASE status
+    WHEN 'active' THEN 0
+    WHEN 'superseded' THEN 1
+    ELSE 2
+  END,
+  delivered_at DESC
+`
+
+type ListDesignDeliveriesByIssueParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	SourceIssueID pgtype.UUID `json:"source_issue_id"`
+}
+
+func (q *Queries) ListDesignDeliveriesByIssue(ctx context.Context, arg ListDesignDeliveriesByIssueParams) ([]DesignDelivery, error) {
+	rows, err := q.db.Query(ctx, listDesignDeliveriesByIssue, arg.WorkspaceID, arg.SourceIssueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DesignDelivery{}
+	for rows.Next() {
+		var i DesignDelivery
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.SourceIssueID,
+			&i.TargetIssueID,
+			&i.FileID,
+			&i.RevisionID,
+			&i.Scope,
+			&i.Status,
+			&i.DeliveredBy,
+			&i.DeliveredAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CancelledBy,
+			&i.CancelledAt,
+			&i.CancelReason,
+			&i.AuditMetadata,
 		); err != nil {
 			return nil, err
 		}
@@ -1918,7 +2211,7 @@ func (q *Queries) ListDesignRestoreMappings(ctx context.Context, restoreTaskID p
 }
 
 const listDesignRestoreTasks = `-- name: ListDesignRestoreTasks :many
-SELECT id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at FROM design_restore_task
+SELECT id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at, delivery_id FROM design_restore_task
 WHERE workspace_id = $1
 ORDER BY created_at DESC
 LIMIT 50
@@ -1947,6 +2240,7 @@ func (q *Queries) ListDesignRestoreTasks(ctx context.Context, workspaceID pgtype
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DeliveryID,
 		); err != nil {
 			return nil, err
 		}
@@ -2198,6 +2492,43 @@ func (q *Queries) SetDesignFileCurrentRevision(ctx context.Context, arg SetDesig
 	return i, err
 }
 
+const supersedeActiveDesignDeliveries = `-- name: SupersedeActiveDesignDeliveries :exec
+UPDATE design_delivery SET
+    status = 'superseded',
+    audit_metadata = audit_metadata || jsonb_strip_nulls(jsonb_build_object(
+        'superseded_by_delivery_id', $3::uuid,
+        'superseded_by_target_issue_id', $4::uuid,
+        'superseded_by_file_id', $5::uuid,
+        'superseded_by_revision_id', $6::uuid,
+        'superseded_at', now()
+    )),
+    updated_at = now()
+WHERE workspace_id = $1
+  AND source_issue_id = $2
+  AND status = 'active'
+`
+
+type SupersedeActiveDesignDeliveriesParams struct {
+	WorkspaceID               pgtype.UUID `json:"workspace_id"`
+	SourceIssueID             pgtype.UUID `json:"source_issue_id"`
+	SupersededByDeliveryID    pgtype.UUID `json:"superseded_by_delivery_id"`
+	SupersededByTargetIssueID pgtype.UUID `json:"superseded_by_target_issue_id"`
+	SupersededByFileID        pgtype.UUID `json:"superseded_by_file_id"`
+	SupersededByRevisionID    pgtype.UUID `json:"superseded_by_revision_id"`
+}
+
+func (q *Queries) SupersedeActiveDesignDeliveries(ctx context.Context, arg SupersedeActiveDesignDeliveriesParams) error {
+	_, err := q.db.Exec(ctx, supersedeActiveDesignDeliveries,
+		arg.WorkspaceID,
+		arg.SourceIssueID,
+		arg.SupersededByDeliveryID,
+		arg.SupersededByTargetIssueID,
+		arg.SupersededByFileID,
+		arg.SupersededByRevisionID,
+	)
+	return err
+}
+
 const updateDesignCatalogTemplateCurrentRevision = `-- name: UpdateDesignCatalogTemplateCurrentRevision :one
 UPDATE design_catalog_template
 SET current_revision_id = $3, updated_at = now()
@@ -2430,7 +2761,7 @@ UPDATE design_restore_task SET
     error = $7,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at
+RETURNING id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at, delivery_id
 `
 
 type UpdateDesignRestoreTaskParams struct {
@@ -2468,6 +2799,7 @@ func (q *Queries) UpdateDesignRestoreTask(ctx context.Context, arg UpdateDesignR
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeliveryID,
 	)
 	return i, err
 }

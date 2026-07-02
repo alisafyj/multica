@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
-import { designFileDetailOptions, designRevisionListOptions } from "@multica/core/designs/queries";
+import { designFileDetailOptions, designRevisionDetailOptions, designRevisionListOptions } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { DesignRevision, GalleryNativeJson } from "@multica/core/types";
@@ -251,14 +251,14 @@ function FloatingFrameTree({ frames, selectedFrameId, collapsed, onToggle, onSel
   );
 }
 
-function FrameToolMenu({ state, onClose, onView, onCopyImage, onDelete, deleting }: { state: FrameToolMenuState; onClose: () => void; onView: (frame: BoardFrame) => void; onCopyImage: (frame: BoardFrame) => void; onDelete: (frame: BoardFrame) => void; deleting: boolean }) {
+function FrameToolMenu({ state, onClose, onView, onCopyImage, onDelete, deleting, canDelete }: { state: FrameToolMenuState; onClose: () => void; onView: (frame: BoardFrame) => void; onCopyImage: (frame: BoardFrame) => void; onDelete: (frame: BoardFrame) => void; deleting: boolean; canDelete: boolean }) {
   if (!state) return null;
   return (
     <div className="fixed inset-0 z-50" onClick={onClose} onContextMenu={(event) => { event.preventDefault(); onClose(); }}>
       <div className="absolute min-w-40 overflow-hidden rounded-xl border bg-popover p-1 text-popover-foreground shadow-xl" style={{ left: state.x, top: state.y }} onClick={(event) => event.stopPropagation()}>
         <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => onView(state.frame)}><Eye className="h-4 w-4" />查看详情</button>
         <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => onCopyImage(state.frame)}><Copy className="h-4 w-4" />复制图片</button>
-        <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10" disabled={deleting} onClick={() => onDelete(state.frame)}><Trash2 className="h-4 w-4" />{deleting ? "删除中…" : "删除"}</button>
+        <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50" disabled={!canDelete || deleting} onClick={() => onDelete(state.frame)}><Trash2 className="h-4 w-4" />{!canDelete ? "历史版本不可删除" : deleting ? "删除中…" : "删除"}</button>
       </div>
     </div>
   );
@@ -380,9 +380,10 @@ export function DesignFilePage({ designId }: { designId: string }) {
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
   const queryClient = useQueryClient();
+  const urlRevisionId = navigation.searchParams.get("revision_id") ?? "";
   const { data, isLoading, error, refetch } = useQuery(designFileDetailOptions(wsId, designId));
   const { data: revisions = [] } = useQuery({ ...designRevisionListOptions(wsId, designId), enabled: !!data?.file.id });
-  const [selectedRevisionId, setSelectedRevisionId] = useState<string | null>(null);
+  const [selectedRevisionId, setSelectedRevisionId] = useState<string | null>(() => urlRevisionId || null);
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
   const [frameToolMenu, setFrameToolMenu] = useState<FrameToolMenuState>(null);
   const [deleteDesignOpen, setDeleteDesignOpen] = useState(false);
@@ -390,12 +391,13 @@ export function DesignFilePage({ designId }: { designId: string }) {
   const [copyingContext, setCopyingContext] = useState(false);
   const currentRevision = data?.current_revision ?? null;
   const revisionId = selectedRevisionId ?? currentRevision?.id ?? null;
-  const selectedRevision = useQuery({
-    queryKey: ["designs", wsId, "revisions", revisionId],
-    queryFn: () => api.getDesignRevision(revisionId!),
+  const { data: selectedRevision, isLoading: selectedRevisionLoading, error: selectedRevisionError } = useQuery({
+    ...designRevisionDetailOptions(wsId, revisionId ?? ""),
     enabled: !!revisionId && revisionId !== currentRevision?.id,
   });
-  const activeRevision = (revisionId === currentRevision?.id ? currentRevision : selectedRevision.data ?? currentRevision) as DesignRevision | null | undefined;
+  const activeRevision = (revisionId === currentRevision?.id ? currentRevision : selectedRevision ?? null) as DesignRevision | null | undefined;
+  const isHistoricalRevision = !!activeRevision?.id && activeRevision.id !== data?.file.current_revision_id;
+  const canEditActiveRevision = !!activeRevision?.id && !isHistoricalRevision;
   const nativeJson = activeRevision?.native_json;
   const frames = useMemo(() => (nativeJson?.frames ?? []) as BoardFrame[], [nativeJson]);
   const selectedFrame = meaningfulFrame(frames, selectedFrameId);
@@ -404,6 +406,11 @@ export function DesignFilePage({ designId }: { designId: string }) {
   useEffect(() => {
     if (!selectedFrame && frames[0]) setSelectedFrameId(frames[0].id);
   }, [frames, selectedFrame]);
+
+  useEffect(() => {
+    setSelectedRevisionId(urlRevisionId || null);
+    setSelectedFrameId(null);
+  }, [urlRevisionId]);
 
   const deleteDesign = useMutation({
     mutationFn: () => api.deleteDesignFile(designId),
@@ -417,7 +424,10 @@ export function DesignFilePage({ designId }: { designId: string }) {
   });
 
   const deleteFrame = useMutation({
-    mutationFn: (frameId: string) => api.deleteDesignFrame(designId, frameId),
+    mutationFn: (frameId: string) => {
+      if (!canEditActiveRevision) throw new Error("历史版本不可删除画板，请切换到当前版本。");
+      return api.deleteDesignFrame(designId, frameId);
+    },
     onSuccess: async () => {
       setFrameToolMenu(null);
       setDeleteFrameTarget(null);
@@ -432,6 +442,7 @@ export function DesignFilePage({ designId }: { designId: string }) {
       }
       toast.success("已删除画板及历史版本");
     },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "删除画板失败"),
   });
 
   const createFullRestoreTask = useMutation({
@@ -487,7 +498,7 @@ export function DesignFilePage({ designId }: { designId: string }) {
     if (!designId) return;
     setCopyingContext(true);
     try {
-      const context = await api.getDesignFileContext(designId);
+      const context = await api.getDesignFileContext(designId, { revisionId: activeRevision?.id });
       await navigator.clipboard?.writeText(JSON.stringify(context, null, 2));
       toast.success("已复制设计稿上下文 JSON");
     } catch (error) {
@@ -504,13 +515,18 @@ export function DesignFilePage({ designId }: { designId: string }) {
         leaf={<span className="truncate font-medium">{data?.file.title ?? "设计稿"}</span>}
         actions={(
           <>
-            <Badge variant="secondary">版本 {activeRevision?.revision_number ?? "—"}</Badge>
+            <Badge variant={isHistoricalRevision ? "outline" : "secondary"}>版本 {activeRevision?.revision_number ?? "—"}{isHistoricalRevision ? " · 历史" : ""}</Badge>
             {revisions.length > 0 ? (
-              <select value={revisionId ?? ""} onChange={(event) => { setSelectedRevisionId(event.target.value || null); setSelectedFrameId(null); }} className="h-8 rounded-md border bg-background px-2 text-xs">
+              <select value={revisionId ?? ""} onChange={(event) => {
+                const nextRevisionId = event.target.value || null;
+                setSelectedRevisionId(nextRevisionId);
+                setSelectedFrameId(null);
+                navigation.replace(paths.designDetail(designId, { revisionId: nextRevisionId }));
+              }} className="h-8 rounded-md border bg-background px-2 text-xs">
                 {revisions.map((revision) => <option key={revision.id} value={revision.id}>版本 {revision.revision_number}{revision.id === data?.file.current_revision_id ? " · 当前" : ""}</option>)}
               </select>
             ) : null}
-            <Button size="sm" variant="outline" disabled={!data?.file.id || copyingContext} onClick={() => void copyDesignContext()}>
+            <Button size="sm" variant="outline" disabled={!data?.file.id || !activeRevision?.id || copyingContext} onClick={() => void copyDesignContext()}>
               <Copy className="h-3.5 w-3.5" />
               {copyingContext ? "复制中…" : "复制上下文"}
             </Button>
@@ -534,17 +550,19 @@ export function DesignFilePage({ designId }: { designId: string }) {
 
       {isLoading ? (
         <div className="p-4"><Skeleton className="h-[680px]" /></div>
-      ) : error ? (
+      ) : error || selectedRevisionError ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
           <p className="text-sm font-medium">无法加载此设计稿</p>
           <p className="text-sm text-muted-foreground">它可能已被删除，或你没有访问权限。</p>
           <Button size="sm" variant="outline" onClick={() => void refetch()}>重试</Button>
         </div>
+      ) : selectedRevisionLoading ? (
+        <div className="p-4"><Skeleton className="h-[680px]" /></div>
       ) : (
         <main className="min-h-0 flex-1 p-4">
           <div className="flex h-full min-h-[720px] flex-col gap-4">
             <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border bg-background">
-              <DesignBoard nativeJson={nativeJson} selectedFrameId={selectedFrame?.id ?? null} filePreviewUrl={filePreviewUrl} onSelectFrame={setSelectedFrameId} onOpenFrame={(frameId) => navigation.push(paths.designFrameDetail(designId, frameId))} onOpenFrameTools={openFrameTools} />
+              <DesignBoard nativeJson={nativeJson} selectedFrameId={selectedFrame?.id ?? null} filePreviewUrl={filePreviewUrl} onSelectFrame={setSelectedFrameId} onOpenFrame={(frameId) => navigation.push(paths.designFrameDetail(designId, frameId, { revisionId: activeRevision?.id }))} onOpenFrameTools={openFrameTools} />
             </div>
           </div>
         </main>
@@ -552,8 +570,9 @@ export function DesignFilePage({ designId }: { designId: string }) {
       <FrameToolMenu
         state={frameToolMenu}
         deleting={deleteFrame.isPending}
+        canDelete={canEditActiveRevision}
         onClose={() => setFrameToolMenu(null)}
-        onView={(frame) => { setFrameToolMenu(null); navigation.push(paths.designFrameDetail(designId, frame.id)); }}
+        onView={(frame) => { setFrameToolMenu(null); navigation.push(paths.designFrameDetail(designId, frame.id, { revisionId: activeRevision?.id })); }}
         onCopyImage={copyFrameImage}
         onDelete={(frame) => { setFrameToolMenu(null); setDeleteFrameTarget(frame); }}
       />

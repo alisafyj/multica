@@ -241,9 +241,9 @@ RETURNING *;
 
 -- name: CreateDesignRestoreTask :one
 INSERT INTO design_restore_task (
-    workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by
+    workspace_id, file_id, revision_id, issue_id, delivery_id, agent_task_id, status, input, result, error, created_by
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 )
 RETURNING *;
 
@@ -272,6 +272,21 @@ WHERE workspace_id = $1
   AND issue_id = $2
   AND file_id = $3
   AND revision_id = $4
+  AND delivery_id IS NULL
+  AND status IN ('queued', 'running')
+ORDER BY
+  CASE
+    WHEN agent_task_id IS NOT NULL THEN 0
+    WHEN status = 'running' THEN 1
+    ELSE 2
+  END,
+  created_at DESC
+LIMIT 1;
+
+-- name: GetReusableDesignRestoreTaskByDelivery :one
+SELECT * FROM design_restore_task
+WHERE workspace_id = $1
+  AND delivery_id = $2
   AND status IN ('queued', 'running')
 ORDER BY
   CASE
@@ -371,6 +386,71 @@ INSERT INTO design_restore_mapping (
     $1, $2, $3, $4, $5, $6, $7
 )
 RETURNING *;
+
+-- name: SupersedeActiveDesignDeliveries :exec
+UPDATE design_delivery SET
+    status = 'superseded',
+    audit_metadata = audit_metadata || jsonb_strip_nulls(jsonb_build_object(
+        'superseded_by_delivery_id', sqlc.arg('superseded_by_delivery_id')::uuid,
+        'superseded_by_target_issue_id', sqlc.arg('superseded_by_target_issue_id')::uuid,
+        'superseded_by_file_id', sqlc.arg('superseded_by_file_id')::uuid,
+        'superseded_by_revision_id', sqlc.arg('superseded_by_revision_id')::uuid,
+        'superseded_at', now()
+    )),
+    updated_at = now()
+WHERE workspace_id = $1
+  AND source_issue_id = $2
+  AND status = 'active';
+
+-- name: CreateDesignDelivery :one
+INSERT INTO design_delivery (
+    id, workspace_id, project_id, source_issue_id, target_issue_id, file_id, revision_id,
+    scope, status, delivered_by
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+)
+RETURNING *;
+
+-- name: GetDesignDeliveryInWorkspace :one
+SELECT * FROM design_delivery
+WHERE id = $1 AND workspace_id = $2;
+
+-- name: CancelDesignDelivery :one
+UPDATE design_delivery SET
+    status = 'cancelled',
+    cancelled_by = sqlc.narg('cancelled_by'),
+    cancelled_at = now(),
+    cancel_reason = NULLIF(btrim(sqlc.narg('cancel_reason')::text), ''),
+    audit_metadata = jsonb_strip_nulls(jsonb_build_object(
+        'cancel_reason', NULLIF(btrim(sqlc.narg('cancel_reason')::text), ''),
+        'cancelled_by', sqlc.narg('cancelled_by')::uuid,
+        'cancelled_at', now()
+    )),
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status = 'active'
+RETURNING *;
+
+-- name: ListDesignDeliveriesByIssue :many
+SELECT * FROM design_delivery
+WHERE workspace_id = $1
+  AND (source_issue_id = $2 OR target_issue_id = $2)
+ORDER BY
+  CASE status
+    WHEN 'active' THEN 0
+    WHEN 'superseded' THEN 1
+    ELSE 2
+  END,
+  delivered_at DESC;
+
+-- name: GetLatestActiveDesignDeliveryBySourceIssue :one
+SELECT * FROM design_delivery
+WHERE workspace_id = $1
+  AND source_issue_id = $2
+  AND status = 'active'
+ORDER BY delivered_at DESC
+LIMIT 1;
 
 -- name: EnsureDesignTemplateLibrary :one
 INSERT INTO design_template_library (workspace_id, key, name, description, metadata, created_by)

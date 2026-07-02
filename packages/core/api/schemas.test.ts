@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  BatchDeleteIssuesResponseSchema,
+  BatchUpdateIssuesResponseSchema,
   DashboardAgentRunTimeListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
+  DesignRestoreTaskSchema,
+  ListDesignDeliveriesResponseSchema,
+  ListDesignRestoreTasksResponseSchema,
   DuplicateIssueErrorBodySchema,
+  EMPTY_BATCH_DELETE_ISSUES_RESPONSE,
+  EMPTY_BATCH_UPDATE_ISSUES_RESPONSE,
   EMPTY_USER,
   ListIssuesResponseSchema,
   RuntimeHourlyActivityListSchema,
@@ -71,6 +78,154 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
       total: 1,
     };
     expect(ListIssuesResponseSchema.safeParse(payload).success).toBe(false);
+  });
+});
+
+describe("batch issue response schemas", () => {
+  it("defaults missing counts to zero", () => {
+    expect(BatchUpdateIssuesResponseSchema.parse({}).updated).toBe(0);
+    expect(BatchUpdateIssuesResponseSchema.parse({}).skipped).toEqual([]);
+    expect(BatchDeleteIssuesResponseSchema.parse({}).deleted).toBe(0);
+  });
+
+  it("preserves skipped issue details for partial batch updates", () => {
+    const parsed = BatchUpdateIssuesResponseSchema.parse({
+      updated: 1,
+      skipped: [{
+        issue_id: "issue-1",
+        identifier: "MUL-1",
+        title: "UI设计",
+        reason: "UI design issue requires completed UI restore or raw design fallback handoff before completion",
+      }],
+    });
+
+    expect(parsed.skipped).toEqual([{
+      issue_id: "issue-1",
+      identifier: "MUL-1",
+      title: "UI设计",
+      reason: "UI design issue requires completed UI restore or raw design fallback handoff before completion",
+    }]);
+  });
+
+  it("falls back when counts drift to the wrong type", () => {
+    const update = parseWithFallback(
+      { updated: "1" },
+      BatchUpdateIssuesResponseSchema,
+      EMPTY_BATCH_UPDATE_ISSUES_RESPONSE,
+      { endpoint: "POST /api/issues/batch-update" },
+    );
+    const deleted = parseWithFallback(
+      { deleted: "1" },
+      BatchDeleteIssuesResponseSchema,
+      EMPTY_BATCH_DELETE_ISSUES_RESPONSE,
+      { endpoint: "POST /api/issues/batch-delete" },
+    );
+
+    expect(update.updated).toBe(0);
+    expect(update.skipped).toEqual([]);
+    expect(deleted.deleted).toBe(0);
+  });
+});
+
+describe("ListDesignDeliveriesResponseSchema", () => {
+  const delivery = {
+    id: "delivery-1",
+    workspace_id: "ws-1",
+    project_id: null,
+    source_issue_id: "issue-ui",
+    target_issue_id: "issue-fe",
+    file_id: "file-1",
+    revision_id: "revision-1",
+    scope: {
+      version: "1.0",
+      items: [{ frameId: "frame-1", frameName: "Main" }],
+    },
+    status: "active",
+    delivered_by: null,
+    delivered_at: "2026-06-30T00:00:00Z",
+    cancelled_by: null,
+    cancelled_at: null,
+    cancel_reason: null,
+    audit_metadata: {},
+    created_at: "2026-06-30T00:00:00Z",
+    updated_at: "2026-06-30T00:00:00Z",
+  };
+
+  it("defaults deliveries to [] when an older backend omits the field", () => {
+    const parsed = ListDesignDeliveriesResponseSchema.parse({});
+    expect(parsed.deliveries).toEqual([]);
+  });
+
+  it("preserves unknown delivery fields for forward compatibility", () => {
+    const parsed = ListDesignDeliveriesResponseSchema.parse({
+      deliveries: [{ ...delivery, handoff_summary: "Ready for frontend" }],
+    });
+    expect(parsed.deliveries[0]?.handoff_summary).toBe("Ready for frontend");
+  });
+
+  it("defaults nullable fields that older backends may omit", () => {
+    const {
+      project_id: _projectId,
+      delivered_by: _deliveredBy,
+      cancelled_by: _cancelledBy,
+      cancelled_at: _cancelledAt,
+      cancel_reason: _cancelReason,
+      audit_metadata: _auditMetadata,
+      ...legacyDelivery
+    } = delivery;
+    const parsed = ListDesignDeliveriesResponseSchema.parse({ deliveries: [legacyDelivery] });
+    expect(parsed.deliveries[0]?.project_id).toBe(null);
+    expect(parsed.deliveries[0]?.delivered_by).toBe(null);
+    expect(parsed.deliveries[0]?.cancelled_by).toBe(null);
+    expect(parsed.deliveries[0]?.cancelled_at).toBe(null);
+    expect(parsed.deliveries[0]?.cancel_reason).toBe(null);
+    expect(parsed.deliveries[0]?.audit_metadata).toEqual({});
+  });
+
+  it("accepts cancellation audit fields", () => {
+    const parsed = ListDesignDeliveriesResponseSchema.parse({
+      deliveries: [{
+        ...delivery,
+        status: "cancelled",
+        cancelled_by: "user-1",
+        cancelled_at: "2026-06-30T01:00:00Z",
+        cancel_reason: "设计稿需要重新确认",
+        audit_metadata: { cancel_reason: "设计稿需要重新确认" },
+      }],
+    });
+    expect(parsed.deliveries[0]?.cancelled_by).toBe("user-1");
+    expect(parsed.deliveries[0]?.cancel_reason).toBe("设计稿需要重新确认");
+    expect(parsed.deliveries[0]?.audit_metadata.cancel_reason).toBe("设计稿需要重新确认");
+  });
+});
+
+describe("DesignRestoreTaskSchema", () => {
+  const task = {
+    id: "task-1",
+    workspace_id: "ws-1",
+    file_id: "file-1",
+    revision_id: "revision-1",
+    issue_id: "issue-fe",
+    agent_task_id: null,
+    status: "queued",
+    input: { version: "1.0" },
+    result: {},
+    error: null,
+    created_by: "user-1",
+    created_at: "2026-06-30T00:00:00Z",
+    updated_at: "2026-06-30T00:00:00Z",
+  };
+
+  it("defaults delivery_id to null for older restore task responses", () => {
+    const parsed = DesignRestoreTaskSchema.parse(task);
+    expect(parsed.delivery_id).toBe(null);
+  });
+
+  it("preserves delivery_id on task list responses", () => {
+    const parsed = ListDesignRestoreTasksResponseSchema.parse({
+      tasks: [{ ...task, delivery_id: "delivery-1" }],
+    });
+    expect(parsed.tasks[0]?.delivery_id).toBe("delivery-1");
   });
 });
 

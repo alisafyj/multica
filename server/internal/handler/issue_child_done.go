@@ -127,10 +127,10 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 }
 
 func (h *Handler) promoteFrontendSiblingsAfterDesignDone(ctx context.Context, completedChild, parent db.Issue) {
-	if !looksLikeUIDesignIssue(completedChild.Title) {
+	if !isUIDesignIssue(completedChild) {
 		return
 	}
-	if !h.uiDesignRestoreCompleted(ctx, completedChild) {
+	if !h.uiDesignDelivered(ctx, completedChild) {
 		return
 	}
 	children, err := h.Queries.ListChildIssues(ctx, parent.ID)
@@ -138,7 +138,7 @@ func (h *Handler) promoteFrontendSiblingsAfterDesignDone(ctx context.Context, co
 		return
 	}
 	for _, child := range children {
-		if child.ID == completedChild.ID || !looksLikeFrontendDevIssue(child.Title) {
+		if child.ID == completedChild.ID || !isFrontendDevIssue(child) {
 			continue
 		}
 		if child.Status != "backlog" {
@@ -163,6 +163,61 @@ func (h *Handler) uiDesignRestoreCompleted(ctx context.Context, issue db.Issue) 
 		}
 	}
 	return false
+}
+
+const (
+	issueDesignRoleMetadataKey = "design_role"
+	issueDesignRoleUI          = "ui_design"
+	issueDesignRoleFrontend    = "frontend_dev"
+
+	uiDesignDeliveryRequiredBeforeDoneMessage = "UI design issue requires completed UI restore or raw design fallback handoff before completion"
+)
+
+func (h *Handler) canCompleteUIDesignIssue(ctx context.Context, issue db.Issue, nextStatus string) bool {
+	if issue.Status == "done" || nextStatus != "done" || !isUIDesignIssue(issue) {
+		return true
+	}
+	return h.uiDesignDelivered(ctx, issue)
+}
+
+func isUIDesignIssue(issue db.Issue) bool {
+	return issueDesignRole(issue) == issueDesignRoleUI
+}
+
+func isFrontendDevIssue(issue db.Issue) bool {
+	return issueDesignRole(issue) == issueDesignRoleFrontend
+}
+
+func issueDesignRole(issue db.Issue) string {
+	if explicitRole := explicitIssueDesignRole(issue.Metadata); explicitRole != "" {
+		return explicitRole
+	}
+	return inferIssueDesignRoleFromTitle(issue.Title)
+}
+
+func explicitIssueDesignRole(metadata []byte) string {
+	rawRole, ok := parseIssueMetadata(metadata)[issueDesignRoleMetadataKey]
+	if !ok {
+		return ""
+	}
+	role, ok := rawRole.(string)
+	if !ok {
+		return ""
+	}
+	if role == issueDesignRoleUI || role == issueDesignRoleFrontend {
+		return role
+	}
+	return ""
+}
+
+func inferIssueDesignRoleFromTitle(title string) string {
+	if looksLikeUIDesignIssue(title) {
+		return issueDesignRoleUI
+	}
+	if looksLikeFrontendDevIssue(title) {
+		return issueDesignRoleFrontend
+	}
+	return ""
 }
 
 func looksLikeUIDesignIssue(title string) bool {
