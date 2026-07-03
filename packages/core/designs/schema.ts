@@ -63,6 +63,7 @@ export const DesignFrameSchema = z.object({
   thumbnailDataUrl: z.string().optional(),
   thumbnailUrl: z.string().optional(),
   board: z.object({ x: z.number().optional(), y: z.number().optional(), order: z.number().optional() }).loose().optional(),
+  source: JsonRecordSchema.optional(),
 }).loose();
 
 export const DesignAssetRefSchema = z.object({

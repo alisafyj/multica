@@ -27,6 +27,18 @@ The product direction is **Issue-centered design restore**:
 - DB container: `multica-postgres-dev`
 - DB URL: `postgres://multica:multica@localhost:5432/multica?sslmode=disable`
 
+### UI Restore Naming Semantics
+
+Status as of 2026-07-03:
+
+- UI designers should name uploaded Figma frames with the lightweight pattern `页面名 - 状态/场景`.
+- Modals and result states should keep the owning page name on the left:
+  - `提现 - 弹窗：确认提现`
+  - `提现 - 结果：提现申请已提交`
+- The system should treat the text before ` - ` as the owning page and group same-page frames into page states, modals, and result states in the Restore Plan.
+- UI Agent instructions should consume the generated `designStructure` and must not render grouped frames as a flat showcase/gallery unless explicitly requested.
+- This convention intentionally avoids engineering-heavy tags like `[页面]` so normal UI designers can follow it in Figma.
+
 ### Latest Clean Design Import
 
 - Workspace slug: `amc`

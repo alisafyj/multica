@@ -2169,6 +2169,72 @@ type designRestoreVisualReview struct {
 	Notes                    string   `json:"notes,omitempty"`
 }
 
+func (s *designRestoreResultSummary) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	restoreMappingRaw := fields["restoreMapping"]
+	delete(fields, "restoreMapping")
+	rest, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	type summaryNoMethods designRestoreResultSummary
+	var base summaryNoMethods
+	if err := json.Unmarshal(rest, &base); err != nil {
+		return err
+	}
+	*s = designRestoreResultSummary(base)
+	if len(restoreMappingRaw) == 0 || string(restoreMappingRaw) == "null" {
+		return nil
+	}
+	var objectMapping []map[string]any
+	if err := json.Unmarshal(restoreMappingRaw, &objectMapping); err == nil {
+		s.RestoreMapping = objectMapping
+		return nil
+	}
+	var stringMapping []string
+	if err := json.Unmarshal(restoreMappingRaw, &stringMapping); err == nil {
+		s.RestoreMapping = make([]map[string]any, 0, len(stringMapping))
+		for _, item := range stringMapping {
+			if mapping := designRestoreMappingFromString(item); len(mapping) > 0 {
+				s.RestoreMapping = append(s.RestoreMapping, mapping)
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
+func designRestoreMappingFromString(value string) map[string]any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	mapping := map[string]any{
+		"description": value,
+		"targetKind":  "unknown",
+	}
+	for _, sep := range []string{"->", "→", "=>"} {
+		parts := strings.SplitN(value, sep, 2)
+		if len(parts) != 2 {
+			continue
+		}
+		source := strings.TrimSpace(parts[0])
+		target := strings.TrimSpace(parts[1])
+		if source != "" {
+			mapping["sourceLayerId"] = source
+			mapping["layerId"] = source
+		}
+		if target != "" {
+			mapping["targetPath"] = target
+		}
+		return mapping
+	}
+	return mapping
+}
+
 func parseDesignRestoreResultSummary(output string) designRestoreResultSummary {
 	const marker = "RESTORE_RESULT_JSON:"
 	idx := strings.LastIndex(output, marker)

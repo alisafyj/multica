@@ -65,6 +65,24 @@ func TestParseDesignRestoreResultSummary(t *testing.T) {
 	}
 }
 
+func TestParseDesignRestoreResultSummaryAcceptsStringRestoreMapping(t *testing.T) {
+	output := "done\nRESTORE_RESULT_JSON:\n```json\n{\"status\":\"completed\",\"files\":[\"src/views/wallet.vue\"],\"restoreMapping\":[\"frame-1 -> wallet home\",\"frame-2/frame-3 -> account states\"],\"usedLayerIds\":[\"1-1\"],\"usedFullFramePreview\":false}\n```"
+	summary := parseDesignRestoreResultSummary(output)
+	if summary.Status != "completed" {
+		t.Fatalf("status = %q, want completed; summary=%+v", summary.Status, summary)
+	}
+	if len(summary.RestoreMapping) != 2 {
+		t.Fatalf("restoreMapping = %+v, want two entries", summary.RestoreMapping)
+	}
+	if summary.RestoreMapping[0]["layerId"] != "frame-1" || summary.RestoreMapping[0]["targetPath"] != "wallet home" {
+		t.Fatalf("first mapping = %+v", summary.RestoreMapping[0])
+	}
+	ctx := service.DesignRestoreTaskContext{RestorePolicy: json.RawMessage(`{"restoreMode":"strict-structure","allowFullFramePreview":false}`)}
+	if got := designRestorePolicyViolation(ctx, output, summary); got != "" {
+		t.Fatalf("policy violation = %q, want none", got)
+	}
+}
+
 func TestParseDesignRestoreResultSummaryKeepsVisualReview(t *testing.T) {
 	output := "done\nRESTORE_RESULT_JSON:\n```json\n{\"status\":\"completed\",\"visualFidelityScore\":87,\"visualReview\":{\"implementedRoute\":\"/service-record\",\"designScreenshot\":\"/tmp/design.png\",\"implementationScreenshot\":\"/tmp/impl.png\",\"comparisonScreenshot\":\"/tmp/compare.png\",\"remainingDiffs\":[\"头图裁切仍有轻微差异\"],\"notes\":\"二轮视觉 QA 后可验收\"}}\n```"
 	summary := parseDesignRestoreResultSummary(output)

@@ -42,6 +42,7 @@ type Frame struct {
 	ThumbnailDataURL string         `json:"thumbnailDataUrl,omitempty"`
 	ThumbnailURL     string         `json:"thumbnailUrl,omitempty"`
 	Board            map[string]any `json:"board,omitempty"`
+	Source           map[string]any `json:"source,omitempty"`
 }
 
 type Layer struct {

@@ -40,6 +40,7 @@ export interface DesignFrame {
   thumbnailDataUrl?: string;
   thumbnailUrl?: string;
   board?: { x?: number; y?: number; order?: number };
+  source?: Record<string, unknown>;
 }
 
 export type DesignLayerType = "frame" | "group" | "text" | "image" | "shape" | "component" | "instance" | "vector" | "slice" | "table" | "form" | "custom";

@@ -104,6 +104,11 @@ func figmaDesignNativeJSONWithSourceNodes(title string, sourceNodeIDs ...string)
 			"rootLayerId":  layerID,
 			"width":        1440,
 			"height":       900,
+			"source": map[string]any{
+				"tool":      "figma",
+				"groupId":   "4-189",
+				"groupName": "Group 43",
+			},
 		})
 		layers[layerID] = map[string]any{
 			"id":           layerID,
@@ -259,6 +264,54 @@ func contextDesignNativeJSON(title string) map[string]any {
 			"asset-secondary":    map[string]any{"url": "https://example.test/secondary.png"},
 		},
 		"annotations": []map[string]any{{"frameId": "frame-main", "layerId": "main-title", "text": "Check copy"}},
+	}
+}
+
+func nativeJSONWithFrameNamesForTest(names []string) map[string]any {
+	frames := make([]map[string]any, 0, len(names))
+	layers := make(map[string]any, len(names)*2)
+	for i, name := range names {
+		frameID := fmt.Sprintf("frame-%d", i+1)
+		rootID := frameID + "-root"
+		titleID := frameID + "-title"
+		frames = append(frames, map[string]any{
+			"id":          frameID,
+			"name":        name,
+			"rootLayerId": rootID,
+			"width":       375,
+			"height":      812,
+		})
+		layers[rootID] = map[string]any{
+			"id":      rootID,
+			"frameId": frameID,
+			"name":    name + " Root",
+			"type":    "frame",
+			"visible": true,
+			"x":       0,
+			"y":       0,
+			"width":   375,
+			"height":  812,
+		}
+		layers[titleID] = map[string]any{
+			"id":      titleID,
+			"frameId": frameID,
+			"name":    "Title",
+			"type":    "text",
+			"visible": true,
+			"x":       24,
+			"y":       48,
+			"width":   200,
+			"height":  32,
+			"text":    map[string]any{"text": name, "fontFamily": "Inter", "fontSize": 18},
+		}
+	}
+	return map[string]any{
+		"version": "1.0",
+		"file":    map[string]any{"title": "Semantic Frames", "sourceType": "upload"},
+		"frames":  frames,
+		"layers":  layers,
+		"assets":  map[string]any{},
+		"source":  map[string]any{"provider": "figma"},
 	}
 }
 
@@ -2348,7 +2401,10 @@ func TestDispatchDesignRestoreTaskCreatesAgentTask(t *testing.T) {
 	if created.CurrentRevision == nil {
 		t.Fatal("expected current revision")
 	}
-	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, contextDesignNativeJSON("Dispatch Restore Task Design"))
+	nativeJSON := contextDesignNativeJSON("Dispatch Restore Task Design")
+	frames := nativeJSON["frames"].([]map[string]any)
+	frames[0]["source"] = map[string]any{"tool": "figma", "groupId": "4-189", "groupName": "Group 43"}
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, nativeJSON)
 	agentID := createHandlerTestAgent(t, "Dispatch Restore Agent", []byte("[]"))
 	projectID := createProjectForDesignTest(t, "Dispatch Restore Project")
 	issueID := createIssueForDesignTest(t, "Dispatch Restore Issue", projectID)
@@ -2442,6 +2498,10 @@ func TestDispatchDesignRestoreTaskCreatesAgentTask(t *testing.T) {
 	frame := contextPayload["frame"].(map[string]any)
 	if frame["id"] != "frame-main" {
 		t.Fatalf("embedded frame context id = %v, want frame-main", frame["id"])
+	}
+	frameSource, ok := frame["source"].(map[string]any)
+	if !ok || frameSource["groupName"] != "Group 43" {
+		t.Fatalf("embedded frame source = %#v, want Figma group context", frame["source"])
 	}
 }
 
@@ -2791,6 +2851,109 @@ func TestGenerateDesignRestorePlanTargetsBusinessModuleFromParentIssue(t *testin
 		if strings.Contains(path.(string), "design-restore") {
 			t.Fatalf("allowedPaths = %#v, should not include design-restore sandbox", allowedPaths)
 		}
+	}
+}
+
+func TestGenerateDesignRestorePlanBuildsSemanticStructureFromFrameNames(t *testing.T) {
+	created := createDesignFileForTest(t, "我的钱包")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, nativeJSONWithFrameNamesForTest([]string{
+		"01 钱包首页-已绑定支付宝",
+		"01 钱包首页-未绑定支付宝",
+		"04 提现-空金额",
+		"04 提现-弹窗:确认提现",
+		"04 提现-结果:提现申请已提交",
+	}))
+	projectID := createProjectForDesignTest(t, "Wallet Project")
+	parentIssueID := createIssueForDesignTest(t, "我的钱包开发", projectID)
+	uiIssueID := createIssueForDesignTest(t, "UI设计", projectID)
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE issue
+		SET parent_issue_id = $1
+		WHERE id = $2
+	`, parentIssueID, uiIssueID); err != nil {
+		t.Fatalf("link child issue to parent: %v", err)
+	}
+
+	items := []map[string]any{}
+	for i, name := range []string{
+		"01 钱包首页-已绑定支付宝",
+		"01 钱包首页-未绑定支付宝",
+		"04 提现-空金额",
+		"04 提现-弹窗:确认提现",
+		"04 提现-结果:提现申请已提交",
+	} {
+		items = append(items, map[string]any{
+			"itemId":       fmt.Sprintf("wallet-frame-%d", i+1),
+			"order":        i + 1,
+			"designFileId": created.File.ID,
+			"revisionId":   created.CurrentRevision.ID,
+			"frameId":      fmt.Sprintf("frame-%d", i+1),
+			"frameName":    name,
+			"source":       "frame",
+		})
+	}
+	createReq := newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, map[string]any{
+		"file_id":  created.File.ID,
+		"issue_id": uiIssueID,
+		"input": map[string]any{
+			"version":   "1.0",
+			"projectId": projectID,
+			"items":     items,
+		},
+	})
+	createW := httptest.NewRecorder()
+	testHandler.CreateDesignRestoreTask(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateDesignRestoreTask: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+	var createdTask DesignRestoreTaskResponse
+	if err := json.NewDecoder(createW.Body).Decode(&createdTask); err != nil {
+		t.Fatalf("decode CreateDesignRestoreTask: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, createdTask.ID)
+	})
+
+	generateReq := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/plan/generate?workspace_id="+testWorkspaceID, nil), "id", createdTask.ID)
+	generateW := httptest.NewRecorder()
+	testHandler.GenerateDesignRestorePlan(generateW, generateReq)
+	if generateW.Code != http.StatusCreated {
+		t.Fatalf("GenerateDesignRestorePlan: expected 201, got %d: %s", generateW.Code, generateW.Body.String())
+	}
+	var generatedPlan DesignRestorePlanResponse
+	if err := json.NewDecoder(generateW.Body).Decode(&generatedPlan); err != nil {
+		t.Fatalf("decode GenerateDesignRestorePlan: %v", err)
+	}
+	var plan map[string]any
+	if err := json.Unmarshal(generatedPlan.Plan, &plan); err != nil {
+		t.Fatalf("decode generated plan: %v", err)
+	}
+	structure := plan["designStructure"].(map[string]any)
+	pages := structure["pages"].([]any)
+	if len(pages) != 2 {
+		t.Fatalf("pages = %#v, want two semantic pages", pages)
+	}
+	var withdraw map[string]any
+	for _, rawPage := range pages {
+		page := rawPage.(map[string]any)
+		if page["pageName"] == "提现" {
+			withdraw = page
+		}
+	}
+	if withdraw == nil {
+		t.Fatalf("withdraw page missing from pages: %#v", pages)
+	}
+	if len(withdraw["states"].([]any)) != 1 || len(withdraw["modals"].([]any)) != 1 || len(withdraw["resultStates"].([]any)) != 1 {
+		t.Fatalf("withdraw semantic buckets = %#v", withdraw)
+	}
+	itemsBlock := plan["items"].([]any)
+	modalItem := itemsBlock[3].(map[string]any)
+	semantic := modalItem["semantic"].(map[string]any)
+	if semantic["pageName"] != "提现" || semantic["kind"] != "modal" || semantic["label"] != "确认提现" {
+		t.Fatalf("modal semantic = %#v", semantic)
 	}
 }
 
@@ -3402,6 +3565,22 @@ func TestFigmaPluginImportTargetDesignFileMergesNewSourceNode(t *testing.T) {
 		t.Fatalf("merged frame count = %d, want 5", got)
 	}
 	mergedDoc := decodeDesignRevisionNativeJSONForTest(t, merged.CurrentRevision.NativeJSON)
+	mergedFrames, ok := mergedDoc["frames"].([]any)
+	if !ok {
+		t.Fatalf("merged native_json frames type = %T", mergedDoc["frames"])
+	}
+	var foundNewFrameSource map[string]any
+	for _, rawFrame := range mergedFrames {
+		frame, ok := rawFrame.(map[string]any)
+		if !ok || frame["sourceNodeId"] != "1:5" {
+			continue
+		}
+		foundNewFrameSource, _ = frame["source"].(map[string]any)
+		break
+	}
+	if foundNewFrameSource["groupName"] != "Group 43" {
+		t.Fatalf("merged frame source groupName = %v, want Group 43", foundNewFrameSource["groupName"])
+	}
 	if report := importFidelityReportFromNativeJSONForTest(t, mergedDoc); report["byFrameId"] == nil {
 		t.Fatalf("missing merged fidelity byFrameId: %+v", report)
 	}

@@ -2257,6 +2257,11 @@ func compactDesignLayer(layer map[string]any) map[string]any {
 	if semantic, ok := layer["semantic"].(map[string]any); ok {
 		out["semantic"] = sanitizeContextPayload(semantic)
 	}
+	if source, ok := layer["source"].(map[string]any); ok {
+		if stringField(layer, "type") == "" || stringField(source, "groupName") != "" || stringField(source, "groupId") != "" {
+			out["source"] = sanitizeContextPayload(source)
+		}
+	}
 	if image, ok := layer["image"].(map[string]any); ok {
 		out["image"] = map[string]any{"assetId": stringField(image, "assetId")}
 	}
@@ -2504,6 +2509,7 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 			selectedTargetPath = path
 		}
 	}
+	designStructure := buildDesignRestoreSemanticStructure(input.Items)
 	items := make([]map[string]any, 0, len(input.Items))
 	for _, item := range input.Items {
 		usedLayerIDs := item.LayerIDs
@@ -2529,7 +2535,8 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 				}
 			}
 		}
-		items = append(items, map[string]any{
+		semantic := parseDesignRestoreFrameSemantics(item.FrameName)
+		planItem := map[string]any{
 			"itemId":         item.ItemID,
 			"frameId":        item.FrameID,
 			"frameName":      item.FrameName,
@@ -2539,7 +2546,11 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 			"targetPath":     selectedTargetPath,
 			"layerIds":       usedLayerIDs,
 			"implementation": "Build visible component structure from Multica item_contexts; infer or create the page route, split reusable sections into components, and do not paste full-frame preview assets.",
-		})
+		}
+		if semantic.PageName != "" {
+			planItem["semantic"] = semantic.toPlanBlock()
+		}
+		items = append(items, planItem)
 	}
 	plan := map[string]any{
 		"version":        "1.0",
@@ -2557,9 +2568,12 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 			"allowSkipPlanForDevelopment":    true,
 			"forbidFullFramePreviewAsResult": true,
 		},
+		"designStructure": designStructure,
 		"steps": []string{
 			"Read the approved Restore Plan and Multica item_contexts.",
+			"Use designStructure as the source of truth for page relationships: the text before ` - ` is the owning page, `弹窗：` means a modal/sheet attached to that page, and `结果：` means a result state attached to that page.",
 			"Implement a navigable frontend page from the approved target: infer or create the page, wire routing when needed, and split large UI sections into components instead of dumping everything into one file.",
+			"Do not render multiple sibling frames as a flat showcase/gallery unless designStructure.mode is explicitly `showcase`.",
 			"Run relevant typecheck/test command.",
 			"Return RESTORE_RESULT_JSON with files, checks, blockers, restoreMapping, usedLayerIds, usedAssetIds, and usedFullFramePreview=false.",
 		},
@@ -2570,6 +2584,187 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 		},
 	}
 	return json.Marshal(plan)
+}
+
+type designRestoreFrameSemantics struct {
+	PageName string
+	Kind     string
+	Label    string
+	RawName  string
+}
+
+func (s designRestoreFrameSemantics) toPlanBlock() map[string]any {
+	return map[string]any{
+		"pageName": s.PageName,
+		"kind":     fallback(s.Kind, "state"),
+		"label":    s.Label,
+		"rawName":  s.RawName,
+	}
+}
+
+func buildDesignRestoreSemanticStructure(items []DesignRestoreTaskItemInput) map[string]any {
+	pages := make([]map[string]any, 0)
+	pageIndex := make(map[string]int)
+	unparsed := make([]map[string]any, 0)
+	for _, item := range items {
+		semantics := parseDesignRestoreFrameSemantics(item.FrameName)
+		if semantics.PageName == "" {
+			unparsed = append(unparsed, map[string]any{
+				"itemId":    item.ItemID,
+				"frameId":   item.FrameID,
+				"frameName": item.FrameName,
+				"reason":    "frame name does not match `页面名 - 状态/场景`",
+			})
+			continue
+		}
+		idx, ok := pageIndex[semantics.PageName]
+		if !ok {
+			pages = append(pages, map[string]any{
+				"pageName":     semantics.PageName,
+				"pageKind":     "page",
+				"primaryFrame": nil,
+				"states":       []any{},
+				"modals":       []any{},
+				"resultStates": []any{},
+				"frames":       []any{},
+			})
+			idx = len(pages) - 1
+			pageIndex[semantics.PageName] = idx
+		}
+		page := pages[idx]
+		entry := map[string]any{
+			"itemId":    item.ItemID,
+			"frameId":   item.FrameID,
+			"frameName": item.FrameName,
+			"kind":      semantics.Kind,
+			"label":     semantics.Label,
+		}
+		page["frames"] = appendAny(page["frames"], entry)
+		switch semantics.Kind {
+		case "modal":
+			page["modals"] = appendAny(page["modals"], entry)
+		case "result":
+			page["resultStates"] = appendAny(page["resultStates"], entry)
+		default:
+			page["states"] = appendAny(page["states"], entry)
+			if page["primaryFrame"] == nil {
+				page["primaryFrame"] = entry
+			}
+		}
+	}
+	mode := "page_structure"
+	if len(pages) == 0 {
+		mode = "unclassified"
+	}
+	return map[string]any{
+		"version":          "1.0",
+		"mode":             mode,
+		"namingConvention": "页面名 - 状态/场景; 页面名 - 弹窗：弹窗名; 页面名 - 结果：结果名; leading order prefixes such as `01 ` are ignored.",
+		"pages":            pages,
+		"unparsedFrames":   unparsed,
+		"agentInstruction": "Treat frames with the same pageName as one page with states/modals/result states. Do not create one route per frame and do not render all frames as a flat showcase.",
+	}
+}
+
+func appendAny(existing any, value any) []any {
+	values, _ := existing.([]any)
+	return append(values, value)
+}
+
+func parseDesignRestoreFrameSemantics(name string) designRestoreFrameSemantics {
+	raw := strings.TrimSpace(name)
+	if raw == "" {
+		return designRestoreFrameSemantics{}
+	}
+	left, right, ok := splitDesignRestoreSemanticName(raw)
+	if !ok {
+		return designRestoreFrameSemantics{RawName: raw}
+	}
+	left = normalizeDesignRestoreSemanticPageName(left)
+	if left == "" {
+		return designRestoreFrameSemantics{RawName: raw}
+	}
+	kind := "state"
+	label := right
+	for _, prefix := range []struct {
+		Text string
+		Kind string
+	}{
+		{Text: "弹窗", Kind: "modal"},
+		{Text: "浮层", Kind: "modal"},
+		{Text: "底部弹层", Kind: "modal"},
+		{Text: "结果", Kind: "result"},
+		{Text: "结果态", Kind: "result"},
+	} {
+		if strings.HasPrefix(label, prefix.Text+"：") || strings.HasPrefix(label, prefix.Text+":") {
+			kind = prefix.Kind
+			label = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(label, prefix.Text+"："), prefix.Text+":"))
+			break
+		}
+	}
+	if label == "" {
+		label = right
+	}
+	return designRestoreFrameSemantics{
+		PageName: left,
+		Kind:     kind,
+		Label:    label,
+		RawName:  raw,
+	}
+}
+
+func splitDesignRestoreSemanticName(name string) (string, string, bool) {
+	separators := []string{" - ", " — ", " – ", "｜", " | "}
+	for _, sep := range separators {
+		if parts := strings.SplitN(name, sep, 2); len(parts) == 2 {
+			left := strings.TrimSpace(parts[0])
+			right := strings.TrimSpace(parts[1])
+			if left != "" && right != "" {
+				return left, right, true
+			}
+		}
+	}
+	for _, sep := range []string{"-", "—", "–"} {
+		if parts := strings.SplitN(name, sep, 2); len(parts) == 2 {
+			left := strings.TrimSpace(parts[0])
+			right := strings.TrimSpace(parts[1])
+			if left != "" && right != "" {
+				return left, right, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+func normalizeDesignRestoreSemanticPageName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	fields := strings.Fields(name)
+	if len(fields) > 1 && isDesignRestoreOrdinalPrefix(fields[0]) {
+		return strings.TrimSpace(strings.Join(fields[1:], " "))
+	}
+	for _, sep := range []string{".", "、", "_"} {
+		parts := strings.SplitN(name, sep, 2)
+		if len(parts) == 2 && isDesignRestoreOrdinalPrefix(parts[0]) {
+			return strings.TrimSpace(parts[1])
+		}
+	}
+	return name
+}
+
+func isDesignRestoreOrdinalPrefix(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || len([]rune(value)) > 3 {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 type designRestoreTargetStrategy struct {

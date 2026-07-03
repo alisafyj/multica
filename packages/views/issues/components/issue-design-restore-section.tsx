@@ -20,6 +20,7 @@ import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/nati
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@multica/ui/components/ui/sheet";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { RestoreExecutionDiagnostic } from "../../designs/design-restore-execution-diagnostic";
+import { groupedFrames } from "../../designs/frame-groups";
 import { useNavigation } from "../../navigation";
 
 interface IssueDesignRestoreSectionProps {
@@ -177,6 +178,16 @@ function deliveryItemCount(delivery: DesignDelivery | null) {
   return Array.isArray(items) ? items.length : 0;
 }
 
+export function deliveryScopeTitle(delivery: DesignDelivery | null) {
+  const scopeItems = deliveryScopeItems(delivery);
+  if (!scopeItems.length) return deliveryFrameName(delivery) || "默认画板";
+  const first = scopeItems[0];
+  const groupName = label(first?.groupName, "");
+  if (groupName) return scopeItems.length > 1 ? `${groupName} · ${scopeItems.length} 个画板` : groupName;
+  const frameName = label(first?.frameName ?? first?.layerName ?? first?.name, "默认画板");
+  return scopeItems.length > 1 ? `${frameName} 等 ${scopeItems.length} 个对象` : frameName;
+}
+
 export function deliveryScopeItems(delivery: DesignDelivery | null): Array<Record<string, unknown>> {
   const items = delivery?.scope.items;
   if (!Array.isArray(items)) return [];
@@ -262,10 +273,93 @@ interface RawDesignFallbackScopeInput {
   revisionId: string;
   frameId: string;
   frameName: string;
+  items?: IssueDesignScopeItem[];
 }
 
 interface IssueDesignDeliveryScopeInput extends RawDesignFallbackScopeInput {
   activeRestoreTask?: DesignRestoreTask | null;
+}
+
+export interface IssueDesignScopeItem {
+  frameId: string;
+  frameName: string;
+  groupId?: string;
+  groupName?: string;
+  groupPath?: string[];
+}
+
+export interface IssueDesignScopeOption {
+  id: string;
+  kind: "figma_group" | "frame";
+  label: string;
+  items: IssueDesignScopeItem[];
+}
+
+function sourceString(source: Record<string, unknown> | undefined, key: string) {
+  const value = source?.[key];
+  return typeof value === "string" && value.trim() ? value : "";
+}
+
+function sourceStringArray(source: Record<string, unknown> | undefined, key: string) {
+  const value = source?.[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+function frameScopeItem(frame: DesignFrame): IssueDesignScopeItem {
+  const groupId = sourceString(frame.source, "groupId");
+  const groupName = sourceString(frame.source, "groupName");
+  const groupPath = sourceStringArray(frame.source, "groupPath");
+  return {
+    frameId: frame.id,
+    frameName: frame.name,
+    ...(groupId ? { groupId } : {}),
+    ...(groupName ? { groupName } : {}),
+    ...(groupPath.length ? { groupPath } : {}),
+  };
+}
+
+export function issueDesignScopeOptions(frames: DesignFrame[]): IssueDesignScopeOption[] {
+  const groups = groupedFrames(frames);
+  return [
+    ...groups.map((group): IssueDesignScopeOption => ({
+      id: `group:${group.id}`,
+      kind: "figma_group",
+      label: group.name,
+      items: group.frames.map(frameScopeItem),
+    })),
+    ...frames.map((frame): IssueDesignScopeOption => ({
+      id: `frame:${frame.id}`,
+      kind: "frame",
+      label: frame.name,
+      items: [frameScopeItem(frame)],
+    })),
+  ];
+}
+
+function singleScopeItem(frameId: string, frameName: string): IssueDesignScopeItem {
+  return { frameId, frameName };
+}
+
+function normalizedScopeItems(input: { frameId: string; frameName: string; items?: IssueDesignScopeItem[] }) {
+  const items = input.items?.filter((item) => item.frameId && item.frameName) ?? [];
+  return items.length ? items : [singleScopeItem(input.frameId, input.frameName)];
+}
+
+function deliveryItemBase(input: RawDesignFallbackScopeInput, item: IssueDesignScopeItem, index: number, source: string, note: string, extra: Record<string, unknown> = {}) {
+  return {
+    itemId: `delivery-${input.sourceIssueId}-${item.frameId}`,
+    order: index + 1,
+    designFileId: input.designFileId,
+    revisionId: input.revisionId,
+    frameId: item.frameId,
+    frameName: item.frameName,
+    source,
+    ...(item.groupId ? { groupId: item.groupId } : {}),
+    ...(item.groupName ? { groupName: item.groupName } : {}),
+    ...(item.groupPath?.length ? { groupPath: item.groupPath } : {}),
+    ...extra,
+    note,
+  };
 }
 
 export function deliveryHandoffSource(delivery: DesignDelivery | null): DeliveryHandoffSource | null {
@@ -280,6 +374,7 @@ export function isRawDesignFallbackDelivery(delivery: DesignDelivery | null) {
 }
 
 export function createRawDesignFallbackScope(input: RawDesignFallbackScopeInput): Record<string, unknown> {
+  const items = normalizedScopeItems(input);
   return {
     version: "1.0",
     source: "issue_delivery",
@@ -288,16 +383,7 @@ export function createRawDesignFallbackScope(input: RawDesignFallbackScopeInput)
     ...(input.projectId ? { projectId: input.projectId } : {}),
     sourceIssueId: input.sourceIssueId,
     targetIssueId: input.targetIssueId,
-    items: [{
-      itemId: `delivery-${input.sourceIssueId}-${input.frameId}`,
-      order: 1,
-      designFileId: input.designFileId,
-      revisionId: input.revisionId,
-      frameId: input.frameId,
-      frameName: input.frameName,
-      source: "frame",
-      note: "Internal fallback: raw design source handed to frontend for full restore.",
-    }],
+    items: items.map((item, index) => deliveryItemBase(input, item, index, "frame", item.groupName ? `Internal fallback: raw Figma group ${item.groupName} handed to frontend for full restore.` : "Internal fallback: raw design source handed to frontend for full restore.")),
   };
 }
 
@@ -305,6 +391,7 @@ export function createIssueDesignDeliveryScope(input: IssueDesignDeliveryScopeIn
   if (input.activeRestoreTask?.status !== "completed") {
     return createRawDesignFallbackScope(input);
   }
+  const items = normalizedScopeItems(input);
   return {
     version: "1.0",
     source: "issue_delivery",
@@ -314,17 +401,10 @@ export function createIssueDesignDeliveryScope(input: IssueDesignDeliveryScopeIn
     ...(input.projectId ? { projectId: input.projectId } : {}),
     sourceIssueId: input.sourceIssueId,
     targetIssueId: input.targetIssueId,
-    items: [{
-      itemId: `artifact-${input.activeRestoreTask.id}-${input.frameId}`,
-      order: 1,
-      designFileId: input.designFileId,
-      revisionId: input.revisionId,
-      frameId: input.frameId,
-      frameName: input.frameName,
-      source: "ui_restore_task",
-      restoreTaskId: input.activeRestoreTask.id,
-      note: "UI restore artifact handed to frontend for implementation.",
-    }],
+    items: items.map((item, index) => ({
+      ...deliveryItemBase(input, item, index, "ui_restore_task", item.groupName ? `UI restore artifact for Figma group ${item.groupName} handed to frontend for implementation.` : "UI restore artifact handed to frontend for implementation.", { restoreTaskId: input.activeRestoreTask!.id }),
+      itemId: `artifact-${input.activeRestoreTask!.id}-${item.frameId}`,
+    })),
   };
 }
 
@@ -335,26 +415,56 @@ interface IssueDesignRestoreTaskInputArgs {
   restoreRevisionId: string;
   restoreFrameId: string;
   restoreFrameName: string;
+  restoreItems?: IssueDesignScopeItem[];
   receivedDesignDelivery: DesignDelivery | null;
+}
+
+function restoreItemsFromDelivery(delivery: DesignDelivery | null): IssueDesignScopeItem[] {
+  return deliveryScopeItems(delivery).map((item) => {
+    const frameId = label(item.frameId, "");
+    const frameName = label(item.frameName, "");
+    if (!frameId || !frameName) return null;
+    const groupId = label(item.groupId, "");
+    const groupName = label(item.groupName, "");
+    const groupPath = Array.isArray(item.groupPath) ? item.groupPath.filter((part): part is string => typeof part === "string" && part.trim().length > 0) : [];
+    return {
+      frameId,
+      frameName,
+      ...(groupId ? { groupId } : {}),
+      ...(groupName ? { groupName } : {}),
+      ...(groupPath.length ? { groupPath } : {}),
+    } satisfies IssueDesignScopeItem;
+  }).filter((item): item is IssueDesignScopeItem => !!item);
 }
 
 export function createIssueDesignRestoreTaskInput(input: IssueDesignRestoreTaskInputArgs): DesignRestoreTaskInputV1 {
   const isFrontendRestore = !!input.receivedDesignDelivery;
+  const items = isFrontendRestore
+    ? restoreItemsFromDelivery(input.receivedDesignDelivery)
+    : input.restoreItems ?? [];
+  const restoreItems = items.length ? items : [singleScopeItem(input.restoreFrameId, input.restoreFrameName)];
   return {
     version: "1.0",
     projectId: input.projectId ?? undefined,
     sourceIssueId: input.issueId,
     purpose: isFrontendRestore ? "frontend_restore" : "ui_generation",
-    items: [{
-      itemId: `issue-${input.issueId.slice(0, 8)}-${input.restoreFrameId}`,
-      order: 1,
+    items: restoreItems.map((item, index) => ({
+      itemId: `issue-${input.issueId.slice(0, 8)}-${item.frameId}`,
+      order: index + 1,
       designFileId: input.restoreFileId,
       revisionId: input.restoreRevisionId,
-      frameId: input.restoreFrameId,
-      frameName: input.restoreFrameName,
+      frameId: item.frameId,
+      frameName: item.frameName,
       source: "frame",
-      note: isFrontendRestore ? "Issue 内触发：基于收到的设计交付进行前端整页还原。" : "Issue 内触发：UI Agent 进行页面所见还原。",
-    }],
+      ...(item.groupId ? { groupId: item.groupId } : {}),
+      ...(item.groupName ? { groupName: item.groupName } : {}),
+      ...(item.groupPath?.length ? { groupPath: item.groupPath } : {}),
+      note: item.groupName
+        ? isFrontendRestore
+          ? `Issue 内触发：基于收到的设计交付进行前端整页还原；这些画板来自同一 Figma 分组 ${item.groupName}。`
+          : `Issue 内触发：UI Agent 按 Figma 分组 ${item.groupName} 进行页面所见还原。`
+        : isFrontendRestore ? "Issue 内触发：基于收到的设计交付进行前端整页还原。" : "Issue 内触发：UI Agent 进行页面所见还原。",
+    })),
   };
 }
 
@@ -416,7 +526,7 @@ interface DeliveryHistoryItemProps {
 function DeliveryHistoryItem({ delivery, issue, siblingIssues, restoreTasks, designFiles, members, currentIssueId, onOpenDesign, onOpenTask }: DeliveryHistoryItemProps) {
   const status = deliveryStatusCopy(delivery.status);
   const task = selectDeliveryRestoreTask(restoreTasks, delivery.id);
-  const frameName = deliveryFrameName(delivery) || "默认画板";
+  const scopeTitle = deliveryScopeTitle(delivery);
   const sourceTitle = deliveryIssueTitle(issue, siblingIssues, delivery.source_issue_id);
   const targetTitle = deliveryIssueTitle(issue, siblingIssues, delivery.target_issue_id);
   const relation = delivery.source_issue_id === currentIssueId ? "发出" : "收到";
@@ -438,7 +548,7 @@ function DeliveryHistoryItem({ delivery, issue, siblingIssues, restoreTasks, des
             <span className="text-muted-foreground">{relation}</span>
             <span className="font-mono text-muted-foreground">{shortId(delivery.id)}</span>
           </div>
-          <div className="mt-2 truncate font-medium text-foreground">{frameName}</div>
+          <div className="mt-2 truncate font-medium text-foreground">{scopeTitle}</div>
           <div className="mt-1 text-muted-foreground">{sourceTitle} → {targetTitle}</div>
           <div className="mt-1 truncate text-muted-foreground">{fileTitle} · {actorName}</div>
         </div>
@@ -449,11 +559,11 @@ function DeliveryHistoryItem({ delivery, issue, siblingIssues, restoreTasks, des
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2 text-muted-foreground">
         <div className="rounded-md bg-muted px-2 py-1.5">
-          <div>Scope</div>
+          <div>范围</div>
           <div className="font-medium text-foreground">{deliveryItemCount(delivery) || 1} 个对象</div>
         </div>
         <div className="rounded-md bg-muted px-2 py-1.5">
-          <div>Restore Task</div>
+          <div>还原任务</div>
           <div className="font-medium text-foreground">{task ? `${shortId(task.id)} · ${task.status}` : "未创建"}</div>
         </div>
       </div>
@@ -511,7 +621,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const navigation = useNavigation();
   const queryClient = useQueryClient();
   const [fileId, setFileId] = useState("");
-  const [frameId, setFrameId] = useState("");
+  const [scopeOptionId, setScopeOptionId] = useState("");
   const [agentId, setAgentId] = useState("");
   const [restoreTask, setRestoreTask] = useState<DesignRestoreTask | null>(null);
   const [isOrchestrating, setIsOrchestrating] = useState(false);
@@ -533,6 +643,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const activeDesignDelivery = sourceDesignDelivery ?? receivedDesignDelivery;
   const activeDeliveryFrameId = deliveryFrameId(activeDesignDelivery);
   const activeDeliveryFrameName = deliveryFrameName(activeDesignDelivery);
+  const activeDeliveryScopeTitle = deliveryScopeTitle(activeDesignDelivery);
   const deliveryScopeCount = deliveryItemCount(activeDesignDelivery);
   const parentIssueId = issue.parent_issue_id ?? "";
   const { data: siblingIssues = [] } = useQuery({
@@ -561,7 +672,12 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
     enabled: !!selectedFileId,
   });
   const frames = selectedFileDetail?.current_revision?.native_json?.frames ?? [];
-  const selectedFrameId = frameId || activeDeliveryFrameId || frames[0]?.id || "";
+  const scopeOptions = useMemo(() => issueDesignScopeOptions(frames), [frames]);
+  const selectedScopeOption = scopeOptions.find((option) => option.id === scopeOptionId)
+    ?? scopeOptions.find((option) => option.items.some((item) => item.frameId === activeDeliveryFrameId))
+    ?? scopeOptions[0]
+    ?? null;
+  const selectedFrameId = activeDeliveryFrameId || selectedScopeOption?.items[0]?.frameId || "";
   const selectedFrame = frames.find((frame: DesignFrame) => frame.id === selectedFrameId);
   const availableAgents = useMemo(() => agents.filter((agent) => !agent.archived_at && agent.runtime_id), [agents]);
   const assignedAvailableAgent = issue.assignee_type === "agent" ? availableAgents.find((agent) => agent.id === issue.assignee_id) : undefined;
@@ -569,8 +685,9 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const selectedRevisionId = selectedFileDetail?.current_revision?.id;
   const restoreFileId = receivedDesignDelivery?.file_id ?? selectedFileId;
   const restoreRevisionId = receivedDesignDelivery?.revision_id ?? selectedRevisionId;
-  const restoreFrameId = receivedDesignDelivery ? activeDeliveryFrameId || selectedFrameId : selectedFrame?.id || selectedFrameId;
-  const restoreFrameName = receivedDesignDelivery ? activeDeliveryFrameName || selectedFrame?.name || "默认画板" : selectedFrame?.name || "默认画板";
+  const restoreFrameId = receivedDesignDelivery ? activeDeliveryFrameId || selectedFrameId : selectedScopeOption?.items[0]?.frameId || selectedFrameId;
+  const restoreFrameName = receivedDesignDelivery ? activeDeliveryFrameName || selectedScopeOption?.label || selectedFrame?.name || "默认画板" : selectedScopeOption?.label || selectedFrame?.name || "默认画板";
+  const restoreItems = receivedDesignDelivery ? restoreItemsFromDelivery(receivedDesignDelivery) : selectedScopeOption?.items ?? [];
   const existingIssueRestoreTask = useMemo(() => {
     if (!restoreRevisionId) return null;
     return selectIssueRestoreTask(restoreTasks, issue.id, restoreRevisionId, receivedDesignDelivery?.id);
@@ -686,7 +803,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const createDelivery = useMutation({
     mutationFn: async () => {
       if (!selectedDeliveryTargetIssue) throw new Error("请选择交付目标 Issue");
-      if (!selectedFileId || !selectedRevisionId || !selectedFrame) throw new Error("请选择有效设计稿和画板");
+      if (!selectedFileId || !selectedRevisionId || !restoreFrameId || !restoreItems.length) throw new Error("请选择有效设计稿和交付范围");
       return api.createDesignDelivery({
         source_issue_id: issue.id,
         target_issue_id: selectedDeliveryTargetIssue.id,
@@ -698,8 +815,9 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
           targetIssueId: selectedDeliveryTargetIssue.id,
           designFileId: selectedFileId,
           revisionId: selectedRevisionId,
-          frameId: selectedFrame.id,
-          frameName: selectedFrame.name,
+          frameId: restoreFrameId,
+          frameName: restoreFrameName,
+          items: restoreItems,
           activeRestoreTask,
         }),
       });
@@ -756,6 +874,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
           restoreRevisionId,
           restoreFrameId,
           restoreFrameName,
+          restoreItems,
           receivedDesignDelivery,
         }),
       });
@@ -780,7 +899,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
       let task = retryingFailedTask ? null : activeRestoreTask;
       let plan = retryingFailedTask ? undefined : restorePlan;
       if (!task) {
-        if (!restoreFileId || !restoreRevisionId || !restoreFrameId) throw new Error("请选择有效设计稿和画板");
+        if (!restoreFileId || !restoreRevisionId || !restoreFrameId) throw new Error("请选择有效设计稿和交付范围");
         task = await createRestoreTask.mutateAsync();
       }
       if (!plan) {
@@ -828,11 +947,11 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
     }
   };
   const primaryActionPending = createRestoreTask.isPending || isOrchestrating;
-  const deliveryActionDisabled = !selectedDeliveryTargetIssue || !selectedFileId || !selectedRevisionId || !selectedFrame || createDelivery.isPending;
+  const deliveryActionDisabled = !selectedDeliveryTargetIssue || !selectedFileId || !selectedRevisionId || !restoreFrameId || !restoreItems.length || createDelivery.isPending;
   const openActiveDelivery = () => {
     if (!activeDesignDelivery) return;
     setDeliveryHistoryOpen(false);
-    if (activeDeliveryFrameId) {
+    if (activeDeliveryFrameId && deliveryScopeCount <= 1) {
       navigation.push(paths.designFrameDetail(activeDesignDelivery.file_id, activeDeliveryFrameId, { revisionId: activeDesignDelivery.revision_id }));
       return;
     }
@@ -841,7 +960,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const openDelivery = (delivery: DesignDelivery) => {
     const frameId = deliveryFrameId(delivery);
     setDeliveryHistoryOpen(false);
-    if (frameId) {
+    if (frameId && deliveryItemCount(delivery) <= 1) {
       navigation.push(paths.designFrameDetail(delivery.file_id, frameId, { revisionId: delivery.revision_id }));
       return;
     }
@@ -897,7 +1016,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="font-medium text-foreground">{displayStatusHint}</div>
-                <div className="mt-1 truncate text-muted-foreground">{activeDeliveryFrameName || selectedFrame?.name || "默认画板"} · {primaryAgent?.name ?? "等待可用 Agent"}{agentTask ? ` · ${agentTask.status}` : ""}</div>
+                <div className="mt-1 truncate text-muted-foreground">{activeDesignDelivery ? activeDeliveryScopeTitle : selectedScopeOption?.label || selectedFrame?.name || "默认画板"} · {primaryAgent?.name ?? "等待可用 Agent"}{agentTask ? ` · ${agentTask.status}` : ""}</div>
               </div>
               {activeDesignDelivery ? <span className="shrink-0 font-mono text-muted-foreground">{activeDesignDelivery.id.slice(0, 8)}</span> : activeRestoreTask ? <span className="shrink-0 font-mono text-muted-foreground">{activeRestoreTask.id.slice(0, 8)}</span> : null}
             </div>
@@ -930,9 +1049,8 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
                   </div>
                 </div>
                 <div className="rounded-md bg-muted px-2 py-1.5 text-muted-foreground">
-                  <span className="text-foreground">{activeDeliveryFrameName || "默认画板"}</span>
-                  <span> · scope {deliveryScopeCount || 1}</span>
-                  {linkedDeliveryTask ? <span> · Restore Task <span className="font-mono text-foreground">{shortId(linkedDeliveryTask.id)}</span> · {linkedDeliveryTask.status}</span> : <span> · 尚未创建还原任务</span>}
+                  <span className="text-foreground">{activeDeliveryScopeTitle}</span>
+                  {linkedDeliveryTask ? <span> · 还原任务 <span className="font-mono text-foreground">{shortId(linkedDeliveryTask.id)}</span> · {linkedDeliveryTask.status}</span> : <span> · 尚未创建还原任务</span>}
                 </div>
                 <div className="grid gap-2 sm:grid-cols-3">
                   <Button size="sm" variant="ghost" className="w-full" onClick={openActiveDelivery}>
@@ -965,11 +1083,17 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
             <div className="space-y-2 border-t p-2">
               {!receivedDesignDelivery ? (
                 <>
-                  <select value={selectedFileId} onChange={(event) => { setFileId(event.target.value); setFrameId(""); }} className="h-8 w-full rounded-md border bg-background px-2">
+                  <select value={selectedFileId} onChange={(event) => { setFileId(event.target.value); setScopeOptionId(""); }} className="h-8 w-full rounded-md border bg-background px-2">
                     {projectDesignFiles.length ? projectDesignFiles.map((file) => <option key={file.id} value={file.id}>{file.title}</option>) : <option value="">当前项目暂无设计稿</option>}
                   </select>
-                  <select value={selectedFrameId} onChange={(event) => setFrameId(event.target.value)} className="h-8 w-full rounded-md border bg-background px-2" disabled={!frames.length}>
-                    {frames.length ? frames.map((frame: DesignFrame) => <option key={frame.id} value={frame.id}>{frame.name}</option>) : <option value="">暂无画板</option>}
+                  <select value={selectedScopeOption?.id ?? ""} onChange={(event) => setScopeOptionId(event.target.value)} className="h-8 w-full rounded-md border bg-background px-2" disabled={!scopeOptions.length}>
+                    {scopeOptions.length ? scopeOptions.map((option) => {
+                      const item = option.items[0];
+                      const labelText = option.kind === "figma_group"
+                        ? `${option.label} · ${option.items.length} 个画板`
+                        : item?.groupName ? `${item.groupName} / ${option.label}` : option.label;
+                      return <option key={option.id} value={option.id}>{labelText}</option>;
+                    }) : <option value="">暂无交付范围</option>}
                   </select>
                 </>
               ) : null}

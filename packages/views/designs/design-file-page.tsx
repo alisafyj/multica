@@ -26,8 +26,11 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
+import { buildFrameTree, groupedFrames, restoreTaskItemsForFrames } from "./frame-groups";
+import type { FrameTreeNode, GroupedFrame } from "./frame-groups";
 
-type BoardFrame = GalleryNativeJson["frames"][number] & { board?: { x?: number; y?: number; order?: number } };
+type BoardFrame = GroupedFrame;
+type BoardGroup = Extract<FrameTreeNode, { kind: "group" }>;
 type Camera = { x: number; y: number; zoom: number };
 type FramePositionMap = Record<string, { x: number; y: number }>;
 type GuideLine = { orientation: "vertical" | "horizontal"; value: number };
@@ -144,7 +147,40 @@ async function drawFrame(container: Container, frame: BoardFrame, url: string | 
   group.addChild(label);
 }
 
-function PixiBoard({ nativeJson, frames, positions, camera, selectedFrameId, filePreviewUrl }: { nativeJson: GalleryNativeJson | undefined; frames: BoardFrame[]; positions: FramePositionMap; camera: Camera; selectedFrameId: string | null; filePreviewUrl?: string | null }) {
+function drawFrameGroups(container: Container, groups: BoardGroup[], positions: FramePositionMap, selectedGroupId: string | null) {
+  for (const group of groups) {
+    const bounds = frameBounds(group.frames, positions);
+    if (!bounds) continue;
+    const active = group.id === selectedGroupId;
+    const paddingX = 28;
+    const topPadding = 54;
+    const bottomPadding = 28;
+    const x = bounds.minX - paddingX;
+    const y = bounds.minY - topPadding;
+    const width = bounds.maxX - bounds.minX + paddingX * 2;
+    const height = bounds.maxY - bounds.minY + topPadding + bottomPadding;
+    const wrapper = new Container();
+    wrapper.x = x;
+    wrapper.y = y;
+    container.addChild(wrapper);
+
+    wrapper.addChild(
+      new Graphics()
+        .roundRect(0, 0, width, height, 18)
+        .fill({ color: active ? 0x5c54f0 : 0x71717a, alpha: active ? 0.065 : 0.035 })
+        .stroke({ width: active ? 4 : 2, color: active ? 0x5c54f0 : 0x71717a, alpha: active ? 0.68 : 0.32 }),
+    );
+    const label = new Text({
+      text: `${group.name} · ${group.frames.length}`,
+      style: { fill: active ? "#4f46e5" : "#71717a", fontSize: 18, fontFamily: "Inter, Arial", fontWeight: "700" },
+    });
+    label.x = 18;
+    label.y = 14;
+    wrapper.addChild(label);
+  }
+}
+
+function PixiBoard({ nativeJson, frames, groups, positions, camera, selectedFrameId, selectedGroupId, filePreviewUrl }: { nativeJson: GalleryNativeJson | undefined; frames: BoardFrame[]; groups: BoardGroup[]; positions: FramePositionMap; camera: Camera; selectedFrameId: string | null; selectedGroupId: string | null; filePreviewUrl?: string | null }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const appRef = useRef<Application | null>(null);
   const worldRef = useRef<Container | null>(null);
@@ -203,28 +239,32 @@ function PixiBoard({ nativeJson, frames, positions, camera, selectedFrameId, fil
     if (!world || !nativeJson || !pixiReady) return;
     let cancelled = false;
     world.removeChildren().forEach((child) => child.destroy({ children: true }));
+    drawFrameGroups(world, groups, positions, selectedGroupId);
     void Promise.all(frames.map((frame) => drawFrame(world, frame, framePreviewUrl(nativeJson, frame, filePreviewUrl), frame.id === selectedFrameId, positionedFrame(frame, positions).x, positionedFrame(frame, positions).y))).then(() => {
       if (cancelled) world.removeChildren().forEach((child) => child.destroy({ children: true }));
     });
     return () => {
       cancelled = true;
     };
-  }, [filePreviewUrl, frames, nativeJson, pixiReady, positions, selectedFrameId]);
+  }, [filePreviewUrl, frames, groups, nativeJson, pixiReady, positions, selectedFrameId, selectedGroupId]);
 
   return <div ref={hostRef} className="absolute inset-0" />;
 }
 
-function FloatingFrameTree({ frames, selectedFrameId, collapsed, onToggle, onSelect, query, onQueryChange }: { frames: BoardFrame[]; selectedFrameId: string | null; collapsed: boolean; onToggle: () => void; onSelect: (frameId: string) => void; query: string; onQueryChange: (query: string) => void }) {
-  const filtered = frames.filter((frame) => frame.name.toLowerCase().includes(query.trim().toLowerCase()));
+function FloatingFrameTree({ frames, selectedFrameId, selectedGroupId, collapsed, onToggle, onSelectFrame, onSelectGroup, query, onQueryChange }: { frames: BoardFrame[]; selectedFrameId: string | null; selectedGroupId: string | null; collapsed: boolean; onToggle: () => void; onSelectFrame: (frameId: string) => void; onSelectGroup: (group: BoardGroup) => void; query: string; onQueryChange: (query: string) => void }) {
+  const tree = useMemo(() => buildFrameTree(frames, query), [frames, query]);
+  const allGroups = useMemo(() => groupedFrames(frames), [frames]);
+  const groupById = useMemo(() => new Map(allGroups.map((group) => [group.id, group])), [allGroups]);
+  const selectedGroup = allGroups.find((group) => group.id === selectedGroupId);
   if (collapsed) {
     return (
-      <button type="button" onClick={onToggle} className="absolute left-4 top-4 z-20 flex h-10 w-[142px] items-center justify-between rounded-xl border bg-background/95 px-3 text-sm font-medium shadow-lg backdrop-blur">
-        <span>全部</span><ChevronRight className="h-4 w-4 text-muted-foreground" />
+      <button type="button" onClick={onToggle} onPointerDown={(event) => event.stopPropagation()} className="absolute left-4 top-4 z-20 flex h-10 w-[142px] items-center justify-between rounded-xl border bg-background/95 px-3 text-sm font-medium shadow-lg backdrop-blur">
+        <span className="truncate">{selectedGroup?.name ?? "全部"}</span><ChevronRight className="h-4 w-4 text-muted-foreground" />
       </button>
     );
   }
   return (
-    <div className="absolute left-4 top-4 z-20 flex max-h-[calc(100%-32px)] w-72 flex-col overflow-hidden rounded-2xl border bg-background/95 shadow-xl backdrop-blur">
+    <div className="absolute left-4 top-4 z-20 flex max-h-[calc(100%-32px)] w-72 flex-col overflow-hidden rounded-2xl border bg-background/95 shadow-xl backdrop-blur" onPointerDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
       <div className="flex h-12 items-center gap-2 border-b px-3">
         <button type="button" onClick={onToggle} className="rounded-md p-1 hover:bg-accent"><ChevronLeft className="h-4 w-4" /></button>
         <div className="min-w-0 flex-1 font-medium">全部</div>
@@ -237,13 +277,39 @@ function FloatingFrameTree({ frames, selectedFrameId, collapsed, onToggle, onSel
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-2">
-        {filtered.map((frame) => {
-          const active = frame.id === selectedFrameId;
+        {tree.map((node) => {
+          if (node.kind === "frame") {
+            const active = node.frame.id === selectedFrameId;
+            return (
+              <button key={node.frame.id} type="button" onClick={() => onSelectFrame(node.frame.id)} className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs ${active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}>
+                <span className="min-w-0 flex-1 truncate">{node.frame.name}</span>
+                <span className="shrink-0 font-mono opacity-70">{Math.round(node.frame.width)}×{Math.round(node.frame.height)}</span>
+              </button>
+            );
+          }
+
+          const activeGroup = node.id === selectedGroupId;
+          const fullGroup = groupById.get(node.id) ?? node;
           return (
-            <button key={frame.id} type="button" onClick={() => onSelect(frame.id)} className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs ${active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}>
-              <span className="min-w-0 flex-1 truncate">{frame.name}</span>
-              <span className="shrink-0 font-mono opacity-70">{Math.round(frame.width)}×{Math.round(frame.height)}</span>
-            </button>
+            <div key={node.id} className="mb-1">
+              <div className={`flex items-center gap-1 rounded-lg ${activeGroup ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}>
+                <button type="button" onClick={() => onSelectGroup(fullGroup)} className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left text-xs">
+                  <span className="min-w-0 flex-1 truncate font-medium">{node.name}</span>
+                  <Badge variant="secondary" className="shrink-0">{fullGroup.frames.length}</Badge>
+                </button>
+              </div>
+              <div className="ml-3 border-l pl-2">
+                {node.frames.map((frame) => {
+                  const active = frame.id === selectedFrameId;
+                  return (
+                    <button key={frame.id} type="button" onClick={() => onSelectFrame(frame.id)} className={`mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs ${active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}>
+                      <span className="min-w-0 flex-1 truncate">{frame.name}</span>
+                      <span className="shrink-0 font-mono opacity-70">{Math.round(frame.width)}×{Math.round(frame.height)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           );
         })}
       </div>
@@ -264,11 +330,13 @@ function FrameToolMenu({ state, onClose, onView, onCopyImage, onDelete, deleting
   );
 }
 
-function DesignBoard({ nativeJson, selectedFrameId, filePreviewUrl, onSelectFrame, onOpenFrame, onOpenFrameTools }: { nativeJson: GalleryNativeJson | undefined; selectedFrameId: string | null; filePreviewUrl?: string | null; onSelectFrame: (frameId: string) => void; onOpenFrame: (frameId: string) => void; onOpenFrameTools: (event: React.MouseEvent, frame: BoardFrame) => void }) {
+function DesignBoard({ nativeJson, selectedFrameId, selectedGroupId, filePreviewUrl, onSelectFrame, onSelectGroup, onOpenFrame, onOpenFrameTools }: { nativeJson: GalleryNativeJson | undefined; selectedFrameId: string | null; selectedGroupId: string | null; filePreviewUrl?: string | null; onSelectFrame: (frameId: string) => void; onSelectGroup: (group: BoardGroup) => void; onOpenFrame: (frameId: string) => void; onOpenFrameTools: (event: React.MouseEvent, frame: BoardFrame) => void }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const panRef = useRef<{ pointerId: number; startX: number; startY: number; cameraX: number; cameraY: number } | null>(null);
   const frameDragRef = useRef<{ pointerId: number; frameId: string; startX: number; startY: number; baseX: number; baseY: number; moved: boolean } | null>(null);
   const frames = useMemo(() => (nativeJson?.frames ?? []) as BoardFrame[], [nativeJson]);
+  const groups = useMemo(() => groupedFrames(frames), [frames]);
+  const selectedGroup = groups.find((group) => group.id === selectedGroupId);
   const [camera, setCamera] = useState<Camera>({ x: 80, y: 80, zoom: 0.35 });
   const [positions, setPositions] = useState<FramePositionMap>({});
   const [guides, setGuides] = useState<GuideLine[]>([]);
@@ -276,18 +344,23 @@ function DesignBoard({ nativeJson, selectedFrameId, filePreviewUrl, onSelectFram
   const [query, setQuery] = useState("");
 
   const bounds = useMemo(() => frameBounds(frames, positions), [frames, positions]);
-  const fitAll = () => {
+  const fitFrames = (targetFrames: BoardFrame[], padding = 140) => {
     const host = hostRef.current;
-    if (!host || !bounds) return;
-    const padding = 140;
-    const width = Math.max(bounds.maxX - bounds.minX, 1);
-    const height = Math.max(bounds.maxY - bounds.minY, 1);
+    const targetBounds = frameBounds(targetFrames, positions);
+    if (!host || !targetBounds) return;
+    const width = Math.max(targetBounds.maxX - targetBounds.minX, 1);
+    const height = Math.max(targetBounds.maxY - targetBounds.minY, 1);
     const zoom = Math.max(0.04, Math.min(1.5, Math.min((host.clientWidth - padding) / width, (host.clientHeight - padding) / height)));
-    setCamera({ x: (host.clientWidth - width * zoom) / 2 - bounds.minX * zoom, y: (host.clientHeight - height * zoom) / 2 - bounds.minY * zoom, zoom });
+    setCamera({ x: (host.clientWidth - width * zoom) / 2 - targetBounds.minX * zoom, y: (host.clientHeight - height * zoom) / 2 - targetBounds.minY * zoom, zoom });
   };
+  const fitAll = () => fitFrames(frames);
 
   useEffect(() => { fitAll(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [bounds?.minX, bounds?.minY, bounds?.maxX, bounds?.maxY]);
   useEffect(() => { setPositions({}); }, [nativeJson?.version, frames.map((frame) => frame.id).join("|")]);
+  useEffect(() => {
+    if (selectedGroup) fitFrames(selectedGroup.frames, 180);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [selectedGroup?.id]);
 
   const zoomBy = (factor: number) => {
     const host = hostRef.current;
@@ -355,8 +428,8 @@ function DesignBoard({ nativeJson, selectedFrameId, filePreviewUrl, onSelectFram
 
   return (
     <div ref={hostRef} className="relative h-full min-h-[680px] overflow-hidden bg-[radial-gradient(circle_at_1px_1px,hsl(var(--muted-foreground)/0.18)_1px,transparent_0)] [background-size:24px_24px]" onWheel={handleWheel} onPointerDown={handlePanStart} onPointerMove={(event) => { handlePanMove(event); moveFrame(event); }} onPointerUp={clearDrag} onPointerCancel={clearDrag}>
-      <PixiBoard nativeJson={nativeJson} frames={frames} positions={positions} camera={camera} selectedFrameId={selectedFrameId} filePreviewUrl={filePreviewUrl} />
-      <FloatingFrameTree frames={frames} selectedFrameId={selectedFrameId} collapsed={treeCollapsed} onToggle={() => setTreeCollapsed((value) => !value)} onSelect={onSelectFrame} query={query} onQueryChange={setQuery} />
+      <PixiBoard nativeJson={nativeJson} frames={frames} groups={groups} positions={positions} camera={camera} selectedFrameId={selectedFrameId} selectedGroupId={selectedGroupId} filePreviewUrl={filePreviewUrl} />
+      <FloatingFrameTree frames={frames} selectedFrameId={selectedFrameId} selectedGroupId={selectedGroupId} collapsed={treeCollapsed} onToggle={() => setTreeCollapsed((value) => !value)} onSelectFrame={onSelectFrame} onSelectGroup={onSelectGroup} query={query} onQueryChange={setQuery} />
       <div className="absolute left-0 top-0 origin-top-left" style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})` }}>
         {frames.map((frame) => {
           const pos = positionedFrame(frame, positions);
@@ -385,6 +458,7 @@ export function DesignFilePage({ designId }: { designId: string }) {
   const { data: revisions = [] } = useQuery({ ...designRevisionListOptions(wsId, designId), enabled: !!data?.file.id });
   const [selectedRevisionId, setSelectedRevisionId] = useState<string | null>(() => urlRevisionId || null);
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [frameToolMenu, setFrameToolMenu] = useState<FrameToolMenuState>(null);
   const [deleteDesignOpen, setDeleteDesignOpen] = useState(false);
   const [deleteFrameTarget, setDeleteFrameTarget] = useState<BoardFrame | null>(null);
@@ -400,6 +474,7 @@ export function DesignFilePage({ designId }: { designId: string }) {
   const canEditActiveRevision = !!activeRevision?.id && !isHistoricalRevision;
   const nativeJson = activeRevision?.native_json;
   const frames = useMemo(() => (nativeJson?.frames ?? []) as BoardFrame[], [nativeJson]);
+  const groups = useMemo(() => groupedFrames(frames), [frames]);
   const selectedFrame = meaningfulFrame(frames, selectedFrameId);
   const filePreviewUrl = data?.file.thumbnail_url ?? nativeThumbnailUrl(nativeJson);
 
@@ -410,7 +485,12 @@ export function DesignFilePage({ designId }: { designId: string }) {
   useEffect(() => {
     setSelectedRevisionId(urlRevisionId || null);
     setSelectedFrameId(null);
+    setSelectedGroupId(null);
   }, [urlRevisionId]);
+
+  useEffect(() => {
+    if (selectedGroupId && !groups.some((group) => group.id === selectedGroupId)) setSelectedGroupId(null);
+  }, [groups, selectedGroupId]);
 
   const deleteDesign = useMutation({
     mutationFn: () => api.deleteDesignFile(designId),
@@ -456,16 +536,11 @@ export function DesignFilePage({ designId }: { designId: string }) {
           projectId: data?.file.project_id ?? undefined,
           folderId: data?.file.folder_id ?? undefined,
           purpose: "frontend_restore",
-          items: frames.map((frame, index) => ({
-            itemId: `frame-${index + 1}`,
-            order: index + 1,
+          items: restoreTaskItemsForFrames(frames, {
             designFileId: designId,
             revisionId: activeRevision.id,
-            frameId: frame.id,
-            frameName: frame.name,
-            source: "frame",
-            note: "完整设计稿就绪任务：按 frame 提供给前端工程师或 Agent 获取上下文。",
-          })),
+            notePrefix: "完整设计稿就绪任务",
+          }),
         },
       });
     },
@@ -482,6 +557,7 @@ export function DesignFilePage({ designId }: { designId: string }) {
     event.stopPropagation();
     setFrameToolMenu({ x: event.clientX, y: event.clientY, frame });
     setSelectedFrameId(frame.id);
+    setSelectedGroupId(null);
   };
 
   const copyFrameImage = (frame: BoardFrame) => {
@@ -562,7 +638,19 @@ export function DesignFilePage({ designId }: { designId: string }) {
         <main className="min-h-0 flex-1 p-4">
           <div className="flex h-full min-h-[720px] flex-col gap-4">
             <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border bg-background">
-              <DesignBoard nativeJson={nativeJson} selectedFrameId={selectedFrame?.id ?? null} filePreviewUrl={filePreviewUrl} onSelectFrame={setSelectedFrameId} onOpenFrame={(frameId) => navigation.push(paths.designFrameDetail(designId, frameId, { revisionId: activeRevision?.id }))} onOpenFrameTools={openFrameTools} />
+              <DesignBoard
+                nativeJson={nativeJson}
+                selectedFrameId={selectedFrame?.id ?? null}
+                selectedGroupId={selectedGroupId}
+                filePreviewUrl={filePreviewUrl}
+                onSelectFrame={(frameId) => { setSelectedFrameId(frameId); setSelectedGroupId(null); }}
+                onSelectGroup={(group) => {
+                  setSelectedGroupId(group.id);
+                  setSelectedFrameId(group.frames[0]?.id ?? null);
+                }}
+                onOpenFrame={(frameId) => navigation.push(paths.designFrameDetail(designId, frameId, { revisionId: activeRevision?.id }))}
+                onOpenFrameTools={openFrameTools}
+              />
             </div>
           </div>
         </main>
