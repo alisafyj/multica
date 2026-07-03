@@ -2329,7 +2329,7 @@ func TestGetDesignRestoreTaskIncludesOfflineRuntimeExecutionStatus(t *testing.T)
 
 func TestDesignRestoreExecutionStatusWarnsWhenRunningWithoutRecentOutput(t *testing.T) {
 	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
-	row := db.GetDesignRestoreTaskExecutionStatusRow{
+	row := designRestoreExecutionStatusSnapshot{
 		AgentTaskID:        util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 		AgentTaskStatus:    pgtype.Text{String: "running", Valid: true},
 		RuntimeID:          util.MustParseUUID("22222222-2222-2222-2222-222222222222"),

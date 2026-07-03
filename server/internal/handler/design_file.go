@@ -644,24 +644,74 @@ const (
 	designRestoreQueuedWarnAfter   = 60 * time.Second
 )
 
+type designRestoreExecutionStatusSnapshot struct {
+	RestoreTaskID         pgtype.UUID
+	AgentTaskID           pgtype.UUID
+	AgentTaskStatus       pgtype.Text
+	RuntimeID             pgtype.UUID
+	AgentTaskDispatchedAt pgtype.Timestamptz
+	AgentTaskStartedAt    pgtype.Timestamptz
+	AgentTaskCompletedAt  pgtype.Timestamptz
+	AgentTaskCreatedAt    pgtype.Timestamptz
+	AgentTaskError        pgtype.Text
+	AgentTaskWaitReason   pgtype.Text
+	RuntimeStatus         pgtype.Text
+	RuntimeLastSeenAt     pgtype.Timestamptz
+	LastMessageSeq        int32
+	LastMessageAt         pgtype.Timestamptz
+}
+
 func (h *Handler) designRestoreTaskToResponseWithExecution(ctx context.Context, task db.DesignRestoreTask) DesignRestoreTaskResponse {
 	resp := designRestoreTaskToResponse(task)
 	if !task.AgentTaskID.Valid || h == nil || h.Queries == nil {
 		return resp
 	}
-	row, err := h.Queries.GetDesignRestoreTaskExecutionStatus(ctx, db.GetDesignRestoreTaskExecutionStatusParams{
-		ID:          task.ID,
-		WorkspaceID: task.WorkspaceID,
-	})
-	if err != nil {
-		slog.Warn("design restore task execution status: failed to load", "restore_task_id", uuidToString(task.ID), "error", err)
+	snapshot := designRestoreExecutionStatusSnapshot{
+		RestoreTaskID: task.ID,
+		AgentTaskID:   task.AgentTaskID,
+	}
+	agentTask, err := h.Queries.GetAgentTask(ctx, task.AgentTaskID)
+	if err != nil && err != pgx.ErrNoRows {
+		slog.Warn("design restore task execution status: failed to load agent task", "restore_task_id", uuidToString(task.ID), "agent_task_id", uuidToString(task.AgentTaskID), "error", err)
 		return resp
 	}
-	resp.ExecutionStatus = designRestoreExecutionStatusToResponse(row, time.Now())
+	if err == nil {
+		snapshot.AgentTaskStatus = pgtype.Text{String: agentTask.Status, Valid: true}
+		snapshot.RuntimeID = agentTask.RuntimeID
+		snapshot.AgentTaskDispatchedAt = agentTask.DispatchedAt
+		snapshot.AgentTaskStartedAt = agentTask.StartedAt
+		snapshot.AgentTaskCompletedAt = agentTask.CompletedAt
+		snapshot.AgentTaskCreatedAt = agentTask.CreatedAt
+		snapshot.AgentTaskError = agentTask.Error
+		snapshot.AgentTaskWaitReason = agentTask.WaitReason
+
+		if agentTask.RuntimeID.Valid {
+			runtime, runtimeErr := h.Queries.GetAgentRuntime(ctx, agentTask.RuntimeID)
+			if runtimeErr != nil && runtimeErr != pgx.ErrNoRows {
+				slog.Warn("design restore task execution status: failed to load runtime", "restore_task_id", uuidToString(task.ID), "runtime_id", uuidToString(agentTask.RuntimeID), "error", runtimeErr)
+				return resp
+			}
+			if runtimeErr == nil {
+				snapshot.RuntimeStatus = pgtype.Text{String: runtime.Status, Valid: true}
+				snapshot.RuntimeLastSeenAt = runtime.LastSeenAt
+			}
+		}
+
+		latestMessage, messageErr := h.Queries.GetLatestTaskMessageForTask(ctx, agentTask.ID)
+		if messageErr != nil && messageErr != pgx.ErrNoRows {
+			slog.Warn("design restore task execution status: failed to load latest task message", "restore_task_id", uuidToString(task.ID), "agent_task_id", uuidToString(agentTask.ID), "error", messageErr)
+			return resp
+		}
+		if messageErr == nil {
+			snapshot.LastMessageSeq = latestMessage.Seq
+			snapshot.LastMessageAt = latestMessage.CreatedAt
+		}
+	}
+	resp.ExecutionStatus = designRestoreExecutionStatusToResponse(snapshot, time.Now())
 	return resp
 }
 
-func designRestoreExecutionStatusToResponse(row db.GetDesignRestoreTaskExecutionStatusRow, now time.Time) *DesignRestoreTaskExecutionStatusResponse {
+func designRestoreExecutionStatusToResponse(row designRestoreExecutionStatusSnapshot, now time.Time) *DesignRestoreTaskExecutionStatusResponse {
 	status := &DesignRestoreTaskExecutionStatusResponse{
 		AgentTaskID:           uuidToPtr(row.AgentTaskID),
 		AgentTaskStatus:       textToPtr(row.AgentTaskStatus),

@@ -62,6 +62,30 @@ func (q *Queries) DeleteTaskMessages(ctx context.Context, taskID pgtype.UUID) er
 	return err
 }
 
+const getLatestTaskMessageForTask = `-- name: GetLatestTaskMessageForTask :one
+SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM task_message
+WHERE task_id = $1
+ORDER BY seq DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestTaskMessageForTask(ctx context.Context, taskID pgtype.UUID) (TaskMessage, error) {
+	row := q.db.QueryRow(ctx, getLatestTaskMessageForTask, taskID)
+	var i TaskMessage
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.Seq,
+		&i.Type,
+		&i.Tool,
+		&i.Content,
+		&i.Input,
+		&i.Output,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listTaskMessages = `-- name: ListTaskMessages :many
 SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM task_message
 WHERE task_id = $1
