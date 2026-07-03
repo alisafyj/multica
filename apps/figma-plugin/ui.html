@@ -317,7 +317,10 @@
         if (!list.length) {
           boards.innerHTML = `<div class="empty">${currentScope() === 'page' ? '当前页面没有可上传画板' : '未选中画板，请在 Figma 中选择一个或多个画板'}</div>`;
         } else {
-          boards.innerHTML = list.map((frame) => `<div class="board"><span class="board-name">${escapeHtml(frame.name)}</span><span class="board-size">${Math.round(frame.width)}×${Math.round(frame.height)}</span></div>`).join('');
+          boards.innerHTML = list.map((frame) => {
+            const groupHint = frame.groupName ? `<span class="muted" style="margin-left:6px;font-size:10px">来自 ${escapeHtml(frame.groupName)}</span>` : '';
+            return `<div class="board"><span class="board-name">${escapeHtml(frame.name)}${groupHint}</span><span class="board-size">${Math.round(frame.width)}×${Math.round(frame.height)}</span></div>`;
+          }).join('');
         }
         exported = null;
         updateUploadEnabled();

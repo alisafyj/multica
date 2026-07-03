@@ -1,5 +1,9 @@
 figma.showUI(__html__, { width: 460, height: 700, themeColors: true });
 
+if ("skipInvisibleInstanceChildren" in figma) {
+  figma.skipInvisibleInstanceChildren = true;
+}
+
 figma.clientStorage.getAsync('multicaFigmaToken').then((token) => {
   figma.ui.postMessage({ type: 'stored-token', token: token || '' });
   postSelectionSummary('selected');
@@ -193,7 +197,73 @@ function exportableValue(node) {
   }));
 }
 
+function hasChildren(node) {
+  return !!node && "children" in node && Array.isArray(node.children);
+}
+
+function isNodeVisible(node) {
+  return !!node && node.visible !== false;
+}
+
+function visibleChildren(node) {
+  return hasChildren(node) ? node.children.filter(isNodeVisible) : [];
+}
+
+function isFrameLikeRoot(node) {
+  return !!node && ["FRAME", "COMPONENT", "INSTANCE"].includes(node.type);
+}
+
+function isContainerRoot(node) {
+  return !!node && ["GROUP", "SECTION"].includes(node.type);
+}
+
+function groupMetadata(node, depth) {
+  return {
+    id: cleanId(node.id),
+    sourceNodeId: node.id,
+    name: safeName(node),
+    nodeType: node.type,
+    depth,
+  };
+}
+
+function collectDescendantFrameRoots(node, groups, output, depth) {
+  if (!isNodeVisible(node) || !hasChildren(node)) return;
+  const nextGroups = isContainerRoot(node) ? groups.concat(groupMetadata(node, depth)) : groups;
+  for (const child of visibleChildren(node)) {
+    if (child && child.type === "FRAME") {
+      output.push({ node: child, groups: nextGroups });
+      continue;
+    }
+    if (hasChildren(child)) collectDescendantFrameRoots(child, nextGroups, output, depth + 1);
+  }
+}
+
+function exportRootsForNode(root) {
+  if (!isNodeVisible(root)) return [];
+  if (isFrameLikeRoot(root)) return [{ node: root, groups: [] }];
+  if (!isContainerRoot(root)) return [];
+  const descendants = [];
+  collectDescendantFrameRoots(root, [], descendants, 0);
+  return descendants.length > 0 ? descendants : [{ node: root, groups: [] }];
+}
+
+function expandExportRoots(roots) {
+  const expanded = [];
+  const seen = {};
+  for (const root of roots || []) {
+    for (const item of exportRootsForNode(root)) {
+      const key = item && item.node && item.node.id ? String(item.node.id) : "";
+      if (key && seen[key]) continue;
+      if (key) seen[key] = true;
+      expanded.push(item);
+    }
+  }
+  return expanded;
+}
+
 function buildLayer(node, frameId, parentId, layers, frameBox, assets) {
+  if (!isNodeVisible(node)) return undefined;
   const box = rect(node, { x: 0, y: 0, width: 1, height: 1 }, frameBox);
   const id = cleanId(node.id);
   const layer = {
@@ -256,19 +326,20 @@ function buildLayer(node, frameId, parentId, layers, frameBox, assets) {
     isMask: node.isMask,
   };
 
-  if ("children" in node && node.children && node.children.length > 0) {
-    layer.children = node.children.map((child) => cleanId(child.id));
+  const children = visibleChildren(node);
+  if (children.length > 0) {
+    layer.children = children.map((child) => cleanId(child.id));
   }
 
   layers[id] = layer;
-  if ("children" in node && node.children) {
-    for (const child of node.children) buildLayer(child, frameId, id, layers, frameBox, assets);
+  for (const child of children) {
+    buildLayer(child, frameId, id, layers, frameBox, assets);
   }
   return id;
 }
 
 function isExportableRoot(node) {
-  return !!node && ["FRAME", "COMPONENT", "INSTANCE", "SECTION", "GROUP"].includes(node.type);
+  return isNodeVisible(node) && ["FRAME", "COMPONENT", "INSTANCE", "SECTION", "GROUP"].includes(node.type);
 }
 
 function rootsForScope(scope) {
@@ -282,10 +353,21 @@ function nodeSummary(node) {
   return { id: node.id, name: safeName(node), type: node.type, width: box.width, height: box.height, x: box.x, y: box.y };
 }
 
+function exportRootSummary(item) {
+  const summary = nodeSummary(item.node);
+  if (item.groups && item.groups.length > 0) {
+    const group = item.groups[item.groups.length - 1];
+    summary.groupId = group.id;
+    summary.groupName = group.name;
+    summary.groupPath = item.groups.map((groupItem) => groupItem.name);
+  }
+  return summary;
+}
+
 function selectionSummary(scope) {
-  const selected = (figma.currentPage.selection || []).filter(isExportableRoot).map(nodeSummary);
-  const page = (figma.currentPage.children || []).filter(isExportableRoot).map(nodeSummary);
-  const active = rootsForScope(scope).map(nodeSummary);
+  const selected = expandExportRoots((figma.currentPage.selection || []).filter(isExportableRoot)).map(exportRootSummary);
+  const page = expandExportRoots((figma.currentPage.children || []).filter(isExportableRoot)).map(exportRootSummary);
+  const active = expandExportRoots(rootsForScope(scope)).map(exportRootSummary);
   return { pageName: figma.currentPage.name, scope: scope || 'selected', selected, page, active };
 }
 
@@ -295,7 +377,7 @@ function postSelectionSummary(scope) {
 
 function buildSourceKey(scope, roots) {
   const fileKey = figma.fileKey || 'local-file';
-  const nodeIds = roots.map((root) => String(root.id)).sort().join(',');
+  const nodeIds = roots.map((root) => String(root.node ? root.node.id : root.id)).sort().join(',');
   return `figma:${fileKey}:page:${figma.currentPage.id}:scope:${scope || 'selected'}:nodes:${nodeIds}`;
 }
 
@@ -318,17 +400,19 @@ function frameAssetDescriptor(node, frameId, kind, constraint) {
 }
 
 async function exportNativeJson(scope) {
-  const roots = rootsForScope(scope);
+  const roots = expandExportRoots(rootsForScope(scope));
   if (roots.length === 0) throw new Error(scope === 'page' ? '当前页面没有可上传画板' : '请先在 Figma 中选中要上传的画板');
   const sourceKey = buildSourceKey(scope, roots);
   const layers = {};
   const assets = {};
   const frames = [];
-  const selectedNames = roots.map(safeName);
+  const selectedNames = roots.map((item) => safeName(item.node));
   const title = selectedNames.length === 1 ? selectedNames[0] : `${figma.currentPage.name} (${roots.length} selections)`;
+  const figmaGroups = {};
 
   for (let index = 0; index < roots.length; index += 1) {
-    const root = roots[index];
+    const rootItem = roots[index];
+    const root = rootItem.node;
     figma.ui.postMessage({ type: 'export-progress', stage: 'read', current: index + 1, total: roots.length, name: safeName(root) });
     const frameId = `frame-${index + 1}`;
     const box = rect(root, { x: 0, y: 0, width: 1440, height: 900 });
@@ -339,7 +423,7 @@ async function exportNativeJson(scope) {
     const thumbnailAsset = frameAssetDescriptor(root, frameId, 'frame_thumbnail', { type: 'WIDTH', value: 600 });
     if (previewAsset) assets[previewAsset.id] = previewAsset;
     if (thumbnailAsset) assets[thumbnailAsset.id] = thumbnailAsset;
-    frames.push({
+    const frame = {
       id: frameId,
       sourceNodeId: root.id,
       name: safeName(root),
@@ -351,7 +435,30 @@ async function exportNativeJson(scope) {
       previewAssetId: previewAsset && previewAsset.id,
       thumbnailAssetId: thumbnailAsset && thumbnailAsset.id,
       board: { x: box.x, y: box.y, order: index },
-    });
+    };
+    if (rootItem.groups && rootItem.groups.length > 0) {
+      const group = rootItem.groups[rootItem.groups.length - 1];
+      frame.source = {
+        tool: "figma",
+        groupId: group.id,
+        groupSourceNodeId: group.sourceNodeId,
+        groupName: group.name,
+        groupPath: rootItem.groups.map((groupItem) => groupItem.name),
+      };
+      for (const groupItem of rootItem.groups) {
+        if (!figmaGroups[groupItem.id]) {
+          figmaGroups[groupItem.id] = {
+            id: groupItem.id,
+            sourceNodeId: groupItem.sourceNodeId,
+            name: groupItem.name,
+            nodeType: groupItem.nodeType,
+            frameIds: [],
+          };
+        }
+        figmaGroups[groupItem.id].frameIds.push(frameId);
+      }
+    }
+    frames.push(frame);
   }
 
   if (frames.length === 0) {
@@ -375,6 +482,10 @@ async function exportNativeJson(scope) {
     assets,
     slots: {},
     componentBindings: {},
+    restoreHints: Object.keys(figmaGroups).length > 0 ? {
+      figmaGroups,
+      note: "Frames imported from Figma groups should be restored as one related page flow unless product context says otherwise.",
+    } : undefined,
     source: {
       tool: 'figma',
       fileKey: figma.fileKey || undefined,
@@ -382,7 +493,8 @@ async function exportNativeJson(scope) {
       pageName: figma.currentPage.name,
       scope: scope || 'selected',
       sourceKey,
-      nodeIds: roots.map((root) => root.id),
+      nodeIds: roots.map((root) => root.node.id),
+      groups: Object.keys(figmaGroups).length > 0 ? figmaGroups : undefined,
     },
   };
 }

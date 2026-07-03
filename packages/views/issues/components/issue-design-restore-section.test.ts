@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createIssueDesignDeliveryScope, createIssueDesignRestoreTaskInput, createRawDesignFallbackScope, defaultDeliveryTargetId, deliveryActorName, deliveryCancelActorName, deliveryFileTitle, deliveryHandoffSource, deliveryScopeItemLabel, deliveryScopeItems, deliveryStatusCopy, deliveryTargetCandidates, isRawDesignFallbackDelivery, latestInactiveTargetDelivery, restoreAgentUnavailableCopy, restoreDispatchPrompt, selectDeliveryRestoreTask, selectIssueRestoreTask, sortDesignDeliveryHistory } from "./issue-design-restore-section";
-import type { DesignDelivery, DesignFile, DesignRestoreTask, Issue, MemberWithUser } from "@multica/core/types";
+import { createIssueDesignDeliveryScope, createIssueDesignRestoreTaskInput, createRawDesignFallbackScope, defaultDeliveryTargetId, deliveryActorName, deliveryCancelActorName, deliveryFileTitle, deliveryHandoffSource, deliveryScopeItemLabel, deliveryScopeItems, deliveryScopeTitle, deliveryStatusCopy, deliveryTargetCandidates, isRawDesignFallbackDelivery, issueDesignScopeOptions, latestInactiveTargetDelivery, restoreAgentUnavailableCopy, restoreDispatchPrompt, selectDeliveryRestoreTask, selectIssueRestoreTask, sortDesignDeliveryHistory } from "./issue-design-restore-section";
+import type { DesignDelivery, DesignFile, DesignFrame, DesignRestoreTask, Issue, MemberWithUser } from "@multica/core/types";
 
 function task(overrides: Partial<DesignRestoreTask>): DesignRestoreTask {
   return {
@@ -282,7 +282,60 @@ describe("delivery handoff source helpers", () => {
   });
 });
 
+describe("delivery scope title", () => {
+  it("uses the Figma group as the title for multi-frame delivery", () => {
+    const title = deliveryScopeTitle(delivery({
+      id: "delivery-1",
+      scope: {
+        source_type: "raw_design_revision",
+        items: [
+          { frameId: "frame-1", frameName: "钱包首页", source: "frame", groupId: "group-43", groupName: "Group 43" },
+          { frameId: "frame-2", frameName: "提现流程", source: "frame", groupId: "group-43", groupName: "Group 43" },
+        ],
+      },
+    }));
+
+    expect(title).toBe("Group 43 · 2 个画板");
+  });
+
+  it("falls back to the first item name for non-group multi-item delivery", () => {
+    const title = deliveryScopeTitle(delivery({
+      id: "delivery-1",
+      scope: {
+        source_type: "raw_design_revision",
+        items: [
+          { frameId: "frame-1", frameName: "钱包首页", source: "frame" },
+          { frameId: "frame-2", frameName: "提现流程", source: "frame" },
+        ],
+      },
+    }));
+
+    expect(title).toBe("钱包首页 等 2 个对象");
+  });
+});
+
 describe("issue restore task input helpers", () => {
+  it("creates UI generation input for all frames in a selected Figma group", () => {
+    const input = createIssueDesignRestoreTaskInput({
+      issueId: "ui-issue-12345678",
+      projectId: "project-1",
+      restoreFileId: "file-1",
+      restoreRevisionId: "revision-1",
+      restoreFrameId: "frame-1",
+      restoreFrameName: "Group 43",
+      restoreItems: [
+        { frameId: "frame-1", frameName: "钱包首页", groupId: "group-43", groupName: "Group 43", groupPath: ["Group 43"] },
+        { frameId: "frame-2", frameName: "提现流程", groupId: "group-43", groupName: "Group 43", groupPath: ["Group 43"] },
+      ],
+      receivedDesignDelivery: null,
+    });
+
+    expect(input.purpose).toBe("ui_generation");
+    expect(input.items).toHaveLength(2);
+    expect(input.items.map((item) => item.frameId)).toEqual(["frame-1", "frame-2"]);
+    expect(input.items[0]?.note).toContain("Figma 分组 Group 43");
+  });
+
   it("creates UI generation input for UI-owned restore work", () => {
     const input = createIssueDesignRestoreTaskInput({
       issueId: "ui-issue-12345678",
@@ -298,6 +351,31 @@ describe("issue restore task input helpers", () => {
     expect(input.items[0]?.note).toBe("Issue 内触发：UI Agent 进行页面所见还原。");
     expect(restoreDispatchPrompt(false)).toContain("UI 页面所见还原");
     expect(restoreAgentUnavailableCopy(false)).toBe("暂无可用 UI Agent");
+  });
+
+  it("creates frontend restore input from every frame in the received delivery scope", () => {
+    const input = createIssueDesignRestoreTaskInput({
+      issueId: "frontend-issue-12345678",
+      projectId: "project-1",
+      restoreFileId: "file-1",
+      restoreRevisionId: "revision-1",
+      restoreFrameId: "frame-1",
+      restoreFrameName: "Group 43",
+      receivedDesignDelivery: delivery({
+        id: "delivery-1",
+        scope: {
+          source_type: "raw_design_revision",
+          items: [
+            { frameId: "frame-1", frameName: "钱包首页", source: "frame", groupId: "group-43", groupName: "Group 43", groupPath: ["Group 43"] },
+            { frameId: "frame-2", frameName: "提现流程", source: "frame", groupId: "group-43", groupName: "Group 43", groupPath: ["Group 43"] },
+          ],
+        },
+      }),
+    });
+
+    expect(input.purpose).toBe("frontend_restore");
+    expect(input.items.map((item) => item.frameId)).toEqual(["frame-1", "frame-2"]);
+    expect(input.items[0]?.note).toContain("收到的设计交付");
   });
 
   it("keeps frontend restore input for frontend work from a received delivery", () => {
@@ -358,6 +436,24 @@ describe("issue design delivery scope helpers", () => {
     });
   });
 
+  it("keeps all selected Figma group frames in raw design fallback scope", () => {
+    const scope = createIssueDesignDeliveryScope({
+      ...baseInput,
+      frameName: "Group 43",
+      items: [
+        { frameId: "frame-1", frameName: "钱包首页", groupId: "group-43", groupName: "Group 43", groupPath: ["Group 43"] },
+        { frameId: "frame-2", frameName: "提现流程", groupId: "group-43", groupName: "Group 43", groupPath: ["Group 43"] },
+      ],
+      activeRestoreTask: task({ id: "queued-task", status: "queued" }),
+    });
+
+    const items = scope.items as Array<Record<string, unknown>>;
+    expect(scope.source_type).toBe("raw_design_revision");
+    expect(items).toHaveLength(2);
+    expect(items.map((item) => item.frameId)).toEqual(["frame-1", "frame-2"]);
+    expect(items[0]?.groupName).toBe("Group 43");
+  });
+
   it("keeps raw design fallback scope when no completed UI restore exists", () => {
     const scope = createIssueDesignDeliveryScope({
       ...baseInput,
@@ -366,5 +462,32 @@ describe("issue design delivery scope helpers", () => {
 
     expect(scope.source_type).toBe("raw_design_revision");
     expect(scope.fallback_policy).toBe("frontend_full_restore_fallback");
+  });
+});
+
+describe("issue design scope options", () => {
+  function frame(input: Partial<DesignFrame> & Pick<DesignFrame, "id" | "name">): DesignFrame {
+    return {
+      rootLayerId: `${input.id}-root`,
+      width: 390,
+      height: 844,
+      ...input,
+    };
+  }
+
+  it("keeps both Figma group options and individual frame options", () => {
+    const options = issueDesignScopeOptions([
+      frame({ id: "frame-1", name: "钱包首页", source: { groupId: "group-43", groupName: "Group 43", groupPath: ["Group 43"] } }),
+      frame({ id: "frame-2", name: "提现流程", source: { groupId: "group-43", groupName: "Group 43", groupPath: ["Group 43"] } }),
+      frame({ id: "frame-3", name: "未分组页面" }),
+    ]);
+
+    expect(options.map((option) => ({ id: option.id, label: option.label, kind: option.kind, count: option.items.length }))).toEqual([
+      { id: "group:group-43", label: "Group 43", kind: "figma_group", count: 2 },
+      { id: "frame:frame-1", label: "钱包首页", kind: "frame", count: 1 },
+      { id: "frame:frame-2", label: "提现流程", kind: "frame", count: 1 },
+      { id: "frame:frame-3", label: "未分组页面", kind: "frame", count: 1 },
+    ]);
+    expect(options.find((option) => option.id === "frame:frame-1")?.items[0]?.groupName).toBe("Group 43");
   });
 });
