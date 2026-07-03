@@ -179,6 +179,7 @@ function restoreTask(overrides: Partial<DesignRestoreTask> = {}): DesignRestoreT
     created_by: null,
     created_at: "2026-07-02T00:00:00Z",
     updated_at: "2026-07-02T00:00:00Z",
+    execution_status: overrides.execution_status ?? null,
     ...overrides,
   };
 }
@@ -221,5 +222,35 @@ describe("IssueDesignRestoreSection frontend handoff visibility", () => {
     renderSection(issue({ title: "UI设计", metadata: {} }));
 
     expect(await screen.findByText("交付给前端开发")).toBeInTheDocument();
+  });
+
+  it("shows runtime offline diagnostics for an active restore task", async () => {
+    mockDesignQueries.restoreTasks = [restoreTask({
+      agent_task_id: "agent-task-1",
+      status: "running",
+      execution_status: {
+        agent_task_id: "agent-task-1",
+        agent_task_status: "queued",
+        agent_task_created_at: "2026-07-02T00:00:00Z",
+        agent_task_dispatched_at: null,
+        agent_task_started_at: null,
+        agent_task_completed_at: null,
+        agent_task_error: null,
+        agent_task_wait_reason: null,
+        runtime_id: "runtime-1",
+        runtime_status: "offline",
+        runtime_last_seen_at: "2026-07-02T00:00:00Z",
+        last_message_seq: null,
+        last_message_at: null,
+        phase: "waiting_runtime",
+        reason: "runtime_offline",
+        severity: "warning",
+      },
+    })];
+
+    renderSection(issue({ title: "UI设计", metadata: {} }));
+
+    expect(await screen.findByText("运行时离线")).toBeInTheDocument();
+    expect(screen.getByText("Agent 所在运行时当前离线，任务会继续等待守护进程恢复。")).toBeInTheDocument();
   });
 });

@@ -227,6 +227,39 @@ describe("DesignRestoreTaskSchema", () => {
     });
     expect(parsed.tasks[0]?.delivery_id).toBe("delivery-1");
   });
+
+  it("defaults execution_status to null for older restore task responses", () => {
+    const parsed = DesignRestoreTaskSchema.parse(task);
+    expect(parsed.execution_status).toBe(null);
+  });
+
+  it("preserves execution_status diagnostics on task responses", () => {
+    const parsed = DesignRestoreTaskSchema.parse({
+      ...task,
+      execution_status: {
+        agent_task_id: "agent-task-1",
+        agent_task_status: "queued",
+        agent_task_created_at: "2026-07-03T01:00:00Z",
+        agent_task_dispatched_at: null,
+        agent_task_started_at: null,
+        agent_task_completed_at: null,
+        agent_task_error: null,
+        agent_task_wait_reason: null,
+        runtime_id: "runtime-1",
+        runtime_status: "offline",
+        runtime_last_seen_at: "2026-07-03T00:50:00Z",
+        last_message_seq: null,
+        last_message_at: null,
+        phase: "waiting_runtime",
+        reason: "runtime_offline",
+        severity: "warning",
+      },
+    });
+
+    expect(parsed.execution_status?.phase).toBe("waiting_runtime");
+    expect(parsed.execution_status?.reason).toBe("runtime_offline");
+    expect(parsed.execution_status?.runtime_status).toBe("offline");
+  });
 });
 
 // The duplicate-issue branch in create-issue.tsx feeds ApiError.body

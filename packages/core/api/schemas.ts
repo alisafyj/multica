@@ -338,6 +338,25 @@ export const EMPTY_LIST_DESIGN_DELIVERIES_RESPONSE: ListDesignDeliveriesResponse
   deliveries: [],
 };
 
+export const DesignRestoreTaskExecutionStatusSchema = z.object({
+  agent_task_id: z.string().nullable().default(null),
+  agent_task_status: z.string().nullable().default(null),
+  agent_task_created_at: z.string().nullable().default(null),
+  agent_task_dispatched_at: z.string().nullable().default(null),
+  agent_task_started_at: z.string().nullable().default(null),
+  agent_task_completed_at: z.string().nullable().default(null),
+  agent_task_error: z.string().nullable().default(null),
+  agent_task_wait_reason: z.string().nullable().default(null),
+  runtime_id: z.string().nullable().default(null),
+  runtime_status: z.string().nullable().default(null),
+  runtime_last_seen_at: z.string().nullable().default(null),
+  last_message_seq: z.number().nullable().default(null),
+  last_message_at: z.string().nullable().default(null),
+  phase: z.string().default("unknown"),
+  reason: z.string().default("unknown"),
+  severity: z.string().default("info"),
+}).loose();
+
 export const DesignRestoreTaskSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
@@ -353,6 +372,7 @@ export const DesignRestoreTaskSchema = z.object({
   created_by: z.string().nullable().default(null),
   created_at: z.string().default(""),
   updated_at: z.string().default(""),
+  execution_status: DesignRestoreTaskExecutionStatusSchema.nullable().default(null),
 }).loose();
 
 export const EMPTY_DESIGN_RESTORE_TASK: DesignRestoreTask = {
@@ -370,6 +390,7 @@ export const EMPTY_DESIGN_RESTORE_TASK: DesignRestoreTask = {
   created_by: null,
   created_at: "",
   updated_at: "",
+  execution_status: null,
 };
 
 export const ListDesignRestoreTasksResponseSchema = z.object({

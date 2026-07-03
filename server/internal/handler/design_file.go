@@ -165,20 +165,40 @@ func (h *Handler) publishDesignReady(r *http.Request, file db.DesignFile, revisi
 }
 
 type DesignRestoreTaskResponse struct {
-	ID          string          `json:"id"`
-	WorkspaceID string          `json:"workspace_id"`
-	FileID      string          `json:"file_id"`
-	RevisionID  string          `json:"revision_id"`
-	IssueID     *string         `json:"issue_id"`
-	DeliveryID  *string         `json:"delivery_id"`
-	AgentTaskID *string         `json:"agent_task_id"`
-	Status      string          `json:"status"`
-	Input       json.RawMessage `json:"input"`
-	Result      json.RawMessage `json:"result"`
-	Error       *string         `json:"error"`
-	CreatedBy   *string         `json:"created_by"`
-	CreatedAt   string          `json:"created_at"`
-	UpdatedAt   string          `json:"updated_at"`
+	ID              string                                    `json:"id"`
+	WorkspaceID     string                                    `json:"workspace_id"`
+	FileID          string                                    `json:"file_id"`
+	RevisionID      string                                    `json:"revision_id"`
+	IssueID         *string                                   `json:"issue_id"`
+	DeliveryID      *string                                   `json:"delivery_id"`
+	AgentTaskID     *string                                   `json:"agent_task_id"`
+	Status          string                                    `json:"status"`
+	Input           json.RawMessage                           `json:"input"`
+	Result          json.RawMessage                           `json:"result"`
+	Error           *string                                   `json:"error"`
+	CreatedBy       *string                                   `json:"created_by"`
+	CreatedAt       string                                    `json:"created_at"`
+	UpdatedAt       string                                    `json:"updated_at"`
+	ExecutionStatus *DesignRestoreTaskExecutionStatusResponse `json:"execution_status,omitempty"`
+}
+
+type DesignRestoreTaskExecutionStatusResponse struct {
+	AgentTaskID           *string `json:"agent_task_id"`
+	AgentTaskStatus       *string `json:"agent_task_status"`
+	AgentTaskCreatedAt    *string `json:"agent_task_created_at"`
+	AgentTaskDispatchedAt *string `json:"agent_task_dispatched_at"`
+	AgentTaskStartedAt    *string `json:"agent_task_started_at"`
+	AgentTaskCompletedAt  *string `json:"agent_task_completed_at"`
+	AgentTaskError        *string `json:"agent_task_error"`
+	AgentTaskWaitReason   *string `json:"agent_task_wait_reason"`
+	RuntimeID             *string `json:"runtime_id"`
+	RuntimeStatus         *string `json:"runtime_status"`
+	RuntimeLastSeenAt     *string `json:"runtime_last_seen_at"`
+	LastMessageSeq        *int32  `json:"last_message_seq"`
+	LastMessageAt         *string `json:"last_message_at"`
+	Phase                 string  `json:"phase"`
+	Reason                string  `json:"reason"`
+	Severity              string  `json:"severity"`
 }
 
 type DesignRestoreMappingResponse struct {
@@ -616,6 +636,140 @@ func designRestoreTaskToResponse(task db.DesignRestoreTask) DesignRestoreTaskRes
 		CreatedAt:   timestampToString(task.CreatedAt),
 		UpdatedAt:   timestampToString(task.UpdatedAt),
 	}
+}
+
+const (
+	designRestoreRuntimeStaleAfter = 5 * time.Minute
+	designRestoreNoOutputWarnAfter = 3 * time.Minute
+	designRestoreQueuedWarnAfter   = 60 * time.Second
+)
+
+func (h *Handler) designRestoreTaskToResponseWithExecution(ctx context.Context, task db.DesignRestoreTask) DesignRestoreTaskResponse {
+	resp := designRestoreTaskToResponse(task)
+	if !task.AgentTaskID.Valid || h == nil || h.Queries == nil {
+		return resp
+	}
+	row, err := h.Queries.GetDesignRestoreTaskExecutionStatus(ctx, db.GetDesignRestoreTaskExecutionStatusParams{
+		ID:          task.ID,
+		WorkspaceID: task.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("design restore task execution status: failed to load", "restore_task_id", uuidToString(task.ID), "error", err)
+		return resp
+	}
+	resp.ExecutionStatus = designRestoreExecutionStatusToResponse(row, time.Now())
+	return resp
+}
+
+func designRestoreExecutionStatusToResponse(row db.GetDesignRestoreTaskExecutionStatusRow, now time.Time) *DesignRestoreTaskExecutionStatusResponse {
+	status := &DesignRestoreTaskExecutionStatusResponse{
+		AgentTaskID:           uuidToPtr(row.AgentTaskID),
+		AgentTaskStatus:       textToPtr(row.AgentTaskStatus),
+		AgentTaskCreatedAt:    timestampToPtr(row.AgentTaskCreatedAt),
+		AgentTaskDispatchedAt: timestampToPtr(row.AgentTaskDispatchedAt),
+		AgentTaskStartedAt:    timestampToPtr(row.AgentTaskStartedAt),
+		AgentTaskCompletedAt:  timestampToPtr(row.AgentTaskCompletedAt),
+		AgentTaskError:        textToPtr(row.AgentTaskError),
+		AgentTaskWaitReason:   textToPtr(row.AgentTaskWaitReason),
+		RuntimeID:             uuidToPtr(row.RuntimeID),
+		RuntimeStatus:         textToPtr(row.RuntimeStatus),
+		RuntimeLastSeenAt:     timestampToPtr(row.RuntimeLastSeenAt),
+		LastMessageAt:         timestampToPtr(row.LastMessageAt),
+		Phase:                 "unknown",
+		Reason:                "unknown",
+		Severity:              "info",
+	}
+	if row.LastMessageSeq > 0 {
+		status.LastMessageSeq = &row.LastMessageSeq
+	}
+
+	agentTaskStatus := ""
+	if row.AgentTaskStatus.Valid {
+		agentTaskStatus = row.AgentTaskStatus.String
+	}
+	runtimeStatus := ""
+	if row.RuntimeStatus.Valid {
+		runtimeStatus = row.RuntimeStatus.String
+	}
+
+	if !row.AgentTaskID.Valid || !row.AgentTaskStatus.Valid {
+		status.Phase = "not_dispatched"
+		status.Reason = "agent_task_missing"
+		status.Severity = "warning"
+		return status
+	}
+	if !row.RuntimeID.Valid || !row.RuntimeStatus.Valid {
+		status.Phase = "waiting_runtime"
+		status.Reason = "runtime_missing"
+		status.Severity = "warning"
+		return status
+	}
+	if runtimeStatus == "offline" {
+		status.Phase = "waiting_runtime"
+		status.Reason = "runtime_offline"
+		status.Severity = "warning"
+		return status
+	}
+	if runtimeStatus == "online" && row.RuntimeLastSeenAt.Valid && now.Sub(row.RuntimeLastSeenAt.Time) > designRestoreRuntimeStaleAfter {
+		status.Phase = "waiting_runtime"
+		status.Reason = "runtime_stale"
+		status.Severity = "warning"
+		return status
+	}
+
+	switch agentTaskStatus {
+	case "queued", "dispatched":
+		status.Phase = "queued"
+		status.Reason = "waiting_agent_claim"
+		status.Severity = "info"
+		if queuedRef := latestValidTime(row.AgentTaskDispatchedAt, row.AgentTaskCreatedAt); !queuedRef.IsZero() && now.Sub(queuedRef) > designRestoreQueuedWarnAfter {
+			status.Reason = "queued_over_threshold"
+			status.Severity = "warning"
+		}
+	case "waiting_local_directory":
+		status.Phase = "waiting_local_directory"
+		status.Reason = "waiting_local_directory"
+		status.Severity = "warning"
+	case "running":
+		status.Phase = "running"
+		status.Reason = "agent_running"
+		status.Severity = "info"
+		activityRef := latestValidTime(row.LastMessageAt, row.AgentTaskStartedAt, row.AgentTaskDispatchedAt, row.AgentTaskCreatedAt)
+		if !activityRef.IsZero() && now.Sub(activityRef) > designRestoreNoOutputWarnAfter {
+			status.Reason = "running_no_recent_output"
+			status.Severity = "warning"
+		}
+	case "completed":
+		status.Phase = "completed"
+		status.Reason = "agent_task_completed"
+		status.Severity = "success"
+	case "failed":
+		status.Phase = "failed"
+		status.Reason = "agent_task_failed"
+		status.Severity = "error"
+	case "cancelled":
+		status.Phase = "cancelled"
+		status.Reason = "agent_task_cancelled"
+		status.Severity = "warning"
+	default:
+		status.Phase = agentTaskStatus
+		status.Reason = "agent_task_" + agentTaskStatus
+		status.Severity = "info"
+	}
+	return status
+}
+
+func latestValidTime(values ...pgtype.Timestamptz) time.Time {
+	var latest time.Time
+	for _, value := range values {
+		if !value.Valid {
+			continue
+		}
+		if latest.IsZero() || value.Time.After(latest) {
+			latest = value.Time
+		}
+	}
+	return latest
 }
 
 func designRestoreMappingToResponse(mapping db.DesignRestoreMapping) DesignRestoreMappingResponse {
@@ -1579,7 +1733,7 @@ func (h *Handler) ListDesignRestoreTasks(w http.ResponseWriter, r *http.Request)
 	}
 	resp := make([]DesignRestoreTaskResponse, 0, len(tasks))
 	for _, task := range tasks {
-		resp = append(resp, designRestoreTaskToResponse(task))
+		resp = append(resp, h.designRestoreTaskToResponseWithExecution(r.Context(), task))
 	}
 	writeJSON(w, http.StatusOK, DesignRestoreTaskListResponse{Tasks: resp})
 }
@@ -1599,7 +1753,7 @@ func (h *Handler) GetDesignRestoreTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "design restore task not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, designRestoreTaskToResponse(task))
+	writeJSON(w, http.StatusOK, h.designRestoreTaskToResponseWithExecution(r.Context(), task))
 }
 
 func (h *Handler) ListDesignRestoreMappings(w http.ResponseWriter, r *http.Request) {
@@ -1955,7 +2109,7 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 	}
 	agentLabel := designRestoreAgentLabelFromInput(task.Input)
 	h.createDesignRestoreIssueSystemComment(r.Context(), updated.IssueID, fmt.Sprintf("%s 已开始执行设计稿还原：Agent Task `%s`。", agentLabel, uuidToString(agentTask.ID)))
-	writeJSON(w, http.StatusCreated, DispatchDesignRestoreTaskResponse{Task: designRestoreTaskToResponse(updated), AgentTaskID: uuidToString(agentTask.ID)})
+	writeJSON(w, http.StatusCreated, DispatchDesignRestoreTaskResponse{Task: h.designRestoreTaskToResponseWithExecution(r.Context(), updated), AgentTaskID: uuidToString(agentTask.ID)})
 }
 
 func (h *Handler) buildDesignRestoreTaskItemContexts(ctx context.Context, task db.DesignRestoreTask) (json.RawMessage, error) {

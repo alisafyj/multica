@@ -18,6 +18,7 @@ function task(overrides: Partial<DesignRestoreTask>): DesignRestoreTask {
     created_by: null,
     created_at: "2026-06-29T00:00:00Z",
     updated_at: "2026-06-29T00:00:00Z",
+    execution_status: overrides.execution_status ?? null,
   };
 }
 

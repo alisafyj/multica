@@ -19,6 +19,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/native-select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@multica/ui/components/ui/sheet";
 import { Textarea } from "@multica/ui/components/ui/textarea";
+import { RestoreExecutionDiagnostic } from "../../designs/design-restore-execution-diagnostic";
 import { useNavigation } from "../../navigation";
 
 interface IssueDesignRestoreSectionProps {
@@ -982,6 +983,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
         {roleReady && !controlsLocked && canStartRestore && (!activeRestoreTask?.agent_task_id || currentStatus === "failed") ? <Button size="sm" variant={isUiIssue ? "default" : "default"} className="w-full" disabled={!restoreFileId || !restoreFrameId || primaryActionPending || !primaryAgent} onClick={() => void runRestoreFlow()}><WandSparkles className="size-3.5" />{primaryActionPending ? "正在准备…" : primaryActionLabel}</Button> : null}
         {roleReady && isUiIssue && !parentIssueId ? <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">UI 设计 Issue 需要位于父 Issue 下，才能交付给同级前端开发。</div> : null}
         {roleReady && isUiIssue && parentIssueId && !deliveryTargets.length ? <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">未找到可交付的同级子 Issue。请先创建前端开发 Issue，或在对应子 Issue 中设为前端开发。</div> : null}
+        {roleReady ? <RestoreExecutionDiagnostic task={activeRestoreTask} /> : null}
         {canHandoffToFrontend ? (
           <details className="rounded-md border bg-background/60">
             <summary className="cursor-pointer list-none px-2 py-1.5 text-muted-foreground hover:text-foreground">交付给前端开发</summary>

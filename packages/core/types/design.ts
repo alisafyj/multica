@@ -337,6 +337,26 @@ export interface DesignRestoreTask {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  execution_status: DesignRestoreTaskExecutionStatus | null;
+}
+
+export interface DesignRestoreTaskExecutionStatus {
+  agent_task_id: string | null;
+  agent_task_status: string | null;
+  agent_task_created_at: string | null;
+  agent_task_dispatched_at: string | null;
+  agent_task_started_at: string | null;
+  agent_task_completed_at: string | null;
+  agent_task_error: string | null;
+  agent_task_wait_reason: string | null;
+  runtime_id: string | null;
+  runtime_status: string | null;
+  runtime_last_seen_at: string | null;
+  last_message_seq: number | null;
+  last_message_at: string | null;
+  phase: string;
+  reason: string;
+  severity: string;
 }
 
 export type DesignRestorePlanStatus = "draft" | "approved" | "dispatched" | "archived";

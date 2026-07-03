@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -2171,6 +2172,129 @@ func TestGetDesignRestoreTaskReturnsTaskInWorkspace(t *testing.T) {
 	}
 	if string(got.Input) != string(createdTask.Input) {
 		t.Fatalf("input = %s, want %s", string(got.Input), string(createdTask.Input))
+	}
+}
+
+func TestGetDesignRestoreTaskIncludesOfflineRuntimeExecutionStatus(t *testing.T) {
+	created := createDesignFileForTest(t, "Restore Task Offline Runtime Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+
+	createReq := newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, map[string]any{
+		"file_id": created.File.ID,
+		"input": map[string]any{
+			"prompt": "diagnose this task",
+		},
+	})
+	createW := httptest.NewRecorder()
+	testHandler.CreateDesignRestoreTask(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateDesignRestoreTask: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+	var createdTask DesignRestoreTaskResponse
+	if err := json.NewDecoder(createW.Body).Decode(&createdTask); err != nil {
+		t.Fatalf("decode CreateDesignRestoreTask: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, createdTask.ID)
+	})
+
+	var runtimeID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, last_seen_at)
+		VALUES ($1, $2, 'offline restore runtime', 'local', 'opencode', 'offline', '', '{}'::jsonb, $3, now() - interval '10 minutes')
+		RETURNING id
+	`, testWorkspaceID, "restore-offline-"+createdTask.ID, testUserID).Scan(&runtimeID); err != nil {
+		t.Fatalf("insert offline runtime: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+	})
+
+	var agentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent (workspace_id, name, runtime_mode, runtime_config, runtime_id, visibility, max_concurrent_tasks, owner_id)
+		VALUES ($1, 'Offline Restore Agent', 'local', '{}'::jsonb, $2, 'workspace', 1, $3)
+		RETURNING id
+	`, testWorkspaceID, runtimeID, testUserID).Scan(&agentID); err != nil {
+		t.Fatalf("insert offline agent: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
+
+	var agentTaskID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority)
+		VALUES ($1, $2, NULL, 'queued', 0)
+		RETURNING id
+	`, agentID, runtimeID).Scan(&agentTaskID); err != nil {
+		t.Fatalf("insert agent task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, agentTaskID)
+	})
+
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE design_restore_task
+		SET agent_task_id = $1, status = 'running', updated_at = now()
+		WHERE id = $2
+	`, agentTaskID, createdTask.ID); err != nil {
+		t.Fatalf("link agent task: %v", err)
+	}
+
+	getReq := withURLParam(newRequest("GET", "/api/design-restore-tasks/"+createdTask.ID+"?workspace_id="+testWorkspaceID, nil), "id", createdTask.ID)
+	getW := httptest.NewRecorder()
+	testHandler.GetDesignRestoreTask(getW, getReq)
+	if getW.Code != http.StatusOK {
+		t.Fatalf("GetDesignRestoreTask: expected 200, got %d: %s", getW.Code, getW.Body.String())
+	}
+
+	var raw map[string]any
+	if err := json.NewDecoder(getW.Body).Decode(&raw); err != nil {
+		t.Fatalf("decode GetDesignRestoreTask: %v", err)
+	}
+	status, ok := raw["execution_status"].(map[string]any)
+	if !ok {
+		t.Fatalf("execution_status missing or invalid: %#v", raw["execution_status"])
+	}
+	if got := status["phase"]; got != "waiting_runtime" {
+		t.Fatalf("phase = %#v, want waiting_runtime", got)
+	}
+	if got := status["reason"]; got != "runtime_offline" {
+		t.Fatalf("reason = %#v, want runtime_offline", got)
+	}
+	if got := status["severity"]; got != "warning" {
+		t.Fatalf("severity = %#v, want warning", got)
+	}
+	if got := status["runtime_status"]; got != "offline" {
+		t.Fatalf("runtime_status = %#v, want offline", got)
+	}
+	if got := status["agent_task_status"]; got != "queued" {
+		t.Fatalf("agent_task_status = %#v, want queued", got)
+	}
+}
+
+func TestDesignRestoreExecutionStatusWarnsWhenRunningWithoutRecentOutput(t *testing.T) {
+	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	row := db.GetDesignRestoreTaskExecutionStatusRow{
+		AgentTaskID:        util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentTaskStatus:    pgtype.Text{String: "running", Valid: true},
+		RuntimeID:          util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		RuntimeStatus:      pgtype.Text{String: "online", Valid: true},
+		RuntimeLastSeenAt:  pgtype.Timestamptz{Time: now.Add(-30 * time.Second), Valid: true},
+		AgentTaskStartedAt: pgtype.Timestamptz{Time: now.Add(-4 * time.Minute), Valid: true},
+	}
+
+	status := designRestoreExecutionStatusToResponse(row, now)
+
+	if status.Phase != "running" {
+		t.Fatalf("phase = %s, want running", status.Phase)
+	}
+	if status.Reason != "running_no_recent_output" {
+		t.Fatalf("reason = %s, want running_no_recent_output", status.Reason)
+	}
+	if status.Severity != "warning" {
+		t.Fatalf("severity = %s, want warning", status.Severity)
 	}
 }
 

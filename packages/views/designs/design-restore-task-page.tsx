@@ -19,6 +19,7 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
+import { RestoreExecutionDiagnostic } from "./design-restore-execution-diagnostic";
 import { readDesignRestoreVisualReview } from "./design-restore-result";
 import { DesignRestoreVisualReviewPanel } from "./design-restore-visual-review-panel";
 import type { DesignRestorePlan, DesignRestoreTaskInputV1, DesignRestoreTaskItemInput } from "@multica/core/types";
@@ -337,6 +338,7 @@ export function DesignRestoreTaskPage({ taskId }: { taskId: string }) {
                   <div>Agent 任务：<span className="text-foreground">{agentTaskName}</span></div>
                   <div>创建时间：{task.created_at}</div>
                 </div>
+                <RestoreExecutionDiagnostic task={task} className="mt-4 text-xs" />
               </section>
 
               <section className="rounded-lg border bg-background">

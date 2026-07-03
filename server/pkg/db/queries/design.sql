@@ -303,6 +303,34 @@ WHERE workspace_id = $1
 ORDER BY created_at DESC
 LIMIT 50;
 
+-- name: GetDesignRestoreTaskExecutionStatus :one
+SELECT
+    drt.id AS restore_task_id,
+    drt.agent_task_id,
+    atq.status AS agent_task_status,
+    atq.runtime_id,
+    atq.dispatched_at AS agent_task_dispatched_at,
+    atq.started_at AS agent_task_started_at,
+    atq.completed_at AS agent_task_completed_at,
+    atq.created_at AS agent_task_created_at,
+    atq.error AS agent_task_error,
+    atq.wait_reason AS agent_task_wait_reason,
+    ar.status AS runtime_status,
+    ar.last_seen_at AS runtime_last_seen_at,
+    COALESCE(latest_message.seq, 0)::int AS last_message_seq,
+    latest_message.created_at AS last_message_at
+FROM design_restore_task drt
+LEFT JOIN agent_task_queue atq ON atq.id = drt.agent_task_id
+LEFT JOIN agent_runtime ar ON ar.id = atq.runtime_id
+LEFT JOIN LATERAL (
+    SELECT seq, created_at
+    FROM task_message
+    WHERE task_id = atq.id
+    ORDER BY seq DESC
+    LIMIT 1
+) latest_message ON TRUE
+WHERE drt.id = $1 AND drt.workspace_id = $2;
+
 -- name: ListDesignRestoreMappings :many
 SELECT * FROM design_restore_mapping
 WHERE restore_task_id = $1
