@@ -47,6 +47,42 @@ func createIssueForDesignTest(t *testing.T, title string, projectID string) stri
 	return id
 }
 
+func createCompletedDesignRepoAnalysisForDesignTest(t *testing.T, projectID string, framework string) string {
+	t.Helper()
+	var resourceID string
+	resourceRef, err := json.Marshal(map[string]any{"localPath": "/tmp/multica-design-restore-" + projectID})
+	if err != nil {
+		t.Fatalf("marshal project resource ref: %v", err)
+	}
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, label, position, created_by)
+		VALUES ($1, $2, 'local_directory', $3::jsonb, 'Repository root', 0, $4)
+		RETURNING id
+	`, projectID, testWorkspaceID, resourceRef, testUserID).Scan(&resourceID); err != nil {
+		t.Fatalf("insert project_resource: %v", err)
+	}
+	var analysisID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_repo_analysis (
+			workspace_id, project_id, project_resource_id, status, schema_version, source_fingerprint,
+			framework, language, package_manager, app_type, routing, styling, directories,
+			commands, boundaries, target_candidates, confidence, summary, raw_result, analyzed_at
+		) VALUES (
+			$1, $2, $3, 'completed', '1.0', $4,
+			$5, 'TypeScript', 'npm', 'single_app', '{"kind":"client_router","owners":["src/router"]}'::jsonb, '{}'::jsonb,
+			'{"appRoots":["src"],"businessViews":["src/views"],"uiComponents":["src/components"]}'::jsonb,
+			'{"typecheck":["npm exec tsc --noEmit --pretty false"]}'::jsonb,
+			'{"forbiddenPaths":["node_modules","dist"]}'::jsonb,
+			'[{"kind":"view_file","path":"src/views/HomeView.vue","allowedPaths":["src/views","src/components","src/router"]}]'::jsonb,
+			0.95, $6, '{}'::jsonb, now()
+		)
+		RETURNING id
+	`, testWorkspaceID, projectID, resourceID, "fingerprint-"+resourceID, framework, framework+" / TypeScript / npm").Scan(&analysisID); err != nil {
+		t.Fatalf("insert design_repo_analysis: %v", err)
+	}
+	return analysisID
+}
+
 func createDesignFolderForTest(t *testing.T, projectID string, name string) string {
 	t.Helper()
 	var id string
@@ -2489,6 +2525,9 @@ func TestDispatchDesignRestoreTaskCreatesAgentTask(t *testing.T) {
 	if !ok || restorePolicy["restoreMode"] != "strict-structure" || restorePolicy["allowFullFramePreview"] != false {
 		t.Fatalf("queued restore_policy = %#v, want strict-structure with full frame preview disabled", queuedContext["restore_policy"])
 	}
+	if allowedImageUse, _ := restorePolicy["allowedImageUse"].(string); !strings.Contains(allowedImageUse, "visible layer image/exported assets") || !strings.Contains(allowedImageUse, "full frame preview/thumbnail/full-frame slice forbidden") {
+		t.Fatalf("queued allowedImageUse = %q, want visible layer assets allowed and full-frame assets forbidden", allowedImageUse)
+	}
 	itemContexts, ok := queuedContext["item_contexts"].([]any)
 	if !ok || len(itemContexts) != 1 {
 		t.Fatalf("queued item_contexts = %#v, want one item context", queuedContext["item_contexts"])
@@ -2954,6 +2993,288 @@ func TestGenerateDesignRestorePlanBuildsSemanticStructureFromFrameNames(t *testi
 	semantic := modalItem["semantic"].(map[string]any)
 	if semantic["pageName"] != "提现" || semantic["kind"] != "modal" || semantic["label"] != "确认提现" {
 		t.Fatalf("modal semantic = %#v", semantic)
+	}
+}
+
+func TestGenerateDesignRestorePlanBuildsPageTargetsForDistinctPageNames(t *testing.T) {
+	created := createDesignFileForTest(t, "我的钱包")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	frameNames := []string{
+		"01 钱包首页-已绑支付宝",
+		"02 管理提现账户-已认证",
+		"02 管理提现账户-未认证",
+		"03 绑定支付宝-空表单",
+		"03 绑定支付宝-已授权",
+		"04 提现-空金额",
+		"04 提现-金额输入",
+		"04 提现-弹窗:确认提现",
+	}
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, nativeJSONWithFrameNamesForTest(frameNames))
+	projectID := createProjectForDesignTest(t, "Wallet Project")
+	createCompletedDesignRepoAnalysisForDesignTest(t, projectID, "Vue")
+	parentIssueID := createIssueForDesignTest(t, "我的钱包", projectID)
+	uiIssueID := createIssueForDesignTest(t, "UI设计", projectID)
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE issue
+		SET parent_issue_id = $1
+		WHERE id = $2
+	`, parentIssueID, uiIssueID); err != nil {
+		t.Fatalf("link child issue to parent: %v", err)
+	}
+
+	items := []map[string]any{}
+	for i, name := range frameNames {
+		items = append(items, map[string]any{
+			"itemId":       fmt.Sprintf("wallet-page-frame-%d", i+1),
+			"order":        i + 1,
+			"designFileId": created.File.ID,
+			"revisionId":   created.CurrentRevision.ID,
+			"frameId":      fmt.Sprintf("frame-%d", i+1),
+			"frameName":    name,
+			"source":       "frame",
+		})
+	}
+	createReq := newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, map[string]any{
+		"file_id":  created.File.ID,
+		"issue_id": uiIssueID,
+		"input": map[string]any{
+			"version":   "1.0",
+			"projectId": projectID,
+			"items":     items,
+		},
+	})
+	createW := httptest.NewRecorder()
+	testHandler.CreateDesignRestoreTask(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateDesignRestoreTask: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+	var createdTask DesignRestoreTaskResponse
+	if err := json.NewDecoder(createW.Body).Decode(&createdTask); err != nil {
+		t.Fatalf("decode CreateDesignRestoreTask: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, createdTask.ID)
+	})
+
+	generateReq := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/plan/generate?workspace_id="+testWorkspaceID, nil), "id", createdTask.ID)
+	generateW := httptest.NewRecorder()
+	testHandler.GenerateDesignRestorePlan(generateW, generateReq)
+	if generateW.Code != http.StatusCreated {
+		t.Fatalf("GenerateDesignRestorePlan: expected 201, got %d: %s", generateW.Code, generateW.Body.String())
+	}
+	var generatedPlan DesignRestorePlanResponse
+	if err := json.NewDecoder(generateW.Body).Decode(&generatedPlan); err != nil {
+		t.Fatalf("decode GenerateDesignRestorePlan: %v", err)
+	}
+	var plan map[string]any
+	if err := json.Unmarshal(generatedPlan.Plan, &plan); err != nil {
+		t.Fatalf("decode generated plan: %v", err)
+	}
+
+	targets := plan["targets"].(map[string]any)
+	pageTargets, ok := targets["pageTargets"].([]any)
+	if !ok {
+		t.Fatalf("targets.pageTargets = %#v, want generated page targets", targets["pageTargets"])
+	}
+	if len(pageTargets) != 4 {
+		t.Fatalf("pageTargets = %#v, want four business pages", pageTargets)
+	}
+	byName := map[string]map[string]any{}
+	for _, rawTarget := range pageTargets {
+		target := rawTarget.(map[string]any)
+		byName[target["pageName"].(string)] = target
+	}
+	if byName["钱包首页"]["routePath"] != "/business-module" || byName["钱包首页"]["pagePath"] != "src/views/business-module/BusinessModuleView.vue" {
+		t.Fatalf("wallet target = %#v", byName["钱包首页"])
+	}
+	if byName["管理提现账户"]["routePath"] != "/business-module/account-management" || byName["管理提现账户"]["pagePath"] != "src/views/business-module/AccountManagementView.vue" {
+		t.Fatalf("account management target = %#v", byName["管理提现账户"])
+	}
+	if byName["绑定支付宝"]["routePath"] != "/business-module/bind-alipay" || byName["绑定支付宝"]["pagePath"] != "src/views/business-module/BindAlipayView.vue" {
+		t.Fatalf("bind alipay target = %#v", byName["绑定支付宝"])
+	}
+	if byName["提现"]["routePath"] != "/business-module/withdraw" || byName["提现"]["pagePath"] != "src/views/business-module/WithdrawView.vue" {
+		t.Fatalf("withdraw target = %#v", byName["提现"])
+	}
+	policy := targets["pageTargetPolicy"].(map[string]any)
+	if policy["forbidTabsAcrossPageNames"] != true {
+		t.Fatalf("pageTargetPolicy = %#v, want forbidTabsAcrossPageNames", policy)
+	}
+
+	planItems := plan["items"].([]any)
+	accountItem := planItems[1].(map[string]any)
+	if accountItem["targetPath"] != "src/views/business-module/AccountManagementView.vue" || accountItem["targetRoutePath"] != "/business-module/account-management" {
+		t.Fatalf("account item target = %#v", accountItem)
+	}
+	withdrawModalItem := planItems[7].(map[string]any)
+	if withdrawModalItem["targetPath"] != "src/views/business-module/WithdrawView.vue" || withdrawModalItem["targetRoutePath"] != "/business-module/withdraw" {
+		t.Fatalf("withdraw modal item target = %#v", withdrawModalItem)
+	}
+
+	interactionFlow, ok := plan["interactionFlow"].(map[string]any)
+	if !ok {
+		t.Fatalf("interactionFlow = %#v, want generated page relationship contract", plan["interactionFlow"])
+	}
+	flowPolicy := interactionFlow["policy"].(map[string]any)
+	if flowPolicy["queryParametersAreDebugOnly"] != true || flowPolicy["primaryPathRequiresUserInteractions"] != true {
+		t.Fatalf("interactionFlow.policy = %#v, want interaction-first query-debug policy", flowPolicy)
+	}
+	transitions := interactionFlow["transitions"].([]any)
+	if !designRestoreTransitionExistsForTest(transitions, "钱包首页", "提现账号管理", "管理提现账户", "route") {
+		t.Fatalf("interactionFlow transitions missing wallet account-management route: %#v", transitions)
+	}
+	if !designRestoreTransitionExistsForTest(transitions, "钱包首页", "提现", "提现", "route") {
+		t.Fatalf("interactionFlow transitions missing wallet withdraw route: %#v", transitions)
+	}
+	if !designRestoreTransitionExistsForTest(transitions, "管理提现账户", "立即绑定", "绑定支付宝", "route") {
+		t.Fatalf("interactionFlow transitions missing account bind-alipay route: %#v", transitions)
+	}
+	if !designRestoreTransitionExistsForTest(transitions, "绑定支付宝", "确认绑定", "管理提现账户", "route") {
+		t.Fatalf("interactionFlow transitions missing bind-confirm account route: %#v", transitions)
+	}
+	stateTransitions := interactionFlow["stateTransitions"].([]any)
+	if !designRestoreStateTransitionExistsForTest(stateTransitions, "提现", "金额输入", "state") {
+		t.Fatalf("interactionFlow stateTransitions missing withdraw amount state: %#v", stateTransitions)
+	}
+	if !designRestoreStateTransitionExistsForTest(stateTransitions, "提现", "确认提现", "modal") {
+		t.Fatalf("interactionFlow stateTransitions missing withdraw confirm modal: %#v", stateTransitions)
+	}
+}
+
+func designRestoreTransitionExistsForTest(transitions []any, fromPage string, triggerText string, toPage string, kind string) bool {
+	for _, raw := range transitions {
+		transition, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if transition["fromPage"] == fromPage &&
+			transition["triggerText"] == triggerText &&
+			transition["toPage"] == toPage &&
+			transition["kind"] == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func designRestoreStateTransitionExistsForTest(transitions []any, pageName string, label string, kind string) bool {
+	for _, raw := range transitions {
+		transition, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if transition["pageName"] == pageName &&
+			transition["label"] == label &&
+			transition["kind"] == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func TestGenerateDesignRestorePlanIncludesLightweightRestorePackPolicies(t *testing.T) {
+	created := createDesignFileForTest(t, "Restore Pack Policy Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	nativeJSON := contextDesignNativeJSON("Restore Pack Policy Design")
+	layers := nativeJSON["layers"].(map[string]any)
+	layers["select-account"] = map[string]any{
+		"id":      "select-account",
+		"name":    "请选择提现账户",
+		"type":    "text",
+		"visible": true,
+		"x":       24,
+		"y":       128,
+		"width":   180,
+		"height":  24,
+		"frameId": "frame-main",
+		"text":    map[string]any{"characters": "请选择提现账户", "fontSize": 16},
+	}
+	layers["asset-card"] = map[string]any{
+		"id":      "asset-card",
+		"name":    "银行卡图标",
+		"type":    "shape",
+		"visible": true,
+		"x":       24,
+		"y":       180,
+		"width":   48,
+		"height":  48,
+		"frameId": "frame-main",
+		"image":   map[string]any{"assetId": "asset-card-image"},
+	}
+	nativeJSON["assets"].(map[string]any)["asset-card-image"] = map[string]any{"id": "asset-card-image", "kind": "image", "url": "https://static.example/card.png", "width": 48, "height": 48}
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, nativeJSON)
+
+	projectID := createProjectForDesignTest(t, "Restore Pack Policy Project")
+	uiIssueID := createIssueForDesignTest(t, "UI设计", projectID)
+	createReq := newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, map[string]any{
+		"file_id":  created.File.ID,
+		"issue_id": uiIssueID,
+		"input": map[string]any{
+			"version":   "1.0",
+			"projectId": projectID,
+			"items": []map[string]any{{
+				"itemId":       "restore-pack-frame",
+				"order":        1,
+				"designFileId": created.File.ID,
+				"revisionId":   created.CurrentRevision.ID,
+				"frameId":      "frame-main",
+				"frameName":    "提现-金额输入",
+				"source":       "frame",
+			}},
+		},
+	})
+	createW := httptest.NewRecorder()
+	testHandler.CreateDesignRestoreTask(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateDesignRestoreTask: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+	var createdTask DesignRestoreTaskResponse
+	if err := json.NewDecoder(createW.Body).Decode(&createdTask); err != nil {
+		t.Fatalf("decode CreateDesignRestoreTask: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, createdTask.ID)
+	})
+
+	generateReq := withURLParam(newRequest("POST", "/api/design-restore-tasks/"+createdTask.ID+"/plan/generate?workspace_id="+testWorkspaceID, nil), "id", createdTask.ID)
+	generateW := httptest.NewRecorder()
+	testHandler.GenerateDesignRestorePlan(generateW, generateReq)
+	if generateW.Code != http.StatusCreated {
+		t.Fatalf("GenerateDesignRestorePlan: expected 201, got %d: %s", generateW.Code, generateW.Body.String())
+	}
+	var generatedPlan DesignRestorePlanResponse
+	if err := json.NewDecoder(generateW.Body).Decode(&generatedPlan); err != nil {
+		t.Fatalf("decode GenerateDesignRestorePlan: %v", err)
+	}
+	var plan map[string]any
+	if err := json.Unmarshal(generatedPlan.Plan, &plan); err != nil {
+		t.Fatalf("decode generated plan: %v", err)
+	}
+
+	restorePack := plan["restorePack"].(map[string]any)
+	if restorePack["mode"] != "lightweight" {
+		t.Fatalf("restorePack mode = %#v, want lightweight", restorePack["mode"])
+	}
+	assetPolicy := restorePack["assetPolicy"].(map[string]any)
+	if assetPolicy["priority"] != "render_visible_layer_assets" || assetPolicy["doNotRedrawExportedAssets"] != true {
+		t.Fatalf("asset policy = %#v", assetPolicy)
+	}
+	interactionPolicy := restorePack["interactionPolicy"].(map[string]any)
+	if interactionPolicy["selectLikeText"] != "use_project_select_or_popover" || interactionPolicy["inputLikeText"] != "use_project_input_or_form_control" {
+		t.Fatalf("interaction policy = %#v", interactionPolicy)
+	}
+	noisePolicy := restorePack["noisePolicy"].(map[string]any)
+	if noisePolicy["mode"] != "conservative" || noisePolicy["doNotDropVisibleAssets"] != true {
+		t.Fatalf("noise policy = %#v", noisePolicy)
+	}
+	items := plan["items"].([]any)
+	hints := items[0].(map[string]any)["restoreHints"].(map[string]any)
+	if hints["assetLayerCount"].(float64) < 1 || hints["interactionCueCount"].(float64) < 1 {
+		t.Fatalf("restore hints = %#v", hints)
 	}
 }
 

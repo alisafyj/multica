@@ -2073,7 +2073,7 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 	if prompt == "" {
 		prompt = "根据 restore task 的设计上下文完成最小安全前端还原；优先复用现有组件，完成后运行相关 typecheck，并在结果里说明变更文件、检查项和阻塞项。"
 	}
-	restorePolicy := json.RawMessage(`{"restoreMode":"strict-structure","allowFullFramePreview":false,"forbidFullFramePreviewAsResult":true,"onInsufficientStructure":"blocked_placeholder_or_fail","allowedImageUse":"local component assets only; full frame preview/thumbnail/full-frame slice forbidden as primary result"}`)
+	restorePolicy := json.RawMessage(`{"restoreMode":"strict-structure","allowFullFramePreview":false,"forbidFullFramePreviewAsResult":true,"onInsufficientStructure":"blocked_placeholder_or_fail","allowedImageUse":"visible layer image/exported assets from item_contexts and local component assets allowed; full frame preview/thumbnail/full-frame slice forbidden as primary result"}`)
 	outputPolicy := json.RawMessage(`{"result":{"files":"string[]","restoreMapping":"array","summary":"string","blockers":"string[]","usedLayerIds":"string[]","usedAssetIds":"string[]","usedFullFramePreview":"boolean"}}`)
 	var approvedPlan *db.DesignRestorePlan
 	plan, err := h.Queries.GetDesignRestorePlanByTask(r.Context(), db.GetDesignRestorePlanByTaskParams{RestoreTaskID: task.ID, WorkspaceID: wsUUID})
@@ -2552,17 +2552,37 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 		}
 	}
 	selectedTargetPath := fmt.Sprintf("fengchenDoc/gallery-native-agent-test/restore-%s.html", strings.ReplaceAll(uuidToString(task.ID), "-", "")[:12])
+	selectedTargetRoutePath := ""
 	if selected, ok := targetsBlock["selected"].(map[string]any); ok {
 		if pagePath, ok := selected["pagePath"].(string); ok && strings.TrimSpace(pagePath) != "" {
 			selectedTargetPath = pagePath
 		} else if path, ok := selected["path"].(string); ok && strings.TrimSpace(path) != "" {
 			selectedTargetPath = path
 		}
+		selectedTargetRoutePath = stringField(selected, "routePath")
 	}
 	designStructure := buildDesignRestoreSemanticStructure(input.Items)
+	pageTargets := designRestorePageTargetsFromStructure(designStructure, targetsBlock)
+	pageTargetByName := map[string]map[string]any{}
+	for _, target := range pageTargets {
+		if pageName := stringField(target, "pageName"); pageName != "" {
+			pageTargetByName[pageName] = target
+		}
+	}
+	if len(pageTargets) > 1 {
+		targetsBlock["pageTargets"] = pageTargets
+		targetsBlock["pageTargetPolicy"] = map[string]any{
+			"mode":                                "page_name_route_boundaries",
+			"forbidTabsAcrossPageNames":           true,
+			"tabsAllowedOnlyWhenExplicitInDesign": true,
+			"instruction":                         "Different pageName values are separate pages/routes, not tabs. Only frames sharing the same pageName may become states/modals/result states inside one page.",
+		}
+	}
+	interactionFlow := buildDesignRestoreInteractionFlow(designStructure, pageTargets)
 	items := make([]map[string]any, 0, len(input.Items))
 	for _, item := range input.Items {
 		usedLayerIDs := item.LayerIDs
+		restoreHints := designRestoreEmptyRestoreHints()
 		if len(usedLayerIDs) == 0 && strings.TrimSpace(item.FrameID) != "" {
 			revisionID := task.RevisionID
 			if strings.TrimSpace(item.RevisionID) != "" {
@@ -2581,11 +2601,24 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 							usedLayerIDs = append(usedLayerIDs, layerID)
 						}
 						sort.Strings(usedLayerIDs)
+						restoreHints = designRestoreHintsFromLayers(layers)
 					}
 				}
 			}
 		}
 		semantic := parseDesignRestoreFrameSemantics(item.FrameName)
+		targetPath := selectedTargetPath
+		targetRoutePath := selectedTargetRoutePath
+		if semantic.PageName != "" {
+			if pageTarget, ok := pageTargetByName[semantic.PageName]; ok {
+				if pagePath := firstString(pageTarget, "pagePath", "path"); pagePath != "" {
+					targetPath = pagePath
+				}
+				if routePath := stringField(pageTarget, "routePath"); routePath != "" {
+					targetRoutePath = routePath
+				}
+			}
+		}
 		planItem := map[string]any{
 			"itemId":         item.ItemID,
 			"frameId":        item.FrameID,
@@ -2593,9 +2626,13 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 			"source":         item.Source,
 			"restoreScope":   "strict-structure",
 			"targetKind":     "file",
-			"targetPath":     selectedTargetPath,
+			"targetPath":     targetPath,
 			"layerIds":       usedLayerIDs,
+			"restoreHints":   restoreHints,
 			"implementation": "Build visible component structure from Multica item_contexts; infer or create the page route, split reusable sections into components, and do not paste full-frame preview assets.",
+		}
+		if targetRoutePath != "" {
+			planItem["targetRoutePath"] = targetRoutePath
 		}
 		if semantic.PageName != "" {
 			planItem["semantic"] = semantic.toPlanBlock()
@@ -2603,26 +2640,52 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 		items = append(items, planItem)
 	}
 	plan := map[string]any{
-		"version":        "1.0",
-		"restoreTaskId":  uuidToString(task.ID),
-		"designFileId":   uuidToString(task.FileID),
-		"revisionId":     uuidToString(task.RevisionID),
-		"mode":           "strict-structure",
-		"targetRoot":     "fengchenDoc/gallery-native-agent-test",
-		"repo":           repoBlock,
-		"targetStrategy": targetStrategyBlock,
-		"targets":        targetsBlock,
-		"execution":      executionBlock,
+		"version":         "1.0",
+		"restoreTaskId":   uuidToString(task.ID),
+		"designFileId":    uuidToString(task.FileID),
+		"revisionId":      uuidToString(task.RevisionID),
+		"mode":            "strict-structure",
+		"targetRoot":      "fengchenDoc/gallery-native-agent-test",
+		"repo":            repoBlock,
+		"targetStrategy":  targetStrategyBlock,
+		"targets":         targetsBlock,
+		"execution":       executionBlock,
+		"interactionFlow": interactionFlow,
 		"dispatchPolicy": map[string]any{
 			"requireApproval":                true,
 			"allowSkipPlanForDevelopment":    true,
 			"forbidFullFramePreviewAsResult": true,
+		},
+		"restorePack": map[string]any{
+			"mode": "lightweight",
+			"assetPolicy": map[string]any{
+				"priority":                    "render_visible_layer_assets",
+				"doNotRedrawExportedAssets":   true,
+				"preserveVisibleAssetLayers":  true,
+				"forbiddenPrimaryAssetSource": "full_frame_preview_or_thumbnail",
+			},
+			"interactionPolicy": map[string]any{
+				"selectLikeText": "use_project_select_or_popover",
+				"inputLikeText":  "use_project_input_or_form_control",
+				"scope":          "ui_static_interaction_without_api_binding",
+			},
+			"noisePolicy": map[string]any{
+				"mode":                          "conservative",
+				"doNotDropVisibleAssets":        true,
+				"ignoreHiddenLayers":            true,
+				"ignoreOnlyHighConfidenceNoise": true,
+			},
 		},
 		"designStructure": designStructure,
 		"steps": []string{
 			"Read the approved Restore Plan and Multica item_contexts.",
 			"Use designStructure as the source of truth for page relationships: the text before ` - ` is the owning page, `弹窗：` means a modal/sheet attached to that page, and `结果：` means a result state attached to that page.",
 			"Implement a navigable frontend page from the approved target: infer or create the page, wire routing when needed, and split large UI sections into components instead of dumping everything into one file.",
+			"When targets.pageTargets exists, implement each distinct pageName as its own page/route target; do not represent different pageName values as tabs unless the design explicitly contains a tab control.",
+			"Use interactionFlow as the source of truth for page relationships and state/modal triggers. Query parameters may be kept as debug/deep-link aids, but the primary user path must work through click handlers, router navigation, and component state.",
+			"Render visible layer image/exported assets from item_contexts as assets instead of redrawing those layers by hand.",
+			"Turn `请选择`/select-like text into project select/popover controls and `请输入`/input-like text into project input/form controls when the surrounding UI implies interaction.",
+			"Keep cleanup conservative: ignore hidden or high-confidence noise, but do not drop visible asset layers.",
 			"Do not render multiple sibling frames as a flat showcase/gallery unless designStructure.mode is explicitly `showcase`.",
 			"Run relevant typecheck/test command.",
 			"Return RESTORE_RESULT_JSON with files, checks, blockers, restoreMapping, usedLayerIds, usedAssetIds, and usedFullFramePreview=false.",
@@ -2631,9 +2694,363 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 		"risks": []string{
 			"If item_contexts lack structure, return blocked or a clearly marked 缺少可结构化 UI 稿 placeholder.",
 			"Do not use sy-gallery_* current session or full-frame preview/thumbnail as implementation source.",
+			"Do not over-clean noisy design layers when they contain visible image/exported assets.",
 		},
 	}
 	return json.Marshal(plan)
+}
+
+func buildDesignRestoreInteractionFlow(designStructure map[string]any, pageTargets []map[string]any) map[string]any {
+	pages := designRestoreSemanticPages(designStructure)
+	pageTargetByName := map[string]map[string]any{}
+	for _, target := range pageTargets {
+		if pageName := stringField(target, "pageName"); pageName != "" {
+			pageTargetByName[pageName] = target
+		}
+	}
+
+	transitions := make([]map[string]any, 0)
+	stateTransitions := make([]map[string]any, 0)
+	primaryPageName := ""
+	if len(pages) > 0 {
+		primaryPageName = stringField(pages[0], "pageName")
+	}
+	for i, page := range pages {
+		pageName := stringField(page, "pageName")
+		if pageName == "" {
+			continue
+		}
+		if i > 0 && primaryPageName != "" {
+			transitions = append(transitions, designRestoreRouteTransition(primaryPageName, pageName, designRestoreRouteTriggerText(primaryPageName, pageName), pageTargetByName[pageName]))
+		}
+		for _, state := range asObjectSlice(page["states"]) {
+			label := stringField(state, "label")
+			if label == "" {
+				continue
+			}
+			primaryFrame, _ := page["primaryFrame"].(map[string]any)
+			if stringField(primaryFrame, "frameId") == stringField(state, "frameId") {
+				continue
+			}
+			stateTransitions = append(stateTransitions, designRestoreStateTransition(pageName, "state", label, "component_state"))
+		}
+		for _, modal := range asObjectSlice(page["modals"]) {
+			if label := stringField(modal, "label"); label != "" {
+				stateTransitions = append(stateTransitions, designRestoreStateTransition(pageName, "modal", label, "open_modal"))
+			}
+		}
+		for _, result := range asObjectSlice(page["resultStates"]) {
+			if label := stringField(result, "label"); label != "" {
+				stateTransitions = append(stateTransitions, designRestoreStateTransition(pageName, "result", label, "show_result_state"))
+			}
+		}
+	}
+
+	if designRestoreHasPage(pages, "管理提现账户") && designRestoreHasPage(pages, "绑定支付宝") {
+		transitions = append(transitions, designRestoreRouteTransition("管理提现账户", "绑定支付宝", "立即绑定", pageTargetByName["绑定支付宝"]))
+		transitions = append(transitions, designRestoreRouteTransition("绑定支付宝", "管理提现账户", "确认绑定", pageTargetByName["管理提现账户"]))
+	}
+
+	return map[string]any{
+		"version": "1.0",
+		"mode":    "interaction_first",
+		"policy": map[string]any{
+			"queryParametersAreDebugOnly":         true,
+			"primaryPathRequiresUserInteractions": true,
+			"preserveDebugDeepLinks":              true,
+			"instruction":                         "Implement the user's primary path with click handlers, router navigation, and component state. Query parameters may remain only as debug/deep-link shortcuts for QA.",
+		},
+		"transitions":      transitions,
+		"stateTransitions": stateTransitions,
+	}
+}
+
+func designRestoreRouteTransition(fromPage string, toPage string, triggerText string, target map[string]any) map[string]any {
+	transition := map[string]any{
+		"kind":        "route",
+		"fromPage":    fromPage,
+		"toPage":      toPage,
+		"triggerText": triggerText,
+		"action":      "router_navigation",
+	}
+	if routePath := stringField(target, "routePath"); routePath != "" {
+		transition["toRoutePath"] = routePath
+	}
+	if pagePath := firstString(target, "pagePath", "path"); pagePath != "" {
+		transition["toPagePath"] = pagePath
+	}
+	return transition
+}
+
+func designRestoreStateTransition(pageName string, kind string, label string, action string) map[string]any {
+	return map[string]any{
+		"kind":       kind,
+		"pageName":   pageName,
+		"label":      label,
+		"action":     action,
+		"stateModel": "component_state",
+	}
+}
+
+func designRestoreRouteTriggerText(fromPage string, toPage string) string {
+	normalizedTo := strings.ReplaceAll(strings.TrimSpace(toPage), " ", "")
+	switch {
+	case strings.Contains(normalizedTo, "管理提现账户") || strings.Contains(normalizedTo, "提现账户管理") || strings.Contains(normalizedTo, "管理提现账号") || strings.Contains(normalizedTo, "提现账号管理"):
+		return "提现账号管理"
+	case strings.Contains(normalizedTo, "绑定支付宝") || strings.Contains(normalizedTo, "支付宝绑定"):
+		return "绑定支付宝"
+	case strings.Contains(normalizedTo, "提现"):
+		return "提现"
+	default:
+		return "进入" + strings.TrimSpace(toPage)
+	}
+}
+
+func designRestoreHasPage(pages []map[string]any, pageName string) bool {
+	for _, page := range pages {
+		if stringField(page, "pageName") == pageName {
+			return true
+		}
+	}
+	return false
+}
+
+func designRestorePageTargetsFromStructure(designStructure map[string]any, targetsBlock map[string]any) []map[string]any {
+	selected, ok := targetsBlock["selected"].(map[string]any)
+	if !ok || selected == nil {
+		return nil
+	}
+	pages := designRestoreSemanticPages(designStructure)
+	if len(pages) <= 1 {
+		return nil
+	}
+	selectedPagePath := firstString(selected, "pagePath", "path")
+	selectedRoutePath := stringField(selected, "routePath")
+	if selectedPagePath == "" && selectedRoutePath == "" {
+		return nil
+	}
+	pageTargets := make([]map[string]any, 0, len(pages))
+	usedSlugs := map[string]int{}
+	for i, page := range pages {
+		pageName := stringField(page, "pageName")
+		if pageName == "" {
+			continue
+		}
+		pageSlug := designRestoreSemanticPageSlug(pageName, i+1)
+		if count := usedSlugs[pageSlug]; count > 0 {
+			pageSlug = fmt.Sprintf("%s-%d", pageSlug, count+1)
+		}
+		usedSlugs[pageSlug]++
+		pagePath := selectedPagePath
+		routePath := selectedRoutePath
+		if i > 0 {
+			pagePath = designRestoreSiblingPagePath(selectedPagePath, pageSlug)
+			routePath = designRestoreChildRoutePath(selectedRoutePath, pageSlug)
+		}
+		target := map[string]any{
+			"pageName":      pageName,
+			"pageSlug":      pageSlug,
+			"pagePath":      pagePath,
+			"path":          pagePath,
+			"routePath":     routePath,
+			"routeOwner":    selected["routeOwner"],
+			"componentRoot": selected["componentRoot"],
+			"writeMode":     selected["writeMode"],
+			"primary":       i == 0,
+		}
+		if primaryFrame, ok := page["primaryFrame"].(map[string]any); ok {
+			target["primaryFrameId"] = stringField(primaryFrame, "frameId")
+		}
+		pageTargets = append(pageTargets, target)
+	}
+	return pageTargets
+}
+
+func designRestoreSemanticPages(designStructure map[string]any) []map[string]any {
+	switch pages := designStructure["pages"].(type) {
+	case []map[string]any:
+		return pages
+	case []any:
+		out := make([]map[string]any, 0, len(pages))
+		for _, rawPage := range pages {
+			if page, ok := rawPage.(map[string]any); ok {
+				out = append(out, page)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func designRestoreSemanticPageSlug(pageName string, index int) string {
+	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(pageName), " ", ""))
+	known := []struct {
+		Contains string
+		Slug     string
+	}{
+		{Contains: "钱包首页", Slug: "wallet-home"},
+		{Contains: "我的钱包", Slug: "wallet"},
+		{Contains: "提现账户管理", Slug: "account-management"},
+		{Contains: "提现账号管理", Slug: "account-management"},
+		{Contains: "管理提现账户", Slug: "account-management"},
+		{Contains: "管理提现账号", Slug: "account-management"},
+		{Contains: "绑定支付宝", Slug: "bind-alipay"},
+		{Contains: "支付宝绑定", Slug: "bind-alipay"},
+		{Contains: "提现", Slug: "withdraw"},
+		{Contains: "服务记录", Slug: "service-record"},
+	}
+	for _, item := range known {
+		if strings.Contains(normalized, strings.ToLower(item.Contains)) {
+			return item.Slug
+		}
+	}
+	asciiSlug := designRestoreASCIIKebab(pageName)
+	if asciiSlug != "" {
+		return asciiSlug
+	}
+	return fmt.Sprintf("page-%d", index)
+}
+
+func designRestoreASCIIKebab(value string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if b.Len() > 0 && !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func designRestoreSiblingPagePath(selectedPagePath string, pageSlug string) string {
+	if selectedPagePath == "" {
+		return ""
+	}
+	dir := ""
+	file := selectedPagePath
+	if idx := strings.LastIndex(selectedPagePath, "/"); idx >= 0 {
+		dir = selectedPagePath[:idx]
+		file = selectedPagePath[idx+1:]
+	}
+	if strings.HasSuffix(file, "page.tsx") || strings.HasSuffix(file, "page.ts") || strings.HasSuffix(file, "page.jsx") || strings.HasSuffix(file, "page.js") {
+		return strings.TrimSuffix(dir, "/") + "/" + pageSlug + "/" + file
+	}
+	ext := ".tsx"
+	if dot := strings.LastIndex(file, "."); dot >= 0 {
+		ext = file[dot:]
+	}
+	suffix := "Page"
+	if ext == ".vue" || strings.HasSuffix(file, "View.vue") {
+		suffix = "View"
+	}
+	return strings.TrimSuffix(dir, "/") + "/" + designRestorePascalName(pageSlug) + suffix + ext
+}
+
+func designRestoreChildRoutePath(selectedRoutePath string, pageSlug string) string {
+	base := strings.TrimRight(strings.TrimSpace(selectedRoutePath), "/")
+	if base == "" {
+		return "/" + pageSlug
+	}
+	if !strings.HasPrefix(base, "/") {
+		base = "/" + base
+	}
+	return base + "/" + pageSlug
+}
+
+func designRestoreEmptyRestoreHints() map[string]any {
+	return map[string]any{
+		"assetLayerCount":     0,
+		"interactionCueCount": 0,
+		"assetLayerIds":       []string{},
+		"interactionLayerIds": []string{},
+		"assetPolicy":         "render visible exported/image assets as assets; do not redraw them",
+		"interactionPolicy":   "turn select/input placeholder cues into project controls",
+		"noisePolicy":         "only ignore hidden/high-confidence noise; do not drop visible asset layers",
+	}
+}
+
+func designRestoreHintsFromLayers(layers map[string]any) map[string]any {
+	assetLayerIDs := []string{}
+	interactionLayerIDs := []string{}
+	for layerID, rawLayer := range layers {
+		layer, ok := rawLayer.(map[string]any)
+		if !ok || !designRestoreLayerVisible(layer) {
+			continue
+		}
+		if designRestoreLayerHasAsset(layer) {
+			assetLayerIDs = append(assetLayerIDs, layerID)
+		}
+		if designRestoreLayerHasInteractionCue(layer) {
+			interactionLayerIDs = append(interactionLayerIDs, layerID)
+		}
+	}
+	sort.Strings(assetLayerIDs)
+	sort.Strings(interactionLayerIDs)
+	return map[string]any{
+		"assetLayerCount":     len(assetLayerIDs),
+		"interactionCueCount": len(interactionLayerIDs),
+		"assetLayerIds":       limitStringSlice(assetLayerIDs, 20),
+		"interactionLayerIds": limitStringSlice(interactionLayerIDs, 20),
+		"assetPolicy":         "render visible exported/image assets as assets; do not redraw them",
+		"interactionPolicy":   "turn select/input placeholder cues into project controls",
+		"noisePolicy":         "only ignore hidden/high-confidence noise; do not drop visible asset layers",
+	}
+}
+
+func designRestoreLayerVisible(layer map[string]any) bool {
+	visible, ok := layer["visible"].(bool)
+	return !ok || visible
+}
+
+func designRestoreLayerHasAsset(layer map[string]any) bool {
+	if image, ok := layer["image"].(map[string]any); ok && stringField(image, "assetId") != "" {
+		return true
+	}
+	for _, item := range asObjectSlice(layer["exportable"]) {
+		if stringField(item, "assetId") != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func designRestoreLayerHasInteractionCue(layer map[string]any) bool {
+	text := strings.ToLower(strings.Join(designRestoreLayerCueTexts(layer), " "))
+	return strings.Contains(text, "请选择") ||
+		strings.Contains(text, "选择") ||
+		strings.Contains(text, "select") ||
+		strings.Contains(text, "请输入") ||
+		strings.Contains(text, "输入") ||
+		strings.Contains(text, "input")
+}
+
+func designRestoreLayerCueTexts(layer map[string]any) []string {
+	values := []string{}
+	for _, key := range []string{"name", "placeholder", "label"} {
+		if value := strings.TrimSpace(stringField(layer, key)); value != "" {
+			values = append(values, value)
+		}
+	}
+	if text, ok := layer["text"].(map[string]any); ok {
+		if value := strings.TrimSpace(stringField(text, "characters")); value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+func limitStringSlice(values []string, limit int) []string {
+	if len(values) <= limit {
+		return values
+	}
+	return values[:limit]
 }
 
 type designRestoreFrameSemantics struct {
