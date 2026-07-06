@@ -24,6 +24,44 @@ The UI design Issue owner can still choose UI Agent restore. MCP exists for the 
 
 The frontend engineer must still be able to restore a single frame even when the frame belongs to a Figma group. Group restore is an additional scope, not a replacement for frame restore.
 
+## Deployment Topology
+
+Multica Server is a cloud service. The v1 MCP server is not a local Multica deployment; it is a local adapter process on the frontend engineer's machine.
+
+The v1 topology is:
+
+```text
+Frontend engineer IDE / local coding agent
+        |
+        | stdio MCP
+        v
+multica mcp serve design
+        |
+        | HTTPS API with persisted token
+        v
+Cloud Multica Server
+        |
+        v
+Design files / Issues / Restore Pack data
+```
+
+This matters because the engineer's coding agent usually runs next to the local target repository. The local MCP adapter gives that agent design data from cloud Multica without requiring the cloud server to access the engineer's filesystem.
+
+Later, Multica can also expose a cloud-hosted remote MCP endpoint:
+
+```text
+Cloud coding agent / web-based AI tool
+        |
+        | HTTPS MCP
+        v
+Cloud Multica MCP endpoint
+        |
+        v
+Cloud Multica Server
+```
+
+That remote MCP endpoint is a different product surface and needs OAuth-style authorization. It should not block the v1 local-adapter path.
+
 ## Non-Goals
 
 - Do not implement remote HTTP MCP with OAuth in v1.
@@ -35,13 +73,13 @@ The frontend engineer must still be able to restore a single frame even when the
 
 ## Recommended Approach
 
-Use a local stdio MCP server launched by the Multica CLI:
+Use a local stdio MCP adapter launched by the Multica CLI:
 
 ```bash
 multica mcp serve design
 ```
 
-The MCP server reads the existing CLI config:
+The adapter runs on the engineer's machine and connects to the cloud Multica Server through normal HTTPS APIs. It reads the existing CLI config:
 
 ```text
 ~/.multica/config.json
@@ -54,7 +92,7 @@ That config already carries:
 - `workspace_id`
 - `token`
 
-This keeps v1 simple and reliable. Local editor agents connect to a command, not a remote HTTP endpoint. The token stays on the user's machine and is not copied into every MCP client config.
+This keeps v1 simple and reliable. Local editor agents connect to a command, not a remote HTTP endpoint. The token stays on the user's machine and is not copied into every MCP client config. Multica itself can still be deployed in the cloud.
 
 Remote Streamable HTTP MCP can be added later for cloud-hosted clients, but it should be a separate auth design because browser OAuth, redirect handling, token refresh, and workspace scoping are materially more complex.
 
@@ -99,7 +137,7 @@ Reuse the existing CLI PAT path.
 
 The existing browser login flow creates a PAT and persists it in the CLI config file. That PAT currently has a longer lifetime than 30 days, so it satisfies the 30-day no-repeat-login requirement when setup succeeds.
 
-The local MCP server should:
+The local MCP adapter should:
 
 - read the token from CLI config
 - never print the token in logs
@@ -518,13 +556,13 @@ Manual validation:
 
 ## Rollout
 
-Phase 1: local MCP server and Restore Pack API.
+Phase 1: local MCP adapter and cloud Restore Pack API.
 
 Phase 2: Design Center copy-scope actions for frame, group, selected layers, and marquee bounds.
 
 Phase 3: documentation for frontend engineers, including examples for Codex, Claude Desktop, and OpenCode.
 
-Phase 4: optional remote HTTP MCP with OAuth and narrower MCP-scoped token.
+Phase 4: optional cloud-hosted remote HTTP MCP endpoint with OAuth and narrower MCP-scoped token.
 
 ## Acceptance Criteria
 
