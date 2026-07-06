@@ -303,6 +303,35 @@ func contextDesignNativeJSON(title string) map[string]any {
 	}
 }
 
+func restorePackGroupedNativeJSONForTest(title string) map[string]any {
+	nativeJSON := contextDesignNativeJSON(title)
+	frames := nativeJSON["frames"].([]map[string]any)
+	frames[0]["source"] = map[string]any{
+		"tool":      "figma",
+		"groupId":   "group-wallet",
+		"groupName": "钱包首页",
+		"groupPath": []string{"钱包首页"},
+	}
+	frames[1]["source"] = map[string]any{
+		"tool":      "figma",
+		"groupId":   "group-wallet",
+		"groupName": "钱包首页",
+		"groupPath": []string{"钱包首页"},
+	}
+	nativeJSON["restoreHints"] = map[string]any{
+		"figmaGroups": map[string]any{
+			"group-wallet": map[string]any{
+				"id":           "group-wallet",
+				"sourceNodeId": "4:189",
+				"name":         "钱包首页",
+				"nodeType":     "GROUP",
+				"frameIds":     []string{"frame-main", "frame-secondary"},
+			},
+		},
+	}
+	return nativeJSON
+}
+
 func nativeJSONWithFrameNamesForTest(names []string) map[string]any {
 	frames := make([]map[string]any, 0, len(names))
 	layers := make(map[string]any, len(names)*2)
@@ -1192,6 +1221,173 @@ func TestGetDesignSelectionContextWithBoundsReturnsIntersectingLayers(t *testing
 	text := resp["text"].([]any)
 	if len(text) != 1 || text[0].(map[string]any)["layerId"] != "main-title" {
 		t.Fatalf("unexpected selection text context: %+v", text)
+	}
+}
+
+func TestCreateDesignRestorePackFrameScope(t *testing.T) {
+	created := createDesignFileForTest(t, "Restore Pack Frame Design")
+	nativeJSON := contextDesignNativeJSON("Restore Pack Frame Design")
+	layers := nativeJSON["layers"].(map[string]any)
+	layers["hidden-trash"] = map[string]any{
+		"id":      "hidden-trash",
+		"frameId": "frame-main",
+		"name":    "Hidden Draft",
+		"type":    "text",
+		"visible": false,
+		"x":       16,
+		"y":       16,
+		"width":   100,
+		"height":  20,
+		"text":    map[string]any{"text": "do not upload"},
+	}
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, nativeJSON)
+
+	req := withURLParam(newRequest("POST", "/api/design-files/"+created.File.ID+"/restore-pack?workspace_id="+testWorkspaceID, map[string]any{
+		"scope": map[string]any{
+			"version":      "1.0",
+			"kind":         "frame",
+			"designFileId": created.File.ID,
+			"revisionId":   created.CurrentRevision.ID,
+			"frameId":      "frame-main",
+		},
+	}), "id", created.File.ID)
+	w := httptest.NewRecorder()
+	testHandler.CreateDesignRestorePack(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CreateDesignRestorePack frame: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode restore pack: %v", err)
+	}
+	if resp["version"] != "1.0" {
+		t.Fatalf("version = %#v", resp["version"])
+	}
+	scope := resp["scope"].(map[string]any)
+	if scope["kind"] != "frame" || scope["frameId"] != "frame-main" {
+		t.Fatalf("scope = %#v", scope)
+	}
+	frames := resp["frames"].([]any)
+	if len(frames) != 1 {
+		t.Fatalf("frames = %#v, want one frame", frames)
+	}
+	frame := frames[0].(map[string]any)
+	layersResp := frame["layers"].(map[string]any)
+	if _, ok := layersResp["main-image"]; !ok {
+		t.Fatalf("restore pack should include visible image layer: %#v", layersResp)
+	}
+	if _, ok := layersResp["hidden-trash"]; ok {
+		t.Fatalf("restore pack should exclude hidden layer: %#v", layersResp)
+	}
+	assets := resp["assets"].(map[string]any)
+	if _, ok := assets["asset-hero"]; !ok {
+		t.Fatalf("restore pack assets missing image asset: %#v", assets)
+	}
+	hints := resp["implementationHints"].(map[string]any)
+	if !designRestoreAnySliceContainsString(hints["assetLayerIds"], "main-image") {
+		t.Fatalf("implementationHints.assetLayerIds = %#v, want main-image", hints["assetLayerIds"])
+	}
+}
+
+func TestCreateDesignRestorePackFigmaGroupScope(t *testing.T) {
+	created := createDesignFileForTest(t, "Restore Pack Group Design")
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, restorePackGroupedNativeJSONForTest("Restore Pack Group Design"))
+
+	req := withURLParam(newRequest("POST", "/api/design-files/"+created.File.ID+"/restore-pack?workspace_id="+testWorkspaceID, map[string]any{
+		"scope": map[string]any{
+			"version":      "1.0",
+			"kind":         "figma_group",
+			"designFileId": created.File.ID,
+			"revisionId":   created.CurrentRevision.ID,
+			"groupId":      "group-wallet",
+		},
+	}), "id", created.File.ID)
+	w := httptest.NewRecorder()
+	testHandler.CreateDesignRestorePack(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CreateDesignRestorePack group: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode restore pack: %v", err)
+	}
+	frames := resp["frames"].([]any)
+	if len(frames) != 2 {
+		t.Fatalf("frames = %#v, want grouped frames", frames)
+	}
+	structure := resp["designStructure"].(map[string]any)
+	if structure["mode"] != "figma_group" || structure["groupName"] != "钱包首页" {
+		t.Fatalf("designStructure = %#v", structure)
+	}
+}
+
+func TestCreateDesignRestorePackSelectionBoundsScope(t *testing.T) {
+	created := createDesignFileForTest(t, "Restore Pack Selection Design")
+	nativeJSON := contextDesignNativeJSON("Restore Pack Selection Design")
+	layers := nativeJSON["layers"].(map[string]any)
+	layers["select-account"] = map[string]any{
+		"id":      "select-account",
+		"frameId": "frame-main",
+		"name":    "请选择提现账户",
+		"type":    "text",
+		"visible": true,
+		"x":       48,
+		"y":       92,
+		"width":   180,
+		"height":  24,
+		"text":    map[string]any{"characters": "请选择提现账户", "fontSize": 16},
+	}
+	layers["amount-input"] = map[string]any{
+		"id":      "amount-input",
+		"frameId": "frame-main",
+		"name":    "请输入提现金额",
+		"type":    "text",
+		"visible": true,
+		"x":       48,
+		"y":       132,
+		"width":   180,
+		"height":  24,
+		"text":    map[string]any{"characters": "请输入提现金额", "fontSize": 16},
+	}
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, nativeJSON)
+
+	req := withURLParam(newRequest("POST", "/api/design-files/"+created.File.ID+"/restore-pack?workspace_id="+testWorkspaceID, map[string]any{
+		"scope": map[string]any{
+			"version":      "1.0",
+			"kind":         "selection_bounds",
+			"designFileId": created.File.ID,
+			"revisionId":   created.CurrentRevision.ID,
+			"frameId":      "frame-main",
+			"selectionBounds": map[string]any{
+				"x":      35,
+				"y":      35,
+				"width":  260,
+				"height": 150,
+			},
+		},
+	}), "id", created.File.ID)
+	w := httptest.NewRecorder()
+	testHandler.CreateDesignRestorePack(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CreateDesignRestorePack selection bounds: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode restore pack: %v", err)
+	}
+	scope := resp["scope"].(map[string]any)
+	if scope["kind"] != "selection_bounds" {
+		t.Fatalf("scope = %#v", scope)
+	}
+	hints := resp["implementationHints"].(map[string]any)
+	if hints["interactionCueCount"].(float64) < 2 {
+		t.Fatalf("implementationHints = %#v, want select and input cues", hints)
+	}
+	if !designRestoreAnySliceContainsString(hints["interactionLayerIds"], "select-account") || !designRestoreAnySliceContainsString(hints["interactionLayerIds"], "amount-input") {
+		t.Fatalf("interactionLayerIds = %#v, want select-account and amount-input", hints["interactionLayerIds"])
 	}
 }
 

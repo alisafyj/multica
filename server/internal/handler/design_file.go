@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -427,6 +428,28 @@ type DesignSelectionContextRequest struct {
 	LayerIDs                  []string                      `json:"layerIds"`
 	SelectionBounds           *DesignSelectionBoundsRequest `json:"selectionBounds"`
 	IncludeIntersectingLayers *bool                         `json:"includeIntersectingLayers"`
+}
+
+type DesignRestorePackRequest struct {
+	Scope       DesignRestoreScopeV1 `json:"scope"`
+	DetailLevel string               `json:"detailLevel"`
+}
+
+type DesignRestoreScopeV1 struct {
+	Version                   string                        `json:"version"`
+	Kind                      string                        `json:"kind"`
+	DesignFileID              string                        `json:"designFileId"`
+	RevisionID                string                        `json:"revisionId"`
+	FrameID                   string                        `json:"frameId"`
+	GroupID                   string                        `json:"groupId"`
+	GroupName                 string                        `json:"groupName"`
+	GroupPath                 []string                      `json:"groupPath"`
+	FrameIDs                  []string                      `json:"frameIds"`
+	LayerIDs                  []string                      `json:"layerIds"`
+	SelectionBounds           *DesignSelectionBoundsRequest `json:"selectionBounds"`
+	IncludeIntersectingLayers *bool                         `json:"includeIntersectingLayers"`
+	Label                     string                        `json:"label"`
+	SourcePageURL             string                        `json:"sourcePageUrl"`
 }
 
 type DesignLayerLightweightEditRequest struct {
@@ -1459,6 +1482,38 @@ func (h *Handler) GetDesignSelectionContext(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, ctx)
 }
 
+func (h *Handler) CreateDesignRestorePack(w http.ResponseWriter, r *http.Request) {
+	idUUID, wsUUID, ok := h.parseDesignFileAndWorkspaceIDs(w, r)
+	if !ok {
+		return
+	}
+	var req DesignRestorePackRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	file, revision, ok := h.requestedDesignRevisionForRestorePack(w, r, idUUID, wsUUID, req.Scope)
+	if !ok {
+		return
+	}
+	pack, err := buildDesignRestorePackFromNativeJSON(file, revision, req.Scope, req.DetailLevel)
+	if err != nil {
+		var badReq errBadRequest
+		if errors.As(err, &badReq) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		var notFound errNotFound
+		if errors.As(err, &notFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to build design restore pack")
+		return
+	}
+	writeJSON(w, http.StatusOK, pack)
+}
+
 func (h *Handler) UpdateDesignLayerLightweight(w http.ResponseWriter, r *http.Request) {
 	idUUID, wsUUID, ok := h.parseDesignFileAndWorkspaceIDs(w, r)
 	if !ok {
@@ -1563,6 +1618,50 @@ func (h *Handler) requestedDesignRevision(w http.ResponseWriter, r *http.Request
 		return file, revision, true
 	}
 	revisionUUID, ok := parseUUIDOrBadRequest(w, revisionID, "revision_id")
+	if !ok {
+		return db.DesignFile{}, db.DesignRevision{}, false
+	}
+	revision, err := h.Queries.GetDesignRevisionInWorkspace(r.Context(), db.GetDesignRevisionInWorkspaceParams{ID: revisionUUID, WorkspaceID: workspaceID})
+	if err != nil || revision.FileID != file.ID {
+		writeError(w, http.StatusNotFound, "design revision not found")
+		return db.DesignFile{}, db.DesignRevision{}, false
+	}
+	return file, revision, true
+}
+
+func (h *Handler) requestedDesignRevisionForRestorePack(w http.ResponseWriter, r *http.Request, fileID pgtype.UUID, workspaceID pgtype.UUID, scope DesignRestoreScopeV1) (db.DesignFile, db.DesignRevision, bool) {
+	if strings.TrimSpace(scope.DesignFileID) != "" {
+		scopeFileID, ok := parseUUIDOrBadRequest(w, scope.DesignFileID, "scope.designFileId")
+		if !ok {
+			return db.DesignFile{}, db.DesignRevision{}, false
+		}
+		if scopeFileID != fileID {
+			writeError(w, http.StatusBadRequest, "scope.designFileId does not match design file id")
+			return db.DesignFile{}, db.DesignRevision{}, false
+		}
+	}
+	file, err := h.Queries.GetDesignFileInWorkspace(r.Context(), db.GetDesignFileInWorkspaceParams{ID: fileID, WorkspaceID: workspaceID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "design file not found")
+		return db.DesignFile{}, db.DesignRevision{}, false
+	}
+	revisionID := strings.TrimSpace(scope.RevisionID)
+	if revisionID == "" {
+		revisionID = strings.TrimSpace(r.URL.Query().Get("revision_id"))
+	}
+	if revisionID == "" {
+		if !file.CurrentRevisionID.Valid {
+			writeError(w, http.StatusNotFound, "design revision not found")
+			return db.DesignFile{}, db.DesignRevision{}, false
+		}
+		revision, err := h.Queries.GetDesignRevisionInWorkspace(r.Context(), db.GetDesignRevisionInWorkspaceParams{ID: file.CurrentRevisionID, WorkspaceID: workspaceID})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "design revision not found")
+			return db.DesignFile{}, db.DesignRevision{}, false
+		}
+		return file, revision, true
+	}
+	revisionUUID, ok := parseUUIDOrBadRequest(w, revisionID, "scope.revisionId")
 	if !ok {
 		return db.DesignFile{}, db.DesignRevision{}, false
 	}
@@ -5026,6 +5125,10 @@ type errBadRequest string
 
 func (e errBadRequest) Error() string { return string(e) }
 
+type errNotFound string
+
+func (e errNotFound) Error() string { return string(e) }
+
 func asObjectSlice(value any) []map[string]any {
 	items, ok := value.([]any)
 	if !ok {
@@ -5105,6 +5208,343 @@ func designFrameContextFromNativeJSON(revision db.DesignRevision, frameID string
 		"text":         collectText(layers, nil),
 		"annotations":  sanitizeContextPayload(frameAnnotations(doc, frameID, nil)),
 	}, nil
+}
+
+func buildDesignRestorePackFromNativeJSON(file db.DesignFile, revision db.DesignRevision, scope DesignRestoreScopeV1, detailLevel string) (map[string]any, error) {
+	var doc map[string]any
+	if err := json.Unmarshal(revision.NativeJson, &doc); err != nil {
+		return nil, err
+	}
+	scope = normalizeDesignRestoreScope(file, revision, scope)
+	if detailLevel = strings.TrimSpace(detailLevel); detailLevel == "" {
+		detailLevel = "normal"
+	}
+	frameIDs, structure, err := resolveDesignRestorePackFrames(doc, scope)
+	if err != nil {
+		return nil, err
+	}
+	packFrames := make([]map[string]any, 0, len(frameIDs))
+	mergedAssets := map[string]any{}
+	mergedText := []map[string]any{}
+	mergedColors := []map[string]any{}
+	warnings := []any{}
+	for _, frameID := range frameIDs {
+		item, err := designRestorePackFrame(file, revision, doc, frameID, scope)
+		if err != nil {
+			return nil, err
+		}
+		if item == nil {
+			return nil, errNotFound("design frame not found")
+		}
+		packFrames = append(packFrames, item)
+		for id, asset := range mapField(item, "assets") {
+			mergedAssets[id] = asset
+		}
+		mergedText = append(mergedText, collectText(mapField(item, "layers"), nil)...)
+		mergedColors = append(mergedColors, collectColors(mapField(item, "layers"), nil)...)
+		if len(mapField(item, "layers")) == 0 && (scope.Kind == "selected_layers" || scope.Kind == "selection_bounds") {
+			warnings = append(warnings, map[string]any{"code": "empty_selection", "message": "selection resolved to no visible layers"})
+		}
+	}
+	hints := designRestoreImplementationHints(packFrames)
+	return map[string]any{
+		"version":             "1.0",
+		"designFile":          map[string]any{"id": uuidToString(file.ID), "title": file.Title, "sourceType": file.SourceType},
+		"revision":            map[string]any{"id": uuidToString(revision.ID), "number": revision.RevisionNumber, "status": revision.Status},
+		"scope":               scope,
+		"frames":              packFrames,
+		"designStructure":     structure,
+		"assets":              mergedAssets,
+		"texts":               mergedText,
+		"colors":              mergedColors,
+		"implementationHints": hints,
+		"warnings":            warnings,
+		"provenance":          map[string]any{"detailLevel": detailLevel, "sourcePageUrl": scope.SourcePageURL},
+	}, nil
+}
+
+func normalizeDesignRestoreScope(file db.DesignFile, revision db.DesignRevision, scope DesignRestoreScopeV1) DesignRestoreScopeV1 {
+	if strings.TrimSpace(scope.Version) == "" {
+		scope.Version = "1.0"
+	}
+	scope.Kind = strings.TrimSpace(scope.Kind)
+	scope.DesignFileID = strings.TrimSpace(scope.DesignFileID)
+	if scope.DesignFileID == "" {
+		scope.DesignFileID = uuidToString(file.ID)
+	}
+	scope.RevisionID = strings.TrimSpace(scope.RevisionID)
+	if scope.RevisionID == "" {
+		scope.RevisionID = uuidToString(revision.ID)
+	}
+	scope.FrameID = strings.TrimSpace(scope.FrameID)
+	scope.GroupID = strings.TrimSpace(scope.GroupID)
+	scope.GroupName = strings.TrimSpace(scope.GroupName)
+	scope.Label = strings.TrimSpace(scope.Label)
+	scope.SourcePageURL = strings.TrimSpace(scope.SourcePageURL)
+	return scope
+}
+
+func resolveDesignRestorePackFrames(doc map[string]any, scope DesignRestoreScopeV1) ([]string, map[string]any, error) {
+	switch scope.Kind {
+	case "frame":
+		if scope.FrameID == "" {
+			return nil, nil, errBadRequest("scope.frameId is required")
+		}
+		return []string{scope.FrameID}, map[string]any{"mode": "frame", "frameId": scope.FrameID}, nil
+	case "selected_layers", "selection_bounds":
+		if scope.FrameID == "" {
+			return nil, nil, errBadRequest("scope.frameId is required")
+		}
+		return []string{scope.FrameID}, map[string]any{"mode": "selection", "source": scope.Kind, "frameId": scope.FrameID}, nil
+	case "figma_group":
+		frameIDs, groupMeta := resolveDesignRestorePackGroupFrameIDs(doc, scope)
+		if len(frameIDs) == 0 {
+			return nil, nil, errNotFound("design group not found")
+		}
+		groupName := firstString(groupMeta, "name", "groupName")
+		if groupName == "" {
+			groupName = scope.GroupName
+		}
+		groupID := firstString(groupMeta, "id", "groupId", "sourceNodeId")
+		if groupID == "" {
+			groupID = scope.GroupID
+		}
+		return frameIDs, map[string]any{"mode": "figma_group", "groupId": groupID, "groupName": groupName, "frameIds": frameIDs, "frameCount": len(frameIDs)}, nil
+	default:
+		if scope.Kind == "" {
+			return nil, nil, errBadRequest("scope.kind is required")
+		}
+		return nil, nil, errBadRequest("unsupported restore scope kind")
+	}
+}
+
+func resolveDesignRestorePackGroupFrameIDs(doc map[string]any, scope DesignRestoreScopeV1) ([]string, map[string]any) {
+	if len(scope.FrameIDs) > 0 {
+		return uniqueOrderedStrings(scope.FrameIDs), map[string]any{"id": scope.GroupID, "name": scope.GroupName}
+	}
+	if group := findDesignRestorePackGroupHint(doc, scope); group != nil {
+		return stringsFromAnySlice(group["frameIds"]), group
+	}
+	out := []string{}
+	meta := map[string]any{}
+	for _, frame := range asObjectSlice(doc["frames"]) {
+		source, _ := frame["source"].(map[string]any)
+		if !designRestoreFrameMatchesGroup(source, scope) {
+			continue
+		}
+		if len(meta) == 0 {
+			meta = source
+		}
+		if frameID := stringField(frame, "id"); frameID != "" {
+			out = append(out, frameID)
+		}
+	}
+	return uniqueOrderedStrings(out), meta
+}
+
+func findDesignRestorePackGroupHint(doc map[string]any, scope DesignRestoreScopeV1) map[string]any {
+	restoreHints, _ := doc["restoreHints"].(map[string]any)
+	groups, _ := restoreHints["figmaGroups"].(map[string]any)
+	for _, raw := range groups {
+		group, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if scope.GroupID != "" {
+			for _, key := range []string{"id", "groupId", "sourceNodeId"} {
+				if stringField(group, key) == scope.GroupID {
+					return group
+				}
+			}
+		}
+		if scope.GroupName != "" && firstString(group, "name", "groupName") == scope.GroupName {
+			return group
+		}
+	}
+	return nil
+}
+
+func designRestoreFrameMatchesGroup(source map[string]any, scope DesignRestoreScopeV1) bool {
+	if len(source) == 0 {
+		return false
+	}
+	if scope.GroupID != "" {
+		for _, key := range []string{"groupId", "id", "sourceNodeId"} {
+			if stringField(source, key) == scope.GroupID {
+				return true
+			}
+		}
+	}
+	if scope.GroupName != "" && stringField(source, "groupName") == scope.GroupName {
+		return true
+	}
+	if len(scope.GroupPath) > 0 {
+		return stringSlicesEqual(stringsFromAnySlice(source["groupPath"]), scope.GroupPath)
+	}
+	return false
+}
+
+func designRestorePackFrame(file db.DesignFile, revision db.DesignRevision, doc map[string]any, frameID string, scope DesignRestoreScopeV1) (map[string]any, error) {
+	frame := findFrame(doc, frameID)
+	if frame == nil {
+		return nil, nil
+	}
+	var ctx map[string]any
+	var err error
+	if scope.Kind == "selected_layers" || scope.Kind == "selection_bounds" {
+		ctx, err = designSelectionContextFromNativeJSON(revision, frameID, DesignSelectionContextRequest{
+			LayerIDs:                  scope.LayerIDs,
+			SelectionBounds:           scope.SelectionBounds,
+			IncludeIntersectingLayers: scope.IncludeIntersectingLayers,
+		})
+	} else {
+		ctx, err = designFrameContextFromNativeJSON(revision, frameID)
+	}
+	if err != nil || ctx == nil {
+		return ctx, err
+	}
+	layers := visibleDesignRestoreLayers(mapField(ctx, "layers"))
+	assetIDs := referencedAssetIDs(frame, layers)
+	if scope.Kind == "selected_layers" || scope.Kind == "selection_bounds" {
+		assetIDs = referencedAssetIDs(nil, layers)
+	}
+	item := map[string]any{
+		"designFileId": uuidToString(file.ID),
+		"revisionId":   uuidToString(revision.ID),
+		"frame":        sanitizeContextPayload(frame),
+		"frameId":      frameID,
+		"rootLayerId":  stringField(frame, "rootLayerId"),
+		"layers":       sanitizeContextPayload(layers),
+		"assets":       assetsByID(doc, assetIDs),
+		"exportables":  sanitizeContextPayload(collectExportables(layers)),
+		"colors":       collectColors(layers, nil),
+		"text":         collectText(layers, nil),
+		"annotations":  sanitizeContextPayload(frameAnnotations(doc, frameID, nil)),
+	}
+	if bounds, ok := ctx["bounds"]; ok {
+		item["bounds"] = bounds
+	}
+	return item, nil
+}
+
+func visibleDesignRestoreLayers(layers map[string]any) map[string]any {
+	out := make(map[string]any, len(layers))
+	for id, rawLayer := range layers {
+		layer, ok := rawLayer.(map[string]any)
+		if !ok {
+			continue
+		}
+		if visible, ok := layer["visible"].(bool); ok && !visible {
+			continue
+		}
+		out[id] = rawLayer
+	}
+	return out
+}
+
+func designRestoreImplementationHints(frames []map[string]any) map[string]any {
+	assetLayerIDs := map[string]struct{}{}
+	interactionLayerIDs := map[string]struct{}{}
+	interactionCues := []map[string]any{}
+	for _, frame := range frames {
+		for layerID, rawLayer := range mapField(frame, "layers") {
+			layer, ok := rawLayer.(map[string]any)
+			if !ok {
+				continue
+			}
+			if designRestoreLayerHasAsset(layer) {
+				assetLayerIDs[layerID] = struct{}{}
+			}
+			cueKind := designRestoreInteractionCueKind(layer)
+			if cueKind == "" {
+				continue
+			}
+			interactionLayerIDs[layerID] = struct{}{}
+			interactionCues = append(interactionCues, map[string]any{
+				"layerId": layerID,
+				"kind":    cueKind,
+				"text":    designRestoreLayerText(layer),
+				"name":    stringField(layer, "name"),
+			})
+		}
+	}
+	return map[string]any{
+		"assetLayerIds":       sortedStringSetKeys(assetLayerIDs),
+		"interactionLayerIds": sortedStringSetKeys(interactionLayerIDs),
+		"interactionCueCount": len(interactionCues),
+		"interactionCues":     interactionCues,
+	}
+}
+
+func designRestoreInteractionCueKind(layer map[string]any) string {
+	text := designRestoreLayerText(layer) + " " + stringField(layer, "name")
+	switch {
+	case strings.Contains(text, "请选择"):
+		return "select"
+	case strings.Contains(text, "请输入"):
+		return "input"
+	default:
+		return ""
+	}
+}
+
+func designRestoreLayerText(layer map[string]any) string {
+	text, _ := layer["text"].(map[string]any)
+	return firstString(text, "text", "characters")
+}
+
+func mapField(obj map[string]any, key string) map[string]any {
+	value, _ := obj[key].(map[string]any)
+	if value == nil {
+		return map[string]any{}
+	}
+	return value
+}
+
+func stringsFromAnySlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return uniqueOrderedStrings(typed)
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if value, ok := item.(string); ok {
+				out = append(out, value)
+			}
+		}
+		return uniqueOrderedStrings(out)
+	default:
+		return nil
+	}
+}
+
+func uniqueOrderedStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func stringSlicesEqual(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func designSelectionContextFromNativeJSON(revision db.DesignRevision, frameID string, req DesignSelectionContextRequest) (map[string]any, error) {

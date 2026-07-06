@@ -721,6 +721,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetDesignFile)
 					r.Get("/context", h.GetDesignFileContext)
+					r.Post("/restore-pack", h.CreateDesignRestorePack)
 					r.Delete("/", h.DeleteDesignFile)
 					r.Delete("/frames/{frameId}", h.DeleteDesignFrame)
 					r.Get("/frames/{frameId}/context", h.GetDesignFrameContext)

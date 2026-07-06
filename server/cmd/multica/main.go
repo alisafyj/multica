@@ -17,9 +17,9 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "multica",
-	Short: "Multica CLI — local agent runtime and management tool",
-	Long:  "Work seamlessly with Multica from the command line.",
+	Use:           "multica",
+	Short:         "Multica CLI — local agent runtime and management tool",
+	Long:          "Work seamlessly with Multica from the command line.",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -58,6 +58,7 @@ func init() {
 	setupCmd.GroupID = groupAdditional
 	attachmentCmd.GroupID = groupAdditional
 	configCmd.GroupID = groupAdditional
+	mcpCmd.GroupID = groupAdditional
 	updateCmd.GroupID = groupAdditional
 	versionCmd.GroupID = groupAdditional
 
@@ -78,6 +79,7 @@ func init() {
 	rootCmd.AddCommand(setupCmd)
 	rootCmd.AddCommand(attachmentCmd)
 	rootCmd.AddCommand(configCmd)
+	rootCmd.AddCommand(mcpCmd)
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(versionCmd)
 
