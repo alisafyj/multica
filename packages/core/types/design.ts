@@ -631,6 +631,7 @@ export interface DesignRestoreTaskInputV1 {
   sourceIssueId?: string;
   targetRoute?: string;
   targetFiles?: string[];
+  artifactDocPath?: string;
   purpose: DesignRestoreTaskPurpose;
   items: DesignRestoreTaskItemInput[];
 }

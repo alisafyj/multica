@@ -2074,7 +2074,7 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 		prompt = "根据 restore task 的设计上下文完成最小安全前端还原；优先复用现有组件，完成后运行相关 typecheck，并在结果里说明变更文件、检查项和阻塞项。"
 	}
 	restorePolicy := json.RawMessage(`{"restoreMode":"strict-structure","allowFullFramePreview":false,"forbidFullFramePreviewAsResult":true,"onInsufficientStructure":"blocked_placeholder_or_fail","allowedImageUse":"visible layer image/exported assets from item_contexts and local component assets allowed; full frame preview/thumbnail/full-frame slice forbidden as primary result"}`)
-	outputPolicy := json.RawMessage(`{"result":{"files":"string[]","restoreMapping":"array","summary":"string","blockers":"string[]","usedLayerIds":"string[]","usedAssetIds":"string[]","usedFullFramePreview":"boolean"}}`)
+	outputPolicy := json.RawMessage(`{"result":{"files":"string[]","restoreMapping":"array","summary":"string","blockers":"string[]","artifactDocPath":"string","usedLayerIds":"string[]","usedAssetIds":"string[]","usedFullFramePreview":"boolean"}}`)
 	var approvedPlan *db.DesignRestorePlan
 	plan, err := h.Queries.GetDesignRestorePlanByTask(r.Context(), db.GetDesignRestorePlanByTaskParams{RestoreTaskID: task.ID, WorkspaceID: wsUUID})
 	if err == nil {
@@ -2516,11 +2516,12 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 	if err := json.Unmarshal(task.Input, &input); err != nil {
 		return nil, err
 	}
+	artifactDocPath := designRestoreArtifactDocPath(task)
 	repoBlock := map[string]any{"status": "missing", "mode": "prototype", "note": "No completed design repo analysis was found; current plan remains a prototype target."}
 	targetsBlock := map[string]any{"selected": nil, "candidates": []any{}, "needsUserSelection": false}
 	targetStrategyBlock := map[string]any{"mode": "sandbox_fallback", "fallbackMode": "prototype_html", "note": "No production repo analysis is available; use isolated prototype target only."}
 	executionBlock := map[string]any{
-		"allowedPaths":        []string{"fengchenDoc/gallery-native-agent-test"},
+		"allowedPaths":        []string{"fengchenDoc/gallery-native-agent-test", "docs/multica/ui-restore"},
 		"forbiddenPaths":      []string{"server", "packages/core"},
 		"commands":            []string{"pnpm --filter @multica/views exec tsc --noEmit --pretty false"},
 		"allowPrototypeHtml":  true,
@@ -2540,7 +2541,7 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 				}
 				targetsBlock = map[string]any{"selected": artifactTarget, "candidates": candidates, "needsUserSelection": false, "defaultMode": artifactTarget["kind"]}
 				executionBlock = map[string]any{
-					"allowedPaths":       artifactTarget["allowedPaths"],
+					"allowedPaths":       appendDesignRestoreAllowedPath(artifactTarget["allowedPaths"], "docs/multica/ui-restore"),
 					"forbiddenPaths":     jsonRawFieldToAny(analysis.Boundaries, "forbiddenPaths", []any{}),
 					"commands":           jsonRawFieldToAny(analysis.Commands, "typecheck", []any{}),
 					"allowPrototypeHtml": false,
@@ -2651,6 +2652,16 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 		"targets":         targetsBlock,
 		"execution":       executionBlock,
 		"interactionFlow": interactionFlow,
+		"artifacts": map[string]any{
+			"uiRestoreDocument": map[string]any{
+				"kind":         "markdown",
+				"path":         artifactDocPath,
+				"handoffField": "artifactDocPath",
+				"producer":     "ui_generation",
+				"consumer":     "frontend_restore",
+				"instruction":  "UI Agent must create this Markdown file in the target repo and return its relative path as RESTORE_RESULT_JSON.artifactDocPath. Frontend Agent must read it before API/state/integration work.",
+			},
+		},
 		"dispatchPolicy": map[string]any{
 			"requireApproval":                true,
 			"allowSkipPlanForDevelopment":    true,
@@ -2687,8 +2698,9 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 			"Turn `请选择`/select-like text into project select/popover controls and `请输入`/input-like text into project input/form controls when the surrounding UI implies interaction.",
 			"Keep cleanup conservative: ignore hidden or high-confidence noise, but do not drop visible asset layers.",
 			"Do not render multiple sibling frames as a flat showcase/gallery unless designStructure.mode is explicitly `showcase`.",
+			"Create the UI restore artifact document at artifacts.uiRestoreDocument.path and include artifactDocPath in RESTORE_RESULT_JSON so the frontend Agent can consume the handoff by path.",
 			"Run relevant typecheck/test command.",
-			"Return RESTORE_RESULT_JSON with files, checks, blockers, restoreMapping, usedLayerIds, usedAssetIds, and usedFullFramePreview=false.",
+			"Return RESTORE_RESULT_JSON with files, checks, blockers, restoreMapping, artifactDocPath, usedLayerIds, usedAssetIds, and usedFullFramePreview=false.",
 		},
 		"items": items,
 		"risks": []string{
@@ -2698,6 +2710,30 @@ func (h *Handler) buildDefaultDesignRestorePlan(ctx context.Context, task db.Des
 		},
 	}
 	return json.Marshal(plan)
+}
+
+func designRestoreArtifactDocPath(task db.DesignRestoreTask) string {
+	return "docs/multica/ui-restore/" + uuidToString(task.ID) + ".md"
+}
+
+func appendDesignRestoreAllowedPath(paths any, path string) []string {
+	values := []string{}
+	switch typed := paths.(type) {
+	case []string:
+		values = append(values, typed...)
+	case []any:
+		for _, raw := range typed {
+			if value, ok := raw.(string); ok && strings.TrimSpace(value) != "" {
+				values = append(values, value)
+			}
+		}
+	}
+	for _, value := range values {
+		if value == path {
+			return values
+		}
+	}
+	return append(values, path)
 }
 
 func buildDesignRestoreInteractionFlow(designStructure map[string]any, pageTargets []map[string]any) map[string]any {

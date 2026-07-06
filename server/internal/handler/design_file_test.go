@@ -2528,6 +2528,14 @@ func TestDispatchDesignRestoreTaskCreatesAgentTask(t *testing.T) {
 	if allowedImageUse, _ := restorePolicy["allowedImageUse"].(string); !strings.Contains(allowedImageUse, "visible layer image/exported assets") || !strings.Contains(allowedImageUse, "full frame preview/thumbnail/full-frame slice forbidden") {
 		t.Fatalf("queued allowedImageUse = %q, want visible layer assets allowed and full-frame assets forbidden", allowedImageUse)
 	}
+	outputPolicy, ok := queuedContext["output_policy"].(map[string]any)
+	if !ok {
+		t.Fatalf("queued output_policy = %#v, want object", queuedContext["output_policy"])
+	}
+	resultPolicy, ok := outputPolicy["result"].(map[string]any)
+	if !ok || resultPolicy["artifactDocPath"] != "string" {
+		t.Fatalf("queued output_policy.result = %#v, want artifactDocPath string contract", outputPolicy["result"])
+	}
 	itemContexts, ok := queuedContext["item_contexts"].([]any)
 	if !ok || len(itemContexts) != 1 {
 		t.Fatalf("queued item_contexts = %#v, want one item context", queuedContext["item_contexts"])
@@ -3141,6 +3149,36 @@ func TestGenerateDesignRestorePlanBuildsPageTargetsForDistinctPageNames(t *testi
 	if !designRestoreStateTransitionExistsForTest(stateTransitions, "提现", "确认提现", "modal") {
 		t.Fatalf("interactionFlow stateTransitions missing withdraw confirm modal: %#v", stateTransitions)
 	}
+
+	artifacts, ok := plan["artifacts"].(map[string]any)
+	if !ok {
+		t.Fatalf("artifacts = %#v, want UI restore artifact document contract", plan["artifacts"])
+	}
+	uiRestoreDocument, ok := artifacts["uiRestoreDocument"].(map[string]any)
+	if !ok {
+		t.Fatalf("artifacts.uiRestoreDocument = %#v, want document target", artifacts["uiRestoreDocument"])
+	}
+	if uiRestoreDocument["path"] != "docs/multica/ui-restore/"+createdTask.ID+".md" || uiRestoreDocument["handoffField"] != "artifactDocPath" {
+		t.Fatalf("ui restore document artifact = %#v", uiRestoreDocument)
+	}
+	execution := plan["execution"].(map[string]any)
+	if !designRestoreAnySliceContainsString(execution["allowedPaths"], "docs/multica/ui-restore") {
+		t.Fatalf("execution.allowedPaths = %#v, want UI restore artifact doc path allowed", execution["allowedPaths"])
+	}
+}
+
+func designRestoreAnySliceContainsString(values any, want string) bool {
+	rawValues, ok := values.([]any)
+	if !ok {
+		return false
+	}
+	for _, raw := range rawValues {
+		value, ok := raw.(string)
+		if ok && value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func designRestoreTransitionExistsForTest(transitions []any, fromPage string, triggerText string, toPage string, kind string) bool {

@@ -2150,6 +2150,7 @@ type designRestoreResultSummary struct {
 	UsedAssetIDs             []string                   `json:"usedAssetIds"`
 	UsedFullFramePreview     bool                       `json:"usedFullFramePreview"`
 	PolicyViolation          string                     `json:"policyViolation"`
+	ArtifactDocPath          string                     `json:"artifactDocPath,omitempty"`
 	VisualFidelityScore      *float64                   `json:"visualFidelityScore,omitempty"`
 	VisualReview             *designRestoreVisualReview `json:"visualReview,omitempty"`
 	ImplementedRoute         string                     `json:"implementedRoute,omitempty"`
@@ -2293,6 +2294,8 @@ func designRestorePolicyViolation(ctx service.DesignRestoreTaskContext, output s
 				return "completed_result_missing_restore_mapping"
 			case len(summary.UsedLayerIDs) == 0:
 				return "completed_result_missing_used_layer_ids"
+			case designRestoreContextPurpose(ctx) == "ui_generation" && strings.TrimSpace(summary.ArtifactDocPath) == "":
+				return "completed_result_missing_artifact_doc_path"
 			}
 		}
 		if summary.Status == "blocked" && len(summary.Blockers) == 0 {
@@ -2300,6 +2303,16 @@ func designRestorePolicyViolation(ctx service.DesignRestoreTaskContext, output s
 		}
 	}
 	return designRestoreFullFramePreviewViolation(ctx, output)
+}
+
+func designRestoreContextPurpose(ctx service.DesignRestoreTaskContext) string {
+	var payload struct {
+		Purpose string `json:"purpose"`
+	}
+	if err := json.Unmarshal(ctx.Input, &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Purpose)
 }
 
 func designRestorePolicyWarning(ctx service.DesignRestoreTaskContext, summary designRestoreResultSummary) string {

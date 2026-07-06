@@ -113,6 +113,15 @@ function resultSummary(task: DesignRestoreTask | null): Record<string, unknown> 
   return summary && typeof summary === "object" && !Array.isArray(summary) ? summary as Record<string, unknown> : null;
 }
 
+function nonEmptyString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function restoreTaskArtifactDocPath(task: DesignRestoreTask | null) {
+  const summary = resultSummary(task);
+  return nonEmptyString(summary?.artifactDocPath) || nonEmptyString(task?.result?.artifactDocPath);
+}
+
 export function selectIssueRestoreTask(tasks: DesignRestoreTask[], issueId: string, currentRevisionId?: string, deliveryId?: string) {
   const issueTasks = tasks.filter((task) => task.issue_id === issueId);
   const revisionTasks = currentRevisionId ? issueTasks.filter((task) => task.revision_id === currentRevisionId) : issueTasks;
@@ -392,12 +401,14 @@ export function createIssueDesignDeliveryScope(input: IssueDesignDeliveryScopeIn
     return createRawDesignFallbackScope(input);
   }
   const items = normalizedScopeItems(input);
+  const artifactDocPath = restoreTaskArtifactDocPath(input.activeRestoreTask);
   return {
     version: "1.0",
     source: "issue_delivery",
     source_type: "ui_restore_artifact",
     artifact_id: input.activeRestoreTask.id,
     restoreTaskId: input.activeRestoreTask.id,
+    ...(artifactDocPath ? { artifactDocPath } : {}),
     ...(input.projectId ? { projectId: input.projectId } : {}),
     sourceIssueId: input.sourceIssueId,
     targetIssueId: input.targetIssueId,
@@ -439,6 +450,7 @@ function restoreItemsFromDelivery(delivery: DesignDelivery | null): IssueDesignS
 
 export function createIssueDesignRestoreTaskInput(input: IssueDesignRestoreTaskInputArgs): DesignRestoreTaskInputV1 {
   const isFrontendRestore = !!input.receivedDesignDelivery;
+  const artifactDocPath = isFrontendRestore ? nonEmptyString(input.receivedDesignDelivery?.scope?.artifactDocPath) : "";
   const items = isFrontendRestore
     ? restoreItemsFromDelivery(input.receivedDesignDelivery)
     : input.restoreItems ?? [];
@@ -447,6 +459,7 @@ export function createIssueDesignRestoreTaskInput(input: IssueDesignRestoreTaskI
     version: "1.0",
     projectId: input.projectId ?? undefined,
     sourceIssueId: input.issueId,
+    ...(artifactDocPath ? { artifactDocPath } : {}),
     purpose: isFrontendRestore ? "frontend_restore" : "ui_generation",
     items: restoreItems.map((item, index) => ({
       itemId: `issue-${input.issueId.slice(0, 8)}-${item.frameId}`,
@@ -461,9 +474,9 @@ export function createIssueDesignRestoreTaskInput(input: IssueDesignRestoreTaskI
       ...(item.groupPath?.length ? { groupPath: item.groupPath } : {}),
       note: item.groupName
         ? isFrontendRestore
-          ? `Issue 内触发：基于收到的设计交付进行前端整页还原；这些画板来自同一 Figma 分组 ${item.groupName}。`
+          ? `Issue 内触发：基于收到的设计交付进行前端整页还原；这些画板来自同一 Figma 分组 ${item.groupName}。${artifactDocPath ? ` 请先读取 UI 还原产物文档：${artifactDocPath}。` : ""}`
           : `Issue 内触发：UI Agent 按 Figma 分组 ${item.groupName} 进行页面所见还原。`
-        : isFrontendRestore ? "Issue 内触发：基于收到的设计交付进行前端整页还原。" : "Issue 内触发：UI Agent 进行页面所见还原。",
+        : isFrontendRestore ? `Issue 内触发：基于收到的设计交付进行前端整页还原。${artifactDocPath ? ` 请先读取 UI 还原产物文档：${artifactDocPath}。` : ""}` : "Issue 内触发：UI Agent 进行页面所见还原。",
     })),
   };
 }

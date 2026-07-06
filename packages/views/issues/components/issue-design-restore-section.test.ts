@@ -13,7 +13,7 @@ function task(overrides: Partial<DesignRestoreTask>): DesignRestoreTask {
     agent_task_id: overrides.agent_task_id ?? null,
     status: overrides.status ?? "queued",
     input: {},
-    result: {},
+    result: overrides.result ?? {},
     error: null,
     created_by: null,
     created_at: "2026-06-29T00:00:00Z",
@@ -394,6 +394,30 @@ describe("issue restore task input helpers", () => {
     expect(restoreDispatchPrompt(true)).toContain("前端整页还原");
     expect(restoreAgentUnavailableCopy(true)).toBe("暂无可用前端 Agent");
   });
+
+  it("passes UI restore artifact document path into frontend restore input", () => {
+    const input = createIssueDesignRestoreTaskInput({
+      issueId: "frontend-issue-12345678",
+      projectId: "project-1",
+      restoreFileId: "file-1",
+      restoreRevisionId: "revision-1",
+      restoreFrameId: "frame-1",
+      restoreFrameName: "服务记录",
+      receivedDesignDelivery: delivery({
+        id: "delivery-1",
+        scope: {
+          source_type: "ui_restore_artifact",
+          artifactDocPath: "docs/multica/ui-restore/restore-task-1.md",
+          restoreTaskId: "restore-task-1",
+          items: [{ frameId: "frame-1", frameName: "服务记录", source: "ui_restore_task" }],
+        },
+      }),
+    });
+
+    expect(input.purpose).toBe("frontend_restore");
+    expect(input.artifactDocPath).toBe("docs/multica/ui-restore/restore-task-1.md");
+    expect(input.items[0]?.note).toContain("docs/multica/ui-restore/restore-task-1.md");
+  });
 });
 
 describe("issue design delivery scope helpers", () => {
@@ -410,7 +434,15 @@ describe("issue design delivery scope helpers", () => {
   it("creates UI restore artifact scope after UI restore completes", () => {
     const scope = createIssueDesignDeliveryScope({
       ...baseInput,
-      activeRestoreTask: task({ id: "restore-task-1", status: "completed" }),
+      activeRestoreTask: task({
+        id: "restore-task-1",
+        status: "completed",
+        result: {
+          summary: {
+            artifactDocPath: "docs/multica/ui-restore/restore-task-1.md",
+          },
+        },
+      }),
     });
 
     expect(scope).toEqual({
@@ -419,6 +451,7 @@ describe("issue design delivery scope helpers", () => {
       source_type: "ui_restore_artifact",
       artifact_id: "restore-task-1",
       restoreTaskId: "restore-task-1",
+      artifactDocPath: "docs/multica/ui-restore/restore-task-1.md",
       projectId: "project-1",
       sourceIssueId: "ui-issue",
       targetIssueId: "frontend-issue",
