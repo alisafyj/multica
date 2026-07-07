@@ -387,6 +387,39 @@ Gallery test target:
 
 ## Useful Commands
 
+### Local Dev Server Startup Rule
+
+Updated 2026-07-06 after repeated startup mistakes:
+
+- Do **not** use `pnpm dev:web`, `corepack pnpm dev:web`, `make start`, or `make dev` when the user only asks to start the already-developed Multica backend/frontend for testing. Those paths can route through Turbo/pnpm, trigger `node_modules` reinstall prompts, start on the wrong port, or take much longer than needed.
+- Do **not** touch unrelated preview services such as `http://localhost:5173`; that port is often the target restore repo preview.
+- Before starting anything, check listeners first:
+
+```bash
+lsof -nP -iTCP:8080 -iTCP:3031 -iTCP:5173 -sTCP:LISTEN || true
+curl -sf http://localhost:8080/health
+```
+
+- If backend `8080` is already healthy, leave it running.
+- If frontend `3031` needs to be started, use the local Next binary directly from `apps/web`; this avoids pnpm/turbo and preserves login/cookie behavior on the expected port:
+
+```bash
+cd /Users/fengyujie/Documents/soyoung/multica/apps/web
+set -a && source ../../.env && set +a
+./node_modules/.bin/next dev --webpack --port "${FRONTEND_PORT:-3031}"
+```
+
+- If backend `8080` is not running and the user explicitly wants it started:
+
+```bash
+cd /Users/fengyujie/Documents/soyoung/multica/server
+set -a && source ../.env && set +a
+go run ./cmd/server
+```
+
+- Avoid switching foreground servers into ad-hoc background/nohup processes during user testing unless the user explicitly asks for that. Keep the startup path simple and report exact URLs.
+- If an agent stops backend or frontend while implementing/testing changes, it must restart the affected service before handing back to the user. Do not wait for the user to remind you.
+
 Frontend verification:
 
 ```bash
@@ -399,9 +432,9 @@ npx gitnexus detect-changes
 Restart frontend on port 3031:
 
 ```bash
-for pid in $(lsof -ti tcp:3031 || true); do kill "$pid" || true; done
-set -a && source .env && set +a
-FRONTEND_PORT=3031 NPM_CONFIG_REGISTRY=https://registry.npmjs.org PNPM_CONFIG_REGISTRY=https://registry.npmjs.org nohup pnpm --filter @multica/web dev > "/var/folders/q0/vgjdbrm579942n43js1pr7_m0000gn/T/opencode/multica-frontend.log" 2>&1 &
+cd /Users/fengyujie/Documents/soyoung/multica/apps/web
+set -a && source ../../.env && set +a
+./node_modules/.bin/next dev --webpack --port "${FRONTEND_PORT:-3031}"
 ```
 
 Restart backend on port 8080:

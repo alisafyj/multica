@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, ClipboardList, Copy, Eye, Maximize2, Search, Trash2, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronLeft, ChevronRight, ClipboardList, Code2, Copy, Eye, Maximize2, MoreHorizontal, Search, Trash2, ZoomIn, ZoomOut } from "lucide-react";
 import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from "pixi.js";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -13,6 +13,7 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import type { DesignRevision, GalleryNativeJson } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@multica/ui/components/ui/dropdown-menu";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import {
   AlertDialog,
@@ -26,6 +27,7 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
+import { createDesignRestoreMCPPrompt, createFigmaGroupRestoreScope, createFrameRestoreScope, type DesignRestoreScopeV1 } from "./design-restore-scope";
 import { buildFrameTree, groupedFrames, restoreTaskItemsForFrames } from "./frame-groups";
 import type { FrameTreeNode, GroupedFrame } from "./frame-groups";
 
@@ -63,6 +65,11 @@ function positionedFrame(frame: BoardFrame, positions: FramePositionMap) {
 function meaningfulFrame(frames: BoardFrame[], selectedFrameId: string | null) {
   if (!frames.length) return undefined;
   return frames.find((frame) => frame.id === selectedFrameId) ?? frames.find((frame) => frame.width >= 240 && frame.height >= 320) ?? frames[0];
+}
+
+function browserPageUrl(path?: string) {
+  if (typeof window === "undefined") return undefined;
+  return path ? new URL(path, window.location.origin).toString() : window.location.href;
 }
 
 function frameBounds(frames: BoardFrame[], positions: FramePositionMap) {
@@ -317,13 +324,14 @@ function FloatingFrameTree({ frames, selectedFrameId, selectedGroupId, collapsed
   );
 }
 
-function FrameToolMenu({ state, onClose, onView, onCopyImage, onDelete, deleting, canDelete }: { state: FrameToolMenuState; onClose: () => void; onView: (frame: BoardFrame) => void; onCopyImage: (frame: BoardFrame) => void; onDelete: (frame: BoardFrame) => void; deleting: boolean; canDelete: boolean }) {
+function FrameToolMenu({ state, onClose, onView, onCopyImage, onCopyPrompt, onDelete, deleting, canDelete }: { state: FrameToolMenuState; onClose: () => void; onView: (frame: BoardFrame) => void; onCopyImage: (frame: BoardFrame) => void; onCopyPrompt: (frame: BoardFrame) => void; onDelete: (frame: BoardFrame) => void; deleting: boolean; canDelete: boolean }) {
   if (!state) return null;
   return (
     <div className="fixed inset-0 z-50" onClick={onClose} onContextMenu={(event) => { event.preventDefault(); onClose(); }}>
       <div className="absolute min-w-40 overflow-hidden rounded-xl border bg-popover p-1 text-popover-foreground shadow-xl" style={{ left: state.x, top: state.y }} onClick={(event) => event.stopPropagation()}>
         <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => onView(state.frame)}><Eye className="h-4 w-4" />查看详情</button>
         <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => onCopyImage(state.frame)}><Copy className="h-4 w-4" />复制图片</button>
+        <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => onCopyPrompt(state.frame)}><Code2 className="h-4 w-4" />复制 MCP 还原 Prompt</button>
         <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50" disabled={!canDelete || deleting} onClick={() => onDelete(state.frame)}><Trash2 className="h-4 w-4" />{!canDelete ? "历史版本不可删除" : deleting ? "删除中…" : "删除"}</button>
       </div>
     </div>
@@ -476,6 +484,7 @@ export function DesignFilePage({ designId }: { designId: string }) {
   const frames = useMemo(() => (nativeJson?.frames ?? []) as BoardFrame[], [nativeJson]);
   const groups = useMemo(() => groupedFrames(frames), [frames]);
   const selectedFrame = meaningfulFrame(frames, selectedFrameId);
+  const selectedGroup = groups.find((group) => group.id === selectedGroupId) ?? null;
   const filePreviewUrl = data?.file.thumbnail_url ?? nativeThumbnailUrl(nativeJson);
 
   useEffect(() => {
@@ -570,15 +579,55 @@ export function DesignFilePage({ designId }: { designId: string }) {
     setFrameToolMenu(null);
   };
 
+  const copyMCPRestorePrompt = async (scope: DesignRestoreScopeV1) => {
+    try {
+      await navigator.clipboard?.writeText(createDesignRestoreMCPPrompt(scope));
+      toast.success("已复制 MCP 还原 Prompt");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "复制 MCP 还原 Prompt 失败");
+    }
+  };
+
+  const copyFrameRestorePrompt = (frame: BoardFrame) => {
+    if (!activeRevision?.id) {
+      toast.info("设计版本未加载，无法复制 MCP Prompt。");
+      return;
+    }
+    void copyMCPRestorePrompt(
+      createFrameRestoreScope({
+        designFileId: designId,
+        revisionId: activeRevision.id,
+        frame,
+        sourcePageUrl: browserPageUrl(paths.designFrameDetail(designId, frame.id, { revisionId: activeRevision.id })),
+      }),
+    );
+    setFrameToolMenu(null);
+  };
+
+  const copySelectedGroupRestorePrompt = () => {
+    if (!activeRevision?.id || !selectedGroup) {
+      toast.info("请先选择一个分组。");
+      return;
+    }
+    void copyMCPRestorePrompt(
+      createFigmaGroupRestoreScope({
+        designFileId: designId,
+        revisionId: activeRevision.id,
+        group: selectedGroup,
+        sourcePageUrl: browserPageUrl(paths.designDetail(designId, { revisionId: activeRevision.id })),
+      }),
+    );
+  };
+
   const copyDesignContext = async () => {
     if (!designId) return;
     setCopyingContext(true);
     try {
       const context = await api.getDesignFileContext(designId, { revisionId: activeRevision?.id });
       await navigator.clipboard?.writeText(JSON.stringify(context, null, 2));
-      toast.success("已复制设计稿上下文 JSON");
+      toast.success("已复制调试上下文 JSON");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "复制设计稿上下文失败");
+      toast.error(error instanceof Error ? error.message : "复制调试上下文 JSON 失败");
     } finally {
       setCopyingContext(false);
     }
@@ -602,10 +651,23 @@ export function DesignFilePage({ designId }: { designId: string }) {
                 {revisions.map((revision) => <option key={revision.id} value={revision.id}>版本 {revision.revision_number}{revision.id === data?.file.current_revision_id ? " · 当前" : ""}</option>)}
               </select>
             ) : null}
-            <Button size="sm" variant="outline" disabled={!data?.file.id || !activeRevision?.id || copyingContext} onClick={() => void copyDesignContext()}>
-              <Copy className="h-3.5 w-3.5" />
-              {copyingContext ? "复制中…" : "复制上下文"}
-            </Button>
+            {selectedGroup ? (
+              <Button size="sm" variant="outline" disabled={!activeRevision?.id} onClick={copySelectedGroupRestorePrompt}>
+                <Code2 className="h-3.5 w-3.5" />
+                复制 MCP 还原 Prompt
+              </Button>
+            ) : null}
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button size="icon-sm" variant="outline" aria-label="更多" />}>
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem disabled={!data?.file.id || !activeRevision?.id || copyingContext} onClick={() => void copyDesignContext()}>
+                  <Copy className="h-3.5 w-3.5" />
+                  {copyingContext ? "复制中…" : "复制调试上下文 JSON"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button size="sm" variant="outline" disabled={!activeRevision?.id || !frames.length || createFullRestoreTask.isPending} onClick={() => createFullRestoreTask.mutate()}>
               <ClipboardList className="h-3.5 w-3.5" />
               {createFullRestoreTask.isPending ? "保存中…" : "保存全量任务"}
@@ -662,6 +724,7 @@ export function DesignFilePage({ designId }: { designId: string }) {
         onClose={() => setFrameToolMenu(null)}
         onView={(frame) => { setFrameToolMenu(null); navigation.push(paths.designFrameDetail(designId, frame.id, { revisionId: activeRevision?.id })); }}
         onCopyImage={copyFrameImage}
+        onCopyPrompt={copyFrameRestorePrompt}
         onDelete={(frame) => { setFrameToolMenu(null); setDeleteFrameTarget(frame); }}
       />
       <AlertDialog open={deleteDesignOpen} onOpenChange={setDeleteDesignOpen}>

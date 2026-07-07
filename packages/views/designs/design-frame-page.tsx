@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent, MutableRefObject, ReactNode } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, ClipboardList, Code2, Copy, Download, Droplets, Layers, MessageSquareText, MousePointer2, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, ClipboardList, Code2, Copy, Download, Droplets, Layers, MessageSquareText, MoreHorizontal, MousePointer2, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
@@ -14,6 +14,7 @@ import type { DesignLayer, DesignLayerLightweightEditRequest, GalleryNativeJson 
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@multica/ui/components/ui/dropdown-menu";
 import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Textarea } from "@multica/ui/components/ui/textarea";
@@ -29,6 +30,7 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
+import { createDesignRestoreMCPPrompt, createFrameRestoreScope, createSelectionRestoreScope, type DesignRestoreScopeV1 } from "./design-restore-scope";
 import { LayerTree } from "./layer-tree";
 import { NativeFramePreview } from "./native-renderer";
 import { analyzeFrameFidelity } from "./native-renderer/fidelity";
@@ -110,6 +112,10 @@ function normalizedRect(rect: MarqueeState): Rect | null {
   const width = Math.abs(rect.currentX - rect.startX);
   const height = Math.abs(rect.currentY - rect.startY);
   return { x, y, width, height };
+}
+
+function browserPageUrl() {
+  return typeof window === "undefined" ? undefined : window.location.href;
 }
 
 function distanceLines(selected: Rect | null, target: Rect | null): DistanceLine[] {
@@ -438,6 +444,15 @@ function copyWithToast(text: string, label = "复制成功") {
   void navigator.clipboard?.writeText(text).then(() => toast.success(label));
 }
 
+async function copyMCPRestorePrompt(scope: DesignRestoreScopeV1) {
+  try {
+    await navigator.clipboard?.writeText(createDesignRestoreMCPPrompt(scope));
+    toast.success("已复制 MCP 还原 Prompt");
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : "复制 MCP 还原 Prompt 失败");
+  }
+}
+
 function restoreTaskSourceLabel(source: LocalRestoreTaskItem["source"]) {
   if (source === "selection_bounds") return "框选区域";
   if (source === "selected_layers") return "选中图层";
@@ -742,19 +757,53 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
   };
   const copyFrameContext = async () => {
     if (!activeRevision?.id) {
-      toast.info("设计版本未加载，无法复制上下文。");
+      toast.info("设计版本未加载，无法复制调试画板 JSON。");
       return;
     }
     setCopyingFrameContext(true);
     try {
       const context = await api.getDesignFrameContext(designId, frameId, { revisionId: activeRevision.id });
       await navigator.clipboard?.writeText(JSON.stringify(context, null, 2));
-      toast.success("已复制画板上下文 JSON");
+      toast.success("已复制调试画板 JSON");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "复制画板上下文失败");
+      toast.error(error instanceof Error ? error.message : "复制调试画板 JSON 失败");
     } finally {
       setCopyingFrameContext(false);
     }
+  };
+  const copyFrameRestorePrompt = () => {
+    if (!activeRevision?.id || !frame) {
+      toast.info("设计版本未加载，无法复制 MCP Prompt。");
+      return;
+    }
+    void copyMCPRestorePrompt(
+      createFrameRestoreScope({
+        designFileId: designId,
+        revisionId: activeRevision.id,
+        frame,
+        sourcePageUrl: browserPageUrl(),
+      }),
+    );
+  };
+  const copySelectionRestorePrompt = () => {
+    if (!activeRevision?.id || !frame) {
+      toast.info("设计版本未加载，无法复制 MCP Prompt。");
+      return;
+    }
+    if (!selectionLayerIds.length && !selectionBounds) {
+      toast.info("请先选择图层或框选区域。");
+      return;
+    }
+    void copyMCPRestorePrompt(
+      createSelectionRestoreScope({
+        designFileId: designId,
+        revisionId: activeRevision.id,
+        frame,
+        layerIds: selectionLayerIds,
+        selectionBounds: selectionBounds ? { x: rectX(selectionBounds), y: rectY(selectionBounds), width: selectionBounds.width, height: selectionBounds.height } : undefined,
+        sourcePageUrl: browserPageUrl(),
+      }),
+    );
   };
   const updateTaskItem = (itemId: string, patch: Partial<Pick<LocalRestoreTaskItem, "note">>) => {
     setTaskQueue((items) => items.map((item) => item.itemId === itemId ? { ...item, ...patch } : item));
@@ -928,7 +977,18 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                     <span className="w-8 text-right tabular-nums">{overlayRevealPercent}%</span>
                   </label>
                 ) : null}
-                <Button size="sm" variant="outline" disabled={copyingFrameContext || !activeRevision?.id} onClick={() => void copyFrameContext()}><Copy className="h-3.5 w-3.5" />{copyingFrameContext ? "复制中…" : "复制画板上下文"}</Button>
+                <Button size="sm" variant="outline" disabled={!activeRevision?.id || !frame} onClick={copyFrameRestorePrompt}><Code2 className="h-3.5 w-3.5" />复制 MCP 还原 Prompt</Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger render={<Button size="icon-sm" variant="outline" aria-label="更多" />}>
+                    <MoreHorizontal className="h-3.5 w-3.5" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuItem disabled={copyingFrameContext || !activeRevision?.id} onClick={() => void copyFrameContext()}>
+                      <Copy className="h-3.5 w-3.5" />
+                      {copyingFrameContext ? "复制中…" : "复制调试画板 JSON"}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Badge variant={isHistoricalRevision ? "outline" : "secondary"}>版本 {activeRevision?.revision_number ?? "—"}{isHistoricalRevision ? " · 历史" : ""}</Badge>
               </div>
             </div>
@@ -1124,8 +1184,11 @@ export function DesignFramePage({ designId, frameId }: { designId: string; frame
                   <div className="flex items-center justify-between rounded-lg bg-muted p-2"><span className="text-muted-foreground">解析后图层</span><span className="font-mono">{selectionContextLoading ? "…" : activeSelectionContext?.resolvedLayerIds.length ?? selectionLayerIds.length}</span></div>
                   {selectionBounds ? <div className="rounded-lg bg-muted p-2 font-mono text-[11px] text-muted-foreground">bounds · x {numberText(rectX(selectionBounds))} · y {numberText(rectY(selectionBounds))} · {numberText(selectionBounds.width)} × {numberText(selectionBounds.height)}</div> : null}
                   {activeSelectionContext?.resolvedLayerIds.length ? <div className="max-h-28 overflow-auto rounded-lg border p-2 font-mono text-[11px] text-muted-foreground">{activeSelectionContext.resolvedLayerIds.slice(0, 20).join("\n")}</div> : <p className="text-xs text-muted-foreground">按住 Shift 点击多个图层，或在画板上拖拽，预览内部智能体选区上下文。</p>}
-                  <Button size="sm" variant="outline" className="mt-2 w-full" onClick={() => activeSelectionContext && copyWithToast(JSON.stringify(activeSelectionContext, null, 2), "已复制选区上下文 JSON")} disabled={!activeSelectionContext || selectionContextLoading}>
-                    <Copy className="h-3.5 w-3.5" />复制选区上下文
+                  <Button size="sm" variant="outline" className="mt-2 w-full" onClick={copySelectionRestorePrompt} disabled={selectionContextLoading || (!selectionLayerIds.length && !selectionBounds)}>
+                    <Code2 className="h-3.5 w-3.5" />复制 MCP 还原 Prompt
+                  </Button>
+                  <Button size="sm" variant="outline" className="mt-2 w-full" onClick={() => activeSelectionContext && copyWithToast(JSON.stringify(activeSelectionContext, null, 2), "已复制选区调试 JSON")} disabled={!activeSelectionContext || selectionContextLoading}>
+                    <Copy className="h-3.5 w-3.5" />复制选区调试 JSON
                   </Button>
                   <Button size="sm" className="mt-2 w-full" onClick={addSelectionToTaskQueue} disabled={selectionContextLoading}>
                     <Plus className="h-3.5 w-3.5" />加入任务队列
