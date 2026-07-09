@@ -134,6 +134,22 @@ export function designTemplateDetailOptions(wsId: string, id: string) {
   });
 }
 
+export function designSystemListOptions(wsId: string, projectId?: string) {
+  return queryOptions({
+    queryKey: designKeys.designSystems(wsId, projectId),
+    queryFn: () => api.listDesignSystemProfiles(projectId ? { project_id: projectId } : {}),
+    select: (data) => data.design_systems,
+  });
+}
+
+export function designSystemDetailOptions(wsId: string, id: string) {
+  return queryOptions({
+    queryKey: designKeys.designSystem(wsId, id),
+    queryFn: () => api.getDesignSystemProfile(id),
+    enabled: !!id,
+  });
+}
+
 export function designDraftListOptions(wsId: string) {
   return queryOptions({
     queryKey: designKeys.drafts(wsId),

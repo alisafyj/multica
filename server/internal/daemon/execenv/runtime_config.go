@@ -552,11 +552,12 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- Do NOT call `multica issue get`, `multica issue status`, or `multica issue comment add` for this task — there is no issue to query, transition, or comment on. The platform writes the user's success/failure inbox notification automatically based on whether `multica issue create` succeeded.\n")
 		b.WriteString("- If the CLI returns an error, exit with that error as the only output. Do not retry.\n\n")
 	} else if ctx.UIDraftCreateContext != "" {
-		b.WriteString("**This task was triggered by Gallery Native UI draft generation.** There is NO existing Multica issue. Follow the JSON-only output contract in the user message you just received; ignore the default assignment-task workflow.\n\n")
+		b.WriteString("**This task was triggered by Gallery Native UI draft generation.** Follow the embedded UI draft context and the JSON-only output contract in the user message you just received; ignore the default assignment-task workflow.\n\n")
 		b.WriteString("Hard guardrails (apply even if the user message is missing):\n")
 		b.WriteString("- Do NOT call `multica issue get`, `multica issue status`, or `multica issue comment add` for this task.\n")
 		b.WriteString("- Do NOT edit files or create design files directly. The platform will create a reviewable DesignDraft from your final JSON output.\n")
-		b.WriteString("- Final output must be a single JSON object with `title`, `requirement_core`, `slot_values`, and `patch`.\n\n")
+		b.WriteString("- If `template_candidates` is present, choose one and return its `id` as `catalog_template_id`.\n")
+		b.WriteString("- Final output must be a single JSON object with `title`, `catalog_template_id`, `requirement_core`, `slot_values`, and `patch`.\n\n")
 	} else if ctx.DesignRestoreContext != "" {
 		b.WriteString("**This task was triggered by a Gallery Native restore task.** Use the design restore context in the user message and `.agent_context/task.md` as the source of truth.\n\n")
 		b.WriteString("Hard guardrails:\n")
@@ -721,8 +722,9 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- Print exactly one final line: `Created <identifier-or-id>: <title>` after a successful `multica issue create`. Use the created issue's `identifier` from JSON output when available; otherwise use its `id`. Do not assume any workspace issue prefix such as `MUL-`; workspaces can use custom prefixes.\n")
 		b.WriteString("- On CLI failure, exit with the CLI error as the only output. The platform translates that into a `quick_create_failed` inbox item carrying the original prompt for the user.\n")
 	case ctx.UIDraftCreateContext != "":
-		b.WriteString("This is a UI draft generation task. There is NO existing issue to comment on. Your final stdout is parsed automatically into a reviewable Gallery Native DesignDraft.\n\n")
+		b.WriteString("This is a UI draft generation task. Your final stdout is parsed automatically into a reviewable Gallery Native DesignDraft.\n\n")
 		b.WriteString("- Output exactly one JSON object, no markdown or prose.\n")
+		b.WriteString("- If `template_candidates` is present, include `catalog_template_id` for the selected candidate.\n")
 		b.WriteString("- Prefer `slot_values`; keep `patch` empty unless safe metadata/text changes are necessary.\n")
 	case ctx.DesignRestoreContext != "":
 		b.WriteString("This is a Gallery Native restore task. Your final stdout is captured automatically; if issue_id is present, also post a concise issue comment with changed files, checks, blockers, and restore mapping.\n")

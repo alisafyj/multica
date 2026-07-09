@@ -1,16 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ClipboardList, Copy, Eye, FileJson, Folder, Palette, Plus, Search, Sparkles, Trash2, X } from "lucide-react";
+import { ClipboardList, Copy, Eye, FileJson, Folder, Palette, Plus, Search, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
-import { designDraftListOptions, designFileListOptions, designFolderListOptions, designRestoreTaskListOptions, designTemplateListOptions } from "@multica/core/designs/queries";
+import { designDraftListOptions, designFileListOptions, designFolderListOptions, designSystemListOptions, designTemplateListOptions } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
-import type { DesignCatalogTemplate, DesignDraft, DesignFile, DesignFolder, DesignRestoreTask, GalleryJsonPatchOperation, Project } from "@multica/core/types";
+import type { DesignCatalogTemplate, DesignDraft, DesignFile, DesignFolder, DesignSystemProfile, GalleryJsonPatchOperation, Project } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
@@ -32,6 +32,7 @@ import { AppLink, useNavigation } from "../navigation";
 
 type ToolMenuState = { x: number; y: number; file: DesignFile } | null;
 type DraftDialogState = { template: DesignCatalogTemplate; title: string; requirement: string; slotValues: string; patch: string; agentId: string; prompt: string } | null;
+type DesignAssetTab = "designs" | "templates" | "systems";
 
 function formatDate(value: string) {
   const date = new Date(value);
@@ -156,70 +157,158 @@ function defaultValueForSlotType(type: string): unknown {
   return "";
 }
 
-function TemplateCatalogCard({ template, onCreateDraft }: { template: DesignCatalogTemplate; onCreateDraft: (template: DesignCatalogTemplate) => void }) {
+function AssetPreview({ thumbnailUrl, badge, icon }: { thumbnailUrl?: string | null; badge?: string; icon: React.ReactNode }) {
+  return (
+    <div className="relative aspect-[4/3] overflow-hidden rounded-t-lg bg-muted/50">
+      {thumbnailUrl ? (
+        <img src={thumbnailUrl} alt="" className="h-full w-full object-contain p-3 transition-transform group-hover/card:scale-[1.02]" loading="lazy" />
+      ) : (
+        <div className="absolute inset-4 flex items-center justify-center rounded-lg border bg-background text-muted-foreground shadow-sm">
+          {icon}
+        </div>
+      )}
+      {badge ? <Badge variant="secondary" className="absolute left-3 top-3 max-w-[calc(100%-1.5rem)] truncate bg-background/90">{badge}</Badge> : null}
+    </div>
+  );
+}
+
+function TemplateCatalogCard({ template, sourceFile, onCreateDraft }: { template: DesignCatalogTemplate; sourceFile?: DesignFile; onCreateDraft: (template: DesignCatalogTemplate) => void }) {
   const paths = useWorkspacePaths();
   return (
-    <div className="flex min-w-[220px] flex-col gap-3 rounded-lg border bg-card p-3 transition-colors hover:border-primary/50">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium">{template.name}</div>
-          <div className="mt-1 truncate text-xs text-muted-foreground">{template.description ?? template.design_file_title ?? "已发布设计模板"}</div>
+    <div className="group/card flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card transition-colors hover:border-primary/50">
+      <AssetPreview thumbnailUrl={template.thumbnail_url ?? sourceFile?.thumbnail_url} badge={template.category} icon={<FileJson className="h-6 w-6" />} />
+      <div className="flex min-w-0 flex-col gap-3 p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium">{template.name}</div>
+            <div className="mt-1 truncate text-xs text-muted-foreground">{template.description ?? template.design_file_title ?? "已发布设计模版"}</div>
+          </div>
+          <Badge variant="secondary" className="shrink-0">v{template.template_revision_number ?? 1}</Badge>
         </div>
-        <Badge variant="secondary" className="shrink-0">v{template.template_revision_number ?? 1}</Badge>
-      </div>
-      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span className="truncate">{template.category}</span>
-        <span className="shrink-0">{formatDate(template.updated_at)}</span>
-      </div>
-      <div className="flex items-center gap-2">
-        <Button type="button" size="sm" className="h-7" onClick={() => onCreateDraft(template)}>创建设计草稿</Button>
-        {template.design_file_id ? <AppLink href={paths.designDetail(template.design_file_id)} className="text-xs text-muted-foreground hover:text-foreground">打开来源</AppLink> : null}
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span className="truncate">{sourceFile?.title ?? template.design_file_title ?? "来源设计稿"}</span>
+          <span className="shrink-0">{formatDate(template.updated_at)}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button type="button" size="sm" className="h-7" onClick={() => onCreateDraft(template)}>创建设计草稿</Button>
+          {template.design_file_id ? <AppLink href={paths.designDetail(template.design_file_id)} className="text-xs text-muted-foreground hover:text-foreground">打开来源</AppLink> : null}
+        </div>
       </div>
     </div>
   );
 }
 
-function DraftReviewCard({ draft, onMaterialize, materializing }: { draft: DesignDraft; onMaterialize: (draft: DesignDraft) => void; materializing: boolean }) {
+function DesignSystemCard({ profile, sourceFile }: { profile: DesignSystemProfile; sourceFile?: DesignFile }) {
   const paths = useWorkspacePaths();
   return (
-    <div className="rounded-lg border bg-card p-3">
-      <div className="flex items-start justify-between gap-3">
+    <div className="group/card flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card transition-colors hover:border-primary/50">
+      <AssetPreview thumbnailUrl={profile.thumbnail_url ?? sourceFile?.thumbnail_url} badge={profile.is_default ? "默认" : profile.status} icon={<Palette className="h-6 w-6" />} />
+      <div className="flex min-w-0 flex-col gap-3 p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium">{profile.name}</div>
+            <div className="mt-1 truncate text-xs text-muted-foreground">{profile.description ?? sourceFile?.title ?? "项目 UI 规范"}</div>
+          </div>
+          {profile.is_default ? <Badge variant="secondary" className="shrink-0">默认</Badge> : <Badge variant="outline" className="shrink-0">{profile.status}</Badge>}
+        </div>
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span className="truncate">{sourceFile?.title ?? profile.source_file_id.slice(0, 8)}</span>
+          <span className="shrink-0">{formatDate(profile.updated_at)}</span>
+        </div>
+        <AppLink href={paths.designDetail(profile.source_file_id)} className="text-xs text-muted-foreground hover:text-foreground">查看规范来源</AppLink>
+      </div>
+    </div>
+  );
+}
+
+function DraftReviewCard({ draft, previewFile, onMaterialize, materializing }: { draft: DesignDraft; previewFile?: DesignFile; onMaterialize: (draft: DesignDraft) => void; materializing: boolean }) {
+  const paths = useWorkspacePaths();
+  return (
+    <div className="group/card flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card transition-colors hover:border-primary/50">
+      <AssetPreview thumbnailUrl={previewFile?.thumbnail_url} badge={draft.status} icon={<ClipboardList className="h-6 w-6" />} />
+      <div className="flex min-w-0 flex-col gap-3 p-3">
         <div className="min-w-0">
           <AppLink href={paths.designDraftDetail(draft.id)} className="block truncate text-sm font-medium hover:text-primary">{draft.title}</AppLink>
-          <div className="mt-1 truncate text-xs text-muted-foreground">{draft.catalog_template_id ? `模板 ${draft.catalog_template_id.slice(0, 8)}` : "设计草稿"}</div>
+          <div className="mt-1 truncate text-xs text-muted-foreground">{draft.catalog_template_id ? `模版 ${draft.catalog_template_id.slice(0, 8)}` : "设计草稿"}</div>
         </div>
-        <Badge variant="outline" className="shrink-0">{draft.status}</Badge>
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>{draft.patch.length} 个 patch 操作</span>
+          <span className="shrink-0">{formatDate(draft.materialized_at ?? draft.updated_at)}</span>
+        </div>
+        {draft.generated_file_id ? (
+          <AppLink href={paths.designDetail(draft.generated_file_id)} className="flex h-7 w-full items-center justify-center rounded-md border px-3 text-xs font-medium hover:bg-accent">打开生成的设计稿</AppLink>
+        ) : (
+          <Button type="button" size="sm" variant="outline" className="h-7 w-full" disabled={materializing} onClick={() => onMaterialize(draft)}>{materializing ? "生成中…" : "生成设计稿"}</Button>
+        )}
       </div>
-      <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>{draft.patch.length} 个 patch 操作</span>
-        <span>{formatDate(draft.materialized_at ?? draft.updated_at)}</span>
-      </div>
-      {draft.generated_file_id ? (
-        <AppLink href={paths.designDetail(draft.generated_file_id)} className="mt-3 flex h-7 w-full items-center justify-center rounded-md border px-3 text-xs font-medium hover:bg-accent">打开生成的设计稿</AppLink>
-      ) : (
-        <Button type="button" size="sm" variant="outline" className="mt-3 h-7 w-full" disabled={materializing} onClick={() => onMaterialize(draft)}>{materializing ? "生成中…" : "生成设计稿"}</Button>
-      )}
     </div>
   );
 }
 
-function RestoreTaskCard({ task }: { task: DesignRestoreTask }) {
-  const paths = useWorkspacePaths();
-  const itemCount = Array.isArray(task.input?.items) ? task.input.items.length : 0;
+function WorkspaceAssetCard({ icon, title, count, description, meta, active, onClick }: { icon: React.ReactNode; title: string; count: number; description: string; meta: string; active: boolean; onClick: () => void }) {
   return (
-    <AppLink href={paths.designRestoreTaskDetail(task.id)} className="block rounded-lg border bg-card p-3 transition-colors hover:border-primary/50">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium">还原任务 {task.id.slice(0, 8)}</div>
-          <div className="mt-1 truncate text-xs text-muted-foreground">设计稿 {task.file_id.slice(0, 8)} · {itemCount} 个任务项</div>
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`min-h-28 rounded-lg border bg-card p-4 text-left transition-colors hover:border-primary/50 ${active ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary/20" : ""}`}
+    >
+      <div className="flex h-full flex-col justify-between gap-4">
+        <div className="flex items-start justify-between gap-3">
+          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>{icon}</span>
+          <span className="font-mono text-lg font-semibold leading-none text-foreground">{count}</span>
         </div>
-        <Badge variant="outline" className="shrink-0">{task.status}</Badge>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <div className="truncate text-sm font-medium">{title}</div>
+            {active ? <span className="h-1.5 w-1.5 rounded-full bg-primary" /> : null}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+          <p className="mt-2 truncate text-xs text-muted-foreground/80">{meta}</p>
+        </div>
       </div>
-      <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>{task.error ? "有错误" : "等待消费"}</span>
-        <span>{formatDate(task.updated_at)}</span>
+    </button>
+  );
+}
+
+function SectionHeader({ icon, title, count, description, action }: { icon: React.ReactNode; title: string; count?: number; description?: string; action?: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-3 border-b pb-2">
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+          <span className="text-muted-foreground">{icon}</span>
+          <span className="truncate">{title}</span>
+          {typeof count === "number" ? <span className="font-mono text-xs text-muted-foreground">{count}</span> : null}
+        </div>
+        {description ? <p className="mt-1 text-xs text-muted-foreground">{description}</p> : null}
       </div>
-    </AppLink>
+      {action ? <div className="shrink-0">{action}</div> : null}
+    </div>
+  );
+}
+
+function InlineEmpty({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-md border border-dashed bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+      {children}
+    </div>
+  );
+}
+
+function FolderSectionHeader({ folderName, count, canDelete, onDelete }: { folderName: string; count: number; canDelete: boolean; onDelete: () => void }) {
+  return (
+    <div className="group/folder mb-3 flex items-center justify-between gap-3 border-b pb-2 text-xs text-muted-foreground">
+      <div className="flex min-w-0 items-center gap-2">
+        <Folder className="h-3.5 w-3.5" />
+        <span className="truncate font-medium text-foreground/80">{folderName}</span>
+        <span className="font-mono text-muted-foreground/80">{count}</span>
+      </div>
+      {canDelete ? (
+        <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive opacity-0 transition-opacity hover:text-destructive group-hover/folder:opacity-100 focus-visible:opacity-100" title="删除分组" aria-label="删除分组" onClick={onDelete}>
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      ) : null}
+    </div>
   );
 }
 
@@ -232,7 +321,6 @@ export function DesignsPage() {
   const { data: folders = [] } = useQuery(designFolderListOptions(wsId));
   const { data: templates = [], isLoading: templatesLoading } = useQuery(designTemplateListOptions(wsId));
   const { data: drafts = [], isLoading: draftsLoading } = useQuery(designDraftListOptions(wsId));
-  const { data: restoreTasks = [], isLoading: restoreTasksLoading } = useQuery(designRestoreTaskListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: projectData } = useQuery({ queryKey: ["projects", wsId, "designs"], queryFn: () => api.listProjects() });
   const projects = projectData?.projects ?? [];
@@ -243,10 +331,11 @@ export function DesignsPage() {
   const [createFolderOpen, setCreateFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [deleteFolderTarget, setDeleteFolderTarget] = useState<{ folder: DesignFolder; count: number } | null>(null);
-  const [templateDrawerOpen, setTemplateDrawerOpen] = useState(false);
   const [draftDialog, setDraftDialog] = useState<DraftDialogState>(null);
   const [materializingDraftId, setMaterializingDraftId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [activeTab, setActiveTab] = useState<DesignAssetTab>("designs");
+  const { data: designSystems = [], isLoading: designSystemsLoading } = useQuery(designSystemListOptions(wsId, selectedProjectId || undefined));
   const figmaConnection = useMutation({
     mutationFn: () => api.createFigmaImportConnection(),
     onSuccess: (data) => setFigmaCode({ code: data.code, expiresAt: data.expires_at }),
@@ -254,6 +343,7 @@ export function DesignsPage() {
 
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const folderById = useMemo(() => new Map(folders.map((folder) => [folder.id, folder])), [folders]);
+  const fileById = useMemo(() => new Map(files.map((file) => [file.id, file])), [files]);
   useEffect(() => {
     if (!selectedProjectId && projects[0]?.id) setSelectedProjectId(projects[0].id);
     else if (selectedProjectId && projects.length && !projects.some((project) => project.id === selectedProjectId)) setSelectedProjectId(projects[0]?.id ?? "");
@@ -381,9 +471,20 @@ export function DesignsPage() {
   const projectFiles = useMemo(() => files.filter((file) => file.project_id === selectedProjectId), [files, selectedProjectId]);
   const projectFolders = useMemo(() => folders.filter((folder) => folder.project_id === selectedProjectId), [folders, selectedProjectId]);
   const projectTemplates = useMemo(() => templates.filter((template) => template.metadata?.project_id === selectedProjectId), [templates, selectedProjectId]);
-  const projectRestoreTasks = useMemo(() => restoreTasks.filter((task) => !selectedProjectId || task.input?.projectId === selectedProjectId), [restoreTasks, selectedProjectId]);
+  const projectTemplateIds = useMemo(() => new Set(projectTemplates.map((template) => template.id)), [projectTemplates]);
+  const projectDrafts = useMemo(() => drafts.filter((draft) => {
+    if (!selectedProjectId) return true;
+    if (draft.catalog_template_id && projectTemplateIds.has(draft.catalog_template_id)) return true;
+    const sourceFile = draft.file_id ? fileById.get(draft.file_id) : undefined;
+    if (sourceFile?.project_id === selectedProjectId) return true;
+    const generatedFile = draft.generated_file_id ? fileById.get(draft.generated_file_id) : undefined;
+    if (generatedFile?.project_id === selectedProjectId) return true;
+    return !draft.catalog_template_id && !draft.file_id && !draft.generated_file_id;
+  }), [drafts, fileById, projectTemplateIds, selectedProjectId]);
+  const searchQuery = search.trim().toLowerCase();
+  const searchPlaceholder = activeTab === "designs" ? "搜索设计稿…" : activeTab === "templates" ? "搜索模版…" : "搜索 UI 规范…";
   const filtered = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const query = searchQuery;
     if (!query) return projectFiles;
     return projectFiles.filter((file) => {
       const haystack = [
@@ -395,7 +496,40 @@ export function DesignsPage() {
       ].join(" ").toLowerCase();
       return haystack.includes(query);
     });
-  }, [folderById, projectById, projectFiles, search]);
+  }, [folderById, projectById, projectFiles, searchQuery]);
+  const filteredDrafts = useMemo(() => {
+    const query = searchQuery;
+    if (!query) return projectDrafts;
+    return projectDrafts.filter((draft) => [
+      draft.title,
+      draft.status,
+      draft.requirement_core?.title ?? "",
+      draft.requirement_core?.summary ?? "",
+    ].join(" ").toLowerCase().includes(query));
+  }, [projectDrafts, searchQuery]);
+  const filteredTemplates = useMemo(() => {
+    const query = searchQuery;
+    if (!query) return projectTemplates;
+    return projectTemplates.filter((template) => [
+      template.name,
+      template.description ?? "",
+      template.category,
+      template.design_file_title ?? "",
+    ].join(" ").toLowerCase().includes(query));
+  }, [projectTemplates, searchQuery]);
+  const filteredDesignSystems = useMemo(() => {
+    const query = searchQuery;
+    if (!query) return designSystems;
+    return designSystems.filter((profile) => {
+      const sourceFile = fileById.get(profile.source_file_id);
+      return [
+        profile.name,
+        profile.description ?? "",
+        profile.status,
+        sourceFile?.title ?? "",
+      ].join(" ").toLowerCase().includes(query);
+    });
+  }, [designSystems, fileById, searchQuery]);
 
   const grouped = useMemo(() => {
     const folderMap = new Map<string, { folderKey: string; folderName: string; items: DesignFile[] }>();
@@ -409,9 +543,12 @@ export function DesignsPage() {
       const folderGroup = folderMap.get(fKey) ?? { folderKey: fKey, folderName: fName, items: [] };
       folderGroup.items.push(file);
     }
-    return Array.from(folderMap.values()).filter((folder) => folder.items.length > 0 || search.trim() === "");
-  }, [filtered, folderById, projectFolders, search]);
+    return Array.from(folderMap.values()).filter((folder) => folder.items.length > 0 || !searchQuery);
+  }, [filtered, folderById, projectFolders, searchQuery]);
   const selectedProject = projectById.get(selectedProjectId);
+  const defaultDesignSystem = designSystems.find((profile) => profile.is_default);
+  const designSearchCount = filteredDrafts.length + filtered.length;
+  const designAssetCount = projectDrafts.length + projectFiles.length;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -451,9 +588,11 @@ export function DesignsPage() {
           </div>
           <div className="relative w-full sm:w-72">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索设计稿…" className="h-8 pl-8 text-sm" />
+            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={searchPlaceholder} className="h-8 pl-8 text-sm" />
           </div>
-          <span className="hidden font-mono text-xs text-muted-foreground/70 sm:block">{filtered.length} / {projectFiles.length}</span>
+          <span className="hidden font-mono text-xs text-muted-foreground/70 sm:block">
+            {activeTab === "designs" ? `${designSearchCount} / ${designAssetCount}` : activeTab === "templates" ? `${filteredTemplates.length} / ${projectTemplates.length}` : `${filteredDesignSystems.length} / ${designSystems.length}`}
+          </span>
         </div>
 
         {isLoading ? (
@@ -469,64 +608,97 @@ export function DesignsPage() {
         ) : !selectedProjectId ? (
           <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
             <h2 className="text-base font-semibold">请选择项目</h2>
-            <p className="mt-1 max-w-md text-sm text-muted-foreground">设计稿和模板资产都按项目归类展示。</p>
+            <p className="mt-1 max-w-md text-sm text-muted-foreground">设计稿、模版和 UI 规范都按项目归类展示。</p>
           </div>
-        ) : projectFiles.length === 0 && projectFolders.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-              <Palette className="h-6 w-6 text-muted-foreground" />
-            </div>
-            <h2 className="mt-4 text-base font-semibold">当前项目暂无设计资产</h2>
-            <p className="mt-1 max-w-md text-sm text-muted-foreground">请从 Figma 插件上传业务设计稿，模板、草稿和还原任务可从右侧抽屉查看。</p>
-            <div className="mt-4 flex gap-2">
-              <Button size="sm" variant="outline" onClick={() => setTemplateDrawerOpen(true)}><Sparkles className="h-3.5 w-3.5" />工作台</Button>
-              <Button size="sm" onClick={() => setCreateFolderOpen(true)} disabled={!selectedProjectId}><Plus className="h-3.5 w-3.5" />新增分组</Button>
-            </div>
-          </div>
-        ) : filtered.length === 0 && search.trim() ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">没有匹配“{search}”的设计稿。</div>
         ) : (
           <div className="min-h-0 flex-1 overflow-auto p-4">
-            <div className="mb-4 rounded-lg border bg-background p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    <Folder className="h-4 w-4 text-muted-foreground" />
-                    {selectedProject?.title ?? "项目"} 设计库
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">当前项目下的分组和设计稿项目。模板、草稿和还原任务从右侧抽屉查看。</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setTemplateDrawerOpen(true)}><Sparkles className="h-3.5 w-3.5" />工作台 <span className="font-mono text-xs">{projectTemplates.length + drafts.length + projectRestoreTasks.length}</span></Button>
-                  <Button size="sm" onClick={() => setCreateFolderOpen(true)} disabled={!selectedProjectId}><Plus className="h-3.5 w-3.5" />新增分组</Button>
-                </div>
-              </div>
-            </div>
             <div className="space-y-6">
-              {grouped.map((folder) => (
-                <section key={folder.folderKey} className="space-y-3">
-                  <div className="mb-3 flex items-center justify-between gap-3 border-b pb-2 text-xs text-muted-foreground">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <Folder className="h-3.5 w-3.5" />
-                      <span className="truncate font-medium text-foreground/80">{folder.folderName}</span>
-                      <span className="font-mono text-muted-foreground/80">{folder.items.length}</span>
-                    </div>
-                    {folder.folderKey !== "__ungrouped" ? (
-                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive hover:text-destructive" onClick={() => {
-                        const targetFolder = folderById.get(folder.folderKey);
-                        if (targetFolder) setDeleteFolderTarget({ folder: targetFolder, count: folder.items.length });
-                      }}>
-                        删除分组
-                      </Button>
-                    ) : null}
-                  </div>
-                  {folder.items.length ? (
+              <div className="grid gap-3 lg:grid-cols-3">
+                <WorkspaceAssetCard icon={<Folder className="h-4 w-4" />} title="设计稿" count={projectFiles.length} description="业务页面、状态和草稿审核入口。" meta={`${projectDrafts.length} 个待审核草稿 / ${projectFolders.length} 个分组`} active={activeTab === "designs"} onClick={() => setActiveTab("designs")} />
+                <WorkspaceAssetCard icon={<FileJson className="h-4 w-4" />} title="模版" count={projectTemplates.length} description="可复用的标准页面结构。" meta={projectTemplates.length ? "可创建 UI Agent 草稿" : "等待从 Figma 上传"} active={activeTab === "templates"} onClick={() => setActiveTab("templates")} />
+                <WorkspaceAssetCard icon={<Palette className="h-4 w-4" />} title="UI 规范" count={designSystems.length} description="主题色、组件样式和设计规则。" meta={defaultDesignSystem ? `默认：${defaultDesignSystem.name}` : "未设置默认规范"} active={activeTab === "systems"} onClick={() => setActiveTab("systems")} />
+              </div>
+
+              {activeTab === "designs" ? (
+                <>
+                  <section className="space-y-3">
+                    <SectionHeader icon={<ClipboardList className="h-4 w-4" />} title="待审核草稿" count={filteredDrafts.length} description="UI Agent 生成后先进入这里，审核通过后再生成设计稿。" />
+                    {draftsLoading ? (
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="aspect-[4/3] w-full" />)}</div>
+                    ) : filteredDrafts.length === 0 ? (
+                      <InlineEmpty>{searchQuery ? `没有匹配“${search}”的待审核草稿。` : "暂无待审核草稿。"}</InlineEmpty>
+                    ) : (
                       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {folder.items.map((file) => <DesignFileCard key={file.id} file={file} projectName={selectedProject?.title ?? "项目"} folderName={folder.folderName} onContextMenu={openToolMenu} />)}
+                        {filteredDrafts.map((draft) => {
+                          const previewFile = draft.generated_file_id ? fileById.get(draft.generated_file_id) : draft.file_id ? fileById.get(draft.file_id) : undefined;
+                          return <DraftReviewCard key={draft.id} draft={draft} previewFile={previewFile} materializing={materializingDraftId === draft.id} onMaterialize={(item) => materializeDraft.mutate(item)} />;
+                        })}
                       </div>
-                  ) : <p className="text-xs text-muted-foreground">此文件夹暂无设计稿项目。</p>}
+                    )}
+                  </section>
+
+                  <section className="space-y-3">
+                    <SectionHeader
+                      icon={<Folder className="h-4 w-4" />}
+                      title={`${selectedProject?.title ?? "项目"} / 设计稿`}
+                      count={filtered.length}
+                      description="业务设计稿按分组展示，默认以缩略图方式浏览。"
+                      action={<Button size="sm" onClick={() => setCreateFolderOpen(true)} disabled={!selectedProjectId}><Plus className="h-3.5 w-3.5" />新增分组</Button>}
+                    />
+
+                    {filtered.length === 0 && searchQuery ? (
+                      <InlineEmpty>{`没有匹配“${search}”的设计稿。`}</InlineEmpty>
+                    ) : (
+                      <div className="space-y-6">
+                        {grouped.map((folder) => (
+                          <section key={folder.folderKey} className="space-y-3">
+                            <FolderSectionHeader
+                              folderName={folder.folderName}
+                              count={folder.items.length}
+                              canDelete={folder.folderKey !== "__ungrouped"}
+                              onDelete={() => {
+                                const targetFolder = folderById.get(folder.folderKey);
+                                if (targetFolder) setDeleteFolderTarget({ folder: targetFolder, count: folder.items.length });
+                              }}
+                            />
+                            {folder.items.length ? (
+                              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                                {folder.items.map((file) => <DesignFileCard key={file.id} file={file} projectName={selectedProject?.title ?? "项目"} folderName={folder.folderName} onContextMenu={openToolMenu} />)}
+                              </div>
+                            ) : <InlineEmpty>此分组暂无设计稿。</InlineEmpty>}
+                          </section>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                </>
+              ) : activeTab === "templates" ? (
+                <section className="space-y-3">
+                  <SectionHeader icon={<FileJson className="h-4 w-4" />} title="模版" count={filteredTemplates.length} description="从 Figma 上传的标准页面结构，可用于创建草稿或交给 UI Agent 生成。" />
+                  {templatesLoading ? (
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="aspect-[4/3] w-full" />)}</div>
+                  ) : filteredTemplates.length === 0 ? (
+                    <InlineEmpty>{searchQuery ? `没有匹配“${search}”的模版。` : "当前项目暂无模版资产。请从 Figma 插件选择“模板资产”上传。"}</InlineEmpty>
+                  ) : (
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {filteredTemplates.map((template) => <TemplateCatalogCard key={template.id} template={template} sourceFile={template.design_file_id ? fileById.get(template.design_file_id) : undefined} onCreateDraft={openDraftDialog} />)}
+                    </div>
+                  )}
                 </section>
-              ))}
+              ) : (
+                <section className="space-y-3">
+                  <SectionHeader icon={<Palette className="h-4 w-4" />} title="UI 规范" count={filteredDesignSystems.length} description="从 Figma 上传的主题、组件样式和设计规则，供 UI Agent 生成时参考。" />
+                  {designSystemsLoading ? (
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="aspect-[4/3] w-full" />)}</div>
+                  ) : filteredDesignSystems.length === 0 ? (
+                    <InlineEmpty>{searchQuery ? `没有匹配“${search}”的 UI 规范。` : "暂无项目 UI 规范。请从 Figma 插件选择“UI 规范”上传。"}</InlineEmpty>
+                  ) : (
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {filteredDesignSystems.map((profile) => <DesignSystemCard key={profile.id} profile={profile} sourceFile={fileById.get(profile.source_file_id)} />)}
+                    </div>
+                  )}
+                </section>
+              )}
             </div>
           </div>
         )}
@@ -551,60 +723,6 @@ export function DesignsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {templateDrawerOpen ? (
-        <div className="fixed inset-0 z-50 flex justify-end bg-background/60 backdrop-blur-sm" onClick={() => setTemplateDrawerOpen(false)}>
-          <aside className="flex h-full w-full max-w-xl flex-col border-l bg-background shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <div className="flex items-start justify-between gap-3 border-b p-4">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="h-4 w-4 text-muted-foreground" />设计工作台</div>
-                <p className="mt-1 text-xs text-muted-foreground">当前项目：{selectedProject?.title ?? "未选择项目"}。集中查看模板、草稿和还原任务。</p>
-              </div>
-              <Button size="sm" variant="ghost" onClick={() => setTemplateDrawerOpen(false)}><X className="h-4 w-4" /></Button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto p-4">
-              <div className="mb-4 rounded-lg border bg-muted/20 p-3">
-                <div className="mb-2 flex items-center justify-between text-sm font-medium">
-                  <span>已发布模板</span>
-                  <span className="font-mono text-xs text-muted-foreground">{projectTemplates.length}</span>
-                </div>
-                {templatesLoading ? (
-                  <div className="grid gap-3">{Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-24 w-full" />)}</div>
-                ) : projectTemplates.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">当前项目暂无模板资产。请从 Figma 插件选择“模板资产”上传。</p>
-                ) : (
-                  <div className="grid gap-3">{projectTemplates.map((template) => <TemplateCatalogCard key={template.id} template={template} onCreateDraft={openDraftDialog} />)}</div>
-                )}
-              </div>
-              <div className="rounded-lg border bg-muted/20 p-3">
-                <div className="mb-2 flex items-center justify-between text-sm font-medium">
-                  <span>待审核草稿</span>
-                  <span className="font-mono text-xs text-muted-foreground">{drafts.length}</span>
-                </div>
-                {draftsLoading ? (
-                  <div className="grid gap-3">{Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-24 w-full" />)}</div>
-                ) : drafts.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">暂无生成的草稿。可从模板卡片创建或询问 UI 智能体。</p>
-                ) : (
-                  <div className="grid gap-3">{drafts.map((draft) => <DraftReviewCard key={draft.id} draft={draft} materializing={materializingDraftId === draft.id} onMaterialize={(item) => materializeDraft.mutate(item)} />)}</div>
-                )}
-              </div>
-              <div className="mt-4 rounded-lg border bg-muted/20 p-3">
-                <div className="mb-2 flex items-center justify-between text-sm font-medium">
-                  <span className="flex items-center gap-2"><ClipboardList className="h-4 w-4 text-muted-foreground" />还原任务</span>
-                  <span className="font-mono text-xs text-muted-foreground">{projectRestoreTasks.length}</span>
-                </div>
-                {restoreTasksLoading ? (
-                  <div className="grid gap-3">{Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-24 w-full" />)}</div>
-                ) : projectRestoreTasks.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">暂无还原任务。打开设计稿后点击“保存全量任务”即可创建。</p>
-                ) : (
-                  <div className="grid gap-3">{projectRestoreTasks.map((task) => <RestoreTaskCard key={task.id} task={task} />)}</div>
-                )}
-              </div>
-            </div>
-          </aside>
-        </div>
-      ) : null}
       <Dialog open={createFolderOpen} onOpenChange={(open) => { setCreateFolderOpen(open); if (!open) setNewFolderName(""); }}>
         <DialogContent>
           <DialogHeader>

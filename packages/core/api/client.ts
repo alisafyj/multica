@@ -126,6 +126,7 @@ import type {
   CreateDesignFileRequest,
   CreateDesignFolderRequest,
   CreateDesignRestoreTaskRequest,
+  CreateDesignSystemProfileRequest,
   DesignCatalogTemplate,
   DesignContext,
   DesignDelivery,
@@ -136,6 +137,7 @@ import type {
   DesignFrameContext,
   DesignLayerLightweightEditRequest,
   DesignRevision,
+  DesignSystemProfile,
   CreateDesignRepoAnalysisRequest,
   DesignRepoAnalysis,
   DesignRestorePlan,
@@ -156,6 +158,7 @@ import type {
   ListDesignRepoAnalysesResponse,
   ListDesignRestoreMappingsResponse,
   ListDesignRestoreTasksResponse,
+  ListDesignSystemProfilesResponse,
   ListDesignTemplatesResponse,
   PublishDesignTemplateRequest,
   UpdateDesignRestorePlanRequest,
@@ -236,14 +239,18 @@ import {
   EMPTY_BILLING_CHECKOUT_SESSION_STATUS,
   EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE,
   DesignDeliverySchema,
+  DesignSystemProfileSchema,
   DesignRestoreTaskSchema,
   DispatchDesignRestoreTaskResponseSchema,
   EMPTY_DESIGN_DELIVERY,
+  EMPTY_DESIGN_SYSTEM_PROFILE,
   EMPTY_DESIGN_RESTORE_TASK,
   EMPTY_DISPATCH_DESIGN_RESTORE_TASK_RESPONSE,
   ListDesignDeliveriesResponseSchema,
+  ListDesignSystemProfilesResponseSchema,
   ListDesignRestoreTasksResponseSchema,
   EMPTY_LIST_DESIGN_DELIVERIES_RESPONSE,
+  EMPTY_LIST_DESIGN_SYSTEM_PROFILES_RESPONSE,
   EMPTY_LIST_DESIGN_RESTORE_TASKS_RESPONSE,
 } from "./schemas";
 
@@ -1945,6 +1952,40 @@ export class ApiClient {
 
   async getDesignTemplate(id: string): Promise<DesignCatalogTemplate> {
     return this.fetch(`/api/design-templates/${encodeURIComponent(id)}`);
+  }
+
+  async listDesignSystemProfiles(params: { project_id?: string } = {}): Promise<ListDesignSystemProfilesResponse> {
+    const search = new URLSearchParams();
+    if (params.project_id) search.set("project_id", params.project_id);
+    const suffix = search.toString();
+    const raw = await this.fetch<unknown>(`/api/design-systems${suffix ? `?${suffix}` : ""}`);
+    return parseWithFallback(raw, ListDesignSystemProfilesResponseSchema, EMPTY_LIST_DESIGN_SYSTEM_PROFILES_RESPONSE, {
+      endpoint: "GET /api/design-systems",
+    });
+  }
+
+  async createDesignSystemProfile(data: CreateDesignSystemProfileRequest): Promise<DesignSystemProfile> {
+    const raw = await this.fetch<unknown>("/api/design-systems", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignSystemProfileSchema, EMPTY_DESIGN_SYSTEM_PROFILE, {
+      endpoint: "POST /api/design-systems",
+    });
+  }
+
+  async getDesignSystemProfile(id: string): Promise<DesignSystemProfile> {
+    const raw = await this.fetch<unknown>(`/api/design-systems/${encodeURIComponent(id)}`);
+    return parseWithFallback(raw, DesignSystemProfileSchema, { ...EMPTY_DESIGN_SYSTEM_PROFILE, id }, {
+      endpoint: "GET /api/design-systems/{id}",
+    });
+  }
+
+  async setDesignSystemProfileDefault(id: string): Promise<DesignSystemProfile> {
+    const raw = await this.fetch<unknown>(`/api/design-systems/${encodeURIComponent(id)}/set-default`, { method: "POST" });
+    return parseWithFallback(raw, DesignSystemProfileSchema, { ...EMPTY_DESIGN_SYSTEM_PROFILE, id, is_default: true }, {
+      endpoint: "POST /api/design-systems/{id}/set-default",
+    });
   }
 
   async listDesignDrafts(): Promise<ListDesignDraftsResponse> {

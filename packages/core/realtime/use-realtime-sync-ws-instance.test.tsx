@@ -26,6 +26,32 @@ function createMockWs(): WSClient {
   } as unknown as WSClient;
 }
 
+function createEventfulMockWs() {
+  const handlers = new Map<string, (payload: unknown) => void>();
+  const ws = {
+    on: vi.fn((event: string, handler: (payload: unknown) => void) => {
+      handlers.set(event, handler);
+      return () => handlers.delete(event);
+    }),
+    onAny: vi.fn(() => () => {}),
+    onReconnect: vi.fn(() => () => {}),
+  } as unknown as WSClient;
+  return { ws, handlers };
+}
+
+function createAnyEventMockWs() {
+  const anyHandlers: Array<(message: { type?: unknown; payload?: unknown }) => void> = [];
+  const ws = {
+    on: vi.fn(() => () => {}),
+    onAny: vi.fn((handler: (message: { type?: unknown; payload?: unknown }) => void) => {
+      anyHandlers.push(handler);
+      return () => {};
+    }),
+    onReconnect: vi.fn(() => () => {}),
+  } as unknown as WSClient;
+  return { ws, anyHandlers };
+}
+
 function createStores(): RealtimeSyncStores {
   return {
     authStore: Object.assign(() => ({}), {
@@ -137,5 +163,30 @@ describe("useRealtimeSync — ws instance change", () => {
     expect(calls).toContainEqual(["chat", "ws-1"]);
     expect(calls).toContainEqual(["labels", "ws-1"]);
     expect(calls).toContainEqual(["workspaces", "ws-1", "invitations"]);
+  });
+
+  it("invalidates design draft queries when a design draft becomes ready", () => {
+    const { ws, handlers } = createEventfulMockWs();
+    renderHook(() => useRealtimeSync(ws, stores), {
+      wrapper: createWrapper(qc),
+    });
+
+    invalidateSpy.mockClear();
+    handlers.get("design_draft:ready")?.({ design_draft_id: "draft-1" });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["designs", "ws-1", "drafts"] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["designs", "ws-1", "drafts", "draft-1"] });
+  });
+
+  it("ignores malformed websocket messages without an event type", () => {
+    const { ws, anyHandlers } = createAnyEventMockWs();
+    renderHook(() => useRealtimeSync(ws, stores), {
+      wrapper: createWrapper(qc),
+    });
+
+    invalidateSpy.mockClear();
+
+    expect(() => anyHandlers[0]?.({ payload: {} })).not.toThrow();
+    expect(invalidateSpy).not.toHaveBeenCalled();
   });
 });

@@ -479,6 +479,23 @@ type DesignRevision struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
+type DesignSystemProfile struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	SourceFileID     pgtype.UUID        `json:"source_file_id"`
+	SourceRevisionID pgtype.UUID        `json:"source_revision_id"`
+	Name             string             `json:"name"`
+	Description      pgtype.Text        `json:"description"`
+	Status           string             `json:"status"`
+	IsDefault        bool               `json:"is_default"`
+	ProfileJson      []byte             `json:"profile_json"`
+	AnalysisErrors   []byte             `json:"analysis_errors"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type DesignTemplate struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`

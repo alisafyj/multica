@@ -21,15 +21,41 @@ VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: ListDesignFiles :many
-SELECT * FROM design_file
-WHERE workspace_id = $1
+SELECT df.* FROM design_file df
+WHERE df.workspace_id = $1
+  AND COALESCE(df.source_ref->>'asset_type', '') NOT IN ('template', 'design_system')
+  AND NOT EXISTS (
+    SELECT 1
+    FROM design_system_profile dsp
+    WHERE dsp.source_file_id = df.id
+      AND dsp.status <> 'archived'
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM design_template_revision dtr
+    JOIN design_revision dr ON dr.id = dtr.design_revision_id
+    WHERE dr.file_id = df.id
+  )
 ORDER BY updated_at DESC, created_at DESC;
 
 -- name: ListDesignFilesByProject :many
-SELECT * FROM design_file
-WHERE workspace_id = $1
-  AND project_id = $2
-  AND (sqlc.narg('folder_id')::uuid IS NULL OR folder_id = sqlc.narg('folder_id'))
+SELECT df.* FROM design_file df
+WHERE df.workspace_id = $1
+  AND df.project_id = $2
+  AND (sqlc.narg('folder_id')::uuid IS NULL OR df.folder_id = sqlc.narg('folder_id'))
+  AND COALESCE(df.source_ref->>'asset_type', '') NOT IN ('template', 'design_system')
+  AND NOT EXISTS (
+    SELECT 1
+    FROM design_system_profile dsp
+    WHERE dsp.source_file_id = df.id
+      AND dsp.status <> 'archived'
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM design_template_revision dtr
+    JOIN design_revision dr ON dr.id = dtr.design_revision_id
+    WHERE dr.file_id = df.id
+  )
 ORDER BY updated_at DESC, created_at DESC;
 
 -- name: GetDesignFile :one
@@ -237,6 +263,71 @@ UPDATE design_draft SET
     materialized_at = COALESCE(sqlc.narg('materialized_at'), materialized_at),
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
+RETURNING *;
+
+-- Gallery Native design systems
+
+-- name: ListDesignSystemProfiles :many
+SELECT * FROM design_system_profile
+WHERE workspace_id = $1
+  AND (
+    sqlc.narg('project_id')::uuid IS NULL
+    OR project_id = sqlc.narg('project_id')::uuid
+  )
+  AND status <> 'archived'
+ORDER BY is_default DESC, updated_at DESC, created_at DESC;
+
+-- name: GetDesignSystemProfileInWorkspace :one
+SELECT * FROM design_system_profile
+WHERE id = $1
+  AND workspace_id = $2
+  AND status <> 'archived';
+
+-- name: GetDefaultDesignSystemProfileForProject :one
+SELECT * FROM design_system_profile
+WHERE workspace_id = $1
+  AND project_id = $2
+  AND is_default = true
+  AND status = 'analyzed'
+ORDER BY updated_at DESC
+LIMIT 1;
+
+-- name: CreateDesignSystemProfile :one
+INSERT INTO design_system_profile (
+    workspace_id, project_id, source_file_id, source_revision_id, name,
+    description, status, is_default, profile_json, analysis_errors, created_by
+) VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, $8, $9, $10, $11
+)
+RETURNING *;
+
+-- name: ClearDefaultDesignSystemProfilesForProject :exec
+UPDATE design_system_profile
+SET is_default = false,
+    updated_at = now()
+WHERE workspace_id = $1
+  AND project_id = $2
+  AND is_default = true;
+
+-- name: SetDesignSystemProfileDefault :one
+UPDATE design_system_profile
+SET is_default = true,
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND project_id = $3
+  AND status = 'analyzed'
+RETURNING *;
+
+-- name: UpdateDesignSystemProfileAnalysis :one
+UPDATE design_system_profile
+SET status = $3,
+    profile_json = $4,
+    analysis_errors = $5,
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
 RETURNING *;
 
 -- name: CreateDesignRestoreTask :one

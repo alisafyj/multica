@@ -76,6 +76,7 @@ import type {
   ChatMessagesPage,
   InvitationCreatedPayload,
   DesignReadyPayload,
+  DesignDraftReadyPayload,
 } from "../types";
 
 const chatWsLogger = createLogger("chat.ws");
@@ -417,8 +418,10 @@ export function useRealtimeSync(
     ]);
 
     const unsubAny = ws.onAny((msg) => {
-      if (specificEvents.has(msg.type)) return;
-      const prefix = msg.type.split(":")[0] ?? "";
+      const eventType = typeof msg.type === "string" ? msg.type : "";
+      if (!eventType) return;
+      if (specificEvents.has(eventType)) return;
+      const prefix = eventType.split(":")[0] ?? "";
       const refresh = refreshMap[prefix];
       if (refresh) debouncedRefresh(prefix, refresh);
     });
@@ -543,8 +546,19 @@ export function useRealtimeSync(
       }
     };
 
+    const invalidateDesignDraftReady = (p: unknown) => {
+      const payload = p as DesignDraftReadyPayload;
+      const wsId = getCurrentWsId();
+      if (!wsId) return;
+      qc.invalidateQueries({ queryKey: designKeys.drafts(wsId) });
+      if (payload?.design_draft_id) {
+        qc.invalidateQueries({ queryKey: designKeys.draft(wsId, payload.design_draft_id) });
+      }
+    };
+
     const unsubDesignReady = ws.on("design:ready", invalidateDesignReady);
     const unsubDesignTemplateReady = ws.on("design_template:ready", invalidateDesignReady);
+    const unsubDesignDraftReady = ws.on("design_draft:ready", invalidateDesignDraftReady);
 
     // --- Timeline event handlers (global fallback) ---
     // These events are also handled granularly by useIssueTimeline when
@@ -995,6 +1009,7 @@ export function useRealtimeSync(
       unsubInboxNew();
       unsubDesignReady();
       unsubDesignTemplateReady();
+      unsubDesignDraftReady();
       unsubCommentCreated();
       unsubCommentUpdated();
       unsubCommentDeleted();

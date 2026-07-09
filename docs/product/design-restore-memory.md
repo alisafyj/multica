@@ -90,6 +90,30 @@ Main files in target repo:
 
 ## Completed Product/Engineering Work
 
+### UI Specification Profile Compiler
+
+Status as of 2026-07-09:
+
+- Figma plugin supports uploading `业务设计稿`, `模板资产`, and `UI 规范`.
+- UI specification uploads create a project-scoped `design_system_profile` and set it as the project default when analysis succeeds.
+- Designers should name UI specification components with the lightweight pattern `组件 - 变体 - 状态`, for example:
+  - `按钮 - 主按钮 - 默认`
+  - `按钮 - 主按钮 - 禁用`
+  - `输入框 - 错误`
+  - `表格 - 标准表格`
+  - `分页 - 标准分页`
+- Multica compiles uploaded UI specification layers into `profile_json.version = 1.1`:
+  - `tokens.colors` and `tokens.typography`
+  - `components.{kind}.variants[].states`
+  - source layer examples with text, colors, dimensions, and typography
+  - inferred patterns such as `filter_table_pagination`
+  - `guidelines` and `anti_rules` for UI Agent consumption
+- Hidden layers are ignored during component compilation.
+- Component compilation is intentionally strict: the first name segment must explicitly declare the component kind, such as `按钮`, `输入框`, `选择器`, `标签`, `表格`, `弹窗`, `分页`, or `卡片`. Do not fall back to fuzzy full-name matching, otherwise internal layers such as `Icon/Checkbox-Selected` or `附件按钮 - pdf` pollute the profile.
+- Obvious design-noise names are filtered before compilation, including `Icon/`, `DataEntry/`, `备份`, `废稿`, attachment file buttons, and common draft/temp markers.
+- The UI Agent draft prompt now treats `design_system.profile` as the project visual contract; templates are structure references only.
+- Do not add a manual form for users to tag each component. The product direction is: designer names components in Figma, Multica compiles the Agent-readable rules.
+
 ### Figma Plugin Import Stability
 
 Commits:
@@ -392,6 +416,7 @@ Gallery test target:
 Updated 2026-07-06 after repeated startup mistakes:
 
 - Do **not** use `pnpm dev:web`, `corepack pnpm dev:web`, `make start`, or `make dev` when the user only asks to start the already-developed Multica backend/frontend for testing. Those paths can route through Turbo/pnpm, trigger `node_modules` reinstall prompts, start on the wrong port, or take much longer than needed.
+- For verification commands that do need pnpm, use `corepack pnpm` so the repo's `packageManager` pin (`pnpm@10.28.2`) is honored. Do **not** rely on a Codex/runtime PATH `pnpm`; pnpm 11 can misread this repo's config, purge `node_modules`, and fail on lockfile config mismatch.
 - Do **not** touch unrelated preview services such as `http://localhost:5173`; that port is often the target restore repo preview.
 - Before starting anything, check listeners first:
 

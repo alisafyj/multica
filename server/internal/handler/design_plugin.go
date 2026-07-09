@@ -22,9 +22,12 @@ import (
 )
 
 const (
-	designPluginProviderFigma = "figma"
-	designPluginScopeImport   = "design_import"
-	designPluginAuthTTL       = 15 * time.Minute
+	designPluginProviderFigma         = "figma"
+	designPluginScopeImport           = "design_import"
+	designPluginAuthTTL               = 15 * time.Minute
+	designPluginAssetTypeDesign       = "design"
+	designPluginAssetTypeTemplate     = "template"
+	designPluginAssetTypeDesignSystem = "design_system"
 )
 
 type CreateDesignPluginAuthSessionResponse struct {
@@ -46,20 +49,23 @@ type AuthorizeDesignPluginAuthSessionRequest struct {
 }
 
 type ImportFigmaDesignWithTokenRequest struct {
-	Title              string          `json:"title"`
-	Description        *string         `json:"description"`
-	ProjectID          string          `json:"project_id"`
-	FolderID           string          `json:"folder_id"`
-	TargetDesignFileID string          `json:"target_design_file_id"`
-	DesignFileTitle    string          `json:"design_file_title"`
-	SourceRef          json.RawMessage `json:"source_ref"`
-	NativeJSON         json.RawMessage `json:"native_json"`
-	PublishAsTemplate  bool            `json:"publish_as_template"`
-	TemplateLibraryKey string          `json:"template_library_key"`
-	TemplateKey        string          `json:"template_key"`
-	TemplateName       string          `json:"template_name"`
-	TemplateCategory   string          `json:"template_category"`
-	TemplateSlotSchema json.RawMessage `json:"template_slot_schema"`
+	Title                   string          `json:"title"`
+	Description             *string         `json:"description"`
+	ProjectID               string          `json:"project_id"`
+	FolderID                string          `json:"folder_id"`
+	TargetDesignFileID      string          `json:"target_design_file_id"`
+	DesignFileTitle         string          `json:"design_file_title"`
+	AssetType               string          `json:"asset_type"`
+	SourceRef               json.RawMessage `json:"source_ref"`
+	NativeJSON              json.RawMessage `json:"native_json"`
+	PublishAsTemplate       bool            `json:"publish_as_template"`
+	TemplateLibraryKey      string          `json:"template_library_key"`
+	TemplateKey             string          `json:"template_key"`
+	TemplateName            string          `json:"template_name"`
+	TemplateCategory        string          `json:"template_category"`
+	TemplateSlotSchema      json.RawMessage `json:"template_slot_schema"`
+	DesignSystemName        string          `json:"design_system_name"`
+	DesignSystemDescription string          `json:"design_system_description"`
 }
 
 type UploadFigmaDesignAssetResponse struct {
@@ -633,6 +639,25 @@ func cleanDesignID(raw string) string {
 	return strings.Trim(b.String(), "-")
 }
 
+func normalizeDesignPluginAssetType(req ImportFigmaDesignWithTokenRequest) (string, error) {
+	assetType := strings.TrimSpace(req.AssetType)
+	if assetType == "" {
+		if req.PublishAsTemplate {
+			return designPluginAssetTypeTemplate, nil
+		}
+		return designPluginAssetTypeDesign, nil
+	}
+	switch assetType {
+	case designPluginAssetTypeDesign, designPluginAssetTypeTemplate, designPluginAssetTypeDesignSystem:
+		if assetType == designPluginAssetTypeDesignSystem && req.PublishAsTemplate {
+			return "", fmt.Errorf("asset_type conflicts with publish_as_template")
+		}
+		return assetType, nil
+	default:
+		return "", fmt.Errorf("unsupported asset_type")
+	}
+}
+
 func (h *Handler) ImportFigmaDesignWithPluginToken(w http.ResponseWriter, r *http.Request) {
 	pluginToken, ok := h.resolveFigmaPluginToken(w, r)
 	if !ok {
@@ -648,6 +673,11 @@ func (h *Handler) ImportFigmaDesignWithPluginToken(w http.ResponseWriter, r *htt
 	if req.Title == "" {
 		req.Title = "Figma import"
 	}
+	assetType, err := normalizeDesignPluginAssetType(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	projectUUID, ok := parseOptionalUUIDOrBadRequest(w, req.ProjectID, "project_id")
 	if !ok {
 		return
@@ -662,6 +692,10 @@ func (h *Handler) ImportFigmaDesignWithPluginToken(w http.ResponseWriter, r *htt
 	targetFileUUID, ok := parseOptionalUUIDOrBadRequest(w, req.TargetDesignFileID, "target_design_file_id")
 	if !ok {
 		return
+	}
+	if assetType == designPluginAssetTypeTemplate || assetType == designPluginAssetTypeDesignSystem {
+		folderUUID = pgtype.UUID{}
+		targetFileUUID = pgtype.UUID{}
 	}
 	if len(req.NativeJSON) == 0 {
 		writeError(w, http.StatusBadRequest, "native_json is required")
@@ -694,7 +728,7 @@ func (h *Handler) ImportFigmaDesignWithPluginToken(w http.ResponseWriter, r *htt
 		return
 	}
 	var templateResp *DesignCatalogTemplateResponse
-	if req.PublishAsTemplate {
+	if assetType == designPluginAssetTypeTemplate {
 		libraryKey := slugOrDefault(req.TemplateLibraryKey, "figma")
 		libraryName := "Figma Templates"
 		name := strings.TrimSpace(req.TemplateName)
@@ -714,7 +748,8 @@ func (h *Handler) ImportFigmaDesignWithPluginToken(w http.ResponseWriter, r *htt
 		}
 		defer tx.Rollback(r.Context())
 		qtx := h.Queries.WithTx(tx)
-		metadataRaw, _ := json.Marshal(map[string]any{"project_id": uuidToString(projectUUID), "source": "figma_plugin"})
+		baseMetadata, _ := json.Marshal(map[string]any{"project_id": uuidToString(projectUUID), "source": "figma_plugin"})
+		metadataRaw := designTemplateMetadataWithProfile(baseMetadata, revision.NativeJson, name, category)
 		library, err := qtx.EnsureDesignTemplateLibrary(r.Context(), db.EnsureDesignTemplateLibraryParams{WorkspaceID: pluginToken.WorkspaceID, Key: libraryKey, Name: libraryName, Description: pgtype.Text{}, Metadata: []byte(`{}`), CreatedBy: pluginToken.UserID})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to ensure template library")
@@ -753,13 +788,42 @@ func (h *Handler) ImportFigmaDesignWithPluginToken(w http.ResponseWriter, r *htt
 			return
 		}
 		resp := designCatalogTemplateRowToResponse(row)
+		resp.ThumbnailURL = thumbnailFromNativeJSON(revision.NativeJson)
 		templateResp = &resp
+	}
+	var designSystemResp *DesignSystemProfileResponse
+	if assetType == designPluginAssetTypeDesignSystem {
+		name := strings.TrimSpace(req.DesignSystemName)
+		if name == "" {
+			name = req.Title
+		}
+		description := strings.TrimSpace(req.DesignSystemDescription)
+		if description == "" && req.Description != nil {
+			description = strings.TrimSpace(*req.Description)
+		}
+		profile, err := h.createDesignSystemProfileFromRevision(r.Context(), createDesignSystemProfileFromRevisionParams{
+			WorkspaceID: pluginToken.WorkspaceID,
+			ProjectID:   projectUUID,
+			File:        file,
+			Revision:    revision,
+			Name:        name,
+			Description: description,
+			IsDefault:   true,
+			CreatedBy:   pluginToken.UserID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create design system")
+			return
+		}
+		resp := h.designSystemProfileToResponseWithThumbnail(r.Context(), profile)
+		designSystemResp = &resp
 	}
 	go h.Queries.UpdateDesignPluginTokenLastUsed(r.Context(), pluginToken.ID)
 	h.publishDesignReady(r, file, revision, pluginToken.UserID, templateResp)
 	revisionResp := designRevisionToResponse(revision)
 	writeJSON(w, http.StatusCreated, struct {
 		DesignFileDetailResponse
-		Template *DesignCatalogTemplateResponse `json:"template,omitempty"`
-	}{DesignFileDetailResponse: DesignFileDetailResponse{File: designFileToResponse(file), CurrentRevision: &revisionResp}, Template: templateResp})
+		Template     *DesignCatalogTemplateResponse `json:"template,omitempty"`
+		DesignSystem *DesignSystemProfileResponse   `json:"design_system,omitempty"`
+	}{DesignFileDetailResponse: DesignFileDetailResponse{File: designFileToResponse(file), CurrentRevision: &revisionResp}, Template: templateResp, DesignSystem: designSystemResp})
 }

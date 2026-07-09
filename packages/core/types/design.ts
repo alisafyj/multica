@@ -3,6 +3,7 @@ export type DesignRevisionStatus = "draft" | "valid" | "invalid";
 export type DesignAssetKind = "frame_preview" | "frame_thumbnail" | "image" | "slice" | "thumbnail" | "source" | "other";
 export type DesignTemplateSlotType = "text" | "number" | "boolean" | "image" | "color" | "enum" | "list" | "object";
 export type DesignDraftStatus = "draft" | "generated" | "validated" | "failed" | "archived";
+export type DesignSystemProfileStatus = "draft" | "analyzed" | "failed" | "archived";
 export type DesignRestoreTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type DesignRestoreTargetKind = "component" | "file" | "symbol" | "route" | "unknown";
 export type DesignRestoreTaskPurpose = "frontend_restore" | "ui_generation" | "template_annotation";
@@ -215,10 +216,38 @@ export interface DesignCatalogTemplate {
   slot_schema?: Record<string, unknown>;
   design_file_id?: string | null;
   design_file_title?: string | null;
+  thumbnail_url?: string | null;
   metadata: Record<string, unknown>;
   created_by?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface DesignSystemProfile {
+  id: string;
+  workspace_id: string;
+  project_id?: string | null;
+  source_file_id: string;
+  source_revision_id: string;
+  name: string;
+  description?: string | null;
+  thumbnail_url?: string | null;
+  status: DesignSystemProfileStatus;
+  is_default: boolean;
+  profile_json: Record<string, unknown>;
+  analysis_errors: unknown[];
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateDesignSystemProfileRequest {
+  project_id: string;
+  source_file_id: string;
+  source_revision_id: string;
+  name: string;
+  description?: string;
+  is_default?: boolean;
 }
 
 export interface PublishDesignTemplateRequest {
@@ -311,8 +340,9 @@ export interface CreateDesignDraftRequest {
 
 export interface CreateDesignDraftAgentTaskRequest {
   agent_id: string;
-  catalog_template_id: string;
+  catalog_template_id?: string;
   template_revision_id?: string;
+  issue_id?: string;
   title?: string;
   prompt?: string;
   requirement_core?: Partial<RequirementCore> | Record<string, unknown>;
@@ -733,6 +763,10 @@ export interface ListDesignRevisionsResponse {
 export interface ListDesignTemplatesResponse {
   templates: DesignCatalogTemplate[];
   total: number;
+}
+
+export interface ListDesignSystemProfilesResponse {
+  design_systems: DesignSystemProfile[];
 }
 
 export interface ListDesignDraftsResponse {

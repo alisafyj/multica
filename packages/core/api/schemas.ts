@@ -21,10 +21,12 @@ import type {
   User,
   WebhookDelivery,
   DesignDelivery,
+  DesignSystemProfile,
   DesignRestoreTask,
   DispatchDesignRestoreTaskResponse,
   BatchUpdateIssuesResponse,
   ListDesignDeliveriesResponse,
+  ListDesignSystemProfilesResponse,
   ListDesignRestoreTasksResponse,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
@@ -336,6 +338,50 @@ export const ListDesignDeliveriesResponseSchema = z.object({
 
 export const EMPTY_LIST_DESIGN_DELIVERIES_RESPONSE: ListDesignDeliveriesResponse = {
   deliveries: [],
+};
+
+export const DesignSystemProfileSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  project_id: z.string().nullable().optional(),
+  source_file_id: z.string(),
+  source_revision_id: z.string(),
+  name: z.string(),
+  description: z.string().nullable().optional(),
+  thumbnail_url: z.string().nullable().optional(),
+  status: z.string().default("analyzed"),
+  is_default: z.boolean().default(false),
+  profile_json: z.record(z.string(), z.unknown()).default({}),
+  analysis_errors: z.array(z.unknown()).default([]),
+  created_by: z.string().nullable().optional(),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const EMPTY_DESIGN_SYSTEM_PROFILE: DesignSystemProfile = {
+  id: "",
+  workspace_id: "",
+  project_id: null,
+  source_file_id: "",
+  source_revision_id: "",
+  name: "",
+  description: null,
+  thumbnail_url: null,
+  status: "failed",
+  is_default: false,
+  profile_json: {},
+  analysis_errors: [],
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const ListDesignSystemProfilesResponseSchema = z.object({
+  design_systems: z.array(DesignSystemProfileSchema).default([]),
+}).loose();
+
+export const EMPTY_LIST_DESIGN_SYSTEM_PROFILES_RESPONSE: ListDesignSystemProfilesResponse = {
+  design_systems: [],
 };
 
 export const DesignRestoreTaskExecutionStatusSchema = z.object({

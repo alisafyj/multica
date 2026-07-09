@@ -1852,7 +1852,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
 	// Verify the caller owns this task's workspace.
-	_, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
+	existingTask, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
 	if !ok {
 		return
 	}
@@ -1861,6 +1861,25 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+
+	var createdDraft *db.DesignDraft
+	if existingTask.Status == "running" && isUIDraftCreateTaskContext(existingTask.Context) {
+		draft, draftErr := h.createDesignDraftFromAgentTaskOutput(r.Context(), existingTask, req.Output)
+		if draftErr != nil {
+			slog.Warn("ui agent draft completion: invalid draft output", "task_id", taskID, "error", draftErr)
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), draftErr.Error(), req.SessionID, req.WorkDir, "ui_draft_invalid_output")
+			if failErr != nil {
+				slog.Warn("ui agent draft completion: failed to mark task failed", "task_id", taskID, "error", failErr)
+			} else if failedTask != nil {
+				if err := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); err != nil {
+					slog.Warn("complete task: failed to revoke task tokens after ui draft failure", "task_id", uuidToString(failedTask.ID), "error", err)
+				}
+			}
+			writeError(w, http.StatusBadRequest, "invalid ui draft output: "+draftErr.Error())
+			return
+		}
+		createdDraft = draft
 	}
 
 	result, _ := json.Marshal(req)
@@ -1872,10 +1891,15 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.emitIssueExecutedOnFirstCompletion(r, task)
-	if draft, draftErr := h.createDesignDraftFromAgentTaskOutput(r.Context(), *task, req.Output); draftErr != nil {
-		slog.Warn("ui agent draft completion: failed to create draft", "task_id", taskID, "error", draftErr)
-	} else if draft != nil {
-		slog.Info("ui agent draft created from task", "task_id", taskID, "draft_id", uuidToString(draft.ID))
+	if createdDraft != nil {
+		slog.Info("ui agent draft created from task", "task_id", taskID, "draft_id", uuidToString(createdDraft.ID))
+		h.publish(protocol.EventDesignDraftReady, workspaceID, "agent", uuidToString(task.AgentID), map[string]any{
+			"design_draft_id":     uuidToString(createdDraft.ID),
+			"issue_id":            uuidToPtr(createdDraft.IssueID),
+			"catalog_template_id": uuidToPtr(createdDraft.CatalogTemplateID),
+			"status":              createdDraft.Status,
+			"title":               createdDraft.Title,
+		})
 	}
 	if err := h.updateDesignRestoreTaskFromAgentCompletion(r.Context(), *task, req); err != nil {
 		slog.Warn("design restore task completion: failed to update restore task", "task_id", taskID, "error", err)

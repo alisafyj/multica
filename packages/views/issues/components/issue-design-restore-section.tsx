@@ -7,13 +7,13 @@ import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { agentTasksOptions } from "@multica/core/agents/queries";
 import { designKeys } from "@multica/core/designs/keys";
-import { designDeliveriesByIssueOptions, designFileDetailOptions, designFileListOptions, designRestoreMappingsOptions, designRestorePlanOptions, designRestoreTaskDetailOptions, designRestoreTaskListOptions } from "@multica/core/designs/queries";
+import { designDeliveriesByIssueOptions, designDraftListOptions, designFileDetailOptions, designFileListOptions, designRestoreMappingsOptions, designRestorePlanOptions, designRestoreTaskDetailOptions, designRestoreTaskListOptions } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { ISSUE_DESIGN_ROLE_FRONTEND, ISSUE_DESIGN_ROLE_KEY, ISSUE_DESIGN_ROLE_UI, explicitIssueDesignRole, issueDesignRole } from "@multica/core/issues/design-role";
 import { childIssuesOptions, issueKeys } from "@multica/core/issues/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
-import type { Agent, DesignDelivery, DesignFile, DesignFrame, DesignRestorePlan, DesignRestoreTask, DesignRestoreTaskInputV1, Issue, MemberWithUser } from "@multica/core/types";
+import type { Agent, DesignDelivery, DesignDraft, DesignFile, DesignFrame, DesignRestorePlan, DesignRestoreTask, DesignRestoreTaskInputV1, Issue, MemberWithUser } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/native-select";
@@ -120,6 +120,12 @@ function nonEmptyString(value: unknown) {
 function restoreTaskArtifactDocPath(task: DesignRestoreTask | null) {
   const summary = resultSummary(task);
   return nonEmptyString(summary?.artifactDocPath) || nonEmptyString(task?.result?.artifactDocPath);
+}
+
+function latestIssueDesignDraft(drafts: DesignDraft[], issueId: string) {
+  return drafts
+    .filter((draft) => draft.issue_id === issueId)
+    .sort((a, b) => timestampValue(b.updated_at || b.created_at) - timestampValue(a.updated_at || a.created_at))[0] ?? null;
 }
 
 export function selectIssueRestoreTask(tasks: DesignRestoreTask[], issueId: string, currentRevisionId?: string, deliveryId?: string) {
@@ -677,7 +683,12 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
     ...designRestoreTaskListOptions(wsId),
     enabled: roleReady,
   });
+  const { data: designDrafts = [] } = useQuery({
+    ...designDraftListOptions(wsId),
+    enabled: roleReady && isUiIssue,
+  });
   const deliveryRestoreTask = useMemo(() => selectDeliveryRestoreTask(restoreTasks, activeDesignDelivery?.id), [restoreTasks, activeDesignDelivery?.id]);
+  const issueDesignDraft = useMemo(() => latestIssueDesignDraft(designDrafts, issue.id), [designDrafts, issue.id]);
   const projectDesignFiles = useMemo(() => designFiles.filter((file) => !issue.project_id || file.project_id === issue.project_id), [designFiles, issue.project_id]);
   const selectedFileId = fileId || activeDesignDelivery?.file_id || projectDesignFiles[0]?.id || "";
   const { data: selectedFileDetail } = useQuery({
@@ -870,6 +881,23 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
       toast.success("已撤回设计交付");
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "撤回设计交付失败"),
+  });
+
+  const createIssueDraftTask = useMutation({
+    mutationFn: async () => {
+      if (!primaryAgent) throw new Error("暂无可用 UI Agent");
+      return api.createDesignDraftAgentTask({
+        agent_id: primaryAgent.id,
+        issue_id: issue.id,
+        title: `${issue.title} 设计草稿`,
+        prompt: "阅读 Issue 需求，从模板候选中选择最匹配的模板，生成可审核的 UI 设计草稿。优先使用 slot_values，只有安全文本/元数据变化才使用 patch。",
+      });
+    },
+    onSuccess: async (task) => {
+      await queryClient.invalidateQueries({ queryKey: designKeys.drafts(wsId) });
+      toast.success(`已提交 UI Agent 设计稿任务 ${task.task_id.slice(0, 8)}`);
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "提交 UI Agent 设计稿任务失败"),
   });
 
   const createRestoreTask = useMutation({
@@ -1090,6 +1118,39 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
             ) : null}
           </div>
           ) : null}
+        {roleReady && isUiIssue ? (
+          <div className="rounded-md border bg-background p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-medium text-foreground">UI Agent 设计稿</div>
+                <div className="mt-1 text-muted-foreground">读取当前 Issue 需求，匹配模板库后生成待审核草稿。</div>
+              </div>
+              {issueDesignDraft ? <Badge variant="secondary" className="shrink-0">{issueDesignDraft.status}</Badge> : null}
+            </div>
+            {issueDesignDraft ? (
+              <div className="mt-3 rounded-md bg-muted px-2 py-1.5 text-muted-foreground">
+                <div className="truncate text-foreground">{issueDesignDraft.title}</div>
+                <div className="mt-1 font-mono">草稿 {shortId(issueDesignDraft.id)} · {formatCompactDateTime(issueDesignDraft.updated_at)}</div>
+              </div>
+            ) : null}
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {issueDesignDraft ? (
+                <Button size="sm" variant="ghost" className="w-full" onClick={() => navigation.push(paths.designDraftDetail(issueDesignDraft.id))}>
+                  <ExternalLink className="size-3.5" />打开草稿
+                </Button>
+              ) : null}
+              {issueDesignDraft?.generated_file_id ? (
+                <Button size="sm" variant="ghost" className="w-full" onClick={() => navigation.push(paths.designDetail(issueDesignDraft.generated_file_id!))}>
+                  <ExternalLink className="size-3.5" />打开生成稿
+                </Button>
+              ) : (
+                <Button size="sm" variant="outline" className="w-full" disabled={!primaryAgent || createIssueDraftTask.isPending} onClick={() => createIssueDraftTask.mutate()}>
+                  <WandSparkles className="size-3.5" />{createIssueDraftTask.isPending ? "正在提交…" : "让 UI Agent 生成设计稿"}
+                </Button>
+              )}
+            </div>
+          </div>
+        ) : null}
         {roleReady && !controlsLocked ? (
           <details className="rounded-md border bg-background/60">
             <summary className="cursor-pointer list-none px-2 py-1.5 text-muted-foreground hover:text-foreground">{receivedDesignDelivery ? "调整 Agent" : "调整上传设计稿 / Agent"}</summary>

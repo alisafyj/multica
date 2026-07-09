@@ -127,6 +127,212 @@ func minimalDesignNativeJSON(title string) map[string]any {
 	}
 }
 
+func nativeJSONWithThumbnailForTest(title string, thumbnailURL string) map[string]any {
+	doc := minimalDesignNativeJSON(title)
+	frames := doc["frames"].([]map[string]any)
+	frames[0]["thumbnailAssetId"] = "asset-thumb-main"
+	doc["assets"].(map[string]any)["asset-thumb-main"] = map[string]any{
+		"id":  "asset-thumb-main",
+		"url": thumbnailURL,
+	}
+	return doc
+}
+
+func designSystemSpecNativeJSONForTest(title string) map[string]any {
+	doc := minimalDesignNativeJSON(title)
+	layers := doc["layers"].(map[string]any)
+	specLayers := []map[string]any{
+		{
+			"id":      "button-primary-default",
+			"frameId": "frame-1",
+			"name":    "按钮 - 主按钮 - 默认",
+			"type":    "component",
+			"visible": true,
+			"width":   88,
+			"height":  32,
+			"fills":   []any{map[string]any{"color": "#1677ff"}},
+			"text":    map[string]any{"characters": "确认", "text": "确认", "fontFamily": "Inter", "fontSize": 14},
+		},
+		{
+			"id":      "button-primary-disabled",
+			"frameId": "frame-1",
+			"name":    "按钮 - 主按钮 - 禁用",
+			"type":    "component",
+			"visible": true,
+			"width":   88,
+			"height":  32,
+			"fills":   []any{map[string]any{"color": "#d0d5dd"}},
+			"text":    map[string]any{"characters": "确认", "text": "确认", "fontFamily": "Inter", "fontSize": 14},
+		},
+		{
+			"id":      "button-danger",
+			"frameId": "frame-1",
+			"name":    "按钮 - 危险按钮",
+			"type":    "component",
+			"visible": true,
+			"width":   88,
+			"height":  32,
+			"fills":   []any{map[string]any{"color": "#f04438"}},
+			"text":    map[string]any{"characters": "删除", "text": "删除", "fontFamily": "Inter", "fontSize": 14},
+		},
+		{
+			"id":      "input-error",
+			"frameId": "frame-1",
+			"name":    "输入框 - 错误",
+			"type":    "component",
+			"visible": true,
+			"width":   240,
+			"height":  36,
+			"strokes": []any{map[string]any{"color": "#f04438"}},
+			"text":    map[string]any{"characters": "请输入手机号", "text": "请输入手机号", "fontFamily": "Inter", "fontSize": 14},
+		},
+		{
+			"id":      "select-single",
+			"frameId": "frame-1",
+			"name":    "选择器 - 单选",
+			"type":    "component",
+			"visible": true,
+			"width":   240,
+			"height":  36,
+			"text":    map[string]any{"characters": "请选择", "text": "请选择", "fontFamily": "Inter", "fontSize": 14},
+		},
+		{
+			"id":      "table-standard",
+			"frameId": "frame-1",
+			"name":    "表格 - 标准表格",
+			"type":    "component",
+			"visible": true,
+			"width":   960,
+			"height":  360,
+			"text":    map[string]any{"characters": "客户姓名 手机号 状态 操作", "text": "客户姓名 手机号 状态 操作"},
+		},
+		{
+			"id":      "pagination-standard",
+			"frameId": "frame-1",
+			"name":    "分页 - 标准分页",
+			"type":    "component",
+			"visible": true,
+			"width":   360,
+			"height":  32,
+			"text":    map[string]any{"characters": "上一页 1 2 下一页", "text": "上一页 1 2 下一页"},
+		},
+		{
+			"id":      "hidden-button",
+			"frameId": "frame-1",
+			"name":    "按钮 - 废稿 - 默认",
+			"type":    "component",
+			"visible": false,
+		},
+		{
+			"id":      "visible-draft-button",
+			"frameId": "frame-1",
+			"name":    "按钮 - 废稿 - 默认",
+			"type":    "component",
+			"visible": true,
+		},
+		{
+			"id":      "attachment-pdf-button",
+			"frameId": "frame-1",
+			"name":    "附件按钮 - pdf",
+			"type":    "component",
+			"visible": true,
+		},
+		{
+			"id":      "attachment-jpg-button",
+			"frameId": "frame-1",
+			"name":    "附件按钮 - jpg",
+			"type":    "component",
+			"visible": true,
+		},
+		{
+			"id":      "internal-checkbox-icon",
+			"frameId": "frame-1",
+			"name":    "Icon/Checkbox-Selected",
+			"type":    "component",
+			"visible": true,
+		},
+		{
+			"id":      "internal-dataentry-checkbox",
+			"frameId": "frame-1",
+			"name":    "DataEntry/Checkbox/Light/Selected-Normal",
+			"type":    "component",
+			"visible": true,
+		},
+		{
+			"id":      "backup-select",
+			"frameId": "frame-1",
+			"name":    "选择器 - 单选备份",
+			"type":    "component",
+			"visible": true,
+		},
+	}
+	for _, layer := range specLayers {
+		layers[layer["id"].(string)] = layer
+	}
+	return doc
+}
+
+func filterTableTemplateNativeJSONForTest(title string) map[string]any {
+	doc := minimalDesignNativeJSON(title)
+	layers := doc["layers"].(map[string]any)
+	layers["filter-title"] = map[string]any{
+		"id":      "filter-title",
+		"frameId": "frame-1",
+		"name":    "筛选区 / 请输入 / 请选择",
+		"type":    "text",
+		"visible": true,
+		"x":       40,
+		"y":       32,
+		"width":   320,
+		"height":  32,
+		"text": map[string]any{
+			"characters": "筛选条件 请输入 请选择 查询",
+			"text":       "筛选条件 请输入 请选择 查询",
+		},
+	}
+	layers["table-title"] = map[string]any{
+		"id":      "table-title",
+		"frameId": "frame-1",
+		"name":    "表格 / 状态 / 操作",
+		"type":    "text",
+		"visible": true,
+		"x":       40,
+		"y":       160,
+		"width":   520,
+		"height":  32,
+		"text": map[string]any{
+			"characters": "表格 列表 状态 操作",
+			"text":       "表格 列表 状态 操作",
+		},
+	}
+	layers["pagination-title"] = map[string]any{
+		"id":      "pagination-title",
+		"frameId": "frame-1",
+		"name":    "分页 / Pagination",
+		"type":    "text",
+		"visible": true,
+		"x":       40,
+		"y":       760,
+		"width":   320,
+		"height":  32,
+		"text": map[string]any{
+			"characters": "分页 10条/页 上一页 下一页",
+			"text":       "分页 10条/页 上一页 下一页",
+		},
+	}
+	doc["slots"] = map[string]any{
+		"page_title":    map[string]any{"slotKey": "page_title", "layerIds": []any{"filter-title"}},
+		"filter_fields": map[string]any{"slotKey": "filter_fields", "type": "array"},
+		"table_columns": map[string]any{"slotKey": "table_columns", "type": "array"},
+	}
+	doc["componentBindings"] = map[string]any{
+		"filter-title":     map[string]any{"componentKey": "FilterForm"},
+		"table-title":      map[string]any{"componentKey": "DataTable"},
+		"pagination-title": map[string]any{"componentKey": "Pagination"},
+	}
+	return doc
+}
+
 func figmaDesignNativeJSONWithSourceNodes(title string, sourceNodeIDs ...string) map[string]any {
 	frames := make([]map[string]any, 0, len(sourceNodeIDs))
 	layers := make(map[string]any, len(sourceNodeIDs))
@@ -469,6 +675,8 @@ func TestPublishDesignRevisionAsTemplateAndListGet(t *testing.T) {
 	if design.CurrentRevision == nil {
 		t.Fatal("expected current revision")
 	}
+	templateThumbnailURL := "https://static.example.test/template-thumb.png"
+	updateDesignRevisionNativeJSONForTest(t, design.CurrentRevision.ID, nativeJSONWithThumbnailForTest("Template Source Design", templateThumbnailURL))
 	libraryKey := fmt.Sprintf("test-library-%d", time.Now().UnixNano())
 	templateKey := fmt.Sprintf("test-template-%d", time.Now().UnixNano())
 	t.Cleanup(func() {
@@ -504,6 +712,9 @@ func TestPublishDesignRevisionAsTemplateAndListGet(t *testing.T) {
 	if published.TemplateRevisionNumber == nil || *published.TemplateRevisionNumber != 1 {
 		t.Fatalf("template_revision_number = %v, want 1", published.TemplateRevisionNumber)
 	}
+	if published.ThumbnailURL == nil || *published.ThumbnailURL != templateThumbnailURL {
+		t.Fatalf("published thumbnail_url = %v, want %s", published.ThumbnailURL, templateThumbnailURL)
+	}
 
 	listReq := newRequest("GET", "/api/design-templates?workspace_id="+testWorkspaceID+"&category=checkout", nil)
 	listW := httptest.NewRecorder()
@@ -521,6 +732,9 @@ func TestPublishDesignRevisionAsTemplateAndListGet(t *testing.T) {
 	found := false
 	for _, item := range listResp.Templates {
 		if item.ID == published.ID {
+			if item.ThumbnailURL == nil || *item.ThumbnailURL != templateThumbnailURL {
+				t.Fatalf("listed thumbnail_url = %v, want %s", item.ThumbnailURL, templateThumbnailURL)
+			}
 			found = true
 			break
 		}
@@ -542,6 +756,56 @@ func TestPublishDesignRevisionAsTemplateAndListGet(t *testing.T) {
 	}
 	if got.ID != published.ID || got.DesignRevisionID == nil || *got.DesignRevisionID != design.CurrentRevision.ID {
 		t.Fatalf("unexpected get response: %+v", got)
+	}
+	if got.ThumbnailURL == nil || *got.ThumbnailURL != templateThumbnailURL {
+		t.Fatalf("get thumbnail_url = %v, want %s", got.ThumbnailURL, templateThumbnailURL)
+	}
+}
+
+func TestPublishDesignRevisionAsTemplateAddsTemplateProfile(t *testing.T) {
+	design := createDesignFileForTest(t, "筛选表格分页模板")
+	if design.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	updateDesignRevisionNativeJSONForTest(t, design.CurrentRevision.ID, filterTableTemplateNativeJSONForTest("筛选表格分页模板"))
+	libraryKey := fmt.Sprintf("profile-library-%d", time.Now().UnixNano())
+	templateKey := fmt.Sprintf("profile-template-%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_template_library WHERE workspace_id = $1 AND key = $2`, testWorkspaceID, libraryKey)
+	})
+
+	req := newRequest("POST", "/api/design-revisions/"+design.CurrentRevision.ID+"/publish-template?workspace_id="+testWorkspaceID, map[string]any{
+		"library_key":  libraryKey,
+		"template_key": templateKey,
+		"name":         "标准筛选表格分页模板",
+		"category":     "b端列表页",
+	})
+	req = withDesignURLParams(req, "revisionId", design.CurrentRevision.ID)
+	w := httptest.NewRecorder()
+	testHandler.PublishDesignRevisionAsTemplate(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("PublishDesignRevisionAsTemplate: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var published DesignCatalogTemplateResponse
+	if err := json.NewDecoder(w.Body).Decode(&published); err != nil {
+		t.Fatalf("decode publish response: %v", err)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(published.Metadata, &metadata); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+	profile, ok := metadata["template_profile"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected template_profile metadata, got %+v", metadata)
+	}
+	if profile["page_type"] != "saas.filter-table-pagination" {
+		t.Fatalf("page_type = %v, want saas.filter-table-pagination; profile=%+v", profile["page_type"], profile)
+	}
+	tags := asStringSlice(profile["tags"])
+	for _, want := range []string{"筛选", "表格", "分页"} {
+		if !containsString(tags, want) {
+			t.Fatalf("profile tags = %v, missing %q", tags, want)
+		}
 	}
 }
 
@@ -566,6 +830,73 @@ func createCatalogTemplateForDraftTest(t *testing.T) DesignCatalogTemplateRespon
 	testHandler.PublishDesignRevisionAsTemplate(w, req)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("PublishDesignRevisionAsTemplate: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var published DesignCatalogTemplateResponse
+	if err := json.NewDecoder(w.Body).Decode(&published); err != nil {
+		t.Fatalf("decode publish response: %v", err)
+	}
+	return published
+}
+
+func createFilterTableCatalogTemplateForDraftTest(t *testing.T) DesignCatalogTemplateResponse {
+	t.Helper()
+	design := createDesignFileForTest(t, "筛选表格分页模板源")
+	if design.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	updateDesignRevisionNativeJSONForTest(t, design.CurrentRevision.ID, filterTableTemplateNativeJSONForTest("筛选表格分页模板源"))
+	libraryKey := fmt.Sprintf("filter-table-library-%d", time.Now().UnixNano())
+	templateKey := fmt.Sprintf("filter-table-template-%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_template_library WHERE workspace_id = $1 AND key = $2`, testWorkspaceID, libraryKey)
+	})
+	req := newRequest("POST", "/api/design-revisions/"+design.CurrentRevision.ID+"/publish-template?workspace_id="+testWorkspaceID, map[string]any{
+		"library_key":  libraryKey,
+		"template_key": templateKey,
+		"name":         "标准筛选表格分页模板",
+		"category":     "b端列表页",
+		"slot_schema": map[string]any{
+			"page_title":    map[string]any{"type": "text", "required": true},
+			"filter_fields": map[string]any{"type": "array"},
+			"table_columns": map[string]any{"type": "array"},
+		},
+	})
+	req = withDesignURLParams(req, "revisionId", design.CurrentRevision.ID)
+	w := httptest.NewRecorder()
+	testHandler.PublishDesignRevisionAsTemplate(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("PublishDesignRevisionAsTemplate: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var published DesignCatalogTemplateResponse
+	if err := json.NewDecoder(w.Body).Decode(&published); err != nil {
+		t.Fatalf("decode publish response: %v", err)
+	}
+	return published
+}
+
+func createFilterTableCatalogTemplateWithoutSlotsForDraftTest(t *testing.T) DesignCatalogTemplateResponse {
+	t.Helper()
+	design := createDesignFileForTest(t, "无槽位筛选表格模板源")
+	if design.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	updateDesignRevisionNativeJSONForTest(t, design.CurrentRevision.ID, filterTableTemplateNativeJSONForTest("无槽位筛选表格模板源"))
+	libraryKey := fmt.Sprintf("filter-table-no-slots-library-%d", time.Now().UnixNano())
+	templateKey := fmt.Sprintf("filter-table-no-slots-template-%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_template_library WHERE workspace_id = $1 AND key = $2`, testWorkspaceID, libraryKey)
+	})
+	req := newRequest("POST", "/api/design-revisions/"+design.CurrentRevision.ID+"/publish-template?workspace_id="+testWorkspaceID, map[string]any{
+		"library_key":  libraryKey,
+		"template_key": templateKey,
+		"name":         "无槽位标准筛选表格分页模板",
+		"category":     "b端列表页",
+	})
+	req = withDesignURLParams(req, "revisionId", design.CurrentRevision.ID)
+	w := httptest.NewRecorder()
+	testHandler.PublishDesignRevisionAsTemplate(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("PublishDesignRevisionAsTemplate without slots: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var published DesignCatalogTemplateResponse
 	if err := json.NewDecoder(w.Body).Decode(&published); err != nil {
@@ -633,6 +964,13 @@ func handlerTestAgentID(t *testing.T) string {
 	return id
 }
 
+func attachDesignFileToProjectForTest(t *testing.T, fileID string, projectID string) {
+	t.Helper()
+	if _, err := testPool.Exec(context.Background(), `UPDATE design_file SET project_id = $1 WHERE id = $2`, projectID, fileID); err != nil {
+		t.Fatalf("attach design file to project: %v", err)
+	}
+}
+
 func TestCreateDesignDraftFromCatalogTemplate(t *testing.T) {
 	template := createCatalogTemplateForDraftTest(t)
 	req := newRequest("POST", "/api/design-drafts?workspace_id="+testWorkspaceID, map[string]any{
@@ -678,6 +1016,202 @@ func TestCreateDesignDraftFromCatalogTemplate(t *testing.T) {
 	}
 }
 
+func TestCreateDesignSystemProfileFromDesignFile(t *testing.T) {
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "Design System Project")
+	created := createDesignFileForTest(t, "Design System Source")
+	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+
+	req := newRequest("POST", "/api/design-systems?workspace_id="+testWorkspaceID, map[string]any{
+		"project_id":         projectID,
+		"source_file_id":     created.File.ID,
+		"source_revision_id": created.CurrentRevision.ID,
+		"name":               "CRM 后台设计系统",
+		"description":        "CRM admin base components",
+		"is_default":         true,
+	})
+	w := httptest.NewRecorder()
+	testHandler.CreateDesignSystemProfile(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateDesignSystemProfile: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp DesignSystemProfileResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Name != "CRM 后台设计系统" {
+		t.Fatalf("name = %q", resp.Name)
+	}
+	if !resp.IsDefault {
+		t.Fatal("created design system should be default")
+	}
+	if len(resp.ProfileJSON) == 0 || string(resp.ProfileJSON) == "null" {
+		t.Fatal("profile_json should be populated")
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_system_profile WHERE id = $1`, resp.ID)
+	})
+}
+
+func TestAnalyzeDesignSystemProfileCompilesNamedComponents(t *testing.T) {
+	raw, err := json.Marshal(designSystemSpecNativeJSONForTest("CRM UI Spec"))
+	if err != nil {
+		t.Fatalf("marshal design system native json: %v", err)
+	}
+	profileRaw, analysisErrors, status := analyzeDesignSystemProfile(raw, "file-1", "revision-1")
+	if status != "analyzed" {
+		t.Fatalf("status = %q, want analyzed", status)
+	}
+	if string(analysisErrors) != "[]" {
+		t.Fatalf("analysis_errors = %s, want []", string(analysisErrors))
+	}
+	var profile map[string]any
+	if err := json.Unmarshal(profileRaw, &profile); err != nil {
+		t.Fatalf("decode profile: %v", err)
+	}
+	if profile["version"] != "1.1" {
+		t.Fatalf("profile version = %v, want 1.1", profile["version"])
+	}
+	components, ok := profile["components"].(map[string]any)
+	if !ok {
+		t.Fatalf("components missing: %+v", profile)
+	}
+	button, ok := components["button"].(map[string]any)
+	if !ok {
+		t.Fatalf("button component missing: %+v", components)
+	}
+	if button["label"] != "按钮" {
+		t.Fatalf("button label = %v, want 按钮", button["label"])
+	}
+	if !componentVariantHasStates(button, "主按钮", "默认", "禁用") {
+		t.Fatalf("button primary states missing: %+v", button["variants"])
+	}
+	if !componentVariantHasStates(button, "危险按钮", "默认") {
+		t.Fatalf("button danger default state missing: %+v", button["variants"])
+	}
+	if componentVariantHasStates(button, "废稿", "默认") {
+		t.Fatalf("draft layer should not become a component variant: %+v", button["variants"])
+	}
+	for _, noiseName := range []string{"附件按钮 - pdf", "附件按钮 - jpg", "Icon/Checkbox-Selected", "DataEntry/Checkbox/Light/Selected-Normal"} {
+		if componentHasExampleSourceName(button, noiseName) {
+			t.Fatalf("noise layer %q should not become a button example: %+v", noiseName, button["examples"])
+		}
+	}
+	input, ok := components["input"].(map[string]any)
+	if !ok || !componentVariantHasStates(input, "错误", "默认") {
+		t.Fatalf("input error variant missing: %+v", components["input"])
+	}
+	selectComponent, ok := components["select"].(map[string]any)
+	if !ok || !componentVariantHasStates(selectComponent, "单选", "默认") {
+		t.Fatalf("select single variant missing: %+v", components["select"])
+	}
+	for _, noiseName := range []string{"选择器 - 单选备份", "Icon/Checkbox-Selected", "DataEntry/Checkbox/Light/Selected-Normal"} {
+		if componentHasExampleSourceName(selectComponent, noiseName) {
+			t.Fatalf("noise layer %q should not become a select example: %+v", noiseName, selectComponent["examples"])
+		}
+	}
+	table, ok := components["table"].(map[string]any)
+	if !ok || !componentVariantHasStates(table, "标准表格", "默认") {
+		t.Fatalf("table standard variant missing: %+v", components["table"])
+	}
+	pagination, ok := components["pagination"].(map[string]any)
+	if !ok || !componentVariantHasStates(pagination, "标准分页", "默认") {
+		t.Fatalf("pagination standard variant missing: %+v", components["pagination"])
+	}
+	patterns, ok := profile["patterns"].(map[string]any)
+	if !ok {
+		t.Fatalf("patterns missing: %+v", profile)
+	}
+	if _, ok := patterns["filter_table_pagination"]; !ok {
+		t.Fatalf("filter_table_pagination pattern missing: %+v", patterns)
+	}
+}
+
+func componentVariantHasStates(component map[string]any, variantName string, states ...string) bool {
+	variants, ok := component["variants"].([]any)
+	if !ok {
+		return false
+	}
+	for _, rawVariant := range variants {
+		variant, ok := rawVariant.(map[string]any)
+		if !ok || variant["name"] != variantName {
+			continue
+		}
+		rawStates, ok := variant["states"].([]any)
+		if !ok {
+			return false
+		}
+		for _, want := range states {
+			found := false
+			for _, rawState := range rawStates {
+				if rawState == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func componentHasExampleSourceName(component map[string]any, sourceName string) bool {
+	examples, ok := component["examples"].([]any)
+	if !ok {
+		return false
+	}
+	for _, rawExample := range examples {
+		example, ok := rawExample.(map[string]any)
+		if ok && example["source_layer_name"] == sourceName {
+			return true
+		}
+	}
+	return false
+}
+
+func TestListDesignSystemProfilesByProject(t *testing.T) {
+	projectID := createProjectForDesignTest(t, "Design System List Project")
+	created := createDesignFileForTest(t, "Design System List Source")
+	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	designSystemThumbnailURL := "https://static.example.test/design-system-thumb.png"
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, nativeJSONWithThumbnailForTest("Design System List Source", designSystemThumbnailURL))
+
+	createReq := newRequest("POST", "/api/design-systems?workspace_id="+testWorkspaceID, map[string]any{
+		"project_id":         projectID,
+		"source_file_id":     created.File.ID,
+		"source_revision_id": created.CurrentRevision.ID,
+		"name":               "Listable Design System",
+	})
+	createW := httptest.NewRecorder()
+	testHandler.CreateDesignSystemProfile(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create setup: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+
+	listReq := newRequest("GET", "/api/design-systems?workspace_id="+testWorkspaceID+"&project_id="+projectID, nil)
+	listW := httptest.NewRecorder()
+	testHandler.ListDesignSystemProfiles(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("ListDesignSystemProfiles: expected 200, got %d: %s", listW.Code, listW.Body.String())
+	}
+	var list DesignSystemProfileListResponse
+	if err := json.NewDecoder(listW.Body).Decode(&list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list.DesignSystems) == 0 {
+		t.Fatal("expected at least one design system")
+	}
+	if list.DesignSystems[0].Name != "Listable Design System" {
+		t.Fatalf("first design system = %q", list.DesignSystems[0].Name)
+	}
+	if list.DesignSystems[0].ThumbnailURL == nil || *list.DesignSystems[0].ThumbnailURL != designSystemThumbnailURL {
+		t.Fatalf("design system thumbnail_url = %v, want %s", list.DesignSystems[0].ThumbnailURL, designSystemThumbnailURL)
+	}
+}
+
 func TestCreateDesignDraftAgentTaskEnqueuesTaskContext(t *testing.T) {
 	template := createCatalogTemplateForDraftTest(t)
 	agentID := handlerTestAgentID(t)
@@ -716,6 +1250,214 @@ func TestCreateDesignDraftAgentTaskEnqueuesTaskContext(t *testing.T) {
 	}
 	if _, ok := payload["output_policy"].(map[string]any); !ok {
 		t.Fatalf("expected output_policy in context: %+v", payload)
+	}
+}
+
+func TestCreateDesignDraftAgentTaskFromIssueProvidesTemplateCandidates(t *testing.T) {
+	template := createFilterTableCatalogTemplateForDraftTest(t)
+	projectID := createProjectForDesignTest(t, "UI Agent Draft Project")
+	issueID := createIssueForDesignTest(t, "服务记录开发 UI设计", projectID)
+	_, err := testPool.Exec(context.Background(), `
+		UPDATE issue
+		SET description = $2
+		WHERE id = $1
+	`, issueID, "需要新增服务记录列表页，包含门店、治疗师、日期筛选，表格展示服务时间、客户、状态、操作，并支持分页。")
+	if err != nil {
+		t.Fatalf("update issue description: %v", err)
+	}
+	agentID := handlerTestAgentID(t)
+	req := newRequest("POST", "/api/design-drafts/agent-tasks?workspace_id="+testWorkspaceID, map[string]any{
+		"agent_id": agentID,
+		"issue_id": issueID,
+		"title":    "服务记录列表草稿",
+	})
+	w := httptest.NewRecorder()
+	testHandler.CreateDesignDraftAgentTask(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("CreateDesignDraftAgentTask: expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp CreateDesignDraftAgentTaskResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode task response: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, resp.TaskID)
+	})
+	var contextRaw []byte
+	if err := testPool.QueryRow(context.Background(), `SELECT context FROM agent_task_queue WHERE id = $1`, resp.TaskID).Scan(&contextRaw); err != nil {
+		t.Fatalf("get task context: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(contextRaw, &payload); err != nil {
+		t.Fatalf("decode task context: %v", err)
+	}
+	issue, ok := payload["issue"].(map[string]any)
+	if !ok || issue["id"] != issueID || issue["title"] != "服务记录开发 UI设计" {
+		t.Fatalf("unexpected issue context: %+v", payload["issue"])
+	}
+	candidates, ok := payload["template_candidates"].([]any)
+	if !ok || len(candidates) == 0 {
+		t.Fatalf("expected template_candidates, got %+v", payload["template_candidates"])
+	}
+	candidate, _ := candidates[0].(map[string]any)
+	if candidate["id"] != template.ID {
+		t.Fatalf("first candidate id = %v, want %s", candidate["id"], template.ID)
+	}
+	profile, _ := candidate["template_profile"].(map[string]any)
+	if profile["page_type"] != "saas.filter-table-pagination" {
+		t.Fatalf("candidate profile = %+v", profile)
+	}
+	textLayers, ok := candidate["editable_text_layers"].([]any)
+	if !ok || len(textLayers) == 0 {
+		t.Fatalf("expected editable_text_layers in candidate, got %+v", candidate["editable_text_layers"])
+	}
+	firstTextLayer, _ := textLayers[0].(map[string]any)
+	patchPaths, _ := firstTextLayer["patch_paths"].([]any)
+	if firstTextLayer["id"] == "" || firstTextLayer["text"] == "" || len(patchPaths) == 0 {
+		t.Fatalf("unexpected editable text layer summary: %+v", firstTextLayer)
+	}
+	policy, _ := payload["selection_policy"].(map[string]any)
+	if policy["agent_must_select_catalog_template_id"] != true {
+		t.Fatalf("selection_policy = %+v", policy)
+	}
+}
+
+func TestCreateDesignDraftAgentTaskFromChildIssueIncludesParentIssueContext(t *testing.T) {
+	createFilterTableCatalogTemplateForDraftTest(t)
+	projectID := createProjectForDesignTest(t, "UI Agent Parent PRD Project")
+	parentIssueID := createIssueForDesignTest(t, "CRM 客户管理开发", projectID)
+	childIssueID := createIssueForDesignTest(t, "UI设计", projectID)
+	_, err := testPool.Exec(context.Background(), `
+		UPDATE issue
+		SET description = $2,
+		    acceptance_criteria = $3::jsonb
+		WHERE id = $1
+	`, parentIssueID, "父 Issue PRD：客户管理页面需要筛选、表格、分页和客户状态操作。", `["筛选项完整","表格字段完整"]`)
+	if err != nil {
+		t.Fatalf("update parent issue: %v", err)
+	}
+	_, err = testPool.Exec(context.Background(), `
+		UPDATE issue
+		SET description = $2,
+		    parent_issue_id = $3
+		WHERE id = $1
+	`, childIssueID, "子 Issue 范围：请产出 UI 设计稿。", parentIssueID)
+	if err != nil {
+		t.Fatalf("update child issue: %v", err)
+	}
+
+	agentID := handlerTestAgentID(t)
+	req := newRequest("POST", "/api/design-drafts/agent-tasks?workspace_id="+testWorkspaceID, map[string]any{
+		"agent_id": agentID,
+		"issue_id": childIssueID,
+		"title":    "CRM UI 草稿",
+	})
+	w := httptest.NewRecorder()
+	testHandler.CreateDesignDraftAgentTask(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("CreateDesignDraftAgentTask: expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp CreateDesignDraftAgentTaskResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode task response: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, resp.TaskID)
+	})
+	var contextRaw []byte
+	if err := testPool.QueryRow(context.Background(), `SELECT context FROM agent_task_queue WHERE id = $1`, resp.TaskID).Scan(&contextRaw); err != nil {
+		t.Fatalf("get task context: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(contextRaw, &payload); err != nil {
+		t.Fatalf("decode task context: %v", err)
+	}
+	parentIssue, ok := payload["parent_issue"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected parent_issue in context, got %+v", payload)
+	}
+	if parentIssue["id"] != parentIssueID || parentIssue["title"] != "CRM 客户管理开发" {
+		t.Fatalf("unexpected parent_issue identity: %+v", parentIssue)
+	}
+	if parentIssue["description"] != "父 Issue PRD：客户管理页面需要筛选、表格、分页和客户状态操作。" {
+		t.Fatalf("parent_issue description = %v", parentIssue["description"])
+	}
+	criteria, ok := parentIssue["acceptance_criteria"].([]any)
+	if !ok || len(criteria) != 2 {
+		t.Fatalf("parent_issue acceptance_criteria = %+v", parentIssue["acceptance_criteria"])
+	}
+	childIssue, _ := payload["issue"].(map[string]any)
+	if childIssue["parent_issue_id"] != parentIssueID {
+		t.Fatalf("child issue parent_issue_id = %v, want %s", childIssue["parent_issue_id"], parentIssueID)
+	}
+}
+
+func TestCreateDesignDraftAgentTaskIncludesDefaultDesignSystem(t *testing.T) {
+	createFilterTableCatalogTemplateForDraftTest(t)
+	projectID := createProjectForDesignTest(t, "UI Agent Design System Project")
+	issueID := createIssueForDesignTest(t, "CRM 客户管理 UI设计", projectID)
+	created := createDesignFileForTest(t, "Default Design System Source")
+	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	profileJSON := []byte(`{"version":"1.0","tokens":{"colors":[{"value":"#1677ff"}]},"components":{"button":[{"name":"主按钮"}]}}`)
+	var profileID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_system_profile (
+			workspace_id, project_id, source_file_id, source_revision_id, name,
+			status, is_default, profile_json, analysis_errors, created_by
+		)
+		VALUES ($1, $2, $3, $4, 'Default Design System', 'analyzed', true, $5, '[]', $6)
+		RETURNING id
+	`, testWorkspaceID, projectID, created.File.ID, created.CurrentRevision.ID, profileJSON, testUserID).Scan(&profileID); err != nil {
+		t.Fatalf("insert design system: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_system_profile WHERE id = $1`, profileID)
+	})
+
+	agentID := handlerTestAgentID(t)
+	req := newRequest("POST", "/api/design-drafts/agent-tasks?workspace_id="+testWorkspaceID, map[string]any{
+		"agent_id": agentID,
+		"issue_id": issueID,
+		"title":    "CRM UI 草稿",
+	})
+	w := httptest.NewRecorder()
+	testHandler.CreateDesignDraftAgentTask(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("CreateDesignDraftAgentTask: expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp CreateDesignDraftAgentTaskResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode task response: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, resp.TaskID)
+	})
+	var contextRaw []byte
+	if err := testPool.QueryRow(context.Background(), `SELECT context FROM agent_task_queue WHERE id = $1`, resp.TaskID).Scan(&contextRaw); err != nil {
+		t.Fatalf("get task context: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(contextRaw, &payload); err != nil {
+		t.Fatalf("decode task context: %v", err)
+	}
+	designSystem, ok := payload["design_system"].(map[string]any)
+	if !ok {
+		t.Fatalf("context missing design_system: %+v", payload)
+	}
+	if designSystem["id"] != profileID || designSystem["name"] != "Default Design System" {
+		t.Fatalf("unexpected design_system identity: %+v", designSystem)
+	}
+	profile, ok := designSystem["profile"].(map[string]any)
+	if !ok {
+		t.Fatalf("design_system profile missing: %+v", designSystem)
+	}
+	tokens, ok := profile["tokens"].(map[string]any)
+	if !ok {
+		t.Fatalf("design_system profile tokens missing: %+v", profile)
+	}
+	colors, ok := tokens["colors"].([]any)
+	if !ok || len(colors) == 0 {
+		t.Fatalf("design_system profile colors missing: %+v", tokens)
 	}
 }
 
@@ -774,7 +1516,7 @@ func TestClaimUIDraftCreateTaskReturnsContext(t *testing.T) {
 }
 
 func TestCompleteUIDraftCreateTaskCreatesDraft(t *testing.T) {
-	template := createCatalogTemplateForDraftTest(t)
+	template := createCatalogTemplateWithTextSlotForDraftTest(t)
 	agentID := handlerTestAgentID(t)
 	req := newRequest("POST", "/api/design-drafts/agent-tasks?workspace_id="+testWorkspaceID, map[string]any{
 		"agent_id":            agentID,
@@ -815,6 +1557,136 @@ func TestCompleteUIDraftCreateTaskCreatesDraft(t *testing.T) {
 		t.Fatalf("expected created design draft: %v", err)
 	}
 	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM design_draft WHERE id = $1`, draftID) })
+}
+
+func TestCompleteUIDraftCreateTaskRejectsEmptyDraftChanges(t *testing.T) {
+	template := createFilterTableCatalogTemplateWithoutSlotsForDraftTest(t)
+	agentID := handlerTestAgentID(t)
+	req := newRequest("POST", "/api/design-drafts/agent-tasks?workspace_id="+testWorkspaceID, map[string]any{
+		"agent_id":            agentID,
+		"catalog_template_id": template.ID,
+		"title":               "Empty Agent Draft",
+	})
+	w := httptest.NewRecorder()
+	testHandler.CreateDesignDraftAgentTask(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("CreateDesignDraftAgentTask: expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	var created CreateDesignDraftAgentTaskResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode task response: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, created.TaskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_draft WHERE workspace_id = $1 AND title = 'Empty Agent Draft'`, testWorkspaceID)
+	})
+	if _, err := testPool.Exec(context.Background(), `UPDATE agent_task_queue SET status = 'running', started_at = now() WHERE id = $1`, created.TaskID); err != nil {
+		t.Fatalf("mark task running: %v", err)
+	}
+	output := map[string]any{
+		"title":            "Empty Agent Draft",
+		"requirement_core": map[string]any{"selected_catalog_template_id": template.ID},
+		"slot_values":      map[string]any{},
+		"patch":            []any{},
+	}
+	outputJSON, _ := json.Marshal(output)
+	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+created.TaskID+"/complete", map[string]any{"output": string(outputJSON)}, testWorkspaceID, "ui-draft-empty-output")
+	completeReq = withURLParam(completeReq, "taskId", created.TaskID)
+	completeW := httptest.NewRecorder()
+	testHandler.CompleteTask(completeW, completeReq)
+	if completeW.Code != http.StatusBadRequest {
+		t.Fatalf("CompleteTask empty draft: expected 400, got %d: %s", completeW.Code, completeW.Body.String())
+	}
+	if !strings.Contains(completeW.Body.String(), "non-empty patch") {
+		t.Fatalf("CompleteTask empty draft error = %s", completeW.Body.String())
+	}
+	var status string
+	var taskError pgtype.Text
+	if err := testPool.QueryRow(context.Background(), `SELECT status, error FROM agent_task_queue WHERE id = $1`, created.TaskID).Scan(&status, &taskError); err != nil {
+		t.Fatalf("query task status: %v", err)
+	}
+	if status != "failed" || !strings.Contains(taskError.String, "non-empty patch") {
+		t.Fatalf("task status/error = %s / %q", status, taskError.String)
+	}
+	var draftCount int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM design_draft WHERE workspace_id = $1 AND title = 'Empty Agent Draft'`, testWorkspaceID).Scan(&draftCount); err != nil {
+		t.Fatalf("count design drafts: %v", err)
+	}
+	if draftCount != 0 {
+		t.Fatalf("created %d empty drafts, want 0", draftCount)
+	}
+}
+
+func TestCompleteUIDraftCreateTaskCreatesIssueDraftFromSelectedTemplate(t *testing.T) {
+	template := createFilterTableCatalogTemplateForDraftTest(t)
+	projectID := createProjectForDesignTest(t, "UI Agent Selected Template Project")
+	issueID := createIssueForDesignTest(t, "服务记录列表 UI设计", projectID)
+	_, err := testPool.Exec(context.Background(), `
+		UPDATE issue
+		SET description = $2
+		WHERE id = $1
+	`, issueID, "服务记录列表页，需要筛选、表格和分页。")
+	if err != nil {
+		t.Fatalf("update issue description: %v", err)
+	}
+	agentID := handlerTestAgentID(t)
+	req := newRequest("POST", "/api/design-drafts/agent-tasks?workspace_id="+testWorkspaceID, map[string]any{
+		"agent_id": agentID,
+		"issue_id": issueID,
+		"title":    "服务记录列表草稿",
+	})
+	w := httptest.NewRecorder()
+	testHandler.CreateDesignDraftAgentTask(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("CreateDesignDraftAgentTask: expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	var created CreateDesignDraftAgentTaskResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode task response: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, created.TaskID)
+	})
+	if _, err := testPool.Exec(context.Background(), `UPDATE agent_task_queue SET status = 'running', started_at = now() WHERE id = $1`, created.TaskID); err != nil {
+		t.Fatalf("mark task running: %v", err)
+	}
+	output := map[string]any{
+		"title": "服务记录列表生成稿",
+		"requirement_core": map[string]any{
+			"version":                      "1.0",
+			"title":                        "服务记录列表",
+			"pageType":                     "saas.filter-table-pagination",
+			"selected_catalog_template_id": template.ID,
+		},
+		"slot_values": map[string]any{
+			"page_title":    "服务记录",
+			"filter_fields": []any{"门店", "治疗师", "日期"},
+			"table_columns": []any{"服务时间", "客户", "状态", "操作"},
+		},
+		"patch": []any{},
+	}
+	outputJSON, _ := json.Marshal(output)
+	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+created.TaskID+"/complete", map[string]any{"output": string(outputJSON)}, testWorkspaceID, "ui-draft-selected-template")
+	completeReq = withURLParam(completeReq, "taskId", created.TaskID)
+	completeW := httptest.NewRecorder()
+	testHandler.CompleteTask(completeW, completeReq)
+	if completeW.Code != http.StatusOK {
+		t.Fatalf("CompleteTask: expected 200, got %d: %s", completeW.Code, completeW.Body.String())
+	}
+	var draftID, draftIssueID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT id, issue_id
+		FROM design_draft
+		WHERE workspace_id = $1 AND title = '服务记录列表生成稿'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, testWorkspaceID).Scan(&draftID, &draftIssueID); err != nil {
+		t.Fatalf("expected created issue design draft: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM design_draft WHERE id = $1`, draftID) })
+	if draftIssueID != issueID {
+		t.Fatalf("draft issue_id = %s, want %s", draftIssueID, issueID)
+	}
 }
 
 func TestCreateDesignDraftRejectsLayoutPatch(t *testing.T) {
@@ -3746,6 +4618,64 @@ func TestGetDesignRestoreTaskItemContextUnknownItemReturnsNotFound(t *testing.T)
 	}
 }
 
+func TestListDesignFilesHidesManagedAssetSources(t *testing.T) {
+	regular := createDesignFileForTest(t, "Visible Business Design")
+	projectID := createProjectForDesignTest(t, "Managed Asset List Project")
+	token := createPluginTokenForTest(t)
+	req := newRequest("POST", "/api/design-plugin/figma/imports", map[string]any{
+		"title":              "Hidden UI Spec Source",
+		"project_id":         projectID,
+		"asset_type":         "design_system",
+		"design_system_name": "Hidden UI Spec",
+		"source_ref":         map[string]any{"provider": "figma", "source_key": "hidden-ui-spec"},
+		"native_json":        minimalDesignNativeJSON("Hidden UI Spec Source"),
+	})
+	req.Header.Set("Authorization", "Bearer "+token)
+	importW := httptest.NewRecorder()
+	testHandler.ImportFigmaDesignWithPluginToken(importW, req)
+	if importW.Code != http.StatusCreated {
+		t.Fatalf("plugin import design system: expected 201, got %d: %s", importW.Code, importW.Body.String())
+	}
+	var imported struct {
+		File DesignFileResponse `json:"file"`
+	}
+	if err := json.NewDecoder(importW.Body).Decode(&imported); err != nil {
+		t.Fatalf("decode plugin import: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_file WHERE id = $1`, imported.File.ID)
+	})
+
+	listReq := newRequest("GET", "/api/design-files?workspace_id="+testWorkspaceID, nil)
+	listW := httptest.NewRecorder()
+	testHandler.ListDesignFiles(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("ListDesignFiles: expected 200, got %d: %s", listW.Code, listW.Body.String())
+	}
+	var listResp struct {
+		DesignFiles []DesignFileResponse `json:"design_files"`
+	}
+	if err := json.NewDecoder(listW.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode ListDesignFiles: %v", err)
+	}
+	foundRegular := false
+	foundManagedSource := false
+	for _, file := range listResp.DesignFiles {
+		if file.ID == regular.File.ID {
+			foundRegular = true
+		}
+		if file.ID == imported.File.ID {
+			foundManagedSource = true
+		}
+	}
+	if !foundRegular {
+		t.Fatalf("regular design file %s should be visible", regular.File.ID)
+	}
+	if foundManagedSource {
+		t.Fatalf("managed asset source file %s should not appear in regular design file list", imported.File.ID)
+	}
+}
+
 func TestGetDesignFileRejectsInvalidID(t *testing.T) {
 	req := withURLParam(newRequest("GET", "/api/design-files/not-a-uuid?workspace_id="+testWorkspaceID, nil), "id", "not-a-uuid")
 	w := httptest.NewRecorder()
@@ -4182,9 +5112,69 @@ func TestFigmaPluginImportCanPublishTemplate(t *testing.T) {
 	if resp.Template.Name != "Plugin Published Template" {
 		t.Fatalf("template name = %q", resp.Template.Name)
 	}
+	var metadata map[string]any
+	if err := json.Unmarshal(resp.Template.Metadata, &metadata); err != nil {
+		t.Fatalf("decode template metadata: %v", err)
+	}
+	if _, ok := metadata["template_profile"].(map[string]any); !ok {
+		t.Fatalf("expected plugin template metadata to include template_profile, got %+v", metadata)
+	}
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_file WHERE id = $1`, resp.File.ID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_template_library WHERE workspace_id = $1 AND key = 'figma'`, testWorkspaceID)
+	})
+}
+
+func TestFigmaPluginImportCanPublishDesignSystem(t *testing.T) {
+	projectID := createProjectForDesignTest(t, "Plugin Design System Project")
+	token := createPluginTokenForTest(t)
+	req := newRequest("POST", "/api/design-plugin/figma/imports", map[string]any{
+		"title":                     "CRM UI Spec",
+		"project_id":                projectID,
+		"asset_type":                "design_system",
+		"design_system_name":        "CRM 后台 UI 规范",
+		"design_system_description": "CRM admin tokens and components",
+		"source_ref":                map[string]any{"provider": "figma", "source_key": "crm-ui-spec"},
+		"native_json":               minimalDesignNativeJSON("CRM UI Spec"),
+	})
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	testHandler.ImportFigmaDesignWithPluginToken(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("plugin import design system: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		File         DesignFileResponse           `json:"file"`
+		DesignSystem *DesignSystemProfileResponse `json:"design_system"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode plugin design system import: %v", err)
+	}
+	if resp.DesignSystem == nil {
+		t.Fatal("expected design_system response")
+	}
+	if resp.DesignSystem.Name != "CRM 后台 UI 规范" {
+		t.Fatalf("design system name = %q", resp.DesignSystem.Name)
+	}
+	if !resp.DesignSystem.IsDefault {
+		t.Fatal("uploaded design system should become project default")
+	}
+	if resp.DesignSystem.ProjectID == nil || *resp.DesignSystem.ProjectID != projectID {
+		t.Fatalf("design system project_id = %v, want %s", resp.DesignSystem.ProjectID, projectID)
+	}
+	var defaultID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT id
+		FROM design_system_profile
+		WHERE workspace_id = $1 AND project_id = $2 AND is_default = true AND status = 'analyzed'
+	`, testWorkspaceID, projectID).Scan(&defaultID); err != nil {
+		t.Fatalf("get default design system: %v", err)
+	}
+	if defaultID != resp.DesignSystem.ID {
+		t.Fatalf("default design system id = %s, want %s", defaultID, resp.DesignSystem.ID)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_file WHERE id = $1`, resp.File.ID)
 	})
 }
 

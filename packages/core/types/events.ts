@@ -63,6 +63,7 @@ export type WSEventType =
   | "project:deleted"
   | "design:ready"
   | "design_template:ready"
+  | "design_draft:ready"
   | "squad:created"
   | "squad:updated"
   | "squad:deleted"
@@ -141,6 +142,14 @@ export interface DesignReadyPayload {
   folder_id?: string | null;
   title: string;
   template?: DesignCatalogTemplate;
+}
+
+export interface DesignDraftReadyPayload {
+  design_draft_id: string;
+  issue_id?: string | null;
+  catalog_template_id?: string | null;
+  status?: string;
+  title?: string;
 }
 
 export interface InboxReadPayload {
@@ -450,6 +459,9 @@ export interface WSEventPayloadMap {
   "project:created": ProjectCreatedPayload;
   "project:updated": ProjectUpdatedPayload;
   "project:deleted": ProjectDeletedPayload;
+  "design:ready": DesignReadyPayload;
+  "design_template:ready": DesignReadyPayload;
+  "design_draft:ready": DesignDraftReadyPayload;
   "invitation:created": InvitationCreatedPayload;
   "invitation:accepted": InvitationAcceptedPayload;
   "invitation:declined": InvitationDeclinedPayload;

@@ -658,6 +658,11 @@ type UIDraftCreateContext struct {
 	CatalogTemplateID  string          `json:"catalog_template_id"`
 	TemplateRevisionID string          `json:"template_revision_id"`
 	DesignRevisionID   string          `json:"design_revision_id"`
+	IssueID            string          `json:"issue_id,omitempty"`
+	Issue              json.RawMessage `json:"issue,omitempty"`
+	ParentIssue        json.RawMessage `json:"parent_issue,omitempty"`
+	TemplateCandidates json.RawMessage `json:"template_candidates,omitempty"`
+	SelectionPolicy    json.RawMessage `json:"selection_policy,omitempty"`
 	Title              string          `json:"title"`
 	RequirementCore    json.RawMessage `json:"requirement_core"`
 	SlotSchema         json.RawMessage `json:"slot_schema"`

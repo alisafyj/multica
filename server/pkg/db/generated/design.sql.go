@@ -66,6 +66,25 @@ func (q *Queries) CancelDesignDelivery(ctx context.Context, arg CancelDesignDeli
 	return i, err
 }
 
+const clearDefaultDesignSystemProfilesForProject = `-- name: ClearDefaultDesignSystemProfilesForProject :exec
+UPDATE design_system_profile
+SET is_default = false,
+    updated_at = now()
+WHERE workspace_id = $1
+  AND project_id = $2
+  AND is_default = true
+`
+
+type ClearDefaultDesignSystemProfilesForProjectParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+func (q *Queries) ClearDefaultDesignSystemProfilesForProject(ctx context.Context, arg ClearDefaultDesignSystemProfilesForProjectParams) error {
+	_, err := q.db.Exec(ctx, clearDefaultDesignSystemProfilesForProject, arg.WorkspaceID, arg.ProjectID)
+	return err
+}
+
 const consumeDesignImportCode = `-- name: ConsumeDesignImportCode :exec
 UPDATE design_import_code
 SET consumed_at = now()
@@ -658,6 +677,65 @@ func (q *Queries) CreateDesignRevision(ctx context.Context, arg CreateDesignRevi
 	return i, err
 }
 
+const createDesignSystemProfile = `-- name: CreateDesignSystemProfile :one
+INSERT INTO design_system_profile (
+    workspace_id, project_id, source_file_id, source_revision_id, name,
+    description, status, is_default, profile_json, analysis_errors, created_by
+) VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, $8, $9, $10, $11
+)
+RETURNING id, workspace_id, project_id, source_file_id, source_revision_id, name, description, status, is_default, profile_json, analysis_errors, created_by, created_at, updated_at
+`
+
+type CreateDesignSystemProfileParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	ProjectID        pgtype.UUID `json:"project_id"`
+	SourceFileID     pgtype.UUID `json:"source_file_id"`
+	SourceRevisionID pgtype.UUID `json:"source_revision_id"`
+	Name             string      `json:"name"`
+	Description      pgtype.Text `json:"description"`
+	Status           string      `json:"status"`
+	IsDefault        bool        `json:"is_default"`
+	ProfileJson      []byte      `json:"profile_json"`
+	AnalysisErrors   []byte      `json:"analysis_errors"`
+	CreatedBy        pgtype.UUID `json:"created_by"`
+}
+
+func (q *Queries) CreateDesignSystemProfile(ctx context.Context, arg CreateDesignSystemProfileParams) (DesignSystemProfile, error) {
+	row := q.db.QueryRow(ctx, createDesignSystemProfile,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.SourceFileID,
+		arg.SourceRevisionID,
+		arg.Name,
+		arg.Description,
+		arg.Status,
+		arg.IsDefault,
+		arg.ProfileJson,
+		arg.AnalysisErrors,
+		arg.CreatedBy,
+	)
+	var i DesignSystemProfile
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.SourceFileID,
+		&i.SourceRevisionID,
+		&i.Name,
+		&i.Description,
+		&i.Status,
+		&i.IsDefault,
+		&i.ProfileJson,
+		&i.AnalysisErrors,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createDesignTemplate = `-- name: CreateDesignTemplate :one
 INSERT INTO design_template (
     workspace_id, key, name, description, category, native_json, slot_schema, metadata, is_system, created_by
@@ -824,6 +902,43 @@ func (q *Queries) EnsureDesignTemplateLibrary(ctx context.Context, arg EnsureDes
 		&i.Name,
 		&i.Description,
 		&i.Metadata,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getDefaultDesignSystemProfileForProject = `-- name: GetDefaultDesignSystemProfileForProject :one
+SELECT id, workspace_id, project_id, source_file_id, source_revision_id, name, description, status, is_default, profile_json, analysis_errors, created_by, created_at, updated_at FROM design_system_profile
+WHERE workspace_id = $1
+  AND project_id = $2
+  AND is_default = true
+  AND status = 'analyzed'
+ORDER BY updated_at DESC
+LIMIT 1
+`
+
+type GetDefaultDesignSystemProfileForProjectParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetDefaultDesignSystemProfileForProject(ctx context.Context, arg GetDefaultDesignSystemProfileForProjectParams) (DesignSystemProfile, error) {
+	row := q.db.QueryRow(ctx, getDefaultDesignSystemProfileForProject, arg.WorkspaceID, arg.ProjectID)
+	var i DesignSystemProfile
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.SourceFileID,
+		&i.SourceRevisionID,
+		&i.Name,
+		&i.Description,
+		&i.Status,
+		&i.IsDefault,
+		&i.ProfileJson,
+		&i.AnalysisErrors,
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -1316,6 +1431,40 @@ func (q *Queries) GetDesignRevisionInWorkspace(ctx context.Context, arg GetDesig
 		&i.ValidationErrors,
 		&i.CreatedBy,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getDesignSystemProfileInWorkspace = `-- name: GetDesignSystemProfileInWorkspace :one
+SELECT id, workspace_id, project_id, source_file_id, source_revision_id, name, description, status, is_default, profile_json, analysis_errors, created_by, created_at, updated_at FROM design_system_profile
+WHERE id = $1
+  AND workspace_id = $2
+  AND status <> 'archived'
+`
+
+type GetDesignSystemProfileInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetDesignSystemProfileInWorkspace(ctx context.Context, arg GetDesignSystemProfileInWorkspaceParams) (DesignSystemProfile, error) {
+	row := q.db.QueryRow(ctx, getDesignSystemProfileInWorkspace, arg.ID, arg.WorkspaceID)
+	var i DesignSystemProfile
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.SourceFileID,
+		&i.SourceRevisionID,
+		&i.Name,
+		&i.Description,
+		&i.Status,
+		&i.IsDefault,
+		&i.ProfileJson,
+		&i.AnalysisErrors,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1952,8 +2101,21 @@ func (q *Queries) ListDesignDrafts(ctx context.Context, workspaceID pgtype.UUID)
 }
 
 const listDesignFiles = `-- name: ListDesignFiles :many
-SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at FROM design_file
-WHERE workspace_id = $1
+SELECT df.id, df.workspace_id, df.project_id, df.folder_id, df.title, df.description, df.source_type, df.source_ref, df.current_revision_id, df.created_by, df.created_at, df.updated_at FROM design_file df
+WHERE df.workspace_id = $1
+  AND COALESCE(df.source_ref->>'asset_type', '') NOT IN ('template', 'design_system')
+  AND NOT EXISTS (
+    SELECT 1
+    FROM design_system_profile dsp
+    WHERE dsp.source_file_id = df.id
+      AND dsp.status <> 'archived'
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM design_template_revision dtr
+    JOIN design_revision dr ON dr.id = dtr.design_revision_id
+    WHERE dr.file_id = df.id
+  )
 ORDER BY updated_at DESC, created_at DESC
 `
 
@@ -1991,10 +2153,23 @@ func (q *Queries) ListDesignFiles(ctx context.Context, workspaceID pgtype.UUID) 
 }
 
 const listDesignFilesByProject = `-- name: ListDesignFilesByProject :many
-SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at FROM design_file
-WHERE workspace_id = $1
-  AND project_id = $2
-  AND ($3::uuid IS NULL OR folder_id = $3)
+SELECT df.id, df.workspace_id, df.project_id, df.folder_id, df.title, df.description, df.source_type, df.source_ref, df.current_revision_id, df.created_by, df.created_at, df.updated_at FROM design_file df
+WHERE df.workspace_id = $1
+  AND df.project_id = $2
+  AND ($3::uuid IS NULL OR df.folder_id = $3)
+  AND COALESCE(df.source_ref->>'asset_type', '') NOT IN ('template', 'design_system')
+  AND NOT EXISTS (
+    SELECT 1
+    FROM design_system_profile dsp
+    WHERE dsp.source_file_id = df.id
+      AND dsp.status <> 'archived'
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM design_template_revision dtr
+    JOIN design_revision dr ON dr.id = dtr.design_revision_id
+    WHERE dr.file_id = df.id
+  )
 ORDER BY updated_at DESC, created_at DESC
 `
 
@@ -2334,6 +2509,59 @@ func (q *Queries) ListDesignRevisionsWithNativeJSON(ctx context.Context, fileID 
 	return items, nil
 }
 
+const listDesignSystemProfiles = `-- name: ListDesignSystemProfiles :many
+
+SELECT id, workspace_id, project_id, source_file_id, source_revision_id, name, description, status, is_default, profile_json, analysis_errors, created_by, created_at, updated_at FROM design_system_profile
+WHERE workspace_id = $1
+  AND (
+    $2::uuid IS NULL
+    OR project_id = $2::uuid
+  )
+  AND status <> 'archived'
+ORDER BY is_default DESC, updated_at DESC, created_at DESC
+`
+
+type ListDesignSystemProfilesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+// Gallery Native design systems
+func (q *Queries) ListDesignSystemProfiles(ctx context.Context, arg ListDesignSystemProfilesParams) ([]DesignSystemProfile, error) {
+	rows, err := q.db.Query(ctx, listDesignSystemProfiles, arg.WorkspaceID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DesignSystemProfile{}
+	for rows.Next() {
+		var i DesignSystemProfile
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.SourceFileID,
+			&i.SourceRevisionID,
+			&i.Name,
+			&i.Description,
+			&i.Status,
+			&i.IsDefault,
+			&i.ProfileJson,
+			&i.AnalysisErrors,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDesignTemplateSlots = `-- name: ListDesignTemplateSlots :many
 SELECT id, template_id, slot_key, label, slot_type, required, default_value, constraints, description, position, created_at FROM design_template_slot
 WHERE template_id = $1
@@ -2485,6 +2713,45 @@ func (q *Queries) SetDesignFileCurrentRevision(ctx context.Context, arg SetDesig
 		&i.SourceType,
 		&i.SourceRef,
 		&i.CurrentRevisionID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setDesignSystemProfileDefault = `-- name: SetDesignSystemProfileDefault :one
+UPDATE design_system_profile
+SET is_default = true,
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND project_id = $3
+  AND status = 'analyzed'
+RETURNING id, workspace_id, project_id, source_file_id, source_revision_id, name, description, status, is_default, profile_json, analysis_errors, created_by, created_at, updated_at
+`
+
+type SetDesignSystemProfileDefaultParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+func (q *Queries) SetDesignSystemProfileDefault(ctx context.Context, arg SetDesignSystemProfileDefaultParams) (DesignSystemProfile, error) {
+	row := q.db.QueryRow(ctx, setDesignSystemProfileDefault, arg.ID, arg.WorkspaceID, arg.ProjectID)
+	var i DesignSystemProfile
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.SourceFileID,
+		&i.SourceRevisionID,
+		&i.Name,
+		&i.Description,
+		&i.Status,
+		&i.IsDefault,
+		&i.ProfileJson,
+		&i.AnalysisErrors,
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -2800,6 +3067,53 @@ func (q *Queries) UpdateDesignRestoreTask(ctx context.Context, arg UpdateDesignR
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeliveryID,
+	)
+	return i, err
+}
+
+const updateDesignSystemProfileAnalysis = `-- name: UpdateDesignSystemProfileAnalysis :one
+UPDATE design_system_profile
+SET status = $3,
+    profile_json = $4,
+    analysis_errors = $5,
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+RETURNING id, workspace_id, project_id, source_file_id, source_revision_id, name, description, status, is_default, profile_json, analysis_errors, created_by, created_at, updated_at
+`
+
+type UpdateDesignSystemProfileAnalysisParams struct {
+	ID             pgtype.UUID `json:"id"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	Status         string      `json:"status"`
+	ProfileJson    []byte      `json:"profile_json"`
+	AnalysisErrors []byte      `json:"analysis_errors"`
+}
+
+func (q *Queries) UpdateDesignSystemProfileAnalysis(ctx context.Context, arg UpdateDesignSystemProfileAnalysisParams) (DesignSystemProfile, error) {
+	row := q.db.QueryRow(ctx, updateDesignSystemProfileAnalysis,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.Status,
+		arg.ProfileJson,
+		arg.AnalysisErrors,
+	)
+	var i DesignSystemProfile
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.SourceFileID,
+		&i.SourceRevisionID,
+		&i.Name,
+		&i.Description,
+		&i.Status,
+		&i.IsDefault,
+		&i.ProfileJson,
+		&i.AnalysisErrors,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

@@ -1,11 +1,19 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
-import type { Agent, DesignRestoreTask, Issue } from "@multica/core/types";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { api } from "@multica/core/api";
+import type { Agent, DesignDraft, DesignRestoreTask, Issue } from "@multica/core/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IssueDesignRestoreSection } from "./issue-design-restore-section";
 
 const mockDesignQueries = vi.hoisted(() => ({
   restoreTasks: [] as DesignRestoreTask[],
+  designDrafts: [] as DesignDraft[],
+}));
+
+vi.mock("@multica/core/api", () => ({
+  api: {
+    createDesignDraftAgentTask: vi.fn(),
+  },
 }));
 
 vi.mock("@multica/core/hooks", () => ({
@@ -15,6 +23,7 @@ vi.mock("@multica/core/hooks", () => ({
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
     designDetail: (id: string) => `/designs/${id}`,
+    designDraftDetail: (id: string) => `/design-drafts/${id}`,
     designFrameDetail: (id: string, frameId: string) => `/designs/${id}/frames/${frameId}`,
     designRestoreTaskDetail: (id: string) => `/design-restore-tasks/${id}`,
   }),
@@ -45,6 +54,10 @@ vi.mock("@multica/core/designs/queries", () => ({
   designDeliveriesByIssueOptions: () => ({
     queryKey: ["design-deliveries"],
     queryFn: () => Promise.resolve([]),
+  }),
+  designDraftListOptions: () => ({
+    queryKey: ["design-drafts"],
+    queryFn: () => Promise.resolve(mockDesignQueries.designDrafts),
   }),
   designFileDetailOptions: () => ({
     queryKey: ["design-file-detail"],
@@ -186,6 +199,9 @@ function restoreTask(overrides: Partial<DesignRestoreTask> = {}): DesignRestoreT
 
 beforeEach(() => {
   mockDesignQueries.restoreTasks = [];
+  mockDesignQueries.designDrafts = [];
+  vi.mocked(api.createDesignDraftAgentTask).mockReset();
+  vi.mocked(api.createDesignDraftAgentTask).mockResolvedValue({ task_id: "task-12345678", status: "queued" });
 });
 
 describe("IssueDesignRestoreSection role controls", () => {
@@ -210,6 +226,56 @@ describe("IssueDesignRestoreSection role controls", () => {
 });
 
 describe("IssueDesignRestoreSection frontend handoff visibility", () => {
+  it("can ask a UI Agent to generate a design draft from the issue requirement", async () => {
+    renderSection(issue({ title: "服务记录 UI设计", metadata: {} }));
+
+    const button = await screen.findByRole("button", { name: "让 UI Agent 生成设计稿" });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(api.createDesignDraftAgentTask).toHaveBeenCalledWith({
+        agent_id: "agent-1",
+        issue_id: "issue-1",
+        title: "服务记录 UI设计 设计草稿",
+        prompt: expect.stringContaining("模板候选"),
+      });
+    });
+  });
+
+  it("shows the latest issue-linked design draft when one exists", async () => {
+    mockDesignQueries.designDrafts = [{
+      id: "draft-1",
+      workspace_id: "ws-1",
+      template_id: null,
+      catalog_template_id: "template-1",
+      template_revision_id: "template-revision-1",
+      file_id: "file-1",
+      revision_id: "revision-1",
+      issue_id: "issue-1",
+      title: "服务记录生成稿",
+      requirement_core: {
+        version: "1.0",
+        title: "服务记录",
+        pageType: "saas.filter-table-pagination",
+        entity: { key: "service_record", label: "服务记录" },
+      },
+      slot_values: {},
+      patch: [],
+      status: "generated",
+      validation_errors: [],
+      generated_file_id: null,
+      materialized_at: null,
+      created_by: "user-1",
+      created_at: "2026-07-02T00:00:00Z",
+      updated_at: "2026-07-03T00:00:00Z",
+    }];
+
+    renderSection(issue({ title: "服务记录 UI设计", metadata: {} }));
+
+    expect(await screen.findByText("服务记录生成稿")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开草稿" })).toBeInTheDocument();
+  });
+
   it("keeps frontend handoff hidden before UI restore completes", () => {
     renderSection(issue({ title: "UI设计", metadata: {} }));
 

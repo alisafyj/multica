@@ -86,6 +86,7 @@ const (
 	// Gallery Native design events
 	EventDesignReady         = "design:ready"
 	EventDesignTemplateReady = "design_template:ready"
+	EventDesignDraftReady    = "design_draft:ready"
 
 	// Label events
 	EventLabelCreated       = "label:created"

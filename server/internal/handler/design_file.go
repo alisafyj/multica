@@ -286,10 +286,53 @@ type DesignCatalogTemplateResponse struct {
 	SlotSchema             json.RawMessage `json:"slot_schema"`
 	DesignFileID           *string         `json:"design_file_id,omitempty"`
 	DesignFileTitle        *string         `json:"design_file_title,omitempty"`
+	ThumbnailURL           *string         `json:"thumbnail_url,omitempty"`
 	Metadata               json.RawMessage `json:"metadata"`
 	CreatedBy              *string         `json:"created_by,omitempty"`
 	CreatedAt              string          `json:"created_at"`
 	UpdatedAt              string          `json:"updated_at"`
+}
+
+type DesignSystemProfileResponse struct {
+	ID               string          `json:"id"`
+	WorkspaceID      string          `json:"workspace_id"`
+	ProjectID        *string         `json:"project_id,omitempty"`
+	SourceFileID     string          `json:"source_file_id"`
+	SourceRevisionID string          `json:"source_revision_id"`
+	Name             string          `json:"name"`
+	Description      *string         `json:"description,omitempty"`
+	ThumbnailURL     *string         `json:"thumbnail_url,omitempty"`
+	Status           string          `json:"status"`
+	IsDefault        bool            `json:"is_default"`
+	ProfileJSON      json.RawMessage `json:"profile_json"`
+	AnalysisErrors   json.RawMessage `json:"analysis_errors"`
+	CreatedBy        *string         `json:"created_by"`
+	CreatedAt        string          `json:"created_at"`
+	UpdatedAt        string          `json:"updated_at"`
+}
+
+type DesignSystemProfileListResponse struct {
+	DesignSystems []DesignSystemProfileResponse `json:"design_systems"`
+}
+
+type CreateDesignSystemProfileRequest struct {
+	ProjectID        string `json:"project_id"`
+	SourceFileID     string `json:"source_file_id"`
+	SourceRevisionID string `json:"source_revision_id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	IsDefault        bool   `json:"is_default"`
+}
+
+type createDesignSystemProfileFromRevisionParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	File        db.DesignFile
+	Revision    db.DesignRevision
+	Name        string
+	Description string
+	IsDefault   bool
+	CreatedBy   pgtype.UUID
 }
 
 type PublishDesignTemplateRequest struct {
@@ -341,6 +384,7 @@ type CreateDesignDraftAgentTaskRequest struct {
 	AgentID            string          `json:"agent_id"`
 	CatalogTemplateID  string          `json:"catalog_template_id"`
 	TemplateRevisionID string          `json:"template_revision_id"`
+	IssueID            string          `json:"issue_id"`
 	Title              string          `json:"title"`
 	Prompt             string          `json:"prompt"`
 	RequirementCore    json.RawMessage `json:"requirement_core"`
@@ -352,10 +396,11 @@ type CreateDesignDraftAgentTaskResponse struct {
 }
 
 type uiDraftAgentOutput struct {
-	Title           string          `json:"title"`
-	RequirementCore json.RawMessage `json:"requirement_core"`
-	SlotValues      json.RawMessage `json:"slot_values"`
-	Patch           json.RawMessage `json:"patch"`
+	Title             string          `json:"title"`
+	CatalogTemplateID string          `json:"catalog_template_id"`
+	RequirementCore   json.RawMessage `json:"requirement_core"`
+	SlotValues        json.RawMessage `json:"slot_values"`
+	Patch             json.RawMessage `json:"patch"`
 }
 
 type DesignDraftMaterializeResponse struct {
@@ -640,6 +685,617 @@ func designFolderToResponse(folder db.DesignFolder) DesignFolderResponse {
 		CreatedAt:   timestampToString(folder.CreatedAt),
 		UpdatedAt:   timestampToString(folder.UpdatedAt),
 	}
+}
+
+func designSystemProfileToResponse(profile db.DesignSystemProfile) DesignSystemProfileResponse {
+	profileJSON := json.RawMessage(profile.ProfileJson)
+	if len(profileJSON) == 0 {
+		profileJSON = json.RawMessage(`{}`)
+	}
+	analysisErrors := json.RawMessage(profile.AnalysisErrors)
+	if len(analysisErrors) == 0 {
+		analysisErrors = json.RawMessage(`[]`)
+	}
+	return DesignSystemProfileResponse{
+		ID:               uuidToString(profile.ID),
+		WorkspaceID:      uuidToString(profile.WorkspaceID),
+		ProjectID:        uuidToPtr(profile.ProjectID),
+		SourceFileID:     uuidToString(profile.SourceFileID),
+		SourceRevisionID: uuidToString(profile.SourceRevisionID),
+		Name:             profile.Name,
+		Description:      textToPtr(profile.Description),
+		Status:           profile.Status,
+		IsDefault:        profile.IsDefault,
+		ProfileJSON:      profileJSON,
+		AnalysisErrors:   analysisErrors,
+		CreatedBy:        uuidToPtr(profile.CreatedBy),
+		CreatedAt:        timestampToString(profile.CreatedAt),
+		UpdatedAt:        timestampToString(profile.UpdatedAt),
+	}
+}
+
+func (h *Handler) designSystemProfileToResponseWithThumbnail(ctx context.Context, profile db.DesignSystemProfile) DesignSystemProfileResponse {
+	resp := designSystemProfileToResponse(profile)
+	resp.ThumbnailURL = h.thumbnailForDesignRevision(ctx, profile.WorkspaceID, profile.SourceRevisionID)
+	return resp
+}
+
+func (h *Handler) thumbnailForDesignRevision(ctx context.Context, workspaceID pgtype.UUID, revisionID pgtype.UUID) *string {
+	if !revisionID.Valid {
+		return nil
+	}
+	revision, err := h.Queries.GetDesignRevisionInWorkspace(ctx, db.GetDesignRevisionInWorkspaceParams{ID: revisionID, WorkspaceID: workspaceID})
+	if err != nil {
+		return nil
+	}
+	return thumbnailFromNativeJSON(revision.NativeJson)
+}
+
+func analyzeDesignSystemProfile(nativeJSON json.RawMessage, sourceFileID string, sourceRevisionID string) (json.RawMessage, json.RawMessage, string) {
+	var doc map[string]any
+	if err := json.Unmarshal(nativeJSON, &doc); err != nil {
+		return json.RawMessage(`{}`), json.RawMessage(`[{"message":"native_json is invalid"}]`), "failed"
+	}
+	components := extractDesignSystemComponents(doc, 120)
+	profile := map[string]any{
+		"version": "1.1",
+		"source": map[string]any{
+			"file_id":     sourceFileID,
+			"revision_id": sourceRevisionID,
+		},
+		"naming_convention": map[string]any{
+			"pattern": "组件 - 变体 - 状态",
+			"examples": []string{
+				"按钮 - 主按钮 - 默认",
+				"按钮 - 主按钮 - 禁用",
+				"输入框 - 错误",
+				"表格 - 标准表格",
+			},
+		},
+		"tokens": map[string]any{
+			"colors":     extractDesignSystemColors(doc, 40),
+			"typography": extractDesignSystemTypography(doc, 40),
+			"spacing":    []any{},
+			"radius":     []any{},
+		},
+		"components": components,
+		"patterns":   inferDesignSystemPatterns(components),
+		"guidelines": []string{
+			"Treat this compiled UI specification as the project visual contract.",
+			"Use component variants and states before falling back to raw layer names.",
+			"Prefer project design system examples over template residue when generating UI drafts.",
+		},
+		"anti_rules": []string{
+			"Do not treat template business copy as UI specification.",
+			"Do not preserve unrelated template sample data when the issue requirement changes the business domain.",
+		},
+		"confidence": map[string]any{"overall": designSystemProfileConfidence(components)},
+	}
+	raw, err := json.Marshal(profile)
+	if err != nil {
+		return json.RawMessage(`{}`), json.RawMessage(`[{"message":"failed to marshal profile"}]`), "failed"
+	}
+	return raw, json.RawMessage(`[]`), "analyzed"
+}
+
+func (h *Handler) createDesignSystemProfileFromRevision(ctx context.Context, params createDesignSystemProfileFromRevisionParams) (db.DesignSystemProfile, error) {
+	name := strings.TrimSpace(params.Name)
+	if name == "" {
+		name = params.File.Title
+	}
+	description := strings.TrimSpace(params.Description)
+	profileJSON, analysisErrors, status := analyzeDesignSystemProfile(params.Revision.NativeJson, uuidToString(params.File.ID), uuidToString(params.Revision.ID))
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.DesignSystemProfile{}, err
+	}
+	defer tx.Rollback(ctx)
+	qtx := h.Queries.WithTx(tx)
+	isDefault := params.IsDefault && status == "analyzed"
+	if isDefault {
+		if err := qtx.ClearDefaultDesignSystemProfilesForProject(ctx, db.ClearDefaultDesignSystemProfilesForProjectParams{WorkspaceID: params.WorkspaceID, ProjectID: params.ProjectID}); err != nil {
+			return db.DesignSystemProfile{}, err
+		}
+	}
+	created, err := qtx.CreateDesignSystemProfile(ctx, db.CreateDesignSystemProfileParams{
+		WorkspaceID:      params.WorkspaceID,
+		ProjectID:        params.ProjectID,
+		SourceFileID:     params.File.ID,
+		SourceRevisionID: params.Revision.ID,
+		Name:             name,
+		Description:      pgtype.Text{String: description, Valid: description != ""},
+		Status:           status,
+		IsDefault:        isDefault,
+		ProfileJson:      profileJSON,
+		AnalysisErrors:   analysisErrors,
+		CreatedBy:        params.CreatedBy,
+	})
+	if err != nil {
+		return db.DesignSystemProfile{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.DesignSystemProfile{}, err
+	}
+	return created, nil
+}
+
+func extractDesignSystemColors(doc map[string]any, limit int) []map[string]any {
+	seen := make(map[string]struct{})
+	colors := make([]map[string]any, 0)
+	walkDesignSystemLayers(doc, func(layer map[string]any) bool {
+		layerID := firstString(layer, "id")
+		layerName := firstString(layer, "name")
+		for _, key := range []string{"color", "fill", "fills", "stroke", "strokes", "backgroundColor", "borderColor"} {
+			for _, value := range designSystemColorValues(layer[key]) {
+				if _, ok := seen[value]; ok {
+					continue
+				}
+				seen[value] = struct{}{}
+				colors = append(colors, map[string]any{
+					"value":             value,
+					"source_layer_id":   layerID,
+					"source_layer_name": layerName,
+				})
+				if len(colors) >= limit {
+					return false
+				}
+			}
+		}
+		return true
+	})
+	return colors
+}
+
+func extractDesignSystemTypography(doc map[string]any, limit int) []map[string]any {
+	typography := make([]map[string]any, 0)
+	walkDesignSystemLayers(doc, func(layer map[string]any) bool {
+		layerType := strings.ToLower(firstString(layer, "type"))
+		textSample := designSystemLayerText(layer)
+		if !strings.Contains(layerType, "text") && textSample == "" {
+			return true
+		}
+		item := map[string]any{
+			"source_layer_id":   firstString(layer, "id"),
+			"source_layer_name": firstString(layer, "name"),
+		}
+		if textSample != "" {
+			item["sample"] = textSample
+		}
+		if fontFamily := firstString(layer, "fontFamily"); fontFamily != "" {
+			item["font_family"] = fontFamily
+		}
+		if fontWeight := firstString(layer, "fontWeight"); fontWeight != "" {
+			item["font_weight"] = fontWeight
+		}
+		if fontSize := numberField(layer, "fontSize"); fontSize > 0 {
+			item["font_size"] = fontSize
+		}
+		if style, ok := layer["style"].(map[string]any); ok {
+			if fontFamily := firstString(style, "fontFamily"); fontFamily != "" {
+				item["font_family"] = fontFamily
+			}
+			if fontWeight := firstString(style, "fontWeight"); fontWeight != "" {
+				item["font_weight"] = fontWeight
+			}
+			if fontSize := numberField(style, "fontSize"); fontSize > 0 {
+				item["font_size"] = fontSize
+			}
+		}
+		typography = append(typography, item)
+		return len(typography) < limit
+	})
+	return typography
+}
+
+type designSystemComponentProfile struct {
+	Kind     string                         `json:"kind"`
+	Label    string                         `json:"label"`
+	Aliases  []string                       `json:"aliases"`
+	Variants []designSystemComponentVariant `json:"variants"`
+	States   []string                       `json:"states"`
+	Examples []designSystemComponentExample `json:"examples"`
+	Rules    []string                       `json:"rules"`
+}
+
+type designSystemComponentVariant struct {
+	Name     string                         `json:"name"`
+	States   []string                       `json:"states"`
+	Examples []designSystemComponentExample `json:"examples"`
+}
+
+type designSystemComponentExample struct {
+	SourceLayerID   string         `json:"source_layer_id"`
+	SourceLayerName string         `json:"source_layer_name"`
+	FrameID         string         `json:"frame_id,omitempty"`
+	SourceNodeID    string         `json:"source_node_id,omitempty"`
+	Type            string         `json:"type,omitempty"`
+	Variant         string         `json:"variant,omitempty"`
+	State           string         `json:"state,omitempty"`
+	TextSamples     []string       `json:"text_samples,omitempty"`
+	Colors          []string       `json:"colors,omitempty"`
+	Size            map[string]any `json:"size,omitempty"`
+	Typography      map[string]any `json:"typography,omitempty"`
+}
+
+type designSystemParsedComponentName struct {
+	Kind    string
+	Variant string
+	State   string
+}
+
+type designSystemComponentDefinition struct {
+	Kind    string
+	Label   string
+	Aliases []string
+	Markers []string
+}
+
+func extractDesignSystemComponents(doc map[string]any, limit int) map[string]designSystemComponentProfile {
+	defs := designSystemComponentDefinitions()
+	components := make(map[string]designSystemComponentProfile, len(defs))
+	for _, def := range defs {
+		components[def.Kind] = designSystemComponentProfile{
+			Kind:     def.Kind,
+			Label:    def.Label,
+			Aliases:  def.Aliases,
+			Variants: []designSystemComponentVariant{},
+			States:   []string{},
+			Examples: []designSystemComponentExample{},
+			Rules:    designSystemComponentRules(def.Kind),
+		}
+	}
+	total := 0
+	walkDesignSystemLayers(doc, func(layer map[string]any) bool {
+		name := firstString(layer, "name")
+		if name == "" {
+			return true
+		}
+		if visible, ok := layer["visible"].(bool); ok && !visible {
+			return true
+		}
+		parsed, ok := parseDesignSystemComponentName(name)
+		if !ok {
+			return true
+		}
+		profile := components[parsed.Kind]
+		example := designSystemComponentExampleFromLayer(layer, parsed)
+		profile.Examples = append(profile.Examples, example)
+		profile.States = appendUniqueString(profile.States, parsed.State)
+		profile.Variants = appendDesignSystemVariantExample(profile.Variants, parsed.Variant, parsed.State, example)
+		components[parsed.Kind] = profile
+		total++
+		if total >= limit {
+			return false
+		}
+		return true
+	})
+	for kind, profile := range components {
+		sort.Slice(profile.Variants, func(i, j int) bool { return profile.Variants[i].Name < profile.Variants[j].Name })
+		sort.Strings(profile.States)
+		components[kind] = profile
+	}
+	return components
+}
+
+func walkDesignSystemLayers(doc map[string]any, visit func(map[string]any) bool) {
+	layers, ok := doc["layers"].(map[string]any)
+	if !ok {
+		return
+	}
+	for _, raw := range layers {
+		layer, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if !visit(layer) {
+			return
+		}
+	}
+}
+
+func designSystemColorValues(value any) []string {
+	values := make([]string, 0)
+	var collect func(any)
+	collect = func(candidate any) {
+		switch typed := candidate.(type) {
+		case string:
+			color := strings.TrimSpace(typed)
+			lower := strings.ToLower(color)
+			if strings.HasPrefix(color, "#") || strings.HasPrefix(lower, "rgb") || strings.HasPrefix(lower, "hsl") || strings.HasPrefix(lower, "var(") {
+				values = append(values, color)
+			}
+		case []any:
+			for _, item := range typed {
+				collect(item)
+			}
+		case map[string]any:
+			for _, key := range []string{"value", "hex", "color"} {
+				collect(typed[key])
+			}
+		}
+	}
+	collect(value)
+	return uniqueDesignSystemStrings(values)
+}
+
+func designSystemLayerText(layer map[string]any) string {
+	if text := firstString(layer, "characters", "text"); text != "" {
+		return text
+	}
+	textNode, ok := layer["text"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return firstString(textNode, "characters", "text")
+}
+
+func designSystemComponentKinds(name string) []string {
+	normalized := strings.ToLower(name)
+	kinds := make([]string, 0)
+	for _, def := range designSystemComponentDefinitions() {
+		for _, marker := range def.Markers {
+			if strings.Contains(normalized, strings.ToLower(marker)) {
+				kinds = append(kinds, def.Kind)
+				break
+			}
+		}
+	}
+	sort.Strings(kinds)
+	return kinds
+}
+
+func designSystemComponentDefinitions() []designSystemComponentDefinition {
+	return []designSystemComponentDefinition{
+		{Kind: "button", Label: "按钮", Aliases: []string{"button", "btn"}, Markers: []string{"按钮", "button", "btn", "查询", "提交"}},
+		{Kind: "input", Label: "输入框", Aliases: []string{"input", "field"}, Markers: []string{"输入框", "输入", "input", "field", "请输入"}},
+		{Kind: "select", Label: "选择器", Aliases: []string{"select", "picker"}, Markers: []string{"选择器", "选择", "select", "picker", "请选择", "下拉"}},
+		{Kind: "tag", Label: "标签", Aliases: []string{"tag", "badge"}, Markers: []string{"标签", "tag", "badge", "状态"}},
+		{Kind: "table", Label: "表格", Aliases: []string{"table", "data grid"}, Markers: []string{"表格", "table", "data grid", "列表"}},
+		{Kind: "modal", Label: "弹窗", Aliases: []string{"modal", "dialog", "popup"}, Markers: []string{"弹窗", "弹层", "modal", "dialog", "popup"}},
+		{Kind: "pagination", Label: "分页", Aliases: []string{"pagination", "pager"}, Markers: []string{"分页", "pagination", "pager"}},
+		{Kind: "card", Label: "卡片", Aliases: []string{"card", "panel"}, Markers: []string{"卡片", "面板", "card", "panel"}},
+	}
+}
+
+func parseDesignSystemComponentName(name string) (designSystemParsedComponentName, bool) {
+	if shouldIgnoreDesignSystemLayerName(name) {
+		return designSystemParsedComponentName{}, false
+	}
+	parts := splitDesignSystemName(name)
+	if len(parts) == 0 {
+		return designSystemParsedComponentName{}, false
+	}
+	kind, ok := designSystemComponentKindFromPrefix(parts[0])
+	if !ok {
+		return designSystemParsedComponentName{}, false
+	}
+	variant := "标准"
+	if len(parts) >= 2 && parts[1] != "" {
+		variant = parts[1]
+	}
+	state := "默认"
+	if len(parts) >= 3 {
+		joined := strings.TrimSpace(strings.Join(parts[2:], " - "))
+		if joined != "" {
+			state = joined
+		}
+	}
+	return designSystemParsedComponentName{Kind: kind, Variant: variant, State: state}, true
+}
+
+func shouldIgnoreDesignSystemLayerName(name string) bool {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return true
+	}
+	lower := strings.ToLower(trimmed)
+	for _, prefix := range []string{"icon/", "icon-", "dataentry/", "dataentry-", "data entry/", "data entry-"} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	for _, marker := range []string{"备份", "废稿", "废弃", "垃圾", "勿用", "不要用", "copy", "draft", "temp"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	for _, extension := range []string{"pdf", "jpg", "jpeg", "png", "gif", "webp", "svg"} {
+		if strings.HasPrefix(trimmed, "附件按钮") && strings.Contains(lower, extension) {
+			return true
+		}
+	}
+	return false
+}
+
+func designSystemComponentKindFromPrefix(prefix string) (string, bool) {
+	normalized := strings.TrimSpace(prefix)
+	if normalized == "" {
+		return "", false
+	}
+	for _, def := range designSystemComponentDefinitions() {
+		if strings.EqualFold(normalized, def.Label) {
+			return def.Kind, true
+		}
+		for _, alias := range def.Aliases {
+			if strings.EqualFold(normalized, alias) {
+				return def.Kind, true
+			}
+		}
+	}
+	switch strings.ToLower(normalized) {
+	case "日期选择器", "时间选择器", "级联选择器", "下拉":
+		return "select", true
+	case "弹层", "对话框":
+		return "modal", true
+	case "面板":
+		return "card", true
+	}
+	return "", false
+}
+
+func splitDesignSystemName(name string) []string {
+	replacer := strings.NewReplacer("－", "-", "—", "-", "–", "-", "：", "-", ":", "-", "/", "-", "／", "-", "|", "-")
+	normalized := replacer.Replace(name)
+	rawParts := strings.Split(normalized, "-")
+	parts := make([]string, 0, len(rawParts))
+	for _, part := range rawParts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return parts
+}
+
+func designSystemComponentExampleFromLayer(layer map[string]any, parsed designSystemParsedComponentName) designSystemComponentExample {
+	example := designSystemComponentExample{
+		SourceLayerID:   firstString(layer, "id"),
+		SourceLayerName: firstString(layer, "name"),
+		FrameID:         firstString(layer, "frameId", "frame_id"),
+		SourceNodeID:    firstString(layer, "sourceNodeId", "source_node_id"),
+		Type:            firstString(layer, "type"),
+		Variant:         parsed.Variant,
+		State:           parsed.State,
+		TextSamples:     uniqueDesignSystemStrings([]string{designSystemLayerText(layer)}),
+		Colors:          designSystemLayerColors(layer),
+		Size:            designSystemLayerSize(layer),
+		Typography:      designSystemLayerTypography(layer),
+	}
+	return example
+}
+
+func appendDesignSystemVariantExample(variants []designSystemComponentVariant, name string, state string, example designSystemComponentExample) []designSystemComponentVariant {
+	for i := range variants {
+		if variants[i].Name == name {
+			variants[i].States = appendUniqueString(variants[i].States, state)
+			variants[i].Examples = append(variants[i].Examples, example)
+			sort.Strings(variants[i].States)
+			return variants
+		}
+	}
+	return append(variants, designSystemComponentVariant{Name: name, States: []string{state}, Examples: []designSystemComponentExample{example}})
+}
+
+func designSystemLayerColors(layer map[string]any) []string {
+	values := make([]string, 0)
+	for _, key := range []string{"color", "fill", "fills", "stroke", "strokes", "backgroundColor", "borderColor"} {
+		values = append(values, designSystemColorValues(layer[key])...)
+	}
+	return uniqueDesignSystemStrings(values)
+}
+
+func designSystemLayerSize(layer map[string]any) map[string]any {
+	size := make(map[string]any)
+	if width := numberField(layer, "width"); width > 0 {
+		size["width"] = width
+	}
+	if height := numberField(layer, "height"); height > 0 {
+		size["height"] = height
+	}
+	if len(size) == 0 {
+		return nil
+	}
+	return size
+}
+
+func designSystemLayerTypography(layer map[string]any) map[string]any {
+	typography := make(map[string]any)
+	if textNode, ok := layer["text"].(map[string]any); ok {
+		if fontFamily := firstString(textNode, "fontFamily"); fontFamily != "" {
+			typography["font_family"] = fontFamily
+		}
+		if fontWeight := firstString(textNode, "fontWeight"); fontWeight != "" {
+			typography["font_weight"] = fontWeight
+		}
+		if fontSize := numberField(textNode, "fontSize"); fontSize > 0 {
+			typography["font_size"] = fontSize
+		}
+	}
+	if style, ok := layer["style"].(map[string]any); ok {
+		if fontFamily := firstString(style, "fontFamily"); fontFamily != "" {
+			typography["font_family"] = fontFamily
+		}
+		if fontWeight := firstString(style, "fontWeight"); fontWeight != "" {
+			typography["font_weight"] = fontWeight
+		}
+		if fontSize := numberField(style, "fontSize"); fontSize > 0 {
+			typography["font_size"] = fontSize
+		}
+	}
+	if len(typography) == 0 {
+		return nil
+	}
+	return typography
+}
+
+func designSystemComponentRules(kind string) []string {
+	switch kind {
+	case "button":
+		return []string{"Use button variants by intent; do not reuse a primary button style for destructive actions."}
+	case "input":
+		return []string{"Use error state examples when validation or required-field feedback is present."}
+	case "select":
+		return []string{"Use select examples for choose-one or choose-many interactions instead of plain text placeholders."}
+	case "tag":
+		return []string{"Use tag variants to represent semantic status, not arbitrary decoration."}
+	case "table":
+		return []string{"Use table examples for dense B-end data lists; replace all template columns and sample rows with requirement data."}
+	case "modal":
+		return []string{"Use modal examples only for explicit confirmation, result, or blocking interactions."}
+	case "pagination":
+		return []string{"Use pagination examples when the page presents long tabular or list data."}
+	default:
+		return []string{"Use examples from this component only when the issue requirement needs the same UI role."}
+	}
+}
+
+func inferDesignSystemPatterns(components map[string]designSystemComponentProfile) map[string]any {
+	patterns := make(map[string]any)
+	if componentHasExamples(components, "table") && componentHasExamples(components, "pagination") && (componentHasExamples(components, "input") || componentHasExamples(components, "select")) {
+		patterns["filter_table_pagination"] = map[string]any{
+			"components": []string{"input", "select", "button", "table", "pagination"},
+			"rules": []string{
+				"Use this pattern for B-end list pages with filters, a data table, and pagination.",
+				"Requirement fields must replace template filter labels, table columns, and sample rows completely.",
+			},
+		}
+	}
+	return patterns
+}
+
+func componentHasExamples(components map[string]designSystemComponentProfile, kind string) bool {
+	component, ok := components[kind]
+	return ok && len(component.Examples) > 0
+}
+
+func designSystemProfileConfidence(components map[string]designSystemComponentProfile) string {
+	count := 0
+	for _, component := range components {
+		if len(component.Examples) > 0 {
+			count++
+		}
+	}
+	if count >= 5 {
+		return "medium"
+	}
+	return "low"
+}
+
+func uniqueDesignSystemStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	unique := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		unique = append(unique, value)
+	}
+	return unique
 }
 
 func designRestoreTaskToResponse(task db.DesignRestoreTask) DesignRestoreTaskResponse {
@@ -3869,6 +4525,7 @@ func (h *Handler) ListDesignCatalogTemplates(w http.ResponseWriter, r *http.Requ
 	resp := make([]DesignCatalogTemplateResponse, len(rows))
 	for i, row := range rows {
 		resp[i] = designCatalogTemplateListRowToResponse(row)
+		resp[i].ThumbnailURL = h.thumbnailForDesignRevision(r.Context(), wsUUID, row.DesignRevisionID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"templates": resp, "total": len(resp)})
 }
@@ -3891,7 +4548,9 @@ func (h *Handler) GetDesignCatalogTemplate(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to get design template")
 		return
 	}
-	writeJSON(w, http.StatusOK, designCatalogTemplateRowToResponse(row))
+	resp := designCatalogTemplateRowToResponse(row)
+	resp.ThumbnailURL = h.thumbnailForDesignRevision(r.Context(), wsUUID, row.DesignRevisionID)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) PublishDesignRevisionAsTemplate(w http.ResponseWriter, r *http.Request) {
@@ -3948,7 +4607,7 @@ func (h *Handler) PublishDesignRevisionAsTemplate(w http.ResponseWriter, r *http
 	if category == "" {
 		category = "custom"
 	}
-	metadata := validJSONOrDefault(req.Metadata, `{}`)
+	metadata := designTemplateMetadataWithProfile(req.Metadata, revision.NativeJson, name, category)
 	slotSchema := validJSONOrDefault(req.SlotSchema, `{}`)
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
@@ -3990,7 +4649,186 @@ func (h *Handler) PublishDesignRevisionAsTemplate(w http.ResponseWriter, r *http
 		return
 	}
 	row := db.GetDesignCatalogTemplateRow{ID: updated.ID, WorkspaceID: updated.WorkspaceID, LibraryID: updated.LibraryID, Key: updated.Key, Name: updated.Name, Description: updated.Description, Category: updated.Category, CurrentRevisionID: updated.CurrentRevisionID, Metadata: updated.Metadata, CreatedBy: updated.CreatedBy, CreatedAt: updated.CreatedAt, UpdatedAt: updated.UpdatedAt, DesignRevisionID: revision.ID, TemplateRevisionNumber: pgtype.Int4{Int32: templateRevision.RevisionNumber, Valid: true}, SlotSchema: templateRevision.SlotSchema, DesignFileID: revision.FileID, DesignFileTitle: strToText(file.Title)}
-	writeJSON(w, http.StatusCreated, designCatalogTemplateRowToResponse(row))
+	resp := designCatalogTemplateRowToResponse(row)
+	resp.ThumbnailURL = thumbnailFromNativeJSON(revision.NativeJson)
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (h *Handler) ListDesignSystemProfiles(w http.ResponseWriter, r *http.Request) {
+	wsUUID, ok := parseUUIDOrBadRequest(w, h.resolveWorkspaceID(r), "workspace_id")
+	if !ok {
+		return
+	}
+	projectID, ok := parseOptionalUUIDOrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("project_id")), "project_id")
+	if !ok {
+		return
+	}
+	profiles, err := h.Queries.ListDesignSystemProfiles(r.Context(), db.ListDesignSystemProfilesParams{WorkspaceID: wsUUID, ProjectID: projectID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list design systems")
+		return
+	}
+	resp := make([]DesignSystemProfileResponse, len(profiles))
+	for i, profile := range profiles {
+		resp[i] = h.designSystemProfileToResponseWithThumbnail(r.Context(), profile)
+	}
+	writeJSON(w, http.StatusOK, DesignSystemProfileListResponse{DesignSystems: resp})
+}
+
+func (h *Handler) CreateDesignSystemProfile(w http.ResponseWriter, r *http.Request) {
+	var req CreateDesignSystemProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	wsUUID, ok := parseUUIDOrBadRequest(w, h.resolveWorkspaceID(r), "workspace_id")
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	userUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
+	if !ok {
+		return
+	}
+	projectID, ok := parseUUIDOrBadRequest(w, req.ProjectID, "project_id")
+	if !ok {
+		return
+	}
+	sourceFileID, ok := parseUUIDOrBadRequest(w, req.SourceFileID, "source_file_id")
+	if !ok {
+		return
+	}
+	sourceRevisionID, ok := parseUUIDOrBadRequest(w, req.SourceRevisionID, "source_revision_id")
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: projectID, WorkspaceID: wsUUID}); err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusForbidden, "project access denied")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get project")
+		return
+	}
+	file, err := h.Queries.GetDesignFileInWorkspace(r.Context(), db.GetDesignFileInWorkspaceParams{ID: sourceFileID, WorkspaceID: wsUUID})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "source design file not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get source design file")
+		return
+	}
+	if file.ProjectID.Valid && uuidToString(file.ProjectID) != uuidToString(projectID) {
+		writeError(w, http.StatusBadRequest, "source design file does not belong to project")
+		return
+	}
+	revision, err := h.Queries.GetDesignRevisionInWorkspace(r.Context(), db.GetDesignRevisionInWorkspaceParams{ID: sourceRevisionID, WorkspaceID: wsUUID})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "source design revision not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get source design revision")
+		return
+	}
+	if uuidToString(revision.FileID) != uuidToString(sourceFileID) {
+		writeError(w, http.StatusNotFound, "source design revision not found")
+		return
+	}
+	created, err := h.createDesignSystemProfileFromRevision(r.Context(), createDesignSystemProfileFromRevisionParams{
+		WorkspaceID: wsUUID,
+		ProjectID:   projectID,
+		File:        file,
+		Revision:    revision,
+		Name:        name,
+		Description: req.Description,
+		IsDefault:   req.IsDefault,
+		CreatedBy:   userUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create design system")
+		return
+	}
+	writeJSON(w, http.StatusCreated, h.designSystemProfileToResponseWithThumbnail(r.Context(), created))
+}
+
+func (h *Handler) GetDesignSystemProfile(w http.ResponseWriter, r *http.Request) {
+	wsUUID, ok := parseUUIDOrBadRequest(w, h.resolveWorkspaceID(r), "workspace_id")
+	if !ok {
+		return
+	}
+	profileID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "design system id")
+	if !ok {
+		return
+	}
+	profile, err := h.Queries.GetDesignSystemProfileInWorkspace(r.Context(), db.GetDesignSystemProfileInWorkspaceParams{ID: profileID, WorkspaceID: wsUUID})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "design system not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get design system")
+		return
+	}
+	writeJSON(w, http.StatusOK, h.designSystemProfileToResponseWithThumbnail(r.Context(), profile))
+}
+
+func (h *Handler) SetDesignSystemProfileDefault(w http.ResponseWriter, r *http.Request) {
+	wsUUID, ok := parseUUIDOrBadRequest(w, h.resolveWorkspaceID(r), "workspace_id")
+	if !ok {
+		return
+	}
+	profileID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "design system id")
+	if !ok {
+		return
+	}
+	profile, err := h.Queries.GetDesignSystemProfileInWorkspace(r.Context(), db.GetDesignSystemProfileInWorkspaceParams{ID: profileID, WorkspaceID: wsUUID})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "design system not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get design system")
+		return
+	}
+	if profile.Status != "analyzed" {
+		writeError(w, http.StatusBadRequest, "only analyzed design systems can be default")
+		return
+	}
+	if !profile.ProjectID.Valid {
+		writeError(w, http.StatusBadRequest, "design system has no project")
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if err := qtx.ClearDefaultDesignSystemProfilesForProject(r.Context(), db.ClearDefaultDesignSystemProfilesForProjectParams{WorkspaceID: wsUUID, ProjectID: profile.ProjectID}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clear default design system")
+		return
+	}
+	updated, err := qtx.SetDesignSystemProfileDefault(r.Context(), db.SetDesignSystemProfileDefaultParams{ID: profile.ID, WorkspaceID: wsUUID, ProjectID: profile.ProjectID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to set default design system")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit default design system")
+		return
+	}
+	writeJSON(w, http.StatusOK, h.designSystemProfileToResponseWithThumbnail(r.Context(), updated))
 }
 
 func (h *Handler) ListDesignDrafts(w http.ResponseWriter, r *http.Request) {
@@ -4206,52 +5044,143 @@ func (h *Handler) CreateDesignDraftAgentTask(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "agent has no runtime")
 		return
 	}
-	catalogTemplateID, ok := parseUUIDOrBadRequest(w, req.CatalogTemplateID, "catalog_template_id")
-	if !ok {
-		return
-	}
-	template, err := h.Queries.GetDesignCatalogTemplate(r.Context(), db.GetDesignCatalogTemplateParams{ID: catalogTemplateID, WorkspaceID: wsUUID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "design template not found")
-		return
-	}
-	templateRevisionID := template.CurrentRevisionID
-	if strings.TrimSpace(req.TemplateRevisionID) != "" {
-		templateRevisionID, ok = parseUUIDOrBadRequest(w, req.TemplateRevisionID, "template_revision_id")
+	var issue db.Issue
+	var issueContext map[string]any
+	var parentIssueContext map[string]any
+	var issueID pgtype.UUID
+	if strings.TrimSpace(req.IssueID) != "" {
+		loadedIssue, ok := h.loadIssueForUser(w, r, strings.TrimSpace(req.IssueID))
 		if !ok {
 			return
 		}
+		issue = loadedIssue
+		issueID = loadedIssue.ID
+		issuePrefix := h.getIssuePrefix(r.Context(), loadedIssue.WorkspaceID)
+		issueContext = designDraftIssueContext(loadedIssue, issuePrefix)
+		if loadedIssue.ParentIssueID.Valid {
+			parentIssue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: loadedIssue.ParentIssueID, WorkspaceID: wsUUID})
+			if err != nil {
+				writeError(w, http.StatusNotFound, "parent issue not found")
+				return
+			}
+			parentIssueContext = designDraftIssueContext(parentIssue, issuePrefix)
+		}
 	}
-	if !templateRevisionID.Valid {
-		writeError(w, http.StatusBadRequest, "template has no current revision")
+	var catalogTemplateID pgtype.UUID
+	var template db.GetDesignCatalogTemplateRow
+	var templateRevision db.DesignTemplateRevision
+	var templateRevisionID pgtype.UUID
+	hasPresetTemplate := strings.TrimSpace(req.CatalogTemplateID) != ""
+	if hasPresetTemplate {
+		var ok bool
+		catalogTemplateID, ok = parseUUIDOrBadRequest(w, req.CatalogTemplateID, "catalog_template_id")
+		if !ok {
+			return
+		}
+		var err error
+		template, err = h.Queries.GetDesignCatalogTemplate(r.Context(), db.GetDesignCatalogTemplateParams{ID: catalogTemplateID, WorkspaceID: wsUUID})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "design template not found")
+			return
+		}
+		templateRevisionID = template.CurrentRevisionID
+		if strings.TrimSpace(req.TemplateRevisionID) != "" {
+			templateRevisionID, ok = parseUUIDOrBadRequest(w, req.TemplateRevisionID, "template_revision_id")
+			if !ok {
+				return
+			}
+		}
+		if !templateRevisionID.Valid {
+			writeError(w, http.StatusBadRequest, "template has no current revision")
+			return
+		}
+		templateRevision, err = h.Queries.GetDesignTemplateRevisionInWorkspace(r.Context(), db.GetDesignTemplateRevisionInWorkspaceParams{ID: templateRevisionID, WorkspaceID: wsUUID})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "template revision not found")
+			return
+		}
+	} else if !issueID.Valid {
+		writeError(w, http.StatusBadRequest, "catalog_template_id or issue_id is required")
 		return
 	}
-	templateRevision, err := h.Queries.GetDesignTemplateRevisionInWorkspace(r.Context(), db.GetDesignTemplateRevisionInWorkspaceParams{ID: templateRevisionID, WorkspaceID: wsUUID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "template revision not found")
-		return
+	var templateCandidates []map[string]any
+	if !hasPresetTemplate {
+		rows, err := h.Queries.ListDesignCatalogTemplates(r.Context(), db.ListDesignCatalogTemplatesParams{WorkspaceID: wsUUID, Column2: pgtype.UUID{}, Column3: ""})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list design templates")
+			return
+		}
+		templateCandidates = designDraftTemplateCandidates(rows, issue)
+		if len(templateCandidates) == 0 {
+			writeError(w, http.StatusBadRequest, "no design templates available")
+			return
+		}
+		h.enrichDesignDraftTemplateCandidates(r.Context(), wsUUID, templateCandidates)
 	}
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
-		prompt = "Generate UI draft slot_values and a safe JSON patch from the requirement. Return only data that can create a DesignDraft."
+		if hasPresetTemplate {
+			prompt = "Read the embedded requirement, use the project design_system as the visual contract when present, then generate UI draft slot_values and a safe JSON patch. Return only data that can create a DesignDraft."
+		} else {
+			prompt = "Read the embedded issue, use the project design_system as the visual contract when present, choose the best template candidate as a structure reference, then generate UI draft slot_values and a safe JSON patch."
+		}
 	}
 	contextPayload := map[string]any{
-		"type":                 "ui_agent_draft_create",
-		"requester_id":         userID,
-		"workspace_id":         uuidToString(wsUUID),
-		"agent_id":             req.AgentID,
-		"catalog_template_id":  req.CatalogTemplateID,
-		"template_revision_id": uuidToString(templateRevisionID),
-		"design_revision_id":   uuidToString(templateRevision.DesignRevisionID),
-		"title":                strings.TrimSpace(req.Title),
-		"prompt":               prompt,
-		"requirement_core":     json.RawMessage(validJSONOrDefault(req.RequirementCore, `{}`)),
-		"slot_schema":          json.RawMessage(templateRevision.SlotSchema),
+		"type":             "ui_agent_draft_create",
+		"requester_id":     userID,
+		"workspace_id":     uuidToString(wsUUID),
+		"agent_id":         req.AgentID,
+		"title":            strings.TrimSpace(req.Title),
+		"prompt":           prompt,
+		"requirement_core": json.RawMessage(validJSONOrDefault(req.RequirementCore, `{}`)),
 		"output_policy": map[string]any{
 			"slot_values_first":        true,
 			"json_patch_allowed":       true,
 			"forbidden_patch_segments": []string{"x", "y", "width", "height", "children"},
 		},
+	}
+	if hasPresetTemplate {
+		contextPayload["catalog_template_id"] = req.CatalogTemplateID
+		contextPayload["template_revision_id"] = uuidToString(templateRevisionID)
+		contextPayload["design_revision_id"] = uuidToString(templateRevision.DesignRevisionID)
+		contextPayload["slot_schema"] = json.RawMessage(templateRevision.SlotSchema)
+		if designRevision, err := h.Queries.GetDesignRevisionInWorkspace(r.Context(), db.GetDesignRevisionInWorkspaceParams{ID: templateRevision.DesignRevisionID, WorkspaceID: wsUUID}); err == nil {
+			if textLayers := designDraftEditableTextLayers(designRevision.NativeJson, 120); len(textLayers) > 0 {
+				contextPayload["editable_text_layers"] = textLayers
+				contextPayload["patch_hints"] = designDraftTextPatchHints()
+			}
+		}
+	} else {
+		contextPayload["template_candidates"] = templateCandidates
+		contextPayload["selection_policy"] = map[string]any{
+			"agent_must_select_catalog_template_id": true,
+			"max_candidates":                        len(templateCandidates),
+			"prefer_template_profile_page_type":     "saas.filter-table-pagination",
+		}
+	}
+	if issueID.Valid {
+		contextPayload["issue_id"] = uuidToString(issueID)
+		contextPayload["issue"] = issueContext
+	}
+	if parentIssueContext != nil {
+		contextPayload["parent_issue"] = parentIssueContext
+	}
+	if issue.ProjectID.Valid {
+		if profile, err := h.Queries.GetDefaultDesignSystemProfileForProject(r.Context(), db.GetDefaultDesignSystemProfileForProjectParams{WorkspaceID: wsUUID, ProjectID: issue.ProjectID}); err == nil {
+			contextPayload["design_system"] = map[string]any{
+				"id":                 uuidToString(profile.ID),
+				"name":               profile.Name,
+				"status":             profile.Status,
+				"source_file_id":     uuidToString(profile.SourceFileID),
+				"source_revision_id": uuidToString(profile.SourceRevisionID),
+				"profile":            json.RawMessage(profile.ProfileJson),
+			}
+		} else {
+			if err != pgx.ErrNoRows {
+				slog.Warn("ui draft task: failed to load default design system", "workspace_id", uuidToString(wsUUID), "project_id", uuidToString(issue.ProjectID), "error", err)
+			}
+			contextPayload["design_system"] = map[string]any{"status": "missing"}
+		}
 	}
 	contextJSON, err := json.Marshal(contextPayload)
 	if err != nil {
@@ -4282,25 +5211,45 @@ func (h *Handler) createDesignDraftFromAgentTaskOutput(ctx context.Context, task
 	if err != nil {
 		return nil, fmt.Errorf("invalid draft task requester: %w", err)
 	}
-	catalogTemplateID, err := util.ParseUUID(draftCtx.CatalogTemplateID)
+	parsed, err := parseUIDraftAgentOutput(output)
+	if err != nil {
+		return nil, err
+	}
+	selectedTemplateID := strings.TrimSpace(draftCtx.CatalogTemplateID)
+	if selectedTemplateID == "" {
+		selectedTemplateID = strings.TrimSpace(parsed.CatalogTemplateID)
+	}
+	if selectedTemplateID == "" {
+		selectedTemplateID = selectedTemplateIDFromRequirementCore(parsed.RequirementCore)
+	}
+	if selectedTemplateID == "" {
+		return nil, fmt.Errorf("ui agent draft output must include catalog_template_id")
+	}
+	if len(draftCtx.TemplateCandidates) > 0 && strings.TrimSpace(draftCtx.CatalogTemplateID) == "" && !templateCandidateContainsID(draftCtx.TemplateCandidates, selectedTemplateID) {
+		return nil, fmt.Errorf("catalog_template_id is not in template_candidates")
+	}
+	catalogTemplateID, err := util.ParseUUID(selectedTemplateID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid draft task template: %w", err)
-	}
-	templateRevisionID, err := util.ParseUUID(draftCtx.TemplateRevisionID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid draft task template revision: %w", err)
 	}
 	template, err := h.Queries.GetDesignCatalogTemplate(ctx, db.GetDesignCatalogTemplateParams{ID: catalogTemplateID, WorkspaceID: wsUUID})
 	if err != nil {
 		return nil, fmt.Errorf("load design template: %w", err)
 	}
+	templateRevisionIDText := strings.TrimSpace(draftCtx.TemplateRevisionID)
+	if templateRevisionIDText == "" {
+		if !template.CurrentRevisionID.Valid {
+			return nil, fmt.Errorf("selected design template has no current revision")
+		}
+		templateRevisionIDText = uuidToString(template.CurrentRevisionID)
+	}
+	templateRevisionID, err := util.ParseUUID(templateRevisionIDText)
+	if err != nil {
+		return nil, fmt.Errorf("invalid draft task template revision: %w", err)
+	}
 	templateRevision, err := h.Queries.GetDesignTemplateRevisionInWorkspace(ctx, db.GetDesignTemplateRevisionInWorkspaceParams{ID: templateRevisionID, WorkspaceID: wsUUID})
 	if err != nil {
 		return nil, fmt.Errorf("load design template revision: %w", err)
-	}
-	parsed, err := parseUIDraftAgentOutput(output)
-	if err != nil {
-		return nil, err
 	}
 	slotValues := validJSONOrDefault(parsed.SlotValues, `{}`)
 	if err := validateTemplateSlotValues(templateRevision.SlotSchema, slotValues); err != nil {
@@ -4308,6 +5257,9 @@ func (h *Handler) createDesignDraftFromAgentTaskOutput(ctx context.Context, task
 	}
 	patch := validJSONOrDefault(parsed.Patch, `[]`)
 	if err := validateDesignDraftPatch(patch); err != nil {
+		return nil, err
+	}
+	if err := validateUIDraftHasEffectiveChanges(templateRevision.SlotSchema, slotValues, patch); err != nil {
 		return nil, err
 	}
 	title := strings.TrimSpace(parsed.Title)
@@ -4321,7 +5273,14 @@ func (h *Handler) createDesignDraftFromAgentTaskOutput(ctx context.Context, task
 	if len(requirementCore) == 0 {
 		requirementCore = []byte(`{}`)
 	}
-	draft, err := h.Queries.CreateDesignDraft(ctx, db.CreateDesignDraftParams{WorkspaceID: wsUUID, CatalogTemplateID: catalogTemplateID, TemplateRevisionID: templateRevisionID, FileID: template.DesignFileID, RevisionID: templateRevision.DesignRevisionID, Title: title, RequirementCore: requirementCore, SlotValues: slotValues, Patch: patch, Status: "generated", ValidationErrors: []byte(`[]`), CreatedBy: requesterUUID})
+	var issueID pgtype.UUID
+	if strings.TrimSpace(draftCtx.IssueID) != "" {
+		issueID, err = util.ParseUUID(draftCtx.IssueID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid draft task issue: %w", err)
+		}
+	}
+	draft, err := h.Queries.CreateDesignDraft(ctx, db.CreateDesignDraftParams{WorkspaceID: wsUUID, CatalogTemplateID: catalogTemplateID, TemplateRevisionID: templateRevisionID, FileID: template.DesignFileID, RevisionID: templateRevision.DesignRevisionID, IssueID: issueID, Title: title, RequirementCore: requirementCore, SlotValues: slotValues, Patch: patch, Status: "generated", ValidationErrors: []byte(`[]`), CreatedBy: requesterUUID})
 	if err != nil {
 		return nil, fmt.Errorf("create agent design draft: %w", err)
 	}
@@ -4346,6 +5305,24 @@ func parseUIDraftAgentOutput(output string) (uiDraftAgentOutput, error) {
 		return uiDraftAgentOutput{}, fmt.Errorf("invalid ui agent draft output: %w", err)
 	}
 	return parsed, nil
+}
+
+func selectedTemplateIDFromRequirementCore(raw json.RawMessage) string {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return ""
+	}
+	var requirement map[string]any
+	if err := json.Unmarshal(raw, &requirement); err != nil {
+		return ""
+	}
+	return firstString(requirement, "selected_catalog_template_id", "catalog_template_id", "template_id")
+}
+
+func isUIDraftCreateTaskContext(raw []byte) bool {
+	var payload struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(raw, &payload) == nil && payload.Type == service.UIDraftCreateContextType
 }
 
 func designDraftToResponse(draft db.DesignDraft) DesignDraftResponse {
@@ -4376,6 +5353,47 @@ func validateDesignDraftPatch(raw json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+func validateUIDraftHasEffectiveChanges(slotSchema []byte, slotValues []byte, patch []byte) error {
+	hasPatch, err := jsonArrayHasEntries(patch)
+	if err != nil {
+		return fmt.Errorf("patch must be a JSON patch array")
+	}
+	hasSlotValues, err := jsonObjectHasEntries(slotValues)
+	if err != nil {
+		return fmt.Errorf("slot_values must be a JSON object")
+	}
+	hasSlotSchema := len(templateSlotDefinitions(slotSchema)) > 0
+	if hasPatch || (hasSlotSchema && hasSlotValues) {
+		return nil
+	}
+	if !hasSlotSchema {
+		return fmt.Errorf("ui agent draft output must include a non-empty patch because selected template has no slot_schema")
+	}
+	return fmt.Errorf("ui agent draft output must include non-empty slot_values or patch")
+}
+
+func jsonObjectHasEntries(raw []byte) (bool, error) {
+	if len(raw) == 0 {
+		return false, nil
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return false, err
+	}
+	return len(obj) > 0, nil
+}
+
+func jsonArrayHasEntries(raw []byte) (bool, error) {
+	if len(raw) == 0 {
+		return false, nil
+	}
+	var items []any
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return false, err
+	}
+	return len(items) > 0, nil
 }
 
 func validateTemplateSlotValues(schemaRaw []byte, valuesRaw []byte) error {
@@ -4588,6 +5606,368 @@ func designFrameSourceNodeID(revisions []db.DesignRevision, frameID string) stri
 		}
 	}
 	return ""
+}
+
+func designTemplateMetadataWithProfile(raw json.RawMessage, nativeJSON json.RawMessage, name string, category string) []byte {
+	metadata := map[string]any{}
+	if len(raw) > 0 && json.Valid(raw) {
+		_ = json.Unmarshal(raw, &metadata)
+	}
+	if _, ok := metadata["template_profile"]; !ok {
+		metadata["template_profile"] = buildDesignTemplateProfile(nativeJSON, name, category)
+	}
+	out, err := json.Marshal(metadata)
+	if err != nil {
+		return []byte(`{}`)
+	}
+	return out
+}
+
+func buildDesignTemplateProfile(nativeJSON json.RawMessage, name string, category string) map[string]any {
+	texts := []string{name, category}
+	components := []string{}
+	slots := []string{}
+	var doc map[string]any
+	if err := json.Unmarshal(nativeJSON, &doc); err == nil {
+		for _, frame := range asObjectSlice(doc["frames"]) {
+			texts = append(texts, stringField(frame, "name"))
+		}
+		if layers, ok := doc["layers"].(map[string]any); ok {
+			for _, rawLayer := range layers {
+				layer, ok := rawLayer.(map[string]any)
+				if !ok {
+					continue
+				}
+				texts = append(texts, stringField(layer, "name"), stringField(layer, "type"))
+				if text, ok := layer["text"].(map[string]any); ok {
+					texts = append(texts, stringField(text, "characters"), stringField(text, "text"))
+				}
+			}
+		}
+		if bindings, ok := doc["componentBindings"].(map[string]any); ok {
+			for _, rawBinding := range bindings {
+				binding, ok := rawBinding.(map[string]any)
+				if !ok {
+					continue
+				}
+				components = appendUniqueString(components, firstString(binding, "componentKey", "component_key", "name", "componentName"))
+			}
+		}
+		if rawSlots, ok := doc["slots"].(map[string]any); ok {
+			for key := range rawSlots {
+				slots = appendUniqueString(slots, key)
+			}
+		}
+	}
+	haystack := strings.ToLower(strings.Join(texts, " "))
+	hasFilter := containsAnyTemplateKeyword(haystack, []string{"筛选", "查询", "搜索", "请输入", "请选择", "filter", "search", "input", "select", "datepicker"})
+	hasTable := containsAnyTemplateKeyword(haystack, []string{"表格", "列表", "状态", "操作", "table", "datatable", "column", "row"})
+	hasPagination := containsAnyTemplateKeyword(haystack, []string{"分页", "页码", "上一页", "下一页", "条/页", "pagination", "page size"})
+	tags := []string{}
+	if hasFilter {
+		tags = append(tags, "筛选")
+		components = appendUniqueString(components, "FilterForm")
+	}
+	if hasTable {
+		tags = append(tags, "表格")
+		components = appendUniqueString(components, "DataTable")
+	}
+	if hasPagination {
+		tags = append(tags, "分页")
+		components = appendUniqueString(components, "Pagination")
+	}
+	pageType := "unknown"
+	if hasFilter && hasTable && hasPagination {
+		pageType = "saas.filter-table-pagination"
+	}
+	sort.Strings(slots)
+	sort.Strings(components)
+	return map[string]any{
+		"version":           "1.0",
+		"source":            "native_json_heuristic",
+		"page_type":         pageType,
+		"tags":              tags,
+		"slots":             slots,
+		"components":        components,
+		"detected_patterns": map[string]any{"filter": hasFilter, "table": hasTable, "pagination": hasPagination},
+	}
+}
+
+func containsAnyTemplateKeyword(text string, keywords []string) bool {
+	for _, keyword := range keywords {
+		if strings.Contains(text, strings.ToLower(keyword)) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUniqueString(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return values
+	}
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func designDraftIssueContext(issue db.Issue, issuePrefix string) map[string]any {
+	issueContext := map[string]any{
+		"id":         uuidToString(issue.ID),
+		"identifier": issuePrefix + "-" + fmt.Sprint(issue.Number),
+		"title":      issue.Title,
+		"status":     issue.Status,
+		"priority":   issue.Priority,
+		"metadata":   parseIssueMetadata(issue.Metadata),
+	}
+	if issue.Description.Valid {
+		issueContext["description"] = issue.Description.String
+	}
+	if value, ok := issueJSONContextValue(issue.AcceptanceCriteria); ok {
+		issueContext["acceptance_criteria"] = value
+	}
+	if value, ok := issueJSONContextValue(issue.ContextRefs); ok {
+		issueContext["context_refs"] = value
+	}
+	if issue.ProjectID.Valid {
+		issueContext["project_id"] = uuidToString(issue.ProjectID)
+	}
+	if issue.ParentIssueID.Valid {
+		issueContext["parent_issue_id"] = uuidToString(issue.ParentIssueID)
+	}
+	return issueContext
+}
+
+func issueJSONContextValue(raw []byte) (any, bool) {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return nil, false
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+		return nil, false
+	}
+	return value, true
+}
+
+type designDraftTemplateCandidate struct {
+	Payload map[string]any
+	Score   int
+	Name    string
+}
+
+func designDraftTemplateCandidates(rows []db.ListDesignCatalogTemplatesRow, issue db.Issue) []map[string]any {
+	candidates := make([]designDraftTemplateCandidate, 0, len(rows))
+	for _, row := range rows {
+		if !row.CurrentRevisionID.Valid || !row.DesignRevisionID.Valid {
+			continue
+		}
+		profile := designTemplateProfileFromMetadata(row.Metadata, row.Name, row.Category)
+		score := scoreDesignTemplateCandidate(row, profile, issue)
+		payload := map[string]any{
+			"id":                       uuidToString(row.ID),
+			"key":                      row.Key,
+			"name":                     row.Name,
+			"category":                 row.Category,
+			"current_revision_id":      uuidToString(row.CurrentRevisionID),
+			"design_revision_id":       uuidToString(row.DesignRevisionID),
+			"template_revision_number": int4ToPtr(row.TemplateRevisionNumber),
+			"slot_schema":              json.RawMessage(row.SlotSchema),
+			"template_profile":         profile,
+			"score":                    score,
+		}
+		if row.DesignFileID.Valid {
+			payload["design_file_id"] = uuidToString(row.DesignFileID)
+		}
+		if row.DesignFileTitle.Valid {
+			payload["design_file_title"] = row.DesignFileTitle.String
+		}
+		candidates = append(candidates, designDraftTemplateCandidate{Payload: payload, Score: score, Name: row.Name})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Score == candidates[j].Score {
+			return candidates[i].Name < candidates[j].Name
+		}
+		return candidates[i].Score > candidates[j].Score
+	})
+	limit := 5
+	if len(candidates) < limit {
+		limit = len(candidates)
+	}
+	out := make([]map[string]any, 0, limit)
+	for _, candidate := range candidates[:limit] {
+		out = append(out, candidate.Payload)
+	}
+	return out
+}
+
+func (h *Handler) enrichDesignDraftTemplateCandidates(ctx context.Context, workspaceID pgtype.UUID, candidates []map[string]any) {
+	for _, candidate := range candidates {
+		revisionIDText := strings.TrimSpace(stringField(candidate, "design_revision_id"))
+		if revisionIDText == "" {
+			continue
+		}
+		revisionID, err := util.ParseUUID(revisionIDText)
+		if err != nil {
+			continue
+		}
+		revision, err := h.Queries.GetDesignRevisionInWorkspace(ctx, db.GetDesignRevisionInWorkspaceParams{ID: revisionID, WorkspaceID: workspaceID})
+		if err != nil {
+			slog.Warn("ui draft template candidate context: failed to load design revision", "design_revision_id", revisionIDText, "error", err)
+			continue
+		}
+		textLayers := designDraftEditableTextLayers(revision.NativeJson, 120)
+		if len(textLayers) == 0 {
+			continue
+		}
+		candidate["editable_text_layers"] = textLayers
+		candidate["patch_hints"] = designDraftTextPatchHints()
+	}
+}
+
+func designDraftTextPatchHints() map[string]any {
+	return map[string]any{
+		"text_characters_path": "/layers/{layer_id}/text/characters",
+		"text_text_path":       "/layers/{layer_id}/text/text",
+		"recommended_text_ops": []string{"replace"},
+	}
+}
+
+func designDraftEditableTextLayers(nativeJSON []byte, limit int) []map[string]any {
+	if limit <= 0 || len(nativeJSON) == 0 || !json.Valid(nativeJSON) {
+		return nil
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(nativeJSON, &doc); err != nil {
+		return nil
+	}
+	layers, _ := doc["layers"].(map[string]any)
+	if len(layers) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0)
+	for layerID, rawLayer := range layers {
+		layer, ok := rawLayer.(map[string]any)
+		if !ok {
+			continue
+		}
+		if visible, ok := layer["visible"].(bool); ok && !visible {
+			continue
+		}
+		text, _ := layer["text"].(map[string]any)
+		if len(text) == 0 {
+			continue
+		}
+		characters := strings.TrimSpace(firstString(text, "characters", "text"))
+		if characters == "" {
+			continue
+		}
+		if id := strings.TrimSpace(stringField(layer, "id")); id != "" {
+			layerID = id
+		}
+		item := map[string]any{
+			"id":          layerID,
+			"name":        strings.TrimSpace(stringField(layer, "name")),
+			"text":        characters,
+			"frame_id":    strings.TrimSpace(stringField(layer, "frameId")),
+			"x":           numberField(layer, "x"),
+			"y":           numberField(layer, "y"),
+			"patch_paths": []string{"/layers/" + layerID + "/text/characters", "/layers/" + layerID + "/text/text"},
+		}
+		out = append(out, item)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		yi, yj := numberField(out[i], "y"), numberField(out[j], "y")
+		if yi != yj {
+			return yi < yj
+		}
+		xi, xj := numberField(out[i], "x"), numberField(out[j], "x")
+		if xi != xj {
+			return xi < xj
+		}
+		return stringField(out[i], "id") < stringField(out[j], "id")
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func designTemplateProfileFromMetadata(metadataRaw []byte, name string, category string) map[string]any {
+	var metadata map[string]any
+	if len(metadataRaw) > 0 && json.Valid(metadataRaw) {
+		_ = json.Unmarshal(metadataRaw, &metadata)
+	}
+	if profile, ok := metadata["template_profile"].(map[string]any); ok {
+		return profile
+	}
+	return map[string]any{
+		"version":           "1.0",
+		"source":            "missing_profile_fallback",
+		"page_type":         "unknown",
+		"tags":              []string{},
+		"slots":             []string{},
+		"components":        []string{},
+		"detected_patterns": map[string]any{},
+		"name":              name,
+		"category":          category,
+	}
+}
+
+func scoreDesignTemplateCandidate(row db.ListDesignCatalogTemplatesRow, profile map[string]any, issue db.Issue) int {
+	description := ""
+	if issue.Description.Valid {
+		description = issue.Description.String
+	}
+	issueText := strings.ToLower(issue.Title + " " + description)
+	templateText := strings.ToLower(row.Name + " " + row.Category + " " + row.Key)
+	score := 0
+	if stringField(profile, "page_type") == "saas.filter-table-pagination" && issueLooksLikeFilterTablePagination(issueText) {
+		score += 100
+	}
+	for _, tag := range asStringSlice(profile["tags"]) {
+		if strings.Contains(issueText, strings.ToLower(tag)) {
+			score += 12
+		}
+	}
+	if containsAnyTemplateKeyword(templateText, []string{"筛选", "表格", "分页", "filter", "table", "pagination"}) {
+		score += 8
+	}
+	if issue.ProjectID.Valid {
+		var metadata map[string]any
+		if len(row.Metadata) > 0 && json.Valid(row.Metadata) {
+			_ = json.Unmarshal(row.Metadata, &metadata)
+		}
+		if metadata["project_id"] == uuidToString(issue.ProjectID) {
+			score += 20
+		}
+	}
+	return score
+}
+
+func issueLooksLikeFilterTablePagination(text string) bool {
+	return containsAnyTemplateKeyword(text, []string{"筛选", "查询", "搜索", "请输入", "请选择", "filter", "search"}) &&
+		containsAnyTemplateKeyword(text, []string{"表格", "列表", "字段", "列", "状态", "操作", "table"}) &&
+		containsAnyTemplateKeyword(text, []string{"分页", "页码", "条/页", "pagination", "page"})
+}
+
+func templateCandidateContainsID(raw json.RawMessage, id string) bool {
+	if strings.TrimSpace(id) == "" {
+		return false
+	}
+	var candidates []map[string]any
+	if err := json.Unmarshal(raw, &candidates); err != nil {
+		return false
+	}
+	for _, candidate := range candidates {
+		if stringField(candidate, "id") == id {
+			return true
+		}
+	}
+	return false
 }
 
 func designCatalogTemplateListRowToResponse(row db.ListDesignCatalogTemplatesRow) DesignCatalogTemplateResponse {

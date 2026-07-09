@@ -36,6 +36,7 @@
       .kv strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
       .form-grid { display: grid; gap: 12px; }
       .scope-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+      .asset-type-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .radio-card { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; border: 1px solid var(--figma-color-border); border-radius: 12px; background: var(--figma-color-bg); padding: 10px; }
       .radio-card input { display: none; }
       .radio-dot { width: 16px; height: 16px; flex: 0 0 16px; border-radius: 999px; border: 1px solid var(--figma-color-border); background: var(--figma-color-bg); }
@@ -134,7 +135,7 @@
             <section class="card form-grid">
             <div style="grid-column:1/-1">
               <label class="label">上传类型</label>
-              <div class="scope-grid" style="margin-top:6px">
+              <div class="scope-grid asset-type-grid" style="margin-top:6px">
                 <label class="radio-card">
                   <input type="radio" name="uploadMode" value="design" checked />
                   <span class="radio-dot"></span>
@@ -144,6 +145,11 @@
                   <input type="radio" name="uploadMode" value="template" />
                   <span class="radio-dot"></span>
                   <span class="radio-label">模板资产</span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="uploadMode" value="design_system" />
+                  <span class="radio-dot"></span>
+                  <span class="radio-label">UI 规范</span>
                 </label>
               </div>
             </div>
@@ -161,6 +167,11 @@
               <label class="label">模板名称</label>
               <input class="field" id="templateName" placeholder="默认使用设计稿名称" />
               <div class="muted" style="margin-top:6px;font-size:12px">模板资产进入当前项目的模板库，不归属文件夹。</div>
+            </div>
+            <div id="designSystemOptions" style="display:none;grid-column:1/-1">
+              <label class="label">UI 规范名称</label>
+              <input class="field" id="designSystemName" placeholder="默认使用设计稿名称" />
+              <div class="muted" style="margin-top:6px;font-size:12px">UI 规范上传后会成为当前项目默认设计系统。</div>
             </div>
             </section>
 
@@ -276,6 +287,14 @@
         return uploadMode() === 'template';
       }
 
+      function isDesignSystemUpload() {
+        return uploadMode() === 'design_system';
+      }
+
+      function isManagedAssetUpload() {
+        return isTemplateUpload() || isDesignSystemUpload();
+      }
+
       function currentProject() {
         return (pluginContext?.projects || []).find((project) => project.id === selectedProjectId) || null;
       }
@@ -300,9 +319,9 @@
       }
 
       function updateUploadEnabled() {
-        const templateMode = isTemplateUpload();
-        const needsDesignFileName = !templateMode && selectedDesignFileId === '__new';
-        uploadBtn.disabled = busy || !pluginToken || !selectedProjectId || (!templateMode && !selectedDesignFileId) || (needsDesignFileName && !pendingDesignFileTitle.trim()) || activeBoards().length === 0;
+        const managedAssetMode = isManagedAssetUpload();
+        const needsDesignFileName = !managedAssetMode && selectedDesignFileId === '__new';
+        uploadBtn.disabled = busy || !pluginToken || !selectedProjectId || (!managedAssetMode && !selectedDesignFileId) || (needsDesignFileName && !pendingDesignFileTitle.trim()) || activeBoards().length === 0;
       }
 
       function escapeHtml(value) {
@@ -331,12 +350,15 @@
         const folder = currentFolder();
         const file = currentDesignFile();
         const templateMode = isTemplateUpload();
+        const designSystemMode = isDesignSystemUpload();
+        const managedAssetMode = isManagedAssetUpload();
         document.getElementById('projectValue').textContent = project?.title || '未选择';
         document.getElementById('folderValue').textContent = folder?.name || '未分组';
         document.getElementById('designFileValue').textContent = selectedDesignFileId === '__new' ? (pendingDesignFileTitle || '请新建或选择') : (file?.title || '未选择');
-        document.getElementById('designOptions').style.display = templateMode ? 'none' : 'grid';
+        document.getElementById('designOptions').style.display = managedAssetMode ? 'none' : 'grid';
         document.getElementById('templateOptions').style.display = templateMode ? 'block' : 'none';
-        uploadBtn.textContent = templateMode ? '读取并上传模板' : '读取并上传设计稿';
+        document.getElementById('designSystemOptions').style.display = designSystemMode ? 'block' : 'none';
+        uploadBtn.textContent = designSystemMode ? '读取并上传 UI 规范' : templateMode ? '读取并上传模板' : '读取并上传设计稿';
         updateUploadEnabled();
       }
 
@@ -519,7 +541,7 @@
       uploadBtn.onclick = async () => {
         const projectId = selectedProjectId;
         if (!projectId) return setStatus('请选择项目后再上传。', 'err');
-        if (!isTemplateUpload() && selectedDesignFileId === '__new' && !pendingDesignFileTitle.trim()) return setStatus('请先在设计稿项目抽屉中新建或选择设计稿项目。', 'err');
+        if (!isManagedAssetUpload() && selectedDesignFileId === '__new' && !pendingDesignFileTitle.trim()) return setStatus('请先在设计稿项目抽屉中新建或选择设计稿项目。', 'err');
         if (!activeBoards().length) return setStatus('请先选择要上传的画板。', 'err');
         busy = true;
         exported = null;
@@ -531,11 +553,14 @@
 
       async function uploadExported(nativeJson) {
         const projectId = selectedProjectId;
+        const mode = uploadMode();
         const templateMode = isTemplateUpload();
+        const designSystemMode = isDesignSystemUpload();
+        const managedAssetMode = isManagedAssetUpload();
         removeUnuploadedAssetReferences(nativeJson);
         removeUnsafeBinaryFields(nativeJson);
-        setStatus(templateMode ? '上传模板到 Multica…' : '上传到 Multica…');
-        setProgress(true, templateMode ? '上传模板' : '上传设计稿', 85);
+        setStatus(designSystemMode ? '上传 UI 规范到 Multica…' : templateMode ? '上传模板到 Multica…' : '上传到 Multica…');
+        setProgress(true, designSystemMode ? '上传 UI 规范' : templateMode ? '上传模板' : '上传设计稿', 85);
         const res = await fetch(`${apiBase()}/api/design-plugin/figma/imports`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${pluginToken}` },
@@ -543,16 +568,20 @@
             title: nativeJson.file.title,
             description: '从 Figma 插件导入',
             project_id: projectId,
-            folder_id: templateMode ? undefined : (selectedFolderId || undefined),
-            target_design_file_id: !templateMode && selectedDesignFileId !== '__new' ? selectedDesignFileId : undefined,
-            design_file_title: !templateMode && selectedDesignFileId === '__new' ? pendingDesignFileTitle.trim() : undefined,
+            asset_type: mode,
+            folder_id: managedAssetMode ? undefined : (selectedFolderId || undefined),
+            target_design_file_id: !managedAssetMode && selectedDesignFileId !== '__new' ? selectedDesignFileId : undefined,
+            design_file_title: !managedAssetMode && selectedDesignFileId === '__new' ? pendingDesignFileTitle.trim() : undefined,
             publish_as_template: templateMode,
             template_library_key: 'figma',
             template_name: document.getElementById('templateName').value || nativeJson.file.title,
             template_category: 'figma',
+            design_system_name: document.getElementById('designSystemName').value || nativeJson.file.title,
+            design_system_description: '从 Figma 插件导入的项目 UI 规范',
             source_ref: {
               tool: 'figma',
               plugin: 'multica-gallery-native-importer-dev',
+              asset_type: mode,
               file_name: nativeJson.file.title,
               file_key: nativeJson.source?.fileKey,
               page_id: nativeJson.source?.pageId,
@@ -560,8 +589,8 @@
               source_key: nativeJson.source?.sourceKey || nativeJson.file.sourceKey,
               node_ids: nativeJson.source?.nodeIds || [],
               project_id: projectId,
-              folder_id: templateMode ? undefined : (selectedFolderId || undefined),
-              design_file_id: !templateMode && selectedDesignFileId !== '__new' ? selectedDesignFileId : undefined,
+              folder_id: managedAssetMode ? undefined : (selectedFolderId || undefined),
+              design_file_id: !managedAssetMode && selectedDesignFileId !== '__new' ? selectedDesignFileId : undefined,
             },
             native_json: nativeJson,
           }),
@@ -570,7 +599,7 @@
         if (!res.ok) throw new Error(data.error || data.message || `HTTP ${res.status}`);
         setProgress(true, '上传完成', 100);
         window.setTimeout(() => setProgress(false, '', 0), 450);
-        setStatus(templateMode ? `模板上传成功：${data.template?.name || nativeJson.file.title}` : `上传成功：${data.file?.title || nativeJson.file.title}`, 'ok');
+        setStatus(designSystemMode ? `UI 规范上传成功：${data.design_system?.name || nativeJson.file.title}` : templateMode ? `模板上传成功：${data.template?.name || nativeJson.file.title}` : `上传成功：${data.file?.title || nativeJson.file.title}`, 'ok');
       }
 
       function fileFromUpload(upload) {

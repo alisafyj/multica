@@ -566,3 +566,52 @@ func TestBuildPromptDesignRestoreUsesMulticaContextOnly(t *testing.T) {
 		t.Fatalf("design restore prompt did not embed Multica item contexts\n--- prompt ---\n%s", prompt)
 	}
 }
+
+func TestBuildPromptUIDraftIssueTemplateSelection(t *testing.T) {
+	prompt := BuildPrompt(Task{UIDraftCreateContext: []byte(`{"type":"ui_agent_draft_create","issue":{"id":"issue-1","title":"服务记录列表"},"template_candidates":[{"id":"template-1","template_profile":{"page_type":"saas.filter-table-pagination"}}]}`)}, "opencode")
+	for _, want := range []string{
+		"UI design draft generation agent",
+		"template_candidates",
+		"catalog_template_id",
+		"Choose the best template candidate",
+		"actual design changes",
+		"editable_text_layers",
+		"Do not return empty `slot_values: {}` and empty `patch: []`",
+		"Return your final answer as a single JSON object",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("UI draft prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "There is NO existing issue to read") {
+		t.Fatalf("UI draft prompt should not claim there is no issue when issue context is embedded\n--- prompt ---\n%s", prompt)
+	}
+}
+
+func TestBuildPromptUIDraftParentIssueGuidance(t *testing.T) {
+	prompt := BuildPrompt(Task{UIDraftCreateContext: []byte(`{"type":"ui_agent_draft_create","issue":{"id":"child-1","title":"UI设计"},"parent_issue":{"id":"parent-1","title":"CRM 客户管理开发","description":"客户管理 PRD"}}`)}, "opencode")
+	for _, want := range []string{
+		"parent_issue",
+		"primary PRD",
+		"current `issue` is the UI design task scope",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("UI draft parent issue prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+}
+
+func TestBuildPromptUIDraftDesignSystemGuidance(t *testing.T) {
+	prompt := BuildPrompt(Task{UIDraftCreateContext: []byte(`{"type":"ui_agent_draft_create","design_system":{"name":"CRM UI 规范","profile":{"version":"1.1","components":{"button":{"variants":[{"name":"主按钮","states":["默认"]}]}}}}}`)}, "opencode")
+	for _, want := range []string{
+		"design_system.profile",
+		"project visual contract",
+		"components.{kind}.variants[].states",
+		"组件 - 变体 - 状态",
+		"Templates are structure references only",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("UI draft design system prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+}
