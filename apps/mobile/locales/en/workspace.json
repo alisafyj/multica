@@ -33,11 +33,14 @@
     "no_results": "No results for “{{query}}”",
     "empty_prompt": "Type to search issues and projects."
   },
-  "more_dropdown": {
+  "more_page": {
+    "section_title": "Workspace",
     "nav": {
       "pinned": "Pinned",
       "issues": "Issues",
-      "projects": "Projects"
+      "projects": "Projects",
+      "skills": "Skills",
+      "runtimes": "Runtimes"
     },
     "account_settings_a11y": "Account settings",
     "switch_workspace_a11y": "Switch workspace",

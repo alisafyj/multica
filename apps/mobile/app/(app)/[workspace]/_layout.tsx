@@ -17,7 +17,6 @@ import { useWorkspacePresencePrefetch } from "@/lib/use-workspace-presence-prefe
 import { ModalCloseButton } from "@/components/ui/modal-close-button";
 import { useNewIssueDraftResetOnWorkspaceChange } from "@/data/stores/new-issue-draft-store";
 import { useNewProjectDraftResetOnWorkspaceChange } from "@/data/stores/new-project-draft-store";
-import { useChatSessionPickerResetOnWorkspaceChange } from "@/data/stores/chat-session-picker-store";
 
 /**
  * Shared Stack.Screen options for every iOS formSheet-presented sheet route.
@@ -111,6 +110,8 @@ export default function WorkspaceLayout() {
   const { t: tIssues } = useTranslation("issues");
   const { t: tProjects } = useTranslation("projects");
   const { t: tSettings } = useTranslation("settings");
+  const { t: tRuntimes } = useTranslation("runtimes");
+  const { t: tSkills } = useTranslation("skills");
   const { t: tWorkspace } = useTranslation("workspace");
   const { t: tChat } = useTranslation("chat");
   const { t: tCommon } = useTranslation("common");
@@ -128,7 +129,6 @@ export default function WorkspaceLayout() {
   // session id, etc.) is invalid in workspace B and must not leak.
   useNewIssueDraftResetOnWorkspaceChange(matched?.id ?? null);
   useNewProjectDraftResetOnWorkspaceChange(matched?.id ?? null);
-  useChatSessionPickerResetOnWorkspaceChange(matched?.id ?? null);
 
   // Wait for the workspaces list before deciding membership — otherwise a
   // valid deep link would briefly redirect away on cold start.
@@ -295,8 +295,22 @@ export default function WorkspaceLayout() {
         {/* Shared filter sheet for My Issues and the workspace Issues page —
             chooses the right view-store via `?scope=my|all` URL param. */}
         <Stack.Screen name="issues-filter" options={SHEET_OPTIONS} />
-        {/* Chat session-switch sheet. */}
-        <Stack.Screen name="chat-sessions" options={SHEET_OPTIONS} />
+        <Stack.Screen
+          name="chat/[id]"
+          options={{
+            title: tChat("title_button.default_agent_name"),
+            headerBackTitle: tCommon("nav.back"),
+            headerTitleAlign: "left",
+          }}
+        />
+        <Stack.Screen
+          name="chat/new"
+          options={{
+            title: tChat("title_button.default_agent_name"),
+            headerBackTitle: tCommon("nav.back"),
+            headerTitleAlign: "left",
+          }}
+        />
         {/* Workspace switcher — reached from the More popover's collapsed
             WorkspaceCard. Two-step (pick → iOS Alert confirm → switch). */}
         <Stack.Screen name="switch-workspace" options={SHEET_OPTIONS} />
@@ -325,6 +339,41 @@ export default function WorkspaceLayout() {
           name="more/pins"
           options={{
             title: tWorkspace("pins.header_title"),
+            headerBackTitle: tCommon("nav.back"),
+          }}
+        />
+        <Stack.Screen
+          name="more/skills"
+          options={{
+            title: tSkills("list.header_title"),
+            headerBackTitle: tCommon("nav.back"),
+          }}
+        />
+        <Stack.Screen
+          name="more/skills/[id]"
+          options={{
+            title: tSkills("detail.header_default_title"),
+            headerBackTitle: tCommon("nav.back"),
+          }}
+        />
+        <Stack.Screen
+          name="more/skills/[id]/file/[...path]"
+          options={{
+            title: tSkills("file.header_default_title"),
+            headerBackTitle: tSkills("detail.header_default_title"),
+          }}
+        />
+        <Stack.Screen
+          name="more/runtimes"
+          options={{
+            title: tRuntimes("list.header_title"),
+            headerBackTitle: tCommon("nav.back"),
+          }}
+        />
+        <Stack.Screen
+          name="more/runtimes/[id]"
+          options={{
+            title: tRuntimes("detail.header_default_title"),
             headerBackTitle: tCommon("nav.back"),
           }}
         />
