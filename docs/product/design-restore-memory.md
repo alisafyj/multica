@@ -90,6 +90,19 @@ Main files in target repo:
 
 ## Completed Product/Engineering Work
 
+### Project Design Contract Roadmap
+
+Status as of 2026-07-14:
+
+- Future work should follow `docs/product/project-design-contract-roadmap.md`.
+- The product direction is to make cloud `design_system_profile` the Multica-managed project design contract, generated from Figma UI specification uploads and consumed by UI Agent / UI Restore Agent.
+- Local `DESIGN.md` is not generated, patched, synced, or overwritten by Multica. If the target repository already has one, Agents may read it as auxiliary context.
+- Design-rule priority is: cloud `design_system_profile` > local `DESIGN.md` > local repository reality.
+- The two product outcomes are:
+  - UI Agent creates smarter, more project-faithful design drafts.
+  - UI Restore Agent restores designs into code with higher visual and structural fidelity.
+- First slice should use the existing local Agent/daemon task model, with `Local UI Restore Agent` analyzing UI specifications and producing `profile_json`.
+
 ### UI Specification Profile Compiler
 
 Status as of 2026-07-09:

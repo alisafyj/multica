@@ -731,69 +731,37 @@ func (h *Handler) thumbnailForDesignRevision(ctx context.Context, workspaceID pg
 	return thumbnailFromNativeJSON(revision.NativeJson)
 }
 
-func analyzeDesignSystemProfile(nativeJSON json.RawMessage, sourceFileID string, sourceRevisionID string) (json.RawMessage, json.RawMessage, string) {
-	var doc map[string]any
-	if err := json.Unmarshal(nativeJSON, &doc); err != nil {
-		return json.RawMessage(`{}`), json.RawMessage(`[{"message":"native_json is invalid"}]`), "failed"
-	}
-	components := extractDesignSystemComponents(doc, 120)
-	profile := map[string]any{
-		"version": "1.1",
-		"source": map[string]any{
-			"file_id":     sourceFileID,
-			"revision_id": sourceRevisionID,
-		},
-		"naming_convention": map[string]any{
-			"pattern": "组件 - 变体 - 状态",
-			"examples": []string{
-				"按钮 - 主按钮 - 默认",
-				"按钮 - 主按钮 - 禁用",
-				"输入框 - 错误",
-				"表格 - 标准表格",
-			},
-		},
-		"tokens": map[string]any{
-			"colors":     extractDesignSystemColors(doc, 40),
-			"typography": extractDesignSystemTypography(doc, 40),
-			"spacing":    []any{},
-			"radius":     []any{},
-		},
-		"components": components,
-		"patterns":   inferDesignSystemPatterns(components),
-		"guidelines": []string{
-			"Treat this compiled UI specification as the project visual contract.",
-			"Use component variants and states before falling back to raw layer names.",
-			"Prefer project design system examples over template residue when generating UI drafts.",
-		},
-		"anti_rules": []string{
-			"Do not treat template business copy as UI specification.",
-			"Do not preserve unrelated template sample data when the issue requirement changes the business domain.",
-		},
-		"confidence": map[string]any{"overall": designSystemProfileConfidence(components)},
-	}
-	raw, err := json.Marshal(profile)
-	if err != nil {
-		return json.RawMessage(`{}`), json.RawMessage(`[{"message":"failed to marshal profile"}]`), "failed"
-	}
-	return raw, json.RawMessage(`[]`), "analyzed"
-}
-
 func (h *Handler) createDesignSystemProfileFromRevision(ctx context.Context, params createDesignSystemProfileFromRevisionParams) (db.DesignSystemProfile, error) {
 	name := strings.TrimSpace(params.Name)
 	if name == "" {
 		name = params.File.Title
 	}
 	description := strings.TrimSpace(params.Description)
-	profileJSON, analysisErrors, status := analyzeDesignSystemProfile(params.Revision.NativeJson, uuidToString(params.File.ID), uuidToString(params.Revision.ID))
+	agent, ok, err := h.selectDesignSystemProfileAnalyzerAgent(ctx, params.WorkspaceID)
+	if err != nil {
+		return db.DesignSystemProfile{}, err
+	}
+	if !ok {
+		return db.DesignSystemProfile{}, fmt.Errorf("no available Local UI Restore Agent for design system profile analysis")
+	}
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		return db.DesignSystemProfile{}, err
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
-	isDefault := params.IsDefault && status == "analyzed"
-	if isDefault {
-		if err := qtx.ClearDefaultDesignSystemProfilesForProject(ctx, db.ClearDefaultDesignSystemProfilesForProjectParams{WorkspaceID: params.WorkspaceID, ProjectID: params.ProjectID}); err != nil {
+	defaultProfileID := ""
+	if params.IsDefault && params.ProjectID.Valid {
+		if _, err := qtx.LockProjectInWorkspaceForUpdate(ctx, db.LockProjectInWorkspaceForUpdateParams{ID: params.ProjectID, WorkspaceID: params.WorkspaceID}); err != nil {
+			return db.DesignSystemProfile{}, err
+		}
+		currentDefault, err := qtx.GetDefaultDesignSystemProfileForProject(ctx, db.GetDefaultDesignSystemProfileForProjectParams{
+			WorkspaceID: params.WorkspaceID,
+			ProjectID:   params.ProjectID,
+		})
+		if err == nil {
+			defaultProfileID = uuidToString(currentDefault.ID)
+		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return db.DesignSystemProfile{}, err
 		}
 	}
@@ -804,177 +772,209 @@ func (h *Handler) createDesignSystemProfileFromRevision(ctx context.Context, par
 		SourceRevisionID: params.Revision.ID,
 		Name:             name,
 		Description:      pgtype.Text{String: description, Valid: description != ""},
-		Status:           status,
-		IsDefault:        isDefault,
-		ProfileJson:      profileJSON,
-		AnalysisErrors:   analysisErrors,
+		Status:           "analyzing",
+		IsDefault:        false,
+		ProfileJson:      json.RawMessage(`{}`),
+		AnalysisErrors:   json.RawMessage(`[]`),
 		CreatedBy:        params.CreatedBy,
 	})
+	if err != nil {
+		return db.DesignSystemProfile{}, err
+	}
+	task, err := h.enqueueDesignSystemProfileAnalyzeTask(ctx, qtx, agent, created, params, defaultProfileID)
 	if err != nil {
 		return db.DesignSystemProfile{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return db.DesignSystemProfile{}, err
 	}
+	if h.TaskService != nil {
+		h.TaskService.NotifyTaskEnqueued(ctx, task)
+	}
 	return created, nil
 }
 
-func extractDesignSystemColors(doc map[string]any, limit int) []map[string]any {
-	seen := make(map[string]struct{})
-	colors := make([]map[string]any, 0)
-	walkDesignSystemLayers(doc, func(layer map[string]any) bool {
-		layerID := firstString(layer, "id")
-		layerName := firstString(layer, "name")
-		for _, key := range []string{"color", "fill", "fills", "stroke", "strokes", "backgroundColor", "borderColor"} {
-			for _, value := range designSystemColorValues(layer[key]) {
-				if _, ok := seen[value]; ok {
-					continue
-				}
-				seen[value] = struct{}{}
-				colors = append(colors, map[string]any{
-					"value":             value,
-					"source_layer_id":   layerID,
-					"source_layer_name": layerName,
-				})
-				if len(colors) >= limit {
-					return false
-				}
-			}
-		}
-		return true
-	})
-	return colors
+func (h *Handler) enqueueDesignSystemProfileAnalyzeTask(ctx context.Context, queries *db.Queries, agent db.Agent, profile db.DesignSystemProfile, params createDesignSystemProfileFromRevisionParams, defaultProfileID string) (db.AgentTaskQueue, error) {
+	payload := service.DesignSystemProfileAnalyzeContext{
+		Type:                      service.DesignSystemProfileAnalyzeContextType,
+		Prompt:                    "Analyze the uploaded Figma UI specification and return an Agent-readable design_system_profile JSON.",
+		RequesterID:               uuidToString(params.CreatedBy),
+		WorkspaceID:               uuidToString(params.WorkspaceID),
+		AgentID:                   uuidToString(agent.ID),
+		DesignSystemProfileID:     uuidToString(profile.ID),
+		SourceFileID:              uuidToString(params.File.ID),
+		SourceRevisionID:          uuidToString(params.Revision.ID),
+		ProjectID:                 uuidToString(params.ProjectID),
+		ProfileName:               profile.Name,
+		MakeDefault:               params.IsDefault,
+		DefaultProfileIDAtEnqueue: defaultProfileID,
+		CandidateLayers:           designSystemProfileCandidateLayers(params.Revision.NativeJson, 240),
+		Tokens:                    designSystemProfileTokenCandidates(params.Revision.NativeJson),
+		TextSamples:               designSystemProfileTextSamples(params.Revision.NativeJson, 120),
+		OutputPolicy:              json.RawMessage(`{"strict_json":true,"required_fields":["profile_json","analysis_errors","summary"],"profile_version":"agent-1.0"}`),
+	}
+	contextJSON, err := json.Marshal(payload)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("marshal design system profile analysis context: %w", err)
+	}
+	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("create design system profile analysis task: %w", err)
+	}
+	return task, nil
 }
 
-func extractDesignSystemTypography(doc map[string]any, limit int) []map[string]any {
-	typography := make([]map[string]any, 0)
-	walkDesignSystemLayers(doc, func(layer map[string]any) bool {
-		layerType := strings.ToLower(firstString(layer, "type"))
-		textSample := designSystemLayerText(layer)
-		if !strings.Contains(layerType, "text") && textSample == "" {
-			return true
+func (h *Handler) selectDesignSystemProfileAnalyzerAgent(ctx context.Context, workspaceID pgtype.UUID) (db.Agent, bool, error) {
+	agents, err := h.Queries.ListAgents(ctx, workspaceID)
+	if err != nil {
+		return db.Agent{}, false, fmt.Errorf("list agents: %w", err)
+	}
+	for i := range agents {
+		agent := agents[i]
+		if !agent.RuntimeID.Valid || agent.RuntimeMode != "local" {
+			continue
 		}
-		item := map[string]any{
-			"source_layer_id":   firstString(layer, "id"),
-			"source_layer_name": firstString(layer, "name"),
-		}
-		if textSample != "" {
-			item["sample"] = textSample
-		}
-		if fontFamily := firstString(layer, "fontFamily"); fontFamily != "" {
-			item["font_family"] = fontFamily
-		}
-		if fontWeight := firstString(layer, "fontWeight"); fontWeight != "" {
-			item["font_weight"] = fontWeight
-		}
-		if fontSize := numberField(layer, "fontSize"); fontSize > 0 {
-			item["font_size"] = fontSize
-		}
-		if style, ok := layer["style"].(map[string]any); ok {
-			if fontFamily := firstString(style, "fontFamily"); fontFamily != "" {
-				item["font_family"] = fontFamily
-			}
-			if fontWeight := firstString(style, "fontWeight"); fontWeight != "" {
-				item["font_weight"] = fontWeight
-			}
-			if fontSize := numberField(style, "fontSize"); fontSize > 0 {
-				item["font_size"] = fontSize
-			}
-		}
-		typography = append(typography, item)
-		return len(typography) < limit
-	})
-	return typography
-}
-
-type designSystemComponentProfile struct {
-	Kind     string                         `json:"kind"`
-	Label    string                         `json:"label"`
-	Aliases  []string                       `json:"aliases"`
-	Variants []designSystemComponentVariant `json:"variants"`
-	States   []string                       `json:"states"`
-	Examples []designSystemComponentExample `json:"examples"`
-	Rules    []string                       `json:"rules"`
-}
-
-type designSystemComponentVariant struct {
-	Name     string                         `json:"name"`
-	States   []string                       `json:"states"`
-	Examples []designSystemComponentExample `json:"examples"`
-}
-
-type designSystemComponentExample struct {
-	SourceLayerID   string         `json:"source_layer_id"`
-	SourceLayerName string         `json:"source_layer_name"`
-	FrameID         string         `json:"frame_id,omitempty"`
-	SourceNodeID    string         `json:"source_node_id,omitempty"`
-	Type            string         `json:"type,omitempty"`
-	Variant         string         `json:"variant,omitempty"`
-	State           string         `json:"state,omitempty"`
-	TextSamples     []string       `json:"text_samples,omitempty"`
-	Colors          []string       `json:"colors,omitempty"`
-	Size            map[string]any `json:"size,omitempty"`
-	Typography      map[string]any `json:"typography,omitempty"`
-}
-
-type designSystemParsedComponentName struct {
-	Kind    string
-	Variant string
-	State   string
-}
-
-type designSystemComponentDefinition struct {
-	Kind    string
-	Label   string
-	Aliases []string
-	Markers []string
-}
-
-func extractDesignSystemComponents(doc map[string]any, limit int) map[string]designSystemComponentProfile {
-	defs := designSystemComponentDefinitions()
-	components := make(map[string]designSystemComponentProfile, len(defs))
-	for _, def := range defs {
-		components[def.Kind] = designSystemComponentProfile{
-			Kind:     def.Kind,
-			Label:    def.Label,
-			Aliases:  def.Aliases,
-			Variants: []designSystemComponentVariant{},
-			States:   []string{},
-			Examples: []designSystemComponentExample{},
-			Rules:    designSystemComponentRules(def.Kind),
+		if strings.TrimSpace(agent.Name) == "Local UI Restore Agent" {
+			return agent, true, nil
 		}
 	}
-	total := 0
+	return db.Agent{}, false, nil
+}
+
+func designSystemProfileCandidateLayers(nativeJSON json.RawMessage, limit int) json.RawMessage {
+	var doc map[string]any
+	if err := json.Unmarshal(nativeJSON, &doc); err != nil {
+		return json.RawMessage(`[]`)
+	}
+	items := make([]map[string]any, 0)
 	walkDesignSystemLayers(doc, func(layer map[string]any) bool {
-		name := firstString(layer, "name")
-		if name == "" {
-			return true
-		}
 		if visible, ok := layer["visible"].(bool); ok && !visible {
 			return true
 		}
-		parsed, ok := parseDesignSystemComponentName(name)
-		if !ok {
+		name := firstString(layer, "name")
+		if strings.TrimSpace(name) == "" {
 			return true
 		}
-		profile := components[parsed.Kind]
-		example := designSystemComponentExampleFromLayer(layer, parsed)
-		profile.Examples = append(profile.Examples, example)
-		profile.States = appendUniqueString(profile.States, parsed.State)
-		profile.Variants = appendDesignSystemVariantExample(profile.Variants, parsed.Variant, parsed.State, example)
-		components[parsed.Kind] = profile
-		total++
-		if total >= limit {
-			return false
+		item := map[string]any{
+			"id":   firstString(layer, "id"),
+			"name": name,
 		}
-		return true
+		for _, key := range []string{"type", "frameId", "frame_id", "parentId", "parent_id"} {
+			if value := firstString(layer, key); value != "" {
+				item[key] = value
+			}
+		}
+		for _, key := range []string{"x", "y", "width", "height"} {
+			if value := numberField(layer, key); value != 0 {
+				item[key] = value
+			}
+		}
+		if text := designSystemLayerText(layer); text != "" {
+			item["text"] = text
+		}
+		if colors := designSystemLayerColors(layer); len(colors) > 0 {
+			item["colors"] = colors
+		}
+		if typography := designSystemLayerTypography(layer); len(typography) > 0 {
+			item["typography"] = typography
+		}
+		if assetRefs := designSystemLayerAssetRefs(layer); len(assetRefs) > 0 {
+			item["asset_refs"] = assetRefs
+		}
+		items = append(items, item)
+		return len(items) < limit
 	})
-	for kind, profile := range components {
-		sort.Slice(profile.Variants, func(i, j int) bool { return profile.Variants[i].Name < profile.Variants[j].Name })
-		sort.Strings(profile.States)
-		components[kind] = profile
+	raw, err := json.Marshal(items)
+	if err != nil {
+		return json.RawMessage(`[]`)
 	}
-	return components
+	return raw
+}
+
+func designSystemProfileTokenCandidates(nativeJSON json.RawMessage) json.RawMessage {
+	var doc map[string]any
+	if err := json.Unmarshal(nativeJSON, &doc); err != nil {
+		return json.RawMessage(`{"colors":[],"typography":[]}`)
+	}
+	colors := make([]map[string]any, 0)
+	seenColors := make(map[string]struct{})
+	typography := make([]map[string]any, 0)
+	seenTypography := make(map[string]struct{})
+	walkDesignSystemLayers(doc, func(layer map[string]any) bool {
+		if visible, ok := layer["visible"].(bool); ok && !visible {
+			return true
+		}
+		name := firstString(layer, "name")
+		for _, color := range designSystemLayerColors(layer) {
+			if _, ok := seenColors[color]; ok {
+				continue
+			}
+			seenColors[color] = struct{}{}
+			colors = append(colors, map[string]any{"value": color, "source_layer_name": name})
+		}
+		if len(typography) < 80 {
+			if item := designSystemLayerTypography(layer); len(item) > 0 {
+				keyBytes, _ := json.Marshal(item)
+				key := string(keyBytes)
+				if _, ok := seenTypography[key]; !ok {
+					seenTypography[key] = struct{}{}
+					item["source_layer_name"] = name
+					typography = append(typography, item)
+				}
+			}
+		}
+		return len(colors) < 80 || len(typography) < 80
+	})
+	tokens := map[string]any{
+		"colors":     colors,
+		"typography": typography,
+		"spacing":    []any{},
+		"radius":     []any{},
+	}
+	raw, err := json.Marshal(tokens)
+	if err != nil {
+		return json.RawMessage(`{"colors":[],"typography":[]}`)
+	}
+	return raw
+}
+
+func designSystemProfileTextSamples(nativeJSON json.RawMessage, limit int) json.RawMessage {
+	var doc map[string]any
+	if err := json.Unmarshal(nativeJSON, &doc); err != nil {
+		return json.RawMessage(`[]`)
+	}
+	samples := make([]map[string]string, 0)
+	walkDesignSystemLayers(doc, func(layer map[string]any) bool {
+		if visible, ok := layer["visible"].(bool); ok && !visible {
+			return true
+		}
+		name := firstString(layer, "name")
+		text := designSystemLayerText(layer)
+		if name == "" || text == "" {
+			return true
+		}
+		samples = append(samples, map[string]string{
+			"id":   firstString(layer, "id"),
+			"name": name,
+			"text": text,
+		})
+		return len(samples) < limit
+	})
+	raw, err := json.Marshal(samples)
+	if err != nil {
+		return json.RawMessage(`[]`)
+	}
+	return raw
+}
+
+func designSystemLayerAssetRefs(layer map[string]any) []string {
+	refs := make([]string, 0)
+	for _, key := range []string{"assetId", "asset_id", "imageRef", "image_ref", "imageHash", "image_hash", "src", "url"} {
+		if value := firstString(layer, key); value != "" {
+			refs = append(refs, value)
+		}
+	}
+	return uniqueDesignSystemStrings(refs)
 }
 
 func walkDesignSystemLayers(doc map[string]any, visit func(map[string]any) bool) {
@@ -1029,173 +1029,12 @@ func designSystemLayerText(layer map[string]any) string {
 	return firstString(textNode, "characters", "text")
 }
 
-func designSystemComponentKinds(name string) []string {
-	normalized := strings.ToLower(name)
-	kinds := make([]string, 0)
-	for _, def := range designSystemComponentDefinitions() {
-		for _, marker := range def.Markers {
-			if strings.Contains(normalized, strings.ToLower(marker)) {
-				kinds = append(kinds, def.Kind)
-				break
-			}
-		}
-	}
-	sort.Strings(kinds)
-	return kinds
-}
-
-func designSystemComponentDefinitions() []designSystemComponentDefinition {
-	return []designSystemComponentDefinition{
-		{Kind: "button", Label: "按钮", Aliases: []string{"button", "btn"}, Markers: []string{"按钮", "button", "btn", "查询", "提交"}},
-		{Kind: "input", Label: "输入框", Aliases: []string{"input", "field"}, Markers: []string{"输入框", "输入", "input", "field", "请输入"}},
-		{Kind: "select", Label: "选择器", Aliases: []string{"select", "picker"}, Markers: []string{"选择器", "选择", "select", "picker", "请选择", "下拉"}},
-		{Kind: "tag", Label: "标签", Aliases: []string{"tag", "badge"}, Markers: []string{"标签", "tag", "badge", "状态"}},
-		{Kind: "table", Label: "表格", Aliases: []string{"table", "data grid"}, Markers: []string{"表格", "table", "data grid", "列表"}},
-		{Kind: "modal", Label: "弹窗", Aliases: []string{"modal", "dialog", "popup"}, Markers: []string{"弹窗", "弹层", "modal", "dialog", "popup"}},
-		{Kind: "pagination", Label: "分页", Aliases: []string{"pagination", "pager"}, Markers: []string{"分页", "pagination", "pager"}},
-		{Kind: "card", Label: "卡片", Aliases: []string{"card", "panel"}, Markers: []string{"卡片", "面板", "card", "panel"}},
-	}
-}
-
-func parseDesignSystemComponentName(name string) (designSystemParsedComponentName, bool) {
-	if shouldIgnoreDesignSystemLayerName(name) {
-		return designSystemParsedComponentName{}, false
-	}
-	parts := splitDesignSystemName(name)
-	if len(parts) == 0 {
-		return designSystemParsedComponentName{}, false
-	}
-	kind, ok := designSystemComponentKindFromPrefix(parts[0])
-	if !ok {
-		return designSystemParsedComponentName{}, false
-	}
-	variant := "标准"
-	if len(parts) >= 2 && parts[1] != "" {
-		variant = parts[1]
-	}
-	state := "默认"
-	if len(parts) >= 3 {
-		joined := strings.TrimSpace(strings.Join(parts[2:], " - "))
-		if joined != "" {
-			state = joined
-		}
-	}
-	return designSystemParsedComponentName{Kind: kind, Variant: variant, State: state}, true
-}
-
-func shouldIgnoreDesignSystemLayerName(name string) bool {
-	trimmed := strings.TrimSpace(name)
-	if trimmed == "" {
-		return true
-	}
-	lower := strings.ToLower(trimmed)
-	for _, prefix := range []string{"icon/", "icon-", "dataentry/", "dataentry-", "data entry/", "data entry-"} {
-		if strings.HasPrefix(lower, prefix) {
-			return true
-		}
-	}
-	for _, marker := range []string{"备份", "废稿", "废弃", "垃圾", "勿用", "不要用", "copy", "draft", "temp"} {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-	for _, extension := range []string{"pdf", "jpg", "jpeg", "png", "gif", "webp", "svg"} {
-		if strings.HasPrefix(trimmed, "附件按钮") && strings.Contains(lower, extension) {
-			return true
-		}
-	}
-	return false
-}
-
-func designSystemComponentKindFromPrefix(prefix string) (string, bool) {
-	normalized := strings.TrimSpace(prefix)
-	if normalized == "" {
-		return "", false
-	}
-	for _, def := range designSystemComponentDefinitions() {
-		if strings.EqualFold(normalized, def.Label) {
-			return def.Kind, true
-		}
-		for _, alias := range def.Aliases {
-			if strings.EqualFold(normalized, alias) {
-				return def.Kind, true
-			}
-		}
-	}
-	switch strings.ToLower(normalized) {
-	case "日期选择器", "时间选择器", "级联选择器", "下拉":
-		return "select", true
-	case "弹层", "对话框":
-		return "modal", true
-	case "面板":
-		return "card", true
-	}
-	return "", false
-}
-
-func splitDesignSystemName(name string) []string {
-	replacer := strings.NewReplacer("－", "-", "—", "-", "–", "-", "：", "-", ":", "-", "/", "-", "／", "-", "|", "-")
-	normalized := replacer.Replace(name)
-	rawParts := strings.Split(normalized, "-")
-	parts := make([]string, 0, len(rawParts))
-	for _, part := range rawParts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			parts = append(parts, part)
-		}
-	}
-	return parts
-}
-
-func designSystemComponentExampleFromLayer(layer map[string]any, parsed designSystemParsedComponentName) designSystemComponentExample {
-	example := designSystemComponentExample{
-		SourceLayerID:   firstString(layer, "id"),
-		SourceLayerName: firstString(layer, "name"),
-		FrameID:         firstString(layer, "frameId", "frame_id"),
-		SourceNodeID:    firstString(layer, "sourceNodeId", "source_node_id"),
-		Type:            firstString(layer, "type"),
-		Variant:         parsed.Variant,
-		State:           parsed.State,
-		TextSamples:     uniqueDesignSystemStrings([]string{designSystemLayerText(layer)}),
-		Colors:          designSystemLayerColors(layer),
-		Size:            designSystemLayerSize(layer),
-		Typography:      designSystemLayerTypography(layer),
-	}
-	return example
-}
-
-func appendDesignSystemVariantExample(variants []designSystemComponentVariant, name string, state string, example designSystemComponentExample) []designSystemComponentVariant {
-	for i := range variants {
-		if variants[i].Name == name {
-			variants[i].States = appendUniqueString(variants[i].States, state)
-			variants[i].Examples = append(variants[i].Examples, example)
-			sort.Strings(variants[i].States)
-			return variants
-		}
-	}
-	return append(variants, designSystemComponentVariant{Name: name, States: []string{state}, Examples: []designSystemComponentExample{example}})
-}
-
 func designSystemLayerColors(layer map[string]any) []string {
 	values := make([]string, 0)
 	for _, key := range []string{"color", "fill", "fills", "stroke", "strokes", "backgroundColor", "borderColor"} {
 		values = append(values, designSystemColorValues(layer[key])...)
 	}
 	return uniqueDesignSystemStrings(values)
-}
-
-func designSystemLayerSize(layer map[string]any) map[string]any {
-	size := make(map[string]any)
-	if width := numberField(layer, "width"); width > 0 {
-		size["width"] = width
-	}
-	if height := numberField(layer, "height"); height > 0 {
-		size["height"] = height
-	}
-	if len(size) == 0 {
-		return nil
-	}
-	return size
 }
 
 func designSystemLayerTypography(layer map[string]any) map[string]any {
@@ -1226,59 +1065,6 @@ func designSystemLayerTypography(layer map[string]any) map[string]any {
 		return nil
 	}
 	return typography
-}
-
-func designSystemComponentRules(kind string) []string {
-	switch kind {
-	case "button":
-		return []string{"Use button variants by intent; do not reuse a primary button style for destructive actions."}
-	case "input":
-		return []string{"Use error state examples when validation or required-field feedback is present."}
-	case "select":
-		return []string{"Use select examples for choose-one or choose-many interactions instead of plain text placeholders."}
-	case "tag":
-		return []string{"Use tag variants to represent semantic status, not arbitrary decoration."}
-	case "table":
-		return []string{"Use table examples for dense B-end data lists; replace all template columns and sample rows with requirement data."}
-	case "modal":
-		return []string{"Use modal examples only for explicit confirmation, result, or blocking interactions."}
-	case "pagination":
-		return []string{"Use pagination examples when the page presents long tabular or list data."}
-	default:
-		return []string{"Use examples from this component only when the issue requirement needs the same UI role."}
-	}
-}
-
-func inferDesignSystemPatterns(components map[string]designSystemComponentProfile) map[string]any {
-	patterns := make(map[string]any)
-	if componentHasExamples(components, "table") && componentHasExamples(components, "pagination") && (componentHasExamples(components, "input") || componentHasExamples(components, "select")) {
-		patterns["filter_table_pagination"] = map[string]any{
-			"components": []string{"input", "select", "button", "table", "pagination"},
-			"rules": []string{
-				"Use this pattern for B-end list pages with filters, a data table, and pagination.",
-				"Requirement fields must replace template filter labels, table columns, and sample rows completely.",
-			},
-		}
-	}
-	return patterns
-}
-
-func componentHasExamples(components map[string]designSystemComponentProfile, kind string) bool {
-	component, ok := components[kind]
-	return ok && len(component.Examples) > 0
-}
-
-func designSystemProfileConfidence(components map[string]designSystemComponentProfile) string {
-	count := 0
-	for _, component := range components {
-		if len(component.Examples) > 0 {
-			count++
-		}
-	}
-	if count >= 5 {
-		return "medium"
-	}
-	return "low"
 }
 
 func uniqueDesignSystemStrings(values []string) []string {
@@ -2819,8 +2605,20 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 		if !ok {
 			return
 		}
-		if _, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: issueUUID, WorkspaceID: wsUUID}); err != nil {
+	}
+	issueProjectID := pgtype.UUID{Valid: false}
+	if issueUUID.Valid {
+		issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: issueUUID, WorkspaceID: wsUUID})
+		if err != nil {
 			writeError(w, http.StatusNotFound, "issue not found")
+			return
+		}
+		issueProjectID = issue.ProjectID
+	}
+	projectID := designRestoreProjectID(task.Input, issueProjectID)
+	if projectID.Valid {
+		if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: projectID, WorkspaceID: wsUUID}); err != nil {
+			writeError(w, http.StatusBadRequest, "restore project not found in workspace")
 			return
 		}
 	}
@@ -2861,11 +2659,13 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 	if approvedPlan != nil {
 		restorePlanJSON = json.RawMessage(approvedPlan.Plan)
 	}
+	designSystem := h.designRestoreDesignSystemContext(r.Context(), task, projectID)
 	contextPayload := service.DesignRestoreTaskContext{
 		Type:          service.DesignRestoreTaskContextType,
 		Prompt:        prompt,
 		RequesterID:   uuidToString(userUUID),
 		WorkspaceID:   uuidToString(wsUUID),
+		ProjectID:     uuidToString(projectID),
 		AgentID:       uuidToString(agent.ID),
 		IssueID:       uuidToString(issueUUID),
 		RestoreTaskID: uuidToString(task.ID),
@@ -2873,6 +2673,7 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 		RevisionID:    uuidToString(task.RevisionID),
 		Input:         json.RawMessage(task.Input),
 		RestorePlan:   restorePlanJSON,
+		DesignSystem:  designSystem,
 		ItemContexts:  itemContexts,
 		RestorePolicy: restorePolicy,
 		OutputPolicy:  outputPolicy,
@@ -2915,6 +2716,51 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 	agentLabel := designRestoreAgentLabelFromInput(task.Input)
 	h.createDesignRestoreIssueSystemComment(r.Context(), updated.IssueID, fmt.Sprintf("%s 已开始执行设计稿还原：Agent Task `%s`。", agentLabel, uuidToString(agentTask.ID)))
 	writeJSON(w, http.StatusCreated, DispatchDesignRestoreTaskResponse{Task: h.designRestoreTaskToResponseWithExecution(r.Context(), updated), AgentTaskID: uuidToString(agentTask.ID)})
+}
+
+func designRestoreProjectID(inputJSON json.RawMessage, issueProjectID pgtype.UUID) pgtype.UUID {
+	if issueProjectID.Valid {
+		return issueProjectID
+	}
+	var input DesignRestoreTaskInputV1
+	_ = json.Unmarshal(inputJSON, &input)
+	if strings.TrimSpace(input.ProjectID) != "" {
+		if parsed, err := util.ParseUUID(input.ProjectID); err == nil {
+			return parsed
+		}
+	}
+	return pgtype.UUID{Valid: false}
+}
+
+func (h *Handler) designRestoreDesignSystemContext(ctx context.Context, task db.DesignRestoreTask, projectID pgtype.UUID) json.RawMessage {
+	if !projectID.Valid {
+		return nil
+	}
+
+	profile, err := h.Queries.GetDefaultDesignSystemProfileForProject(ctx, db.GetDefaultDesignSystemProfileForProjectParams{
+		WorkspaceID: task.WorkspaceID,
+		ProjectID:   projectID,
+	})
+	if err != nil {
+		if err != pgx.ErrNoRows {
+			slog.Warn("design restore task: failed to load default design system", "workspace_id", uuidToString(task.WorkspaceID), "project_id", uuidToString(projectID), "error", err)
+		}
+		return json.RawMessage(`{"status":"missing"}`)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"id":                 uuidToString(profile.ID),
+		"name":               profile.Name,
+		"status":             profile.Status,
+		"source_file_id":     uuidToString(profile.SourceFileID),
+		"source_revision_id": uuidToString(profile.SourceRevisionID),
+		"profile":            json.RawMessage(profile.ProfileJson),
+	})
+	if err != nil {
+		slog.Warn("design restore task: failed to encode default design system", "design_system_profile_id", uuidToString(profile.ID), "error", err)
+		return json.RawMessage(`{"status":"missing"}`)
+	}
+	return payload
 }
 
 func (h *Handler) buildDesignRestoreTaskItemContexts(ctx context.Context, task db.DesignRestoreTask) (json.RawMessage, error) {
@@ -4815,6 +4661,10 @@ func (h *Handler) SetDesignSystemProfileDefault(w http.ResponseWriter, r *http.R
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	if _, err := qtx.LockProjectInWorkspaceForUpdate(r.Context(), db.LockProjectInWorkspaceForUpdateParams{ID: profile.ProjectID, WorkspaceID: wsUUID}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock design system project")
+		return
+	}
 	if err := qtx.ClearDefaultDesignSystemProfilesForProject(r.Context(), db.ClearDefaultDesignSystemProfilesForProjectParams{WorkspaceID: wsUUID, ProjectID: profile.ProjectID}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to clear default design system")
 		return
@@ -5166,6 +5016,7 @@ func (h *Handler) CreateDesignDraftAgentTask(w http.ResponseWriter, r *http.Requ
 		contextPayload["parent_issue"] = parentIssueContext
 	}
 	if issue.ProjectID.Valid {
+		contextPayload["project_id"] = uuidToString(issue.ProjectID)
 		if profile, err := h.Queries.GetDefaultDesignSystemProfileForProject(r.Context(), db.GetDefaultDesignSystemProfileForProjectParams{WorkspaceID: wsUUID, ProjectID: issue.ProjectID}); err == nil {
 			contextPayload["design_system"] = map[string]any{
 				"id":                 uuidToString(profile.ID),
@@ -5287,6 +5138,107 @@ func (h *Handler) createDesignDraftFromAgentTaskOutput(ctx context.Context, task
 	return &draft, nil
 }
 
+func (h *Handler) updateDesignSystemProfileFromAgentTaskOutput(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue, parsed designSystemProfileAnalyzeOutput) (*db.DesignSystemProfile, error) {
+	var profileCtx service.DesignSystemProfileAnalyzeContext
+	if err := json.Unmarshal(task.Context, &profileCtx); err != nil || profileCtx.Type != service.DesignSystemProfileAnalyzeContextType {
+		return nil, nil
+	}
+	wsUUID, err := util.ParseUUID(profileCtx.WorkspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid design system profile workspace: %w", err)
+	}
+	profileUUID, err := util.ParseUUID(profileCtx.DesignSystemProfileID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid design system profile id: %w", err)
+	}
+	updated, err := queries.UpdateDesignSystemProfileAnalysis(ctx, db.UpdateDesignSystemProfileAnalysisParams{
+		ID:             profileUUID,
+		WorkspaceID:    wsUUID,
+		Status:         "analyzed",
+		ProfileJson:    parsed.ProfileJSON,
+		AnalysisErrors: parsed.AnalysisErrors,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if profileCtx.MakeDefault && strings.TrimSpace(profileCtx.ProjectID) != "" {
+		projectUUID, err := util.ParseUUID(profileCtx.ProjectID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid design system profile project: %w", err)
+		}
+		if _, err := queries.LockProjectInWorkspaceForUpdate(ctx, db.LockProjectInWorkspaceForUpdateParams{ID: projectUUID, WorkspaceID: wsUUID}); err != nil {
+			return nil, err
+		}
+		currentDefaultID := ""
+		currentDefault, err := queries.GetDefaultDesignSystemProfileForProject(ctx, db.GetDefaultDesignSystemProfileForProjectParams{
+			WorkspaceID: wsUUID,
+			ProjectID:   projectUUID,
+		})
+		if err == nil {
+			currentDefaultID = uuidToString(currentDefault.ID)
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if currentDefaultID == profileCtx.DefaultProfileIDAtEnqueue {
+			if err := queries.ClearDefaultDesignSystemProfilesForProject(ctx, db.ClearDefaultDesignSystemProfilesForProjectParams{WorkspaceID: wsUUID, ProjectID: projectUUID}); err != nil {
+				return nil, err
+			}
+			updated, err = queries.SetDesignSystemProfileDefault(ctx, db.SetDesignSystemProfileDefaultParams{ID: profileUUID, WorkspaceID: wsUUID, ProjectID: projectUUID})
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return &updated, nil
+}
+
+type designSystemProfileAnalyzeOutput struct {
+	ProfileJSON    json.RawMessage `json:"profile_json"`
+	AnalysisErrors json.RawMessage `json:"analysis_errors"`
+	Summary        string          `json:"summary"`
+}
+
+func parseDesignSystemProfileAnalyzeOutput(output string) (designSystemProfileAnalyzeOutput, error) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("design system profile output is empty")
+	}
+	var parsed designSystemProfileAnalyzeOutput
+	if err := json.Unmarshal([]byte(output), &parsed); err != nil {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("design system profile output must be a complete JSON object: %w", err)
+	}
+	if len(parsed.ProfileJSON) == 0 || !json.Valid(parsed.ProfileJSON) {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("profile_json must be valid JSON")
+	}
+	var profileObj map[string]any
+	if err := json.Unmarshal(parsed.ProfileJSON, &profileObj); err != nil {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("profile_json must be a JSON object")
+	}
+	if len(profileObj) == 0 {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("profile_json must not be empty")
+	}
+	if version, _ := profileObj["version"].(string); version != "agent-1.0" {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("profile_json.version must be agent-1.0")
+	}
+	if len(parsed.AnalysisErrors) == 0 {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("analysis_errors is required")
+	}
+	if !json.Valid(parsed.AnalysisErrors) {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("analysis_errors must be valid JSON")
+	}
+	if trimmed := strings.TrimSpace(string(parsed.AnalysisErrors)); !strings.HasPrefix(trimmed, "[") {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("analysis_errors must be a JSON array")
+	}
+	var errorsArray []any
+	if err := json.Unmarshal(parsed.AnalysisErrors, &errorsArray); err != nil {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("analysis_errors must be a JSON array")
+	}
+	if strings.TrimSpace(parsed.Summary) == "" {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("summary is required")
+	}
+	return parsed, nil
+}
+
 func parseUIDraftAgentOutput(output string) (uiDraftAgentOutput, error) {
 	output = strings.TrimSpace(output)
 	if output == "" {
@@ -5323,6 +5275,13 @@ func isUIDraftCreateTaskContext(raw []byte) bool {
 		Type string `json:"type"`
 	}
 	return json.Unmarshal(raw, &payload) == nil && payload.Type == service.UIDraftCreateContextType
+}
+
+func isDesignSystemProfileAnalyzeTaskContext(raw []byte) bool {
+	var payload struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(raw, &payload) == nil && payload.Type == service.DesignSystemProfileAnalyzeContextType
 }
 
 func designDraftToResponse(draft db.DesignDraft) DesignDraftResponse {

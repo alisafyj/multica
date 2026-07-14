@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -134,140 +136,6 @@ func nativeJSONWithThumbnailForTest(title string, thumbnailURL string) map[strin
 	doc["assets"].(map[string]any)["asset-thumb-main"] = map[string]any{
 		"id":  "asset-thumb-main",
 		"url": thumbnailURL,
-	}
-	return doc
-}
-
-func designSystemSpecNativeJSONForTest(title string) map[string]any {
-	doc := minimalDesignNativeJSON(title)
-	layers := doc["layers"].(map[string]any)
-	specLayers := []map[string]any{
-		{
-			"id":      "button-primary-default",
-			"frameId": "frame-1",
-			"name":    "按钮 - 主按钮 - 默认",
-			"type":    "component",
-			"visible": true,
-			"width":   88,
-			"height":  32,
-			"fills":   []any{map[string]any{"color": "#1677ff"}},
-			"text":    map[string]any{"characters": "确认", "text": "确认", "fontFamily": "Inter", "fontSize": 14},
-		},
-		{
-			"id":      "button-primary-disabled",
-			"frameId": "frame-1",
-			"name":    "按钮 - 主按钮 - 禁用",
-			"type":    "component",
-			"visible": true,
-			"width":   88,
-			"height":  32,
-			"fills":   []any{map[string]any{"color": "#d0d5dd"}},
-			"text":    map[string]any{"characters": "确认", "text": "确认", "fontFamily": "Inter", "fontSize": 14},
-		},
-		{
-			"id":      "button-danger",
-			"frameId": "frame-1",
-			"name":    "按钮 - 危险按钮",
-			"type":    "component",
-			"visible": true,
-			"width":   88,
-			"height":  32,
-			"fills":   []any{map[string]any{"color": "#f04438"}},
-			"text":    map[string]any{"characters": "删除", "text": "删除", "fontFamily": "Inter", "fontSize": 14},
-		},
-		{
-			"id":      "input-error",
-			"frameId": "frame-1",
-			"name":    "输入框 - 错误",
-			"type":    "component",
-			"visible": true,
-			"width":   240,
-			"height":  36,
-			"strokes": []any{map[string]any{"color": "#f04438"}},
-			"text":    map[string]any{"characters": "请输入手机号", "text": "请输入手机号", "fontFamily": "Inter", "fontSize": 14},
-		},
-		{
-			"id":      "select-single",
-			"frameId": "frame-1",
-			"name":    "选择器 - 单选",
-			"type":    "component",
-			"visible": true,
-			"width":   240,
-			"height":  36,
-			"text":    map[string]any{"characters": "请选择", "text": "请选择", "fontFamily": "Inter", "fontSize": 14},
-		},
-		{
-			"id":      "table-standard",
-			"frameId": "frame-1",
-			"name":    "表格 - 标准表格",
-			"type":    "component",
-			"visible": true,
-			"width":   960,
-			"height":  360,
-			"text":    map[string]any{"characters": "客户姓名 手机号 状态 操作", "text": "客户姓名 手机号 状态 操作"},
-		},
-		{
-			"id":      "pagination-standard",
-			"frameId": "frame-1",
-			"name":    "分页 - 标准分页",
-			"type":    "component",
-			"visible": true,
-			"width":   360,
-			"height":  32,
-			"text":    map[string]any{"characters": "上一页 1 2 下一页", "text": "上一页 1 2 下一页"},
-		},
-		{
-			"id":      "hidden-button",
-			"frameId": "frame-1",
-			"name":    "按钮 - 废稿 - 默认",
-			"type":    "component",
-			"visible": false,
-		},
-		{
-			"id":      "visible-draft-button",
-			"frameId": "frame-1",
-			"name":    "按钮 - 废稿 - 默认",
-			"type":    "component",
-			"visible": true,
-		},
-		{
-			"id":      "attachment-pdf-button",
-			"frameId": "frame-1",
-			"name":    "附件按钮 - pdf",
-			"type":    "component",
-			"visible": true,
-		},
-		{
-			"id":      "attachment-jpg-button",
-			"frameId": "frame-1",
-			"name":    "附件按钮 - jpg",
-			"type":    "component",
-			"visible": true,
-		},
-		{
-			"id":      "internal-checkbox-icon",
-			"frameId": "frame-1",
-			"name":    "Icon/Checkbox-Selected",
-			"type":    "component",
-			"visible": true,
-		},
-		{
-			"id":      "internal-dataentry-checkbox",
-			"frameId": "frame-1",
-			"name":    "DataEntry/Checkbox/Light/Selected-Normal",
-			"type":    "component",
-			"visible": true,
-		},
-		{
-			"id":      "backup-select",
-			"frameId": "frame-1",
-			"name":    "选择器 - 单选备份",
-			"type":    "component",
-			"visible": true,
-		},
-	}
-	for _, layer := range specLayers {
-		layers[layer["id"].(string)] = layer
 	}
 	return doc
 }
@@ -964,6 +832,26 @@ func handlerTestAgentID(t *testing.T) string {
 	return id
 }
 
+func createLocalUIRestoreAgentForDesignTest(t *testing.T) string {
+	t.Helper()
+	var agentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent (
+			workspace_id, name, description, runtime_mode, runtime_config,
+			runtime_id, visibility, max_concurrent_tasks, owner_id,
+			instructions, custom_env, custom_args, mcp_config
+		)
+		VALUES ($1, 'Local UI Restore Agent', '', 'local', '{}'::jsonb, $2, 'private', 1, $3, '', '{}'::jsonb, '[]'::jsonb, '[]'::jsonb)
+		RETURNING id
+	`, testWorkspaceID, handlerTestRuntimeID(t), testUserID).Scan(&agentID); err != nil {
+		t.Fatalf("failed to create Local UI Restore Agent: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+	})
+	return agentID
+}
+
 func attachDesignFileToProjectForTest(t *testing.T, fileID string, projectID string) {
 	t.Helper()
 	if _, err := testPool.Exec(context.Background(), `UPDATE design_file SET project_id = $1 WHERE id = $2`, projectID, fileID); err != nil {
@@ -1021,6 +909,7 @@ func TestCreateDesignSystemProfileFromDesignFile(t *testing.T) {
 	projectID := createProjectForDesignTest(t, "Design System Project")
 	created := createDesignFileForTest(t, "Design System Source")
 	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	createLocalUIRestoreAgentForDesignTest(t)
 
 	req := newRequest("POST", "/api/design-systems?workspace_id="+testWorkspaceID, map[string]any{
 		"project_id":         projectID,
@@ -1042,140 +931,56 @@ func TestCreateDesignSystemProfileFromDesignFile(t *testing.T) {
 	if resp.Name != "CRM 后台设计系统" {
 		t.Fatalf("name = %q", resp.Name)
 	}
-	if !resp.IsDefault {
-		t.Fatal("created design system should be default")
+	if resp.Status != "analyzing" {
+		t.Fatalf("status = %q, want analyzing", resp.Status)
 	}
-	if len(resp.ProfileJSON) == 0 || string(resp.ProfileJSON) == "null" {
-		t.Fatal("profile_json should be populated")
+	if resp.IsDefault {
+		t.Fatal("created design system should wait for agent analysis before becoming default")
+	}
+	var taskID string
+	var taskContext []byte
+	var agentName string
+	if err := testPool.QueryRow(ctx, `
+		SELECT atq.id, atq.context, a.name
+		FROM agent_task_queue atq
+		JOIN agent a ON a.id = atq.agent_id
+		WHERE atq.context->>'type' = $1
+		  AND atq.context->>'design_system_profile_id' = $2
+		ORDER BY atq.created_at DESC
+		LIMIT 1
+	`, service.DesignSystemProfileAnalyzeContextType, resp.ID).Scan(&taskID, &taskContext, &agentName); err != nil {
+		t.Fatalf("expected design system analyze task: %v", err)
+	}
+	if agentName != "Local UI Restore Agent" {
+		t.Fatalf("analyze task agent = %q, want Local UI Restore Agent", agentName)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(taskContext, &payload); err != nil {
+		t.Fatalf("decode analyze task context: %v", err)
+	}
+	if payload["profile_name"] != "CRM 后台设计系统" {
+		t.Fatalf("profile_name = %v", payload["profile_name"])
+	}
+	if _, ok := payload["candidate_layers"].([]any); !ok {
+		t.Fatalf("analyze task context missing candidate_layers: %+v", payload)
+	}
+	if _, ok := payload["deterministic_profile"]; ok {
+		t.Fatalf("analyze task context must not include backend semantic classification: %+v", payload["deterministic_profile"])
+	}
+	if string(resp.ProfileJSON) != "{}" {
+		t.Fatalf("profile_json = %s, want empty while Agent analysis is pending", resp.ProfileJSON)
 	}
 	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM design_system_profile WHERE id = $1`, resp.ID)
 	})
-}
-
-func TestAnalyzeDesignSystemProfileCompilesNamedComponents(t *testing.T) {
-	raw, err := json.Marshal(designSystemSpecNativeJSONForTest("CRM UI Spec"))
-	if err != nil {
-		t.Fatalf("marshal design system native json: %v", err)
-	}
-	profileRaw, analysisErrors, status := analyzeDesignSystemProfile(raw, "file-1", "revision-1")
-	if status != "analyzed" {
-		t.Fatalf("status = %q, want analyzed", status)
-	}
-	if string(analysisErrors) != "[]" {
-		t.Fatalf("analysis_errors = %s, want []", string(analysisErrors))
-	}
-	var profile map[string]any
-	if err := json.Unmarshal(profileRaw, &profile); err != nil {
-		t.Fatalf("decode profile: %v", err)
-	}
-	if profile["version"] != "1.1" {
-		t.Fatalf("profile version = %v, want 1.1", profile["version"])
-	}
-	components, ok := profile["components"].(map[string]any)
-	if !ok {
-		t.Fatalf("components missing: %+v", profile)
-	}
-	button, ok := components["button"].(map[string]any)
-	if !ok {
-		t.Fatalf("button component missing: %+v", components)
-	}
-	if button["label"] != "按钮" {
-		t.Fatalf("button label = %v, want 按钮", button["label"])
-	}
-	if !componentVariantHasStates(button, "主按钮", "默认", "禁用") {
-		t.Fatalf("button primary states missing: %+v", button["variants"])
-	}
-	if !componentVariantHasStates(button, "危险按钮", "默认") {
-		t.Fatalf("button danger default state missing: %+v", button["variants"])
-	}
-	if componentVariantHasStates(button, "废稿", "默认") {
-		t.Fatalf("draft layer should not become a component variant: %+v", button["variants"])
-	}
-	for _, noiseName := range []string{"附件按钮 - pdf", "附件按钮 - jpg", "Icon/Checkbox-Selected", "DataEntry/Checkbox/Light/Selected-Normal"} {
-		if componentHasExampleSourceName(button, noiseName) {
-			t.Fatalf("noise layer %q should not become a button example: %+v", noiseName, button["examples"])
-		}
-	}
-	input, ok := components["input"].(map[string]any)
-	if !ok || !componentVariantHasStates(input, "错误", "默认") {
-		t.Fatalf("input error variant missing: %+v", components["input"])
-	}
-	selectComponent, ok := components["select"].(map[string]any)
-	if !ok || !componentVariantHasStates(selectComponent, "单选", "默认") {
-		t.Fatalf("select single variant missing: %+v", components["select"])
-	}
-	for _, noiseName := range []string{"选择器 - 单选备份", "Icon/Checkbox-Selected", "DataEntry/Checkbox/Light/Selected-Normal"} {
-		if componentHasExampleSourceName(selectComponent, noiseName) {
-			t.Fatalf("noise layer %q should not become a select example: %+v", noiseName, selectComponent["examples"])
-		}
-	}
-	table, ok := components["table"].(map[string]any)
-	if !ok || !componentVariantHasStates(table, "标准表格", "默认") {
-		t.Fatalf("table standard variant missing: %+v", components["table"])
-	}
-	pagination, ok := components["pagination"].(map[string]any)
-	if !ok || !componentVariantHasStates(pagination, "标准分页", "默认") {
-		t.Fatalf("pagination standard variant missing: %+v", components["pagination"])
-	}
-	patterns, ok := profile["patterns"].(map[string]any)
-	if !ok {
-		t.Fatalf("patterns missing: %+v", profile)
-	}
-	if _, ok := patterns["filter_table_pagination"]; !ok {
-		t.Fatalf("filter_table_pagination pattern missing: %+v", patterns)
-	}
-}
-
-func componentVariantHasStates(component map[string]any, variantName string, states ...string) bool {
-	variants, ok := component["variants"].([]any)
-	if !ok {
-		return false
-	}
-	for _, rawVariant := range variants {
-		variant, ok := rawVariant.(map[string]any)
-		if !ok || variant["name"] != variantName {
-			continue
-		}
-		rawStates, ok := variant["states"].([]any)
-		if !ok {
-			return false
-		}
-		for _, want := range states {
-			found := false
-			for _, rawState := range rawStates {
-				if rawState == want {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
-func componentHasExampleSourceName(component map[string]any, sourceName string) bool {
-	examples, ok := component["examples"].([]any)
-	if !ok {
-		return false
-	}
-	for _, rawExample := range examples {
-		example, ok := rawExample.(map[string]any)
-		if ok && example["source_layer_name"] == sourceName {
-			return true
-		}
-	}
-	return false
 }
 
 func TestListDesignSystemProfilesByProject(t *testing.T) {
 	projectID := createProjectForDesignTest(t, "Design System List Project")
 	created := createDesignFileForTest(t, "Design System List Source")
 	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	createLocalUIRestoreAgentForDesignTest(t)
 	designSystemThumbnailURL := "https://static.example.test/design-system-thumb.png"
 	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, nativeJSONWithThumbnailForTest("Design System List Source", designSystemThumbnailURL))
 
@@ -1463,10 +1268,46 @@ func TestCreateDesignDraftAgentTaskIncludesDefaultDesignSystem(t *testing.T) {
 
 func TestClaimUIDraftCreateTaskReturnsContext(t *testing.T) {
 	template := createCatalogTemplateForDraftTest(t)
-	agentID := handlerTestAgentID(t)
+	projectID := createProjectForDesignTest(t, "Claim UI Draft Project")
+	issueID := createIssueForDesignTest(t, "Claim UI Draft Issue", projectID)
+	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+	var daemonID string
+	if err := testPool.QueryRow(context.Background(), `SELECT daemon_id FROM agent_runtime WHERE id = $1`, runtimeID).Scan(&daemonID); err != nil {
+		t.Fatalf("load UI draft runtime daemon id: %v", err)
+	}
+	resourceRef, err := json.Marshal(map[string]any{"local_path": "/tmp/multica-claim-ui-draft", "daemon_id": daemonID})
+	if err != nil {
+		t.Fatalf("marshal UI draft project resource: %v", err)
+	}
+	var resourceID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, label, position, created_by)
+		VALUES ($1, $2, 'local_directory', $3::jsonb, 'Repository root', 0, $4)
+		RETURNING id
+	`, projectID, testWorkspaceID, resourceRef, testUserID).Scan(&resourceID); err != nil {
+		t.Fatalf("insert UI draft project resource: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM project_resource WHERE id = $1`, resourceID)
+	})
+	var agentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent (
+			workspace_id, name, description, runtime_mode, runtime_config,
+			runtime_id, visibility, max_concurrent_tasks, owner_id
+		)
+		VALUES ($1, $2, '', 'local', '{}'::jsonb, $3, 'private', 1, $4)
+		RETURNING id
+	`, testWorkspaceID, fmt.Sprintf("Claim UI Draft Agent %d", time.Now().UnixNano()), runtimeID, testUserID).Scan(&agentID); err != nil {
+		t.Fatalf("insert UI draft agent: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+	})
 	req := newRequest("POST", "/api/design-drafts/agent-tasks?workspace_id="+testWorkspaceID, map[string]any{
 		"agent_id":            agentID,
 		"catalog_template_id": template.ID,
+		"issue_id":            issueID,
 		"title":               "Claimed Agent Draft",
 		"prompt":              "Generate draft JSON",
 	})
@@ -1483,8 +1324,8 @@ func TestClaimUIDraftCreateTaskReturnsContext(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, created.TaskID)
 	})
 
-	claimReq := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+testRuntimeID+"/tasks/claim", nil, testWorkspaceID, "ui-draft-claim")
-	claimReq = withURLParam(claimReq, "runtimeId", testRuntimeID)
+	claimReq := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "ui-draft-claim")
+	claimReq = withURLParam(claimReq, "runtimeId", runtimeID)
 	claimW := httptest.NewRecorder()
 	testHandler.ClaimTaskByRuntime(claimW, claimReq)
 	if claimW.Code != http.StatusOK {
@@ -1492,9 +1333,11 @@ func TestClaimUIDraftCreateTaskReturnsContext(t *testing.T) {
 	}
 	var claimResp struct {
 		Task *struct {
-			ID                   string          `json:"id"`
-			WorkspaceID          string          `json:"workspace_id"`
-			UIDraftCreateContext json.RawMessage `json:"ui_draft_create_context"`
+			ID                   string                `json:"id"`
+			WorkspaceID          string                `json:"workspace_id"`
+			ProjectID            string                `json:"project_id"`
+			ProjectResources     []ProjectResourceData `json:"project_resources"`
+			UIDraftCreateContext json.RawMessage       `json:"ui_draft_create_context"`
 		} `json:"task"`
 	}
 	if err := json.Unmarshal(claimW.Body.Bytes(), &claimResp); err != nil {
@@ -1506,12 +1349,259 @@ func TestClaimUIDraftCreateTaskReturnsContext(t *testing.T) {
 	if claimResp.Task.WorkspaceID != testWorkspaceID {
 		t.Fatalf("workspace_id = %q, want %q", claimResp.Task.WorkspaceID, testWorkspaceID)
 	}
+	if claimResp.Task.ProjectID != projectID {
+		t.Fatalf("project_id = %q, want %q", claimResp.Task.ProjectID, projectID)
+	}
+	if len(claimResp.Task.ProjectResources) != 1 || claimResp.Task.ProjectResources[0].ID != resourceID {
+		t.Fatalf("project_resources = %+v, want resource %s", claimResp.Task.ProjectResources, resourceID)
+	}
 	var ctxPayload map[string]any
 	if err := json.Unmarshal(claimResp.Task.UIDraftCreateContext, &ctxPayload); err != nil {
 		t.Fatalf("decode ui draft context: %v", err)
 	}
 	if ctxPayload["type"] != "ui_agent_draft_create" {
 		t.Fatalf("context type = %v", ctxPayload["type"])
+	}
+	if ctxPayload["project_id"] != projectID {
+		t.Fatalf("context project_id = %v, want %s", ctxPayload["project_id"], projectID)
+	}
+}
+
+func TestClaimDesignSystemProfileAnalyzeTaskReturnsContext(t *testing.T) {
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "Claim Design System Analyze Project")
+	created := createDesignFileForTest(t, "Claim Design System Analyze Source")
+	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+	var agentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent (
+			workspace_id, name, description, runtime_mode, runtime_config,
+			runtime_id, visibility, max_concurrent_tasks, owner_id
+		)
+		VALUES ($1, 'Local UI Restore Agent', '', 'local', '{}'::jsonb, $2, 'private', 1, $3)
+		RETURNING id
+	`, testWorkspaceID, runtimeID, testUserID).Scan(&agentID); err != nil {
+		t.Fatalf("insert Local UI Restore Agent: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID)
+	})
+	var profileID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO design_system_profile (
+			workspace_id, project_id, source_file_id, source_revision_id, name,
+			status, is_default, profile_json, analysis_errors, created_by
+		)
+		VALUES ($1, $2, $3, $4, 'Claim UI Spec', 'analyzing', false, '{}'::jsonb, '[]'::jsonb, $5)
+		RETURNING id
+	`, testWorkspaceID, projectID, created.File.ID, created.CurrentRevision.ID, testUserID).Scan(&profileID); err != nil {
+		t.Fatalf("insert design system profile: %v", err)
+	}
+	contextPayload := map[string]any{
+		"type":                     service.DesignSystemProfileAnalyzeContextType,
+		"requester_id":             testUserID,
+		"workspace_id":             testWorkspaceID,
+		"agent_id":                 agentID,
+		"design_system_profile_id": profileID,
+		"source_file_id":           created.File.ID,
+		"source_revision_id":       created.CurrentRevision.ID,
+		"project_id":               projectID,
+		"profile_name":             "Claim UI Spec",
+		"candidate_layers":         []map[string]any{{"id": "button-1", "name": "按钮 - 主按钮 - 默认"}},
+	}
+	contextJSON, _ := json.Marshal(contextPayload)
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
+		VALUES ($1, $2, NULL, 'queued', 0, $3)
+		RETURNING id
+	`, agentID, runtimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("insert analyze task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_system_profile WHERE id = $1`, profileID)
+	})
+
+	claimReq := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "design-system-analyze-claim")
+	claimReq = withURLParam(claimReq, "runtimeId", runtimeID)
+	claimW := httptest.NewRecorder()
+	testHandler.ClaimTaskByRuntime(claimW, claimReq)
+	if claimW.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: expected 200, got %d: %s", claimW.Code, claimW.Body.String())
+	}
+	var claimResp struct {
+		Task *struct {
+			ID                                string          `json:"id"`
+			WorkspaceID                       string          `json:"workspace_id"`
+			DesignSystemProfileAnalyzeContext json.RawMessage `json:"design_system_profile_analyze_context"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(claimW.Body.Bytes(), &claimResp); err != nil {
+		t.Fatalf("decode claim response: %v", err)
+	}
+	if claimResp.Task == nil || claimResp.Task.ID != taskID {
+		t.Fatalf("claimed task = %+v, want %s", claimResp.Task, taskID)
+	}
+	if claimResp.Task.WorkspaceID != testWorkspaceID {
+		t.Fatalf("workspace_id = %q, want %q", claimResp.Task.WorkspaceID, testWorkspaceID)
+	}
+	var gotContext map[string]any
+	if err := json.Unmarshal(claimResp.Task.DesignSystemProfileAnalyzeContext, &gotContext); err != nil {
+		t.Fatalf("decode design system analyze context: %v", err)
+	}
+	if gotContext["type"] != service.DesignSystemProfileAnalyzeContextType || gotContext["design_system_profile_id"] != profileID {
+		t.Fatalf("unexpected analyze context: %+v", gotContext)
+	}
+}
+
+func TestClaimDesignRestoreTaskUsesDispatchProjectContext(t *testing.T) {
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "Claim Design Restore Project")
+	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+	var daemonID string
+	if err := testPool.QueryRow(ctx, `SELECT daemon_id FROM agent_runtime WHERE id = $1`, runtimeID).Scan(&daemonID); err != nil {
+		t.Fatalf("load design restore runtime daemon id: %v", err)
+	}
+	resourceRef, _ := json.Marshal(map[string]any{"local_path": "/tmp/multica-claim-design-restore", "daemon_id": daemonID})
+	var resourceID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, label, position, created_by)
+		VALUES ($1, $2, 'local_directory', $3::jsonb, 'Repository root', 0, $4)
+		RETURNING id
+	`, projectID, testWorkspaceID, resourceRef, testUserID).Scan(&resourceID); err != nil {
+		t.Fatalf("insert design restore project resource: %v", err)
+	}
+	var agentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent (
+			workspace_id, name, description, runtime_mode, runtime_config,
+			runtime_id, visibility, max_concurrent_tasks, owner_id
+		)
+		VALUES ($1, $2, '', 'local', '{}'::jsonb, $3, 'private', 1, $4)
+		RETURNING id
+	`, testWorkspaceID, fmt.Sprintf("Claim Design Restore Agent %d", time.Now().UnixNano()), runtimeID, testUserID).Scan(&agentID); err != nil {
+		t.Fatalf("insert claim design restore agent: %v", err)
+	}
+	contextJSON, _ := json.Marshal(map[string]any{
+		"type":            service.DesignRestoreTaskContextType,
+		"workspace_id":    testWorkspaceID,
+		"project_id":      projectID,
+		"restore_task_id": "11111111-1111-1111-1111-111111111111",
+		"input":           map[string]any{"version": "1.0"},
+	})
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, context)
+		VALUES ($1, $2, 'queued', 0, $3)
+		RETURNING id
+	`, agentID, runtimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("insert claim design restore task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM project_resource WHERE id = $1`, resourceID)
+	})
+
+	claimReq := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "design-restore-project-claim")
+	claimReq = withURLParam(claimReq, "runtimeId", runtimeID)
+	claimW := httptest.NewRecorder()
+	testHandler.ClaimTaskByRuntime(claimW, claimReq)
+	if claimW.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: expected 200, got %d: %s", claimW.Code, claimW.Body.String())
+	}
+	var claimResp struct {
+		Task *struct {
+			ID               string                `json:"id"`
+			ProjectID        string                `json:"project_id"`
+			ProjectResources []ProjectResourceData `json:"project_resources"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(claimW.Body.Bytes(), &claimResp); err != nil {
+		t.Fatalf("decode design restore claim response: %v", err)
+	}
+	if claimResp.Task == nil || claimResp.Task.ID != taskID {
+		t.Fatalf("claimed task = %+v, want %s", claimResp.Task, taskID)
+	}
+	if claimResp.Task.ProjectID != projectID {
+		t.Fatalf("project_id = %q, want %q", claimResp.Task.ProjectID, projectID)
+	}
+	if len(claimResp.Task.ProjectResources) != 1 || claimResp.Task.ProjectResources[0].ID != resourceID {
+		t.Fatalf("project_resources = %+v, want resource %s", claimResp.Task.ProjectResources, resourceID)
+	}
+	if _, err := testHandler.TaskService.CancelTask(ctx, parseUUID(taskID)); err != nil {
+		t.Fatalf("cancel first claimed restore task: %v", err)
+	}
+
+	var foreignWorkspaceID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workspace (name, slug, description, issue_prefix)
+		VALUES ('Foreign restore workspace', $1, '', 'FRR')
+		RETURNING id
+	`, fmt.Sprintf("foreign-restore-%d", time.Now().UnixNano())).Scan(&foreignWorkspaceID); err != nil {
+		t.Fatalf("insert foreign restore workspace: %v", err)
+	}
+	var foreignProjectID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title, description, status, priority)
+		VALUES ($1, 'Foreign restore project', '', 'planned', 'medium')
+		RETURNING id
+	`, foreignWorkspaceID).Scan(&foreignProjectID); err != nil {
+		t.Fatalf("insert foreign restore project: %v", err)
+	}
+	foreignResourceRef, _ := json.Marshal(map[string]any{"local_path": "/tmp/foreign-restore-secret"})
+	var foreignResourceID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, label, position, created_by)
+		VALUES ($1, $2, 'local_directory', $3::jsonb, 'Foreign secret', 0, $4)
+		RETURNING id
+	`, foreignProjectID, foreignWorkspaceID, foreignResourceRef, testUserID).Scan(&foreignResourceID); err != nil {
+		t.Fatalf("insert foreign restore resource: %v", err)
+	}
+	foreignContextJSON, _ := json.Marshal(map[string]any{
+		"type":            service.DesignRestoreTaskContextType,
+		"workspace_id":    testWorkspaceID,
+		"project_id":      foreignProjectID,
+		"restore_task_id": "22222222-2222-2222-2222-222222222222",
+		"input":           map[string]any{"version": "1.0"},
+	})
+	var foreignTaskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, context)
+		VALUES ($1, $2, 'queued', 0, $3)
+		RETURNING id
+	`, agentID, runtimeID, foreignContextJSON).Scan(&foreignTaskID); err != nil {
+		t.Fatalf("insert foreign project restore task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, foreignTaskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID)
+	})
+
+	foreignClaimReq := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "design-restore-foreign-project-claim")
+	foreignClaimReq = withURLParam(foreignClaimReq, "runtimeId", runtimeID)
+	foreignClaimW := httptest.NewRecorder()
+	testHandler.ClaimTaskByRuntime(foreignClaimW, foreignClaimReq)
+	if foreignClaimW.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime foreign project: expected 200, got %d: %s", foreignClaimW.Code, foreignClaimW.Body.String())
+	}
+	var foreignClaimResp struct {
+		Task *struct {
+			ID               string                `json:"id"`
+			ProjectID        string                `json:"project_id"`
+			ProjectResources []ProjectResourceData `json:"project_resources"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(foreignClaimW.Body.Bytes(), &foreignClaimResp); err != nil {
+		t.Fatalf("decode foreign project claim response: %v", err)
+	}
+	if foreignClaimResp.Task == nil || foreignClaimResp.Task.ID != foreignTaskID {
+		t.Fatalf("foreign claimed task = %+v, want %s", foreignClaimResp.Task, foreignTaskID)
+	}
+	if foreignClaimResp.Task.ProjectID != "" || len(foreignClaimResp.Task.ProjectResources) != 0 {
+		t.Fatalf("foreign project leaked through claim: project_id=%q resources=%+v", foreignClaimResp.Task.ProjectID, foreignClaimResp.Task.ProjectResources)
 	}
 }
 
@@ -1557,6 +1647,591 @@ func TestCompleteUIDraftCreateTaskCreatesDraft(t *testing.T) {
 		t.Fatalf("expected created design draft: %v", err)
 	}
 	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM design_draft WHERE id = $1`, draftID) })
+}
+
+func TestCompleteDesignSystemProfileAnalyzeTaskUpdatesProfile(t *testing.T) {
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "Complete Design System Analyze Project")
+	created := createDesignFileForTest(t, "Complete Design System Analyze Source")
+	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	agentID := createLocalUIRestoreAgentForDesignTest(t)
+	var profileID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO design_system_profile (
+			workspace_id, project_id, source_file_id, source_revision_id, name,
+			status, is_default, profile_json, analysis_errors, created_by
+		)
+		VALUES ($1, $2, $3, $4, 'Complete UI Spec', 'analyzing', false, '{}'::jsonb, '[]'::jsonb, $5)
+		RETURNING id
+	`, testWorkspaceID, projectID, created.File.ID, created.CurrentRevision.ID, testUserID).Scan(&profileID); err != nil {
+		t.Fatalf("insert design system profile: %v", err)
+	}
+	contextPayload := map[string]any{
+		"type":                     service.DesignSystemProfileAnalyzeContextType,
+		"requester_id":             testUserID,
+		"workspace_id":             testWorkspaceID,
+		"agent_id":                 agentID,
+		"design_system_profile_id": profileID,
+		"source_file_id":           created.File.ID,
+		"source_revision_id":       created.CurrentRevision.ID,
+		"project_id":               projectID,
+		"profile_name":             "Complete UI Spec",
+		"make_default":             true,
+		"candidate_layers":         []map[string]any{{"id": "button-1", "name": "按钮 - 主按钮 - 默认"}},
+	}
+	contextJSON, _ := json.Marshal(contextPayload)
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, context)
+		VALUES ($1, $2, NULL, 'running', 0, now(), $3)
+		RETURNING id
+	`, agentID, testRuntimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("insert analyze task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_system_profile WHERE id = $1`, profileID)
+	})
+
+	output := map[string]any{
+		"profile_json": map[string]any{
+			"version": "agent-1.0",
+			"components": map[string]any{
+				"button": map[string]any{
+					"label":    "按钮",
+					"variants": []map[string]any{{"name": "主按钮", "states": []string{"默认"}}},
+				},
+			},
+			"guidelines": []string{"Use primary button for main submission actions."},
+		},
+		"analysis_errors": []map[string]any{{"severity": "warning", "message": "部分图层缺少状态命名"}},
+		"summary":         "CRM UI specification analyzed.",
+	}
+	outputJSON, _ := json.Marshal(output)
+	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete", map[string]any{"output": string(outputJSON)}, testWorkspaceID, "design-system-analyze-complete")
+	completeReq = withURLParam(completeReq, "taskId", taskID)
+	completeW := httptest.NewRecorder()
+	testHandler.CompleteTask(completeW, completeReq)
+	if completeW.Code != http.StatusOK {
+		t.Fatalf("CompleteTask: expected 200, got %d: %s", completeW.Code, completeW.Body.String())
+	}
+	var status string
+	var isDefault bool
+	var profileJSON []byte
+	var analysisErrors []byte
+	if err := testPool.QueryRow(ctx, `
+		SELECT status, is_default, profile_json, analysis_errors
+		FROM design_system_profile
+		WHERE id = $1
+	`, profileID).Scan(&status, &isDefault, &profileJSON, &analysisErrors); err != nil {
+		t.Fatalf("query updated design system profile: %v", err)
+	}
+	if status != "analyzed" || !isDefault {
+		t.Fatalf("profile status/default = %s/%v, want analyzed/true", status, isDefault)
+	}
+	var profile map[string]any
+	if err := json.Unmarshal(profileJSON, &profile); err != nil {
+		t.Fatalf("decode profile_json: %v", err)
+	}
+	if profile["version"] != "agent-1.0" {
+		t.Fatalf("profile_json.version = %v", profile["version"])
+	}
+	var warnings []any
+	if err := json.Unmarshal(analysisErrors, &warnings); err != nil {
+		t.Fatalf("decode analysis_errors: %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("analysis_errors length = %d, want 1", len(warnings))
+	}
+}
+
+func TestParseDesignSystemProfileAnalyzeOutputRequiresStrictContract(t *testing.T) {
+	valid := `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[],"summary":"Analyzed."}`
+	for _, tc := range []struct {
+		name   string
+		output string
+	}{
+		{name: "wrapped prose", output: "result: " + valid},
+		{name: "missing analysis errors", output: `{"profile_json":{"version":"agent-1.0"},"summary":"Analyzed."}`},
+		{name: "null analysis errors", output: `{"profile_json":{"version":"agent-1.0"},"analysis_errors":null,"summary":"Analyzed."}`},
+		{name: "missing profile version", output: `{"profile_json":{"components":{}},"analysis_errors":[],"summary":"Analyzed."}`},
+		{name: "wrong profile version", output: `{"profile_json":{"version":"1.1"},"analysis_errors":[],"summary":"Analyzed."}`},
+		{name: "missing summary", output: `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[]}`},
+		{name: "empty summary", output: `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[],"summary":""}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := parseDesignSystemProfileAnalyzeOutput(tc.output); err == nil {
+				t.Fatalf("parseDesignSystemProfileAnalyzeOutput(%q) succeeded, want error", tc.output)
+			}
+		})
+	}
+	if _, err := parseDesignSystemProfileAnalyzeOutput(valid); err != nil {
+		t.Fatalf("strict valid output rejected: %v", err)
+	}
+}
+
+func TestSelectDesignSystemProfileAnalyzerAgentRequiresExactLocalAgent(t *testing.T) {
+	var cloudAgentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent (
+			workspace_id, name, description, runtime_mode, runtime_config,
+			runtime_id, visibility, max_concurrent_tasks, owner_id
+		)
+		VALUES ($1, 'Local UI Restore Agent', '', 'cloud', '{}'::jsonb, $2, 'private', 1, $3)
+		RETURNING id
+	`, testWorkspaceID, testRuntimeID, testUserID).Scan(&cloudAgentID); err != nil {
+		t.Fatalf("insert cloud Local UI Restore Agent: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, cloudAgentID)
+	})
+
+	workspaceID, err := util.ParseUUID(testWorkspaceID)
+	if err != nil {
+		t.Fatalf("parse workspace id: %v", err)
+	}
+	if agent, ok, err := testHandler.selectDesignSystemProfileAnalyzerAgent(context.Background(), workspaceID); err != nil {
+		t.Fatalf("select analyzer agent: %v", err)
+	} else if ok {
+		t.Fatalf("selected non-local analyzer agent %s", uuidToString(agent.ID))
+	}
+}
+
+func TestCreateDesignSystemProfileWithoutLocalAgentDoesNotPersistProfile(t *testing.T) {
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "No Analyzer Design System Project")
+	created := createDesignFileForTest(t, "No Analyzer Design System Source")
+	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+
+	rows, err := testPool.Query(ctx, `
+		UPDATE agent
+		SET name = name || ' unavailable ' || id::text
+		WHERE workspace_id = $1
+		  AND name = 'Local UI Restore Agent'
+		RETURNING id
+	`, testWorkspaceID)
+	if err != nil {
+		t.Fatalf("hide existing Local UI Restore Agents: %v", err)
+	}
+	var renamedAgentIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			t.Fatalf("scan renamed analyzer agent: %v", err)
+		}
+		renamedAgentIDs = append(renamedAgentIDs, id)
+	}
+	rows.Close()
+	t.Cleanup(func() {
+		for _, id := range renamedAgentIDs {
+			_, _ = testPool.Exec(ctx, `UPDATE agent SET name = 'Local UI Restore Agent' WHERE id = $1`, id)
+		}
+	})
+
+	workspaceUUID, _ := util.ParseUUID(testWorkspaceID)
+	projectUUID, _ := util.ParseUUID(projectID)
+	fileUUID, _ := util.ParseUUID(created.File.ID)
+	revisionUUID, _ := util.ParseUUID(created.CurrentRevision.ID)
+	file, err := testHandler.Queries.GetDesignFileInWorkspace(ctx, db.GetDesignFileInWorkspaceParams{ID: fileUUID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		t.Fatalf("load design file: %v", err)
+	}
+	revision, err := testHandler.Queries.GetDesignRevisionInWorkspace(ctx, db.GetDesignRevisionInWorkspaceParams{ID: revisionUUID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		t.Fatalf("load design revision: %v", err)
+	}
+	profileName := fmt.Sprintf("No Analyzer UI Spec %d", time.Now().UnixNano())
+	if _, err := testHandler.createDesignSystemProfileFromRevision(ctx, createDesignSystemProfileFromRevisionParams{
+		WorkspaceID: workspaceUUID,
+		ProjectID:   projectUUID,
+		File:        file,
+		Revision:    revision,
+		Name:        profileName,
+		IsDefault:   true,
+		CreatedBy:   parseUUID(testUserID),
+	}); err == nil {
+		t.Fatal("create design system profile succeeded without Local UI Restore Agent")
+	}
+	var count int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM design_system_profile WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, profileName).Scan(&count); err != nil {
+		t.Fatalf("count orphaned design system profiles: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("persisted design system profile count = %d, want 0", count)
+	}
+}
+
+func TestFailDesignSystemProfileAnalyzeTaskMarksProfileFailed(t *testing.T) {
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "Fail Design System Analyze Project")
+	created := createDesignFileForTest(t, "Fail Design System Analyze Source")
+	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+	var agentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent (workspace_id, name, runtime_mode, runtime_config, runtime_id, visibility, max_concurrent_tasks, owner_id)
+		VALUES ($1, $2, 'local', '{}'::jsonb, $3, 'private', 1, $4)
+		RETURNING id
+	`, testWorkspaceID, fmt.Sprintf("Fail UI Spec Agent %d", time.Now().UnixNano()), runtimeID, testUserID).Scan(&agentID); err != nil {
+		t.Fatalf("insert fail analyzer agent: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID) })
+	var profileID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO design_system_profile (
+			workspace_id, project_id, source_file_id, source_revision_id, name,
+			status, is_default, profile_json, analysis_errors, created_by
+		) VALUES ($1, $2, $3, $4, 'Fail UI Spec', 'analyzing', false, '{}'::jsonb, '[]'::jsonb, $5)
+		RETURNING id
+	`, testWorkspaceID, projectID, created.File.ID, created.CurrentRevision.ID, testUserID).Scan(&profileID); err != nil {
+		t.Fatalf("insert fail design system profile: %v", err)
+	}
+	contextJSON, _ := json.Marshal(map[string]any{
+		"type":                     service.DesignSystemProfileAnalyzeContextType,
+		"workspace_id":             testWorkspaceID,
+		"project_id":               projectID,
+		"design_system_profile_id": profileID,
+	})
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, started_at, context)
+		VALUES ($1, $2, 'running', 0, now(), $3)
+		RETURNING id
+	`, agentID, runtimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("insert fail analyze task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_system_profile WHERE id = $1`, profileID)
+	})
+
+	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/fail", map[string]any{
+		"error":          "provider exited before returning JSON",
+		"failure_reason": "agent_error",
+	}, testWorkspaceID, "design-system-analyze-fail")
+	req = withURLParam(req, "taskId", taskID)
+	w := httptest.NewRecorder()
+	testHandler.FailTask(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("FailTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var taskStatus string
+	var profileStatus string
+	var analysisErrors []byte
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&taskStatus); err != nil {
+		t.Fatalf("load failed task: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT status, analysis_errors FROM design_system_profile WHERE id = $1`, profileID).Scan(&profileStatus, &analysisErrors); err != nil {
+		t.Fatalf("load failed profile: %v", err)
+	}
+	if taskStatus != "failed" || profileStatus != "failed" {
+		t.Fatalf("task/profile status = %s/%s, want failed/failed", taskStatus, profileStatus)
+	}
+	if !strings.Contains(string(analysisErrors), "provider exited before returning JSON") {
+		t.Fatalf("analysis_errors = %s", string(analysisErrors))
+	}
+}
+
+func TestCancelDesignSystemProfileAnalyzeTaskMarksProfileFailed(t *testing.T) {
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "Cancel Design System Analyze Project")
+	created := createDesignFileForTest(t, "Cancel Design System Analyze Source")
+	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	agentID := handlerTestAgentID(t)
+	var profileID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO design_system_profile (
+			workspace_id, project_id, source_file_id, source_revision_id, name,
+			status, is_default, profile_json, analysis_errors, created_by
+		) VALUES ($1, $2, $3, $4, 'Cancel UI Spec', 'analyzing', false, '{}'::jsonb, '[]'::jsonb, $5)
+		RETURNING id
+	`, testWorkspaceID, projectID, created.File.ID, created.CurrentRevision.ID, testUserID).Scan(&profileID); err != nil {
+		t.Fatalf("insert cancel design system profile: %v", err)
+	}
+	contextJSON, _ := json.Marshal(map[string]any{
+		"type":                     service.DesignSystemProfileAnalyzeContextType,
+		"workspace_id":             testWorkspaceID,
+		"project_id":               projectID,
+		"design_system_profile_id": profileID,
+	})
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, started_at, context)
+		VALUES ($1, $2, 'running', 0, now(), $3)
+		RETURNING id
+	`, agentID, testRuntimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("insert cancel analyze task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_system_profile WHERE id = $1`, profileID)
+	})
+
+	taskUUID, err := util.ParseUUID(taskID)
+	if err != nil {
+		t.Fatalf("parse task id: %v", err)
+	}
+	if _, err := testHandler.TaskService.CancelTask(ctx, taskUUID); err != nil {
+		t.Fatalf("cancel analyze task: %v", err)
+	}
+	var profileStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM design_system_profile WHERE id = $1`, profileID).Scan(&profileStatus); err != nil {
+		t.Fatalf("load cancelled profile: %v", err)
+	}
+	if profileStatus != "failed" {
+		t.Fatalf("profile status = %s, want failed", profileStatus)
+	}
+}
+
+func TestCancelTasksForAgentMarksDesignSystemProfileFailed(t *testing.T) {
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "Bulk Cancel Design System Project")
+	created := createDesignFileForTest(t, "Bulk Cancel Design System Source")
+	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+	var agentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent (workspace_id, name, runtime_mode, runtime_config, runtime_id, visibility, max_concurrent_tasks, owner_id)
+		VALUES ($1, $2, 'local', '{}'::jsonb, $3, 'private', 1, $4)
+		RETURNING id
+	`, testWorkspaceID, fmt.Sprintf("Bulk Cancel UI Spec Agent %d", time.Now().UnixNano()), runtimeID, testUserID).Scan(&agentID); err != nil {
+		t.Fatalf("insert bulk cancel analyzer agent: %v", err)
+	}
+	var profileID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO design_system_profile (
+			workspace_id, project_id, source_file_id, source_revision_id, name,
+			status, is_default, profile_json, analysis_errors, created_by
+		) VALUES ($1, $2, $3, $4, 'Bulk Cancel UI Spec', 'analyzing', false, '{}', '[]', $5)
+		RETURNING id
+	`, testWorkspaceID, projectID, created.File.ID, created.CurrentRevision.ID, testUserID).Scan(&profileID); err != nil {
+		t.Fatalf("insert bulk cancel design system profile: %v", err)
+	}
+	contextJSON, _ := json.Marshal(map[string]any{
+		"type":                     service.DesignSystemProfileAnalyzeContextType,
+		"workspace_id":             testWorkspaceID,
+		"project_id":               projectID,
+		"design_system_profile_id": profileID,
+	})
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, started_at, context)
+		VALUES ($1, $2, 'running', 0, now(), $3)
+		RETURNING id
+	`, agentID, runtimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("insert bulk cancel analyze task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_system_profile WHERE id = $1`, profileID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID)
+	})
+
+	if _, err := testHandler.TaskService.CancelTasksForAgent(ctx, parseUUID(agentID)); err != nil {
+		t.Fatalf("cancel analyzer tasks: %v", err)
+	}
+	var profileStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM design_system_profile WHERE id = $1`, profileID).Scan(&profileStatus); err != nil {
+		t.Fatalf("load bulk cancelled profile: %v", err)
+	}
+	if profileStatus != "failed" {
+		t.Fatalf("profile status = %s, want failed", profileStatus)
+	}
+}
+
+func TestHandleFailedTasksMarksDesignSystemProfileFailed(t *testing.T) {
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "Sweeper Design System Analyze Project")
+	created := createDesignFileForTest(t, "Sweeper Design System Analyze Source")
+	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	agentID := handlerTestAgentID(t)
+	var profileID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO design_system_profile (
+			workspace_id, project_id, source_file_id, source_revision_id, name,
+			status, is_default, profile_json, analysis_errors, created_by
+		) VALUES ($1, $2, $3, $4, 'Sweeper UI Spec', 'analyzing', false, '{}'::jsonb, '[]'::jsonb, $5)
+		RETURNING id
+	`, testWorkspaceID, projectID, created.File.ID, created.CurrentRevision.ID, testUserID).Scan(&profileID); err != nil {
+		t.Fatalf("insert sweeper design system profile: %v", err)
+	}
+	contextJSON, _ := json.Marshal(map[string]any{
+		"type":                     service.DesignSystemProfileAnalyzeContextType,
+		"workspace_id":             testWorkspaceID,
+		"project_id":               projectID,
+		"design_system_profile_id": profileID,
+	})
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, status, priority, started_at, completed_at,
+			error, failure_reason, context
+		)
+		VALUES ($1, $2, 'failed', 0, now() - interval '5 minutes', now(), 'task timed out', 'timeout', $3)
+		RETURNING id
+	`, agentID, testRuntimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("insert swept analyze task: %v", err)
+	}
+	task, err := testHandler.Queries.GetAgentTask(ctx, parseUUID(taskID))
+	if err != nil {
+		t.Fatalf("load swept analyze task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_system_profile WHERE id = $1`, profileID)
+	})
+
+	testHandler.TaskService.HandleFailedTasks(ctx, []db.AgentTaskQueue{task})
+	var profileStatus string
+	var analysisErrors []byte
+	if err := testPool.QueryRow(ctx, `SELECT status, analysis_errors FROM design_system_profile WHERE id = $1`, profileID).Scan(&profileStatus, &analysisErrors); err != nil {
+		t.Fatalf("load swept profile: %v", err)
+	}
+	if profileStatus != "failed" || !strings.Contains(string(analysisErrors), "task timed out") {
+		t.Fatalf("profile status/errors = %s/%s, want failed timeout error", profileStatus, analysisErrors)
+	}
+}
+
+func TestCompleteDesignSystemProfileAnalyzeTaskDoesNotOverrideNewerDefault(t *testing.T) {
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "Default Guard Design System Project")
+	created := createDesignFileForTest(t, "Default Guard Design System Source")
+	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	agentID := handlerTestAgentID(t)
+	var originalDefaultID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO design_system_profile (
+			workspace_id, project_id, source_file_id, source_revision_id, name,
+			status, is_default, profile_json, analysis_errors, created_by
+		) VALUES ($1, $2, $3, $4, 'Original Default UI Spec', 'analyzed', true, '{}', '[]', $5)
+		RETURNING id
+	`, testWorkspaceID, projectID, created.File.ID, created.CurrentRevision.ID, testUserID).Scan(&originalDefaultID); err != nil {
+		t.Fatalf("insert original default profile: %v", err)
+	}
+	var pendingProfileID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO design_system_profile (
+			workspace_id, project_id, source_file_id, source_revision_id, name,
+			status, is_default, profile_json, analysis_errors, created_by
+		) VALUES ($1, $2, $3, $4, 'Pending Default UI Spec', 'analyzing', false, '{}', '[]', $5)
+		RETURNING id
+	`, testWorkspaceID, projectID, created.File.ID, created.CurrentRevision.ID, testUserID).Scan(&pendingProfileID); err != nil {
+		t.Fatalf("insert pending default profile: %v", err)
+	}
+	contextJSON, _ := json.Marshal(service.DesignSystemProfileAnalyzeContext{
+		Type:                      service.DesignSystemProfileAnalyzeContextType,
+		WorkspaceID:               testWorkspaceID,
+		ProjectID:                 projectID,
+		DesignSystemProfileID:     pendingProfileID,
+		MakeDefault:               true,
+		DefaultProfileIDAtEnqueue: originalDefaultID,
+	})
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, started_at, context)
+		VALUES ($1, $2, 'running', 0, now(), $3)
+		RETURNING id
+	`, agentID, testRuntimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("insert pending default analysis task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE design_system_profile SET is_default = false WHERE id = $1`, originalDefaultID); err != nil {
+		t.Fatalf("clear original default profile: %v", err)
+	}
+	var newerDefaultID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO design_system_profile (
+			workspace_id, project_id, source_file_id, source_revision_id, name,
+			status, is_default, profile_json, analysis_errors, created_by
+		) VALUES ($1, $2, $3, $4, 'Newer Default UI Spec', 'analyzed', true, '{}', '[]', $5)
+		RETURNING id
+	`, testWorkspaceID, projectID, created.File.ID, created.CurrentRevision.ID, testUserID).Scan(&newerDefaultID); err != nil {
+		t.Fatalf("insert newer default profile: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_system_profile WHERE id IN ($1, $2, $3)`, pendingProfileID, newerDefaultID, originalDefaultID)
+	})
+
+	output := `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[],"summary":"Analyzed."}`
+	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete", map[string]any{"output": output}, testWorkspaceID, "design-system-default-guard")
+	req = withURLParam(req, "taskId", taskID)
+	w := httptest.NewRecorder()
+	testHandler.CompleteTask(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CompleteTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var pendingStatus string
+	var pendingDefault bool
+	var newerDefault bool
+	if err := testPool.QueryRow(ctx, `SELECT status, is_default FROM design_system_profile WHERE id = $1`, pendingProfileID).Scan(&pendingStatus, &pendingDefault); err != nil {
+		t.Fatalf("load pending profile: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT is_default FROM design_system_profile WHERE id = $1`, newerDefaultID).Scan(&newerDefault); err != nil {
+		t.Fatalf("load newer default profile: %v", err)
+	}
+	if pendingStatus != "analyzed" || pendingDefault || !newerDefault {
+		t.Fatalf("pending status/default and newer default = %s/%v/%v, want analyzed/false/true", pendingStatus, pendingDefault, newerDefault)
+	}
+}
+
+func TestCompleteTaskWithMutationRollsBackTaskOnMutationError(t *testing.T) {
+	ctx := context.Background()
+	agentID := handlerTestAgentID(t)
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, started_at, context)
+		VALUES ($1, $2, 'running', 0, now(), '{}'::jsonb)
+		RETURNING id
+	`, agentID, testRuntimeID).Scan(&taskID); err != nil {
+		t.Fatalf("insert completion mutation task: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	taskUUID, err := util.ParseUUID(taskID)
+	if err != nil {
+		t.Fatalf("parse task id: %v", err)
+	}
+	_, err = testHandler.TaskService.CompleteTaskWithMutation(ctx, taskUUID, []byte(`{"output":"done"}`), "", "", func(*db.Queries, db.AgentTaskQueue) error {
+		return errors.New("profile mutation failed")
+	})
+	if err == nil {
+		t.Fatal("CompleteTaskWithMutation succeeded, want error")
+	}
+	var status string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&status); err != nil {
+		t.Fatalf("load completion mutation task: %v", err)
+	}
+	if status != "running" {
+		t.Fatalf("task status = %s, want running after rolled-back mutation", status)
+	}
+}
+
+func TestCompleteTaskWithMutationDoesNotTreatMutationNoRowsAsFinalized(t *testing.T) {
+	ctx := context.Background()
+	agentID := handlerTestAgentID(t)
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, started_at, context)
+		VALUES ($1, $2, 'running', 0, now(), '{}'::jsonb)
+		RETURNING id
+	`, agentID, testRuntimeID).Scan(&taskID); err != nil {
+		t.Fatalf("insert no-rows completion mutation task: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	task, err := testHandler.TaskService.CompleteTaskWithMutation(ctx, parseUUID(taskID), []byte(`{"output":"done"}`), "", "", func(*db.Queries, db.AgentTaskQueue) error {
+		return pgx.ErrNoRows
+	})
+	if err == nil {
+		t.Fatalf("CompleteTaskWithMutation returned task %+v without error for mutation pgx.ErrNoRows", task)
+	}
+	var status string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&status); err != nil {
+		t.Fatalf("load no-rows completion mutation task: %v", err)
+	}
+	if status != "running" {
+		t.Fatalf("task status = %s, want running after rolled-back no-rows mutation", status)
+	}
 }
 
 func TestCompleteUIDraftCreateTaskRejectsEmptyDraftChanges(t *testing.T) {
@@ -3511,16 +4186,33 @@ func TestDispatchDesignRestoreTaskCreatesAgentTask(t *testing.T) {
 	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, nativeJSON)
 	agentID := createHandlerTestAgent(t, "Dispatch Restore Agent", []byte("[]"))
 	projectID := createProjectForDesignTest(t, "Dispatch Restore Project")
+	inputProjectID := createProjectForDesignTest(t, "Dispatch Restore Wrong Input Project")
 	issueID := createIssueForDesignTest(t, "Dispatch Restore Issue", projectID)
+	var designSystemProfileID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_system_profile (
+			workspace_id, project_id, source_file_id, source_revision_id, name, description,
+			status, is_default, profile_json, analysis_errors, created_by
+		) VALUES (
+			$1, $2, $3, $4, 'Dispatch Restore UI 规范', '',
+			'analyzed', true, '{"version":"agent-1.0","tokens":{"colors":[{"value":"#1677ff"}]}}'::jsonb, '[]'::jsonb, $5
+		)
+		RETURNING id
+	`, testWorkspaceID, projectID, created.File.ID, created.CurrentRevision.ID, testUserID).Scan(&designSystemProfileID); err != nil {
+		t.Fatalf("insert default design system profile: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_system_profile WHERE id = $1`, designSystemProfileID)
+	})
 	if _, err := testPool.Exec(context.Background(), `UPDATE issue SET status = 'backlog' WHERE id = $1`, issueID); err != nil {
 		t.Fatalf("set issue backlog: %v", err)
 	}
 
 	createReq := newRequest("POST", "/api/design-restore-tasks?workspace_id="+testWorkspaceID, map[string]any{
-		"file_id":  created.File.ID,
-		"issue_id": issueID,
+		"file_id": created.File.ID,
 		"input": map[string]any{
-			"version": "1.0",
+			"version":   "1.0",
+			"projectId": inputProjectID,
 			"items": []map[string]any{{
 				"itemId":       "dispatch-frame-1",
 				"order":        1,
@@ -3588,6 +4280,20 @@ func TestDispatchDesignRestoreTaskCreatesAgentTask(t *testing.T) {
 	}
 	if queuedContext["type"] != service.DesignRestoreTaskContextType {
 		t.Fatalf("queued context type = %v", queuedContext["type"])
+	}
+	if queuedContext["project_id"] != projectID {
+		t.Fatalf("queued context project_id = %v, want %s", queuedContext["project_id"], projectID)
+	}
+	designSystem, ok := queuedContext["design_system"].(map[string]any)
+	if !ok {
+		t.Fatalf("queued context missing design_system: %#v", queuedContext)
+	}
+	if designSystem["id"] != designSystemProfileID || designSystem["status"] != "analyzed" {
+		t.Fatalf("queued design_system identity = %#v", designSystem)
+	}
+	profile, ok := designSystem["profile"].(map[string]any)
+	if !ok || profile["version"] != "agent-1.0" {
+		t.Fatalf("queued design_system profile = %#v", designSystem["profile"])
 	}
 	restorePolicy, ok := queuedContext["restore_policy"].(map[string]any)
 	if !ok || restorePolicy["restoreMode"] != "strict-structure" || restorePolicy["allowFullFramePreview"] != false {
@@ -5127,6 +5833,7 @@ func TestFigmaPluginImportCanPublishTemplate(t *testing.T) {
 
 func TestFigmaPluginImportCanPublishDesignSystem(t *testing.T) {
 	projectID := createProjectForDesignTest(t, "Plugin Design System Project")
+	createLocalUIRestoreAgentForDesignTest(t)
 	token := createPluginTokenForTest(t)
 	req := newRequest("POST", "/api/design-plugin/figma/imports", map[string]any{
 		"title":                     "CRM UI Spec",
@@ -5156,24 +5863,36 @@ func TestFigmaPluginImportCanPublishDesignSystem(t *testing.T) {
 	if resp.DesignSystem.Name != "CRM 后台 UI 规范" {
 		t.Fatalf("design system name = %q", resp.DesignSystem.Name)
 	}
-	if !resp.DesignSystem.IsDefault {
-		t.Fatal("uploaded design system should become project default")
+	if resp.DesignSystem.Status != "analyzing" {
+		t.Fatalf("uploaded design system status = %q, want analyzing", resp.DesignSystem.Status)
 	}
 	if resp.DesignSystem.ProjectID == nil || *resp.DesignSystem.ProjectID != projectID {
 		t.Fatalf("design system project_id = %v, want %s", resp.DesignSystem.ProjectID, projectID)
 	}
-	var defaultID string
+	var queuedTaskID string
 	if err := testPool.QueryRow(context.Background(), `
 		SELECT id
+		FROM agent_task_queue
+		WHERE context->>'type' = $1
+		  AND context->>'design_system_profile_id' = $2
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, service.DesignSystemProfileAnalyzeContextType, resp.DesignSystem.ID).Scan(&queuedTaskID); err != nil {
+		t.Fatalf("get queued design system analyze task: %v", err)
+	}
+	var defaultCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)
 		FROM design_system_profile
 		WHERE workspace_id = $1 AND project_id = $2 AND is_default = true AND status = 'analyzed'
-	`, testWorkspaceID, projectID).Scan(&defaultID); err != nil {
-		t.Fatalf("get default design system: %v", err)
+	`, testWorkspaceID, projectID).Scan(&defaultCount); err != nil {
+		t.Fatalf("count default design system: %v", err)
 	}
-	if defaultID != resp.DesignSystem.ID {
-		t.Fatalf("default design system id = %s, want %s", defaultID, resp.DesignSystem.ID)
+	if defaultCount != 0 {
+		t.Fatalf("default design system count = %d, want 0 before agent analysis", defaultCount)
 	}
 	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, queuedTaskID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_file WHERE id = $1`, resp.File.ID)
 	})
 }

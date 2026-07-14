@@ -1430,6 +1430,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	hasQuickCreate := false
 	hasUIDraftCreate := false
 	hasDesignRestore := false
+	hasDesignSystemProfileAnalyze := false
 	if task.Context != nil && !task.IssueID.Valid && !task.ChatSessionID.Valid && !task.AutopilotRunID.Valid {
 		var qc service.QuickCreateContext
 		if json.Unmarshal(task.Context, &qc) == nil && qc.Type == service.QuickCreateContextType {
@@ -1556,20 +1557,10 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			hasUIDraftCreate = true
 			resp.WorkspaceID = draftCtx.WorkspaceID
 			resp.UIDraftCreateContext = json.RawMessage(task.Context)
-		}
-
-		var restoreCtx service.DesignRestoreTaskContext
-		if json.Unmarshal(task.Context, &restoreCtx) == nil && restoreCtx.Type == service.DesignRestoreTaskContextType {
-			hasDesignRestore = true
-			resp.WorkspaceID = restoreCtx.WorkspaceID
-			resp.DesignRestoreContext = json.RawMessage(task.Context)
-			var restoreInput struct {
-				ProjectID string `json:"projectId"`
-			}
-			if json.Unmarshal(restoreCtx.Input, &restoreInput) == nil && strings.TrimSpace(restoreInput.ProjectID) != "" {
-				projectUUID, err := util.ParseUUID(restoreInput.ProjectID)
+			if strings.TrimSpace(draftCtx.ProjectID) != "" {
+				projectUUID, err := util.ParseUUID(draftCtx.ProjectID)
 				if err == nil {
-					resp.ProjectID = restoreInput.ProjectID
+					resp.ProjectID = draftCtx.ProjectID
 					if proj, err := h.Queries.GetProject(r.Context(), projectUUID); err == nil {
 						resp.ProjectTitle = proj.Title
 					}
@@ -1603,6 +1594,64 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+
+		var restoreCtx service.DesignRestoreTaskContext
+		if json.Unmarshal(task.Context, &restoreCtx) == nil && restoreCtx.Type == service.DesignRestoreTaskContextType {
+			hasDesignRestore = true
+			resp.WorkspaceID = restoreCtx.WorkspaceID
+			resp.DesignRestoreContext = json.RawMessage(task.Context)
+			projectID := strings.TrimSpace(restoreCtx.ProjectID)
+			var restoreInput struct {
+				ProjectID string `json:"projectId"`
+			}
+			if projectID == "" && json.Unmarshal(restoreCtx.Input, &restoreInput) == nil {
+				projectID = strings.TrimSpace(restoreInput.ProjectID)
+			}
+			if projectID != "" {
+				projectUUID, err := util.ParseUUID(projectID)
+				if err == nil {
+					if proj, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: projectUUID, WorkspaceID: runtime.WorkspaceID}); err == nil {
+						resp.ProjectID = projectID
+						resp.ProjectTitle = proj.Title
+						var projectRepos []RepoData
+						if rows := h.listProjectResourcesForProject(r.Context(), projectUUID); len(rows) > 0 {
+							out := make([]ProjectResourceData, 0, len(rows))
+							for _, row := range rows {
+								label := ""
+								if row.Label.Valid {
+									label = row.Label.String
+								}
+								ref := json.RawMessage(row.ResourceRef)
+								if len(ref) == 0 {
+									ref = json.RawMessage("{}")
+								}
+								out = append(out, ProjectResourceData{ID: uuidToString(row.ID), ResourceType: row.ResourceType, ResourceRef: ref, Label: label})
+								if row.ResourceType == "github_repo" {
+									var payload struct {
+										URL string `json:"url"`
+									}
+									if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
+										projectRepos = append(projectRepos, RepoData{URL: payload.URL})
+									}
+								}
+							}
+							resp.ProjectResources = out
+						}
+						if len(projectRepos) > 0 {
+							resp.Repos = projectRepos
+						}
+					}
+				}
+			}
+		}
+
+		var profileCtx service.DesignSystemProfileAnalyzeContext
+		if json.Unmarshal(task.Context, &profileCtx) == nil && profileCtx.Type == service.DesignSystemProfileAnalyzeContextType {
+			hasDesignSystemProfileAnalyze = true
+			resp.WorkspaceID = profileCtx.WorkspaceID
+			resp.DesignSystemProfileAnalyzeContext = json.RawMessage(task.Context)
+			resp.ProjectID = profileCtx.ProjectID
+		}
 	}
 
 	// Workspace isolation check: the daemon uses this response's workspace_id
@@ -1626,6 +1675,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			"has_quick_create", hasQuickCreate,
 			"has_ui_draft_create", hasUIDraftCreate,
 			"has_design_restore", hasDesignRestore,
+			"has_design_system_profile_analyze", hasDesignSystemProfileAnalyze,
 		)
 		if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
 			slog.Error("task claim: cancel after workspace check failed",
@@ -1864,6 +1914,8 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var createdDraft *db.DesignDraft
+	var analyzedProfile *db.DesignSystemProfile
+	var profileOutput *designSystemProfileAnalyzeOutput
 	if existingTask.Status == "running" && isUIDraftCreateTaskContext(existingTask.Context) {
 		draft, draftErr := h.createDesignDraftFromAgentTaskOutput(r.Context(), existingTask, req.Output)
 		if draftErr != nil {
@@ -1881,9 +1933,38 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		}
 		createdDraft = draft
 	}
+	if existingTask.Status == "running" && isDesignSystemProfileAnalyzeTaskContext(existingTask.Context) {
+		parsed, profileErr := parseDesignSystemProfileAnalyzeOutput(req.Output)
+		if profileErr != nil {
+			slog.Warn("design system profile analysis completion: invalid output", "task_id", taskID, "error", profileErr)
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), profileErr.Error(), req.SessionID, req.WorkDir, "design_system_profile_invalid_output")
+			if failErr != nil {
+				slog.Warn("design system profile analysis completion: failed to mark task failed", "task_id", taskID, "error", failErr)
+			} else if failedTask != nil {
+				if err := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); err != nil {
+					slog.Warn("complete task: failed to revoke task tokens after design system profile failure", "task_id", uuidToString(failedTask.ID), "error", err)
+				}
+			}
+			writeError(w, http.StatusBadRequest, "invalid design system profile output: "+profileErr.Error())
+			return
+		}
+		profileOutput = &parsed
+	}
 
 	result, _ := json.Marshal(req)
-	task, err := h.TaskService.CompleteTask(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir)
+	var task *db.AgentTaskQueue
+	var err error
+	if profileOutput != nil {
+		task, err = h.TaskService.CompleteTaskWithMutation(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
+			profile, updateErr := h.updateDesignSystemProfileFromAgentTaskOutput(r.Context(), qtx, completedTask, *profileOutput)
+			if updateErr == nil {
+				analyzedProfile = profile
+			}
+			return updateErr
+		})
+	} else {
+		task, err = h.TaskService.CompleteTask(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir)
+	}
 	if err != nil {
 		slog.Warn("complete task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -1900,6 +1981,9 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 			"status":              createdDraft.Status,
 			"title":               createdDraft.Title,
 		})
+	}
+	if analyzedProfile != nil {
+		slog.Info("design system profile analyzed from task", "task_id", taskID, "design_system_profile_id", uuidToString(analyzedProfile.ID))
 	}
 	if err := h.updateDesignRestoreTaskFromAgentCompletion(r.Context(), *task, req); err != nil {
 		slog.Warn("design restore task completion: failed to update restore task", "task_id", taskID, "error", err)

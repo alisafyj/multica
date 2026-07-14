@@ -567,6 +567,22 @@ func TestBuildPromptDesignRestoreUsesMulticaContextOnly(t *testing.T) {
 	}
 }
 
+func TestBuildPromptDesignRestorePrioritizesCloudDesignSystem(t *testing.T) {
+	prompt := BuildPrompt(Task{DesignRestoreContext: []byte(`{"type":"design_restore_task_execute","design_system":{"id":"profile-1","status":"analyzed","profile":{"version":"agent-1.0"}}}`)}, "opencode")
+
+	for _, want := range []string{
+		"`design_system.profile`",
+		"cloud project visual contract",
+		"Cloud design_system_profile > local DESIGN.md > repository reality",
+		"read-only implementation context",
+		"Never create, patch, sync, or overwrite `DESIGN.md`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("design restore prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestBuildPromptUIDraftIssueTemplateSelection(t *testing.T) {
 	prompt := BuildPrompt(Task{UIDraftCreateContext: []byte(`{"type":"ui_agent_draft_create","issue":{"id":"issue-1","title":"服务记录列表"},"template_candidates":[{"id":"template-1","template_profile":{"page_type":"saas.filter-table-pagination"}}]}`)}, "opencode")
 	for _, want := range []string{
@@ -609,9 +625,28 @@ func TestBuildPromptUIDraftDesignSystemGuidance(t *testing.T) {
 		"components.{kind}.variants[].states",
 		"组件 - 变体 - 状态",
 		"Templates are structure references only",
+		"Cloud design_system_profile > local DESIGN.md > repository reality",
+		"Never create, patch, sync, or overwrite `DESIGN.md`",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("UI draft design system prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+}
+
+func TestBuildPromptDesignSystemProfileAnalyze(t *testing.T) {
+	prompt := BuildPrompt(Task{DesignSystemProfileAnalyzeContext: []byte(`{"type":"design_system_profile_analyze","profile_name":"CRM UI 规范","candidate_layers":[{"id":"button-1","name":"按钮 - 主按钮 - 默认"}],"tokens":{"colors":[{"value":"#1677ff"}]}}`)}, "opencode")
+	for _, want := range []string{
+		"design system profile analysis agent",
+		"design_system_profile_analyze",
+		"profile_json",
+		"semantic classification",
+		"组件 - 变体 - 状态",
+		"Do not output markdown fences",
+		"Design system profile analysis context JSON",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("design system analysis prompt missing %q\n--- prompt ---\n%s", want, prompt)
 		}
 	}
 }

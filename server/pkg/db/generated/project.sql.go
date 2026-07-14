@@ -220,6 +220,24 @@ func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]P
 	return items, nil
 }
 
+const lockProjectInWorkspaceForUpdate = `-- name: LockProjectInWorkspaceForUpdate :one
+SELECT id FROM project
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE
+`
+
+type LockProjectInWorkspaceForUpdateParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockProjectInWorkspaceForUpdate(ctx context.Context, arg LockProjectInWorkspaceForUpdateParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockProjectInWorkspaceForUpdate, arg.ID, arg.WorkspaceID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const updateProject = `-- name: UpdateProject :one
 UPDATE project SET
     title = COALESCE($2, title),

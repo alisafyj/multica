@@ -2471,6 +2471,9 @@ func gcMetaForTask(task Task) (execenv.GCMeta, bool) {
 	case len(task.DesignRestoreContext) > 0:
 		meta.Kind = execenv.GCKindDesignRestore
 		meta.TaskID = task.ID
+	case len(task.DesignSystemProfileAnalyzeContext) > 0:
+		meta.Kind = execenv.GCKindQuickCreate
+		meta.TaskID = task.ID
 	default:
 		return execenv.GCMeta{}, false
 	}
@@ -2524,33 +2527,34 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Repos are passed as metadata only — the agent checks them out on demand
 	// via `multica repo checkout <url>`.
 	taskCtx := execenv.TaskContextForEnv{
-		IssueID:                          task.IssueID,
-		TriggerCommentID:                 task.TriggerCommentID,
-		NewCommentCount:                  task.NewCommentCount,
-		NewCommentsSince:                 task.NewCommentsSince,
-		PriorSessionResumed:              task.PriorSessionID != "",
-		AgentID:                          agentID,
-		AgentName:                        agentName,
-		AgentInstructions:                instructions,
-		AgentSkills:                      convertSkillsForEnv(skills),
-		Repos:                            convertReposForEnv(task.Repos),
-		ProjectID:                        task.ProjectID,
-		ProjectTitle:                     task.ProjectTitle,
-		ProjectResources:                 convertProjectResourcesForEnv(task.ProjectResources),
-		ChatSessionID:                    task.ChatSessionID,
-		AutopilotRunID:                   task.AutopilotRunID,
-		AutopilotID:                      task.AutopilotID,
-		AutopilotTitle:                   task.AutopilotTitle,
-		AutopilotDescription:             task.AutopilotDescription,
-		AutopilotSource:                  task.AutopilotSource,
-		AutopilotTriggerPayload:          strings.TrimSpace(string(task.AutopilotTriggerPayload)),
-		QuickCreatePrompt:                task.QuickCreatePrompt,
-		UIDraftCreateContext:             strings.TrimSpace(string(task.UIDraftCreateContext)),
-		DesignRestoreContext:             strings.TrimSpace(string(task.DesignRestoreContext)),
-		IsSquadLeader:                    strings.Contains(instructions, "## Squad Operating Protocol"),
-		RequestingUserName:               task.RequestingUserName,
-		RequestingUserProfileDescription: task.RequestingUserProfileDescription,
-		WorkspaceContext:                 task.WorkspaceContext,
+		IssueID:                           task.IssueID,
+		TriggerCommentID:                  task.TriggerCommentID,
+		NewCommentCount:                   task.NewCommentCount,
+		NewCommentsSince:                  task.NewCommentsSince,
+		PriorSessionResumed:               task.PriorSessionID != "",
+		AgentID:                           agentID,
+		AgentName:                         agentName,
+		AgentInstructions:                 instructions,
+		AgentSkills:                       convertSkillsForEnv(skills),
+		Repos:                             convertReposForEnv(task.Repos),
+		ProjectID:                         task.ProjectID,
+		ProjectTitle:                      task.ProjectTitle,
+		ProjectResources:                  convertProjectResourcesForEnv(task.ProjectResources),
+		ChatSessionID:                     task.ChatSessionID,
+		AutopilotRunID:                    task.AutopilotRunID,
+		AutopilotID:                       task.AutopilotID,
+		AutopilotTitle:                    task.AutopilotTitle,
+		AutopilotDescription:              task.AutopilotDescription,
+		AutopilotSource:                   task.AutopilotSource,
+		AutopilotTriggerPayload:           strings.TrimSpace(string(task.AutopilotTriggerPayload)),
+		QuickCreatePrompt:                 task.QuickCreatePrompt,
+		UIDraftCreateContext:              strings.TrimSpace(string(task.UIDraftCreateContext)),
+		DesignRestoreContext:              strings.TrimSpace(string(task.DesignRestoreContext)),
+		DesignSystemProfileAnalyzeContext: strings.TrimSpace(string(task.DesignSystemProfileAnalyzeContext)),
+		IsSquadLeader:                     strings.Contains(instructions, "## Squad Operating Protocol"),
+		RequestingUserName:                task.RequestingUserName,
+		RequestingUserProfileDescription:  task.RequestingUserProfileDescription,
+		WorkspaceContext:                  task.WorkspaceContext,
 	}
 
 	// Mark candidate env roots as active before any env work so the GC loop
@@ -2704,6 +2708,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// deterministically (see GetIssueByOrigin).
 	if task.QuickCreatePrompt != "" {
 		agentEnv["MULTICA_QUICK_CREATE_TASK_ID"] = task.ID
+	}
+	if len(task.DesignSystemProfileAnalyzeContext) > 0 {
+		agentEnv["MULTICA_DESIGN_SYSTEM_PROFILE_ANALYZE_TASK_ID"] = task.ID
 	}
 	// Ensure the multica CLI is on PATH inside the agent's environment.
 	// Some runtimes (e.g. Codex) run in an isolated sandbox that may not

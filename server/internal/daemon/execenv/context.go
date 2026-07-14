@@ -414,6 +414,9 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 	if ctx.DesignRestoreContext != "" {
 		return renderDesignRestoreContext(ctx)
 	}
+	if ctx.DesignSystemProfileAnalyzeContext != "" {
+		return renderDesignSystemProfileAnalyzeContext(ctx)
+	}
 
 	var b strings.Builder
 
@@ -489,6 +492,24 @@ func renderDesignRestoreContext(ctx TaskContextForEnv) string {
 	b.WriteString("```json\n")
 	b.WriteString(ctx.DesignRestoreContext)
 	b.WriteString("\n```\n")
+	return b.String()
+}
+
+func renderDesignSystemProfileAnalyzeContext(ctx TaskContextForEnv) string {
+	var b strings.Builder
+	b.WriteString("# Design System Profile Analysis\n\n")
+	b.WriteString("**Trigger:** Figma UI specification upload\n\n")
+	b.WriteString("## Analysis context JSON\n\n")
+	b.WriteString("```json\n")
+	b.WriteString(ctx.DesignSystemProfileAnalyzeContext)
+	b.WriteString("\n```\n\n")
+	if len(ctx.AgentSkills) > 0 {
+		b.WriteString("## Agent Skills\n\n")
+		for _, skill := range ctx.AgentSkills {
+			fmt.Fprintf(&b, "- **%s**\n", skill.Name)
+		}
+		b.WriteString("\n")
+	}
 	return b.String()
 }
 

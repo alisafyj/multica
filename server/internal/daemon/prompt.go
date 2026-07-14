@@ -33,11 +33,36 @@ func BuildPrompt(task Task, provider string) string {
 	if len(task.DesignRestoreContext) > 0 {
 		return buildDesignRestorePrompt(task)
 	}
+	if len(task.DesignSystemProfileAnalyzeContext) > 0 {
+		return buildDesignSystemProfileAnalyzePrompt(task)
+	}
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). On long-running issues use `--recent 20 --output json` to read the 20 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
+	return b.String()
+}
+
+func buildDesignSystemProfileAnalyzePrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a design system profile analysis agent for a Multica workspace.\n\n")
+	b.WriteString("Use ONLY the design_system_profile_analyze context JSON below as the source of truth. This is a semantic classification task for an uploaded Figma UI specification.\n\n")
+	b.WriteString("Your job is to convert cleaned UI specification candidates into an Agent-readable project visual contract.\n\n")
+	b.WriteString("Return your final answer as a single JSON object only, with this shape:\n")
+	b.WriteString("{\"profile_json\": object, \"analysis_errors\": array, \"summary\": string}\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- Perform semantic classification from names, text samples, dimensions, colors, and hierarchy summaries. Do not rely on a fixed backend component dictionary.\n")
+	b.WriteString("- Respect the naming convention `组件 - 变体 - 状态`, such as `按钮 - 主按钮 - 默认`, while allowing normal design-system extensions when the intent is clear.\n")
+	b.WriteString("- Group component examples under `profile_json.components.{kind}.variants[].states` and keep source layer IDs in examples so future agents can trace decisions.\n")
+	b.WriteString("- Extract reusable tokens into `profile_json.tokens.colors`, `profile_json.tokens.typography`, `profile_json.tokens.spacing`, and `profile_json.tokens.radius` when the evidence exists.\n")
+	b.WriteString("- Add concise `guidelines` and `anti_rules` that UI Agent and UI Restore Agent can follow directly.\n")
+	b.WriteString("- Keep warnings in `analysis_errors`; do not fail just because some layers are noisy or partially named.\n")
+	b.WriteString("- Do not create files, edit repositories, upload designs, call Figma, or call Multica write commands. The server will store your JSON output.\n")
+	b.WriteString("- Do not output markdown fences, prose outside JSON, comments, or trailing text.\n\n")
+	b.WriteString("Design system profile analysis context JSON:\n")
+	b.Write(task.DesignSystemProfileAnalyzeContext)
+	b.WriteString("\n")
 	return b.String()
 }
 
@@ -49,6 +74,9 @@ func buildDesignRestorePrompt(task Task) string {
 	b.WriteString("If `restore_plan` is present in the context, treat it as the approved execution contract. Follow its selected target, allowed paths, scope, mapping, risks, and steps before falling back to raw item context.\n\n")
 	b.WriteString("Rules:\n")
 	b.WriteString("- The embedded `item_contexts` are snapshots from Multica `/api/design-files/{design_file_id}/frames/{frame_id}/context`; treat them as authoritative.\n")
+	b.WriteString("- When `design_system.status` is `analyzed`, treat `design_system.profile` as the cloud project visual contract. Read its components, variants, states, tokens, guidelines, and anti_rules before implementing the design.\n")
+	b.WriteString("- Design-context priority is exactly: Cloud design_system_profile > local DESIGN.md > repository reality. The cloud profile controls intended visual language; local files and repository reality guide feasible implementation without overriding it.\n")
+	b.WriteString("- If a root-level `DESIGN.md` already exists in the current repository, read it as read-only implementation context after the cloud profile. Never create, patch, sync, or overwrite `DESIGN.md`.\n")
 	b.WriteString("- When an approved `restore_plan` exists, do not ignore it or silently change target paths/scope; report blockers if it cannot be followed.\n")
 	b.WriteString("- For production restore plans (`restore_plan.repo.mode == \"production_candidate\"`), write only under `restore_plan.execution.allowedPaths`; do not write prototype HTML or files under `fengchenDoc/gallery-native-agent-test`.\n")
 	b.WriteString("- Read `restore_plan.targetStrategy` before editing. When it is `business_module`, behave like a normal programmer: create or update the named business module from moduleName/moduleSlug, then place page, components, and router changes in the planned module paths.\n")
@@ -93,6 +121,7 @@ func buildUIDraftCreatePrompt(task Task) string {
 	b.WriteString("- If the context includes `parent_issue`, treat `parent_issue` as the primary PRD / business requirement source.\n")
 	b.WriteString("- When `parent_issue` exists, the current `issue` is the UI design task scope and constraints; do not treat its short title as the full requirement.\n")
 	b.WriteString("- If `design_system` is present, treat `design_system.profile` as the project visual contract. Read `components.{kind}.variants[].states`, examples, tokens, patterns, guidelines, and anti_rules before deciding any visual structure.\n")
+	b.WriteString("- Design-context priority is exactly: Cloud design_system_profile > local DESIGN.md > repository reality. If a root-level `DESIGN.md` already exists in the current project repository, read it only as auxiliary project context. Never create, patch, sync, or overwrite `DESIGN.md`.\n")
 	b.WriteString("- The design system naming convention is usually `组件 - 变体 - 状态`, such as `按钮 - 主按钮 - 默认`; use these compiled variants/states instead of guessing from raw Figma layers.\n")
 	b.WriteString("- Templates are structure references only. If a template conflicts with the issue or design_system, the issue and design_system win.\n")
 	b.WriteString("- If `template_candidates` is present, choose the best template candidate and return its `id` as `catalog_template_id`.\n")
