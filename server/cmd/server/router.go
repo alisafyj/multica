@@ -139,6 +139,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			store = local
 		}
 	}
+	designAssetStore := store
+	if qiniu := storage.NewQiniuStorageFromEnv(); qiniu != nil {
+		designAssetStore = qiniu
+	}
 
 	cfSigner := auth.NewCloudFrontSignerFromEnv()
 
@@ -153,6 +157,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		CloudRuntimeFleetTimeout: envDuration("MULTICA_CLOUD_FLEET_TIMEOUT", 35*time.Second),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	h.DesignAssetStorage = designAssetStore
 	h.Metrics = opts.BusinessMetrics
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics

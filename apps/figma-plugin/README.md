@@ -1,23 +1,33 @@
-# Multica Gallery Native Figma Plugin
+# Multica Figma Plugin
 
-Development-only MVP importer.
+将 Figma 画板、分组、图层和静态资源上传到 Multica 设计库。
 
-## Use locally
+## 安装
 
-1. In Figma Desktop: `Plugins → Development → Import plugin from manifest…`
-2. Select `apps/figma-plugin/manifest.json`.
-3. Open Multica Designs and click **Connect Figma** to generate a one-time code.
-4. Run **Multica Gallery Native Importer** in Figma.
-5. Fill:
-   - API base URL: `http://localhost:8080`
-   - Workspace: your workspace slug, e.g. `amc`
-   - One-time connection code from the Multica Designs page
-6. Click **Export selection**, then **Upload to Multica**.
+1. 解压 `multica-figma-plugin.zip`。
+2. 在 Figma Desktop 中打开 `Plugins -> Development -> Import plugin from manifest...`。
+3. 选择解压目录中的 `manifest.json`。
+4. 运行 `Multica 设计稿上传`。
 
-The plugin exports selected nodes, or the current page if nothing is selected, into `GalleryNativeJson` and stores it through Multica's design file API.
+## 使用
 
-## MVP limitations
+1. 输入 Multica Server 地址，例如 `https://multica.example.com`。
+2. 点击登录，在浏览器中完成 Multica 授权。
+3. 选择项目、上传类型和 Figma 画板。
+4. 点击上传。画板预览、图片填充和切片会先上传到 Multica 配置的 CDN，再保存设计稿。
 
-- Captures structure, geometry, text, and basic node types.
-- Does not upload image assets/slices yet.
-- Requires local API CORS to allow Figma plugin requests.
+插件会在本机保存专用上传凭证；退出登录后凭证会被清除。
+
+## 发布文件
+
+Figma 运行时只依赖以下文件：
+
+- `manifest.json`
+- `code.js`
+- `ui.html`
+
+运行仓库脚本可重新生成安装包：
+
+```bash
+./scripts/package-figma-plugin.sh
+```

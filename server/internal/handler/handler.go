@@ -107,6 +107,7 @@ type Handler struct {
 	LivenessStore         LivenessStore
 	HeartbeatScheduler    HeartbeatScheduler
 	Storage               storage.Storage
+	DesignAssetStorage    storage.Storage
 	CFSigner              *auth.CloudFrontSigner
 	Analytics             analytics.Client
 	// Metrics is the shared business-metrics collector built by main.go.

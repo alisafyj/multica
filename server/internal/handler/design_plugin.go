@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/designcore"
+	"github.com/multica-ai/multica/server/internal/storage"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -337,7 +338,8 @@ func (h *Handler) UploadFigmaDesignAssetWithPluginToken(w http.ResponseWriter, r
 	if !ok {
 		return
 	}
-	if h.Storage == nil {
+	designAssetStorage := h.figmaDesignAssetStorage()
+	if designAssetStorage == nil {
 		writeError(w, http.StatusServiceUnavailable, "design asset upload not configured")
 		return
 	}
@@ -391,7 +393,7 @@ func (h *Handler) UploadFigmaDesignAssetWithPluginToken(w http.ResponseWriter, r
 	}
 	filename := id.String() + ext
 	key := "workspaces/" + uuidToString(pluginToken.WorkspaceID) + "/design-assets/" + filename
-	url, err := h.Storage.Upload(r.Context(), key, data, contentType, header.Filename)
+	url, err := designAssetStorage.Upload(r.Context(), key, data, contentType, header.Filename)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "upload failed")
 		return
@@ -405,6 +407,13 @@ func (h *Handler) UploadFigmaDesignAssetWithPluginToken(w http.ResponseWriter, r
 		ContentType: contentType,
 		SizeBytes:   int64(len(data)),
 	})
+}
+
+func (h *Handler) figmaDesignAssetStorage() storage.Storage {
+	if h.DesignAssetStorage != nil {
+		return h.DesignAssetStorage
+	}
+	return h.Storage
 }
 
 func (h *Handler) CreateFigmaPluginDesignFolder(w http.ResponseWriter, r *http.Request) {

@@ -29,6 +29,7 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { PageHeader } from "../layout/page-header";
 import { AppLink, useNavigation } from "../navigation";
+import { FigmaPluginDownload } from "./figma-plugin-download";
 
 type ToolMenuState = { x: number; y: number; file: DesignFile } | null;
 type DraftDialogState = { template: DesignCatalogTemplate; title: string; requirement: string; slotValues: string; patch: string; agentId: string; prompt: string } | null;
@@ -312,7 +313,7 @@ function FolderSectionHeader({ folderName, count, canDelete, onDelete }: { folde
   );
 }
 
-export function DesignsPage() {
+export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl?: string }) {
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
@@ -552,16 +553,26 @@ export function DesignsPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PageHeader className="justify-between px-5">
-        <div className="flex items-center gap-2">
+      <PageHeader className="justify-between gap-2 px-3 sm:px-5">
+        <div className="flex min-w-0 items-center gap-2">
           <Palette className="h-4 w-4 text-muted-foreground" />
-          <h1 className="text-sm font-medium">设计库</h1>
-          {!isLoading && projectFiles.length > 0 ? <span className="font-mono text-xs text-muted-foreground/70">{projectFiles.length}</span> : null}
+          <h1 className="truncate text-sm font-medium">设计库</h1>
+          {!isLoading && projectFiles.length > 0 ? <span className="hidden font-mono text-xs text-muted-foreground/70 sm:inline">{projectFiles.length}</span> : null}
         </div>
-        <Button size="sm" variant="outline" onClick={() => figmaConnection.mutate()} disabled={figmaConnection.isPending}>
-          <FileJson className="h-3.5 w-3.5" />
-          {figmaConnection.isPending ? "正在创建代码…" : "连接 Figma"}
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <FigmaPluginDownload downloadUrl={figmaPluginDownloadUrl} />
+          <Button
+            size="sm"
+            variant="outline"
+            aria-label={figmaConnection.isPending ? "正在创建 Figma 连接代码" : "连接 Figma"}
+            onClick={() => figmaConnection.mutate()}
+            disabled={figmaConnection.isPending}
+          >
+            <FileJson className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">{figmaConnection.isPending ? "正在创建代码…" : "连接 Figma"}</span>
+            <span className="sm:hidden">{figmaConnection.isPending ? "连接中…" : "连接"}</span>
+          </Button>
+        </div>
       </PageHeader>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
