@@ -348,6 +348,13 @@ func TestWorkspaceContextRenderedAcrossTaskKinds(t *testing.T) {
 				WorkspaceContext: wsContext,
 			},
 		},
+		{
+			name: "design-system-profile-analysis",
+			ctx: TaskContextForEnv{
+				DesignSystemProfileAnalyzeContext: `{"type":"design_system_profile_analyze"}`,
+				WorkspaceContext:                  wsContext,
+			},
+		},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -423,6 +430,10 @@ func TestSubIssueCreationSectionSkippedForNonIssueModes(t *testing.T) {
 			name: "autopilot run-only",
 			ctx:  TaskContextForEnv{AutopilotRunID: "run-1"},
 		},
+		{
+			name: "design-system-profile-analysis",
+			ctx:  TaskContextForEnv{DesignSystemProfileAnalyzeContext: `{"type":"design_system_profile_analyze"}`},
+		},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -433,6 +444,25 @@ func TestSubIssueCreationSectionSkippedForNonIssueModes(t *testing.T) {
 				t.Errorf("%s mode must NOT emit the Sub-issue Creation section", tc.name)
 			}
 		})
+	}
+}
+
+func TestDesignSystemProfileAnalyzeContextSkipsIssueWorkflow(t *testing.T) {
+	t.Parallel()
+	out := buildMetaSkillContent("claude", TaskContextForEnv{
+		DesignSystemProfileAnalyzeContext: `{"type":"design_system_profile_analyze"}`,
+	})
+	for _, want := range []string{
+		"Figma UI specification upload",
+		"profile_json",
+		"Do NOT call `multica issue get`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("design system profile analysis brief missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Run `multica issue get") {
+		t.Fatalf("design system profile analysis brief must not include assignment issue workflow\n--- output ---\n%s", out)
 	}
 }
 

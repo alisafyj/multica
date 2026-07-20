@@ -7,6 +7,8 @@ import { StatusIcon } from "../status-icon";
 import { PropertyPicker, PickerItem } from "./property-picker";
 import { useT } from "../../../i18n";
 
+type DisabledStatusConfig = Partial<Record<IssueStatus, React.ReactNode>>;
+
 export function StatusPicker({
   status,
   onUpdate,
@@ -14,6 +16,7 @@ export function StatusPicker({
   triggerRender,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
+  disabledStatuses,
   align,
 }: {
   status: IssueStatus;
@@ -22,6 +25,7 @@ export function StatusPicker({
   triggerRender?: React.ReactElement;
   open?: boolean;
   onOpenChange?: (v: boolean) => void;
+  disabledStatuses?: DisabledStatusConfig;
   align?: "start" | "center" | "end";
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
@@ -47,10 +51,13 @@ export function StatusPicker({
     >
       {ALL_STATUSES.map((s) => {
         const c = STATUS_CONFIG[s];
+        const disabledReason = disabledStatuses?.[s];
         return (
           <PickerItem
             key={s}
             selected={s === status}
+            disabled={!!disabledReason}
+            tooltip={disabledReason}
             hoverClassName={c.hoverBg}
             onClick={() => {
               onUpdate({ status: s });

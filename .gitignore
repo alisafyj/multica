@@ -68,3 +68,9 @@ server/server
 data/
 .kilo
 .idea
+
+
+fengchenDoc/
+
+# deepwork session state
+.slim/deepwork/

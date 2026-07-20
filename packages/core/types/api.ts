@@ -35,6 +35,18 @@ export interface UpdateIssueRequest {
   attachment_ids?: string[];
 }
 
+export interface BatchUpdateIssueSkipped {
+  issue_id: string;
+  identifier: string;
+  title: string;
+  reason: string;
+}
+
+export interface BatchUpdateIssuesResponse {
+  updated: number;
+  skipped: BatchUpdateIssueSkipped[];
+}
+
 export interface ListIssuesParams {
   limit?: number;
   offset?: number;

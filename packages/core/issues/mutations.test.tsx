@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
-import { useLoadMoreByAssigneeGroup, useLoadMoreByStatus } from "./mutations";
+import { useCreateIssue, useLoadMoreByAssigneeGroup, useLoadMoreByStatus } from "./mutations";
 import {
   issueKeys,
   type IssueSortParam,
@@ -21,6 +21,7 @@ import type {
   ListGroupedIssuesParams,
   ListIssuesResponse,
 } from "../types";
+import { ISSUE_DESIGN_ROLE_KEY, ISSUE_DESIGN_ROLE_UI } from "./design-role";
 
 vi.mock("../hooks", () => ({
   useWorkspaceId: () => "ws-1",
@@ -310,5 +311,62 @@ describe("useLoadMoreByAssigneeGroup", () => {
       "issue-1",
       "issue-2",
     ]);
+  });
+});
+
+describe("useCreateIssue", () => {
+  let qc: QueryClient;
+  let createIssue: ReturnType<typeof vi.fn>;
+  let setIssueMetadataKey: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    createIssue = vi.fn();
+    setIssueMetadataKey = vi.fn();
+    setApiInstance({ createIssue, setIssueMetadataKey } as unknown as ApiClient);
+  });
+
+  afterEach(() => {
+    qc.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("uses design_role metadata returned by createIssue without issuing a follow-up metadata write", async () => {
+    const listKey = issueKeys.listSorted(WS_ID, undefined);
+    qc.setQueryData<ListIssuesCache>(listKey, {
+      byStatus: { todo: { issues: [], total: 0 } },
+    });
+    createIssue.mockResolvedValue(makeIssue(10, {
+      title: "UI设计",
+      parent_issue_id: "parent-1",
+      metadata: { [ISSUE_DESIGN_ROLE_KEY]: ISSUE_DESIGN_ROLE_UI },
+    }));
+
+    const { result } = renderHook(() => useCreateIssue(), { wrapper: createWrapper(qc) });
+
+    await act(async () => {
+      await result.current.mutateAsync({ title: "UI设计", parent_issue_id: "parent-1" });
+    });
+
+    expect(setIssueMetadataKey).not.toHaveBeenCalled();
+    const cached = qc.getQueryData<ListIssuesCache>(listKey);
+    expect(cached?.byStatus.todo?.issues[0]?.metadata).toEqual({
+      [ISSUE_DESIGN_ROLE_KEY]: ISSUE_DESIGN_ROLE_UI,
+    });
+  });
+
+  it("does not issue metadata writes for top-level issues", async () => {
+    createIssue.mockResolvedValue(makeIssue(11, {
+      title: "UI设计",
+      parent_issue_id: null,
+    }));
+
+    const { result } = renderHook(() => useCreateIssue(), { wrapper: createWrapper(qc) });
+
+    await act(async () => {
+      await result.current.mutateAsync({ title: "UI设计" });
+    });
+
+    expect(setIssueMetadataKey).not.toHaveBeenCalled();
   });
 });

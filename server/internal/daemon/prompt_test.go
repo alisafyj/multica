@@ -508,3 +508,145 @@ func TestBuildPromptResumedNoDeltaDoesNotForceThreadRead(t *testing.T) {
 		t.Errorf("resumed/no-delta prompt must not use the cold-start forced-read wording, got:\n%s", out)
 	}
 }
+
+func TestBuildPromptDesignRestoreUsesMulticaContextOnly(t *testing.T) {
+	prompt := BuildPrompt(Task{DesignRestoreContext: []byte(`{"type":"design_restore_task_execute","item_contexts":[{"item":{"itemId":"item-1"},"context":{"frame":{"id":"frame-main"}}}]}`)}, "opencode")
+	for _, want := range []string{
+		"Use ONLY the Multica design restore context JSON below as the design source of truth",
+		"The embedded `item_contexts` are snapshots from Multica",
+		"Default restore mode is `strict-structure`",
+		"restore_plan.targetStrategy",
+		"`business_module`",
+		"normal programmer",
+		"pagePath/routeOwner/componentRoot/routePath",
+		"Different `pageName` values are page or route boundaries",
+		"Do NOT implement different `pageName` values as tabs",
+		"Tabs are allowed only when an explicit tab control exists",
+		"same `pageName` may share one page",
+		"restore_plan.interactionFlow",
+		"query parameters are debug/deep-link aids",
+		"primary user path must be implemented with click handlers",
+		"router navigation",
+		"component state",
+		"restore_plan.execution.allowedPaths",
+		"wire the router",
+		"Do not default to restore-id sandbox directories",
+		"restore_plan.execution.forbiddenPaths",
+		"do not write prototype HTML",
+		"Do NOT call sy-gallery_* tools",
+		"Do NOT delegate implementation to background agents",
+		"Do NOT invent business copy",
+		"Do NOT use full-frame preview",
+		"Visual QA loop",
+		"Open the implemented route",
+		"frame_preview",
+		"side-by-side comparison",
+		"visualFidelityScore",
+		"visualReview",
+		"implementedRoute",
+		"designScreenshot",
+		"implementationScreenshot",
+		"comparisonScreenshot",
+		"remainingDiffs",
+		"UI restore artifact document",
+		"docs/multica/ui-restore",
+		"artifactDocPath",
+		"`frontend_restore`",
+		"read that artifact document first",
+		"缺少可结构化 UI 稿",
+		"usedFullFramePreview: false",
+		"RESTORE_RESULT_JSON:",
+		"usedAssetIds",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("design restore prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+	if !strings.Contains(prompt, "item_contexts") || !strings.Contains(prompt, "frame-main") {
+		t.Fatalf("design restore prompt did not embed Multica item contexts\n--- prompt ---\n%s", prompt)
+	}
+}
+
+func TestBuildPromptDesignRestorePrioritizesCloudDesignSystem(t *testing.T) {
+	prompt := BuildPrompt(Task{DesignRestoreContext: []byte(`{"type":"design_restore_task_execute","design_system":{"id":"profile-1","status":"analyzed","profile":{"version":"agent-1.0"}}}`)}, "opencode")
+
+	for _, want := range []string{
+		"`design_system.profile`",
+		"cloud project visual contract",
+		"Cloud design_system_profile > local DESIGN.md > repository reality",
+		"read-only implementation context",
+		"Never create, patch, sync, or overwrite `DESIGN.md`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("design restore prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestBuildPromptUIDraftIssueTemplateSelection(t *testing.T) {
+	prompt := BuildPrompt(Task{UIDraftCreateContext: []byte(`{"type":"ui_agent_draft_create","issue":{"id":"issue-1","title":"服务记录列表"},"template_candidates":[{"id":"template-1","template_profile":{"page_type":"saas.filter-table-pagination"}}]}`)}, "opencode")
+	for _, want := range []string{
+		"UI design draft generation agent",
+		"template_candidates",
+		"catalog_template_id",
+		"Choose the best template candidate",
+		"actual design changes",
+		"editable_text_layers",
+		"Do not return empty `slot_values: {}` and empty `patch: []`",
+		"Return your final answer as a single JSON object",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("UI draft prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "There is NO existing issue to read") {
+		t.Fatalf("UI draft prompt should not claim there is no issue when issue context is embedded\n--- prompt ---\n%s", prompt)
+	}
+}
+
+func TestBuildPromptUIDraftParentIssueGuidance(t *testing.T) {
+	prompt := BuildPrompt(Task{UIDraftCreateContext: []byte(`{"type":"ui_agent_draft_create","issue":{"id":"child-1","title":"UI设计"},"parent_issue":{"id":"parent-1","title":"CRM 客户管理开发","description":"客户管理 PRD"}}`)}, "opencode")
+	for _, want := range []string{
+		"parent_issue",
+		"primary PRD",
+		"current `issue` is the UI design task scope",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("UI draft parent issue prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+}
+
+func TestBuildPromptUIDraftDesignSystemGuidance(t *testing.T) {
+	prompt := BuildPrompt(Task{UIDraftCreateContext: []byte(`{"type":"ui_agent_draft_create","design_system":{"name":"CRM UI 规范","profile":{"version":"1.1","components":{"button":{"variants":[{"name":"主按钮","states":["默认"]}]}}}}}`)}, "opencode")
+	for _, want := range []string{
+		"design_system.profile",
+		"project visual contract",
+		"components.{kind}.variants[].states",
+		"组件 - 变体 - 状态",
+		"Templates are structure references only",
+		"Cloud design_system_profile > local DESIGN.md > repository reality",
+		"Never create, patch, sync, or overwrite `DESIGN.md`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("UI draft design system prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+}
+
+func TestBuildPromptDesignSystemProfileAnalyze(t *testing.T) {
+	prompt := BuildPrompt(Task{DesignSystemProfileAnalyzeContext: []byte(`{"type":"design_system_profile_analyze","profile_name":"CRM UI 规范","candidate_layers":[{"id":"button-1","name":"按钮 - 主按钮 - 默认"}],"tokens":{"colors":[{"value":"#1677ff"}]}}`)}, "opencode")
+	for _, want := range []string{
+		"design system profile analysis agent",
+		"design_system_profile_analyze",
+		"profile_json",
+		"semantic classification",
+		"组件 - 变体 - 状态",
+		"Do not output markdown fences",
+		"Design system profile analysis context JSON",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("design system analysis prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+}

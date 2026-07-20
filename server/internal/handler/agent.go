@@ -198,28 +198,31 @@ type AgentTaskResponse struct {
 	// when WorkDir is empty, or when stripping leaves nothing. See
 	// relativeWorkDir() for the full rules. Older clients can still read
 	// WorkDir directly; newer UIs should prefer RelativeWorkDir.
-	RelativeWorkDir         string               `json:"relative_work_dir,omitempty"`
-	TriggerCommentID        *string              `json:"trigger_comment_id,omitempty"`        // comment that triggered this task
-	TriggerCommentContent   string               `json:"trigger_comment_content,omitempty"`   // content of the triggering comment
-	TriggerSummary          *string              `json:"trigger_summary,omitempty"`           // canonical short description snapshot — comment text / autopilot title — taken at task creation; survives source edits/deletes
-	TriggerAuthorType       string               `json:"trigger_author_type,omitempty"`       // "agent" or "member" — author kind of the triggering comment
-	TriggerAuthorName       string               `json:"trigger_author_name,omitempty"`       // display name of the triggering comment author
-	NewCommentCount         int                  `json:"new_comment_count,omitempty"`         // trigger-thread comments since last run; excludes injected trigger + own comments; omitempty so old daemons ignore it
-	NewCommentsSince        string               `json:"new_comments_since,omitempty"`        // RFC3339 anchor (last run's started_at) the count is measured from; omitempty so old daemons ignore it
-	ChatSessionID           string               `json:"chat_session_id,omitempty"`           // non-empty for chat tasks
-	ChatMessage             string               `json:"chat_message,omitempty"`              // user message for chat tasks
-	ChatMessageAttachments  []ChatAttachmentMeta `json:"chat_message_attachments,omitempty"`  // attachments on the user message — agent calls `multica attachment download <id>` per entry
-	AutopilotRunID          string               `json:"autopilot_run_id,omitempty"`          // non-empty for autopilot-spawned tasks
-	AutopilotID             string               `json:"autopilot_id,omitempty"`              // autopilot that spawned this task
-	AutopilotTitle          string               `json:"autopilot_title,omitempty"`           // autopilot title used as task context
-	AutopilotDescription    string               `json:"autopilot_description,omitempty"`     // autopilot description used as task prompt
-	AutopilotSource         string               `json:"autopilot_source,omitempty"`          // manual, schedule, webhook, or api
-	AutopilotTriggerPayload json.RawMessage      `json:"autopilot_trigger_payload,omitempty"` // optional trigger payload for webhook/api runs
-	QuickCreatePrompt       string               `json:"quick_create_prompt,omitempty"`       // user's natural-language input for quick-create tasks
-	SquadID                 string               `json:"squad_id,omitempty"`                  // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
-	SquadName               string               `json:"squad_name,omitempty"`                // display name for the picker squad
-	ParentIssueID           string               `json:"parent_issue_id,omitempty"`           // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
-	ParentIssueIdentifier   string               `json:"parent_issue_identifier,omitempty"`   // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
+	RelativeWorkDir                   string               `json:"relative_work_dir,omitempty"`
+	TriggerCommentID                  *string              `json:"trigger_comment_id,omitempty"`                    // comment that triggered this task
+	TriggerCommentContent             string               `json:"trigger_comment_content,omitempty"`               // content of the triggering comment
+	TriggerSummary                    *string              `json:"trigger_summary,omitempty"`                       // canonical short description snapshot — comment text / autopilot title — taken at task creation; survives source edits/deletes
+	TriggerAuthorType                 string               `json:"trigger_author_type,omitempty"`                   // "agent" or "member" — author kind of the triggering comment
+	TriggerAuthorName                 string               `json:"trigger_author_name,omitempty"`                   // display name of the triggering comment author
+	NewCommentCount                   int                  `json:"new_comment_count,omitempty"`                     // trigger-thread comments since last run; excludes injected trigger + own comments; omitempty so old daemons ignore it
+	NewCommentsSince                  string               `json:"new_comments_since,omitempty"`                    // RFC3339 anchor (last run's started_at) the count is measured from; omitempty so old daemons ignore it
+	ChatSessionID                     string               `json:"chat_session_id,omitempty"`                       // non-empty for chat tasks
+	ChatMessage                       string               `json:"chat_message,omitempty"`                          // user message for chat tasks
+	ChatMessageAttachments            []ChatAttachmentMeta `json:"chat_message_attachments,omitempty"`              // attachments on the user message — agent calls `multica attachment download <id>` per entry
+	AutopilotRunID                    string               `json:"autopilot_run_id,omitempty"`                      // non-empty for autopilot-spawned tasks
+	AutopilotID                       string               `json:"autopilot_id,omitempty"`                          // autopilot that spawned this task
+	AutopilotTitle                    string               `json:"autopilot_title,omitempty"`                       // autopilot title used as task context
+	AutopilotDescription              string               `json:"autopilot_description,omitempty"`                 // autopilot description used as task prompt
+	AutopilotSource                   string               `json:"autopilot_source,omitempty"`                      // manual, schedule, webhook, or api
+	AutopilotTriggerPayload           json.RawMessage      `json:"autopilot_trigger_payload,omitempty"`             // optional trigger payload for webhook/api runs
+	QuickCreatePrompt                 string               `json:"quick_create_prompt,omitempty"`                   // user's natural-language input for quick-create tasks
+	UIDraftCreateContext              json.RawMessage      `json:"ui_draft_create_context,omitempty"`               // typed context for design draft generation tasks
+	DesignRestoreContext              json.RawMessage      `json:"design_restore_context,omitempty"`                // typed context for Gallery Native restore execution tasks
+	DesignSystemProfileAnalyzeContext json.RawMessage      `json:"design_system_profile_analyze_context,omitempty"` // typed context for UI specification profile analysis tasks
+	SquadID                           string               `json:"squad_id,omitempty"`                              // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
+	SquadName                         string               `json:"squad_name,omitempty"`                            // display name for the picker squad
+	ParentIssueID                     string               `json:"parent_issue_id,omitempty"`                       // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
+	ParentIssueIdentifier             string               `json:"parent_issue_identifier,omitempty"`               // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
 	// RequestingUserName + RequestingUserProfileDescription mirror the user
 	// the agent is acting on behalf of (see daemon/types.go). v1 sources them
 	// from the runtime owner so they're populated for daemon runtimes and
@@ -228,7 +231,7 @@ type AgentTaskResponse struct {
 	// is empty.
 	RequestingUserName               string `json:"requesting_user_name,omitempty"`
 	RequestingUserProfileDescription string `json:"requesting_user_profile_description,omitempty"`
-	Kind                             string `json:"kind"` // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
+	Kind                             string `json:"kind"` // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "design_restore" | "direct" — used by the activity row to label tasks that have no linked issue
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request
@@ -419,8 +422,9 @@ func basename(p string) string {
 // to choose how to render a task row. Computed from the existing FK shape so
 // no extra DB lookup is needed: chat / autopilot / comment-on-issue (any
 // triggered task with both an issue_id and trigger_comment_id) / quick_create
-// (no linked source — the agent is creating the issue itself) / direct
-// (assignee-driven task on an existing issue).
+// (no linked source — the agent is creating the issue itself) / design_restore
+// (Gallery Native restore context) / direct (assignee-driven task on an
+// existing issue).
 func computeTaskKind(t db.AgentTaskQueue) string {
 	if uuidToString(t.ChatSessionID) != "" {
 		return "chat"
@@ -429,6 +433,14 @@ func computeTaskKind(t db.AgentTaskQueue) string {
 		return "autopilot"
 	}
 	if uuidToString(t.IssueID) == "" {
+		var restoreCtx service.DesignRestoreTaskContext
+		if len(t.Context) > 0 && json.Unmarshal(t.Context, &restoreCtx) == nil && restoreCtx.Type == service.DesignRestoreTaskContextType {
+			return "design_restore"
+		}
+		var profileCtx service.DesignSystemProfileAnalyzeContext
+		if len(t.Context) > 0 && json.Unmarshal(t.Context, &profileCtx) == nil && profileCtx.Type == service.DesignSystemProfileAnalyzeContextType {
+			return "design_system_profile_analyze"
+		}
 		return "quick_create"
 	}
 	if uuidToString(t.TriggerCommentID) != "" {
@@ -1160,10 +1172,8 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 	// rows here — the agent:archived event below already triggers a full
 	// active-tasks invalidation on every connected client, so per-task
 	// task:cancelled events would be redundant noise.
-	if cancelled, err := h.Queries.CancelAgentTasksByAgent(r.Context(), agent.ID); err != nil {
+	if _, err := h.TaskService.CancelTasksForAgentWithoutBroadcast(r.Context(), agent.ID); err != nil {
 		slog.Warn("cancel agent tasks on archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-	} else {
-		h.TaskService.CaptureCancelledTasks(r.Context(), cancelled)
 	}
 
 	wsID := uuidToString(archived.WorkspaceID)

@@ -1424,10 +1424,13 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Quick-create task: no issue / chat / autopilot link — workspace and
-	// prompt come from the task's context JSONB. Resolve workspace from
-	// there so the isolation check below has something to compare.
+	// Context-backed task: no issue / chat / autopilot link — workspace and
+	// task-specific prompt/context come from the task's context JSONB. Resolve
+	// workspace from there so the isolation check below has something to compare.
 	hasQuickCreate := false
+	hasUIDraftCreate := false
+	hasDesignRestore := false
+	hasDesignSystemProfileAnalyze := false
 	if task.Context != nil && !task.IssueID.Valid && !task.ChatSessionID.Valid && !task.AutopilotRunID.Valid {
 		var qc service.QuickCreateContext
 		if json.Unmarshal(task.Context, &qc) == nil && qc.Type == service.QuickCreateContextType {
@@ -1548,6 +1551,107 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+
+		var draftCtx service.UIDraftCreateContext
+		if json.Unmarshal(task.Context, &draftCtx) == nil && draftCtx.Type == service.UIDraftCreateContextType {
+			hasUIDraftCreate = true
+			resp.WorkspaceID = draftCtx.WorkspaceID
+			resp.UIDraftCreateContext = json.RawMessage(task.Context)
+			if strings.TrimSpace(draftCtx.ProjectID) != "" {
+				projectUUID, err := util.ParseUUID(draftCtx.ProjectID)
+				if err == nil {
+					resp.ProjectID = draftCtx.ProjectID
+					if proj, err := h.Queries.GetProject(r.Context(), projectUUID); err == nil {
+						resp.ProjectTitle = proj.Title
+					}
+					var projectRepos []RepoData
+					if rows := h.listProjectResourcesForProject(r.Context(), projectUUID); len(rows) > 0 {
+						out := make([]ProjectResourceData, 0, len(rows))
+						for _, row := range rows {
+							label := ""
+							if row.Label.Valid {
+								label = row.Label.String
+							}
+							ref := json.RawMessage(row.ResourceRef)
+							if len(ref) == 0 {
+								ref = json.RawMessage("{}")
+							}
+							out = append(out, ProjectResourceData{ID: uuidToString(row.ID), ResourceType: row.ResourceType, ResourceRef: ref, Label: label})
+							if row.ResourceType == "github_repo" {
+								var payload struct {
+									URL string `json:"url"`
+								}
+								if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
+									projectRepos = append(projectRepos, RepoData{URL: payload.URL})
+								}
+							}
+						}
+						resp.ProjectResources = out
+					}
+					if len(projectRepos) > 0 {
+						resp.Repos = projectRepos
+					}
+				}
+			}
+		}
+
+		var restoreCtx service.DesignRestoreTaskContext
+		if json.Unmarshal(task.Context, &restoreCtx) == nil && restoreCtx.Type == service.DesignRestoreTaskContextType {
+			hasDesignRestore = true
+			resp.WorkspaceID = restoreCtx.WorkspaceID
+			resp.DesignRestoreContext = json.RawMessage(task.Context)
+			projectID := strings.TrimSpace(restoreCtx.ProjectID)
+			var restoreInput struct {
+				ProjectID string `json:"projectId"`
+			}
+			if projectID == "" && json.Unmarshal(restoreCtx.Input, &restoreInput) == nil {
+				projectID = strings.TrimSpace(restoreInput.ProjectID)
+			}
+			if projectID != "" {
+				projectUUID, err := util.ParseUUID(projectID)
+				if err == nil {
+					if proj, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: projectUUID, WorkspaceID: runtime.WorkspaceID}); err == nil {
+						resp.ProjectID = projectID
+						resp.ProjectTitle = proj.Title
+						var projectRepos []RepoData
+						if rows := h.listProjectResourcesForProject(r.Context(), projectUUID); len(rows) > 0 {
+							out := make([]ProjectResourceData, 0, len(rows))
+							for _, row := range rows {
+								label := ""
+								if row.Label.Valid {
+									label = row.Label.String
+								}
+								ref := json.RawMessage(row.ResourceRef)
+								if len(ref) == 0 {
+									ref = json.RawMessage("{}")
+								}
+								out = append(out, ProjectResourceData{ID: uuidToString(row.ID), ResourceType: row.ResourceType, ResourceRef: ref, Label: label})
+								if row.ResourceType == "github_repo" {
+									var payload struct {
+										URL string `json:"url"`
+									}
+									if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
+										projectRepos = append(projectRepos, RepoData{URL: payload.URL})
+									}
+								}
+							}
+							resp.ProjectResources = out
+						}
+						if len(projectRepos) > 0 {
+							resp.Repos = projectRepos
+						}
+					}
+				}
+			}
+		}
+
+		var profileCtx service.DesignSystemProfileAnalyzeContext
+		if json.Unmarshal(task.Context, &profileCtx) == nil && profileCtx.Type == service.DesignSystemProfileAnalyzeContextType {
+			hasDesignSystemProfileAnalyze = true
+			resp.WorkspaceID = profileCtx.WorkspaceID
+			resp.DesignSystemProfileAnalyzeContext = json.RawMessage(task.Context)
+			resp.ProjectID = profileCtx.ProjectID
+		}
 	}
 
 	// Workspace isolation check: the daemon uses this response's workspace_id
@@ -1569,6 +1673,9 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			"has_chat", task.ChatSessionID.Valid,
 			"has_autopilot_run", task.AutopilotRunID.Valid,
 			"has_quick_create", hasQuickCreate,
+			"has_ui_draft_create", hasUIDraftCreate,
+			"has_design_restore", hasDesignRestore,
+			"has_design_system_profile_analyze", hasDesignSystemProfileAnalyze,
 		)
 		if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
 			slog.Error("task claim: cancel after workspace check failed",
@@ -1683,9 +1790,31 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := h.markDesignRestoreTaskRunning(r.Context(), *task); err != nil {
+		slog.Warn("design restore task start: failed to mark restore task running", "task_id", taskID, "error", err)
+	}
 
 	slog.Info("task started", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
+}
+
+func (h *Handler) markDesignRestoreTaskRunning(ctx context.Context, task db.AgentTaskQueue) error {
+	var restoreCtx service.DesignRestoreTaskContext
+	if err := json.Unmarshal(task.Context, &restoreCtx); err != nil || restoreCtx.Type != service.DesignRestoreTaskContextType {
+		return nil
+	}
+	restoreTask, err := h.Queries.GetDesignRestoreTaskByAgentTask(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	_, err = h.Queries.UpdateDesignRestoreTask(ctx, db.UpdateDesignRestoreTaskParams{
+		ID:          restoreTask.ID,
+		WorkspaceID: restoreTask.WorkspaceID,
+		Status:      pgtype.Text{String: "running", Valid: true},
+		Result:      restoreTask.Result,
+		Error:       restoreTask.Error,
+	})
+	return err
 }
 
 // TaskWaitLocalDirectoryRequest is the body the daemon POSTs when it parks
@@ -1773,7 +1902,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
 	// Verify the caller owns this task's workspace.
-	_, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
+	existingTask, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
 	if !ok {
 		return
 	}
@@ -1784,8 +1913,58 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var createdDraft *db.DesignDraft
+	var analyzedProfile *db.DesignSystemProfile
+	var profileOutput *designSystemProfileAnalyzeOutput
+	if existingTask.Status == "running" && isUIDraftCreateTaskContext(existingTask.Context) {
+		draft, draftErr := h.createDesignDraftFromAgentTaskOutput(r.Context(), existingTask, req.Output)
+		if draftErr != nil {
+			slog.Warn("ui agent draft completion: invalid draft output", "task_id", taskID, "error", draftErr)
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), draftErr.Error(), req.SessionID, req.WorkDir, "ui_draft_invalid_output")
+			if failErr != nil {
+				slog.Warn("ui agent draft completion: failed to mark task failed", "task_id", taskID, "error", failErr)
+			} else if failedTask != nil {
+				if err := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); err != nil {
+					slog.Warn("complete task: failed to revoke task tokens after ui draft failure", "task_id", uuidToString(failedTask.ID), "error", err)
+				}
+			}
+			writeError(w, http.StatusBadRequest, "invalid ui draft output: "+draftErr.Error())
+			return
+		}
+		createdDraft = draft
+	}
+	if existingTask.Status == "running" && isDesignSystemProfileAnalyzeTaskContext(existingTask.Context) {
+		parsed, profileErr := parseDesignSystemProfileAnalyzeOutput(req.Output)
+		if profileErr != nil {
+			slog.Warn("design system profile analysis completion: invalid output", "task_id", taskID, "error", profileErr)
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), profileErr.Error(), req.SessionID, req.WorkDir, "design_system_profile_invalid_output")
+			if failErr != nil {
+				slog.Warn("design system profile analysis completion: failed to mark task failed", "task_id", taskID, "error", failErr)
+			} else if failedTask != nil {
+				if err := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); err != nil {
+					slog.Warn("complete task: failed to revoke task tokens after design system profile failure", "task_id", uuidToString(failedTask.ID), "error", err)
+				}
+			}
+			writeError(w, http.StatusBadRequest, "invalid design system profile output: "+profileErr.Error())
+			return
+		}
+		profileOutput = &parsed
+	}
+
 	result, _ := json.Marshal(req)
-	task, err := h.TaskService.CompleteTask(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir)
+	var task *db.AgentTaskQueue
+	var err error
+	if profileOutput != nil {
+		task, err = h.TaskService.CompleteTaskWithMutation(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
+			profile, updateErr := h.updateDesignSystemProfileFromAgentTaskOutput(r.Context(), qtx, completedTask, *profileOutput)
+			if updateErr == nil {
+				analyzedProfile = profile
+			}
+			return updateErr
+		})
+	} else {
+		task, err = h.TaskService.CompleteTask(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir)
+	}
 	if err != nil {
 		slog.Warn("complete task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -1793,6 +1972,22 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.emitIssueExecutedOnFirstCompletion(r, task)
+	if createdDraft != nil {
+		slog.Info("ui agent draft created from task", "task_id", taskID, "draft_id", uuidToString(createdDraft.ID))
+		h.publish(protocol.EventDesignDraftReady, workspaceID, "agent", uuidToString(task.AgentID), map[string]any{
+			"design_draft_id":     uuidToString(createdDraft.ID),
+			"issue_id":            uuidToPtr(createdDraft.IssueID),
+			"catalog_template_id": uuidToPtr(createdDraft.CatalogTemplateID),
+			"status":              createdDraft.Status,
+			"title":               createdDraft.Title,
+		})
+	}
+	if analyzedProfile != nil {
+		slog.Info("design system profile analyzed from task", "task_id", taskID, "design_system_profile_id", uuidToString(analyzedProfile.ID))
+	}
+	if err := h.updateDesignRestoreTaskFromAgentCompletion(r.Context(), *task, req); err != nil {
+		slog.Warn("design restore task completion: failed to update restore task", "task_id", taskID, "error", err)
+	}
 
 	// Best-effort revoke of any agent task token minted at claim time.
 	// The token would naturally expire at the 24h watermark and is also
@@ -1806,6 +2001,494 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("task completed", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
+}
+
+func (h *Handler) updateDesignRestoreTaskFromAgentCompletion(ctx context.Context, task db.AgentTaskQueue, req TaskCompleteRequest) error {
+	var restoreCtx service.DesignRestoreTaskContext
+	if err := json.Unmarshal(task.Context, &restoreCtx); err != nil || restoreCtx.Type != service.DesignRestoreTaskContextType {
+		return nil
+	}
+	restoreTask, err := h.Queries.GetDesignRestoreTaskByAgentTask(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	summary := parseDesignRestoreResultSummary(req.Output)
+	status := "completed"
+	if summary.Status == "blocked" || summary.Status == "failed" || strings.Contains(strings.ToLower(req.Output), "blocked") || strings.Contains(strings.ToLower(req.Output), "阻塞") {
+		status = "failed"
+	}
+	policyViolation := designRestorePolicyViolation(restoreCtx, req.Output, summary)
+	if policyViolation != "" {
+		status = "failed"
+	}
+	policyWarning := designRestorePolicyWarning(restoreCtx, summary)
+	result := map[string]any{
+		"output":           req.Output,
+		"summary":          summary,
+		"pr_url":           req.PRURL,
+		"session_id":       req.SessionID,
+		"work_dir":         req.WorkDir,
+		"policy_violation": policyViolation,
+		"policy_warning":   policyWarning,
+	}
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	_, err = h.Queries.UpdateDesignRestoreTask(ctx, db.UpdateDesignRestoreTaskParams{
+		ID:          restoreTask.ID,
+		WorkspaceID: restoreTask.WorkspaceID,
+		Status:      pgtype.Text{String: status, Valid: true},
+		Result:      resultJSON,
+		Error:       pgtype.Text{Valid: false},
+	})
+	if err != nil {
+		return err
+	}
+	if err := h.replaceDesignRestoreMappingsFromSummary(ctx, restoreTask, summary); err != nil {
+		return err
+	}
+	if err := h.advanceIssueAfterDesignRestoreCompletion(ctx, restoreTask, status); err != nil {
+		return err
+	}
+	agentLabel := designRestoreAgentLabelFromInput(restoreTask.Input)
+	h.createDesignRestoreIssueSystemComment(ctx, restoreTask.IssueID, designRestoreCompletionComment(agentLabel, status, policyViolation, policyWarning, summary))
+	return nil
+}
+
+func (h *Handler) advanceIssueAfterDesignRestoreCompletion(ctx context.Context, restoreTask db.DesignRestoreTask, restoreStatus string) error {
+	if !restoreTask.IssueID.Valid {
+		return nil
+	}
+	issue, err := h.Queries.GetIssue(ctx, restoreTask.IssueID)
+	if err != nil {
+		return err
+	}
+	if issue.Status == "done" || issue.Status == "cancelled" {
+		return nil
+	}
+	nextStatus := "in_review"
+	if restoreStatus == "completed" && isUIDesignIssue(issue) {
+		nextStatus = "done"
+	} else if restoreStatus != "completed" {
+		nextStatus = "blocked"
+	}
+	if err := h.updateIssueStatusAndPublish(ctx, issue.ID, issue.WorkspaceID, nextStatus, "system", ""); err != nil {
+		return err
+	}
+	if nextStatus == "done" && issue.ParentIssueID.Valid {
+		if parent, err := h.Queries.GetIssue(ctx, issue.ParentIssueID); err == nil {
+			h.promoteFrontendSiblingsAfterDesignDone(ctx, issue, parent)
+		}
+	}
+	return nil
+}
+
+func (h *Handler) updateIssueStatusAndPublish(ctx context.Context, issueID, workspaceID pgtype.UUID, status, actorType, actorID string) error {
+	updated, err := h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{ID: issueID, WorkspaceID: workspaceID, Status: status})
+	if err != nil {
+		return err
+	}
+	prefix := h.getIssuePrefix(ctx, updated.WorkspaceID)
+	h.publish(protocol.EventIssueUpdated, uuidToString(updated.WorkspaceID), actorType, actorID, map[string]any{
+		"issue": issueToResponse(updated, prefix),
+	})
+	return nil
+}
+
+func designRestoreAgentLabelFromInput(input []byte) string {
+	var payload struct {
+		Purpose string `json:"purpose"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "前端 Agent"
+	}
+	if payload.Purpose == "ui_generation" {
+		return "UI Agent"
+	}
+	return "前端 Agent"
+}
+
+func designRestoreCompletionComment(agentLabel, status, policyViolation, policyWarning string, summary designRestoreResultSummary) string {
+	var b strings.Builder
+	if status == "completed" {
+		b.WriteString(agentLabel)
+		b.WriteString(" 已完成设计稿还原。")
+	} else {
+		b.WriteString(agentLabel)
+		b.WriteString(" 设计稿还原未完成，需要处理。")
+	}
+	if summary.Summary != "" {
+		b.WriteString("\n\n摘要：")
+		b.WriteString(summary.Summary)
+	}
+	if len(summary.Files) > 0 {
+		b.WriteString("\n\n变更文件：")
+		for _, file := range summary.Files {
+			b.WriteString("\n- `")
+			b.WriteString(file)
+			b.WriteString("`")
+		}
+	}
+	if len(summary.Checks) > 0 {
+		b.WriteString("\n\n检查：")
+		for _, check := range summary.Checks {
+			b.WriteString("\n- `")
+			b.WriteString(check)
+			b.WriteString("`")
+		}
+	}
+	if len(summary.Blockers) > 0 {
+		b.WriteString("\n\n阻塞项：")
+		for _, blocker := range summary.Blockers {
+			b.WriteString("\n- ")
+			b.WriteString(blocker)
+		}
+	}
+	if len(summary.RestoreMapping) > 0 {
+		b.WriteString(fmt.Sprintf("\n\nRestore Mapping：%d 条", len(summary.RestoreMapping)))
+	}
+	if policyViolation == "" {
+		policyViolation = "无"
+	}
+	b.WriteString("\n\n策略违规：")
+	b.WriteString(policyViolation)
+	if policyWarning != "" {
+		b.WriteString("\n策略警告：")
+		b.WriteString(policyWarning)
+	}
+	b.WriteString("\n整图 preview：")
+	if summary.UsedFullFramePreview {
+		b.WriteString("已使用")
+	} else {
+		b.WriteString("未使用")
+	}
+	return b.String()
+}
+
+func (h *Handler) replaceDesignRestoreMappingsFromSummary(ctx context.Context, task db.DesignRestoreTask, summary designRestoreResultSummary) error {
+	if err := h.Queries.DeleteDesignRestoreMappingsByTask(ctx, db.DeleteDesignRestoreMappingsByTaskParams{RestoreTaskID: task.ID, WorkspaceID: task.WorkspaceID}); err != nil {
+		return err
+	}
+	for _, item := range summary.RestoreMapping {
+		layerID, targetPath, targetKind := designRestoreMappingFields(item)
+		if layerID == "" || targetPath == "" {
+			continue
+		}
+		confidence := float32(0.8)
+		if value, ok := item["confidence"]; ok {
+			confidence = float32FromAny(value, confidence)
+		}
+		metadata, err := json.Marshal(item)
+		if err != nil {
+			metadata = []byte(`{}`)
+		}
+		if _, err := h.Queries.CreateDesignRestoreMapping(ctx, db.CreateDesignRestoreMappingParams{
+			RestoreTaskID: task.ID,
+			WorkspaceID:   task.WorkspaceID,
+			LayerID:       layerID,
+			TargetPath:    targetPath,
+			TargetKind:    targetKind,
+			Confidence:    confidence,
+			Metadata:      metadata,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func designRestoreMappingFields(item map[string]any) (string, string, string) {
+	layerID := firstNonEmptyString(item, "layerId", "layer_id", "sourceLayerId", "source_layer_id", "sketchId", "sketch_id", "source")
+	targetPath := firstNonEmptyString(item, "targetPath", "target_path", "targetFile", "target_file", "file", "path", "target")
+	targetKind := firstNonEmptyString(item, "targetKind", "target_kind", "kind")
+	if targetKind == "" && firstNonEmptyString(item, "targetFile", "target_file", "file", "path") != "" {
+		targetKind = "file"
+	}
+	if !validDesignRestoreTargetKind(targetKind) {
+		targetKind = "unknown"
+	}
+	return layerID, targetPath, targetKind
+}
+
+func firstNonEmptyString(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := values[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func validDesignRestoreTargetKind(kind string) bool {
+	switch kind {
+	case "component", "file", "symbol", "route", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func float32FromAny(value any, fallback float32) float32 {
+	switch v := value.(type) {
+	case float64:
+		if v >= 0 && v <= 1 {
+			return float32(v)
+		}
+	case float32:
+		if v >= 0 && v <= 1 {
+			return v
+		}
+	case int:
+		if v >= 0 && v <= 1 {
+			return float32(v)
+		}
+	}
+	return fallback
+}
+
+type designRestoreResultSummary struct {
+	Status                   string                     `json:"status"`
+	Summary                  string                     `json:"summary"`
+	Files                    []string                   `json:"files"`
+	Checks                   []string                   `json:"checks"`
+	Blockers                 []string                   `json:"blockers"`
+	RestoreMapping           []map[string]any           `json:"restoreMapping"`
+	UsedLayerIDs             []string                   `json:"usedLayerIds"`
+	UsedAssetIDs             []string                   `json:"usedAssetIds"`
+	UsedFullFramePreview     bool                       `json:"usedFullFramePreview"`
+	PolicyViolation          string                     `json:"policyViolation"`
+	ArtifactDocPath          string                     `json:"artifactDocPath,omitempty"`
+	VisualFidelityScore      *float64                   `json:"visualFidelityScore,omitempty"`
+	VisualReview             *designRestoreVisualReview `json:"visualReview,omitempty"`
+	ImplementedRoute         string                     `json:"implementedRoute,omitempty"`
+	DesignScreenshot         string                     `json:"designScreenshot,omitempty"`
+	ImplementationScreenshot string                     `json:"implementationScreenshot,omitempty"`
+	ComparisonScreenshot     string                     `json:"comparisonScreenshot,omitempty"`
+	RemainingDiffs           []string                   `json:"remainingDiffs,omitempty"`
+	Notes                    string                     `json:"notes,omitempty"`
+}
+
+type designRestoreVisualReview struct {
+	ImplementedRoute         string   `json:"implementedRoute,omitempty"`
+	DesignScreenshot         string   `json:"designScreenshot,omitempty"`
+	ImplementationScreenshot string   `json:"implementationScreenshot,omitempty"`
+	ComparisonScreenshot     string   `json:"comparisonScreenshot,omitempty"`
+	RemainingDiffs           []string `json:"remainingDiffs,omitempty"`
+	Notes                    string   `json:"notes,omitempty"`
+}
+
+func (s *designRestoreResultSummary) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	restoreMappingRaw := fields["restoreMapping"]
+	delete(fields, "restoreMapping")
+	rest, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	type summaryNoMethods designRestoreResultSummary
+	var base summaryNoMethods
+	if err := json.Unmarshal(rest, &base); err != nil {
+		return err
+	}
+	*s = designRestoreResultSummary(base)
+	if len(restoreMappingRaw) == 0 || string(restoreMappingRaw) == "null" {
+		return nil
+	}
+	var objectMapping []map[string]any
+	if err := json.Unmarshal(restoreMappingRaw, &objectMapping); err == nil {
+		s.RestoreMapping = objectMapping
+		return nil
+	}
+	var stringMapping []string
+	if err := json.Unmarshal(restoreMappingRaw, &stringMapping); err == nil {
+		s.RestoreMapping = make([]map[string]any, 0, len(stringMapping))
+		for _, item := range stringMapping {
+			if mapping := designRestoreMappingFromString(item); len(mapping) > 0 {
+				s.RestoreMapping = append(s.RestoreMapping, mapping)
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
+func designRestoreMappingFromString(value string) map[string]any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	mapping := map[string]any{
+		"description": value,
+		"targetKind":  "unknown",
+	}
+	for _, sep := range []string{"->", "→", "=>"} {
+		parts := strings.SplitN(value, sep, 2)
+		if len(parts) != 2 {
+			continue
+		}
+		source := strings.TrimSpace(parts[0])
+		target := strings.TrimSpace(parts[1])
+		if source != "" {
+			mapping["sourceLayerId"] = source
+			mapping["layerId"] = source
+		}
+		if target != "" {
+			mapping["targetPath"] = target
+		}
+		return mapping
+	}
+	return mapping
+}
+
+func parseDesignRestoreResultSummary(output string) designRestoreResultSummary {
+	const marker = "RESTORE_RESULT_JSON:"
+	idx := strings.LastIndex(output, marker)
+	if idx < 0 {
+		return designRestoreResultSummary{}
+	}
+	candidate := strings.TrimSpace(output[idx+len(marker):])
+	if strings.HasPrefix(candidate, "```") {
+		candidate = strings.TrimPrefix(candidate, "```")
+		candidate = strings.TrimPrefix(strings.TrimSpace(candidate), "json")
+		if end := strings.Index(candidate, "```"); end >= 0 {
+			candidate = candidate[:end]
+		}
+	}
+	start := strings.Index(candidate, "{")
+	end := strings.LastIndex(candidate, "}")
+	if start < 0 || end < start {
+		return designRestoreResultSummary{}
+	}
+	var summary designRestoreResultSummary
+	if err := json.Unmarshal([]byte(candidate[start:end+1]), &summary); err != nil {
+		return designRestoreResultSummary{}
+	}
+	summary.Status = strings.ToLower(strings.TrimSpace(summary.Status))
+	return summary
+}
+
+func designRestorePolicyViolation(ctx service.DesignRestoreTaskContext, output string, summary designRestoreResultSummary) string {
+	if strings.TrimSpace(summary.PolicyViolation) != "" {
+		return strings.TrimSpace(summary.PolicyViolation)
+	}
+	if summary.UsedFullFramePreview {
+		return "full_frame_preview_forbidden"
+	}
+	if len(summary.UsedAssetIDs) > 0 {
+		forbidden := designRestoreForbiddenFullFrameAssetIDs(ctx.ItemContexts)
+		forbiddenSet := make(map[string]bool, len(forbidden))
+		for _, id := range forbidden {
+			forbiddenSet[strings.ToLower(id)] = true
+		}
+		for _, id := range summary.UsedAssetIDs {
+			if forbiddenSet[strings.ToLower(strings.TrimSpace(id))] {
+				return "full_frame_preview_forbidden: " + id
+			}
+		}
+	}
+	if len(ctx.RestorePolicy) > 0 {
+		if summary.Status == "" {
+			return "missing_restore_result_json"
+		}
+		if summary.Status == "completed" {
+			switch {
+			case len(summary.Files) == 0:
+				return "completed_result_missing_files"
+			case len(summary.RestoreMapping) == 0:
+				return "completed_result_missing_restore_mapping"
+			case len(summary.UsedLayerIDs) == 0:
+				return "completed_result_missing_used_layer_ids"
+			case designRestoreContextPurpose(ctx) == "ui_generation" && strings.TrimSpace(summary.ArtifactDocPath) == "":
+				return "completed_result_missing_artifact_doc_path"
+			}
+		}
+		if summary.Status == "blocked" && len(summary.Blockers) == 0 {
+			return "blocked_result_missing_blockers"
+		}
+	}
+	return designRestoreFullFramePreviewViolation(ctx, output)
+}
+
+func designRestoreContextPurpose(ctx service.DesignRestoreTaskContext) string {
+	var payload struct {
+		Purpose string `json:"purpose"`
+	}
+	if err := json.Unmarshal(ctx.Input, &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Purpose)
+}
+
+func designRestorePolicyWarning(ctx service.DesignRestoreTaskContext, summary designRestoreResultSummary) string {
+	if len(ctx.RestorePolicy) > 0 && summary.Status == "" {
+		return "missing_restore_result_json"
+	}
+	return ""
+}
+
+func designRestoreFullFramePreviewViolation(ctx service.DesignRestoreTaskContext, output string) string {
+	if len(ctx.RestorePolicy) == 0 || !strings.Contains(string(ctx.RestorePolicy), `"allowFullFramePreview":false`) {
+		return ""
+	}
+	forbidden := designRestoreForbiddenFullFrameAssetIDs(ctx.ItemContexts)
+	if len(forbidden) == 0 {
+		return ""
+	}
+	lowerOutput := strings.ToLower(output)
+	for _, id := range forbidden {
+		if strings.Contains(lowerOutput, strings.ToLower(id)) {
+			return "full_frame_preview_forbidden: " + id
+		}
+	}
+	if strings.Contains(lowerOutput, "usedfullframepreview: true") || strings.Contains(lowerOutput, `"usedfullframepreview":true`) {
+		return "full_frame_preview_forbidden"
+	}
+	return ""
+}
+
+func designRestoreForbiddenFullFrameAssetIDs(itemContexts json.RawMessage) []string {
+	if len(itemContexts) == 0 {
+		return nil
+	}
+	var items []struct {
+		Context struct {
+			Frame struct {
+				Width  float64 `json:"width"`
+				Height float64 `json:"height"`
+			} `json:"frame"`
+			Assets map[string]struct {
+				ID     string  `json:"id"`
+				Kind   string  `json:"kind"`
+				Width  float64 `json:"width"`
+				Height float64 `json:"height"`
+			} `json:"assets"`
+		} `json:"context"`
+	}
+	if err := json.Unmarshal(itemContexts, &items); err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var ids []string
+	for _, item := range items {
+		for key, asset := range item.Context.Assets {
+			id := asset.ID
+			if strings.TrimSpace(id) == "" {
+				id = key
+			}
+			kind := strings.ToLower(asset.Kind)
+			isFrameAsset := kind == "frame_preview" || kind == "frame_thumbnail"
+			isFullFrameSlice := kind == "slice" && item.Context.Frame.Width > 0 && item.Context.Frame.Height > 0 && asset.Width == item.Context.Frame.Width && asset.Height == item.Context.Frame.Height
+			if (isFrameAsset || isFullFrameSlice) && id != "" && !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
 }
 
 // emitIssueExecutedOnFirstCompletion atomically flips issue.first_executed_at
@@ -1940,6 +2623,9 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := h.updateDesignRestoreTaskFromAgentFailure(r.Context(), *task, req); err != nil {
+		slog.Warn("design restore task failure: failed to update restore task", "task_id", taskID, "error", err)
+	}
 
 	// Best-effort revoke of the mat_ task token minted at claim. Same
 	// rationale as CompleteTask — eager deletion shrinks the post-
@@ -1950,6 +2636,43 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("task failed", "task_id", taskID, "agent_id", uuidToString(task.AgentID), "task_error", req.Error, "failure_reason", req.FailureReason)
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
+}
+
+func (h *Handler) updateDesignRestoreTaskFromAgentFailure(ctx context.Context, task db.AgentTaskQueue, req TaskFailRequest) error {
+	var restoreCtx service.DesignRestoreTaskContext
+	if err := json.Unmarshal(task.Context, &restoreCtx); err != nil || restoreCtx.Type != service.DesignRestoreTaskContextType {
+		return nil
+	}
+	restoreTask, err := h.Queries.GetDesignRestoreTaskByAgentTask(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	result := map[string]any{
+		"error":          req.Error,
+		"session_id":     req.SessionID,
+		"work_dir":       req.WorkDir,
+		"failure_reason": req.FailureReason,
+	}
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	_, err = h.Queries.UpdateDesignRestoreTask(ctx, db.UpdateDesignRestoreTaskParams{
+		ID:          restoreTask.ID,
+		WorkspaceID: restoreTask.WorkspaceID,
+		Status:      pgtype.Text{String: "failed", Valid: true},
+		Result:      resultJSON,
+		Error:       pgtype.Text{String: req.Error, Valid: strings.TrimSpace(req.Error) != ""},
+	})
+	if err != nil {
+		return err
+	}
+	if err := h.advanceIssueAfterDesignRestoreCompletion(ctx, restoreTask, "failed"); err != nil {
+		return err
+	}
+	agentLabel := designRestoreAgentLabelFromInput(restoreTask.Input)
+	h.createDesignRestoreIssueSystemComment(ctx, restoreTask.IssueID, designRestoreCompletionComment(agentLabel, "failed", "Agent 执行失败", "", designRestoreResultSummary{Status: "failed", Blockers: []string{req.Error}}))
+	return nil
 }
 
 // ---------------------------------------------------------------------------

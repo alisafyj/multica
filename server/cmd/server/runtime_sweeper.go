@@ -148,7 +148,9 @@ func sweepStaleRuntimes(ctx context.Context, queries *db.Queries, liveness handl
 	slog.Info("runtime sweeper: marked stale runtimes offline", "count", len(staleRows), "workspaces", len(workspaces))
 
 	// Fail orphaned tasks (dispatched/running) whose runtimes just went offline.
-	failedTasks, err := queries.FailTasksForOfflineRuntimes(ctx)
+	failedTasks, err := taskSvc.FailTasksWithProfileSync(ctx, func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
+		return qtx.FailTasksForOfflineRuntimes(ctx)
+	})
 	if err != nil {
 		slog.Warn("runtime sweeper: failed to clean up stale tasks", "error", err)
 	} else if len(failedTasks) > 0 {
@@ -240,10 +242,12 @@ func gcRuntimes(ctx context.Context, queries *db.Queries, bus *events.Bus) {
 // - The agent process hangs and the daemon is still heartbeating
 // - The daemon failed to report task completion/failure
 // - A server restart left tasks in a non-terminal state
-func sweepStaleTasks(ctx context.Context, queries *db.Queries, taskSvc *service.TaskService, bus *events.Bus) {
-	failedTasks, err := queries.FailStaleTasks(ctx, db.FailStaleTasksParams{
-		DispatchTimeoutSecs: dispatchTimeoutSeconds,
-		RunningTimeoutSecs:  runningTimeoutSeconds,
+func sweepStaleTasks(ctx context.Context, _ *db.Queries, taskSvc *service.TaskService, bus *events.Bus) {
+	failedTasks, err := taskSvc.FailTasksWithProfileSync(ctx, func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
+		return qtx.FailStaleTasks(ctx, db.FailStaleTasksParams{
+			DispatchTimeoutSecs: dispatchTimeoutSeconds,
+			RunningTimeoutSecs:  runningTimeoutSeconds,
+		})
 	})
 	if err != nil {
 		slog.Warn("task sweeper: failed to clean up stale tasks", "error", err)
@@ -264,10 +268,12 @@ func sweepStaleTasks(ctx context.Context, queries *db.Queries, taskSvc *service.
 // historical backlog and catches the race where a runtime goes offline AFTER
 // a task is already queued. Capped to queuedExpireBatchSize per tick so a
 // big backlog can't monopolise the DB.
-func sweepExpiredQueuedTasks(ctx context.Context, queries *db.Queries, taskSvc *service.TaskService) {
-	failedTasks, err := queries.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
-		TtlSecs:    queuedTTLSeconds,
-		MaxPerTick: queuedExpireBatchSize,
+func sweepExpiredQueuedTasks(ctx context.Context, _ *db.Queries, taskSvc *service.TaskService) {
+	failedTasks, err := taskSvc.FailTasksWithProfileSync(ctx, func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
+		return qtx.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
+			TtlSecs:    queuedTTLSeconds,
+			MaxPerTick: queuedExpireBatchSize,
+		})
 	})
 	if err != nil {
 		slog.Warn("task sweeper: failed to expire stale queued tasks", "error", err)

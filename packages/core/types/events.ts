@@ -5,6 +5,7 @@ import type { Comment, Reaction } from "./comment";
 import type { TimelineEntry } from "./activity";
 import type { Workspace, MemberWithUser, Invitation } from "./workspace";
 import type { Project } from "./project";
+import type { DesignCatalogTemplate } from "./design";
 import type { Label } from "./label";
 
 // WebSocket event types (matching Go server protocol/events.go)
@@ -60,6 +61,9 @@ export type WSEventType =
   | "project:created"
   | "project:updated"
   | "project:deleted"
+  | "design:ready"
+  | "design_template:ready"
+  | "design_draft:ready"
   | "squad:created"
   | "squad:updated"
   | "squad:deleted"
@@ -128,6 +132,24 @@ export interface AgentRestoredPayload {
 
 export interface InboxNewPayload {
   item: InboxItem;
+}
+
+export interface DesignReadyPayload {
+  ready_type: "design_file" | "template";
+  design_file_id: string;
+  revision_id: string;
+  project_id?: string | null;
+  folder_id?: string | null;
+  title: string;
+  template?: DesignCatalogTemplate;
+}
+
+export interface DesignDraftReadyPayload {
+  design_draft_id: string;
+  issue_id?: string | null;
+  catalog_template_id?: string | null;
+  status?: string;
+  title?: string;
 }
 
 export interface InboxReadPayload {
@@ -437,6 +459,9 @@ export interface WSEventPayloadMap {
   "project:created": ProjectCreatedPayload;
   "project:updated": ProjectUpdatedPayload;
   "project:deleted": ProjectDeletedPayload;
+  "design:ready": DesignReadyPayload;
+  "design_template:ready": DesignReadyPayload;
+  "design_draft:ready": DesignDraftReadyPayload;
   "invitation:created": InvitationCreatedPayload;
   "invitation:accepted": InvitationAcceptedPayload;
   "invitation:declined": InvitationDeclinedPayload;

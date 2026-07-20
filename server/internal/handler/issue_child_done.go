@@ -66,6 +66,7 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	if parent.Status == "done" || parent.Status == "cancelled" {
 		return
 	}
+	h.promoteFrontendSiblingsAfterDesignDone(ctx, issue, parent)
 	// Human-assigned parents read their own timeline; an automated system
 	// comment is just noise and there is no agent task to trigger. Skip the
 	// whole notification (comment + mention + inbox row) — MUL-2538.
@@ -123,6 +124,110 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	// title inert and gives the platform a single place to apply the loop
 	// and idempotency guards.
 	h.dispatchParentAssigneeTrigger(ctx, parent, issue, comment, actorType, actorID)
+}
+
+func (h *Handler) promoteFrontendSiblingsAfterDesignDone(ctx context.Context, completedChild, parent db.Issue) {
+	if !isUIDesignIssue(completedChild) {
+		return
+	}
+	if !h.uiDesignDelivered(ctx, completedChild) {
+		return
+	}
+	children, err := h.Queries.ListChildIssues(ctx, parent.ID)
+	if err != nil {
+		return
+	}
+	for _, child := range children {
+		if child.ID == completedChild.ID || !isFrontendDevIssue(child) {
+			continue
+		}
+		if child.Status != "backlog" {
+			continue
+		}
+		if err := h.updateIssueStatusAndPublish(ctx, child.ID, child.WorkspaceID, "todo", "system", ""); err != nil {
+			slog.Warn("design done: failed to promote frontend sibling", "issue_id", uuidToString(child.ID), "error", err)
+			continue
+		}
+		h.createDesignRestoreIssueSystemComment(ctx, child.ID, "UI 设计交付已完成，前端开发已进入待办。")
+	}
+}
+
+func (h *Handler) uiDesignRestoreCompleted(ctx context.Context, issue db.Issue) bool {
+	tasks, err := h.Queries.ListDesignRestoreTasks(ctx, issue.WorkspaceID)
+	if err != nil {
+		return false
+	}
+	for _, task := range tasks {
+		if task.IssueID.Valid && task.IssueID == issue.ID && task.Status == "completed" {
+			return true
+		}
+	}
+	return false
+}
+
+const (
+	issueDesignRoleMetadataKey = "design_role"
+	issueDesignRoleUI          = "ui_design"
+	issueDesignRoleFrontend    = "frontend_dev"
+
+	uiDesignDeliveryRequiredBeforeDoneMessage = "UI design issue requires completed UI restore or raw design fallback handoff before completion"
+)
+
+func (h *Handler) canCompleteUIDesignIssue(ctx context.Context, issue db.Issue, nextStatus string) bool {
+	if issue.Status == "done" || nextStatus != "done" || !isUIDesignIssue(issue) {
+		return true
+	}
+	return h.uiDesignDelivered(ctx, issue)
+}
+
+func isUIDesignIssue(issue db.Issue) bool {
+	return issueDesignRole(issue) == issueDesignRoleUI
+}
+
+func isFrontendDevIssue(issue db.Issue) bool {
+	return issueDesignRole(issue) == issueDesignRoleFrontend
+}
+
+func issueDesignRole(issue db.Issue) string {
+	if explicitRole := explicitIssueDesignRole(issue.Metadata); explicitRole != "" {
+		return explicitRole
+	}
+	return inferIssueDesignRoleFromTitle(issue.Title)
+}
+
+func explicitIssueDesignRole(metadata []byte) string {
+	rawRole, ok := parseIssueMetadata(metadata)[issueDesignRoleMetadataKey]
+	if !ok {
+		return ""
+	}
+	role, ok := rawRole.(string)
+	if !ok {
+		return ""
+	}
+	if role == issueDesignRoleUI || role == issueDesignRoleFrontend {
+		return role
+	}
+	return ""
+}
+
+func inferIssueDesignRoleFromTitle(title string) string {
+	if looksLikeUIDesignIssue(title) {
+		return issueDesignRoleUI
+	}
+	if looksLikeFrontendDevIssue(title) {
+		return issueDesignRoleFrontend
+	}
+	return ""
+}
+
+func looksLikeUIDesignIssue(title string) bool {
+	title = strings.ToLower(strings.TrimSpace(title))
+	return strings.Contains(title, "ui") || strings.Contains(title, "设计")
+}
+
+func looksLikeFrontendDevIssue(title string) bool {
+	title = strings.ToLower(strings.TrimSpace(title))
+	return strings.Contains(title, "前端") || strings.Contains(title, "frontend")
 }
 
 // sanitizeChildTitleForSystemComment removes mention-style markdown from a

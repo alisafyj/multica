@@ -253,6 +253,111 @@ describe("ApiClient", () => {
     );
   });
 
+  describe("design system profiles", () => {
+    it("lists design system profiles for a project", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            design_systems: [
+              {
+                id: "dsp-1",
+                workspace_id: "ws-1",
+                project_id: "project-1",
+                source_file_id: "file-1",
+                source_revision_id: "rev-1",
+                name: "CRM 后台设计系统",
+                description: "CRM base components",
+                status: "analyzed",
+                is_default: true,
+                profile_json: { version: "1.0" },
+                analysis_errors: [],
+                created_by: "user-1",
+                created_at: "2026-07-08T00:00:00Z",
+                updated_at: "2026-07-08T00:00:00Z",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      const resp = await client.listDesignSystemProfiles({ project_id: "project-1" });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.example.test/api/design-systems?project_id=project-1");
+      expect(resp.design_systems).toHaveLength(1);
+      expect(resp.design_systems[0]?.name).toBe("CRM 后台设计系统");
+      expect(resp.design_systems[0]?.profile_json).toMatchObject({ version: "1.0" });
+    });
+
+    it("falls back to an empty design system list for malformed responses", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ design_systems: [{ id: 123 }] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      );
+
+      const client = new ApiClient("https://api.example.test");
+      const resp = await client.listDesignSystemProfiles();
+
+      expect(resp.design_systems).toEqual([]);
+    });
+
+    it("creates a design system profile", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            id: "dsp-2",
+            workspace_id: "ws-1",
+            project_id: "project-1",
+            source_file_id: "file-1",
+            source_revision_id: "rev-1",
+            name: "CRM 设计系统",
+            status: "analyzed",
+            is_default: true,
+            profile_json: { version: "1.0" },
+            analysis_errors: [],
+            created_by: "user-1",
+            created_at: "2026-07-08T00:00:00Z",
+            updated_at: "2026-07-08T00:00:00Z",
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      const profile = await client.createDesignSystemProfile({
+        project_id: "project-1",
+        source_file_id: "file-1",
+        source_revision_id: "rev-1",
+        name: "CRM 设计系统",
+        is_default: true,
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, opts] = fetchMock.mock.calls[0]!;
+      expect(url).toBe("https://api.example.test/api/design-systems");
+      expect(opts).toMatchObject({
+        method: "POST",
+        body: JSON.stringify({
+          project_id: "project-1",
+          source_file_id: "file-1",
+          source_revision_id: "rev-1",
+          name: "CRM 设计系统",
+          is_default: true,
+        }),
+      });
+      expect(profile.id).toBe("dsp-2");
+    });
+  });
+
   describe("getAttachment", () => {
     it("returns the parsed attachment for a well-formed response", async () => {
       vi.stubGlobal(

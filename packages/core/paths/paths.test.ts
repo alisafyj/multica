@@ -10,6 +10,10 @@ describe("paths.workspace(slug)", () => {
     expect(ws.issueDetail("abc-123")).toBe("/acme/issues/abc-123");
     expect(ws.projects()).toBe("/acme/projects");
     expect(ws.projectDetail("p1")).toBe("/acme/projects/p1");
+    expect(ws.designs()).toBe("/acme/designs");
+    expect(ws.designDetail("d1")).toBe("/acme/designs/d1");
+    expect(ws.designDraftDetail("draft1")).toBe("/acme/designs/drafts/draft1");
+    expect(ws.designRestoreTaskDetail("task1")).toBe("/acme/designs/restore-tasks/task1");
     expect(ws.autopilots()).toBe("/acme/autopilots");
     expect(ws.autopilotDetail("a1")).toBe("/acme/autopilots/a1");
     expect(ws.agents()).toBe("/acme/agents");
@@ -27,6 +31,11 @@ describe("paths.workspace(slug)", () => {
 
   it("URL-encodes special characters in ids", () => {
     expect(ws.issueDetail("id with space")).toBe("/acme/issues/id%20with%20space");
+  });
+
+  it("can pin design paths to a revision", () => {
+    expect(ws.designDetail("d 1", { revisionId: "rev 1" })).toBe("/acme/designs/d%201?revision_id=rev+1");
+    expect(ws.designFrameDetail("d 1", "frame/1", { revisionId: "rev 1" })).toBe("/acme/designs/d%201/frames/frame%2F1?revision_id=rev+1");
   });
 });
 

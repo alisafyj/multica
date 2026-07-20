@@ -11,6 +11,7 @@ import { defaultStorage } from "../platform/storage";
 import { getCurrentWsId, getCurrentSlug } from "../platform/workspace-storage";
 import { issueKeys } from "../issues/queries";
 import { projectKeys } from "../projects/queries";
+import { designKeys } from "../designs/keys";
 import { pinKeys } from "../pins/queries";
 import { autopilotKeys } from "../autopilots/queries";
 import { runtimeKeys } from "../runtimes/queries";
@@ -74,6 +75,8 @@ import type {
   ChatPendingTask,
   ChatMessagesPage,
   InvitationCreatedPayload,
+  DesignReadyPayload,
+  DesignDraftReadyPayload,
 } from "../types";
 
 const chatWsLogger = createLogger("chat.ws");
@@ -415,8 +418,10 @@ export function useRealtimeSync(
     ]);
 
     const unsubAny = ws.onAny((msg) => {
-      if (specificEvents.has(msg.type)) return;
-      const prefix = msg.type.split(":")[0] ?? "";
+      const eventType = typeof msg.type === "string" ? msg.type : "";
+      if (!eventType) return;
+      if (specificEvents.has(eventType)) return;
+      const prefix = eventType.split(":")[0] ?? "";
       const refresh = refreshMap[prefix];
       if (refresh) debouncedRefresh(prefix, refresh);
     });
@@ -526,6 +531,34 @@ export function useRealtimeSync(
         body: item.body ?? "",
       });
     });
+
+    const invalidateDesignReady = (p: unknown) => {
+      const payload = p as DesignReadyPayload;
+      const wsId = getCurrentWsId();
+      if (!wsId || !payload?.design_file_id) return;
+      qc.invalidateQueries({ queryKey: designKeys.files(wsId) });
+      qc.invalidateQueries({ queryKey: designKeys.file(wsId, payload.design_file_id) });
+      qc.invalidateQueries({ queryKey: designKeys.revisions(wsId, payload.design_file_id) });
+      qc.invalidateQueries({ queryKey: designKeys.fileContext(wsId, payload.design_file_id) });
+      if (payload.ready_type === "template" || payload.template) {
+        qc.invalidateQueries({ queryKey: designKeys.templates(wsId) });
+        qc.invalidateQueries({ queryKey: designKeys.drafts(wsId) });
+      }
+    };
+
+    const invalidateDesignDraftReady = (p: unknown) => {
+      const payload = p as DesignDraftReadyPayload;
+      const wsId = getCurrentWsId();
+      if (!wsId) return;
+      qc.invalidateQueries({ queryKey: designKeys.drafts(wsId) });
+      if (payload?.design_draft_id) {
+        qc.invalidateQueries({ queryKey: designKeys.draft(wsId, payload.design_draft_id) });
+      }
+    };
+
+    const unsubDesignReady = ws.on("design:ready", invalidateDesignReady);
+    const unsubDesignTemplateReady = ws.on("design_template:ready", invalidateDesignReady);
+    const unsubDesignDraftReady = ws.on("design_draft:ready", invalidateDesignDraftReady);
 
     // --- Timeline event handlers (global fallback) ---
     // These events are also handled granularly by useIssueTimeline when
@@ -974,6 +1007,9 @@ export function useRealtimeSync(
       unsubIssueLabelsChanged();
       unsubIssueMetadataChanged();
       unsubInboxNew();
+      unsubDesignReady();
+      unsubDesignTemplateReady();
+      unsubDesignDraftReady();
       unsubCommentCreated();
       unsubCommentUpdated();
       unsubCommentDeleted();

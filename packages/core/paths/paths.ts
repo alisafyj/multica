@@ -14,6 +14,17 @@
 
 const encode = (id: string) => encodeURIComponent(id);
 
+type RevisionPathOptions = { revisionId?: string | null };
+
+function withQuery(path: string, params: Record<string, string | null | undefined>) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) search.set(key, value);
+  }
+  const query = search.toString();
+  return query ? `${path}?${query}` : path;
+}
+
 function workspaceScoped(slug: string) {
   const ws = `/${encode(slug)}`;
   return {
@@ -23,6 +34,11 @@ function workspaceScoped(slug: string) {
     issueDetail: (id: string) => `${ws}/issues/${encode(id)}`,
     projects: () => `${ws}/projects`,
     projectDetail: (id: string) => `${ws}/projects/${encode(id)}`,
+    designs: () => `${ws}/designs`,
+    designDetail: (id: string, options: RevisionPathOptions = {}) => withQuery(`${ws}/designs/${encode(id)}`, { revision_id: options.revisionId }),
+    designFrameDetail: (id: string, frameId: string, options: RevisionPathOptions = {}) => withQuery(`${ws}/designs/${encode(id)}/frames/${encode(frameId)}`, { revision_id: options.revisionId }),
+    designDraftDetail: (id: string) => `${ws}/designs/drafts/${encode(id)}`,
+    designRestoreTaskDetail: (id: string) => `${ws}/designs/restore-tasks/${encode(id)}`,
     autopilots: () => `${ws}/autopilots`,
     autopilotDetail: (id: string) => `${ws}/autopilots/${encode(id)}`,
     agents: () => `${ws}/agents`,
