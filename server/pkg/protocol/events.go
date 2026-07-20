@@ -90,6 +90,11 @@ const (
 	EventProjectResourceUpdated = "project_resource:updated"
 	EventProjectResourceDeleted = "project_resource:deleted"
 
+	// Gallery Native design events
+	EventDesignReady         = "design:ready"
+	EventDesignTemplateReady = "design_template:ready"
+	EventDesignDraftReady    = "design_draft:ready"
+
 	// Label events
 	EventLabelCreated       = "label:created"
 	EventLabelUpdated       = "label:updated"

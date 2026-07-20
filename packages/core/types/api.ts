@@ -76,6 +76,18 @@ export interface IssueTriggerPreview {
   total_count: number;
 }
 
+export interface BatchUpdateIssueSkipped {
+  issue_id: string;
+  identifier: string;
+  title: string;
+  reason: string;
+}
+
+export interface BatchUpdateIssuesResponse {
+  updated: number;
+  skipped: BatchUpdateIssueSkipped[];
+}
+
 export interface ListIssuesParams {
   limit?: number;
   offset?: number;

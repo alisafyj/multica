@@ -29,7 +29,9 @@
     "original_input": "Original input",
     "edit_advanced": "Edit as advanced form",
     "archive": "Archive",
-    "unarchive": "Unarchive"
+    "unarchive": "Unarchive",
+    "open_design": "Open design",
+    "open_template_design": "Open template design"
   },
   "types": {
     "issue_assigned": "Assigned",
@@ -49,7 +51,8 @@
     "agent_completed": "Agent completed",
     "reaction_added": "Reacted",
     "quick_create_done": "Created with agent",
-    "quick_create_failed": "Create with agent failed"
+    "quick_create_failed": "Create with agent failed",
+    "design_ready": "Design ready"
   },
   "labels": {
     "set_status_to": "Set status to",

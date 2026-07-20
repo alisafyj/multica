@@ -13,6 +13,11 @@ WHERE id = $1;
 SELECT * FROM project
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: LockProjectInWorkspaceForUpdate :one
+SELECT id FROM project
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;
+
 -- name: CreateProject :one
 INSERT INTO project (
     workspace_id, title, description, icon, status,

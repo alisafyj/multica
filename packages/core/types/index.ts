@@ -209,3 +209,4 @@ export type {
   BillingCheckoutSessionStatus,
   CreateBillingPortalSessionResponse,
 } from "./billing";
+export type * from "./design";

@@ -1,5 +1,12 @@
 import { useEffect } from "react";
 import { createMemoryRouter, Outlet, useMatches } from "react-router-dom";
+import {
+  createMemoryRouter,
+  Navigate,
+  Outlet,
+  useParams,
+  useMatches,
+} from "react-router-dom";
 import type { RouteObject } from "react-router-dom";
 import { IssueDetailPage } from "./pages/issue-detail-page";
 import { ProjectDetailPage } from "./pages/project-detail-page";
@@ -18,6 +25,7 @@ import { DashboardPage } from "@multica/views/dashboard";
 import { AutopilotsPage } from "@multica/views/autopilots/components";
 import { MyIssuesPage } from "@multica/views/my-issues";
 import { SkillsPage } from "@multica/views/skills";
+import { DesignDraftPage, DesignFilePage, DesignFramePage, DesignRestoreTaskPage, DesignsPage } from "@multica/views/designs";
 import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
 import { DesktopAgentsPage } from "./components/desktop-agents-page";
 import { AgentCreationStudio } from "@multica/views/agents";
@@ -57,6 +65,26 @@ function DesktopSettingsRoute() {
       ]}
     />
   );
+}
+
+function DesktopDesignFileRoute() {
+  const { id = "" } = useParams();
+  return <DesignFilePage designId={id} />;
+}
+
+function DesktopDesignFrameRoute() {
+  const { id = "", frameId = "" } = useParams();
+  return <DesignFramePage designId={id} frameId={frameId} />;
+}
+
+function DesktopDesignDraftRoute() {
+  const { draftId = "" } = useParams();
+  return <DesignDraftPage draftId={draftId} />;
+}
+
+function DesktopDesignRestoreTaskRoute() {
+  const { taskId = "" } = useParams();
+  return <DesignRestoreTaskPage taskId={taskId} />;
 }
 
 /**
@@ -141,6 +169,27 @@ export const appRoutes: RouteObject[] = [
             path: "projects/:id",
             element: <ProjectDetailPage />,
             handle: { title: "Project" },
+          },
+          { path: "designs", element: <DesignsPage />, handle: { title: "Designs" } },
+          {
+            path: "designs/drafts/:draftId",
+            element: <DesktopDesignDraftRoute />,
+            handle: { title: "Design Draft" },
+          },
+          {
+            path: "designs/restore-tasks/:taskId",
+            element: <DesktopDesignRestoreTaskRoute />,
+            handle: { title: "Design Restore Task" },
+          },
+          {
+            path: "designs/:id",
+            element: <DesktopDesignFileRoute />,
+            handle: { title: "Design" },
+          },
+          {
+            path: "designs/:id/frames/:frameId",
+            element: <DesktopDesignFrameRoute />,
+            handle: { title: "Design Frame" },
           },
           {
             path: "autopilots",

@@ -69,3 +69,7 @@ data/
 .kilo
 .idea
 .gstack/
+fengchenDoc/
+
+# deepwork session state
+.slim/deepwork/

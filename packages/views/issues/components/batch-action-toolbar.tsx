@@ -24,6 +24,17 @@ import { cn } from "@multica/ui/lib/utils";
 import { useIssueSurfaceActionsOptional } from "../surface/actions-context";
 import { useIssueSurfaceSelection } from "../surface/selection-context";
 
+function skippedIssueSummary(skipped: { identifier?: string; title?: string; issue_id?: string }[]) {
+  return skipped
+    .slice(0, 3)
+    .map((item) => {
+      const label = [item.identifier, item.title].filter(Boolean).join(" ").trim();
+      return label || item.issue_id || "";
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
 export function BatchActionToolbar({
   issues,
   placement = "fixed-bottom",
@@ -88,6 +99,27 @@ export function BatchActionToolbar({
         await surfaceActions.batchUpdate(ids, updates);
       } else {
         await batchUpdate.mutateAsync({ ids, updates });
+      }
+      if (!surfaceActions) {
+        const result = await batchUpdate.mutateAsync({ ids, updates });
+        const updated = typeof result.updated === "number" ? result.updated : count;
+        if (updated < count) {
+          const skipped = result.skipped ?? [];
+          const items = skippedIssueSummary(skipped);
+          toast.success(
+            items
+              ? t(($) => $.batch.update_partial_success_with_items, {
+                  updated,
+                  skipped: count - updated,
+                  items,
+                })
+              : t(($) => $.batch.update_partial_success, {
+                  updated,
+                  skipped: count - updated,
+                }),
+          );
+          return;
+        }
       }
       toast.success(t(($) => $.batch.update_success, { count }));
     } catch (err) {

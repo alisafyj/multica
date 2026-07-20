@@ -50,6 +50,7 @@ import type { Attachment, Issue, IssueStatus, IssuePriority, TimelineEntry, Upda
 import { contentReferencesAttachment } from "@multica/core/types";
 import { STATUS_CONFIG, PRIORITY_CONFIG } from "@multica/core/issues/config";
 import { formatDateOnly } from "@multica/core/issues/date";
+import { ISSUE_DESIGN_ROLE_UI, issueDesignRole } from "@multica/core/issues/design-role";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { toast } from "sonner";
 import { StatusIcon, PriorityIcon, StatusPicker, PriorityPicker, StagePicker, StartDatePicker, DueDatePicker, AssigneePicker, LabelPicker } from ".";
@@ -65,6 +66,7 @@ import { ThreadMinimap, type ThreadMinimapThread } from "./thread-minimap";
 import { collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
+import { IssueDesignRestoreSection, isRawDesignFallbackDelivery } from "./issue-design-restore-section";
 import { PullRequestList } from "./pull-request-list";
 import { useGitHubSettings } from "@multica/core/github";
 import { useQuery } from "@tanstack/react-query";
@@ -74,6 +76,7 @@ import { useActorName } from "@multica/core/workspace/hooks";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useRecentContextStore } from "@multica/core/chat";
 import { issueListOptions, issueDetailOptions, childIssuesOptions, issueUsageOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
+import { designDeliveriesByIssueOptions, designRestoreTaskListOptions } from "@multica/core/designs/queries";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { issueLabelsOptions } from "@multica/core/labels";
@@ -584,11 +587,31 @@ function ActivityBlock({
 
 function SubIssueRow({ child }: { child: Issue }) {
   const { t } = useT("issues");
+  const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const updateIssue = useUpdateIssue();
   const selected = useIssueSelectionStore((s) => s.selectedIds.has(child.id));
   const toggleSelected = useIssueSelectionStore((s) => s.toggle);
   const isDone = child.status === "done" || child.status === "cancelled";
+  const isUiDesignIssue = issueDesignRole(child) === ISSUE_DESIGN_ROLE_UI;
+  const { data: designDeliveries = [], isLoading: designDeliveriesLoading } = useQuery({
+    ...designDeliveriesByIssueOptions(wsId, child.id),
+    enabled: isUiDesignIssue,
+  });
+  const { data: restoreTasks = [], isLoading: restoreTasksLoading } = useQuery({
+    ...designRestoreTaskListOptions(wsId),
+    enabled: isUiDesignIssue,
+  });
+  const hasRawDesignFallbackDelivery = isUiDesignIssue && designDeliveries.some((delivery) => delivery.status === "active" && delivery.source_issue_id === child.id && isRawDesignFallbackDelivery(delivery));
+  const hasCompletedRestoreTask = isUiDesignIssue && restoreTasks.some((task) => task.issue_id === child.id && task.status === "completed");
+  const completionCheckLoading = isUiDesignIssue && (designDeliveriesLoading || restoreTasksLoading);
+  const completionBlocked = isUiDesignIssue && !completionCheckLoading && !hasRawDesignFallbackDelivery && !hasCompletedRestoreTask;
+  const completionBlockedCopy = completionCheckLoading
+    ? t(($) => $.detail.mark_done_checking_design_delivery)
+    : completionBlocked
+      ? t(($) => $.detail.mark_done_requires_design_delivery)
+      : null;
+  const disabledDoneStatus = completionBlockedCopy ? { done: completionBlockedCopy } : undefined;
 
   const handleUpdate = useCallback(
     (updates: Partial<UpdateIssueRequest>) => {
@@ -637,11 +660,15 @@ function SubIssueRow({ child }: { child: Issue }) {
         status={child.status}
         onUpdate={handleUpdate}
         align="start"
+        disabledStatuses={disabledDoneStatus}
         trigger={
-          <StatusIcon
-            status={child.status}
-            className="h-[15px] w-[15px] shrink-0"
-          />
+          <>
+            <StatusIcon
+              status={child.status}
+              className="h-[15px] w-[15px] shrink-0"
+            />
+            <span className="sr-only">{t(($) => $.status[child.status])}</span>
+          </>
         }
       />
       <AppLink
@@ -891,6 +918,29 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       return cached?.description != null ? cached : undefined;
     },
   });
+  const isUiDesignIssue = issue ? issueDesignRole(issue) === ISSUE_DESIGN_ROLE_UI : false;
+  const designDeliveryQuery = useQuery({
+    ...designDeliveriesByIssueOptions(wsId, issue?.id ?? ""),
+    enabled: !!issue && isUiDesignIssue,
+  });
+  const { data: designDeliveries = [], isLoading: designDeliveriesLoading } = designDeliveryQuery;
+  const restoreTaskQuery = useQuery({
+    ...designRestoreTaskListOptions(wsId),
+    enabled: !!issue && isUiDesignIssue,
+  });
+  const { data: restoreTasks = [], isLoading: restoreTasksLoading } = restoreTaskQuery;
+  const uiDesignHasRawDesignFallbackDelivery = isUiDesignIssue && designDeliveries.some((delivery) => delivery.status === "active" && delivery.source_issue_id === issue?.id && isRawDesignFallbackDelivery(delivery));
+  const uiDesignHasCompletedRestoreTask = isUiDesignIssue && restoreTasks.some((task) => task.issue_id === issue?.id && task.status === "completed");
+  const uiDesignCompletionCheckLoading = isUiDesignIssue && (designDeliveriesLoading || restoreTasksLoading);
+  const uiDesignCompletionBlocked = isUiDesignIssue && !uiDesignCompletionCheckLoading && !uiDesignHasRawDesignFallbackDelivery && !uiDesignHasCompletedRestoreTask;
+  const uiDesignCompletionBlockedCopy = uiDesignCompletionCheckLoading
+    ? t(($) => $.detail.mark_done_checking_design_delivery)
+    : uiDesignCompletionBlocked
+      ? t(($) => $.detail.mark_done_requires_design_delivery)
+      : null;
+  const markDoneDisabled = !!uiDesignCompletionBlockedCopy;
+  const markDoneTooltip = uiDesignCompletionBlockedCopy ?? t(($) => $.detail.mark_done_tooltip);
+  const disabledDoneStatus = uiDesignCompletionBlockedCopy ? { done: uiDesignCompletionBlockedCopy } : undefined;
 
   // Record recent visit
   const recordVisit = useRecentIssuesStore((s) => s.recordVisit);
@@ -1557,7 +1607,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         {propertiesOpen && <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 pl-2">
           {/* Core props — always rendered. */}
           <PropRow label={t(($) => $.detail.prop_status)}>
-            <StatusPicker status={issue.status} onUpdate={handleUpdateField} align="start" />
+            <StatusPicker status={issue.status} onUpdate={handleUpdateField} align="start" disabledStatuses={disabledDoneStatus} />
           </PropRow>
           <PropRow label={t(($) => $.detail.prop_assignee)}>
             <AssigneePicker assigneeType={issue.assignee_type} assigneeId={issue.assignee_id} onUpdate={handleUpdateField} align="start" />
@@ -1817,6 +1867,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       {/* Execution log — active runs + collapsed past runs. Self-contained;
           owns its own collapse state and WS subscriptions. Hides itself
           when there are no runs to show. */}
+      <IssueDesignRestoreSection issue={issue} agents={agents} />
       <ExecutionLogSection issueId={id} />
 
       {/* Token usage */}
@@ -2005,17 +2056,21 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className="text-muted-foreground"
-                      onClick={() => { handleUpdateField({ status: "done" }); onDone?.(); }}
-                    >
-                      <CircleCheck />
-                    </Button>
+                    <span>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="text-muted-foreground"
+                        aria-label={markDoneTooltip}
+                        disabled={markDoneDisabled}
+                        onClick={() => { handleUpdateField({ status: "done" }); onDone?.(); }}
+                      >
+                        <CircleCheck />
+                      </Button>
+                    </span>
                   }
                 />
-                <TooltipContent side="bottom">{t(($) => $.detail.mark_done_tooltip)}</TooltipContent>
+                <TooltipContent side="bottom">{markDoneTooltip}</TooltipContent>
               </Tooltip>
             )}
             {onDone && issue.status === "done" && (

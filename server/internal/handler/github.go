@@ -1361,6 +1361,11 @@ func (h *Handler) lookupIssueByIdentifier(ctx context.Context, workspaceID pgtyp
 }
 
 func (h *Handler) advanceIssueToDone(ctx context.Context, issue db.Issue, workspaceID string) {
+	if !h.canCompleteUIDesignIssue(ctx, issue, "done") {
+		slog.Warn("github: skipped UI design issue completion without active delivery", "issue_id", uuidToString(issue.ID))
+		return
+	}
+
 	updated, err := h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
 		ID:          issue.ID,
 		Status:      "done",

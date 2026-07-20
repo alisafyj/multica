@@ -13,6 +13,12 @@ SELECT * FROM task_message
 WHERE task_id = $1 AND seq > $2
 ORDER BY seq ASC;
 
+-- name: GetLatestTaskMessageForTask :one
+SELECT * FROM task_message
+WHERE task_id = $1
+ORDER BY seq DESC
+LIMIT 1;
+
 -- name: DeleteTaskMessages :exec
 DELETE FROM task_message
 WHERE task_id = $1;

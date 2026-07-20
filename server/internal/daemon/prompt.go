@@ -27,6 +27,15 @@ func BuildPrompt(task Task, provider string) string {
 	if task.QuickCreatePrompt != "" {
 		return buildQuickCreatePrompt(task)
 	}
+	if len(task.UIDraftCreateContext) > 0 {
+		return buildUIDraftCreatePrompt(task)
+	}
+	if len(task.DesignRestoreContext) > 0 {
+		return buildDesignRestorePrompt(task)
+	}
+	if len(task.DesignSystemProfileAnalyzeContext) > 0 {
+		return buildDesignSystemProfileAnalyzePrompt(task)
+	}
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
@@ -39,6 +48,102 @@ func BuildPrompt(task Task, provider string) string {
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Start with `multica issue comment list %s --recent 10 --output json` to read the 10 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. Resolved threads come back folded — `--full` to expand. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
+	return b.String()
+}
+
+func buildDesignSystemProfileAnalyzePrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a design system profile analysis agent for a Multica workspace.\n\n")
+	b.WriteString("Use ONLY the design_system_profile_analyze context JSON below as the source of truth. This is a semantic classification task for an uploaded Figma UI specification.\n\n")
+	b.WriteString("Your job is to convert cleaned UI specification candidates into an Agent-readable project visual contract.\n\n")
+	b.WriteString("Return your final answer as a single JSON object only, with this shape:\n")
+	b.WriteString("{\"profile_json\": object, \"analysis_errors\": array, \"summary\": string}\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- Perform semantic classification from names, text samples, dimensions, colors, and hierarchy summaries. Do not rely on a fixed backend component dictionary.\n")
+	b.WriteString("- Respect the naming convention `组件 - 变体 - 状态`, such as `按钮 - 主按钮 - 默认`, while allowing normal design-system extensions when the intent is clear.\n")
+	b.WriteString("- Group component examples under `profile_json.components.{kind}.variants[].states` and keep source layer IDs in examples so future agents can trace decisions.\n")
+	b.WriteString("- Extract reusable tokens into `profile_json.tokens.colors`, `profile_json.tokens.typography`, `profile_json.tokens.spacing`, and `profile_json.tokens.radius` when the evidence exists.\n")
+	b.WriteString("- Add concise `guidelines` and `anti_rules` that UI Agent and UI Restore Agent can follow directly.\n")
+	b.WriteString("- Keep warnings in `analysis_errors`; do not fail just because some layers are noisy or partially named.\n")
+	b.WriteString("- Do not create files, edit repositories, upload designs, call Figma, or call Multica write commands. The server will store your JSON output.\n")
+	b.WriteString("- Do not output markdown fences, prose outside JSON, comments, or trailing text.\n\n")
+	b.WriteString("Design system profile analysis context JSON:\n")
+	b.Write(task.DesignSystemProfileAnalyzeContext)
+	b.WriteString("\n")
+	return b.String()
+}
+
+func buildDesignRestorePrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a Gallery Native frontend restore agent for a Multica workspace.\n\n")
+	b.WriteString("Use ONLY the Multica design restore context JSON below as the design source of truth. If issue_id is present, also run `multica issue get <issue_id> --output json` before editing.\n\n")
+	b.WriteString("Your job is to implement the smallest safe frontend code change that matches the restore task.\n\n")
+	b.WriteString("If `restore_plan` is present in the context, treat it as the approved execution contract. Follow its selected target, allowed paths, scope, mapping, risks, and steps before falling back to raw item context.\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- The embedded `item_contexts` are snapshots from Multica `/api/design-files/{design_file_id}/frames/{frame_id}/context`; treat them as authoritative.\n")
+	b.WriteString("- When `design_system.status` is `analyzed`, treat `design_system.profile` as the cloud project visual contract. Read its components, variants, states, tokens, guidelines, and anti_rules before implementing the design.\n")
+	b.WriteString("- Design-context priority is exactly: Cloud design_system_profile > local DESIGN.md > repository reality. The cloud profile controls intended visual language; local files and repository reality guide feasible implementation without overriding it.\n")
+	b.WriteString("- If a root-level `DESIGN.md` already exists in the current repository, read it as read-only implementation context after the cloud profile. Never create, patch, sync, or overwrite `DESIGN.md`.\n")
+	b.WriteString("- When an approved `restore_plan` exists, do not ignore it or silently change target paths/scope; report blockers if it cannot be followed.\n")
+	b.WriteString("- For production restore plans (`restore_plan.repo.mode == \"production_candidate\"`), write only under `restore_plan.execution.allowedPaths`; do not write prototype HTML or files under `fengchenDoc/gallery-native-agent-test`.\n")
+	b.WriteString("- Read `restore_plan.targetStrategy` before editing. When it is `business_module`, behave like a normal programmer: create or update the named business module from moduleName/moduleSlug, then place page, components, and router changes in the planned module paths.\n")
+	b.WriteString("- Treat `restore_plan.targets.selected` as a delivery contract, not a single-file dump. If it contains pagePath/routeOwner/componentRoot/routePath, create or update a navigable page, wire the router, and split sections into normal project components.\n")
+	b.WriteString("- Different `pageName` values are page or route boundaries. When `restore_plan.targets.pageTargets` exists, implement each page target as a separate navigable page/route or route-owned view, not as a tab inside one page.\n")
+	b.WriteString("- Do NOT implement different `pageName` values as tabs, segmented controls, or demo switches. Tabs are allowed only when an explicit tab control exists in item_contexts/design layers. Frames with the same `pageName` may share one page as states, modals, or result states.\n")
+	b.WriteString("- Read `restore_plan.interactionFlow` before editing: query parameters are debug/deep-link aids only; the primary user path must be implemented with click handlers, router navigation, and component state.\n")
+	b.WriteString("- Do not default to restore-id sandbox directories for production plans. Use `design-restore/restore-*` only when the approved plan explicitly selects a sandbox fallback or reports that business module inference is unavailable.\n")
+	b.WriteString("- If the repo already has an obviously matching page/route, you may use it only when it is inside allowedPaths and the plan permits it; otherwise create the planned page and route.\n")
+	b.WriteString("- Never write under `restore_plan.execution.forbiddenPaths`; if the requested target conflicts with forbidden paths, return blocked with the conflict.\n")
+	b.WriteString("- Default restore mode is `strict-structure`: produce visible HTML/CSS/component structure from layers, not a pasted screenshot.\n")
+	b.WriteString("- Do NOT call sy-gallery_* tools or use an external Gallery MCP current session/sketch as source material. Those may point at a different design and must be ignored for this task.\n")
+	b.WriteString("- Do NOT delegate implementation to background agents, async lanes, or sub-agents. Finish the file edits, verification, and RESTORE_RESULT_JSON in this task before exiting.\n")
+	b.WriteString("- Do NOT invent business copy, names, phone numbers, tabs, or components that are absent from `item_contexts`/assets.\n")
+	b.WriteString("- Do NOT use full-frame preview, thumbnail, or full-frame slice assets as the primary result. Forbidden examples: `frame_preview-*`, `frame_thumbnail-*`, and a frame-sized slice.\n")
+	b.WriteString("- If structural reconstruction is insufficient, do not fake completion by pasting the screenshot. Either return blocked with a concrete reason, or create a clearly marked centered placeholder saying `缺少可结构化 UI 稿` plus the reason.\n")
+	b.WriteString("- Use restore_task_id/design_file_id/revision_id only to cross-check identity; do not substitute another sketch/design ID.\n")
+	b.WriteString("- Prefer existing project components and conventions. Do not put the whole design into one monolithic page file when normal components/sections should be split. Respect package boundaries.\n")
+	b.WriteString("- Do not change backend unless the issue explicitly requires it.\n")
+	b.WriteString("- Run the relevant typecheck/test command before final response.\n")
+	b.WriteString("- Visual QA loop is mandatory for completed work: Open the implemented route, capture an implementation screenshot, compare it with the authoritative frame_preview asset from item_contexts, create or describe a side-by-side comparison, then make at least one correction pass for obvious visual mismatches before final response.\n")
+	b.WriteString("- For the Visual QA loop, layer JSON controls structure/position/text, while frame_preview controls final visual calibration for image crop, icon shape, spacing, color, and fixed bars. Prefer exported slice assets for icons and small visual elements instead of hand-drawn approximations when those slices exist.\n")
+	b.WriteString("- If you cannot open the route or capture screenshots, do not omit the visual review. Put the concrete blocker in `visualReview.remainingDiffs` and `blockers`, and lower `visualFidelityScore` accordingly.\n")
+	b.WriteString("- For `ui_generation`, create a UI restore artifact document in the target repo. Use `restore_plan.artifacts.uiRestoreDocument.path` when present, otherwise use `docs/multica/ui-restore/<restore_task_id>.md`. The document must summarize entry routes, changed files, page/state/modal mapping, restoreMapping, checks, blockers, and remaining frontend integration notes.\n")
+	b.WriteString("- For `frontend_restore`, if the received delivery or restore input includes `artifactDocPath`, read that artifact document first and treat it as the UI implementation handoff before touching API/state/integration work.\n")
+	b.WriteString("- Final response must summarize changed files, checks run, blockers, restore mapping, exact layer text/asset IDs used, Visual QA evidence, and explicitly state `usedFullFramePreview: false` unless blocked.\n")
+	b.WriteString("- End your final response with a machine-readable JSON block prefixed by exactly `RESTORE_RESULT_JSON:`. Shape: {\"status\":\"completed|blocked|failed\",\"summary\":string,\"files\":string[],\"checks\":string[],\"blockers\":string[],\"restoreMapping\":array,\"usedLayerIds\":string[],\"usedAssetIds\":string[],\"usedFullFramePreview\":boolean,\"policyViolation\":string,\"artifactDocPath\":string,\"visualFidelityScore\":number,\"visualReview\":{\"implementedRoute\":string,\"designScreenshot\":string,\"implementationScreenshot\":string,\"comparisonScreenshot\":string,\"remainingDiffs\":string[],\"notes\":string}}.\n\n")
+	b.WriteString("Design restore context JSON:\n")
+	b.Write(task.DesignRestoreContext)
+	b.WriteString("\n")
+	return b.String()
+}
+
+func buildUIDraftCreatePrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a UI design draft generation agent for a Multica workspace.\n\n")
+	b.WriteString("Use the UI draft context JSON below as the source of truth. If it includes `issue`, that issue content has already been embedded for you.\n\n")
+	b.WriteString("Your job is to generate controlled DesignDraft data for human review, not to create or edit design files directly.\n\n")
+	b.WriteString("Return your final answer as a single JSON object only, with this shape:\n")
+	b.WriteString("{\"title\": string, \"catalog_template_id\": string, \"requirement_core\": object, \"slot_values\": object, \"patch\": array}\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- If the context includes `parent_issue`, treat `parent_issue` as the primary PRD / business requirement source.\n")
+	b.WriteString("- When `parent_issue` exists, the current `issue` is the UI design task scope and constraints; do not treat its short title as the full requirement.\n")
+	b.WriteString("- If `design_system` is present, treat `design_system.profile` as the project visual contract. Read `components.{kind}.variants[].states`, examples, tokens, patterns, guidelines, and anti_rules before deciding any visual structure.\n")
+	b.WriteString("- Design-context priority is exactly: Cloud design_system_profile > local DESIGN.md > repository reality. If a root-level `DESIGN.md` already exists in the current project repository, read it only as auxiliary project context. Never create, patch, sync, or overwrite `DESIGN.md`.\n")
+	b.WriteString("- The design system naming convention is usually `组件 - 变体 - 状态`, such as `按钮 - 主按钮 - 默认`; use these compiled variants/states instead of guessing from raw Figma layers.\n")
+	b.WriteString("- Templates are structure references only. If a template conflicts with the issue or design_system, the issue and design_system win.\n")
+	b.WriteString("- If `template_candidates` is present, choose the best template candidate and return its `id` as `catalog_template_id`.\n")
+	b.WriteString("- Choose the best template candidate by matching the issue requirement to `template_profile.page_type`, tags, slots, and component intent.\n")
+	b.WriteString("- Selecting a template is not enough: the final JSON must contain actual design changes in `slot_values` or `patch`.\n")
+	b.WriteString("- Prefer slot_values when the selected template has a non-empty slot_schema.\n")
+	b.WriteString("- If the selected template has an empty slot_schema, use `editable_text_layers` and `patch_hints` from that candidate to produce a non-empty safe text patch.\n")
+	b.WriteString("- Use patch only for safe non-layout metadata/text changes. For a visible text replacement, patch both `/layers/{layer_id}/text/characters` and `/layers/{layer_id}/text/text` when both paths are available.\n")
+	b.WriteString("- Do not return empty `slot_values: {}` and empty `patch: []`; if you cannot identify any safe change, return a JSON object with a clear `requirement_core.blocked_reason` and no fake completion.\n")
+	b.WriteString("- Do not patch layout/tree paths or segments: x, y, width, height, children.\n")
+	b.WriteString("- Match every required slot in slot_schema and respect primitive types.\n")
+	b.WriteString("- Do not output markdown fences, prose, comments, or extra text.\n\n")
+	b.WriteString("UI draft context JSON:\n")
+	b.Write(task.UIDraftCreateContext)
+	b.WriteString("\n")
 	return b.String()
 }
 

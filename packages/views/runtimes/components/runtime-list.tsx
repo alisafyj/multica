@@ -29,6 +29,7 @@ import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import {
   deriveRuntimeHealth,
   runtimeProfileListOptions,
+  latestCliVersionOptions,
   runtimeUsageOptions,
 } from "@multica/core/runtimes";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -631,6 +632,17 @@ export function RuntimeList({
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
   const { data: profiles = [] } = useQuery(runtimeProfileListOptions(wsId));
+  const shouldFetchLatestCliVersion = runtimes.some(
+    (runtime) =>
+      runtime.runtime_mode === "local" &&
+      runtime.metadata?.launched_by !== "desktop" &&
+      typeof runtime.metadata?.cli_version === "string" &&
+      runtime.metadata.cli_version,
+  );
+  useQuery({
+    ...latestCliVersionOptions(),
+    enabled: shouldFetchLatestCliVersion,
+  });
 
   const currentMember = user
     ? members.find((m) => m.user_id === user.id)

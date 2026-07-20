@@ -195,6 +195,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			store = local
 		}
 	}
+	designAssetStore := store
+	if qiniu := storage.NewQiniuStorageFromEnv(); qiniu != nil {
+		designAssetStore = qiniu
+	}
 
 	cfSigner := auth.NewCloudFrontSignerFromEnv()
 	origins := allowedOrigins()
@@ -217,6 +221,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		ServerVersion:            normalizeServerVersion(version),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	h.DesignAssetStorage = designAssetStore
 	h.Metrics = opts.BusinessMetrics
 	h.FeatureFlags = opts.FeatureFlags
 	h.TaskService.FeatureFlags = opts.FeatureFlags
@@ -749,6 +754,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// only forward the bytes + the Stripe-Signature header; see
 	// HandleCloudBillingStripeWebhook for the rationale).
 	r.Post("/api/webhooks/stripe", h.HandleCloudBillingStripeWebhook)
+	r.Post("/api/design-files/imports/figma", h.ImportFigmaDesignFile)
+	r.Post("/api/design-plugin/figma/auth-sessions", h.CreateFigmaPluginAuthSession)
+	r.Get("/api/design-plugin/figma/auth-sessions/{sessionId}", h.PollFigmaPluginAuthSession)
+	r.Get("/api/design-plugin/figma/context", h.GetFigmaPluginContext)
+	r.Post("/api/design-plugin/figma/folders", h.CreateFigmaPluginDesignFolder)
+	r.Post("/api/design-plugin/figma/assets", h.UploadFigmaDesignAssetWithPluginToken)
+	r.Post("/api/design-plugin/figma/imports", h.ImportFigmaDesignWithPluginToken)
 
 	// Composio OAuth callback (MUL-3843). NOT under the Auth group on purpose:
 	// Composio 302-redirects the user's browser here at the end of the OAuth
@@ -831,6 +843,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
+		r.Post("/api/design-plugin/figma/auth-sessions/{sessionId}/authorize", h.AuthorizeFigmaPluginAuthSession)
 
 		// Note (MUL-4309): the generic OpenAI-compatible passthrough endpoints
 		// (POST /api/llm/v1/chat/completions[/stream]) were intentionally
@@ -1117,6 +1130,57 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/resources/{resourceId}", h.DeleteProjectResource)
 				})
 			})
+
+			// Gallery Native design files
+			r.Get("/api/design-folders", h.ListDesignFolders)
+			r.Post("/api/design-folders", h.CreateDesignFolder)
+			r.Delete("/api/design-folders/{id}", h.DeleteDesignFolder)
+			r.Route("/api/design-files", func(r chi.Router) {
+				r.Post("/figma-connections", h.CreateFigmaImportConnection)
+				r.Get("/", h.ListDesignFiles)
+				r.Post("/", h.CreateDesignFile)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetDesignFile)
+					r.Get("/context", h.GetDesignFileContext)
+					r.Post("/restore-pack", h.CreateDesignRestorePack)
+					r.Delete("/", h.DeleteDesignFile)
+					r.Delete("/frames/{frameId}", h.DeleteDesignFrame)
+					r.Get("/frames/{frameId}/context", h.GetDesignFrameContext)
+					r.Post("/frames/{frameId}/selection-context", h.GetDesignSelectionContext)
+					r.Post("/layers/{layerId}/lightweight-edit", h.UpdateDesignLayerLightweight)
+					r.Get("/revisions", h.ListDesignRevisions)
+				})
+			})
+			r.Get("/api/design-revisions/{revisionId}", h.GetDesignRevision)
+			r.Post("/api/design-revisions/{revisionId}/publish-template", h.PublishDesignRevisionAsTemplate)
+			r.Get("/api/design-templates", h.ListDesignCatalogTemplates)
+			r.Get("/api/design-templates/{id}", h.GetDesignCatalogTemplate)
+			r.Get("/api/design-systems", h.ListDesignSystemProfiles)
+			r.Post("/api/design-systems", h.CreateDesignSystemProfile)
+			r.Get("/api/design-systems/{id}", h.GetDesignSystemProfile)
+			r.Post("/api/design-systems/{id}/set-default", h.SetDesignSystemProfileDefault)
+			r.Post("/api/design-repo-analysis", h.CreateDesignRepoAnalysis)
+			r.Get("/api/design-repo-analysis", h.ListDesignRepoAnalyses)
+			r.Get("/api/design-repo-analysis/{id}", h.GetDesignRepoAnalysis)
+			r.Post("/api/design-repo-analysis/{id}/rerun", h.RerunDesignRepoAnalysis)
+			r.Get("/api/design-drafts", h.ListDesignDrafts)
+			r.Post("/api/design-drafts", h.CreateDesignDraft)
+			r.Post("/api/design-drafts/agent-tasks", h.CreateDesignDraftAgentTask)
+			r.Get("/api/design-drafts/{id}", h.GetDesignDraft)
+			r.Post("/api/design-drafts/{id}/materialize", h.MaterializeDesignDraft)
+			r.Get("/api/design-deliveries", h.ListDesignDeliveries)
+			r.Post("/api/design-deliveries", h.CreateDesignDelivery)
+			r.Post("/api/design-deliveries/{id}/cancel", h.CancelDesignDelivery)
+			r.Post("/api/design-restore-tasks", h.CreateDesignRestoreTask)
+			r.Get("/api/design-restore-tasks", h.ListDesignRestoreTasks)
+			r.Get("/api/design-restore-tasks/{id}", h.GetDesignRestoreTask)
+			r.Get("/api/design-restore-tasks/{id}/mappings", h.ListDesignRestoreMappings)
+			r.Get("/api/design-restore-tasks/{id}/plan", h.GetDesignRestorePlan)
+			r.Post("/api/design-restore-tasks/{id}/plan/generate", h.GenerateDesignRestorePlan)
+			r.Put("/api/design-restore-tasks/{id}/plan", h.UpdateDesignRestorePlan)
+			r.Post("/api/design-restore-tasks/{id}/plan/approve", h.ApproveDesignRestorePlan)
+			r.Post("/api/design-restore-tasks/{id}/dispatch", h.DispatchDesignRestoreTask)
+			r.Get("/api/design-restore-tasks/{id}/items/{itemId}/context", h.GetDesignRestoreTaskItemContext)
 
 			// Squads
 			r.Route("/api/squads", func(r chi.Router) {

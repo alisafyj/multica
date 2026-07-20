@@ -254,6 +254,12 @@ export function InboxPage() {
     setSelectedKey(next ? (next.issue_id ?? next.id) : "");
   };
 
+  const openSelectedDesign = () => {
+    const designFileId = selected?.details?.design_file_id;
+    if (!designFileId) return;
+    replace(wsPaths.designDetail(designFileId));
+  };
+
   const handleArchive = (id: string) => {
     advanceSelectionPast(id, items);
     archiveMutation.mutate(id, {
@@ -514,6 +520,21 @@ export function InboxPage() {
             {t(($) => $.detail.archive)}
           </Button>
         )}
+        {selected.type === "design_ready" && selected.details?.design_file_id && (
+          <Button size="sm" onClick={openSelectedDesign}>
+            {selected.details.ready_type === "template"
+              ? t(($) => $.detail.open_template_design)
+              : t(($) => $.detail.open_design)}
+          </Button>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => handleArchive(selected.id)}
+        >
+          <Archive className="mr-1.5 h-3.5 w-3.5" />
+          {t(($) => $.detail.archive)}
+        </Button>
       </div>
     </div>
   ) : null;
