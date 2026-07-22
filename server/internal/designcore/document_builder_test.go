@@ -426,3 +426,191 @@ func mustMarshalDocumentBuilderTest(t *testing.T, value any) []byte {
 	}
 	return raw
 }
+
+func TestDocumentBuilderUsesCanonicalCloneAuthorization(t *testing.T) {
+	builder, err := NewDocumentBuilder(compilerTemplateForTest(), "canonical-clone")
+	if err != nil {
+		t.Fatalf("NewDocumentBuilder: %v", err)
+	}
+	clone, err := builder.CloneSubtree(recipeSourceWithImageForTest(), "input-root", "filters", "frame-1", Rect{Width: 200, Height: 32})
+	if err != nil {
+		t.Fatalf("CloneSubtree: %v", err)
+	}
+	originalMap := copyLayerIDMap(clone.SourceToTarget)
+	before := mustMarshalDocumentBuilderTest(t, builder.Document())
+
+	t.Run("injected key", func(t *testing.T) {
+		forged := CloneResult{RootLayerID: clone.RootLayerID, SourceToTarget: copyLayerIDMap(originalMap)}
+		forged.SourceToTarget["injected"] = originalMap["input-label"]
+		if err := builder.BindText(forged, "injected", "forged"); err == nil {
+			t.Fatal("BindText accepted a caller-injected source ID")
+		}
+	})
+
+	t.Run("remapped existing key", func(t *testing.T) {
+		forged := CloneResult{RootLayerID: clone.RootLayerID, SourceToTarget: copyLayerIDMap(originalMap)}
+		forged.SourceToTarget["input-label"] = clone.RootLayerID
+		if err := builder.FitCloneLayer(forged, "input-label", Rect{Width: 10, Height: 10}); err == nil {
+			t.Fatal("FitCloneLayer accepted a caller-remapped source ID")
+		}
+	})
+
+	t.Run("forged root", func(t *testing.T) {
+		forged := CloneResult{RootLayerID: "filters", SourceToTarget: copyLayerIDMap(originalMap)}
+		if err := builder.BindText(forged, "input-label", "forged"); err == nil {
+			t.Fatal("BindText accepted a root not created as a clone")
+		}
+	})
+
+	t.Run("returned map mutation", func(t *testing.T) {
+		clone.SourceToTarget["input-label"] = clone.RootLayerID
+		if err := builder.FitCloneLayer(clone, "input-label", Rect{Width: 10, Height: 10}); err == nil {
+			t.Fatal("FitCloneLayer trusted mutation of the returned map")
+		}
+
+		restored := CloneResult{RootLayerID: clone.RootLayerID, SourceToTarget: copyLayerIDMap(originalMap)}
+		if err := builder.BindText(restored, "input-label", "canonical"); err != nil {
+			t.Fatalf("canonical mapping was not retained independently: %v", err)
+		}
+		bound := builder.Document().Layers[originalMap["input-label"]]
+		if got := bound.Text["characters"]; got != "canonical" {
+			t.Fatalf("bound text = %#v", got)
+		}
+	})
+
+	after := builder.Document()
+	bound := after.Layers[originalMap["input-label"]]
+	bound.Text["characters"] = "Name"
+	after.Layers[originalMap["input-label"]] = bound
+	if got := mustMarshalDocumentBuilderTest(t, after); !reflect.DeepEqual(got, before) {
+		t.Fatal("rejected forged clone results mutated the document")
+	}
+}
+
+func TestDocumentBuilderRejectsUnreachableTargetParentsAtomically(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*NativeJSON)
+	}{
+		{
+			name: "orphan",
+			mutate: func(doc *NativeJSON) {
+				root := doc.Layers["page-root"]
+				root.Children = nil
+				doc.Layers["page-root"] = root
+				filters := doc.Layers["filters"]
+				filters.ParentID = ""
+				doc.Layers["filters"] = filters
+			},
+		},
+		{
+			name: "cycle",
+			mutate: func(doc *NativeJSON) {
+				root := doc.Layers["page-root"]
+				root.Children = nil
+				doc.Layers["page-root"] = root
+				filters := doc.Layers["filters"]
+				filters.ParentID = "cycle-node"
+				filters.Children = []string{"cycle-node"}
+				doc.Layers["filters"] = filters
+				doc.Layers["cycle-node"] = Layer{ID: "cycle-node", FrameID: "frame-1", ParentID: "filters", Children: []string{"filters"}, Name: "Cycle", Type: "frame", Visible: true}
+			},
+		},
+		{
+			name: "cross frame",
+			mutate: func(doc *NativeJSON) {
+				root := doc.Layers["page-root"]
+				root.Children = nil
+				doc.Layers["page-root"] = root
+				filters := doc.Layers["filters"]
+				filters.ParentID = "frame-2-root"
+				doc.Layers["filters"] = filters
+				doc.Layers["frame-2-root"] = Layer{ID: "frame-2-root", FrameID: "frame-2", Children: []string{"filters"}, Name: "Other", Type: "frame", Visible: true}
+				doc.Frames = append(doc.Frames, Frame{ID: "frame-2", Name: "Other", RootLayerID: "frame-2-root", Width: 100, Height: 100})
+			},
+		},
+		{
+			name: "inconsistent parent children",
+			mutate: func(doc *NativeJSON) {
+				root := doc.Layers["page-root"]
+				root.Children = nil
+				doc.Layers["page-root"] = root
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := compilerTemplateForTest()
+			tt.mutate(&base)
+			if result := ValidateDocument(base); !result.Valid {
+				t.Fatalf("fixture must pass current validation: %v", result.Errors)
+			}
+			builder, err := NewDocumentBuilder(base, "target-"+tt.name)
+			if err != nil {
+				t.Fatalf("NewDocumentBuilder: %v", err)
+			}
+			before := mustMarshalDocumentBuilderTest(t, builder.Document())
+			if _, err := builder.CloneSubtree(recipeSourceWithImageForTest(), "input-root", "filters", "frame-1", Rect{Width: 200, Height: 32}); err == nil {
+				t.Fatal("CloneSubtree accepted an unreachable target parent")
+			}
+			if after := mustMarshalDocumentBuilderTest(t, builder.Document()); !reflect.DeepEqual(after, before) {
+				t.Fatal("failed structural validation mutated the document")
+			}
+
+			primitive := Layer{ID: "sequence-probe", Name: "Probe", Type: "text", Visible: true}
+			gotID, err := builder.AddPrimitiveLayer("page-root", primitive)
+			if err != nil {
+				t.Fatalf("AddPrimitiveLayer after failed clone: %v", err)
+			}
+			fresh, err := NewDocumentBuilder(base, "target-"+tt.name)
+			if err != nil {
+				t.Fatalf("fresh NewDocumentBuilder: %v", err)
+			}
+			wantID, err := fresh.AddPrimitiveLayer("page-root", primitive)
+			if err != nil {
+				t.Fatalf("fresh AddPrimitiveLayer: %v", err)
+			}
+			if gotID != wantID {
+				t.Fatalf("failed clone consumed sequence: got %q, want %q", gotID, wantID)
+			}
+		})
+	}
+}
+
+func TestDocumentBuilderClonesImageWithEmptyAssetID(t *testing.T) {
+	source := recipeSourceWithImageForTest()
+	icon := source.Layers["input-icon"]
+	icon.Image.AssetID = ""
+	source.Layers["input-icon"] = icon
+	source.Assets = nil
+	root := source.Layers["input-root"]
+	root.Text, root.Style, root.Semantic, root.Source, root.Shape, root.Exportable = nil, nil, nil, nil, nil, nil
+	source.Layers["input-root"] = root
+	if result := ValidateDocument(source); !result.Valid {
+		t.Fatalf("source must pass current validation: %v", result.Errors)
+	}
+	sourceBefore := mustMarshalDocumentBuilderTest(t, source)
+
+	base := compilerTemplateForTest()
+	base.Assets = nil
+	builder, err := NewDocumentBuilder(base, "empty-image-asset")
+	if err != nil {
+		t.Fatalf("NewDocumentBuilder: %v", err)
+	}
+	clone, err := builder.CloneSubtree(source, "input-root", "filters", "frame-1", Rect{Width: 200, Height: 32})
+	if err != nil {
+		t.Fatalf("CloneSubtree: %v", err)
+	}
+	doc := builder.Document()
+	clonedIcon := doc.Layers[clone.SourceToTarget["input-icon"]]
+	if clonedIcon.Image == nil || clonedIcon.Image.AssetID != "" {
+		t.Fatalf("cloned image = %+v", clonedIcon.Image)
+	}
+	if result := ValidateDocument(doc); !result.Valid {
+		t.Fatalf("cloned document is invalid: %v", result.Errors)
+	}
+	if got := mustMarshalDocumentBuilderTest(t, source); !reflect.DeepEqual(got, sourceBefore) {
+		t.Fatal("clone mutated source with empty image asset ID")
+	}
+}

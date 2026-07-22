@@ -18,9 +18,10 @@ type CloneResult struct {
 }
 
 type DocumentBuilder struct {
-	document  NativeJSON
-	namespace string
-	sequence  uint64
+	document      NativeJSON
+	namespace     string
+	sequence      uint64
+	cloneMappings map[string]map[string]string
 }
 
 func NewDocumentBuilder(base NativeJSON, namespace string) (*DocumentBuilder, error) {
@@ -34,7 +35,11 @@ func NewDocumentBuilder(base NativeJSON, namespace string) (*DocumentBuilder, er
 	if err := validateBuilderDocument(document); err != nil {
 		return nil, fmt.Errorf("invalid base document: %w", err)
 	}
-	return &DocumentBuilder{document: document, namespace: namespace}, nil
+	return &DocumentBuilder{
+		document:      document,
+		namespace:     namespace,
+		cloneMappings: make(map[string]map[string]string),
+	}, nil
 }
 
 func (b *DocumentBuilder) ClearChildren(rootLayerID string) error {
@@ -92,15 +97,9 @@ func (b *DocumentBuilder) CloneSubtree(source NativeJSON, sourceRootID, targetPa
 	if err := validateBounds(bounds); err != nil {
 		return CloneResult{}, err
 	}
-	parent, ok := b.document.Layers[targetParentID]
-	if !ok {
-		return CloneResult{}, fmt.Errorf("target parent layer %q does not exist", targetParentID)
-	}
-	if !documentHasFrame(b.document, targetFrameID) {
-		return CloneResult{}, fmt.Errorf("target frame %q does not exist", targetFrameID)
-	}
-	if parent.FrameID != targetFrameID {
-		return CloneResult{}, fmt.Errorf("target parent %q belongs to frame %q, not %q", targetParentID, parent.FrameID, targetFrameID)
+	parent, err := validateCloneTargetParent(b.document, targetParentID, targetFrameID)
+	if err != nil {
+		return CloneResult{}, err
 	}
 
 	sourceCopy, err := copyNativeDocument(source)
@@ -174,7 +173,7 @@ func (b *DocumentBuilder) CloneSubtree(source NativeJSON, sourceRootID, targetPa
 		layer.Source = rewriteJSONMap(layer.Source, nodeIDs, assetIDs)
 		layer.Shape = rewriteJSONMap(layer.Shape, nodeIDs, assetIDs)
 		layer.Exportable = rewriteJSONMaps(layer.Exportable, nodeIDs, assetIDs)
-		if layer.Image != nil {
+		if layer.Image != nil && layer.Image.AssetID != "" {
 			mappedAssetID, exists := assetIDs[layer.Image.AssetID]
 			if !exists {
 				return CloneResult{}, fmt.Errorf("layer %q references missing asset %q", sourceID, layer.Image.AssetID)
@@ -212,9 +211,12 @@ func (b *DocumentBuilder) CloneSubtree(source NativeJSON, sourceRootID, targetPa
 		return CloneResult{}, fmt.Errorf("clone subtree: %w", err)
 	}
 
+	rootLayerID := nodeIDs[sourceRootID]
+	canonicalMapping := copyLayerIDMap(nodeIDs)
 	b.document = candidate
 	b.sequence = operation
-	return CloneResult{RootLayerID: nodeIDs[sourceRootID], SourceToTarget: copyLayerIDMap(nodeIDs)}, nil
+	b.cloneMappings[rootLayerID] = canonicalMapping
+	return CloneResult{RootLayerID: rootLayerID, SourceToTarget: copyLayerIDMap(canonicalMapping)}, nil
 }
 
 func (b *DocumentBuilder) BindText(clone CloneResult, sourceTargetLayerID, value string) error {
@@ -322,9 +324,17 @@ func (b *DocumentBuilder) generatedID(operation uint64, sourceID string) string 
 }
 
 func (b *DocumentBuilder) resolveCloneLayer(clone CloneResult, sourceTargetLayerID string) (string, Layer, error) {
-	targetID, authorized := clone.SourceToTarget[sourceTargetLayerID]
+	canonicalMapping, created := b.cloneMappings[clone.RootLayerID]
+	if !created {
+		return "", Layer{}, fmt.Errorf("clone root layer %q was not created by this builder", clone.RootLayerID)
+	}
+	targetID, authorized := canonicalMapping[sourceTargetLayerID]
 	if !authorized {
 		return "", Layer{}, fmt.Errorf("source layer %q is not authorized by clone", sourceTargetLayerID)
+	}
+	callerTargetID, supplied := clone.SourceToTarget[sourceTargetLayerID]
+	if !supplied || callerTargetID != targetID {
+		return "", Layer{}, fmt.Errorf("clone mapping for source layer %q does not match builder mapping", sourceTargetLayerID)
 	}
 	if _, exists := b.document.Layers[clone.RootLayerID]; !exists {
 		return "", Layer{}, fmt.Errorf("clone root layer %q does not exist", clone.RootLayerID)
@@ -337,6 +347,70 @@ func (b *DocumentBuilder) resolveCloneLayer(clone CloneResult, sourceTargetLayer
 		return "", Layer{}, fmt.Errorf("target layer %q is outside clone %q", targetID, clone.RootLayerID)
 	}
 	return targetID, layer, nil
+}
+
+func validateCloneTargetParent(document NativeJSON, targetParentID, targetFrameID string) (Layer, error) {
+	var targetFrame Frame
+	foundFrame := false
+	for _, frame := range document.Frames {
+		if frame.ID != targetFrameID {
+			continue
+		}
+		if foundFrame {
+			return Layer{}, fmt.Errorf("target frame %q is duplicated", targetFrameID)
+		}
+		targetFrame = frame
+		foundFrame = true
+	}
+	if !foundFrame {
+		return Layer{}, fmt.Errorf("target frame %q does not exist", targetFrameID)
+	}
+	targetParent, exists := document.Layers[targetParentID]
+	if !exists {
+		return Layer{}, fmt.Errorf("target parent layer %q does not exist", targetParentID)
+	}
+
+	visited := make(map[string]struct{})
+	currentID := targetParentID
+	for {
+		if _, seen := visited[currentID]; seen {
+			return Layer{}, fmt.Errorf("target parent chain contains a cycle at %q", currentID)
+		}
+		visited[currentID] = struct{}{}
+		current, exists := document.Layers[currentID]
+		if !exists {
+			return Layer{}, fmt.Errorf("target parent chain references missing layer %q", currentID)
+		}
+		if current.FrameID != targetFrameID {
+			return Layer{}, fmt.Errorf("target parent chain layer %q belongs to frame %q, not %q", currentID, current.FrameID, targetFrameID)
+		}
+		if currentID == targetFrame.RootLayerID {
+			if current.ParentID != "" {
+				return Layer{}, fmt.Errorf("target frame root %q has parent %q", currentID, current.ParentID)
+			}
+			return targetParent, nil
+		}
+		if current.ParentID == "" {
+			return Layer{}, fmt.Errorf("target parent chain from %q does not reach frame root %q", targetParentID, targetFrame.RootLayerID)
+		}
+		parent, exists := document.Layers[current.ParentID]
+		if !exists {
+			return Layer{}, fmt.Errorf("target parent chain layer %q references missing parent %q", currentID, current.ParentID)
+		}
+		if parent.FrameID != targetFrameID {
+			return Layer{}, fmt.Errorf("target parent chain layer %q belongs to frame %q, not %q", parent.ID, parent.FrameID, targetFrameID)
+		}
+		childReferences := 0
+		for _, childID := range parent.Children {
+			if childID == currentID {
+				childReferences++
+			}
+		}
+		if childReferences != 1 {
+			return Layer{}, fmt.Errorf("target parent chain layer %q references child %q %d times", parent.ID, currentID, childReferences)
+		}
+		currentID = current.ParentID
+	}
 }
 
 func (b *DocumentBuilder) setBounds(layerID string, bounds Rect) error {
@@ -515,15 +589,6 @@ func validateBuilderDocument(document NativeJSON) error {
 		return nil
 	}
 	return errors.New(strings.Join(result.Errors, "; "))
-}
-
-func documentHasFrame(document NativeJSON, frameID string) bool {
-	for _, frame := range document.Frames {
-		if frame.ID == frameID {
-			return true
-		}
-	}
-	return false
 }
 
 func copyNativeDocument(source NativeJSON) (NativeJSON, error) {
