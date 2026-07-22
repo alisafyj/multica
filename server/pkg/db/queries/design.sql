@@ -643,3 +643,37 @@ LEFT JOIN design_template_revision tr ON tr.id = t.current_revision_id
 LEFT JOIN design_revision dr ON dr.id = tr.design_revision_id
 LEFT JOIN design_file df ON df.id = dr.file_id
 WHERE t.id = $1 AND t.workspace_id = $2;
+
+-- Semantic design generation assets
+
+-- name: CreateDesignTemplateBlueprint :one
+INSERT INTO design_template_blueprint (
+    workspace_id, template_id, template_revision_id, source_revision_id,
+    analysis_version, schema_version, status, structure_json, blueprint_json,
+    validation_errors, created_by
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING *;
+
+-- name: GetLatestValidDesignTemplateBlueprint :one
+SELECT * FROM design_template_blueprint
+WHERE workspace_id = $1
+  AND template_revision_id = $2
+  AND status = 'valid'
+ORDER BY analysis_version DESC
+LIMIT 1;
+
+-- name: CreateDesignComponentRecipeSet :one
+INSERT INTO design_component_recipe_set (
+    workspace_id, design_system_profile_id, source_revision_id,
+    analysis_version, schema_version, status, recipes_json,
+    validation_errors, created_by
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING *;
+
+-- name: GetLatestValidDesignComponentRecipeSet :one
+SELECT * FROM design_component_recipe_set
+WHERE workspace_id = $1
+  AND design_system_profile_id = $2
+  AND status = 'valid'
+ORDER BY analysis_version DESC
+LIMIT 1;

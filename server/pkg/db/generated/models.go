@@ -287,6 +287,20 @@ type DesignCatalogTemplate struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
+type DesignComponentRecipeSet struct {
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	DesignSystemProfileID pgtype.UUID        `json:"design_system_profile_id"`
+	SourceRevisionID      pgtype.UUID        `json:"source_revision_id"`
+	AnalysisVersion       int32              `json:"analysis_version"`
+	SchemaVersion         string             `json:"schema_version"`
+	Status                string             `json:"status"`
+	RecipesJson           []byte             `json:"recipes_json"`
+	ValidationErrors      []byte             `json:"validation_errors"`
+	CreatedBy             pgtype.UUID        `json:"created_by"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
 type DesignDelivery struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
@@ -510,6 +524,22 @@ type DesignTemplate struct {
 	CreatedBy   pgtype.UUID        `json:"created_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DesignTemplateBlueprint struct {
+	ID                 pgtype.UUID        `json:"id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	TemplateID         pgtype.UUID        `json:"template_id"`
+	TemplateRevisionID pgtype.UUID        `json:"template_revision_id"`
+	SourceRevisionID   pgtype.UUID        `json:"source_revision_id"`
+	AnalysisVersion    int32              `json:"analysis_version"`
+	SchemaVersion      string             `json:"schema_version"`
+	Status             string             `json:"status"`
+	StructureJson      []byte             `json:"structure_json"`
+	BlueprintJson      []byte             `json:"blueprint_json"`
+	ValidationErrors   []byte             `json:"validation_errors"`
+	CreatedBy          pgtype.UUID        `json:"created_by"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 }
 
 type DesignTemplateLibrary struct {
