@@ -118,6 +118,46 @@ func TestBuildTemplateBlueprintReportsReferenceDiagnostics(t *testing.T) {
 	}
 }
 
+func TestBuildTemplateBlueprintRequiresReplaceableBusinessRegions(t *testing.T) {
+	structure := ExtractTemplateStructure(blueprintSourceDocumentForTest())
+	for _, regionKey := range []string{"breadcrumb", "pageTitle", "filters", "pageActions", "table", "pagination"} {
+		t.Run(regionKey, func(t *testing.T) {
+			classification := completeBlueprintClassificationForTest()
+			region := classification.Regions[regionKey]
+			region.ReplaceChildren = false
+			classification.Regions[regionKey] = region
+
+			_, diagnostics := BuildTemplateBlueprint(structure, classification, BlueprintSourceRefs{})
+			if got := countDiagnosticCode(diagnostics, "invalid_region_relationship"); got != 1 {
+				t.Fatalf("invalid_region_relationship count = %d, want 1; diagnostics = %+v", got, diagnostics)
+			}
+		})
+	}
+}
+
+func TestBuildTemplateBlueprintCannotBypassUnsafeRelationships(t *testing.T) {
+	structure := ExtractTemplateStructure(blueprintSourceDocumentForTest())
+	tests := []struct {
+		name        string
+		rootLayerID string
+	}{
+		{name: "outside content", rootLayerID: "outside-shell"},
+		{name: "nested peer", rootLayerID: "table"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			classification := completeBlueprintClassificationForTest()
+			classification.Regions["filters"] = RegionClassification{RootLayerID: tt.rootLayerID, ReplaceChildren: false}
+
+			_, diagnostics := BuildTemplateBlueprint(structure, classification, BlueprintSourceRefs{})
+			if got := countDiagnosticCode(diagnostics, "invalid_region_relationship"); got != 2 {
+				t.Fatalf("invalid_region_relationship count = %d, want 2; diagnostics = %+v", got, diagnostics)
+			}
+		})
+	}
+}
+
 func TestValidateTemplateBlueprintRechecksPersistedValues(t *testing.T) {
 	structure := ExtractTemplateStructure(blueprintSourceDocumentForTest())
 	blueprint, diagnostics := BuildTemplateBlueprint(structure, completeBlueprintClassificationForTest(), BlueprintSourceRefs{})
@@ -254,4 +294,14 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func countDiagnosticCode(diagnostics Diagnostics, code string) int {
+	count := 0
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == code {
+			count++
+		}
+	}
+	return count
 }

@@ -295,27 +295,30 @@ func validateBlueprintRegionRelationships(diagnostics *Diagnostics, structure Te
 	if !hasContent {
 		return
 	}
-	replaceable := make([]struct {
+	businessRegions := make([]struct {
 		key string
 		id  string
 	}, 0, len(replaceableBusinessRegions))
 	for _, key := range replaceableBusinessRegions {
 		region, ok := blueprint.Regions[key]
-		if !ok || !region.ReplaceChildren {
+		if !ok {
 			continue
 		}
-		if !isStructuralDescendant(structure.Layers, region.RootLayerID, content.RootLayerID) {
-			addLayerDiagnostic(diagnostics, "invalid_region_relationship", fmt.Sprintf("replaceable region %q must descend from content", key), "regions."+key, region.RootLayerID)
+		if !region.ReplaceChildren {
+			diagnostics.addError("invalid_region_relationship", fmt.Sprintf("business region %q must replace its children", key), "regions."+key+".replaceChildren")
 		}
-		replaceable = append(replaceable, struct {
+		if !isStructuralDescendant(structure.Layers, region.RootLayerID, content.RootLayerID) {
+			addLayerDiagnostic(diagnostics, "invalid_region_relationship", fmt.Sprintf("business region %q must descend from content", key), "regions."+key, region.RootLayerID)
+		}
+		businessRegions = append(businessRegions, struct {
 			key string
 			id  string
 		}{key: key, id: region.RootLayerID})
 	}
-	for i := range replaceable {
-		for j := i + 1; j < len(replaceable); j++ {
-			if isStructuralDescendantOrSelf(structure.Layers, replaceable[i].id, replaceable[j].id) || isStructuralDescendantOrSelf(structure.Layers, replaceable[j].id, replaceable[i].id) {
-				diagnostics.addError("invalid_region_relationship", fmt.Sprintf("replaceable regions %q and %q must not be nested", replaceable[i].key, replaceable[j].key), "regions."+replaceable[i].key, "regions."+replaceable[j].key)
+	for i := range businessRegions {
+		for j := i + 1; j < len(businessRegions); j++ {
+			if isStructuralDescendantOrSelf(structure.Layers, businessRegions[i].id, businessRegions[j].id) || isStructuralDescendantOrSelf(structure.Layers, businessRegions[j].id, businessRegions[i].id) {
+				diagnostics.addError("invalid_region_relationship", fmt.Sprintf("business regions %q and %q must not be nested", businessRegions[i].key, businessRegions[j].key), "regions."+businessRegions[i].key, "regions."+businessRegions[j].key)
 			}
 		}
 	}

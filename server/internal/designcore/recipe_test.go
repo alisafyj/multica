@@ -2,6 +2,7 @@ package designcore
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -174,6 +175,28 @@ func TestResolveRecipeDoesNotCrossComponentKinds(t *testing.T) {
 	delete(set.PrimitiveFallbacks, "select")
 	_, diagnostics := ResolveRecipe(set, RecipeRequest{Kind: "select", Variant: "default", State: "default"})
 	assertDiagnosticCode(t, diagnostics, "missing_recipe")
+}
+
+func TestResolveRecipePrimitiveFallbackEmitsWarning(t *testing.T) {
+	set := completeRecipeSetForTest(t)
+	delete(set.Recipes, RecipeKey{Kind: "input", Variant: "default", State: "default"}.String())
+
+	resolved, diagnostics := ResolveRecipe(set, RecipeRequest{Kind: "input", Variant: "compact", State: "focused"})
+	if resolved.Primitive == nil || resolved.Primitive.Kind != "input" || resolved.Fallback != "primitive" {
+		t.Fatalf("primitive resolution = %+v", resolved)
+	}
+	want := Diagnostics{{
+		Code:     "primitive_fallback",
+		Severity: DiagnosticWarning,
+		Message:  `resolved component kind "input" with primitive fallback`,
+		Paths:    []string{"primitiveFallbacks.input"},
+	}}
+	if !reflect.DeepEqual(diagnostics, want) {
+		t.Fatalf("diagnostics = %+v, want %+v", diagnostics, want)
+	}
+	if diagnostics.HasErrors() {
+		t.Fatalf("primitive fallback warning must not be an error: %+v", diagnostics)
+	}
 }
 
 func TestResolveRecipeRejectsNonExecutablePrimitive(t *testing.T) {

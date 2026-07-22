@@ -169,7 +169,13 @@ func ResolveRecipe(set ComponentRecipeSet, request RecipeRequest) (ResolvedRecip
 		validatePrimitiveRecipe(&diagnostics, set.Tokens, request.Kind, primitive, "primitiveFallbacks."+request.Kind)
 		if !diagnostics.HasErrors() {
 			copy := primitive
-			return ResolvedRecipe{Primitive: &copy, Fallback: "primitive"}, nil
+			warning := Diagnostic{
+				Code:     "primitive_fallback",
+				Severity: DiagnosticWarning,
+				Message:  fmt.Sprintf("resolved component kind %q with primitive fallback", request.Kind),
+				Paths:    []string{"primitiveFallbacks." + request.Kind},
+			}
+			return ResolvedRecipe{Primitive: &copy, Fallback: "primitive"}, Diagnostics{warning}
 		}
 	}
 	diagnostics := Diagnostics{}
