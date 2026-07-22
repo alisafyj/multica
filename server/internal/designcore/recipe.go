@@ -133,7 +133,7 @@ func ValidateComponentRecipeSet(source NativeJSON, set ComponentRecipeSet) Diagn
 	if set.DesignSystemProfileID == "" || set.SourceRevisionID == "" {
 		diagnostics.addError("invalid_recipe_set", "design system profile and source revision are required", "designSystemProfileId", "sourceRevisionId")
 	}
-	if !canonicalJSONEqual(set.Tokens, source.Tokens) {
+	if (len(set.Tokens) > 0 || len(source.Tokens) > 0) && !canonicalJSONEqual(set.Tokens, source.Tokens) {
 		diagnostics.addError("recipe_token_drift", "persisted recipe tokens do not match the current source document", "tokens")
 	}
 

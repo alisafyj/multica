@@ -186,6 +186,39 @@ func TestValidateComponentRecipeSetRejectsSameRevisionTokenMutation(t *testing.T
 	assertDiagnosticCode(t, ValidateComponentRecipeSet(source, set), "recipe_token_drift")
 }
 
+func TestValidateComponentRecipeSetAcceptsOmittedEmptyTokens(t *testing.T) {
+	source := recipeSourceDocumentForTest()
+	source.Tokens = map[string]any{}
+	set, diagnostics := BuildComponentRecipeSet(
+		"profile-1",
+		"revision-1",
+		ComponentRecipeSetVersion,
+		source,
+		completeRecipeClassificationsForTest(),
+		nil,
+	)
+	if diagnostics.HasErrors() {
+		t.Fatalf("build diagnostics: %+v", diagnostics)
+	}
+
+	raw, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := ParseNativeJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Tokens != nil {
+		t.Fatalf("empty tokens should be omitted by native JSON persistence: %+v", persisted.Tokens)
+	}
+
+	diagnostics = ValidateComponentRecipeSet(persisted, set)
+	if diagnostics.HasErrors() {
+		t.Fatalf("empty and omitted tokens should be equivalent: %+v", diagnostics)
+	}
+}
+
 func TestResolveRecipePrimitiveFallbackEmitsWarning(t *testing.T) {
 	set := completeRecipeSetForTest(t)
 	delete(set.Recipes, RecipeKey{Kind: "input", Variant: "default", State: "default"}.String())
