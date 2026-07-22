@@ -256,16 +256,19 @@ func TestCompileListPagePropagatesDefaultAndPrimitiveFallbackWarnings(t *testing
 }
 
 func TestCompileListPageRequiresExactMappedStatusRecipe(t *testing.T) {
-	t.Run("default recipe cannot mask deleted mapped variant", func(t *testing.T) {
-		input := completeCompilerInputForTest(t)
-		delete(input.RecipeSet.Recipes, (RecipeKey{Kind: "status-tag", Variant: "warning", State: "default"}).String())
+	for _, variant := range []string{"success", "warning", "danger", "disabled", "info"} {
+		t.Run("missing exact "+variant, func(t *testing.T) {
+			input := completeCompilerInputForTest(t)
+			input.PageSpec.Table.Columns[2].StatusMap["Pending"] = variant
+			delete(input.RecipeSet.Recipes, (RecipeKey{Kind: "status-tag", Variant: variant, State: "default"}).String())
 
-		output := CompileListPage(input)
-		if output.Status != compileStatusFailed {
-			t.Fatalf("status = %q, diagnostics = %+v", output.Status, output.Diagnostics)
-		}
-		assertDiagnosticCode(t, output.Diagnostics, "missing_recipe")
-	})
+			output := CompileListPage(input)
+			if output.Status != compileStatusFailed {
+				t.Fatalf("status = %q, diagnostics = %+v", output.Status, output.Diagnostics)
+			}
+			assertDiagnosticCode(t, output.Diagnostics, "missing_recipe")
+		})
+	}
 
 	t.Run("primitive cannot mask deleted mapped variant", func(t *testing.T) {
 		input := completeCompilerInputForTest(t)
@@ -279,18 +282,17 @@ func TestCompileListPageRequiresExactMappedStatusRecipe(t *testing.T) {
 		assertDiagnosticCode(t, output.Diagnostics, "missing_recipe")
 	})
 
-	t.Run("mapped default resolves exact default", func(t *testing.T) {
+	t.Run("default remains rejected before recipe instantiation", func(t *testing.T) {
 		input := completeCompilerInputForTest(t)
 		input.PageSpec.Table.Columns[2].StatusMap["Pending"] = "default"
-		delete(input.RecipeSet.Recipes, (RecipeKey{Kind: "status-tag", Variant: "warning", State: "default"}).String())
 
 		output := CompileListPage(input)
-		if output.Diagnostics.HasErrors() {
-			t.Fatalf("diagnostics: %+v", output.Diagnostics)
+		if output.Status != compileStatusFailed {
+			t.Fatalf("status = %q, diagnostics = %+v", output.Status, output.Diagnostics)
 		}
-		root := generatedRootAtSpecPath(t, output.Document, "table.sampleRows.0.status")
-		if root.Semantic["recipeVariant"] != "default" || root.Semantic["recipeFallback"] != "exact" {
-			t.Fatalf("status recipe metadata = %+v", root.Semantic)
+		assertDiagnosticCode(t, output.Diagnostics, "unsupported_status_variant")
+		if len(output.Manifest.GeneratedLayerIDs) != 0 || len(generatedLayerIDs(output.Document)) != 0 {
+			t.Fatalf("invalid PageSpec instantiated recipes: manifest=%v", output.Manifest.GeneratedLayerIDs)
 		}
 	})
 }

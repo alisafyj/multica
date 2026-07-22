@@ -206,7 +206,7 @@ func (c *listPageCompiler) validateInputs() {
 	}
 	requiredIDs, requirementDiagnostics := normalizeRequiredRequirementIDs(c.input.RequiredRequirementIDs)
 	c.diagnostics = append(c.diagnostics, requirementDiagnostics...)
-	c.diagnostics = append(c.diagnostics, ValidatePageSpec(pageSpecForCompilerValidation(c.input.PageSpec), requiredIDs)...)
+	c.diagnostics = append(c.diagnostics, ValidatePageSpec(c.input.PageSpec, requiredIDs)...)
 	c.validateSourceIdentity()
 	if templateValidation.Valid {
 		structure := ExtractTemplateStructure(c.input.TemplateDoc)
@@ -216,26 +216,6 @@ func (c *listPageCompiler) validateInputs() {
 		c.diagnostics = append(c.diagnostics, ValidateComponentRecipeSet(c.input.RecipeDoc, c.input.RecipeSet)...)
 	}
 	c.diagnostics = normalizeCompilerDiagnostics(c.diagnostics)
-}
-
-func pageSpecForCompilerValidation(spec PageSpec) PageSpec {
-	validationSpec := spec
-	validationSpec.Table.Columns = append([]TableColumnSpec(nil), spec.Table.Columns...)
-	for index, column := range validationSpec.Table.Columns {
-		if len(column.StatusMap) == 0 {
-			continue
-		}
-		column.StatusMap = make(map[string]string, len(column.StatusMap))
-		for value, variant := range spec.Table.Columns[index].StatusMap {
-			// Task 7 admits the exact default Recipe while the earlier PageSpec enum does not.
-			if variant == "default" {
-				variant = "info"
-			}
-			column.StatusMap[value] = variant
-		}
-		validationSpec.Table.Columns[index] = column
-	}
-	return validationSpec
 }
 
 func normalizeRequiredRequirementIDs(source []string) ([]string, Diagnostics) {
