@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/designcore"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -18,9 +19,12 @@ type generationAssetFixture struct {
 	WorkspaceID              pgtype.UUID
 	UserID                   pgtype.UUID
 	TemplateID               pgtype.UUID
+	TemplateLibraryID        pgtype.UUID
 	TemplateRevisionID       pgtype.UUID
+	TemplateSourceFileID     pgtype.UUID
 	TemplateSourceRevisionID pgtype.UUID
 	DesignSystemProfileID    pgtype.UUID
+	RecipeSourceFileID       pgtype.UUID
 	RecipeSourceRevisionID   pgtype.UUID
 	Structure                designcore.TemplateStructure
 	Blueprint                designcore.TemplateBlueprint
@@ -57,9 +61,10 @@ func TestDesignGenerationAssetStoreLoadsLatestValidVersions(t *testing.T) {
 		AnalysisVersion: 2, CreatedBy: fixture.UserID, Structure: fixture.Structure, Blueprint: invalidBlueprint,
 	})
 	assertGenerationAssetValidationError(t, err)
-	if invalidBlueprintRecord.Status != "invalid" || len(invalidBlueprintRecord.ValidationErrors) == 0 {
+	if invalidBlueprintRecord.Status != "invalid" {
 		t.Fatalf("invalid blueprint record = %+v", invalidBlueprintRecord)
 	}
+	assertPersistedDiagnostic(t, invalidBlueprintRecord.ValidationErrors, "invalid_constraint", 1)
 
 	invalidRecipeSet := fixture.RecipeSet
 	invalidRecipe := invalidRecipeSet.Recipes["input/default/default"]
@@ -70,9 +75,10 @@ func TestDesignGenerationAssetStoreLoadsLatestValidVersions(t *testing.T) {
 		SourceRevisionID: fixture.RecipeSourceRevisionID, AnalysisVersion: 2, CreatedBy: fixture.UserID, RecipeSet: invalidRecipeSet,
 	})
 	assertGenerationAssetValidationError(t, err)
-	if invalidRecipeRecord.Status != "invalid" || len(invalidRecipeRecord.ValidationErrors) == 0 {
+	if invalidRecipeRecord.Status != "invalid" {
 		t.Fatalf("invalid recipe record = %+v", invalidRecipeRecord)
 	}
+	assertPersistedDiagnostic(t, invalidRecipeRecord.ValidationErrors, "recipe_fingerprint_drift", 1)
 
 	assets, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
 		WorkspaceID: fixture.WorkspaceID, TemplateRevisionID: fixture.TemplateRevisionID,
@@ -129,11 +135,124 @@ func TestDesignGenerationAssetStoreRejectsStaleAssets(t *testing.T) {
 	})
 }
 
+func TestDesignGenerationAssetStoreRejectsMismatchedRelationships(t *testing.T) {
+	t.Run("save rejects profile source file mismatch", func(t *testing.T) {
+		ctx := context.Background()
+		store := service.DesignGenerationAssetStore{Queries: db.New(testPool)}
+		fixture := createGenerationAssetFixture(t)
+
+		if _, err := testPool.Exec(ctx, `UPDATE design_system_profile SET source_file_id = $1 WHERE id = $2`, fixture.TemplateSourceFileID, fixture.DesignSystemProfileID); err != nil {
+			t.Fatalf("change profile source file: %v", err)
+		}
+		_, err := store.SaveRecipeSetAnalysis(ctx, service.SaveRecipeSetAnalysisParams{
+			WorkspaceID: fixture.WorkspaceID, DesignSystemProfileID: fixture.DesignSystemProfileID,
+			SourceRevisionID: fixture.RecipeSourceRevisionID, AnalysisVersion: 1, CreatedBy: fixture.UserID, RecipeSet: fixture.RecipeSet,
+		})
+		if !errors.Is(err, service.ErrGenerationAssetsStale) {
+			t.Fatalf("save profile source file mismatch error = %v", err)
+		}
+	})
+
+	t.Run("load rejects persisted blueprint template mismatch", func(t *testing.T) {
+		ctx := context.Background()
+		store := service.DesignGenerationAssetStore{Queries: db.New(testPool)}
+		fixture := createGenerationAssetFixture(t)
+		saveGenerationAssetsForTest(t, ctx, store, fixture)
+		mismatchTemplateID := createGenerationAssetCatalogTemplate(t, fixture)
+
+		if _, err := testPool.Exec(ctx, `UPDATE design_template_blueprint SET template_id = $1 WHERE template_revision_id = $2`, mismatchTemplateID, fixture.TemplateRevisionID); err != nil {
+			t.Fatalf("change persisted blueprint template: %v", err)
+		}
+		_, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
+			WorkspaceID: fixture.WorkspaceID, TemplateRevisionID: fixture.TemplateRevisionID,
+			DesignSystemProfileID: fixture.DesignSystemProfileID,
+		})
+		if !errors.Is(err, service.ErrGenerationAssetsStale) {
+			t.Fatalf("load blueprint template mismatch error = %v", err)
+		}
+	})
+
+	t.Run("load rejects profile source file mismatch", func(t *testing.T) {
+		ctx := context.Background()
+		store := service.DesignGenerationAssetStore{Queries: db.New(testPool)}
+		fixture := createGenerationAssetFixture(t)
+		saveGenerationAssetsForTest(t, ctx, store, fixture)
+
+		if _, err := testPool.Exec(ctx, `UPDATE design_system_profile SET source_file_id = $1 WHERE id = $2`, fixture.TemplateSourceFileID, fixture.DesignSystemProfileID); err != nil {
+			t.Fatalf("change profile source file: %v", err)
+		}
+		_, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
+			WorkspaceID: fixture.WorkspaceID, TemplateRevisionID: fixture.TemplateRevisionID,
+			DesignSystemProfileID: fixture.DesignSystemProfileID,
+		})
+		if !errors.Is(err, service.ErrGenerationAssetsStale) {
+			t.Fatalf("load profile source file mismatch error = %v", err)
+		}
+	})
+}
+
+func TestDesignGenerationAssetStoreMissingAndCrossWorkspace(t *testing.T) {
+	t.Run("missing assets", func(t *testing.T) {
+		ctx := context.Background()
+		store := service.DesignGenerationAssetStore{Queries: db.New(testPool)}
+		fixture := createGenerationAssetFixture(t)
+
+		_, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
+			WorkspaceID: fixture.WorkspaceID, TemplateRevisionID: fixture.TemplateRevisionID,
+			DesignSystemProfileID: fixture.DesignSystemProfileID,
+		})
+		if !errors.Is(err, service.ErrGenerationAssetsMissing) {
+			t.Fatalf("load missing assets error = %v", err)
+		}
+	})
+
+	t.Run("cross workspace", func(t *testing.T) {
+		ctx := context.Background()
+		store := service.DesignGenerationAssetStore{Queries: db.New(testPool)}
+		fixture := createGenerationAssetFixture(t)
+		saveGenerationAssetsForTest(t, ctx, store, fixture)
+		otherWorkspaceID := createGenerationAssetWorkspace(t)
+
+		_, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
+			WorkspaceID: otherWorkspaceID, TemplateRevisionID: fixture.TemplateRevisionID,
+			DesignSystemProfileID: fixture.DesignSystemProfileID,
+		})
+		if !errors.Is(err, service.ErrGenerationAssetsMissing) {
+			t.Fatalf("cross-workspace load error = %v", err)
+		}
+		_, err = store.SaveBlueprintAnalysis(ctx, service.SaveBlueprintAnalysisParams{
+			WorkspaceID: otherWorkspaceID, TemplateID: fixture.TemplateID,
+			TemplateRevisionID: fixture.TemplateRevisionID, SourceRevisionID: fixture.TemplateSourceRevisionID,
+			AnalysisVersion: 2, CreatedBy: fixture.UserID, Structure: fixture.Structure, Blueprint: fixture.Blueprint,
+		})
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("cross-workspace save error = %v", err)
+		}
+	})
+}
+
 func assertGenerationAssetValidationError(t *testing.T, err error) {
 	t.Helper()
 	var validationErr *service.GenerationAssetValidationError
 	if !errors.As(err, &validationErr) || len(validationErr.Diagnostics) == 0 {
 		t.Fatalf("expected typed validation error with diagnostics, got %v", err)
+	}
+}
+
+func assertPersistedDiagnostic(t *testing.T, raw []byte, code string, wantCount int) {
+	t.Helper()
+	var diagnostics designcore.Diagnostics
+	if err := json.Unmarshal(raw, &diagnostics); err != nil {
+		t.Fatalf("decode persisted diagnostics: %v", err)
+	}
+	count := 0
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == code {
+			count++
+		}
+	}
+	if count != wantCount {
+		t.Fatalf("diagnostic %q count = %d, want %d; diagnostics = %+v", code, count, wantCount, diagnostics)
 	}
 }
 
@@ -220,10 +339,38 @@ func createGenerationAssetFixture(t *testing.T) generationAssetFixture {
 	}
 
 	return generationAssetFixture{
-		WorkspaceID: workspaceID, UserID: userID, TemplateID: template.ID, TemplateRevisionID: templateRevision.ID,
-		TemplateSourceRevisionID: parseUUID(templateDesign.CurrentRevision.ID), DesignSystemProfileID: profile.ID,
-		RecipeSourceRevisionID: parseUUID(recipeDesign.CurrentRevision.ID), Structure: structure, Blueprint: blueprint, RecipeSet: recipeSet, RecipeDoc: recipeDoc,
+		WorkspaceID: workspaceID, UserID: userID, TemplateID: template.ID, TemplateLibraryID: library.ID, TemplateRevisionID: templateRevision.ID,
+		TemplateSourceFileID: parseUUID(templateDesign.File.ID), TemplateSourceRevisionID: parseUUID(templateDesign.CurrentRevision.ID), DesignSystemProfileID: profile.ID,
+		RecipeSourceFileID: parseUUID(recipeDesign.File.ID), RecipeSourceRevisionID: parseUUID(recipeDesign.CurrentRevision.ID), Structure: structure, Blueprint: blueprint, RecipeSet: recipeSet, RecipeDoc: recipeDoc,
 	}
+}
+
+func createGenerationAssetCatalogTemplate(t *testing.T, fixture generationAssetFixture) pgtype.UUID {
+	t.Helper()
+	var templateID pgtype.UUID
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_catalog_template (workspace_id, library_id, key, name, category, metadata, created_by)
+		VALUES ($1, $2, $3, 'Mismatch', 'list', '{}'::jsonb, $4)
+		RETURNING id
+	`, fixture.WorkspaceID, fixture.TemplateLibraryID, fmt.Sprintf("mismatch-%d", time.Now().UnixNano()), fixture.UserID).Scan(&templateID); err != nil {
+		t.Fatalf("create mismatch catalog template: %v", err)
+	}
+	return templateID
+}
+
+func createGenerationAssetWorkspace(t *testing.T) pgtype.UUID {
+	t.Helper()
+	var workspaceID pgtype.UUID
+	slug := fmt.Sprintf("generation-assets-%d", time.Now().UnixNano())
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO workspace (name, slug, description, issue_prefix)
+		VALUES ('Generation Asset Boundary', $1, '', 'GAB')
+		RETURNING id
+	`, slug).Scan(&workspaceID); err != nil {
+		t.Fatalf("create cross-workspace fixture: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID) })
+	return workspaceID
 }
 
 func updateGenerationAssetNativeJSON(t *testing.T, revisionID pgtype.UUID, doc designcore.NativeJSON) {

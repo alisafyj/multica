@@ -109,6 +109,9 @@ func (s DesignGenerationAssetStore) SaveBlueprintAnalysis(ctx context.Context, p
 	if err != nil {
 		return db.DesignTemplateBlueprint{}, fmt.Errorf("create template blueprint: %w", err)
 	}
+	if record.TemplateID != templateRevision.TemplateID {
+		return db.DesignTemplateBlueprint{}, staleGenerationAssets("persisted blueprint template identity does not match its template revision")
+	}
 	if diagnostics.HasErrors() {
 		return record, &GenerationAssetValidationError{Diagnostics: diagnostics}
 	}
@@ -130,6 +133,9 @@ func (s DesignGenerationAssetStore) SaveRecipeSetAnalysis(ctx context.Context, p
 	})
 	if err != nil {
 		return db.DesignComponentRecipeSet{}, fmt.Errorf("load recipe source revision: %w", err)
+	}
+	if profile.SourceFileID != sourceRevision.FileID {
+		return db.DesignComponentRecipeSet{}, staleGenerationAssets("recipe source file does not match its design system profile")
 	}
 	sourceDoc, err := designcore.ParseNativeJSON(sourceRevision.NativeJson)
 	if err != nil {
@@ -193,15 +199,21 @@ func (s DesignGenerationAssetStore) LoadCompilationAssets(ctx context.Context, p
 		ID: params.TemplateRevisionID, WorkspaceID: params.WorkspaceID,
 	})
 	if err != nil {
-		return CompilationAssets{}, staleGenerationAssets("template revision is unavailable")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CompilationAssets{}, ErrGenerationAssetsMissing
+		}
+		return CompilationAssets{}, fmt.Errorf("load template revision: %w", err)
 	}
 	profile, err := s.Queries.GetDesignSystemProfileInWorkspace(ctx, db.GetDesignSystemProfileInWorkspaceParams{
 		ID: params.DesignSystemProfileID, WorkspaceID: params.WorkspaceID,
 	})
 	if err != nil {
-		return CompilationAssets{}, staleGenerationAssets("design system profile is unavailable")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CompilationAssets{}, ErrGenerationAssetsMissing
+		}
+		return CompilationAssets{}, fmt.Errorf("load design system profile: %w", err)
 	}
-	if blueprintRecord.TemplateRevisionID != templateRevision.ID || blueprintRecord.SourceRevisionID != templateRevision.DesignRevisionID || recipeSetRecord.DesignSystemProfileID != profile.ID || recipeSetRecord.SourceRevisionID != profile.SourceRevisionID {
+	if blueprintRecord.TemplateRevisionID != templateRevision.ID || blueprintRecord.TemplateID != templateRevision.TemplateID || blueprintRecord.SourceRevisionID != templateRevision.DesignRevisionID || recipeSetRecord.DesignSystemProfileID != profile.ID || recipeSetRecord.SourceRevisionID != profile.SourceRevisionID {
 		return CompilationAssets{}, staleGenerationAssets("asset records do not match current source identities")
 	}
 
@@ -209,21 +221,30 @@ func (s DesignGenerationAssetStore) LoadCompilationAssets(ctx context.Context, p
 		ID: blueprintRecord.SourceRevisionID, WorkspaceID: params.WorkspaceID,
 	})
 	if err != nil {
-		return CompilationAssets{}, staleGenerationAssets("template source revision is unavailable")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CompilationAssets{}, ErrGenerationAssetsMissing
+		}
+		return CompilationAssets{}, fmt.Errorf("load template source revision: %w", err)
 	}
 	recipeSourceRevision, err := s.Queries.GetDesignRevisionInWorkspace(ctx, db.GetDesignRevisionInWorkspaceParams{
 		ID: recipeSetRecord.SourceRevisionID, WorkspaceID: params.WorkspaceID,
 	})
 	if err != nil {
-		return CompilationAssets{}, staleGenerationAssets("recipe source revision is unavailable")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CompilationAssets{}, ErrGenerationAssetsMissing
+		}
+		return CompilationAssets{}, fmt.Errorf("load recipe source revision: %w", err)
+	}
+	if profile.SourceFileID != recipeSourceRevision.FileID {
+		return CompilationAssets{}, staleGenerationAssets("recipe source file does not match its design system profile")
 	}
 	templateDoc, err := designcore.ParseNativeJSON(templateSourceRevision.NativeJson)
 	if err != nil {
-		return CompilationAssets{}, staleGenerationAssets("template source document is invalid")
+		return CompilationAssets{}, fmt.Errorf("parse template source document: %w", err)
 	}
 	recipeDoc, err := designcore.ParseNativeJSON(recipeSourceRevision.NativeJson)
 	if err != nil {
-		return CompilationAssets{}, staleGenerationAssets("recipe source document is invalid")
+		return CompilationAssets{}, fmt.Errorf("parse recipe source document: %w", err)
 	}
 	blueprint, err := designcore.ParseTemplateBlueprint(blueprintRecord.BlueprintJson)
 	if err != nil {
@@ -236,8 +257,14 @@ func (s DesignGenerationAssetStore) LoadCompilationAssets(ctx context.Context, p
 	if !blueprintSourceRefsMatch(blueprint, templateSourceRevision, templateRevision.ID) || recipeSet.DesignSystemProfileID != util.UUIDToString(profile.ID) || recipeSet.SourceRevisionID != util.UUIDToString(recipeSourceRevision.ID) {
 		return CompilationAssets{}, staleGenerationAssets("parsed assets do not match current source identities")
 	}
-	if designcore.ValidateTemplateBlueprint(designcore.ExtractTemplateStructure(templateDoc), blueprint).HasErrors() || designcore.ValidateComponentRecipeSet(recipeDoc, recipeSet).HasErrors() {
-		return CompilationAssets{}, staleGenerationAssets("asset content no longer matches source documents")
+	if diagnostics := designcore.ValidateTemplateBlueprint(designcore.ExtractTemplateStructure(templateDoc), blueprint); diagnostics.HasErrors() {
+		return CompilationAssets{}, fmt.Errorf("validate persisted template blueprint: %+v", diagnostics)
+	}
+	if diagnostics := designcore.ValidateComponentRecipeSet(recipeDoc, recipeSet); diagnostics.HasErrors() {
+		if hasGenerationAssetDiagnostic(diagnostics, "recipe_fingerprint_drift") {
+			return CompilationAssets{}, staleGenerationAssets("recipe fingerprints do not match source document")
+		}
+		return CompilationAssets{}, fmt.Errorf("validate persisted component recipe set: %+v", diagnostics)
 	}
 
 	return CompilationAssets{
@@ -254,4 +281,13 @@ func blueprintSourceRefsMatch(blueprint designcore.TemplateBlueprint, sourceRevi
 
 func staleGenerationAssets(detail string) error {
 	return fmt.Errorf("%w: %s", ErrGenerationAssetsStale, detail)
+}
+
+func hasGenerationAssetDiagnostic(diagnostics designcore.Diagnostics, code string) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == code {
+			return true
+		}
+	}
+	return false
 }
