@@ -62,8 +62,8 @@ type ResolvedComponentExpectation struct {
 	SourceRevisionID     string
 	SourceRootLayerID    string
 	SourceFingerprint    string
+	OutputFingerprint    string
 	TextOverflow         string
-	AllowOverlay         bool
 	OverlayRole          string
 }
 
@@ -204,7 +204,7 @@ func CompileListPage(input CompileInput) CompileOutput {
 	}
 
 	compiler.manifest.GeneratedLayerIDs = compilerGeneratedLayerIDs(compiler.templateSource, final)
-	compiler.manifest.ResolvedComponents = compilerResolvedComponentExpectations(compiler.generatedRoots)
+	compiler.manifest.ResolvedComponents = compilerResolvedComponentExpectations(compiler.generatedRoots, final)
 	quality := EvaluateCompiledDesign(final, input.PageSpec, input.Blueprint, compiler.manifest, compiler.diagnostics)
 	return CompileOutput{
 		Status:      quality.Status,
@@ -816,6 +816,13 @@ func (c *listPageCompiler) applyFinalEdits(document *NativeJSON) {
 			layer.Text = make(map[string]any)
 		}
 		layer.Text["overflow"] = c.textOverflow[layerID]
+		if c.textOverflow[layerID] == "ellipsis" {
+			layer.Text["clip"] = true
+			layer.Text["maxLines"] = 1
+		} else {
+			delete(layer.Text, "clip")
+			delete(layer.Text, "maxLines")
+		}
 		document.Layers[layerID] = layer
 	}
 
@@ -918,7 +925,7 @@ func compilerGeneratedLayerIDs(template, document NativeJSON) []string {
 	return result
 }
 
-func compilerResolvedComponentExpectations(generatedRoots map[string]generatedRootMetadata) []ResolvedComponentExpectation {
+func compilerResolvedComponentExpectations(generatedRoots map[string]generatedRootMetadata, document NativeJSON) []ResolvedComponentExpectation {
 	rootIDs := make([]string, 0, len(generatedRoots))
 	for rootID, metadata := range generatedRoots {
 		if metadata.RecipeKind != "" {
@@ -939,8 +946,8 @@ func compilerResolvedComponentExpectations(generatedRoots map[string]generatedRo
 			SourceRevisionID:     metadata.RecipeSourceRevisionID,
 			SourceRootLayerID:    metadata.RecipeSourceRootLayerID,
 			SourceFingerprint:    metadata.RecipeSourceFingerprint,
+			OutputFingerprint:    fingerprintGeneratedSubtree(document, rootID),
 			TextOverflow:         metadata.TextOverflow,
-			AllowOverlay:         metadata.OverlayRole != "",
 			OverlayRole:          metadata.OverlayRole,
 		})
 	}

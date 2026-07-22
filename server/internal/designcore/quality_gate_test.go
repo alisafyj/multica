@@ -32,18 +32,30 @@ func TestEvaluateCompiledDesignReturnsGeneratedStatuses(t *testing.T) {
 }
 
 func TestEvaluateCompiledDesignBlocksTextOverflow(t *testing.T) {
-	t.Run("ellipsis", func(t *testing.T) {
+	t.Run("safe ellipsis", func(t *testing.T) {
 		input := completeCompilerInputForTest(t)
 		input.PageSpec.Filters[0].Placeholder = strings.Repeat("overflow ", 48)
 
 		output := CompileListPage(input)
-		if output.Status != "compile_failed" {
+		if output.Status != "generated" {
 			t.Fatalf("status = %q, diagnostics = %+v", output.Status, output.Diagnostics)
 		}
-		assertDiagnosticCode(t, output.Diagnostics, "text_overflow")
+		assertNoDiagnosticCode(t, output.Diagnostics, "text_overflow")
+
+		doc := copyQualityGateDocument(t, output.Document)
+		root := qualityGeneratedRoot(t, doc, "filters.name")
+		for _, id := range qualityDescendants(doc.Layers, root.ID) {
+			layer := doc.Layers[id]
+			if structuralLayerText(layer) == input.PageSpec.Filters[0].Placeholder {
+				delete(layer.Text, "clip")
+				doc.Layers[id] = layer
+			}
+		}
+		report := EvaluateCompiledDesign(doc, input.PageSpec, input.Blueprint, output.Manifest, nil)
+		assertDiagnosticCode(t, report.Diagnostics, "text_overflow")
 	})
 
-	t.Run("explicit wrap", func(t *testing.T) {
+	t.Run("wrap requires enough height", func(t *testing.T) {
 		input := completeCompilerInputForTest(t)
 		input.PageSpec.Filters[0].Placeholder = strings.Repeat("overflow ", 48)
 		key := (RecipeKey{Kind: "input", Variant: "default", State: "default"}).String()
@@ -52,10 +64,10 @@ func TestEvaluateCompiledDesignBlocksTextOverflow(t *testing.T) {
 		input.RecipeSet.Recipes[key] = recipe
 
 		output := CompileListPage(input)
-		if output.Status != "generated" {
+		if output.Status != "compile_failed" {
 			t.Fatalf("status = %q, diagnostics = %+v", output.Status, output.Diagnostics)
 		}
-		assertNoDiagnosticCode(t, output.Diagnostics, "text_overflow")
+		assertDiagnosticCode(t, output.Diagnostics, "text_overflow")
 	})
 }
 
@@ -221,7 +233,97 @@ func TestEvaluateCompiledDesignBlocksComponentNonconformance(t *testing.T) {
 	assertDiagnosticCode(t, report.Diagnostics, "component_nonconformance")
 }
 
-func TestEvaluateCompiledDesignPermitsOnlyManifestDeclaredOverlay(t *testing.T) {
+func TestEvaluateCompiledDesignFingerprintsActualComponentOutput(t *testing.T) {
+	input, output := completeQualityGateOutput(t)
+	root := qualityGeneratedRoot(t, output.Document, "filters.name")
+	childID := output.Document.Layers[root.ID].Children[0]
+	tests := []struct {
+		name   string
+		mutate func(*NativeJSON)
+	}{
+		{name: "fill", mutate: func(doc *NativeJSON) {
+			layer := doc.Layers[root.ID]
+			layer.Style["fill"] = "#ffffff"
+			doc.Layers[root.ID] = layer
+		}},
+		{name: "radius", mutate: func(doc *NativeJSON) {
+			layer := doc.Layers[root.ID]
+			layer.Style["radius"] = 99.0
+			doc.Layers[root.ID] = layer
+		}},
+		{name: "source variant removed", mutate: func(doc *NativeJSON) {
+			layer := doc.Layers[root.ID]
+			delete(layer.Style, "sourceVariant")
+			doc.Layers[root.ID] = layer
+		}},
+		{name: "typography", mutate: func(doc *NativeJSON) {
+			layer := doc.Layers[childID]
+			layer.Text["fontSize"] = 28.0
+			doc.Layers[childID] = layer
+		}},
+		{name: "descendant geometry", mutate: func(doc *NativeJSON) { layer := doc.Layers[childID]; layer.X++; doc.Layers[childID] = layer }},
+		{name: "asset", mutate: func(doc *NativeJSON) {
+			doc.Assets["mutated-asset"] = Asset{ID: "mutated-asset", Kind: "image", URL: "https://example.test/mutated.png"}
+			layer := doc.Layers[childID]
+			layer.Image = &ImageData{AssetID: "mutated-asset"}
+			doc.Layers[childID] = layer
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc := copyQualityGateDocument(t, output.Document)
+			tt.mutate(&doc)
+			report := EvaluateCompiledDesign(doc, input.PageSpec, input.Blueprint, output.Manifest, nil)
+			assertDiagnosticCode(t, report.Diagnostics, "component_nonconformance")
+		})
+	}
+}
+
+func TestEvaluateCompiledDesignFingerprintsPrimitiveStyle(t *testing.T) {
+	input := completeCompilerInputForTest(t)
+	forcePrimitiveRecipeForTest(&input, "input")
+	output := CompileListPage(input)
+	if output.Diagnostics.HasErrors() {
+		t.Fatalf("compile: %+v", output.Diagnostics)
+	}
+	doc := copyQualityGateDocument(t, output.Document)
+	root := qualityGeneratedRoot(t, doc, "filters.name")
+	root.Style["fill"] = "#000000"
+	doc.Layers[root.ID] = root
+	report := EvaluateCompiledDesign(doc, input.PageSpec, input.Blueprint, output.Manifest, nil)
+	assertDiagnosticCode(t, report.Diagnostics, "component_nonconformance")
+}
+
+func TestEvaluateCompiledDesignChecksCrossParentOverlapAndRolePairs(t *testing.T) {
+	input, output := completeQualityGateOutput(t)
+	first := qualityGeneratedRoot(t, output.Document, "filters.name")
+	second := qualityGeneratedRoot(t, output.Document, "table.sampleRows.0.customerName")
+
+	evaluate := func(t *testing.T, firstRole, secondRole string) QualityReport {
+		t.Helper()
+		doc := copyQualityGateDocument(t, output.Document)
+		moved := doc.Layers[second.ID]
+		moved.X, moved.Y = first.X, first.Y
+		doc.Layers[moved.ID] = moved
+		manifest := output.Manifest
+		manifest.ResolvedComponents = append([]ResolvedComponentExpectation(nil), output.Manifest.ResolvedComponents...)
+		for index := range manifest.ResolvedComponents {
+			switch manifest.ResolvedComponents[index].GeneratedRootLayerID {
+			case first.ID:
+				manifest.ResolvedComponents[index].OverlayRole = firstRole
+			case second.ID:
+				manifest.ResolvedComponents[index].OverlayRole = secondRole
+			}
+		}
+		return EvaluateCompiledDesign(doc, input.PageSpec, input.Blueprint, manifest, nil)
+	}
+
+	assertDiagnosticCode(t, evaluate(t, "", "").Diagnostics, "unexpected_overlap")
+	assertDiagnosticCode(t, evaluate(t, "dropdown", "tooltip").Diagnostics, "unexpected_overlap")
+	assertNoDiagnosticCode(t, evaluate(t, "dropdown", "dropdown").Diagnostics, "unexpected_overlap")
+}
+
+func TestEvaluateCompiledDesignPermitsOnlyCompatibleManifestOverlayRoles(t *testing.T) {
 	input, output := completeQualityGateOutput(t)
 
 	t.Run("manifest declared", func(t *testing.T) {
@@ -233,6 +335,7 @@ func TestEvaluateCompiledDesignPermitsOnlyManifestDeclaredOverlay(t *testing.T) 
 		manifest := output.Manifest
 		manifest.FilterCount++
 		manifest.GeneratedLayerIDs = append(manifest.GeneratedLayerIDs, overlay.ID)
+		manifest.ResolvedComponents = append([]ResolvedComponentExpectation(nil), manifest.ResolvedComponents...)
 		manifest.ResolvedComponents = append(manifest.ResolvedComponents, ResolvedComponentExpectation{
 			GeneratedRootLayerID: overlay.ID,
 			RecipeKind:           "input",
@@ -240,9 +343,13 @@ func TestEvaluateCompiledDesignPermitsOnlyManifestDeclaredOverlay(t *testing.T) 
 			RecipeState:          "default",
 			RequestedVariant:     "default",
 			Fallback:             "primitive",
-			AllowOverlay:         true,
 			OverlayRole:          "recipe-overlay",
 		})
+		for index := range manifest.ResolvedComponents {
+			if manifest.ResolvedComponents[index].GeneratedRootLayerID == parent.ID {
+				manifest.ResolvedComponents[index].OverlayRole = "recipe-overlay"
+			}
+		}
 
 		report := EvaluateCompiledDesign(doc, input.PageSpec, input.Blueprint, manifest, nil)
 		assertNoDiagnosticCode(t, report.Diagnostics, "unexpected_overlap")

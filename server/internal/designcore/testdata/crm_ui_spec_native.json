@@ -9,9 +9,12 @@
     "input-default": { "id": "input-default", "frameId": "crm-ui-spec-frame", "parentId": "recipe-root", "children": ["input-default-label", "input-default-value"], "name": "Input default", "type": "frame", "visible": true, "x": 0, "y": 0, "width": 200, "height": 32, "style": { "sourceVariant": "default" } },
     "input-default-label": { "id": "input-default-label", "frameId": "crm-ui-spec-frame", "parentId": "input-default", "name": "Input label", "type": "text", "visible": true, "x": 8, "y": 8, "width": 176, "height": 16, "text": { "characters": "标签" } },
     "input-default-value": { "id": "input-default-value", "frameId": "crm-ui-spec-frame", "parentId": "input-default", "name": "Input value", "type": "text", "visible": true, "x": 8, "y": 8, "width": 176, "height": 16, "text": { "characters": "输入内容" } },
-    "select-default": { "id": "select-default", "frameId": "crm-ui-spec-frame", "parentId": "recipe-root", "children": ["select-default-label", "select-default-value"], "name": "Select default", "type": "frame", "visible": true, "x": 0, "y": 56, "width": 200, "height": 32, "style": { "sourceVariant": "default" } },
+    "select-default": { "id": "select-default", "frameId": "crm-ui-spec-frame", "parentId": "recipe-root", "children": ["select-default-label", "select-default-value", "select-default-decoration"], "name": "Select default", "type": "frame", "visible": true, "x": 0, "y": 56, "width": 200, "height": 32, "style": { "sourceVariant": "default" } },
     "select-default-label": { "id": "select-default-label", "frameId": "crm-ui-spec-frame", "parentId": "select-default", "name": "Select label", "type": "text", "visible": true, "x": 8, "y": 64, "width": 176, "height": 16, "text": { "characters": "标签" } },
     "select-default-value": { "id": "select-default-value", "frameId": "crm-ui-spec-frame", "parentId": "select-default", "name": "Select value", "type": "text", "visible": true, "x": 8, "y": 64, "width": 176, "height": 16, "text": { "characters": "选择内容" } },
+    "select-default-decoration": { "id": "select-default-decoration", "frameId": "crm-ui-spec-frame", "parentId": "select-default", "children": ["select-default-chevron", "select-default-dot"], "name": "Select decoration", "type": "frame", "visible": true, "x": 168, "y": 60, "width": 28, "height": 24 },
+    "select-default-chevron": { "id": "select-default-chevron", "frameId": "crm-ui-spec-frame", "parentId": "select-default-decoration", "name": "Select chevron", "type": "image", "visible": true, "x": 180, "y": 64, "width": 12, "height": 12, "image": { "assetId": "select-chevron-asset" } },
+    "select-default-dot": { "id": "select-default-dot", "frameId": "crm-ui-spec-frame", "parentId": "select-default-decoration", "name": "Select status dot", "type": "ellipse", "visible": true, "x": 172, "y": 68, "width": 4, "height": 4, "shape": { "fill": "#1677ff" } },
     "date-range-default": { "id": "date-range-default", "frameId": "crm-ui-spec-frame", "parentId": "recipe-root", "children": ["date-range-default-label", "date-range-default-value"], "name": "Date range default", "type": "frame", "visible": true, "x": 0, "y": 112, "width": 200, "height": 32, "style": { "sourceVariant": "default" } },
     "date-range-default-label": { "id": "date-range-default-label", "frameId": "crm-ui-spec-frame", "parentId": "date-range-default", "name": "Date range label", "type": "text", "visible": true, "x": 8, "y": 120, "width": 176, "height": 16, "text": { "characters": "标签" } },
     "date-range-default-value": { "id": "date-range-default-value", "frameId": "crm-ui-spec-frame", "parentId": "date-range-default", "name": "Date range value", "type": "text", "visible": true, "x": 8, "y": 120, "width": 176, "height": 16, "text": { "characters": "日期范围" } },
@@ -36,10 +39,15 @@
     "pagination-default": { "id": "pagination-default", "frameId": "crm-ui-spec-frame", "parentId": "recipe-root", "children": ["pagination-default-value"], "name": "Pagination", "type": "frame", "visible": true, "x": 0, "y": 672, "width": 200, "height": 32, "style": { "sourceVariant": "default" } },
     "pagination-default-value": { "id": "pagination-default-value", "frameId": "crm-ui-spec-frame", "parentId": "pagination-default", "name": "Pagination value", "type": "text", "visible": true, "x": 8, "y": 680, "width": 176, "height": 16, "text": { "characters": "第 1 页" } }
   },
-  "assets": {},
+  "assets": {
+    "select-chevron-asset": { "id": "select-chevron-asset", "kind": "image", "url": "https://static.soyoung.com/multica/crm-select-chevron.png", "contentType": "image/png", "width": 12, "height": 12 }
+  },
   "tokens": {
     "color": { "primary": "#1677ff", "text": "#111111" },
     "spacing": { "control": 12 }
+  },
+  "componentBindings": {
+    "select-default": { "componentKey": "select", "target": "select-default-value", "props": { "indicator": "select-default-chevron" } }
   },
   "source": { "revisionId": "crm-ui-spec-revision-1" }
 }

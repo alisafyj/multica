@@ -86,9 +86,34 @@ func TestCRMCustomerListCompilerAcceptance(t *testing.T) {
 	if first.Manifest.FilterCount != 4 || first.Manifest.ColumnCount != 6 || first.Manifest.RowCount != 3 {
 		t.Fatalf("manifest = %+v", first.Manifest)
 	}
-	if first.Quality.Metrics.TextOverflowCount != 0 || first.Quality.Metrics.UnexpectedOverlapCount != 0 || first.Quality.Metrics.TemplateResidueCount != 0 {
+	if first.Quality.Metrics.TextOverflowCount != 0 || first.Quality.Metrics.UnexpectedOverlapCount != 0 || first.Quality.Metrics.OffFrameCount != 0 || first.Quality.Metrics.TemplateResidueCount != 0 {
 		t.Fatalf("quality = %+v", first.Quality)
 	}
+	selectRoot := generatedRootAtSpecPath(t, first.Document, "filters.status")
+	assetLayer, ok := firstAssetLayerInSubtree(first.Document, selectRoot.ID)
+	if !ok || assetLayer.Image == nil {
+		t.Fatal("select recipe did not preserve its nested image")
+	}
+	asset := first.Document.Assets[assetLayer.Image.AssetID]
+	if asset.URL != "https://static.soyoung.com/multica/crm-select-chevron.png" {
+		t.Fatalf("select asset URL = %q", asset.URL)
+	}
+	if assetLayer.X != selectRoot.X+180 || assetLayer.Y != selectRoot.Y+8 {
+		t.Fatalf("select asset bounds = (%v,%v), root = (%v,%v)", assetLayer.X, assetLayer.Y, selectRoot.X, selectRoot.Y)
+	}
+	if _, ok := first.Document.ComponentBindings[selectRoot.ID]; !ok {
+		t.Fatal("select recipe component binding was not cloned")
+	}
+}
+
+func firstAssetLayerInSubtree(doc NativeJSON, rootID string) (Layer, bool) {
+	for _, layerID := range qualityDescendants(doc.Layers, rootID) {
+		layer := doc.Layers[layerID]
+		if layer.Image != nil {
+			return layer, true
+		}
+	}
+	return Layer{}, false
 }
 
 func loadCRMCompilerFixture(t *testing.T) CompileInput {

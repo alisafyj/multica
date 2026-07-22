@@ -3,6 +3,7 @@ package designcore
 import (
 	"math"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -197,8 +198,29 @@ func TestAllocateTableLayoutUsesHorizontalScrollBeforeOverlap(t *testing.T) {
 			t.Fatalf("column must not be pinned: %+v", column)
 		}
 	}
-	if layout.ActionColumn == nil || layout.ActionColumn.Width != 176 || layout.ActionColumn.X != 636 || layout.ActionColumn.Pinned != "" {
+	if layout.ActionColumn == nil || layout.ActionColumn.Width != 176 || layout.ActionColumn.X != layout.TotalWidth-layout.ActionColumn.Width || layout.ActionColumn.Pinned != "" {
 		t.Fatalf("action column = %+v", layout.ActionColumn)
+	}
+}
+
+func TestAllocateTableLayoutUsesPreferredWidthsInScrollMode(t *testing.T) {
+	long := strings.Repeat("customer-record-", 20)
+	layout, diagnostics := AllocateTableLayout(TableLayoutInput{
+		Columns: []TableColumnSpec{
+			{Key: "name", Title: "Name", Width: "medium"},
+			{Key: "notes", Title: "Notes", Width: "wide"},
+		},
+		Rows:          []map[string]string{{"name": long, "notes": long}},
+		ViewportWidth: 200, Typography: TypographyMetrics{FontSize: 14}, CellHorizontalPadding: 16,
+	})
+	if diagnostics.HasErrors() {
+		t.Fatalf("diagnostics = %+v", diagnostics)
+	}
+	if !layout.HorizontalScroll || layout.Columns[0].Width != layout.Columns[0].PreferredWidth || layout.Columns[1].Width != layout.Columns[1].PreferredWidth {
+		t.Fatalf("scroll layout = %+v", layout)
+	}
+	if layout.Columns[0].Width != layout.Columns[0].MaxWidth || layout.Columns[1].Width != layout.Columns[1].MaxWidth {
+		t.Fatalf("long content was not capped at max widths: %+v", layout.Columns)
 	}
 }
 

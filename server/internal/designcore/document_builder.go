@@ -84,12 +84,18 @@ func (b *DocumentBuilder) ClearChildren(rootLayerID string) error {
 	for layerID := range removed {
 		delete(candidate.Layers, layerID)
 	}
+	pruneRemovedDocumentBindings(&candidate, removed)
 	root.Children = []string{}
 	candidate.Layers[rootLayerID] = root
 	if err := validateBuilderDocument(candidate); err != nil {
 		return fmt.Errorf("clear children: %w", err)
 	}
 	b.document = candidate
+	for cloneRootID := range b.cloneMappings {
+		if _, wasRemoved := removed[cloneRootID]; wasRemoved {
+			delete(b.cloneMappings, cloneRootID)
+		}
+	}
 	return nil
 }
 
@@ -110,6 +116,9 @@ func (b *DocumentBuilder) CloneSubtree(source NativeJSON, sourceRootID, targetPa
 	if err != nil {
 		return CloneResult{}, err
 	}
+	sourceRoot := sourceCopy.Layers[sourceRootID]
+	deltaX := bounds.X - sourceRoot.X
+	deltaY := bounds.Y - sourceRoot.Y
 
 	operation := b.sequence + 1
 	nodeIDs := make(map[string]string, len(orderedLayerIDs))
@@ -165,6 +174,8 @@ func (b *DocumentBuilder) CloneSubtree(source NativeJSON, sourceRootID, targetPa
 				return CloneResult{}, fmt.Errorf("layer %q has parent %q outside cloned subtree", sourceID, layer.ParentID)
 			}
 			layer.ParentID = mappedParentID
+			layer.X += deltaX
+			layer.Y += deltaY
 		}
 		layer.Children = rewriteStringSlice(layer.Children, nodeIDs)
 		layer.Text = rewriteJSONMap(layer.Text, nodeIDs, assetIDs)
@@ -188,6 +199,10 @@ func (b *DocumentBuilder) CloneSubtree(source NativeJSON, sourceRootID, targetPa
 		asset := sourceCopy.Assets[sourceID]
 		targetID := assetIDs[sourceID]
 		asset.ID = targetID
+		asset.Metadata = rewriteJSONMap(asset.Metadata, nodeIDs, assetIDs)
+		if asset.FrameID != "" {
+			asset.FrameID = targetFrameID
+		}
 		clonedAssets[targetID] = asset
 	}
 
@@ -204,6 +219,7 @@ func (b *DocumentBuilder) CloneSubtree(source NativeJSON, sourceRootID, targetPa
 	for targetID, layer := range clonedLayers {
 		candidate.Layers[targetID] = layer
 	}
+	cloneDocumentBindings(&candidate, sourceCopy, operation, nodeIDs, assetIDs, b.generatedID)
 	parent = candidate.Layers[targetParentID]
 	parent.Children = append(parent.Children, nodeIDs[sourceRootID])
 	candidate.Layers[targetParentID] = parent
@@ -217,6 +233,130 @@ func (b *DocumentBuilder) CloneSubtree(source NativeJSON, sourceRootID, targetPa
 	b.sequence = operation
 	b.cloneMappings[rootLayerID] = canonicalMapping
 	return CloneResult{RootLayerID: rootLayerID, SourceToTarget: copyLayerIDMap(canonicalMapping)}, nil
+}
+
+func pruneRemovedDocumentBindings(document *NativeJSON, removed map[string]struct{}) {
+	for layerID := range document.ComponentBindings {
+		if _, ok := removed[layerID]; ok {
+			delete(document.ComponentBindings, layerID)
+		}
+	}
+	for key, binding := range document.Slots {
+		if referencesRemovedLayer(binding.LayerIDs, removed) {
+			delete(document.Slots, key)
+		}
+	}
+	for key, binding := range document.Modules {
+		if referencesRemovedLayer(binding.LayerIDs, removed) {
+			delete(document.Modules, key)
+		}
+	}
+	for key, binding := range document.States {
+		if referencesRemovedLayer(binding.LayerIDs, removed) {
+			delete(document.States, key)
+		}
+	}
+}
+
+func referencesRemovedLayer(layerIDs []string, removed map[string]struct{}) bool {
+	for _, layerID := range layerIDs {
+		if _, ok := removed[layerID]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneDocumentBindings(
+	target *NativeJSON,
+	source NativeJSON,
+	operation uint64,
+	nodeIDs, assetIDs map[string]string,
+	generateKey func(uint64, string) string,
+) {
+	if len(source.ComponentBindings) > 0 && target.ComponentBindings == nil {
+		target.ComponentBindings = make(map[string]ComponentBinding)
+	}
+	for sourceLayerID, binding := range source.ComponentBindings {
+		targetLayerID, owned := nodeIDs[sourceLayerID]
+		if !owned {
+			continue
+		}
+		binding.ComponentKey = rewriteExactString(binding.ComponentKey, nodeIDs, assetIDs)
+		binding.Target = rewriteExactString(binding.Target, nodeIDs, assetIDs)
+		binding.Props = rewriteJSONMap(binding.Props, nodeIDs, assetIDs)
+		target.ComponentBindings[targetLayerID] = binding
+	}
+
+	if len(source.Slots) > 0 && target.Slots == nil {
+		target.Slots = make(map[string]SlotBinding)
+	}
+	for sourceKey, binding := range source.Slots {
+		layerIDs, owned := rewriteOwnedLayerIDs(binding.LayerIDs, nodeIDs)
+		if !owned {
+			continue
+		}
+		targetKey := generateKey(operation, "slot\x00"+sourceKey)
+		binding.SlotKey = targetKey
+		binding.LayerIDs = layerIDs
+		binding.Value = rewriteJSONValue(binding.Value, nodeIDs, assetIDs)
+		target.Slots[targetKey] = binding
+	}
+
+	if len(source.Modules) > 0 && target.Modules == nil {
+		target.Modules = make(map[string]ModuleBinding)
+	}
+	for sourceKey, binding := range source.Modules {
+		layerIDs, owned := rewriteOwnedLayerIDs(binding.LayerIDs, nodeIDs)
+		if !owned {
+			continue
+		}
+		targetKey := generateKey(operation, "module\x00"+sourceKey)
+		binding.ModuleKey = targetKey
+		binding.LayerIDs = layerIDs
+		binding.EntityKey = rewriteExactString(binding.EntityKey, nodeIDs, assetIDs)
+		target.Modules[targetKey] = binding
+	}
+
+	if len(source.States) > 0 && target.States == nil {
+		target.States = make(map[string]StateBinding)
+	}
+	for sourceKey, binding := range source.States {
+		layerIDs, owned := rewriteOwnedLayerIDs(binding.LayerIDs, nodeIDs)
+		if !owned {
+			continue
+		}
+		targetKey := generateKey(operation, "state\x00"+sourceKey)
+		binding.StateKey = targetKey
+		binding.LayerIDs = layerIDs
+		binding.StateType = rewriteExactString(binding.StateType, nodeIDs, assetIDs)
+		target.States[targetKey] = binding
+	}
+}
+
+func rewriteOwnedLayerIDs(source []string, nodeIDs map[string]string) ([]string, bool) {
+	if len(source) == 0 {
+		return nil, false
+	}
+	result := make([]string, len(source))
+	for index, sourceID := range source {
+		targetID, ok := nodeIDs[sourceID]
+		if !ok {
+			return nil, false
+		}
+		result[index] = targetID
+	}
+	return result, true
+}
+
+func rewriteExactString(value string, nodeIDs, assetIDs map[string]string) string {
+	if mapped, ok := nodeIDs[value]; ok {
+		return mapped
+	}
+	if mapped, ok := assetIDs[value]; ok {
+		return mapped
+	}
+	return value
 }
 
 func (b *DocumentBuilder) BindText(clone CloneResult, sourceTargetLayerID, value string) error {

@@ -15,7 +15,7 @@
     },
     "select/default/default": {
       "kind": "select", "variant": "default", "state": "default",
-      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "select-default", "fingerprint": "652556170a8e6dc412c7a53f5dadea7b8e406d00b3d34cbf9ce78d053174d0df" },
+      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "select-default", "fingerprint": "80e06d00e4423d3478d94ddc9270b8c27031fa0d8b77dce0a32d8e316685149c" },
       "props": { "label": { "targetLayerId": "select-default-label", "type": "text" }, "value": { "targetLayerId": "select-default-value", "type": "text" } },
       "layout": { "widthMode": "fixed", "textOverflow": "ellipsis", "height": 32, "minWidth": 80 }
     },

@@ -78,6 +78,19 @@ func TestCompileListPageBuildsCountsAndRecipeBackedContent(t *testing.T) {
 	}
 }
 
+func TestCompileListPageSupportsNarrowViewportLongContentWithScrollAndEllipsis(t *testing.T) {
+	input := completeCompilerInputForTest(t)
+	input.Blueprint.Constraints.ContentWidth = 260
+	input.PageSpec.Table.SampleRows[0]["customerName"] = strings.Repeat("Long customer record ", 20)
+	input.PageSpec.Table.SampleRows[0]["createdAt"] = strings.Repeat("2026-07-22 ", 12)
+
+	output := CompileListPage(input)
+	if output.Status != "generated" || !output.Manifest.HorizontalScroll {
+		t.Fatalf("status=%q scroll=%v diagnostics=%+v", output.Status, output.Manifest.HorizontalScroll, output.Diagnostics)
+	}
+	assertNoDiagnosticCode(t, output.Diagnostics, "text_overflow")
+}
+
 func TestCompileListPageReflowsFiltersActionsRowsAndPagination(t *testing.T) {
 	filterY := map[int]float64{}
 	for _, count := range []int{0, 1, 3, 4} {
@@ -671,7 +684,7 @@ func TestCompileListPageRecordsRecipeDeclaredOverlay(t *testing.T) {
 	root := generatedRootAtSpecPath(t, output.Document, "filters.name")
 	for _, expectation := range output.Manifest.ResolvedComponents {
 		if expectation.GeneratedRootLayerID == root.ID {
-			if !expectation.AllowOverlay || expectation.OverlayRole != "dropdown" {
+			if expectation.OverlayRole != "dropdown" {
 				t.Fatalf("overlay expectation = %+v", expectation)
 			}
 			return

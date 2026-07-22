@@ -1,6 +1,9 @@
 package designcore
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -77,15 +80,50 @@ func (q *qualityEvaluator) evaluateTextOverflow() {
 		}
 		text := structuralLayerText(layer)
 		expectation, root, ok := q.expectedComponentAncestor(layer.ID)
-		if text == "" || !ok || expectation.TextOverflow == "wrap" {
+		if text == "" || !ok {
 			continue
 		}
 		fontSize := qualityFontSize(layer.Text)
-		if MeasureTextWidth(text, TypographyMetrics{FontSize: fontSize})+2*compilerCellHorizontalPadding > root.Width {
+		measuredWidth := MeasureTextWidth(text, TypographyMetrics{FontSize: fontSize})
+		availableWidth := layer.Width
+		if availableWidth <= 0 {
+			availableWidth = root.Width
+		}
+		overflows := false
+		switch expectation.TextOverflow {
+		case "ellipsis":
+			if measuredWidth > availableWidth && !qualityHasSafeEllipsis(layer, root) {
+				overflows = true
+			}
+		case "wrap":
+			lineHeight := qualityNumber(layer.Text["lineHeight"])
+			if lineHeight <= 0 {
+				lineHeight = fontSize * 1.4
+			}
+			lineCount := math.Ceil(measuredWidth / math.Max(availableWidth, 1))
+			if lineCount < 1 {
+				lineCount = 1
+			}
+			if qualityString(layer.Text, "overflow") != "wrap" || lineCount*lineHeight > layer.Height || !rectContains(qualityRect(root), qualityRect(layer)) {
+				overflows = true
+			}
+		default:
+			if measuredWidth > availableWidth {
+				overflows = true
+			}
+		}
+		if overflows {
 			q.report.Metrics.TextOverflowCount++
-			q.addError("text_overflow", fmt.Sprintf("text in layer %q exceeds its available width", layer.ID), "layers."+layer.ID, layer.ID)
+			q.addError("text_overflow", fmt.Sprintf("text in layer %q is not safely contained by its overflow policy", layer.ID), "layers."+layer.ID, layer.ID)
 		}
 	}
+}
+
+func qualityHasSafeEllipsis(layer, root Layer) bool {
+	return qualityString(layer.Text, "overflow") == "ellipsis" &&
+		layer.Text["clip"] == true &&
+		qualityNumber(layer.Text["maxLines"]) == 1 &&
+		rectContains(qualityRect(root), qualityRect(layer))
 }
 
 func qualityFontSize(text map[string]any) float64 {
@@ -115,36 +153,33 @@ func qualityFontSize(text map[string]any) float64 {
 }
 
 func (q *qualityEvaluator) evaluateOverlap() {
-	byParent := make(map[string][]Layer)
+	generated := make([]Layer, 0)
 	for _, layerID := range q.sortedLayerIDs() {
 		layer := q.doc.Layers[layerID]
 		if !isVisibleNativeLayer(q.doc.Layers, layer.ID) || layer.Semantic["generatedBy"] != DesignCompilerVersion {
 			continue
 		}
-		byParent[layer.ParentID] = append(byParent[layer.ParentID], layer)
+		generated = append(generated, layer)
 	}
-	parentIDs := make([]string, 0, len(byParent))
-	for parentID := range byParent {
-		parentIDs = append(parentIDs, parentID)
-	}
-	sort.Strings(parentIDs)
-	for _, parentID := range parentIDs {
-		siblings := byParent[parentID]
-		for left := 0; left < len(siblings); left++ {
-			for right := left + 1; right < len(siblings); right++ {
-				first, second := siblings[left], siblings[right]
-				if q.allowsOverlay(first, second) || !rectanglesOverlap(qualityRect(first), qualityRect(second)) {
-					continue
-				}
-				q.report.Metrics.UnexpectedOverlapCount++
-				q.addError("unexpected_overlap", fmt.Sprintf("generated sibling layers %q and %q overlap", first.ID, second.ID), "layers."+first.ID, "layers."+second.ID)
+	for left := 0; left < len(generated); left++ {
+		for right := left + 1; right < len(generated); right++ {
+			first, second := generated[left], generated[right]
+			if isNativeDescendantOrSelf(q.doc.Layers, first.ID, second.ID) || isNativeDescendantOrSelf(q.doc.Layers, second.ID, first.ID) {
+				continue
 			}
+			if q.allowsOverlay(first, second) || !rectanglesOverlap(qualityRect(first), qualityRect(second)) {
+				continue
+			}
+			q.report.Metrics.UnexpectedOverlapCount++
+			q.addError("unexpected_overlap", fmt.Sprintf("generated layers %q and %q overlap", first.ID, second.ID), "layers."+first.ID, "layers."+second.ID)
 		}
 	}
 }
 
 func (q *qualityEvaluator) allowsOverlay(first, second Layer) bool {
-	return q.expectations[first.ID].AllowOverlay || q.expectations[second.ID].AllowOverlay
+	firstExpectation, firstOK := q.expectations[first.ID]
+	secondExpectation, secondOK := q.expectations[second.ID]
+	return firstOK && secondOK && firstExpectation.OverlayRole != "" && firstExpectation.OverlayRole == secondExpectation.OverlayRole
 }
 
 func (q *qualityEvaluator) evaluateOffFrame() {
@@ -298,7 +333,7 @@ func (q *qualityEvaluator) evaluateComponentConformance() {
 			q.addError("unresolved_recipe", fmt.Sprintf("generated component %q is missing resolved recipe metadata", layer.ID), "layers."+layer.ID, layer.ID)
 			continue
 		}
-		if !qualityComponentMatchesExpectation(layer, expectation) {
+		if !qualityComponentMatchesExpectation(q.doc, layer, expectation) {
 			q.addError("component_nonconformance", fmt.Sprintf("generated component %q does not match its compiler-resolved recipe", layer.ID), "layers."+layer.ID, layer.ID)
 		}
 	}
@@ -321,7 +356,7 @@ func resolvedComponentExpectations(source []ResolvedComponentExpectation) map[st
 	return result
 }
 
-func qualityComponentMatchesExpectation(layer Layer, expectation ResolvedComponentExpectation) bool {
+func qualityComponentMatchesExpectation(doc NativeJSON, layer Layer, expectation ResolvedComponentExpectation) bool {
 	if qualityString(layer.Semantic, "recipeKind") != expectation.RecipeKind ||
 		qualityString(layer.Semantic, "recipeVariant") != expectation.RecipeVariant ||
 		qualityString(layer.Semantic, "recipeState") != expectation.RecipeState ||
@@ -334,8 +369,111 @@ func qualityComponentMatchesExpectation(layer Layer, expectation ResolvedCompone
 		qualityString(layer.Semantic, "recipeSourceFingerprint") != expectation.SourceFingerprint {
 		return false
 	}
-	if expectation.Fallback != "primitive" {
-		if sourceVariant, exists := layer.Style["sourceVariant"]; exists && sourceVariant != expectation.RecipeVariant {
+	return expectation.OutputFingerprint != "" && fingerprintGeneratedSubtree(doc, layer.ID) == expectation.OutputFingerprint
+}
+
+type fingerprintNamedSlot struct {
+	Key     string      `json:"key"`
+	Binding SlotBinding `json:"binding"`
+}
+
+type fingerprintNamedModule struct {
+	Key     string        `json:"key"`
+	Binding ModuleBinding `json:"binding"`
+}
+
+type fingerprintNamedState struct {
+	Key     string       `json:"key"`
+	Binding StateBinding `json:"binding"`
+}
+
+type fingerprintNamedComponent struct {
+	LayerID string           `json:"layerId"`
+	Binding ComponentBinding `json:"binding"`
+}
+
+func fingerprintGeneratedSubtree(doc NativeJSON, rootLayerID string) string {
+	if _, ok := doc.Layers[rootLayerID]; !ok {
+		return ""
+	}
+	payload := struct {
+		RootLayerID string                      `json:"rootLayerId"`
+		Layers      []Layer                     `json:"layers"`
+		Assets      []Asset                     `json:"assets"`
+		Slots       []fingerprintNamedSlot      `json:"slots,omitempty"`
+		Modules     []fingerprintNamedModule    `json:"modules,omitempty"`
+		States      []fingerprintNamedState     `json:"states,omitempty"`
+		Components  []fingerprintNamedComponent `json:"components,omitempty"`
+	}{RootLayerID: rootLayerID}
+	visited := make(map[string]struct{})
+	assetIDs := make(map[string]struct{})
+	var visit func(string)
+	visit = func(layerID string) {
+		if _, seen := visited[layerID]; seen {
+			return
+		}
+		layer, ok := doc.Layers[layerID]
+		if !ok {
+			return
+		}
+		visited[layerID] = struct{}{}
+		payload.Layers = append(payload.Layers, layer)
+		collectReferencedAssets(layer, doc.Assets, assetIDs)
+		for _, childID := range layer.Children {
+			visit(childID)
+		}
+	}
+	visit(rootLayerID)
+
+	assetKeys := sortedQualityMapKeys(doc.Assets)
+	for _, key := range assetKeys {
+		if _, used := assetIDs[key]; used {
+			payload.Assets = append(payload.Assets, doc.Assets[key])
+		}
+	}
+	for _, key := range sortedQualityMapKeys(doc.Slots) {
+		if qualityBindingOwnedBySubtree(doc.Slots[key].LayerIDs, visited) {
+			payload.Slots = append(payload.Slots, fingerprintNamedSlot{Key: key, Binding: doc.Slots[key]})
+		}
+	}
+	for _, key := range sortedQualityMapKeys(doc.Modules) {
+		if qualityBindingOwnedBySubtree(doc.Modules[key].LayerIDs, visited) {
+			payload.Modules = append(payload.Modules, fingerprintNamedModule{Key: key, Binding: doc.Modules[key]})
+		}
+	}
+	for _, key := range sortedQualityMapKeys(doc.States) {
+		if qualityBindingOwnedBySubtree(doc.States[key].LayerIDs, visited) {
+			payload.States = append(payload.States, fingerprintNamedState{Key: key, Binding: doc.States[key]})
+		}
+	}
+	for _, key := range sortedQualityMapKeys(doc.ComponentBindings) {
+		if _, owned := visited[key]; owned {
+			payload.Components = append(payload.Components, fingerprintNamedComponent{LayerID: key, Binding: doc.ComponentBindings[key]})
+		}
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func sortedQualityMapKeys[T any](values map[string]T) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func qualityBindingOwnedBySubtree(layerIDs []string, subtree map[string]struct{}) bool {
+	if len(layerIDs) == 0 {
+		return false
+	}
+	for _, layerID := range layerIDs {
+		if _, ok := subtree[layerID]; !ok {
 			return false
 		}
 	}
@@ -406,6 +544,23 @@ func rectContains(outer, inner Rect) bool {
 func qualityString(values map[string]any, key string) string {
 	value, _ := values[key].(string)
 	return value
+}
+
+func qualityNumber(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int32:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	default:
+		return 0
+	}
 }
 
 func manifestGeneratedIDs(manifest CompilationManifest) []string {

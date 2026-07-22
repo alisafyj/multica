@@ -71,6 +71,9 @@ func AllocateTableLayout(input TableLayoutInput) (TableLayout, Diagnostics) {
 	layout := TableLayout{Columns: columns}
 	if minimumTotal > input.ViewportWidth {
 		layout.HorizontalScroll = true
+		for index := range layout.Columns {
+			layout.Columns[index].Width = layout.Columns[index].PreferredWidth
+		}
 	} else {
 		remaining := input.ViewportWidth - minimumTotal
 		remaining = distributeColumnGrowth(layout.Columns, remaining, func(column TableColumnLayout) float64 {

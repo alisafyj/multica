@@ -37,6 +37,17 @@ func TestDocumentBuilderClonesRecipeSubtreeAndPreservesAsset(t *testing.T) {
 		t.Fatalf("bound text = %#v", got)
 	}
 	icon := doc.Layers[clone.SourceToTarget["input-icon"]]
+	if got := (Rect{X: icon.X, Y: icon.Y, Width: icon.Width, Height: icon.Height}); got != (Rect{X: 216, Y: 88, Width: 16, Height: 16}) {
+		t.Fatalf("translated icon bounds = %+v", got)
+	}
+	decoration := doc.Layers[clone.SourceToTarget["input-decoration"]]
+	if got := (Rect{X: decoration.X, Y: decoration.Y, Width: decoration.Width, Height: decoration.Height}); got != (Rect{X: 200, Y: 84, Width: 32, Height: 24}) {
+		t.Fatalf("translated nested group bounds = %+v", got)
+	}
+	shape := doc.Layers[clone.SourceToTarget["input-shape"]]
+	if got := (Rect{X: shape.X, Y: shape.Y, Width: shape.Width, Height: shape.Height}); got != (Rect{X: 204, Y: 88, Width: 8, Height: 8}) {
+		t.Fatalf("translated shape bounds = %+v", got)
+	}
 	if icon.Image == nil || icon.Image.AssetID == "shared-asset" {
 		t.Fatalf("colliding asset was not remapped: %+v", icon.Image)
 	}
@@ -46,11 +57,37 @@ func TestDocumentBuilderClonesRecipeSubtreeAndPreservesAsset(t *testing.T) {
 	if got := doc.Assets["shared-asset"].URL; got != "https://example.test/template.png" {
 		t.Fatalf("base collision asset changed: %q", got)
 	}
+	if _, ok := doc.ComponentBindings[clone.RootLayerID]; !ok {
+		t.Fatal("root component binding was not cloned")
+	}
+	assertClonedBindingReferences(t, doc.Slots, clone.SourceToTarget["input-label"])
+	assertClonedBindingReferences(t, doc.Modules, clone.SourceToTarget["input-icon"])
+	assertClonedBindingReferences(t, doc.States, clone.SourceToTarget["input-shape"])
 	if got := mustMarshalDocumentBuilderTest(t, base); !reflect.DeepEqual(got, baseBefore) {
 		t.Fatal("constructor mutated caller-owned base document")
 	}
 	if got := mustMarshalDocumentBuilderTest(t, source); !reflect.DeepEqual(got, sourceBefore) {
 		t.Fatal("clone mutated caller-owned source document")
+	}
+}
+
+func TestDocumentBuilderClearChildrenPrunesCloneMappings(t *testing.T) {
+	builder, err := NewDocumentBuilder(compilerTemplateForTest(), "prune-clones")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone, err := builder.CloneSubtree(recipeSourceWithImageForTest(), "input-root", "filters", "frame-1", Rect{X: 40, Y: 80, Width: 320, Height: 36})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := builder.ClearChildren("filters"); err != nil {
+		t.Fatal(err)
+	}
+	if _, retained := builder.cloneMappings[clone.RootLayerID]; retained {
+		t.Fatal("removed clone mapping was retained")
+	}
+	if err := builder.BindText(clone, "input-label", "stale"); err == nil {
+		t.Fatal("removed clone handle remained usable")
 	}
 }
 
@@ -97,6 +134,7 @@ func TestDocumentBuilderRewritesCompleteSubtreeReferencesExactly(t *testing.T) {
 	doc := builder.Document()
 	rootID := clone.SourceToTarget["input-root"]
 	labelID := clone.SourceToTarget["input-label"]
+	decorationID := clone.SourceToTarget["input-decoration"]
 	iconID := clone.SourceToTarget["input-icon"]
 	root := doc.Layers[rootID]
 	label := doc.Layers[labelID]
@@ -104,11 +142,11 @@ func TestDocumentBuilderRewritesCompleteSubtreeReferencesExactly(t *testing.T) {
 	if root.ID == "input-root" || label.ID == "input-label" || icon.ID == "input-icon" {
 		t.Fatalf("source IDs survived clone: %+v", clone.SourceToTarget)
 	}
-	if !reflect.DeepEqual(root.Children, []string{labelID, iconID}) {
+	if !reflect.DeepEqual(root.Children, []string{labelID, decorationID}) {
 		t.Fatalf("children = %#v", root.Children)
 	}
-	if label.ParentID != rootID || icon.ParentID != rootID {
-		t.Fatalf("parents = %q, %q; want %q", label.ParentID, icon.ParentID, rootID)
+	if label.ParentID != rootID || icon.ParentID != decorationID {
+		t.Fatalf("parents = %q, %q; want %q, %q", label.ParentID, icon.ParentID, rootID, decorationID)
 	}
 	assetID := icon.Image.AssetID
 	checks := map[string]any{
@@ -405,16 +443,37 @@ func recipeSourceWithImageForTest() NativeJSON {
 		Frames:  []Frame{{ID: "recipe-frame", Name: "Recipe", RootLayerID: "input-root", Width: 200, Height: 32}},
 		Layers: map[string]Layer{
 			"input-root": {
-				ID: "input-root", FrameID: "recipe-frame", Children: []string{"input-label", "input-icon"}, Name: "Input", Type: "frame", Visible: true, Width: 200, Height: 32,
+				ID: "input-root", FrameID: "recipe-frame", Children: []string{"input-label", "input-decoration"}, Name: "Input", Type: "frame", Visible: true, Width: 200, Height: 32,
 				Text: references("input-label"), Style: map[string]any{"nodeRef": "input-icon", "assetRef": "shared-asset", "substring": "prefix-input-label-suffix", "nested": []any{"input-label", map[string]any{"assetRef": "shared-asset"}}},
 				Semantic: references("input-label"), Source: references("input-icon"), Shape: references("input-label"), Exportable: []map[string]any{references("input-icon")},
 			},
-			"input-label": {ID: "input-label", FrameID: "recipe-frame", ParentID: "input-root", Name: "Label", Type: "text", Visible: true, X: 8, Y: 6, Width: 140, Height: 20, Text: map[string]any{"characters": "Name"}},
-			"input-icon":  {ID: "input-icon", FrameID: "recipe-frame", ParentID: "input-root", Name: "Search", Type: "image", Visible: true, X: 176, Y: 8, Width: 16, Height: 16, Image: &ImageData{AssetID: "shared-asset"}},
+			"input-label":      {ID: "input-label", FrameID: "recipe-frame", ParentID: "input-root", Name: "Label", Type: "text", Visible: true, X: 8, Y: 6, Width: 140, Height: 20, Text: map[string]any{"characters": "Name"}},
+			"input-decoration": {ID: "input-decoration", FrameID: "recipe-frame", ParentID: "input-root", Children: []string{"input-icon", "input-shape"}, Name: "Decoration", Type: "frame", Visible: true, X: 160, Y: 4, Width: 32, Height: 24},
+			"input-icon":       {ID: "input-icon", FrameID: "recipe-frame", ParentID: "input-decoration", Name: "Search", Type: "image", Visible: true, X: 176, Y: 8, Width: 16, Height: 16, Image: &ImageData{AssetID: "shared-asset"}},
+			"input-shape":      {ID: "input-shape", FrameID: "recipe-frame", ParentID: "input-decoration", Name: "Dot", Type: "ellipse", Visible: true, X: 164, Y: 8, Width: 8, Height: 8, Shape: map[string]any{"fill": "#1677ff"}},
 		},
 		Assets: map[string]Asset{
 			"shared-asset": {ID: "shared-asset", Kind: "image", URL: "https://example.test/search.png", ContentType: "image/png", Width: 16, Height: 16, Metadata: map[string]any{"component": "search"}},
 		},
+		Slots:   map[string]SlotBinding{"input-slot": {SlotKey: "input-slot", LayerIDs: []string{"input-label"}, Value: map[string]any{"target": "input-icon"}}},
+		Modules: map[string]ModuleBinding{"input-module": {ModuleKey: "input-module", LayerIDs: []string{"input-icon"}, EntityKey: "input-root"}},
+		States:  map[string]StateBinding{"input-state": {StateKey: "input-state", LayerIDs: []string{"input-shape"}, StateType: "input-icon"}},
+		ComponentBindings: map[string]ComponentBinding{
+			"input-root": {ComponentKey: "input", Target: "input-label", Props: map[string]any{"icon": "input-icon"}},
+		},
+	}
+}
+
+func assertClonedBindingReferences[T interface {
+	SlotBinding | ModuleBinding | StateBinding
+}](t *testing.T, bindings map[string]T, wantLayerID string) {
+	t.Helper()
+	raw, err := json.Marshal(bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(regexp.QuoteMeta(wantLayerID)).Match(raw) {
+		t.Fatalf("cloned binding does not reference %q: %s", wantLayerID, raw)
 	}
 }
 
