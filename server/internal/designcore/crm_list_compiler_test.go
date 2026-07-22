@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -41,13 +42,46 @@ func TestCRMCustomerListCompilerAcceptance(t *testing.T) {
 			t.Fatalf("required business text %q is missing", required)
 		}
 	}
+	for _, column := range input.PageSpec.Table.Columns {
+		path := "table.columns." + column.Key
+		header := generatedRootAtSpecPath(t, first.Document, path)
+		if !subtreeContainsText(first.Document, header.ID, column.Title) {
+			t.Fatalf("%s does not contain header title %q", path, column.Title)
+		}
+	}
+	for rowIndex, row := range input.PageSpec.Table.SampleRows {
+		for _, column := range input.PageSpec.Table.Columns {
+			path := "table.sampleRows." + strconv.Itoa(rowIndex) + "." + column.Key
+			cell := generatedRootAtSpecPath(t, first.Document, path)
+			if !subtreeContainsText(first.Document, cell.ID, row[column.Key]) {
+				t.Fatalf("%s does not contain value %q", path, row[column.Key])
+			}
+			if column.Cell != "status-tag" {
+				continue
+			}
+			wantVariant := column.StatusMap[row[column.Key]]
+			wantRecipe := input.RecipeSet.Recipes[(RecipeKey{Kind: "status-tag", Variant: wantVariant, State: "default"}).String()]
+			if cell.Semantic["recipeVariant"] != wantVariant ||
+				cell.Semantic["recipeState"] != "default" ||
+				cell.Semantic["recipeSourceRootLayerId"] != wantRecipe.Source.RootLayerID ||
+				cell.Semantic["recipeSourceFingerprint"] != wantRecipe.Source.Fingerprint ||
+				cell.Style["sourceVariant"] != wantVariant {
+				t.Fatalf("%s status recipe = semantic:%+v style:%+v, want variant=%q recipe=%+v", path, cell.Semantic, cell.Style, wantVariant, wantRecipe)
+			}
+		}
+		for _, action := range input.PageSpec.Table.RowActions {
+			path := "table.sampleRows." + strconv.Itoa(rowIndex) + ".rowActions." + action.Key
+			rowAction := generatedRootAtSpecPath(t, first.Document, path)
+			if !subtreeContainsText(first.Document, rowAction.ID, action.Label) {
+				t.Fatalf("%s does not contain action label %q", path, action.Label)
+			}
+		}
+	}
 	if countGeneratedRole(first.Document, "status-tag") != 3 {
 		t.Fatal("every sample row must instantiate one status tag")
 	}
-	for _, variant := range []string{"success", "warning", "disabled"} {
-		if !containsGeneratedStatusVariant(first.Document, variant) {
-			t.Fatalf("status tag variant %q is missing", variant)
-		}
+	if countGeneratedRole(first.Document, "row-action") != 6 {
+		t.Fatal("every sample row must instantiate view and edit actions")
 	}
 	if first.Manifest.FilterCount != 4 || first.Manifest.ColumnCount != 6 || first.Manifest.RowCount != 3 {
 		t.Fatalf("manifest = %+v", first.Manifest)
@@ -146,15 +180,4 @@ func allVisibleText(doc NativeJSON) string {
 		}
 	}
 	return strings.Join(values, "\n")
-}
-
-func containsGeneratedStatusVariant(doc NativeJSON, want string) bool {
-	for _, layer := range doc.Layers {
-		if layer.Semantic["generatedBy"] == DesignCompilerVersion &&
-			layer.Semantic["generationRole"] == "status-tag" &&
-			layer.Semantic["recipeVariant"] == want {
-			return true
-		}
-	}
-	return false
 }
