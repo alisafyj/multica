@@ -65,9 +65,6 @@ func AllocateTableLayout(input TableLayoutInput) (TableLayout, Diagnostics) {
 			PreferredWidth: preferred,
 			MaxWidth:       bounds.max,
 		}
-		if index == 0 {
-			columns[index].Pinned = "left"
-		}
 		minimumTotal += bounds.min
 	}
 
@@ -76,14 +73,16 @@ func AllocateTableLayout(input TableLayoutInput) (TableLayout, Diagnostics) {
 		layout.HorizontalScroll = true
 	} else {
 		remaining := input.ViewportWidth - minimumTotal
-		for index := range layout.Columns {
-			remaining = growColumn(&layout.Columns[index], layout.Columns[index].PreferredWidth, remaining)
-		}
-		for index, column := range input.Columns {
-			if tableWidthHints[column.Width].flexible {
-				remaining = growColumn(&layout.Columns[index], layout.Columns[index].MaxWidth, remaining)
-			}
-		}
+		remaining = distributeColumnGrowth(layout.Columns, remaining, func(column TableColumnLayout) float64 {
+			return column.PreferredWidth
+		}, func(int) bool {
+			return true
+		})
+		remaining = distributeColumnGrowth(layout.Columns, remaining, func(column TableColumnLayout) float64 {
+			return column.MaxWidth
+		}, func(index int) bool {
+			return tableWidthHints[input.Columns[index].Width].flexible
+		})
 	}
 
 	x := 0.0
@@ -99,7 +98,6 @@ func AllocateTableLayout(input TableLayoutInput) (TableLayout, Diagnostics) {
 			MinWidth:       reserve,
 			PreferredWidth: reserve,
 			MaxWidth:       reserve,
-			Pinned:         "right",
 		}
 		layout.ActionColumn = &actionColumn
 		x += reserve
@@ -119,8 +117,8 @@ func validateTableLayoutInput(input TableLayoutInput) Diagnostics {
 	if !isNonNegativeFinite(input.Typography.FontSize) {
 		diagnostics = append(diagnostics, tableLayoutDiagnostic("invalid_font_size", "font size must be finite and non-negative", "typography.fontSize"))
 	}
-	if !isNonNegativeFinite(input.Typography.LetterSpacing) {
-		diagnostics = append(diagnostics, tableLayoutDiagnostic("invalid_letter_spacing", "letter spacing must be finite and non-negative", "typography.letterSpacing"))
+	if !isFinite(input.Typography.LetterSpacing) {
+		diagnostics = append(diagnostics, tableLayoutDiagnostic("invalid_letter_spacing", "letter spacing must be finite", "typography.letterSpacing"))
 	}
 	if !isNonNegativeFinite(input.CellHorizontalPadding) {
 		diagnostics = append(diagnostics, tableLayoutDiagnostic("invalid_cell_horizontal_padding", "cell horizontal padding must be finite and non-negative", "cellHorizontalPadding"))
@@ -151,8 +149,58 @@ func actionReserve(actionCount int) float64 {
 	return 176
 }
 
-func growColumn(column *TableColumnLayout, target, remaining float64) float64 {
-	growth := math.Min(target-column.Width, remaining)
-	column.Width += growth
-	return remaining - growth
+func distributeColumnGrowth(columns []TableColumnLayout, remaining float64, target func(TableColumnLayout) float64, eligible func(int) bool) float64 {
+	if remaining <= 0 {
+		return remaining
+	}
+
+	indices := make([]int, 0, len(columns))
+	totalDemand := 0.0
+	for index, column := range columns {
+		if !eligible(index) {
+			continue
+		}
+		demand := target(column) - column.Width
+		if demand <= 0 {
+			continue
+		}
+		indices = append(indices, index)
+		totalDemand += demand
+	}
+	if totalDemand <= 0 {
+		return remaining
+	}
+	if totalDemand <= remaining {
+		for _, index := range indices {
+			columns[index].Width = target(columns[index])
+		}
+		return remaining - totalDemand
+	}
+
+	budget := remaining
+	allocated := 0.0
+	for position, index := range indices {
+		column := &columns[index]
+		demand := target(*column) - column.Width
+		growth := budget * demand / totalDemand
+		if position == len(indices)-1 {
+			growth = budget - allocated
+		}
+		growth = math.Min(demand, math.Max(0, growth))
+		column.Width += growth
+		allocated += growth
+	}
+
+	residual := budget - allocated
+	for _, index := range indices {
+		if residual <= 0 {
+			break
+		}
+		column := &columns[index]
+		growth := math.Min(target(*column)-column.Width, residual)
+		column.Width += growth
+		allocated += growth
+		residual -= growth
+	}
+	return remaining - allocated
 }
