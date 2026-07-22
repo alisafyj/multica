@@ -362,7 +362,6 @@ func TestDesignGenerationAssetStoreMissingAndCrossWorkspace(t *testing.T) {
 		ctx := context.Background()
 		store := service.DesignGenerationAssetStore{Queries: db.New(testPool)}
 		fixture := createGenerationAssetFixture(t)
-		saveGenerationAssetsForTest(t, ctx, store, fixture)
 		otherWorkspaceID := createGenerationAssetWorkspace(t)
 
 		_, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{

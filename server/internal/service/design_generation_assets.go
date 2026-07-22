@@ -197,6 +197,9 @@ func (s DesignGenerationAssetStore) SaveRecipeSetAnalysis(ctx context.Context, p
 
 func (s DesignGenerationAssetStore) LoadCompilationAssets(ctx context.Context, params LoadCompilationAssetsParams) (CompilationAssets, error) {
 	if err := s.requireTargetProject(ctx, params.WorkspaceID, params.TargetProjectID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CompilationAssets{}, ErrGenerationAssetsMissing
+		}
 		return CompilationAssets{}, err
 	}
 	templateRevision, err := s.Queries.GetDesignTemplateRevisionInWorkspace(ctx, db.GetDesignTemplateRevisionInWorkspaceParams{
