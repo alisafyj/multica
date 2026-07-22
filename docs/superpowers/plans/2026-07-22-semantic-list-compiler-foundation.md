@@ -289,7 +289,7 @@ type RecipeProp struct { TargetLayerID, Type string }
 type RecipeLayout struct { WidthMode, TextOverflow string; Height, MinWidth float64 }
 type ComponentRecipe struct { Kind, Variant, State string; Source RecipeSource; Props map[string]RecipeProp; Layout RecipeLayout }
 type PrimitiveRecipe struct { Kind, LayerType string; Props map[string]RecipeProp; Style map[string]any; Layout RecipeLayout }
-type ComponentRecipeSet struct { Version, DesignSystemProfileID, SourceRevisionID string; Recipes map[string]ComponentRecipe; PrimitiveFallbacks map[string]PrimitiveRecipe }
+type ComponentRecipeSet struct { Version, DesignSystemProfileID, SourceRevisionID string; Tokens map[string]any; Recipes map[string]ComponentRecipe; PrimitiveFallbacks map[string]PrimitiveRecipe }
 type ComponentRecipeClassification struct { Kind, Variant, State, RootLayerID string; Props map[string]RecipeProp; Layout RecipeLayout }
 type RecipeRequest struct { Kind, Variant, State string }
 type ResolvedRecipe struct { Recipe *ComponentRecipe; Primitive *PrimitiveRecipe; Fallback string }
@@ -300,7 +300,7 @@ func ValidateComponentRecipeSet(source NativeJSON, set ComponentRecipeSet) Diagn
 func ResolveRecipe(set ComponentRecipeSet, request RecipeRequest) (ResolvedRecipe, Diagnostics)
 ```
 
-Required kinds are `input`, `select`, `date-range`, `primary-button`, `secondary-button`, `text-button`, `table-header`, `table-row`, `status-tag`, and `pagination`. `RecipeLayout.TextOverflow` is `ellipsis` or `wrap`. Validate source roots and prop ancestry/types, compute `RecipeSource.Fingerprint` from canonical JSON for the complete source subtree, and reject persisted fingerprint drift. Resolution order is exact, same-kind `default/default`, then an executable `PrimitiveRecipe` under the requested kind. It never crosses component kinds. Primitive style values must come from analyzed design-system tokens carried in the Recipe set, not hardcoded compiler colors.
+Required kinds are `input`, `select`, `date-range`, `primary-button`, `secondary-button`, `text-button`, `table-header`, `table-row`, `status-tag`, and `pagination`. `RecipeLayout.TextOverflow` is `ellipsis` or `wrap`. `BuildComponentRecipeSet` copies `source.Tokens` into `ComponentRecipeSet.Tokens`. Validate source roots and prop ancestry/types, compute `RecipeSource.Fingerprint` from canonical JSON for the complete source subtree, and reject persisted fingerprint drift. Resolution order is exact, same-kind `default/default`, then an executable `PrimitiveRecipe` under the requested kind. It never crosses component kinds. Every primitive style leaf is a `$token.path` reference that must resolve in `ComponentRecipeSet.Tokens`; raw color, radius, typography, and spacing values are invalid.
 
 - [ ] **Step 5: Run contract tests and format**
 
