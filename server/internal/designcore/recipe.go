@@ -1,6 +1,7 @@
 package designcore
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -132,6 +133,9 @@ func ValidateComponentRecipeSet(source NativeJSON, set ComponentRecipeSet) Diagn
 	if set.DesignSystemProfileID == "" || set.SourceRevisionID == "" {
 		diagnostics.addError("invalid_recipe_set", "design system profile and source revision are required", "designSystemProfileId", "sourceRevisionId")
 	}
+	if !canonicalJSONEqual(set.Tokens, source.Tokens) {
+		diagnostics.addError("recipe_token_drift", "persisted recipe tokens do not match the current source document", "tokens")
+	}
 
 	presentKinds := make(map[string]struct{}, len(set.Recipes))
 	for key, recipe := range set.Recipes {
@@ -152,6 +156,12 @@ func ValidateComponentRecipeSet(source NativeJSON, set ComponentRecipeSet) Diagn
 		validatePrimitiveRecipe(&diagnostics, set.Tokens, key, primitive, "primitiveFallbacks."+key)
 	}
 	return diagnostics
+}
+
+func canonicalJSONEqual(left, right any) bool {
+	leftJSON, leftErr := json.Marshal(left)
+	rightJSON, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && bytes.Equal(leftJSON, rightJSON)
 }
 
 func ResolveRecipe(set ComponentRecipeSet, request RecipeRequest) (ResolvedRecipe, Diagnostics) {

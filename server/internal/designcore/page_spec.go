@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 const PageSpecVersion = "1.0"
@@ -160,10 +161,14 @@ func ValidatePageSpec(spec PageSpec, requiredRequirementIDs []string) Diagnostic
 	if _, ok := allowedDensities[spec.Page.Density]; !ok {
 		diagnostics.addError("unsupported_density", fmt.Sprintf("page density %q is not supported", spec.Page.Density), "page.density")
 	}
+	validateRequiredText(&diagnostics, spec.Page.Module, "page.module")
+	validateRequiredText(&diagnostics, spec.Page.Title, "page.title")
 
 	filterKeys := make(map[string]struct{}, len(spec.Filters))
 	for _, filter := range spec.Filters {
 		path := fmt.Sprintf("filters.%s", filter.Key)
+		validateRequiredText(&diagnostics, filter.Key, path+".key")
+		validateRequiredText(&diagnostics, filter.Label, path+".label")
 		if !addUniqueKey(&diagnostics, filterKeys, filter.Key, path) {
 			continue
 		}
@@ -177,8 +182,13 @@ func ValidatePageSpec(spec PageSpec, requiredRequirementIDs []string) Diagnostic
 
 	pageActionKeys := validateActions(&diagnostics, "pageActions", spec.PageActions)
 	columnKeys := make(map[string]struct{}, len(spec.Table.Columns))
+	if len(spec.Table.Columns) == 0 {
+		diagnostics.addError("missing_table_column", "list pages require at least one table column", "table.columns")
+	}
 	for _, column := range spec.Table.Columns {
 		path := fmt.Sprintf("table.columns.%s", column.Key)
+		validateRequiredText(&diagnostics, column.Key, path+".key")
+		validateRequiredText(&diagnostics, column.Title, path+".title")
 		if !addUniqueKey(&diagnostics, columnKeys, column.Key, path) {
 			continue
 		}
@@ -199,6 +209,9 @@ func ValidatePageSpec(spec PageSpec, requiredRequirementIDs []string) Diagnostic
 	}
 	rowActionKeys := validateActions(&diagnostics, "table.rowActions", spec.Table.RowActions)
 	validateSampleRows(&diagnostics, spec.Table.Columns, spec.Table.SampleRows)
+	if spec.Pagination.Enabled && (spec.Pagination.PageSize <= 0 || spec.Pagination.SampleTotal < 0) {
+		diagnostics.addError("invalid_pagination", "enabled pagination requires a positive page size and a non-negative sample total", "pagination")
+	}
 	validateRequirementCoverage(&diagnostics, spec.RequirementCoverage, requiredRequirementIDs, filterKeys, pageActionKeys, columnKeys, rowActionKeys)
 
 	return diagnostics
@@ -217,10 +230,18 @@ func addUniqueKey(diagnostics *Diagnostics, keys map[string]struct{}, key, path 
 	return true
 }
 
+func validateRequiredText(diagnostics *Diagnostics, value, path string) {
+	if strings.TrimSpace(value) == "" {
+		diagnostics.addError("missing_required_field", fmt.Sprintf("%s must not be blank", path), path)
+	}
+}
+
 func validateActions(diagnostics *Diagnostics, scope string, actions []ActionSpec) map[string]struct{} {
 	keys := make(map[string]struct{}, len(actions))
 	for _, action := range actions {
 		path := fmt.Sprintf("%s.%s", scope, action.Key)
+		validateRequiredText(diagnostics, action.Key, path+".key")
+		validateRequiredText(diagnostics, action.Label, path+".label")
 		if !addUniqueKey(diagnostics, keys, action.Key, path) {
 			continue
 		}
@@ -249,16 +270,28 @@ func validateSampleRows(diagnostics *Diagnostics, columns []TableColumnSpec, row
 }
 
 func validateRequirementCoverage(diagnostics *Diagnostics, coverage []RequirementCoverage, requiredIDs []string, filterKeys, pageActionKeys, columnKeys, rowActionKeys map[string]struct{}) {
+	declaredIDs := make(map[string]struct{}, len(coverage))
 	coveredIDs := make(map[string]struct{}, len(coverage))
 	for _, item := range coverage {
 		path := fmt.Sprintf("requirementCoverage.%s", item.RequirementID)
-		if !addUniqueKey(diagnostics, coveredIDs, item.RequirementID, path) {
+		validateRequiredText(diagnostics, item.RequirementID, path+".requirementId")
+		if !addUniqueKey(diagnostics, declaredIDs, item.RequirementID, path) {
 			continue
 		}
+		validPaths := make(map[string]struct{}, len(item.SpecPaths))
 		for _, specPath := range item.SpecPaths {
 			if !isValidCoveragePath(specPath, filterKeys, pageActionKeys, columnKeys, rowActionKeys) {
 				diagnostics.addError("invalid_spec_path", fmt.Sprintf("spec path %q is not valid", specPath), path)
+				continue
 			}
+			if _, duplicate := validPaths[specPath]; duplicate {
+				diagnostics.addError("duplicate_spec_path", fmt.Sprintf("spec path %q is duplicated", specPath), path)
+				continue
+			}
+			validPaths[specPath] = struct{}{}
+		}
+		if len(validPaths) > 0 {
+			coveredIDs[item.RequirementID] = struct{}{}
 		}
 	}
 

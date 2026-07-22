@@ -149,8 +149,30 @@ const createDesignComponentRecipeSet = `-- name: CreateDesignComponentRecipeSet 
 INSERT INTO design_component_recipe_set (
     workspace_id, design_system_profile_id, source_revision_id,
     analysis_version, schema_version, status, recipes_json,
-    validation_errors, created_by
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	validation_errors, created_by
+)
+SELECT
+	$1, $2, $3,
+	$4, $5, $6, $7,
+	$8, $9
+WHERE EXISTS (
+	SELECT 1 FROM project p
+	WHERE p.id = $10
+	  AND p.workspace_id = $1
+)
+AND EXISTS (
+	SELECT 1 FROM design_system_profile dsp
+	WHERE dsp.id = $2
+	  AND dsp.workspace_id = $1
+	  AND dsp.source_revision_id = $3
+	  AND (dsp.project_id IS NULL OR dsp.project_id = $10)
+	  AND EXISTS (
+		SELECT 1 FROM design_revision dr
+		WHERE dr.id = $3
+		  AND dr.workspace_id = $1
+		  AND dr.file_id = dsp.source_file_id
+	  )
+)
 RETURNING id, workspace_id, design_system_profile_id, source_revision_id, analysis_version, schema_version, status, recipes_json, validation_errors, created_by, created_at
 `
 
@@ -164,6 +186,7 @@ type CreateDesignComponentRecipeSetParams struct {
 	RecipesJson           []byte      `json:"recipes_json"`
 	ValidationErrors      []byte      `json:"validation_errors"`
 	CreatedBy             pgtype.UUID `json:"created_by"`
+	TargetProjectID       pgtype.UUID `json:"target_project_id"`
 }
 
 func (q *Queries) CreateDesignComponentRecipeSet(ctx context.Context, arg CreateDesignComponentRecipeSetParams) (DesignComponentRecipeSet, error) {
@@ -177,6 +200,7 @@ func (q *Queries) CreateDesignComponentRecipeSet(ctx context.Context, arg Create
 		arg.RecipesJson,
 		arg.ValidationErrors,
 		arg.CreatedBy,
+		arg.TargetProjectID,
 	)
 	var i DesignComponentRecipeSet
 	err := row.Scan(
@@ -845,8 +869,40 @@ const createDesignTemplateBlueprint = `-- name: CreateDesignTemplateBlueprint :o
 INSERT INTO design_template_blueprint (
     workspace_id, template_id, template_revision_id, source_revision_id,
     analysis_version, schema_version, status, structure_json, blueprint_json,
-    validation_errors, created_by
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	validation_errors, created_by
+)
+SELECT
+	$1, $2, $3, $4,
+	$5, $6, $7, $8, $9,
+	$10, $11
+WHERE EXISTS (
+	SELECT 1 FROM project p
+	WHERE p.id = $12
+	  AND p.workspace_id = $1
+)
+AND EXISTS (
+	SELECT 1 FROM design_template_revision dtr
+	WHERE dtr.id = $3
+	  AND dtr.workspace_id = $1
+	  AND dtr.template_id = $2
+	  AND dtr.design_revision_id = $4
+)
+AND EXISTS (
+	SELECT 1 FROM design_catalog_template dct
+	WHERE dct.id = $2
+	  AND dct.workspace_id = $1
+)
+AND EXISTS (
+	SELECT 1 FROM design_revision dr
+	WHERE dr.id = $4
+	  AND dr.workspace_id = $1
+	  AND EXISTS (
+		SELECT 1 FROM design_file df
+		WHERE df.id = dr.file_id
+		  AND df.workspace_id = $1
+		  AND df.project_id = $12
+	  )
+)
 RETURNING id, workspace_id, template_id, template_revision_id, source_revision_id, analysis_version, schema_version, status, structure_json, blueprint_json, validation_errors, created_by, created_at
 `
 
@@ -862,6 +918,7 @@ type CreateDesignTemplateBlueprintParams struct {
 	BlueprintJson      []byte      `json:"blueprint_json"`
 	ValidationErrors   []byte      `json:"validation_errors"`
 	CreatedBy          pgtype.UUID `json:"created_by"`
+	TargetProjectID    pgtype.UUID `json:"target_project_id"`
 }
 
 // Semantic design generation assets
@@ -878,6 +935,7 @@ func (q *Queries) CreateDesignTemplateBlueprint(ctx context.Context, arg CreateD
 		arg.BlueprintJson,
 		arg.ValidationErrors,
 		arg.CreatedBy,
+		arg.TargetProjectID,
 	)
 	var i DesignTemplateBlueprint
 	err := row.Scan(
@@ -1821,9 +1879,15 @@ func (q *Queries) GetLatestCompletedDesignRepoAnalysisForResource(ctx context.Co
 
 const getLatestValidDesignComponentRecipeSet = `-- name: GetLatestValidDesignComponentRecipeSet :one
 SELECT id, workspace_id, design_system_profile_id, source_revision_id, analysis_version, schema_version, status, recipes_json, validation_errors, created_by, created_at FROM design_component_recipe_set
-WHERE workspace_id = $1
-  AND design_system_profile_id = $2
-  AND status = 'valid'
+WHERE design_component_recipe_set.workspace_id = $1
+  AND design_component_recipe_set.design_system_profile_id = $2
+  AND design_component_recipe_set.status = 'valid'
+  AND EXISTS (
+	SELECT 1 FROM design_system_profile dsp
+	WHERE dsp.id = design_component_recipe_set.design_system_profile_id
+	  AND dsp.workspace_id = $1
+	  AND (dsp.project_id IS NULL OR dsp.project_id = $3)
+  )
 ORDER BY analysis_version DESC
 LIMIT 1
 `
@@ -1831,10 +1895,11 @@ LIMIT 1
 type GetLatestValidDesignComponentRecipeSetParams struct {
 	WorkspaceID           pgtype.UUID `json:"workspace_id"`
 	DesignSystemProfileID pgtype.UUID `json:"design_system_profile_id"`
+	TargetProjectID       pgtype.UUID `json:"target_project_id"`
 }
 
 func (q *Queries) GetLatestValidDesignComponentRecipeSet(ctx context.Context, arg GetLatestValidDesignComponentRecipeSetParams) (DesignComponentRecipeSet, error) {
-	row := q.db.QueryRow(ctx, getLatestValidDesignComponentRecipeSet, arg.WorkspaceID, arg.DesignSystemProfileID)
+	row := q.db.QueryRow(ctx, getLatestValidDesignComponentRecipeSet, arg.WorkspaceID, arg.DesignSystemProfileID, arg.TargetProjectID)
 	var i DesignComponentRecipeSet
 	err := row.Scan(
 		&i.ID,
@@ -1854,9 +1919,20 @@ func (q *Queries) GetLatestValidDesignComponentRecipeSet(ctx context.Context, ar
 
 const getLatestValidDesignTemplateBlueprint = `-- name: GetLatestValidDesignTemplateBlueprint :one
 SELECT id, workspace_id, template_id, template_revision_id, source_revision_id, analysis_version, schema_version, status, structure_json, blueprint_json, validation_errors, created_by, created_at FROM design_template_blueprint
-WHERE workspace_id = $1
-  AND template_revision_id = $2
-  AND status = 'valid'
+WHERE design_template_blueprint.workspace_id = $1
+  AND design_template_blueprint.template_revision_id = $2
+  AND design_template_blueprint.status = 'valid'
+  AND EXISTS (
+	SELECT 1 FROM design_revision dr
+	WHERE dr.id = design_template_blueprint.source_revision_id
+	  AND dr.workspace_id = $1
+	  AND EXISTS (
+		SELECT 1 FROM design_file df
+		WHERE df.id = dr.file_id
+		  AND df.workspace_id = $1
+		  AND df.project_id = $3
+	  )
+  )
 ORDER BY analysis_version DESC
 LIMIT 1
 `
@@ -1864,10 +1940,11 @@ LIMIT 1
 type GetLatestValidDesignTemplateBlueprintParams struct {
 	WorkspaceID        pgtype.UUID `json:"workspace_id"`
 	TemplateRevisionID pgtype.UUID `json:"template_revision_id"`
+	TargetProjectID    pgtype.UUID `json:"target_project_id"`
 }
 
 func (q *Queries) GetLatestValidDesignTemplateBlueprint(ctx context.Context, arg GetLatestValidDesignTemplateBlueprintParams) (DesignTemplateBlueprint, error) {
-	row := q.db.QueryRow(ctx, getLatestValidDesignTemplateBlueprint, arg.WorkspaceID, arg.TemplateRevisionID)
+	row := q.db.QueryRow(ctx, getLatestValidDesignTemplateBlueprint, arg.WorkspaceID, arg.TemplateRevisionID, arg.TargetProjectID)
 	var i DesignTemplateBlueprint
 	err := row.Scan(
 		&i.ID,

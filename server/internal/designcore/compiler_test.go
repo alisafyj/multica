@@ -139,18 +139,6 @@ func TestCompileListPageSupportsEmptySingleAndMultipleCollections(t *testing.T) 
 		pagination int
 	}{
 		{
-			name: "empty",
-			mutate: func(input *CompileInput) {
-				input.PageSpec.Page.Breadcrumb = nil
-				input.PageSpec.Filters = nil
-				input.PageSpec.PageActions = nil
-				input.PageSpec.Table.Columns = nil
-				input.PageSpec.Table.SampleRows = nil
-				input.PageSpec.Table.RowActions = nil
-				input.PageSpec.Pagination.Enabled = false
-			},
-		},
-		{
 			name: "single",
 			mutate: func(input *CompileInput) {
 				input.PageSpec.Filters = input.PageSpec.Filters[:1]
@@ -206,6 +194,21 @@ func TestCompileListPageSupportsEmptySingleAndMultipleCollections(t *testing.T) 
 				}
 			}
 		})
+	}
+}
+
+func TestCompileListPageBlocksSemanticallyEmptyPageSpec(t *testing.T) {
+	input := completeCompilerInputForTest(t)
+	input.PageSpec.Page.Title = " "
+	input.PageSpec.Table.Columns = nil
+	input.PageSpec.RequirementCoverage[0].SpecPaths = nil
+
+	output := CompileListPage(input)
+	if output.Status != "compile_failed" {
+		t.Fatalf("status = %q", output.Status)
+	}
+	for _, code := range []string{"missing_required_field", "missing_table_column", "missing_requirement_coverage"} {
+		assertDiagnosticCode(t, output.Diagnostics, code)
 	}
 }
 
@@ -305,6 +308,7 @@ func TestCompileListPageResolvesPrimitiveTokenAliasesRecursively(t *testing.T) {
 			"control": "$alias.fill",
 			"fill":    "$color.primary",
 		}
+		input.RecipeDoc.Tokens = cloneJSONMap(input.RecipeSet.Tokens)
 		primitive := input.RecipeSet.PrimitiveFallbacks["select"]
 		primitive.Style = map[string]any{"fill": "$alias.control"}
 		input.RecipeSet.PrimitiveFallbacks["select"] = primitive
@@ -332,6 +336,7 @@ func TestCompileListPageResolvesPrimitiveTokenAliasesRecursively(t *testing.T) {
 				"shadows": []any{"$color.primary", map[string]any{"color": "$color.text", "opacity": 0.5}},
 			},
 		}
+		input.RecipeDoc.Tokens = cloneJSONMap(input.RecipeSet.Tokens)
 		primitive := input.RecipeSet.PrimitiveFallbacks["select"]
 		primitive.Style = map[string]any{"theme": "$component.style"}
 		input.RecipeSet.PrimitiveFallbacks["select"] = primitive
@@ -363,6 +368,7 @@ func TestCompileListPageResolvesPrimitiveTokenAliasesRecursively(t *testing.T) {
 		input := completeCompilerInputForTest(t)
 		forcePrimitiveRecipeForTest(&input, "select")
 		input.RecipeSet.Tokens["alias"] = "$missing.token"
+		input.RecipeDoc.Tokens = cloneJSONMap(input.RecipeSet.Tokens)
 		primitive := input.RecipeSet.PrimitiveFallbacks["select"]
 		primitive.Style = map[string]any{"fill": "$alias"}
 		input.RecipeSet.PrimitiveFallbacks["select"] = primitive
@@ -378,6 +384,7 @@ func TestCompileListPageResolvesPrimitiveTokenAliasesRecursively(t *testing.T) {
 		input := completeCompilerInputForTest(t)
 		forcePrimitiveRecipeForTest(&input, "select")
 		input.RecipeSet.Tokens["alias"] = map[string]any{"a": "$alias.b", "b": "$alias.a"}
+		input.RecipeDoc.Tokens = cloneJSONMap(input.RecipeSet.Tokens)
 		primitive := input.RecipeSet.PrimitiveFallbacks["select"]
 		primitive.Style = map[string]any{"fill": "$alias.a"}
 		input.RecipeSet.PrimitiveFallbacks["select"] = primitive

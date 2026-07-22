@@ -2,6 +2,8 @@ package designcore
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -105,6 +107,7 @@ type TemplateBlueprint struct {
 	Constraints            BlueprintConstraints          `json:"constraints"`
 	ShellAllowlistLayerIDs []string                      `json:"shellAllowlistLayerIds,omitempty"`
 	SourceRefs             BlueprintSourceRefs           `json:"sourceRefs"`
+	StructureFingerprint   string                        `json:"structureFingerprint"`
 }
 
 var requiredBlueprintRegions = []string{"shell", "content", "breadcrumb", "pageTitle", "filters", "pageActions", "table", "pagination"}
@@ -175,6 +178,7 @@ func BuildTemplateBlueprint(structure TemplateStructure, classification Blueprin
 		Constraints:            classification.Constraints,
 		ShellAllowlistLayerIDs: append([]string(nil), classification.ShellAllowlistLayerIDs...),
 		SourceRefs:             refs,
+		StructureFingerprint:   fingerprintTemplateStructure(structure),
 	}
 	for key, region := range classification.Regions {
 		blueprint.Regions[key] = BlueprintRegion{
@@ -222,6 +226,9 @@ func validateTemplateBlueprint(structure TemplateStructure, blueprint TemplateBl
 	if blueprint.PageType != "list" {
 		diagnostics.addError("unsupported_page_type", fmt.Sprintf("page type %q is not supported", blueprint.PageType), "pageType")
 	}
+	if blueprint.StructureFingerprint == "" || blueprint.StructureFingerprint != fingerprintTemplateStructure(structure) {
+		diagnostics.addError("blueprint_structure_drift", "persisted blueprint structure does not match the current source document", "structureFingerprint")
+	}
 	for _, key := range requiredBlueprintRegions {
 		if _, ok := blueprint.Regions[key]; !ok {
 			diagnostics.addError("missing_region", fmt.Sprintf("required region %q is missing", key), "regions."+key)
@@ -258,6 +265,15 @@ func validateTemplateBlueprint(structure TemplateStructure, blueprint TemplateBl
 	validateBlueprintShellAllowlist(&diagnostics, structure, hidden, blueprint)
 	validateBlueprintConstraints(&diagnostics, blueprint.Constraints)
 	return diagnostics
+}
+
+func fingerprintTemplateStructure(structure TemplateStructure) string {
+	raw, err := json.Marshal(structure)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 func validateBlueprintLayerReference(diagnostics *Diagnostics, structure TemplateStructure, hidden map[string]struct{}, frameID, layerID, path string) bool {

@@ -74,6 +74,28 @@ func TestBuildTemplateBlueprintAcceptsValidatedListClassification(t *testing.T) 
 	}
 }
 
+func TestValidateTemplateBlueprintRejectsSameRevisionStructureMutation(t *testing.T) {
+	structure := ExtractTemplateStructure(blueprintSourceDocumentForTest())
+	blueprint, diagnostics := BuildTemplateBlueprint(structure, completeBlueprintClassificationForTest(), BlueprintSourceRefs{
+		DesignFileID: "file-1", DesignRevisionID: "revision-1", TemplateRevisionID: "template-revision-1",
+	})
+	if diagnostics.HasErrors() {
+		t.Fatalf("build blueprint: %+v", diagnostics)
+	}
+
+	mutated := structure
+	mutated.Layers = make(map[string]StructuralLayer, len(structure.Layers))
+	for id, layer := range structure.Layers {
+		mutated.Layers[id] = layer
+	}
+	filters := mutated.Layers[blueprint.Regions["filters"].RootLayerID]
+	filters.Bounds.X += 12
+	filters.Layout = map[string]any{"layoutMode": "horizontal"}
+	mutated.Layers[filters.ID] = filters
+
+	assertDiagnosticCode(t, ValidateTemplateBlueprint(mutated, blueprint), "blueprint_structure_drift")
+}
+
 func TestBuildTemplateBlueprintReportsReferenceDiagnostics(t *testing.T) {
 	structure := ExtractTemplateStructure(blueprintSourceDocumentForTest())
 	tests := []struct {

@@ -38,25 +38,28 @@ type CompilationAssets struct {
 }
 
 type SaveBlueprintAnalysisParams struct {
-	WorkspaceID, TemplateID, TemplateRevisionID, SourceRevisionID pgtype.UUID
-	AnalysisVersion                                               int32
-	CreatedBy                                                     pgtype.UUID
-	Structure                                                     designcore.TemplateStructure
-	Blueprint                                                     designcore.TemplateBlueprint
+	WorkspaceID, TargetProjectID, TemplateID, TemplateRevisionID, SourceRevisionID pgtype.UUID
+	AnalysisVersion                                                                int32
+	CreatedBy                                                                      pgtype.UUID
+	Structure                                                                      designcore.TemplateStructure
+	Blueprint                                                                      designcore.TemplateBlueprint
 }
 
 type SaveRecipeSetAnalysisParams struct {
-	WorkspaceID, DesignSystemProfileID, SourceRevisionID pgtype.UUID
-	AnalysisVersion                                      int32
-	CreatedBy                                            pgtype.UUID
-	RecipeSet                                            designcore.ComponentRecipeSet
+	WorkspaceID, TargetProjectID, DesignSystemProfileID, SourceRevisionID pgtype.UUID
+	AnalysisVersion                                                       int32
+	CreatedBy                                                             pgtype.UUID
+	RecipeSet                                                             designcore.ComponentRecipeSet
 }
 
 type LoadCompilationAssetsParams struct {
-	WorkspaceID, TemplateRevisionID, DesignSystemProfileID pgtype.UUID
+	WorkspaceID, TargetProjectID, TemplateRevisionID, DesignSystemProfileID pgtype.UUID
 }
 
 func (s DesignGenerationAssetStore) SaveBlueprintAnalysis(ctx context.Context, params SaveBlueprintAnalysisParams) (db.DesignTemplateBlueprint, error) {
+	if err := s.requireTargetProject(ctx, params.WorkspaceID, params.TargetProjectID); err != nil {
+		return db.DesignTemplateBlueprint{}, err
+	}
 	templateRevision, err := s.Queries.GetDesignTemplateRevisionInWorkspace(ctx, db.GetDesignTemplateRevisionInWorkspaceParams{
 		ID: params.TemplateRevisionID, WorkspaceID: params.WorkspaceID,
 	})
@@ -77,15 +80,25 @@ func (s DesignGenerationAssetStore) SaveBlueprintAnalysis(ctx context.Context, p
 	if err != nil {
 		return db.DesignTemplateBlueprint{}, fmt.Errorf("parse blueprint source document: %w", err)
 	}
+	sourceFile, err := s.Queries.GetDesignFileInWorkspace(ctx, db.GetDesignFileInWorkspaceParams{
+		ID: sourceRevision.FileID, WorkspaceID: params.WorkspaceID,
+	})
+	if err != nil {
+		return db.DesignTemplateBlueprint{}, fmt.Errorf("load blueprint source file: %w", err)
+	}
+	if !sourceFile.ProjectID.Valid || sourceFile.ProjectID != params.TargetProjectID {
+		return db.DesignTemplateBlueprint{}, staleGenerationAssets("template design file does not belong to the target project")
+	}
 
-	diagnostics := designcore.ValidateTemplateBlueprint(designcore.ExtractTemplateStructure(sourceDoc), params.Blueprint)
+	currentStructure := designcore.ExtractTemplateStructure(sourceDoc)
+	diagnostics := designcore.ValidateTemplateBlueprint(currentStructure, params.Blueprint)
 	if !blueprintSourceRefsMatch(params.Blueprint, sourceRevision, params.TemplateRevisionID) {
 		diagnostics = append(diagnostics, designcore.Diagnostic{
 			Code: "invalid_blueprint_source", Severity: designcore.DiagnosticError,
 			Message: "blueprint source references do not match the persisted template revision", Paths: []string{"sourceRefs"},
 		})
 	}
-	structureJSON, err := json.Marshal(params.Structure)
+	structureJSON, err := json.Marshal(currentStructure)
 	if err != nil {
 		return db.DesignTemplateBlueprint{}, fmt.Errorf("marshal blueprint structure: %w", err)
 	}
@@ -105,6 +118,7 @@ func (s DesignGenerationAssetStore) SaveBlueprintAnalysis(ctx context.Context, p
 		WorkspaceID: params.WorkspaceID, TemplateID: params.TemplateID, TemplateRevisionID: params.TemplateRevisionID,
 		SourceRevisionID: params.SourceRevisionID, AnalysisVersion: params.AnalysisVersion, SchemaVersion: designcore.TemplateBlueprintVersion,
 		Status: status, StructureJson: structureJSON, BlueprintJson: blueprintJSON, ValidationErrors: validationErrors, CreatedBy: params.CreatedBy,
+		TargetProjectID: params.TargetProjectID,
 	})
 	if err != nil {
 		return db.DesignTemplateBlueprint{}, fmt.Errorf("create template blueprint: %w", err)
@@ -119,6 +133,9 @@ func (s DesignGenerationAssetStore) SaveBlueprintAnalysis(ctx context.Context, p
 }
 
 func (s DesignGenerationAssetStore) SaveRecipeSetAnalysis(ctx context.Context, params SaveRecipeSetAnalysisParams) (db.DesignComponentRecipeSet, error) {
+	if err := s.requireTargetProject(ctx, params.WorkspaceID, params.TargetProjectID); err != nil {
+		return db.DesignComponentRecipeSet{}, err
+	}
 	profile, err := s.Queries.GetDesignSystemProfileInWorkspace(ctx, db.GetDesignSystemProfileInWorkspaceParams{
 		ID: params.DesignSystemProfileID, WorkspaceID: params.WorkspaceID,
 	})
@@ -127,6 +144,9 @@ func (s DesignGenerationAssetStore) SaveRecipeSetAnalysis(ctx context.Context, p
 	}
 	if profile.SourceRevisionID != params.SourceRevisionID {
 		return db.DesignComponentRecipeSet{}, staleGenerationAssets("recipe source identity does not match its design system profile")
+	}
+	if profile.ProjectID.Valid && profile.ProjectID != params.TargetProjectID {
+		return db.DesignComponentRecipeSet{}, staleGenerationAssets("design system profile does not belong to the target project")
 	}
 	sourceRevision, err := s.Queries.GetDesignRevisionInWorkspace(ctx, db.GetDesignRevisionInWorkspaceParams{
 		ID: params.SourceRevisionID, WorkspaceID: params.WorkspaceID,
@@ -164,7 +184,7 @@ func (s DesignGenerationAssetStore) SaveRecipeSetAnalysis(ctx context.Context, p
 	record, err := s.Queries.CreateDesignComponentRecipeSet(ctx, db.CreateDesignComponentRecipeSetParams{
 		WorkspaceID: params.WorkspaceID, DesignSystemProfileID: params.DesignSystemProfileID, SourceRevisionID: params.SourceRevisionID,
 		AnalysisVersion: params.AnalysisVersion, SchemaVersion: designcore.ComponentRecipeSetVersion, Status: status,
-		RecipesJson: recipeSetJSON, ValidationErrors: validationErrors, CreatedBy: params.CreatedBy,
+		RecipesJson: recipeSetJSON, ValidationErrors: validationErrors, CreatedBy: params.CreatedBy, TargetProjectID: params.TargetProjectID,
 	})
 	if err != nil {
 		return db.DesignComponentRecipeSet{}, fmt.Errorf("create component recipe set: %w", err)
@@ -176,25 +196,9 @@ func (s DesignGenerationAssetStore) SaveRecipeSetAnalysis(ctx context.Context, p
 }
 
 func (s DesignGenerationAssetStore) LoadCompilationAssets(ctx context.Context, params LoadCompilationAssetsParams) (CompilationAssets, error) {
-	blueprintRecord, err := s.Queries.GetLatestValidDesignTemplateBlueprint(ctx, db.GetLatestValidDesignTemplateBlueprintParams{
-		WorkspaceID: params.WorkspaceID, TemplateRevisionID: params.TemplateRevisionID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return CompilationAssets{}, ErrGenerationAssetsMissing
+	if err := s.requireTargetProject(ctx, params.WorkspaceID, params.TargetProjectID); err != nil {
+		return CompilationAssets{}, err
 	}
-	if err != nil {
-		return CompilationAssets{}, fmt.Errorf("load latest template blueprint: %w", err)
-	}
-	recipeSetRecord, err := s.Queries.GetLatestValidDesignComponentRecipeSet(ctx, db.GetLatestValidDesignComponentRecipeSetParams{
-		WorkspaceID: params.WorkspaceID, DesignSystemProfileID: params.DesignSystemProfileID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return CompilationAssets{}, ErrGenerationAssetsMissing
-	}
-	if err != nil {
-		return CompilationAssets{}, fmt.Errorf("load latest component recipe set: %w", err)
-	}
-
 	templateRevision, err := s.Queries.GetDesignTemplateRevisionInWorkspace(ctx, db.GetDesignTemplateRevisionInWorkspaceParams{
 		ID: params.TemplateRevisionID, WorkspaceID: params.WorkspaceID,
 	})
@@ -213,12 +217,11 @@ func (s DesignGenerationAssetStore) LoadCompilationAssets(ctx context.Context, p
 		}
 		return CompilationAssets{}, fmt.Errorf("load design system profile: %w", err)
 	}
-	if blueprintRecord.TemplateRevisionID != templateRevision.ID || blueprintRecord.TemplateID != templateRevision.TemplateID || blueprintRecord.SourceRevisionID != templateRevision.DesignRevisionID || recipeSetRecord.DesignSystemProfileID != profile.ID || recipeSetRecord.SourceRevisionID != profile.SourceRevisionID {
-		return CompilationAssets{}, staleGenerationAssets("asset records do not match current source identities")
+	if profile.ProjectID.Valid && profile.ProjectID != params.TargetProjectID {
+		return CompilationAssets{}, staleGenerationAssets("design system profile does not belong to the target project")
 	}
-
 	templateSourceRevision, err := s.Queries.GetDesignRevisionInWorkspace(ctx, db.GetDesignRevisionInWorkspaceParams{
-		ID: blueprintRecord.SourceRevisionID, WorkspaceID: params.WorkspaceID,
+		ID: templateRevision.DesignRevisionID, WorkspaceID: params.WorkspaceID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -226,8 +229,17 @@ func (s DesignGenerationAssetStore) LoadCompilationAssets(ctx context.Context, p
 		}
 		return CompilationAssets{}, fmt.Errorf("load template source revision: %w", err)
 	}
+	templateSourceFile, err := s.Queries.GetDesignFileInWorkspace(ctx, db.GetDesignFileInWorkspaceParams{
+		ID: templateSourceRevision.FileID, WorkspaceID: params.WorkspaceID,
+	})
+	if err != nil {
+		return CompilationAssets{}, fmt.Errorf("load template source file: %w", err)
+	}
+	if !templateSourceFile.ProjectID.Valid || templateSourceFile.ProjectID != params.TargetProjectID {
+		return CompilationAssets{}, staleGenerationAssets("template design file does not belong to the target project")
+	}
 	recipeSourceRevision, err := s.Queries.GetDesignRevisionInWorkspace(ctx, db.GetDesignRevisionInWorkspaceParams{
-		ID: recipeSetRecord.SourceRevisionID, WorkspaceID: params.WorkspaceID,
+		ID: profile.SourceRevisionID, WorkspaceID: params.WorkspaceID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -237,6 +249,29 @@ func (s DesignGenerationAssetStore) LoadCompilationAssets(ctx context.Context, p
 	}
 	if profile.SourceFileID != recipeSourceRevision.FileID {
 		return CompilationAssets{}, staleGenerationAssets("recipe source file does not match its design system profile")
+	}
+
+	blueprintRecord, err := s.Queries.GetLatestValidDesignTemplateBlueprint(ctx, db.GetLatestValidDesignTemplateBlueprintParams{
+		WorkspaceID: params.WorkspaceID, TemplateRevisionID: params.TemplateRevisionID, TargetProjectID: params.TargetProjectID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CompilationAssets{}, ErrGenerationAssetsMissing
+	}
+	if err != nil {
+		return CompilationAssets{}, fmt.Errorf("load latest template blueprint: %w", err)
+	}
+	recipeSetRecord, err := s.Queries.GetLatestValidDesignComponentRecipeSet(ctx, db.GetLatestValidDesignComponentRecipeSetParams{
+		WorkspaceID: params.WorkspaceID, DesignSystemProfileID: params.DesignSystemProfileID, TargetProjectID: params.TargetProjectID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CompilationAssets{}, ErrGenerationAssetsMissing
+	}
+	if err != nil {
+		return CompilationAssets{}, fmt.Errorf("load latest component recipe set: %w", err)
+	}
+
+	if blueprintRecord.TemplateRevisionID != templateRevision.ID || blueprintRecord.TemplateID != templateRevision.TemplateID || blueprintRecord.SourceRevisionID != templateRevision.DesignRevisionID || recipeSetRecord.DesignSystemProfileID != profile.ID || recipeSetRecord.SourceRevisionID != profile.SourceRevisionID {
+		return CompilationAssets{}, staleGenerationAssets("asset records do not match current source identities")
 	}
 	templateDoc, err := designcore.ParseNativeJSON(templateSourceRevision.NativeJson)
 	if err != nil {
@@ -258,11 +293,14 @@ func (s DesignGenerationAssetStore) LoadCompilationAssets(ctx context.Context, p
 		return CompilationAssets{}, staleGenerationAssets("parsed assets do not match current source identities")
 	}
 	if diagnostics := designcore.ValidateTemplateBlueprint(designcore.ExtractTemplateStructure(templateDoc), blueprint); diagnostics.HasErrors() {
+		if hasGenerationAssetDiagnostic(diagnostics, "blueprint_structure_drift") {
+			return CompilationAssets{}, staleGenerationAssets("blueprint structure does not match source document")
+		}
 		return CompilationAssets{}, fmt.Errorf("validate persisted template blueprint: %+v", diagnostics)
 	}
 	if diagnostics := designcore.ValidateComponentRecipeSet(recipeDoc, recipeSet); diagnostics.HasErrors() {
-		if hasGenerationAssetDiagnostic(diagnostics, "recipe_fingerprint_drift") {
-			return CompilationAssets{}, staleGenerationAssets("recipe fingerprints do not match source document")
+		if hasGenerationAssetDiagnostic(diagnostics, "recipe_fingerprint_drift") || hasGenerationAssetDiagnostic(diagnostics, "recipe_token_drift") {
+			return CompilationAssets{}, staleGenerationAssets("recipe source evidence does not match source document")
 		}
 		return CompilationAssets{}, fmt.Errorf("validate persisted component recipe set: %+v", diagnostics)
 	}
@@ -271,6 +309,14 @@ func (s DesignGenerationAssetStore) LoadCompilationAssets(ctx context.Context, p
 		Blueprint: blueprint, RecipeSet: recipeSet, TemplateDoc: templateDoc, RecipeDoc: recipeDoc,
 		BlueprintRecordID: util.UUIDToString(blueprintRecord.ID), RecipeSetRecordID: util.UUIDToString(recipeSetRecord.ID),
 	}, nil
+}
+
+func (s DesignGenerationAssetStore) requireTargetProject(ctx context.Context, workspaceID, targetProjectID pgtype.UUID) error {
+	_, err := s.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: targetProjectID, WorkspaceID: workspaceID})
+	if err != nil {
+		return fmt.Errorf("load target project: %w", err)
+	}
+	return nil
 }
 
 func blueprintSourceRefsMatch(blueprint designcore.TemplateBlueprint, sourceRevision db.DesignRevision, templateRevisionID pgtype.UUID) bool {

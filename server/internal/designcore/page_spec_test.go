@@ -143,6 +143,58 @@ func TestValidatePageSpecReportsSemanticContractDiagnostics(t *testing.T) {
 	}
 }
 
+func TestValidatePageSpecRejectsSemanticallyEmptyListShape(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*PageSpec)
+		code   string
+	}{
+		{name: "blank module", mutate: func(spec *PageSpec) { spec.Page.Module = " \t" }, code: "missing_required_field"},
+		{name: "blank title", mutate: func(spec *PageSpec) { spec.Page.Title = "" }, code: "missing_required_field"},
+		{name: "blank filter key", mutate: func(spec *PageSpec) { spec.Filters[0].Key = " " }, code: "missing_required_field"},
+		{name: "blank filter label", mutate: func(spec *PageSpec) { spec.Filters[0].Label = "" }, code: "missing_required_field"},
+		{name: "blank action key", mutate: func(spec *PageSpec) { spec.PageActions[0].Key = "" }, code: "missing_required_field"},
+		{name: "blank action label", mutate: func(spec *PageSpec) { spec.Table.RowActions[0].Label = "\n" }, code: "missing_required_field"},
+		{name: "no columns", mutate: func(spec *PageSpec) { spec.Table.Columns = nil }, code: "missing_table_column"},
+		{name: "blank column key", mutate: func(spec *PageSpec) { spec.Table.Columns[0].Key = "" }, code: "missing_required_field"},
+		{name: "blank column title", mutate: func(spec *PageSpec) { spec.Table.Columns[0].Title = " " }, code: "missing_required_field"},
+		{name: "enabled pagination without page size", mutate: func(spec *PageSpec) { spec.Pagination.PageSize = 0 }, code: "invalid_pagination"},
+		{name: "enabled pagination with negative total", mutate: func(spec *PageSpec) { spec.Pagination.SampleTotal = -1 }, code: "invalid_pagination"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := completePageSpec()
+			tt.mutate(&spec)
+			assertDiagnosticCode(t, ValidatePageSpec(spec, nil), tt.code)
+		})
+	}
+}
+
+func TestValidatePageSpecRequiresRealRequirementCoveragePaths(t *testing.T) {
+	tests := []struct {
+		name  string
+		paths []string
+		codes []string
+	}{
+		{name: "empty", paths: nil, codes: []string{"missing_requirement_coverage"}},
+		{name: "blank", paths: []string{"", "  "}, codes: []string{"invalid_spec_path", "missing_requirement_coverage"}},
+		{name: "invalid", paths: []string{"filters.missing"}, codes: []string{"invalid_spec_path", "missing_requirement_coverage"}},
+		{name: "duplicate", paths: []string{"filters.keyword", "filters.keyword"}, codes: []string{"duplicate_spec_path"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := completePageSpec()
+			spec.RequirementCoverage = []RequirementCoverage{{RequirementID: "REQ-1", SpecPaths: tt.paths}}
+			diagnostics := ValidatePageSpec(spec, []string{"REQ-1"})
+			for _, code := range tt.codes {
+				assertDiagnosticCode(t, diagnostics, code)
+			}
+		})
+	}
+}
+
 func TestDiagnosticsHasErrors(t *testing.T) {
 	if (Diagnostics{{Severity: DiagnosticWarning}}).HasErrors() {
 		t.Fatal("warnings must not be errors")

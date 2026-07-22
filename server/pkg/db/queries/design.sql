@@ -650,15 +650,58 @@ WHERE t.id = $1 AND t.workspace_id = $2;
 INSERT INTO design_template_blueprint (
     workspace_id, template_id, template_revision_id, source_revision_id,
     analysis_version, schema_version, status, structure_json, blueprint_json,
-    validation_errors, created_by
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	validation_errors, created_by
+)
+SELECT
+	sqlc.arg('workspace_id'), sqlc.arg('template_id'), sqlc.arg('template_revision_id'), sqlc.arg('source_revision_id'),
+	sqlc.arg('analysis_version'), sqlc.arg('schema_version'), sqlc.arg('status'), sqlc.arg('structure_json'), sqlc.arg('blueprint_json'),
+	sqlc.arg('validation_errors'), sqlc.narg('created_by')
+WHERE EXISTS (
+	SELECT 1 FROM project p
+	WHERE p.id = sqlc.arg('target_project_id')
+	  AND p.workspace_id = sqlc.arg('workspace_id')
+)
+AND EXISTS (
+	SELECT 1 FROM design_template_revision dtr
+	WHERE dtr.id = sqlc.arg('template_revision_id')
+	  AND dtr.workspace_id = sqlc.arg('workspace_id')
+	  AND dtr.template_id = sqlc.arg('template_id')
+	  AND dtr.design_revision_id = sqlc.arg('source_revision_id')
+)
+AND EXISTS (
+	SELECT 1 FROM design_catalog_template dct
+	WHERE dct.id = sqlc.arg('template_id')
+	  AND dct.workspace_id = sqlc.arg('workspace_id')
+)
+AND EXISTS (
+	SELECT 1 FROM design_revision dr
+	WHERE dr.id = sqlc.arg('source_revision_id')
+	  AND dr.workspace_id = sqlc.arg('workspace_id')
+	  AND EXISTS (
+		SELECT 1 FROM design_file df
+		WHERE df.id = dr.file_id
+		  AND df.workspace_id = sqlc.arg('workspace_id')
+		  AND df.project_id = sqlc.arg('target_project_id')
+	  )
+)
 RETURNING *;
 
 -- name: GetLatestValidDesignTemplateBlueprint :one
 SELECT * FROM design_template_blueprint
-WHERE workspace_id = $1
-  AND template_revision_id = $2
-  AND status = 'valid'
+WHERE design_template_blueprint.workspace_id = sqlc.arg('workspace_id')
+  AND design_template_blueprint.template_revision_id = sqlc.arg('template_revision_id')
+  AND design_template_blueprint.status = 'valid'
+  AND EXISTS (
+	SELECT 1 FROM design_revision dr
+	WHERE dr.id = design_template_blueprint.source_revision_id
+	  AND dr.workspace_id = sqlc.arg('workspace_id')
+	  AND EXISTS (
+		SELECT 1 FROM design_file df
+		WHERE df.id = dr.file_id
+		  AND df.workspace_id = sqlc.arg('workspace_id')
+		  AND df.project_id = sqlc.arg('target_project_id')
+	  )
+  )
 ORDER BY analysis_version DESC
 LIMIT 1;
 
@@ -666,14 +709,42 @@ LIMIT 1;
 INSERT INTO design_component_recipe_set (
     workspace_id, design_system_profile_id, source_revision_id,
     analysis_version, schema_version, status, recipes_json,
-    validation_errors, created_by
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	validation_errors, created_by
+)
+SELECT
+	sqlc.arg('workspace_id'), sqlc.arg('design_system_profile_id'), sqlc.arg('source_revision_id'),
+	sqlc.arg('analysis_version'), sqlc.arg('schema_version'), sqlc.arg('status'), sqlc.arg('recipes_json'),
+	sqlc.arg('validation_errors'), sqlc.narg('created_by')
+WHERE EXISTS (
+	SELECT 1 FROM project p
+	WHERE p.id = sqlc.arg('target_project_id')
+	  AND p.workspace_id = sqlc.arg('workspace_id')
+)
+AND EXISTS (
+	SELECT 1 FROM design_system_profile dsp
+	WHERE dsp.id = sqlc.arg('design_system_profile_id')
+	  AND dsp.workspace_id = sqlc.arg('workspace_id')
+	  AND dsp.source_revision_id = sqlc.arg('source_revision_id')
+	  AND (dsp.project_id IS NULL OR dsp.project_id = sqlc.arg('target_project_id'))
+	  AND EXISTS (
+		SELECT 1 FROM design_revision dr
+		WHERE dr.id = sqlc.arg('source_revision_id')
+		  AND dr.workspace_id = sqlc.arg('workspace_id')
+		  AND dr.file_id = dsp.source_file_id
+	  )
+)
 RETURNING *;
 
 -- name: GetLatestValidDesignComponentRecipeSet :one
 SELECT * FROM design_component_recipe_set
-WHERE workspace_id = $1
-  AND design_system_profile_id = $2
-  AND status = 'valid'
+WHERE design_component_recipe_set.workspace_id = sqlc.arg('workspace_id')
+  AND design_component_recipe_set.design_system_profile_id = sqlc.arg('design_system_profile_id')
+  AND design_component_recipe_set.status = 'valid'
+  AND EXISTS (
+	SELECT 1 FROM design_system_profile dsp
+	WHERE dsp.id = design_component_recipe_set.design_system_profile_id
+	  AND dsp.workspace_id = sqlc.arg('workspace_id')
+	  AND (dsp.project_id IS NULL OR dsp.project_id = sqlc.arg('target_project_id'))
+  )
 ORDER BY analysis_version DESC
 LIMIT 1;

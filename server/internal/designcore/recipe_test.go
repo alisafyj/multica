@@ -177,6 +177,15 @@ func TestResolveRecipeDoesNotCrossComponentKinds(t *testing.T) {
 	assertDiagnosticCode(t, diagnostics, "missing_recipe")
 }
 
+func TestValidateComponentRecipeSetRejectsSameRevisionTokenMutation(t *testing.T) {
+	source := recipeSourceDocumentForTest()
+	set := completeRecipeSetForTest(t)
+	set.Tokens = cloneJSONMap(source.Tokens)
+	set.Tokens["color"] = map[string]any{"primary": "#000000"}
+
+	assertDiagnosticCode(t, ValidateComponentRecipeSet(source, set), "recipe_token_drift")
+}
+
 func TestResolveRecipePrimitiveFallbackEmitsWarning(t *testing.T) {
 	set := completeRecipeSetForTest(t)
 	delete(set.Recipes, RecipeKey{Kind: "input", Variant: "default", State: "default"}.String())

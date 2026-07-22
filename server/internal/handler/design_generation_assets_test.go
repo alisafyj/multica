@@ -17,6 +17,7 @@ import (
 
 type generationAssetFixture struct {
 	WorkspaceID              pgtype.UUID
+	ProjectID                pgtype.UUID
 	UserID                   pgtype.UUID
 	TemplateID               pgtype.UUID
 	TemplateLibraryID        pgtype.UUID
@@ -30,23 +31,32 @@ type generationAssetFixture struct {
 	Blueprint                designcore.TemplateBlueprint
 	RecipeSet                designcore.ComponentRecipeSet
 	RecipeDoc                designcore.NativeJSON
+	TemplateDoc              designcore.NativeJSON
 }
 
 func TestDesignGenerationAssetStoreLoadsLatestValidVersions(t *testing.T) {
 	ctx := context.Background()
 	store := service.DesignGenerationAssetStore{Queries: db.New(testPool)}
 	fixture := createGenerationAssetFixture(t)
+	callerStructure := fixture.Structure
+	callerStructure.Layers = make(map[string]designcore.StructuralLayer, len(fixture.Structure.Layers))
+	for id, layer := range fixture.Structure.Layers {
+		callerStructure.Layers[id] = layer
+	}
+	staleFilters := callerStructure.Layers["filters"]
+	staleFilters.Bounds.X = -999
+	callerStructure.Layers["filters"] = staleFilters
 
 	blueprintRecord, err := store.SaveBlueprintAnalysis(ctx, service.SaveBlueprintAnalysisParams{
-		WorkspaceID: fixture.WorkspaceID, TemplateID: fixture.TemplateID,
+		WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, TemplateID: fixture.TemplateID,
 		TemplateRevisionID: fixture.TemplateRevisionID, SourceRevisionID: fixture.TemplateSourceRevisionID,
-		AnalysisVersion: 1, CreatedBy: fixture.UserID, Structure: fixture.Structure, Blueprint: fixture.Blueprint,
+		AnalysisVersion: 1, CreatedBy: fixture.UserID, Structure: callerStructure, Blueprint: fixture.Blueprint,
 	})
 	if err != nil {
 		t.Fatalf("save blueprint: %v", err)
 	}
 	recipeRecord, err := store.SaveRecipeSetAnalysis(ctx, service.SaveRecipeSetAnalysisParams{
-		WorkspaceID: fixture.WorkspaceID, DesignSystemProfileID: fixture.DesignSystemProfileID,
+		WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, DesignSystemProfileID: fixture.DesignSystemProfileID,
 		SourceRevisionID: fixture.RecipeSourceRevisionID, AnalysisVersion: 1, CreatedBy: fixture.UserID, RecipeSet: fixture.RecipeSet,
 	})
 	if err != nil {
@@ -56,7 +66,7 @@ func TestDesignGenerationAssetStoreLoadsLatestValidVersions(t *testing.T) {
 	invalidBlueprint := fixture.Blueprint
 	invalidBlueprint.Constraints.ContentWidth = 0
 	invalidBlueprintRecord, err := store.SaveBlueprintAnalysis(ctx, service.SaveBlueprintAnalysisParams{
-		WorkspaceID: fixture.WorkspaceID, TemplateID: fixture.TemplateID,
+		WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, TemplateID: fixture.TemplateID,
 		TemplateRevisionID: fixture.TemplateRevisionID, SourceRevisionID: fixture.TemplateSourceRevisionID,
 		AnalysisVersion: 2, CreatedBy: fixture.UserID, Structure: fixture.Structure, Blueprint: invalidBlueprint,
 	})
@@ -71,7 +81,7 @@ func TestDesignGenerationAssetStoreLoadsLatestValidVersions(t *testing.T) {
 	invalidRecipe.Source.Fingerprint = "stale-fingerprint"
 	invalidRecipeSet.Recipes["input/default/default"] = invalidRecipe
 	invalidRecipeRecord, err := store.SaveRecipeSetAnalysis(ctx, service.SaveRecipeSetAnalysisParams{
-		WorkspaceID: fixture.WorkspaceID, DesignSystemProfileID: fixture.DesignSystemProfileID,
+		WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, DesignSystemProfileID: fixture.DesignSystemProfileID,
 		SourceRevisionID: fixture.RecipeSourceRevisionID, AnalysisVersion: 2, CreatedBy: fixture.UserID, RecipeSet: invalidRecipeSet,
 	})
 	assertGenerationAssetValidationError(t, err)
@@ -81,7 +91,7 @@ func TestDesignGenerationAssetStoreLoadsLatestValidVersions(t *testing.T) {
 	assertPersistedDiagnostic(t, invalidRecipeRecord.ValidationErrors, "recipe_fingerprint_drift", 1)
 
 	assets, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
-		WorkspaceID: fixture.WorkspaceID, TemplateRevisionID: fixture.TemplateRevisionID,
+		WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, TemplateRevisionID: fixture.TemplateRevisionID,
 		DesignSystemProfileID: fixture.DesignSystemProfileID,
 	})
 	if err != nil {
@@ -92,6 +102,13 @@ func TestDesignGenerationAssetStoreLoadsLatestValidVersions(t *testing.T) {
 	}
 	if assets.BlueprintRecordID != uuidToString(blueprintRecord.ID) || assets.RecipeSetRecordID != uuidToString(recipeRecord.ID) {
 		t.Fatalf("loaded records = %q, %q", assets.BlueprintRecordID, assets.RecipeSetRecordID)
+	}
+	var persistedStructure designcore.TemplateStructure
+	if err := json.Unmarshal(blueprintRecord.StructureJson, &persistedStructure); err != nil {
+		t.Fatalf("decode persisted structure: %v", err)
+	}
+	if got, want := persistedStructure.Layers["filters"].Bounds, designcore.ExtractTemplateStructure(fixture.TemplateDoc).Layers["filters"].Bounds; got != want {
+		t.Fatalf("persisted structure bounds = %+v, want current source %+v", got, want)
 	}
 }
 
@@ -106,7 +123,7 @@ func TestDesignGenerationAssetStoreRejectsStaleAssets(t *testing.T) {
 			t.Fatalf("change profile source revision: %v", err)
 		}
 		_, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
-			WorkspaceID: fixture.WorkspaceID, TemplateRevisionID: fixture.TemplateRevisionID,
+			WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, TemplateRevisionID: fixture.TemplateRevisionID,
 			DesignSystemProfileID: fixture.DesignSystemProfileID,
 		})
 		if !errors.Is(err, service.ErrGenerationAssetsStale) {
@@ -126,11 +143,50 @@ func TestDesignGenerationAssetStoreRejectsStaleAssets(t *testing.T) {
 		updateGenerationAssetNativeJSON(t, fixture.RecipeSourceRevisionID, fixture.RecipeDoc)
 
 		_, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
-			WorkspaceID: fixture.WorkspaceID, TemplateRevisionID: fixture.TemplateRevisionID,
+			WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, TemplateRevisionID: fixture.TemplateRevisionID,
 			DesignSystemProfileID: fixture.DesignSystemProfileID,
 		})
 		if !errors.Is(err, service.ErrGenerationAssetsStale) {
 			t.Fatalf("load stale fingerprint error = %v", err)
+		}
+	})
+
+	t.Run("blueprint structure", func(t *testing.T) {
+		ctx := context.Background()
+		store := service.DesignGenerationAssetStore{Queries: db.New(testPool)}
+		fixture := createGenerationAssetFixture(t)
+		saveGenerationAssetsForTest(t, ctx, store, fixture)
+
+		filters := fixture.TemplateDoc.Layers["filters"]
+		filters.X += 24
+		filters.Source = map[string]any{"layout": map[string]any{"layoutMode": "horizontal"}}
+		fixture.TemplateDoc.Layers["filters"] = filters
+		updateGenerationAssetNativeJSON(t, fixture.TemplateSourceRevisionID, fixture.TemplateDoc)
+
+		_, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
+			WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, TemplateRevisionID: fixture.TemplateRevisionID,
+			DesignSystemProfileID: fixture.DesignSystemProfileID,
+		})
+		if !errors.Is(err, service.ErrGenerationAssetsStale) {
+			t.Fatalf("load stale blueprint structure error = %v", err)
+		}
+	})
+
+	t.Run("recipe tokens", func(t *testing.T) {
+		ctx := context.Background()
+		store := service.DesignGenerationAssetStore{Queries: db.New(testPool)}
+		fixture := createGenerationAssetFixture(t)
+		saveGenerationAssetsForTest(t, ctx, store, fixture)
+
+		fixture.RecipeDoc.Tokens = map[string]any{"color": map[string]any{"primary": "#123456"}}
+		updateGenerationAssetNativeJSON(t, fixture.RecipeSourceRevisionID, fixture.RecipeDoc)
+
+		_, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
+			WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, TemplateRevisionID: fixture.TemplateRevisionID,
+			DesignSystemProfileID: fixture.DesignSystemProfileID,
+		})
+		if !errors.Is(err, service.ErrGenerationAssetsStale) {
+			t.Fatalf("load stale recipe tokens error = %v", err)
 		}
 	})
 }
@@ -145,7 +201,7 @@ func TestDesignGenerationAssetStoreRejectsMismatchedRelationships(t *testing.T) 
 			t.Fatalf("change profile source file: %v", err)
 		}
 		_, err := store.SaveRecipeSetAnalysis(ctx, service.SaveRecipeSetAnalysisParams{
-			WorkspaceID: fixture.WorkspaceID, DesignSystemProfileID: fixture.DesignSystemProfileID,
+			WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, DesignSystemProfileID: fixture.DesignSystemProfileID,
 			SourceRevisionID: fixture.RecipeSourceRevisionID, AnalysisVersion: 1, CreatedBy: fixture.UserID, RecipeSet: fixture.RecipeSet,
 		})
 		if !errors.Is(err, service.ErrGenerationAssetsStale) {
@@ -164,7 +220,7 @@ func TestDesignGenerationAssetStoreRejectsMismatchedRelationships(t *testing.T) 
 			t.Fatalf("change persisted blueprint template: %v", err)
 		}
 		_, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
-			WorkspaceID: fixture.WorkspaceID, TemplateRevisionID: fixture.TemplateRevisionID,
+			WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, TemplateRevisionID: fixture.TemplateRevisionID,
 			DesignSystemProfileID: fixture.DesignSystemProfileID,
 		})
 		if !errors.Is(err, service.ErrGenerationAssetsStale) {
@@ -182,13 +238,109 @@ func TestDesignGenerationAssetStoreRejectsMismatchedRelationships(t *testing.T) 
 			t.Fatalf("change profile source file: %v", err)
 		}
 		_, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
-			WorkspaceID: fixture.WorkspaceID, TemplateRevisionID: fixture.TemplateRevisionID,
+			WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, TemplateRevisionID: fixture.TemplateRevisionID,
 			DesignSystemProfileID: fixture.DesignSystemProfileID,
 		})
 		if !errors.Is(err, service.ErrGenerationAssetsStale) {
 			t.Fatalf("load profile source file mismatch error = %v", err)
 		}
 	})
+}
+
+func TestDesignGenerationAssetStoreEnforcesTargetProjectScope(t *testing.T) {
+	ctx := context.Background()
+	store := service.DesignGenerationAssetStore{Queries: db.New(testPool)}
+
+	t.Run("workspace global profile is accepted", func(t *testing.T) {
+		fixture := createGenerationAssetFixture(t)
+		saveGenerationAssetsForTest(t, ctx, store, fixture)
+		if _, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
+			WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID,
+			TemplateRevisionID: fixture.TemplateRevisionID, DesignSystemProfileID: fixture.DesignSystemProfileID,
+		}); err != nil {
+			t.Fatalf("load workspace-global profile: %v", err)
+		}
+	})
+
+	t.Run("same workspace cross project is rejected", func(t *testing.T) {
+		fixture := createGenerationAssetFixture(t)
+		otherProjectID := createGenerationAssetProject(t, fixture.WorkspaceID)
+		saveGenerationAssetsForTest(t, ctx, store, fixture)
+		if _, err := testPool.Exec(ctx, `UPDATE design_system_profile SET project_id = $1 WHERE id = $2`, otherProjectID, fixture.DesignSystemProfileID); err != nil {
+			t.Fatalf("scope profile to other project: %v", err)
+		}
+
+		_, err := store.SaveBlueprintAnalysis(ctx, service.SaveBlueprintAnalysisParams{
+			WorkspaceID: fixture.WorkspaceID, TargetProjectID: otherProjectID, TemplateID: fixture.TemplateID,
+			TemplateRevisionID: fixture.TemplateRevisionID, SourceRevisionID: fixture.TemplateSourceRevisionID,
+			AnalysisVersion: 1, CreatedBy: fixture.UserID, Structure: fixture.Structure, Blueprint: fixture.Blueprint,
+		})
+		if !errors.Is(err, service.ErrGenerationAssetsStale) {
+			t.Fatalf("cross-project blueprint save error = %v", err)
+		}
+		_, err = store.SaveRecipeSetAnalysis(ctx, service.SaveRecipeSetAnalysisParams{
+			WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID,
+			DesignSystemProfileID: fixture.DesignSystemProfileID, SourceRevisionID: fixture.RecipeSourceRevisionID,
+			AnalysisVersion: 1, CreatedBy: fixture.UserID, RecipeSet: fixture.RecipeSet,
+		})
+		if !errors.Is(err, service.ErrGenerationAssetsStale) {
+			t.Fatalf("cross-project recipe save error = %v", err)
+		}
+		_, err = store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
+			WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID,
+			TemplateRevisionID: fixture.TemplateRevisionID, DesignSystemProfileID: fixture.DesignSystemProfileID,
+		})
+		if !errors.Is(err, service.ErrGenerationAssetsStale) {
+			t.Fatalf("cross-project asset load error = %v", err)
+		}
+	})
+
+	t.Run("project profile is accepted for its target", func(t *testing.T) {
+		fixture := createGenerationAssetFixture(t)
+		if _, err := testPool.Exec(ctx, `UPDATE design_system_profile SET project_id = $1 WHERE id = $2`, fixture.ProjectID, fixture.DesignSystemProfileID); err != nil {
+			t.Fatalf("scope profile to target project: %v", err)
+		}
+		saveGenerationAssetsForTest(t, ctx, store, fixture)
+		if _, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
+			WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID,
+			TemplateRevisionID: fixture.TemplateRevisionID, DesignSystemProfileID: fixture.DesignSystemProfileID,
+		}); err != nil {
+			t.Fatalf("load target-project profile: %v", err)
+		}
+	})
+}
+
+func TestDesignGenerationAssetCreateQueriesGuardTargetProject(t *testing.T) {
+	ctx := context.Background()
+	queries := db.New(testPool)
+	fixture := createGenerationAssetFixture(t)
+	otherProjectID := createGenerationAssetProject(t, fixture.WorkspaceID)
+	structureJSON, _ := json.Marshal(fixture.Structure)
+	blueprintJSON, _ := json.Marshal(fixture.Blueprint)
+	recipeJSON, _ := json.Marshal(fixture.RecipeSet)
+
+	_, err := queries.CreateDesignTemplateBlueprint(ctx, db.CreateDesignTemplateBlueprintParams{
+		WorkspaceID: fixture.WorkspaceID, TargetProjectID: otherProjectID, TemplateID: fixture.TemplateID,
+		TemplateRevisionID: fixture.TemplateRevisionID, SourceRevisionID: fixture.TemplateSourceRevisionID,
+		AnalysisVersion: 1, SchemaVersion: designcore.TemplateBlueprintVersion, Status: "valid",
+		StructureJson: structureJSON, BlueprintJson: blueprintJSON, ValidationErrors: []byte(`[]`), CreatedBy: fixture.UserID,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("direct blueprint query error = %v", err)
+	}
+
+	if _, err := testPool.Exec(ctx, `UPDATE design_system_profile SET project_id = $1 WHERE id = $2`, otherProjectID, fixture.DesignSystemProfileID); err != nil {
+		t.Fatalf("scope profile to other project: %v", err)
+	}
+	_, err = queries.CreateDesignComponentRecipeSet(ctx, db.CreateDesignComponentRecipeSetParams{
+		WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID,
+		DesignSystemProfileID: fixture.DesignSystemProfileID, SourceRevisionID: fixture.RecipeSourceRevisionID,
+		AnalysisVersion: 1, SchemaVersion: designcore.ComponentRecipeSetVersion, Status: "valid",
+		RecipesJson: recipeJSON, ValidationErrors: []byte(`[]`), CreatedBy: fixture.UserID,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("direct recipe query error = %v", err)
+	}
 }
 
 func TestDesignGenerationAssetStoreMissingAndCrossWorkspace(t *testing.T) {
@@ -198,7 +350,7 @@ func TestDesignGenerationAssetStoreMissingAndCrossWorkspace(t *testing.T) {
 		fixture := createGenerationAssetFixture(t)
 
 		_, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
-			WorkspaceID: fixture.WorkspaceID, TemplateRevisionID: fixture.TemplateRevisionID,
+			WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, TemplateRevisionID: fixture.TemplateRevisionID,
 			DesignSystemProfileID: fixture.DesignSystemProfileID,
 		})
 		if !errors.Is(err, service.ErrGenerationAssetsMissing) {
@@ -214,14 +366,14 @@ func TestDesignGenerationAssetStoreMissingAndCrossWorkspace(t *testing.T) {
 		otherWorkspaceID := createGenerationAssetWorkspace(t)
 
 		_, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
-			WorkspaceID: otherWorkspaceID, TemplateRevisionID: fixture.TemplateRevisionID,
+			WorkspaceID: otherWorkspaceID, TargetProjectID: fixture.ProjectID, TemplateRevisionID: fixture.TemplateRevisionID,
 			DesignSystemProfileID: fixture.DesignSystemProfileID,
 		})
 		if !errors.Is(err, service.ErrGenerationAssetsMissing) {
 			t.Fatalf("cross-workspace load error = %v", err)
 		}
 		_, err = store.SaveBlueprintAnalysis(ctx, service.SaveBlueprintAnalysisParams{
-			WorkspaceID: otherWorkspaceID, TemplateID: fixture.TemplateID,
+			WorkspaceID: otherWorkspaceID, TargetProjectID: fixture.ProjectID, TemplateID: fixture.TemplateID,
 			TemplateRevisionID: fixture.TemplateRevisionID, SourceRevisionID: fixture.TemplateSourceRevisionID,
 			AnalysisVersion: 2, CreatedBy: fixture.UserID, Structure: fixture.Structure, Blueprint: fixture.Blueprint,
 		})
@@ -259,14 +411,14 @@ func assertPersistedDiagnostic(t *testing.T, raw []byte, code string, wantCount 
 func saveGenerationAssetsForTest(t *testing.T, ctx context.Context, store service.DesignGenerationAssetStore, fixture generationAssetFixture) {
 	t.Helper()
 	if _, err := store.SaveBlueprintAnalysis(ctx, service.SaveBlueprintAnalysisParams{
-		WorkspaceID: fixture.WorkspaceID, TemplateID: fixture.TemplateID,
+		WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, TemplateID: fixture.TemplateID,
 		TemplateRevisionID: fixture.TemplateRevisionID, SourceRevisionID: fixture.TemplateSourceRevisionID,
 		AnalysisVersion: 1, CreatedBy: fixture.UserID, Structure: fixture.Structure, Blueprint: fixture.Blueprint,
 	}); err != nil {
 		t.Fatalf("save blueprint: %v", err)
 	}
 	if _, err := store.SaveRecipeSetAnalysis(ctx, service.SaveRecipeSetAnalysisParams{
-		WorkspaceID: fixture.WorkspaceID, DesignSystemProfileID: fixture.DesignSystemProfileID,
+		WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, DesignSystemProfileID: fixture.DesignSystemProfileID,
 		SourceRevisionID: fixture.RecipeSourceRevisionID, AnalysisVersion: 1, CreatedBy: fixture.UserID, RecipeSet: fixture.RecipeSet,
 	}); err != nil {
 		t.Fatalf("save recipe set: %v", err)
@@ -279,6 +431,7 @@ func createGenerationAssetFixture(t *testing.T) generationAssetFixture {
 	queries := db.New(testPool)
 	workspaceID := parseUUID(testWorkspaceID)
 	userID := parseUUID(testUserID)
+	projectID := createGenerationAssetProject(t, workspaceID)
 
 	templateDesign := createDesignFileForTest(t, "Generation asset template")
 	if templateDesign.CurrentRevision == nil {
@@ -286,6 +439,9 @@ func createGenerationAssetFixture(t *testing.T) generationAssetFixture {
 	}
 	templateDoc := generationAssetTemplateDocument()
 	updateGenerationAssetNativeJSON(t, parseUUID(templateDesign.CurrentRevision.ID), templateDoc)
+	if _, err := testPool.Exec(ctx, `UPDATE design_file SET project_id = $1 WHERE id = $2`, projectID, parseUUID(templateDesign.File.ID)); err != nil {
+		t.Fatalf("scope template design to project: %v", err)
+	}
 
 	library, err := queries.EnsureDesignTemplateLibrary(ctx, db.EnsureDesignTemplateLibraryParams{
 		WorkspaceID: workspaceID, Key: fmt.Sprintf("generation-assets-%d", time.Now().UnixNano()), Name: "Generation Assets", Metadata: []byte(`{}`), CreatedBy: userID,
@@ -339,10 +495,22 @@ func createGenerationAssetFixture(t *testing.T) generationAssetFixture {
 	}
 
 	return generationAssetFixture{
-		WorkspaceID: workspaceID, UserID: userID, TemplateID: template.ID, TemplateLibraryID: library.ID, TemplateRevisionID: templateRevision.ID,
+		WorkspaceID: workspaceID, ProjectID: projectID, UserID: userID, TemplateID: template.ID, TemplateLibraryID: library.ID, TemplateRevisionID: templateRevision.ID,
 		TemplateSourceFileID: parseUUID(templateDesign.File.ID), TemplateSourceRevisionID: parseUUID(templateDesign.CurrentRevision.ID), DesignSystemProfileID: profile.ID,
-		RecipeSourceFileID: parseUUID(recipeDesign.File.ID), RecipeSourceRevisionID: parseUUID(recipeDesign.CurrentRevision.ID), Structure: structure, Blueprint: blueprint, RecipeSet: recipeSet, RecipeDoc: recipeDoc,
+		RecipeSourceFileID: parseUUID(recipeDesign.File.ID), RecipeSourceRevisionID: parseUUID(recipeDesign.CurrentRevision.ID), Structure: structure, Blueprint: blueprint, RecipeSet: recipeSet, RecipeDoc: recipeDoc, TemplateDoc: templateDoc,
 	}
+}
+
+func createGenerationAssetProject(t *testing.T, workspaceID pgtype.UUID) pgtype.UUID {
+	t.Helper()
+	var projectID pgtype.UUID
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+	`, workspaceID, fmt.Sprintf("Generation Assets %d", time.Now().UnixNano())).Scan(&projectID); err != nil {
+		t.Fatalf("create generation asset project: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+	return projectID
 }
 
 func createGenerationAssetCatalogTemplate(t *testing.T, fixture generationAssetFixture) pgtype.UUID {
