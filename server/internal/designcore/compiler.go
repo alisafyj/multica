@@ -12,8 +12,7 @@ import (
 const DesignCompilerVersion = "list-1.0"
 
 const (
-	compileStatusCompiled = "compiled"
-	compileStatusFailed   = "compile_failed"
+	compileStatusCompiled = compileStatusGenerated
 
 	compilerFontSize              = 14.0
 	compilerCellHorizontalPadding = 16.0
@@ -56,6 +55,7 @@ type CompileOutput struct {
 	Document    NativeJSON
 	Manifest    CompilationManifest
 	Diagnostics Diagnostics
+	Quality     QualityReport
 }
 
 type generatedRootMetadata struct {
@@ -186,12 +186,13 @@ func CompileListPage(input CompileInput) CompileOutput {
 	}
 
 	compiler.manifest.GeneratedLayerIDs = compilerGeneratedLayerIDs(compiler.templateSource, final)
-	compiler.diagnostics = normalizeCompilerDiagnostics(compiler.diagnostics)
+	quality := EvaluateCompiledDesign(final, input.PageSpec, input.Blueprint, compiler.manifest, compiler.diagnostics)
 	return CompileOutput{
-		Status:      compileStatusCompiled,
+		Status:      quality.Status,
 		Document:    final,
 		Manifest:    compiler.manifest,
-		Diagnostics: compiler.diagnostics,
+		Diagnostics: quality.Diagnostics,
+		Quality:     quality,
 	}
 }
 
@@ -304,6 +305,10 @@ func (c *listPageCompiler) failedOutput(document NativeJSON) CompileOutput {
 		Document:    detached,
 		Manifest:    c.manifest,
 		Diagnostics: c.diagnostics,
+		Quality: QualityReport{
+			Status:      compileStatusFailed,
+			Diagnostics: c.diagnostics,
+		},
 	}
 }
 
