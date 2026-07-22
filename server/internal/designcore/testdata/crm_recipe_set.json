@@ -1,0 +1,90 @@
+{
+  "version": "1.0",
+  "designSystemProfileId": "crm-design-system-profile",
+  "sourceRevisionId": "crm-ui-spec-revision-1",
+  "tokens": {
+    "color": { "primary": "#1677ff", "text": "#111111" },
+    "spacing": { "control": 12 }
+  },
+  "recipes": {
+    "input/default/default": {
+      "kind": "input", "variant": "default", "state": "default",
+      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "input-default", "fingerprint": "eed638deeae9d0ceb026d4621f84d7b343b8f96f4770f043ccd2bf0cd54ce2a1" },
+      "props": { "label": { "targetLayerId": "input-default-label", "type": "text" }, "value": { "targetLayerId": "input-default-value", "type": "text" } },
+      "layout": { "widthMode": "fixed", "textOverflow": "ellipsis", "height": 32, "minWidth": 80 }
+    },
+    "select/default/default": {
+      "kind": "select", "variant": "default", "state": "default",
+      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "select-default", "fingerprint": "652556170a8e6dc412c7a53f5dadea7b8e406d00b3d34cbf9ce78d053174d0df" },
+      "props": { "label": { "targetLayerId": "select-default-label", "type": "text" }, "value": { "targetLayerId": "select-default-value", "type": "text" } },
+      "layout": { "widthMode": "fixed", "textOverflow": "ellipsis", "height": 32, "minWidth": 80 }
+    },
+    "date-range/default/default": {
+      "kind": "date-range", "variant": "default", "state": "default",
+      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "date-range-default", "fingerprint": "d598133aaa609ef4dee113a40c694fcb84e57654194cd7780858cff5df8909b7" },
+      "props": { "label": { "targetLayerId": "date-range-default-label", "type": "text" }, "value": { "targetLayerId": "date-range-default-value", "type": "text" } },
+      "layout": { "widthMode": "fixed", "textOverflow": "ellipsis", "height": 32, "minWidth": 80 }
+    },
+    "primary-button/default/default": {
+      "kind": "primary-button", "variant": "default", "state": "default",
+      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "primary-button-default", "fingerprint": "2a6fbcd8b1af5a7add6c6d16c162c8869bbc5049372ab0dca125737ecebcbcc3" },
+      "props": { "label": { "targetLayerId": "primary-button-default-label", "type": "text" } },
+      "layout": { "widthMode": "fixed", "textOverflow": "ellipsis", "height": 32, "minWidth": 80 }
+    },
+    "secondary-button/default/default": {
+      "kind": "secondary-button", "variant": "default", "state": "default",
+      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "secondary-button-default", "fingerprint": "c9f5b1cd589c219763a2d09dfbfdd508d940462e866404a5771abbf15dbc0bbd" },
+      "props": { "label": { "targetLayerId": "secondary-button-default-label", "type": "text" } },
+      "layout": { "widthMode": "fixed", "textOverflow": "ellipsis", "height": 32, "minWidth": 80 }
+    },
+    "text-button/default/default": {
+      "kind": "text-button", "variant": "default", "state": "default",
+      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "text-button-default", "fingerprint": "dbbb1accb58a03857492ce51db885c9f7faaf764faeae7aafd17f08c7e436ae0" },
+      "props": { "label": { "targetLayerId": "text-button-default-label", "type": "text" } },
+      "layout": { "widthMode": "fixed", "textOverflow": "ellipsis", "height": 32, "minWidth": 80 }
+    },
+    "table-header/default/default": {
+      "kind": "table-header", "variant": "default", "state": "default",
+      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "table-header-default", "fingerprint": "f9de602207fab78c15713ad55b16f4920eef364f3edebaab96a735bef16f5c3a" },
+      "props": { "label": { "targetLayerId": "table-header-default-label", "type": "text" } },
+      "layout": { "widthMode": "fixed", "textOverflow": "ellipsis", "height": 32, "minWidth": 80 }
+    },
+    "table-row/default/default": {
+      "kind": "table-row", "variant": "default", "state": "default",
+      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "table-row-default", "fingerprint": "5c7409d5b34676529fe6c67e9b8f927d5c32840c423ef719db6c0a97cf57a33d" },
+      "props": { "value": { "targetLayerId": "table-row-default-value", "type": "text" } },
+      "layout": { "widthMode": "fixed", "textOverflow": "ellipsis", "height": 32, "minWidth": 80 }
+    },
+    "table-row/alternate/default": {
+      "kind": "table-row", "variant": "alternate", "state": "default",
+      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "table-row-alternate", "fingerprint": "d0f8fefdb92d419bf92749c3845e8ce39538d95247b15d5eb198308971131d50" },
+      "props": { "value": { "targetLayerId": "table-row-alternate-value", "type": "text" } },
+      "layout": { "widthMode": "fixed", "textOverflow": "ellipsis", "height": 32, "minWidth": 80 }
+    },
+    "status-tag/success/default": {
+      "kind": "status-tag", "variant": "success", "state": "default",
+      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "status-tag-success", "fingerprint": "564cefd20aa8881e35939c6f112173beb4097e310f133fc1391da3fdc728df42" },
+      "props": { "value": { "targetLayerId": "status-tag-success-value", "type": "text" } },
+      "layout": { "widthMode": "fixed", "textOverflow": "ellipsis", "height": 32, "minWidth": 80 }
+    },
+    "status-tag/warning/default": {
+      "kind": "status-tag", "variant": "warning", "state": "default",
+      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "status-tag-warning", "fingerprint": "09eb92661dab872750b43c82e0a6f22b6ff347e51b738633f2f94f9309d7fe2d" },
+      "props": { "value": { "targetLayerId": "status-tag-warning-value", "type": "text" } },
+      "layout": { "widthMode": "fixed", "textOverflow": "ellipsis", "height": 32, "minWidth": 80 }
+    },
+    "status-tag/disabled/default": {
+      "kind": "status-tag", "variant": "disabled", "state": "default",
+      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "status-tag-disabled", "fingerprint": "44a2fc425ee36271fd54f116e68b86d1b5db653ac1319ec1b360d015ace4ad3a" },
+      "props": { "value": { "targetLayerId": "status-tag-disabled-value", "type": "text" } },
+      "layout": { "widthMode": "fixed", "textOverflow": "ellipsis", "height": 32, "minWidth": 80 }
+    },
+    "pagination/default/default": {
+      "kind": "pagination", "variant": "default", "state": "default",
+      "source": { "revisionId": "crm-ui-spec-revision-1", "rootLayerId": "pagination-default", "fingerprint": "5c3dfb13f08a88db6204e451c43751b33eacfe50851f3636d37f09184a495cac" },
+      "props": { "value": { "targetLayerId": "pagination-default-value", "type": "text" } },
+      "layout": { "widthMode": "fixed", "textOverflow": "ellipsis", "height": 32, "minWidth": 80 }
+    }
+  },
+  "primitiveFallbacks": {}
+}
