@@ -23,7 +23,7 @@ func TestCompileListPageBuildsCountsAndRecipeBackedContent(t *testing.T) {
 	if output.Diagnostics.HasErrors() {
 		t.Fatalf("compile diagnostics: %+v", output.Diagnostics)
 	}
-	if output.Status != "compiled" {
+	if output.Status != "generated" {
 		t.Fatalf("status = %q", output.Status)
 	}
 	if output.Manifest.FilterCount != 2 || output.Manifest.PageActionCount != 2 || output.Manifest.RowCount != 2 || output.Manifest.ColumnCount != len(input.PageSpec.Table.Columns) || output.Manifest.RowActionCount != 2 {
@@ -620,6 +620,8 @@ func TestCompileListPageClearsBusinessTextResidueAndProtectsShell(t *testing.T) 
 
 func TestCompileListPagePinsOnlyWhenHorizontalScrollIsActive(t *testing.T) {
 	wide := completeCompilerInputForTest(t)
+	wide.PageSpec.Filters = nil
+	wide.PageSpec.PageActions = nil
 	wide.Blueprint.Constraints.ContentWidth = 300
 	wide.Blueprint.Constraints.PinFirstColumn = true
 	wide.Blueprint.Constraints.PinActionColumn = true
@@ -636,7 +638,7 @@ func TestCompileListPagePinsOnlyWhenHorizontalScrollIsActive(t *testing.T) {
 	}
 
 	fitting := completeCompilerInputForTest(t)
-	fitting.Blueprint.Constraints.ContentWidth = 1200
+	fitting.Blueprint.Constraints.ContentWidth = 900
 	fitting.Blueprint.Constraints.PinFirstColumn = true
 	fitting.Blueprint.Constraints.PinActionColumn = true
 	fittingOutput := CompileListPage(fitting)
@@ -646,6 +648,29 @@ func TestCompileListPagePinsOnlyWhenHorizontalScrollIsActive(t *testing.T) {
 	if countPinned(fittingOutput.Document, "left") != 0 || countPinned(fittingOutput.Document, "right") != 0 {
 		t.Fatal("pin metadata was emitted without horizontal scrolling")
 	}
+}
+
+func TestCompileListPageRecordsRecipeDeclaredOverlay(t *testing.T) {
+	input := completeCompilerInputForTest(t)
+	key := (RecipeKey{Kind: "input", Variant: "default", State: "default"}).String()
+	recipe := input.RecipeSet.Recipes[key]
+	recipe.Layout.OverlayRole = "dropdown"
+	input.RecipeSet.Recipes[key] = recipe
+
+	output := CompileListPage(input)
+	if output.Diagnostics.HasErrors() {
+		t.Fatalf("diagnostics: %+v", output.Diagnostics)
+	}
+	root := generatedRootAtSpecPath(t, output.Document, "filters.name")
+	for _, expectation := range output.Manifest.ResolvedComponents {
+		if expectation.GeneratedRootLayerID == root.ID {
+			if !expectation.AllowOverlay || expectation.OverlayRole != "dropdown" {
+				t.Fatalf("overlay expectation = %+v", expectation)
+			}
+			return
+		}
+	}
+	t.Fatalf("resolved expectation for %q not found", root.ID)
 }
 
 func TestCompileListPageWritesCompleteStableManifestAndProvenance(t *testing.T) {
@@ -893,7 +918,7 @@ func compilerBlueprintClassificationForTest() BlueprintClassification {
 			"tableRow":        {RootLayerID: "table-row-prototype"},
 		},
 		Constraints: BlueprintConstraints{
-			ContentWidth: 1000, FilterRowHeight: 68, TableHeaderHeight: 44, TableRowHeight: 52,
+			ContentWidth: 820, FilterRowHeight: 68, TableHeaderHeight: 44, TableRowHeight: 52,
 			HorizontalGap: 16, VerticalGap: 16, FilterColumns: 3,
 		},
 		ShellAllowlistLayerIDs: []string{"navigation", "topbar"},

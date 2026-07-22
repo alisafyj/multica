@@ -31,7 +31,8 @@ type QualityReport struct {
 func EvaluateCompiledDesign(doc NativeJSON, spec PageSpec, blueprint TemplateBlueprint, manifest CompilationManifest, compilerDiagnostics Diagnostics) QualityReport {
 	report := QualityReport{Diagnostics: append(Diagnostics(nil), compilerDiagnostics...)}
 	quality := qualityEvaluator{
-		doc: doc, spec: spec, blueprint: blueprint, manifest: manifest, report: &report,
+		doc: doc, spec: spec, blueprint: blueprint, manifest: manifest,
+		expectations: resolvedComponentExpectations(manifest.ResolvedComponents), report: &report,
 	}
 	quality.evaluate()
 	report.Diagnostics = normalizeCompilerDiagnostics(report.Diagnostics)
@@ -47,11 +48,12 @@ func EvaluateCompiledDesign(doc NativeJSON, spec PageSpec, blueprint TemplateBlu
 }
 
 type qualityEvaluator struct {
-	doc       NativeJSON
-	spec      PageSpec
-	blueprint TemplateBlueprint
-	manifest  CompilationManifest
-	report    *QualityReport
+	doc          NativeJSON
+	spec         PageSpec
+	blueprint    TemplateBlueprint
+	manifest     CompilationManifest
+	expectations map[string]ResolvedComponentExpectation
+	report       *QualityReport
 }
 
 func (q *qualityEvaluator) evaluate() {
@@ -74,35 +76,16 @@ func (q *qualityEvaluator) evaluateTextOverflow() {
 			continue
 		}
 		text := structuralLayerText(layer)
-		if text == "" || q.textWrapEnabled(layer) || layer.Text["overflow"] == "ellipsis" {
-			continue
-		}
-		if _, enabled := layer.Text["overflow"]; !enabled {
+		expectation, root, ok := q.expectedComponentAncestor(layer.ID)
+		if text == "" || !ok || expectation.TextOverflow == "wrap" {
 			continue
 		}
 		fontSize := qualityFontSize(layer.Text)
-		if MeasureTextWidth(text, TypographyMetrics{FontSize: fontSize})+2*compilerCellHorizontalPadding > layer.Width {
+		if MeasureTextWidth(text, TypographyMetrics{FontSize: fontSize})+2*compilerCellHorizontalPadding > root.Width {
 			q.report.Metrics.TextOverflowCount++
 			q.addError("text_overflow", fmt.Sprintf("text in layer %q exceeds its available width", layer.ID), "layers."+layer.ID, layer.ID)
 		}
 	}
-}
-
-func (q *qualityEvaluator) textWrapEnabled(layer Layer) bool {
-	if layer.Text["overflow"] == "wrap" {
-		return true
-	}
-	for current := layer.ID; current != ""; {
-		currentLayer, ok := q.doc.Layers[current]
-		if !ok {
-			return false
-		}
-		if currentLayer.Semantic["textOverflow"] == "wrap" {
-			return true
-		}
-		current = currentLayer.ParentID
-	}
-	return false
 }
 
 func qualityFontSize(text map[string]any) float64 {
@@ -161,14 +144,7 @@ func (q *qualityEvaluator) evaluateOverlap() {
 }
 
 func (q *qualityEvaluator) allowsOverlay(first, second Layer) bool {
-	return qualityOverlayRole(first) != "" || qualityOverlayRole(second) != ""
-}
-
-func qualityOverlayRole(layer Layer) string {
-	if role, ok := layer.Semantic["overlayRole"].(string); ok {
-		return strings.TrimSpace(role)
-	}
-	return ""
+	return q.expectations[first.ID].AllowOverlay || q.expectations[second.ID].AllowOverlay
 }
 
 func (q *qualityEvaluator) evaluateOffFrame() {
@@ -186,11 +162,11 @@ func (q *qualityEvaluator) evaluateOffFrame() {
 		if !ok {
 			continue
 		}
-		within := rectanglesOverlap(Rect{X: frame.X, Y: frame.Y, Width: frame.Width, Height: frame.Height}, qualityRect(layer))
+		bounds := Rect{X: frame.X, Y: frame.Y, Width: frame.Width, Height: frame.Height}
 		if q.manifest.HorizontalScroll && isNativeDescendantOrSelf(q.doc.Layers, layer.ID, tableRegion) {
-			within = layer.X+layer.Width > q.doc.Layers[tableRegion].X && layer.Y+layer.Height > frame.Y && layer.Y < frame.Y+frame.Height
+			bounds = q.manifest.TableContentBounds
 		}
-		if !within {
+		if bounds.Width <= 0 || bounds.Height <= 0 || !rectContains(bounds, qualityRect(layer)) {
 			q.report.Metrics.OffFrameCount++
 			q.addError("off_frame", fmt.Sprintf("generated layer %q is outside frame %q", layer.ID, frame.ID), "layers."+layer.ID, layer.ID)
 		}
@@ -304,31 +280,81 @@ func (q *qualityEvaluator) evaluatePaginationPlacement() {
 }
 
 func (q *qualityEvaluator) evaluateComponentConformance() {
+	seen := make(map[string]struct{}, len(q.expectations))
 	for _, layerID := range q.sortedLayerIDs() {
 		layer := q.doc.Layers[layerID]
 		if layer.Semantic["generatedBy"] != DesignCompilerVersion || !qualityRoleRequiresRecipe(qualityString(layer.Semantic, "generationRole")) {
 			continue
 		}
-		kind := qualityString(layer.Semantic, "recipeKind")
-		variant := qualityString(layer.Semantic, "recipeVariant")
-		state := qualityString(layer.Semantic, "recipeState")
-		fallback := qualityString(layer.Semantic, "recipeFallback")
-		if kind == "" || variant == "" || state == "" || (fallback != "exact" && fallback != "default" && fallback != "primitive") {
+		expectation, ok := q.expectations[layer.ID]
+		if !ok {
 			q.report.Metrics.MissingComponentCount++
-			q.addError("unresolved_recipe", fmt.Sprintf("generated component %q has no resolved recipe metadata", layer.ID), "layers."+layer.ID, layer.ID)
+			q.addError("unresolved_recipe", fmt.Sprintf("generated component %q has no compiler-resolved recipe expectation", layer.ID), "layers."+layer.ID, layer.ID)
 			continue
 		}
-		if fallback == "primitive" {
+		seen[layer.ID] = struct{}{}
+		if qualityString(layer.Semantic, "recipeKind") == "" || qualityString(layer.Semantic, "recipeVariant") == "" || qualityString(layer.Semantic, "recipeState") == "" || qualityString(layer.Semantic, "recipeFallback") == "" {
+			q.report.Metrics.MissingComponentCount++
+			q.addError("unresolved_recipe", fmt.Sprintf("generated component %q is missing resolved recipe metadata", layer.ID), "layers."+layer.ID, layer.ID)
 			continue
 		}
-		if qualityString(layer.Semantic, "recipeSourceRevisionId") == "" || qualityString(layer.Semantic, "recipeSourceRootLayerId") == "" || qualityString(layer.Semantic, "recipeSourceFingerprint") == "" {
-			q.addError("component_nonconformance", fmt.Sprintf("generated component %q is missing cloned recipe provenance", layer.ID), "layers."+layer.ID, layer.ID)
-			continue
-		}
-		if sourceVariant, exists := layer.Style["sourceVariant"]; exists && sourceVariant != variant {
-			q.addError("component_nonconformance", fmt.Sprintf("generated component %q source variant does not match resolved recipe variant", layer.ID), "layers."+layer.ID, layer.ID)
+		if !qualityComponentMatchesExpectation(layer, expectation) {
+			q.addError("component_nonconformance", fmt.Sprintf("generated component %q does not match its compiler-resolved recipe", layer.ID), "layers."+layer.ID, layer.ID)
 		}
 	}
+	for rootID := range q.expectations {
+		if _, ok := seen[rootID]; ok {
+			continue
+		}
+		q.report.Metrics.MissingComponentCount++
+		q.addError("unresolved_recipe", fmt.Sprintf("compiler-resolved component %q is missing from the document", rootID), "layers."+rootID, rootID)
+	}
+}
+
+func resolvedComponentExpectations(source []ResolvedComponentExpectation) map[string]ResolvedComponentExpectation {
+	result := make(map[string]ResolvedComponentExpectation, len(source))
+	for _, expectation := range source {
+		if expectation.GeneratedRootLayerID != "" {
+			result[expectation.GeneratedRootLayerID] = expectation
+		}
+	}
+	return result
+}
+
+func qualityComponentMatchesExpectation(layer Layer, expectation ResolvedComponentExpectation) bool {
+	if qualityString(layer.Semantic, "recipeKind") != expectation.RecipeKind ||
+		qualityString(layer.Semantic, "recipeVariant") != expectation.RecipeVariant ||
+		qualityString(layer.Semantic, "recipeState") != expectation.RecipeState ||
+		qualityString(layer.Semantic, "requestedRecipeVariant") != expectation.RequestedVariant ||
+		qualityString(layer.Semantic, "recipeFallback") != expectation.Fallback {
+		return false
+	}
+	if qualityString(layer.Semantic, "recipeSourceRevisionId") != expectation.SourceRevisionID ||
+		qualityString(layer.Semantic, "recipeSourceRootLayerId") != expectation.SourceRootLayerID ||
+		qualityString(layer.Semantic, "recipeSourceFingerprint") != expectation.SourceFingerprint {
+		return false
+	}
+	if expectation.Fallback != "primitive" {
+		if sourceVariant, exists := layer.Style["sourceVariant"]; exists && sourceVariant != expectation.RecipeVariant {
+			return false
+		}
+	}
+	return true
+}
+
+func (q *qualityEvaluator) expectedComponentAncestor(layerID string) (ResolvedComponentExpectation, Layer, bool) {
+	for current := layerID; current != ""; {
+		if expectation, ok := q.expectations[current]; ok {
+			root, exists := q.doc.Layers[current]
+			return expectation, root, exists
+		}
+		layer, ok := q.doc.Layers[current]
+		if !ok {
+			break
+		}
+		current = layer.ParentID
+	}
+	return ResolvedComponentExpectation{}, Layer{}, false
 }
 
 func qualityRoleRequiresRecipe(role string) bool {
@@ -371,6 +397,10 @@ func qualityRect(layer Layer) Rect {
 
 func rectanglesOverlap(first, second Rect) bool {
 	return first.X < second.X+second.Width && second.X < first.X+first.Width && first.Y < second.Y+second.Height && second.Y < first.Y+first.Height
+}
+
+func rectContains(outer, inner Rect) bool {
+	return inner.X >= outer.X && inner.Y >= outer.Y && inner.X+inner.Width <= outer.X+outer.Width && inner.Y+inner.Height <= outer.Y+outer.Height
 }
 
 func qualityString(values map[string]any, key string) string {

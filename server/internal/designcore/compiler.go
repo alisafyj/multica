@@ -45,9 +45,26 @@ type CompilationManifest struct {
 	RowCount               int
 	RowActionCount         int
 	HorizontalScroll       bool
+	TableContentBounds     Rect
 	GeneratedLayerIDs      []string
 	BusinessRegionLayerIDs []string
 	TemplateBusinessTexts  []string
+	ResolvedComponents     []ResolvedComponentExpectation
+}
+
+type ResolvedComponentExpectation struct {
+	GeneratedRootLayerID string
+	RecipeKind           string
+	RecipeVariant        string
+	RecipeState          string
+	RequestedVariant     string
+	Fallback             string
+	SourceRevisionID     string
+	SourceRootLayerID    string
+	SourceFingerprint    string
+	TextOverflow         string
+	AllowOverlay         bool
+	OverlayRole          string
 }
 
 type CompileOutput struct {
@@ -70,6 +87,7 @@ type generatedRootMetadata struct {
 	RecipeSourceRootLayerID string
 	RecipeSourceFingerprint string
 	TextOverflow            string
+	OverlayRole             string
 	Pinned                  string
 }
 
@@ -186,6 +204,7 @@ func CompileListPage(input CompileInput) CompileOutput {
 	}
 
 	compiler.manifest.GeneratedLayerIDs = compilerGeneratedLayerIDs(compiler.templateSource, final)
+	compiler.manifest.ResolvedComponents = compilerResolvedComponentExpectations(compiler.generatedRoots)
 	quality := EvaluateCompiledDesign(final, input.PageSpec, input.Blueprint, compiler.manifest, compiler.diagnostics)
 	return CompileOutput{
 		Status:      quality.Status,
@@ -331,7 +350,8 @@ func (c *listPageCompiler) markResolvedRecipeRoot(layerID, role, specPath string
 		RequestedRecipeVariant: request.Variant, RecipeFallback: fallback,
 		RecipeSourceRevisionID: recipe.Source.RevisionID, RecipeSourceRootLayerID: recipe.Source.RootLayerID,
 		RecipeSourceFingerprint: recipe.Source.Fingerprint, TextOverflow: recipe.Layout.TextOverflow,
-		Pinned: pinned,
+		OverlayRole: recipe.Layout.OverlayRole,
+		Pinned:      pinned,
 	}
 }
 
@@ -497,6 +517,7 @@ func (c *listPageCompiler) instantiatePrimitive(parentID string, bounds Rect, re
 	c.markGeneratedRoot(rootID, role, specPath, request, "primitive", pinned)
 	metadata := c.generatedRoots[rootID]
 	metadata.TextOverflow = primitive.Layout.TextOverflow
+	metadata.OverlayRole = primitive.Layout.OverlayRole
 	c.generatedRoots[rootID] = metadata
 	keys := declaredCompilerBindingKeys(primitive.Props, bindings.Values)
 	for index, key := range keys {
@@ -894,6 +915,35 @@ func compilerGeneratedLayerIDs(template, document NativeJSON) []string {
 		}
 	}
 	sort.Strings(result)
+	return result
+}
+
+func compilerResolvedComponentExpectations(generatedRoots map[string]generatedRootMetadata) []ResolvedComponentExpectation {
+	rootIDs := make([]string, 0, len(generatedRoots))
+	for rootID, metadata := range generatedRoots {
+		if metadata.RecipeKind != "" {
+			rootIDs = append(rootIDs, rootID)
+		}
+	}
+	sort.Strings(rootIDs)
+	result := make([]ResolvedComponentExpectation, 0, len(rootIDs))
+	for _, rootID := range rootIDs {
+		metadata := generatedRoots[rootID]
+		result = append(result, ResolvedComponentExpectation{
+			GeneratedRootLayerID: rootID,
+			RecipeKind:           metadata.RecipeKind,
+			RecipeVariant:        metadata.RecipeVariant,
+			RecipeState:          metadata.RecipeState,
+			RequestedVariant:     metadata.RequestedRecipeVariant,
+			Fallback:             metadata.RecipeFallback,
+			SourceRevisionID:     metadata.RecipeSourceRevisionID,
+			SourceRootLayerID:    metadata.RecipeSourceRootLayerID,
+			SourceFingerprint:    metadata.RecipeSourceFingerprint,
+			TextOverflow:         metadata.TextOverflow,
+			AllowOverlay:         metadata.OverlayRole != "",
+			OverlayRole:          metadata.OverlayRole,
+		})
+	}
 	return result
 }
 

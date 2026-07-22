@@ -33,6 +33,7 @@ type RecipeLayout struct {
 	TextOverflow string  `json:"textOverflow"`
 	Height       float64 `json:"height"`
 	MinWidth     float64 `json:"minWidth"`
+	OverlayRole  string  `json:"overlayRole,omitempty"`
 }
 
 type ComponentRecipe struct {
@@ -223,6 +224,9 @@ func validateRecipeLayout(diagnostics *Diagnostics, layout RecipeLayout, path st
 	}
 	if layout.Height <= 0 || layout.MinWidth < 0 || layout.WidthMode == "" {
 		diagnostics.addError("invalid_recipe_layout", "widthMode and positive height are required, and minWidth cannot be negative", path)
+	}
+	if layout.OverlayRole != "" && strings.TrimSpace(layout.OverlayRole) == "" {
+		diagnostics.addError("invalid_recipe_layout", "overlayRole must be non-blank when declared", path+".overlayRole")
 	}
 }
 

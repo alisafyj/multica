@@ -30,6 +30,13 @@ func (c *listPageCompiler) instantiateTable(tableY float64) (float64, error) {
 		headerHeight = constraints.TableHeaderHeight
 	}
 	tableHeight := headerHeight + float64(len(c.input.PageSpec.Table.SampleRows))*constraints.TableRowHeight
+	if layout.HorizontalScroll {
+		c.manifest.TableContentBounds = Rect{
+			X: tableRegion.Bounds.X, Y: tableY, Width: layout.TotalWidth, Height: tableHeight,
+		}
+	} else {
+		c.manifest.TableContentBounds = Rect{}
+	}
 	if err := c.builder.SetBounds(tableRegion.RootLayerID, Rect{
 		X: tableRegion.Bounds.X, Y: tableY, Width: constraints.ContentWidth, Height: tableHeight,
 	}); err != nil {
