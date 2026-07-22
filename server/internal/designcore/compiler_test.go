@@ -255,6 +255,139 @@ func TestCompileListPagePropagatesDefaultAndPrimitiveFallbackWarnings(t *testing
 	})
 }
 
+func TestCompileListPageRequiresExactMappedStatusRecipe(t *testing.T) {
+	t.Run("default recipe cannot mask deleted mapped variant", func(t *testing.T) {
+		input := completeCompilerInputForTest(t)
+		delete(input.RecipeSet.Recipes, (RecipeKey{Kind: "status-tag", Variant: "warning", State: "default"}).String())
+
+		output := CompileListPage(input)
+		if output.Status != compileStatusFailed {
+			t.Fatalf("status = %q, diagnostics = %+v", output.Status, output.Diagnostics)
+		}
+		assertDiagnosticCode(t, output.Diagnostics, "missing_recipe")
+	})
+
+	t.Run("primitive cannot mask deleted mapped variant", func(t *testing.T) {
+		input := completeCompilerInputForTest(t)
+		delete(input.RecipeSet.Recipes, (RecipeKey{Kind: "status-tag", Variant: "warning", State: "default"}).String())
+		delete(input.RecipeSet.Recipes, (RecipeKey{Kind: "status-tag", Variant: "default", State: "default"}).String())
+
+		output := CompileListPage(input)
+		if output.Status != compileStatusFailed {
+			t.Fatalf("status = %q, diagnostics = %+v", output.Status, output.Diagnostics)
+		}
+		assertDiagnosticCode(t, output.Diagnostics, "missing_recipe")
+	})
+
+	t.Run("mapped default resolves exact default", func(t *testing.T) {
+		input := completeCompilerInputForTest(t)
+		input.PageSpec.Table.Columns[2].StatusMap["Pending"] = "default"
+		delete(input.RecipeSet.Recipes, (RecipeKey{Kind: "status-tag", Variant: "warning", State: "default"}).String())
+
+		output := CompileListPage(input)
+		if output.Diagnostics.HasErrors() {
+			t.Fatalf("diagnostics: %+v", output.Diagnostics)
+		}
+		root := generatedRootAtSpecPath(t, output.Document, "table.sampleRows.0.status")
+		if root.Semantic["recipeVariant"] != "default" || root.Semantic["recipeFallback"] != "exact" {
+			t.Fatalf("status recipe metadata = %+v", root.Semantic)
+		}
+	})
+}
+
+func TestCompileListPageResolvesPrimitiveTokenAliasesRecursively(t *testing.T) {
+	t.Run("alias chain", func(t *testing.T) {
+		input := completeCompilerInputForTest(t)
+		forcePrimitiveRecipeForTest(&input, "select")
+		input.RecipeSet.Tokens["alias"] = map[string]any{
+			"control": "$alias.fill",
+			"fill":    "$color.primary",
+		}
+		primitive := input.RecipeSet.PrimitiveFallbacks["select"]
+		primitive.Style = map[string]any{"fill": "$alias.control"}
+		input.RecipeSet.PrimitiveFallbacks["select"] = primitive
+		before := mustMarshalCompilerTest(t, input)
+
+		output := CompileListPage(input)
+		if output.Diagnostics.HasErrors() {
+			t.Fatalf("diagnostics: %+v", output.Diagnostics)
+		}
+		root := generatedRootAtSpecPath(t, output.Document, "filters.status")
+		if root.Style["fill"] != "#1677ff" || containsTokenReference(root.Style) {
+			t.Fatalf("resolved style = %#v", root.Style)
+		}
+		if after := mustMarshalCompilerTest(t, input); !reflect.DeepEqual(before, after) {
+			t.Fatal("alias resolution mutated CompileInput tokens")
+		}
+	})
+
+	t.Run("nested token objects and arrays", func(t *testing.T) {
+		input := completeCompilerInputForTest(t)
+		forcePrimitiveRecipeForTest(&input, "select")
+		input.RecipeSet.Tokens["component"] = map[string]any{
+			"style": map[string]any{
+				"border":  map[string]any{"color": "$color.text", "width": 1.0},
+				"shadows": []any{"$color.primary", map[string]any{"color": "$color.text", "opacity": 0.5}},
+			},
+		}
+		primitive := input.RecipeSet.PrimitiveFallbacks["select"]
+		primitive.Style = map[string]any{"theme": "$component.style"}
+		input.RecipeSet.PrimitiveFallbacks["select"] = primitive
+		before := mustMarshalCompilerTest(t, input)
+
+		output := CompileListPage(input)
+		if output.Diagnostics.HasErrors() {
+			t.Fatalf("diagnostics: %+v", output.Diagnostics)
+		}
+		root := generatedRootAtSpecPath(t, output.Document, "filters.status")
+		if containsTokenReference(root.Style) {
+			t.Fatalf("resolved style retained token reference: %#v", root.Style)
+		}
+		theme, ok := root.Style["theme"].(map[string]any)
+		if !ok {
+			t.Fatalf("theme = %#v", root.Style["theme"])
+		}
+		border := theme["border"].(map[string]any)
+		shadows := theme["shadows"].([]any)
+		if border["color"] != "#111111" || border["width"] != float64(1) || shadows[0] != "#1677ff" {
+			t.Fatalf("nested resolved style = %#v", theme)
+		}
+		if after := mustMarshalCompilerTest(t, input); !reflect.DeepEqual(before, after) {
+			t.Fatal("nested token resolution mutated CompileInput tokens")
+		}
+	})
+
+	t.Run("missing alias", func(t *testing.T) {
+		input := completeCompilerInputForTest(t)
+		forcePrimitiveRecipeForTest(&input, "select")
+		input.RecipeSet.Tokens["alias"] = "$missing.token"
+		primitive := input.RecipeSet.PrimitiveFallbacks["select"]
+		primitive.Style = map[string]any{"fill": "$alias"}
+		input.RecipeSet.PrimitiveFallbacks["select"] = primitive
+
+		output := CompileListPage(input)
+		if output.Status != compileStatusFailed {
+			t.Fatalf("status = %q", output.Status)
+		}
+		assertDiagnosticCode(t, output.Diagnostics, "primitive_token_missing")
+	})
+
+	t.Run("alias cycle", func(t *testing.T) {
+		input := completeCompilerInputForTest(t)
+		forcePrimitiveRecipeForTest(&input, "select")
+		input.RecipeSet.Tokens["alias"] = map[string]any{"a": "$alias.b", "b": "$alias.a"}
+		primitive := input.RecipeSet.PrimitiveFallbacks["select"]
+		primitive.Style = map[string]any{"fill": "$alias.a"}
+		input.RecipeSet.PrimitiveFallbacks["select"] = primitive
+
+		output := CompileListPage(input)
+		if output.Status != compileStatusFailed {
+			t.Fatalf("status = %q", output.Status)
+		}
+		assertDiagnosticCode(t, output.Diagnostics, "primitive_token_cycle")
+	})
+}
+
 func TestCompileListPageRejectsMissingContractsAndInvalidSources(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -303,6 +436,138 @@ func TestCompileListPageRejectsMissingContractsAndInvalidSources(t *testing.T) {
 				generatedRootAtSpecPath(t, output.Document, "page.title")
 			}
 		})
+	}
+}
+
+func TestCompileListPageRequiresExplicitRequirementCoverage(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*CompileInput)
+		code   string
+	}{
+		{
+			name: "missing required ID set",
+			mutate: func(input *CompileInput) {
+				input.RequiredRequirementIDs = nil
+			},
+			code: "missing_required_requirement_ids",
+		},
+		{
+			name: "missing coverage",
+			mutate: func(input *CompileInput) {
+				input.PageSpec.RequirementCoverage = nil
+			},
+			code: "missing_requirement_coverage",
+		},
+		{
+			name: "duplicate required ID",
+			mutate: func(input *CompileInput) {
+				input.RequiredRequirementIDs = []string{"REQ-LIST-PAGE", "REQ-LIST-PAGE"}
+			},
+			code: "duplicate_required_requirement_id",
+		},
+		{
+			name: "blank required ID",
+			mutate: func(input *CompileInput) {
+				input.RequiredRequirementIDs = []string{"REQ-LIST-PAGE", "  "}
+			},
+			code: "blank_required_requirement_id",
+		},
+		{
+			name: "invalid coverage path",
+			mutate: func(input *CompileInput) {
+				input.PageSpec.RequirementCoverage[0].SpecPaths = []string{"table.columns.invented"}
+			},
+			code: "invalid_spec_path",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := completeCompilerInputForTest(t)
+			tt.mutate(&input)
+			before := mustMarshalCompilerTest(t, input)
+			output := CompileListPage(input)
+			if output.Status != compileStatusFailed || !output.Diagnostics.HasErrors() {
+				t.Fatalf("output = %+v", output)
+			}
+			assertDiagnosticCode(t, output.Diagnostics, tt.code)
+			if after := mustMarshalCompilerTest(t, input); !reflect.DeepEqual(before, after) {
+				t.Fatal("requirement validation mutated CompileInput")
+			}
+		})
+	}
+}
+
+func TestCompileListPageValidatesOptionalNativeSourceIdentity(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*CompileInput)
+		code    string
+		success bool
+	}{
+		{name: "present identities match", mutate: func(*CompileInput) {}, success: true},
+		{name: "missing identities are allowed", mutate: func(input *CompileInput) {
+			delete(input.TemplateDoc.Source, "revisionId")
+			delete(input.RecipeDoc.Source, "revisionId")
+		}, success: true},
+		{name: "empty identities are allowed", mutate: func(input *CompileInput) {
+			input.TemplateDoc.Source["revisionId"] = ""
+			input.RecipeDoc.Source["revisionId"] = ""
+		}, success: true},
+		{name: "template mismatch", mutate: func(input *CompileInput) {
+			input.TemplateDoc.Source["revisionId"] = "wrong-design-revision"
+		}, code: "template_source_identity_mismatch"},
+		{name: "template wrong type", mutate: func(input *CompileInput) {
+			input.TemplateDoc.Source["revisionId"] = 7.0
+		}, code: "invalid_template_source_identity"},
+		{name: "recipe mismatch", mutate: func(input *CompileInput) {
+			input.RecipeDoc.Source["revisionId"] = "wrong-ui-spec-revision"
+		}, code: "recipe_source_identity_mismatch"},
+		{name: "recipe wrong type", mutate: func(input *CompileInput) {
+			input.RecipeDoc.Source["revisionId"] = []any{"ui-spec-revision-9"}
+		}, code: "invalid_recipe_source_identity"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := completeCompilerInputForTest(t)
+			tt.mutate(&input)
+			before := mustMarshalCompilerTest(t, input)
+			output := CompileListPage(input)
+			if tt.success {
+				if output.Diagnostics.HasErrors() || output.Status != compileStatusCompiled {
+					t.Fatalf("output = %+v", output)
+				}
+			} else {
+				if output.Status != compileStatusFailed {
+					t.Fatalf("status = %q", output.Status)
+				}
+				assertDiagnosticCode(t, output.Diagnostics, tt.code)
+			}
+			if after := mustMarshalCompilerTest(t, input); !reflect.DeepEqual(before, after) {
+				t.Fatal("source identity validation mutated CompileInput")
+			}
+		})
+	}
+}
+
+func TestCompileListPageEarlyInvalidInputRetainsDetachedValidTemplate(t *testing.T) {
+	input := completeCompilerInputForTest(t)
+	input.RequiredRequirementIDs = nil
+	output := CompileListPage(input)
+	if output.Status != compileStatusFailed {
+		t.Fatalf("status = %q", output.Status)
+	}
+	if validation := ValidateDocument(output.Document); !validation.Valid {
+		t.Fatalf("retained document is invalid: %v", validation.Errors)
+	}
+	if !reflect.DeepEqual(mustMarshalCompilerTest(t, output.Document), mustMarshalCompilerTest(t, input.TemplateDoc)) {
+		t.Fatal("early failure did not retain the detached template")
+	}
+	output.Document.File.Title = "mutated retained output"
+	if input.TemplateDoc.File.Title == output.Document.File.Title {
+		t.Fatal("retained failure document aliases TemplateDoc")
 	}
 }
 
@@ -534,12 +799,14 @@ func completeCompilerInputForTest(t *testing.T) CompileInput {
 					{Key: "edit", Label: "Edit", Variant: "text"},
 				},
 			},
-			Pagination: PaginationSpec{Enabled: true, PageSize: 20, SampleTotal: 57},
+			Pagination:          PaginationSpec{Enabled: true, PageSize: 20, SampleTotal: 57},
+			RequirementCoverage: []RequirementCoverage{{RequirementID: "REQ-LIST-PAGE", SpecPaths: []string{"page.title"}}},
 		},
-		Blueprint:   blueprint,
-		RecipeSet:   recipeSet,
-		TemplateDoc: template,
-		RecipeDoc:   recipeDoc,
+		RequiredRequirementIDs: []string{"REQ-LIST-PAGE"},
+		Blueprint:              blueprint,
+		RecipeSet:              recipeSet,
+		TemplateDoc:            template,
+		RecipeDoc:              recipeDoc,
 		Provenance: CompileProvenance{
 			WorkspaceID: "workspace-1", ProjectID: "project-1", IssueID: "issue-1", AgentTaskID: "task-1",
 			PageSpecVersion: PageSpecVersion, BlueprintRecordID: "blueprint-record-1", RecipeSetRecordID: "recipe-record-1",
@@ -599,7 +866,7 @@ func compilerTemplateDocumentForTest() NativeJSON {
 		Frames:  []Frame{{ID: "frame-1", Name: "Desktop", RootLayerID: "frame-root", Width: 1000, Height: 900}},
 		Layers:  layers,
 		Assets:  map[string]Asset{},
-		Source:  map[string]any{"revisionId": "template-revision-4"},
+		Source:  map[string]any{"revisionId": "design-revision-7"},
 	}
 }
 
@@ -741,6 +1008,15 @@ func compilerPrimitiveFallbacksForTest() map[string]PrimitiveRecipe {
 	return result
 }
 
+func forcePrimitiveRecipeForTest(input *CompileInput, kind string) {
+	defaultKey := (RecipeKey{Kind: kind, Variant: "default", State: "default"}).String()
+	nonDefault := input.RecipeSet.Recipes[defaultKey]
+	nonDefault.Variant = "compact"
+	nonDefault.State = "focused"
+	input.RecipeSet.Recipes[(RecipeKey{Kind: kind, Variant: "compact", State: "focused"}).String()] = nonDefault
+	delete(input.RecipeSet.Recipes, defaultKey)
+}
+
 func compilerRecipeForTest(source NativeJSON, kind, variant, state, root, prop string) ComponentRecipe {
 	return ComponentRecipe{
 		Kind: kind, Variant: variant, State: state,
@@ -828,6 +1104,26 @@ func documentContainsText(doc NativeJSON, want string) bool {
 	for _, layer := range doc.Layers {
 		if layer.Text["characters"] == want || layer.Text["text"] == want {
 			return true
+		}
+	}
+	return false
+}
+
+func containsTokenReference(value any) bool {
+	switch typed := value.(type) {
+	case string:
+		return strings.HasPrefix(typed, "$")
+	case map[string]any:
+		for _, child := range typed {
+			if containsTokenReference(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if containsTokenReference(child) {
+				return true
+			}
 		}
 	}
 	return false

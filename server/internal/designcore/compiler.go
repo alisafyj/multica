@@ -30,12 +30,13 @@ type CompileProvenance struct {
 }
 
 type CompileInput struct {
-	PageSpec    PageSpec
-	Blueprint   TemplateBlueprint
-	RecipeSet   ComponentRecipeSet
-	TemplateDoc NativeJSON
-	RecipeDoc   NativeJSON
-	Provenance  CompileProvenance
+	PageSpec               PageSpec
+	RequiredRequirementIDs []string
+	Blueprint              TemplateBlueprint
+	RecipeSet              ComponentRecipeSet
+	TemplateDoc            NativeJSON
+	RecipeDoc              NativeJSON
+	Provenance             CompileProvenance
 }
 
 type CompilationManifest struct {
@@ -203,7 +204,10 @@ func (c *listPageCompiler) validateInputs() {
 	for _, message := range recipeValidation.Errors {
 		c.addError("invalid_recipe_document", message, "recipeDoc")
 	}
-	c.diagnostics = append(c.diagnostics, ValidatePageSpec(c.input.PageSpec, nil)...)
+	requiredIDs, requirementDiagnostics := normalizeRequiredRequirementIDs(c.input.RequiredRequirementIDs)
+	c.diagnostics = append(c.diagnostics, requirementDiagnostics...)
+	c.diagnostics = append(c.diagnostics, ValidatePageSpec(pageSpecForCompilerValidation(c.input.PageSpec), requiredIDs)...)
+	c.validateSourceIdentity()
 	if templateValidation.Valid {
 		structure := ExtractTemplateStructure(c.input.TemplateDoc)
 		c.diagnostics = append(c.diagnostics, ValidateTemplateBlueprintForPageSpec(structure, c.input.Blueprint, c.input.PageSpec)...)
@@ -212,6 +216,90 @@ func (c *listPageCompiler) validateInputs() {
 		c.diagnostics = append(c.diagnostics, ValidateComponentRecipeSet(c.input.RecipeDoc, c.input.RecipeSet)...)
 	}
 	c.diagnostics = normalizeCompilerDiagnostics(c.diagnostics)
+}
+
+func pageSpecForCompilerValidation(spec PageSpec) PageSpec {
+	validationSpec := spec
+	validationSpec.Table.Columns = append([]TableColumnSpec(nil), spec.Table.Columns...)
+	for index, column := range validationSpec.Table.Columns {
+		if len(column.StatusMap) == 0 {
+			continue
+		}
+		column.StatusMap = make(map[string]string, len(column.StatusMap))
+		for value, variant := range spec.Table.Columns[index].StatusMap {
+			// Task 7 admits the exact default Recipe while the earlier PageSpec enum does not.
+			if variant == "default" {
+				variant = "info"
+			}
+			column.StatusMap[value] = variant
+		}
+		validationSpec.Table.Columns[index] = column
+	}
+	return validationSpec
+}
+
+func normalizeRequiredRequirementIDs(source []string) ([]string, Diagnostics) {
+	diagnostics := Diagnostics{}
+	if len(source) == 0 {
+		diagnostics.addError("missing_required_requirement_ids", "semantic compilation requires at least one required requirement ID", "requiredRequirementIds")
+		return []string{}, diagnostics
+	}
+	seen := make(map[string]struct{}, len(source))
+	result := make([]string, 0, len(source))
+	for index, rawID := range source {
+		id := strings.TrimSpace(rawID)
+		path := fmt.Sprintf("requiredRequirementIds.%d", index)
+		if id == "" {
+			diagnostics.addError("blank_required_requirement_id", "required requirement IDs must not be blank", path)
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			diagnostics.addError("duplicate_required_requirement_id", fmt.Sprintf("required requirement ID %q is duplicated", id), path)
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	if len(result) == 0 {
+		diagnostics.addError("missing_required_requirement_ids", "semantic compilation requires at least one non-blank required requirement ID", "requiredRequirementIds")
+	}
+	sort.Strings(result)
+	return result, diagnostics
+}
+
+func (c *listPageCompiler) validateSourceIdentity() {
+	validateOptionalSourceIdentity(
+		&c.diagnostics,
+		c.input.TemplateDoc.Source,
+		c.input.Blueprint.SourceRefs.DesignRevisionID,
+		"template",
+		"templateDoc.source.revisionId",
+	)
+	validateOptionalSourceIdentity(
+		&c.diagnostics,
+		c.input.RecipeDoc.Source,
+		c.input.RecipeSet.SourceRevisionID,
+		"recipe",
+		"recipeDoc.source.revisionId",
+	)
+}
+
+func validateOptionalSourceIdentity(diagnostics *Diagnostics, source map[string]any, expected, scope, path string) {
+	value, present := source["revisionId"]
+	if !present {
+		return
+	}
+	revisionID, ok := value.(string)
+	if !ok {
+		diagnostics.addError("invalid_"+scope+"_source_identity", fmt.Sprintf("%s source revisionId must be a string when present", scope), path)
+		return
+	}
+	if revisionID == "" {
+		return
+	}
+	if revisionID != expected {
+		diagnostics.addError(scope+"_source_identity_mismatch", fmt.Sprintf("%s source revision %q does not match %q", scope, revisionID, expected), path)
+	}
 }
 
 func (c *listPageCompiler) failedOutput(document NativeJSON) CompileOutput {
@@ -290,11 +378,34 @@ func (c *listPageCompiler) resolveRecipe(request RecipeRequest, specPath string)
 	return resolved, true
 }
 
+func (c *listPageCompiler) resolveExactRecipe(request RecipeRequest, specPath string) (ResolvedRecipe, bool) {
+	key := (RecipeKey{Kind: request.Kind, Variant: request.Variant, State: request.State}).String()
+	recipe, ok := c.input.RecipeSet.Recipes[key]
+	if !ok || recipe.Kind != request.Kind || recipe.Variant != request.Variant || recipe.State != request.State {
+		c.addError("missing_recipe", fmt.Sprintf("exact recipe %s is required", key), specPath)
+		return ResolvedRecipe{}, false
+	}
+	copy := recipe
+	return ResolvedRecipe{Recipe: &copy, Fallback: "exact"}, true
+}
+
 func (c *listPageCompiler) instantiateComponent(parentID string, bounds Rect, request RecipeRequest, bindings componentBindingPlan, role, specPath, pinned string) (instantiatedComponent, error) {
 	resolved, ok := c.resolveRecipe(request, specPath)
 	if !ok {
 		return instantiatedComponent{}, nil
 	}
+	return c.instantiateResolvedComponent(parentID, bounds, request, resolved, bindings, role, specPath, pinned)
+}
+
+func (c *listPageCompiler) instantiateExactRecipeComponent(parentID string, bounds Rect, request RecipeRequest, bindings componentBindingPlan, role, specPath, pinned string) (instantiatedComponent, error) {
+	resolved, ok := c.resolveExactRecipe(request, specPath)
+	if !ok {
+		return instantiatedComponent{}, nil
+	}
+	return c.instantiateResolvedComponent(parentID, bounds, request, resolved, bindings, role, specPath, pinned)
+}
+
+func (c *listPageCompiler) instantiateResolvedComponent(parentID string, bounds Rect, request RecipeRequest, resolved ResolvedRecipe, bindings componentBindingPlan, role, specPath, pinned string) (instantiatedComponent, error) {
 	props, layout := resolvedRecipePropsAndLayout(resolved)
 	if !validateComponentBindingPlan(props, bindings) {
 		c.addError("missing_recipe_prop", fmt.Sprintf("recipe %s/%s/%s does not declare the required label/value prop", request.Kind, request.Variant, request.State), specPath)
@@ -384,7 +495,11 @@ func (c *listPageCompiler) bindRecipeClone(clone CloneResult, props map[string]R
 func (c *listPageCompiler) instantiatePrimitive(parentID string, bounds Rect, request RecipeRequest, primitive PrimitiveRecipe, bindings componentBindingPlan, role, specPath, pinned string) (instantiatedComponent, error) {
 	style, err := resolvePrimitiveStyle(c.input.RecipeSet.Tokens, primitive.Style)
 	if err != nil {
-		c.addError("primitive_style_resolution_failed", err.Error(), specPath)
+		code := "primitive_style_resolution_failed"
+		if resolutionError, ok := err.(*primitiveTokenResolutionError); ok {
+			code = resolutionError.Code
+		}
+		c.addError(code, err.Error(), specPath)
 		return instantiatedComponent{}, nil
 	}
 	rootID, err := c.builder.AddPrimitiveLayer(parentID, Layer{
@@ -447,7 +562,11 @@ func compilerTextBounds(bounds Rect, index, count int) Rect {
 }
 
 func resolvePrimitiveStyle(tokens map[string]any, style map[string]any) (map[string]any, error) {
-	resolved, err := resolvePrimitiveStyleValue(tokens, style)
+	resolver := primitiveTokenResolver{
+		tokens: tokens,
+		active: make(map[string]int),
+	}
+	resolved, err := resolver.resolveStyleValue(style)
 	if err != nil {
 		return nil, err
 	}
@@ -455,20 +574,45 @@ func resolvePrimitiveStyle(tokens map[string]any, style map[string]any) (map[str
 	if !ok {
 		return nil, fmt.Errorf("primitive style must be an object")
 	}
+	if reference, found := firstCompilerTokenReference(result); found {
+		return nil, &primitiveTokenResolutionError{
+			Code:    "primitive_token_unresolved",
+			Message: fmt.Sprintf("primitive style retained unresolved token reference %q", reference),
+		}
+	}
 	return result, nil
 }
 
 func resolvePrimitiveStyleValue(tokens map[string]any, value any) (any, error) {
+	resolver := primitiveTokenResolver{
+		tokens: tokens,
+		active: make(map[string]int),
+	}
+	return resolver.resolveStyleValue(value)
+}
+
+type primitiveTokenResolutionError struct {
+	Code    string
+	Message string
+}
+
+func (e *primitiveTokenResolutionError) Error() string {
+	return e.Message
+}
+
+type primitiveTokenResolver struct {
+	tokens map[string]any
+	stack  []string
+	active map[string]int
+}
+
+func (r *primitiveTokenResolver) resolveStyleValue(value any) (any, error) {
 	switch typed := value.(type) {
 	case string:
 		if !strings.HasPrefix(typed, "$") {
 			return nil, fmt.Errorf("primitive style leaf %q is not a token reference", typed)
 		}
-		resolved, ok := lookupCompilerToken(tokens, strings.TrimPrefix(typed, "$"))
-		if !ok {
-			return nil, fmt.Errorf("token reference %q does not exist", typed)
-		}
-		return detachCompilerJSONValue(resolved)
+		return r.resolveReference(strings.TrimPrefix(typed, "$"))
 	case map[string]any:
 		result := make(map[string]any, len(typed))
 		keys := make([]string, 0, len(typed))
@@ -477,7 +621,7 @@ func resolvePrimitiveStyleValue(tokens map[string]any, value any) (any, error) {
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			child, err := resolvePrimitiveStyleValue(tokens, typed[key])
+			child, err := r.resolveStyleValue(typed[key])
 			if err != nil {
 				return nil, err
 			}
@@ -487,7 +631,7 @@ func resolvePrimitiveStyleValue(tokens map[string]any, value any) (any, error) {
 	case []any:
 		result := make([]any, len(typed))
 		for index, child := range typed {
-			resolved, err := resolvePrimitiveStyleValue(tokens, child)
+			resolved, err := r.resolveStyleValue(child)
 			if err != nil {
 				return nil, err
 			}
@@ -497,6 +641,93 @@ func resolvePrimitiveStyleValue(tokens map[string]any, value any) (any, error) {
 	default:
 		return nil, fmt.Errorf("primitive style leaf has unsupported type %T", value)
 	}
+}
+
+func (r *primitiveTokenResolver) resolveReference(path string) (any, error) {
+	if index, cycling := r.active[path]; cycling {
+		cycle := append(append([]string(nil), r.stack[index:]...), path)
+		return nil, &primitiveTokenResolutionError{
+			Code:    "primitive_token_cycle",
+			Message: "primitive token alias cycle: " + strings.Join(cycle, " -> "),
+		}
+	}
+	value, ok := lookupCompilerToken(r.tokens, path)
+	if !ok {
+		return nil, &primitiveTokenResolutionError{
+			Code:    "primitive_token_missing",
+			Message: fmt.Sprintf("primitive token reference $%s does not exist", path),
+		}
+	}
+	r.active[path] = len(r.stack)
+	r.stack = append(r.stack, path)
+	resolved, err := r.resolveTokenValue(value)
+	r.stack = r.stack[:len(r.stack)-1]
+	delete(r.active, path)
+	return resolved, err
+}
+
+func (r *primitiveTokenResolver) resolveTokenValue(value any) (any, error) {
+	switch typed := value.(type) {
+	case string:
+		if strings.HasPrefix(typed, "$") {
+			return r.resolveReference(strings.TrimPrefix(typed, "$"))
+		}
+		return detachCompilerJSONValue(typed)
+	case map[string]any:
+		result := make(map[string]any, len(typed))
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			child, err := r.resolveTokenValue(typed[key])
+			if err != nil {
+				return nil, err
+			}
+			result[key] = child
+		}
+		return result, nil
+	case []any:
+		result := make([]any, len(typed))
+		for index, child := range typed {
+			resolved, err := r.resolveTokenValue(child)
+			if err != nil {
+				return nil, err
+			}
+			result[index] = resolved
+		}
+		return result, nil
+	default:
+		return detachCompilerJSONValue(typed)
+	}
+}
+
+func firstCompilerTokenReference(value any) (string, bool) {
+	switch typed := value.(type) {
+	case string:
+		if strings.HasPrefix(typed, "$") {
+			return typed, true
+		}
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if reference, found := firstCompilerTokenReference(typed[key]); found {
+				return reference, true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if reference, found := firstCompilerTokenReference(child); found {
+				return reference, true
+			}
+		}
+	}
+	return "", false
 }
 
 func detachCompilerJSONValue(value any) (any, error) {

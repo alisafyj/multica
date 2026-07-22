@@ -117,6 +117,7 @@ func (c *listPageCompiler) instantiateTableRows(region BlueprintRegion, firstRow
 			}
 			request := RecipeRequest{Kind: "table-row", Variant: rowVariant, State: "default"}
 			role := "table-cell"
+			requireExactRecipe := false
 			if column.Cell == "status-tag" {
 				statusVariant, ok := column.StatusMap[value]
 				if !ok {
@@ -125,19 +126,18 @@ func (c *listPageCompiler) instantiateTableRows(region BlueprintRegion, firstRow
 				}
 				request = RecipeRequest{Kind: "status-tag", Variant: statusVariant, State: "default"}
 				role = "status-tag"
+				requireExactRecipe = true
 			}
-			_, err := c.instantiateComponent(
-				container.RootLayerID,
-				bounds,
-				request,
-				componentBindingPlan{
-					Values:      map[string]string{"label": value, "value": value},
-					RequiredAny: []string{"value", "label"},
-				},
-				role,
-				path,
-				columnLayout.Pinned,
-			)
+			bindings := componentBindingPlan{
+				Values:      map[string]string{"label": value, "value": value},
+				RequiredAny: []string{"value", "label"},
+			}
+			var err error
+			if requireExactRecipe {
+				_, err = c.instantiateExactRecipeComponent(container.RootLayerID, bounds, request, bindings, role, path, columnLayout.Pinned)
+			} else {
+				_, err = c.instantiateComponent(container.RootLayerID, bounds, request, bindings, role, path, columnLayout.Pinned)
+			}
 			if err != nil {
 				return fmt.Errorf("instantiate row %d column %q: %w", rowIndex, column.Key, err)
 			}
