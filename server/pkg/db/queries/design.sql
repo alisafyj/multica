@@ -33,8 +33,12 @@ WHERE df.workspace_id = $1
   AND NOT EXISTS (
     SELECT 1
     FROM design_template_revision dtr
-    JOIN design_revision dr ON dr.id = dtr.design_revision_id
-    WHERE dr.file_id = df.id
+    WHERE EXISTS (
+      SELECT 1
+      FROM design_revision dr
+      WHERE dr.id = dtr.design_revision_id
+        AND dr.file_id = df.id
+    )
   )
 ORDER BY updated_at DESC, created_at DESC;
 
@@ -53,8 +57,12 @@ WHERE df.workspace_id = $1
   AND NOT EXISTS (
     SELECT 1
     FROM design_template_revision dtr
-    JOIN design_revision dr ON dr.id = dtr.design_revision_id
-    WHERE dr.file_id = df.id
+    WHERE EXISTS (
+      SELECT 1
+      FROM design_revision dr
+      WHERE dr.id = dtr.design_revision_id
+        AND dr.file_id = df.id
+    )
   )
 ORDER BY updated_at DESC, created_at DESC;
 
@@ -605,15 +613,58 @@ SELECT
     t.created_by,
     t.created_at,
     t.updated_at,
-    tr.design_revision_id,
-    tr.revision_number AS template_revision_number,
-    tr.slot_schema AS slot_schema,
-    dr.file_id AS design_file_id,
-    df.title AS design_file_title
+    (
+      SELECT tr.design_revision_id
+      FROM design_template_revision tr
+      WHERE tr.id = t.current_revision_id
+    ) AS design_revision_id,
+    (
+      SELECT candidate.revision_number
+      FROM (
+        SELECT NULL::integer AS revision_number, 1 AS priority
+        UNION ALL
+        SELECT tr.revision_number, 0 AS priority
+        FROM design_template_revision tr
+        WHERE tr.id = t.current_revision_id
+      ) candidate
+      ORDER BY candidate.priority
+      LIMIT 1
+    ) AS template_revision_number,
+    (
+      SELECT tr.slot_schema
+      FROM design_template_revision tr
+      WHERE tr.id = t.current_revision_id
+    ) AS slot_schema,
+    (
+      SELECT dr.file_id
+      FROM design_revision dr
+      WHERE dr.id = (
+        SELECT tr.design_revision_id
+        FROM design_template_revision tr
+        WHERE tr.id = t.current_revision_id
+      )
+    ) AS design_file_id,
+    (
+      SELECT candidate.title
+      FROM (
+        SELECT NULL::text AS title, 1 AS priority
+        UNION ALL
+        SELECT df.title, 0 AS priority
+        FROM design_file df
+        WHERE df.id = (
+          SELECT dr.file_id
+          FROM design_revision dr
+          WHERE dr.id = (
+            SELECT tr.design_revision_id
+            FROM design_template_revision tr
+            WHERE tr.id = t.current_revision_id
+          )
+        )
+      ) candidate
+      ORDER BY candidate.priority
+      LIMIT 1
+    ) AS design_file_title
 FROM design_catalog_template t
-LEFT JOIN design_template_revision tr ON tr.id = t.current_revision_id
-LEFT JOIN design_revision dr ON dr.id = tr.design_revision_id
-LEFT JOIN design_file df ON df.id = dr.file_id
 WHERE t.workspace_id = $1
   AND ($2::uuid IS NULL OR t.library_id = $2)
   AND ($3::text = '' OR t.category = $3)
@@ -633,15 +684,58 @@ SELECT
     t.created_by,
     t.created_at,
     t.updated_at,
-    tr.design_revision_id,
-    tr.revision_number AS template_revision_number,
-    tr.slot_schema AS slot_schema,
-    dr.file_id AS design_file_id,
-    df.title AS design_file_title
+    (
+      SELECT tr.design_revision_id
+      FROM design_template_revision tr
+      WHERE tr.id = t.current_revision_id
+    ) AS design_revision_id,
+    (
+      SELECT candidate.revision_number
+      FROM (
+        SELECT NULL::integer AS revision_number, 1 AS priority
+        UNION ALL
+        SELECT tr.revision_number, 0 AS priority
+        FROM design_template_revision tr
+        WHERE tr.id = t.current_revision_id
+      ) candidate
+      ORDER BY candidate.priority
+      LIMIT 1
+    ) AS template_revision_number,
+    (
+      SELECT tr.slot_schema
+      FROM design_template_revision tr
+      WHERE tr.id = t.current_revision_id
+    ) AS slot_schema,
+    (
+      SELECT dr.file_id
+      FROM design_revision dr
+      WHERE dr.id = (
+        SELECT tr.design_revision_id
+        FROM design_template_revision tr
+        WHERE tr.id = t.current_revision_id
+      )
+    ) AS design_file_id,
+    (
+      SELECT candidate.title
+      FROM (
+        SELECT NULL::text AS title, 1 AS priority
+        UNION ALL
+        SELECT df.title, 0 AS priority
+        FROM design_file df
+        WHERE df.id = (
+          SELECT dr.file_id
+          FROM design_revision dr
+          WHERE dr.id = (
+            SELECT tr.design_revision_id
+            FROM design_template_revision tr
+            WHERE tr.id = t.current_revision_id
+          )
+        )
+      ) candidate
+      ORDER BY candidate.priority
+      LIMIT 1
+    ) AS design_file_title
 FROM design_catalog_template t
-LEFT JOIN design_template_revision tr ON tr.id = t.current_revision_id
-LEFT JOIN design_revision dr ON dr.id = tr.design_revision_id
-LEFT JOIN design_file df ON df.id = dr.file_id
 WHERE t.id = $1 AND t.workspace_id = $2;
 
 -- Semantic design generation assets
