@@ -1,0 +1,1158 @@
+package handler
+
+import (
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/url"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
+	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+)
+
+const (
+	maxProjectDesignSystemReferences    = 20
+	maxProjectDesignSystemSnapshotBytes = 512 << 10
+)
+
+type ProjectDesignSystemReferenceInput struct {
+	Kind                  string `json:"kind"`
+	AttachmentID          string `json:"attachment_id,omitempty"`
+	DesignFileID          string `json:"design_file_id,omitempty"`
+	DesignSystemProfileID string `json:"design_system_profile_id,omitempty"`
+	Value                 string `json:"value,omitempty"`
+	Label                 string `json:"label,omitempty"`
+}
+
+type CreateProjectDesignSystemRequest struct {
+	ProjectID  string                              `json:"project_id"`
+	AgentID    string                              `json:"agent_id"`
+	Platform   string                              `json:"platform"`
+	Brief      string                              `json:"brief"`
+	References []ProjectDesignSystemReferenceInput `json:"references"`
+}
+
+type ProjectDesignSystemScope struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id,omitempty"`
+}
+
+type AdjustProjectDesignSystemRequest struct {
+	AgentID     string                   `json:"agent_id"`
+	Instruction string                   `json:"instruction"`
+	Scope       ProjectDesignSystemScope `json:"scope"`
+}
+
+type RegenerateProjectDesignSystemRequest struct {
+	AgentID    string                               `json:"agent_id"`
+	Platform   *string                              `json:"platform,omitempty"`
+	Brief      *string                              `json:"brief,omitempty"`
+	References *[]ProjectDesignSystemReferenceInput `json:"references,omitempty"`
+}
+
+type ProjectDesignSystemContentResponse struct {
+	Sections    []projectdesignsystem.Section    `json:"sections"`
+	TokenGroups []projectdesignsystem.TokenGroup `json:"token_groups"`
+	PreviewHTML string                           `json:"preview_html"`
+	Locators    []projectdesignsystem.Locator    `json:"locators"`
+}
+
+type ProjectDesignSystemTaskResponse struct {
+	ID          string  `json:"id"`
+	AgentID     string  `json:"agent_id"`
+	Status      string  `json:"status"`
+	Operation   string  `json:"operation"`
+	Error       *string `json:"error,omitempty"`
+	CreatedAt   string  `json:"created_at"`
+	StartedAt   *string `json:"started_at,omitempty"`
+	CompletedAt *string `json:"completed_at,omitempty"`
+}
+
+type ProjectDesignSystemResponse struct {
+	ID                string                             `json:"id,omitempty"`
+	WorkspaceID       string                             `json:"workspace_id"`
+	ProjectID         string                             `json:"project_id"`
+	Name              string                             `json:"name,omitempty"`
+	Platform          string                             `json:"platform,omitempty"`
+	CurrentAgentID    *string                            `json:"current_agent_id,omitempty"`
+	Status            string                             `json:"status"`
+	ActiveTask        *ProjectDesignSystemTaskResponse   `json:"active_task"`
+	InputSnapshot     json.RawMessage                    `json:"input_snapshot"`
+	Content           ProjectDesignSystemContentResponse `json:"content"`
+	HasUnsavedChanges bool                               `json:"has_unsaved_changes"`
+	LastError         json.RawMessage                    `json:"last_error"`
+	Activity          []ProjectDesignSystemTaskResponse  `json:"activity"`
+	CreatedAt         string                             `json:"created_at,omitempty"`
+	UpdatedAt         string                             `json:"updated_at,omitempty"`
+	SavedAt           *string                            `json:"saved_at,omitempty"`
+}
+
+type projectDesignSystemInputSnapshot struct {
+	AgentID    string                                 `json:"agent_id"`
+	Platform   string                                 `json:"platform"`
+	Brief      string                                 `json:"brief"`
+	References []projectDesignSystemReferenceSnapshot `json:"references"`
+}
+
+type projectDesignSystemReferenceSnapshot struct {
+	Kind              string           `json:"kind"`
+	AttachmentID      string           `json:"attachment_id,omitempty"`
+	DesignFileID      string           `json:"design_file_id,omitempty"`
+	ProfileID         string           `json:"design_system_profile_id,omitempty"`
+	Label             string           `json:"label,omitempty"`
+	Value             string           `json:"value,omitempty"`
+	Filename          string           `json:"filename,omitempty"`
+	ContentType       string           `json:"content_type,omitempty"`
+	URL               string           `json:"url,omitempty"`
+	Title             string           `json:"title,omitempty"`
+	ThumbnailURL      string           `json:"thumbnail_url,omitempty"`
+	CurrentRevisionID string           `json:"current_revision_id,omitempty"`
+	SourceRevisionID  string           `json:"source_revision_id,omitempty"`
+	Frames            []map[string]any `json:"frames,omitempty"`
+	Profile           json.RawMessage  `json:"profile,omitempty"`
+}
+
+type projectDesignSystemRequestError struct {
+	status  int
+	code    string
+	message string
+}
+
+func (e *projectDesignSystemRequestError) Error() string { return e.message }
+
+func (h *Handler) CreateProjectDesignSystem(w http.ResponseWriter, r *http.Request) {
+	var req CreateProjectDesignSystemRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+		return
+	}
+	req.ProjectID = strings.TrimSpace(req.ProjectID)
+	req.AgentID = strings.TrimSpace(req.AgentID)
+	req.Platform = strings.TrimSpace(req.Platform)
+	req.Brief = strings.TrimSpace(req.Brief)
+	if req.ProjectID == "" {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "project_id_required", "project_id is required")
+		return
+	}
+	if req.AgentID == "" {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "agent_id_required", "agent_id is required")
+		return
+	}
+	if req.Platform == "" {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "platform_required", "platform is required")
+		return
+	}
+	if !validProjectDesignSystemPlatform(req.Platform) {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "platform_invalid", "platform must be web, mobile, or cross_platform")
+		return
+	}
+	if req.Brief == "" {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "brief_required", "brief is required")
+		return
+	}
+
+	workspaceUUID, requesterUUID, ok := h.projectDesignSystemRequestScope(w, r)
+	if !ok {
+		return
+	}
+	projectUUID, ok := parseUUIDOrBadRequest(w, req.ProjectID, "project_id")
+	if !ok {
+		return
+	}
+	agentUUID, ok := parseUUIDOrBadRequest(w, req.AgentID, "agent_id")
+	if !ok {
+		return
+	}
+
+	references, err := h.resolveProjectDesignSystemReferences(r.Context(), workspaceUUID, projectUUID, req.References)
+	if err != nil {
+		writeProjectDesignSystemRequestError(w, err)
+		return
+	}
+	input := projectDesignSystemInputSnapshot{
+		AgentID:    req.AgentID,
+		Platform:   req.Platform,
+		Brief:      req.Brief,
+		References: references,
+	}
+	inputJSON, err := json.Marshal(input)
+	if err != nil || len(inputJSON) > maxProjectDesignSystemSnapshotBytes {
+		writeProjectDesignSystemError(w, http.StatusRequestEntityTooLarge, "input_snapshot_too_large", "design system inputs exceed the size limit")
+		return
+	}
+
+	system, task, err := h.createProjectDesignSystemTask(r.Context(), workspaceUUID, requesterUUID, projectUUID, agentUUID, input, inputJSON)
+	if err != nil {
+		writeProjectDesignSystemRequestError(w, err)
+		return
+	}
+	h.TaskService.NotifyTaskEnqueued(r.Context(), task)
+
+	response, err := h.projectDesignSystemResponse(r.Context(), system)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "response_failed", "failed to build project design system response")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, response)
+}
+
+func (h *Handler) GetProjectDesignSystemByProject(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.projectDesignSystemRequestScope(w, r)
+	if !ok {
+		return
+	}
+	projectID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("project_id")), "project_id")
+	if !ok {
+		return
+	}
+	if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: projectID, WorkspaceID: workspaceID}); err != nil {
+		writeProjectDesignSystemError(w, http.StatusNotFound, "project_not_found", "project not found")
+		return
+	}
+	system, err := h.Queries.GetProjectDesignSystemByProject(r.Context(), db.GetProjectDesignSystemByProjectParams{
+		WorkspaceID: workspaceID,
+		ProjectID:   projectID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusOK, emptyProjectDesignSystemResponse(workspaceID, projectID))
+		return
+	}
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "lookup_failed", "failed to load project design system")
+		return
+	}
+	response, err := h.projectDesignSystemResponse(r.Context(), system)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "response_failed", "failed to build project design system response")
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (h *Handler) GetProjectDesignSystem(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.projectDesignSystemRequestScope(w, r)
+	if !ok {
+		return
+	}
+	system, ok := h.loadProjectDesignSystemForRequest(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	response, err := h.projectDesignSystemResponse(r.Context(), system)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "response_failed", "failed to build project design system response")
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (h *Handler) AdjustProjectDesignSystem(w http.ResponseWriter, r *http.Request) {
+	workspaceID, requesterID, ok := h.projectDesignSystemRequestScope(w, r)
+	if !ok {
+		return
+	}
+	system, ok := h.loadProjectDesignSystemForRequest(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	var req AdjustProjectDesignSystemRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+		return
+	}
+	req.AgentID = strings.TrimSpace(req.AgentID)
+	req.Instruction = strings.TrimSpace(req.Instruction)
+	req.Scope.Kind = strings.TrimSpace(req.Scope.Kind)
+	req.Scope.ID = strings.TrimSpace(req.Scope.ID)
+	if req.AgentID == "" {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "agent_id_required", "agent_id is required")
+		return
+	}
+	if req.Instruction == "" {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "instruction_required", "instruction is required")
+		return
+	}
+	if req.Scope.Kind == "" {
+		req.Scope.Kind = "all"
+	}
+	agentID, ok := parseUUIDOrBadRequest(w, req.AgentID, "agent_id")
+	if !ok {
+		return
+	}
+	input, inputJSON, err := decodeProjectDesignSystemInput(system.InputSnapshot)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusUnprocessableEntity, "input_snapshot_invalid", "stored design system inputs are invalid")
+		return
+	}
+	scopeJSON, err := json.Marshal(req.Scope)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "scope_invalid", "scope is invalid")
+		return
+	}
+	updated, task, err := h.enqueueExistingProjectDesignSystemTask(
+		r.Context(), workspaceID, requesterID, system.ID, agentID, input, inputJSON,
+		service.ProjectDesignSystemAdjust, req.Instruction, scopeJSON,
+	)
+	if err != nil {
+		writeProjectDesignSystemRequestError(w, err)
+		return
+	}
+	h.TaskService.NotifyTaskEnqueued(r.Context(), task)
+	response, err := h.projectDesignSystemResponse(r.Context(), updated)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "response_failed", "failed to build project design system response")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, response)
+}
+
+func (h *Handler) RegenerateProjectDesignSystem(w http.ResponseWriter, r *http.Request) {
+	workspaceID, requesterID, ok := h.projectDesignSystemRequestScope(w, r)
+	if !ok {
+		return
+	}
+	system, ok := h.loadProjectDesignSystemForRequest(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	var req RegenerateProjectDesignSystemRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+		return
+	}
+	req.AgentID = strings.TrimSpace(req.AgentID)
+	if req.AgentID == "" {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "agent_id_required", "agent_id is required")
+		return
+	}
+	agentID, ok := parseUUIDOrBadRequest(w, req.AgentID, "agent_id")
+	if !ok {
+		return
+	}
+	input, _, err := decodeProjectDesignSystemInput(system.InputSnapshot)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusUnprocessableEntity, "input_snapshot_invalid", "stored design system inputs are invalid")
+		return
+	}
+	input.AgentID = req.AgentID
+	if req.Platform != nil {
+		input.Platform = strings.TrimSpace(*req.Platform)
+		if !validProjectDesignSystemPlatform(input.Platform) {
+			writeProjectDesignSystemError(w, http.StatusBadRequest, "platform_invalid", "platform must be web, mobile, or cross_platform")
+			return
+		}
+	}
+	if req.Brief != nil {
+		input.Brief = strings.TrimSpace(*req.Brief)
+		if input.Brief == "" {
+			writeProjectDesignSystemError(w, http.StatusBadRequest, "brief_required", "brief is required")
+			return
+		}
+	}
+	if req.References != nil {
+		input.References, err = h.resolveProjectDesignSystemReferences(r.Context(), workspaceID, system.ProjectID, *req.References)
+		if err != nil {
+			writeProjectDesignSystemRequestError(w, err)
+			return
+		}
+	}
+	inputJSON, err := json.Marshal(input)
+	if err != nil || len(inputJSON) > maxProjectDesignSystemSnapshotBytes {
+		writeProjectDesignSystemError(w, http.StatusRequestEntityTooLarge, "input_snapshot_too_large", "design system inputs exceed the size limit")
+		return
+	}
+	updated, task, err := h.enqueueExistingProjectDesignSystemTask(
+		r.Context(), workspaceID, requesterID, system.ID, agentID, input, inputJSON,
+		service.ProjectDesignSystemRegenerate, "", nil,
+	)
+	if err != nil {
+		writeProjectDesignSystemRequestError(w, err)
+		return
+	}
+	h.TaskService.NotifyTaskEnqueued(r.Context(), task)
+	response, err := h.projectDesignSystemResponse(r.Context(), updated)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "response_failed", "failed to build project design system response")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, response)
+}
+
+func (h *Handler) SaveProjectDesignSystem(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.projectDesignSystemRequestScope(w, r)
+	if !ok {
+		return
+	}
+	system, ok := h.loadProjectDesignSystemForRequest(w, r, workspaceID)
+	if !ok {
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "transaction_failed", "failed to start save")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	queries := h.Queries.WithTx(tx)
+	if _, err := queries.LockProjectInWorkspaceForUpdate(r.Context(), db.LockProjectInWorkspaceForUpdateParams{ID: system.ProjectID, WorkspaceID: workspaceID}); err != nil {
+		writeProjectDesignSystemError(w, http.StatusNotFound, "project_design_system_not_found", "project design system not found")
+		return
+	}
+	system, err = queries.GetProjectDesignSystemInWorkspace(r.Context(), db.GetProjectDesignSystemInWorkspaceParams{ID: system.ID, WorkspaceID: workspaceID})
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusNotFound, "project_design_system_not_found", "project design system not found")
+		return
+	}
+	if system.ActiveTaskID.Valid {
+		writeProjectDesignSystemError(w, http.StatusConflict, "operation_in_progress", "design system generation is still in progress")
+		return
+	}
+	draft, err := queries.GetProjectDesignSystemPackageBySlot(r.Context(), db.GetProjectDesignSystemPackageBySlotParams{DesignSystemID: system.ID, Slot: "draft", WorkspaceID: workspaceID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeProjectDesignSystemError(w, http.StatusConflict, "draft_required", "a validated draft is required")
+		return
+	}
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "draft_lookup_failed", "failed to load draft")
+		return
+	}
+	if !validStoredProjectDesignSystemPackage(draft, h.projectDesignSystemAllowedHosts()) {
+		writeProjectDesignSystemError(w, http.StatusUnprocessableEntity, "draft_invalid", "draft has not passed validation")
+		return
+	}
+	if _, err := queries.SaveProjectDesignSystemDraft(r.Context(), db.SaveProjectDesignSystemDraftParams{DesignSystemID: system.ID, WorkspaceID: workspaceID}); err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "save_failed", "failed to save draft")
+		return
+	}
+	if err := queries.DeleteProjectDesignSystemPackageSlot(r.Context(), db.DeleteProjectDesignSystemPackageSlotParams{DesignSystemID: system.ID, Slot: "draft", WorkspaceID: workspaceID}); err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "save_failed", "failed to clear saved draft")
+		return
+	}
+	system, err = queries.MarkProjectDesignSystemSaved(r.Context(), db.MarkProjectDesignSystemSavedParams{ID: system.ID, WorkspaceID: workspaceID})
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "save_failed", "failed to mark design system saved")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "save_failed", "failed to commit saved design system")
+		return
+	}
+	response, err := h.projectDesignSystemResponse(r.Context(), system)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "response_failed", "failed to build project design system response")
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (h *Handler) createProjectDesignSystemTask(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	requesterID pgtype.UUID,
+	projectID pgtype.UUID,
+	agentID pgtype.UUID,
+	input projectDesignSystemInputSnapshot,
+	inputJSON []byte,
+) (db.ProjectDesignSystem, db.AgentTaskQueue, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("transaction_failed", "failed to start design system generation")
+	}
+	defer tx.Rollback(ctx)
+	queries := h.Queries.WithTx(tx)
+
+	if _, err := queries.LockProjectInWorkspaceForUpdate(ctx, db.LockProjectInWorkspaceForUpdateParams{ID: projectID, WorkspaceID: workspaceID}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_not_found", message: "project not found"}
+		}
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("project_lock_failed", "failed to lock project")
+	}
+	project, err := queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: projectID, WorkspaceID: workspaceID})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_not_found", message: "project not found"}
+	}
+	if _, err := queries.GetProjectDesignSystemByProject(ctx, db.GetProjectDesignSystemByProjectParams{WorkspaceID: workspaceID, ProjectID: projectID}); err == nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "project_design_system_exists", message: "project already has a design system"}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("lookup_failed", "failed to check project design system")
+	}
+
+	system, err := queries.CreateProjectDesignSystem(ctx, db.CreateProjectDesignSystemParams{
+		WorkspaceID:    workspaceID,
+		ProjectID:      projectID,
+		Name:           project.Title,
+		Platform:       input.Platform,
+		CurrentAgentID: agentID,
+		InputSnapshot:  inputJSON,
+		CreatedBy:      requesterID,
+	})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("create_failed", "failed to create project design system")
+	}
+
+	agent, err := queries.GetAgent(ctx, agentID)
+	if err != nil || agent.WorkspaceID != workspaceID {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
+	}
+	ready, reason, err := service.AgentReadiness(ctx, queries, agent)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
+	}
+	if !ready {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: reason}
+	}
+
+	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agentID, input, service.ProjectDesignSystemGenerate, nil, "", nil)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
+	}
+	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{
+		AgentID:   agent.ID,
+		RuntimeID: agent.RuntimeID,
+		Priority:  0,
+		Context:   contextJSON,
+	})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("enqueue_failed", "failed to enqueue design system generation")
+	}
+	system, err = queries.UpdateProjectDesignSystemInputAndTask(ctx, db.UpdateProjectDesignSystemInputAndTaskParams{
+		Platform:        input.Platform,
+		CurrentAgentID:  agent.ID,
+		ActiveTaskID:    task.ID,
+		ActiveOperation: pgtype.Text{String: string(service.ProjectDesignSystemGenerate), Valid: true},
+		InputSnapshot:   inputJSON,
+		ID:              system.ID,
+		WorkspaceID:     workspaceID,
+	})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("state_failed", "failed to record design system generation")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("commit_failed", "failed to commit design system generation")
+	}
+	return system, task, nil
+}
+
+func (h *Handler) enqueueExistingProjectDesignSystemTask(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	requesterID pgtype.UUID,
+	designSystemID pgtype.UUID,
+	agentID pgtype.UUID,
+	input projectDesignSystemInputSnapshot,
+	inputJSON []byte,
+	operation service.ProjectDesignSystemOperation,
+	instruction string,
+	scopeJSON json.RawMessage,
+) (db.ProjectDesignSystem, db.AgentTaskQueue, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("transaction_failed", "failed to start design system operation")
+	}
+	defer tx.Rollback(ctx)
+	queries := h.Queries.WithTx(tx)
+
+	system, err := queries.GetProjectDesignSystemInWorkspace(ctx, db.GetProjectDesignSystemInWorkspaceParams{ID: designSystemID, WorkspaceID: workspaceID})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_design_system_not_found", message: "project design system not found"}
+	}
+	if _, err := queries.LockProjectInWorkspaceForUpdate(ctx, db.LockProjectInWorkspaceForUpdateParams{ID: system.ProjectID, WorkspaceID: workspaceID}); err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_design_system_not_found", message: "project design system not found"}
+	}
+	system, err = queries.GetProjectDesignSystemInWorkspace(ctx, db.GetProjectDesignSystemInWorkspaceParams{ID: designSystemID, WorkspaceID: workspaceID})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_design_system_not_found", message: "project design system not found"}
+	}
+	if system.ActiveTaskID.Valid {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "operation_in_progress", message: "another design system operation is in progress"}
+	}
+	project, err := queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: system.ProjectID, WorkspaceID: workspaceID})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_not_found", message: "project not found"}
+	}
+
+	basePackage, validatedBase, err := loadProjectDesignSystemBasePackage(ctx, queries, system, h.projectDesignSystemAllowedHosts())
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, err
+	}
+	if operation == service.ProjectDesignSystemAdjust {
+		if basePackage == nil {
+			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "base_package_required", message: "a valid design system package is required for adjustment"}
+		}
+		var scope ProjectDesignSystemScope
+		if len(scopeJSON) == 0 || json.Unmarshal(scopeJSON, &scope) != nil {
+			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "scope_invalid", message: "scope is invalid"}
+		}
+		if err := validateProjectDesignSystemScope(scope, validatedBase.Manifest); err != nil {
+			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, err
+		}
+	}
+
+	agent, err := queries.GetAgent(ctx, agentID)
+	if err != nil || agent.WorkspaceID != workspaceID {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
+	}
+	ready, reason, err := service.AgentReadiness(ctx, queries, agent)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
+	}
+	if !ready {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: reason}
+	}
+
+	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agent.ID, input, operation, basePackage, instruction, scopeJSON)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
+	}
+	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("enqueue_failed", "failed to enqueue design system operation")
+	}
+	system, err = queries.UpdateProjectDesignSystemInputAndTask(ctx, db.UpdateProjectDesignSystemInputAndTaskParams{
+		Platform:        input.Platform,
+		CurrentAgentID:  agent.ID,
+		ActiveTaskID:    task.ID,
+		ActiveOperation: pgtype.Text{String: string(operation), Valid: true},
+		InputSnapshot:   inputJSON,
+		ID:              system.ID,
+		WorkspaceID:     workspaceID,
+	})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("state_failed", "failed to record design system operation")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("commit_failed", "failed to commit design system operation")
+	}
+	return system, task, nil
+}
+
+func loadProjectDesignSystemBasePackage(
+	ctx context.Context,
+	queries *db.Queries,
+	system db.ProjectDesignSystem,
+	allowedHosts []string,
+) (json.RawMessage, projectdesignsystem.ValidatedPackage, error) {
+	var selected db.ProjectDesignSystemPackage
+	found := false
+	for _, slot := range []string{"draft", "saved"} {
+		pkg, err := queries.GetProjectDesignSystemPackageBySlot(ctx, db.GetProjectDesignSystemPackageBySlotParams{
+			DesignSystemID: system.ID,
+			Slot:           slot,
+			WorkspaceID:    system.WorkspaceID,
+		})
+		if err == nil {
+			selected = pkg
+			found = true
+			break
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, projectdesignsystem.ValidatedPackage{}, projectDesignSystemInternalError("package_lookup_failed", "failed to load current design system package")
+		}
+	}
+	if !found {
+		return nil, projectdesignsystem.ValidatedPackage{}, nil
+	}
+	validated, err := projectdesignsystem.Validate(projectdesignsystem.ArtifactInput{
+		DesignMD:       selected.DesignMd,
+		TokensCSS:      selected.TokensCss,
+		ComponentsHTML: selected.ComponentsHtml,
+	}, allowedHosts)
+	if err != nil {
+		return nil, projectdesignsystem.ValidatedPackage{}, &projectDesignSystemRequestError{status: http.StatusUnprocessableEntity, code: "base_package_invalid", message: "current design system package is invalid"}
+	}
+	payload, err := json.Marshal(map[string]any{
+		"design_md":        selected.DesignMd,
+		"tokens_css":       selected.TokensCss,
+		"components_html":  selected.ComponentsHtml,
+		"manifest":         validJSONOr(selected.Manifest, json.RawMessage(`{}`)),
+		"validation":       validJSONOr(selected.Validation, json.RawMessage(`{}`)),
+		"integrity_sha256": selected.IntegritySha256,
+	})
+	if err != nil {
+		return nil, projectdesignsystem.ValidatedPackage{}, projectDesignSystemInternalError("package_context_failed", "failed to snapshot current design system package")
+	}
+	return payload, validated, nil
+}
+
+func validateProjectDesignSystemScope(scope ProjectDesignSystemScope, manifest projectdesignsystem.Manifest) error {
+	switch scope.Kind {
+	case "all":
+		if scope.ID != "" {
+			return &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "scope_invalid", message: "all scope cannot include an id"}
+		}
+		return nil
+	case "section":
+		for _, section := range manifest.Sections {
+			if section.ID == scope.ID {
+				return nil
+			}
+		}
+	case "token_group":
+		for _, group := range manifest.TokenGroups {
+			if group.ID == scope.ID {
+				return nil
+			}
+		}
+	case "component", "block":
+		for _, locator := range manifest.Locators {
+			if locator.ID == scope.ID && locator.Kind == scope.Kind {
+				return nil
+			}
+		}
+	default:
+		return &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "scope_invalid", message: "unsupported scope kind"}
+	}
+	if scope.ID == "" {
+		return &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "scope_invalid", message: "scope id is required"}
+	}
+	return &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "scope_not_found", message: "scope does not exist in the current design system"}
+}
+
+func decodeProjectDesignSystemInput(raw []byte) (projectDesignSystemInputSnapshot, []byte, error) {
+	var input projectDesignSystemInputSnapshot
+	if len(raw) == 0 || json.Unmarshal(raw, &input) != nil || input.AgentID == "" || !validProjectDesignSystemPlatform(input.Platform) || strings.TrimSpace(input.Brief) == "" {
+		return projectDesignSystemInputSnapshot{}, nil, errors.New("invalid project design system input snapshot")
+	}
+	if input.References == nil {
+		input.References = []projectDesignSystemReferenceSnapshot{}
+	}
+	normalized, err := json.Marshal(input)
+	if err != nil {
+		return projectDesignSystemInputSnapshot{}, nil, err
+	}
+	return input, normalized, nil
+}
+
+func validStoredProjectDesignSystemPackage(pkg db.ProjectDesignSystemPackage, allowedHosts []string) bool {
+	var stored projectdesignsystem.ValidationReport
+	if len(pkg.Validation) == 0 || json.Unmarshal(pkg.Validation, &stored) != nil || !stored.Passed {
+		return false
+	}
+	validated, err := projectdesignsystem.Validate(projectdesignsystem.ArtifactInput{
+		DesignMD:       pkg.DesignMd,
+		TokensCSS:      pkg.TokensCss,
+		ComponentsHTML: pkg.ComponentsHtml,
+	}, allowedHosts)
+	return err == nil && validated.Validation.Passed && validated.Manifest.Digest == pkg.IntegritySha256
+}
+
+func marshalProjectDesignSystemTaskContext(
+	system db.ProjectDesignSystem,
+	project db.Project,
+	requesterID pgtype.UUID,
+	agentID pgtype.UUID,
+	input projectDesignSystemInputSnapshot,
+	operation service.ProjectDesignSystemOperation,
+	basePackage json.RawMessage,
+	instruction string,
+	scope json.RawMessage,
+) ([]byte, error) {
+	projectJSON, err := json.Marshal(map[string]any{
+		"id":          uuidToString(project.ID),
+		"name":        project.Title,
+		"description": textToString(project.Description),
+	})
+	if err != nil {
+		return nil, err
+	}
+	referencesJSON, err := json.Marshal(input.References)
+	if err != nil {
+		return nil, err
+	}
+	outputPolicy, err := json.Marshal(map[string]any{
+		"required_artifacts":  []string{"DESIGN.md", "tokens.css", "components.html"},
+		"user_brief_priority": "highest",
+		"scripts_allowed":     false,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(service.ProjectDesignSystemTaskContext{
+		Type:                  service.ProjectDesignSystemTaskContextType,
+		Operation:             operation,
+		RequesterID:           uuidToString(requesterID),
+		WorkspaceID:           uuidToString(system.WorkspaceID),
+		ProjectID:             uuidToString(system.ProjectID),
+		ProjectDesignSystemID: uuidToString(system.ID),
+		AgentID:               uuidToString(agentID),
+		Project:               projectJSON,
+		Platform:              input.Platform,
+		Brief:                 input.Brief,
+		References:            referencesJSON,
+		BasePackage:           basePackage,
+		Instruction:           instruction,
+		Scope:                 scope,
+		OutputPolicy:          outputPolicy,
+	})
+}
+
+func (h *Handler) projectDesignSystemRequestScope(w http.ResponseWriter, r *http.Request) (pgtype.UUID, pgtype.UUID, bool) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return pgtype.UUID{}, pgtype.UUID{}, false
+	}
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return pgtype.UUID{}, pgtype.UUID{}, false
+	}
+	return workspaceUUID, member.UserID, true
+}
+
+func (h *Handler) loadProjectDesignSystemForRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	workspaceID pgtype.UUID,
+) (db.ProjectDesignSystem, bool) {
+	systemID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "project_design_system_id")
+	if !ok {
+		return db.ProjectDesignSystem{}, false
+	}
+	system, err := h.Queries.GetProjectDesignSystemInWorkspace(r.Context(), db.GetProjectDesignSystemInWorkspaceParams{
+		ID:          systemID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusNotFound, "project_design_system_not_found", "project design system not found")
+		return db.ProjectDesignSystem{}, false
+	}
+	return system, true
+}
+
+func emptyProjectDesignSystemResponse(workspaceID pgtype.UUID, projectID pgtype.UUID) ProjectDesignSystemResponse {
+	return ProjectDesignSystemResponse{
+		WorkspaceID:   uuidToString(workspaceID),
+		ProjectID:     uuidToString(projectID),
+		Status:        "unestablished",
+		InputSnapshot: json.RawMessage(`{}`),
+		Content: ProjectDesignSystemContentResponse{
+			Sections:    []projectdesignsystem.Section{},
+			TokenGroups: []projectdesignsystem.TokenGroup{},
+			Locators:    []projectdesignsystem.Locator{},
+		},
+		LastError: json.RawMessage(`null`),
+		Activity:  []ProjectDesignSystemTaskResponse{},
+	}
+}
+
+func (h *Handler) resolveProjectDesignSystemReferences(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	projectID pgtype.UUID,
+	inputs []ProjectDesignSystemReferenceInput,
+) ([]projectDesignSystemReferenceSnapshot, error) {
+	if len(inputs) > maxProjectDesignSystemReferences {
+		return nil, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "too_many_references", message: "no more than 20 references are allowed"}
+	}
+	result := make([]projectDesignSystemReferenceSnapshot, 0, len(inputs))
+	for _, input := range inputs {
+		input.Kind = strings.TrimSpace(input.Kind)
+		input.Label = strings.TrimSpace(input.Label)
+		switch input.Kind {
+		case "attachment":
+			attachmentID, err := util.ParseUUID(strings.TrimSpace(input.AttachmentID))
+			if err != nil {
+				return nil, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "reference_invalid", message: "attachment_id is invalid"}
+			}
+			attachment, err := h.Queries.GetAttachment(ctx, db.GetAttachmentParams{ID: attachmentID, WorkspaceID: workspaceID})
+			if err != nil {
+				return nil, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "reference_not_found", message: "attachment not found"}
+			}
+			if attachment.IssueID.Valid {
+				issue, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: attachment.IssueID, WorkspaceID: workspaceID})
+				if err != nil || !issue.ProjectID.Valid || issue.ProjectID != projectID {
+					return nil, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "reference_not_found", message: "attachment does not belong to this project"}
+				}
+			}
+			result = append(result, projectDesignSystemReferenceSnapshot{
+				Kind:         input.Kind,
+				AttachmentID: input.AttachmentID,
+				Label:        input.Label,
+				Filename:     attachment.Filename,
+				ContentType:  attachment.ContentType,
+				URL:          attachment.Url,
+			})
+		case "brand_color":
+			color, err := normalizeProjectDesignSystemColor(input.Value)
+			if err != nil {
+				return nil, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "reference_invalid", message: err.Error()}
+			}
+			result = append(result, projectDesignSystemReferenceSnapshot{Kind: input.Kind, Label: input.Label, Value: color})
+		case "link":
+			parsed, err := url.Parse(strings.TrimSpace(input.Value))
+			if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+				return nil, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "reference_invalid", message: "reference link must be an HTTPS URL"}
+			}
+			result = append(result, projectDesignSystemReferenceSnapshot{Kind: input.Kind, Label: input.Label, URL: parsed.String()})
+		case "design_file":
+			fileID, err := util.ParseUUID(strings.TrimSpace(input.DesignFileID))
+			if err != nil {
+				return nil, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "reference_invalid", message: "design_file_id is invalid"}
+			}
+			file, err := h.Queries.GetDesignFileInWorkspace(ctx, db.GetDesignFileInWorkspaceParams{ID: fileID, WorkspaceID: workspaceID})
+			if err != nil || !file.ProjectID.Valid || file.ProjectID != projectID || !file.CurrentRevisionID.Valid {
+				return nil, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "reference_not_found", message: "design file not found in this project"}
+			}
+			revision, err := h.Queries.GetDesignRevisionInWorkspace(ctx, db.GetDesignRevisionInWorkspaceParams{ID: file.CurrentRevisionID, WorkspaceID: workspaceID})
+			if err != nil || revision.FileID != file.ID {
+				return nil, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "reference_not_found", message: "design file revision not found"}
+			}
+			frames, err := projectDesignSystemFrameReferences(revision.NativeJson)
+			if err != nil {
+				return nil, &projectDesignSystemRequestError{status: http.StatusUnprocessableEntity, code: "reference_invalid", message: "design file content is invalid"}
+			}
+			thumbnail := ""
+			if value := thumbnailFromNativeJSON(revision.NativeJson); value != nil && strings.HasPrefix(*value, "https://") {
+				thumbnail = *value
+			}
+			result = append(result, projectDesignSystemReferenceSnapshot{
+				Kind:              input.Kind,
+				DesignFileID:      input.DesignFileID,
+				Label:             input.Label,
+				Title:             file.Title,
+				ThumbnailURL:      thumbnail,
+				CurrentRevisionID: uuidToString(file.CurrentRevisionID),
+				Frames:            frames,
+			})
+		case "design_system_profile":
+			profileID, err := util.ParseUUID(strings.TrimSpace(input.DesignSystemProfileID))
+			if err != nil {
+				return nil, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "reference_invalid", message: "design_system_profile_id is invalid"}
+			}
+			profile, err := h.Queries.GetDesignSystemProfileInWorkspace(ctx, db.GetDesignSystemProfileInWorkspaceParams{ID: profileID, WorkspaceID: workspaceID})
+			if err != nil || !profile.ProjectID.Valid || profile.ProjectID != projectID {
+				return nil, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "reference_not_found", message: "UI specification not found in this project"}
+			}
+			result = append(result, projectDesignSystemReferenceSnapshot{
+				Kind:             input.Kind,
+				ProfileID:        input.DesignSystemProfileID,
+				Label:            input.Label,
+				Title:            profile.Name,
+				SourceRevisionID: uuidToString(profile.SourceRevisionID),
+				Profile:          validJSONOr(profile.ProfileJson, json.RawMessage(`{}`)),
+			})
+		default:
+			return nil, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "reference_kind_invalid", message: "unsupported reference kind"}
+		}
+	}
+	return result, nil
+}
+
+func projectDesignSystemFrameReferences(raw []byte) ([]map[string]any, error) {
+	var document struct {
+		Frames []struct {
+			ID               string `json:"id"`
+			Name             string `json:"name"`
+			PreviewAssetID   string `json:"previewAssetId"`
+			ThumbnailAssetID string `json:"thumbnailAssetId"`
+			PreviewURL       string `json:"previewUrl"`
+			ThumbnailURL     string `json:"thumbnailUrl"`
+		} `json:"frames"`
+		Assets map[string]struct {
+			URL string `json:"url"`
+		} `json:"assets"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return nil, err
+	}
+	frames := make([]map[string]any, 0, len(document.Frames))
+	for _, frame := range document.Frames {
+		previewURL := ""
+		for _, assetID := range []string{frame.PreviewAssetID, frame.ThumbnailAssetID} {
+			if asset, ok := document.Assets[assetID]; ok && strings.HasPrefix(asset.URL, "https://") {
+				previewURL = asset.URL
+				break
+			}
+		}
+		if previewURL == "" {
+			for _, candidate := range []string{frame.PreviewURL, frame.ThumbnailURL} {
+				if strings.HasPrefix(candidate, "https://") {
+					previewURL = candidate
+					break
+				}
+			}
+		}
+		item := map[string]any{"id": frame.ID, "name": frame.Name}
+		if previewURL != "" {
+			item["preview_url"] = previewURL
+		}
+		frames = append(frames, item)
+	}
+	return frames, nil
+}
+
+func normalizeProjectDesignSystemColor(raw string) (string, error) {
+	value := strings.TrimSpace(strings.TrimPrefix(raw, "#"))
+	if len(value) == 3 {
+		value = string([]byte{value[0], value[0], value[1], value[1], value[2], value[2]})
+	}
+	if len(value) != 6 {
+		return "", errors.New("brand color must be #RGB or #RRGGBB")
+	}
+	decoded, err := hex.DecodeString(value)
+	if err != nil || len(decoded) != 3 {
+		return "", errors.New("brand color must be #RGB or #RRGGBB")
+	}
+	return "#" + strings.ToUpper(value), nil
+}
+
+func validProjectDesignSystemPlatform(value string) bool {
+	return value == "web" || value == "mobile" || value == "cross_platform"
+}
+
+func (h *Handler) projectDesignSystemResponse(ctx context.Context, system db.ProjectDesignSystem) (ProjectDesignSystemResponse, error) {
+	response := ProjectDesignSystemResponse{
+		ID:             uuidToString(system.ID),
+		WorkspaceID:    uuidToString(system.WorkspaceID),
+		ProjectID:      uuidToString(system.ProjectID),
+		Name:           system.Name,
+		Platform:       system.Platform,
+		CurrentAgentID: uuidToPtr(system.CurrentAgentID),
+		Status:         "unestablished",
+		InputSnapshot:  validJSONOr(system.InputSnapshot, json.RawMessage(`{}`)),
+		Content: ProjectDesignSystemContentResponse{
+			Sections:    []projectdesignsystem.Section{},
+			TokenGroups: []projectdesignsystem.TokenGroup{},
+			Locators:    []projectdesignsystem.Locator{},
+		},
+		LastError: json.RawMessage(`null`),
+		Activity:  []ProjectDesignSystemTaskResponse{},
+		CreatedAt: timestampToString(system.CreatedAt),
+		UpdatedAt: timestampToString(system.UpdatedAt),
+		SavedAt:   timestampToPtr(system.SavedAt),
+	}
+	if len(system.LastError) > 0 && json.Valid(system.LastError) {
+		response.LastError = json.RawMessage(system.LastError)
+	}
+
+	draft, draftErr := h.Queries.GetProjectDesignSystemPackageBySlot(ctx, db.GetProjectDesignSystemPackageBySlotParams{
+		DesignSystemID: system.ID, Slot: "draft", WorkspaceID: system.WorkspaceID,
+	})
+	hasDraft := draftErr == nil
+	if draftErr != nil && !errors.Is(draftErr, pgx.ErrNoRows) {
+		return ProjectDesignSystemResponse{}, draftErr
+	}
+	saved, savedErr := h.Queries.GetProjectDesignSystemPackageBySlot(ctx, db.GetProjectDesignSystemPackageBySlotParams{
+		DesignSystemID: system.ID, Slot: "saved", WorkspaceID: system.WorkspaceID,
+	})
+	hasSaved := savedErr == nil
+	if savedErr != nil && !errors.Is(savedErr, pgx.ErrNoRows) {
+		return ProjectDesignSystemResponse{}, savedErr
+	}
+
+	switch {
+	case system.ActiveTaskID.Valid:
+		response.Status = "generating"
+	case hasDraft:
+		response.Status = "draft"
+	case hasSaved:
+		response.Status = "saved"
+	}
+	response.HasUnsavedChanges = hasDraft
+
+	if hasDraft || hasSaved {
+		selected := saved
+		if hasDraft {
+			selected = draft
+		}
+		validated, err := projectdesignsystem.Validate(projectdesignsystem.ArtifactInput{
+			DesignMD: selected.DesignMd, TokensCSS: selected.TokensCss, ComponentsHTML: selected.ComponentsHtml,
+		}, h.projectDesignSystemAllowedHosts())
+		if err == nil {
+			response.Content.Sections = validated.Manifest.Sections
+			response.Content.TokenGroups = validated.Manifest.TokenGroups
+			response.Content.Locators = validated.Manifest.Locators
+			response.Content.PreviewHTML = projectdesignsystem.BuildPreviewHTML(validated, h.projectDesignSystemAllowedHosts())
+		}
+	}
+
+	if system.ActiveTaskID.Valid {
+		if task, err := h.Queries.GetAgentTask(ctx, system.ActiveTaskID); err == nil {
+			active := projectDesignSystemTaskResponse(task)
+			response.ActiveTask = &active
+		}
+	}
+	tasks, err := h.Queries.ListProjectDesignSystemTasks(ctx, db.ListProjectDesignSystemTasksParams{
+		ProjectDesignSystemID: system.ID,
+		WorkspaceID:           system.WorkspaceID,
+		LimitCount:            20,
+	})
+	if err != nil {
+		return ProjectDesignSystemResponse{}, err
+	}
+	for _, task := range tasks {
+		response.Activity = append(response.Activity, projectDesignSystemTaskResponse(task))
+	}
+	return response, nil
+}
+
+func projectDesignSystemTaskResponse(task db.AgentTaskQueue) ProjectDesignSystemTaskResponse {
+	operation := ""
+	var taskContext service.ProjectDesignSystemTaskContext
+	if json.Unmarshal(task.Context, &taskContext) == nil {
+		operation = string(taskContext.Operation)
+	}
+	return ProjectDesignSystemTaskResponse{
+		ID:          uuidToString(task.ID),
+		AgentID:     uuidToString(task.AgentID),
+		Status:      task.Status,
+		Operation:   operation,
+		Error:       textToPtr(task.Error),
+		CreatedAt:   timestampToString(task.CreatedAt),
+		StartedAt:   timestampToPtr(task.StartedAt),
+		CompletedAt: timestampToPtr(task.CompletedAt),
+	}
+}
+
+func (h *Handler) projectDesignSystemAllowedHosts() []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, 2)
+	for _, store := range []interface{ CdnDomain() string }{h.DesignAssetStorage, h.Storage} {
+		if store == nil {
+			continue
+		}
+		host := strings.ToLower(strings.TrimSpace(store.CdnDomain()))
+		if host == "" {
+			continue
+		}
+		if _, ok := seen[host]; ok {
+			continue
+		}
+		seen[host] = struct{}{}
+		result = append(result, host)
+	}
+	return result
+}
+
+func validJSONOr(raw []byte, fallback json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return fallback
+	}
+	return json.RawMessage(raw)
+}
+
+func writeProjectDesignSystemRequestError(w http.ResponseWriter, err error) {
+	var requestErr *projectDesignSystemRequestError
+	if errors.As(err, &requestErr) {
+		writeProjectDesignSystemError(w, requestErr.status, requestErr.code, requestErr.message)
+		return
+	}
+	writeProjectDesignSystemError(w, http.StatusInternalServerError, "internal_error", "project design system request failed")
+}
+
+func writeProjectDesignSystemError(w http.ResponseWriter, status int, code string, message string) {
+	writeJSON(w, status, map[string]any{"code": code, "error": message})
+}
+
+func projectDesignSystemInternalError(code string, message string) error {
+	return &projectDesignSystemRequestError{status: http.StatusInternalServerError, code: code, message: message}
+}

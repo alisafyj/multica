@@ -437,6 +437,35 @@ func TestProtectedRoutesRequireAuth(t *testing.T) {
 	}
 }
 
+func TestProjectDesignSystemRoutesRequireAuth(t *testing.T) {
+	const resourceID = "00000000-0000-0000-0000-000000000001"
+	tests := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/project-design-systems?project_id=" + resourceID},
+		{method: http.MethodGet, path: "/api/project-design-systems/" + resourceID},
+		{method: http.MethodPost, path: "/api/project-design-systems"},
+		{method: http.MethodPost, path: "/api/project-design-systems/" + resourceID + "/adjust"},
+		{method: http.MethodPost, path: "/api/project-design-systems/" + resourceID + "/regenerate"},
+		{method: http.MethodPost, path: "/api/project-design-systems/" + resourceID + "/save"},
+	}
+	for _, tt := range tests {
+		req, err := http.NewRequest(tt.method, testServer.URL+tt.path, nil)
+		if err != nil {
+			t.Fatalf("create request for %s: %v", tt.path, err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request to %s failed: %v", tt.path, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s %s: expected 401, got %d", tt.method, tt.path, resp.StatusCode)
+		}
+	}
+}
+
 func TestInvalidJWT(t *testing.T) {
 	cases := []struct {
 		name  string

@@ -651,6 +651,16 @@ const DesignRestoreTaskContextType = "design_restore_task_execute"
 
 const DesignSystemProfileAnalyzeContextType = "design_system_profile_analyze"
 
+const ProjectDesignSystemTaskContextType = "project_design_system_task"
+
+type ProjectDesignSystemOperation string
+
+const (
+	ProjectDesignSystemGenerate   ProjectDesignSystemOperation = "generate"
+	ProjectDesignSystemAdjust     ProjectDesignSystemOperation = "adjust"
+	ProjectDesignSystemRegenerate ProjectDesignSystemOperation = "regenerate"
+)
+
 type UIDraftCreateContext struct {
 	Type               string          `json:"type"`
 	Prompt             string          `json:"prompt"`
@@ -708,6 +718,24 @@ type DesignSystemProfileAnalyzeContext struct {
 	Tokens                    json.RawMessage `json:"tokens,omitempty"`
 	TextSamples               json.RawMessage `json:"text_samples,omitempty"`
 	OutputPolicy              json.RawMessage `json:"output_policy"`
+}
+
+type ProjectDesignSystemTaskContext struct {
+	Type                  string                       `json:"type"`
+	Operation             ProjectDesignSystemOperation `json:"operation"`
+	RequesterID           string                       `json:"requester_id"`
+	WorkspaceID           string                       `json:"workspace_id"`
+	ProjectID             string                       `json:"project_id"`
+	ProjectDesignSystemID string                       `json:"project_design_system_id"`
+	AgentID               string                       `json:"agent_id"`
+	Project               json.RawMessage              `json:"project"`
+	Platform              string                       `json:"platform"`
+	Brief                 string                       `json:"brief"`
+	References            json.RawMessage              `json:"references"`
+	BasePackage           json.RawMessage              `json:"base_package,omitempty"`
+	Instruction           string                       `json:"instruction,omitempty"`
+	Scope                 json.RawMessage              `json:"scope,omitempty"`
+	OutputPolicy          json.RawMessage              `json:"output_policy"`
 }
 
 // EnqueueQuickCreateTask creates a queued task that has no issue / chat /
@@ -2248,6 +2276,9 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 	if pc, ok := s.parseDesignSystemProfileAnalyzeContext(task); ok {
 		return pc.WorkspaceID
 	}
+	if pc, ok := s.parseProjectDesignSystemTaskContext(task); ok {
+		return pc.WorkspaceID
+	}
 	return ""
 }
 
@@ -2488,6 +2519,23 @@ func (s *TaskService) parseDesignSystemProfileAnalyzeContext(task db.AgentTaskQu
 	}
 	if pc.Type != DesignSystemProfileAnalyzeContextType {
 		return DesignSystemProfileAnalyzeContext{}, false
+	}
+	return pc, true
+}
+
+func (s *TaskService) parseProjectDesignSystemTaskContext(task db.AgentTaskQueue) (ProjectDesignSystemTaskContext, bool) {
+	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid {
+		return ProjectDesignSystemTaskContext{}, false
+	}
+	if len(task.Context) == 0 {
+		return ProjectDesignSystemTaskContext{}, false
+	}
+	var pc ProjectDesignSystemTaskContext
+	if err := json.Unmarshal(task.Context, &pc); err != nil {
+		return ProjectDesignSystemTaskContext{}, false
+	}
+	if pc.Type != ProjectDesignSystemTaskContextType {
+		return ProjectDesignSystemTaskContext{}, false
 	}
 	return pc, true
 }
