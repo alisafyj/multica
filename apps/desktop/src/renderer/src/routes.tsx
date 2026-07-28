@@ -1,11 +1,9 @@
 import { useEffect } from "react";
-import { createMemoryRouter, Outlet, useMatches } from "react-router-dom";
 import {
   createMemoryRouter,
-  Navigate,
   Outlet,
-  useParams,
   useMatches,
+  useParams,
 } from "react-router-dom";
 import type { RouteObject } from "react-router-dom";
 import { IssueDetailPage } from "./pages/issue-detail-page";

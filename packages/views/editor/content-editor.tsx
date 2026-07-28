@@ -58,8 +58,10 @@ import type { MentionItem } from "./extensions/mention-suggestion";
 import type { IssueIdentifierResolver } from "./extensions/issue-identifier-autolink";
 import { createEditorExtensions } from "./extensions";
 import { uploadAndInsertFile } from "./extensions/file-upload";
+import { configStore } from "@multica/core/config";
 import { preprocessMarkdown } from "./utils/preprocess";
 import { repairEmptyListItems } from "./utils/repair-list-items";
+import { useAppOrigin } from "../navigation";
 import { openLink, isMentionHref } from "./utils/link-handler";
 import { EditorBubbleMenu } from "./bubble-menu";
 import { posFromAnchor, type TextAnchor } from "./text-anchor";
@@ -396,6 +398,13 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     const workspaceSlugRef = useRef(workspaceSlug);
     workspaceSlugRef.current = workspaceSlug;
 
+    // Same reasoning for this deployment's app origin: it tells openLink which
+    // absolute URLs address this app and must route in-app instead of opening
+    // the system browser.
+    const appOrigin = useAppOrigin();
+    const appOriginRef = useRef(appOrigin);
+    appOriginRef.current = appOrigin;
+
     // Keep refs in sync without recreating editor
     onUpdateRef.current = onUpdate;
     onSubmitRef.current = onSubmit;
@@ -439,7 +448,13 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
 
     const initialMarkdown = value ?? defaultValue ?? "";
     const initialContent = initialMarkdown
-      ? preprocessMarkdown(initialMarkdown)
+      ? // One-shot read: the editor preprocesses its initial document once at
+        // load. Unlike the readonly renderer it does not need to re-run when
+        // the CDN config lands later — the user's own edits drive the document
+        // from here on.
+        preprocessMarkdown(initialMarkdown, {
+          cdnDomain: configStore.getState().cdnDomain,
+        })
       : "";
     // With `immediatelyRender: false` the Tiptap instance is created after
     // mount, so an imperative `focus()` fired on the same tick (e.g. chat
@@ -531,7 +546,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
             if (!href || isMentionHref(href)) return false;
 
             event.preventDefault();
-            openLink(href, workspaceSlugRef.current);
+            openLink(href, workspaceSlugRef.current, appOriginRef.current);
             return true;
           },
         },
@@ -623,7 +638,11 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
         // example `dev.de` used to become a link during a debounce pause).
         if (normalizeMarkdown(markdown) === before) return;
 
-        const incoming = markdown ? preprocessMarkdown(markdown) : "";
+        const incoming = markdown
+          ? preprocessMarkdown(markdown, {
+              cdnDomain: configStore.getState().cdnDomain,
+            })
+          : "";
         const incomingNormalized = normalizeMarkdown(incoming);
         // Normalized-equal short-circuit. Avoids a no-op transaction when the
         // preprocessed input serializes to the document already on screen.
