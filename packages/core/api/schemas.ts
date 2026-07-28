@@ -28,6 +28,8 @@ import type {
   ListDesignDeliveriesResponse,
   ListDesignSystemProfilesResponse,
   ListDesignRestoreTasksResponse,
+  ProjectDesignSystem,
+  ProjectDesignSystemStatus,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 
@@ -382,6 +384,131 @@ export const ListDesignSystemProfilesResponseSchema = z.object({
 
 export const EMPTY_LIST_DESIGN_SYSTEM_PROFILES_RESPONSE: ListDesignSystemProfilesResponse = {
   design_systems: [],
+};
+
+function normalizeProjectDesignSystemStatus(value: unknown): ProjectDesignSystemStatus {
+  switch (value) {
+    case "generating":
+    case "draft":
+    case "saved":
+      return value;
+    default:
+      return "unestablished";
+  }
+}
+
+const ProjectDesignSystemSectionSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  markdown: z.string(),
+}).loose();
+
+const ProjectDesignSystemTokenSchema = z.object({
+  name: z.string(),
+  value: z.string(),
+}).loose();
+
+const ProjectDesignSystemTokenGroupSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  tokens: z.preprocess(
+    (value) => value == null ? [] : value,
+    z.array(ProjectDesignSystemTokenSchema).catch([]),
+  ),
+}).loose();
+
+const ProjectDesignSystemLocatorSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["component", "block"]),
+  label: z.string(),
+}).loose();
+
+const ProjectDesignSystemContentSchema = z.preprocess(
+  (value) => value == null ? {} : value,
+  z.object({
+    sections: z.preprocess(
+      (value) => value == null ? [] : value,
+      z.array(ProjectDesignSystemSectionSchema).catch([]),
+    ),
+    token_groups: z.preprocess(
+      (value) => value == null ? [] : value,
+      z.array(ProjectDesignSystemTokenGroupSchema).catch([]),
+    ),
+    locators: z.preprocess(
+      (value) => value == null ? [] : value,
+      z.array(ProjectDesignSystemLocatorSchema).catch([]),
+    ),
+    preview_html: z.string().catch("").default(""),
+    integrity_sha256: z.string().catch("").default(""),
+  }).loose(),
+);
+
+const ProjectDesignSystemTaskSchema = z.object({
+  id: z.string(),
+  agent_id: z.string(),
+  status: z.string().catch("").default(""),
+  operation: z.string().catch("").default(""),
+  error: z.string().nullable().catch(null).default(null),
+  created_at: z.string().catch("").default(""),
+  started_at: z.string().nullable().catch(null).default(null),
+  completed_at: z.string().nullable().catch(null).default(null),
+}).loose();
+
+const ProjectDesignSystemPlatformSchema = z.union([
+  z.literal("web"),
+  z.literal("mobile"),
+  z.literal("cross_platform"),
+  z.literal(""),
+]).catch("");
+
+export const ProjectDesignSystemSchema = z.object({
+  id: z.string().catch("").default(""),
+  workspace_id: z.string(),
+  project_id: z.string(),
+  name: z.string().catch("").default(""),
+  platform: ProjectDesignSystemPlatformSchema,
+  current_agent_id: z.string().nullable().catch(null).default(null),
+  status: z.unknown().transform(normalizeProjectDesignSystemStatus),
+  active_task: z.preprocess(
+    (value) => value == null ? null : value,
+    ProjectDesignSystemTaskSchema.nullable().catch(null),
+  ),
+  input_snapshot: z.record(z.string(), z.unknown()).catch({}).default({}),
+  content: ProjectDesignSystemContentSchema,
+  has_unsaved_changes: z.boolean().catch(false).default(false),
+  last_error: z.unknown().transform((value) => value ?? null),
+  activity: z.preprocess(
+    (value) => value == null ? [] : value,
+    z.array(ProjectDesignSystemTaskSchema).catch([]),
+  ),
+  created_at: z.string().catch("").default(""),
+  updated_at: z.string().catch("").default(""),
+  saved_at: z.string().nullable().catch(null).default(null),
+}).loose();
+
+export const EMPTY_PROJECT_DESIGN_SYSTEM: ProjectDesignSystem = {
+  id: "",
+  workspace_id: "",
+  project_id: "",
+  name: "",
+  platform: "",
+  current_agent_id: null,
+  status: "unestablished",
+  active_task: null,
+  input_snapshot: {},
+  content: {
+    sections: [],
+    token_groups: [],
+    locators: [],
+    preview_html: "",
+    integrity_sha256: "",
+  },
+  has_unsaved_changes: false,
+  last_error: null,
+  activity: [],
+  created_at: "",
+  updated_at: "",
+  saved_at: null,
 };
 
 export const DesignRestoreTaskExecutionStatusSchema = z.object({

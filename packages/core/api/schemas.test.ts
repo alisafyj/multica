@@ -5,6 +5,7 @@ import {
   DashboardAgentRunTimeListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
+  EMPTY_PROJECT_DESIGN_SYSTEM,
   DesignRestoreTaskSchema,
   ListDesignDeliveriesResponseSchema,
   ListDesignRestoreTasksResponseSchema,
@@ -13,6 +14,7 @@ import {
   EMPTY_BATCH_UPDATE_ISSUES_RESPONSE,
   EMPTY_USER,
   ListIssuesResponseSchema,
+  ProjectDesignSystemSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByHourListSchema,
@@ -196,6 +198,58 @@ describe("ListDesignDeliveriesResponseSchema", () => {
     expect(parsed.deliveries[0]?.cancelled_by).toBe("user-1");
     expect(parsed.deliveries[0]?.cancel_reason).toBe("设计稿需要重新确认");
     expect(parsed.deliveries[0]?.audit_metadata.cancel_reason).toBe("设计稿需要重新确认");
+  });
+});
+
+describe("ProjectDesignSystemSchema", () => {
+  it("downgrades unknown status and null collections without throwing", () => {
+    const parsed = ProjectDesignSystemSchema.parse({
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      status: "future_server_status",
+      content: null,
+      activity: null,
+    });
+
+    expect(parsed.status).toBe("unestablished");
+    expect(parsed.content).toEqual({
+      sections: [],
+      token_groups: [],
+      locators: [],
+      preview_html: "",
+      integrity_sha256: "",
+    });
+    expect(parsed.activity).toEqual([]);
+  });
+
+  it("defaults missing content arrays and discards malformed locators", () => {
+    const parsed = ProjectDesignSystemSchema.parse({
+      id: "system-1",
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      status: "draft",
+      content: {
+        preview_html: "<main>CRM</main>",
+        integrity_sha256: "sha-1",
+        locators: [{ id: 42, kind: "component", label: "Button" }],
+      },
+    });
+
+    expect(parsed.content.sections).toEqual([]);
+    expect(parsed.content.token_groups).toEqual([]);
+    expect(parsed.content.locators).toEqual([]);
+    expect(parsed.content.preview_html).toBe("<main>CRM</main>");
+  });
+
+  it("falls back to an empty unestablished response for malformed top-level data", () => {
+    const parsed = parseWithFallback(
+      null,
+      ProjectDesignSystemSchema,
+      EMPTY_PROJECT_DESIGN_SYSTEM,
+      { endpoint: "GET /api/project-design-systems/{id}" },
+    );
+
+    expect(parsed).toEqual(EMPTY_PROJECT_DESIGN_SYSTEM);
   });
 });
 

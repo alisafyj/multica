@@ -178,6 +178,27 @@ describe("useRealtimeSync — ws instance change", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["designs", "ws-1", "drafts", "draft-1"] });
   });
 
+  it("invalidates project lookup and system detail when a project design system changes", () => {
+    const { ws, handlers } = createEventfulMockWs();
+    renderHook(() => useRealtimeSync(ws, stores), {
+      wrapper: createWrapper(qc),
+    });
+
+    invalidateSpy.mockClear();
+    handlers.get("project_design_system:changed")?.({
+      project_design_system_id: "system-1",
+      project_id: "project-1",
+      status: "draft",
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["designs", "ws-1", "project-design-systems", "project", "project-1"],
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["designs", "ws-1", "project-design-systems", "system", "system-1"],
+    });
+  });
+
   it("ignores malformed websocket messages without an event type", () => {
     const { ws, anyHandlers } = createAnyEventMockWs();
     renderHook(() => useRealtimeSync(ws, stores), {

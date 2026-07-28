@@ -64,6 +64,7 @@ export type WSEventType =
   | "design:ready"
   | "design_template:ready"
   | "design_draft:ready"
+  | "project_design_system:changed"
   | "squad:created"
   | "squad:updated"
   | "squad:deleted"
@@ -150,6 +151,12 @@ export interface DesignDraftReadyPayload {
   catalog_template_id?: string | null;
   status?: string;
   title?: string;
+}
+
+export interface ProjectDesignSystemChangedPayload {
+  project_design_system_id: string;
+  project_id: string;
+  status: string;
 }
 
 export interface InboxReadPayload {
@@ -462,6 +469,7 @@ export interface WSEventPayloadMap {
   "design:ready": DesignReadyPayload;
   "design_template:ready": DesignReadyPayload;
   "design_draft:ready": DesignDraftReadyPayload;
+  "project_design_system:changed": ProjectDesignSystemChangedPayload;
   "invitation:created": InvitationCreatedPayload;
   "invitation:accepted": InvitationAcceptedPayload;
   "invitation:declined": InvitationDeclinedPayload;

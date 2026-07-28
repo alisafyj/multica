@@ -38,6 +38,7 @@ function workspaceScoped(slug: string) {
     designDetail: (id: string, options: RevisionPathOptions = {}) => withQuery(`${ws}/designs/${encode(id)}`, { revision_id: options.revisionId }),
     designFrameDetail: (id: string, frameId: string, options: RevisionPathOptions = {}) => withQuery(`${ws}/designs/${encode(id)}/frames/${encode(frameId)}`, { revision_id: options.revisionId }),
     designDraftDetail: (id: string) => `${ws}/designs/drafts/${encode(id)}`,
+    projectDesignSystemDetail: (id: string) => `${ws}/designs/systems/${encode(id)}`,
     designRestoreTaskDetail: (id: string) => `${ws}/designs/restore-tasks/${encode(id)}`,
     autopilots: () => `${ws}/autopilots`,
     autopilotDetail: (id: string) => `${ws}/autopilots/${encode(id)}`,

@@ -77,6 +77,7 @@ import type {
   InvitationCreatedPayload,
   DesignReadyPayload,
   DesignDraftReadyPayload,
+  ProjectDesignSystemChangedPayload,
 } from "../types";
 
 const chatWsLogger = createLogger("chat.ws");
@@ -410,6 +411,7 @@ export function useRealtimeSync(
       // every message would flood the network. Specific chat handlers below
       // still receive it via ws.on() (a separate subscription channel).
       "task:message",
+      "project_design_system:changed",
       // task:completed / task:failed deliberately NOT here. They go through
       // both the task-prefix invalidate (refreshes the agent-task-snapshot
       // cache) AND the chat-specific ws.on() handlers below. The two
@@ -559,6 +561,21 @@ export function useRealtimeSync(
     const unsubDesignReady = ws.on("design:ready", invalidateDesignReady);
     const unsubDesignTemplateReady = ws.on("design_template:ready", invalidateDesignReady);
     const unsubDesignDraftReady = ws.on("design_draft:ready", invalidateDesignDraftReady);
+    const unsubProjectDesignSystemChanged = ws.on("project_design_system:changed", (p) => {
+      const payload = p as ProjectDesignSystemChangedPayload;
+      const wsId = getCurrentWsId();
+      if (!wsId) return;
+      if (payload?.project_id) {
+        qc.invalidateQueries({
+          queryKey: designKeys.projectDesignSystemByProject(wsId, payload.project_id),
+        });
+      }
+      if (payload?.project_design_system_id) {
+        qc.invalidateQueries({
+          queryKey: designKeys.projectDesignSystem(wsId, payload.project_design_system_id),
+        });
+      }
+    });
 
     // --- Timeline event handlers (global fallback) ---
     // These events are also handled granularly by useIssueTimeline when
@@ -1010,6 +1027,7 @@ export function useRealtimeSync(
       unsubDesignReady();
       unsubDesignTemplateReady();
       unsubDesignDraftReady();
+      unsubProjectDesignSystemChanged();
       unsubCommentCreated();
       unsubCommentUpdated();
       unsubCommentDeleted();

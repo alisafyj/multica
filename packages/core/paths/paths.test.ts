@@ -13,6 +13,7 @@ describe("paths.workspace(slug)", () => {
     expect(ws.designs()).toBe("/acme/designs");
     expect(ws.designDetail("d1")).toBe("/acme/designs/d1");
     expect(ws.designDraftDetail("draft1")).toBe("/acme/designs/drafts/draft1");
+    expect(ws.projectDesignSystemDetail("system1")).toBe("/acme/designs/systems/system1");
     expect(ws.designRestoreTaskDetail("task1")).toBe("/acme/designs/restore-tasks/task1");
     expect(ws.autopilots()).toBe("/acme/autopilots");
     expect(ws.autopilotDetail("a1")).toBe("/acme/autopilots/a1");
@@ -31,6 +32,9 @@ describe("paths.workspace(slug)", () => {
 
   it("URL-encodes special characters in ids", () => {
     expect(ws.issueDetail("id with space")).toBe("/acme/issues/id%20with%20space");
+    expect(ws.projectDesignSystemDetail("system/with space")).toBe(
+      "/acme/designs/systems/system%2Fwith%20space",
+    );
   });
 
   it("can pin design paths to a revision", () => {

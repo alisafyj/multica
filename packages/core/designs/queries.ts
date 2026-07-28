@@ -150,6 +150,22 @@ export function designSystemDetailOptions(wsId: string, id: string) {
   });
 }
 
+export function projectDesignSystemByProjectOptions(wsId: string, projectId: string) {
+  return queryOptions({
+    queryKey: designKeys.projectDesignSystemByProject(wsId, projectId),
+    queryFn: () => api.getProjectDesignSystemForProject(projectId),
+    enabled: !!projectId,
+  });
+}
+
+export function projectDesignSystemDetailOptions(wsId: string, id: string) {
+  return queryOptions({
+    queryKey: designKeys.projectDesignSystem(wsId, id),
+    queryFn: () => api.getProjectDesignSystem(id),
+    enabled: !!id,
+  });
+}
+
 export function designDraftListOptions(wsId: string) {
   return queryOptions({
     queryKey: designKeys.drafts(wsId),

@@ -10,6 +10,12 @@ export type DesignRestoreTaskPurpose = "frontend_restore" | "ui_generation" | "t
 export type DesignRestoreTaskItemSource = "frame" | "selected_layers" | "selection_bounds" | "template" | "draft";
 export type DesignProjectRulesSource = "project_rules" | "gallery_specs_legacy" | "inline" | "none";
 export type GalleryNativeVersion = "1.0";
+export type ProjectDesignSystemStatus = "unestablished" | "generating" | "draft" | "saved";
+export type ProjectDesignSystemPlatform = "web" | "mobile" | "cross_platform";
+export type ProjectDesignSystemReferenceKind = "attachment" | "brand_color" | "link" | "design_file" | "design_system_profile";
+export type ProjectDesignSystemScope =
+  | { kind: "all" }
+  | { kind: "section" | "token_group" | "component" | "block"; id: string };
 
 export type GalleryLayerId = string;
 export type GalleryFrameId = string;
@@ -248,6 +254,97 @@ export interface CreateDesignSystemProfileRequest {
   name: string;
   description?: string;
   is_default?: boolean;
+}
+
+export interface ProjectDesignSystemReferenceInput {
+  kind: ProjectDesignSystemReferenceKind;
+  attachment_id?: string;
+  design_file_id?: string;
+  design_system_profile_id?: string;
+  value?: string;
+  label?: string;
+}
+
+export interface CreateProjectDesignSystemRequest {
+  project_id: string;
+  agent_id: string;
+  platform: ProjectDesignSystemPlatform;
+  brief: string;
+  references: ProjectDesignSystemReferenceInput[];
+}
+
+export interface AdjustProjectDesignSystemRequest {
+  agent_id: string;
+  instruction: string;
+  scope: ProjectDesignSystemScope;
+}
+
+export interface RegenerateProjectDesignSystemRequest {
+  agent_id: string;
+  platform?: ProjectDesignSystemPlatform;
+  brief?: string;
+  references?: ProjectDesignSystemReferenceInput[];
+}
+
+export interface ProjectDesignSystemSection {
+  id: string;
+  title: string;
+  markdown: string;
+}
+
+export interface ProjectDesignSystemToken {
+  name: string;
+  value: string;
+}
+
+export interface ProjectDesignSystemTokenGroup {
+  id: string;
+  label: string;
+  tokens: ProjectDesignSystemToken[];
+}
+
+export interface ProjectDesignSystemLocator {
+  id: string;
+  kind: "component" | "block";
+  label: string;
+}
+
+export interface ProjectDesignSystemContent {
+  sections: ProjectDesignSystemSection[];
+  token_groups: ProjectDesignSystemTokenGroup[];
+  locators: ProjectDesignSystemLocator[];
+  preview_html: string;
+  integrity_sha256: string;
+}
+
+export interface ProjectDesignSystemTask {
+  id: string;
+  agent_id: string;
+  status: string;
+  operation: string;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface ProjectDesignSystem {
+  id: string;
+  workspace_id: string;
+  project_id: string;
+  name: string;
+  platform: ProjectDesignSystemPlatform | "";
+  current_agent_id: string | null;
+  status: ProjectDesignSystemStatus;
+  active_task: ProjectDesignSystemTask | null;
+  input_snapshot: Record<string, unknown>;
+  content: ProjectDesignSystemContent;
+  has_unsaved_changes: boolean;
+  last_error: unknown;
+  activity: ProjectDesignSystemTask[];
+  created_at: string;
+  updated_at: string;
+  saved_at: string | null;
 }
 
 export interface PublishDesignTemplateRequest {

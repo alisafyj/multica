@@ -6,6 +6,124 @@ afterEach(() => {
 });
 
 describe("ApiClient", () => {
+  describe("project design systems", () => {
+    it("uses the project design system HTTP contract", async () => {
+      const response = {
+        id: "system-1",
+        workspace_id: "ws-1",
+        project_id: "project /1",
+        name: "CRM",
+        platform: "web",
+        status: "draft",
+        content: {
+          sections: [],
+          token_groups: [],
+          locators: [],
+          preview_html: "<main>CRM</main>",
+          integrity_sha256: "sha-1",
+        },
+        activity: [],
+      };
+      const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+        new Response(JSON.stringify(response), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      await client.getProjectDesignSystemForProject("project /1");
+      await client.getProjectDesignSystem("system /1");
+      await client.createProjectDesignSystem({
+        project_id: "project /1",
+        agent_id: "agent-1",
+        platform: "web",
+        brief: "CRM customer management",
+        references: [],
+      });
+      await client.adjustProjectDesignSystem("system /1", {
+        agent_id: "agent-1",
+        instruction: "Increase the primary button contrast",
+        scope: { kind: "component", id: "button-primary" },
+      });
+      await client.regenerateProjectDesignSystem("system /1", {
+        agent_id: "agent-2",
+        brief: "Regenerate for CRM",
+      });
+      await client.saveProjectDesignSystem("system /1");
+
+      const calls = fetchMock.mock.calls.map(([url, init]) => ({
+        url,
+        method: init?.method ?? "GET",
+        body: init?.body,
+      }));
+      expect(calls).toEqual([
+        {
+          url: "https://api.example.test/api/project-design-systems?project_id=project%20%2F1",
+          method: "GET",
+          body: undefined,
+        },
+        {
+          url: "https://api.example.test/api/project-design-systems/system%20%2F1",
+          method: "GET",
+          body: undefined,
+        },
+        {
+          url: "https://api.example.test/api/project-design-systems",
+          method: "POST",
+          body: JSON.stringify({
+            project_id: "project /1",
+            agent_id: "agent-1",
+            platform: "web",
+            brief: "CRM customer management",
+            references: [],
+          }),
+        },
+        {
+          url: "https://api.example.test/api/project-design-systems/system%20%2F1/adjust",
+          method: "POST",
+          body: JSON.stringify({
+            agent_id: "agent-1",
+            instruction: "Increase the primary button contrast",
+            scope: { kind: "component", id: "button-primary" },
+          }),
+        },
+        {
+          url: "https://api.example.test/api/project-design-systems/system%20%2F1/regenerate",
+          method: "POST",
+          body: JSON.stringify({ agent_id: "agent-2", brief: "Regenerate for CRM" }),
+        },
+        {
+          url: "https://api.example.test/api/project-design-systems/system%20%2F1/save",
+          method: "POST",
+          body: undefined,
+        },
+      ]);
+    });
+
+    it("returns an unestablished fallback for null responses", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation(() => Promise.resolve(
+          new Response("null", {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )),
+      );
+
+      const client = new ApiClient("https://api.example.test");
+      const byProject = await client.getProjectDesignSystemForProject("project-1");
+      const detail = await client.getProjectDesignSystem("system-1");
+
+      expect(byProject).toMatchObject({ project_id: "project-1", status: "unestablished" });
+      expect(detail).toMatchObject({ id: "system-1", status: "unestablished" });
+      expect(byProject.content.sections).toEqual([]);
+      expect(detail.activity).toEqual([]);
+    });
+  });
+
   it("preserves HTTP status on failed requests", async () => {
     vi.stubGlobal(
       "fetch",

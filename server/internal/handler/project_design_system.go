@@ -59,10 +59,11 @@ type RegenerateProjectDesignSystemRequest struct {
 }
 
 type ProjectDesignSystemContentResponse struct {
-	Sections    []projectdesignsystem.Section    `json:"sections"`
-	TokenGroups []projectdesignsystem.TokenGroup `json:"token_groups"`
-	PreviewHTML string                           `json:"preview_html"`
-	Locators    []projectdesignsystem.Locator    `json:"locators"`
+	Sections        []projectdesignsystem.Section    `json:"sections"`
+	TokenGroups     []projectdesignsystem.TokenGroup `json:"token_groups"`
+	PreviewHTML     string                           `json:"preview_html"`
+	Locators        []projectdesignsystem.Locator    `json:"locators"`
+	IntegritySHA256 string                           `json:"integrity_sha256"`
 }
 
 type ProjectDesignSystemTaskResponse struct {
@@ -1072,6 +1073,7 @@ func (h *Handler) projectDesignSystemResponse(ctx context.Context, system db.Pro
 			response.Content.TokenGroups = validated.Manifest.TokenGroups
 			response.Content.Locators = validated.Manifest.Locators
 			response.Content.PreviewHTML = projectdesignsystem.BuildPreviewHTML(validated, h.projectDesignSystemAllowedHosts())
+			response.Content.IntegritySHA256 = selected.IntegritySha256
 		}
 	}
 

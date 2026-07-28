@@ -323,6 +323,7 @@ func TestAdjustProjectDesignSystemValidatesScopeAgainstManifest(t *testing.T) {
 	if response.ActiveTask == nil || response.Status != "generating" {
 		t.Fatalf("adjustment response = %+v", response)
 	}
+	assertProjectDesignSystemResponseDigest(t, response.Content, pkg.Manifest.Digest)
 
 	var contextJSON []byte
 	if err := testPool.QueryRow(context.Background(), `SELECT context FROM agent_task_queue WHERE id = $1`, response.ActiveTask.ID).Scan(&contextJSON); err != nil {
@@ -443,12 +444,28 @@ func TestSaveProjectDesignSystemRequiresValidatedDraft(t *testing.T) {
 	if response.Status != "saved" || response.HasUnsavedChanges {
 		t.Fatalf("saved response = %+v", response)
 	}
+	assertProjectDesignSystemResponseDigest(t, response.Content, pkg.Manifest.Digest)
 	if _, err := queries.GetProjectDesignSystemPackageBySlot(context.Background(), db.GetProjectDesignSystemPackageBySlotParams{DesignSystemID: system.ID, Slot: "draft", WorkspaceID: parseUUID(testWorkspaceID)}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("draft lookup error = %v, want pgx.ErrNoRows", err)
 	}
 	saved, err := queries.GetProjectDesignSystemPackageBySlot(context.Background(), db.GetProjectDesignSystemPackageBySlotParams{DesignSystemID: system.ID, Slot: "saved", WorkspaceID: parseUUID(testWorkspaceID)})
 	if err != nil || saved.IntegritySha256 != pkg.Manifest.Digest {
 		t.Fatalf("saved package = %+v, err = %v", saved, err)
+	}
+}
+
+func assertProjectDesignSystemResponseDigest(t *testing.T, content ProjectDesignSystemContentResponse, want string) {
+	t.Helper()
+	raw, err := json.Marshal(content)
+	if err != nil {
+		t.Fatalf("marshal project design system content: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("decode project design system content: %v", err)
+	}
+	if decoded["integrity_sha256"] != want {
+		t.Fatalf("content integrity_sha256 = %v, want %s", decoded["integrity_sha256"], want)
 	}
 }
 
