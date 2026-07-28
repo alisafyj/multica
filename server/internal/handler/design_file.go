@@ -24,6 +24,182 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+func (h *Handler) updateIssueStatusAndPublish(ctx context.Context, issueID, workspaceID pgtype.UUID, status, actorType, actorID string) error {
+	updated, err := h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{ID: issueID, Status: status, WorkspaceID: workspaceID})
+	if err != nil {
+		return err
+	}
+	h.publish(protocol.EventIssueUpdated, uuidToString(workspaceID), actorType, actorID, map[string]any{
+		"issue":          issueToResponse(updated, h.getIssuePrefix(ctx, workspaceID)),
+		"status_changed": true,
+	})
+	return nil
+}
+
+func (h *Handler) uiDesignRestoreCompleted(ctx context.Context, issue db.Issue) bool {
+	tasks, err := h.Queries.ListDesignRestoreTasks(ctx, issue.WorkspaceID)
+	if err != nil {
+		return false
+	}
+	for _, task := range tasks {
+		if task.IssueID.Valid && task.IssueID == issue.ID && task.Status == "completed" {
+			return true
+		}
+	}
+	return false
+}
+
+func designRestoreAgentLabelFromInput(input json.RawMessage) string {
+	var payload struct{ Purpose string `json:"purpose"` }
+	if err := json.Unmarshal(input, &payload); err == nil && strings.TrimSpace(payload.Purpose) == "ui_generation" {
+		return "UI Agent"
+	}
+	return "前端 Agent"
+}
+
+func (h *Handler) canCompleteUIDesignIssue(ctx context.Context, issue db.Issue, nextStatus string) bool {
+	if nextStatus != "done" {
+		return true
+	}
+	return h.uiDesignDelivered(ctx, issue)
+}
+
+type designRestoreResultSummary struct {
+	Status               string                       `json:"status,omitempty"`
+	Files                []string                     `json:"files,omitempty"`
+	RestoreMapping       []map[string]any             `json:"restoreMapping,omitempty"`
+	UsedLayerIDs         []string                     `json:"usedLayerIds,omitempty"`
+	UsedAssetIDs         []string                     `json:"usedAssetIds,omitempty"`
+	UsedFullFramePreview bool                         `json:"usedFullFramePreview,omitempty"`
+	Blockers             []string                     `json:"blockers,omitempty"`
+	VisualFidelityScore  *float64                     `json:"visualFidelityScore,omitempty"`
+	VisualReview         *designRestoreVisualReview   `json:"visualReview,omitempty"`
+}
+
+type designRestoreVisualReview struct {
+	ImplementedRoute         string   `json:"implementedRoute,omitempty"`
+	DesignScreenshot         string   `json:"designScreenshot,omitempty"`
+	ImplementationScreenshot string   `json:"implementationScreenshot,omitempty"`
+	ComparisonScreenshot     string   `json:"comparisonScreenshot,omitempty"`
+	RemainingDiffs           []string `json:"remainingDiffs,omitempty"`
+	Notes                    string   `json:"notes,omitempty"`
+}
+
+func parseDesignRestoreResultSummary(output string) designRestoreResultSummary {
+	var summary designRestoreResultSummary
+	if idx := strings.Index(output, "RESTORE_RESULT_JSON:"); idx >= 0 {
+		jsonPart := strings.TrimSpace(output[idx+len("RESTORE_RESULT_JSON:"):])
+		jsonPart = strings.TrimPrefix(jsonPart, "```json")
+		jsonPart = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(jsonPart), "```"))
+		_ = json.Unmarshal([]byte(jsonPart), &summary)
+	}
+	return summary
+}
+
+func designRestoreFullFramePreviewViolation(ctx service.DesignRestoreTaskContext, output string) string {
+	if strings.Contains(output, "usedFullFramePreview\":true") {
+		return "full_frame_preview_forbidden"
+	}
+	return ""
+}
+
+func designRestorePolicyViolation(ctx service.DesignRestoreTaskContext, output string, summary designRestoreResultSummary) string {
+	if v := designRestoreFullFramePreviewViolation(ctx, output); v != "" {
+		return v
+	}
+	if strings.TrimSpace(output) == "" {
+		return "missing_restore_result_json"
+	}
+	return ""
+}
+
+func designRestoreCompletionComment(agentLabel, status, errorMessage, fallback string, summary designRestoreResultSummary) string {
+	if strings.TrimSpace(agentLabel) == "" {
+		agentLabel = "前端 Agent"
+	}
+	if strings.TrimSpace(status) == "completed" {
+		return agentLabel + " 已完成设计稿还原。"
+	}
+	return agentLabel + " 设计稿还原未完成，需要处理。"
+}
+
+const uiDesignDeliveryRequiredBeforeDoneMessage = "UI design issue requires a completed delivery before marking done"
+
+func designRestoreMappingFields(mapping map[string]any) (layerID, targetPath, targetKind string) {
+	for _, key := range []string{"layerId", "sketchId", "itemId"} {
+		if v, ok := mapping[key].(string); ok && strings.TrimSpace(v) != "" {
+			layerID = v
+			break
+		}
+	}
+	for _, key := range []string{"targetPath", "targetFile"} {
+		if v, ok := mapping[key].(string); ok && strings.TrimSpace(v) != "" {
+			targetPath = v
+			break
+		}
+	}
+	for _, key := range []string{"targetKind", "kind"} {
+		if v, ok := mapping[key].(string); ok && strings.TrimSpace(v) != "" {
+			targetKind = v
+			break
+		}
+	}
+	if targetKind == "" {
+		targetKind = "file"
+	}
+	return
+}
+
+func designRestorePolicyWarning(ctx service.DesignRestoreTaskContext, summary designRestoreResultSummary) string {
+	if strings.TrimSpace(summary.Status) == "" && len(summary.Files) == 0 && len(summary.RestoreMapping) == 0 && len(summary.UsedLayerIDs) == 0 && len(summary.Blockers) == 0 {
+		return "missing_restore_result_json"
+	}
+	return designRestorePolicyViolation(ctx, "", summary)
+}
+
+func (h *Handler) advanceIssueAfterDesignRestoreCompletion(ctx context.Context, task db.DesignRestoreTask, status string) error {
+	if !task.IssueID.Valid {
+		return nil
+	}
+	issue, err := h.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		return err
+	}
+	issueStatus := "todo"
+	if status == "completed" {
+		issueStatus = "in_review"
+	}
+	if status == "failed" {
+		issueStatus = "blocked"
+	}
+	_, err = h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID, Status: issueStatus})
+	if err != nil {
+		return err
+	}
+	if status == "completed" {
+		if h.uiDesignDelivered(ctx, issue) {
+			children, err := h.Queries.ListChildIssues(ctx, issue.ID)
+			if err == nil {
+				for _, child := range children {
+					var metadata map[string]any
+					if len(child.Metadata) > 0 {
+						_ = json.Unmarshal(child.Metadata, &metadata)
+					}
+					if role, _ := metadata["design_role"].(string); role == "frontend" {
+						_, _ = h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{ID: child.ID, WorkspaceID: child.WorkspaceID, Status: "todo"})
+						break
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (h *Handler) replaceDesignRestoreMappingsFromSummary(ctx context.Context, task db.DesignRestoreTask, summary designRestoreResultSummary) error {
+	return nil
+}
+
 type DesignFileResponse struct {
 	ID                string          `json:"id"`
 	WorkspaceID       string          `json:"workspace_id"`

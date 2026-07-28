@@ -140,6 +140,9 @@ type TaskContextForEnv struct {
 	AutopilotSource         string
 	AutopilotTriggerPayload string
 	QuickCreatePrompt       string // non-empty for quick-create tasks
+	UIDraftCreateContext    string // non-empty for UI design draft generation tasks
+	DesignRestoreContext    string // non-empty for Gallery Native restore execution tasks
+	DesignSystemProfileAnalyzeContext string // non-empty for UI specification profile analysis tasks
 	HandoffNote             string // assignment handoff instruction; rendered into issue_context.md (MUL-3375)
 	IsSquadLeader           bool   // true when the agent is acting as a squad leader (may exit silently on no_action)
 	// WorkspaceContext is the workspace-level system prompt (workspace.context
@@ -735,6 +738,8 @@ type GCMeta struct {
 	// still allowed.
 	LocalDirectory bool `json:"local_directory,omitempty"`
 }
+
+const GCKindDesignRestore GCMetaKind = "design_restore"
 
 const gcMetaFile = ".gc_meta.json"
 

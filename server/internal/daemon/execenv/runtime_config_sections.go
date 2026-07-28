@@ -16,7 +16,7 @@ import (
 // Layout:
 //
 //   - buildMetaSkillContentSlim is the entry point.
-//   - It calls classifyTask (runtime_config_kind.go) to pick one of five
+//   - It calls classifyTask (runtime_config_kind.go) to pick one of eight
 //     task kinds, then composes the brief from the per-section writers
 //     below.
 //   - Each section is its own writer so the matrix of "which kind gets
@@ -418,6 +418,35 @@ func writeWorkflowAutopilot(b *strings.Builder, ctx TaskContextForEnv) {
 	b.WriteString("- Do not run `multica issue get`, `multica issue comment add`, or `multica issue status` for this run unless the autopilot instructions explicitly tell you to create or update an issue\n\n")
 }
 
+// writeWorkflowUIDraftCreate emits the server-managed UI draft workflow.
+func writeWorkflowUIDraftCreate(b *strings.Builder) {
+	b.WriteString("**This is a server-managed UI design draft generation task.** The issue and design inputs are already embedded in the UI draft context JSON from the user message; do not fall back to the assignment workflow.\n\n")
+	b.WriteString("- Generate the requested controlled DesignDraft JSON for human review.\n")
+	b.WriteString("- Do NOT call `multica issue get`, `multica issue comment add`, or `multica issue status`; the server captures and stores your final JSON directly.\n")
+	b.WriteString("- Follow the exact JSON shape and no-extra-prose rules in the user message.\n\n")
+}
+
+// writeWorkflowDesignRestore emits the server-managed Gallery Native restore
+// workflow. The user prompt carries the detailed restore policy and result
+// schema; this section only prevents the generic issue workflow from
+// overriding that contract.
+func writeWorkflowDesignRestore(b *strings.Builder) {
+	b.WriteString("**This is a server-managed Gallery Native design restore task.** The restore task, issue, assets, and target repository context are already embedded in the user message; do not fall back to the assignment workflow.\n\n")
+	b.WriteString("- Perform the restore directly in the target repository and follow every policy in the design restore prompt.\n")
+	b.WriteString("- Do NOT call `multica issue get`, `multica issue comment add`, or `multica issue status`; the server captures your final restore result directly.\n")
+	b.WriteString("- Finish with the required `RESTORE_RESULT_JSON:` block.\n\n")
+}
+
+// writeWorkflowDesignSystemProfileAnalyze emits the server-managed analysis
+// workflow for a Figma UI specification upload.
+func writeWorkflowDesignSystemProfileAnalyze(b *strings.Builder) {
+	b.WriteString("**This task analyzes a Figma UI specification upload.** There is no Multica issue workflow for this run; the server stores the structured analysis result directly.\n\n")
+	b.WriteString("- Treat the design system profile analysis context JSON in the user message as the source of truth.\n")
+	b.WriteString("- Return exactly the requested JSON object containing `profile_json`, `analysis_errors`, and `summary`.\n")
+	b.WriteString("- Do NOT call `multica issue get`, `multica issue comment add`, or `multica issue status`; there is no issue to query, comment on, or transition.\n")
+	b.WriteString("- Do not output markdown fences or prose outside the JSON object.\n\n")
+}
+
 // writeWorkflowComment emits the comment-triggered workflow.
 func writeWorkflowComment(b *strings.Builder, provider string, ctx TaskContextForEnv) {
 	b.WriteString("**This task was triggered by a NEW comment.** Your primary job is to respond to THIS specific comment, even if you have handled similar requests before in this session.\n\n")
@@ -613,6 +642,9 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 		} else {
 			b.WriteString("**Delivering files here:** run `multica attachment upload <local-path>` — it binds the file to your reply and it renders as an attachment card. That command is the ONLY way a file reaches the user; a path written into your reply text is not.\n")
 		}
+	case kindUIDraftCreate, kindDesignRestore, kindDesignSystemProfileAnalyze:
+		b.WriteString("This is a server-managed design task. Your final assistant output is captured automatically and processed by the server; do not post an issue comment. Follow the exact output schema in the user message.\n\n")
+		b.WriteString("**Delivering files here:** the captured result is text-only. Keep generated artifacts in the target repository when the task requires them, and reference repository paths as inline code rather than local links.\n")
 	default:
 		if ctx.IsSquadLeader {
 			b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`** — unless your outcome is `no_action`. When you evaluate a trigger and decide no action is needed, calling `multica squad activity <issue-id> no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment that announces no_action, acknowledges another agent, or says you are exiting silently — such comments are noise. For all other outcomes (`action`, `failed`), a comment is still mandatory.\n\n")
@@ -697,6 +729,12 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 		writeWorkflowQuickCreate(&b)
 	case kindAutopilotRunOnly:
 		writeWorkflowAutopilot(&b, ctx)
+	case kindUIDraftCreate:
+		writeWorkflowUIDraftCreate(&b)
+	case kindDesignRestore:
+		writeWorkflowDesignRestore(&b)
+	case kindDesignSystemProfileAnalyze:
+		writeWorkflowDesignSystemProfileAnalyze(&b)
 	case kindCommentTriggered:
 		writeWorkflowComment(&b, provider, ctx)
 	case kindAssignmentTriggered:

@@ -6,7 +6,7 @@ package execenv
 // flag that once gated it against a legacy verbose brief was retired in
 // MUL-4297, so this is now the only brief).
 //
-// Five kinds, mutually exclusive in practice. classifyTask documents the
+// Eight kinds, mutually exclusive in practice. classifyTask documents the
 // tiebreak rule that applies if a future caller accidentally violates the
 // mutex.
 type taskKind int
@@ -25,13 +25,22 @@ const (
 	kindQuickCreate
 	// kindChat: interactive chat session, no issue.
 	kindChat
+	// kindUIDraftCreate: server-managed UI draft generation whose JSON result
+	// is captured directly rather than posted to an issue.
+	kindUIDraftCreate
+	// kindDesignRestore: server-managed Gallery Native restore execution whose
+	// structured result is captured directly.
+	kindDesignRestore
+	// kindDesignSystemProfileAnalyze: server-managed analysis of an uploaded
+	// Figma UI specification whose JSON result is stored by the server.
+	kindDesignSystemProfileAnalyze
 )
 
 // classifyTask maps a TaskContextForEnv to the single taskKind the slim
 // brief should be assembled for. Precedence (documented for the tiebreak
 // case, although the daemon never sets two specific-kind flags at once):
-// chat → quick-create → autopilot run-only → comment-triggered →
-// assignment-triggered.
+// chat → quick-create → autopilot run-only → design-system profile analysis
+// → design restore → UI draft creation → comment-triggered → assignment-triggered.
 func classifyTask(ctx TaskContextForEnv) taskKind {
 	switch {
 	case ctx.ChatSessionID != "":
@@ -40,6 +49,12 @@ func classifyTask(ctx TaskContextForEnv) taskKind {
 		return kindQuickCreate
 	case ctx.AutopilotRunID != "":
 		return kindAutopilotRunOnly
+	case ctx.DesignSystemProfileAnalyzeContext != "":
+		return kindDesignSystemProfileAnalyze
+	case ctx.DesignRestoreContext != "":
+		return kindDesignRestore
+	case ctx.UIDraftCreateContext != "":
+		return kindUIDraftCreate
 	case ctx.TriggerCommentID != "":
 		return kindCommentTriggered
 	default:

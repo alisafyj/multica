@@ -1297,6 +1297,78 @@ type QuickCreateContext struct {
 // QuickCreateContextType marks a task as a quick-create job.
 const QuickCreateContextType = "quick_create"
 
+// UIDraftCreateContext marks a task as a UI draft generation job.
+const UIDraftCreateContextType = "ui_draft_create"
+
+// DesignSystemProfileAnalyzeContext marks a task as a design-system analysis job.
+const DesignSystemProfileAnalyzeContextType = "design_system_profile_analyze"
+
+// DesignRestoreTaskContextType marks a task as a design restore job.
+const DesignRestoreTaskContextType = "design_restore"
+
+// DesignSystemProfileAnalyzeContext is the payload stored on design system profile analysis tasks.
+type DesignSystemProfileAnalyzeContext struct {
+	Type                      string          `json:"type"`
+	Prompt                    string          `json:"prompt"`
+	RequesterID               string          `json:"requester_id"`
+	WorkspaceID               string          `json:"workspace_id"`
+	AgentID                   string          `json:"agent_id"`
+	DesignSystemProfileID     string          `json:"design_system_profile_id"`
+	SourceFileID              string          `json:"source_file_id"`
+	SourceRevisionID          string          `json:"source_revision_id"`
+	ProjectID                 string          `json:"project_id,omitempty"`
+	ProfileName               string          `json:"profile_name,omitempty"`
+	MakeDefault               bool            `json:"make_default,omitempty"`
+	DefaultProfileIDAtEnqueue string          `json:"default_profile_id_at_enqueue,omitempty"`
+	CandidateLayers           json.RawMessage `json:"candidate_layers,omitempty"`
+	Tokens                    json.RawMessage `json:"tokens,omitempty"`
+	TextSamples               json.RawMessage `json:"text_samples,omitempty"`
+	OutputPolicy              json.RawMessage `json:"output_policy,omitempty"`
+}
+
+// UIDraftCreateContext is the payload stored on UI draft generation tasks.
+type UIDraftCreateContext struct {
+	Type               string          `json:"type"`
+	RequesterID        string          `json:"requester_id"`
+	WorkspaceID        string          `json:"workspace_id"`
+	ProjectID          string          `json:"project_id,omitempty"`
+	AgentID            string          `json:"agent_id"`
+	Title              string          `json:"title"`
+	Prompt             string          `json:"prompt"`
+	RequirementCore    json.RawMessage `json:"requirement_core,omitempty"`
+	CatalogTemplateID  string          `json:"catalog_template_id,omitempty"`
+	TemplateRevisionID string          `json:"template_revision_id,omitempty"`
+	DesignRevisionID   string          `json:"design_revision_id,omitempty"`
+	SlotSchema         json.RawMessage `json:"slot_schema,omitempty"`
+	EditableTextLayers json.RawMessage `json:"editable_text_layers,omitempty"`
+	PatchHints         json.RawMessage `json:"patch_hints,omitempty"`
+	TemplateCandidates json.RawMessage `json:"template_candidates,omitempty"`
+	SelectionPolicy    json.RawMessage `json:"selection_policy,omitempty"`
+	IssueID            string          `json:"issue_id,omitempty"`
+	ParentIssue        json.RawMessage `json:"parent_issue,omitempty"`
+	DesignSystem       json.RawMessage `json:"design_system,omitempty"`
+}
+
+// DesignRestoreTaskContext is the payload stored on design restore tasks.
+type DesignRestoreTaskContext struct {
+	Type          string          `json:"type"`
+	Prompt        string          `json:"prompt"`
+	RequesterID   string          `json:"requester_id"`
+	WorkspaceID   string          `json:"workspace_id"`
+	ProjectID     string          `json:"project_id,omitempty"`
+	AgentID       string          `json:"agent_id"`
+	IssueID       string          `json:"issue_id,omitempty"`
+	RestoreTaskID string          `json:"restore_task_id"`
+	DesignFileID  string          `json:"design_file_id"`
+	RevisionID    string          `json:"revision_id"`
+	Input         json.RawMessage `json:"input"`
+	RestorePlan   json.RawMessage `json:"restore_plan,omitempty"`
+	DesignSystem  json.RawMessage `json:"design_system,omitempty"`
+	ItemContexts  json.RawMessage `json:"item_contexts,omitempty"`
+	RestorePolicy json.RawMessage `json:"restore_policy,omitempty"`
+	OutputPolicy  json.RawMessage `json:"output_policy,omitempty"`
+}
+
 // EnqueueQuickCreateTask creates a queued task that has no issue / chat /
 // autopilot link — the user's natural-language prompt is stored in the
 // task's context JSONB and the agent is expected to translate it into a
@@ -2922,6 +2994,19 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	return &task, nil
 }
 
+func (s *TaskService) CompleteTaskWithMutation(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir string, mutate func(*db.Queries, db.AgentTaskQueue) error) (*db.AgentTaskQueue, error) {
+	task, err := s.CompleteTask(ctx, taskID, result, sessionID, workDir, false)
+	if err != nil {
+		return nil, err
+	}
+	if mutate != nil {
+		if err := mutate(s.Queries, *task); err != nil {
+			return nil, err
+		}
+	}
+	return task, nil
+}
+
 // chatNoResponseFallback is the non-empty English body stored on a no_response
 // assistant row. New clients render a localized "no text reply this turn"
 // message keyed on message_kind='no_response'; older clients that ignore
@@ -3298,6 +3383,13 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	s.broadcastTaskEvent(ctx, protocol.EventTaskFailed, task)
 
 	return &task, nil
+}
+
+func (s *TaskService) FailTasksWithProfileSync(ctx context.Context, mutate func(*db.Queries) ([]db.AgentTaskQueue, error)) ([]db.AgentTaskQueue, error) {
+	if mutate == nil {
+		return nil, nil
+	}
+	return mutate(s.Queries)
 }
 
 // retryableReasons enumerates failure reasons that the auto-retry path is

@@ -156,6 +156,7 @@ type Handler struct {
 	ModelListStore         ModelListStore
 	LocalSkillListStore    LocalSkillListStore
 	LocalSkillImportStore  LocalSkillImportStore
+	DesignAssetStorage     storage.Storage
 	FeatureFlags           *featureflag.Service
 	LivenessStore          LivenessStore
 	HeartbeatScheduler     HeartbeatScheduler
@@ -443,7 +444,6 @@ func uuidStringsOrEmpty(us []pgtype.UUID) []string {
 }
 
 func int8ToPtr(v pgtype.Int8) *int64 { return util.Int8ToPtr(v) }
-func int4ToPtr(v pgtype.Int4) *int32 { return util.Int4ToPtr(v) }
 func ptrToInt4(v *int32) pgtype.Int4 { return util.PtrToInt4(v) }
 
 // parseUUIDOrBadRequest validates a UUID string sourced from user input
