@@ -1911,11 +1911,14 @@ func (h *Handler) ReportTaskProgress(w http.ResponseWriter, r *http.Request) {
 
 // CompleteTask marks a running task as completed.
 type TaskCompleteRequest struct {
-	PRURL     string `json:"pr_url"`
-	Output    string `json:"output"`
-	SessionID string `json:"session_id"` // Claude session ID for future resumption
-	WorkDir   string `json:"work_dir"`   // working directory used during execution
+	PRURL                        string                        `json:"pr_url"`
+	Output                       string                        `json:"output"`
+	SessionID                    string                        `json:"session_id"` // Claude session ID for future resumption
+	WorkDir                      string                        `json:"work_dir"`   // working directory used during execution
+	ProjectDesignSystemArtifacts *ProjectDesignSystemArtifacts `json:"project_design_system_artifacts,omitempty"`
 }
+
+const taskCompleteRequestMaxBytes int64 = 2 << 20
 
 func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
@@ -1926,8 +1929,14 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, taskCompleteRequestMaxBytes)
 	var req TaskCompleteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -1935,6 +1944,17 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	var createdDraft *db.DesignDraft
 	var analyzedProfile *db.DesignSystemProfile
 	var profileOutput *designSystemProfileAnalyzeOutput
+	var completedProjectDesignSystem *db.ProjectDesignSystem
+	var preparedProjectDesignSystem *preparedProjectDesignSystemCompletion
+	if existingTask.Status == "running" && isProjectDesignSystemTaskContext(existingTask) {
+		prepared, prepareErr := h.prepareProjectDesignSystemCompletion(r.Context(), existingTask, workspaceID, req.ProjectDesignSystemArtifacts)
+		if prepareErr != nil {
+			h.failInvalidProjectDesignSystemCompletion(r.Context(), existingTask, req, prepareErr)
+			writeError(w, http.StatusBadRequest, prepareErr.Error())
+			return
+		}
+		preparedProjectDesignSystem = &prepared
+	}
 	if existingTask.Status == "running" && isUIDraftCreateTaskContext(existingTask.Context) {
 		draft, draftErr := h.createDesignDraftFromAgentTaskOutput(r.Context(), existingTask, req.Output)
 		if draftErr != nil {
@@ -1981,6 +2001,14 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 			}
 			return updateErr
 		})
+	} else if preparedProjectDesignSystem != nil {
+		task, err = h.TaskService.CompleteTaskWithMutation(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
+			system, saveErr := persistProjectDesignSystemCompletion(r.Context(), qtx, completedTask, *preparedProjectDesignSystem)
+			if saveErr == nil {
+				completedProjectDesignSystem = &system
+			}
+			return saveErr
+		})
 	} else {
 		task, err = h.TaskService.CompleteTask(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir)
 	}
@@ -2003,6 +2031,13 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if analyzedProfile != nil {
 		slog.Info("design system profile analyzed from task", "task_id", taskID, "design_system_profile_id", uuidToString(analyzedProfile.ID))
+	}
+	if completedProjectDesignSystem != nil {
+		h.publish("project_design_system:changed", workspaceID, "agent", uuidToString(task.AgentID), map[string]any{
+			"project_design_system_id": uuidToString(completedProjectDesignSystem.ID),
+			"project_id":               uuidToString(completedProjectDesignSystem.ProjectID),
+			"status":                   "draft",
+		})
 	}
 	if err := h.updateDesignRestoreTaskFromAgentCompletion(r.Context(), *task, req); err != nil {
 		slog.Warn("design restore task completion: failed to update restore task", "task_id", taskID, "error", err)

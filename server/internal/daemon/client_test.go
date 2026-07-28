@@ -85,6 +85,65 @@ func TestClient_VersionOmittedWhenUnset(t *testing.T) {
 	}
 }
 
+func TestClientCompleteTaskSerializesOptionalProjectDesignSystemArtifacts(t *testing.T) {
+	want := ProjectDesignSystemArtifacts{
+		DesignMD:       "# Design system",
+		TokensCSS:      ":root { --color-primary: #1677ff; }",
+		ComponentsHTML: "<main>Kit</main>",
+	}
+	var payload map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewClient(srv.URL)
+	if err := client.CompleteTask(
+		context.Background(),
+		"task-1",
+		"done",
+		"",
+		"session-1",
+		"/tmp/workdir",
+		&want,
+	); err != nil {
+		t.Fatalf("complete task: %v", err)
+	}
+	var got ProjectDesignSystemArtifacts
+	if err := json.Unmarshal(payload["project_design_system_artifacts"], &got); err != nil {
+		t.Fatalf("decode artifacts: %v", err)
+	}
+	if got != want {
+		t.Fatalf("artifacts = %#v, want %#v", got, want)
+	}
+}
+
+func TestClientCompleteTaskOmitsProjectDesignSystemArtifactsWhenNil(t *testing.T) {
+	var payload map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewClient(srv.URL)
+	if err := client.CompleteTask(context.Background(), "task-1", "done", "", "", "", nil); err != nil {
+		t.Fatalf("complete task: %v", err)
+	}
+	if _, exists := payload["project_design_system_artifacts"]; exists {
+		t.Fatal("ordinary completion included project_design_system_artifacts")
+	}
+}
+
 // noSleepRetry replaces retrySleep with an immediate no-op so tests don't
 // actually wait the 4s/8s/16s/... backoffs. Returns a restore func.
 func noSleepRetry(t *testing.T) func() {

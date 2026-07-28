@@ -2215,6 +2215,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 
+	result = attachProjectDesignSystemArtifacts(task, result)
+
 	_ = d.client.ReportProgress(ctx, task.ID, "Finishing task", 2, 2)
 
 	// Final pre-completion check: if the server already moved the task to
@@ -2380,7 +2382,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 	switch result.Status {
 	case "completed":
 		taskLog.Info("task completed", "status", result.Status)
-		err := d.client.CompleteTask(ctx, taskID, result.Comment, result.BranchName, result.SessionID, result.WorkDir)
+		err := d.client.CompleteTask(ctx, taskID, result.Comment, result.BranchName, result.SessionID, result.WorkDir, result.ProjectDesignSystemArtifacts)
 		if err == nil {
 			return
 		}

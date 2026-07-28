@@ -922,7 +922,7 @@ func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 }
 
 // CancelTasksForAgentWithoutBroadcast is the archive path: task rows and any
-// design-system analysis profiles transition atomically, while the caller's
+// linked design-system state transition atomically, while the caller's
 // agent:archived event remains the sole frontend invalidation signal.
 func (s *TaskService) CancelTasksForAgentWithoutBroadcast(ctx context.Context, agentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
 	cancelled, err := s.cancelTasksForAgent(ctx, agentID)
@@ -944,6 +944,9 @@ func (s *TaskService) cancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 		}
 		for _, task := range rows {
 			if err := s.markDesignSystemProfileAnalysisFailed(ctx, qtx, task, "design system profile analysis was cancelled"); err != nil {
+				return err
+			}
+			if err := s.markProjectDesignSystemTaskFailed(ctx, qtx, task, "project_design_system_cancelled", "project design system task was cancelled"); err != nil {
 				return err
 			}
 		}
@@ -981,6 +984,12 @@ func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID
 func (s *TaskService) BroadcastCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue) {
 	for _, t := range cancelled {
 		s.markCancelledDesignSystemProfile(ctx, t)
+		if err := s.markProjectDesignSystemTaskFailed(ctx, s.Queries, t, "project_design_system_cancelled", "project design system task was cancelled"); err != nil {
+			slog.Warn("cancel task: failed to update project design system",
+				"task_id", util.UUIDToString(t.ID),
+				"error", err,
+			)
+		}
 		s.captureTaskCancelled(ctx, t)
 		s.ReconcileAgentStatus(ctx, t.AgentID)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
@@ -1008,6 +1017,9 @@ func (s *TaskService) CancelTask(ctx context.Context, taskID pgtype.UUID) (*db.A
 		task = cancelled
 		if err := s.markDesignSystemProfileAnalysisFailed(ctx, qtx, cancelled, "design system profile analysis was cancelled"); err != nil {
 			return fmt.Errorf("mark design system profile analysis cancelled: %w", err)
+		}
+		if err := s.markProjectDesignSystemTaskFailed(ctx, qtx, cancelled, "project_design_system_cancelled", "project design system task was cancelled"); err != nil {
+			return fmt.Errorf("mark project design system task cancelled: %w", err)
 		}
 		return nil
 	})
@@ -1540,6 +1552,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		if err := s.markDesignSystemProfileAnalysisFailed(ctx, qtx, t, errMsg); err != nil {
 			return fmt.Errorf("mark design system profile analysis failed: %w", err)
 		}
+		if err := s.markProjectDesignSystemTaskFailed(ctx, qtx, t, failureReason, errMsg); err != nil {
+			return fmt.Errorf("mark project design system task failed: %w", err)
+		}
 		return nil
 	}); err != nil {
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
@@ -1852,7 +1867,7 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 	retried := 0
 
 	for _, t := range tasks {
-		failureMessage := "design system profile analysis failed"
+		failureMessage := ""
 		if t.Error.Valid && strings.TrimSpace(t.Error.String) != "" {
 			failureMessage = t.Error.String
 		} else if t.FailureReason.Valid && strings.TrimSpace(t.FailureReason.String) != "" {
@@ -1860,6 +1875,16 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 		}
 		if err := s.markDesignSystemProfileAnalysisFailed(ctx, s.Queries, t, failureMessage); err != nil {
 			slog.Warn("handle failed tasks: failed to update design system profile",
+				"task_id", util.UUIDToString(t.ID),
+				"error", err,
+			)
+		}
+		failureCode := "project_design_system_task_failed"
+		if t.FailureReason.Valid && strings.TrimSpace(t.FailureReason.String) != "" {
+			failureCode = t.FailureReason.String
+		}
+		if err := s.markProjectDesignSystemTaskFailed(ctx, s.Queries, t, failureCode, failureMessage); err != nil {
+			slog.Warn("handle failed tasks: failed to update project design system",
 				"task_id", util.UUIDToString(t.ID),
 				"error", err,
 			)
@@ -1939,7 +1964,7 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 }
 
 // FailTasksWithProfileSync runs a bulk task-failure query and synchronizes any
-// linked design-system analysis profiles before the transaction commits.
+// linked specialized design-system state before the transaction commits.
 func (s *TaskService) FailTasksWithProfileSync(ctx context.Context, fail func(*db.Queries) ([]db.AgentTaskQueue, error)) ([]db.AgentTaskQueue, error) {
 	var tasks []db.AgentTaskQueue
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
@@ -1948,13 +1973,20 @@ func (s *TaskService) FailTasksWithProfileSync(ctx context.Context, fail func(*d
 			return err
 		}
 		for _, task := range failed {
-			message := "design system profile analysis failed"
+			message := ""
 			if task.Error.Valid && strings.TrimSpace(task.Error.String) != "" {
 				message = task.Error.String
 			} else if task.FailureReason.Valid && strings.TrimSpace(task.FailureReason.String) != "" {
 				message = task.FailureReason.String
 			}
 			if err := s.markDesignSystemProfileAnalysisFailed(ctx, qtx, task, message); err != nil {
+				return err
+			}
+			failureCode := "project_design_system_task_failed"
+			if task.FailureReason.Valid && strings.TrimSpace(task.FailureReason.String) != "" {
+				failureCode = task.FailureReason.String
+			}
+			if err := s.markProjectDesignSystemTaskFailed(ctx, qtx, task, failureCode, message); err != nil {
 				return err
 			}
 		}
@@ -2007,6 +2039,81 @@ func (s *TaskService) markDesignSystemProfileAnalysisFailed(ctx context.Context,
 		ProfileJson:    profile.ProfileJson,
 		AnalysisErrors: errorsJSON,
 	})
+	return err
+}
+
+func (s *TaskService) markProjectDesignSystemTaskFailed(
+	ctx context.Context,
+	queries *db.Queries,
+	task db.AgentTaskQueue,
+	code string,
+	message string,
+) error {
+	taskContext, ok := s.parseProjectDesignSystemTaskContext(task)
+	if !ok {
+		return nil
+	}
+	workspaceID, err := util.ParseUUID(taskContext.WorkspaceID)
+	if err != nil {
+		return fmt.Errorf("parse project design system workspace id: %w", err)
+	}
+	projectID, err := util.ParseUUID(taskContext.ProjectID)
+	if err != nil {
+		return fmt.Errorf("parse project design system project id: %w", err)
+	}
+	systemID, err := util.ParseUUID(taskContext.ProjectDesignSystemID)
+	if err != nil {
+		return fmt.Errorf("parse project design system id: %w", err)
+	}
+	agentID, err := util.ParseUUID(taskContext.AgentID)
+	if err != nil {
+		return fmt.Errorf("parse project design system agent id: %w", err)
+	}
+	if util.UUIDToString(agentID) != util.UUIDToString(task.AgentID) {
+		return errors.New("project design system task agent mismatch")
+	}
+
+	system, err := queries.GetProjectDesignSystemInWorkspace(ctx, db.GetProjectDesignSystemInWorkspaceParams{
+		ID:          systemID,
+		WorkspaceID: workspaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if util.UUIDToString(system.ProjectID) != util.UUIDToString(projectID) ||
+		!system.CurrentAgentID.Valid || util.UUIDToString(system.CurrentAgentID) != util.UUIDToString(agentID) {
+		return errors.New("project design system task identity mismatch")
+	}
+
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = "project_design_system_task_failed"
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "project design system task failed"
+	}
+	lastError, err := json.Marshal(map[string]any{
+		"code":      code,
+		"message":   message,
+		"task_id":   util.UUIDToString(task.ID),
+		"operation": taskContext.Operation,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = queries.SetProjectDesignSystemFailure(ctx, db.SetProjectDesignSystemFailureParams{
+		LastError:    lastError,
+		ID:           system.ID,
+		WorkspaceID:  workspaceID,
+		ActiveTaskID: task.ID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
 	return err
 }
 
