@@ -2474,6 +2474,9 @@ func gcMetaForTask(task Task) (execenv.GCMeta, bool) {
 	case len(task.DesignSystemProfileAnalyzeContext) > 0:
 		meta.Kind = execenv.GCKindQuickCreate
 		meta.TaskID = task.ID
+	case len(task.ProjectDesignSystemContext) > 0:
+		meta.Kind = execenv.GCKindQuickCreate
+		meta.TaskID = task.ID
 	default:
 		return execenv.GCMeta{}, false
 	}
@@ -2551,6 +2554,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		UIDraftCreateContext:              strings.TrimSpace(string(task.UIDraftCreateContext)),
 		DesignRestoreContext:              strings.TrimSpace(string(task.DesignRestoreContext)),
 		DesignSystemProfileAnalyzeContext: strings.TrimSpace(string(task.DesignSystemProfileAnalyzeContext)),
+		ProjectDesignSystemContext:        strings.TrimSpace(string(task.ProjectDesignSystemContext)),
 		IsSquadLeader:                     strings.Contains(instructions, "## Squad Operating Protocol"),
 		RequestingUserName:                task.RequestingUserName,
 		RequestingUserProfileDescription:  task.RequestingUserProfileDescription,
@@ -2711,6 +2715,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if len(task.DesignSystemProfileAnalyzeContext) > 0 {
 		agentEnv["MULTICA_DESIGN_SYSTEM_PROFILE_ANALYZE_TASK_ID"] = task.ID
+	}
+	if len(task.ProjectDesignSystemContext) > 0 && env.OutputDir != "" {
+		agentEnv["MULTICA_OUTPUT_DIR"] = env.OutputDir
 	}
 	// Ensure the multica CLI is on PATH inside the agent's environment.
 	// Some runtimes (e.g. Codex) run in an isolated sandbox that may not

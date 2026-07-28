@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -647,6 +648,55 @@ func TestBuildPromptDesignSystemProfileAnalyze(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("design system analysis prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+}
+
+func projectDesignSystemPromptTask(t *testing.T, operation string) Task {
+	t.Helper()
+	var task Task
+	raw := `{"project_design_system_context":{"type":"project_design_system_task","operation":"` + operation + `","brief":"Calm CRM"}}`
+	if err := json.Unmarshal([]byte(raw), &task); err != nil {
+		t.Fatalf("decode task: %v", err)
+	}
+	return task
+}
+
+func TestBuildPromptProjectDesignSystemGenerate(t *testing.T) {
+	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "generate"), "opencode")
+	for _, want := range []string{
+		"design system designer",
+		".agent_context/project_design_system/task.json",
+		"user brief as the primary intent",
+		"Open Design",
+		"one coherent direction",
+		"components.html is a real static UI Kit",
+		"data-design-node-id",
+		"$MULTICA_OUTPUT_DIR/DESIGN.md",
+		"Do not paste file contents into the final response",
+		"Do not modify a repository",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("project design system generate prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "Calm CRM") {
+		t.Fatal("project design system prompt must read task.json instead of embedding the full context")
+	}
+}
+
+func TestBuildPromptProjectDesignSystemAdjustRequiresCompleteReplacement(t *testing.T) {
+	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "adjust"), "opencode")
+	for _, want := range []string{
+		"base/DESIGN.md",
+		"base/tokens.css",
+		"base/components.html",
+		"complete mutually consistent replacement",
+		"even when the requested scope is local",
+		"Never write scripts, event attributes, imports, forms, external embeds",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("project design system adjustment prompt missing %q\n--- prompt ---\n%s", want, prompt)
 		}
 	}
 }

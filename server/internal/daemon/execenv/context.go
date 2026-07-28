@@ -54,6 +54,10 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 		}
 	}
 
+	if err := writeProjectDesignSystemContext(workDir, ctx, manifest); err != nil {
+		return fmt.Errorf("write project design system context: %w", err)
+	}
+
 	if len(ctx.AgentSkills) > 0 {
 		skillsDir, err := resolveSkillsDir(workDir, provider, manifest)
 		if err != nil {
@@ -76,6 +80,77 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 		return fmt.Errorf("write project resources: %w", err)
 	}
 
+	return nil
+}
+
+func writeProjectDesignSystemContext(workDir string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
+	if strings.TrimSpace(ctx.ProjectDesignSystemContext) == "" {
+		return nil
+	}
+
+	var task map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(ctx.ProjectDesignSystemContext), &task); err != nil {
+		return fmt.Errorf("decode task context: %w", err)
+	}
+	var discriminator string
+	if err := json.Unmarshal(task["type"], &discriminator); err != nil || discriminator != "project_design_system_task" {
+		return fmt.Errorf("invalid task context type")
+	}
+	var operation string
+	if err := json.Unmarshal(task["operation"], &operation); err != nil {
+		return fmt.Errorf("decode operation: %w", err)
+	}
+
+	root := filepath.Join(workDir, ".agent_context", "project_design_system")
+	if err := recordMkdirAll(root, 0o755, manifest); err != nil {
+		return err
+	}
+
+	if operation == "adjust" || operation == "regenerate" {
+		var base map[string]json.RawMessage
+		if err := json.Unmarshal(task["base_package"], &base); err != nil {
+			return fmt.Errorf("decode base package: %w", err)
+		}
+		baseDir := filepath.Join(root, "base")
+		if err := recordMkdirAll(baseDir, 0o755, manifest); err != nil {
+			return err
+		}
+		files := []struct {
+			key  string
+			name string
+		}{
+			{key: "design_md", name: "DESIGN.md"},
+			{key: "tokens_css", name: "tokens.css"},
+			{key: "components_html", name: "components.html"},
+		}
+		for _, file := range files {
+			var contents string
+			if err := json.Unmarshal(base[file.key], &contents); err != nil {
+				return fmt.Errorf("decode base %s: %w", file.name, err)
+			}
+			if err := recordWriteFile(filepath.Join(baseDir, file.name), []byte(contents), 0o644, manifest); err != nil {
+				return err
+			}
+			delete(base, file.key)
+		}
+		baseMetadata, err := json.Marshal(base)
+		if err != nil {
+			return fmt.Errorf("encode base metadata: %w", err)
+		}
+		task["base_package"] = baseMetadata
+	} else if operation == "generate" {
+		delete(task, "base_package")
+	} else {
+		return fmt.Errorf("unsupported operation %q", operation)
+	}
+
+	taskJSON, err := json.MarshalIndent(task, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode task context: %w", err)
+	}
+	if err := recordWriteFile(filepath.Join(root, "task.json"), taskJSON, 0o644, manifest); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -417,6 +492,9 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 	if ctx.DesignSystemProfileAnalyzeContext != "" {
 		return renderDesignSystemProfileAnalyzeContext(ctx)
 	}
+	if ctx.ProjectDesignSystemContext != "" {
+		return renderProjectDesignSystemContext()
+	}
 
 	var b strings.Builder
 
@@ -443,6 +521,10 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 	}
 
 	return b.String()
+}
+
+func renderProjectDesignSystemContext() string {
+	return "# Project Design System\n\nRead `.agent_context/project_design_system/task.json` before designing. Write the completed package to `$MULTICA_OUTPUT_DIR`.\n"
 }
 
 // renderQuickCreateContext renders issue_context.md for quick-create tasks.

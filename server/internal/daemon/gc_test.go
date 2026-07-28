@@ -1038,6 +1038,25 @@ func TestGCMetaForTask(t *testing.T) {
 	})
 }
 
+func TestGCMetaRecognizesProjectDesignSystemTask(t *testing.T) {
+	t.Parallel()
+	var task Task
+	if err := json.Unmarshal([]byte(`{
+		"id":"project-design-system-task",
+		"workspace_id":"workspace-1",
+		"project_design_system_context":{"type":"project_design_system_task"}
+	}`), &task); err != nil {
+		t.Fatalf("decode task: %v", err)
+	}
+	meta, ok := gcMetaForTask(task)
+	if !ok {
+		t.Fatal("expected project design system task to be recognized")
+	}
+	if meta.Kind != execenv.GCKindQuickCreate || meta.TaskID != "project-design-system-task" || meta.WorkspaceID != "workspace-1" {
+		t.Fatalf("gc meta = %+v", meta)
+	}
+}
+
 // TestShouldCleanTaskDir_LocalDirectoryNeverClean confirms the GC loop
 // never removes the envRoot of a local_directory task even when the parent
 // issue is long-since done. Artifact-pattern cleanup is the most that

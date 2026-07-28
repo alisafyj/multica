@@ -36,11 +36,33 @@ func BuildPrompt(task Task, provider string) string {
 	if len(task.DesignSystemProfileAnalyzeContext) > 0 {
 		return buildDesignSystemProfileAnalyzePrompt(task)
 	}
+	if len(task.ProjectDesignSystemContext) > 0 {
+		return buildProjectDesignSystemPrompt()
+	}
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). On long-running issues use `--recent 20 --output json` to read the 20 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
+	return b.String()
+}
+
+func buildProjectDesignSystemPrompt() string {
+	var b strings.Builder
+	b.WriteString("You are running as a project design system designer for a Multica workspace.\n\n")
+	b.WriteString("Read `.agent_context/project_design_system/task.json` first. Treat the user brief as the primary intent and references as evidence.\n")
+	b.WriteString("For adjust or regenerate operations, read all three base files before designing: `base/DESIGN.md`, `base/tokens.css`, and `base/components.html`.\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- Use Open Design's stable Token layers. Do not invent unsupported project facts merely to fill a catalog.\n")
+	b.WriteString("- Create one coherent direction, not multiple alternatives or a demo switcher.\n")
+	b.WriteString("- components.html is a real static UI Kit using tokens.css, with project-relevant components, states, and representative compositions.\n")
+	b.WriteString("- Every selectable component or block must have unique `data-design-node-id`, `data-design-node-kind`, and `data-design-node-label` attributes.\n")
+	b.WriteString("- Never write scripts, event attributes, imports, forms, external embeds, or arbitrary remote resources.\n")
+	b.WriteString("- For adjustment, return a complete mutually consistent replacement of all three files even when the requested scope is local.\n")
+	b.WriteString("- Write exact files to `$MULTICA_OUTPUT_DIR/DESIGN.md`, `$MULTICA_OUTPUT_DIR/tokens.css`, and `$MULTICA_OUTPUT_DIR/components.html`.\n")
+	b.WriteString("- Do not paste file contents into the final response; report only a short completion summary.\n")
+	b.WriteString("- Do not modify a repository, call Figma, upload a design file, or call Multica write commands.\n")
+	b.WriteString("- Do not report success unless all three output files have been written.\n")
 	return b.String()
 }
 

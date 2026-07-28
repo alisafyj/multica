@@ -205,6 +205,78 @@ func TestProviderNeedsInlineSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestRunTaskExportsProjectDesignSystemOutputDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is POSIX-only")
+	}
+
+	tempDir := t.TempDir()
+	capturePath := filepath.Join(tempDir, "output-dir.txt")
+	fakePath := filepath.Join(tempDir, "opencode")
+	script := `#!/bin/sh
+printf '%s' "$MULTICA_OUTPUT_DIR" > "$CAPTURE_FILE"
+printf '{"type":"step_start","timestamp":1,"sessionID":"ses_fake","part":{"type":"step-start"}}\n'
+printf '{"type":"text","timestamp":2,"sessionID":"ses_fake","part":{"type":"text","text":"done"}}\n'
+printf '{"type":"step_finish","timestamp":3,"sessionID":"ses_fake","part":{"type":"step-finish"}}\n'
+`
+	if err := os.WriteFile(fakePath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake opencode: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	d := New(Config{
+		ServerBaseURL:  srv.URL,
+		WorkspacesRoot: filepath.Join(tempDir, "workspaces"),
+		HealthPort:     19514,
+		AgentTimeout:   5 * time.Second,
+		Agents: map[string]AgentEntry{
+			"opencode": {Path: fakePath},
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	var task Task
+	if err := json.Unmarshal([]byte(`{
+		"id":"project-design-system-output-task",
+		"agent_id":"agent-1",
+		"workspace_id":"workspace-1",
+		"project_id":"project-1",
+		"project_design_system_context":{"type":"project_design_system_task","operation":"generate"}
+	}`), &task); err != nil {
+		t.Fatalf("decode task: %v", err)
+	}
+	task.Agent = &AgentData{
+		ID:   "agent-1",
+		Name: "Local UI Designer",
+		CustomEnv: map[string]string{
+			"CAPTURE_FILE":       capturePath,
+			"MULTICA_OUTPUT_DIR": filepath.Join(tempDir, "attacker-controlled"),
+		},
+	}
+
+	result, err := d.runTask(context.Background(), task, "opencode", 0, slog.Default())
+	if err != nil {
+		t.Fatalf("runTask: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("result status = %q, comment=%q", result.Status, result.Comment)
+	}
+	captured, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatalf("read captured output dir: %v", err)
+	}
+	want := filepath.Join(result.EnvRoot, "output", "project-design-system")
+	if string(captured) != want {
+		t.Fatalf("MULTICA_OUTPUT_DIR = %q, want %q", captured, want)
+	}
+	if info, err := os.Stat(want); err != nil || !info.IsDir() {
+		t.Fatalf("output directory missing: info=%v err=%v", info, err)
+	}
+}
+
 // TestComposeOpenclawIncludeRoots — the Elon must-fix regression: the
 // daemon must grant OpenClaw permission to follow the wrapper's $include
 // link from envRoot into the user's active config dir, while preserving

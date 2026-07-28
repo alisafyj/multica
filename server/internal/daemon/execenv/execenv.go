@@ -81,6 +81,7 @@ type TaskContextForEnv struct {
 	UIDraftCreateContext              string // non-empty for UI design draft generation tasks
 	DesignRestoreContext              string // non-empty for Gallery Native restore execution tasks
 	DesignSystemProfileAnalyzeContext string // non-empty for UI specification profile analysis tasks
+	ProjectDesignSystemContext        string // non-empty for project design-system generation tasks
 	IsSquadLeader                     bool   // true when the agent is acting as a squad leader (may exit silently on no_action)
 	// WorkspaceContext is the workspace-level system prompt (workspace.context
 	// in the DB). Rendered into the brief as `## Workspace Context` when
@@ -139,6 +140,9 @@ type Environment struct {
 	// directory holding the wrapper file. Empty when no $include is
 	// emitted (fresh install).
 	OpenclawIncludeRoot string
+	// OutputDir is the dedicated artifact directory for tasks that produce
+	// file-based output. It is empty for ordinary coding and issue tasks.
+	OutputDir string
 
 	logger *slog.Logger // for cleanup logging
 }
@@ -182,6 +186,15 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// envRoot.
 	workDir := filepath.Join(envRoot, "workdir")
 	scratchDirs := []string{filepath.Join(envRoot, "output"), filepath.Join(envRoot, "logs")}
+	outputDir := ""
+	if params.Task.ProjectDesignSystemContext != "" {
+		var err error
+		outputDir, err = filepath.Abs(filepath.Join(envRoot, "output", "project-design-system"))
+		if err != nil {
+			return nil, fmt.Errorf("execenv: resolve project design system output directory: %w", err)
+		}
+		scratchDirs = append(scratchDirs, outputDir)
+	}
 	if params.LocalWorkDir == "" {
 		scratchDirs = append(scratchDirs, workDir)
 	} else {
@@ -197,6 +210,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		RootDir:        envRoot,
 		WorkDir:        workDir,
 		LocalDirectory: params.LocalWorkDir != "",
+		OutputDir:      outputDir,
 		logger:         logger,
 	}
 
@@ -296,6 +310,18 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		WorkDir:        params.WorkDir,
 		LocalDirectory: params.LocalDirectory,
 		logger:         logger,
+	}
+	if params.Task.ProjectDesignSystemContext != "" && rootDir != "" {
+		var err error
+		env.OutputDir, err = filepath.Abs(filepath.Join(rootDir, "output", "project-design-system"))
+		if err != nil {
+			logger.Warn("execenv: resolve project design system output dir on reuse failed", "error", err)
+			return nil
+		}
+		if err := os.MkdirAll(env.OutputDir, 0o755); err != nil {
+			logger.Warn("execenv: create project design system output dir on reuse failed", "error", err)
+			return nil
+		}
 	}
 
 	// Roll back the previous dispatch's sidecar writes before refreshing.

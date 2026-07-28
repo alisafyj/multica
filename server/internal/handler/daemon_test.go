@@ -4040,3 +4040,99 @@ func TestClaimTaskByRuntime_CommentResumeDefaultOn(t *testing.T) {
 		t.Errorf("prior_session_id = %q, want %q (comment resume is default-on)", resp.Task.PriorSessionID, priorSession)
 	}
 }
+
+func TestClaimProjectDesignSystemTaskReturnsExactContext(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "Project design system claim")
+	agentID, runtimeID := createProjectDesignSystemAgent(t, "online")
+	designSystemID := uuid.NewString()
+	contextPayload := service.ProjectDesignSystemTaskContext{
+		Type:                  service.ProjectDesignSystemTaskContextType,
+		Operation:             service.ProjectDesignSystemAdjust,
+		RequesterID:           testUserID,
+		WorkspaceID:           testWorkspaceID,
+		ProjectID:             projectID,
+		ProjectDesignSystemID: designSystemID,
+		AgentID:               agentID,
+		Project:               json.RawMessage(`{"id":"` + projectID + `","name":"Project design system claim"}`),
+		Platform:              "web",
+		Brief:                 "Create a calm CRM design system.",
+		References:            json.RawMessage(`[{"kind":"link","url":"https://example.com/brand"}]`),
+		BasePackage:           json.RawMessage(`{"design_md":"# Base","tokens_css":":root{--color:#123456}","components_html":"<main>Base</main>"}`),
+		Instruction:           "Tighten the primary button.",
+		Scope:                 json.RawMessage(`{"kind":"component","id":"button-primary"}`),
+		OutputPolicy:          json.RawMessage(`{"required_artifacts":["DESIGN.md","tokens.css","components.html"]}`),
+	}
+	contextJSON, err := json.Marshal(contextPayload)
+	if err != nil {
+		t.Fatalf("marshal context: %v", err)
+	}
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
+		VALUES ($1, $2, NULL, 'queued', 0, $3::jsonb)
+		RETURNING id
+	`, agentID, runtimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("create project design system task: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "project-design-system-claim")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var response struct {
+		Task *struct {
+			ID                         string                `json:"id"`
+			AgentID                    string                `json:"agent_id"`
+			WorkspaceID                string                `json:"workspace_id"`
+			ProjectID                  string                `json:"project_id"`
+			ProjectTitle               string                `json:"project_title"`
+			Repos                      []RepoData            `json:"repos"`
+			ProjectResources           []ProjectResourceData `json:"project_resources"`
+			ProjectDesignSystemContext json.RawMessage       `json:"project_design_system_context"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode claim response: %v", err)
+	}
+	if response.Task == nil || response.Task.ID != taskID {
+		t.Fatalf("claimed task = %#v, want %s", response.Task, taskID)
+	}
+	if response.Task.AgentID != agentID || response.Task.WorkspaceID != testWorkspaceID || response.Task.ProjectID != projectID {
+		t.Fatalf("claim identity = agent %s workspace %s project %s", response.Task.AgentID, response.Task.WorkspaceID, response.Task.ProjectID)
+	}
+	if response.Task.ProjectTitle != "Project design system claim" {
+		t.Fatalf("project title = %q", response.Task.ProjectTitle)
+	}
+	if len(response.Task.Repos) != 0 || len(response.Task.ProjectResources) != 0 {
+		t.Fatalf("project design system claim must not inject repositories or resources: repos=%v resources=%v", response.Task.Repos, response.Task.ProjectResources)
+	}
+
+	var claimed service.ProjectDesignSystemTaskContext
+	if err := json.Unmarshal(response.Task.ProjectDesignSystemContext, &claimed); err != nil {
+		t.Fatalf("decode claimed project design system context: %v; raw=%s", err, response.Task.ProjectDesignSystemContext)
+	}
+	if claimed.AgentID != contextPayload.AgentID || claimed.ProjectID != contextPayload.ProjectID || claimed.Platform != contextPayload.Platform || claimed.Brief != contextPayload.Brief || claimed.Instruction != contextPayload.Instruction {
+		t.Fatalf("claimed context lost scalar fields: %+v", claimed)
+	}
+	for label, pair := range map[string][2]json.RawMessage{
+		"references":   {contextPayload.References, claimed.References},
+		"scope":        {contextPayload.Scope, claimed.Scope},
+		"base_package": {contextPayload.BasePackage, claimed.BasePackage},
+	} {
+		var want, got any
+		if json.Unmarshal(pair[0], &want) != nil || json.Unmarshal(pair[1], &got) != nil || fmt.Sprintf("%#v", got) != fmt.Sprintf("%#v", want) {
+			t.Fatalf("%s changed across claim: got=%s want=%s", label, pair[1], pair[0])
+		}
+	}
+}

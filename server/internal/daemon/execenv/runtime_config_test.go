@@ -466,6 +466,31 @@ func TestDesignSystemProfileAnalyzeContextSkipsIssueWorkflow(t *testing.T) {
 	}
 }
 
+func TestProjectDesignSystemContextSkipsIssueWorkflow(t *testing.T) {
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{"type":"project_design_system_task","operation":"generate"}`)
+	out := buildMetaSkillContent("opencode", ctx)
+	for _, want := range []string{
+		"project design system",
+		".agent_context/project_design_system/task.json",
+		"MULTICA_OUTPUT_DIR",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("project design system runtime brief missing %q\n--- brief ---\n%s", want, out)
+		}
+	}
+	for _, forbidden := range []string{
+		"Run `multica issue get",
+		"You are responsible for managing the issue status",
+		"Final results MUST be delivered via `multica issue comment add`",
+		"## Issue Metadata",
+	} {
+		if strings.Contains(out, forbidden) {
+			t.Fatalf("project design system runtime brief contains issue workflow %q\n--- brief ---\n%s", forbidden, out)
+		}
+	}
+}
+
 // writeRuntimeConfigFile is the safe replacement for the previous
 // unconditional os.WriteFile of CLAUDE.md / AGENTS.md / GEMINI.md. The three
 // states it must handle correctly are: file missing, file present without

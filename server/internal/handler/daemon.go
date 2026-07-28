@@ -1431,6 +1431,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	hasUIDraftCreate := false
 	hasDesignRestore := false
 	hasDesignSystemProfileAnalyze := false
+	hasProjectDesignSystem := false
 	if task.Context != nil && !task.IssueID.Valid && !task.ChatSessionID.Valid && !task.AutopilotRunID.Valid {
 		var qc service.QuickCreateContext
 		if json.Unmarshal(task.Context, &qc) == nil && qc.Type == service.QuickCreateContextType {
@@ -1652,6 +1653,23 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			resp.DesignSystemProfileAnalyzeContext = json.RawMessage(task.Context)
 			resp.ProjectID = profileCtx.ProjectID
 		}
+
+		var projectDesignSystemCtx service.ProjectDesignSystemTaskContext
+		if json.Unmarshal(task.Context, &projectDesignSystemCtx) == nil && projectDesignSystemCtx.Type == service.ProjectDesignSystemTaskContextType {
+			hasProjectDesignSystem = true
+			resp.WorkspaceID = projectDesignSystemCtx.WorkspaceID
+			resp.ProjectID = projectDesignSystemCtx.ProjectID
+			resp.ProjectDesignSystemContext = json.RawMessage(task.Context)
+			// This task designs a cloud asset in an isolated scratch workspace.
+			// Project repositories and resources are intentionally not exposed.
+			resp.Repos = nil
+			resp.ProjectResources = nil
+			if projectUUID, err := util.ParseUUID(projectDesignSystemCtx.ProjectID); err == nil {
+				if project, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: projectUUID, WorkspaceID: runtime.WorkspaceID}); err == nil {
+					resp.ProjectTitle = project.Title
+				}
+			}
+		}
 	}
 
 	// Workspace isolation check: the daemon uses this response's workspace_id
@@ -1676,6 +1694,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			"has_ui_draft_create", hasUIDraftCreate,
 			"has_design_restore", hasDesignRestore,
 			"has_design_system_profile_analyze", hasDesignSystemProfileAnalyze,
+			"has_project_design_system", hasProjectDesignSystem,
 		)
 		if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
 			slog.Error("task claim: cancel after workspace check failed",

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -420,6 +421,176 @@ func TestWriteContextFilesOmitsSkillsWhenEmpty(t *testing.T) {
 	}
 	if strings.Contains(s, "## Agent Skills") {
 		t.Error("expected skills section to be omitted when no skills")
+	}
+}
+
+func setProjectDesignSystemContextForTest(t *testing.T, ctx *TaskContextForEnv, raw string) {
+	t.Helper()
+	field := reflect.ValueOf(ctx).Elem().FieldByName("ProjectDesignSystemContext")
+	if !field.IsValid() {
+		t.Fatal("TaskContextForEnv.ProjectDesignSystemContext is missing")
+	}
+	field.SetString(raw)
+}
+
+func TestProjectDesignSystemContextWritesTaskAndBasePackageFiles(t *testing.T) {
+	envRoot := t.TempDir()
+	workDir := filepath.Join(envRoot, "workdir")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("create workdir: %v", err)
+	}
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"adjust",
+		"brief":"Calm CRM",
+		"base_package":{
+			"design_md":"# Base design",
+			"tokens_css":":root { --color-brand: #123456; }",
+			"components_html":"<main data-design-node-id=\"base\">Base kit</main>",
+			"integrity_sha256":"abc123"
+		}
+	}`)
+	manifest := &sidecarManifest{}
+	if err := writeContextFiles(workDir, "opencode", ctx, manifest); err != nil {
+		t.Fatalf("write project design system context: %v", err)
+	}
+	if err := writeSidecarManifest(envRoot, manifest); err != nil {
+		t.Fatalf("write sidecar manifest: %v", err)
+	}
+
+	root := filepath.Join(workDir, ".agent_context", "project_design_system")
+	taskJSON, err := os.ReadFile(filepath.Join(root, "task.json"))
+	if err != nil {
+		t.Fatalf("read task.json: %v", err)
+	}
+	if strings.Contains(string(taskJSON), "# Base design") || strings.Contains(string(taskJSON), "components_html") {
+		t.Fatalf("task.json duplicated embedded base contents: %s", taskJSON)
+	}
+	if !strings.Contains(string(taskJSON), `"integrity_sha256": "abc123"`) {
+		t.Fatalf("task.json must retain base metadata: %s", taskJSON)
+	}
+	for name, want := range map[string]string{
+		"DESIGN.md":       "# Base design",
+		"tokens.css":      ":root { --color-brand: #123456; }",
+		"components.html": `<main data-design-node-id="base">Base kit</main>`,
+	} {
+		got, err := os.ReadFile(filepath.Join(root, "base", name))
+		if err != nil {
+			t.Fatalf("read base/%s: %v", name, err)
+		}
+		if string(got) != want {
+			t.Fatalf("base/%s = %q, want %q", name, got, want)
+		}
+	}
+
+	if err := CleanupSidecars(envRoot); err != nil {
+		t.Fatalf("cleanup project design system sidecars: %v", err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("project design system sidecars remain after cleanup: %v", err)
+	}
+}
+
+func TestProjectDesignSystemGenerateContextOmitsBaseFiles(t *testing.T) {
+	workDir := t.TempDir()
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"generate",
+		"brief":"Create a new design system"
+	}`)
+	if err := writeContextFiles(workDir, "opencode", ctx, nil); err != nil {
+		t.Fatalf("write generate context: %v", err)
+	}
+	root := filepath.Join(workDir, ".agent_context", "project_design_system")
+	if _, err := os.Stat(filepath.Join(root, "task.json")); err != nil {
+		t.Fatalf("task.json missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "base")); !os.IsNotExist(err) {
+		t.Fatalf("generate task must not create base directory: %v", err)
+	}
+}
+
+func TestPrepareProjectDesignSystemOutputDir(t *testing.T) {
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{"type":"project_design_system_task","operation":"generate"}`)
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: t.TempDir(),
+		WorkspaceID:    "workspace-output",
+		TaskID:         "task-output-12345678",
+		Provider:       "opencode",
+		Task:           ctx,
+	}, discardLogger())
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	field := reflect.ValueOf(env).Elem().FieldByName("OutputDir")
+	if !field.IsValid() || field.String() == "" {
+		t.Fatal("Environment.OutputDir is missing or empty")
+	}
+	want := filepath.Join(env.RootDir, "output", "project-design-system")
+	if field.String() != want {
+		t.Fatalf("OutputDir = %q, want %q", field.String(), want)
+	}
+	if info, err := os.Stat(want); err != nil || !info.IsDir() {
+		t.Fatalf("project design system output directory not created: info=%v err=%v", info, err)
+	}
+}
+
+func TestPrepareProjectDesignSystemOutputDirIsAbsolute(t *testing.T) {
+	base := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	relativeRoot, err := filepath.Rel(cwd, base)
+	if err != nil {
+		t.Fatalf("relative workspaces root: %v", err)
+	}
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{"type":"project_design_system_task","operation":"generate"}`)
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: relativeRoot,
+		WorkspaceID:    "workspace-absolute",
+		TaskID:         "task-absolute-12345678",
+		Provider:       "opencode",
+		Task:           ctx,
+	}, discardLogger())
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if !filepath.IsAbs(env.OutputDir) {
+		t.Fatalf("OutputDir must be absolute, got %q", env.OutputDir)
+	}
+}
+
+func TestReuseProjectDesignSystemOutputDirIsAbsolute(t *testing.T) {
+	base := t.TempDir()
+	workDir := filepath.Join(base, "workspace-reuse", "task-reuse", "workdir")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("create workdir: %v", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	relativeWorkDir, err := filepath.Rel(cwd, workDir)
+	if err != nil {
+		t.Fatalf("relative workdir: %v", err)
+	}
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{"type":"project_design_system_task","operation":"generate"}`)
+	env := Reuse(ReuseParams{
+		WorkDir:  relativeWorkDir,
+		Provider: "opencode",
+		Task:     ctx,
+	}, discardLogger())
+	if env == nil {
+		t.Fatal("Reuse returned nil")
+	}
+	if !filepath.IsAbs(env.OutputDir) {
+		t.Fatalf("OutputDir must be absolute, got %q", env.OutputDir)
 	}
 }
 
