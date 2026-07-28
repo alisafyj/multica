@@ -1070,3 +1070,38 @@ type WorkspaceInvitation struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 }
+type ProjectDesignSystem struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	Name            string             `json:"name"`
+	Platform        string             `json:"platform"`
+	CurrentAgentID  pgtype.UUID        `json:"current_agent_id"`
+	ActiveTaskID    pgtype.UUID        `json:"active_task_id"`
+	ActiveOperation pgtype.Text        `json:"active_operation"`
+	InputSnapshot   []byte             `json:"input_snapshot"`
+	LastError       []byte             `json:"last_error"`
+	CreatedBy       pgtype.UUID        `json:"created_by"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	SavedAt         pgtype.Timestamptz `json:"saved_at"`
+}
+
+type ProjectDesignSystemPackage struct {
+	ID              pgtype.UUID        `json:"id"`
+	DesignSystemID  pgtype.UUID        `json:"design_system_id"`
+	Slot            string             `json:"slot"`
+	DesignMd        string             `json:"design_md"`
+	TokensCss       string             `json:"tokens_css"`
+	ComponentsHtml  string             `json:"components_html"`
+	Manifest        []byte             `json:"manifest"`
+	Validation      []byte             `json:"validation"`
+	IntegritySha256 string             `json:"integrity_sha256"`
+	SourceTaskID    pgtype.UUID        `json:"source_task_id"`
+	AgentID         pgtype.UUID        `json:"agent_id"`
+	Instruction     pgtype.Text        `json:"instruction"`
+	Scope           []byte             `json:"scope"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+

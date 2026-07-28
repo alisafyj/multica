@@ -842,3 +842,221 @@ WHERE design_component_recipe_set.workspace_id = sqlc.arg('workspace_id')
   )
 ORDER BY analysis_version DESC
 LIMIT 1;
+-- Project design systems
+
+-- name: GetProjectDesignSystemByProject :one
+SELECT * FROM project_design_system
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND project_id = sqlc.arg('project_id');
+
+-- name: GetProjectDesignSystemInWorkspace :one
+SELECT * FROM project_design_system
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id');
+
+-- name: CreateProjectDesignSystem :one
+INSERT INTO project_design_system (
+    workspace_id,
+    project_id,
+    name,
+    platform,
+    current_agent_id,
+    active_task_id,
+    active_operation,
+    input_snapshot,
+    last_error,
+    created_by
+)
+SELECT
+    sqlc.arg('workspace_id'),
+    sqlc.arg('project_id'),
+    sqlc.arg('name'),
+    sqlc.arg('platform'),
+    sqlc.narg('current_agent_id'),
+    sqlc.narg('active_task_id'),
+    sqlc.narg('active_operation'),
+    sqlc.arg('input_snapshot'),
+    sqlc.narg('last_error'),
+    sqlc.narg('created_by')
+FROM project
+WHERE project.id = sqlc.arg('project_id')
+  AND project.workspace_id = sqlc.arg('workspace_id')
+RETURNING *;
+
+-- name: UpdateProjectDesignSystemInputAndTask :one
+UPDATE project_design_system SET
+    platform = sqlc.arg('platform'),
+    current_agent_id = sqlc.arg('current_agent_id'),
+    active_task_id = sqlc.arg('active_task_id'),
+    active_operation = sqlc.arg('active_operation'),
+    input_snapshot = sqlc.arg('input_snapshot'),
+    last_error = NULL,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+RETURNING *;
+
+-- name: ClearProjectDesignSystemActiveTask :one
+UPDATE project_design_system SET
+    active_task_id = NULL,
+    active_operation = NULL,
+    last_error = NULL,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND active_task_id = sqlc.arg('active_task_id')
+RETURNING *;
+
+-- name: SetProjectDesignSystemFailure :one
+UPDATE project_design_system SET
+    active_task_id = NULL,
+    active_operation = NULL,
+    last_error = sqlc.arg('last_error'),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND active_task_id = sqlc.arg('active_task_id')
+RETURNING *;
+
+-- name: MarkProjectDesignSystemSaved :one
+UPDATE project_design_system SET
+    saved_at = now(),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+RETURNING *;
+
+-- name: GetProjectDesignSystemPackageBySlot :one
+SELECT * FROM project_design_system_package
+WHERE design_system_id = sqlc.arg('design_system_id')
+  AND slot = sqlc.arg('slot')
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = project_design_system_package.design_system_id
+        AND project_design_system.workspace_id = sqlc.arg('workspace_id')
+  );
+
+-- name: UpsertProjectDesignSystemPackage :one
+INSERT INTO project_design_system_package (
+    design_system_id,
+    slot,
+    design_md,
+    tokens_css,
+    components_html,
+    manifest,
+    validation,
+    integrity_sha256,
+    source_task_id,
+    agent_id,
+    instruction,
+    scope
+)
+SELECT
+    sqlc.arg('design_system_id'),
+    sqlc.arg('slot'),
+    sqlc.arg('design_md'),
+    sqlc.arg('tokens_css'),
+    sqlc.arg('components_html'),
+    sqlc.arg('manifest'),
+    sqlc.arg('validation'),
+    sqlc.arg('integrity_sha256'),
+    sqlc.narg('source_task_id'),
+    sqlc.narg('agent_id'),
+    sqlc.narg('instruction'),
+    sqlc.narg('scope')
+WHERE EXISTS (
+    SELECT 1
+    FROM project_design_system
+    WHERE project_design_system.id = sqlc.arg('design_system_id')
+      AND project_design_system.workspace_id = sqlc.arg('workspace_id')
+)
+ON CONFLICT (design_system_id, slot) DO UPDATE SET
+    design_md = EXCLUDED.design_md,
+    tokens_css = EXCLUDED.tokens_css,
+    components_html = EXCLUDED.components_html,
+    manifest = EXCLUDED.manifest,
+    validation = EXCLUDED.validation,
+    integrity_sha256 = EXCLUDED.integrity_sha256,
+    source_task_id = EXCLUDED.source_task_id,
+    agent_id = EXCLUDED.agent_id,
+    instruction = EXCLUDED.instruction,
+    scope = EXCLUDED.scope,
+    updated_at = now()
+RETURNING *;
+
+-- name: SaveProjectDesignSystemDraft :one
+INSERT INTO project_design_system_package (
+    design_system_id,
+    slot,
+    design_md,
+    tokens_css,
+    components_html,
+    manifest,
+    validation,
+    integrity_sha256,
+    source_task_id,
+    agent_id,
+    instruction,
+    scope
+)
+SELECT
+    project_design_system_package.design_system_id,
+    'saved',
+    project_design_system_package.design_md,
+    project_design_system_package.tokens_css,
+    project_design_system_package.components_html,
+    project_design_system_package.manifest,
+    project_design_system_package.validation,
+    project_design_system_package.integrity_sha256,
+    project_design_system_package.source_task_id,
+    project_design_system_package.agent_id,
+    project_design_system_package.instruction,
+    project_design_system_package.scope
+FROM project_design_system_package
+WHERE project_design_system_package.design_system_id = sqlc.arg('design_system_id')
+  AND project_design_system_package.slot = 'draft'
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = project_design_system_package.design_system_id
+        AND project_design_system.workspace_id = sqlc.arg('workspace_id')
+  )
+ON CONFLICT (design_system_id, slot) DO UPDATE SET
+    design_md = EXCLUDED.design_md,
+    tokens_css = EXCLUDED.tokens_css,
+    components_html = EXCLUDED.components_html,
+    manifest = EXCLUDED.manifest,
+    validation = EXCLUDED.validation,
+    integrity_sha256 = EXCLUDED.integrity_sha256,
+    source_task_id = EXCLUDED.source_task_id,
+    agent_id = EXCLUDED.agent_id,
+    instruction = EXCLUDED.instruction,
+    scope = EXCLUDED.scope,
+    updated_at = now()
+RETURNING *;
+
+-- name: DeleteProjectDesignSystemPackageSlot :exec
+DELETE FROM project_design_system_package
+WHERE design_system_id = sqlc.arg('design_system_id')
+  AND slot = sqlc.arg('slot')
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = project_design_system_package.design_system_id
+        AND project_design_system.workspace_id = sqlc.arg('workspace_id')
+  );
+
+-- name: ListProjectDesignSystemTasks :many
+SELECT * FROM agent_task_queue
+WHERE context->>'project_design_system_id' = sqlc.arg('project_design_system_id')::uuid::text
+  AND context->>'workspace_id' = sqlc.arg('workspace_id')::uuid::text
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = sqlc.arg('project_design_system_id')
+        AND project_design_system.workspace_id = sqlc.arg('workspace_id')
+  )
+ORDER BY created_at DESC
+LIMIT sqlc.arg('limit_count');
+
