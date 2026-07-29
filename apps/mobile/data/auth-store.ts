@@ -1,13 +1,13 @@
 /**
  * Mobile auth store — Zustand. Logic mirrors packages/core/auth/store.ts:
- *   - Token written only after a successful PKCE code exchange
+ *   - Token written only after successful verification or PKCE exchange
  *   - 401 → clear token; non-401 (5xx / network blip) → preserve token so
  *     the next launch can retry
  *   - logout = clear token + clear in-memory user + setToken(null)
  *
  * NOT shared with web/desktop (per Sharing Principles in root CLAUDE.md).
  * Storage backend is expo-secure-store (mobile only); web uses HttpOnly
- * cookies, desktop uses Electron safeStorage via StorageAdapter.
+ * cookies, desktop selects localStorage or Electron safeStorage by auth mode.
  */
 import { create } from "zustand";
 import type { User } from "@multica/core/types";
@@ -19,7 +19,13 @@ interface AuthState {
   user: User | null;
   isLoading: boolean;
   initialize: () => Promise<void>;
-	loginWithSSO: (code: string, codeVerifier: string, redirectUri: string) => Promise<User>;
+  sendCode: (email: string) => Promise<void>;
+  verifyCode: (email: string, code: string) => Promise<User>;
+  loginWithSSO: (
+    code: string,
+    codeVerifier: string,
+    redirectUri: string,
+  ) => Promise<User>;
   logout: () => Promise<void>;
   /** Overwrite the in-memory user — call after PATCH /api/me so name/avatar
    *  edits land without a refetch. Server response is the source of truth. */
@@ -56,9 +62,25 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-	loginWithSSO: async (code, codeVerifier, redirectUri) => {
-		const { token, user } = await api.exchangeSSOCode(code, codeVerifier, redirectUri);
-		await setToken(token);
+  sendCode: async (email) => {
+    await api.sendCode(email);
+  },
+
+  verifyCode: async (email, code) => {
+    const { token, user } = await api.verifyCode(email, code);
+    await setToken(token);
+    api.setToken(token);
+    set({ user });
+    return user;
+  },
+
+  loginWithSSO: async (code, codeVerifier, redirectUri) => {
+    const { token, user } = await api.exchangeSSOCode(
+      code,
+      codeVerifier,
+      redirectUri,
+    );
+    await setToken(token);
     api.setToken(token);
     set({ user });
     return user;
