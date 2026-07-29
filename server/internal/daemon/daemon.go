@@ -29,7 +29,10 @@ var ErrRepoNotConfigured = errors.New("repo is not configured for this workspace
 
 var errAuthenticationExpired = errors.New("authentication expired")
 
-const DefaultAuthDrainLead = 30 * time.Second
+const (
+	DefaultAuthDrainLead        = 30 * time.Second
+	DefaultTokenRenewalInterval = 3 * 24 * time.Hour
+)
 
 // taskRunner executes a single agent task and returns the result.
 // Extracted as an interface so tests can inject a fake without spawning real
@@ -648,9 +651,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.heartbeatLoop(ctx)
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
-	go d.authExpiryLoop(ctx)
+	if strings.HasPrefix(d.client.Token(), "mul_") {
+		go d.tokenRenewalLoop(ctx)
+	} else if !d.authExpiresAt.IsZero() {
+		go d.authExpiryLoop(ctx)
+	}
 	go d.serveHealth(ctx, healthLn, time.Now())
-	d.logger.Debug("background loops launched (workspace-sync, task-wakeup, heartbeat, gc, auto-update, auth-expiry, health)")
+	d.logger.Debug("background loops launched (workspace-sync, task-wakeup, heartbeat, gc, auto-update, auth-lifecycle, health)")
 	err = d.pollLoop(ctx, taskWakeups)
 	d.logger.Debug("daemon main loop returning", "error", err)
 	return err
@@ -1035,6 +1042,10 @@ func (d *Daemon) ensureRepoReady(ctx context.Context, workspaceID, repoURL strin
 }
 
 func (d *Daemon) preflightAuth(ctx context.Context) error {
+	isRenewablePAT := strings.HasPrefix(d.client.Token(), "mul_")
+	if isRenewablePAT {
+		d.tryRenewToken(ctx)
+	}
 	if err := d.syncWorkspacesFromAPI(ctx); err != nil {
 		if isUnauthorizedError(err) {
 			return fmt.Errorf("authentication expired: run %s and restart the daemon", d.loginCommand())
@@ -1042,6 +1053,9 @@ func (d *Daemon) preflightAuth(ctx context.Context) error {
 		return err
 	}
 	d.authExpiresAt = d.client.AuthExpiresAt()
+	if isRenewablePAT {
+		return nil
+	}
 	if d.authExpiresAt.IsZero() {
 		return errors.New("server did not return authentication expiry")
 	}
@@ -1049,6 +1063,38 @@ func (d *Daemon) preflightAuth(ctx context.Context) error {
 		return fmt.Errorf("authentication expired: run %s and restart the daemon", d.loginCommand())
 	}
 	return nil
+}
+
+func (d *Daemon) tokenRenewalLoop(ctx context.Context) {
+	ticker := time.NewTicker(DefaultTokenRenewalInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			d.tryRenewToken(ctx)
+		}
+	}
+}
+
+func (d *Daemon) tryRenewToken(ctx context.Context) {
+	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	resp, err := d.client.RenewToken(reqCtx)
+	if err != nil {
+		if isUnauthorizedError(err) {
+			d.logger.Warn("auth token rejected by server; run "+d.loginCommand()+" to re-authenticate, then restart the daemon", "error", err)
+			return
+		}
+		d.logger.Debug("token renewal failed; will retry on next cycle", "error", err)
+		return
+	}
+	if resp.Renewed {
+		d.logger.Info("auth token renewed", "expires_at", resp.ExpiresAt)
+	} else {
+		d.logger.Debug("auth token not yet eligible for renewal", "expires_at", resp.ExpiresAt)
+	}
 }
 
 func (d *Daemon) loginCommand() string {
@@ -1059,6 +1105,9 @@ func (d *Daemon) loginCommand() string {
 }
 
 func (d *Daemon) authExpiryLoop(ctx context.Context) {
+	if d.authExpiresAt.IsZero() {
+		return
+	}
 	drainLead := d.authDrainLead
 	if drainLead <= 0 {
 		drainLead = DefaultAuthDrainLead

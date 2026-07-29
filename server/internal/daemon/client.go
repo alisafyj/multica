@@ -346,6 +346,19 @@ type WorkspaceInfo struct {
 	Name string `json:"name"`
 }
 
+type RenewTokenResponse struct {
+	ExpiresAt string `json:"expires_at"`
+	Renewed   bool   `json:"renewed"`
+}
+
+func (c *Client) RenewToken(ctx context.Context) (*RenewTokenResponse, error) {
+	var resp RenewTokenResponse
+	if err := c.postJSON(ctx, "/api/tokens/current/renew", map[string]any{}, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // ListWorkspaces fetches all workspaces the authenticated user belongs to.
 func (c *Client) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, error) {
 	var workspaces []WorkspaceInfo

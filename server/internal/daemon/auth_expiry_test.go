@@ -114,3 +114,41 @@ func TestAuthExpiryLoopTerminatesAtExpiry(t *testing.T) {
 		t.Fatal("daemon terminated before auth expiry")
 	}
 }
+
+func TestAuthExpiryLoopDrainsSSOCredentials(t *testing.T) {
+	for _, token := range []string{"eyJhbGciOiJIUzI1NiJ9.payload.signature", "msa_service"} {
+		t.Run(strings.SplitN(token, "_", 2)[0], func(t *testing.T) {
+			expiresAt := time.Now().UTC().Add(150 * time.Millisecond)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/workspaces" {
+					t.Fatalf("unexpected request path %s", r.URL.Path)
+				}
+				w.Header().Set("X-Auth-Expires-At", expiresAt.Format(time.RFC3339Nano))
+				_, _ = w.Write([]byte(`[]`))
+			}))
+			t.Cleanup(srv.Close)
+
+			root, cancel := context.WithCancel(context.Background())
+			d := &Daemon{
+				client:            NewClient(srv.URL),
+				logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+				cancelFunc:        cancel,
+				authDrainLead:     100 * time.Millisecond,
+				activeTaskCancels: make(map[string]context.CancelCauseFunc),
+			}
+			d.client.SetToken(token)
+			if err := d.preflightAuth(root); err != nil {
+				t.Fatal(err)
+			}
+			go d.authExpiryLoop(root)
+			select {
+			case <-root.Done():
+			case <-time.After(2 * time.Second):
+				t.Fatal("daemon did not terminate at auth expiry")
+			}
+			if !d.authDraining.Load() {
+				t.Fatal("daemon did not enter auth drain before expiry")
+			}
+		})
+	}
+}
