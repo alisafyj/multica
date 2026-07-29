@@ -30,6 +30,14 @@ func JWTSecret() []byte {
 	return jwtSecret
 }
 
+func GeneratePATToken() (string, error) {
+	b := make([]byte, 20)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate PAT token: %w", err)
+	}
+	return "mul_" + hex.EncodeToString(b), nil
+}
+
 func GenerateServiceAccountToken() (string, error) {
 	b := make([]byte, 20)
 	if _, err := rand.Read(b); err != nil {
