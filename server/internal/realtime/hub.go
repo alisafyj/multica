@@ -24,6 +24,10 @@ type MembershipChecker interface {
 // SlugResolver translates a workspace slug to its UUID.
 type SlugResolver func(ctx context.Context, slug string) (workspaceID string, err error)
 
+type PATResolver interface {
+	ResolveToken(ctx context.Context, token string) (userID string, ok bool)
+}
+
 // ScopeAuthorizer decides whether a connection (identified by userID +
 // workspaceID) is allowed to subscribe to a given scope. Implementations
 // typically perform a DB lookup on the underlying resource (task / chat
@@ -572,13 +576,29 @@ func (h *Hub) Snapshot() map[string]any {
 	}
 }
 
-// authenticateToken validates an expiring internal token and returns the user ID.
-func authenticateToken(tokenStr string) (string, time.Time, string) {
-	identity, err := auth.ParseInternalToken(tokenStr)
+func authenticateToken(tokenStr string, resolver PATResolver, ctx context.Context, useSySSO bool) (string, time.Time, string) {
+	if !useSySSO && strings.HasPrefix(tokenStr, "mul_") {
+		if resolver == nil {
+			return "", time.Time{}, `{"error":"invalid token"}`
+		}
+		userID, ok := resolver.ResolveToken(ctx, tokenStr)
+		if !ok {
+			return "", time.Time{}, `{"error":"invalid token"}`
+		}
+		return userID, time.Time{}, ""
+	}
+	if useSySSO {
+		identity, err := auth.ParseInternalToken(tokenStr)
+		if err != nil {
+			return "", time.Time{}, `{"error":"invalid token"}`
+		}
+		return identity.UserID, identity.ExpiresAt, ""
+	}
+	identity, err := auth.ParseLegacyJWT(tokenStr)
 	if err != nil {
 		return "", time.Time{}, `{"error":"invalid token"}`
 	}
-	return identity.UserID, identity.ExpiresAt, ""
+	return identity.UserID, time.Time{}, ""
 }
 
 // firstMessageAuth reads the first WebSocket message expecting an auth payload.
@@ -624,7 +644,7 @@ func writeWSAuthErrorAndClose(conn *websocket.Conn, payload []byte, attrs ...any
 
 // HandleWebSocket upgrades an HTTP connection to WebSocket with cookie or
 // first-message auth.
-func HandleWebSocket(hub *Hub, mc MembershipChecker, resolveSlug SlugResolver, w http.ResponseWriter, r *http.Request) {
+func HandleWebSocket(hub *Hub, mc MembershipChecker, resolver PATResolver, resolveSlug SlugResolver, useSySSO bool, w http.ResponseWriter, r *http.Request) {
 	workspaceID := r.URL.Query().Get("workspace_id")
 	if workspaceID == "" {
 		if slug := r.URL.Query().Get("workspace_slug"); slug != "" && resolveSlug != nil {
@@ -644,7 +664,7 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, resolveSlug SlugResolver, w
 	var userID string
 	var authExpiresAt time.Time
 	if cookie, err := r.Cookie(auth.AuthCookieName); err == nil && cookie.Value != "" {
-		uid, expiresAt, errMsg := authenticateToken(cookie.Value)
+		uid, expiresAt, errMsg := authenticateToken(cookie.Value, resolver, r.Context(), useSySSO)
 		if errMsg != "" {
 			http.Error(w, errMsg, http.StatusUnauthorized)
 			return
@@ -669,7 +689,7 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, resolveSlug SlugResolver, w
 			writeWSAuthErrorAndClose(conn, []byte(errMsg), "workspace_id", workspaceID)
 			return
 		}
-		uid, expiresAt, errMsg := authenticateToken(tokenStr)
+		uid, expiresAt, errMsg := authenticateToken(tokenStr, resolver, r.Context(), useSySSO)
 		if errMsg != "" {
 			writeWSAuthErrorAndClose(conn, []byte(errMsg), "workspace_id", workspaceID)
 			return

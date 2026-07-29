@@ -400,6 +400,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// WebSocket
 	mc := &membershipChecker{queries: queries}
+	pr := &patResolver{queries: queries, cache: patCache}
 	slugResolver := realtime.SlugResolver(func(ctx context.Context, slug string) (string, error) {
 		ws, err := queries.GetWorkspaceBySlug(ctx, slug)
 		if err != nil {
@@ -408,7 +409,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		return util.UUIDToString(ws.ID), nil
 	})
 	r.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
-		realtime.HandleWebSocket(hub, mc, slugResolver, w, r)
+		realtime.HandleWebSocket(hub, mc, pr, slugResolver, opts.UseSySSO, w, r)
 	})
 
 	// Local file serving (when using local storage)
@@ -1093,6 +1094,30 @@ func (mc *membershipChecker) IsMember(ctx context.Context, userID, workspaceID s
 		WorkspaceID: parseUUID(workspaceID),
 	})
 	return err == nil
+}
+
+type patResolver struct {
+	queries *db.Queries
+	cache   *auth.PATCache
+}
+
+func (pr *patResolver) ResolveToken(ctx context.Context, token string) (string, bool) {
+	hash := auth.HashToken(token)
+	if userID, ok := pr.cache.Get(ctx, hash); ok {
+		return userID, true
+	}
+	pat, err := pr.queries.GetPersonalAccessTokenByHash(ctx, hash)
+	if err != nil {
+		return "", false
+	}
+	userID := util.UUIDToString(pat.UserID)
+	var expiresAt time.Time
+	if pat.ExpiresAt.Valid {
+		expiresAt = pat.ExpiresAt.Time
+	}
+	pr.cache.Set(ctx, hash, userID, auth.TTLForExpiry(time.Now(), expiresAt))
+	go pr.queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID)
+	return userID, true
 }
 
 // parseUUID is a thin alias for util.MustParseUUID. Call sites here are all

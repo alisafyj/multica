@@ -46,7 +46,33 @@ func makeTestTokenUntil(t *testing.T, expiresAt time.Time) string {
 	return signed
 }
 
+func makeLegacyTestToken(t *testing.T) string {
+	t.Helper()
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": testUserID,
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	signed, err := token.SignedString(auth.JWTSecret())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signed
+}
+
+type mockPATResolver struct {
+	calls int
+}
+
+func (r *mockPATResolver) ResolveToken(context.Context, string) (string, bool) {
+	r.calls++
+	return testUserID, true
+}
+
 func newTestHub(t *testing.T) (*Hub, *httptest.Server) {
+	return newTestHubMode(t, true, nil)
+}
+
+func newTestHubMode(t *testing.T, useSySSO bool, resolver PATResolver) (*Hub, *httptest.Server) {
 	t.Helper()
 	hub := NewHub()
 	go hub.Run()
@@ -54,10 +80,88 @@ func newTestHub(t *testing.T) (*Hub, *httptest.Server) {
 	mc := &mockMembershipChecker{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		HandleWebSocket(hub, mc, nil, w, r)
+		HandleWebSocket(hub, mc, resolver, nil, useSySSO, w, r)
 	})
 	server := httptest.NewServer(mux)
 	return hub, server
+}
+
+func TestAuthenticateTokenMode(t *testing.T) {
+	legacy := makeLegacyTestToken(t)
+	sso := makeTestToken(t)
+
+	userID, expiresAt, errMessage := authenticateToken(legacy, nil, context.Background(), false)
+	if userID != testUserID || !expiresAt.IsZero() || errMessage != "" {
+		t.Fatalf("legacy identity = %q, %v, %q", userID, expiresAt, errMessage)
+	}
+	userID, expiresAt, errMessage = authenticateToken(sso, nil, context.Background(), true)
+	if userID != testUserID || expiresAt.IsZero() || errMessage != "" {
+		t.Fatalf("SSO identity = %q, %v, %q", userID, expiresAt, errMessage)
+	}
+	if _, _, errMessage = authenticateToken(legacy, nil, context.Background(), true); errMessage == "" {
+		t.Fatal("SSO mode accepted legacy JWT")
+	}
+	if _, _, errMessage = authenticateToken(sso, nil, context.Background(), false); errMessage == "" {
+		t.Fatal("legacy mode accepted SSO JWT")
+	}
+
+	resolver := &mockPATResolver{}
+	userID, expiresAt, errMessage = authenticateToken("mul_test", resolver, context.Background(), false)
+	if userID != testUserID || !expiresAt.IsZero() || errMessage != "" || resolver.calls != 1 {
+		t.Fatalf("PAT identity = %q, %v, %q, calls %d", userID, expiresAt, errMessage, resolver.calls)
+	}
+	if _, _, errMessage = authenticateToken("mul_test", resolver, context.Background(), true); errMessage == "" || resolver.calls != 1 {
+		t.Fatalf("SSO PAT result = %q, calls %d", errMessage, resolver.calls)
+	}
+}
+
+func TestWebSocketLegacyFirstMessageAuth(t *testing.T) {
+	_, server := newTestHubMode(t, false, nil)
+	defer server.Close()
+	conn := connectWSWithToken(t, server, makeLegacyTestToken(t))
+	_ = conn.Close()
+}
+
+func TestWebSocketCookieAuthMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		useSySSO bool
+		token    func(*testing.T) string
+		resolver *mockPATResolver
+		wantOK   bool
+	}{
+		{"legacy JWT in legacy mode", false, makeLegacyTestToken, nil, true},
+		{"SSO JWT in SSO mode", true, makeTestToken, nil, true},
+		{"SSO JWT in legacy mode", false, makeTestToken, nil, false},
+		{"legacy JWT in SSO mode", true, makeLegacyTestToken, nil, false},
+		{"PAT in legacy mode", false, func(*testing.T) string { return "mul_cookie" }, &mockPATResolver{}, true},
+		{"PAT in SSO mode", true, func(*testing.T) string { return "mul_cookie" }, &mockPATResolver{}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, server := newTestHubMode(t, tc.useSySSO, tc.resolver)
+			defer server.Close()
+			header := http.Header{}
+			header.Set("Cookie", (&http.Cookie{Name: auth.AuthCookieName, Value: tc.token(t)}).String())
+			url := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws?workspace_id=" + testWorkspaceID
+			conn, response, err := websocket.DefaultDialer.Dial(url, header)
+			if tc.wantOK {
+				if err != nil {
+					t.Fatalf("dial failed: %v", err)
+				}
+				_ = conn.Close()
+				return
+			}
+			if err == nil {
+				_ = conn.Close()
+				t.Fatal("dial succeeded")
+			}
+			if response == nil || response.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("response = %#v, err %v", response, err)
+			}
+			_ = response.Body.Close()
+		})
+	}
 }
 
 func connectWS(t *testing.T, server *httptest.Server) *websocket.Conn {
