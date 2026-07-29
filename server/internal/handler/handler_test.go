@@ -58,7 +58,7 @@ func TestMain(m *testing.M) {
 	go hub.Run()
 	bus := events.New()
 	emailSvc := service.NewEmailService()
-	testHandler = New(queries, pool, hub, bus, emailSvc, nil, nil, analytics.NoopClient{}, Config{})
+	testHandler = New(queries, pool, hub, bus, emailSvc, nil, nil, analytics.NoopClient{}, Config{AllowSignup: true})
 	// httptest.NewRequest defaults RemoteAddr to 192.0.2.1, so every webhook
 	// test in the suite shares one IP bucket. With the production default
 	// (30/min) the budget runs out partway through the suite and unrelated
@@ -2301,6 +2301,107 @@ func TestCreateWorkspaceInvalidSlugReturnsBadRequest(t *testing.T) {
 	testHandler.CreateWorkspace(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("CreateWorkspace: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSendCode(t *testing.T) {
+	const email = "sendcode-test@multica.ai"
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM verification_code WHERE email = $1`, email)
+	})
+
+	w := httptest.NewRecorder()
+	var body bytes.Buffer
+	_ = json.NewEncoder(&body).Encode(map[string]string{"email": email})
+	req := httptest.NewRequest(http.MethodPost, "/auth/send-code", &body)
+	testHandler.SendCode(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("SendCode: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSendCodeDbError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	var body bytes.Buffer
+	_ = json.NewEncoder(&body).Encode(map[string]string{"email": "dberror-test@multica.ai"})
+	req := httptest.NewRequest(http.MethodPost, "/auth/send-code", &body).WithContext(ctx)
+
+	testHandler.SendCode(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("SendCode: expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestVerifyCode(t *testing.T) {
+	const email = "verify-test@multica.ai"
+	ctx := context.Background()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM verification_code WHERE email = $1`, email)
+		_, _ = testPool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, email)
+	})
+
+	w := httptest.NewRecorder()
+	var body bytes.Buffer
+	_ = json.NewEncoder(&body).Encode(map[string]string{"email": email})
+	testHandler.SendCode(w, httptest.NewRequest(http.MethodPost, "/auth/send-code", &body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("SendCode: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	dbCode, err := testHandler.Queries.GetLatestVerificationCode(ctx, email)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w = httptest.NewRecorder()
+	body.Reset()
+	_ = json.NewEncoder(&body).Encode(map[string]string{"email": email, "code": dbCode.Code})
+	testHandler.VerifyCode(w, httptest.NewRequest(http.MethodPost, "/auth/verify-code", &body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("VerifyCode: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var response LoginResponse
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil || response.Token == "" || response.User.Email != email {
+		t.Fatalf("VerifyCode response = %#v, err %v", response, err)
+	}
+}
+
+func TestDevVerificationCodePolicy(t *testing.T) {
+	t.Setenv(devVerificationCodeEnv, "888888")
+	t.Setenv("APP_ENV", "development")
+	if !isDevVerificationCode("888888") {
+		t.Fatal("configured development code was rejected")
+	}
+	t.Setenv("APP_ENV", "production")
+	if isDevVerificationCode("888888") {
+		t.Fatal("development code was accepted in production")
+	}
+}
+
+func TestGoogleLoginRequiresConfiguration(t *testing.T) {
+	t.Setenv("GOOGLE_CLIENT_ID", "")
+	t.Setenv("GOOGLE_CLIENT_SECRET", "")
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/auth/google", strings.NewReader(`{"code":"test"}`))
+	testHandler.GoogleLogin(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GoogleLogin: expected 503, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestIssueCliToken(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/cli-token", nil)
+	req.Header.Set("X-User-ID", testUserID)
+	testHandler.IssueCliToken(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("IssueCliToken: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var response map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil || response["token"] == "" {
+		t.Fatalf("IssueCliToken response = %#v, err %v", response, err)
 	}
 }
 

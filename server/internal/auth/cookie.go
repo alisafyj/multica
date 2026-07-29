@@ -12,17 +12,65 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	AuthCookieName = "multica_auth"
-	CSRFCookieName = "multica_csrf"
+	AuthCookieName      = "multica_auth"
+	CSRFCookieName      = "multica_csrf"
+	defaultAuthTokenTTL = 30 * 24 * time.Hour
 )
 
-var ipCookieDomainWarnOnce sync.Once
+var (
+	ipCookieDomainWarnOnce sync.Once
+	authTokenTTLOnce       sync.Once
+	authTokenTTLCached     time.Duration
+)
+
+func parseAuthTokenTTL(raw string) (time.Duration, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, false
+	}
+	if duration, err := time.ParseDuration(raw); err == nil {
+		if duration <= 0 {
+			return 0, false
+		}
+		if duration > 10*365*24*time.Hour {
+			slog.Warn("AUTH_TOKEN_TTL exceeds 10 years; accepting but verify this is intentional", "value", raw, "hours", duration.Hours())
+		}
+		return duration, true
+	}
+	seconds, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || seconds <= 0 || seconds > int64(math.MaxInt64/int64(time.Second)) {
+		return 0, false
+	}
+	duration := time.Duration(seconds) * time.Second
+	if duration > 10*365*24*time.Hour {
+		slog.Warn("AUTH_TOKEN_TTL exceeds 10 years; accepting but verify this is intentional", "value", raw, "hours", duration.Hours())
+	}
+	return duration, true
+}
+
+func AuthTokenTTL() time.Duration {
+	authTokenTTLOnce.Do(func() {
+		raw := os.Getenv("AUTH_TOKEN_TTL")
+		if ttl, ok := parseAuthTokenTTL(raw); ok {
+			authTokenTTLCached = ttl
+			slog.Info("auth token TTL configured", "seconds", int(ttl.Seconds()))
+			return
+		}
+		authTokenTTLCached = defaultAuthTokenTTL
+		if strings.TrimSpace(raw) != "" {
+			slog.Warn("AUTH_TOKEN_TTL is not a valid duration or positive integer; using default",
+				"value", raw, "default_seconds", int(defaultAuthTokenTTL.Seconds()))
+		}
+	})
+	return authTokenTTLCached
+}
 
 // cookieDomain returns the trimmed COOKIE_DOMAIN env value, or "" if it looks
 // like an IP address. RFC 6265 §4.1.2.3 forbids IP literals in the cookie
@@ -79,6 +127,10 @@ func generateCSRFToken(authToken string) (string, error) {
 	sig := hex.EncodeToString(mac.Sum(nil))
 
 	return nonceHex + "." + sig, nil
+}
+
+func SetAuthCookies(w http.ResponseWriter, token string) error {
+	return SetAuthCookiesUntil(w, token, time.Now().Add(AuthTokenTTL()))
 }
 
 // SetAuthCookiesUntil sets auth and CSRF cookies with an authoritative absolute expiry.

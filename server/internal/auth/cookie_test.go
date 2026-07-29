@@ -82,6 +82,29 @@ func TestSetAuthCookies_HTTPSelfHost(t *testing.T) {
 	}
 }
 
+func TestParseAuthTokenTTL(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want time.Duration
+		ok   bool
+	}{
+		{"", 0, false},
+		{"3600", time.Hour, true},
+		{" 7200 ", 2 * time.Hour, true},
+		{"720h30m", 720*time.Hour + 30*time.Minute, true},
+		{"0", 0, false},
+		{"-1h", 0, false},
+		{"abc", 0, false},
+		{"9999999999", 0, false},
+	}
+	for _, tc := range tests {
+		got, ok := parseAuthTokenTTL(tc.raw)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("parseAuthTokenTTL(%q) = (%v, %v), want (%v, %v)", tc.raw, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
 func TestSetAuthCookies_HTTPSProduction(t *testing.T) {
 	t.Setenv("FRONTEND_ORIGIN", "https://app.example.com")
 	t.Setenv("COOKIE_DOMAIN", "app.example.com")
