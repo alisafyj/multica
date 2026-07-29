@@ -48,6 +48,9 @@ var setupSelfHostCmd = &cobra.Command{
 By default, connects to http://localhost:8080 (backend) and http://localhost:3000 (frontend).
 Use --server-url and --app-url to specify a custom server (e.g. an on-premise deployment).
 
+For a legacy-auth server where the browser cannot reach this CLI directly,
+pass --callback-host with a reachable FQDN or IP.
+
 Examples:
   multica setup self-host
   multica setup self-host --server-url https://api.internal.co --app-url https://app.internal.co
@@ -60,6 +63,7 @@ func init() {
 	setupSelfHostCmd.Flags().String("app-url", "", "Frontend app URL (e.g. https://app.internal.co)")
 	setupSelfHostCmd.Flags().Int("port", 8080, "Backend server port (used when --server-url is not set)")
 	setupSelfHostCmd.Flags().Int("frontend-port", 3000, "Frontend port (used when --app-url is not set)")
+	setupSelfHostCmd.Flags().String(callbackHostFlag, "", "Host the legacy browser callback URL points at (auto-detected when empty)")
 	setupCmd.AddCommand(setupCloudCmd)
 	setupCmd.AddCommand(setupSelfHostCmd)
 }

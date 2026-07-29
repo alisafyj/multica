@@ -32,12 +32,17 @@ var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate and set up workspaces",
 	Long:  "Log in to Multica, then automatically discover and watch all your workspaces.",
-	Args:  cobra.NoArgs,
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runLogin,
 }
 
+const tokenPromptSentinel = "\x00prompt"
+
 func init() {
+	loginCmd.Flags().String("token", "", "Authenticate using a personal access token (mul_... or mcn_...). Pass --token alone to be prompted.")
+	loginCmd.Flags().Lookup("token").NoOptDefVal = tokenPromptSentinel
 	loginCmd.Flags().String("service-token", "", "Authenticate the dedicated ai_work Mac with an msa_ service token")
+	loginCmd.Flags().String(callbackHostFlag, "", "Host the legacy browser callback URL points at (auto-detected when empty)")
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {

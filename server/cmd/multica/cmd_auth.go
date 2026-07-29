@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -18,10 +20,23 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
 const serviceTokenKeychainService = "ai.multica.cli.service-token"
+const callbackHostFlag = "callback-host"
+
+var loginTokenPrefixes = []string{"mul_", auth.CloudPATPrefix}
+
+func validateLoginTokenPrefix(token string) error {
+	for _, prefix := range loginTokenPrefixes {
+		if strings.HasPrefix(token, prefix) {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid token format: must start with %s", strings.Join(loginTokenPrefixes, " or "))
+}
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
@@ -94,11 +109,260 @@ func openBrowser(url string) error {
 }
 
 func runAuthLogin(cmd *cobra.Command, args []string) error {
-	serviceToken, _ := cmd.Flags().GetString("service-token")
-	if serviceToken != "" {
-		return runServiceTokenLogin(cmd, serviceToken)
+	serverURL := resolveServerURL(cmd)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	useSySSO, err := fetchUseSySSO(ctx, serverURL)
+	if err != nil {
+		return fmt.Errorf("fetch server auth mode: %w", err)
 	}
-	return runAuthLoginBrowser(cmd)
+
+	tokenChanged := cmd.Flags().Changed("token")
+	serviceTokenChanged := cmd.Flags().Changed("service-token")
+	if useSySSO {
+		if tokenChanged {
+			return errors.New("--token is unavailable when USE_SY_SSO=true; use browser SSO or --service-token")
+		}
+		if len(args) != 0 {
+			return fmt.Errorf("unexpected argument %q", args[0])
+		}
+		serviceToken, _ := cmd.Flags().GetString("service-token")
+		if serviceTokenChanged {
+			return runServiceTokenLogin(cmd, serviceToken)
+		}
+		return runAuthLoginBrowser(cmd)
+	}
+
+	if serviceTokenChanged {
+		return errors.New("--service-token requires USE_SY_SSO=true; use browser login or --token")
+	}
+	if tokenChanged {
+		tokenFlag, _ := cmd.Flags().GetString("token")
+		if tokenFlag == tokenPromptSentinel && len(args) == 1 {
+			tokenFlag = args[0]
+		} else if len(args) != 0 {
+			return fmt.Errorf("unexpected argument %q", args[0])
+		}
+		return runAuthLoginToken(cmd, tokenFlag)
+	}
+	if len(args) != 0 {
+		return fmt.Errorf("unexpected argument %q", args[0])
+	}
+	return runLegacyAuthLoginBrowser(cmd)
+}
+
+func fetchUseSySSO(ctx context.Context, serverURL string) (bool, error) {
+	var config struct {
+		UseSySSO bool `json:"use_sy_sso"`
+	}
+	if err := cli.NewAPIClient(serverURL, "", "").GetJSON(ctx, "/api/config", &config); err != nil {
+		return false, err
+	}
+	return config.UseSySSO, nil
+}
+
+func resolveCallbackBinding(flagHost, serverURL, appURL string, detectOutbound func(string) net.IP) (callbackHost, bindAddr string) {
+	if host := strings.TrimSpace(flagHost); host != "" {
+		return host, "0.0.0.0"
+	}
+	appIP := urlPrivateIP(appURL)
+	if appIP == nil {
+		return "localhost", "127.0.0.1"
+	}
+	cliIP := detectOutbound(serverURL)
+	if cliIP == nil {
+		return appIP.String(), "0.0.0.0"
+	}
+	if cliIP.Equal(appIP) {
+		return "localhost", "127.0.0.1"
+	}
+	return cliIP.String(), "0.0.0.0"
+}
+
+func urlPrivateIP(rawURL string) net.IP {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil
+	}
+	ip := net.ParseIP(parsed.Hostname())
+	if ip == nil || !ip.IsPrivate() {
+		return nil
+	}
+	return ip
+}
+
+func detectOutboundIP(serverURL string) net.IP {
+	parsed, err := url.Parse(serverURL)
+	if err != nil || parsed.Hostname() == "" {
+		return nil
+	}
+	port := parsed.Port()
+	if port == "" {
+		if parsed.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	conn, err := net.Dial("udp4", net.JoinHostPort(parsed.Hostname(), port))
+	if err != nil {
+		return nil
+	}
+	defer conn.Close()
+	local, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok || local.IP == nil {
+		return nil
+	}
+	if v4 := local.IP.To4(); v4 != nil {
+		return v4
+	}
+	return local.IP
+}
+
+func runLegacyAuthLoginBrowser(cmd *cobra.Command) error {
+	serverURL := resolveServerURL(cmd)
+	appURL := resolveAppURL(cmd)
+	flagHost, _ := cmd.Flags().GetString(callbackHostFlag)
+	callbackHost, bindAddr := resolveCallbackBinding(flagHost, serverURL, appURL, detectOutboundIP)
+	listener, err := net.Listen("tcp4", bindAddr+":0")
+	if err != nil {
+		return fmt.Errorf("failed to start local server: %w", err)
+	}
+	defer listener.Close()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	callbackURL := fmt.Sprintf("http://%s:%d/callback", callbackHost, port)
+	stateBytes := make([]byte, 16)
+	if _, err := rand.Read(stateBytes); err != nil {
+		return fmt.Errorf("failed to generate state: %w", err)
+	}
+	state := hex.EncodeToString(stateBytes)
+	loginURL := fmt.Sprintf("%s/login?cli_callback=%s&cli_state=%s", appURL, url.QueryEscape(callbackURL), url.QueryEscape(state))
+
+	jwtCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		token := r.URL.Query().Get("token")
+		if token == "" {
+			http.Error(w, "missing token", http.StatusBadRequest)
+			return
+		}
+		if r.URL.Query().Get("state") != state {
+			http.Error(w, "invalid state parameter", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(callbackSuccessHTML))
+		jwtCh <- token
+	})
+
+	srv := &http.Server{Handler: mux}
+	go func() {
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+	defer srv.Close()
+
+	fmt.Fprintln(os.Stderr, "Opening browser to authenticate...")
+	if err := openBrowser(loginURL); err != nil {
+		fmt.Fprintln(os.Stderr, "Could not open browser automatically.")
+	}
+	fmt.Fprintf(os.Stderr, "If the browser didn't open, visit:\n  %s\n\nWaiting for authentication...\n", loginURL)
+
+	var jwtToken string
+	select {
+	case jwtToken = <-jwtCh:
+	case err := <-errCh:
+		return fmt.Errorf("local server error: %w", err)
+	case <-time.After(5 * time.Minute):
+		return errors.New("timed out waiting for authentication")
+	}
+
+	client := cli.NewAPIClient(serverURL, "", jwtToken)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "unknown"
+	}
+	var patResp struct {
+		Token string `json:"token"`
+	}
+	if err := client.PostJSON(ctx, "/api/tokens", map[string]any{
+		"name":            fmt.Sprintf("CLI (%s)", hostname),
+		"expires_in_days": 90,
+	}, &patResp); err != nil {
+		return fmt.Errorf("failed to create access token: %w", err)
+	}
+
+	patClient := cli.NewAPIClient(serverURL, "", patResp.Token)
+	var me struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	}
+	if err := patClient.GetJSON(ctx, "/api/me", &me); err != nil {
+		return fmt.Errorf("token verification failed: %w", err)
+	}
+
+	profile := resolveProfile(cmd)
+	cfg, _ := cli.LoadCLIConfigForProfile(profile)
+	cfg.WorkspaceID = ""
+	cfg.Token = patResp.Token
+	cfg.ServiceTokenKeychainAccount = ""
+	cfg.ServerURL = serverURL
+	cfg.AppURL = appURL
+	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nToken saved to config.\n", me.Name, me.Email)
+	return nil
+}
+
+func runAuthLoginToken(cmd *cobra.Command, providedToken string) error {
+	if providedToken == tokenPromptSentinel {
+		providedToken = ""
+	}
+	token := strings.TrimSpace(providedToken)
+	if token == "" {
+		fmt.Print("Enter your personal access token: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			return errors.New("no input")
+		}
+		token = strings.TrimSpace(scanner.Text())
+	}
+	if token == "" {
+		return errors.New("token is required")
+	}
+	if err := validateLoginTokenPrefix(token); err != nil {
+		return err
+	}
+
+	serverURL := resolveServerURL(cmd)
+	client := cli.NewAPIClient(serverURL, "", token)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var me struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	}
+	if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
+		return fmt.Errorf("invalid token: %w", err)
+	}
+
+	profile := resolveProfile(cmd)
+	cfg, _ := cli.LoadCLIConfigForProfile(profile)
+	cfg.WorkspaceID = ""
+	cfg.Token = token
+	cfg.ServiceTokenKeychainAccount = ""
+	cfg.ServerURL = serverURL
+	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nToken saved to config.\n", me.Name, me.Email)
+	return nil
 }
 
 func runAuthLoginBrowser(cmd *cobra.Command) error {
