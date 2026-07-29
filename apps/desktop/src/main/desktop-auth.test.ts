@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createDesktopAuthorization,
+  readLegacyDesktopToken,
   readDesktopCallback,
 } from "./desktop-auth";
 
@@ -37,5 +38,21 @@ describe("desktop SSO", () => {
         pending,
       ),
     ).toThrow("state");
+  });
+
+  it("distinguishes a legacy token callback from an SSO code callback", () => {
+    expect(
+      readLegacyDesktopToken(
+        "multica://auth/callback?token=legacy-jwt",
+      ),
+    ).toBe("legacy-jwt");
+    expect(
+      readLegacyDesktopToken(
+        "multica://auth/callback?code=code-1&state=state-1",
+      ),
+    ).toBeNull();
+    expect(() =>
+      readLegacyDesktopToken("https://example.test/?token=legacy-jwt"),
+    ).toThrow("callback");
   });
 });

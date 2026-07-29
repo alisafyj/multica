@@ -29,9 +29,9 @@ export function readDesktopCallback(
   rawUrl: string,
   pending: DesktopAuthorization,
 ): string {
-  const url = new URL(rawUrl);
-  if (url.protocol !== "multica:" || url.hostname !== "auth" || url.pathname !== "/callback") {
-    throw new Error("invalid desktop SSO callback");
+  const url = parseDesktopCallback(rawUrl);
+  if (url.searchParams.has("token")) {
+    throw new Error("desktop SSO callback contained a legacy token");
   }
   if (url.searchParams.get("state") !== pending.state) {
     throw new Error("desktop SSO state mismatch");
@@ -39,4 +39,18 @@ export function readDesktopCallback(
   const code = url.searchParams.get("code");
   if (!code) throw new Error("desktop SSO callback missing code");
   return code;
+}
+
+export function readLegacyDesktopToken(rawUrl: string): string | null {
+  const url = parseDesktopCallback(rawUrl);
+  const token = url.searchParams.get("token");
+  return token || null;
+}
+
+function parseDesktopCallback(rawUrl: string): URL {
+  const url = new URL(rawUrl);
+  if (url.protocol !== "multica:" || url.hostname !== "auth" || url.pathname !== "/callback") {
+    throw new Error("invalid desktop auth callback");
+  }
+  return url;
 }

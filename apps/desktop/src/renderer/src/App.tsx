@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CoreProvider } from "@multica/core/platform";
 import { pickLocale, type SupportedLocale } from "@multica/core/i18n";
 import { useAuthStore } from "@multica/core/auth";
+import { configStore, useConfigStore } from "@multica/core/config";
 import { useWelcomeStore } from "@multica/core/onboarding";
 import { workspaceKeys, workspaceListOptions } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
@@ -35,15 +36,27 @@ const HTML_LANG: Record<SupportedLocale, string> = {
 };
 
 const desktopStorage: StorageAdapter = {
-  getItem: (key) =>
-    key === "multica_token"
+  getItem: (key) => {
+    if (key !== "multica_token") return window.localStorage.getItem(key);
+    const useSySso = configStore.getState().useSySso;
+    if (useSySso === null) return null;
+    return useSySso
       ? window.desktopAPI.getAuthToken()
-      : window.localStorage.getItem(key),
+      : window.localStorage.getItem(key);
+  },
   setItem: (key, value) => {
-    if (key !== "multica_token") window.localStorage.setItem(key, value);
+    if (
+      key !== "multica_token" ||
+      configStore.getState().useSySso === false
+    ) {
+      window.localStorage.setItem(key, value);
+    }
   },
   removeItem: (key) => {
-    if (key === "multica_token") {
+    if (
+      key === "multica_token" &&
+      configStore.getState().useSySso === true
+    ) {
       void window.desktopAPI.clearAuthToken();
     } else {
       window.localStorage.removeItem(key);
@@ -55,6 +68,7 @@ const desktopStorage: StorageAdapter = {
 function AppContent() {
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
+  const useSySso = useConfigStore((state) => state.useSySso);
   const qc = useQueryClient();
   // Deep-link login runs loginWithToken → syncToken → listWorkspaces →
   // setQueryData sequentially. loginWithToken sets user+isLoading=false
@@ -87,12 +101,8 @@ function AppContent() {
     });
   }, []);
 
-  // Main validates the PKCE callback, exchanges the code, and persists the
-  // encrypted credential before emitting this token-free signal.
   useEffect(() => {
-		return window.desktopAPI.onAuthChanged(async () => {
-			const token = window.desktopAPI.getAuthToken();
-			if (!token) return;
+    const finishLogin = async (token: string) => {
       setBootstrapping(true);
       try {
         await useAuthStore.getState().loginWithToken(token);
@@ -108,24 +118,39 @@ function AppContent() {
       } finally {
         setBootstrapping(false);
       }
+    };
+
+    const unsubscribeLegacy = window.desktopAPI.onAuthToken((token) => {
+      if (configStore.getState().useSySso === false) {
+        void finishLogin(token);
+      }
     });
+    const unsubscribeSSO = window.desktopAPI.onAuthChanged(() => {
+      if (configStore.getState().useSySso !== true) return;
+      const token = window.desktopAPI.getAuthToken();
+      if (token) void finishLogin(token);
+    });
+    return () => {
+      unsubscribeLegacy();
+      unsubscribeSSO();
+    };
   }, [qc]);
 
   // Sync token and start the daemon whenever the user logs in.
   useEffect(() => {
-    if (!user) return;
-		const token = window.desktopAPI.getAuthToken();
+    if (!user || useSySso === null) return;
+    const token = desktopStorage.getItem("multica_token");
     if (!token) return;
     const userId = user.id;
     (async () => {
       try {
-        await window.daemonAPI.syncToken(token, userId);
+        await window.daemonAPI.syncToken(token, userId, useSySso);
         await window.daemonAPI.autoStart();
       } catch (err) {
         console.error("Failed to sync daemon on login", err);
       }
     })();
-  }, [user]);
+  }, [user, useSySso]);
 
   // When a user who started the session with zero workspaces creates their
   // first one, restart the daemon so it picks up the new workspace
@@ -369,7 +394,7 @@ export default function App() {
           apiBaseUrl={runtimeConfigResult.config.apiUrl}
           wsUrl={runtimeConfigResult.config.wsUrl}
           onLogout={handleDaemonLogout}
-					storage={desktopStorage}
+          storage={desktopStorage}
           identity={identity}
           locale={locale}
           resources={resources}

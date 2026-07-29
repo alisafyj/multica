@@ -76,7 +76,7 @@ function profileLogPath(profile: string): string {
   return join(profileDir(profile), "daemon.log");
 }
 
-// Sidecar file that records which Multica user owns the SSO token in
+// Sidecar file that records which Multica user owns the cached credential in
 // config.json. The Go CLI/daemon never read or write this file, so it survives
 // Go-side config rewrites and lets us detect user switches.
 function profileUserIdPath(profile: string): string {
@@ -493,17 +493,62 @@ async function ensureRunningDaemonVersionMatches(): Promise<
   }
 }
 
-/** Persist the exact SSO-derived JWT for the bundled daemon. */
+async function mintPat(jwt: string): Promise<string> {
+  if (!targetApiBaseUrl) {
+    throw new Error("mint PAT: target API URL not set");
+  }
+  const url = `${targetApiBaseUrl.replace(/\/+$/, "")}/api/tokens`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${jwt}`,
+    },
+    body: JSON.stringify({ name: "Multica Desktop" }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(
+      `mint PAT failed: ${res.status} ${res.statusText} ${body}`,
+    );
+  }
+  const data = (await res.json()) as { token?: unknown };
+  if (typeof data.token !== "string" || !data.token.startsWith("mul_")) {
+    throw new Error("mint PAT: response missing token");
+  }
+  return data.token;
+}
+
 async function syncToken(
   tokenFromRenderer: string,
   userId: string,
+  useSySso: boolean,
 ): Promise<void> {
   const active = await ensureActiveProfile();
   const config = await readProfileConfig(active.name);
   const previousUserId = await readProfileUserId(active.name);
   const userChanged = Boolean(previousUserId) && previousUserId !== userId;
 
-  config.token = tokenFromRenderer;
+  const sameUserWithCachedPat =
+    !useSySso &&
+    !userChanged &&
+    previousUserId === userId &&
+    typeof config.token === "string" &&
+    config.token.startsWith("mul_");
+
+  let finalToken = tokenFromRenderer;
+  if (!useSySso && !tokenFromRenderer.startsWith("mul_")) {
+    if (sameUserWithCachedPat) {
+      finalToken = config.token as string;
+    } else {
+      finalToken = await mintPat(tokenFromRenderer);
+      console.log(
+        `[daemon] minted PAT for profile "${active.name}" (user_changed=${userChanged})`,
+      );
+    }
+  }
+
+  config.token = finalToken;
   if (targetApiBaseUrl) config.server_url = targetApiBaseUrl;
   await writeProfileConfig(active.name, config);
   await writeProfileUserId(active.name, userId);
@@ -804,7 +849,8 @@ export function setupDaemonManager(
   ipcMain.handle("daemon:get-host-name", () => hostname());
   ipcMain.handle(
     "daemon:sync-token",
-    (_event, token: string, userId: string) => syncToken(token, userId),
+    (_event, token: string, userId: string, useSySso: boolean) =>
+      syncToken(token, userId, useSySso),
   );
   ipcMain.handle("daemon:clear-token", () => clearToken());
   ipcMain.handle("daemon:is-cli-installed", async () => {

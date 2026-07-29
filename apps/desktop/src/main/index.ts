@@ -21,6 +21,7 @@ import {
 } from "./renderer-recovery";
 import {
   createDesktopAuthorization,
+  readLegacyDesktopToken,
   readDesktopCallback,
   type DesktopAuthorization,
 } from "./desktop-auth";
@@ -151,12 +152,17 @@ function handleDeepLink(url: string): void {
     if (parsed.protocol !== `${PROTOCOL}:`) return;
 
     if (parsed.hostname === "auth" && parsed.pathname === "/callback") {
-			void finishDesktopSSO(url).catch((error) => {
-				mainWindow?.webContents.send(
-					"auth:error",
-					error instanceof Error ? error.message : "SSO sign-in failed",
-				);
-			});
+      const legacyToken = readLegacyDesktopToken(url);
+      if (legacyToken) {
+        mainWindow?.webContents.send("auth:token", legacyToken);
+        return;
+      }
+      void finishDesktopSSO(url).catch((error) => {
+        mainWindow?.webContents.send(
+          "auth:error",
+          error instanceof Error ? error.message : "SSO sign-in failed",
+        );
+      });
       return;
     }
 
@@ -463,14 +469,14 @@ if (!gotTheLock) {
     // Sync IPC: preload exposes the validated runtime config before renderer
     // boot. If desktop.json exists but is invalid, renderer receives the
     // blocking error and must not silently fall back to the cloud defaults.
-		ipcMain.on("runtime-config:get", (event) => {
-			event.returnValue = runtimeConfigResult;
-		});
-		ipcMain.on("auth:get-token", (event) => {
-			event.returnValue = readAuthToken();
-		});
-		ipcMain.handle("auth:start", () => startDesktopSSO());
-		ipcMain.handle("auth:clear", () => clearAuthToken());
+    ipcMain.on("runtime-config:get", (event) => {
+      event.returnValue = runtimeConfigResult;
+    });
+    ipcMain.on("auth:get-token", (event) => {
+      event.returnValue = readAuthToken();
+    });
+    ipcMain.handle("auth:start", () => startDesktopSSO());
+    ipcMain.handle("auth:clear", () => clearAuthToken());
 
     // IPC: toggle immersive mode — hides the macOS traffic lights so full-screen
     // modals (e.g. create-workspace) can place UI in the top-left corner

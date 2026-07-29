@@ -16,6 +16,8 @@ interface DesktopAPI {
   runtimeConfig: RuntimeConfigResult;
   /** Decrypt the persisted SSO credential into renderer memory. */
   getAuthToken: () => string | null;
+  /** Listen for a legacy bearer token delivered via deep link. */
+  onAuthToken: (callback: (token: string) => void) => () => void;
   startSSO: () => Promise<void>;
   clearAuthToken: () => Promise<void>;
   onAuthChanged: (callback: () => void) => () => void;
@@ -102,7 +104,7 @@ interface DaemonAPI {
   getHostName: () => Promise<string>;
   onStatusChange: (callback: (status: DaemonStatus) => void) => () => void;
   setTargetApiUrl: (url: string) => Promise<void>;
-  syncToken: (token: string, userId: string) => Promise<void>;
+  syncToken: (token: string, userId: string, useSySso: boolean) => Promise<void>;
   clearToken: () => Promise<void>;
   isCliInstalled: () => Promise<boolean>;
   getPrefs: () => Promise<DaemonPrefs>;
