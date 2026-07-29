@@ -10,9 +10,10 @@ import (
 )
 
 type AppConfig struct {
-	CdnDomain string `json:"cdn_domain"`
-	// Company SSO is the only human login path, so public signup is always off.
-	AllowSignup bool `json:"allow_signup"`
+	CdnDomain      string `json:"cdn_domain"`
+	UseSySSO       bool   `json:"use_sy_sso"`
+	AllowSignup    bool   `json:"allow_signup"`
+	GoogleClientID string `json:"google_client_id,omitempty"`
 	// WorkspaceCreationDisabled mirrors the server-side
 	// DISABLE_WORKSPACE_CREATION env var so the UI can hide every
 	// "Create workspace" affordance on self-hosted instances. Omitted
@@ -40,8 +41,12 @@ type AppConfig struct {
 // to anonymous callers — never user- or tenant-scoped data.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	config := AppConfig{
-		AllowSignup:               false,
+		UseSySSO:                  h.cfg.UseSySSO,
+		AllowSignup:               !h.cfg.UseSySSO && h.cfg.AllowSignup,
 		WorkspaceCreationDisabled: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
+	}
+	if !h.cfg.UseSySSO {
+		config.GoogleClientID = os.Getenv("GOOGLE_CLIENT_ID")
 	}
 	if h.Storage != nil {
 		config.CdnDomain = h.Storage.CdnDomain()

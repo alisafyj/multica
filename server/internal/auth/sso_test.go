@@ -114,3 +114,31 @@ func TestLoadDevAuthEmailFromEnv(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadUseSySSOFromEnv(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    bool
+		wantErr bool
+	}{
+		{name: "unset"},
+		{name: "false", value: "false"},
+		{name: "false uppercase", value: " FALSE "},
+		{name: "true", value: "true", want: true},
+		{name: "true mixed case", value: " TrUe ", want: true},
+		{name: "rejects ambiguous value", value: "1", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("USE_SY_SSO", tc.value)
+			got, err := LoadUseSySSOFromEnv()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("LoadUseSySSOFromEnv() error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Fatalf("LoadUseSySSOFromEnv() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -54,18 +54,27 @@ func parseRSAPublicKey(der []byte) (*rsa.PublicKey, error) {
 }
 
 func LoadSSOVerifierFromEnv() (*SSOVerifier, error) {
-	if !strings.EqualFold(strings.TrimSpace(os.Getenv("SSO_ENABLED")), "true") {
-		return nil, nil
-	}
 	path := strings.TrimSpace(os.Getenv("SSO_PUBLIC_KEY_PATH"))
 	if path == "" {
-		return nil, errors.New("SSO_PUBLIC_KEY_PATH is required when SSO_ENABLED=true")
+		return nil, errors.New("SSO_PUBLIC_KEY_PATH is required when USE_SY_SSO=true")
 	}
 	publicKeyPEM, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read SSO public key: %w", err)
 	}
 	return NewSSOVerifier(publicKeyPEM, os.Getenv("SSO_EXPECTED_SUB"))
+}
+
+func LoadUseSySSOFromEnv() (bool, error) {
+	raw := strings.TrimSpace(os.Getenv("USE_SY_SSO"))
+	switch strings.ToLower(raw) {
+	case "", "false":
+		return false, nil
+	case "true":
+		return true, nil
+	default:
+		return false, fmt.Errorf("USE_SY_SSO must be true or false, got %q", raw)
+	}
 }
 
 func LoadDevAuthEmailFromEnv() (string, error) {

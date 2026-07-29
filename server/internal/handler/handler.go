@@ -49,6 +49,10 @@ type dbExecutor interface {
 }
 
 type Config struct {
+	UseSySSO            bool
+	AllowSignup         bool
+	AllowedEmails       []string
+	AllowedEmailDomains []string
 	// DisableWorkspaceCreation, when true, makes POST /api/workspaces return
 	// 403 for every caller. There is no role/owner exception because the repo
 	// has no platform-admin concept; operators bootstrap the workspace with

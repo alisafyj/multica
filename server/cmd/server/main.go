@@ -120,6 +120,11 @@ func envDuration(name string, def time.Duration) time.Duration {
 
 func main() {
 	logger.Init()
+	useSySSO, err := auth.LoadUseSySSOFromEnv()
+	if err != nil {
+		slog.Error("invalid USE_SY_SSO configuration", "error", err)
+		os.Exit(1)
+	}
 
 	// Warn about missing configuration
 	if os.Getenv("JWT_SECRET") == "" {
@@ -312,18 +317,22 @@ func main() {
 	// alongside the sweeper, and Stop is called explicitly during graceful
 	// shutdown so any pending bumps are flushed before we exit.
 	heartbeatScheduler := handler.NewBatchedHeartbeatScheduler(queries, handler.DefaultHeartbeatBatchInterval)
-	ssoVerifier, err := auth.LoadSSOVerifierFromEnv()
-	if err != nil {
-		slog.Error("invalid SSO configuration", "error", err)
-		os.Exit(1)
-	}
-	devAuthEmail, err := auth.LoadDevAuthEmailFromEnv()
-	if err != nil {
-		slog.Error("invalid local authentication configuration", "error", err)
-		os.Exit(1)
-	}
-	if devAuthEmail != "" {
-		slog.Warn("local authentication bypass enabled", "email", devAuthEmail)
+	var ssoVerifier *auth.SSOVerifier
+	var devAuthEmail string
+	if useSySSO {
+		ssoVerifier, err = auth.LoadSSOVerifierFromEnv()
+		if err != nil {
+			slog.Error("invalid SSO configuration", "error", err)
+			os.Exit(1)
+		}
+		devAuthEmail, err = auth.LoadDevAuthEmailFromEnv()
+		if err != nil {
+			slog.Error("invalid local authentication configuration", "error", err)
+			os.Exit(1)
+		}
+		if devAuthEmail != "" {
+			slog.Warn("local authentication bypass enabled", "email", devAuthEmail)
+		}
 	}
 
 	r, h := NewRouterWithOptions(pool, hub, bus, analyticsClient, storeRedis, RouterOptions{
@@ -332,6 +341,7 @@ func main() {
 		DaemonHub:          daemonHub,
 		DaemonWakeup:       daemonWakeup,
 		HeartbeatScheduler: heartbeatScheduler,
+		UseSySSO:           useSySSO,
 		SSOVerifier:        ssoVerifier,
 		DevAuthEmail:       devAuthEmail,
 	})
