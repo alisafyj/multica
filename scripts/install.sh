@@ -456,7 +456,7 @@ run_with_server() {
   printf "\n"
   printf "     ${CYAN}multica setup self-host${RESET}   # Configure + authenticate + start daemon\n"
   printf "\n"
-  printf "  ${BOLD}Login:${RESET} use the configured company SSO.\n"
+  printf "  ${BOLD}Login:${RESET} use the authentication mode configured in .env (legacy by default).\n"
   printf "\n"
   printf "  ${BOLD}To stop all services:${RESET}\n"
   printf "     curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --stop\n"

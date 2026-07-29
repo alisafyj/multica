@@ -1,19 +1,28 @@
 # Company SSO Operations
 
-Multica accepts company SSO for every human login. APISIX provides the
-`sy_sso_token` cookie; Multica validates RS256, exact `sub`, identity fields,
-and `exp`. All derived human credentials expire at that same `exp`.
+Company SSO is opt-in. When `USE_SY_SSO` is unset or `false`, Multica keeps the
+legacy email, Google, PAT, CLI-token, and Daemon PAT-renewal flows. Set
+`USE_SY_SSO=true` to enable company SSO for human login and the `ai_work`
+service-account path.
+
+In SSO mode, APISIX provides the `sy_sso_token` cookie; Multica validates
+RS256, exact `sub`, identity fields, and `exp`. All derived human credentials
+expire at that same `exp`.
 
 ## Required configuration
 
 ```env
-SSO_ENABLED=true
+USE_SY_SSO=true
 SSO_PUBLIC_KEY_PATH=/run/secrets/company-sso-public.pem
 SSO_EXPECTED_SUB=multica.company.example
 SSO_DESKTOP_REDIRECT_URI=multica://auth/callback
 SSO_MOBILE_REDIRECT_URI=multica://auth/mobile-callback
 DISABLE_WORKSPACE_CREATION=true
 ```
+
+Changing `USE_SY_SSO` requires a backend restart. Existing Web, Desktop,
+Mobile, CLI, and Daemon sessions must log in again after the mode changes;
+the setting is not hot-reloaded.
 
 Mount the issuer's RSA public key read-only. Key rotation requires replacing
 the mounted key and restarting the backend. `SSO_EXPECTED_SUB` must exactly

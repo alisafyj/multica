@@ -502,7 +502,7 @@ function Start-LocalInstall {
     Write-Host ""
     Write-Host "     multica setup self-host  " -NoNewline; Write-Host "# Configure + authenticate + start daemon" -ForegroundColor DarkGray
     Write-Host ""
-    Write-Host "  Login: use the configured company SSO."
+    Write-Host "  Login: use the authentication mode configured in .env (legacy by default)."
     Write-Host ""
     Write-Host "  To stop all services:"
     Write-Host '     $env:MULTICA_MODE="stop"; irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex'
