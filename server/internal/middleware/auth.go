@@ -26,7 +26,7 @@ func uuidToString(u pgtype.UUID) string { return util.UUIDToString(u) }
 // cloudPAT is optional; when non-nil, tokens with the mcn_ prefix are
 // validated by calling the Multica Cloud Fleet service rather than the
 // local DB. When nil (Fleet URL unset) mcn_ tokens are rejected.
-func Auth(queries *db.Queries, cloudPAT *auth.CloudPATVerifier) func(http.Handler) http.Handler {
+func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATVerifier, useSySSO bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// X-Actor-Source is server-set only — any value supplied by
@@ -53,7 +53,7 @@ func Auth(queries *db.Queries, cloudPAT *auth.CloudPATVerifier) func(http.Handle
 				return
 			}
 
-			if strings.HasPrefix(tokenString, auth.ServiceAccountTokenPrefix) {
+			if useSySSO && strings.HasPrefix(tokenString, auth.ServiceAccountTokenPrefix) {
 				if queries == nil {
 					http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 					return
@@ -166,14 +166,51 @@ func Auth(queries *db.Queries, cloudPAT *auth.CloudPATVerifier) func(http.Handle
 				return
 			}
 
-			identity, err := auth.ParseInternalToken(tokenString)
+			if !useSySSO && strings.HasPrefix(tokenString, "mul_") {
+				hash := auth.HashToken(tokenString)
+				if userID, ok := patCache.Get(r.Context(), hash); ok {
+					r.Header.Set("X-User-ID", userID)
+					next.ServeHTTP(w, r)
+					return
+				}
+				if queries == nil {
+					http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+					return
+				}
+				pat, err := queries.GetPersonalAccessTokenByHash(r.Context(), hash)
+				if err != nil {
+					slog.Warn("auth: invalid PAT", "path", r.URL.Path, "error", err)
+					http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+					return
+				}
+				userID := uuidToString(pat.UserID)
+				r.Header.Set("X-User-ID", userID)
+				var expiresAt time.Time
+				if pat.ExpiresAt.Valid {
+					expiresAt = pat.ExpiresAt.Time
+				}
+				patCache.Set(r.Context(), hash, userID, auth.TTLForExpiry(time.Now(), expiresAt))
+				go queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID)
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			var identity auth.InternalTokenIdentity
+			var err error
+			if useSySSO {
+				identity, err = auth.ParseInternalToken(tokenString)
+			} else {
+				identity, err = auth.ParseLegacyJWT(tokenString)
+			}
 			if err != nil {
 				slog.Warn("auth: invalid token", "path", r.URL.Path, "error", err)
 				http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 				return
 			}
 			r.Header.Set("X-User-ID", identity.UserID)
-			r.Header.Set("X-Actor-Source", identity.Source)
+			if identity.Source != "" {
+				r.Header.Set("X-Actor-Source", identity.Source)
+			}
 			r.Header.Set("X-Auth-Expires-At", identity.ExpiresAt.UTC().Format(time.RFC3339))
 			w.Header().Set("X-Auth-Expires-At", identity.ExpiresAt.UTC().Format(time.RFC3339))
 			if identity.Email != "" {

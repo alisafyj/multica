@@ -27,7 +27,7 @@ func TestRouterDevAuthEmail(t *testing.T) {
 		events.New(),
 		analytics.NoopClient{},
 		nil,
-		RouterOptions{DevAuthEmail: email},
+		RouterOptions{UseSySSO: true, DevAuthEmail: email},
 	)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/auth/sso/session", nil))

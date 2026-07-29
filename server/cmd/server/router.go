@@ -330,8 +330,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	if opts.HeartbeatScheduler != nil {
 		h.HeartbeatScheduler = opts.HeartbeatScheduler
 	}
-	// DaemonTokenCache backs the DaemonAuth mdt_ path.
+	patCache := auth.NewPATCache(rdb)
 	daemonTokenCache := auth.NewDaemonTokenCache(rdb)
+	h.PATCache = patCache
 	h.DaemonTokenCache = daemonTokenCache
 	h.MembershipCache = auth.NewMembershipCache(rdb)
 
@@ -425,9 +426,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	trustedProxies := middleware.ParseTrustedProxies(os.Getenv("RATE_LIMIT_TRUSTED_PROXIES"))
 	authVerifyRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_VERIFY", 20), time.Minute, trustedProxies)
 	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
-	r.With(authVerifyRL).Post("/auth/sso/session", h.SSOSession)
-	r.With(authVerifyRL).Get("/auth/sso/authorize", h.SSOAuthorize)
-	r.With(authVerifyRL).Post("/auth/sso/token", h.SSOToken)
+	if opts.UseSySSO {
+		r.With(authVerifyRL).Post("/auth/sso/session", h.SSOSession)
+		r.With(authVerifyRL).Get("/auth/sso/authorize", h.SSOAuthorize)
+		r.With(authVerifyRL).Post("/auth/sso/token", h.SSOToken)
+	} else {
+		authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
+		r.With(authRL).Post("/auth/send-code", h.SendCode)
+		r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
+		r.With(authRL).Post("/auth/google", h.GoogleLogin)
+	}
 	r.Post("/auth/logout", h.Logout)
 
 	// Public API
@@ -457,7 +465,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Daemon API routes (require daemon token or valid user token)
 	r.Route("/api/daemon", func(r chi.Router) {
-		r.Use(middleware.DaemonAuth(queries, daemonTokenCache, cloudPATVerifier))
+		r.Use(middleware.DaemonAuth(queries, patCache, daemonTokenCache, cloudPATVerifier, opts.UseSySSO))
 
 		r.Post("/register", h.DaemonRegister)
 		r.Post("/deregister", h.DaemonDeregister)
@@ -493,7 +501,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Protected API routes
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Auth(queries, cloudPATVerifier))
+		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, opts.UseSySSO))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
 
 		// --- User-scoped routes (no workspace context required) ---
@@ -510,6 +518,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// server/internal/handler/onboarding_shim.go.
 		r.Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
 		r.Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
+		if !opts.UseSySSO {
+			r.Post("/api/cli-token", h.IssueCliToken)
+		}
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
 		r.Post("/api/design-plugin/figma/auth-sessions/{sessionId}/authorize", h.AuthorizeFigmaPluginAuthSession)
@@ -544,15 +555,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/invitations/{invitationId}", h.RevokeInvitation)
 				})
 				// Owner-only access
-				r.Group(func(r chi.Router) {
-					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner"))
-					r.Use(handler.RequireHumanActor)
-					r.Get("/service-account", h.GetServiceAccount)
-					r.Post("/service-account", h.CreateServiceAccount)
-					r.Post("/service-account/rotate", h.RotateServiceAccountToken)
-					r.Delete("/service-account", h.RevokeServiceAccountToken)
-					r.Delete("/", h.DeleteWorkspace)
-				})
+				if opts.UseSySSO {
+					r.Group(func(r chi.Router) {
+						r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner"))
+						r.Use(handler.RequireHumanActor)
+						r.Get("/service-account", h.GetServiceAccount)
+						r.Post("/service-account", h.CreateServiceAccount)
+						r.Post("/service-account/rotate", h.RotateServiceAccountToken)
+						r.Delete("/service-account", h.RevokeServiceAccountToken)
+						r.Delete("/", h.DeleteWorkspace)
+					})
+				} else {
+					r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner")).Delete("/", h.DeleteWorkspace)
+				}
 
 				// GitHub integration — connect / disconnect remain admin-only;
 				// the read-only list endpoint lives in the member-level group
@@ -600,6 +615,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/api/invitations/{id}", h.GetMyInvitation)
 		r.Post("/api/invitations/{id}/accept", h.AcceptInvitation)
 		r.Post("/api/invitations/{id}/decline", h.DeclineInvitation)
+		if !opts.UseSySSO {
+			r.Route("/api/tokens", func(r chi.Router) {
+				r.Get("/", h.ListPersonalAccessTokens)
+				r.Post("/", h.CreatePersonalAccessToken)
+				r.Post("/current/renew", h.RenewCurrentPersonalAccessToken)
+				r.Delete("/{id}", h.RevokePersonalAccessToken)
+			})
+		}
 
 		// Cloud Billing proxy. Same upstream service / port as
 		// cloud-runtime — multica-cloud's Fleet and Billing share

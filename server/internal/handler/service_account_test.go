@@ -72,10 +72,10 @@ func TestServiceAccountLifecycle(t *testing.T) {
 		t.Fatalf("second service account status = %d, want 409", secondRecorder.Code)
 	}
 
-	assertToken := func(token string, wantStatus int) {
+	assertToken := func(token string, useSySSO bool, wantStatus int) {
 		t.Helper()
 		var actorSource, workspaceID string
-		handler := middleware.Auth(testHandler.Queries, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler := middleware.Auth(testHandler.Queries, nil, nil, useSySSO)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			actorSource = r.Header.Get("X-Actor-Source")
 			workspaceID = r.Header.Get("X-Service-Workspace-ID")
 			w.WriteHeader(http.StatusOK)
@@ -91,7 +91,28 @@ func TestServiceAccountLifecycle(t *testing.T) {
 			t.Fatalf("token actor source/workspace = %q/%q", actorSource, workspaceID)
 		}
 	}
-	assertToken(created.Token, http.StatusOK)
+	assertToken(created.Token, false, http.StatusUnauthorized)
+	assertToken(created.Token, true, http.StatusOK)
+	assertDaemonToken := func(useSySSO bool, wantStatus int) {
+		t.Helper()
+		var workspaceID string
+		handler := middleware.DaemonAuth(testHandler.Queries, nil, nil, nil, useSySSO)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			workspaceID = middleware.DaemonWorkspaceIDFromContext(r.Context())
+			w.WriteHeader(http.StatusOK)
+		}))
+		req := httptest.NewRequest(http.MethodPost, "/api/daemon/heartbeat", nil)
+		req.Header.Set("Authorization", "Bearer "+created.Token)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		if recorder.Code != wantStatus {
+			t.Fatalf("daemon token status = %d, want %d", recorder.Code, wantStatus)
+		}
+		if wantStatus == http.StatusOK && workspaceID != testWorkspaceID {
+			t.Fatalf("daemon workspace = %q, want %q", workspaceID, testWorkspaceID)
+		}
+	}
+	assertDaemonToken(false, http.StatusUnauthorized)
+	assertDaemonToken(true, http.StatusOK)
 
 	rotateRequest := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/service-account/rotate", nil)
 	rotateRequest = withURLParams(rotateRequest, "id", testWorkspaceID)
@@ -110,8 +131,8 @@ func TestServiceAccountLifecycle(t *testing.T) {
 	if rotated.Token == "" || rotated.Token == created.Token {
 		t.Fatalf("rotated token = %q", rotated.Token)
 	}
-	assertToken(created.Token, http.StatusUnauthorized)
-	assertToken(rotated.Token, http.StatusOK)
+	assertToken(created.Token, true, http.StatusUnauthorized)
+	assertToken(rotated.Token, true, http.StatusOK)
 
 	revokeRequest := newRequest(http.MethodDelete, "/api/workspaces/"+testWorkspaceID+"/service-account", nil)
 	revokeRequest = withURLParams(revokeRequest, "id", testWorkspaceID)
@@ -121,5 +142,5 @@ func TestServiceAccountLifecycle(t *testing.T) {
 	if revokeRecorder.Code != http.StatusNoContent {
 		t.Fatalf("revoke status = %d, body = %s", revokeRecorder.Code, revokeRecorder.Body.String())
 	}
-	assertToken(rotated.Token, http.StatusUnauthorized)
+	assertToken(rotated.Token, true, http.StatusUnauthorized)
 }

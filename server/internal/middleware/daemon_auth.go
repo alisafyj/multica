@@ -24,6 +24,7 @@ const (
 // Daemon auth path labels exposed via context for slow-log attribution.
 const (
 	DaemonAuthPathDaemonToken = "daemon_token"
+	DaemonAuthPathPAT         = "pat"
 	DaemonAuthPathCloudPAT    = "cloud_pat"
 	DaemonAuthPathJWT         = "jwt"
 	DaemonAuthPathService     = "service_account"
@@ -69,7 +70,7 @@ func WithDaemonContext(ctx context.Context, workspaceID, daemonID string) contex
 // branch — same fail-closed contract as the regular Auth middleware.
 //
 // Cache misses fall back to the original DB-backed behavior.
-func DaemonAuth(queries *db.Queries, daemonCache *auth.DaemonTokenCache, cloudPAT *auth.CloudPATVerifier) func(http.Handler) http.Handler {
+func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.DaemonTokenCache, cloudPAT *auth.CloudPATVerifier, useSySSO bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// X-Actor-Source is server-set only — strip any
@@ -98,7 +99,7 @@ func DaemonAuth(queries *db.Queries, daemonCache *auth.DaemonTokenCache, cloudPA
 				return
 			}
 
-			if strings.HasPrefix(tokenString, auth.ServiceAccountTokenPrefix) {
+			if useSySSO && strings.HasPrefix(tokenString, auth.ServiceAccountTokenPrefix) {
 				if queries == nil {
 					writeError(w, http.StatusUnauthorized, "invalid token")
 					return
@@ -205,14 +206,53 @@ func DaemonAuth(queries *db.Queries, daemonCache *auth.DaemonTokenCache, cloudPA
 				return
 			}
 
-			identity, err := auth.ParseInternalToken(tokenString)
+			if !useSySSO && strings.HasPrefix(tokenString, "mul_") {
+				hash := auth.HashToken(tokenString)
+				if userID, ok := patCache.Get(r.Context(), hash); ok {
+					r.Header.Set("X-User-ID", userID)
+					ctx := context.WithValue(r.Context(), ctxKeyDaemonAuthPath, DaemonAuthPathPAT)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+				if queries == nil {
+					writeError(w, http.StatusUnauthorized, "invalid token")
+					return
+				}
+				pat, err := queries.GetPersonalAccessTokenByHash(r.Context(), hash)
+				if err != nil {
+					slog.Warn("daemon_auth: invalid PAT", "path", r.URL.Path, "error", err)
+					writeError(w, http.StatusUnauthorized, "invalid token")
+					return
+				}
+				userID := uuidToString(pat.UserID)
+				r.Header.Set("X-User-ID", userID)
+				var expiresAt time.Time
+				if pat.ExpiresAt.Valid {
+					expiresAt = pat.ExpiresAt.Time
+				}
+				patCache.Set(r.Context(), hash, userID, auth.TTLForExpiry(time.Now(), expiresAt))
+				go queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID)
+				ctx := context.WithValue(r.Context(), ctxKeyDaemonAuthPath, DaemonAuthPathPAT)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			var identity auth.InternalTokenIdentity
+			var err error
+			if useSySSO {
+				identity, err = auth.ParseInternalToken(tokenString)
+			} else {
+				identity, err = auth.ParseLegacyJWT(tokenString)
+			}
 			if err != nil {
 				slog.Warn("daemon_auth: invalid token", "path", r.URL.Path, "error", err)
 				writeError(w, http.StatusUnauthorized, "invalid token")
 				return
 			}
 			r.Header.Set("X-User-ID", identity.UserID)
-			r.Header.Set("X-Actor-Source", identity.Source)
+			if identity.Source != "" {
+				r.Header.Set("X-Actor-Source", identity.Source)
+			}
 			r.Header.Set("X-Auth-Expires-At", identity.ExpiresAt.UTC().Format(time.RFC3339))
 			w.Header().Set("X-Auth-Expires-At", identity.ExpiresAt.UTC().Format(time.RFC3339))
 			ctx := context.WithValue(r.Context(), ctxKeyDaemonAuthPath, DaemonAuthPathJWT)

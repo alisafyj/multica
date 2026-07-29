@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/multica-ai/multica/server/internal/auth"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -28,7 +30,7 @@ func TestDaemonAuth_DaemonTokenCacheHit(t *testing.T) {
 	}, auth.AuthCacheTTL)
 
 	var gotWS, gotDaemon, gotPath string
-	mw := DaemonAuth(nil, cache, nil) // nil queries — only safe on cache hit
+	mw := DaemonAuth(nil, nil, cache, nil, true) // nil queries — only safe on cache hit
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotWS = DaemonWorkspaceIDFromContext(r.Context())
 		gotDaemon = DaemonIDFromContext(r.Context())
@@ -54,7 +56,7 @@ func TestDaemonAuth_DaemonTokenCacheHit(t *testing.T) {
 
 func TestDaemonAuth_RejectsPersonalAccessToken(t *testing.T) {
 	const rawToken = "mul_daemon_pat_cache_hit_test"
-	mw := DaemonAuth(nil, nil, nil)
+	mw := DaemonAuth(nil, nil, nil, nil, true)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next handler should not be called")
 	}))
@@ -70,7 +72,7 @@ func TestDaemonAuth_RejectsPersonalAccessToken(t *testing.T) {
 }
 
 func TestDaemonAuth_MissingAuth(t *testing.T) {
-	mw := DaemonAuth(nil, nil, nil)
+	mw := DaemonAuth(nil, nil, nil, nil, true)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next must not be called")
 	}))
@@ -108,7 +110,7 @@ func TestDaemonAuth_StripsClientSuppliedActorSource(t *testing.T) {
 	}, auth.AuthCacheTTL)
 
 	var gotActorSource string
-	mw := DaemonAuth(nil, cache, nil)
+	mw := DaemonAuth(nil, nil, cache, nil, true)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotActorSource = r.Header.Get("X-Actor-Source")
 		w.WriteHeader(http.StatusOK)
@@ -130,7 +132,7 @@ func TestDaemonAuth_StripsClientSuppliedActorSource(t *testing.T) {
 }
 
 func TestDaemonAuth_InvalidMDT_NilQueries(t *testing.T) {
-	mw := DaemonAuth(nil, nil, nil) // no caches, no DB
+	mw := DaemonAuth(nil, nil, nil, nil, true) // no caches, no DB
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next must not be called")
 	}))
@@ -149,7 +151,7 @@ func TestDaemonAuth_InvalidMDT_NilQueries(t *testing.T) {
 // through to the mul_/JWT paths (an mcn_ string would never match a
 // valid PAT or JWT, but failing closed makes the contract explicit).
 func TestDaemonAuth_MCN_NoVerifierConfigured(t *testing.T) {
-	mw := DaemonAuth(nil, nil, nil)
+	mw := DaemonAuth(nil, nil, nil, nil, true)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next must not be called when verifier is unconfigured")
 	}))
@@ -180,7 +182,7 @@ func TestDaemonAuth_MCN_ValidTokenSetsUserID(t *testing.T) {
 	verifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{FleetBaseURL: srv.URL})
 
 	var gotUser, gotPath, gotActorSource string
-	mw := DaemonAuth(nil, nil, verifier)
+	mw := DaemonAuth(nil, nil, nil, verifier, true)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotUser = r.Header.Get("X-User-ID")
 		gotPath = DaemonAuthPathFromContext(r.Context())
@@ -223,7 +225,7 @@ func TestDaemonAuth_MCN_FleetSaysInvalid(t *testing.T) {
 	defer srv.Close()
 
 	verifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{FleetBaseURL: srv.URL})
-	mw := DaemonAuth(nil, nil, verifier)
+	mw := DaemonAuth(nil, nil, nil, verifier, true)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next must not be called when fleet says invalid")
 	}))
@@ -249,7 +251,7 @@ func TestDaemonAuth_MCN_FleetUnreachable(t *testing.T) {
 	defer srv.Close()
 
 	verifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{FleetBaseURL: srv.URL})
-	mw := DaemonAuth(nil, nil, verifier)
+	mw := DaemonAuth(nil, nil, nil, verifier, true)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next must not be called when fleet is unavailable")
 	}))
@@ -287,7 +289,7 @@ func TestDaemonAuth_MCN_OwnerNotInLocalDB(t *testing.T) {
 
 	verifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{FleetBaseURL: srv.URL})
 
-	mw := DaemonAuth(queries, nil, verifier)
+	mw := DaemonAuth(queries, nil, nil, verifier, true)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next must not be called when owner_id has no local user")
 	}))
@@ -299,5 +301,64 @@ func TestDaemonAuth_MCN_OwnerNotInLocalDB(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 when local user is missing, got %d", w.Code)
+	}
+}
+
+func TestDaemonAuthModeJWT(t *testing.T) {
+	expiresAt := time.Now().Add(time.Hour).Unix()
+	legacy := generateToken(jwt.MapClaims{"sub": "legacy-user", "exp": expiresAt}, auth.JWTSecret())
+	sso := generateToken(jwt.MapClaims{"sub": "sso-user", "auth_source": "sso", "exp": expiresAt}, auth.JWTSecret())
+	tests := []struct {
+		name     string
+		useSySSO bool
+		token    string
+		want     int
+	}{
+		{"legacy accepts legacy JWT", false, legacy, http.StatusOK},
+		{"legacy rejects SSO JWT", false, sso, http.StatusUnauthorized},
+		{"SSO rejects legacy JWT", true, legacy, http.StatusUnauthorized},
+		{"SSO accepts SSO JWT", true, sso, http.StatusOK},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := DaemonAuth(nil, nil, nil, nil, tc.useSySSO)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			req := httptest.NewRequest(http.MethodPost, "/api/daemon/heartbeat", nil)
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d", w.Code, tc.want)
+			}
+		})
+	}
+}
+
+func TestDaemonAuthModePersonalAccessToken(t *testing.T) {
+	rdb := newRedisTestClient(t)
+	cache := auth.NewPATCache(rdb)
+	const token = "mul_daemon_mode_cache_hit"
+	cache.Set(context.Background(), auth.HashToken(token), "legacy-user", auth.AuthCacheTTL)
+	for _, tc := range []struct {
+		name     string
+		useSySSO bool
+		want     int
+	}{
+		{"legacy", false, http.StatusOK},
+		{"SSO", true, http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := DaemonAuth(nil, cache, nil, nil, tc.useSySSO)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			req := httptest.NewRequest(http.MethodPost, "/api/daemon/heartbeat", nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d", w.Code, tc.want)
+			}
+		})
 	}
 }

@@ -193,12 +193,11 @@ func readJSON(t *testing.T, resp *http.Response, v any) {
 
 func generateTestJWT(userID, email, name string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":         userID,
-		"email":       email,
-		"name":        name,
-		"auth_source": "sso",
-		"exp":         time.Now().Add(72 * time.Hour).Unix(),
-		"iat":         time.Now().Unix(),
+		"sub":   userID,
+		"email": email,
+		"name":  name,
+		"exp":   time.Now().Add(72 * time.Hour).Unix(),
+		"iat":   time.Now().Unix(),
 	})
 	return token.SignedString(auth.JWTSecret())
 }
@@ -275,32 +274,61 @@ func TestConfigRouteIsPublic(t *testing.T) {
 
 // ---- Auth ----
 
-func TestLegacyAuthRoutesAreRemoved(t *testing.T) {
-	cases := []struct {
-		method string
-		path   string
-	}{
+func TestRouterAuthMode(t *testing.T) {
+	hub := realtime.NewHub()
+	go hub.Run()
+	ssoRouter, _ := NewRouterWithOptions(testPool, hub, events.New(), analytics.NoopClient{}, nil, RouterOptions{UseSySSO: true})
+	ssoServer := httptest.NewServer(ssoRouter)
+	defer ssoServer.Close()
+
+	assertStatus := func(name, baseURL, method, path string, want int) {
+		t.Helper()
+		req, err := http.NewRequest(method, baseURL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Fatalf("%s: status = %d, want %d", name, resp.StatusCode, want)
+		}
+	}
+
+	legacyRoutes := []struct{ method, path string }{
 		{http.MethodPost, "/auth/send-code"},
 		{http.MethodPost, "/auth/verify-code"},
 		{http.MethodPost, "/auth/google"},
 		{http.MethodPost, "/api/cli-token"},
 		{http.MethodGet, "/api/tokens"},
 	}
-
-	for _, tc := range cases {
-		req, err := http.NewRequest(tc.method, testServer.URL+tc.path, nil)
-		if err != nil {
-			t.Fatal(err)
+	for _, route := range legacyRoutes {
+		want := http.StatusBadRequest
+		if strings.HasPrefix(route.path, "/api/") {
+			want = http.StatusUnauthorized
 		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("%s %s: %v", tc.method, tc.path, err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusNotFound {
-			t.Fatalf("%s %s: expected 404, got %d", tc.method, tc.path, resp.StatusCode)
-		}
+		assertStatus("legacy route exists", testServer.URL, route.method, route.path, want)
+		assertStatus("legacy route absent in SSO", ssoServer.URL, route.method, route.path, http.StatusNotFound)
 	}
+
+	ssoRoutes := []struct{ method, path string }{
+		{http.MethodPost, "/auth/sso/session"},
+		{http.MethodGet, "/auth/sso/authorize"},
+		{http.MethodPost, "/auth/sso/token"},
+		{http.MethodGet, "/api/workspaces/00000000-0000-0000-0000-000000000000/service-account"},
+	}
+	for _, route := range ssoRoutes {
+		assertStatus("SSO route absent in legacy", testServer.URL, route.method, route.path, http.StatusNotFound)
+		want := http.StatusBadRequest
+		if strings.Contains(route.path, "session") || strings.Contains(route.path, "service-account") {
+			want = http.StatusUnauthorized
+		}
+		assertStatus("SSO route exists", ssoServer.URL, route.method, route.path, want)
+	}
+	assertStatus("legacy logout", testServer.URL, http.MethodPost, "/auth/logout", http.StatusOK)
+	assertStatus("SSO logout", ssoServer.URL, http.MethodPost, "/auth/logout", http.StatusOK)
 }
 
 func TestProtectedRoutesRequireAuth(t *testing.T) {

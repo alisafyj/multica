@@ -51,3 +51,29 @@ func TestParseInternalToken(t *testing.T) {
 		})
 	}
 }
+
+func TestParseLegacyJWT(t *testing.T) {
+	expiresAt := time.Now().Add(time.Hour).Truncate(time.Second)
+	sign := func(claims jwt.MapClaims) string {
+		t.Helper()
+		raw, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(JWTSecret())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	legacy := jwt.MapClaims{"sub": "user-id", "email": "user@example.com", "exp": expiresAt.Unix()}
+	identity, err := ParseLegacyJWT(sign(legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.UserID != "user-id" || identity.Source != "" || !identity.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("identity = %#v", identity)
+	}
+	for _, source := range []string{"sso", "legacy"} {
+		claims := jwt.MapClaims{"sub": "user-id", "auth_source": source, "exp": expiresAt.Unix()}
+		if _, err := ParseLegacyJWT(sign(claims)); err == nil {
+			t.Fatalf("ParseLegacyJWT accepted auth_source=%q", source)
+		}
+	}
+}
