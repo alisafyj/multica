@@ -14,8 +14,12 @@ interface DesktopAPI {
   onSystemLocaleChanged: (callback: (locale: string) => void) => () => void;
   /** Validated runtime endpoint config, or a blocking config error. */
   runtimeConfig: RuntimeConfigResult;
-  /** Listen for auth token delivered via deep link. Returns an unsubscribe function. */
-  onAuthToken: (callback: (token: string) => void) => () => void;
+  /** Decrypt the persisted SSO credential into renderer memory. */
+  getAuthToken: () => string | null;
+  startSSO: () => Promise<void>;
+  clearAuthToken: () => Promise<void>;
+  onAuthChanged: (callback: () => void) => () => void;
+  onAuthError: (callback: (message: string) => void) => () => void;
   /** Listen for invitation IDs delivered via deep link. Returns an unsubscribe function. */
   onInviteOpen: (callback: (invitationId: string) => void) => () => void;
   /** Open a URL in the default browser. */

@@ -63,6 +63,7 @@ const TYPE_LABEL: Record<InboxItemType, string> = {
   reaction_added: "Reaction added",
   quick_create_done: "Quick-create done",
   quick_create_failed: "Quick-create failed",
+  design_ready: "Design ready",
 };
 
 // due_date is a calendar day — format timezone-safely (no offset day shift).

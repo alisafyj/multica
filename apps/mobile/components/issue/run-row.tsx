@@ -156,5 +156,6 @@ const FAILURE_REASON_LABEL: Record<TaskFailureReason, string> = {
   codex_semantic_inactivity: "Codex inactivity",
   runtime_offline: "Runtime offline",
   runtime_recovery: "Runtime recovery",
+  authentication_expired: "Authentication expired",
   manual: "Manual",
 };

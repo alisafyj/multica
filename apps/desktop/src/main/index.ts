@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, safeStorage } from "electron";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "os";
 import { join } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
@@ -18,6 +19,11 @@ import {
   installRendererRecoveryHandlers,
   type RendererRecoveryWindow,
 } from "./renderer-recovery";
+import {
+  createDesktopAuthorization,
+  readDesktopCallback,
+  type DesktopAuthorization,
+} from "./desktop-auth";
 
 // Bundled icon used for dock/taskbar branding. macOS/Windows production
 // builds let the OS pick up the icon from the .app bundle / .exe resources,
@@ -62,6 +68,7 @@ if (process.platform !== "win32") {
 const PROTOCOL = "multica";
 
 let mainWindow: BrowserWindow | null = null;
+let pendingDesktopAuthorization: DesktopAuthorization | null = null;
 let runtimeConfigResult: RuntimeConfigResult = {
   ok: false,
   error: { message: "Runtime config has not loaded yet" },
@@ -69,17 +76,87 @@ let runtimeConfigResult: RuntimeConfigResult = {
 
 // --- Deep link helpers ---------------------------------------------------
 
+function authTokenPath(): string {
+  return join(app.getPath("userData"), "auth-token.bin");
+}
+
+function readAuthToken(): string | null {
+  const path = authTokenPath();
+  if (!existsSync(path) || !safeStorage.isEncryptionAvailable()) return null;
+  try {
+    return safeStorage.decryptString(readFileSync(path));
+  } catch {
+    return null;
+  }
+}
+
+function writeAuthToken(token: string): void {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error("secure credential storage is unavailable");
+  }
+  mkdirSync(app.getPath("userData"), { recursive: true, mode: 0o700 });
+  writeFileSync(authTokenPath(), safeStorage.encryptString(token), { mode: 0o600 });
+}
+
+function clearAuthToken(): void {
+  try {
+    unlinkSync(authTokenPath());
+  } catch {
+    // Already signed out.
+  }
+}
+
+async function startDesktopSSO(): Promise<void> {
+  if (!runtimeConfigResult.ok) throw new Error(runtimeConfigResult.error.message);
+  pendingDesktopAuthorization = createDesktopAuthorization(
+    runtimeConfigResult.config.apiUrl,
+    "multica://auth/callback",
+  );
+  await openExternalSafely(pendingDesktopAuthorization.url);
+}
+
+async function finishDesktopSSO(rawUrl: string): Promise<void> {
+  const pending = pendingDesktopAuthorization;
+  if (!pending) throw new Error("desktop SSO was not started by this app");
+  const code = readDesktopCallback(rawUrl, pending);
+  pendingDesktopAuthorization = null;
+  if (!runtimeConfigResult.ok) throw new Error(runtimeConfigResult.error.message);
+
+  const response = await fetch(
+    `${runtimeConfigResult.config.apiUrl.replace(/\/+$/, "")}/auth/sso/token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "authorization_code",
+        code,
+        code_verifier: pending.verifier,
+        client_id: "desktop",
+        redirect_uri: pending.redirectUri,
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(`SSO token exchange failed (${response.status})`);
+  const data = (await response.json()) as { token?: unknown };
+  if (typeof data.token !== "string" || data.token.length === 0) {
+    throw new Error("SSO token exchange returned no token");
+  }
+  writeAuthToken(data.token);
+  mainWindow?.webContents.send("auth:changed");
+}
+
 function handleDeepLink(url: string): void {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== `${PROTOCOL}:`) return;
 
-    // multica://auth/callback?token=<jwt>
     if (parsed.hostname === "auth" && parsed.pathname === "/callback") {
-      const token = parsed.searchParams.get("token");
-      if (token && mainWindow) {
-        mainWindow.webContents.send("auth:token", token);
-      }
+			void finishDesktopSSO(url).catch((error) => {
+				mainWindow?.webContents.send(
+					"auth:error",
+					error instanceof Error ? error.message : "SSO sign-in failed",
+				);
+			});
       return;
     }
 
@@ -386,9 +463,14 @@ if (!gotTheLock) {
     // Sync IPC: preload exposes the validated runtime config before renderer
     // boot. If desktop.json exists but is invalid, renderer receives the
     // blocking error and must not silently fall back to the cloud defaults.
-    ipcMain.on("runtime-config:get", (event) => {
-      event.returnValue = runtimeConfigResult;
-    });
+		ipcMain.on("runtime-config:get", (event) => {
+			event.returnValue = runtimeConfigResult;
+		});
+		ipcMain.on("auth:get-token", (event) => {
+			event.returnValue = readAuthToken();
+		});
+		ipcMain.handle("auth:start", () => startDesktopSSO());
+		ipcMain.handle("auth:clear", () => clearAuthToken());
 
     // IPC: toggle immersive mode — hides the macOS traffic lights so full-screen
     // modals (e.g. create-workspace) can place UI in the top-left corner

@@ -134,6 +134,7 @@ if (!API_URL) {
 export interface LoginResponse {
   token: string;
   user: User;
+	expires_at: string;
 }
 
 /** Mobile file payload for `uploadFile`. RN doesn't have a browser `File`
@@ -362,19 +363,22 @@ class ApiClient {
   }
 
   // --- Auth ---
-  async sendCode(email: string): Promise<void> {
-    await this.fetch<void>("/auth/send-code", {
-      method: "POST",
-      body: JSON.stringify({ email }),
-    });
-  }
-
-  async verifyCode(email: string, code: string): Promise<LoginResponse> {
-    return this.fetch<LoginResponse>("/auth/verify-code", {
-      method: "POST",
-      body: JSON.stringify({ email, code }),
-    });
-  }
+  async exchangeSSOCode(
+		code: string,
+		codeVerifier: string,
+		redirectUri: string,
+	): Promise<LoginResponse> {
+		return this.fetch<LoginResponse>("/auth/sso/token", {
+			method: "POST",
+			body: JSON.stringify({
+				grant_type: "authorization_code",
+				code,
+				code_verifier: codeVerifier,
+				client_id: "mobile",
+				redirect_uri: redirectUri,
+			}),
+		});
+	}
 
   async getMe(opts?: { signal?: AbortSignal }): Promise<User> {
     return this.fetchValidated(

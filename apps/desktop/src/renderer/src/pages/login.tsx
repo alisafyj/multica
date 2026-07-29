@@ -1,38 +1,45 @@
-import { LoginPage } from "@multica/views/auth";
-import { DragStrip } from "@multica/views/platform";
-import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
-
-function requireRuntimeAppUrl(): string {
-  const runtimeConfig = window.desktopAPI.runtimeConfig;
-  if (!runtimeConfig.ok) {
-    throw new Error(
-      "Invariant violated: DesktopLoginPage rendered before App accepted runtime config",
-    );
-  }
-  return runtimeConfig.config.appUrl;
-}
+import { useEffect, useState } from "react";
+import { Button } from "@multica/ui/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@multica/ui/components/ui/card";
+import { LogIn, Loader2 } from "lucide-react";
 
 export function DesktopLoginPage() {
-  const webUrl = requireRuntimeAppUrl();
-  const handleGoogleLogin = () => {
-    // Open web login page in the default browser with platform=desktop flag.
-    // The web callback will redirect back via multica:// deep link with the token.
-    window.desktopAPI.openExternal(
-      `${webUrl}/login?platform=desktop`,
-    );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => window.desktopAPI.onAuthError(setError), []);
+
+  const signIn = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      await window.desktopAPI.startSSO();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "SSO sign-in failed");
+      setLoading(false);
+    }
   };
 
   return (
-    <div className="flex h-screen flex-col">
-      <DragStrip />
-      <LoginPage
-        logo={<MulticaIcon bordered size="lg" />}
-        onSuccess={() => {
-          // Auth store update triggers AppContent re-render → shows DesktopShell.
-          // Initial workspace navigation happens in routes.tsx via IndexRedirect.
-        }}
-        onGoogleLogin={handleGoogleLogin}
-      />
-    </div>
+    <main className="flex min-h-screen items-center justify-center px-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader className="text-center">
+          <CardTitle>Multica</CardTitle>
+          <CardDescription>{error || "Sign in with your company account"}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button className="w-full" onClick={signIn} disabled={loading}>
+            {loading ? <Loader2 className="animate-spin" /> : <LogIn />}
+            Continue with SSO
+          </Button>
+        </CardContent>
+      </Card>
+    </main>
   );
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -116,9 +115,6 @@ func runMCPServeDesign(cmd *cobra.Command, _ []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if strings.HasPrefix(client.Token, "mul_") {
-		_ = client.PostJSON(ctx, "/api/tokens/current/renew", map[string]any{}, nil)
-	}
 	if err := validateDesignMCPAuth(ctx, client); err != nil {
 		return err
 	}

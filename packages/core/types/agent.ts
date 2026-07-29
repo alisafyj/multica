@@ -42,6 +42,7 @@ export type TaskFailureReason =
   | "codex_semantic_inactivity"
   | "runtime_offline"
   | "runtime_recovery"
+	| "authentication_expired"
   | "manual";
 
 // One daily bucket for the Agents-list ACTIVITY sparkline. The back-end

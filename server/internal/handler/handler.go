@@ -49,9 +49,6 @@ type dbExecutor interface {
 }
 
 type Config struct {
-	AllowSignup         bool
-	AllowedEmails       []string
-	AllowedEmailDomains []string
 	// DisableWorkspaceCreation, when true, makes POST /api/workspaces return
 	// 403 for every caller. There is no role/owner exception because the repo
 	// has no platform-admin concept; operators bootstrap the workspace with
@@ -82,6 +79,9 @@ type Config struct {
 	// return 503 instead of attempting to dial a hard-coded private service.
 	CloudRuntimeFleetURL     string
 	CloudRuntimeFleetTimeout time.Duration
+	SSODesktopRedirectURI    string
+	SSOMobileRedirectURI     string
+	DevAuthEmail             string
 }
 
 type cloudRuntimeProxy interface {
@@ -115,7 +115,6 @@ type Handler struct {
 	// every Record* method is nil-safe and obsmetrics.RecordEvent treats a
 	// nil Metrics as "PostHog only".
 	Metrics              *obsmetrics.BusinessMetrics
-	PATCache             *auth.PATCache
 	DaemonTokenCache     *auth.DaemonTokenCache
 	MembershipCache      *auth.MembershipCache
 	WebhookRateLimiter   WebhookRateLimiter
@@ -153,8 +152,9 @@ type Handler struct {
 	// can yield cleanly when the DB is healthy without blocking
 	// process exit indefinitely if the pool is frozen — at worst the
 	// next replica waits the full TTL.
-	LarkHub *lark.Hub
-	cfg     Config
+	LarkHub     *lark.Hub
+	SSOVerifier *auth.SSOVerifier
+	cfg         Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {

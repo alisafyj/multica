@@ -29,9 +29,15 @@ func (m *mockMembershipChecker) IsMember(_ context.Context, _, _ string) bool {
 }
 
 func makeTestToken(t *testing.T) string {
+	return makeTestTokenUntil(t, time.Now().Add(time.Hour))
+}
+
+func makeTestTokenUntil(t *testing.T, expiresAt time.Time) string {
 	t.Helper()
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": testUserID,
+		"sub":         testUserID,
+		"auth_source": "sso",
+		"exp":         expiresAt.Unix(),
 	})
 	signed, err := token.SignedString(auth.JWTSecret())
 	if err != nil {
@@ -48,7 +54,7 @@ func newTestHub(t *testing.T) (*Hub, *httptest.Server) {
 	mc := &mockMembershipChecker{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		HandleWebSocket(hub, mc, nil, nil, w, r)
+		HandleWebSocket(hub, mc, nil, w, r)
 	})
 	server := httptest.NewServer(mux)
 	return hub, server
@@ -56,7 +62,11 @@ func newTestHub(t *testing.T) (*Hub, *httptest.Server) {
 
 func connectWS(t *testing.T, server *httptest.Server) *websocket.Conn {
 	t.Helper()
-	token := makeTestToken(t)
+	return connectWSWithToken(t, server, makeTestToken(t))
+}
+
+func connectWSWithToken(t *testing.T, server *httptest.Server, token string) *websocket.Conn {
+	t.Helper()
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws?workspace_id=" + testWorkspaceID
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
@@ -80,6 +90,24 @@ func connectWS(t *testing.T, server *httptest.Server) *websocket.Conn {
 	}
 	conn.SetReadDeadline(time.Time{})
 	return conn
+}
+
+func TestWebSocketClosesAtAuthenticationExpiry(t *testing.T) {
+	_, server := newTestHub(t)
+	defer server.Close()
+	expiresAt := time.Now().Add(2 * time.Second).Truncate(time.Second)
+	conn := connectWSWithToken(t, server, makeTestTokenUntil(t, expiresAt))
+	defer conn.Close()
+
+	conn.SetReadDeadline(expiresAt.Add(2 * time.Second))
+	_, _, err := conn.ReadMessage()
+	if err == nil {
+		t.Fatal("WebSocket remained open after authentication expiry")
+	}
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) || closeErr.Code != 4001 {
+		t.Fatalf("close error = %v, want close code 4001", err)
+	}
 }
 
 // totalClients counts all currently registered clients.

@@ -13,5 +13,6 @@ export const failureReasonLabel: Record<TaskFailureReason, string> = {
   codex_semantic_inactivity: "Codex semantic inactivity timeout",
   runtime_offline: "Daemon offline",
   runtime_recovery: "Daemon restarted",
+  authentication_expired: "Authentication expired",
   manual: "Cancelled by user",
 };

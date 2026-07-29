@@ -43,6 +43,7 @@ services:
       - "0.0.0.0:${BACKEND_PORT:-${API_PORT:-${SERVER_PORT:-${PORT:-8080}}}}:8080"
     volumes:
       - backend_uploads:/app/data/uploads
+      - ${SSO_PUBLIC_KEY_FILE:-/dev/null}:/run/secrets/company-sso-public.pem:ro
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-multica}:${POSTGRES_PASSWORD:-multica}@multica-postgres:5432/${POSTGRES_DB:-multica}?sslmode=disable
       PORT: "8080"
@@ -58,9 +59,11 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_TLS: ${SMTP_TLS:-}
       SMTP_TLS_INSECURE: ${SMTP_TLS_INSECURE:-false}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:${FRONTEND_PORT:-3000}/auth/callback}
+      SSO_ENABLED: ${SSO_ENABLED:-false}
+      SSO_PUBLIC_KEY_PATH: /run/secrets/company-sso-public.pem
+      SSO_EXPECTED_SUB: ${SSO_EXPECTED_SUB:-}
+      SSO_DESKTOP_REDIRECT_URI: ${SSO_DESKTOP_REDIRECT_URI:-multica://auth/callback}
+      SSO_MOBILE_REDIRECT_URI: ${SSO_MOBILE_REDIRECT_URI:-multica://auth/mobile-callback}
       S3_BUCKET: ${S3_BUCKET:-}
       S3_REGION: ${S3_REGION:-us-west-2}
       CLOUDFRONT_DOMAIN: ${CLOUDFRONT_DOMAIN:-}
@@ -68,11 +71,7 @@ services:
       CLOUDFRONT_PRIVATE_KEY: ${CLOUDFRONT_PRIVATE_KEY:-}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
       APP_ENV: ${APP_ENV:-production}
-      MULTICA_DEV_VERIFICATION_CODE: ${MULTICA_DEV_VERIFICATION_CODE:-}
       MULTICA_APP_URL: ${MULTICA_APP_URL:-http://localhost:${FRONTEND_PORT:-3000}}
-      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
-      ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
-      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}
       DISABLE_WORKSPACE_CREATION: ${DISABLE_WORKSPACE_CREATION:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}

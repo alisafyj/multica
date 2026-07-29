@@ -91,3 +91,22 @@ describe("authStore.initialize — token mode", () => {
     expect(storage.snapshot().multica_token).toBe("t");
   });
 });
+
+describe("authStore.loginWithSSO", () => {
+  it("uses the cookie session without persisting a bearer token", async () => {
+    const storage = makeStorage();
+    const api = {
+      ssoSession: vi.fn().mockResolvedValue({ user: fakeUser }),
+      setToken: vi.fn(),
+    } as unknown as ApiClient;
+    const onLogin = vi.fn();
+    const store = createAuthStore({ api, storage, cookieAuth: true, onLogin });
+
+    await store.getState().loginWithSSO();
+
+    expect(store.getState().user).toEqual(fakeUser);
+    expect(storage.snapshot()).toEqual({});
+    expect(api.setToken).not.toHaveBeenCalled();
+    expect(onLogin).toHaveBeenCalledOnce();
+  });
+});

@@ -74,14 +74,22 @@ const desktopAPI = {
   },
   /** Validated runtime endpoint config, or a blocking config error. */
   runtimeConfig,
-  /** Listen for auth token delivered via deep link */
-  onAuthToken: (callback: (token: string) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, token: string) =>
-      callback(token);
-    ipcRenderer.on("auth:token", handler);
-    return () => {
-      ipcRenderer.removeListener("auth:token", handler);
-    };
+  getAuthToken: (): string | null =>
+    ipcRenderer.sendSync("auth:get-token") as string | null,
+  startSSO: (): Promise<void> => ipcRenderer.invoke("auth:start"),
+  clearAuthToken: (): Promise<void> => ipcRenderer.invoke("auth:clear"),
+  onAuthChanged: (callback: () => void) => {
+		const handler = () => callback();
+		ipcRenderer.on("auth:changed", handler);
+		return () => {
+			ipcRenderer.removeListener("auth:changed", handler);
+		};
+	},
+  onAuthError: (callback: (message: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, message: string) =>
+      callback(message);
+    ipcRenderer.on("auth:error", handler);
+    return () => ipcRenderer.removeListener("auth:error", handler);
   },
   /** Listen for invitation IDs delivered via deep link */
   onInviteOpen: (callback: (invitationId: string) => void) => {

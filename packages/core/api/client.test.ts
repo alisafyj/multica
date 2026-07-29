@@ -6,6 +6,24 @@ afterEach(() => {
 });
 
 describe("ApiClient", () => {
+  it("exchanges the APISIX SSO cookie without a bearer token", async () => {
+    const user = { id: "u1", name: "Alice", email: "alice@soyoung.com" };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ user }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.ssoSession()).resolves.toEqual({ user });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/auth/sso/session",
+      expect.objectContaining({ method: "POST", credentials: "include" }),
+    );
+  });
+
   it("preserves HTTP status on failed requests", async () => {
     vi.stubGlobal(
       "fetch",

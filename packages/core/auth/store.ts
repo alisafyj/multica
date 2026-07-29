@@ -18,9 +18,7 @@ export interface AuthState {
   isLoading: boolean;
 
   initialize: () => Promise<void>;
-  sendCode: (email: string) => Promise<void>;
-  verifyCode: (email: string, code: string) => Promise<User>;
-  loginWithGoogle: (code: string, redirectUri: string) => Promise<User>;
+  loginWithSSO: () => Promise<User>;
   loginWithToken: (token: string) => Promise<User>;
   logout: () => void;
   setUser: (user: User) => void;
@@ -74,32 +72,11 @@ export function createAuthStore(options: AuthStoreOptions) {
       }
     },
 
-    sendCode: async (email: string) => {
-      await api.sendCode(email);
-    },
-
-    verifyCode: async (email: string, code: string) => {
-      const { token, user } = await api.verifyCode(email, code);
-      if (!cookieAuth) {
-        // Token mode: persist for Electron / legacy.
-        storage.setItem("multica_token", token);
-        api.setToken(token);
-      }
+    loginWithSSO: async () => {
+      const { user } = await api.ssoSession();
       onLogin?.();
       identifyAnalytics(user.id, { email: user.email, name: user.name });
-      set({ user });
-      return user;
-    },
-
-    loginWithGoogle: async (code: string, redirectUri: string) => {
-      const { token, user } = await api.googleLogin(code, redirectUri);
-      if (!cookieAuth) {
-        storage.setItem("multica_token", token);
-        api.setToken(token);
-      }
-      onLogin?.();
-      identifyAnalytics(user.id, { email: user.email, name: user.name });
-      set({ user });
+      set({ user, isLoading: false });
       return user;
     },
 

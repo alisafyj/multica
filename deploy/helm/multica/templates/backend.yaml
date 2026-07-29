@@ -71,8 +71,12 @@ spec:
           env:
             - name: DATABASE_URL
               value: {{ include "multica.databaseUrl" . | quote }}
-          {{- if .Values.backend.uploads.persistence.enabled }}
           volumeMounts:
+            - name: sso-public-key
+              mountPath: /run/secrets/company-sso-public.pem
+              subPath: SSO_PUBLIC_KEY_PEM
+              readOnly: true
+          {{- if .Values.backend.uploads.persistence.enabled }}
             - name: uploads
               mountPath: /app/data/uploads
           {{- end }}
@@ -102,8 +106,14 @@ spec:
             periodSeconds: 30
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
-      {{- if .Values.backend.uploads.persistence.enabled }}
       volumes:
+        - name: sso-public-key
+          secret:
+            secretName: {{ .Values.existingSecret }}
+            items:
+              - key: SSO_PUBLIC_KEY_PEM
+                path: SSO_PUBLIC_KEY_PEM
+      {{- if .Values.backend.uploads.persistence.enabled }}
         - name: uploads
           persistentVolumeClaim:
             claimName: {{ include "multica.backend.fullname" . }}-uploads

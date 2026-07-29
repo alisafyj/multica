@@ -2,6 +2,7 @@
 
 import { Suspense, useMemo } from "react";
 import { CoreProvider } from "@multica/core/platform";
+import { useAuthStore } from "@multica/core/auth";
 import { createBrowserCookieLocaleAdapter } from "@multica/core/i18n/browser";
 import type { LocaleResources, SupportedLocale } from "@multica/core/i18n";
 import { useWelcomeStore } from "@multica/core/onboarding";
@@ -12,21 +13,6 @@ import {
   clearLoggedInCookie,
 } from "@/features/auth/auth-cookie";
 import { PageviewTracker } from "./pageview-tracker";
-
-// Legacy token in localStorage → keep this session in token mode so users who
-// logged in before the cookie-auth migration stay authed. They migrate to
-// cookie mode on their next logout/login cycle (logout clears multica_token).
-// Sunset: once telemetry shows <1% of sessions still carry multica_token,
-// delete this branch and hard-code `cookieAuth` — the localStorage token is
-// XSS-exposed and is the exact thing the cookie migration exists to remove.
-function hasLegacyToken(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return Boolean(window.localStorage.getItem("multica_token"));
-  } catch {
-    return false;
-  }
-}
 
 // Derive WebSocket URL from the page origin so self-hosted / LAN deployments
 // work without explicit NEXT_PUBLIC_WS_URL.  The Next.js rewrite rule
@@ -53,7 +39,6 @@ export function WebProviders({
   locale: SupportedLocale;
   resources: Record<string, LocaleResources>;
 }) {
-  const cookieAuth = !hasLegacyToken();
   // Stable identity reference so downstream effects keyed on it don't see a
   // new object on every parent render.
   const identity = useMemo(
@@ -65,9 +50,10 @@ export function WebProviders({
     <CoreProvider
       apiBaseUrl={process.env.NEXT_PUBLIC_API_URL}
       wsUrl={deriveWsUrl()}
-      cookieAuth={cookieAuth}
+      cookieAuth
       onLogin={setLoggedInCookie}
       onLogout={() => {
+        const wasAuthenticated = useAuthStore.getState().user != null;
         // welcome-store holds the transient post-onboarding signal. Must
         // clear on logout so user B logging into the same browser doesn't
         // inherit user A's signal and have <WelcomeAfterOnboarding /> fire
@@ -76,6 +62,7 @@ export function WebProviders({
         // is where it gets wired.
         useWelcomeStore.getState().reset();
         clearLoggedInCookie();
+        if (wasAuthenticated) window.location.assign("/logout");
       }}
       identity={identity}
       locale={locale}

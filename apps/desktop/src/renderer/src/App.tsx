@@ -20,6 +20,7 @@ import { useWindowOverlayStore } from "./stores/window-overlay-store";
 import { useDaemonIPCBridge } from "./platform/daemon-ipc-bridge";
 import { createDesktopLocaleAdapter } from "./platform/i18n-adapter";
 import { RESOURCES } from "@multica/views/locales";
+import type { StorageAdapter } from "@multica/core/types";
 
 // BCP-47 region tags for the <html lang> attribute, mirroring
 // apps/web/app/layout.tsx HTML_LANG. index.html ships a static lang="en";
@@ -31,6 +32,23 @@ const HTML_LANG: Record<SupportedLocale, string> = {
   "zh-Hans": "zh-CN",
   ko: "ko-KR",
   ja: "ja-JP",
+};
+
+const desktopStorage: StorageAdapter = {
+  getItem: (key) =>
+    key === "multica_token"
+      ? window.desktopAPI.getAuthToken()
+      : window.localStorage.getItem(key),
+  setItem: (key, value) => {
+    if (key !== "multica_token") window.localStorage.setItem(key, value);
+  },
+  removeItem: (key) => {
+    if (key === "multica_token") {
+      void window.desktopAPI.clearAuthToken();
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  },
 };
 
 
@@ -69,11 +87,12 @@ function AppContent() {
     });
   }, []);
 
-  // Listen for auth token delivered via deep link (multica://auth/callback?token=...).
-  // daemonAPI.syncToken is handled separately by the [user] effect below, which
-  // fires whenever a user logs in (deep link, session restore, account switch).
+  // Main validates the PKCE callback, exchanges the code, and persists the
+  // encrypted credential before emitting this token-free signal.
   useEffect(() => {
-    return window.desktopAPI.onAuthToken(async (token) => {
+		return window.desktopAPI.onAuthChanged(async () => {
+			const token = window.desktopAPI.getAuthToken();
+			if (!token) return;
       setBootstrapping(true);
       try {
         await useAuthStore.getState().loginWithToken(token);
@@ -95,7 +114,7 @@ function AppContent() {
   // Sync token and start the daemon whenever the user logs in.
   useEffect(() => {
     if (!user) return;
-    const token = localStorage.getItem("multica_token");
+		const token = window.desktopAPI.getAuthToken();
     if (!token) return;
     const userId = user.id;
     (async () => {
@@ -350,6 +369,7 @@ export default function App() {
           apiBaseUrl={runtimeConfigResult.config.apiUrl}
           wsUrl={runtimeConfigResult.config.wsUrl}
           onLogout={handleDaemonLogout}
+					storage={desktopStorage}
           identity={identity}
           locale={locale}
           resources={resources}
