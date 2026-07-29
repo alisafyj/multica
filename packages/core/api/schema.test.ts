@@ -92,9 +92,10 @@ describe("ApiClient schema fallback", () => {
   });
 
   describe("getConfig", () => {
-    it("drops malformed daemon setup URLs instead of throwing", async () => {
+    it("defaults a missing SSO flag to legacy mode", async () => {
       stubFetchJson({
         cdn_domain: "cdn.example.com",
+        allow_signup: true,
         daemon_server_url: { wrong: "shape" },
         daemon_app_url: 123,
         workspace_creation_disabled: false,
@@ -102,9 +103,17 @@ describe("ApiClient schema fallback", () => {
       const client = new ApiClient("https://api.example.test");
       const config = await client.getConfig();
       expect(config.cdn_domain).toBe("cdn.example.com");
-      expect(config.allow_signup).toBe(false);
+      expect(config.allow_signup).toBe(true);
+      expect(config.use_sy_sso).toBe(false);
       expect(config.daemon_server_url).toBeUndefined();
       expect(config.daemon_app_url).toBeUndefined();
+    });
+
+    it("preserves an enabled SSO flag", async () => {
+      stubFetchJson({ cdn_domain: "", allow_signup: false, use_sy_sso: true });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.getConfig()).resolves.toMatchObject({ use_sy_sso: true });
     });
   });
 

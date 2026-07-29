@@ -72,6 +72,7 @@ describe("global path / reserved slug consistency", () => {
   // probing isGlobalPath. Order matters: keep this list in sync with paths.ts.
   const globalPrefixes = [
     "/login",
+    "/auth/",
     "/logout",
     "/signup",
     "/workspaces/",

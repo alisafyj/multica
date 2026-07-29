@@ -110,3 +110,38 @@ describe("authStore.loginWithSSO", () => {
     expect(onLogin).toHaveBeenCalledOnce();
   });
 });
+
+describe("authStore legacy login", () => {
+  it("sends email codes and persists verified tokens in token mode", async () => {
+    const storage = makeStorage();
+    const api = {
+      sendCode: vi.fn().mockResolvedValue(undefined),
+      verifyCode: vi.fn().mockResolvedValue({ token: "legacy-token", user: fakeUser }),
+      setToken: vi.fn(),
+    } as unknown as ApiClient;
+    const store = createAuthStore({ api, storage });
+
+    await store.getState().sendCode("alice@example.com");
+    await store.getState().verifyCode("alice@example.com", "123456");
+
+    expect(api.sendCode).toHaveBeenCalledWith("alice@example.com");
+    expect(storage.snapshot().multica_token).toBe("legacy-token");
+    expect(api.setToken).toHaveBeenCalledWith("legacy-token");
+    expect(store.getState().user).toEqual(fakeUser);
+  });
+
+  it("uses the Google response without persisting a token in cookie mode", async () => {
+    const storage = makeStorage();
+    const api = {
+      googleLogin: vi.fn().mockResolvedValue({ token: "cookie-token", user: fakeUser }),
+      setToken: vi.fn(),
+    } as unknown as ApiClient;
+    const store = createAuthStore({ api, storage, cookieAuth: true });
+
+    await store.getState().loginWithGoogle("google-code", "https://app.example.test/auth/callback");
+
+    expect(storage.snapshot()).toEqual({});
+    expect(api.setToken).not.toHaveBeenCalled();
+    expect(store.getState().user).toEqual(fakeUser);
+  });
+});
