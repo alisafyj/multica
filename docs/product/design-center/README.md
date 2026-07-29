@@ -33,6 +33,7 @@
 - [decision-register.md](./decision-register.md)：确认当前哪些内容已经决定，哪些仍是提案；
 - [open-design-evidence.md](./open-design-evidence.md)：凡涉及 Open Design 的判断，必须回到对应版本和源码证据；
 - [open-design-multica-mapping.md](./open-design-multica-mapping.md)：当前 Open Design 契约到 Multica 云端实体和 Agent 上下文的最小映射提案；
+- [project-design-system-validation.md](./project-design-system-validation.md)：项目设计体系第一阶段的真实链路、持久化与失败保护证据，以及尚未完成的验收项；
 - 历史文档：只用于了解已有实现和失败经验，不自动继承为当前方案。
 
 恢复后必须遵守：

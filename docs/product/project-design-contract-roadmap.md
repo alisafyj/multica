@@ -1,6 +1,13 @@
 # Project Design Contract Roadmap
 
-Status as of 2026-07-14.
+> **Superseded product assumption as of 2026-07-28:** Figma UI specification
+> uploads are no longer the primary source of the project design system. The
+> project design system is now the source of truth; online UI Kit is a derived
+> view, and Figma UI specifications are optional import evidence. Keep this
+> document as implementation history only. The current direction lives in
+> `docs/product/design-center/README.md` and decision `DC-012`.
+
+Status as of 2026-07-14. Superseded as current product direction on 2026-07-28.
 
 This document is the working outline for the next Multica design-module product line.
 It defines how cloud Multica design specifications become the primary project-level design contract that UI Agent and UI Restore Agent can consume.

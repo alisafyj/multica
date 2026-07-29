@@ -25,6 +25,15 @@ Multica is an AI-native task management platform — like Linear, but with AI ag
 - Supports local (daemon) and cloud agent runtimes
 - Built for 2-10 person AI-native teams
 
+### Design Center Product Memory
+
+Before discussing, planning, or implementing Design Center, design system,
+UI specification, UI Agent, design generation, design restore, design MCP, or
+Open Design integration work, read `docs/product/design-center/README.md`.
+After a context compaction, interruption, or resumed session, read it again
+before relying on the conversation summary. Its decision register distinguishes
+confirmed direction from proposals and historical implementation.
+
 ## Architecture
 
 **Go backend + monorepo frontend (pnpm workspaces + Turborepo) with shared packages.**
