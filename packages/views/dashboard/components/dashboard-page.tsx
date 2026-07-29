@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BarChart3, FolderKanban, Trash2 } from "lucide-react";
+import { BarChart3, EyeOff, FolderKanban, Trash2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import {
@@ -28,6 +28,7 @@ import {
   dashboardRunTimeDailyOptions,
   dashboardFailuresDailyOptions,
   dashboardFailuresByAgentOptions,
+  FAILURE_CLASSES,
   type FailureClass,
 } from "@multica/core/dashboard";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -78,12 +79,19 @@ import {
   computeFailureTotals,
   DELETED_AGENTS_ROW_ID,
   formatDuration,
+  hasRateSample,
+  isSyntheticAgentRow,
   mergeAgentDashboardRows,
+  MIN_RATE_SAMPLE,
+  OFFENDER_METRIC,
+  RESTRICTED_AGENTS_ROW_ID,
+  sortAgentFailures,
   type AgentDashboardRow,
   type AgentFailureRow,
   type FailureClassRow,
   type FailureReasonRow,
   type FailureTotals,
+  type OffenderSort,
 } from "../utils";
 
 // Period selector — mirrors the runtime detail page so users see the same
@@ -135,21 +143,36 @@ const EMPTY_AGENTS: Agent[] = [];
 // Local segmented control — same visual language the runtime usage section
 // uses for its period / tab toggles. shadcn's Tabs is wired for full tab
 // pages with ARIA semantics the compact toolbar pill doesn't need.
+//
+// Which option is active was expressed only as a colour swap, which no screen
+// reader can see, so `aria-pressed` carries it too. `label` is required rather
+// than optional because a naked group of toggle buttons is announced without
+// saying WHAT it toggles — "Rate, pressed" is useless until you know the group
+// is the offender ranking. Toggle buttons rather than a radiogroup: a
+// radiogroup owes the user arrow-key roving focus, and these are tab stops
+// wherever they appear in the page.
 function Segmented<T extends string | number>({
   value,
   onChange,
   options,
+  label,
 }: {
   value: T;
   onChange: (v: T) => void;
   options: readonly { label: string; value: T }[];
+  label: string;
 }) {
   return (
-    <div className="inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5">
+    <div
+      role="group"
+      aria-label={label}
+      className="inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5"
+    >
       {options.map((o) => (
         <button
           key={String(o.value)}
           type="button"
+          aria-pressed={o.value === value}
           onClick={() => onChange(o.value)}
           className={`rounded-sm px-2.5 py-1 text-xs font-medium transition-colors ${
             o.value === value
@@ -460,11 +483,16 @@ export function DashboardPage() {
     [agentRows, knownAgentIds],
   );
   // Distinct hard-deleted agents folded into the bucket — drives the caption's
-  // "· N deleted" suffix (the bucket itself is a single row).
+  // "· N deleted" suffix (the bucket itself is a single row). The server's
+  // restricted bucket is not in `knownAgentIds` either but is not a deletion,
+  // so it must not inflate this count — that mislabelling is exactly the bug
+  // MUL-5409 came with.
   const deletedAgentCount = useMemo(
     () =>
       knownAgentIds
-        ? agentRows.filter((r) => !knownAgentIds.has(r.agentId)).length
+        ? agentRows.filter(
+            (r) => !knownAgentIds.has(r.agentId) && !isSyntheticAgentRow(r.agentId),
+          ).length
         : 0,
     [agentRows, knownAgentIds],
   );
@@ -487,6 +515,7 @@ export function DashboardPage() {
             onChange={setProjectValue}
           />
           <Segmented
+            label={t(($) => $.dim.label)}
             value={dim}
             onChange={handleDimChange}
             options={[
@@ -495,6 +524,7 @@ export function DashboardPage() {
             ]}
           />
           <Segmented
+            label={t(($) => $.filter.period_label)}
             value={days}
             onChange={setDays}
             options={allowedRanges.map((r) => ({ label: r.label, value: r.days }))}
@@ -595,6 +625,15 @@ export function DashboardPage() {
                 lessThanMinuteLabel={t(($) => $.duration.less_than_minute)}
               />
 
+              {/* Per-agent leaderboard — user picks the ranking metric;
+                  the progress bar and column emphasis follow the metric. */}
+              <Leaderboard
+                rows={visibleAgentRows}
+                agents={agents}
+                deletedAgentCount={deletedAgentCount}
+                lessThanMinuteLabel={t(($) => $.duration.less_than_minute)}
+              />
+
               {/* Failure breakdown — what broke and who it broke for. Rendered
                   unconditionally (not only when failures exist) so "no failed
                   runs" is an answer the page gives rather than an absence the
@@ -605,15 +644,6 @@ export function DashboardPage() {
                 reasonRows={failureReasonRows}
                 agentRows={agentFailureRows}
                 agents={agents}
-              />
-
-              {/* Per-agent leaderboard — user picks the ranking metric;
-                  the progress bar and column emphasis follow the metric. */}
-              <Leaderboard
-                rows={visibleAgentRows}
-                agents={agents}
-                deletedAgentCount={deletedAgentCount}
-                lessThanMinuteLabel={t(($) => $.duration.less_than_minute)}
               />
             </>
           )}
@@ -777,6 +807,7 @@ function TrendBlock({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <h4 className="text-sm font-semibold">{title}</h4>
         <Segmented
+          label={t(($) => $.daily.metric_label)}
           value={metric}
           onChange={setMetric}
           options={[
@@ -859,14 +890,29 @@ function useFailureClassLabel(): (c: FailureClass) => string {
   };
 }
 
+// How many offenders the list shows before collapsing the tail behind a
+// toggle. The list is ranked by absolute failure count, so the tail is
+// agents that failed once or twice — real, but not what anyone opens this
+// card to see. Eight keeps the card roughly as tall as the class summary
+// plus a header, instead of running to 30+ rows on a busy workspace.
+const TOP_OFFENDER_LIMIT = 8;
+
+// Shared by the offender column header and every offender row, so the two
+// cannot drift out of alignment.
+const OFFENDER_GRID =
+  "grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_4rem_4rem_4rem] items-center gap-3";
+
 /**
  * Failure breakdown for the selected window: what class of thing broke, and
  * which agents it broke for.
  *
- * Two ranked lists rather than a second chart — with seven classes and an
- * unbounded agent list, bar length plus an exact number is easier to read
- * than more stacked colour, and it leaves room for the raw error codes
- * behind a disclosure.
+ * Laid out as two stacked full-width sections rather than side-by-side
+ * columns. The two halves have structurally different lengths — classes are
+ * capped at seven and usually show three or four, while the agent list is
+ * unbounded — so a 2-column grid left one side stranded next to a column of
+ * whitespace. Stacking also lets each section use the full width for what it
+ * actually needs: proportion for the classes, a leaderboard-shaped row for
+ * the agents.
  */
 function ErrorsBreakdown({
   totals,
@@ -884,9 +930,33 @@ function ErrorsBreakdown({
   const { t } = useT("usage");
   const classLabel = useFailureClassLabel();
   const [showReasons, setShowReasons] = useState(false);
+  const [showAllAgents, setShowAllAgents] = useState(false);
+  const [sortBy, setSortBy] = useState<OffenderSort>("failed");
 
-  const maxClass = classRows.reduce((m, r) => Math.max(m, r.count), 0);
-  const maxAgent = agentRows.reduce((m, r) => Math.max(m, r.failed), 0);
+  const sortOptions = useMemo(
+    () => [
+      { value: "failed" as const, label: t(($) => $.errors.sort_failed) },
+      { value: "rate" as const, label: t(($) => $.errors.sort_rate) },
+    ],
+    [t],
+  );
+
+  const sortedAgents = useMemo(
+    () => sortAgentFailures(agentRows, sortBy),
+    [agentRows, sortBy],
+  );
+
+  // The leader fills the track, measured over every row rather than the
+  // visible ones so a bar means the same thing collapsed and expanded. Reading
+  // it off the leader (instead of a max over the raw rows) also keeps the Rate
+  // scale usable: a demoted small-sample row can out-rate the leader, and
+  // scaling to it would squash every meaningful bar to a sliver.
+  const leader = sortedAgents[0];
+  const maxValue = leader ? OFFENDER_METRIC[sortBy](leader) : 0;
+
+  const visibleAgents = showAllAgents
+    ? sortedAgents
+    : sortedAgents.slice(0, TOP_OFFENDER_LIMIT);
 
   return (
     <div className="rounded-lg border bg-card">
@@ -904,11 +974,16 @@ function ErrorsBreakdown({
       </div>
 
       {totals.failed === 0 ? null : (
-        <div className="grid grid-cols-1 divide-y md:grid-cols-2 md:divide-x md:divide-y-0">
-          <div className="min-w-0 p-4">
-            <div className="mb-2 flex items-center justify-between gap-2">
+        <>
+          <div className="border-b p-4">
+            <div className="mb-2.5 flex items-center justify-between gap-2">
+              {/* Spells out its own denominator. The header above quotes a
+                  rate over every run (3.3% of 8575); this section splits the
+                  failures alone (287). Two percentages one above the other
+                  with different denominators read as a contradiction unless
+                  each says what it is counting. */}
               <h5 className="text-xs font-medium text-muted-foreground">
-                {t(($) => $.errors.by_class)}
+                {t(($) => $.errors.mix_title, { failed: totals.failed })}
               </h5>
               <button
                 type="button"
@@ -921,94 +996,225 @@ function ErrorsBreakdown({
               </button>
             </div>
             {showReasons ? (
-              // Raw failure_reason values, unlocalised on purpose: they are
-              // the backend's wire enum, and an operator pasting one into a
-              // log search or an issue needs the exact string.
-              <ul aria-label={t(($) => $.errors.by_class)} className="space-y-1.5">
-                {reasonRows.map((row) => (
-                  <li
-                    key={row.reason}
-                    className="flex items-center justify-between gap-2"
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span
-                        aria-hidden
-                        className="h-2 w-2 shrink-0 rounded-[2px]"
-                        style={{
-                          backgroundColor: FAILURE_CLASS_COLOR[row.failureClass],
-                        }}
-                      />
-                      <code className="truncate text-xs text-muted-foreground">
-                        {row.reason}
-                      </code>
-                    </span>
-                    <span className="shrink-0 text-xs tabular-nums">
-                      {row.count}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <ReasonList rows={reasonRows} />
             ) : (
-              <ul aria-label={t(($) => $.errors.by_class)} className="space-y-2">
-                {classRows.map((row) => (
-                  <li key={row.failureClass} className="space-y-1">
-                    <div className="flex items-center justify-between gap-2 text-xs">
-                      <span className="truncate">{classLabel(row.failureClass)}</span>
-                      <span className="shrink-0 tabular-nums text-muted-foreground">
-                        {row.count}
-                      </span>
-                    </div>
-                    <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                      <div
-                        className="h-full rounded-full transition-[width] duration-300 ease-out"
-                        style={{
-                          width: `${maxClass > 0 ? (row.count / maxClass) * 100 : 0}%`,
-                          backgroundColor: FAILURE_CLASS_COLOR[row.failureClass],
-                        }}
-                      />
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <ClassComposition rows={classRows} classLabel={classLabel} />
             )}
           </div>
 
-          <div className="min-w-0 p-4">
-            <h5 className="mb-2 text-xs font-medium text-muted-foreground">
-              {t(($) => $.errors.by_agent)}
-            </h5>
-            <ul aria-label={t(($) => $.errors.by_agent)} className="space-y-2">
-              {agentRows.map((row) => (
+          <div className="p-4">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h5 className="text-xs font-medium text-muted-foreground">
+                {t(($) => $.errors.by_agent)}
+              </h5>
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <Segmented
+                  label={t(($) => $.errors.sort_label)}
+                  value={sortBy}
+                  onChange={setSortBy}
+                  options={sortOptions}
+                />
+                {sortedAgents.length > TOP_OFFENDER_LIMIT ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllAgents((v) => !v)}
+                    className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    {showAllAgents
+                      ? t(($) => $.errors.show_less, {
+                          count: TOP_OFFENDER_LIMIT,
+                        })
+                      : t(($) => $.errors.show_all, {
+                          count: sortedAgents.length,
+                        })}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {/* Column headers, as on the leaderboard: `4 / 10 · 40%` was one
+                unlabelled blob and the reader had to guess which number was
+                which. The active metric's column is emphasised so it is
+                obvious what the ranking and the bars measure. */}
+            {sortedAgents.length > 0 ? (
+              <div
+                className={`${OFFENDER_GRID} border-b py-2 text-xs font-medium text-muted-foreground`}
+              >
+                <span>{t(($) => $.errors.header_agent)}</span>
+                <span />
+                <span
+                  className={`text-right ${sortBy === "failed" ? "text-foreground" : ""}`}
+                >
+                  {t(($) => $.errors.header_failed)}
+                </span>
+                <span className="text-right">
+                  {t(($) => $.errors.header_runs)}
+                </span>
+                <span
+                  className={`text-right ${sortBy === "rate" ? "text-foreground" : ""}`}
+                >
+                  {t(($) => $.errors.header_rate)}
+                </span>
+              </div>
+            ) : null}
+            <ul aria-label={t(($) => $.errors.by_agent)} className="divide-y">
+              {visibleAgents.map((row) => (
                 <AgentFailureItem
                   key={row.agentId}
                   row={row}
                   name={agents.find((a) => a.id === row.agentId)?.name ?? null}
-                  maxFailed={maxAgent}
+                  maxValue={maxValue}
+                  sortBy={sortBy}
                   classLabel={classLabel}
                 />
               ))}
             </ul>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
 }
 
+/**
+ * Class breakdown as one 100%-stacked bar plus a legend.
+ *
+ * Replaces seven stacked progress bars. The question this answers is "what is
+ * the mix", and a single bar shows share-of-total directly — with separate
+ * bars the reader has to compare lengths and mentally total them. It also
+ * collapses ~340px of vertical space into ~70px, which is what let the card
+ * stop being a column of whitespace.
+ */
+function ClassComposition({
+  rows,
+  classLabel,
+}: {
+  rows: FailureClassRow[];
+  classLabel: (c: FailureClass) => string;
+}) {
+  const { t } = useT("usage");
+  const total = rows.reduce((sum, r) => sum + r.count, 0);
+  if (total === 0) return null;
+
+  return (
+    <div className="space-y-2.5">
+      {/* Segments are ordered by count desc (the aggregator's order), so the
+          bar reads heaviest-first left to right. */}
+      <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted">
+        {rows.map((row) => (
+          <div
+            key={row.failureClass}
+            className="h-full transition-[width] duration-300 ease-out"
+            style={{
+              width: `${(row.count / total) * 100}%`,
+              backgroundColor: FAILURE_CLASS_COLOR[row.failureClass],
+            }}
+          />
+        ))}
+      </div>
+      <ul
+        aria-label={t(($) => $.errors.mix_label)}
+        className="flex flex-wrap items-center gap-x-4 gap-y-1.5"
+      >
+        {rows.map((row) => (
+          <li key={row.failureClass} className="flex items-center gap-1.5">
+            <span
+              aria-hidden
+              className="h-2 w-2 shrink-0 rounded-[2px]"
+              style={{ backgroundColor: FAILURE_CLASS_COLOR[row.failureClass] }}
+            />
+            <span className="text-xs">{classLabel(row.failureClass)}</span>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {row.count}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Raw `failure_reason` values behind the class summary. Unlocalised on
+ * purpose: they are the backend's wire enum, and an operator pasting one into
+ * a log search or an issue needs the exact string.
+ *
+ * Two columns on wide viewports — the list runs to ~20 rows at its longest,
+ * and the card now has the full page width to spend on it.
+ */
+function ReasonList({ rows }: { rows: FailureReasonRow[] }) {
+  const { t } = useT("usage");
+  return (
+    <ul
+      aria-label={t(($) => $.errors.codes_label)}
+      className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2"
+    >
+      {rows.map((row) => (
+        <li key={row.reason} className="flex items-center justify-between gap-2">
+          <span className="flex min-w-0 items-center gap-2">
+            <span
+              aria-hidden
+              className="h-2 w-2 shrink-0 rounded-[2px]"
+              style={{ backgroundColor: FAILURE_CLASS_COLOR[row.failureClass] }}
+            />
+            <code className="truncate text-xs text-muted-foreground">
+              {row.reason}
+            </code>
+          </span>
+          <span className="shrink-0 text-xs tabular-nums">{row.count}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * One offender row, shaped like the leaderboard row directly above this card:
+ * identity, then a proportional bar, then one column per number.
+ *
+ * The bar measures whatever the list is currently sorted by, and the matching
+ * column is emphasised — the same lockstep the leaderboard keeps. Before, the
+ * bar always measured absolute failures while the loudest number on the row
+ * was the rate, so the worst-rate agent could sit near the bottom with one of
+ * the shortest bars.
+ *
+ * The bar is stacked by failure class, which is also the only thing its colour
+ * means. A row that fails one way is a solid block; a row failing five ways is
+ * visibly striped — a distinction the old single dominant-class badge erased.
+ */
 function AgentFailureItem({
   row,
   name,
-  maxFailed,
+  maxValue,
+  sortBy,
   classLabel,
 }: {
   row: AgentFailureRow;
   name: string | null;
-  maxFailed: number;
+  maxValue: number;
+  sortBy: OffenderSort;
   classLabel: (c: FailureClass) => string;
 }) {
   const { t } = useT("usage");
   const wsPaths = useWorkspacePaths();
-  const barColor = FAILURE_CLASS_COLOR[row.topClass ?? "other"];
+
+  const segments = FAILURE_CLASSES.filter((c) => row.classes[c] > 0);
+  // Text equivalent of the stacked bar. The bar is the only place the class
+  // split is rendered now that the badge is gone, so it has to carry a name
+  // for screen readers as well as a hover affordance for everyone else.
+  const composition = segments
+    .map((c) => `${classLabel(c)} ${row.classes[c]}`)
+    .join(" · ");
+
+  // Clamped, not just scaled: under the Rate ranking a small-sample row is
+  // demoted below the leader while still able to carry a higher rate, and an
+  // unclamped width would overflow the track.
+  const value = OFFENDER_METRIC[sortBy](row);
+  const pct = maxValue > 0 ? Math.min(100, (value / maxValue) * 100) : 0;
+
+  // Below MIN_RATE_SAMPLE runs the rate is arithmetic, not signal (1/1 is
+  // 100%). Those rows sort last under Rate and never take the emphasis that
+  // marks the active column, but they keep rendering and say why on hover.
+  const weakSample = !hasRateSample(row);
 
   // The row links into the agent's Overview, whose ActivityTab lists recent
   // runs with each failure's reason — the drill-down from "this agent is the
@@ -1021,51 +1227,68 @@ function AgentFailureItem({
   // here would leak a bare UUID — and, for a private agent, leak its
   // existence and failure profile to a member who cannot see it.
   const label = (
-    <span className="flex min-w-0 items-center gap-2">
-      <span
-        className={`truncate text-xs${name ? "" : " italic text-muted-foreground"}`}
-      >
-        {name ?? t(($) => $.errors.other_agents)}
-      </span>
-      {row.topClass ? (
-        <span className="shrink-0 rounded-sm bg-muted px-1 py-px text-[10px] text-muted-foreground">
-          {classLabel(row.topClass)}
-        </span>
-      ) : null}
+    <span
+      className={`block truncate text-xs${name ? "" : " italic text-muted-foreground"}`}
+    >
+      {name ?? t(($) => $.errors.other_agents)}
     </span>
   );
 
   return (
-    <li className="space-y-1">
-      <div className="flex items-center justify-between gap-2">
-        {name ? (
-          <AppLink
-            href={`${wsPaths.agentDetail(row.agentId)}?view=overview`}
-            newTabTitle={name}
-            className="min-w-0 hover:underline"
-          >
-            {label}
-          </AppLink>
-        ) : (
-          label
-        )}
-        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-          {t(($) => $.errors.agent_rate, {
-            failed: row.failed,
-            total: row.total,
-            rate: formatRate(row.failed, row.total),
-          })}
-        </span>
-      </div>
+    <li className={`${OFFENDER_GRID} py-2`}>
+      {name ? (
+        <AppLink
+          href={`${wsPaths.agentDetail(row.agentId)}?view=overview`}
+          newTabTitle={name}
+          className="min-w-0 hover:underline"
+        >
+          {label}
+        </AppLink>
+      ) : (
+        label
+      )}
       <div className="h-1.5 overflow-hidden rounded-full bg-muted">
         <div
-          className="h-full rounded-full transition-[width] duration-300 ease-out"
-          style={{
-            width: `${maxFailed > 0 ? (row.failed / maxFailed) * 100 : 0}%`,
-            backgroundColor: barColor,
-          }}
-        />
+          role="img"
+          aria-label={composition}
+          title={composition}
+          className="flex h-full overflow-hidden rounded-full transition-[width] duration-300 ease-out"
+          style={{ width: `${pct}%` }}
+        >
+          {segments.map((c) => (
+            <div
+              key={c}
+              className="h-full"
+              style={{
+                width: `${(row.classes[c] / row.failed) * 100}%`,
+                backgroundColor: FAILURE_CLASS_COLOR[c],
+              }}
+            />
+          ))}
+        </div>
       </div>
+      <span
+        className={`text-right text-xs tabular-nums ${sortBy === "failed" ? "font-medium text-foreground" : "text-muted-foreground"}`}
+      >
+        {row.failed}
+      </span>
+      <span className="text-right text-xs tabular-nums text-muted-foreground">
+        {row.total}
+      </span>
+      <span
+        title={
+          weakSample
+            ? t(($) => $.errors.low_sample, { count: MIN_RATE_SAMPLE })
+            : undefined
+        }
+        className={`text-right text-xs tabular-nums ${
+          sortBy === "rate" && !weakSample
+            ? "font-medium text-foreground"
+            : "text-muted-foreground"
+        }`}
+      >
+        {formatRate(row.failed, row.total)}
+      </span>
     </li>
   );
 }
@@ -1082,6 +1305,13 @@ const SORT_METRIC: Record<LeaderboardSort, (r: AgentDashboardRow) => number> = {
   tasks: (r) => r.taskCount,
 };
 
+// How many agents the leaderboard ranks before collapsing the tail behind a
+// toggle, mirroring the Errors card's top-offenders cap. A workspace with
+// dozens of agents rendered every one of them, which pushed the Errors card a
+// full screen or more below the fold (MUL-5388). Ten answers "who is spending
+// the most" — the tail is reachable via the toggle.
+const LEADERBOARD_LIMIT = 10;
+
 function Leaderboard({
   rows,
   agents,
@@ -1095,6 +1325,7 @@ function Leaderboard({
 }) {
   const { t } = useT("usage");
   const [sortBy, setSortBy] = useState<LeaderboardSort>("tokens");
+  const [showAll, setShowAll] = useState(false);
 
   const sortOptions = useMemo(
     () => [
@@ -1114,10 +1345,25 @@ function Leaderboard({
     return rows.toSorted((a, b) => metric(b) - metric(a));
   }, [rows, sortBy]);
 
+  // Measured across every row, not just the visible ones, so a bar's width
+  // means the same thing collapsed and expanded — the leader always fills the
+  // track and nothing re-scales when the tail comes into view.
   const maxValue = useMemo(() => {
     const metric = SORT_METRIC[sortBy];
     return sortedRows.reduce((m, r) => Math.max(m, metric(r)), 0);
   }, [sortedRows, sortBy]);
+
+  const visibleRows = showAll
+    ? sortedRows
+    : sortedRows.slice(0, LEADERBOARD_LIMIT);
+
+  // "N agents" counts the rows that actually name an agent. Up to two of the
+  // rows are synthetic buckets (deleted, restricted), and subtracting a fixed 1
+  // reported one agent too many whenever both were present.
+  const namedAgentCount = useMemo(
+    () => rows.filter((r) => !isSyntheticAgentRow(r.agentId)).length,
+    [rows],
+  );
 
   // Active column gets foreground text; others stay muted. Helps the user
   // see "this is what the bar is measuring" at a glance.
@@ -1128,16 +1374,36 @@ function Leaderboard({
     <div className="rounded-lg border bg-card">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 pt-4 pb-3">
         <h4 className="text-sm font-semibold">{t(($) => $.leaderboard.title)}</h4>
-        <div className="flex items-center gap-3">
-          <Segmented value={sortBy} onChange={setSortBy} options={sortOptions} />
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <Segmented
+            label={t(($) => $.leaderboard.sort_label)}
+            value={sortBy}
+            onChange={setSortBy}
+            options={sortOptions}
+          />
           <span className="text-xs text-muted-foreground">
             {deletedAgentCount > 0
               ? t(($) => $.leaderboard.caption_with_deleted, {
-                  count: rows.length - 1,
+                  count: namedAgentCount,
                   deleted: deletedAgentCount,
                 })
-              : t(($) => $.leaderboard.caption, { count: rows.length })}
+              : t(($) => $.leaderboard.caption, { count: namedAgentCount })}
           </span>
+          {/* The caption right beside this already states how many agents the
+              window covers, so the toggle carries a count only when
+              collapsing — spelling the total out twice reads as two different
+              numbers once the deleted-agents bucket splits the caption. */}
+          {sortedRows.length > LEADERBOARD_LIMIT ? (
+            <button
+              type="button"
+              onClick={() => setShowAll((v) => !v)}
+              className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              {showAll
+                ? t(($) => $.leaderboard.show_less, { count: LEADERBOARD_LIMIT })
+                : t(($) => $.leaderboard.show_all)}
+            </button>
+          ) : null}
         </div>
       </div>
       {sortedRows.length === 0 ? (
@@ -1154,29 +1420,51 @@ function Leaderboard({
             <span className={colClass("time")}>{t(($) => $.leaderboard.header_time)}</span>
             <span className={colClass("tasks")}>{t(($) => $.leaderboard.header_tasks)}</span>
           </div>
-          <div className="divide-y">
-            {sortedRows.map((row) => {
-              // The deleted-agents bucket is a synthetic row, not a real agent:
-              // render a neutral placeholder (no avatar fetch / hover card / UUID)
-              // and dash out Time/Tasks, which it never carries (see
-              // bucketUnknownAgentRows).
+          {/* A real list, like the Errors card's offender list: the rows are
+              now a truncated ranking, so screen readers need the count and the
+              item boundaries rather than a bag of divs. */}
+          <ul aria-label={t(($) => $.leaderboard.title)} className="divide-y">
+            {visibleRows.map((row) => {
+              // Two synthetic rows, neither a real agent: both render a neutral
+              // placeholder (no avatar fetch / hover card / UUID) instead of
+              // looking the id up in the agent list.
+              //
+              // Only the deleted bucket dashes out Time/Tasks — it genuinely
+              // never carries them (see bucketUnknownAgentRows). The server's
+              // bucket does: those agents are alive and ran, the server just
+              // merged them (MUL-5409), so zeroing their columns would
+              // under-report the workspace's run time.
+              //
+              // Its copy is the neutral "Other agents" rather than anything
+              // about permissions, because it covers two populations: agents
+              // this viewer may not see, and the hidden system carriers behind
+              // agent-builder sessions, which nobody can name — including the
+              // admin who owns them.
               const isDeletedBucket = row.agentId === DELETED_AGENTS_ROW_ID;
+              const isRestrictedBucket = row.agentId === RESTRICTED_AGENTS_ROW_ID;
+              const isBucket = isDeletedBucket || isRestrictedBucket;
               const agent = agents.find((a) => a.id === row.agentId);
               const value = SORT_METRIC[sortBy](row);
               const pct = maxValue > 0 ? (value / maxValue) * 100 : 0;
               return (
-                <div
+                <li
                   key={row.agentId}
                   className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_5rem_5rem_5rem_4rem] items-center gap-3 px-4 py-2"
                 >
                   <div className="flex min-w-0 items-center gap-2">
-                    {isDeletedBucket ? (
+                    {isBucket ? (
                       <>
                         <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                          <Trash2 className="h-3 w-3" />
+                          {isDeletedBucket ? (
+                            <Trash2 className="h-3 w-3" />
+                          ) : (
+                            <EyeOff className="h-3 w-3" />
+                          )}
                         </span>
                         <span className="truncate text-sm font-medium italic text-muted-foreground">
-                          {t(($) => $.leaderboard.deleted_agents)}
+                          {isDeletedBucket
+                            ? t(($) => $.leaderboard.deleted_agents)
+                            : t(($) => $.leaderboard.other_agents)}
                         </span>
                       </>
                     ) : (
@@ -1221,10 +1509,10 @@ function Leaderboard({
                   >
                     {isDeletedBucket ? "—" : row.taskCount}
                   </div>
-                </div>
+                </li>
               );
             })}
-          </div>
+          </ul>
         </>
       )}
     </div>

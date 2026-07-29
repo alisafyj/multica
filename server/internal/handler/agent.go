@@ -120,8 +120,8 @@ func agentToResponse(a db.Agent) AgentResponse {
 	// Compute env metadata WITHOUT exposing the values. We unmarshal here
 	// only to count keys; the map never reaches the response. A coarse
 	// has_custom_env / key_count is what the UI gets — to read the values
-	// the caller must hit GET /api/agents/{id}/env (owner/admin only,
-	// audited).
+	// the caller must hit GET /api/agents/{id}/env (agent owner or
+	// workspace owner/admin, audited).
 	envKeyCount := 0
 	if a.CustomEnv != nil {
 		var customEnv map[string]string
@@ -1021,8 +1021,9 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Visibility == "" {
 		req.Visibility = "private"
 	}
-	if req.MaxConcurrentTasks == 0 {
-		req.MaxConcurrentTasks = 6
+	if err := defaultAndValidateAgentMaxConcurrentTasks(rawFields, &req.MaxConcurrentTasks); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	runtimeUUID, ok := parseUUIDOrBadRequest(w, req.RuntimeID, "runtime_id")
@@ -1288,9 +1289,10 @@ type UpdateAgentRequest struct {
 	RuntimeID     *string `json:"runtime_id"`
 	RuntimeConfig any     `json:"runtime_config"`
 	// custom_env is intentionally NOT updatable through this endpoint.
-	// Use `PUT /api/agents/{id}/env` for env changes — that path is
-	// owner/admin-only, denies agent actors, and writes a persisted
-	// audit log entry. A `PUT /api/agents/{id}` body that carries
+	// Use `PUT /api/agents/{id}/env` for env changes — that path admits
+	// the agent owner or a workspace owner/admin, denies agent actors,
+	// and writes a persisted audit log entry. A `PUT /api/agents/{id}`
+	// body that carries
 	// `custom_env` is rejected with 400 in the handler below so a
 	// caller never believes they rotated a secret when the value is
 	// actually unchanged, and so a client that round-tripped a
@@ -1526,8 +1528,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// `omitempty` field would do) was the pre-PR behaviour and led to
 	// users believing they had rotated a secret when the value was
 	// actually unchanged. env values move only through `PUT
-	// /api/agents/{id}/env` — that endpoint is owner/admin-only, denies
-	// agent actors, and writes a queryable audit row.
+	// /api/agents/{id}/env` — that endpoint admits the agent owner or a
+	// workspace owner/admin, denies agent actors, and writes a queryable
+	// audit row.
 	if _, ok := rawFields["custom_env"]; ok {
 		writeError(w, http.StatusBadRequest, "custom_env is no longer accepted on this endpoint; use PUT /api/agents/{id}/env (or `multica agent env set`)")
 		return
@@ -1655,6 +1658,10 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		params.Status = pgtype.Text{String: *req.Status, Valid: true}
 	}
 	if req.MaxConcurrentTasks != nil {
+		if err := validateAgentMaxConcurrentTasks(*req.MaxConcurrentTasks); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		params.MaxConcurrentTasks = pgtype.Int4{Int32: *req.MaxConcurrentTasks, Valid: true}
 	}
 	if req.Model != nil {
@@ -2188,13 +2195,36 @@ func (h *Handler) ListWorkspaceWorkingAgents(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Narrows the projection to one issue's direct children, so an issue
+	// detail's sub-issue header reads this endpoint instead of deriving a
+	// count client-side. Left zero when absent, which the query treats as
+	// NULL and therefore as "no narrowing" — an older client that never
+	// sends it keeps the exact workspace-wide behaviour.
+	var parentIssueID pgtype.UUID
+	if raw := strings.TrimSpace(r.URL.Query().Get("parent")); raw != "" {
+		if workType != "issue" {
+			writeError(w, http.StatusBadRequest, "parent requires type=issue")
+			return
+		}
+		if scope != "" {
+			writeError(w, http.StatusBadRequest, "parent cannot be combined with scope")
+			return
+		}
+		var ok bool
+		parentIssueID, ok = parseUUIDOrBadRequest(w, raw, "parent")
+		if !ok {
+			return
+		}
+	}
+
 	rows, err := h.Queries.ListWorkspaceWorkingAgents(
 		r.Context(),
 		db.ListWorkspaceWorkingAgentsParams{
-			WorkspaceID:  parseUUID(workspaceID),
-			WorkType:     workType,
-			MineRelation: mineRelation,
-			MemberID:     memberID,
+			WorkspaceID:   parseUUID(workspaceID),
+			WorkType:      workType,
+			MineRelation:  mineRelation,
+			MemberID:      memberID,
+			ParentIssueID: parentIssueID,
 		},
 	)
 	if err != nil {
@@ -2308,15 +2338,18 @@ func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// ListWorkspaceAgentTaskSnapshot returns the task data the front-end needs to
-// derive each agent's presence: every active task (queued/dispatched/running)
-// plus each agent's most recent OUTCOME task (completed/failed only). Cancelled
-// tasks are excluded from the outcome half by design — cancel is a procedural
-// signal ("attempt aborted"), not an outcome, so it must not mask a prior
-// failure. The front-end picks "active wins, else latest outcome"; a failed
-// outcome stays sticky until the user starts a new task or one succeeds.
-// Per-agent filtering happens in the front-end against this workspace-wide
-// snapshot.
+// ListWorkspaceAgentTaskSnapshot returns the workspace-wide task data the
+// front-end reads for two things: every active task
+// (queued/dispatched/running/waiting_local_directory), which is the current
+// workload presence derives from, plus each agent's most recent OUTCOME task
+// (completed/failed only), which is no longer part of presence since #1823 and
+// only feeds the Squad hover card's "last activity" line. Cancelled tasks are
+// excluded from the outcome half by design — cancel is a procedural signal
+// ("attempt aborted"), not an outcome, so it must not mask a prior failure.
+// Per-agent filtering happens in the front-end against this snapshot.
+//
+// The outcome half is deliberately still served here so shipped desktop builds
+// keep working; MUL-5436 tracks moving it to a dedicated lazy endpoint.
 func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	member, ok := h.workspaceMember(w, r, workspaceID)

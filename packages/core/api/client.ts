@@ -138,6 +138,7 @@ import type {
   NotificationPreferences,
   GitHubPullRequest,
   ListGitHubInstallationsResponse,
+  ListGitHubRepositoriesResponse,
   GitHubConnectResponse,
   ListVCSConnectionsResponse,
   ConnectVCSRequest,
@@ -352,6 +353,12 @@ import {
   EMPTY_LIST_DESIGN_DELIVERIES_RESPONSE,
   EMPTY_LIST_DESIGN_SYSTEM_PROFILES_RESPONSE,
   EMPTY_LIST_DESIGN_RESTORE_TASKS_RESPONSE,
+  GitHubConnectResponseSchema,
+  ListGitHubInstallationsResponseSchema,
+  ListGitHubRepositoriesResponseSchema,
+  EMPTY_GITHUB_CONNECT_RESPONSE,
+  EMPTY_LIST_GITHUB_INSTALLATIONS_RESPONSE,
+  EMPTY_LIST_GITHUB_REPOSITORIES_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -1239,10 +1246,10 @@ export class ApiClient {
   }
 
   /**
-   * Returns the plaintext `custom_env` map for an agent. Owner/admin
-   * only; calls from agent-actor sessions get a 403. Every successful
-   * call writes an `agent_env_revealed` activity_log row server-side.
-   * MUL-2600.
+   * Returns the plaintext `custom_env` map for an agent. Admits the
+   * agent's owner or a workspace owner/admin (MUL-5438); calls from
+   * agent-actor sessions get a 403. Every successful call writes an
+   * `agent_env_revealed` activity_log row server-side. MUL-2600.
    */
   async getAgentEnv(id: string): Promise<AgentEnvResponse> {
     return this.fetch(`/api/agents/${id}/env`);
@@ -1252,9 +1259,9 @@ export class ApiClient {
    * Replaces an agent's `custom_env` wholesale. Values equal to
    * `"****"` are preserved server-side (the **** guard) so a partial
    * UI edit doesn't overwrite real secrets with the masked
-   * placeholder. Owner/admin only; agent actors get a 403. Every
-   * successful call writes an `agent_env_updated` activity_log row.
-   * MUL-2600.
+   * placeholder. Admits the agent's owner or a workspace owner/admin
+   * (MUL-5438); agent actors get a 403. Every successful call writes an
+   * `agent_env_updated` activity_log row. MUL-2600.
    */
   async updateAgentEnv(id: string, data: UpdateAgentEnvRequest): Promise<AgentEnvResponse> {
     return this.fetch(`/api/agents/${id}/env`, {
@@ -1810,15 +1817,22 @@ export class ApiClient {
   // already deduplicates running agents and returns only the display fields
   // consumers need. Callers may narrow the projection by task source and, for
   // issue work, the authenticated member's My Issues relation.
+  // `parentIssueId` narrows the projection to that issue's direct children,
+  // which is how the sub-issue header on issue detail reads the same source
+  // as the Issues list header. The server rejects combining it with `scope`,
+  // so callers pass one or the other.
   async getWorkspaceWorkingAgents(
     type?: WorkspaceWorkingAgentType,
     mineRelation?: WorkspaceWorkingAgentMineRelation,
+    parentIssueId?: string,
   ): Promise<WorkspaceWorkingAgent[]> {
     const search = new URLSearchParams();
     if (type) search.set("type", type);
     if (mineRelation) {
       search.set("scope", "mine");
       search.set("relation", mineRelation);
+    } else if (parentIssueId) {
+      search.set("parent", parentIssueId);
     }
     const query = search.toString();
     return this.fetch(`/api/working-agents${query ? `?${query}` : ""}`);
@@ -2162,6 +2176,11 @@ export class ApiClient {
   async uploadFile(
     file: File,
     opts?: { issueId?: string; commentId?: string; chatSessionId?: string },
+    // Optional abort signal so a module-level upload coordinator (MUL-5181)
+    // can cancel an in-flight upload on logout. When aborted, `fetch` rejects
+    // with an AbortError, which the coordinator distinguishes from a real
+    // failure via `signal.aborted` / `err.name === "AbortError"`.
+    signal?: AbortSignal,
   ): Promise<Attachment> {
     const formData = new FormData();
     formData.append("file", file);
@@ -2178,6 +2197,7 @@ export class ApiClient {
       headers: this.authHeaders(),
       body: formData,
       credentials: "include",
+      signal,
     });
 
     if (!res.ok) {
@@ -3190,12 +3210,54 @@ export class ApiClient {
   }
 
   // GitHub integration
-  async getGitHubConnectURL(workspaceId: string): Promise<GitHubConnectResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/github/connect`);
+  async getGitHubConnectURL(
+    workspaceId: string,
+    returnTo?: "github" | "repositories",
+  ): Promise<GitHubConnectResponse> {
+    const search = new URLSearchParams();
+    if (returnTo) search.set("return_to", returnTo);
+    const suffix = search.size > 0 ? `?${search.toString()}` : "";
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/github/connect${suffix}`,
+    );
+    return parseWithFallback(
+      raw,
+      GitHubConnectResponseSchema,
+      EMPTY_GITHUB_CONNECT_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/github/connect" },
+    );
   }
 
   async listGitHubInstallations(workspaceId: string): Promise<ListGitHubInstallationsResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/github/installations`);
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/github/installations`,
+    );
+    return parseWithFallback(
+      raw,
+      ListGitHubInstallationsResponseSchema,
+      EMPTY_LIST_GITHUB_INSTALLATIONS_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/github/installations" },
+    );
+  }
+
+  async listGitHubInstallationRepositories(
+    workspaceId: string,
+    installationId: string,
+    params: { page?: number; per_page?: number } = {},
+  ): Promise<ListGitHubRepositoriesResponse> {
+    const search = new URLSearchParams();
+    if (params.page !== undefined) search.set("page", String(params.page));
+    if (params.per_page !== undefined) search.set("per_page", String(params.per_page));
+    const suffix = search.size > 0 ? `?${search.toString()}` : "";
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/github/installations/${installationId}/repositories${suffix}`,
+    );
+    return parseWithFallback(
+      raw,
+      ListGitHubRepositoriesResponseSchema,
+      EMPTY_LIST_GITHUB_REPOSITORIES_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/github/installations/:installationId/repositories" },
+    );
   }
 
   async deleteGitHubInstallation(workspaceId: string, installationId: string): Promise<void> {

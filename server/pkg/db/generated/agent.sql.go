@@ -3619,6 +3619,71 @@ func (q *Queries) ListAllAgents(ctx context.Context, workspaceID pgtype.UUID) ([
 	return items, nil
 }
 
+const listAllAgentsAnyKind = `-- name: ListAllAgentsAnyKind :many
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier FROM agent
+WHERE workspace_id = $1
+ORDER BY created_at ASC
+`
+
+// Every agent row in the workspace, INCLUDING `kind = 'system'` execution
+// carriers (agent builder sessions) that ListAllAgents deliberately hides.
+//
+// Only for surfaces that aggregate over raw `agent_task_queue` / task_usage
+// rows, which carry no kind filter of their own: a system carrier runs real
+// tasks and books real usage, so a per-agent rollup returns it whether or not
+// any list endpoint will ever name it. Those surfaces need the full population
+// to decide what to hide (MUL-5409). Do NOT use this to build a user-facing
+// agent list — `kind = 'system'` must stay out of every picker and assignee
+// surface.
+func (q *Queries) ListAllAgentsAnyKind(ctx context.Context, workspaceID pgtype.UUID) ([]Agent, error) {
+	rows, err := q.db.Query(ctx, listAllAgentsAnyKind, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Agent{}
+	for rows.Next() {
+		var i Agent
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Name,
+			&i.AvatarUrl,
+			&i.RuntimeMode,
+			&i.RuntimeConfig,
+			&i.Visibility,
+			&i.Status,
+			&i.MaxConcurrentTasks,
+			&i.OwnerID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Description,
+			&i.RuntimeID,
+			&i.Instructions,
+			&i.ArchivedAt,
+			&i.ArchivedBy,
+			&i.CustomEnv,
+			&i.CustomArgs,
+			&i.McpConfig,
+			&i.Model,
+			&i.ThinkingLevel,
+			&i.ComposioToolkitAllowlist,
+			&i.PermissionMode,
+			&i.Kind,
+			&i.SystemKey,
+			&i.DisabledRuntimeSkills,
+			&i.ServiceTier,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChatFinalizeDeferredExpired = `-- name: ListChatFinalizeDeferredExpired :many
 SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing FROM agent_task_queue
 WHERE chat_finalize_deferred_at IS NOT NULL
@@ -4030,34 +4095,43 @@ WHERE a.workspace_id = $1
 
 UNION ALL
 
-SELECT t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing FROM (
-  SELECT DISTINCT ON (atq.agent_id) atq.id, atq.agent_id, atq.issue_id, atq.status, atq.priority, atq.dispatched_at, atq.started_at, atq.completed_at, atq.result, atq.error, atq.created_at, atq.context, atq.runtime_id, atq.session_id, atq.work_dir, atq.trigger_comment_id, atq.chat_session_id, atq.autopilot_run_id, atq.attempt, atq.max_attempts, atq.parent_task_id, atq.failure_reason, atq.trigger_summary, atq.force_fresh_session, atq.is_leader_task, atq.wait_reason, atq.initiator_user_id, atq.handoff_note, atq.prepare_lease_expires_at, atq.squad_id, atq.runtime_mcp_overlay, atq.escalation_for_task_id, atq.fire_at, atq.originator_user_id, atq.runtime_connected_apps, atq.coalesced_comment_ids, atq.delivered_comment_ids, atq.chat_input_task_id, atq.chat_finalize_deferred_at, atq.originator_source, atq.delegated_from_task_id, atq.retry_of_task_id, atq.rerun_of_task_id, atq.rule_version_id, atq.trigger_evidence_kind, atq.trigger_evidence_ref_id, atq.accountable_user_id, atq.session_rollout_missing
+SELECT latest.id, latest.agent_id, latest.issue_id, latest.status, latest.priority, latest.dispatched_at, latest.started_at, latest.completed_at, latest.result, latest.error, latest.created_at, latest.context, latest.runtime_id, latest.session_id, latest.work_dir, latest.trigger_comment_id, latest.chat_session_id, latest.autopilot_run_id, latest.attempt, latest.max_attempts, latest.parent_task_id, latest.failure_reason, latest.trigger_summary, latest.force_fresh_session, latest.is_leader_task, latest.wait_reason, latest.initiator_user_id, latest.handoff_note, latest.prepare_lease_expires_at, latest.squad_id, latest.runtime_mcp_overlay, latest.escalation_for_task_id, latest.fire_at, latest.originator_user_id, latest.runtime_connected_apps, latest.coalesced_comment_ids, latest.delivered_comment_ids, latest.chat_input_task_id, latest.chat_finalize_deferred_at, latest.originator_source, latest.delegated_from_task_id, latest.retry_of_task_id, latest.rerun_of_task_id, latest.rule_version_id, latest.trigger_evidence_kind, latest.trigger_evidence_ref_id, latest.accountable_user_id, latest.session_rollout_missing FROM agent a
+JOIN LATERAL (
+  SELECT atq.id, atq.agent_id, atq.issue_id, atq.status, atq.priority, atq.dispatched_at, atq.started_at, atq.completed_at, atq.result, atq.error, atq.created_at, atq.context, atq.runtime_id, atq.session_id, atq.work_dir, atq.trigger_comment_id, atq.chat_session_id, atq.autopilot_run_id, atq.attempt, atq.max_attempts, atq.parent_task_id, atq.failure_reason, atq.trigger_summary, atq.force_fresh_session, atq.is_leader_task, atq.wait_reason, atq.initiator_user_id, atq.handoff_note, atq.prepare_lease_expires_at, atq.squad_id, atq.runtime_mcp_overlay, atq.escalation_for_task_id, atq.fire_at, atq.originator_user_id, atq.runtime_connected_apps, atq.coalesced_comment_ids, atq.delivered_comment_ids, atq.chat_input_task_id, atq.chat_finalize_deferred_at, atq.originator_source, atq.delegated_from_task_id, atq.retry_of_task_id, atq.rerun_of_task_id, atq.rule_version_id, atq.trigger_evidence_kind, atq.trigger_evidence_ref_id, atq.accountable_user_id, atq.session_rollout_missing
   FROM agent_task_queue atq
-  JOIN agent a ON a.id = atq.agent_id
-  WHERE a.workspace_id = $1
+  WHERE atq.agent_id = a.id
     AND atq.status IN ('completed', 'failed')
-  ORDER BY atq.agent_id, atq.completed_at DESC NULLS LAST
-) t
+  ORDER BY atq.completed_at DESC NULLS LAST, atq.created_at DESC, atq.id DESC
+  LIMIT 1
+) latest ON TRUE
+WHERE a.workspace_id = $1
 `
 
-// Returns the tasks needed to derive each agent's current presence:
-//   - All active tasks (queued / dispatched / running) — for working signal + counts
-//   - Each agent's most recent OUTCOME task (completed / failed) — for sticky
-//     failed signal
-//
-// The front-end picks "active wins, else latest outcome" — see derive-presence.ts.
+// Returns the tasks the front-end reads off one workspace-wide snapshot:
+//   - All active tasks (queued / dispatched / running / waiting_local_directory)
+//     — the current workload: working signal + counts (see derive-presence.ts).
+//   - Each agent's most recent OUTCOME task (completed / failed) — NOT part of
+//     presence since #1823; it is the "last activity" line the Squad hover card
+//     renders (agent-live-peek-card.tsx). Kept in this response because shipped
+//     desktop builds read it from here; see MUL-5436 for the plan to move it to
+//     a dedicated lazy endpoint.
 //
 // Cancelled tasks are excluded from the outcome half on purpose: cancel is a
 // procedural signal ("attempt aborted"), not an outcome. It tells us nothing
 // about whether the agent works, so it must NOT be allowed to mask a prior
 // failure. Concretely: if an agent fails and then the user cancels the queued
-// retry (or the parent issue closes and cascades cancels), the failed signal
-// has to stay red. Only a real success (completed) or a fresh attempt (active)
-// clears it.
+// retry (or the parent issue closes and cascades cancels), the failure stays
+// the agent's last real outcome.
 //
-// No UI windows in SQL: stickiness is decided by "is the latest outcome a
-// failure?", not a 2-minute clock. JOINs agent because agent_task_queue has
-// no workspace_id column.
+// The outcome half is a per-agent LATERAL Top-1 rather than a workspace-wide
+// DISTINCT ON: with idx_agent_task_queue_agent_terminal_latest (migration 233)
+// each agent costs one ordered index scan + LIMIT 1, so the cost no longer
+// grows with how much terminal history the workspace has accumulated. The
+// (created_at, id) tie-break makes the pick deterministic when completed_at
+// ties or is NULL — plain completed_at DESC returned an arbitrary row there.
+// Row shape and row set are unchanged.
+//
+// Both halves JOIN / scan agent because agent_task_queue has no workspace_id.
 func (q *Queries) ListWorkspaceAgentTaskSnapshot(ctx context.Context, workspaceID pgtype.UUID) ([]AgentTaskQueue, error) {
 	rows, err := q.db.Query(ctx, listWorkspaceAgentTaskSnapshot, workspaceID)
 	if err != nil {
@@ -4229,15 +4303,26 @@ WHERE a.workspace_id = $1
         )
     )
   )
+  AND (
+    $5::uuid IS NULL
+    OR EXISTS (
+      SELECT 1
+      FROM issue child
+      WHERE child.id = atq.issue_id
+        AND child.workspace_id = a.workspace_id
+        AND child.parent_issue_id = $5::uuid
+    )
+  )
 GROUP BY a.id, a.name, a.avatar_url, a.created_at
 ORDER BY a.created_at ASC
 `
 
 type ListWorkspaceWorkingAgentsParams struct {
-	WorkspaceID  pgtype.UUID `json:"workspace_id"`
-	WorkType     string      `json:"work_type"`
-	MineRelation string      `json:"mine_relation"`
-	MemberID     pgtype.UUID `json:"member_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	WorkType      string      `json:"work_type"`
+	MineRelation  string      `json:"mine_relation"`
+	MemberID      pgtype.UUID `json:"member_id"`
+	ParentIssueID pgtype.UUID `json:"parent_issue_id"`
 }
 
 type ListWorkspaceWorkingAgentsRow struct {
@@ -4256,13 +4341,17 @@ type ListWorkspaceWorkingAgentsRow struct {
 // comment-triggered issue work. Quick-create work is present only in the
 // unfiltered projection because it has no source FK yet. mine_relation is
 // optional (empty = workspace); when set it narrows issue work to the
-// authenticated member's My Issues relation.
+// authenticated member's My Issues relation. parent_issue_id is optional
+// (NULL = workspace); when set it narrows issue work to the direct children
+// of that issue, so an issue detail's sub-issue header reads the same
+// projection as the Issues list header instead of deriving its own count.
 func (q *Queries) ListWorkspaceWorkingAgents(ctx context.Context, arg ListWorkspaceWorkingAgentsParams) ([]ListWorkspaceWorkingAgentsRow, error) {
 	rows, err := q.db.Query(ctx, listWorkspaceWorkingAgents,
 		arg.WorkspaceID,
 		arg.WorkType,
 		arg.MineRelation,
 		arg.MemberID,
+		arg.ParentIssueID,
 	)
 	if err != nil {
 		return nil, err
