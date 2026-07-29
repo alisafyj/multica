@@ -6,11 +6,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
-import { designDraftListOptions, designFileListOptions, designFolderListOptions, designSystemListOptions, designTemplateListOptions } from "@multica/core/designs/queries";
+import { designDraftListOptions, designFileListOptions, designFolderListOptions, designSystemListOptions, designTemplateListOptions, projectDesignSystemByProjectOptions } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
-import type { DesignCatalogTemplate, DesignDraft, DesignFile, DesignFolder, DesignSystemProfile, GalleryJsonPatchOperation, Project } from "@multica/core/types";
+import type { DesignCatalogTemplate, DesignDraft, DesignFile, DesignFolder, GalleryJsonPatchOperation, Project } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
@@ -30,6 +30,7 @@ import {
 import { PageHeader } from "../layout/page-header";
 import { AppLink, useNavigation } from "../navigation";
 import { FigmaPluginDownload } from "./figma-plugin-download";
+import { ProjectDesignSystemCreate } from "./project-design-system-create";
 
 type ToolMenuState = { x: number; y: number; file: DesignFile } | null;
 type DraftDialogState = { template: DesignCatalogTemplate; title: string; requirement: string; slotValues: string; patch: string; agentId: string; prompt: string } | null;
@@ -199,29 +200,6 @@ function TemplateCatalogCard({ template, sourceFile, onCreateDraft }: { template
   );
 }
 
-function DesignSystemCard({ profile, sourceFile }: { profile: DesignSystemProfile; sourceFile?: DesignFile }) {
-  const paths = useWorkspacePaths();
-  return (
-    <div className="group/card flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card transition-colors hover:border-primary/50">
-      <AssetPreview thumbnailUrl={profile.thumbnail_url ?? sourceFile?.thumbnail_url} badge={profile.is_default ? "默认" : profile.status} icon={<Palette className="h-6 w-6" />} />
-      <div className="flex min-w-0 flex-col gap-3 p-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium">{profile.name}</div>
-            <div className="mt-1 truncate text-xs text-muted-foreground">{profile.description ?? sourceFile?.title ?? "项目 UI 规范"}</div>
-          </div>
-          {profile.is_default ? <Badge variant="secondary" className="shrink-0">默认</Badge> : <Badge variant="outline" className="shrink-0">{profile.status}</Badge>}
-        </div>
-        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span className="truncate">{sourceFile?.title ?? profile.source_file_id.slice(0, 8)}</span>
-          <span className="shrink-0">{formatDate(profile.updated_at)}</span>
-        </div>
-        <AppLink href={paths.designDetail(profile.source_file_id)} className="text-xs text-muted-foreground hover:text-foreground">查看规范来源</AppLink>
-      </div>
-    </div>
-  );
-}
-
 function DraftReviewCard({ draft, previewFile, onMaterialize, materializing }: { draft: DesignDraft; previewFile?: DesignFile; onMaterialize: (draft: DesignDraft) => void; materializing: boolean }) {
   const paths = useWorkspacePaths();
   return (
@@ -337,6 +315,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [activeTab, setActiveTab] = useState<DesignAssetTab>("designs");
   const { data: designSystems = [], isLoading: designSystemsLoading } = useQuery(designSystemListOptions(wsId, selectedProjectId || undefined));
+  const { data: projectDesignSystem, isLoading: projectDesignSystemLoading } = useQuery(projectDesignSystemByProjectOptions(wsId, selectedProjectId));
   const figmaConnection = useMutation({
     mutationFn: () => api.createFigmaImportConnection(),
     onSuccess: (data) => setFigmaCode({ code: data.code, expiresAt: data.expires_at }),
@@ -483,7 +462,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
     return !draft.catalog_template_id && !draft.file_id && !draft.generated_file_id;
   }), [drafts, fileById, projectTemplateIds, selectedProjectId]);
   const searchQuery = search.trim().toLowerCase();
-  const searchPlaceholder = activeTab === "designs" ? "搜索设计稿…" : activeTab === "templates" ? "搜索模版…" : "搜索 UI 规范…";
+  const searchPlaceholder = activeTab === "designs" ? "搜索设计稿…" : activeTab === "templates" ? "搜索模版…" : "搜索设计体系…";
   const filtered = useMemo(() => {
     const query = searchQuery;
     if (!query) return projectFiles;
@@ -518,20 +497,6 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
       template.design_file_title ?? "",
     ].join(" ").toLowerCase().includes(query));
   }, [projectTemplates, searchQuery]);
-  const filteredDesignSystems = useMemo(() => {
-    const query = searchQuery;
-    if (!query) return designSystems;
-    return designSystems.filter((profile) => {
-      const sourceFile = fileById.get(profile.source_file_id);
-      return [
-        profile.name,
-        profile.description ?? "",
-        profile.status,
-        sourceFile?.title ?? "",
-      ].join(" ").toLowerCase().includes(query);
-    });
-  }, [designSystems, fileById, searchQuery]);
-
   const grouped = useMemo(() => {
     const folderMap = new Map<string, { folderKey: string; folderName: string; items: DesignFile[] }>();
     folderMap.set("__ungrouped", { folderKey: "__ungrouped", folderName: "未分组", items: [] });
@@ -547,7 +512,16 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
     return Array.from(folderMap.values()).filter((folder) => folder.items.length > 0 || !searchQuery);
   }, [filtered, folderById, projectFolders, searchQuery]);
   const selectedProject = projectById.get(selectedProjectId);
-  const defaultDesignSystem = designSystems.find((profile) => profile.is_default);
+  const projectDesignSystemCount = projectDesignSystem?.id ? 1 : 0;
+  const projectDesignSystemMeta = projectDesignSystemLoading
+    ? "正在读取"
+    : projectDesignSystem?.status === "generating"
+      ? "正在生成"
+      : projectDesignSystem?.status === "saved"
+        ? "已保存"
+        : projectDesignSystem?.status === "draft"
+          ? "草稿"
+          : "尚未建立";
   const designSearchCount = filteredDrafts.length + filtered.length;
   const designAssetCount = projectDrafts.length + projectFiles.length;
 
@@ -602,7 +576,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
             <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={searchPlaceholder} className="h-8 pl-8 text-sm" />
           </div>
           <span className="hidden font-mono text-xs text-muted-foreground/70 sm:block">
-            {activeTab === "designs" ? `${designSearchCount} / ${designAssetCount}` : activeTab === "templates" ? `${filteredTemplates.length} / ${projectTemplates.length}` : `${filteredDesignSystems.length} / ${designSystems.length}`}
+            {activeTab === "designs" ? `${designSearchCount} / ${designAssetCount}` : activeTab === "templates" ? `${filteredTemplates.length} / ${projectTemplates.length}` : `${projectDesignSystemCount} / ${projectDesignSystemCount}`}
           </span>
         </div>
 
@@ -619,7 +593,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
         ) : !selectedProjectId ? (
           <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
             <h2 className="text-base font-semibold">请选择项目</h2>
-            <p className="mt-1 max-w-md text-sm text-muted-foreground">设计稿、模版和 UI 规范都按项目归类展示。</p>
+            <p className="mt-1 max-w-md text-sm text-muted-foreground">设计稿、模版和设计体系都按项目归类展示。</p>
           </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-auto p-4">
@@ -627,7 +601,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
               <div className="grid gap-3 lg:grid-cols-3">
                 <WorkspaceAssetCard icon={<Folder className="h-4 w-4" />} title="设计稿" count={projectFiles.length} description="业务页面、状态和草稿审核入口。" meta={`${projectDrafts.length} 个待审核草稿 / ${projectFolders.length} 个分组`} active={activeTab === "designs"} onClick={() => setActiveTab("designs")} />
                 <WorkspaceAssetCard icon={<FileJson className="h-4 w-4" />} title="模版" count={projectTemplates.length} description="可复用的标准页面结构。" meta={projectTemplates.length ? "可创建 UI Agent 草稿" : "等待从 Figma 上传"} active={activeTab === "templates"} onClick={() => setActiveTab("templates")} />
-                <WorkspaceAssetCard icon={<Palette className="h-4 w-4" />} title="UI 规范" count={designSystems.length} description="主题色、组件样式和设计规则。" meta={defaultDesignSystem ? `默认：${defaultDesignSystem.name}` : "未设置默认规范"} active={activeTab === "systems"} onClick={() => setActiveTab("systems")} />
+                <WorkspaceAssetCard icon={<Palette className="h-4 w-4" />} title="设计体系" count={projectDesignSystemCount} description="项目原则、设计 Token 与 UI Kit。" meta={projectDesignSystemMeta} active={activeTab === "systems"} onClick={() => setActiveTab("systems")} />
               </div>
 
               {activeTab === "designs" ? (
@@ -698,16 +672,17 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                 </section>
               ) : (
                 <section className="space-y-3">
-                  <SectionHeader icon={<Palette className="h-4 w-4" />} title="UI 规范" count={filteredDesignSystems.length} description="从 Figma 上传的主题、组件样式和设计规则，供 UI Agent 生成时参考。" />
-                  {designSystemsLoading ? (
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="aspect-[4/3] w-full" />)}</div>
-                  ) : filteredDesignSystems.length === 0 ? (
-                    <InlineEmpty>{searchQuery ? `没有匹配“${search}”的 UI 规范。` : "暂无项目 UI 规范。请从 Figma 插件选择“UI 规范”上传。"}</InlineEmpty>
-                  ) : (
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                      {filteredDesignSystems.map((profile) => <DesignSystemCard key={profile.id} profile={profile} sourceFile={fileById.get(profile.source_file_id)} />)}
-                    </div>
-                  )}
+                  <SectionHeader icon={<Palette className="h-4 w-4" />} title="设计体系" description="项目级设计原则、Token 与 UI Kit。" />
+                  {selectedProject ? (
+                    <ProjectDesignSystemCreate
+                      project={selectedProject}
+                      agents={agents}
+                      designFiles={projectFiles}
+                      legacyProfiles={designSystems}
+                      system={projectDesignSystem}
+                      isLoading={projectDesignSystemLoading || designSystemsLoading}
+                    />
+                  ) : null}
                 </section>
               )}
             </div>
