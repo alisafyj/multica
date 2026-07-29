@@ -685,6 +685,37 @@ func TestBuildPromptProjectDesignSystemGenerate(t *testing.T) {
 	}
 }
 
+func TestBuildPromptProjectDesignSystemDefinesArtifactContract(t *testing.T) {
+	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "generate"), "opencode")
+	for _, want := range []string{
+		"`components.html` must be an HTML fragment",
+		"Do not include `<!doctype>`, `<html>`, `<head>`, `<body>`, `<meta>`, or `<link>`",
+		"Multica injects `tokens.css` into the preview automatically",
+		"do not add a stylesheet link",
+		"`data-design-node-kind` must be exactly `component` or `block`",
+		"must not declare or redefine CSS custom properties",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("project design system artifact contract missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+}
+
+func TestBuildPromptProjectDesignSystemForbidsDelegationBeforeArtifacts(t *testing.T) {
+	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "generate"), "opencode")
+	for _, want := range []string{
+		"Complete the design yourself in this process",
+		"Do not use the `task` tool",
+		"delegate to another specialist",
+		"read back all three output files",
+		"delegated or promised work is not completion",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("project design system prompt missing anti-delegation rule %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+}
+
 func TestBuildPromptProjectDesignSystemAdjustRequiresCompleteReplacement(t *testing.T) {
 	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "adjust"), "opencode")
 	for _, want := range []string{

@@ -200,6 +200,63 @@ func TestCreateProjectDesignSystemRejectsSecondSystem(t *testing.T) {
 	}
 }
 
+func TestCreateProjectDesignSystemRetriesFailedUnestablishedSystem(t *testing.T) {
+	projectID := createProjectForDesignTest(t, "Retry failed generation project")
+	agentID, _ := createProjectDesignSystemAgent(t, "online")
+	system := createProjectDesignSystemIdentityForTest(t, projectID, agentID, projectDesignSystemInputSnapshot{
+		AgentID:    agentID,
+		Platform:   "web",
+		Brief:      "First attempt",
+		References: []projectDesignSystemReferenceSnapshot{},
+	})
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE project_design_system
+		SET last_error = '{"code":"agent_failed","message":"generation failed"}'::jsonb
+		WHERE id = $1
+	`, uuidToString(system.ID)); err != nil {
+		t.Fatalf("record failed generation: %v", err)
+	}
+
+	response := performProjectDesignSystemRequest(t, testHandler.CreateProjectDesignSystem, http.MethodPost, "/api/project-design-systems", map[string]any{
+		"project_id": projectID,
+		"agent_id":   agentID,
+		"platform":   "mobile",
+		"brief":      "Retry with the preserved project identity.",
+	})
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("retry create status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var got ProjectDesignSystemResponse
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatalf("decode retry response: %v", err)
+	}
+	if got.ID != uuidToString(system.ID) {
+		t.Fatalf("retry system id = %q, want %q", got.ID, uuidToString(system.ID))
+	}
+	if got.ActiveTask == nil || got.ActiveTask.Operation != "generate" || got.ActiveTask.Status != "queued" {
+		t.Fatalf("retry active task = %+v", got.ActiveTask)
+	}
+
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM project_design_system WHERE project_id = $1`, projectID).Scan(&count); err != nil {
+		t.Fatalf("count project design systems after retry: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("project design system count after retry = %d, want 1", count)
+	}
+	var taskContext []byte
+	if err := testPool.QueryRow(context.Background(), `SELECT context FROM agent_task_queue WHERE id = $1`, got.ActiveTask.ID).Scan(&taskContext); err != nil {
+		t.Fatalf("load retry task context: %v", err)
+	}
+	var contextSnapshot map[string]any
+	if err := json.Unmarshal(taskContext, &contextSnapshot); err != nil {
+		t.Fatalf("decode retry task context: %v", err)
+	}
+	if contextSnapshot["operation"] != "generate" || contextSnapshot["platform"] != "mobile" || contextSnapshot["brief"] != "Retry with the preserved project identity." {
+		t.Fatalf("retry task context = %#v", contextSnapshot)
+	}
+}
+
 func TestCreateProjectDesignSystemRejectsUnsafeOrForeignReferences(t *testing.T) {
 	projectID := createProjectForDesignTest(t, "Reference boundary project")
 	foreignProjectID := createProjectForDesignTest(t, "Foreign reference project")

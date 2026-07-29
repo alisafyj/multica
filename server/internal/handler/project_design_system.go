@@ -481,23 +481,39 @@ func (h *Handler) createProjectDesignSystemTask(
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_not_found", message: "project not found"}
 	}
-	if _, err := queries.GetProjectDesignSystemByProject(ctx, db.GetProjectDesignSystemByProjectParams{WorkspaceID: workspaceID, ProjectID: projectID}); err == nil {
-		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "project_design_system_exists", message: "project already has a design system"}
-	} else if !errors.Is(err, pgx.ErrNoRows) {
+	system, lookupErr := queries.GetProjectDesignSystemByProject(ctx, db.GetProjectDesignSystemByProjectParams{WorkspaceID: workspaceID, ProjectID: projectID})
+	if lookupErr == nil {
+		if system.ActiveTaskID.Valid {
+			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "project_design_system_exists", message: "project already has a design system"}
+		}
+		for _, slot := range []string{"draft", "saved"} {
+			_, packageErr := queries.GetProjectDesignSystemPackageBySlot(ctx, db.GetProjectDesignSystemPackageBySlotParams{
+				DesignSystemID: system.ID,
+				Slot:           slot,
+				WorkspaceID:    workspaceID,
+			})
+			if packageErr == nil {
+				return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "project_design_system_exists", message: "project already has a design system"}
+			}
+			if !errors.Is(packageErr, pgx.ErrNoRows) {
+				return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("package_lookup_failed", "failed to check project design system package")
+			}
+		}
+	} else if !errors.Is(lookupErr, pgx.ErrNoRows) {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("lookup_failed", "failed to check project design system")
-	}
-
-	system, err := queries.CreateProjectDesignSystem(ctx, db.CreateProjectDesignSystemParams{
-		WorkspaceID:    workspaceID,
-		ProjectID:      projectID,
-		Name:           project.Title,
-		Platform:       input.Platform,
-		CurrentAgentID: agentID,
-		InputSnapshot:  inputJSON,
-		CreatedBy:      requesterID,
-	})
-	if err != nil {
-		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("create_failed", "failed to create project design system")
+	} else {
+		system, err = queries.CreateProjectDesignSystem(ctx, db.CreateProjectDesignSystemParams{
+			WorkspaceID:    workspaceID,
+			ProjectID:      projectID,
+			Name:           project.Title,
+			Platform:       input.Platform,
+			CurrentAgentID: agentID,
+			InputSnapshot:  inputJSON,
+			CreatedBy:      requesterID,
+		})
+		if err != nil {
+			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("create_failed", "failed to create project design system")
+		}
 	}
 
 	agent, err := queries.GetAgent(ctx, agentID)
