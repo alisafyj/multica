@@ -3,8 +3,11 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { api } from "@multica/core/api";
+import { captureDownloadIntent } from "@multica/core/analytics";
 import { sanitizeNextUrl, useAuthStore } from "@multica/core/auth";
+import { useConfigStore } from "@multica/core/config";
 import { paths, resolvePostAuthDestination } from "@multica/core/paths";
 import type { User, Workspace } from "@multica/core/types";
 import { workspaceKeys } from "@multica/core/workspace/queries";
@@ -17,6 +20,9 @@ import {
   CardTitle,
 } from "@multica/ui/components/ui/card";
 import { Loader2, RefreshCw } from "lucide-react";
+import { LoginPage, validateCliCallback } from "@multica/views/auth";
+import { useT } from "@multica/views/i18n";
+import { setLoggedInCookie } from "@/features/auth/auth-cookie";
 
 async function destinationFor(
   qc: QueryClient,
@@ -39,7 +45,40 @@ async function destinationFor(
   return resolvePostAuthDestination(workspaces, user.onboarded_at != null);
 }
 
-function LoginPageContent() {
+function AuthModeStatus({
+  error,
+  onRetry,
+}: {
+  error: string | null;
+  onRetry: () => void;
+}) {
+  return (
+    <main className="flex min-h-svh items-center justify-center px-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader className="text-center">
+          <CardTitle>
+            {error ? "Unable to load sign-in" : "Loading sign-in configuration"}
+          </CardTitle>
+          <CardDescription>
+            {error || "Checking the server authentication mode..."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex justify-center">
+          {error ? (
+            <Button onClick={onRetry}>
+              <RefreshCw />
+              Retry
+            </Button>
+          ) : (
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          )}
+        </CardContent>
+      </Card>
+    </main>
+  );
+}
+
+function SSOLoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const qc = useQueryClient();
@@ -59,7 +98,9 @@ function LoginPageContent() {
         const destination = await destinationFor(qc, user, workspaces, nextUrl);
         if (active) router.replace(destination);
       } catch (err) {
-        if (active) setError(err instanceof Error ? err.message : "SSO sign-in failed");
+        if (active) {
+          setError(err instanceof Error ? err.message : "SSO sign-in failed");
+        }
       }
     })();
     return () => {
@@ -89,6 +130,174 @@ function LoginPageContent() {
       </Card>
     </main>
   );
+}
+
+function LegacyLoginContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const qc = useQueryClient();
+  const { t } = useT("auth");
+  const googleClientId = useConfigStore((state) => state.googleClientId);
+  const user = useAuthStore((state) => state.user);
+  const isLoading = useAuthStore((state) => state.isLoading);
+  const cliCallbackRaw = searchParams.get("cli_callback");
+  const cliState = searchParams.get("cli_state") || "";
+  const platform = searchParams.get("platform");
+  const isDesktopHandoff = platform === "desktop" && !cliCallbackRaw;
+  const nextUrl = sanitizeNextUrl(searchParams.get("next"));
+  const [desktopToken, setDesktopToken] = useState<string | null>(null);
+  const [desktopError, setDesktopError] = useState("");
+
+  useEffect(() => {
+    if (isLoading || !user || cliCallbackRaw) return;
+    if (isDesktopHandoff) {
+      api
+        .issueCliToken()
+        .then(({ token }) => {
+          setDesktopToken(token);
+          window.location.href = `multica://auth/callback?token=${encodeURIComponent(token)}`;
+        })
+        .catch((err) => {
+          setDesktopError(
+            err instanceof Error
+              ? err.message
+              : t(($) => $.web.desktop_handoff.prepare_failed),
+          );
+        });
+      return;
+    }
+
+    const workspaces =
+      qc.getQueryData<Workspace[]>(workspaceKeys.list()) ?? [];
+    void destinationFor(qc, user, workspaces, nextUrl).then((destination) =>
+      router.replace(destination),
+    );
+  }, [
+    cliCallbackRaw,
+    isDesktopHandoff,
+    isLoading,
+    nextUrl,
+    qc,
+    router,
+    t,
+    user,
+  ]);
+
+  const handleSuccess = async () => {
+    const currentUser = useAuthStore.getState().user;
+    const workspaces =
+      qc.getQueryData<Workspace[]>(workspaceKeys.list()) ?? [];
+    if (!currentUser) {
+      router.push(resolvePostAuthDestination(workspaces, false));
+      return;
+    }
+    router.push(await destinationFor(qc, currentUser, workspaces, nextUrl));
+  };
+
+  const googleState = [
+    platform === "desktop" ? "platform:desktop" : "",
+    nextUrl ? `next:${nextUrl}` : "",
+  ]
+    .filter(Boolean)
+    .join(",") || undefined;
+
+  if (isDesktopHandoff && user) {
+    if (desktopError) {
+      return (
+        <div className="flex min-h-screen items-center justify-center">
+          <Card className="w-full max-w-sm">
+            <CardHeader className="text-center">
+              <CardTitle className="text-2xl">
+                {t(($) => $.web.desktop_handoff.failed_title)}
+              </CardTitle>
+              <CardDescription>{desktopError}</CardDescription>
+            </CardHeader>
+          </Card>
+        </div>
+      );
+    }
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Card className="w-full max-w-sm">
+          <CardHeader className="text-center">
+            <CardTitle className="text-2xl">
+              {t(($) => $.web.desktop_handoff.opening_title)}
+            </CardTitle>
+            <CardDescription>
+              {desktopToken
+                ? t(($) => $.web.desktop_handoff.opening_description)
+                : t(($) => $.web.desktop_handoff.preparing)}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex justify-center">
+            {desktopToken ? (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  window.location.href = `multica://auth/callback?token=${encodeURIComponent(desktopToken)}`;
+                }}
+              >
+                {t(($) => $.web.desktop_handoff.open_button)}
+              </Button>
+            ) : (
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <LoginPage
+      onSuccess={handleSuccess}
+      google={
+        googleClientId
+          ? {
+              clientId: googleClientId,
+              redirectUri: `${window.location.origin}/auth/callback`,
+              state: googleState,
+            }
+          : undefined
+      }
+      cliCallback={
+        cliCallbackRaw && validateCliCallback(cliCallbackRaw)
+          ? { url: cliCallbackRaw, state: cliState }
+          : undefined
+      }
+      onTokenObtained={setLoggedInCookie}
+      extra={
+        <span className="text-xs text-muted-foreground">
+          {t(($) => $.web.prefer_desktop)}{" "}
+          <Link
+            href="/download"
+            onClick={() => captureDownloadIntent("login")}
+            className="font-medium text-foreground underline decoration-foreground/30 underline-offset-4 hover:decoration-foreground/70"
+          >
+            {t(($) => $.web.download)}
+          </Link>
+        </span>
+      }
+    />
+  );
+}
+
+function LoginPageContent() {
+  const useSySso = useConfigStore((state) => state.useSySso);
+  const configError = useConfigStore((state) => state.authConfigError);
+  const loadConfig = useConfigStore((state) => state.loadConfig);
+
+  if (useSySso === null) {
+    return (
+      <AuthModeStatus
+        error={configError}
+        onRetry={() => {
+          void loadConfig(() => api.getConfig()).catch(() => {});
+        }}
+      />
+    );
+  }
+  return useSySso ? <SSOLoginContent /> : <LegacyLoginContent />;
 }
 
 export default function Page() {
