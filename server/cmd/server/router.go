@@ -244,10 +244,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		if notifier, ok := opts.DaemonWakeup.(handler.WorkspaceSetRefreshNotifier); ok {
 			h.DaemonWorkspaceRefresh = notifier
 		}
+		if notifier, ok := opts.DaemonWakeup.(handler.DaemonPendingWorkNotifier); ok {
+			h.DaemonPendingWork = notifier
+		}
 	}
 	if rdb != nil {
 		h.UpdateStore = handler.NewRedisUpdateStore(rdb)
 		h.ModelListStore = handler.NewRedisModelListStore(rdb)
+		h.ModelCatalogCache = handler.NewRedisModelCatalogCache(rdb)
 		h.LocalSkillListStore = handler.NewRedisLocalSkillListStore(rdb)
 		h.LocalSkillImportStore = handler.NewRedisLocalSkillImportStore(rdb)
 		h.LivenessStore = handler.NewRedisLivenessStore(rdb)
@@ -763,6 +767,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// The authenticated /api/attachments/{id}/download route below is
 	// unchanged — this one is purely additive.
 	r.Get("/api/attachments/{id}/signed-download", h.DownloadAttachmentWithCapability)
+
+	// Avatar serving. Public for the same reason as the capability download
+	// above: the auth cookie is SameSite=Strict, so an auth-gated URL cannot
+	// be a native <img src> from Desktop / mobile webview or a split-origin
+	// self-hosted web app. The HMAC signature in the path is the credential.
+	// It covers the storage key, only image keys resolve, and the object must
+	// be avatar-class — see server/internal/handler/avatar.go (MUL-5393 /
+	// #6024).
+	r.Get("/api/avatars/{sig}/*", h.ServeAvatar)
 
 	// Auth (public) — per-IP rate limiting.
 	if rdb == nil {

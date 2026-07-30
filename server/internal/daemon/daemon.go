@@ -74,7 +74,21 @@ const (
 	// intentionally independent from AgentTimeout, which only governs the
 	// provider process after the task reaches running.
 	defaultTaskPrepareTimeout = 5 * time.Minute
+	// pendingWorkHeartbeatTimeout bounds the out-of-band heartbeat a
+	// server-pushed daemon:pending_work hint triggers (MUL-5444). Short on
+	// purpose: the hint is only a latency optimisation, and the scheduled
+	// heartbeat still picks the request up if this attempt fails.
+	pendingWorkHeartbeatTimeout = 15 * time.Second
+	// pendingWorkHintBookkeepingTTL is how long a runtime's last-hint timestamp
+	// is retained before it is swept — purely to keep the map bounded.
+	pendingWorkHintBookkeepingTTL = 10 * time.Minute
 )
+
+// pendingWorkHintMinInterval is the floor between two hint-driven heartbeats
+// for the same runtime. Keeps an interactive first open instant while stopping a
+// caller-triggered hint from becoming a heartbeat amplifier. A var so tests can
+// shrink it, same as the other timing knobs in this package.
+var pendingWorkHintMinInterval = time.Second
 
 func repoCheckoutModeFor(provider, goos string) string {
 	if provider == "codex" && goos == "linux" {
@@ -145,6 +159,11 @@ type terminalTaskReport struct {
 	// session because its rollout was not in the store (MUL-5305). The server
 	// clears the resume pointer and flags the continuity gap for the next claim.
 	sessionRolloutMissing bool
+	// retiredSessionID names a session this run was told to resume and then
+	// abandoned as unresumable (GH #6066). The server records it so no later
+	// run on the issue or chat can select it again, however many clean rows
+	// still reference it.
+	retiredSessionID string
 }
 
 type executionEnvironmentCommand func() ([]string, error)
@@ -327,6 +346,16 @@ type Daemon struct {
 	reregisterNextAttempt     map[string]time.Time // workspace_id -> earliest time the next re-register attempt may run
 	reregisterLastCompletedAt map[string]time.Time // workspace_id -> wall-clock at which the last SUCCESSFUL re-register call returned (failures intentionally not stamped — see recordRegisterCompletion)
 
+	// pendingWorkMu guards pendingWorkInflight and pendingWorkLastRun, which
+	// coalesce and rate-limit server-pushed "heartbeat now" hints (MUL-5444).
+	// Several UI surfaces can request the same runtime's model list within
+	// milliseconds; without the guard each hint would fire its own out-of-band
+	// heartbeat, and an authenticated caller looping the list-models endpoint
+	// could turn that into a heartbeat amplifier.
+	pendingWorkMu       sync.Mutex
+	pendingWorkInflight map[string]struct{}  // runtime_id -> hint-driven heartbeat in flight
+	pendingWorkLastRun  map[string]time.Time // runtime_id -> when the last hint-driven heartbeat started
+
 	cancelFunc    context.CancelFunc // set by Run(); called by triggerRestart
 	rootCtx       context.Context    // set by Run(); used by long-running recoveries that must survive per-runtime ctx cancellation
 	restartBinary string             // non-empty after a successful update; path to the new binary
@@ -423,6 +452,8 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		deletingCodexStores:       make(map[string]bool),
 		localPathLocks:            NewLocalPathLocker(),
 		runtimeGoneInflight:       make(map[string]struct{}),
+		pendingWorkInflight:       make(map[string]struct{}),
+		pendingWorkLastRun:        make(map[string]time.Time),
 		reregisterNextAttempt:     make(map[string]time.Time),
 		reregisterLastCompletedAt: make(map[string]time.Time),
 		cancelPollInterval:        5 * time.Second,
@@ -2779,6 +2810,98 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 	}
 }
 
+// handlePendingWorkHint reacts to a server-pushed daemon:pending_work frame by
+// sending ONE immediate heartbeat for the runtime, then dispatching whatever
+// that heartbeat claimed (MUL-5444).
+//
+// Why a heartbeat and not the work itself: the hint deliberately carries no
+// request payload, so the server never has to un-claim anything when delivery
+// fails, and a duplicated or replayed hint cannot duplicate work — the claim
+// stays atomic inside the store's PopPending. A hint that never arrives (daemon
+// offline, WS gap, relay drop) costs nothing but the pre-existing wait for the
+// next scheduled heartbeat.
+//
+// The HTTP heartbeat is used on purpose rather than queueing a WS frame: the
+// hint arrives on the read pump, the WS write path may be backed up or tearing
+// down, and this is a human-interactive, low-frequency path (a user opened a
+// model picker) where one extra request is cheaper than a missed wakeup. Note it
+// intentionally bypasses the wsHeartbeatRecentlyAcked suppression that the
+// scheduled HTTP tick honours — that suppression exists to avoid duplicate
+// periodic writes, not to block an explicitly requested pull.
+func (d *Daemon) handlePendingWorkHint(runtimeID, kind string) {
+	if runtimeID == "" {
+		return
+	}
+	if d.findRuntime(runtimeID) == nil {
+		// Not one of ours (stale relay fanout, or the runtime was just pruned).
+		return
+	}
+
+	d.pendingWorkMu.Lock()
+	if d.pendingWorkInflight == nil {
+		d.pendingWorkInflight = make(map[string]struct{})
+	}
+	if d.pendingWorkLastRun == nil {
+		d.pendingWorkLastRun = make(map[string]time.Time)
+	}
+	// Drop long-idle bookkeeping so the map can't grow with every runtime this
+	// process has ever seen.
+	for id, at := range d.pendingWorkLastRun {
+		if time.Since(at) > pendingWorkHintBookkeepingTTL {
+			delete(d.pendingWorkLastRun, id)
+		}
+	}
+	if _, inflight := d.pendingWorkInflight[runtimeID]; inflight {
+		d.pendingWorkMu.Unlock()
+		return
+	}
+	// Rate limit per runtime. The hint is caller-triggered (any workspace member
+	// hitting the list-models endpoint), so without a floor a request loop would
+	// become a heartbeat amplifier. A suppressed hint costs nothing but the
+	// pre-existing wait for the scheduled heartbeat.
+	if last, ok := d.pendingWorkLastRun[runtimeID]; ok && time.Since(last) < pendingWorkHintMinInterval {
+		d.pendingWorkMu.Unlock()
+		d.logger.Debug("pending work hint throttled", "runtime_id", runtimeID, "kind", kind)
+		return
+	}
+	d.pendingWorkInflight[runtimeID] = struct{}{}
+	d.pendingWorkLastRun[runtimeID] = time.Now()
+	d.pendingWorkMu.Unlock()
+	defer func() {
+		d.pendingWorkMu.Lock()
+		delete(d.pendingWorkInflight, runtimeID)
+		d.pendingWorkMu.Unlock()
+	}()
+
+	// Root context: handleHeartbeatActions hands this ctx to the actual work
+	// (model discovery shells out to a CLI for up to ~15s), so it must outlive
+	// this function. Only the heartbeat request itself is time-bounded.
+	ctx := d.recoveryContext()
+	if ctx.Err() != nil {
+		return
+	}
+	hbCtx, cancel := context.WithTimeout(ctx, pendingWorkHeartbeatTimeout)
+	resp, err := d.client.SendHeartbeat(hbCtx, runtimeID)
+	cancel()
+	if err != nil {
+		if isRuntimeNotFoundError(err) {
+			go d.handleRuntimeGone(runtimeID)
+			return
+		}
+		d.logger.Debug("pending work hint heartbeat failed", "runtime_id", runtimeID, "kind", kind, "error", err)
+		return
+	}
+	if resp == nil {
+		return
+	}
+	if resp.RuntimeGone {
+		go d.handleRuntimeGone(runtimeID)
+		return
+	}
+	d.logger.Debug("pending work hint served", "runtime_id", runtimeID, "kind", kind)
+	d.handleHeartbeatActions(ctx, runtimeID, resp)
+}
+
 // handleModelList resolves the provider's supported models (via static
 // catalog or by shelling out to the agent CLI) and reports the result
 // back to the server. Model discovery failures are reported as empty
@@ -3028,12 +3151,29 @@ func (d *Daemon) handleUpdate(ctx context.Context, runtimeID string, update *Pen
 		return
 	}
 
-	// Prevent concurrent update attempts.
-	if !d.updating.CompareAndSwap(false, true) {
-		d.logger.Warn("update already in progress, ignoring", "runtime_id", runtimeID, "update_id", update.ID)
+	switch d.tryBeginServerUpdate(ctx) {
+	case serverUpdateAlreadyRunning:
+		d.logger.Warn("update deferred: another update is already in progress", "runtime_id", runtimeID, "update_id", update.ID)
+		d.reportUpdateResult(ctx, runtimeID, update.ID, map[string]any{
+			"status": "failed",
+			"error":  "another runtime update is already in progress on this machine",
+		})
+		return
+	case serverUpdateRuntimeBusy:
+		d.logger.Info("update deferred: task or claim in progress", "runtime_id", runtimeID, "update_id", update.ID)
+		d.reportUpdateResult(ctx, runtimeID, update.ID, map[string]any{
+			"status": "failed",
+			"error":  "runtime update deferred because agent work is starting or still active; retry when the machine is idle",
+		})
 		return
 	}
-	defer d.updating.Store(false)
+	restarting := false
+	defer func() {
+		if !restarting {
+			d.releaseClaimBarrier()
+			d.updating.Store(false)
+		}
+	}()
 
 	d.logger.Info("CLI update requested", "runtime_id", runtimeID, "update_id", update.ID, "target_version", update.TargetVersion)
 
@@ -3060,6 +3200,59 @@ func (d *Daemon) handleUpdate(ctx context.Context, runtimeID string, update *Pen
 
 	// Trigger daemon restart with the new binary.
 	d.triggerRestart()
+	restarting = d.RestartBinary() != ""
+}
+
+type serverUpdateAcquireResult uint8
+
+const (
+	serverUpdateAcquired serverUpdateAcquireResult = iota
+	serverUpdateAlreadyRunning
+	serverUpdateRuntimeBusy
+)
+
+// tryBeginServerUpdate atomically claims update ownership, pauses new claims,
+// and lets any claim already in flight finish its handoff. An empty claim can
+// therefore never starve an update; a claim that returns work increments
+// activeTasks before exitClaim, so the final check still defers safely.
+func (d *Daemon) tryBeginServerUpdate(ctx context.Context) serverUpdateAcquireResult {
+	if !d.updating.CompareAndSwap(false, true) {
+		return serverUpdateAlreadyRunning
+	}
+
+	d.claimMu.Lock()
+	if d.pauseClaims || d.activeTasks.Load() > 0 {
+		d.claimMu.Unlock()
+		d.updating.Store(false)
+		return serverUpdateRuntimeBusy
+	}
+	d.pauseClaims = true
+	d.claimMu.Unlock()
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		d.claimMu.Lock()
+		if d.claimsInFlight == 0 {
+			if d.activeTasks.Load() == 0 {
+				d.claimMu.Unlock()
+				return serverUpdateAcquired
+			}
+			d.pauseClaims = false
+			d.claimMu.Unlock()
+			d.updating.Store(false)
+			return serverUpdateRuntimeBusy
+		}
+		d.claimMu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			d.releaseClaimBarrier()
+			d.updating.Store(false)
+			return serverUpdateRuntimeBusy
+		case <-ticker.C:
+		}
+	}
 }
 
 // runUpdate executes the brew-or-download upgrade against targetVersion and
@@ -3918,6 +4111,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			sessionID:             result.SessionID,
 			workDir:               result.WorkDir,
 			sessionRolloutMissing: result.SessionRolloutMissing,
+			retiredSessionID:      result.RetiredSessionID,
 		})
 		if err == nil {
 			return
@@ -3955,6 +4149,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			workDir:               result.WorkDir,
 			failureReason:         taskfailure.Classify(fallbackErrMsg).String(),
 			sessionRolloutMissing: result.SessionRolloutMissing,
+			retiredSessionID:      result.RetiredSessionID,
 		}); failErr != nil {
 			taskLog.Error("fail task fallback also failed", "error", failErr)
 		}
@@ -3986,6 +4181,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			workDir:               result.WorkDir,
 			failureReason:         failureReason,
 			sessionRolloutMissing: result.SessionRolloutMissing,
+			retiredSessionID:      result.RetiredSessionID,
 		}); err != nil {
 			taskLog.Error("report failed task failed", "error", err)
 		}
@@ -4003,9 +4199,9 @@ func (d *Daemon) reportTerminalTask(parentCtx context.Context, report terminalTa
 
 	switch report.kind {
 	case terminalTaskReportComplete:
-		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing)
+		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID)
 	case terminalTaskReportFail:
-		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.failureReason, report.sessionRolloutMissing)
+		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID)
 	default:
 		return fmt.Errorf("unsupported terminal task report kind %d", report.kind)
 	}
@@ -5204,10 +5400,20 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, err
 	}
 
+	// retiredSessionID is the session this run was told to resume and then
+	// abandoned. Captured before the retry clears task.PriorSessionID, and
+	// reported on EVERY terminal path — the retry succeeding is exactly when
+	// the abandoned id would otherwise survive, unreferenced by this task's
+	// row but still reachable through an older completed row on the issue or
+	// through the chat_session pointer (GH #6066).
+	var retiredSessionID string
+	defer func() { taskResult.RetiredSessionID = retiredSessionID }()
+
 	if shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
 		firstResult := result
 		firstUsage := result.Usage
 		firstTools := tools
+		retiredSessionID = task.PriorSessionID
 		taskLog.Warn("session resume failed, retrying with fresh session", "error", result.Error)
 
 		// Rebuild cold-session context before the single retry. The prior
@@ -5501,6 +5707,28 @@ func shouldRetryWithFreshSession(result agent.Result, priorSessionID string, too
 	}
 	// Positive evidence: the backend proved the resume was refused.
 	if result.ResumeRejected {
+		return true
+	}
+	// Positive evidence of a different kind: the resume was NOT refused —
+	// the transcript loaded fine — and the provider then refused to replay
+	// it because a message in it is empty. ResumeRejected is false for every
+	// backend here precisely because nothing rejected the resume, which is
+	// why this needs its own branch rather than a phrase added to the
+	// rejection list.
+	//
+	// It applies to all 17 backends, not the ResumeRejectionUndetectable
+	// subset below, and that is deliberate: this is the one failure class
+	// where dropping the session is provably the fix without the backend
+	// having to detect anything. The evidence is in the provider's own error
+	// text, which the common layer already has. Leaving it to each adapter
+	// is how the same bug got fixed three times for Kiro, Kimi and Anthropic
+	// while every other backend stayed broken.
+	//
+	// The tools == 0 gate above still applies unchanged — a run that already
+	// used a tool is never re-run, poisoned history or not. Such a task still
+	// gets its session retired, just by classifyPoisonedError at report time
+	// rather than by an in-turn retry.
+	if taskfailure.UnresumableHistory(result.Error) {
 		return true
 	}
 	// Everything below is a bounded compatibility path for the backends that

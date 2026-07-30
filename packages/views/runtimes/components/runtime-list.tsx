@@ -207,7 +207,7 @@ function RuntimeNameCell({
         <ProviderLogo provider={runtime.provider} className="h-5 w-5" />
       </div>
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
-        <span className="block min-w-0 shrink truncate text-sm font-medium">
+        <span className="block min-w-0 shrink truncate text-body font-medium">
           {label}
         </span>
         <RuntimeKindBadge runtime={runtime} />
@@ -229,8 +229,8 @@ function RuntimeKindBadge({ runtime }: { runtime: AgentRuntime }) {
     <span
       className={
         isCustom
-          ? "inline-flex shrink-0 items-center rounded bg-info/10 px-1 text-[10px] font-medium text-info"
-          : "inline-flex shrink-0 items-center rounded bg-muted px-1 text-[10px] font-medium text-muted-foreground"
+          ? "inline-flex shrink-0 items-center rounded bg-info/10 px-1 text-micro font-medium text-info"
+          : "inline-flex shrink-0 items-center rounded bg-muted px-1 text-micro font-medium text-muted-foreground"
       }
     >
       {isCustom
@@ -245,13 +245,13 @@ function PendingRuntimeBadge({ runtime }: { runtime: AgentRuntime }) {
   if (!isPendingCustomRuntime(runtime)) return null;
   if (isDisabledCustomRuntime(runtime)) {
     return (
-      <span className="inline-flex shrink-0 items-center rounded bg-muted px-1 text-[10px] font-medium text-muted-foreground">
+      <span className="inline-flex shrink-0 items-center rounded bg-muted px-1 text-micro font-medium text-muted-foreground">
         {t(($) => $.list.badge_disabled)}
       </span>
     );
   }
   return (
-    <span className="inline-flex shrink-0 items-center rounded bg-warning/10 px-1 text-[10px] font-medium text-warning">
+    <span className="inline-flex shrink-0 items-center rounded bg-warning/10 px-1 text-micro font-medium text-warning">
       {t(($) => $.list.badge_registering)}
     </span>
   );
@@ -266,7 +266,7 @@ function VisibilityBadge({ runtime }: { runtime: AgentRuntime }) {
     <Tooltip>
       <TooltipTrigger
         render={
-          <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-info/10 px-1 text-[10px] font-medium text-info">
+          <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-info/10 px-1 text-micro font-medium text-info">
             <Globe className="h-2.5 w-2.5" />
             {t(($) => $.detail.visibility_label.public)}
           </span>
@@ -302,7 +302,7 @@ function HealthCell({
   if (isDisabledCustomRuntime(runtime)) {
     return (
       <ListGridCell>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-caption text-muted-foreground">
           {t(($) => $.list.pending_health_disabled)}
         </span>
       </ListGridCell>
@@ -314,7 +314,7 @@ function HealthCell({
       <ListGridCell className="gap-1.5">
         <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-destructive" />
         <span
-          className="block min-w-0 truncate text-xs text-destructive"
+          className="block min-w-0 truncate text-caption text-destructive"
           title={registrationFailure}
         >
           {t(($) => $.list.pending_health_error)}
@@ -331,7 +331,7 @@ function HealthCell({
         ) : (
           <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-info" />
         )}
-        <span className="block min-w-0 truncate text-xs">
+        <span className="block min-w-0 truncate text-caption">
           {warning
             ? t(($) => $.list.pending_health_warning)
             : t(($) => $.list.pending_health)}
@@ -348,7 +348,7 @@ function HealthCell({
   return (
     <ListGridCell className="gap-1.5">
       <HealthIcon health={health} />
-      <span className="block min-w-0 truncate text-xs">
+      <span className="block min-w-0 truncate text-caption">
         {labelOf(health)}
         {health !== "online" && lastSeen && (
           <span className="text-muted-foreground"> · {lastSeen}</span>
@@ -391,7 +391,7 @@ export function CostCell({ runtimeId }: { runtimeId: string }) {
   if (usage.length === 0) {
     return (
       <div className="w-full text-right">
-        <span className="text-xs text-muted-foreground/50">—</span>
+        <span className="text-caption text-muted-foreground/50">—</span>
       </div>
     );
   }
@@ -416,10 +416,10 @@ export function CostCell({ runtimeId }: { runtimeId: string }) {
         value={cost7d}
         locales={locales}
         aria-label={fmt}
-        className="text-sm font-medium"
+        className="text-body font-medium"
       />
       {deltaLabel && (
-        <span className={`text-[11px] tabular-nums ${deltaTone}`}>
+        <span className={`text-micro tabular-nums ${deltaTone}`}>
           {deltaLabel}
         </span>
       )}
@@ -433,7 +433,7 @@ export function CliCell({ runtime }: { runtime: AgentRuntime }) {
   if (failure) {
     const command = pendingRuntimeCommandName(runtime);
     return (
-      <div className="flex min-w-0 flex-col text-xs">
+      <div className="flex min-w-0 flex-col text-caption">
         {command && (
           <span
             className="truncate font-mono text-muted-foreground"
@@ -452,13 +452,13 @@ export function CliCell({ runtime }: { runtime: AgentRuntime }) {
     const command = pendingRuntimeCommandName(runtime);
     if (!command) {
       return (
-        <span className="text-xs text-muted-foreground/50">
+        <span className="text-caption text-muted-foreground/50">
           {t(($) => $.list.pending_cli_unknown)}
         </span>
       );
     }
     return (
-      <div className="flex min-w-0 items-center text-xs">
+      <div className="flex min-w-0 items-center text-caption">
         <span
           className="truncate font-mono text-muted-foreground"
           title={command}
@@ -470,7 +470,7 @@ export function CliCell({ runtime }: { runtime: AgentRuntime }) {
   }
 
   if (runtime.runtime_mode === "cloud") {
-    return <span className="text-xs text-muted-foreground/50">—</span>;
+    return <span className="text-caption text-muted-foreground/50">—</span>;
   }
   const meta = runtime.metadata as Record<string, unknown> | null;
   // `version` is the agent's own underlying CLI tool version — distinct per
@@ -484,11 +484,11 @@ export function CliCell({ runtime }: { runtime: AgentRuntime }) {
     meta && typeof meta.version === "string" ? meta.version : null;
 
   if (!version) {
-    return <span className="text-xs text-muted-foreground/50">—</span>;
+    return <span className="text-caption text-muted-foreground/50">—</span>;
   }
 
   return (
-    <div className="flex min-w-0 items-center text-xs">
+    <div className="flex min-w-0 items-center text-caption">
       <span className="truncate font-mono text-muted-foreground">
         {version}
       </span>
@@ -501,7 +501,7 @@ export function CliCell({ runtime }: { runtime: AgentRuntime }) {
 // surfaces AgentProfileCard.
 function AgentStack({ agentIds }: { agentIds: string[] }) {
   if (agentIds.length === 0) {
-    return <span className="text-xs text-muted-foreground/50">—</span>;
+    return <span className="text-caption text-muted-foreground/50">—</span>;
   }
   const visible = agentIds.slice(0, 3);
   const extra = agentIds.length - visible.length;
@@ -521,7 +521,7 @@ function AgentStack({ agentIds }: { agentIds: string[] }) {
         </span>
       ))}
       {extra > 0 && (
-        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground ring-2 ring-background">
+        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-muted text-caption font-medium text-muted-foreground ring-2 ring-background">
           +{extra}
         </span>
       )}
@@ -781,12 +781,12 @@ export function RuntimeList({
                         actorId={row.ownerMember.user_id}
                         size="sm"
                       />
-                      <span className="min-w-0 truncate text-xs text-muted-foreground">
+                      <span className="min-w-0 truncate text-caption text-muted-foreground">
                         {row.ownerMember.name}
                       </span>
                     </>
                   ) : (
-                    <span className="text-xs text-muted-foreground/50">—</span>
+                    <span className="text-caption text-muted-foreground/50">—</span>
                   )}
                 </ListGridCell>
               ) : (
@@ -798,7 +798,7 @@ export function RuntimeList({
               <ListGridCell className="hidden @2xl:flex">
                 {pending ? (
                   <div className="w-full text-right">
-                    <span className="text-xs text-muted-foreground/50">—</span>
+                    <span className="text-caption text-muted-foreground/50">—</span>
                   </div>
                 ) : (
                   <CostCell runtimeId={row.runtime.id} />
