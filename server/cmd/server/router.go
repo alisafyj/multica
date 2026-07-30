@@ -167,6 +167,9 @@ type RouterOptions struct {
 	// BatchedHeartbeatScheduler here so the caller can also drive Run/Stop;
 	// tests leave this nil and get the legacy synchronous behavior.
 	HeartbeatScheduler handler.HeartbeatScheduler
+	UseSySSO           bool
+	SSOVerifier        *auth.SSOVerifier
+	DevAuthEmail       string
 }
 
 // NewRouterWithOptions builds the fully-configured Chi router and
@@ -204,6 +207,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	origins := allowedOrigins()
 
 	signupConfig := handler.Config{
+		UseSySSO:                 opts.UseSySSO,
 		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
 		AllowedEmails:            splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
 		AllowedEmailDomains:      splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
@@ -220,8 +224,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		LLMBaseURL:               strings.TrimSpace(os.Getenv("MULTICA_LLM_BASE_URL")),
 		LLMDefaultModel:          strings.TrimSpace(os.Getenv("MULTICA_LLM_DEFAULT_MODEL")),
 		ServerVersion:            normalizeServerVersion(version),
+		SSODesktopRedirectURI:    strings.TrimSpace(os.Getenv("SSO_DESKTOP_REDIRECT_URI")),
+		SSOMobileRedirectURI:     strings.TrimSpace(os.Getenv("SSO_MOBILE_REDIRECT_URI")),
+		DevAuthEmail:             opts.DevAuthEmail,
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	h.SSOVerifier = opts.SSOVerifier
 	h.DesignAssetStorage = designAssetStore
 	h.Metrics = opts.BusinessMetrics
 	h.FeatureFlags = opts.FeatureFlags
@@ -649,11 +657,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	if opts.HeartbeatScheduler != nil {
 		h.HeartbeatScheduler = opts.HeartbeatScheduler
 	}
-	// Auth caches: PAT cache is shared between the regular Auth middleware,
-	// the DaemonAuth fallback (mul_) path, and the revoke handler
-	// (invalidate). DaemonTokenCache backs the DaemonAuth mdt_ path. Both
-	// constructors return nil when rdb is nil — every consumer handles that
-	// as "no cache, always hit DB".
 	patCache := auth.NewPATCache(rdb)
 	daemonTokenCache := auth.NewDaemonTokenCache(rdb)
 	h.PATCache = patCache
@@ -663,7 +666,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Cloud PAT verifier: validates mcn_ tokens against Multica Cloud
 	// Fleet. Returns nil when no Fleet URL is configured — the Auth /
 	// DaemonAuth middlewares treat nil as "mcn_ not supported" and
-	// reject with 401, instead of falling through to mul_/JWT paths.
+	// reject with 401 instead of falling through to internal-token parsing.
 	// Reuses MULTICA_CLOUD_FLEET_URL (the same URL the cloud-runtime
 	// proxy uses) so a deployment doesn't need a second config knob.
 	cloudPATVerifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{
@@ -740,7 +743,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		return util.UUIDToString(ws.ID), nil
 	})
 	r.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
-		realtime.HandleWebSocket(hub, mc, pr, slugResolver, w, r)
+		realtime.HandleWebSocket(hub, mc, pr, slugResolver, opts.UseSySSO, w, r)
 	})
 
 	// Local file serving (when using local storage). Served through the
@@ -758,12 +761,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Warn("rate limiting disabled: REDIS_URL not configured")
 	}
 	trustedProxies := middleware.ParseTrustedProxies(os.Getenv("RATE_LIMIT_TRUSTED_PROXIES"))
-	authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
 	authVerifyRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_VERIFY", 20), time.Minute, trustedProxies)
 	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
-	r.With(authRL).Post("/auth/send-code", h.SendCode)
-	r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
-	r.With(authRL).Post("/auth/google", h.GoogleLogin)
+	if opts.UseSySSO {
+		r.With(authVerifyRL).Post("/auth/sso/session", h.SSOSession)
+		r.With(authVerifyRL).Get("/auth/sso/authorize", h.SSOAuthorize)
+		r.With(authVerifyRL).Post("/auth/sso/token", h.SSOToken)
+	} else {
+		authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
+		r.With(authRL).Post("/auth/send-code", h.SendCode)
+		r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
+		r.With(authRL).Post("/auth/google", h.GoogleLogin)
+	}
 	r.Post("/auth/logout", h.Logout)
 
 	// Public API
@@ -814,7 +823,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Daemon API routes (require daemon token or valid user token)
 	r.Route("/api/daemon", func(r chi.Router) {
-		r.Use(middleware.DaemonAuth(queries, patCache, daemonTokenCache, cloudPATVerifier))
+		r.Use(middleware.DaemonAuth(queries, patCache, daemonTokenCache, cloudPATVerifier, opts.UseSySSO))
 
 		r.Post("/register", h.DaemonRegister)
 		r.Post("/deregister", h.DaemonDeregister)
@@ -861,7 +870,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Protected API routes
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
+		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, opts.UseSySSO))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
 
 		// --- User-scoped routes (no workspace context required) ---
@@ -878,7 +887,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// server/internal/handler/onboarding_shim.go.
 		r.Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
 		r.Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
-		r.Post("/api/cli-token", h.IssueCliToken)
+		if !opts.UseSySSO {
+			r.Post("/api/cli-token", h.IssueCliToken)
+		}
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
 		r.Post("/api/design-plugin/figma/auth-sessions/{sessionId}/authorize", h.AuthorizeFigmaPluginAuthSession)
@@ -948,7 +959,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/runtime-profiles/{profileId}", h.DeleteRuntimeProfile)
 				})
 				// Owner-only access
-				r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner")).Delete("/", h.DeleteWorkspace)
+				if opts.UseSySSO {
+					r.Group(func(r chi.Router) {
+						r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner"))
+						r.Use(handler.RequireHumanActor)
+						r.Get("/service-account", h.GetServiceAccount)
+						r.Post("/service-account", h.CreateServiceAccount)
+						r.Post("/service-account/rotate", h.RotateServiceAccountToken)
+						r.Delete("/service-account", h.RevokeServiceAccountToken)
+						r.Delete("/", h.DeleteWorkspace)
+					})
+				} else {
+					r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner")).Delete("/", h.DeleteWorkspace)
+				}
 
 				// GitHub integration — connect / disconnect remain admin-only;
 				// the read-only list endpoint lives in the member-level group
@@ -1039,13 +1062,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/api/invitations/{id}", h.GetMyInvitation)
 		r.Post("/api/invitations/{id}/accept", h.AcceptInvitation)
 		r.Post("/api/invitations/{id}/decline", h.DeclineInvitation)
-
-		r.Route("/api/tokens", func(r chi.Router) {
-			r.Get("/", h.ListPersonalAccessTokens)
-			r.Post("/", h.CreatePersonalAccessToken)
-			r.Post("/current/renew", h.RenewCurrentPersonalAccessToken)
-			r.Delete("/{id}", h.RevokePersonalAccessToken)
-		})
+		if !opts.UseSySSO {
+			r.Route("/api/tokens", func(r chi.Router) {
+				r.Get("/", h.ListPersonalAccessTokens)
+				r.Post("/", h.CreatePersonalAccessToken)
+				r.Post("/current/renew", h.RenewCurrentPersonalAccessToken)
+				r.Delete("/{id}", h.RevokePersonalAccessToken)
+			})
+		}
 
 		// Cloud Billing proxy. Same upstream service / port as
 		// cloud-runtime — multica-cloud's Fleet and Billing share
@@ -1515,6 +1539,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	return r, h
 }
 
+func splitAndTrim(raw string) []string {
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if value := strings.TrimSpace(part); value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
 // buildLarkConnector wires the real WS long-conn connector that talks
 // to /callback/ws/endpoint directly with app_id/app_secret. The
 // connector wraps every read with a ctx-cancel watchdog so lease loss /
@@ -1598,10 +1633,6 @@ func (mc *membershipChecker) IsMember(ctx context.Context, userID, workspaceID s
 	return err == nil
 }
 
-// patResolver implements realtime.PATResolver using database queries.
-// patCache is shared with the Auth and DaemonAuth middlewares so a token
-// revoke through any path invalidates the cache for all of them. Nil
-// cache is supported and degrades to direct DB lookups.
 type patResolver struct {
 	queries *db.Queries
 	cache   *auth.PATCache
@@ -1609,28 +1640,20 @@ type patResolver struct {
 
 func (pr *patResolver) ResolveToken(ctx context.Context, token string) (string, bool) {
 	hash := auth.HashToken(token)
-
 	if userID, ok := pr.cache.Get(ctx, hash); ok {
 		return userID, true
 	}
-
 	pat, err := pr.queries.GetPersonalAccessTokenByHash(ctx, hash)
 	if err != nil {
 		return "", false
 	}
-
 	userID := util.UUIDToString(pat.UserID)
-
 	var expiresAt time.Time
 	if pat.ExpiresAt.Valid {
 		expiresAt = pat.ExpiresAt.Time
 	}
 	pr.cache.Set(ctx, hash, userID, auth.TTLForExpiry(time.Now(), expiresAt))
-
-	// Cache miss = first WS auth in this TTL window. Refresh last_used_at;
-	// subsequent connects within the window skip the write.
 	go pr.queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID)
-
 	return userID, true
 }
 
@@ -1651,21 +1674,6 @@ func optionalUUID(s string) pgtype.UUID {
 		return pgtype.UUID{}
 	}
 	return util.MustParseUUID(s)
-}
-
-func splitAndTrim(s string) []string {
-	if s == "" {
-		return nil
-	}
-	parts := strings.Split(s, ",")
-	res := make([]string, 0, len(parts))
-	for _, p := range parts {
-		trimmed := strings.TrimSpace(p)
-		if trimmed != "" {
-			res = append(res, trimmed)
-		}
-	}
-	return res
 }
 
 func cloudRuntimeFleetURLFromEnv() string {

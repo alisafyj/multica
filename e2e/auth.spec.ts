@@ -4,12 +4,11 @@ import { createTestApi, loginAsDefault, openWorkspaceMenu, waitForPageText } fro
 test.describe("Authentication", () => {
   test("login page renders correctly", async ({ page }) => {
     await page.goto("/login", { waitUntil: "domcontentloaded" });
-    await waitForPageText(page, "Sign in to Multica");
+    await waitForPageText(page, "Sign-in failed");
 
-    await expect(page.getByText("Sign in to Multica")).toBeVisible();
-    await expect(page.getByRole("textbox", { name: "Email" })).toBeVisible();
-    await expect(page.getByPlaceholder("you@example.com")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Continue" })).toBeDisabled();
+    await expect(page.getByText("Sign-in failed", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Email" })).toHaveCount(0);
   });
 
   test("login and redirect to /issues", async ({ page }) => {
@@ -19,16 +18,17 @@ test.describe("Authentication", () => {
     await expect(page.getByRole("button", { name: "New Issue" })).toBeVisible();
   });
 
-  test("unauthenticated user is redirected to /login", async ({ page }) => {
+  test("unauthenticated user is redirected to /login", async ({ page, context }) => {
     const api = await createTestApi();
     const [workspace] = await api.getWorkspaces();
     if (!workspace) {
       throw new Error("E2E workspace was not created");
     }
+    await context.clearCookies();
 
     await page.goto(`/${workspace.slug}/issues`, { waitUntil: "domcontentloaded" });
     await page.waitForURL("**/login", { timeout: 10000, waitUntil: "domcontentloaded" });
-    await waitForPageText(page, "Sign in to Multica");
+    await waitForPageText(page, "Sign-in failed");
   });
 
   test("logout redirects to /login", async ({ page }) => {
@@ -37,10 +37,15 @@ test.describe("Authentication", () => {
     // Open the workspace dropdown menu
     await openWorkspaceMenu(page);
 
+    const logoutResponse = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/auth/logout") &&
+        response.request().method() === "POST",
+    );
     await page.getByRole("menuitem", { name: "Log out" }).click();
+    await expect((await logoutResponse).status()).toBe(200);
 
-    await page.waitForURL("**/login", { timeout: 10000, waitUntil: "domcontentloaded" });
-    await waitForPageText(page, "Sign in to Multica");
-    await expect(page).toHaveURL(/\/login/);
+    await page.waitForURL("**/logout", { timeout: 10000 });
+    await expect(page).toHaveURL(/\/logout/);
   });
 });

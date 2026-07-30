@@ -104,6 +104,32 @@ func TestGetConfigIncludesRuntimeAuthConfig(t *testing.T) {
 	}
 }
 
+func TestGetConfigUsesCompanySSOAuthMode(t *testing.T) {
+	origConfig := testHandler.cfg
+	t.Cleanup(func() { testHandler.cfg = origConfig })
+	testHandler.cfg.UseSySSO = true
+	testHandler.cfg.AllowSignup = true
+	t.Setenv("GOOGLE_CLIENT_ID", "legacy-google-client")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	w := httptest.NewRecorder()
+	testHandler.GetConfig(w, req)
+
+	var cfg AppConfig
+	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if !cfg.UseSySSO {
+		t.Fatal("use_sy_sso: want true")
+	}
+	if cfg.AllowSignup {
+		t.Fatal("allow_signup: want false in SSO mode")
+	}
+	if cfg.GoogleClientID != "" {
+		t.Fatalf("google_client_id: want omitted in SSO mode, got %q", cfg.GoogleClientID)
+	}
+}
+
 func TestGetConfigHonorsVCSIntegrationSwitch(t *testing.T) {
 	origCfg := testHandler.cfg
 	t.Cleanup(func() { testHandler.cfg = origCfg })

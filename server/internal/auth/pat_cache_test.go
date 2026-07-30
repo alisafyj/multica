@@ -40,6 +40,16 @@ func newRedisTestClient(t *testing.T) *redis.Client {
 	return rdb
 }
 
+func TestGeneratePATToken(t *testing.T) {
+	token, err := GeneratePATToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(token) != 44 || token[:4] != "mul_" {
+		t.Fatalf("GeneratePATToken() = %q", token)
+	}
+}
+
 func TestPATCache_NilSafe(t *testing.T) {
 	var c *PATCache // nil
 	ctx := context.Background()

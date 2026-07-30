@@ -20,6 +20,7 @@ import { GitHubMark } from "./github-mark";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@multica/ui/components/ui/tabs";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { useCurrentWorkspace } from "@multica/core/paths";
+import { useConfigStore } from "@multica/core/config";
 import { useNavigation } from "../../navigation";
 import { AccountTab } from "./account-tab";
 import { PreferencesTab } from "./preferences-tab";
@@ -111,6 +112,10 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
   const workspaceName = useCurrentWorkspace()?.name;
   const navigation = useNavigation();
   const isMobile = useIsMobile();
+  const useSySso = useConfigStore((state) => state.useSySso);
+  const accountTabKeys = useSySso === false
+    ? ACCOUNT_TAB_KEYS
+    : ACCOUNT_TAB_KEYS.filter((key) => key !== "tokens");
 
   // Whitelist of valid tab values; unknown ?tab=… values silently fall back to
   // the default. Whitelisting also blocks junk like ?tab=<script> from
@@ -118,11 +123,11 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
   const validTabs = React.useMemo(
     () =>
       new Set<string>([
-        ...ACCOUNT_TAB_KEYS,
+        ...accountTabKeys,
         ...Object.values(WORKSPACE_TAB_VALUES),
         ...(extraAccountTabs?.map((tab) => tab.value) ?? []),
       ]),
-    [extraAccountTabs],
+    [accountTabKeys, extraAccountTabs],
   );
 
   const tabFromUrl = navigation.searchParams.get(TAB_QUERY_KEY);
@@ -161,7 +166,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <span className="hidden px-2 pb-1 pt-2 text-xs font-medium text-muted-foreground md:block">
             {t(($) => $.page.my_account)}
           </span>
-          {ACCOUNT_TAB_KEYS.map((key) => {
+          {accountTabKeys.map((key) => {
             const Icon = ACCOUNT_TAB_ICONS[key];
             return (
               <TabsTrigger
@@ -214,7 +219,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <TabsContent value="issue"><IssueTab /></TabsContent>
           <TabsContent value="chat"><ChatTab /></TabsContent>
           <TabsContent value="notifications"><NotificationsTab /></TabsContent>
-          <TabsContent value="tokens"><TokensTab /></TabsContent>
+          {useSySso === false && <TabsContent value="tokens"><TokensTab /></TabsContent>}
           <TabsContent value="workspace"><WorkspaceTab /></TabsContent>
           <TabsContent value="repositories"><RepositoriesTab /></TabsContent>
           <TabsContent value="github"><GitHubTab /></TabsContent>

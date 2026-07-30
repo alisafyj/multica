@@ -25,6 +25,7 @@ BACKEND_PID=""
 FRONTEND_PID=""
 STARTED_BACKEND=false
 STARTED_FRONTEND=false
+E2E_SSO_PUBLIC_KEY=""
 EXIT_CODE=0
 
 # --------------------------------------------------------------------------
@@ -39,6 +40,9 @@ cleanup() {
   if [ "$STARTED_FRONTEND" = true ] && [ -n "$FRONTEND_PID" ]; then
     kill "$FRONTEND_PID" 2>/dev/null && wait "$FRONTEND_PID" 2>/dev/null || true
     echo "    Stopped frontend (PID $FRONTEND_PID)"
+  fi
+  if [ -n "$E2E_SSO_PUBLIC_KEY" ]; then
+    rm -f -- "$E2E_SSO_PUBLIC_KEY"
   fi
   echo ""
   if [ "$EXIT_CODE" -eq 0 ]; then
@@ -111,7 +115,20 @@ if curl -sf "http://localhost:${PORT}/health" > /dev/null 2>&1; then
   echo "    Backend already running on :$PORT"
 else
   echo "    Starting backend..."
-  (cd server && go run ./cmd/server) > /tmp/multica-check-backend.log 2>&1 &
+  E2E_SSO_PUBLIC_KEY="$(mktemp)"
+  if ! openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null \
+    | openssl pkey -pubout -out "$E2E_SSO_PUBLIC_KEY"; then
+    EXIT_CODE=1
+    exit 1
+  fi
+  (
+    cd server
+    USE_SY_SSO=true \
+      MULTICA_DEV_AUTH_EMAIL= \
+      SSO_PUBLIC_KEY_PATH="$E2E_SSO_PUBLIC_KEY" \
+      SSO_EXPECTED_SUB=e2e \
+      go run ./cmd/server
+  ) > /tmp/multica-check-backend.log 2>&1 &
   BACKEND_PID=$!
   STARTED_BACKEND=true
   wait_for_port "$PORT" "Backend" 90 "/health"
@@ -126,6 +143,12 @@ else
   STARTED_FRONTEND=true
   wait_for_port "$FRONTEND_PORT" "Frontend" 120 "/"
 fi
+
+echo "    Warming E2E frontend routes..."
+for path in /login /onboarding /e2e-workspace/issues; do
+  curl -sf "http://localhost:${FRONTEND_PORT}${path}" > /dev/null \
+    || { EXIT_CODE=1; exit 1; }
+done
 
 # --------------------------------------------------------------------------
 # Step 5: E2E tests (Playwright)

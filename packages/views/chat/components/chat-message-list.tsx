@@ -611,6 +611,7 @@ function FailureBubble({
     codex_semantic_inactivity: t(($) => $.message_list.failure.codex_semantic_inactivity),
     runtime_offline: t(($) => $.message_list.failure.runtime_offline),
     runtime_recovery: t(($) => $.message_list.failure.runtime_recovery),
+    authentication_expired: t(($) => $.message_list.failure.authentication_expired),
     manual: t(($) => $.message_list.failure.manual),
   };
   const label =

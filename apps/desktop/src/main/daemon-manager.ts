@@ -112,10 +112,9 @@ function profileLogPath(profile: string): string {
   return join(profileDir(profile), "daemon.log");
 }
 
-// Sidecar file that records which Multica user the cached PAT in config.json
-// was minted for. The Go CLI/daemon never read or write this file, so it
-// survives Go-side config rewrites. Used to detect user switches and mint a
-// fresh PAT instead of reusing a token that belongs to a previous user.
+// Sidecar file that records which Multica user owns the cached credential in
+// config.json. The Go CLI/daemon never read or write this file, so it survives
+// Go-side config rewrites and lets us detect user switches.
 function profileUserIdPath(profile: string): string {
   return join(profileDir(profile), ".desktop-user-id");
 }
@@ -617,11 +616,6 @@ async function ensureRunningDaemonVersionMatches(): Promise<
   }
 }
 
-/**
- * Exchange the user's JWT for a long-lived PAT via POST /api/tokens. The
- * daemon needs a PAT (or `mul_` / `mdt_` token) because JWTs expire in 30
- * days and signatures are tied to a specific backend instance.
- */
 async function mintPat(jwt: string): Promise<string> {
   if (!targetApiBaseUrl) {
     throw new Error("mint PAT: target API URL not set");
@@ -633,7 +627,6 @@ async function mintPat(jwt: string): Promise<string> {
       "Content-Type": "application/json",
       Authorization: `Bearer ${jwt}`,
     },
-    // Omit expires_in_days → server treats as null → non-expiring PAT.
     body: JSON.stringify({ name: "Multica Desktop" }),
   });
   if (!res.ok) {
@@ -653,49 +646,32 @@ async function mintPat(jwt: string): Promise<string> {
   return data.token;
 }
 
-/**
- * Ensure the active profile's config.json has a usable token for the daemon.
- *
- * - Input from the renderer is the user's JWT (from localStorage) plus the
- *   current user's id, so we can detect session changes.
- * - If the profile already has a cached PAT (`mul_...`) AND the sidecar user
- *   id matches the caller, reuse it — minting fresh on every launch would
- *   accumulate garbage in the user's tokens page.
- * - On user mismatch (or first run) call POST /api/tokens with the JWT to
- *   mint a fresh PAT, overwriting any stale cached PAT. This is the critical
- *   path: without it, a previous user's PAT would be used by a new session.
- * - If the caller happens to pass a PAT directly, write it through.
- * - When we mint fresh and a daemon is already running, restart it so the
- *   new credentials take effect (the Go daemon reads config at startup).
- */
 async function syncToken(
   tokenFromRenderer: string,
   userId: string,
+  useSySso: boolean,
 ): Promise<void> {
   const active = await ensureActiveProfile();
   const config = await readProfileConfig(active.name);
   const previousUserId = await readProfileUserId(active.name);
   const userChanged = Boolean(previousUserId) && previousUserId !== userId;
+
   const sameUserWithCachedPat =
+    !useSySso &&
     !userChanged &&
     previousUserId === userId &&
     typeof config.token === "string" &&
     config.token.startsWith("mul_");
 
-  let finalToken: string;
-  if (tokenFromRenderer.startsWith("mul_")) {
-    finalToken = tokenFromRenderer;
-  } else if (sameUserWithCachedPat) {
-    finalToken = config.token as string;
-  } else {
-    try {
+  let finalToken = tokenFromRenderer;
+  if (!useSySso && !tokenFromRenderer.startsWith("mul_")) {
+    if (sameUserWithCachedPat) {
+      finalToken = config.token as string;
+    } else {
       finalToken = await mintPat(tokenFromRenderer);
       console.log(
         `[daemon] minted PAT for profile "${active.name}" (user_changed=${userChanged})`,
       );
-    } catch (err) {
-      console.error("[daemon] failed to mint PAT:", err);
-      throw err;
     }
   }
 
@@ -747,8 +723,8 @@ async function clearToken(): Promise<void> {
     delete config.token;
     await writeProfileConfig(active.name, config);
   }
-  // Always drop the sidecar so a subsequent syncToken from any user is
-  // treated as a fresh mint, not a reuse of a stale cached PAT.
+  // Always drop the sidecar so a subsequent syncToken cannot inherit the
+  // previous user's identity marker.
   await removeProfileUserId(active.name);
 }
 
@@ -782,7 +758,7 @@ async function reauthenticate(
   try {
     await clearToken();
     // syncToken mints a fresh PAT because clearToken just removed any cache.
-    await syncToken(token, userId);
+    await syncToken(token, userId, false);
   } catch (err) {
     if (isAuthStatusError(err)) return { ok: false, reason: "session_invalid" };
     return { ok: false, reason: "transient", message: errorMessage(err) };
@@ -1176,7 +1152,8 @@ export function setupDaemonManager(
   ipcMain.handle("daemon:get-host-name", () => hostname());
   ipcMain.handle(
     "daemon:sync-token",
-    (_event, token: string, userId: string) => syncToken(token, userId),
+    (_event, token: string, userId: string, useSySso: boolean) =>
+      syncToken(token, userId, useSySso),
   );
   ipcMain.handle("daemon:clear-token", () => clearToken());
   ipcMain.handle(

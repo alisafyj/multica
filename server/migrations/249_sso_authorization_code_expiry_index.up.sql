@@ -1,0 +1,2 @@
+CREATE INDEX CONCURRENTLY sso_authorization_code_expires_at_idx
+    ON sso_authorization_code (expires_at);

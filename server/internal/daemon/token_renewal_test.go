@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // captureLogger returns a *slog.Logger whose output lands in buf, so tests
@@ -293,6 +294,53 @@ func TestPreflightAuth_TransientRenewFailureDoesNotBlockStartup(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "level=WARN") {
 		t.Fatalf("transient 500 must not emit the re-login WARN, got: %s", buf.String())
+	}
+}
+
+func TestPreflightAuth_RenewsOnlyLegacyPAT(t *testing.T) {
+	expiresAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	for _, tc := range []struct {
+		name, token string
+		wantRenew   bool
+		wantExpiry  bool
+	}{
+		{name: "legacy PAT", token: "mul_pat", wantRenew: true},
+		{name: "SSO JWT", token: "eyJhbGciOiJIUzI1NiJ9.payload.signature", wantExpiry: true},
+		{name: "service token", token: "msa_service", wantExpiry: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var renewCalls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/tokens/current/renew":
+					renewCalls.Add(1)
+					_ = json.NewEncoder(w).Encode(map[string]any{"renewed": false})
+				case "/api/daemon/workspaces":
+					if tc.wantExpiry {
+						w.Header().Set("X-Auth-Expires-At", expiresAt.Format(time.RFC3339))
+					}
+					_, _ = w.Write([]byte(`[]`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			d := &Daemon{
+				client: NewClient(srv.URL),
+				logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			}
+			d.client.SetToken(tc.token)
+			if err := d.preflightAuth(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := renewCalls.Load() > 0; got != tc.wantRenew {
+				t.Fatalf("renew called = %v, want %v", got, tc.wantRenew)
+			}
+			if tc.wantExpiry && !d.authExpiresAt.Equal(expiresAt) {
+				t.Fatalf("auth expiry = %s, want %s", d.authExpiresAt, expiresAt)
+			}
+		})
 	}
 }
 

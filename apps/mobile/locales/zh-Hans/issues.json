@@ -193,6 +193,7 @@
         "codex_semantic_inactivity": "Codex 无响应",
         "runtime_offline": "运行时离线",
         "runtime_recovery": "运行时恢复中",
+        "authentication_expired": "身份认证已过期",
         "manual": "手动"
       },
       "fallback_summary": {

@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGetState, logout } = vi.hoisted(() => ({
+const { mockGetState, logout, configState } = vi.hoisted(() => ({
   mockGetState: vi.fn(),
   logout: vi.fn(),
+  configState: { useSySso: false },
 }));
 
 const { toastError } = vi.hoisted(() => ({ toastError: vi.fn() }));
 
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: { getState: mockGetState },
+}));
+
+vi.mock("@multica/core/config", () => ({
+  configStore: { getState: () => configState },
 }));
 
 vi.mock("sonner", () => ({
@@ -20,15 +25,29 @@ import { reauthenticateDaemon } from "./daemon-reauth";
 const daemonAPI = {
   reauthenticate: vi.fn(),
 };
+const desktopAPI = { startSSO: vi.fn() };
 
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  configState.useSySso = false;
   (window as unknown as { daemonAPI: typeof daemonAPI }).daemonAPI = daemonAPI;
+  (window as unknown as { desktopAPI: typeof desktopAPI }).desktopAPI = desktopAPI;
   mockGetState.mockReturnValue({ user: { id: "user-1" }, logout });
 });
 
 describe("reauthenticateDaemon", () => {
+  it("starts a fresh SSO authorization instead of reusing an expired token", async () => {
+    configState.useSySso = true;
+    desktopAPI.startSSO.mockResolvedValue(undefined);
+
+    await reauthenticateDaemon();
+
+    expect(desktopAPI.startSSO).toHaveBeenCalledOnce();
+    expect(daemonAPI.reauthenticate).not.toHaveBeenCalled();
+    expect(logout).not.toHaveBeenCalled();
+  });
+
   it("re-mints + restarts the daemon when signed in, without logging out", async () => {
     localStorage.setItem("multica_token", "jwt-abc");
     daemonAPI.reauthenticate.mockResolvedValue({ ok: true });

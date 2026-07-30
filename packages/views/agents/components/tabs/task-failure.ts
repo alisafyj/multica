@@ -7,7 +7,7 @@
 // failed tasks no longer have a top-level workload state; failure context
 // is purely a detail-page concern now.
 //
-// Covers the canonical taxonomy in server/pkg/taskfailure — 7 platform-side
+// Covers the canonical taxonomy in server/pkg/taskfailure — 8 platform-side
 // reasons plus 14 `agent_error.*` sub-reasons — and the pre-MUL-1949 coarse
 // values still present on historical rows. This used to be a
 // `Record<TaskFailureReason, string>` indexed with a cast, which silently
@@ -19,6 +19,7 @@ const REASON_LABEL: Record<string, string> = {
   queued_expired: "Expired in queue",
   runtime_offline: "Daemon offline",
   runtime_recovery: "Daemon restarted",
+  authentication_expired: "Authentication expired",
   timeout: "Task timed out",
   iteration_limit: "Hit the iteration limit",
   agent_blocked: "Waiting on human input",

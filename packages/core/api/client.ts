@@ -13,6 +13,9 @@ import type {
   UpdateMeRequest,
   CreateMemberRequest,
   UpdateMemberRequest,
+  PersonalAccessToken,
+  CreatePersonalAccessTokenRequest,
+  CreatePersonalAccessTokenResponse,
   ListIssuesParams,
   ListGroupedIssuesParams,
   IssueTableFacetsRequest,
@@ -61,9 +64,6 @@ import type {
   UpdateSkillRequest,
   SetAgentSkillsRequest,
   SetAgentRuntimeSkillEnabledRequest,
-  PersonalAccessToken,
-  CreatePersonalAccessTokenRequest,
-  CreatePersonalAccessTokenResponse,
   RuntimeUsage,
   IssueUsageSummary,
   RuntimeHourlyActivity,
@@ -387,6 +387,10 @@ export interface ClientUsageRequest {
   runtime?: ClientRuntimeSnapshot;
 }
 
+export interface SSOSessionResponse {
+  user: User;
+}
+
 export interface LoginResponse {
   token: string;
   user: User;
@@ -597,6 +601,10 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify({ code, redirect_uri: redirectUri }),
     });
+  }
+
+  async ssoSession(): Promise<SSOSessionResponse> {
+    return this.fetch("/auth/sso/session", { method: "POST" });
   }
 
   async logout(): Promise<void> {
@@ -2147,7 +2155,9 @@ export class ApiClient {
     return this.fetch("/api/tokens");
   }
 
-  async createPersonalAccessToken(data: CreatePersonalAccessTokenRequest): Promise<CreatePersonalAccessTokenResponse> {
+  async createPersonalAccessToken(
+    data: CreatePersonalAccessTokenRequest,
+  ): Promise<CreatePersonalAccessTokenResponse> {
     return this.fetch("/api/tokens", {
       method: "POST",
       body: JSON.stringify(data),

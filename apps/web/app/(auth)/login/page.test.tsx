@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -24,6 +24,7 @@ function createWrapper() {
 const {
   mockSendCode,
   mockVerifyCode,
+  mockLoginWithSSO,
   mockIssueCliToken,
   mockListWorkspaces,
   mockListMyInvitations,
@@ -31,9 +32,12 @@ const {
   mockReplace,
   searchParamsState,
   authStateRef,
+  configStateRef,
+  mockGetConfig,
 } = vi.hoisted(() => ({
   mockSendCode: vi.fn(),
   mockVerifyCode: vi.fn(),
+  mockLoginWithSSO: vi.fn(),
   mockIssueCliToken: vi.fn(),
   mockListWorkspaces: vi.fn(),
   mockListMyInvitations: vi.fn(),
@@ -44,10 +48,20 @@ const {
     state: {
       sendCode: vi.fn(),
       verifyCode: vi.fn(),
+      loginWithSSO: vi.fn(),
       user: null as null | { id: string; email: string; onboarded_at?: string | null },
       isLoading: false,
     },
   },
+  configStateRef: {
+    state: {
+      useSySso: false as boolean | null,
+      authConfigError: null as string | null,
+      googleClientId: "",
+      loadConfig: vi.fn(),
+    },
+  },
+  mockGetConfig: vi.fn(),
 }));
 
 // Mock next/navigation — router spies are hoisted so tests can assert
@@ -69,6 +83,7 @@ vi.mock("@multica/core/auth", async () => {
     );
   authStateRef.state.sendCode = mockSendCode;
   authStateRef.state.verifyCode = mockVerifyCode;
+  authStateRef.state.loginWithSSO = mockLoginWithSSO;
   const useAuthStore = Object.assign(
     (selector: (s: typeof authStateRef.state) => unknown) =>
       selector(authStateRef.state),
@@ -76,6 +91,11 @@ vi.mock("@multica/core/auth", async () => {
   );
   return { ...actual, useAuthStore };
 });
+
+vi.mock("@multica/core/config", () => ({
+  useConfigStore: (selector: (state: typeof configStateRef.state) => unknown) =>
+    selector(configStateRef.state),
+}));
 
 // Mock auth-cookie
 vi.mock("@/features/auth/auth-cookie", () => ({
@@ -85,6 +105,7 @@ vi.mock("@/features/auth/auth-cookie", () => ({
 // Mock api
 vi.mock("@multica/core/api", () => ({
   api: {
+    getConfig: mockGetConfig,
     listWorkspaces: mockListWorkspaces,
     listMyInvitations: mockListMyInvitations,
     verifyCode: vi.fn(),
@@ -102,6 +123,16 @@ describe("LoginPage", () => {
     searchParamsState.params = new URLSearchParams();
     authStateRef.state.user = null;
     authStateRef.state.isLoading = false;
+    configStateRef.state.useSySso = false;
+    configStateRef.state.authConfigError = null;
+    configStateRef.state.googleClientId = "";
+    configStateRef.state.loadConfig.mockImplementation((request) => request());
+    mockLoginWithSSO.mockResolvedValue({
+      id: "u1",
+      email: "test@multica.ai",
+      onboarded_at: "2026-01-01T00:00:00Z",
+    });
+    mockGetConfig.mockResolvedValue({ use_sy_sso: false });
     mockListWorkspaces.mockResolvedValue([]);
     mockListMyInvitations.mockResolvedValue([]);
   });
@@ -273,6 +304,36 @@ describe("LoginPage", () => {
         expect(mockReplace).toHaveBeenCalledWith("/invite/abc");
       });
       expect(mockListWorkspaces).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("company SSO mode", () => {
+    it("waits for auth config before choosing a login mode", () => {
+      configStateRef.state.useSySso = null;
+      render(<LoginPage />, { wrapper: createWrapper() });
+
+      expect(screen.getByText("Loading sign-in configuration")).toBeInTheDocument();
+      expect(mockLoginWithSSO).not.toHaveBeenCalled();
+    });
+
+    it("retries a failed auth config request", () => {
+      configStateRef.state.useSySso = null;
+      configStateRef.state.authConfigError = "Config unavailable";
+      render(<LoginPage />, { wrapper: createWrapper() });
+
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      expect(configStateRef.state.loadConfig).toHaveBeenCalledOnce();
+      expect(mockGetConfig).toHaveBeenCalledOnce();
+    });
+
+    it("exchanges the SSO session and preserves a safe next destination", async () => {
+      configStateRef.state.useSySso = true;
+      searchParamsState.params = new URLSearchParams({ next: "/invite/inv-1" });
+      render(<LoginPage />, { wrapper: createWrapper() });
+
+      await waitFor(() => expect(mockLoginWithSSO).toHaveBeenCalledOnce());
+      await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/invite/inv-1"));
+      expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
     });
   });
 });

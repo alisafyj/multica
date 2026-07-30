@@ -57,6 +57,7 @@ type dbExecutor interface {
 }
 
 type Config struct {
+	UseSySSO            bool
 	AllowSignup         bool
 	AllowedEmails       []string
 	AllowedEmailDomains []string
@@ -123,7 +124,10 @@ type Config struct {
 	// value main.go stamps via -X main.version and reports on /metrics).
 	// Surfaced through /api/config so self-hosted operators can confirm which
 	// server build is deployed. Empty in dev builds.
-	ServerVersion string
+	ServerVersion         string
+	SSODesktopRedirectURI string
+	SSOMobileRedirectURI  string
+	DevAuthEmail          string
 }
 
 type cloudRuntimeProxy interface {
@@ -259,8 +263,9 @@ type Handler struct {
 	// trigger is a no-op) when GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY are unset,
 	// so the feature degrades cleanly on deployments without a private key.
 	// Wired in cmd/server/router.go after New.
-	PRRefresh *ghsnapshot.Manager
-	cfg       Config
+	PRRefresh   *ghsnapshot.Manager
+	SSOVerifier *auth.SSOVerifier
+	cfg         Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {

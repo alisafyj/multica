@@ -1,4 +1,5 @@
 import { useAuthStore } from "@multica/core/auth";
+import { configStore } from "@multica/core/config";
 import { toast } from "sonner";
 
 /**
@@ -20,6 +21,17 @@ import { toast } from "sonner";
  */
 export async function reauthenticateDaemon(): Promise<void> {
   const user = useAuthStore.getState().user;
+  const useSySso = configStore.getState().useSySso;
+  if (user && useSySso) {
+    try {
+      await window.desktopAPI.startSSO();
+    } catch (err) {
+      toast.error("Couldn't reconnect the daemon", {
+        description: err instanceof Error ? err.message : "Please try again.",
+      });
+    }
+    return;
+  }
   const token = localStorage.getItem("multica_token");
   if (!user || !token) {
     // No usable session at all — the standard recovery is the login page.

@@ -2,6 +2,8 @@
 
 import { useMemo } from "react";
 import { CoreProvider } from "@multica/core/platform";
+import { useAuthStore } from "@multica/core/auth";
+import { configStore } from "@multica/core/config";
 import { createBrowserCookieLocaleAdapter } from "@multica/core/i18n/browser";
 import type { LocaleResources, SupportedLocale } from "@multica/core/i18n";
 import { useWelcomeStore } from "@multica/core/onboarding";
@@ -13,12 +15,6 @@ import {
 } from "@/features/auth/auth-cookie";
 import { detectWebOS } from "@/platform/client-os";
 
-// Legacy token in localStorage → keep this session in token mode so users who
-// logged in before the cookie-auth migration stay authed. They migrate to
-// cookie mode on their next logout/login cycle (logout clears multica_token).
-// Sunset: once telemetry shows <1% of sessions still carry multica_token,
-// delete this branch and hard-code `cookieAuth` — the localStorage token is
-// XSS-exposed and is the exact thing the cookie migration exists to remove.
 function hasLegacyToken(): boolean {
   if (typeof window === "undefined") return false;
   try {
@@ -71,6 +67,8 @@ export function WebProviders({
       cookieAuth={cookieAuth}
       onLogin={setLoggedInCookie}
       onLogout={() => {
+        const wasAuthenticated = useAuthStore.getState().user != null;
+        const useSySso = configStore.getState().useSySso;
         // welcome-store holds the transient post-onboarding signal. Must
         // clear on logout so user B logging into the same browser doesn't
         // inherit user A's signal and have <WelcomeAfterOnboarding /> fire
@@ -79,6 +77,11 @@ export function WebProviders({
         // is where it gets wired.
         useWelcomeStore.getState().reset();
         clearLoggedInCookie();
+        if (wasAuthenticated && useSySso === true) {
+          window.location.assign("/logout");
+        } else if (!wasAuthenticated && useSySso === true && !cookieAuth) {
+          window.location.reload();
+        }
       }}
       identity={identity}
       locale={locale}

@@ -36,8 +36,14 @@ interface DesktopAPI {
   getLastFreeze: () => FreezeBreadcrumb | null;
   /** Report the resolved account identity so stale issue windows can close. */
   reportAuthSession: (userId: string | null) => void;
-  /** Listen for auth token delivered via deep link. Returns an unsubscribe function. */
+  /** Decrypt the persisted SSO credential into renderer memory. */
+  getAuthToken: () => string | null;
+  /** Listen for a legacy auth token delivered via deep link. */
   onAuthToken: (callback: (token: string) => void) => () => void;
+  startSSO: () => Promise<void>;
+  clearAuthToken: () => Promise<void>;
+  onAuthChanged: (callback: () => void) => () => void;
+  onAuthError: (callback: (message: string) => void) => () => void;
   /** Listen for invitation IDs delivered via deep link. Returns an unsubscribe function. */
   onInviteOpen: (callback: (invitationId: string) => void) => () => void;
   /** Open a URL in the default browser. */
@@ -120,7 +126,7 @@ interface DaemonAPI {
   getHostName: () => Promise<string>;
   onStatusChange: (callback: (status: DaemonStatus) => void) => () => void;
   setTargetApiUrl: (url: string) => Promise<void>;
-  syncToken: (token: string, userId: string) => Promise<void>;
+  syncToken: (token: string, userId: string, useSySso: boolean) => Promise<void>;
   clearToken: () => Promise<void>;
   reauthenticate: (
     token: string,

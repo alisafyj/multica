@@ -40,6 +40,7 @@
       "codex_semantic_inactivity": "智能体长时间无响应，已停止。请重试。",
       "runtime_offline": "智能体当前离线，暂时无法回复。等它恢复在线后再试。",
       "runtime_recovery": "智能体在完成前重启了。请重试。",
+      "authentication_expired": "身份认证在智能体完成前已过期。请重新登录后重试。",
       "manual": "这次回复已取消。",
       "fallback": "出了点问题，智能体未能完成回复。请重试。"
     },

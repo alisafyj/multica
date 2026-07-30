@@ -2610,6 +2610,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "runtime owner required to mint task token")
 		return
 	}
+	tokenNow := time.Now()
 	tokenStr, terr := auth.GenerateAgentTaskToken()
 	if terr != nil {
 		outcome = "error_token"
@@ -2625,7 +2626,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		AgentID:     task.AgentID,
 		WorkspaceID: parseUUID(resp.WorkspaceID),
 		UserID:      runtime.OwnerID,
-		ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true},
+		ExpiresAt:   pgtype.Timestamptz{Time: taskTokenExpiry(r, tokenNow), Valid: true},
 	}, deliveredCommentIDs, commentBackedTask)
 	if ferr != nil {
 		outcome = "error_claim_finalize"
@@ -2654,6 +2655,14 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	payloadBytes, _ = writeMeasuredJSON(w, http.StatusOK, map[string]any{"task": resp})
+}
+
+func taskTokenExpiry(r *http.Request, now time.Time) time.Time {
+	expiresAt := now.Add(24 * time.Hour)
+	if parent, err := time.Parse(time.RFC3339, r.Header.Get("X-Auth-Expires-At")); err == nil && parent.Before(expiresAt) {
+		return parent
+	}
+	return expiresAt
 }
 
 type resolveSkillBundlesRequest struct {

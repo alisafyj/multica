@@ -24,7 +24,7 @@ import {
   CardContent,
 } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { setLoggedInCookie } from "@/features/auth/auth-cookie";
 import Link from "next/link";
 import { LoginPage, validateCliCallback } from "@multica/views/auth";
@@ -56,7 +56,100 @@ async function resolveLoggedInDestination(
   return resolvePostAuthDestination(workspaces, hasOnboarded);
 }
 
-function LoginPageContent() {
+function AuthModeStatus({
+  error,
+  onRetry,
+}: {
+  error: string | null;
+  onRetry: () => void;
+}) {
+  return (
+    <main className="flex min-h-svh items-center justify-center px-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader className="text-center">
+          <CardTitle>
+            {error ? "Unable to load sign-in" : "Loading sign-in configuration"}
+          </CardTitle>
+          <CardDescription>
+            {error || "Checking the server authentication mode..."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex justify-center">
+          {error ? (
+            <Button onClick={onRetry}>
+              <RefreshCw />
+              Retry
+            </Button>
+          ) : (
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          )}
+        </CardContent>
+      </Card>
+    </main>
+  );
+}
+
+function SSOLoginContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const qc = useQueryClient();
+  const loginWithSSO = useAuthStore((state) => state.loginWithSSO);
+  const [attempt, setAttempt] = useState(0);
+  const [error, setError] = useState("");
+  const nextUrl = sanitizeNextUrl(searchParams.get("next"));
+
+  useEffect(() => {
+    let active = true;
+    setError("");
+    void (async () => {
+      try {
+        const user = await loginWithSSO();
+        const workspaces = await api.listWorkspaces();
+        qc.setQueryData(workspaceKeys.list(), workspaces);
+        const destination =
+          nextUrl ??
+          (await resolveLoggedInDestination(
+            qc,
+            user.onboarded_at != null,
+            workspaces,
+          ));
+        if (active) router.replace(destination);
+      } catch (err) {
+        if (active) {
+          setError(err instanceof Error ? err.message : "SSO sign-in failed");
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [attempt, loginWithSSO, nextUrl, qc, router]);
+
+  return (
+    <main className="flex min-h-svh items-center justify-center px-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader className="text-center">
+          <CardTitle>{error ? "Sign-in failed" : "Signing in"}</CardTitle>
+          <CardDescription>
+            {error || "Completing company SSO authentication..."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex justify-center">
+          {error ? (
+            <Button onClick={() => setAttempt((value) => value + 1)}>
+              <RefreshCw />
+              Retry
+            </Button>
+          ) : (
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          )}
+        </CardContent>
+      </Card>
+    </main>
+  );
+}
+
+function LegacyLoginContent() {
   const router = useRouter();
   const qc = useQueryClient();
   const { t } = useT("auth");
@@ -246,6 +339,24 @@ function LoginPageContent() {
       }
     />
   );
+}
+
+function LoginPageContent() {
+  const useSySso = useConfigStore((state) => state.useSySso);
+  const configError = useConfigStore((state) => state.authConfigError);
+  const loadConfig = useConfigStore((state) => state.loadConfig);
+
+  if (useSySso === null) {
+    return (
+      <AuthModeStatus
+        error={configError}
+        onRetry={() => {
+          void loadConfig(() => api.getConfig()).catch(() => {});
+        }}
+      />
+    );
+  }
+  return useSySso ? <SSOLoginContent /> : <LegacyLoginContent />;
 }
 
 export default function Page() {

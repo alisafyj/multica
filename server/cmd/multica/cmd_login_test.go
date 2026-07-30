@@ -46,6 +46,10 @@ func TestRunLoginTokenAutoWatchesDiscoveredWorkspaces(t *testing.T) {
 	t.Setenv("MULTICA_WORKSPACE_ID", "")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/config" {
+			_ = json.NewEncoder(w).Encode(map[string]bool{"use_sy_sso": false})
+			return
+		}
 		if r.Header.Get("Authorization") != "Bearer mul_test_token" {
 			t.Fatalf("Authorization = %q, want bearer token", r.Header.Get("Authorization"))
 		}

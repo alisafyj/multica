@@ -1,21 +1,33 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { paths } from "@multica/core/paths";
 
 const {
   mockPush,
+  mockReplace,
   mockSearchParams,
   mockLoginWithGoogle,
   mockListWorkspaces,
   mockListMyInvitations,
   mockSetQueryData,
+  configStateRef,
+  mockGetConfig,
 } = vi.hoisted(() => ({
   mockPush: vi.fn(),
+  mockReplace: vi.fn(),
   mockSearchParams: new URLSearchParams(),
   mockLoginWithGoogle: vi.fn(),
   mockListWorkspaces: vi.fn(),
   mockListMyInvitations: vi.fn(),
   mockSetQueryData: vi.fn(),
+  configStateRef: {
+    state: {
+      useSySso: false as boolean | null,
+      authConfigError: null as string | null,
+      loadConfig: vi.fn(),
+    },
+  },
+  mockGetConfig: vi.fn(),
 }));
 
 const makeUser = (
@@ -36,8 +48,13 @@ const makeUser = (
 });
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: mockPush }),
+  useRouter: () => ({ push: mockPush, replace: mockReplace }),
   useSearchParams: () => mockSearchParams,
+}));
+
+vi.mock("@multica/core/config", () => ({
+  useConfigStore: (selector: (state: typeof configStateRef.state) => unknown) =>
+    selector(configStateRef.state),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -67,6 +84,7 @@ vi.mock("@multica/core/workspace/queries", () => ({
 
 vi.mock("@multica/core/api", () => ({
   api: {
+    getConfig: mockGetConfig,
     listWorkspaces: mockListWorkspaces,
     listMyInvitations: mockListMyInvitations,
     googleLogin: vi.fn(),
@@ -96,6 +114,10 @@ describe("CallbackPage", () => {
     mockLoginWithGoogle.mockResolvedValue(makeUser());
     mockListWorkspaces.mockResolvedValue([]);
     mockListMyInvitations.mockResolvedValue([]);
+    configStateRef.state.useSySso = false;
+    configStateRef.state.authConfigError = null;
+    configStateRef.state.loadConfig.mockImplementation((request) => request());
+    mockGetConfig.mockResolvedValue({ use_sy_sso: false });
   });
 
   it("unonboarded user honors a safe next= (e.g. /invite/{id}) so invitees aren't trapped", async () => {
@@ -323,5 +345,32 @@ describe("CallbackPage", () => {
     await waitFor(() => {
       expect(mockPush).toHaveBeenCalledWith(paths.workspace("acme").issues());
     });
+  });
+
+  it("does not exchange Google credentials while auth config is unknown", () => {
+    configStateRef.state.useSySso = null;
+    render(<CallbackPage />);
+
+    expect(screen.getByText("Loading sign-in configuration")).toBeInTheDocument();
+    expect(mockLoginWithGoogle).not.toHaveBeenCalled();
+  });
+
+  it("retries auth config without falling back to Google", () => {
+    configStateRef.state.useSySso = null;
+    configStateRef.state.authConfigError = "Config unavailable";
+    render(<CallbackPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(configStateRef.state.loadConfig).toHaveBeenCalledOnce();
+    expect(mockGetConfig).toHaveBeenCalledOnce();
+    expect(mockLoginWithGoogle).not.toHaveBeenCalled();
+  });
+
+  it("redirects SSO callbacks to the login entry without exchanging Google credentials", async () => {
+    configStateRef.state.useSySso = true;
+    render(<CallbackPage />);
+
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/login"));
+    expect(mockLoginWithGoogle).not.toHaveBeenCalled();
   });
 });

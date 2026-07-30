@@ -60,6 +60,7 @@ func init() {
 	// while `--token mul_...` / `--token mcn_...` and the `=value` form
 	// consume the value normally.
 	loginCmd.Flags().Lookup("token").NoOptDefVal = tokenPromptSentinel
+	loginCmd.Flags().String("service-token", "", "Authenticate the dedicated ai_work Mac with an msa_ service token")
 	loginCmd.Flags().String(callbackHostFlag, "", callbackHostFlagHelp)
 }
 

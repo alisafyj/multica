@@ -1,5 +1,6 @@
 import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand";
+import type { AppConfigResponse } from "../api/schemas";
 
 interface ConfigState {
   cdnDomain: string;
@@ -9,6 +10,8 @@ interface ConfigState {
   cdnSigned: boolean;
   allowSignup: boolean;
   googleClientId: string;
+  useSySso: boolean | null;
+  authConfigError: string | null;
   daemonServerUrl: string;
   daemonAppUrl: string;
   // Self-host gate (#3433): when true, every "Create workspace" affordance
@@ -29,6 +32,7 @@ interface ConfigState {
   setAuthConfig: (config: {
     allowSignup: boolean;
     googleClientId?: string;
+    useSySso?: boolean | null;
     workspaceCreationDisabled?: boolean;
     vcsIntegrationAvailable?: boolean;
   }) => void;
@@ -38,6 +42,9 @@ interface ConfigState {
   }) => void;
   setFeatureFlags: (flags?: Record<string, boolean>) => void;
   setServerVersion: (version?: string) => void;
+  loadConfig: (
+    request: () => Promise<AppConfigResponse>,
+  ) => Promise<AppConfigResponse>;
 }
 
 export const configStore = createStore<ConfigState>((set) => ({
@@ -45,6 +52,8 @@ export const configStore = createStore<ConfigState>((set) => ({
   cdnSigned: false,
   allowSignup: true,
   googleClientId: "",
+  useSySso: null,
+  authConfigError: null,
   daemonServerUrl: "",
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
@@ -55,13 +64,49 @@ export const configStore = createStore<ConfigState>((set) => ({
   setAuthConfig: ({
     allowSignup,
     googleClientId = "",
+    useSySso,
     workspaceCreationDisabled = false,
     vcsIntegrationAvailable = false,
-  }) => set({ allowSignup, googleClientId, workspaceCreationDisabled, vcsIntegrationAvailable }),
+  }) =>
+    set((state) => ({
+      allowSignup,
+      googleClientId,
+      useSySso: useSySso === undefined ? state.useSySso : useSySso,
+      authConfigError: useSySso === undefined ? state.authConfigError : null,
+      workspaceCreationDisabled,
+      vcsIntegrationAvailable,
+    })),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
   setFeatureFlags: (flags = {}) => set({ featureFlags: { ...flags } }),
   setServerVersion: (version = "") => set({ serverVersion: version }),
+  loadConfig: async (request) => {
+    set({ useSySso: null, authConfigError: null });
+    try {
+      const config = await request();
+      set((state) => ({
+        cdnDomain: config.cdn_domain || state.cdnDomain,
+        cdnSigned: config.cdn_signed === true,
+        allowSignup: config.allow_signup,
+        googleClientId: config.google_client_id ?? "",
+        useSySso: config.use_sy_sso,
+        authConfigError: null,
+        daemonServerUrl: config.daemon_server_url ?? "",
+        daemonAppUrl: config.daemon_app_url ?? "",
+        workspaceCreationDisabled: config.workspace_creation_disabled === true,
+        vcsIntegrationAvailable: config.vcs_integration_available === true,
+        featureFlags: { ...(config.feature_flags ?? {}) },
+        serverVersion: config.server_version ?? "",
+      }));
+      return config;
+    } catch (error) {
+      set({
+        useSySso: null,
+        authConfigError: error instanceof Error ? error.message : "Failed to load app config",
+      });
+      throw error;
+    }
+  },
 }));
 
 export function useConfigStore(): ConfigState;

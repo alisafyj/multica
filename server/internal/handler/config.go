@@ -20,6 +20,7 @@ type AppConfig struct {
 	// API endpoint or a freshly signed download_url instead (MUL-3254).
 	// Omitted when false so older clients see the previous shape.
 	CdnSigned bool `json:"cdn_signed,omitempty"`
+	UseSySSO  bool `json:"use_sy_sso"`
 	// Public auth config consumed by the web app at runtime so self-hosted
 	// deployments do not need to rebuild the frontend image when operators
 	// toggle signup or wire Google OAuth.
@@ -68,14 +69,16 @@ type AppConfig struct {
 }
 
 // GetConfig is mounted on the public (unauthenticated) route group because
-// the web app calls it before login to decide whether to render the Google
-// sign-in button and signup UI. Only add fields here that are safe to expose
+// the web app calls it before login. Only add fields here that are safe to expose
 // to anonymous callers — never user- or tenant-scoped data.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	config := AppConfig{
-		AllowSignup:               os.Getenv("ALLOW_SIGNUP") != "false",
-		GoogleClientID:            os.Getenv("GOOGLE_CLIENT_ID"),
+		UseSySSO:                  h.cfg.UseSySSO,
+		AllowSignup:               !h.cfg.UseSySSO && h.cfg.AllowSignup,
 		WorkspaceCreationDisabled: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
+	}
+	if !h.cfg.UseSySSO {
+		config.GoogleClientID = os.Getenv("GOOGLE_CLIENT_ID")
 	}
 	if h.Storage != nil {
 		config.CdnDomain = h.Storage.CdnDomain()

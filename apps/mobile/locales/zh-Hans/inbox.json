@@ -56,7 +56,8 @@
     "agent_completed": "智能体已完成",
     "reaction_added": "已添加表情回应",
     "quick_create_done": "快速创建已完成",
-    "quick_create_failed": "快速创建失败"
+    "quick_create_failed": "快速创建失败",
+    "design_ready": "设计稿已就绪"
   },
   "detail": {
     "set_status_to": "状态设为",
