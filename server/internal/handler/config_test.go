@@ -52,15 +52,19 @@ func TestGetConfigReportsCdnSignedMode(t *testing.T) {
 
 func TestGetConfigIncludesRuntimeAuthConfig(t *testing.T) {
 	origStorage := testHandler.Storage
+	origConfig := testHandler.cfg
 	testHandler.Storage = &mockStorage{}
-	defer func() { testHandler.Storage = origStorage }()
+	testHandler.cfg = Config{UseSySSO: true, AllowSignup: true}
+	defer func() {
+		testHandler.Storage = origStorage
+		testHandler.cfg = origConfig
+	}()
 
-	t.Setenv("ALLOW_SIGNUP", "false")
-	t.Setenv("GOOGLE_CLIENT_ID", "google-client-id")
 	t.Setenv("POSTHOG_API_KEY", "phc_test")
 	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
 	t.Setenv("MULTICA_PUBLIC_URL", "https://api.example.com/")
 	t.Setenv("MULTICA_APP_URL", "https://app.example.com/")
+	t.Setenv("GOOGLE_CLIENT_ID", "legacy-google-client")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 	w := httptest.NewRecorder()
@@ -78,11 +82,14 @@ func TestGetConfigIncludesRuntimeAuthConfig(t *testing.T) {
 	if cfg.CdnDomain != "cdn.example.com" {
 		t.Fatalf("cdn_domain: want cdn.example.com, got %q", cfg.CdnDomain)
 	}
+	if !cfg.UseSySSO {
+		t.Fatalf("use_sy_sso: want true, got false")
+	}
 	if cfg.AllowSignup {
 		t.Fatalf("allow_signup: want false, got true")
 	}
-	if cfg.GoogleClientID != "google-client-id" {
-		t.Fatalf("google_client_id: want google-client-id, got %q", cfg.GoogleClientID)
+	if cfg.GoogleClientID != "" {
+		t.Fatalf("google_client_id: want omitted in SSO mode, got %q", cfg.GoogleClientID)
 	}
 	if cfg.PosthogKey != "phc_test" {
 		t.Fatalf("posthog_key: want phc_test, got %q", cfg.PosthogKey)
@@ -135,6 +142,31 @@ func TestGetConfigHonorsVCSIntegrationSwitch(t *testing.T) {
 	}
 	if string(raw) != "true" {
 		t.Fatalf("vcs_integration_available: want true, got %s", raw)
+	}
+}
+
+func TestGetConfigRestoresLegacyAuthConfigWhenSySSOIsDisabled(t *testing.T) {
+	origConfig := testHandler.cfg
+	testHandler.cfg = Config{AllowSignup: true}
+	defer func() { testHandler.cfg = origConfig }()
+	t.Setenv("GOOGLE_CLIENT_ID", "legacy-google-client")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	w := httptest.NewRecorder()
+	testHandler.GetConfig(w, req)
+
+	var cfg AppConfig
+	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if cfg.UseSySSO {
+		t.Fatalf("use_sy_sso: want false, got true")
+	}
+	if !cfg.AllowSignup {
+		t.Fatalf("allow_signup: want true, got false")
+	}
+	if cfg.GoogleClientID != "legacy-google-client" {
+		t.Fatalf("google_client_id: want legacy-google-client, got %q", cfg.GoogleClientID)
 	}
 }
 

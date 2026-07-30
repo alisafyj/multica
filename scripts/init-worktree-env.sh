@@ -40,6 +40,12 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=${frontend_origin}/auth/callback
 
+USE_SY_SSO=false
+SSO_PUBLIC_KEY_PATH=
+SSO_EXPECTED_SUB=
+SSO_DESKTOP_REDIRECT_URI=multica://auth/callback
+SSO_MOBILE_REDIRECT_URI=multica://auth/mobile-callback
+
 FRONTEND_PORT=${frontend_port}
 FRONTEND_ORIGIN=${frontend_origin}
 NEXT_PUBLIC_API_URL=http://localhost:${backend_port}

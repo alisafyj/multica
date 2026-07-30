@@ -19,6 +19,7 @@ const REASON_LABEL: Record<string, string> = {
   queued_expired: "Expired in queue",
   runtime_offline: "Daemon offline",
   runtime_recovery: "Daemon restarted",
+  authentication_expired: "Authentication expired",
   timeout: "Task timed out",
   iteration_limit: "Hit the iteration limit",
   agent_blocked: "Waiting on human input",

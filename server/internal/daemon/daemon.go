@@ -113,6 +113,13 @@ func taskScopedAuthToken(task Task) (string, error) {
 	return token, nil
 }
 
+var errAuthenticationExpired = errors.New("authentication expired")
+
+const (
+	DefaultAuthDrainLead        = 30 * time.Second
+	DefaultTokenRenewalInterval = 3 * 24 * time.Hour
+)
+
 // taskRunner executes a single agent task and returns the result.
 // Extracted as an interface so tests can inject a fake without spawning real
 // agent processes, while keeping test scaffolding out of the production struct.
@@ -362,6 +369,12 @@ type Daemon struct {
 	updating      atomic.Bool        // prevents concurrent update attempts
 	activeTasks   atomic.Int64       // number of tasks currently in handleTask; exposed via /health
 	ready         atomic.Bool        // false until preflight completes; gates /health status (starting -> running)
+	authDraining  atomic.Bool
+	authExpiresAt time.Time
+	authDrainLead time.Duration
+
+	activeTaskMu      sync.Mutex
+	activeTaskCancels map[string]context.CancelCauseFunc
 
 	// claimMu guards pauseClaims and claimsInFlight. It is held only for the
 	// microseconds it takes to make a decision; ClaimTask itself runs without
@@ -461,6 +474,8 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		reconcile:                 newReconcileBroadcaster(),
 		workspaceChanges:          newWorkspaceChangeSignal(),
 		wsRPC:                     newWSRPCClient(wsRPCResponseGrace),
+		authDrainLead:             DefaultAuthDrainLead,
+		activeTaskCancels:         make(map[string]context.CancelCauseFunc),
 	}
 	d.activeEnvRootsCond = sync.NewCond(&d.activeEnvRootsMu)
 	d.activeCodexStoresCond = sync.NewCond(&d.activeCodexStoresMu)
@@ -1219,6 +1234,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// invariant (renew first) is enforced at one site instead of
 	// scattered into Run, and tests can exercise the failure paths
 	// without the full Run setup.
+	// The initial API call also returns the credential's authoritative expiry.
 	if err := d.preflightAuth(ctx); err != nil {
 		return err
 	}
@@ -1239,15 +1255,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.heartbeatLoop(ctx)
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
-	go d.tokenRenewalLoop(ctx)
+	if strings.HasPrefix(d.client.Token(), "mul_") {
+		go d.tokenRenewalLoop(ctx)
+	} else if !d.authExpiresAt.IsZero() {
+		go d.authExpiryLoop(ctx)
+	}
 
 	// Preflight succeeded and the background loops are up: the daemon has
 	// registered its runtimes and can now claim and run tasks. Flip /health
-	// from "starting" to "running" — this is the signal `daemon start`'s
-	// readiness wait blocks on, so success is reported only after startup
-	// actually completed, not merely because the health port came up.
+	// from "starting" to "running" only after startup actually completed.
 	d.ready.Store(true)
-	d.logger.Debug("background loops launched (workspace-sync, task-wakeup, heartbeat, gc, auto-update, token-renewal); health now reporting ready")
+	d.logger.Debug("background loops launched (workspace-sync, task-wakeup, heartbeat, gc, auto-update, auth-lifecycle); health now reporting ready")
 	err = d.pollLoop(ctx, taskWakeups)
 	d.logger.Debug("daemon main loop returning", "error", err)
 	return err
@@ -2319,51 +2337,33 @@ func (d *Daemon) ensureRepoReady(ctx context.Context, workspaceID, repoURL strin
 	return fmt.Errorf("repo is configured but not synced")
 }
 
-// DefaultTokenRenewalInterval is how often the daemon asks the server to
-// extend its PAT. The server-side threshold is 7 days of remaining lifetime;
-// polling every ~3 days gives at least two chances to renew before the
-// window closes, so a single failed call (network blip, server restart) does
-// not push the token out of the renewal window.
-const DefaultTokenRenewalInterval = 3 * 24 * time.Hour
-
-// preflightAuth runs the two auth-sensitive startup steps in their
-// required order: a synchronous PAT renewal first, then the initial
-// workspace sync. The order matters — running tryRenewToken before any
-// other API call is what surfaces a user-actionable "run multica login"
-// WARN when the PAT is already revoked or expired. If we let the
-// workspace sync go first, its 401 would short-circuit Run before the
-// renewal loop's first tick ever fires, and the operator would see only
-// a generic auth failure in the workspace-sync log with no hint that
-// re-login is the fix.
-//
-// The renewal is best-effort: tryRenewToken logs and returns, never
-// propagating errors. preflightAuth's exit status is driven entirely by
-// the workspace sync — so a transient renewal failure (network blip,
-// 500) does not by itself block startup. A successful sync with zero
-// workspaces is fine: a newly-signed-up user may start the daemon
-// before creating their first workspace, and workspaceSyncLoop will
-// register runtimes once one appears.
 func (d *Daemon) preflightAuth(ctx context.Context) error {
-	d.tryRenewToken(ctx)
-	return d.syncWorkspacesFromAPI(ctx, false)
+	isRenewablePAT := strings.HasPrefix(d.client.Token(), "mul_")
+	if isRenewablePAT {
+		d.tryRenewToken(ctx)
+	}
+	if err := d.syncWorkspacesFromAPI(ctx, false); err != nil {
+		if isUnauthorizedError(err) {
+			return fmt.Errorf("authentication expired: run %s and restart the daemon", d.loginCommand())
+		}
+		return err
+	}
+	d.authExpiresAt = d.client.AuthExpiresAt()
+	if isRenewablePAT {
+		return nil
+	}
+	if d.authExpiresAt.IsZero() {
+		return errors.New("server did not return authentication expiry")
+	}
+	if !time.Now().Before(d.authExpiresAt) {
+		return fmt.Errorf("authentication expired: run %s and restart the daemon", d.loginCommand())
+	}
+	return nil
 }
 
-// tokenRenewalLoop keeps the daemon's PAT alive by periodically asking the
-// server to extend its expires_at in-place. The startup renewal happens
-// synchronously in preflightAuth so a daemon coming back online after a
-// week of downtime gets a fresh expiry before its next heartbeat could
-// 401; this loop owns the long-running ~3-day cadence after that.
-//
-// The server is authoritative on the renewal threshold (it sees expires_at;
-// we don't), so this loop is intentionally dumb: call, log, sleep, repeat.
-// On 401 we surface a clear "re-login required" warning because the daemon
-// has no way to recover automatically — but we keep the loop running so the
-// user sees the same warning on every cycle until they fix it, rather than
-// silently exiting and forcing them to read scrollback to find the cause.
 func (d *Daemon) tokenRenewalLoop(ctx context.Context) {
 	ticker := time.NewTicker(DefaultTokenRenewalInterval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -2374,22 +2374,13 @@ func (d *Daemon) tokenRenewalLoop(ctx context.Context) {
 	}
 }
 
-// tryRenewToken performs one renewal round-trip with a short, isolated
-// timeout. Errors are logged but never propagated — there is no caller to
-// handle them. Failures are debug-level except for 401, which gets a
-// user-actionable warning.
 func (d *Daemon) tryRenewToken(ctx context.Context) {
 	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-
 	resp, err := d.client.RenewToken(reqCtx)
 	if err != nil {
 		if isUnauthorizedError(err) {
-			loginHint := "'multica login'"
-			if d.cfg.Profile != "" {
-				loginHint = fmt.Sprintf("'multica login --profile %s'", d.cfg.Profile)
-			}
-			d.logger.Warn("auth token rejected by server — run "+loginHint+" to re-authenticate, then restart the daemon", "error", err)
+			d.logger.Warn("auth token rejected by server; run "+d.loginCommand()+" to re-authenticate, then restart the daemon", "error", err)
 			return
 		}
 		d.logger.Debug("token renewal failed; will retry on next cycle", "error", err)
@@ -2409,6 +2400,57 @@ func (d *Daemon) tryRenewToken(ctx context.Context) {
 // to discover their first workspace. Account-scoped WS hints trigger an
 // immediate minimal sync, while a WS reconnect also reconciles runtime profiles
 // changed during the connection gap.
+func (d *Daemon) loginCommand() string {
+	if d.cfg.Profile != "" {
+		return fmt.Sprintf("'multica login --profile %s'", d.cfg.Profile)
+	}
+	return "'multica login'"
+}
+
+func (d *Daemon) authExpiryLoop(ctx context.Context) {
+	if d.authExpiresAt.IsZero() {
+		return
+	}
+	drainLead := d.authDrainLead
+	if drainLead <= 0 {
+		drainLead = DefaultAuthDrainLead
+	}
+	drainTimer := time.NewTimer(time.Until(d.authExpiresAt.Add(-drainLead)))
+	defer drainTimer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-drainTimer.C:
+		d.beginAuthExpiryDrain()
+	}
+
+	expiryTimer := time.NewTimer(time.Until(d.authExpiresAt))
+	defer expiryTimer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-expiryTimer.C:
+		d.logger.Warn("authentication expired; run " + d.loginCommand() + " and restart the daemon")
+		if d.cancelFunc != nil {
+			d.cancelFunc()
+		}
+	}
+}
+
+func (d *Daemon) beginAuthExpiryDrain() {
+	if d.authDraining.Swap(true) {
+		return
+	}
+	d.logger.Warn("authentication expiring; stopping new tasks and terminating active tasks", "expires_at", d.authExpiresAt)
+	d.activeTaskMu.Lock()
+	defer d.activeTaskMu.Unlock()
+	for _, cancel := range d.activeTaskCancels {
+		cancel(errAuthenticationExpired)
+	}
+}
+
+// workspaceSyncLoop periodically fetches the user's workspaces from the API
+// and registers runtimes for any new ones.
 func (d *Daemon) workspaceSyncLoop(ctx context.Context) {
 	timer := time.NewTimer(jitterDuration(d.workspaceSyncBaseInterval()))
 	defer timer.Stop()
@@ -3340,6 +3382,9 @@ func (d *Daemon) reportUpdateResultWithRetry(ctx context.Context, runtimeID, upd
 // either right after a failed/empty claim, or via the handleTask goroutine's
 // defer once the task is handed off.
 func (d *Daemon) tryEnterClaim() bool {
+	if d.authDraining.Load() {
+		return false
+	}
 	d.claimMu.Lock()
 	defer d.claimMu.Unlock()
 	if d.pauseClaims {
@@ -3755,6 +3800,24 @@ func (d *Daemon) watchTaskCancellation(ctx context.Context, taskID string, pollI
 }
 
 func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
+	taskCtx, cancelTask := context.WithCancelCause(ctx)
+	d.activeTaskMu.Lock()
+	if d.activeTaskCancels == nil {
+		d.activeTaskCancels = make(map[string]context.CancelCauseFunc)
+	}
+	d.activeTaskCancels[task.ID] = cancelTask
+	if d.authDraining.Load() {
+		cancelTask(errAuthenticationExpired)
+	}
+	d.activeTaskMu.Unlock()
+	defer func() {
+		cancelTask(nil)
+		d.activeTaskMu.Lock()
+		delete(d.activeTaskCancels, task.ID)
+		d.activeTaskMu.Unlock()
+	}()
+	ctx = taskCtx
+
 	d.mu.Lock()
 	rt := d.runtimeIndex[task.RuntimeID]
 	d.mu.Unlock()
@@ -3796,6 +3859,9 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// without racing the daemon's os.MkdirAll.
 	localRelease, abort := d.acquireLocalDirectoryLockIfNeeded(ctx, task, taskLog)
 	if abort {
+		if errors.Is(context.Cause(ctx), errAuthenticationExpired) {
+			d.reportAuthenticationExpired(task.ID, TaskResult{}, taskLog)
+		}
 		return
 	}
 	if localRelease != nil {
@@ -3847,6 +3913,10 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	}()
 
 	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
+	if errors.Is(context.Cause(ctx), errAuthenticationExpired) {
+		d.reportAuthenticationExpired(task.ID, result, taskLog)
+		return
+	}
 
 	// Report usage before any early return — the agent accumulates tokens
 	// whether the task completes, errors, or is cancelled mid-run by the poll
@@ -3857,6 +3927,10 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		if usageErr := d.client.ReportTaskUsage(ctx, task.ID, result.Usage); usageErr != nil {
 			taskLog.Warn("report task usage failed", "error", usageErr)
 		}
+	}
+	if errors.Is(context.Cause(ctx), errAuthenticationExpired) {
+		d.reportAuthenticationExpired(task.ID, result, taskLog)
+		return
 	}
 
 	// Check if we were cancelled by the polling goroutine.
@@ -3946,6 +4020,23 @@ func taskRunFailureReason(err error) string {
 		return taskfailure.ReasonSkillBundleUnavailable.String()
 	}
 	return taskfailure.Classify(err.Error()).String()
+}
+
+func (d *Daemon) reportAuthenticationExpired(taskID string, result TaskResult, taskLog *slog.Logger) {
+	deadline := d.authExpiresAt
+	if deadline.IsZero() {
+		deadline = time.Now().Add(5 * time.Second)
+	}
+	reportCtx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	if len(result.Usage) > 0 {
+		if err := d.client.ReportTaskUsage(reportCtx, taskID, result.Usage); err != nil {
+			taskLog.Warn("report task usage after authentication expiry failed", "error", err)
+		}
+	}
+	if err := d.client.FailTask(reportCtx, taskID, errAuthenticationExpired.Error(), result.SessionID, result.WorkDir, taskfailure.ReasonAuthenticationExpired.String(), false, ""); err != nil {
+		taskLog.Error("report authentication-expired task failed", "error", err)
+	}
 }
 
 // acquireLocalDirectoryLockIfNeeded inspects the task's project resources for

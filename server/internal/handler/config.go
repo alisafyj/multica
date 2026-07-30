@@ -12,6 +12,7 @@ import (
 
 type AppConfig struct {
 	CdnDomain string `json:"cdn_domain"`
+	UseSySSO  bool   `json:"use_sy_sso"`
 	// CdnSigned tells clients that the CDN domain above serves PRIVATE
 	// content through time-bounded signed URLs (CloudFront signing is
 	// enabled). When true, a raw storage URL on the CDN domain is NOT
@@ -68,14 +69,16 @@ type AppConfig struct {
 }
 
 // GetConfig is mounted on the public (unauthenticated) route group because
-// the web app calls it before login to decide whether to render the Google
-// sign-in button and signup UI. Only add fields here that are safe to expose
+// the web app calls it before login. Only add fields here that are safe to expose
 // to anonymous callers — never user- or tenant-scoped data.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	config := AppConfig{
-		AllowSignup:               os.Getenv("ALLOW_SIGNUP") != "false",
-		GoogleClientID:            os.Getenv("GOOGLE_CLIENT_ID"),
+		UseSySSO:                  h.cfg.UseSySSO,
+		AllowSignup:               !h.cfg.UseSySSO && h.cfg.AllowSignup,
 		WorkspaceCreationDisabled: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
+	}
+	if !h.cfg.UseSySSO {
+		config.GoogleClientID = os.Getenv("GOOGLE_CLIENT_ID")
 	}
 	if h.Storage != nil {
 		config.CdnDomain = h.Storage.CdnDomain()

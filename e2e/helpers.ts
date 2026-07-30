@@ -27,10 +27,31 @@ export async function reloadAppPage(page: Page) {
   await waitForPageText(page, "Issues");
 }
 
+const FRONTEND_ORIGIN = new URL(
+  process.env.PLAYWRIGHT_BASE_URL ?? process.env.FRONTEND_ORIGIN ?? "http://localhost:3000",
+).origin;
+
+export async function authenticatePage(
+  page: Page,
+  api: TestApiClient,
+  workspaceSlug?: string,
+) {
+  const { token, csrfToken, expiresAt } = api.getBrowserSession();
+  const cookies = [
+    { name: "multica_auth", value: token, url: FRONTEND_ORIGIN, httpOnly: true, sameSite: "Strict" as const, expires: expiresAt },
+    { name: "multica_csrf", value: csrfToken, url: FRONTEND_ORIGIN, sameSite: "Strict" as const, expires: expiresAt },
+    { name: "multica_logged_in", value: "1", url: FRONTEND_ORIGIN, sameSite: "Lax" as const, expires: expiresAt },
+  ];
+  if (workspaceSlug) {
+    cookies.push({ name: "last_workspace_slug", value: workspaceSlug, url: FRONTEND_ORIGIN, sameSite: "Lax", expires: expiresAt });
+  }
+  await page.context().addCookies(cookies);
+}
+
 /**
  * Log in as the default E2E user and ensure the workspace exists first.
- * Authenticates via API (send-code → DB read → verify-code), then injects
- * the token into localStorage so the browser session is authenticated.
+ * Creates a local SSO test identity, then injects the same HttpOnly auth and
+ * CSRF cookies used by the web app.
  *
  * Returns the E2E workspace slug so callers can build workspace-scoped URLs.
  */
@@ -43,16 +64,12 @@ export async function loginAsDefault(page: Page): Promise<string> {
   );
   await api.markUserOnboarded();
 
-  const token = api.getToken();
-  if (!token) {
-    throw new Error("E2E login did not return an auth token");
-  }
-
-  await page.addInitScript((t) => {
-    localStorage.setItem("multica_token", t);
+  await page.addInitScript(() => {
     localStorage.setItem("multica:chat:isOpen", "false");
-  }, token);
+  });
+  await authenticatePage(page, api, workspace.slug);
   await page.goto(`/${workspace.slug}/issues`, { waitUntil: "domcontentloaded" });
+  await page.waitForURL("**/issues", { timeout: 10000 });
   await waitForIssuesPage(page);
   return workspace.slug;
 }

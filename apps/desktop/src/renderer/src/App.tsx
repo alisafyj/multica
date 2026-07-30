@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CoreProvider } from "@multica/core/platform";
 import { pickLocale, type SupportedLocale } from "@multica/core/i18n";
 import { useAuthStore } from "@multica/core/auth";
+import { configStore, useConfigStore } from "@multica/core/config";
 import { useWelcomeStore } from "@multica/core/onboarding";
 import { workspaceKeys, workspaceListOptions } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
@@ -25,6 +26,7 @@ import { DesktopClientUsageReporter } from "./platform/client-usage-reporter";
 import { DiagnosticRouteReporter } from "./platform/diagnostic-route-reporter";
 import { flushFreezeBreadcrumb } from "./freeze-flush";
 import { DiagnosticsControlReporter } from "./platform/diagnostics-control-reporter";
+import type { StorageAdapter } from "@multica/core/types";
 
 // BCP-47 region tags for the <html lang> attribute, mirroring
 // apps/web/app/layout.tsx HTML_LANG. index.html ships a static lang="en";
@@ -36,6 +38,35 @@ const HTML_LANG: Record<SupportedLocale, string> = {
   "zh-Hans": "zh-CN",
   ko: "ko-KR",
   ja: "ja-JP",
+};
+
+const desktopStorage: StorageAdapter = {
+  getItem: (key) => {
+    if (key !== "multica_token") return window.localStorage.getItem(key);
+    const useSySso = configStore.getState().useSySso;
+    if (useSySso === null) return null;
+    return useSySso
+      ? window.desktopAPI.getAuthToken()
+      : window.localStorage.getItem(key);
+  },
+  setItem: (key, value) => {
+    if (
+      key !== "multica_token" ||
+      configStore.getState().useSySso === false
+    ) {
+      window.localStorage.setItem(key, value);
+    }
+  },
+  removeItem: (key) => {
+    if (
+      key === "multica_token" &&
+      configStore.getState().useSySso === true
+    ) {
+      void window.desktopAPI.clearAuthToken();
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  },
 };
 
 
@@ -113,6 +144,7 @@ function DesktopAuthSessionBridge() {
 function AppContent() {
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
+  const useSySso = useConfigStore((state) => state.useSySso);
   const qc = useQueryClient();
 
   // Deep-link login runs loginWithToken → syncToken → listWorkspaces →
@@ -146,11 +178,8 @@ function AppContent() {
     });
   }, []);
 
-  // Listen for auth token delivered via deep link (multica://auth/callback?token=...).
-  // daemonAPI.syncToken is handled separately by the [user] effect below, which
-  // fires whenever a user logs in (deep link, session restore, account switch).
   useEffect(() => {
-    return window.desktopAPI.onAuthToken(async (token) => {
+    const finishLogin = async (token: string) => {
       setBootstrapping(true);
       try {
         await useAuthStore.getState().loginWithToken(token);
@@ -166,24 +195,39 @@ function AppContent() {
       } finally {
         setBootstrapping(false);
       }
+    };
+
+    const unsubscribeLegacy = window.desktopAPI.onAuthToken((token) => {
+      if (configStore.getState().useSySso === false) {
+        void finishLogin(token);
+      }
     });
+    const unsubscribeSSO = window.desktopAPI.onAuthChanged(() => {
+      if (configStore.getState().useSySso !== true) return;
+      const token = window.desktopAPI.getAuthToken();
+      if (token) void finishLogin(token);
+    });
+    return () => {
+      unsubscribeLegacy();
+      unsubscribeSSO();
+    };
   }, [qc]);
 
   // Sync token and start the daemon whenever the user logs in.
   useEffect(() => {
-    if (!user) return;
-    const token = localStorage.getItem("multica_token");
+    if (!user || useSySso === null) return;
+    const token = desktopStorage.getItem("multica_token");
     if (!token) return;
     const userId = user.id;
     (async () => {
       try {
-        await window.daemonAPI.syncToken(token, userId);
+        await window.daemonAPI.syncToken(token, userId, useSySso);
         await window.daemonAPI.autoStart();
       } catch (err) {
         console.error("Failed to sync daemon on login", err);
       }
     })();
-  }, [user]);
+  }, [user, useSySso]);
 
   // When a user who started the session with zero workspaces creates their
   // first one, restart the daemon so it picks up the new workspace
@@ -445,6 +489,7 @@ export default function App() {
           onLogout={
             windowContext.kind === "main" ? handleDaemonLogout : undefined
           }
+          storage={desktopStorage}
           identity={identity}
           locale={locale}
           resources={resources}

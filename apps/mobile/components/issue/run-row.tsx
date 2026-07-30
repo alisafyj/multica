@@ -169,6 +169,7 @@ const FAILURE_REASON_LABEL: Record<string, string> = {
   queued_expired: "Queue expired",
   runtime_offline: "Runtime offline",
   runtime_recovery: "Runtime recovery",
+  authentication_expired: "Authentication expired",
   timeout: "Timeout",
   iteration_limit: "Iteration limit",
   agent_blocked: "Needs input",

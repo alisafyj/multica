@@ -604,6 +604,66 @@ describe("ApiClient notification preferences", () => {
 });
 
 describe("ApiClient", () => {
+  it("keeps legacy login, CLI token, and PAT contracts", async () => {
+    const user = { id: "u1", name: "Alice", email: "alice@example.com" };
+    const token = { token: "mul_secret", user };
+    const pat = {
+      id: "pat-1",
+      name: "CLI",
+      token_prefix: "mul_",
+      expires_at: null,
+      last_used_at: null,
+      created_at: "2026-07-29T00:00:00Z",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(Response.json(token))
+      .mockResolvedValueOnce(Response.json(token))
+      .mockResolvedValueOnce(Response.json({ token: "cli-token" }))
+      .mockResolvedValueOnce(Response.json([pat]))
+      .mockResolvedValueOnce(Response.json({ ...pat, token: "mul_secret" }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await client.sendCode("alice@example.com");
+    await client.verifyCode("alice@example.com", "123456");
+    await client.googleLogin("google-code", "https://app.example.test/auth/callback");
+    await client.issueCliToken();
+    await client.listPersonalAccessTokens();
+    await client.createPersonalAccessToken({ name: "CLI" });
+    await client.revokePersonalAccessToken("pat-1");
+
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method ?? "GET"])).toEqual([
+      ["https://api.example.test/auth/send-code", "POST"],
+      ["https://api.example.test/auth/verify-code", "POST"],
+      ["https://api.example.test/auth/google", "POST"],
+      ["https://api.example.test/api/cli-token", "POST"],
+      ["https://api.example.test/api/tokens", "GET"],
+      ["https://api.example.test/api/tokens", "POST"],
+      ["https://api.example.test/api/tokens/pat-1", "DELETE"],
+    ]);
+  });
+
+  it("exchanges the APISIX SSO cookie without a bearer token", async () => {
+    const user = { id: "u1", name: "Alice", email: "alice@soyoung.com" };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ user }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.ssoSession()).resolves.toEqual({ user });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/auth/sso/session",
+      expect.objectContaining({ method: "POST", credentials: "include" }),
+    );
+  });
+
   it("preserves HTTP status on failed requests", async () => {
     vi.stubGlobal(
       "fetch",

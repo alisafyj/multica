@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { sanitizeNextUrl, useAuthStore } from "@multica/core/auth";
+import { useConfigStore } from "@multica/core/config";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { paths, resolvePostAuthDestination } from "@multica/core/paths";
 import { api } from "@multica/core/api";
@@ -16,7 +17,7 @@ import {
   CardContent,
 } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 
 function CallbackContent() {
   const router = useRouter();
@@ -202,10 +203,58 @@ function CallbackContent() {
   );
 }
 
+function ConfigStatus({ error }: { error: string | null }) {
+  const loadConfig = useConfigStore((state) => state.loadConfig);
+  return (
+    <div className="flex min-h-screen items-center justify-center px-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader className="text-center">
+          <CardTitle>
+            {error ? "Unable to load sign-in" : "Loading sign-in configuration"}
+          </CardTitle>
+          <CardDescription>
+            {error || "Checking the server authentication mode..."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex justify-center">
+          {error ? (
+            <Button
+              onClick={() => {
+                void loadConfig(() => api.getConfig()).catch(() => {});
+              }}
+            >
+              <RefreshCw />
+              Retry
+            </Button>
+          ) : (
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function RedirectFromSSOCallback() {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace(paths.login());
+  }, [router]);
+  return null;
+}
+
+function CallbackModeContent() {
+  const useSySso = useConfigStore((state) => state.useSySso);
+  const configError = useConfigStore((state) => state.authConfigError);
+  if (useSySso === null) return <ConfigStatus error={configError} />;
+  if (useSySso) return <RedirectFromSSOCallback />;
+  return <CallbackContent />;
+}
+
 export default function CallbackPage() {
   return (
     <Suspense fallback={null}>
-      <CallbackContent />
+      <CallbackModeContent />
     </Suspense>
   );
 }

@@ -32,11 +32,8 @@ var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate and set up workspaces",
 	Long:  "Log in to Multica, then automatically discover and watch all your workspaces.",
-	// Up to one positional is accepted so `--token mul_...` / `--token mcn_...`
-	// (space form) can recover the token in runAuthLogin even though pflag
-	// won't bind it.
-	Args: cobra.MaximumNArgs(1),
-	RunE: runLogin,
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runLogin,
 }
 
 // tokenPromptSentinel is the value pflag assigns to `--token` when the flag
@@ -60,6 +57,7 @@ func init() {
 	// while `--token mul_...` / `--token mcn_...` and the `=value` form
 	// consume the value normally.
 	loginCmd.Flags().Lookup("token").NoOptDefVal = tokenPromptSentinel
+	loginCmd.Flags().String("service-token", "", "Authenticate the dedicated ai_work Mac with an msa_ service token")
 	loginCmd.Flags().String(callbackHostFlag, "", callbackHostFlagHelp)
 }
 

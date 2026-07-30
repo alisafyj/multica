@@ -92,6 +92,8 @@ type Client struct {
 	baseURL string
 	token   string
 	client  *http.Client
+	authMu  sync.RWMutex
+	authExp time.Time
 
 	// bundleClient downloads skill bundles. Unlike client it carries no fixed
 	// Timeout: bundles can be large and slow on jittery links, so the caller
@@ -199,6 +201,23 @@ func (c *Client) SetToken(token string) {
 // Token returns the current auth token.
 func (c *Client) Token() string {
 	return c.token
+}
+
+// AuthExpiresAt returns the absolute expiry advertised by the server.
+func (c *Client) AuthExpiresAt() time.Time {
+	c.authMu.RLock()
+	defer c.authMu.RUnlock()
+	return c.authExp
+}
+
+func (c *Client) captureAuthExpiry(header http.Header) {
+	expiresAt, err := time.Parse(time.RFC3339, header.Get("X-Auth-Expires-At"))
+	if err != nil {
+		return
+	}
+	c.authMu.Lock()
+	c.authExp = expiresAt
+	c.authMu.Unlock()
 }
 
 func (c *Client) ClaimTask(ctx context.Context, runtimeID string) (*Task, error) {
@@ -503,19 +522,11 @@ type WorkspaceInfo struct {
 	Name string `json:"name"`
 }
 
-// RenewTokenResponse mirrors handler.RenewPATResponse — kept loose (string +
-// bool) because the daemon never parses the timestamp itself; it just logs it
-// for operator visibility.
 type RenewTokenResponse struct {
 	ExpiresAt string `json:"expires_at"`
 	Renewed   bool   `json:"renewed"`
 }
 
-// RenewToken asks the server to extend the daemon's current PAT in place when
-// it's within the server-side renewal window. The server is authoritative on
-// the threshold — the daemon doesn't know the token's expires_at locally —
-// so this is safe to call on any cadence; the only thing extra calls cost is
-// one round trip and one cheap SELECT.
 func (c *Client) RenewToken(ctx context.Context) (*RenewTokenResponse, error) {
 	var resp RenewTokenResponse
 	if err := c.postJSON(ctx, "/api/tokens/current/renew", map[string]any{}, &resp); err != nil {
@@ -554,6 +565,7 @@ func (c *Client) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	c.captureAuthExpiry(resp.Header)
 
 	if resp.StatusCode == http.StatusNotFound {
 		_, _ = io.Copy(io.Discard, resp.Body)
@@ -969,6 +981,7 @@ func (c *Client) postJSONVia(ctx context.Context, httpClient *http.Client, path 
 		return err
 	}
 	defer resp.Body.Close()
+	c.captureAuthExpiry(resp.Header)
 
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
@@ -996,6 +1009,7 @@ func (c *Client) getJSON(ctx context.Context, path string, respBody any) error {
 		return err
 	}
 	defer resp.Body.Close()
+	c.captureAuthExpiry(resp.Header)
 
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

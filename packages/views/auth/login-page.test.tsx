@@ -406,6 +406,15 @@ describe("LoginPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders Google OAuth button when a custom handler is provided", () => {
+    renderWithI18n(
+      <LoginPage onSuccess={onSuccess} onGoogleLogin={vi.fn()} />,
+    );
+    expect(
+      screen.getByRole("button", { name: /continue with google/i }),
+    ).toBeInTheDocument();
+  });
+
   // -------------------------------------------------------------------------
   // CLI callback — existing session
   // -------------------------------------------------------------------------

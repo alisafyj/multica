@@ -111,6 +111,9 @@ const (
 	// taskRunFailureReason in daemon/daemon.go.
 	ReasonSkillBundleUnavailable Reason = "skill_bundle_unavailable"
 
+	// ReasonAuthenticationExpired means the credential authorizing the task expired while it was running.
+	ReasonAuthenticationExpired Reason = "authentication_expired"
+
 	// Agent process side: failure surfaced by the agent CLI / SDK as
 	// an error string. Classify(rawError) is responsible for picking
 	// the right sub-reason from the string. IsAgentError returns true
@@ -205,6 +208,7 @@ var allReasons = []Reason{
 	ReasonAgentBlocked,
 	ReasonAPIInvalidRequest,
 	ReasonSkillBundleUnavailable,
+	ReasonAuthenticationExpired,
 
 	// Agent process side: provider errors.
 	ReasonAgentProviderAuthOrAccess,

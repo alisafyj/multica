@@ -68,6 +68,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       "expo-router",
       "expo-secure-store",
       "expo-image",
+      "expo-web-browser",
       "@react-native-community/datetimepicker",
       "react-native-enriched-markdown",
       [

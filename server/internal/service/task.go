@@ -3011,7 +3011,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 }
 
 func (s *TaskService) CompleteTaskWithMutation(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir string, mutate func(*db.Queries, db.AgentTaskQueue) error) (*db.AgentTaskQueue, error) {
-	task, err := s.CompleteTask(ctx, taskID, result, sessionID, workDir, false)
+	task, err := s.CompleteTask(ctx, taskID, result, sessionID, workDir, false, "")
 	if err != nil {
 		return nil, err
 	}

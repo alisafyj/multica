@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, screen } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, safeStorage, screen } from "electron";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -82,6 +83,12 @@ function installDownloadSaveDialogHandler(window: BrowserWindow): void {
     });
   });
 }
+import {
+  createDesktopAuthorization,
+  readLegacyDesktopToken,
+  readDesktopCallback,
+  type DesktopAuthorization,
+} from "./desktop-auth";
 
 // Bundled icon used for dock/taskbar branding. macOS/Windows production
 // builds let the OS pick up the icon from the .app bundle / .exe resources,
@@ -179,6 +186,7 @@ async function captureStackIfEnabled(
   if (webContents.isDestroyed()) return null;
   return captureHangStack(webContents.debugger);
 }
+let pendingDesktopAuthorization: DesktopAuthorization | null = null;
 let runtimeConfigResult: RuntimeConfigResult = {
   ok: false,
   error: { message: "Runtime config has not loaded yet" },
@@ -216,15 +224,92 @@ function dispatchToMainRenderer(
   if (window) focusMainWindow(window);
 }
 
+function authTokenPath(): string {
+  return join(app.getPath("userData"), "auth-token.bin");
+}
+
+function readAuthToken(): string | null {
+  const path = authTokenPath();
+  if (!existsSync(path) || !safeStorage.isEncryptionAvailable()) return null;
+  try {
+    return safeStorage.decryptString(readFileSync(path));
+  } catch {
+    return null;
+  }
+}
+
+function writeAuthToken(token: string): void {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error("secure credential storage is unavailable");
+  }
+  mkdirSync(app.getPath("userData"), { recursive: true, mode: 0o700 });
+  writeFileSync(authTokenPath(), safeStorage.encryptString(token), { mode: 0o600 });
+}
+
+function clearAuthToken(): void {
+  try {
+    unlinkSync(authTokenPath());
+  } catch {
+    // Already signed out.
+  }
+}
+
+async function startDesktopSSO(): Promise<void> {
+  if (!runtimeConfigResult.ok) throw new Error(runtimeConfigResult.error.message);
+  pendingDesktopAuthorization = createDesktopAuthorization(
+    runtimeConfigResult.config.apiUrl,
+    "multica://auth/callback",
+  );
+  await openExternalSafely(pendingDesktopAuthorization.url);
+}
+
+async function finishDesktopSSO(rawUrl: string): Promise<void> {
+  const pending = pendingDesktopAuthorization;
+  if (!pending) throw new Error("desktop SSO was not started by this app");
+  const code = readDesktopCallback(rawUrl, pending);
+  pendingDesktopAuthorization = null;
+  if (!runtimeConfigResult.ok) throw new Error(runtimeConfigResult.error.message);
+
+  const response = await fetch(
+    `${runtimeConfigResult.config.apiUrl.replace(/\/+$/, "")}/auth/sso/token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "authorization_code",
+        code,
+        code_verifier: pending.verifier,
+        client_id: "desktop",
+        redirect_uri: pending.redirectUri,
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(`SSO token exchange failed (${response.status})`);
+  const data = (await response.json()) as { token?: unknown };
+  if (typeof data.token !== "string" || data.token.length === 0) {
+    throw new Error("SSO token exchange returned no token");
+  }
+  writeAuthToken(data.token);
+  mainWindow?.webContents.send("auth:changed");
+}
+
 function handleDeepLink(url: string): void {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== `${PROTOCOL}:`) return;
 
-    // multica://auth/callback?token=<jwt>
     if (parsed.hostname === "auth" && parsed.pathname === "/callback") {
-      const token = parsed.searchParams.get("token");
-      if (token) dispatchToMainRenderer("auth:token", token);
+      const legacyToken = readLegacyDesktopToken(url);
+      if (legacyToken) {
+        dispatchToMainRenderer("auth:token", legacyToken);
+        return;
+      }
+      void finishDesktopSSO(url).catch((error) => {
+        dispatchToMainRenderer(
+          "auth:error",
+          error instanceof Error ? error.message : "SSO sign-in failed",
+        );
+      });
       return;
     }
 
@@ -780,6 +865,11 @@ if (!gotTheLock) {
     ipcMain.on("runtime-config:get", (event) => {
       event.returnValue = runtimeConfigResult;
     });
+    ipcMain.on("auth:get-token", (event) => {
+      event.returnValue = readAuthToken();
+    });
+    ipcMain.handle("auth:start", () => startDesktopSSO());
+    ipcMain.handle("auth:clear", () => clearAuthToken());
 
     ipcMain.on(RENDERER_ROUTE_CONTEXT_CHANNEL, (event, context: unknown) => {
       if (!BrowserWindow.fromWebContents(event.sender)) return;

@@ -8,6 +8,7 @@ export const MAIN_RENDERER_CHANNEL_STATE_CHANNEL =
 
 export const MAIN_RENDERER_MESSAGE_CHANNELS = [
   "auth:token",
+  "auth:error",
   "invite:open",
   "inbox:open",
 ] as const;

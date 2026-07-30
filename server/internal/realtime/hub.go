@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"github.com/multica-ai/multica/server/internal/auth"
 )
@@ -27,7 +26,6 @@ type MembershipChecker interface {
 // SlugResolver translates a workspace slug to its UUID.
 type SlugResolver func(ctx context.Context, slug string) (workspaceID string, err error)
 
-// PATResolver resolves a Personal Access Token to a user ID.
 type PATResolver interface {
 	ResolveToken(ctx context.Context, token string) (userID string, ok bool)
 }
@@ -211,11 +209,12 @@ func sk(t, id string) scopeKey { return scopeKey{Type: t, ID: id} }
 // Client represents a single WebSocket connection with identity and the set
 // of scopes it is currently subscribed to.
 type Client struct {
-	hub         *Hub
-	conn        *websocket.Conn
-	send        chan []byte
-	userID      string
-	workspaceID string
+	hub           *Hub
+	conn          *websocket.Conn
+	send          chan []byte
+	userID        string
+	workspaceID   string
+	authExpiresAt time.Time
 
 	// subscriptions is guarded by hub.mu. Tracks the scopes this client is
 	// currently in. Used to clean up rooms on disconnect.
@@ -665,39 +664,29 @@ func (h *Hub) Snapshot() map[string]any {
 	}
 }
 
-// authenticateToken validates a JWT or PAT string and returns the user ID.
-func authenticateToken(tokenStr string, pr PATResolver, ctx context.Context) (string, string) {
-	if strings.HasPrefix(tokenStr, "mul_") {
-		if pr == nil {
-			return "", `{"error":"invalid token"}`
+func authenticateToken(tokenStr string, resolver PATResolver, ctx context.Context, useSySSO bool) (string, time.Time, string) {
+	if !useSySSO && strings.HasPrefix(tokenStr, "mul_") {
+		if resolver == nil {
+			return "", time.Time{}, `{"error":"invalid token"}`
 		}
-		uid, ok := pr.ResolveToken(ctx, tokenStr)
+		userID, ok := resolver.ResolveToken(ctx, tokenStr)
 		if !ok {
-			return "", `{"error":"invalid token"}`
+			return "", time.Time{}, `{"error":"invalid token"}`
 		}
-		return uid, ""
+		return userID, time.Time{}, ""
 	}
-
-	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (any, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, jwt.ErrSignatureInvalid
+	if useSySSO {
+		identity, err := auth.ParseInternalToken(tokenStr)
+		if err != nil {
+			return "", time.Time{}, `{"error":"invalid token"}`
 		}
-		return auth.JWTSecret(), nil
-	})
-	if err != nil || !token.Valid {
-		return "", `{"error":"invalid token"}`
+		return identity.UserID, identity.ExpiresAt, ""
 	}
-
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return "", `{"error":"invalid claims"}`
+	identity, err := auth.ParseLegacyJWT(tokenStr)
+	if err != nil {
+		return "", time.Time{}, `{"error":"invalid token"}`
 	}
-
-	uid, ok := claims["sub"].(string)
-	if !ok || strings.TrimSpace(uid) == "" {
-		return "", `{"error":"invalid claims"}`
-	}
-	return uid, ""
+	return identity.UserID, time.Time{}, ""
 }
 
 // firstMessageAuth reads the first WebSocket message expecting an auth payload.
@@ -743,7 +732,7 @@ func writeWSAuthErrorAndClose(conn *websocket.Conn, payload []byte, attrs ...any
 
 // HandleWebSocket upgrades an HTTP connection to WebSocket with cookie or
 // first-message auth.
-func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug SlugResolver, w http.ResponseWriter, r *http.Request) {
+func HandleWebSocket(hub *Hub, mc MembershipChecker, resolver PATResolver, resolveSlug SlugResolver, useSySSO bool, w http.ResponseWriter, r *http.Request) {
 	workspaceID := r.URL.Query().Get("workspace_id")
 	if workspaceID == "" {
 		if slug := r.URL.Query().Get("workspace_slug"); slug != "" && resolveSlug != nil {
@@ -761,8 +750,9 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 	}
 
 	var userID string
+	var authExpiresAt time.Time
 	if cookie, err := r.Cookie(auth.AuthCookieName); err == nil && cookie.Value != "" {
-		uid, errMsg := authenticateToken(cookie.Value, pr, r.Context())
+		uid, expiresAt, errMsg := authenticateToken(cookie.Value, resolver, r.Context(), useSySSO)
 		if errMsg != "" {
 			http.Error(w, errMsg, http.StatusUnauthorized)
 			return
@@ -772,6 +762,7 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 			return
 		}
 		userID = uid
+		authExpiresAt = expiresAt
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -786,7 +777,7 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 			writeWSAuthErrorAndClose(conn, []byte(errMsg), "workspace_id", workspaceID)
 			return
 		}
-		uid, errMsg := authenticateToken(tokenStr, pr, r.Context())
+		uid, expiresAt, errMsg := authenticateToken(tokenStr, resolver, r.Context(), useSySSO)
 		if errMsg != "" {
 			writeWSAuthErrorAndClose(conn, []byte(errMsg), "workspace_id", workspaceID)
 			return
@@ -801,6 +792,7 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 			return
 		}
 		userID = uid
+		authExpiresAt = expiresAt
 
 		if !writeWSAuthFrame(
 			conn,
@@ -830,11 +822,12 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 	)
 
 	client := &Client{
-		hub:         hub,
-		conn:        conn,
-		send:        make(chan []byte, 256),
-		userID:      userID,
-		workspaceID: workspaceID,
+		hub:           hub,
+		conn:          conn,
+		send:          make(chan []byte, 256),
+		userID:        userID,
+		workspaceID:   workspaceID,
+		authExpiresAt: authExpiresAt,
 	}
 	hub.register <- client
 
@@ -855,6 +848,22 @@ type subPayload struct {
 }
 
 func (c *Client) readPump() {
+	var expiryTimer *time.Timer
+	if !c.authExpiresAt.IsZero() {
+		delay := time.Until(c.authExpiresAt)
+		if delay < 0 {
+			delay = 0
+		}
+		expiryTimer = time.AfterFunc(delay, func() {
+			_ = c.conn.WriteControl(
+				websocket.CloseMessage,
+				websocket.FormatCloseMessage(4001, "authentication expired"),
+				time.Now().Add(writeWait),
+			)
+			c.conn.Close()
+		})
+		defer expiryTimer.Stop()
+	}
 	defer func() {
 		c.hub.unregister <- c
 		c.conn.Close()

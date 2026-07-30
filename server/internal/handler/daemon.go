@@ -2758,6 +2758,14 @@ func trailingUserMessages(msgs []db.ChatMessage) []db.ChatMessage {
 	return msgs
 }
 
+func taskTokenExpiry(r *http.Request, now time.Time) time.Time {
+	expiresAt := now.Add(24 * time.Hour)
+	if parent, err := time.Parse(time.RFC3339, r.Header.Get("X-Auth-Expires-At")); err == nil && parent.Before(expiresAt) {
+		return parent
+	}
+	return expiresAt
+}
+
 // ListPendingTasksByRuntime returns queued/dispatched tasks for a runtime.
 func (h *Handler) ListPendingTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")

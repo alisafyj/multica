@@ -47,6 +47,7 @@ services:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     volumes:
       - backend_uploads:/app/data/uploads
+      - ${SSO_PUBLIC_KEY_FILE:-/dev/null}:/run/secrets/company-sso-public.pem:ro
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-multica}:${POSTGRES_PASSWORD:-multica}@multica-postgres:5432/${POSTGRES_DB:-multica}?sslmode=disable
       PORT: "8080"
@@ -66,6 +67,11 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:3000/auth/callback}
+      USE_SY_SSO: ${USE_SY_SSO:-false}
+      SSO_PUBLIC_KEY_PATH: /run/secrets/company-sso-public.pem
+      SSO_EXPECTED_SUB: ${SSO_EXPECTED_SUB:-}
+      SSO_DESKTOP_REDIRECT_URI: ${SSO_DESKTOP_REDIRECT_URI:-multica://auth/callback}
+      SSO_MOBILE_REDIRECT_URI: ${SSO_MOBILE_REDIRECT_URI:-multica://auth/mobile-callback}
       S3_BUCKET: ${S3_BUCKET:-}
       S3_REGION: ${S3_REGION:-us-west-2}
       AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
@@ -78,6 +84,7 @@ services:
       CLOUDFRONT_KEY_PAIR_ID: ${CLOUDFRONT_KEY_PAIR_ID:-}
       CLOUDFRONT_PRIVATE_KEY: ${CLOUDFRONT_PRIVATE_KEY:-}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      AUTH_TOKEN_TTL: ${AUTH_TOKEN_TTL:-}
       APP_ENV: ${APP_ENV:-production}
       MULTICA_DEV_VERIFICATION_CODE: ${MULTICA_DEV_VERIFICATION_CODE:-}
       MULTICA_APP_URL: ${MULTICA_APP_URL:-http://localhost:3000}
@@ -86,6 +93,9 @@ services:
       ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
       ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}
       DISABLE_WORKSPACE_CREATION: ${DISABLE_WORKSPACE_CREATION:-}
+      RATE_LIMIT_AUTH: ${RATE_LIMIT_AUTH:-5}
+      RATE_LIMIT_AUTH_VERIFY: ${RATE_LIMIT_AUTH_VERIFY:-20}
+      RATE_LIMIT_TRUSTED_PROXIES: ${RATE_LIMIT_TRUSTED_PROXIES:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       # Public URL the API is reachable at from the open internet, no

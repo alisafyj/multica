@@ -24,42 +24,24 @@ import { api } from "@multica/core/api";
 import type { User } from "@multica/core/types";
 import { useT } from "../i18n";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 interface GoogleAuthConfig {
   clientId: string;
   redirectUri: string;
-  /** Opaque state passed through Google OAuth (e.g. "platform:desktop"). */
   state?: string;
 }
 
 interface CliCallbackConfig {
-  /** Validated localhost callback URL */
   url: string;
-  /** Opaque state to pass back to CLI */
   state: string;
 }
 
 interface LoginPageProps {
-  /** Logo element rendered above the title */
   logo?: ReactNode;
-  /** Called after successful login. The workspace list is seeded into React
-   *  Query before this fires, so the caller can compute a destination URL. */
   onSuccess: () => void;
-  /** Google OAuth config. Omit to disable Google login. */
   google?: GoogleAuthConfig;
-  /** CLI callback config for authorizing CLI tools. */
   cliCallback?: CliCallbackConfig;
-  /** Called after a token is obtained (e.g. to set cookies). */
   onTokenObtained?: () => void;
-  /** Override Google login handler (e.g. desktop opens browser externally). When provided, renders the Google button even if `google` config is omitted. */
   onGoogleLogin?: () => void;
-  /** Slot rendered at the bottom of the sign-in card, below the
-   *  Google button. The web shell uses it for a "Prefer the desktop
-   *  app?" prompt; desktop omits it (a download prompt inside the app
-   *  would be absurd). */
   extra?: ReactNode;
 }
 
@@ -72,18 +54,12 @@ export function redirectToCliCallback(url: string, token: string, state: string)
   window.location.href = `${url}${separator}token=${encodeURIComponent(token)}&state=${encodeURIComponent(state)}`;
 }
 
-/**
- * Validate that a CLI callback URL points to a safe host over HTTP.
- * Allows localhost and private/LAN IPs (RFC 1918) to support self-hosted setups
- * on local VMs while blocking arbitrary public hosts.
- */
 export function validateCliCallback(cliCallback: string): boolean {
   try {
     const cbUrl = new URL(cliCallback);
     if (cbUrl.protocol !== "http:") return false;
     const h = cbUrl.hostname;
     if (h === "localhost" || h === "127.0.0.1") return true;
-    // Allow RFC 1918 private IPs: 10.x.x.x, 172.16-31.x.x, 192.168.x.x
     if (/^10\./.test(h)) return true;
     if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
     if (/^192\.168\./.test(h)) return true;
@@ -92,10 +68,6 @@ export function validateCliCallback(cliCallback: string): boolean {
     return false;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 
 export function LoginPage({
   logo,
@@ -115,19 +87,12 @@ export function LoginPage({
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [existingUser, setExistingUser] = useState<User | null>(null);
-  // Tracks how the existing session was detected so handleCliAuthorize
-  // uses the matching token source (cookie → issueCliToken, localStorage → direct).
   const authSourceRef = useRef<"cookie" | "localStorage">("cookie");
 
-  // Check for existing session when CLI callback is present.
-  // Prioritises cookie auth (= current browser session) to avoid authorising
-  // the CLI with a stale or mismatched localStorage token.
   useEffect(() => {
     if (!cliCallback) return;
 
-    // Ensure no stale bearer token interferes — we want to test the cookie first.
     api.setToken(null);
-
     api
       .getMe()
       .then((user) => {
@@ -136,7 +101,6 @@ export function LoginPage({
         setStep("cli_confirm");
       })
       .catch(() => {
-        // Cookie auth failed — fall back to localStorage token
         const token = localStorage.getItem("multica_token");
         if (!token) return;
 
@@ -155,7 +119,6 @@ export function LoginPage({
       });
   }, [cliCallback]);
 
-  // Cooldown timer for resend
   useEffect(() => {
     if (cooldown <= 0) return;
     const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
@@ -196,7 +159,6 @@ export function LoginPage({
       setError("");
       try {
         if (cliCallback) {
-          // CLI path: get token directly for the redirect URL
           const { token } = await api.verifyCode(email, value);
           localStorage.setItem("multica_token", token);
           api.setToken(token);
@@ -205,10 +167,6 @@ export function LoginPage({
           return;
         }
 
-        // Normal path: seed the workspace list into the Query cache so the
-        // caller's onSuccess can read it synchronously to compute a destination
-        // URL (first workspace's slug, or /workspaces/new for zero-workspace
-        // users).
         await useAuthStore.getState().verifyCode(email, value);
         const wsList = await api.listWorkspaces();
         qc.setQueryData(workspaceKeys.list(), wsList);
@@ -246,14 +204,11 @@ export function LoginPage({
 
     try {
       let token: string;
-
       if (authSourceRef.current === "localStorage") {
-        // Session was detected via localStorage — reuse that token directly.
         const stored = localStorage.getItem("multica_token");
         if (!stored) throw new Error("token missing");
         token = stored;
       } else {
-        // Session was detected via cookie — obtain a bearer token from the server.
         const res = await api.issueCliToken();
         token = res.token;
       }
@@ -285,10 +240,6 @@ export function LoginPage({
     if (google.state) params.set("state", google.state);
     window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
   };
-
-  // -------------------------------------------------------------------------
-  // CLI confirm step
-  // -------------------------------------------------------------------------
 
   if (step === "cli_confirm" && existingUser) {
     return (
@@ -329,10 +280,6 @@ export function LoginPage({
       </div>
     );
   }
-
-  // -------------------------------------------------------------------------
-  // Code verification step
-  // -------------------------------------------------------------------------
 
   if (step === "code") {
     return (
@@ -401,10 +348,6 @@ export function LoginPage({
       </div>
     );
   }
-
-  // -------------------------------------------------------------------------
-  // Email step
-  // -------------------------------------------------------------------------
 
   return (
     <div className="flex min-h-svh items-center justify-center">

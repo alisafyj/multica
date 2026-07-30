@@ -15,8 +15,8 @@ const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 60;
 
 export default function Verify() {
-  const sendCode = useAuthStore((s) => s.sendCode);
-  const verifyCode = useAuthStore((s) => s.verifyCode);
+  const sendCode = useAuthStore((state) => state.sendCode);
+  const verifyCode = useAuthStore((state) => state.verifyCode);
   const { email = "" } = useLocalSearchParams<{ email?: string }>();
   const [code, setCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -28,10 +28,10 @@ export default function Verify() {
 
   useEffect(() => {
     if (cooldown <= 0) return;
-    const t = setInterval(() => {
-      setCooldown((c) => (c <= 1 ? 0 : c - 1));
+    const timer = setInterval(() => {
+      setCooldown((value) => (value <= 1 ? 0 : value - 1));
     }, 1000);
-    return () => clearInterval(t);
+    return () => clearInterval(timer);
   }, [cooldown]);
 
   const submit = async (value: string) => {
@@ -41,7 +41,9 @@ export default function Verify() {
     setError(null);
     try {
       await verifyCode(email, value);
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      void Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Success,
+      );
       router.replace("/");
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -52,7 +54,7 @@ export default function Verify() {
     }
   };
 
-  const onResend = async () => {
+  const resend = async () => {
     if (cooldown > 0 || resending || !email) return;
     void Haptics.selectionAsync();
     setResending(true);
@@ -88,7 +90,6 @@ export default function Verify() {
               </Text>
             </View>
           </View>
-
           <View className="gap-3 items-center">
             <OtpInput
               ref={otpRef}
@@ -103,7 +104,6 @@ export default function Verify() {
               <Text className="text-sm text-destructive">{error}</Text>
             ) : null}
           </View>
-
           <View className="gap-3">
             <Button
               size="lg"
@@ -112,9 +112,8 @@ export default function Verify() {
             >
               <Text>{submitting ? t("verify.verifying") : t("verify.verify_button")}</Text>
             </Button>
-
             <Pressable
-              onPress={onResend}
+              onPress={resend}
               disabled={cooldown > 0 || resending}
               className="py-2 items-center"
             >
@@ -132,7 +131,6 @@ export default function Verify() {
                     : t("verify.resend_button")}
               </Text>
             </Pressable>
-
             <Button
               variant="ghost"
               disabled={submitting}

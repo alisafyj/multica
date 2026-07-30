@@ -5,6 +5,7 @@
  */
 
 import "./env";
+import { createHmac, randomBytes } from "node:crypto";
 import pg from "pg";
 
 // `||` (not `??`) so an empty `NEXT_PUBLIC_API_URL=` in .env still falls
@@ -12,6 +13,28 @@ import pg from "pg";
 // the same matches user intent.
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || `http://localhost:${process.env.PORT || "8080"}`;
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://multica:multica@localhost:5432/multica?sslmode=disable";
+const JWT_SECRET = process.env.JWT_SECRET || "multica-dev-secret-change-in-production";
+
+function signInternalToken(userId: string, email: string, expiresAt: number) {
+  const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const header = encode({ alg: "HS256", typ: "JWT" });
+  const claims = encode({
+    sub: userId,
+    email,
+    auth_source: "sso",
+    iat: Math.floor(Date.now() / 1000),
+    exp: expiresAt,
+  });
+  const unsigned = `${header}.${claims}`;
+  const signature = createHmac("sha256", JWT_SECRET).update(unsigned).digest("base64url");
+  return `${unsigned}.${signature}`;
+}
+
+function csrfTokenFor(token: string) {
+  const nonce = randomBytes(16);
+  const signature = createHmac("sha256", token).update(nonce).digest("hex");
+  return `${nonce.toString("hex")}.${signature}`;
+}
 
 interface TestWorkspace {
   id: string;
@@ -47,6 +70,8 @@ export interface TestTableIssue {
 
 export class TestApiClient {
   private token: string | null = null;
+  private csrfToken: string | null = null;
+  private expiresAt: number | null = null;
   private workspaceSlug: string | null = null;
   private workspaceId: string | null = null;
   private email: string | null = null;
@@ -57,57 +82,30 @@ export class TestApiClient {
     const client = new pg.Client(DATABASE_URL);
     await client.connect();
     try {
-      // Keep each E2E login isolated so previous test runs do not trip the
-      // per-email send-code rate limit.
-      await client.query("DELETE FROM verification_code WHERE email = $1", [email]);
-
-      // Step 1: Send verification code
-      const sendRes = await fetch(`${API_BASE}/auth/send-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      if (!sendRes.ok) {
-        throw new Error(`send-code failed: ${sendRes.status}`);
-      }
-
-      // Step 2: Read code from database
-      const result = await client.query(
-        "SELECT code FROM verification_code WHERE email = $1 AND used = FALSE AND expires_at > now() ORDER BY created_at DESC LIMIT 1",
-        [email],
+      const normalizedEmail = email.trim().toLowerCase();
+      const result = await client.query<{
+        id: string;
+        name: string;
+        email: string;
+        account_kind: string;
+      }>(
+        `INSERT INTO "user" AS existing_user (name, email, account_kind)
+         VALUES ($1, $2, 'human')
+         ON CONFLICT (email) DO UPDATE
+           SET name = EXCLUDED.name, updated_at = now()
+           WHERE existing_user.account_kind = 'human'
+         RETURNING id, name, email, account_kind`,
+        [name, normalizedEmail],
       );
       if (result.rows.length === 0) {
-        throw new Error(`No verification code found for ${email}`);
+        throw new Error(`E2E login email belongs to a service account: ${normalizedEmail}`);
       }
-
-      const configuredDevCode = process.env.MULTICA_DEV_VERIFICATION_CODE?.trim();
-      const code = configuredDevCode || result.rows[0].code;
-
-      // Step 3: Verify code to get JWT
-      const verifyRes = await fetch(`${API_BASE}/auth/verify-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code }),
-      });
-      if (!verifyRes.ok) {
-        throw new Error(`verify-code failed: ${verifyRes.status}`);
-      }
-      const data = await verifyRes.json();
-
-      this.token = data.token;
-      this.email = email;
-
-      // Update user name if needed
-      if (name && data.user?.name !== name) {
-        await this.authedFetch("/api/me", {
-          method: "PATCH",
-          body: JSON.stringify({ name }),
-        });
-      }
-
-      await client.query("DELETE FROM verification_code WHERE email = $1", [email]);
-
-      return data;
+      const user = result.rows[0];
+      this.expiresAt = Math.floor(Date.now() / 1000) + 60 * 60;
+      this.token = signInternalToken(user.id, user.email, this.expiresAt);
+      this.csrfToken = csrfTokenFor(this.token);
+      this.email = user.email;
+      return { token: this.token, user };
     } finally {
       await client.end();
     }
@@ -128,33 +126,54 @@ export class TestApiClient {
 
   async ensureWorkspace(name = "E2E Workspace", slug = "e2e-workspace") {
     const workspaces = await this.getWorkspaces();
-    const workspace = workspaces.find((item) => item.slug === slug) ?? workspaces[0];
-    if (workspace) {
-      this.workspaceId = workspace.id;
-      this.workspaceSlug = workspace.slug;
-      return workspace;
+    let workspace = workspaces.find((item) => item.slug === slug) ?? workspaces[0];
+    if (!workspace) {
+      const res = await this.authedFetch("/api/workspaces", {
+        method: "POST",
+        body: JSON.stringify({ name, slug }),
+      });
+      if (res.ok) {
+        workspace = (await res.json()) as TestWorkspace;
+      } else {
+        const refreshed = await this.getWorkspaces();
+        workspace = refreshed.find((item) => item.slug === slug) ?? refreshed[0];
+      }
     }
 
-    const res = await this.authedFetch("/api/workspaces", {
-      method: "POST",
-      body: JSON.stringify({ name, slug }),
+    if (!workspace) {
+      throw new Error(`Failed to ensure workspace ${slug}`);
+    }
+
+    this.workspaceId = workspace.id;
+    this.workspaceSlug = workspace.slug;
+    const questionnaire = await this.authedFetch("/api/me/onboarding", {
+      method: "PATCH",
+      body: JSON.stringify({
+        questionnaire: {
+          source: [],
+          source_other: "",
+          source_skipped: true,
+          role: "",
+          role_other: "",
+          role_skipped: true,
+          use_case: [],
+          use_case_other: "",
+          use_case_skipped: true,
+          version: 2,
+        },
+      }),
     });
-    if (res.ok) {
-      const created = (await res.json()) as TestWorkspace;
-      this.workspaceId = created.id;
-      this.workspaceSlug = created.slug;
-      return created;
+    if (!questionnaire.ok) {
+      throw new Error(`Failed to complete E2E questionnaire: ${questionnaire.status}`);
     }
-
-    const refreshed = await this.getWorkspaces();
-    const created = refreshed.find((item) => item.slug === slug) ?? refreshed[0];
-    if (created) {
-      this.workspaceId = created.id;
-      this.workspaceSlug = created.slug;
-      return created;
+    const onboarding = await this.authedFetch("/api/me/onboarding/complete", {
+      method: "POST",
+      body: JSON.stringify({ completion_path: "skip_existing", workspace_id: workspace.id }),
+    });
+    if (!onboarding.ok) {
+      throw new Error(`Failed to complete E2E onboarding: ${onboarding.status}`);
     }
-
-    throw new Error(`Failed to ensure workspace ${slug}: ${res.status} ${res.statusText}`);
+    return workspace;
   }
 
   async markUserOnboarded() {
@@ -350,6 +369,13 @@ export class TestApiClient {
       throw new Error("Test API client is not logged in");
     }
     return this.email;
+  }
+
+  getBrowserSession() {
+    if (!this.token || !this.csrfToken || !this.expiresAt) {
+      throw new Error("test api client not logged in");
+    }
+    return { token: this.token, csrfToken: this.csrfToken, expiresAt: this.expiresAt };
   }
 
   private async authedFetch(path: string, init?: RequestInit) {
