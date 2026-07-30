@@ -50,6 +50,9 @@ vi.mock("../../i18n", () => ({
 
 vi.mock("./account-tab", () => ({ AccountTab: () => null }));
 vi.mock("./preferences-tab", () => ({ PreferencesTab: () => null }));
+vi.mock("./keyboard-shortcuts-tab", () => ({ KeyboardShortcutsTab: () => null }));
+vi.mock("./issue-tab", () => ({ IssueTab: () => null }));
+vi.mock("./chat-tab", () => ({ ChatTab: () => null }));
 vi.mock("./tokens-tab", () => ({ TokensTab: () => <div>Token settings</div> }));
 vi.mock("./workspace-tab", () => ({ WorkspaceTab: () => null }));
 vi.mock("./members-tab", () => ({ MembersTab: () => null }));
@@ -58,6 +61,8 @@ vi.mock("./github-tab", () => ({ GitHubTab: () => null }));
 vi.mock("./integrations-tab", () => ({ IntegrationsTab: () => null }));
 vi.mock("./labs-tab", () => ({ LabsTab: () => null }));
 vi.mock("./notifications-tab", () => ({ NotificationsTab: () => null }));
+vi.mock("./labels-tab", () => ({ LabelsTab: () => null }));
+vi.mock("./properties-tab", () => ({ PropertiesTab: () => null }));
 
 import { SettingsPage } from "./settings-page";
 
