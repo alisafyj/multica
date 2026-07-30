@@ -122,4 +122,3 @@ before enabling that mode in production:
   between clients and the server.
 - Always exposing both backend stacks and hiding one in clients: a smaller diff,
   but it expands the unauthenticated surface and does not make SSO opt-in.
-
