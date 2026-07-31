@@ -6,7 +6,7 @@ import { Menu, X } from "lucide-react";
 import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
 import { cn } from "@multica/ui/lib/utils";
 import { useAuthStore } from "@multica/core/auth";
-import { docsHrefForLocale, useLocale } from "../i18n";
+import { useLocale } from "../i18n";
 import { useDashboardCtaHref } from "../utils/use-dashboard-cta";
 import { formatStarCount, useGithubStars } from "../utils/use-github-stars";
 import { GitHubMark, githubUrl, headerButtonClassName } from "./shared";
@@ -21,7 +21,10 @@ export function LandingHeader({
   const stars = useGithubStars();
   const starsLabel = stars != null ? formatStarCount(stars) : null;
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const docsHref = docsHrefForLocale(locale);
+  const docsHref =
+    locale === "zh-Hans"
+      ? "https://multica.ai/docs/zh"
+      : "https://multica.ai/docs";
   const navLinks = [
     { href: "/usecases", label: t.header.useCases },
     { href: docsHref, label: t.header.docs },
