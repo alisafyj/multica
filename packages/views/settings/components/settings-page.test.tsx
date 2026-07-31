@@ -63,6 +63,7 @@ vi.mock("./labs-tab", () => ({ LabsTab: () => null }));
 vi.mock("./notifications-tab", () => ({ NotificationsTab: () => null }));
 vi.mock("./labels-tab", () => ({ LabelsTab: () => null }));
 vi.mock("./properties-tab", () => ({ PropertiesTab: () => null }));
+vi.mock("./quick-actions-tab", () => ({ QuickActionsTab: () => null }));
 
 import { SettingsPage } from "./settings-page";
 

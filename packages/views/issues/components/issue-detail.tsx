@@ -70,6 +70,7 @@ import { collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
 import { IssueDesignRestoreSection, isRawDesignFallbackDelivery } from "./issue-design-restore-section";
+import { QuickActionsSection } from "./quick-actions-section";
 import { PullRequestList } from "./pull-request-list";
 import { useGitHubSettings } from "@multica/core/github";
 import { useQuery } from "@tanstack/react-query";
@@ -1440,14 +1441,28 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Quick-jump minimap rail: one tick per comment thread (folded resolved
   // bars included), activity groups skipped. Derived from the same flat
   // `items` array Virtuoso renders so tick order always matches the page.
+  // The resolved flag comes from `deriveThreadResolution`, not from the
+  // `resolved-bar` kind: that kind only covers root resolutions that are
+  // currently folded, so it would miss reply resolutions and would flip off
+  // as soon as the user expanded a resolved thread.
   const minimapThreads = useMemo<ThreadMinimapThread[]>(
     () =>
       items.flatMap((it) =>
         it.kind === "comment" || it.kind === "resolved-bar"
-          ? [{ id: it.id, entry: it.entry }]
+          ? [
+              {
+                id: it.id,
+                entry: it.entry,
+                resolved:
+                  deriveThreadResolution(
+                    it.entry,
+                    timelineView.threadReplies.get(it.id) ?? EMPTY_REPLIES,
+                  ).kind !== "none",
+              },
+            ]
           : [],
       ),
-    [items],
+    [items, timelineView.threadReplies],
   );
 
   // When the timeline renders flat (deep-link or in-page find), there is no
@@ -1974,7 +1989,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                       key={k}
                       type="button"
                       onClick={() => addOptionalProp(k)}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-caption text-foreground/90 transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-caption text-foreground transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
                     >
                       {k === "priority" && (
                         <PriorityIcon priority="medium" inheritColor className="text-muted-foreground" />
@@ -2016,7 +2031,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                             key={p.id}
                             type="button"
                             onClick={() => addCustomProp(p.id)}
-                            className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-caption text-foreground/90 transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+                            className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-caption text-foreground transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
                           >
                             {p.icon ? (
                               <PropertyIcon property={p} className="size-3.5 text-caption" />
@@ -2035,6 +2050,14 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           )}
         </div>}
       </div>
+
+      {/* Quick actions — the sidebar's only "do something" block, so it sits
+          directly under Properties and above every read-only section. Renders
+          nothing when the workspace has no active action visible to this
+          member. It is NOT filtered by invoke permission: a member can see and
+          click an action they cannot run, and the refusal is explained at run
+          time rather than by a silently shorter list. */}
+      <QuickActionsSection issueId={issue.id} />
 
       {/* Parent issue — standalone section, only when the issue has a
           parent. Setting a parent is reachable via the issue actions menu;

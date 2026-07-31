@@ -175,7 +175,11 @@ export function ChatConversationView(props: Props) {
   );
 
   const handleSend = useCallback(
-    async (content: string, attachmentIds: string[] = []) => {
+    async (
+      content: string,
+      attachmentIds: string[] = [],
+      options: { clearDraft?: boolean } = {},
+    ) => {
       if (!currentAgent) return;
 
       const isNewSession = !activeSessionId;
@@ -214,7 +218,9 @@ export function ChatConversationView(props: Props) {
           created_at: result.created_at,
         });
         qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
-        clearDraft(sessionId);
+        if (options.clearDraft !== false) {
+          clearDraft(sessionId);
+        }
       } catch (err) {
         qc.setQueryData<ChatMessage[]>(chatKeys.messages(sessionId), (old) =>
           old ? old.filter((m) => m.id !== optimistic.id) : old,
@@ -306,6 +312,10 @@ export function ChatConversationView(props: Props) {
           hasSessions={sessions.length > 0}
           agentName={currentAgent?.name}
           onPickPrompt={(text) => setDraft(draftKey, text)}
+          onQuickAction={(action) =>
+            handleSend(action.prompt, [], { clearDraft: false })
+          }
+          quickActionsDisabled={sending || disabled}
           pendingTask={pendingTask}
           liveTaskMessages={liveTaskMessages}
           availability={presenceAvailability}
