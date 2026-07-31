@@ -136,12 +136,17 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 		if tokenChanged {
 			return errors.New("--token is unavailable when USE_SY_SSO=true; use browser SSO or --service-token")
 		}
-		if len(args) != 0 {
-			return fmt.Errorf("unexpected argument %q", args[0])
-		}
 		serviceToken, _ := cmd.Flags().GetString("service-token")
 		if serviceTokenChanged {
+			if serviceToken == tokenPromptSentinel && len(args) == 1 {
+				serviceToken = args[0]
+			} else if len(args) != 0 {
+				return fmt.Errorf("unexpected argument %q", args[0])
+			}
 			return runServiceTokenLogin(cmd, serviceToken)
+		}
+		if len(args) != 0 {
+			return fmt.Errorf("unexpected argument %q", args[0])
 		}
 		return runAuthLoginBrowser(cmd)
 	}
@@ -580,10 +585,18 @@ func exchangeSSOCode(ctx context.Context, serverURL, code, verifier, callbackURL
 }
 
 func runServiceTokenLogin(cmd *cobra.Command, providedToken string) error {
-	if runtime.GOOS != "darwin" {
-		return errors.New("the ai_work service account is supported only on macOS")
+	if providedToken == tokenPromptSentinel {
+		providedToken = ""
 	}
 	token := strings.TrimSpace(providedToken)
+	if token == "" {
+		fmt.Print("Enter your ai_work service token: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			return errors.New("no input")
+		}
+		token = strings.TrimSpace(scanner.Text())
+	}
 	if !strings.HasPrefix(token, "msa_") {
 		return errors.New("service token must start with msa_")
 	}
@@ -600,24 +613,40 @@ func runServiceTokenLogin(cmd *cobra.Command, providedToken string) error {
 	}
 
 	profile := resolveProfile(cmd)
+	storage, err := persistServiceToken(profile, serverURL, resolveAppURL(cmd), token, runtime.GOOS == "darwin", storeServiceToken)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nService token saved to %s.\n", me.Name, me.Email, storage)
+	return nil
+}
+
+func persistServiceToken(profile, serverURL, appURL, token string, useKeychain bool, store func(account, token string) error) (string, error) {
 	account := profile
 	if account == "" {
 		account = "default"
 	}
-	if err := storeServiceToken(account, token); err != nil {
-		return err
-	}
 	cfg, _ := cli.LoadCLIConfigForProfile(profile)
 	cfg.WorkspaceID = ""
-	cfg.Token = ""
-	cfg.ServiceTokenKeychainAccount = account
-	cfg.ServerURL = serverURL
-	cfg.AppURL = resolveAppURL(cmd)
-	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
+	if useKeychain {
+		if err := store(account, token); err != nil {
+			return "", err
+		}
+		cfg.Token = ""
+		cfg.ServiceTokenKeychainAccount = account
+	} else {
+		cfg.Token = token
+		cfg.ServiceTokenKeychainAccount = ""
 	}
-	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nService token saved to macOS Keychain.\n", me.Name, me.Email)
-	return nil
+	cfg.ServerURL = serverURL
+	cfg.AppURL = appURL
+	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
+		return "", fmt.Errorf("failed to save config: %w", err)
+	}
+	if useKeychain {
+		return "macOS Keychain", nil
+	}
+	return "the user-only profile config", nil
 }
 
 func storeServiceToken(account, token string) error {

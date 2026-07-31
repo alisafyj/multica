@@ -46,8 +46,10 @@ Keep `DISABLE_WORKSPACE_CREATION=true` after the initial workspace is created.
 
 An SSO-authenticated workspace owner creates the sole `ai_work` service
 account. It receives `admin` in that workspace and one `msa_` token valid for
-90 days. Store the token in macOS Keychain via `multica login --service-token`.
-Rotate or revoke it manually; there is no renewal path.
+90 days. Authenticate the dedicated machine with `multica login
+--service-token` and paste the token at the prompt. macOS stores it in
+Keychain; Linux stores it atomically in the selected profile's user-only
+`config.json` (`0600`). Rotate or revoke it manually; there is no renewal path.
 
 ## Expiry behavior
 

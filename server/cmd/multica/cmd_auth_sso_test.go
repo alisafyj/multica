@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"runtime"
+	"os"
 	"strings"
 	"testing"
 
@@ -23,6 +24,9 @@ func TestLoginFlagsExposeBothAuthModes(t *testing.T) {
 	}
 	if got := loginCmd.Flags().Lookup("token").NoOptDefVal; got != tokenPromptSentinel {
 		t.Fatalf("--token NoOptDefVal = %q, want prompt sentinel", got)
+	}
+	if got := loginCmd.Flags().Lookup("service-token").NoOptDefVal; got != tokenPromptSentinel {
+		t.Fatalf("--service-token NoOptDefVal = %q, want prompt sentinel", got)
 	}
 }
 
@@ -108,11 +112,23 @@ func TestRunAuthLoginUsesServerAuthMode(t *testing.T) {
 
 		err := runAuthLogin(cmd, nil)
 		want := "invalid service token"
-		if runtime.GOOS != "darwin" {
-			want = "supported only on macOS"
-		}
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("runAuthLogin() error = %v, want %q", err, want)
+		}
+	})
+
+	t.Run("SSO accepts service token as the flag's following argument", func(t *testing.T) {
+		srv := newServer(t, true)
+		t.Cleanup(srv.Close)
+		t.Setenv("MULTICA_SERVER_URL", srv.URL)
+		cmd := testAuthLoginCmd()
+		if err := cmd.Flags().Set("service-token", tokenPromptSentinel); err != nil {
+			t.Fatal(err)
+		}
+
+		err := runAuthLogin(cmd, []string{"msa_test"})
+		if err == nil || !strings.Contains(err.Error(), "invalid service token") {
+			t.Fatalf("runAuthLogin() error = %v, want invalid service token", err)
 		}
 	})
 
@@ -141,6 +157,52 @@ func TestRunAuthLoginUsesServerAuthMode(t *testing.T) {
 			t.Fatalf("runAuthLogin() error = %v, want incompatible --service-token error", err)
 		}
 	})
+}
+
+func TestPersistServiceTokenUsesProfileConfigOffMacOS(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	storeCalled := false
+	storage, err := persistServiceToken(
+		"iworker",
+		"https://api.example.test",
+		"https://app.example.test",
+		"msa_test",
+		false,
+		func(_, _ string) error {
+			storeCalled = true
+			return errors.New("keychain should not be called")
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storeCalled {
+		t.Fatal("non-macOS persistence unexpectedly called the Keychain store")
+	}
+	if storage != "the user-only profile config" {
+		t.Fatalf("storage = %q", storage)
+	}
+	cfg, err := cli.LoadCLIConfigForProfile("iworker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Token != "msa_test" || cfg.ServiceTokenKeychainAccount != "" {
+		t.Fatalf("unexpected saved auth config: %#v", cfg)
+	}
+	if cfg.ServerURL != "https://api.example.test" || cfg.AppURL != "https://app.example.test" {
+		t.Fatalf("unexpected saved URLs: %#v", cfg)
+	}
+	path, err := cli.CLIConfigPathForProfile("iworker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("config mode = %o, want 600", got)
+	}
 }
 
 func TestRunAuthLoginDoesNotDowngradeWhenConfigFails(t *testing.T) {
