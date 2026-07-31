@@ -2,6 +2,13 @@
 # instead of pulling the official GHCR images.
 
 services:
+  docs:
+    image: multica-docs:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.docs
+    restart: unless-stopped
+
   backend:
     image: multica-backend:dev
     build:
@@ -19,3 +26,8 @@ services:
       dockerfile: Dockerfile.web
       args:
         NEXT_PUBLIC_APP_VERSION: dev
+    depends_on:
+      - backend
+      - docs
+    environment:
+      DOCS_URL: http://docs:4000

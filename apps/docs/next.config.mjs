@@ -6,6 +6,7 @@ const withMDX = createMDX();
 const config = {
   reactStrictMode: true,
   basePath: "/docs",
+  ...(process.env.STANDALONE === "true" ? { output: "standalone" } : {}),
   // Visiting http://host/ (outside basePath) would otherwise 404 — redirect
   // to the docs root. basePath: false makes the source and destination
   // literal (not re-prefixed with `/docs`), so the redirect runs before
