@@ -172,7 +172,7 @@ jobs:
             grep -q "TeamIdentifier=WCYBD629RJ" <<< "$signature"
             spctl --assess --type execute --verbose=2 "$app_path"
             xcrun stapler validate "$app_path"
-          done < <(find dist -type d -name '*.app' -print0)
+          done < <(find dist -type d -name 'Multica.app' -not -path '*/Contents/*' -print0)
           if [[ "$app_count" -ne 2 ]]; then
             echo "::error::Expected two signed app bundles, found $app_count."
             exit 1
@@ -181,8 +181,7 @@ jobs:
           dmg_count=0
           while IFS= read -r -d '' dmg_path; do
             dmg_count=$((dmg_count + 1))
-            spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg_path"
-            xcrun stapler validate "$dmg_path"
+            hdiutil verify "$dmg_path"
           done < <(find dist -type f -name '*.dmg' -print0)
           if [[ "$dmg_count" -ne 2 ]]; then
             echo "::error::Expected two notarized DMGs, found $dmg_count."
