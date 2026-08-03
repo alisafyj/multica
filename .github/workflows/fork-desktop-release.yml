@@ -151,7 +151,7 @@ jobs:
           APPLE_TEAM_ID: ${{ matrix.target == 'mac' && env.PERSONAL_APPLE_TEAM_ID || '' }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.target == 'mac' && 'true' || 'false' }}
         run: >-
-          node scripts/package.mjs
+          pnpm exec node scripts/package.mjs
           --${{ matrix.target }} --x64 --arm64 --publish never
           -c.publish.owner=${{ github.repository_owner }}
           -c.publish.repo=${{ github.event.repository.name }}
