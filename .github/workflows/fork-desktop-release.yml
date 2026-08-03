@@ -115,12 +115,37 @@ jobs:
           done
           exit "$missing"
 
+      - name: Import macOS signing certificate
+        if: matrix.target == 'mac'
+        shell: bash
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          certificate_path="$RUNNER_TEMP/multica-signing.p12"
+          keychain_path="$RUNNER_TEMP/multica-signing.keychain-db"
+          keychain_password="multica-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          printf '%s' "$CERTIFICATE_BASE64" | tr -d '\r\n' | base64 --decode > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_password" "$keychain_path"
+          security list-keychains -d user -s "$keychain_path" login.keychain-db
+
+          identities=$(security find-identity -v -p codesigning "$keychain_path")
+          echo "$identities"
+          grep -Fq "Developer ID Application: kelong zong (WCYBD629RJ)" <<< "$identities"
+          rm -f "$certificate_path"
+
       - name: Package Desktop installers (${{ matrix.target }})
         working-directory: apps/desktop
         shell: bash
         env:
-          CSC_LINK: ${{ matrix.target == 'mac' && secrets.MACOS_CERTIFICATE_P12_BASE64 || '' }}
-          CSC_KEY_PASSWORD: ${{ matrix.target == 'mac' && secrets.MACOS_CERTIFICATE_PASSWORD || '' }}
           APPLE_ID: ${{ matrix.target == 'mac' && secrets.APPLE_ID || '' }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.target == 'mac' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ matrix.target == 'mac' && env.PERSONAL_APPLE_TEAM_ID || '' }}
