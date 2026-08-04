@@ -1,4 +1,4 @@
-import { githubUrl, discordUrl } from "../components/shared";
+import { githubUrl } from "../components/shared";
 import type { LandingDict } from "./types";
 
 export function createEnDict(allowSignup: boolean): LandingDict {
@@ -231,8 +231,8 @@ export function createEnDict(allowSignup: boolean): LandingDict {
       product: {
         label: "Product",
         links: [
-          { label: "Features", href: "#features" },
-          { label: "How it Works", href: "#how-it-works" },
+          { label: "Features", href: "/#features" },
+          { label: "How it Works", href: "/#how-it-works" },
           { label: "Use cases", href: "/usecases" },
           { label: "Changelog", href: "/changelog" },
           { label: "Download", href: "/download" },
@@ -242,16 +242,13 @@ export function createEnDict(allowSignup: boolean): LandingDict {
         label: "Resources",
         links: [
           { label: "Documentation", href: "/docs" },
-          { label: "API", href: githubUrl },
-          { label: "X (Twitter)", href: "https://x.com/MulticaAI" },
-          { label: "Discord", href: discordUrl },
         ],
       },
       company: {
         label: "Company",
         links: [
           { label: "About", href: "/about" },
-          { label: "Open Source", href: "#open-source" },
+          { label: "Open Source", href: "/#open-source" },
           { label: "Contact Sales", href: "/contact-sales" },
           { label: "GitHub", href: githubUrl },
         ],
@@ -2703,10 +2700,6 @@ export function createEnDict(allowSignup: boolean): LandingDict {
       sshNote: "Already on a server? Same commands work over SSH.",
       copyLabel: "Copy",
       copiedLabel: "Copied",
-    },
-    cloud: {
-      title: "Cloud runtime (waitlist)",
-      sub: "We’ll host the runtime for you. Not live yet — leave your email to be notified.",
     },
     footer: {
       releaseNotes: "What’s new in {version}",

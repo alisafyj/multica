@@ -10,7 +10,8 @@ import {
  * costs at most one GitHub API call per region per 5 minutes.
  *
  * This SSO distribution intentionally reads the fork's signed desktop
- * release by tag so an upstream release cannot silently replace it.
+ * releases so an upstream release cannot silently replace it. CLI-only tags,
+ * drafts, and other releases are ignored.
  *
  * On any failure (network, rate limit, malformed payload) returns a
  * `null`-shaped result and logs — the page degrades to a "version
@@ -25,7 +26,7 @@ export interface LatestRelease {
 }
 
 const GITHUB_RELEASE_URL =
-  "https://api.github.com/repos/coder-zkl1988/multica/releases/tags/desktop-v0.4.16-sso.1";
+  "https://api.github.com/repos/coder-zkl1988/multica/releases?per_page=20";
 
 const REVALIDATE_SECONDS = 300;
 
@@ -62,8 +63,12 @@ export async function fetchLatestRelease(): Promise<LatestRelease> {
     if (!res.ok) {
       throw new Error(`GitHub API responded ${res.status}`);
     }
-    const chosen = (await res.json()) as GitHubReleasePayload;
-    if (chosen.draft) return emptyRelease();
+    const releases = (await res.json()) as GitHubReleasePayload[];
+    const chosen = releases.find(
+      (release) =>
+        !release.draft && release.tag_name?.startsWith("desktop-v"),
+    );
+    if (!chosen) return emptyRelease();
 
     return {
       version: chosen.tag_name ?? null,

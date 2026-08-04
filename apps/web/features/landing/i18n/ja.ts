@@ -1,4 +1,4 @@
-import { githubUrl, discordUrl } from "../components/shared";
+import { githubUrl } from "../components/shared";
 import { createEnDict } from "./en";
 import type { LandingDict } from "./types";
 
@@ -231,8 +231,8 @@ export function createJaDict(allowSignup: boolean): LandingDict {
         product: {
           label: "プロダクト",
           links: [
-            { label: "機能", href: "#features" },
-            { label: "仕組み", href: "#how-it-works" },
+            { label: "機能", href: "/#features" },
+            { label: "仕組み", href: "/#how-it-works" },
             { label: "ユースケース", href: "/usecases" },
             { label: "変更履歴", href: "/changelog" },
             { label: "ダウンロード", href: "/download" },
@@ -242,16 +242,13 @@ export function createJaDict(allowSignup: boolean): LandingDict {
           label: "リソース",
           links: [
             { label: "ドキュメント", href: "/docs/ja" },
-            { label: "API", href: githubUrl },
-            { label: "X (Twitter)", href: "https://x.com/MulticaAI" },
-            { label: "Discord", href: discordUrl },
           ],
         },
         company: {
           label: "会社",
           links: [
             { label: "概要", href: "/about" },
-            { label: "オープンソース", href: "#open-source" },
+            { label: "オープンソース", href: "/#open-source" },
             { label: "営業に相談", href: "/contact-sales" },
             { label: "GitHub", href: githubUrl },
           ],
@@ -2204,10 +2201,6 @@ export function createJaDict(allowSignup: boolean): LandingDict {
         sshNote: "すでにサーバーに接続中ですか? 同じコマンドが SSH 上でもそのまま使えます。",
         copyLabel: "コピー",
         copiedLabel: "コピーしました",
-      },
-      cloud: {
-        title: "クラウドランタイム(順番待ち)",
-        sub: "ランタイムを当社がホストします。まだ提供前です。メールアドレスをお預けいただければ、準備でき次第お知らせします。",
       },
       footer: {
         releaseNotes: "{version} の新着情報",

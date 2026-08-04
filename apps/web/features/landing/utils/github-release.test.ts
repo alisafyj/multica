@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchLatestRelease } from "./github-release";
 
 const SAMPLE_LATEST_ASSET = {
-  name: "multica-desktop-0.4.16-sso.1-mac-arm64.dmg",
+  name: "multica-desktop-0.4.17-sso.2-mac-arm64.dmg",
   browser_download_url:
-    "https://github.com/coder-zkl1988/multica/releases/download/desktop-v0.4.16-sso.1/multica-desktop-0.4.16-sso.1-mac-arm64.dmg",
+    "https://github.com/coder-zkl1988/multica/releases/download/desktop-v0.4.17-sso.2/multica-desktop-0.4.17-sso.2-mac-arm64.dmg",
 };
 
 function releasePayload(overrides: {
@@ -27,9 +27,9 @@ function releasePayload(overrides: {
   };
 }
 
-function mockFetchWithRelease(release: unknown) {
+function mockFetchWithReleases(releases: unknown[]) {
   const fetchMock = vi.fn().mockResolvedValue(
-    new Response(JSON.stringify(release), {
+    new Response(JSON.stringify(releases), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     }),
@@ -43,20 +43,22 @@ afterEach(() => {
 });
 
 describe("fetchLatestRelease", () => {
-  it("uses the tagged SSO desktop release", async () => {
-    const fetchMock = mockFetchWithRelease(
+  it("uses the newest published SSO desktop release from the fork", async () => {
+    const fetchMock = mockFetchWithReleases([
+      releasePayload({ tag: "v0.4.16-sso.1", prerelease: true }),
+      releasePayload({ tag: "desktop-v0.4.17-sso.3", draft: true }),
       releasePayload({
-        tag: "desktop-v0.4.16-sso.1",
+        tag: "desktop-v0.4.17-sso.2",
         asset: SAMPLE_LATEST_ASSET,
         prerelease: true,
       }),
-    );
+    ]);
 
     const result = await fetchLatestRelease();
-    expect(result.version).toBe("desktop-v0.4.16-sso.1");
+    expect(result.version).toBe("desktop-v0.4.17-sso.2");
     expect(result.assets.macArm64Dmg).toBe(SAMPLE_LATEST_ASSET.browser_download_url);
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("coder-zkl1988/multica/releases/tags/desktop-v0.4.16-sso.1"),
+      expect.stringContaining("coder-zkl1988/multica/releases?per_page=20"),
       expect.any(Object),
     );
   });
@@ -80,9 +82,9 @@ describe("fetchLatestRelease", () => {
   });
 
   it("returns an empty release shape for a draft", async () => {
-    mockFetchWithRelease(
+    mockFetchWithReleases([
       releasePayload({ tag: "desktop-v0.4.16-sso.1", draft: true }),
-    );
+    ]);
 
     const result = await fetchLatestRelease();
     expect(result.version).toBeNull();

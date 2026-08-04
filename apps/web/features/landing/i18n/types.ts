@@ -185,7 +185,6 @@ export type LandingDict = {
       copyLabel: string;
       copiedLabel: string;
     };
-    cloud: { title: string; sub: string };
     footer: {
       releaseNotes: string;
       allReleases: string;

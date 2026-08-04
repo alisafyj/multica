@@ -1,4 +1,4 @@
-import { githubUrl, discordUrl } from "../components/shared";
+import { githubUrl } from "../components/shared";
 import type { LandingDict } from "./types";
 
 export function createZhDict(allowSignup: boolean): LandingDict {
@@ -231,8 +231,8 @@ export function createZhDict(allowSignup: boolean): LandingDict {
       product: {
         label: "\u4ea7\u54c1",
         links: [
-          { label: "\u529f\u80fd\u7279\u6027", href: "#features" },
-          { label: "\u5982\u4f55\u5de5\u4f5c", href: "#how-it-works" },
+          { label: "\u529f\u80fd\u7279\u6027", href: "/#features" },
+          { label: "\u5982\u4f55\u5de5\u4f5c", href: "/#how-it-works" },
           { label: "\u6848\u4f8b", href: "/usecases" },
           { label: "更新日志", href: "/changelog" },
           { label: "下载", href: "/download" },
@@ -242,16 +242,13 @@ export function createZhDict(allowSignup: boolean): LandingDict {
         label: "\u8d44\u6e90",
         links: [
           { label: "\u6587\u6863", href: "/docs/zh" },
-          { label: "API", href: githubUrl },
-          { label: "X (Twitter)", href: "https://x.com/MulticaAI" },
-          { label: "Discord", href: discordUrl },
         ],
       },
       company: {
         label: "\u5173\u4e8e",
         links: [
           { label: "\u5173\u4e8e\u6211\u4eec", href: "/about" },
-          { label: "\u5f00\u6e90", href: "#open-source" },
+          { label: "\u5f00\u6e90", href: "/#open-source" },
           { label: "\u8054\u7cfb\u5546\u52a1", href: "/contact-sales" },
           { label: "GitHub", href: githubUrl },
         ],
@@ -2702,10 +2699,6 @@ export function createZhDict(allowSignup: boolean): LandingDict {
       sshNote: "已经在服务器上？通过 SSH 执行同样的命令即可。",
       copyLabel: "复制",
       copiedLabel: "已复制",
-    },
-    cloud: {
-      title: "Cloud runtime（等待名单）",
-      sub: "我们将为你托管 runtime，目前尚未上线——留下邮箱，上线后通知你。",
     },
     footer: {
       releaseNotes: "v{version} 更新内容",

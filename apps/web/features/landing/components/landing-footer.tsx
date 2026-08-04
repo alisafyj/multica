@@ -4,14 +4,7 @@ import Link from "next/link";
 import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
 import { cn } from "@multica/ui/lib/utils";
 import { useAuthStore } from "@multica/core/auth";
-import {
-  XMark,
-  GitHubMark,
-  DiscordMark,
-  githubUrl,
-  twitterUrl,
-  discordUrl,
-} from "./shared";
+import { GitHubMark, githubUrl } from "./shared";
 import { useLocale, locales, localeLabels } from "../i18n";
 import { useDashboardCtaHref } from "../utils/use-dashboard-cta";
 
@@ -39,29 +32,12 @@ export function LandingFooter() {
             </p>
             <div className="mt-4 flex items-center gap-3">
               <Link
-                href={twitterUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-white/40 transition-colors hover:text-white"
-              >
-                <XMark className="size-4" />
-              </Link>
-              <Link
                 href={githubUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="text-white/40 transition-colors hover:text-white"
               >
                 <GitHubMark className="size-4" />
-              </Link>
-              <Link
-                href={discordUrl}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Discord"
-                className="text-white/40 transition-colors hover:text-white"
-              >
-                <DiscordMark className="size-4" />
               </Link>
             </div>
             <div className="mt-6">

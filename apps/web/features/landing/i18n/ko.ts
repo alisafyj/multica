@@ -1,4 +1,4 @@
-import { githubUrl, discordUrl } from "../components/shared";
+import { githubUrl } from "../components/shared";
 import { createEnDict } from "./en";
 import type { LandingDict } from "./types";
 
@@ -230,8 +230,8 @@ export function createKoDict(allowSignup: boolean): LandingDict {
         product: {
           label: "제품",
           links: [
-            { label: "기능", href: "#features" },
-            { label: "작동 방식", href: "#how-it-works" },
+            { label: "기능", href: "/#features" },
+            { label: "작동 방식", href: "/#how-it-works" },
             { label: "사용 사례", href: "/usecases" },
             { label: "변경 로그", href: "/changelog" },
             { label: "다운로드", href: "/download" },
@@ -241,16 +241,13 @@ export function createKoDict(allowSignup: boolean): LandingDict {
           label: "리소스",
           links: [
             { label: "문서", href: "/docs/ko" },
-            { label: "API", href: githubUrl },
-            { label: "X (Twitter)", href: "https://x.com/MulticaAI" },
-            { label: "Discord", href: discordUrl },
           ],
         },
         company: {
           label: "회사",
           links: [
             { label: "소개", href: "/about" },
-            { label: "오픈소스", href: "#open-source" },
+            { label: "오픈소스", href: "/#open-source" },
             { label: "영업팀 문의", href: "/contact-sales" },
             { label: "GitHub", href: githubUrl },
           ],
@@ -2229,10 +2226,6 @@ export function createKoDict(allowSignup: boolean): LandingDict {
         sshNote: "이미 서버에 접속해 있나요? 같은 명령을 SSH에서도 그대로 사용할 수 있습니다.",
         copyLabel: "복사",
         copiedLabel: "복사했습니다",
-      },
-      cloud: {
-        title: "클라우드 런타임 (대기자 명단)",
-        sub: "Multica가 런타임을 직접 호스팅해 드립니다. 아직 정식 출시 전입니다. 이메일을 남겨 주시면 준비되는 대로 알려드릴게요.",
       },
       footer: {
         releaseNotes: "{version}의 새로운 내용",

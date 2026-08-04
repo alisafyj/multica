@@ -7,7 +7,8 @@ import { useLocale } from "../../i18n";
 
 const INSTALL_CMD =
   "curl -fsSL https://raw.githubusercontent.com/coder-zkl1988/multica/main/scripts/install.sh | bash";
-const SETUP_CMD = "multica setup";
+const SETUP_CMD =
+  "multica setup self-host --server-url https://iworker.soyoung.com --app-url https://iworker.soyoung.com";
 
 /**
  * Scenario-first CLI section. Copy leans into servers / remote dev
