@@ -78,6 +78,7 @@ import type {
   DesignReadyPayload,
   DesignDraftReadyPayload,
   ProjectDesignSystemChangedPayload,
+  ProjectDesignSystem,
 } from "../types";
 
 const chatWsLogger = createLogger("chat.ws");
@@ -773,7 +774,7 @@ export function useRealtimeSync(
     const unsubTaskMessage = ws.on("task:message", (p) => {
       const payload = p as TaskMessagePayload;
       qc.setQueryData<TaskMessagePayload[]>(
-        ["task-messages", payload.task_id],
+        chatKeys.taskMessages(payload.task_id),
         (old = []) => {
           if (old.some((m) => m.seq === payload.seq)) return old;
           return [...old, payload].sort((a, b) => a.seq - b.seq);
@@ -794,6 +795,34 @@ export function useRealtimeSync(
     const invalidateSessionLists = () => {
       const id = getCurrentWsId();
       if (id) qc.invalidateQueries({ queryKey: chatKeys.sessions(id) });
+    };
+
+    const invalidateProjectDesignSystemForTask = (taskId: string) => {
+      const id = getCurrentWsId();
+      if (!id || !taskId) return;
+      const matches = qc.getQueriesData<ProjectDesignSystem>({
+        queryKey: designKeys.projectDesignSystems(id),
+      });
+      const invalidated = new Set<string>();
+      for (const [, system] of matches) {
+        if (
+          system?.active_task?.id !== taskId
+          || !system.id
+          || !system.project_id
+          || invalidated.has(system.id)
+        ) {
+          continue;
+        }
+        invalidated.add(system.id);
+        qc.invalidateQueries({
+          queryKey: designKeys.projectDesignSystemByProject(id, system.project_id),
+          exact: true,
+        });
+        qc.invalidateQueries({
+          queryKey: designKeys.projectDesignSystem(id, system.id),
+          exact: true,
+        });
+      }
     };
 
     const unsubChatMessage = ws.on("chat:message", (p) => {
@@ -841,6 +870,7 @@ export function useRealtimeSync(
     // when reconnect replays the event for an already-running task).
     const unsubTaskQueued = ws.on("task:queued", (p) => {
       const payload = p as TaskQueuedPayload;
+      invalidateProjectDesignSystemForTask(payload.task_id);
       if (!payload.chat_session_id) return;
       qc.setQueryData<ChatPendingTask>(
         chatKeys.pendingTask(payload.chat_session_id),
@@ -861,6 +891,7 @@ export function useRealtimeSync(
     // taskMessages → "Thinking · Ns".
     const unsubTaskDispatch = ws.on("task:dispatch", (p) => {
       const payload = p as TaskDispatchPayload;
+      invalidateProjectDesignSystemForTask(payload.task_id);
       if (!payload.chat_session_id) return;
       qc.setQueryData<ChatPendingTask>(
         chatKeys.pendingTask(payload.chat_session_id),
@@ -878,6 +909,7 @@ export function useRealtimeSync(
     // would stay parked even after the daemon resumed work.
     const unsubTaskRunning = ws.on("task:running", (p) => {
       const payload = p as TaskRunningPayload;
+      invalidateProjectDesignSystemForTask(payload.task_id);
       if (!payload.chat_session_id) return;
       qc.setQueryData<ChatPendingTask>(
         chatKeys.pendingTask(payload.chat_session_id),
@@ -897,6 +929,7 @@ export function useRealtimeSync(
       "task:waiting_local_directory",
       (p) => {
         const payload = p as TaskWaitingLocalDirectoryPayload;
+        invalidateProjectDesignSystemForTask(payload.task_id);
         if (!payload.chat_session_id) return;
         qc.setQueryData<ChatPendingTask>(
           chatKeys.pendingTask(payload.chat_session_id),
@@ -915,6 +948,7 @@ export function useRealtimeSync(
     //      forever in the second-tab scenario.
     const unsubTaskCancelled = ws.on("task:cancelled", (p) => {
       const payload = p as TaskCancelledPayload;
+      invalidateProjectDesignSystemForTask(payload.task_id);
       if (!payload.chat_session_id) return;
       chatWsLogger.info("task:cancelled (global, chat)", {
         task_id: payload.task_id,
@@ -926,6 +960,7 @@ export function useRealtimeSync(
 
     const unsubTaskCompleted = ws.on("task:completed", (p) => {
       const payload = p as TaskCompletedPayload;
+      invalidateProjectDesignSystemForTask(payload.task_id);
       if (!payload.chat_session_id) return; // issue tasks handled elsewhere
       chatWsLogger.info("task:completed (global, chat)", {
         task_id: payload.task_id,
@@ -942,6 +977,7 @@ export function useRealtimeSync(
 
     const unsubTaskFailed = ws.on("task:failed", (p) => {
       const payload = p as TaskFailedPayload;
+      invalidateProjectDesignSystemForTask(payload.task_id);
       if (!payload.chat_session_id) return;
       chatWsLogger.warn("task:failed (global, chat)", {
         task_id: payload.task_id,

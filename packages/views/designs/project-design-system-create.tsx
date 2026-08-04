@@ -5,11 +5,12 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   CircleAlert,
-  ExternalLink,
   FileImage,
+  GitBranch,
   Link as LinkIcon,
   LoaderCircle,
   Palette,
+  PencilLine,
   Sparkles,
   Upload,
   X,
@@ -19,9 +20,9 @@ import { api } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useWorkspacePaths } from "@multica/core/paths";
 import type {
   Agent,
+  AnalyzeProjectDesignSystemRepositoryRequest,
   CreateProjectDesignSystemRequest,
   DesignFile,
   DesignSystemProfile,
@@ -29,13 +30,11 @@ import type {
   ProjectDesignSystem,
   ProjectDesignSystemPlatform,
   ProjectDesignSystemReferenceInput,
+  ProjectRepositoryDesignContext,
 } from "@multica/core/types";
-import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
-import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Textarea } from "@multica/ui/components/ui/textarea";
-import { AppLink } from "../navigation";
 
 type UploadedReference = {
   attachmentId: string;
@@ -58,6 +57,10 @@ const PLATFORM_OPTIONS: Array<{ value: ProjectDesignSystemPlatform; label: strin
   { value: "mobile", label: "移动端" },
   { value: "cross_platform", label: "跨端" },
 ];
+
+const ANALYZED_REFERENCES_LABEL = "已用于本次仓库分析";
+const RESELECT_REFERENCES_LABEL = "重新选择参考资料";
+const REFERENCES_NEED_ANALYSIS_LABEL = "参考资料需要重新分析";
 
 function objectValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -129,6 +132,19 @@ function errorMessage(value: unknown): string | null {
   if (typeof value === "string" && value.trim()) return value.trim();
   const record = objectValue(value);
   if (!record) return null;
+  const code = stringValue(record.code).trim();
+  if (code === "project_design_system_cancelled") {
+    return "任务已停止。你可以修改设置后重新生成。";
+  }
+  if (code === "project_design_system_task_failed") {
+    return "智能体执行失败。请检查智能体状态后重新生成。";
+  }
+  if (code === "project_design_system_invalid_artifacts") {
+    return "智能体没有生成有效的设计体系。请调整设计目标或参考资料后重新生成。";
+  }
+  if (code === "project_design_system_invalid_repository_analysis") {
+    return "智能体没有返回有效的仓库分析结果，请重试或更换智能体。";
+  }
   for (const key of ["message", "error", "reason", "code"]) {
     const text = stringValue(record[key]).trim();
     if (text) return text;
@@ -136,31 +152,27 @@ function errorMessage(value: unknown): string | null {
   return null;
 }
 
-function generationStage(system: ProjectDesignSystem): string | null {
-  const status = system.active_task?.status;
-  if (status === "queued" || status === "dispatched") return "准备上下文";
-  if (status === "running") return "智能体生成";
-  if (status === "completed") return "产物校验";
-  return null;
-}
-
-function platformLabel(platform: ProjectDesignSystem["platform"]): string {
-  return PLATFORM_OPTIONS.find((item) => item.value === platform)?.label ?? "未指定";
-}
-
-function formatDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "尚未更新";
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
 function toggleId(values: string[], id: string): string[] {
   return values.includes(id) ? values.filter((value) => value !== id) : [...values, id];
+}
+
+function repositorySourcePaths(analysis: ProjectRepositoryDesignContext): string[] {
+  return [...new Set([
+    ...analysis.source_files.map((source) => source.path),
+    ...analysis.facts.flatMap((fact) => fact.source_paths),
+    ...analysis.conflicts.flatMap((conflict) => conflict.source_paths),
+  ])];
+}
+
+function referenceSummary(form: ProjectDesignSystemForm): string {
+  const items = [
+    form.attachments.length ? `附件 ${form.attachments.length}` : "",
+    form.brandColor.trim() ? "品牌色" : "",
+    form.link.trim() ? "参考链接" : "",
+    form.designFileIds.length ? `项目设计稿 ${form.designFileIds.length}` : "",
+    form.profileIds.length ? `UI 规范 ${form.profileIds.length}` : "",
+  ].filter(Boolean);
+  return items.length ? items.join(" · ") : "未使用额外参考资料";
 }
 
 function ReferenceCheckbox({
@@ -191,22 +203,20 @@ export function ProjectDesignSystemCreate({
   designFiles,
   legacyProfiles,
   system,
-  isLoading,
 }: {
   project: Project;
   agents: Agent[];
   designFiles: DesignFile[];
   legacyProfiles: DesignSystemProfile[];
   system: ProjectDesignSystem | undefined;
-  isLoading: boolean;
+  isLoading?: boolean;
 }) {
   const wsId = useWorkspaceId();
-  const paths = useWorkspacePaths();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [forms, setForms] = useState<Record<string, ProjectDesignSystemForm>>({});
-  const [creationOpen, setCreationOpen] = useState<Record<string, boolean>>({});
   const [submitErrors, setSubmitErrors] = useState<Record<string, string | null>>({});
+  const [referenceEditing, setReferenceEditing] = useState<Record<string, boolean>>({});
   const { upload, uploading } = useFileUpload(api, (error) => toast.error(error.message));
 
   const form = forms[project.id] ?? initialForm(project, system);
@@ -214,6 +224,17 @@ export function ProjectDesignSystemCreate({
   const agentAvailable = isAgentAvailable(currentAgent);
   const validLink = isHttpsLink(form.link);
   const validColor = !form.brandColor.trim() || isHexColor(form.brandColor);
+  const repositoryAnalysis = system?.input_snapshot.repository_analysis;
+  const repositorySources = repositoryAnalysis ? repositorySourcePaths(repositoryAnalysis) : [];
+  const referencesNeedAnalysis = Boolean(repositoryAnalysis && referenceEditing[project.id]);
+  const canAnalyze = Boolean(
+    form.agentId
+      && agentAvailable
+      && form.platform
+      && validLink
+      && validColor
+      && !uploading,
+  );
   const canSubmit = Boolean(
     form.agentId
       && agentAvailable
@@ -221,10 +242,10 @@ export function ProjectDesignSystemCreate({
       && form.brief.trim()
       && validLink
       && validColor
-      && !uploading,
+      && !uploading
+      && !referencesNeedAnalysis,
   );
   const lastError = submitErrors[project.id] ?? errorMessage(system?.last_error);
-  const showCreation = creationOpen[project.id] === true || Boolean(lastError);
 
   const agentOptions = useMemo(() => {
     const active = agents
@@ -277,6 +298,32 @@ export function ProjectDesignSystemCreate({
   const isSubmittingCurrentProject = createSystem.isPending
     && createSystem.variables?.project_id === project.id;
 
+  const analyzeRepository = useMutation({
+    mutationFn: (request: AnalyzeProjectDesignSystemRepositoryRequest) => (
+      api.analyzeProjectDesignSystemRepository(request)
+    ),
+    onMutate: (request) => {
+      setSubmitErrors((current) => ({ ...current, [request.project_id]: null }));
+    },
+    onSuccess: (analyzed) => {
+      setReferenceEditing((current) => ({ ...current, [analyzed.project_id]: false }));
+      queryClient.setQueryData(
+        designKeys.projectDesignSystemByProject(wsId, analyzed.project_id),
+        analyzed,
+      );
+      if (analyzed.id) {
+        queryClient.setQueryData(designKeys.projectDesignSystem(wsId, analyzed.id), analyzed);
+      }
+    },
+    onError: (error, request) => {
+      const message = error instanceof Error ? error.message : "无法分析项目仓库，请检查智能体与项目资源后重试。";
+      setSubmitErrors((current) => ({ ...current, [request.project_id]: message }));
+      toast.error(message);
+    },
+  });
+  const isAnalyzingCurrentProject = analyzeRepository.isPending
+    && analyzeRepository.variables?.project_id === project.id;
+
   const handleUpload = async (file: File) => {
     const projectId = project.id;
     const seed = initialForm(project, system);
@@ -324,94 +371,6 @@ export function ProjectDesignSystemCreate({
       return profile ? [{ kind: "design_system_profile" as const, design_system_profile_id: id, label: profile.name }] : [];
     }),
   ];
-
-  if (isLoading || !system) {
-    return (
-      <div className="mx-auto w-full max-w-5xl space-y-4 py-2">
-        <Skeleton className="h-7 w-48" />
-        <Skeleton className="h-20 w-full" />
-        <Skeleton className="h-36 w-full" />
-      </div>
-    );
-  }
-
-  if (system.status === "generating" || system.active_task) {
-    const stage = generationStage(system);
-    const activeAgent = agents.find((agent) => agent.id === system.current_agent_id);
-    return (
-      <div className="mx-auto w-full max-w-5xl py-2">
-        <div className="flex items-start gap-3 border-b pb-5">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-            <LoaderCircle className="h-4 w-4 animate-spin" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold">正在生成设计体系</h2>
-            <p className="mt-1 text-sm text-muted-foreground">{project.title}</p>
-          </div>
-          {stage ? <Badge variant="secondary">{stage}</Badge> : null}
-        </div>
-        <dl className="grid gap-4 border-b py-5 sm:grid-cols-3">
-          <div><dt className="text-xs text-muted-foreground">智能体</dt><dd className="mt-1 truncate text-sm font-medium">{activeAgent?.name ?? "已选择智能体"}</dd></div>
-          <div><dt className="text-xs text-muted-foreground">平台</dt><dd className="mt-1 text-sm font-medium">{platformLabel(system.platform)}</dd></div>
-          <div><dt className="text-xs text-muted-foreground">任务状态</dt><dd className="mt-1 text-sm font-medium">{system.active_task?.status || "generating"}</dd></div>
-        </dl>
-      </div>
-    );
-  }
-
-  if (system.id && (system.status === "draft" || system.status === "saved")) {
-    const currentSystemAgent = agents.find((agent) => agent.id === system.current_agent_id);
-    return (
-      <div className="mx-auto w-full max-w-5xl py-2">
-        <div className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-              <Palette className="h-4 w-4" />
-            </span>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="truncate text-base font-semibold">{system.name || `${project.title} 设计体系`}</h2>
-                <Badge variant={system.status === "saved" ? "secondary" : "outline"}>{system.status === "saved" ? "已保存" : "草稿"}</Badge>
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">{project.title}</p>
-            </div>
-          </div>
-          <AppLink
-            href={paths.projectDesignSystemDetail(system.id)}
-            className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            打开设计体系
-            <ExternalLink className="h-3.5 w-3.5" />
-          </AppLink>
-        </div>
-        <dl className="grid gap-4 border-b py-5 sm:grid-cols-3">
-          <div><dt className="text-xs text-muted-foreground">平台</dt><dd className="mt-1 text-sm font-medium">{platformLabel(system.platform)}</dd></div>
-          <div><dt className="text-xs text-muted-foreground">智能体</dt><dd className="mt-1 truncate text-sm font-medium">{currentSystemAgent?.name ?? "未记录"}</dd></div>
-          <div><dt className="text-xs text-muted-foreground">最近更新</dt><dd className="mt-1 text-sm font-medium">{formatDate(system.updated_at)}</dd></div>
-        </dl>
-      </div>
-    );
-  }
-
-  if (!showCreation) {
-    return (
-      <div className="mx-auto flex min-h-64 w-full max-w-5xl flex-col items-center justify-center border-y py-12 text-center">
-        <span className="flex h-10 w-10 items-center justify-center rounded-md bg-muted text-muted-foreground">
-          <Palette className="h-5 w-5" />
-        </span>
-        <h2 className="mt-4 text-base font-semibold">尚未建立设计体系</h2>
-        <p className="mt-1 text-sm text-muted-foreground">{project.title}</p>
-        <Button
-          type="button"
-          className="mt-5"
-          onClick={() => setCreationOpen((current) => ({ ...current, [project.id]: true }))}
-        >
-          <Sparkles className="h-4 w-4" />
-          创建设计体系
-        </Button>
-      </div>
-    );
-  }
 
   return (
     <div className="mx-auto w-full max-w-5xl py-2">
@@ -473,8 +432,104 @@ export function ProjectDesignSystemCreate({
               ))}
             </div>
           </div>
+
+          <div className="flex justify-end border-t pt-4">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!canAnalyze || isAnalyzingCurrentProject}
+              onClick={() => {
+                if (!form.platform || !canAnalyze) return;
+                analyzeRepository.mutate({
+                  project_id: project.id,
+                  agent_id: form.agentId,
+                  platform: form.platform,
+                  brief: form.brief.trim(),
+                  references: references(),
+                });
+              }}
+            >
+              {isAnalyzingCurrentProject
+                ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                : <GitBranch className="h-3.5 w-3.5" />}
+              {isAnalyzingCurrentProject ? "正在发起分析" : "分析项目仓库"}
+            </Button>
+          </div>
         </div>
       </section>
+
+      {repositoryAnalysis ? (
+        <section aria-label="仓库背景" className="grid gap-4 border-b py-5 md:grid-cols-[11rem_minmax(0,1fr)]">
+          <div>
+            <h3 className="text-sm font-medium">仓库背景</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {repositoryAnalysis.commit_sha
+                ? `Commit ${repositoryAnalysis.commit_sha.slice(0, 12)}`
+                : `置信度 ${Math.round(repositoryAnalysis.confidence * 100)}%`}
+            </p>
+          </div>
+          <div className="space-y-5">
+            <p className="text-sm leading-6">{repositoryAnalysis.summary}</p>
+
+            {repositoryAnalysis.facts.length ? (
+              <dl className="border-y">
+                {repositoryAnalysis.facts.map((fact, index) => (
+                  <div key={`${fact.kind}-${fact.label}-${index}`} className="grid gap-1 border-b py-3 last:border-b-0 sm:grid-cols-[10rem_minmax(0,1fr)]">
+                    <dt className="text-xs font-medium text-muted-foreground">{fact.label}</dt>
+                    <dd className="text-sm leading-5">{fact.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : null}
+
+            {repositoryAnalysis.conflicts.length ? (
+              <div className="space-y-3 border-l-2 border-amber-500 bg-amber-500/5 px-3 py-3">
+                {repositoryAnalysis.conflicts.map((conflict, index) => (
+                  <div key={`${conflict.label}-${index}`} className="space-y-1 text-sm">
+                    <p className="font-medium">{conflict.label}</p>
+                    <p className="text-muted-foreground">当前：{conflict.repository_fact}</p>
+                    <p>目标：{conflict.user_intent}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {repositorySources.length ? (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">来源</p>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                  {repositorySources.map((source) => (
+                    <code key={source} className="break-all text-xs text-muted-foreground">{source}</code>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {repositoryAnalysis.suggested_brief ? (
+              <div className="flex flex-wrap items-start justify-between gap-3 border-t pt-4">
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium text-muted-foreground">建议设计目标</p>
+                  <p className="mt-1 text-sm leading-6">{repositoryAnalysis.suggested_brief}</p>
+                </div>
+                {repositoryAnalysis.suggested_brief.trim() !== form.brief.trim() ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => updateForm((current) => ({
+                      ...current,
+                      brief: repositoryAnalysis.suggested_brief,
+                    }))}
+                  >
+                    应用到设计目标
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className="grid gap-4 border-b py-5 md:grid-cols-[11rem_minmax(0,1fr)]">
         <div>
@@ -494,7 +549,30 @@ export function ProjectDesignSystemCreate({
           <h3 className="text-sm font-medium">参考资料</h3>
           <p className="mt-1 text-xs text-muted-foreground">可选</p>
         </div>
-        <div className="space-y-5">
+        {repositoryAnalysis && !referencesNeedAnalysis ? (
+          <div className="flex min-h-14 items-center justify-between gap-4 border-y py-3">
+            <div className="min-w-0">
+              <p className="text-xs font-medium">{ANALYZED_REFERENCES_LABEL}</p>
+              <p className="mt-1 truncate text-sm text-muted-foreground">{referenceSummary(form)}</p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              aria-label={RESELECT_REFERENCES_LABEL}
+              onClick={() => setReferenceEditing((current) => ({ ...current, [project.id]: true }))}
+            >
+              <PencilLine className="h-3.5 w-3.5" />
+              {RESELECT_REFERENCES_LABEL}
+            </Button>
+          </div>
+        ) : <div className="space-y-5">
+          {referencesNeedAnalysis ? (
+            <div role="status" className="flex items-center gap-2 border-l-2 border-amber-500 bg-amber-500/5 px-3 py-2 text-sm">
+              <CircleAlert className="h-4 w-4 shrink-0 text-amber-600" />
+              <span>{REFERENCES_NEED_ANALYSIS_LABEL}</span>
+            </div>
+          ) : null}
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm font-medium"><Upload className="h-4 w-4 text-muted-foreground" />上传资料</div>
@@ -597,7 +675,7 @@ export function ProjectDesignSystemCreate({
               </div>
             </fieldset>
           </div>
-        </div>
+        </div>}
       </section>
 
       <div className="flex justify-end pt-5">

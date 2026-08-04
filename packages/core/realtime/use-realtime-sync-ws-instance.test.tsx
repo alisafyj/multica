@@ -199,6 +199,53 @@ describe("useRealtimeSync — ws instance change", () => {
     });
   });
 
+  it("invalidates only the matching project design system on task lifecycle events", () => {
+    const { ws, handlers } = createEventfulMockWs();
+    const system = {
+      id: "system-1",
+      project_id: "project-1",
+      active_task: { id: "task-1" },
+    };
+    qc.setQueryData(
+      ["designs", "ws-1", "project-design-systems", "project", "project-1"],
+      system,
+    );
+    qc.setQueryData(
+      ["designs", "ws-1", "project-design-systems", "system", "system-1"],
+      system,
+    );
+    renderHook(() => useRealtimeSync(ws, stores), {
+      wrapper: createWrapper(qc),
+    });
+
+    invalidateSpy.mockClear();
+    handlers.get("task:running")?.({
+      task_id: "task-1",
+      agent_id: "agent-1",
+      issue_id: "",
+      status: "running",
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["designs", "ws-1", "project-design-systems", "project", "project-1"],
+      exact: true,
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["designs", "ws-1", "project-design-systems", "system", "system-1"],
+      exact: true,
+    });
+
+    invalidateSpy.mockClear();
+    handlers.get("task:running")?.({
+      task_id: "other-task",
+      agent_id: "agent-1",
+      issue_id: "",
+      status: "running",
+    });
+    expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+
   it("ignores malformed websocket messages without an event type", () => {
     const { ws, anyHandlers } = createAnyEventMockWs();
     renderHook(() => useRealtimeSync(ws, stores), {

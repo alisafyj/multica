@@ -24,6 +24,14 @@ describe("designKeys", () => {
       "system",
       "system-1",
     ]);
+    expect(designKeys.projectDesignSystemArchivePreview("ws-1", "system-1")).toEqual([
+      "designs",
+      "ws-1",
+      "project-design-systems",
+      "system",
+      "system-1",
+      "archive-preview",
+    ]);
   });
 
   it("keeps project design system query options workspace-scoped", () => {

@@ -110,6 +110,12 @@ function makeSystem(overrides: Partial<ProjectDesignSystem> = {}): ProjectDesign
       preview_html: "<!doctype html><html><body><button>Save customer</button></body></html>",
       integrity_sha256: "digest-before-adjustment",
     },
+    preview_validation: {
+      status: "passed",
+      integrity_sha256: "digest-before-adjustment",
+      report: {},
+      verified_at: "2026-07-29T01:00:00Z",
+    },
     has_unsaved_changes: true,
     last_error: null,
     activity: [],
@@ -166,6 +172,7 @@ describe("ProjectDesignSystemPage", () => {
     renderPage();
 
     await screen.findByRole("heading", { name: "品牌原则" });
+    await user.click(screen.getByRole("button", { name: "调整设计体系" }));
     await user.selectOptions(screen.getByLabelText("执行智能体"), "agent-2");
     await user.type(screen.getByLabelText("调整要求"), "整体提高信息密度");
     await user.click(screen.getByRole("button", { name: "提交调整" }));
@@ -175,7 +182,8 @@ describe("ProjectDesignSystemPage", () => {
       scope: { kind: "all" },
     }));
 
-    await user.click(screen.getByRole("button", { name: "选择范围：品牌原则" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "调整设计体系" })).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "调整 品牌原则" }));
     await user.type(screen.getByLabelText("调整要求"), "减少说明文字");
     await user.click(screen.getByRole("button", { name: "提交调整" }));
     await waitFor(() => expect(apiMocks.adjustProjectDesignSystem).toHaveBeenLastCalledWith("system-1", {
@@ -194,6 +202,7 @@ describe("ProjectDesignSystemPage", () => {
     renderPage();
 
     await screen.findByText("保持清晰、克制，并优先支持高频工作。");
+    await user.click(screen.getByRole("button", { name: "调整设计体系" }));
     await user.type(screen.getByLabelText("调整要求"), "改成明亮风格");
     await user.click(screen.getByRole("button", { name: "提交调整" }));
     expect(screen.getByText("保持清晰、克制，并优先支持高频工作。")).toBeInTheDocument();
@@ -217,7 +226,7 @@ describe("ProjectDesignSystemPage", () => {
       </QueryClientProvider>,
     );
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "保存为项目设计体系" })).toBeDisabled());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "保存调整" })).not.toBeInTheDocument());
   });
 
   it("requires confirmation before regenerate and preserves saved content until success", async () => {
@@ -232,7 +241,10 @@ describe("ProjectDesignSystemPage", () => {
         status: "queued",
         operation: "regenerate",
         error: null,
+        failure_reason: null,
+        wait_reason: null,
         created_at: "2026-07-29T03:00:00Z",
+        dispatched_at: null,
         started_at: null,
         completed_at: null,
       },

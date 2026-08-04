@@ -15,6 +15,7 @@ export const designKeys = {
   projectDesignSystems: (wsId: string) => ["designs", wsId, "project-design-systems"] as const,
   projectDesignSystemByProject: (wsId: string, projectId: string) => ["designs", wsId, "project-design-systems", "project", projectId] as const,
   projectDesignSystem: (wsId: string, id: string) => ["designs", wsId, "project-design-systems", "system", id] as const,
+  projectDesignSystemArchivePreview: (wsId: string, id: string) => ["designs", wsId, "project-design-systems", "system", id, "archive-preview"] as const,
   drafts: (wsId: string) => ["designs", wsId, "drafts"] as const,
   draft: (wsId: string, id: string) => ["designs", wsId, "drafts", id] as const,
   repoAnalyses: (wsId: string, projectId: string) => ["designs", wsId, "repo-analyses", projectId] as const,

@@ -1,0 +1,250 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Agent, Project, ProjectDesignSystem } from "@multica/core/types";
+
+const apiMocks = vi.hoisted(() => ({
+  cancelTaskById: vi.fn(),
+  listTaskMessages: vi.fn(),
+}));
+
+vi.mock("@multica/core/api", () => ({ api: apiMocks }));
+
+vi.mock("@multica/core/hooks", () => ({
+  useWorkspaceId: () => "ws-1",
+}));
+
+vi.mock("./project-design-system-create", () => ({
+  ProjectDesignSystemCreate: () => <button type="button">生成设计体系</button>,
+}));
+
+vi.mock("./project-design-system-canvas", () => ({
+  ProjectDesignSystemCanvas: ({ system, project }: { system: ProjectDesignSystem; project: Project }) => (
+    <section data-system-id={system.id} data-project-id={project.id} data-active-task-id={system.active_task?.id}>
+      <h2>品牌原则</h2>
+    </section>
+  ),
+}));
+
+vi.mock("./project-design-system-page", () => ({
+  ProjectDesignSystemPage: () => <section data-testid="compatibility-route" />,
+}));
+
+import { ProjectDesignSystemWorkspace } from "./project-design-system-workspace";
+
+const project = {
+  id: "project-1",
+  workspace_id: "ws-1",
+  title: "CRM",
+  description: "客户管理项目",
+} as Project;
+
+const agent = {
+  id: "agent-1",
+  workspace_id: "ws-1",
+  runtime_id: "runtime-1",
+  name: "Local UI Agent",
+  status: "idle",
+  archived_at: null,
+} as Agent;
+
+function makeSystem(overrides: Partial<ProjectDesignSystem> = {}): ProjectDesignSystem {
+  return {
+    id: "",
+    workspace_id: "ws-1",
+    project_id: "project-1",
+    name: "",
+    platform: "",
+    current_agent_id: null,
+    status: "unestablished",
+    active_task: null,
+    input_snapshot: {},
+    content: {
+      sections: [],
+      token_groups: [],
+      locators: [],
+      preview_html: "",
+      integrity_sha256: "",
+    },
+    preview_validation: {
+      status: "none",
+      integrity_sha256: "",
+      report: {},
+      verified_at: null,
+    },
+    has_unsaved_changes: false,
+    last_error: null,
+    activity: [],
+    created_at: "",
+    updated_at: "",
+    saved_at: null,
+    ...overrides,
+  };
+}
+
+function renderWorkspace(
+  system: ProjectDesignSystem,
+  options: { isLoading?: boolean; taskMessages?: unknown[] } = {},
+) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  if (system.active_task && options.taskMessages) {
+    queryClient.setQueryData(["task-messages", system.active_task.id], options.taskMessages);
+  }
+  return {
+    queryClient,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <ProjectDesignSystemWorkspace
+          project={project}
+          agents={[agent]}
+          designFiles={[]}
+          legacyProfiles={[]}
+          system={system}
+          isLoading={options.isLoading ?? false}
+        />
+      </QueryClientProvider>,
+    ),
+  };
+}
+
+function makeActiveTask(status: string, overrides: Record<string, unknown> = {}) {
+  const now = Date.now();
+  return {
+    id: "11111111-1111-4111-8111-111111111111",
+    agent_id: "agent-1",
+    status,
+    operation: "generate",
+    error: null,
+    failure_reason: null,
+    wait_reason: null,
+    created_at: new Date(now - 2 * 60_000).toISOString(),
+    dispatched_at: new Date(now - 110_000).toISOString(),
+    started_at: new Date(now - 90_000).toISOString(),
+    completed_at: null,
+    ...overrides,
+  } as ProjectDesignSystem["active_task"];
+}
+
+describe("ProjectDesignSystemWorkspace", () => {
+  beforeEach(() => {
+    apiMocks.cancelTaskById.mockReset().mockResolvedValue(undefined);
+    apiMocks.listTaskMessages.mockReset().mockResolvedValue([]);
+  });
+
+  it("renders the creation workbench directly for an unestablished project", () => {
+    renderWorkspace(makeSystem());
+
+    expect(screen.getByRole("button", { name: "生成设计体系" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "创建设计体系" })).not.toBeInTheDocument();
+    expect(screen.queryByText("尚未建立设计体系")).not.toBeInTheDocument();
+  });
+
+  it("renders saved content directly without a detail link", () => {
+    renderWorkspace(makeSystem({
+      id: "system-1",
+      name: "CRM 设计体系",
+      platform: "web",
+      status: "saved",
+      updated_at: "2026-07-29T08:00:00Z",
+      saved_at: "2026-07-29T08:00:00Z",
+    }));
+
+    expect(screen.getByRole("heading", { name: "品牌原则" })).toBeInTheDocument();
+    expect(screen.getByText("品牌原则").closest("[data-system-id]")).toHaveAttribute("data-system-id", "system-1");
+    expect(screen.getByText("品牌原则").closest("[data-project-id]")).toHaveAttribute("data-project-id", "project-1");
+    expect(screen.queryByTestId("compatibility-route")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "打开设计体系" })).not.toBeInTheDocument();
+  });
+
+  it("shows truthful activity evidence and can stop an active task", async () => {
+    const activeTask = makeActiveTask("running");
+    const { queryClient } = renderWorkspace(makeSystem({
+      id: "system-1",
+      name: "CRM 设计体系",
+      platform: "web",
+      current_agent_id: "agent-1",
+      status: "generating",
+      active_task: activeTask,
+    }), {
+      taskMessages: [{
+        task_id: activeTask?.id,
+        issue_id: "",
+        seq: 1,
+        type: "text",
+        content: "正在整理组件状态",
+        created_at: new Date(Date.now() - 15_000).toISOString(),
+      }],
+    });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    expect(screen.getByText("智能体执行中")).toBeInTheDocument();
+    expect(screen.getByText("Local UI Agent")).toBeInTheDocument();
+    expect(screen.getByText("开始时间")).toBeInTheDocument();
+    expect(screen.getByText("运行时长")).toBeInTheDocument();
+    expect(screen.getByText("最后活动")).toBeInTheDocument();
+    expect(screen.queryByText(/\d+%/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "停止任务" }));
+    await waitFor(() => expect(apiMocks.cancelTaskById).toHaveBeenCalledWith(activeTask?.id));
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["designs", "ws-1", "project-design-systems", "project", "project-1"],
+      exact: true,
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["designs", "ws-1", "project-design-systems", "system", "system-1"],
+      exact: true,
+    });
+  });
+
+  it("locks the workbench while repository analysis runs and exposes only the stop action", () => {
+    renderWorkspace(makeSystem({
+      id: "system-1",
+      status: "unestablished",
+      active_task: makeActiveTask("running", { operation: "repository_analysis" }),
+    }));
+
+    expect(screen.getByRole("heading", { name: "正在分析项目仓库" })).toBeInTheDocument();
+    expect(screen.getByText("仓库分析")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "停止分析" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "生成设计体系" })).not.toBeInTheDocument();
+    expect(screen.queryByText("repository_analysis")).not.toBeInTheDocument();
+  });
+
+  it("warns when a running task has no activity for three minutes", () => {
+    renderWorkspace(makeSystem({
+      id: "system-1",
+      status: "generating",
+      active_task: makeActiveTask("running", {
+        created_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+        dispatched_at: new Date(Date.now() - 4 * 60_000).toISOString(),
+        started_at: new Date(Date.now() - 4 * 60_000).toISOString(),
+      }),
+    }), { taskMessages: [] });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("超过 3 分钟没有新的活动");
+  });
+
+  it("keeps the existing canvas visible while an adjustment task runs", () => {
+    renderWorkspace(makeSystem({
+      id: "system-1",
+      name: "CRM 设计体系",
+      status: "generating",
+      active_task: makeActiveTask("queued"),
+      content: {
+        sections: [{ id: "principles", title: "品牌原则", markdown: "清晰" }],
+        token_groups: [],
+        locators: [],
+        preview_html: "<main>CRM</main>",
+        integrity_sha256: "sha-1",
+      },
+    }));
+
+    expect(screen.getByRole("heading", { name: "品牌原则" })).toBeInTheDocument();
+    expect(screen.getByText("品牌原则").closest("[data-active-task-id]")).toHaveAttribute(
+      "data-active-task-id",
+      "11111111-1111-4111-8111-111111111111",
+    );
+  });
+});
