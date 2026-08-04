@@ -10,6 +10,7 @@ import {
   saveUpdaterPreferences,
   updaterPreferencesPath,
 } from "./updater-preferences";
+import { configureForkUpdateFeed } from "./fork-update-feed";
 
 // Silent background updates: electron-updater downloads on its own as soon
 // as `update-available` fires; we only surface UI when the package is fully
@@ -88,8 +89,22 @@ function sendToLiveRenderer(
 let inFlightCheck: Promise<unknown> | null = null;
 function checkForUpdatesOnce(): Promise<unknown> {
   if (inFlightCheck) return inFlightCheck;
-  const p = autoUpdater
-    .checkForUpdates()
+  const forkReleaseRepository = (
+    import.meta.env as ImportMetaEnv & {
+      readonly VITE_DESKTOP_RELEASE_REPOSITORY?: string;
+    }
+  ).VITE_DESKTOP_RELEASE_REPOSITORY?.trim();
+  const p = Promise.resolve()
+    .then(async () => {
+      // Fork releases intentionally use desktop-v* tags so they do not
+      // collide with the upstream v* release train. electron-updater ignores
+      // those tags during semver discovery, so fork builds resolve the newest
+      // desktop Release and point its generic provider at that asset folder.
+      if (forkReleaseRepository) {
+        await configureForkUpdateFeed(autoUpdater, forkReleaseRepository);
+      }
+      return autoUpdater.checkForUpdates();
+    })
     .then((result) => {
       // checkForUpdates resolves as soon as metadata is fetched; the actual
       // download (when autoDownload=true) is exposed on result.downloadPromise.

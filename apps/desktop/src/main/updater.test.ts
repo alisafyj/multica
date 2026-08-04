@@ -15,6 +15,7 @@ const ctx = vi.hoisted(() => ({
     updateInfo: { version: "0.3.18" },
     isUpdateAvailable: false,
   })),
+  setFeedURL: vi.fn(),
   downloadUpdate: vi.fn(),
   quitAndInstall: vi.fn(),
   getVersion: vi.fn(() => "0.3.17"),
@@ -34,6 +35,7 @@ vi.mock("electron-updater", () => {
       return autoUpdater;
     }),
     checkForUpdates: ctx.checkForUpdates,
+    setFeedURL: ctx.setFeedURL,
     downloadUpdate: ctx.downloadUpdate,
     quitAndInstall: ctx.quitAndInstall,
   };
@@ -163,6 +165,7 @@ describe("setupAutoUpdater", () => {
       ctx.ipcHandlers.set(channel, handler);
     });
     ctx.checkForUpdates.mockClear();
+    ctx.setFeedURL.mockClear();
     ctx.downloadUpdate.mockClear();
     ctx.quitAndInstall.mockClear();
     ctx.getVersion.mockClear();
@@ -171,6 +174,8 @@ describe("setupAutoUpdater", () => {
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     rmSync(ctx.userDataPath, { recursive: true, force: true });
   });
 
@@ -231,6 +236,54 @@ describe("setupAutoUpdater", () => {
     });
 
     expect(ctx.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the newest desktop-v Release feed in fork builds", async () => {
+    vi.stubEnv(
+      "VITE_DESKTOP_RELEASE_REPOSITORY",
+      "coder-zkl1988/multica",
+    );
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => `
+        <feed>
+          <entry>
+            <link rel="alternate" href="https://github.com/coder-zkl1988/multica/releases/tag/v0.4.16-sso.1"/>
+          </entry>
+          <entry>
+            <link rel="alternate" href="https://github.com/coder-zkl1988/multica/releases/tag/desktop-v0.4.17-sso.5"/>
+          </entry>
+        </feed>
+      `,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    setupAutoUpdater(() => null);
+
+    await expect(invokeIpc("updater:check")).resolves.toMatchObject({
+      ok: true,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://github.com/coder-zkl1988/multica/releases.atom",
+      { headers: { Accept: "application/atom+xml" } },
+    );
+    expect(ctx.setFeedURL).toHaveBeenCalledWith({
+      provider: "generic",
+      url: "https://github.com/coder-zkl1988/multica/releases/download/desktop-v0.4.17-sso.5/",
+    });
+    expect(ctx.setFeedURL).toHaveBeenCalledBefore(ctx.checkForUpdates);
+  });
+
+  it("keeps the packaged provider for official builds", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    setupAutoUpdater(() => null);
+
+    await expect(invokeIpc("updater:check")).resolves.toMatchObject({
+      ok: true,
+    });
+
+    expect(ctx.setFeedURL).not.toHaveBeenCalled();
   });
 
   it("forwards update progress to a live renderer", () => {
