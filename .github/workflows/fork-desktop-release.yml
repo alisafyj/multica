@@ -234,7 +234,7 @@ jobs:
             cp "$asset" release-assets/
           done < <(
             find artifacts -type f \( \
-              -name 'multica-desktop-*' -o -name 'latest*.yml'
+              -name 'multica-desktop-*' -o -name 'latest*.yml' \\
             \) -print0
           )
           if [[ -z "$(find release-assets -type f -print -quit)" ]]; then
