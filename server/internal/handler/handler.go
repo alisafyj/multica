@@ -52,6 +52,9 @@ type Config struct {
 	AllowSignup         bool
 	AllowedEmails       []string
 	AllowedEmailDomains []string
+	// OpenDesignEnabled is an internal Phase 0 gate. Production wiring stays
+	// disabled until the daemon supervisor can execute the pinned worker.
+	OpenDesignEnabled bool
 	// DisableWorkspaceCreation, when true, makes POST /api/workspaces return
 	// 403 for every caller. There is no role/owner exception because the repo
 	// has no platform-admin concept; operators bootstrap the workspace with

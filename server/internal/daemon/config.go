@@ -63,6 +63,10 @@ type Config struct {
 	Profile                        string                // profile name (empty = default)
 	Agents                         map[string]AgentEntry // keyed by provider: claude, codex, copilot, opencode, openclaw, hermes, gemini, pi, cursor, kimi, kiro, antigravity
 	WorkspacesRoot                 string                // base path for execution envs (default: ~/multica_workspaces)
+	OpenDesignWorkerURL            string                // loopback URL for the pinned Open Design worker; optional until an Open Design task is claimed
+	OpenDesignWorkerToken          string                // bearer token for the local Open Design worker; never logged
+	OpenDesignArtifactRoot         string                // root of the pinned Open Design checkout verified before every run
+	OpenDesignBrowserPath          string                // executable Chromium path used for isolated Preview verification
 	KeepEnvAfterTask               bool                  // preserve env after task for debugging
 	HealthPort                     int                   // local HTTP port for health checks (default: 19514)
 	MaxConcurrentTasks             int                   // max tasks running in parallel (default: 20)
@@ -117,6 +121,10 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	openDesignWorkerURL := strings.TrimSpace(os.Getenv("MULTICA_OPEN_DESIGN_WORKER_URL"))
+	openDesignWorkerToken := strings.TrimSpace(os.Getenv("MULTICA_OPEN_DESIGN_WORKER_TOKEN"))
+	openDesignArtifactRoot := strings.TrimSpace(os.Getenv("MULTICA_OPEN_DESIGN_ARTIFACT_ROOT"))
+	openDesignBrowserPath := strings.TrimSpace(os.Getenv("MULTICA_OPEN_DESIGN_BROWSER_PATH"))
 
 	// Probe available agent CLIs. exec.LookPath is the primary path, but on
 	// macOS/Linux a GUI-launched daemon (Electron, Launchpad) does not
@@ -412,6 +420,10 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		Profile:                        profile,
 		Agents:                         agents,
 		WorkspacesRoot:                 workspacesRoot,
+		OpenDesignWorkerURL:            openDesignWorkerURL,
+		OpenDesignWorkerToken:          openDesignWorkerToken,
+		OpenDesignArtifactRoot:         openDesignArtifactRoot,
+		OpenDesignBrowserPath:          openDesignBrowserPath,
 		KeepEnvAfterTask:               keepEnv,
 		GCEnabled:                      gcEnabled,
 		GCInterval:                     gcInterval,

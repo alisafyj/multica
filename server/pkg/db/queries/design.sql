@@ -854,6 +854,12 @@ SELECT * FROM project_design_system
 WHERE id = sqlc.arg('id')
   AND workspace_id = sqlc.arg('workspace_id');
 
+-- name: GetProjectDesignSystemInWorkspaceForUpdate :one
+SELECT * FROM project_design_system
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+FOR UPDATE;
+
 -- name: CreateProjectDesignSystem :one
 INSERT INTO project_design_system (
     workspace_id,
@@ -907,6 +913,19 @@ WHERE id = sqlc.arg('id')
   AND active_task_id = sqlc.arg('active_task_id')
 RETURNING *;
 
+-- name: CompleteProjectDesignSystemRepositoryAnalysis :one
+UPDATE project_design_system SET
+    active_task_id = NULL,
+    active_operation = NULL,
+    input_snapshot = sqlc.arg('input_snapshot'),
+    last_error = NULL,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND active_task_id = sqlc.arg('active_task_id')
+  AND active_operation = 'repository_analysis'
+RETURNING *;
+
 -- name: SetProjectDesignSystemFailure :one
 UPDATE project_design_system SET
     active_task_id = NULL,
@@ -926,6 +945,14 @@ WHERE id = sqlc.arg('id')
   AND workspace_id = sqlc.arg('workspace_id')
 RETURNING *;
 
+-- name: ClearProjectDesignSystemDraftState :one
+UPDATE project_design_system SET
+    last_error = NULL,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+RETURNING *;
+
 -- name: GetProjectDesignSystemPackageBySlot :one
 SELECT * FROM project_design_system_package
 WHERE design_system_id = sqlc.arg('design_system_id')
@@ -936,6 +963,23 @@ WHERE design_system_id = sqlc.arg('design_system_id')
       WHERE project_design_system.id = project_design_system_package.design_system_id
         AND project_design_system.workspace_id = sqlc.arg('workspace_id')
   );
+
+-- name: UpdateProjectDesignSystemPackageRenderValidation :one
+UPDATE project_design_system_package SET
+    render_status = sqlc.arg('render_status'),
+    render_report = sqlc.arg('render_report'),
+    rendered_at = now(),
+    updated_at = now()
+WHERE design_system_id = sqlc.arg('design_system_id')
+  AND slot = 'draft'
+  AND integrity_sha256 = sqlc.arg('integrity_sha256')
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = project_design_system_package.design_system_id
+        AND project_design_system.workspace_id = sqlc.arg('workspace_id')
+  )
+RETURNING *;
 
 -- name: UpsertProjectDesignSystemPackage :one
 INSERT INTO project_design_system_package (
@@ -950,7 +994,10 @@ INSERT INTO project_design_system_package (
     source_task_id,
     agent_id,
     instruction,
-    scope
+    scope,
+    render_status,
+    render_report,
+    rendered_at
 )
 SELECT
     sqlc.arg('design_system_id'),
@@ -964,7 +1011,10 @@ SELECT
     sqlc.narg('source_task_id'),
     sqlc.narg('agent_id'),
     sqlc.narg('instruction'),
-    sqlc.narg('scope')
+    sqlc.narg('scope'),
+    'pending',
+    '{}'::jsonb,
+    NULL::timestamptz
 WHERE EXISTS (
     SELECT 1
     FROM project_design_system
@@ -982,6 +1032,9 @@ ON CONFLICT (design_system_id, slot) DO UPDATE SET
     agent_id = EXCLUDED.agent_id,
     instruction = EXCLUDED.instruction,
     scope = EXCLUDED.scope,
+    render_status = EXCLUDED.render_status,
+    render_report = EXCLUDED.render_report,
+    rendered_at = EXCLUDED.rendered_at,
     updated_at = now()
 RETURNING *;
 
@@ -998,7 +1051,10 @@ INSERT INTO project_design_system_package (
     source_task_id,
     agent_id,
     instruction,
-    scope
+    scope,
+    render_status,
+    render_report,
+    rendered_at
 )
 SELECT
     project_design_system_package.design_system_id,
@@ -1012,10 +1068,14 @@ SELECT
     project_design_system_package.source_task_id,
     project_design_system_package.agent_id,
     project_design_system_package.instruction,
-    project_design_system_package.scope
+    project_design_system_package.scope,
+    project_design_system_package.render_status,
+    project_design_system_package.render_report,
+    project_design_system_package.rendered_at
 FROM project_design_system_package
 WHERE project_design_system_package.design_system_id = sqlc.arg('design_system_id')
   AND project_design_system_package.slot = 'draft'
+  AND project_design_system_package.render_status = 'passed'
   AND EXISTS (
       SELECT 1
       FROM project_design_system
@@ -1033,6 +1093,9 @@ ON CONFLICT (design_system_id, slot) DO UPDATE SET
     agent_id = EXCLUDED.agent_id,
     instruction = EXCLUDED.instruction,
     scope = EXCLUDED.scope,
+    render_status = EXCLUDED.render_status,
+    render_report = EXCLUDED.render_report,
+    rendered_at = EXCLUDED.rendered_at,
     updated_at = now()
 RETURNING *;
 

@@ -656,9 +656,10 @@ const ProjectDesignSystemTaskContextType = "project_design_system_task"
 type ProjectDesignSystemOperation string
 
 const (
-	ProjectDesignSystemGenerate   ProjectDesignSystemOperation = "generate"
-	ProjectDesignSystemAdjust     ProjectDesignSystemOperation = "adjust"
-	ProjectDesignSystemRegenerate ProjectDesignSystemOperation = "regenerate"
+	ProjectDesignSystemGenerate           ProjectDesignSystemOperation = "generate"
+	ProjectDesignSystemAdjust             ProjectDesignSystemOperation = "adjust"
+	ProjectDesignSystemRegenerate         ProjectDesignSystemOperation = "regenerate"
+	ProjectDesignSystemRepositoryAnalysis ProjectDesignSystemOperation = "repository_analysis"
 )
 
 type UIDraftCreateContext struct {
@@ -735,6 +736,8 @@ type ProjectDesignSystemTaskContext struct {
 	BasePackage           json.RawMessage              `json:"base_package,omitempty"`
 	Instruction           string                       `json:"instruction,omitempty"`
 	Scope                 json.RawMessage              `json:"scope,omitempty"`
+	RepositoryAnalysis    json.RawMessage              `json:"repository_analysis,omitempty"`
+	OpenDesignRun         json.RawMessage              `json:"open_design_run,omitempty"`
 	OutputPolicy          json.RawMessage              `json:"output_policy"`
 }
 
@@ -1989,6 +1992,9 @@ func (s *TaskService) FailTasksWithProfileSync(ctx context.Context, fail func(*d
 			if err := s.markProjectDesignSystemTaskFailed(ctx, qtx, task, failureCode, message); err != nil {
 				return err
 			}
+			if err := s.markOpenDesignRunTaskFailed(ctx, qtx, task, failureCode, message); err != nil {
+				return err
+			}
 		}
 		tasks = failed
 		return nil
@@ -1996,6 +2002,43 @@ func (s *TaskService) FailTasksWithProfileSync(ctx context.Context, fail func(*d
 		return nil, err
 	}
 	return tasks, nil
+}
+
+func (s *TaskService) markOpenDesignRunTaskFailed(
+	ctx context.Context,
+	queries *db.Queries,
+	task db.AgentTaskQueue,
+	code string,
+	message string,
+) error {
+	taskContext, ok := s.parseProjectDesignSystemTaskContext(task)
+	if !ok || len(taskContext.OpenDesignRun) == 0 {
+		return nil
+	}
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = "project_design_system_task_failed"
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "project design system task failed"
+	}
+	failure, err := json.Marshal(map[string]string{
+		"code":    code,
+		"message": message,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = queries.FinalizeOpenDesignRun(ctx, db.FinalizeOpenDesignRunParams{
+		Status:  "agent_failed",
+		Failure: failure,
+		TaskID:  task.ID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
 }
 
 func (s *TaskService) markDesignSystemProfileAnalysisFailed(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue, message string) error {

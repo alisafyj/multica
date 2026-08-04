@@ -146,8 +146,9 @@ type Daemon struct {
 	// deleted bare clone and an unrelated `not empty` cleanup failure.
 	bgSyncs sync.WaitGroup
 
-	runner             taskRunner    // executes agent tasks; set to d.runTask by New(), overridable in tests
-	cancelPollInterval time.Duration // how often handleTask polls for server-side cancellation; overridable in tests
+	runner                      taskRunner // executes agent tasks; set to d.runTask by New(), overridable in tests
+	openDesignSupervisorFactory openDesignSupervisorFactory
+	cancelPollInterval          time.Duration // how often handleTask polls for server-side cancellation; overridable in tests
 	// runUpdateFn executes the brew-or-download upgrade. Set to d.runUpdate by
 	// New() and overridable in tests so the auto-update poller can be exercised
 	// without touching the real network or the brew CLI.
@@ -179,6 +180,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		cancelPollInterval:        5 * time.Second,
 	}
 	d.runner = taskRunnerFunc(d.runTask)
+	d.openDesignSupervisorFactory = d.newOpenDesignSupervisor
 	d.runUpdateFn = d.runUpdate
 	return d
 }
@@ -2179,6 +2181,10 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		case <-runCtx.Done():
 		}
 	}()
+
+	if d.handleOpenDesignTask(runCtx, task, provider, slot, taskLog) {
+		return
+	}
 
 	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
 

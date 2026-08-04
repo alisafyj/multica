@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/opendesign"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -165,6 +166,100 @@ func (c *Client) ClaimTask(ctx context.Context, runtimeID string) (*Task, error)
 
 func (c *Client) StartTask(ctx context.Context, taskID string) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, nil)
+}
+
+func (c *Client) ReportOpenDesignPreflight(ctx context.Context, taskID string, report opendesign.PreflightReport) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/open-design/preflight", taskID), report, nil)
+}
+
+func (c *Client) StartOpenDesignRun(ctx context.Context, taskID, openDesignRunID string) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/open-design/start", taskID), opendesign.RunStartRequest{
+		OpenDesignRunID: openDesignRunID,
+	}, nil)
+}
+
+func (c *Client) ReportOpenDesignRunEvent(ctx context.Context, taskID, openDesignRunID string, event opendesign.RunEvent) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/open-design/events", taskID), opendesign.RunEventRequest{
+		OpenDesignRunID: openDesignRunID,
+		Event:           event,
+	}, nil)
+}
+
+func (c *Client) UploadOpenDesignRunArchive(ctx context.Context, taskID, openDesignRunID, contentDigest string, archive []byte) (string, error) {
+	if len(archive) == 0 || int64(len(archive)) > opendesign.RunArchiveMaxBytes {
+		return "", errors.New("Open Design archive has an invalid size")
+	}
+	requestPath := fmt.Sprintf("/api/daemon/tasks/%s/open-design/archive", taskID)
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		archiveObjectKey, err := c.uploadOpenDesignRunArchive(ctx, requestPath, openDesignRunID, contentDigest, archive)
+		if err == nil {
+			return archiveObjectKey, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil || !isTransientError(err) || attempt >= len(openDesignArchiveRetrySchedule) {
+			return "", lastErr
+		}
+		if sleepErr := retrySleep(ctx, openDesignArchiveRetrySchedule[attempt]); sleepErr != nil {
+			return "", lastErr
+		}
+	}
+}
+
+func (c *Client) DownloadOpenDesignBaseArchive(ctx context.Context, taskID string, reference opendesign.BasePackageReference) ([]byte, error) {
+	if strings.TrimSpace(taskID) == "" {
+		return nil, errors.New("Open Design base archive task ID is required")
+	}
+	if err := opendesign.ValidateBasePackageReference(reference); err != nil {
+		return nil, err
+	}
+	requestPath := fmt.Sprintf("/api/daemon/tasks/%s/open-design/base-archive", taskID)
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		archive, err := c.downloadOpenDesignBaseArchive(ctx, requestPath, reference)
+		if err == nil {
+			return archive, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil || !isTransientError(err) || attempt >= len(openDesignArchiveRetrySchedule) {
+			return nil, lastErr
+		}
+		if sleepErr := retrySleep(ctx, openDesignArchiveRetrySchedule[attempt]); sleepErr != nil {
+			return nil, lastErr
+		}
+	}
+}
+
+func (c *Client) ReportOpenDesignRunResult(ctx context.Context, taskID, openDesignRunID string, result opendesign.CollectedRunResult) error {
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/open-design/result", taskID), opendesign.RunResultRequest{
+		OpenDesignRunID:  openDesignRunID,
+		ResultPackage:    result.ResultPackage,
+		ArtifactIndex:    result.ArtifactIndex,
+		ArchiveObjectKey: result.ArchiveObjectKey,
+		ContentDigest:    result.ContentDigest,
+	}, nil, defaultTerminalRetrySchedule)
+}
+
+func (c *Client) ReportOpenDesignRunAudit(ctx context.Context, taskID, openDesignRunID string, receipt opendesign.PackageAuditReceipt) error {
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/open-design/audit", taskID), opendesign.RunAuditRequest{
+		OpenDesignRunID: openDesignRunID,
+		AuditReport:     receipt,
+	}, nil, defaultTerminalRetrySchedule)
+}
+
+func (c *Client) ReportOpenDesignRunPreview(ctx context.Context, taskID, openDesignRunID string, receipt opendesign.PreviewVerificationReceipt) error {
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/open-design/preview", taskID), opendesign.RunPreviewRequest{
+		OpenDesignRunID: openDesignRunID,
+		PreviewReceipt:  receipt,
+	}, nil, defaultTerminalRetrySchedule)
+}
+
+func (c *Client) FinalizeOpenDesignRun(ctx context.Context, taskID, openDesignRunID string, status opendesign.RunStatus, failure json.RawMessage) error {
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/open-design/terminal", taskID), opendesign.RunTerminalRequest{
+		OpenDesignRunID: openDesignRunID,
+		Status:          status,
+		Failure:         failure,
+	}, nil, defaultTerminalRetrySchedule)
 }
 
 // MarkTaskWaitingLocalDirectory parks a freshly-dispatched task in the
@@ -478,6 +573,15 @@ var defaultTerminalRetrySchedule = []time.Duration{
 	64 * time.Second,
 }
 
+var openDesignArchiveRetrySchedule = []time.Duration{
+	2 * time.Second,
+	8 * time.Second,
+}
+
+const openDesignArchiveUploadTimeout = 2 * time.Minute
+
+const openDesignArchiveDownloadTimeout = 2 * time.Minute
+
 // retrySleep is the sleep used between retry attempts. Pulled into a package
 // variable so tests can swap in an instant sleep without rewriting the
 // caller's schedule.
@@ -596,6 +700,88 @@ func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBod
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(respBody)
+}
+
+func (c *Client) uploadOpenDesignRunArchive(ctx context.Context, path, openDesignRunID, contentDigest string, archive []byte) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(archive))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", opendesign.RunArchiveContentType)
+	req.Header.Set(opendesign.RunArchiveRunIDHeader, openDesignRunID)
+	req.Header.Set(opendesign.RunArchiveContentDigestHeader, contentDigest)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	c.setIdentityHeaders(req)
+
+	archiveClient := *c.client
+	if archiveClient.Timeout == 0 || archiveClient.Timeout < openDesignArchiveUploadTimeout {
+		archiveClient.Timeout = openDesignArchiveUploadTimeout
+	}
+	resp, err := archiveClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", &requestError{Method: http.MethodPost, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+	}
+	var response opendesign.RunArchiveResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&response); err != nil {
+		return "", fmt.Errorf("decode Open Design archive response: %w", err)
+	}
+	response.ArchiveObjectKey = strings.TrimSpace(response.ArchiveObjectKey)
+	if response.ArchiveObjectKey == "" {
+		return "", errors.New("Open Design archive response has no object key")
+	}
+	return response.ArchiveObjectKey, nil
+}
+
+func (c *Client) downloadOpenDesignBaseArchive(ctx context.Context, path string, reference opendesign.BasePackageReference) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	c.setIdentityHeaders(req)
+
+	archiveClient := *c.client
+	if archiveClient.Timeout == 0 || archiveClient.Timeout < openDesignArchiveDownloadTimeout {
+		archiveClient.Timeout = openDesignArchiveDownloadTimeout
+	}
+	resp, err := archiveClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+	}
+	if contentType := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]); contentType != opendesign.RunArchiveContentType {
+		return nil, fmt.Errorf("Open Design base archive has unexpected content type %q", contentType)
+	}
+	if digest := resp.Header.Get(opendesign.RunArchiveContentDigestHeader); digest != reference.ContentDigest {
+		return nil, errors.New("Open Design base archive digest header does not match the pinned reference")
+	}
+	if slot := resp.Header.Get(opendesign.BasePackageSlotHeader); slot != reference.Slot {
+		return nil, errors.New("Open Design base archive slot header does not match the pinned reference")
+	}
+	if sourceTaskID := resp.Header.Get(opendesign.BasePackageSourceTaskIDHeader); sourceTaskID != reference.SourceTaskID {
+		return nil, errors.New("Open Design base archive source task header does not match the pinned reference")
+	}
+	archive, err := io.ReadAll(io.LimitReader(resp.Body, opendesign.RunArchiveMaxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read Open Design base archive: %w", err)
+	}
+	if len(archive) == 0 || int64(len(archive)) > opendesign.RunArchiveMaxBytes {
+		return nil, errors.New("Open Design base archive has an invalid size")
+	}
+	return archive, nil
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, respBody any) error {

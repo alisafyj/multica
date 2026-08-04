@@ -12,15 +12,18 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/opendesign"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
 	maxProjectDesignSystemReferences    = 20
 	maxProjectDesignSystemSnapshotBytes = 512 << 10
+	defaultProjectDesignSystemAssetHost = "static.soyoung.com"
 )
 
 type ProjectDesignSystemReferenceInput struct {
@@ -33,6 +36,14 @@ type ProjectDesignSystemReferenceInput struct {
 }
 
 type CreateProjectDesignSystemRequest struct {
+	ProjectID  string                              `json:"project_id"`
+	AgentID    string                              `json:"agent_id"`
+	Platform   string                              `json:"platform"`
+	Brief      string                              `json:"brief"`
+	References []ProjectDesignSystemReferenceInput `json:"references"`
+}
+
+type AnalyzeProjectDesignSystemRepositoryRequest struct {
 	ProjectID  string                              `json:"project_id"`
 	AgentID    string                              `json:"agent_id"`
 	Platform   string                              `json:"platform"`
@@ -66,41 +77,53 @@ type ProjectDesignSystemContentResponse struct {
 	IntegritySHA256 string                           `json:"integrity_sha256"`
 }
 
+type ProjectDesignSystemPreviewValidationResponse struct {
+	Status          string          `json:"status"`
+	IntegritySHA256 string          `json:"integrity_sha256"`
+	Report          json.RawMessage `json:"report"`
+	VerifiedAt      *string         `json:"verified_at"`
+}
+
 type ProjectDesignSystemTaskResponse struct {
-	ID          string  `json:"id"`
-	AgentID     string  `json:"agent_id"`
-	Status      string  `json:"status"`
-	Operation   string  `json:"operation"`
-	Error       *string `json:"error,omitempty"`
-	CreatedAt   string  `json:"created_at"`
-	StartedAt   *string `json:"started_at,omitempty"`
-	CompletedAt *string `json:"completed_at,omitempty"`
+	ID            string  `json:"id"`
+	AgentID       string  `json:"agent_id"`
+	Status        string  `json:"status"`
+	Operation     string  `json:"operation"`
+	Error         *string `json:"error,omitempty"`
+	FailureReason *string `json:"failure_reason,omitempty"`
+	WaitReason    *string `json:"wait_reason,omitempty"`
+	CreatedAt     string  `json:"created_at"`
+	DispatchedAt  *string `json:"dispatched_at,omitempty"`
+	StartedAt     *string `json:"started_at,omitempty"`
+	CompletedAt   *string `json:"completed_at,omitempty"`
 }
 
 type ProjectDesignSystemResponse struct {
-	ID                string                             `json:"id,omitempty"`
-	WorkspaceID       string                             `json:"workspace_id"`
-	ProjectID         string                             `json:"project_id"`
-	Name              string                             `json:"name,omitempty"`
-	Platform          string                             `json:"platform,omitempty"`
-	CurrentAgentID    *string                            `json:"current_agent_id,omitempty"`
-	Status            string                             `json:"status"`
-	ActiveTask        *ProjectDesignSystemTaskResponse   `json:"active_task"`
-	InputSnapshot     json.RawMessage                    `json:"input_snapshot"`
-	Content           ProjectDesignSystemContentResponse `json:"content"`
-	HasUnsavedChanges bool                               `json:"has_unsaved_changes"`
-	LastError         json.RawMessage                    `json:"last_error"`
-	Activity          []ProjectDesignSystemTaskResponse  `json:"activity"`
-	CreatedAt         string                             `json:"created_at,omitempty"`
-	UpdatedAt         string                             `json:"updated_at,omitempty"`
-	SavedAt           *string                            `json:"saved_at,omitempty"`
+	ID                string                                       `json:"id,omitempty"`
+	WorkspaceID       string                                       `json:"workspace_id"`
+	ProjectID         string                                       `json:"project_id"`
+	Name              string                                       `json:"name,omitempty"`
+	Platform          string                                       `json:"platform,omitempty"`
+	CurrentAgentID    *string                                      `json:"current_agent_id,omitempty"`
+	Status            string                                       `json:"status"`
+	ActiveTask        *ProjectDesignSystemTaskResponse             `json:"active_task"`
+	InputSnapshot     json.RawMessage                              `json:"input_snapshot"`
+	Content           ProjectDesignSystemContentResponse           `json:"content"`
+	PreviewValidation ProjectDesignSystemPreviewValidationResponse `json:"preview_validation"`
+	HasUnsavedChanges bool                                         `json:"has_unsaved_changes"`
+	LastError         json.RawMessage                              `json:"last_error"`
+	Activity          []ProjectDesignSystemTaskResponse            `json:"activity"`
+	CreatedAt         string                                       `json:"created_at,omitempty"`
+	UpdatedAt         string                                       `json:"updated_at,omitempty"`
+	SavedAt           *string                                      `json:"saved_at,omitempty"`
 }
 
 type projectDesignSystemInputSnapshot struct {
-	AgentID    string                                 `json:"agent_id"`
-	Platform   string                                 `json:"platform"`
-	Brief      string                                 `json:"brief"`
-	References []projectDesignSystemReferenceSnapshot `json:"references"`
+	AgentID            string                                       `json:"agent_id"`
+	Platform           string                                       `json:"platform"`
+	Brief              string                                       `json:"brief"`
+	References         []projectDesignSystemReferenceSnapshot       `json:"references"`
+	RepositoryAnalysis *projectdesignsystem.RepositoryDesignContext `json:"repository_analysis,omitempty"`
 }
 
 type projectDesignSystemReferenceSnapshot struct {
@@ -197,6 +220,68 @@ func (h *Handler) CreateProjectDesignSystem(w http.ResponseWriter, r *http.Reque
 	}
 	h.TaskService.NotifyTaskEnqueued(r.Context(), task)
 
+	response, err := h.projectDesignSystemResponse(r.Context(), system)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "response_failed", "failed to build project design system response")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, response)
+}
+
+func (h *Handler) AnalyzeProjectDesignSystemRepository(w http.ResponseWriter, r *http.Request) {
+	var req AnalyzeProjectDesignSystemRepositoryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+		return
+	}
+	req.ProjectID = strings.TrimSpace(req.ProjectID)
+	req.AgentID = strings.TrimSpace(req.AgentID)
+	req.Platform = strings.TrimSpace(req.Platform)
+	req.Brief = strings.TrimSpace(req.Brief)
+	if req.ProjectID == "" {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "project_id_required", "project_id is required")
+		return
+	}
+	if req.AgentID == "" {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "agent_id_required", "agent_id is required")
+		return
+	}
+	if !validProjectDesignSystemPlatform(req.Platform) {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "platform_invalid", "platform must be web, mobile, or cross_platform")
+		return
+	}
+
+	workspaceID, requesterID, ok := h.projectDesignSystemRequestScope(w, r)
+	if !ok {
+		return
+	}
+	projectID, ok := parseUUIDOrBadRequest(w, req.ProjectID, "project_id")
+	if !ok {
+		return
+	}
+	agentID, ok := parseUUIDOrBadRequest(w, req.AgentID, "agent_id")
+	if !ok {
+		return
+	}
+	references, err := h.resolveProjectDesignSystemReferences(r.Context(), workspaceID, projectID, req.References)
+	if err != nil {
+		writeProjectDesignSystemRequestError(w, err)
+		return
+	}
+	input := projectDesignSystemInputSnapshot{
+		AgentID:    req.AgentID,
+		Platform:   req.Platform,
+		Brief:      req.Brief,
+		References: references,
+	}
+	system, task, err := h.createProjectDesignSystemRepositoryAnalysisTask(
+		r.Context(), workspaceID, requesterID, projectID, agentID, input,
+	)
+	if err != nil {
+		writeProjectDesignSystemRequestError(w, err)
+		return
+	}
+	h.TaskService.NotifyTaskEnqueued(r.Context(), task)
 	response, err := h.projectDesignSystemResponse(r.Context(), system)
 	if err != nil {
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "response_failed", "failed to build project design system response")
@@ -388,7 +473,7 @@ func (h *Handler) RegenerateProjectDesignSystem(w http.ResponseWriter, r *http.R
 }
 
 func (h *Handler) SaveProjectDesignSystem(w http.ResponseWriter, r *http.Request) {
-	workspaceID, _, ok := h.projectDesignSystemRequestScope(w, r)
+	workspaceID, requesterID, ok := h.projectDesignSystemRequestScope(w, r)
 	if !ok {
 		return
 	}
@@ -408,7 +493,7 @@ func (h *Handler) SaveProjectDesignSystem(w http.ResponseWriter, r *http.Request
 		writeProjectDesignSystemError(w, http.StatusNotFound, "project_design_system_not_found", "project design system not found")
 		return
 	}
-	system, err = queries.GetProjectDesignSystemInWorkspace(r.Context(), db.GetProjectDesignSystemInWorkspaceParams{ID: system.ID, WorkspaceID: workspaceID})
+	system, err = queries.GetProjectDesignSystemInWorkspaceForUpdate(r.Context(), db.GetProjectDesignSystemInWorkspaceForUpdateParams{ID: system.ID, WorkspaceID: workspaceID})
 	if err != nil {
 		writeProjectDesignSystemError(w, http.StatusNotFound, "project_design_system_not_found", "project design system not found")
 		return
@@ -426,8 +511,21 @@ func (h *Handler) SaveProjectDesignSystem(w http.ResponseWriter, r *http.Request
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "draft_lookup_failed", "failed to load draft")
 		return
 	}
-	if !validStoredProjectDesignSystemPackage(draft, h.projectDesignSystemAllowedHosts()) {
+	if isOpenDesignProjectDesignSystemPackage(draft) {
+		if _, err := h.loadOpenDesignArchivePreviewPackage(r.Context(), queries, system, draft); err != nil {
+			writeProjectDesignSystemRequestError(w, err)
+			return
+		}
+	} else if !validStoredProjectDesignSystemPackage(draft, h.projectDesignSystemAllowedHosts()) {
 		writeProjectDesignSystemError(w, http.StatusUnprocessableEntity, "draft_invalid", "draft has not passed validation")
+		return
+	}
+	if draft.RenderStatus == "pending" {
+		writeProjectDesignSystemError(w, http.StatusConflict, "preview_verification_required", "design system preview must be verified before saving")
+		return
+	}
+	if draft.RenderStatus != "passed" {
+		writeProjectDesignSystemError(w, http.StatusUnprocessableEntity, "preview_verification_failed", "design system preview failed verification")
 		return
 	}
 	if _, err := queries.SaveProjectDesignSystemDraft(r.Context(), db.SaveProjectDesignSystemDraftParams{DesignSystemID: system.ID, WorkspaceID: workspaceID}); err != nil {
@@ -452,6 +550,85 @@ func (h *Handler) SaveProjectDesignSystem(w http.ResponseWriter, r *http.Request
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "response_failed", "failed to build project design system response")
 		return
 	}
+	h.publish(protocol.EventProjectDesignSystemChanged, uuidToString(workspaceID), "member", uuidToString(requesterID), map[string]any{
+		"project_design_system_id": uuidToString(system.ID),
+		"project_id":               uuidToString(system.ProjectID),
+		"status":                   response.Status,
+	})
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (h *Handler) DiscardProjectDesignSystemDraft(w http.ResponseWriter, r *http.Request) {
+	workspaceID, requesterID, ok := h.projectDesignSystemRequestScope(w, r)
+	if !ok {
+		return
+	}
+	initialSystem, ok := h.loadProjectDesignSystemForRequest(w, r, workspaceID)
+	if !ok {
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "transaction_failed", "failed to start draft discard")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	queries := h.Queries.WithTx(tx)
+	if _, err := queries.LockProjectInWorkspaceForUpdate(r.Context(), db.LockProjectInWorkspaceForUpdateParams{
+		ID: initialSystem.ProjectID, WorkspaceID: workspaceID,
+	}); err != nil {
+		writeProjectDesignSystemError(w, http.StatusNotFound, "project_design_system_not_found", "project design system not found")
+		return
+	}
+	system, err := queries.GetProjectDesignSystemInWorkspaceForUpdate(r.Context(), db.GetProjectDesignSystemInWorkspaceForUpdateParams{
+		ID: initialSystem.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusNotFound, "project_design_system_not_found", "project design system not found")
+		return
+	}
+	if system.ActiveTaskID.Valid {
+		writeProjectDesignSystemError(w, http.StatusConflict, "operation_in_progress", "design system generation is still in progress")
+		return
+	}
+	if _, err := queries.GetProjectDesignSystemPackageBySlot(r.Context(), db.GetProjectDesignSystemPackageBySlotParams{
+		DesignSystemID: system.ID, Slot: "draft", WorkspaceID: workspaceID,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		writeProjectDesignSystemError(w, http.StatusConflict, "draft_required", "a design system draft is required")
+		return
+	} else if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "draft_lookup_failed", "failed to load draft")
+		return
+	}
+	if err := queries.DeleteProjectDesignSystemPackageSlot(r.Context(), db.DeleteProjectDesignSystemPackageSlotParams{
+		DesignSystemID: system.ID, Slot: "draft", WorkspaceID: workspaceID,
+	}); err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "discard_failed", "failed to discard draft")
+		return
+	}
+	system, err = queries.ClearProjectDesignSystemDraftState(r.Context(), db.ClearProjectDesignSystemDraftStateParams{
+		ID: system.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "discard_failed", "failed to clear draft state")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "discard_failed", "failed to commit discarded draft")
+		return
+	}
+
+	response, err := h.projectDesignSystemResponse(r.Context(), system)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "response_failed", "failed to build project design system response")
+		return
+	}
+	h.publish(protocol.EventProjectDesignSystemChanged, uuidToString(workspaceID), "member", uuidToString(requesterID), map[string]any{
+		"project_design_system_id": uuidToString(system.ID),
+		"project_id":               uuidToString(system.ProjectID),
+		"status":                   response.Status,
+	})
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -499,6 +676,14 @@ func (h *Handler) createProjectDesignSystemTask(
 				return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("package_lookup_failed", "failed to check project design system package")
 			}
 		}
+		var previous projectDesignSystemInputSnapshot
+		if json.Unmarshal(system.InputSnapshot, &previous) == nil && previous.RepositoryAnalysis != nil {
+			input.RepositoryAnalysis = previous.RepositoryAnalysis
+			inputJSON, err = json.Marshal(input)
+			if err != nil || len(inputJSON) > maxProjectDesignSystemSnapshotBytes {
+				return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusRequestEntityTooLarge, code: "input_snapshot_too_large", message: "design system inputs exceed the size limit"}
+			}
+		}
 	} else if !errors.Is(lookupErr, pgx.ErrNoRows) {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("lookup_failed", "failed to check project design system")
 	} else {
@@ -528,7 +713,15 @@ func (h *Handler) createProjectDesignSystemTask(
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: reason}
 	}
 
-	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agentID, input, service.ProjectDesignSystemGenerate, nil, "", nil)
+	openDesignRun, err := h.prepareOpenDesignRun(ctx, queries, agent, service.ProjectDesignSystemGenerate)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, err
+	}
+	var openDesignContext json.RawMessage
+	if openDesignRun != nil {
+		openDesignContext = openDesignRun.Context
+	}
+	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agentID, input, service.ProjectDesignSystemGenerate, nil, "", nil, openDesignContext)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
 	}
@@ -540,6 +733,9 @@ func (h *Handler) createProjectDesignSystemTask(
 	})
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("enqueue_failed", "failed to enqueue design system generation")
+	}
+	if err := persistOpenDesignRun(ctx, queries, openDesignRun, system, task, contextJSON); err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("open_design_run_persist_failed", "failed to persist Open Design run")
 	}
 	system, err = queries.UpdateProjectDesignSystemInputAndTask(ctx, db.UpdateProjectDesignSystemInputAndTaskParams{
 		Platform:        input.Platform,
@@ -557,6 +753,126 @@ func (h *Handler) createProjectDesignSystemTask(
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("commit_failed", "failed to commit design system generation")
 	}
 	return system, task, nil
+}
+
+func (h *Handler) createProjectDesignSystemRepositoryAnalysisTask(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	requesterID pgtype.UUID,
+	projectID pgtype.UUID,
+	agentID pgtype.UUID,
+	input projectDesignSystemInputSnapshot,
+) (db.ProjectDesignSystem, db.AgentTaskQueue, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("transaction_failed", "failed to start repository analysis")
+	}
+	defer tx.Rollback(ctx)
+	queries := h.Queries.WithTx(tx)
+
+	if _, err := queries.LockProjectInWorkspaceForUpdate(ctx, db.LockProjectInWorkspaceForUpdateParams{ID: projectID, WorkspaceID: workspaceID}); err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_not_found", message: "project not found"}
+	}
+	project, err := queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: projectID, WorkspaceID: workspaceID})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_not_found", message: "project not found"}
+	}
+	system, lookupErr := queries.GetProjectDesignSystemByProject(ctx, db.GetProjectDesignSystemByProjectParams{WorkspaceID: workspaceID, ProjectID: projectID})
+	if lookupErr == nil {
+		if system.ActiveTaskID.Valid {
+			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "operation_in_progress", message: "another design system operation is in progress"}
+		}
+		for _, slot := range []string{"draft", "saved"} {
+			_, packageErr := queries.GetProjectDesignSystemPackageBySlot(ctx, db.GetProjectDesignSystemPackageBySlotParams{DesignSystemID: system.ID, Slot: slot, WorkspaceID: workspaceID})
+			if packageErr == nil {
+				return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "project_design_system_exists", message: "project already has a design system"}
+			}
+			if !errors.Is(packageErr, pgx.ErrNoRows) {
+				return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("package_lookup_failed", "failed to check project design system package")
+			}
+		}
+		var previous projectDesignSystemInputSnapshot
+		if json.Unmarshal(system.InputSnapshot, &previous) == nil {
+			input.RepositoryAnalysis = previous.RepositoryAnalysis
+		}
+	} else if !errors.Is(lookupErr, pgx.ErrNoRows) {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("lookup_failed", "failed to check project design system")
+	}
+
+	agent, err := queries.GetAgent(ctx, agentID)
+	if err != nil || agent.WorkspaceID != workspaceID {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
+	}
+	ready, reason, err := service.AgentReadiness(ctx, queries, agent)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
+	}
+	if !ready {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: reason}
+	}
+	runtime, err := queries.GetAgentRuntime(ctx, agent.RuntimeID)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_runtime_lookup_failed", "failed to load agent runtime")
+	}
+	resources, err := queries.ListProjectResources(ctx, projectID)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("project_resources_lookup_failed", "failed to load project resources")
+	}
+	if len(projectDesignSystemResourcesForRuntime(resources, runtime.DaemonID.String)) == 0 {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "project_resource_unavailable", message: "the selected agent cannot access a repository resource for this project"}
+	}
+
+	inputJSON, err := json.Marshal(input)
+	if err != nil || len(inputJSON) > maxProjectDesignSystemSnapshotBytes {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusRequestEntityTooLarge, code: "input_snapshot_too_large", message: "design system inputs exceed the size limit"}
+	}
+	if errors.Is(lookupErr, pgx.ErrNoRows) {
+		system, err = queries.CreateProjectDesignSystem(ctx, db.CreateProjectDesignSystemParams{
+			WorkspaceID: workspaceID, ProjectID: projectID, Name: project.Title, Platform: input.Platform,
+			CurrentAgentID: agent.ID, InputSnapshot: inputJSON, CreatedBy: requesterID,
+		})
+		if err != nil {
+			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("create_failed", "failed to create project design system")
+		}
+	}
+
+	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agent.ID, input, service.ProjectDesignSystemRepositoryAnalysis, nil, "", nil, nil)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build repository analysis task context")
+	}
+	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("enqueue_failed", "failed to enqueue repository analysis")
+	}
+	system, err = queries.UpdateProjectDesignSystemInputAndTask(ctx, db.UpdateProjectDesignSystemInputAndTaskParams{
+		Platform: input.Platform, CurrentAgentID: agent.ID, ActiveTaskID: task.ID,
+		ActiveOperation: pgtype.Text{String: string(service.ProjectDesignSystemRepositoryAnalysis), Valid: true},
+		InputSnapshot:   inputJSON, ID: system.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("state_failed", "failed to record repository analysis")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("commit_failed", "failed to commit repository analysis")
+	}
+	return system, task, nil
+}
+
+func projectDesignSystemResourcesForRuntime(resources []db.ProjectResource, daemonID string) []db.ProjectResource {
+	daemonID = strings.TrimSpace(daemonID)
+	available := make([]db.ProjectResource, 0, len(resources))
+	for _, resource := range resources {
+		switch resource.ResourceType {
+		case "github_repo":
+			available = append(available, resource)
+		case "local_directory":
+			var ref localDirectoryRef
+			if daemonID != "" && json.Unmarshal(resource.ResourceRef, &ref) == nil && strings.TrimSpace(ref.DaemonID) == daemonID {
+				available = append(available, resource)
+			}
+		}
+	}
+	return available
 }
 
 func (h *Handler) enqueueExistingProjectDesignSystemTask(
@@ -597,9 +913,16 @@ func (h *Handler) enqueueExistingProjectDesignSystemTask(
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_not_found", message: "project not found"}
 	}
 
-	basePackage, validatedBase, err := loadProjectDesignSystemBasePackage(ctx, queries, system, h.projectDesignSystemAllowedHosts())
+	basePackage, validatedBase, openDesignBase, err := h.loadProjectDesignSystemBasePackage(ctx, queries, system, h.projectDesignSystemAllowedHosts())
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, err
+	}
+	if openDesignBase && !h.cfg.OpenDesignEnabled {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{
+			status:  http.StatusServiceUnavailable,
+			code:    "open_design_engine_unavailable",
+			message: "Open Design engine is unavailable",
+		}
 	}
 	if operation == service.ProjectDesignSystemAdjust {
 		if basePackage == nil {
@@ -609,8 +932,14 @@ func (h *Handler) enqueueExistingProjectDesignSystemTask(
 		if len(scopeJSON) == 0 || json.Unmarshal(scopeJSON, &scope) != nil {
 			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "scope_invalid", message: "scope is invalid"}
 		}
-		if err := validateProjectDesignSystemScope(scope, validatedBase.Manifest); err != nil {
-			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, err
+		if openDesignBase {
+			if scope.Kind != "all" || scope.ID != "" {
+				return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "scope_invalid", message: "Open Design archive adjustment currently supports all scope only"}
+			}
+		} else {
+			if err := validateProjectDesignSystemScope(scope, validatedBase.Manifest); err != nil {
+				return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, err
+			}
 		}
 	}
 
@@ -626,13 +955,24 @@ func (h *Handler) enqueueExistingProjectDesignSystemTask(
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: reason}
 	}
 
-	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agent.ID, input, operation, basePackage, instruction, scopeJSON)
+	openDesignRun, err := h.prepareOpenDesignRun(ctx, queries, agent, operation)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, err
+	}
+	var openDesignContext json.RawMessage
+	if openDesignRun != nil {
+		openDesignContext = openDesignRun.Context
+	}
+	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agent.ID, input, operation, basePackage, instruction, scopeJSON, openDesignContext)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
 	}
 	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("enqueue_failed", "failed to enqueue design system operation")
+	}
+	if err := persistOpenDesignRun(ctx, queries, openDesignRun, system, task, contextJSON); err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("open_design_run_persist_failed", "failed to persist Open Design run")
 	}
 	system, err = queries.UpdateProjectDesignSystemInputAndTask(ctx, db.UpdateProjectDesignSystemInputAndTaskParams{
 		Platform:        input.Platform,
@@ -652,12 +992,12 @@ func (h *Handler) enqueueExistingProjectDesignSystemTask(
 	return system, task, nil
 }
 
-func loadProjectDesignSystemBasePackage(
+func (h *Handler) loadProjectDesignSystemBasePackage(
 	ctx context.Context,
 	queries *db.Queries,
 	system db.ProjectDesignSystem,
 	allowedHosts []string,
-) (json.RawMessage, projectdesignsystem.ValidatedPackage, error) {
+) (json.RawMessage, projectdesignsystem.ValidatedPackage, bool, error) {
 	var selected db.ProjectDesignSystemPackage
 	found := false
 	for _, slot := range []string{"draft", "saved"} {
@@ -672,11 +1012,31 @@ func loadProjectDesignSystemBasePackage(
 			break
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
-			return nil, projectdesignsystem.ValidatedPackage{}, projectDesignSystemInternalError("package_lookup_failed", "failed to load current design system package")
+			return nil, projectdesignsystem.ValidatedPackage{}, false, projectDesignSystemInternalError("package_lookup_failed", "failed to load current design system package")
 		}
 	}
 	if !found {
-		return nil, projectdesignsystem.ValidatedPackage{}, nil
+		return nil, projectdesignsystem.ValidatedPackage{}, false, nil
+	}
+	if isOpenDesignProjectDesignSystemPackage(selected) {
+		loaded, err := h.loadOpenDesignArchivePreviewPackage(ctx, queries, system, selected)
+		if err != nil {
+			return nil, projectdesignsystem.ValidatedPackage{}, false, err
+		}
+		reference := opendesign.BasePackageReference{
+			Schema:        opendesign.BasePackageReferenceSchema,
+			Slot:          loaded.Slot,
+			ContentDigest: loaded.ContentDigest,
+			SourceTaskID:  uuidToString(selected.SourceTaskID),
+		}
+		if err := opendesign.ValidateBasePackageReference(reference); err != nil {
+			return nil, projectdesignsystem.ValidatedPackage{}, false, openDesignArchivePreviewConflict()
+		}
+		payload, err := json.Marshal(reference)
+		if err != nil {
+			return nil, projectdesignsystem.ValidatedPackage{}, false, projectDesignSystemInternalError("package_context_failed", "failed to snapshot current design system package")
+		}
+		return payload, projectdesignsystem.ValidatedPackage{}, true, nil
 	}
 	validated, err := projectdesignsystem.Validate(projectdesignsystem.ArtifactInput{
 		DesignMD:       selected.DesignMd,
@@ -684,7 +1044,7 @@ func loadProjectDesignSystemBasePackage(
 		ComponentsHTML: selected.ComponentsHtml,
 	}, allowedHosts)
 	if err != nil {
-		return nil, projectdesignsystem.ValidatedPackage{}, &projectDesignSystemRequestError{status: http.StatusUnprocessableEntity, code: "base_package_invalid", message: "current design system package is invalid"}
+		return nil, projectdesignsystem.ValidatedPackage{}, false, &projectDesignSystemRequestError{status: http.StatusUnprocessableEntity, code: "base_package_invalid", message: "current design system package is invalid"}
 	}
 	payload, err := json.Marshal(map[string]any{
 		"design_md":        selected.DesignMd,
@@ -695,9 +1055,9 @@ func loadProjectDesignSystemBasePackage(
 		"integrity_sha256": selected.IntegritySha256,
 	})
 	if err != nil {
-		return nil, projectdesignsystem.ValidatedPackage{}, projectDesignSystemInternalError("package_context_failed", "failed to snapshot current design system package")
+		return nil, projectdesignsystem.ValidatedPackage{}, false, projectDesignSystemInternalError("package_context_failed", "failed to snapshot current design system package")
 	}
-	return payload, validated, nil
+	return payload, validated, false, nil
 }
 
 func validateProjectDesignSystemScope(scope ProjectDesignSystemScope, manifest projectdesignsystem.Manifest) error {
@@ -762,6 +1122,13 @@ func validStoredProjectDesignSystemPackage(pkg db.ProjectDesignSystemPackage, al
 	return err == nil && validated.Validation.Passed && validated.Manifest.Digest == pkg.IntegritySha256
 }
 
+func isOpenDesignProjectDesignSystemPackage(pkg db.ProjectDesignSystemPackage) bool {
+	var manifest struct {
+		Schema string `json:"schema"`
+	}
+	return json.Unmarshal(pkg.Manifest, &manifest) == nil && manifest.Schema == opendesign.DraftPackageManifestSchema
+}
+
 func marshalProjectDesignSystemTaskContext(
 	system db.ProjectDesignSystem,
 	project db.Project,
@@ -772,6 +1139,7 @@ func marshalProjectDesignSystemTaskContext(
 	basePackage json.RawMessage,
 	instruction string,
 	scope json.RawMessage,
+	openDesignRun json.RawMessage,
 ) ([]byte, error) {
 	projectJSON, err := json.Marshal(map[string]any{
 		"id":          uuidToString(project.ID),
@@ -785,13 +1153,43 @@ func marshalProjectDesignSystemTaskContext(
 	if err != nil {
 		return nil, err
 	}
-	outputPolicy, err := json.Marshal(map[string]any{
-		"required_artifacts":  []string{"DESIGN.md", "tokens.css", "components.html"},
-		"user_brief_priority": "highest",
-		"scripts_allowed":     false,
-	})
+	outputPolicyValue := map[string]any{
+		"required_artifacts":            []string{"DESIGN.md", "tokens.css", "components.html"},
+		"generation_mode":               "create_new_system",
+		"repository_grounding_required": false,
+		"reference_alignment_required":  true,
+		"source_priority":               []string{"explicit_user_changes", "optional_references"},
+		"user_brief_priority":           "highest_for_explicit_changes",
+		"scripts_allowed":               false,
+	}
+	if input.RepositoryAnalysis != nil && (len(input.RepositoryAnalysis.Facts) > 0 || len(input.RepositoryAnalysis.SourceFiles) > 0 || len(input.RepositoryAnalysis.RepresentativeWorkflows) > 0) {
+		outputPolicyValue["generation_mode"] = "extract_existing_product"
+		outputPolicyValue["repository_grounding_required"] = true
+		outputPolicyValue["source_priority"] = []string{"explicit_user_changes", "repository_analysis", "optional_references"}
+	}
+	if operation == service.ProjectDesignSystemRepositoryAnalysis {
+		outputPolicyValue = map[string]any{
+			"result_marker":   "REPOSITORY_DESIGN_CONTEXT_JSON:",
+			"schema_version":  projectdesignsystem.RepositoryDesignContextSchemaVersion,
+			"read_only":       true,
+			"scripts_allowed": false,
+		}
+	} else if len(openDesignRun) > 0 {
+		delete(outputPolicyValue, "required_artifacts")
+		outputPolicyValue["artifact_contract"] = "open_design_native_package"
+		outputPolicyValue["workspace_mode"] = "orchestrator_scratch"
+		outputPolicyValue["completion_gate"] = "package_audit"
+	}
+	outputPolicy, err := json.Marshal(outputPolicyValue)
 	if err != nil {
 		return nil, err
+	}
+	var repositoryAnalysis json.RawMessage
+	if input.RepositoryAnalysis != nil {
+		repositoryAnalysis, err = json.Marshal(input.RepositoryAnalysis)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return json.Marshal(service.ProjectDesignSystemTaskContext{
 		Type:                  service.ProjectDesignSystemTaskContextType,
@@ -808,6 +1206,8 @@ func marshalProjectDesignSystemTaskContext(
 		BasePackage:           basePackage,
 		Instruction:           instruction,
 		Scope:                 scope,
+		RepositoryAnalysis:    repositoryAnalysis,
+		OpenDesignRun:         openDesignRun,
 		OutputPolicy:          outputPolicy,
 	})
 }
@@ -855,6 +1255,10 @@ func emptyProjectDesignSystemResponse(workspaceID pgtype.UUID, projectID pgtype.
 			Sections:    []projectdesignsystem.Section{},
 			TokenGroups: []projectdesignsystem.TokenGroup{},
 			Locators:    []projectdesignsystem.Locator{},
+		},
+		PreviewValidation: ProjectDesignSystemPreviewValidationResponse{
+			Status: "none",
+			Report: json.RawMessage(`{}`),
 		},
 		LastError: json.RawMessage(`null`),
 		Activity:  []ProjectDesignSystemTaskResponse{},
@@ -1041,6 +1445,10 @@ func (h *Handler) projectDesignSystemResponse(ctx context.Context, system db.Pro
 			TokenGroups: []projectdesignsystem.TokenGroup{},
 			Locators:    []projectdesignsystem.Locator{},
 		},
+		PreviewValidation: ProjectDesignSystemPreviewValidationResponse{
+			Status: "none",
+			Report: json.RawMessage(`{}`),
+		},
 		LastError: json.RawMessage(`null`),
 		Activity:  []ProjectDesignSystemTaskResponse{},
 		CreatedAt: timestampToString(system.CreatedAt),
@@ -1069,8 +1477,10 @@ func (h *Handler) projectDesignSystemResponse(ctx context.Context, system db.Pro
 	switch {
 	case system.ActiveTaskID.Valid:
 		response.Status = "generating"
-	case hasDraft:
+	case hasDraft && draft.RenderStatus == "passed":
 		response.Status = "draft"
+	case hasDraft:
+		response.Status = "validating"
 	case hasSaved:
 		response.Status = "saved"
 	}
@@ -1080,6 +1490,12 @@ func (h *Handler) projectDesignSystemResponse(ctx context.Context, system db.Pro
 		selected := saved
 		if hasDraft {
 			selected = draft
+		}
+		response.PreviewValidation = ProjectDesignSystemPreviewValidationResponse{
+			Status:          selected.RenderStatus,
+			IntegritySHA256: selected.IntegritySha256,
+			Report:          validJSONOr(selected.RenderReport, json.RawMessage(`{}`)),
+			VerifiedAt:      timestampToPtr(selected.RenderedAt),
 		}
 		validated, err := projectdesignsystem.Validate(projectdesignsystem.ArtifactInput{
 			DesignMD: selected.DesignMd, TokensCSS: selected.TokensCss, ComponentsHTML: selected.ComponentsHtml,
@@ -1120,20 +1536,23 @@ func projectDesignSystemTaskResponse(task db.AgentTaskQueue) ProjectDesignSystem
 		operation = string(taskContext.Operation)
 	}
 	return ProjectDesignSystemTaskResponse{
-		ID:          uuidToString(task.ID),
-		AgentID:     uuidToString(task.AgentID),
-		Status:      task.Status,
-		Operation:   operation,
-		Error:       textToPtr(task.Error),
-		CreatedAt:   timestampToString(task.CreatedAt),
-		StartedAt:   timestampToPtr(task.StartedAt),
-		CompletedAt: timestampToPtr(task.CompletedAt),
+		ID:            uuidToString(task.ID),
+		AgentID:       uuidToString(task.AgentID),
+		Status:        task.Status,
+		Operation:     operation,
+		Error:         textToPtr(task.Error),
+		FailureReason: textToPtr(task.FailureReason),
+		WaitReason:    textToPtr(task.WaitReason),
+		CreatedAt:     timestampToString(task.CreatedAt),
+		DispatchedAt:  timestampToPtr(task.DispatchedAt),
+		StartedAt:     timestampToPtr(task.StartedAt),
+		CompletedAt:   timestampToPtr(task.CompletedAt),
 	}
 }
 
 func (h *Handler) projectDesignSystemAllowedHosts() []string {
-	seen := map[string]struct{}{}
-	result := make([]string, 0, 2)
+	seen := map[string]struct{}{defaultProjectDesignSystemAssetHost: {}}
+	result := []string{defaultProjectDesignSystemAssetHost}
 	for _, store := range []interface{ CdnDomain() string }{h.DesignAssetStorage, h.Storage} {
 		if store == nil {
 			continue

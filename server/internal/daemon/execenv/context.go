@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/multica-ai/multica/server/internal/opendesign"
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 )
 
@@ -111,33 +112,52 @@ func writeProjectDesignSystemContext(workDir string, ctx TaskContextForEnv, mani
 		if err := json.Unmarshal(task["base_package"], &base); err != nil {
 			return fmt.Errorf("decode base package: %w", err)
 		}
-		baseDir := filepath.Join(root, "base")
-		if err := recordMkdirAll(baseDir, 0o755, manifest); err != nil {
-			return err
-		}
-		files := []struct {
-			key  string
-			name string
-		}{
-			{key: "design_md", name: "DESIGN.md"},
-			{key: "tokens_css", name: "tokens.css"},
-			{key: "components_html", name: "components.html"},
-		}
-		for _, file := range files {
-			var contents string
-			if err := json.Unmarshal(base[file.key], &contents); err != nil {
-				return fmt.Errorf("decode base %s: %w", file.name, err)
+		var schema string
+		if rawSchema, ok := base["schema"]; ok {
+			if err := json.Unmarshal(rawSchema, &schema); err != nil {
+				return fmt.Errorf("decode base package schema: %w", err)
 			}
-			if err := recordWriteFile(filepath.Join(baseDir, file.name), []byte(contents), 0o644, manifest); err != nil {
+		}
+		if schema == opendesign.BasePackageReferenceSchema {
+			var reference opendesign.BasePackageReference
+			if err := json.Unmarshal(task["base_package"], &reference); err != nil {
+				return fmt.Errorf("decode Open Design base package reference: %w", err)
+			}
+			if err := opendesign.ValidateBasePackageReference(reference); err != nil {
+				return fmt.Errorf("validate Open Design base package reference: %w", err)
+			}
+		} else {
+			if schema != "" {
+				return fmt.Errorf("unsupported base package schema %q", schema)
+			}
+			baseDir := filepath.Join(root, "base")
+			if err := recordMkdirAll(baseDir, 0o755, manifest); err != nil {
 				return err
 			}
-			delete(base, file.key)
+			files := []struct {
+				key  string
+				name string
+			}{
+				{key: "design_md", name: "DESIGN.md"},
+				{key: "tokens_css", name: "tokens.css"},
+				{key: "components_html", name: "components.html"},
+			}
+			for _, file := range files {
+				var contents string
+				if err := json.Unmarshal(base[file.key], &contents); err != nil {
+					return fmt.Errorf("decode base %s: %w", file.name, err)
+				}
+				if err := recordWriteFile(filepath.Join(baseDir, file.name), []byte(contents), 0o644, manifest); err != nil {
+					return err
+				}
+				delete(base, file.key)
+			}
+			baseMetadata, err := json.Marshal(base)
+			if err != nil {
+				return fmt.Errorf("encode base metadata: %w", err)
+			}
+			task["base_package"] = baseMetadata
 		}
-		baseMetadata, err := json.Marshal(base)
-		if err != nil {
-			return fmt.Errorf("encode base metadata: %w", err)
-		}
-		task["base_package"] = baseMetadata
 	} else if operation == "generate" {
 		delete(task, "base_package")
 	} else {

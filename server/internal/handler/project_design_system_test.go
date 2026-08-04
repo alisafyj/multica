@@ -752,6 +752,19 @@ func createProjectDesignSystemReferencesForTest(t *testing.T, projectID string) 
 	return attachmentID, designFileID, profileID
 }
 
+func getProjectDesignSystemPackageForTest(t *testing.T, systemID pgtype.UUID, slot string) db.ProjectDesignSystemPackage {
+	t.Helper()
+	pkg, err := db.New(testPool).GetProjectDesignSystemPackageBySlot(context.Background(), db.GetProjectDesignSystemPackageBySlotParams{
+		DesignSystemID: systemID,
+		Slot:           slot,
+		WorkspaceID:    parseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatalf("get %s project design system package: %v", slot, err)
+	}
+	return pkg
+}
+
 func assertProjectDesignSystemErrorCode(t *testing.T, response *httptest.ResponseRecorder, status int, code string) {
 	t.Helper()
 	if response.Code != status {
