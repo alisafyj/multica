@@ -1,4 +1,5 @@
 import { useAuthStore } from "@multica/core/auth";
+import { configStore } from "@multica/core/config";
 import { toast } from "sonner";
 
 /**
@@ -6,10 +7,10 @@ import { toast } from "sonner";
  * (daemon state "auth_expired", surfaced by daemon-manager's token probe — see
  * #3512).
  *
- * The desktop owns the daemon's PAT: it mints one from the user's session token
- * and caches it per profile. A stale/revoked cached PAT is the common cause (and
- * merely restarting the app reuses the same bad PAT), so the main process drops
- * the cached token, mints a fresh one, and restarts the daemon.
+ * The desktop owns the daemon credential. Legacy servers use a PAT minted from
+ * the session token; SSO servers use the current internal session token directly.
+ * The main process drops the stale credential, resolves the correct replacement,
+ * and restarts the daemon.
  *
  * Failure handling is deliberately conservative — we only force a full re-login
  * when the session token itself is rejected (a real 401). A transient failure
@@ -28,7 +29,12 @@ export async function reauthenticateDaemon(): Promise<void> {
   }
 
   try {
-    const result = await window.daemonAPI.reauthenticate(token, user.id);
+    const useSySso = configStore.getState().useSySso === true;
+    const result = await window.daemonAPI.reauthenticate(
+      token,
+      user.id,
+      useSySso,
+    );
     if (result.ok) return; // daemon restarting; status flips via onStatusChange
     if (result.reason === "session_invalid") {
       // The session token itself is rejected (401) — full re-login.

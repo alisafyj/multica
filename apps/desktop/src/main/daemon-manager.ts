@@ -34,6 +34,7 @@ import {
   isAuthStatusError,
   type AuthProbeResult,
 } from "./daemon-auth-probe";
+import { planDaemonToken } from "./daemon-token-sync";
 
 const DEFAULT_HEALTH_PORT = 19514;
 const POLL_INTERVAL_MS = 5_000;
@@ -656,14 +657,17 @@ async function mintPat(jwt: string): Promise<string> {
 /**
  * Ensure the active profile's config.json has a usable token for the daemon.
  *
- * - Input from the renderer is the user's JWT (from localStorage) plus the
- *   current user's id, so we can detect session changes.
+ * - Input from the renderer is the user's session token (from localStorage),
+ *   current user's id, and the server's authentication mode.
+ * - SSO servers accept the internal session token directly for daemon auth and
+ *   deliberately do not expose POST /api/tokens, so never mint a PAT there.
  * - If the profile already has a cached PAT (`mul_...`) AND the sidecar user
- *   id matches the caller, reuse it — minting fresh on every launch would
- *   accumulate garbage in the user's tokens page.
- * - On user mismatch (or first run) call POST /api/tokens with the JWT to
- *   mint a fresh PAT, overwriting any stale cached PAT. This is the critical
- *   path: without it, a previous user's PAT would be used by a new session.
+ *   id matches the caller in legacy mode, reuse it — minting fresh on every
+ *   launch would accumulate garbage in the user's tokens page.
+ * - In legacy mode, on user mismatch (or first run) call POST /api/tokens with
+ *   the JWT to mint a fresh PAT, overwriting any stale cached PAT. This is the
+ *   critical path: without it, a previous user's PAT would be used by a new
+ *   session.
  * - If the caller happens to pass a PAT directly, write it through.
  * - When we mint fresh and a daemon is already running, restart it so the
  *   new credentials take effect (the Go daemon reads config at startup).
@@ -671,22 +675,23 @@ async function mintPat(jwt: string): Promise<string> {
 async function syncToken(
   tokenFromRenderer: string,
   userId: string,
+  useSySso: boolean,
+  restartOnCredentialChange = true,
 ): Promise<void> {
   const active = await ensureActiveProfile();
   const config = await readProfileConfig(active.name);
   const previousUserId = await readProfileUserId(active.name);
   const userChanged = Boolean(previousUserId) && previousUserId !== userId;
-  const sameUserWithCachedPat =
-    !userChanged &&
-    previousUserId === userId &&
-    typeof config.token === "string" &&
-    config.token.startsWith("mul_");
+  const tokenPlan = planDaemonToken({
+    tokenFromRenderer,
+    cachedToken: config.token,
+    sameUser: !userChanged && previousUserId === userId,
+    useSySso,
+  });
 
   let finalToken: string;
-  if (tokenFromRenderer.startsWith("mul_")) {
-    finalToken = tokenFromRenderer;
-  } else if (sameUserWithCachedPat) {
-    finalToken = config.token as string;
+  if (tokenPlan.kind === "direct" || tokenPlan.kind === "cached_pat") {
+    finalToken = tokenPlan.token;
   } else {
     try {
       finalToken = await mintPat(tokenFromRenderer);
@@ -699,6 +704,7 @@ async function syncToken(
     }
   }
 
+  const credentialChanged = config.token !== finalToken || userChanged;
   config.token = finalToken;
   if (targetApiBaseUrl) config.server_url = targetApiBaseUrl;
   await writeProfileConfig(active.name, config);
@@ -706,7 +712,7 @@ async function syncToken(
 
   // If we just rotated credentials onto a running daemon, restart it so the
   // in-memory token in the Go process matches the new config.
-  if (userChanged) {
+  if (restartOnCredentialChange && credentialChanged) {
     try {
       const existing = await fetchHealthAtPort(active.port);
       if (daemonStatusAlive(existing?.status)) {
@@ -714,12 +720,12 @@ async function syncToken(
         // already loaded the old token at startup, so it must be restarted to
         // pick up the rotated credentials.
         console.log(
-          "[daemon] user switched — restarting daemon with new credentials",
+          "[daemon] credentials changed — restarting daemon",
         );
         void restartDaemon();
       }
     } catch (err) {
-      console.warn("[daemon] restart-on-user-switch failed:", err);
+      console.warn("[daemon] restart-on-credential-change failed:", err);
     }
   }
 }
@@ -747,8 +753,8 @@ async function clearToken(): Promise<void> {
     delete config.token;
     await writeProfileConfig(active.name, config);
   }
-  // Always drop the sidecar so a subsequent syncToken from any user is
-  // treated as a fresh mint, not a reuse of a stale cached PAT.
+  // Always drop the sidecar so a subsequent syncToken from any user cannot
+  // reuse credentials that belonged to the prior session.
   await removeProfileUserId(active.name);
 }
 
@@ -766,23 +772,24 @@ function errorMessage(err: unknown): string {
 
 /**
  * Recover the local daemon from the "auth_expired" state. Drops the stale
- * cached PAT, mints a fresh one from the current session token, and restarts
- * the daemon so it loads the new credential.
+ * cached token, resolves a replacement for the server's authentication mode,
+ * and restarts the daemon so it loads the new credential.
  *
- * Failures are classified rather than collapsed: a 401 from the mint means the
+ * Legacy mint failures are classified rather than collapsed: a 401 means the
  * session token itself is dead (`session_invalid` → the renderer drives a full
  * re-login); anything else — mint 5xx, a network blip, a config write error, a
  * restart hiccup — is `transient`, leaving the user signed in so they can retry.
- * This mirrors the conservative classification the startup probe already uses.
  */
 async function reauthenticate(
   token: string,
   userId: string,
+  useSySso: boolean,
 ): Promise<ReauthResult> {
   try {
     await clearToken();
-    // syncToken mints a fresh PAT because clearToken just removed any cache.
-    await syncToken(token, userId);
+    // Reauthentication owns the awaited restart below, so avoid scheduling a
+    // second background restart while the credential is being replaced.
+    await syncToken(token, userId, useSySso, false);
   } catch (err) {
     if (isAuthStatusError(err)) return { ok: false, reason: "session_invalid" };
     return { ok: false, reason: "transient", message: errorMessage(err) };
@@ -1176,12 +1183,14 @@ export function setupDaemonManager(
   ipcMain.handle("daemon:get-host-name", () => hostname());
   ipcMain.handle(
     "daemon:sync-token",
-    (_event, token: string, userId: string) => syncToken(token, userId),
+    (_event, token: string, userId: string, useSySso: boolean) =>
+      syncToken(token, userId, useSySso),
   );
   ipcMain.handle("daemon:clear-token", () => clearToken());
   ipcMain.handle(
     "daemon:reauthenticate",
-    (_event, token: string, userId: string) => reauthenticate(token, userId),
+    (_event, token: string, userId: string, useSySso: boolean) =>
+      reauthenticate(token, userId, useSySso),
   );
   ipcMain.handle("daemon:is-cli-installed", async () => {
     const bin = await resolveCliBinary();

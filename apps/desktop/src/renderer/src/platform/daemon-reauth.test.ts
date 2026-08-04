@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGetState, logout } = vi.hoisted(() => ({
-  mockGetState: vi.fn(),
+const { mockAuthGetState, mockConfigGetState, logout } = vi.hoisted(() => ({
+  mockAuthGetState: vi.fn(),
+  mockConfigGetState: vi.fn(),
   logout: vi.fn(),
 }));
 
 const { toastError } = vi.hoisted(() => ({ toastError: vi.fn() }));
 
 vi.mock("@multica/core/auth", () => ({
-  useAuthStore: { getState: mockGetState },
+  useAuthStore: { getState: mockAuthGetState },
+}));
+
+vi.mock("@multica/core/config", () => ({
+  configStore: { getState: mockConfigGetState },
 }));
 
 vi.mock("sonner", () => ({
@@ -25,7 +30,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   (window as unknown as { daemonAPI: typeof daemonAPI }).daemonAPI = daemonAPI;
-  mockGetState.mockReturnValue({ user: { id: "user-1" }, logout });
+  mockAuthGetState.mockReturnValue({ user: { id: "user-1" }, logout });
+  mockConfigGetState.mockReturnValue({ useSySso: false });
 });
 
 describe("reauthenticateDaemon", () => {
@@ -35,7 +41,11 @@ describe("reauthenticateDaemon", () => {
 
     await reauthenticateDaemon();
 
-    expect(daemonAPI.reauthenticate).toHaveBeenCalledWith("jwt-abc", "user-1");
+    expect(daemonAPI.reauthenticate).toHaveBeenCalledWith(
+      "jwt-abc",
+      "user-1",
+      false,
+    );
     expect(logout).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
@@ -88,11 +98,25 @@ describe("reauthenticateDaemon", () => {
 
   it("routes to login when there is no signed-in user", async () => {
     localStorage.setItem("multica_token", "jwt-abc");
-    mockGetState.mockReturnValue({ user: null, logout });
+    mockAuthGetState.mockReturnValue({ user: null, logout });
 
     await reauthenticateDaemon();
 
     expect(logout).toHaveBeenCalledOnce();
     expect(daemonAPI.reauthenticate).not.toHaveBeenCalled();
+  });
+
+  it("passes the SSO authentication mode to the main process", async () => {
+    localStorage.setItem("multica_token", "sso-jwt");
+    mockConfigGetState.mockReturnValue({ useSySso: true });
+    daemonAPI.reauthenticate.mockResolvedValue({ ok: true });
+
+    await reauthenticateDaemon();
+
+    expect(daemonAPI.reauthenticate).toHaveBeenCalledWith(
+      "sso-jwt",
+      "user-1",
+      true,
+    );
   });
 });

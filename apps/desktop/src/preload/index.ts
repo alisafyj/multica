@@ -282,8 +282,9 @@ const daemonAPI = {
   reauthenticate: (
     token: string,
     userId: string,
+    useSySso: boolean,
   ): Promise<DaemonReauthResult> =>
-    ipcRenderer.invoke("daemon:reauthenticate", token, userId),
+    ipcRenderer.invoke("daemon:reauthenticate", token, userId, useSySso),
   isCliInstalled: (): Promise<boolean> =>
     ipcRenderer.invoke("daemon:is-cli-installed"),
   getPrefs: (): Promise<{ autoStart: boolean; autoStop: boolean }> =>
