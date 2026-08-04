@@ -30,4 +30,14 @@ describe("parseReleaseAssets", () => {
         "https://github.test/releases/multica-desktop-0.4.2-mac-x64.zip",
     });
   });
+
+  it("accepts fork versions with an SSO suffix", () => {
+    const assets = parseReleaseAssets([
+      asset("multica-desktop-0.4.16-sso.1-mac-arm64.dmg"),
+    ]);
+
+    expect(assets.macArm64Dmg).toContain(
+      "multica-desktop-0.4.16-sso.1-mac-arm64.dmg",
+    );
+  });
 });

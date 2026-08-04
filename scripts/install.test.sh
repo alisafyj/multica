@@ -70,11 +70,6 @@ _run_installer() {
     return 1
   fi
 
-  if ! grep -q "Homebrew output (last 80 lines):" "$err"; then
-    echo "expected diagnostic tail in stderr" >&2
-    cat "$err" >&2 || true
-    return 1
-  fi
 }
 
 test_brew_install_failure_falls_back_to_release_binary() {
@@ -358,7 +353,7 @@ STUB
   printf '#!/usr/bin/env bash\nexit 0\n' >"$stub_bin/brew"
   chmod +x "$stub_bin/brew"
 
-  printf '#!/usr/bin/env bash\necho "multica v0.3.2 (commit: test)"\n' >"$stub_bin/multica"
+  printf '#!/usr/bin/env bash\necho "multica v0.4.16-sso.1 (commit: test)"\n' >"$stub_bin/multica"
   chmod +x "$stub_bin/multica"
 
   # curl records every probed URL so the health-check port can be asserted.

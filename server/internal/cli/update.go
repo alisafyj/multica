@@ -29,6 +29,9 @@ import (
 // changes one place.
 const ChecksumManifestName = "checksums.txt"
 
+const forkReleaseAPIBase = "https://api.github.com/repos/coder-zkl1988/multica/releases"
+const forkCLIReleaseTag = "v0.4.16-sso.1"
+
 const DefaultUpdateDownloadTimeout = 120 * time.Second
 
 // GitHubRelease is the subset of the GitHub releases API response we need.
@@ -225,7 +228,7 @@ func verifyAssetSHA256(data []byte, expectedHex, assetName string) error {
 
 func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/tags/"+tag, nil)
+	req, err := http.NewRequest(http.MethodGet, forkReleaseAPIBase+"/tags/"+tag, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -248,30 +251,9 @@ func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
 	return &release, nil
 }
 
-// FetchLatestRelease fetches the latest release tag from the multica GitHub repo.
+// FetchLatestRelease fetches the pinned SSO CLI release from the fork.
 func FetchLatestRelease() (*GitHubRelease, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/latest", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
-	}
-
-	var release GitHubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
-	}
-	return &release, nil
+	return fetchReleaseByTag(forkCLIReleaseTag)
 }
 
 // knownBrewPrefixes lists the install roots Homebrew uses on each platform.
