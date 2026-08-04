@@ -193,14 +193,8 @@ jobs:
         with:
           name: desktop-${{ matrix.target }}
           path: |
-            apps/desktop/dist/**/*.dmg
-            apps/desktop/dist/**/*.zip
-            apps/desktop/dist/**/*.exe
-            apps/desktop/dist/**/*.AppImage
-            apps/desktop/dist/**/*.deb
-            apps/desktop/dist/**/*.rpm
-            apps/desktop/dist/**/*.yml
-            apps/desktop/dist/**/*.blockmap
+            apps/desktop/dist/**/multica-desktop-*
+            apps/desktop/dist/**/latest*.yml
           if-no-files-found: error
           retention-days: 7
 
@@ -221,9 +215,7 @@ jobs:
             cp "$asset" release-assets/
           done < <(
             find artifacts -type f \( \
-              -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o \
-              -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o \
-              -name '*.yml' -o -name '*.blockmap'
+              -name 'multica-desktop-*' -o -name 'latest*.yml'
             \) -print0
           )
           if [[ -z "$(find release-assets -type f -print -quit)" ]]; then

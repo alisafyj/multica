@@ -49,9 +49,7 @@ jobs:
             cp "$asset" release-assets/
           done < <(
             find artifacts -type f \( \
-              -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o \
-              -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o \
-              -name '*.yml' -o -name '*.blockmap' \
+              -name 'multica-desktop-*' -o -name 'latest*.yml' \
             \) -print0
           )
           test -n "$(find release-assets -type f -print -quit)"
@@ -70,12 +68,17 @@ jobs:
             prerelease_flag+=(--prerelease)
           fi
 
-          gh release create "$release_tag" release-assets/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "Multica Desktop ${VERSION} (SSO fork)" \
-            --notes "Desktop installers built from coder-zkl1988/multica with the fork's SSO support. macOS artifacts are signed and notarized with Apple Team WCYBD629RJ." \
-            "${prerelease_flag[@]}"
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$release_tag" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$release_tag" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Multica Desktop ${VERSION} (SSO fork)" \
+              --notes "Desktop installers built from coder-zkl1988/multica with the fork's SSO support. macOS artifacts are signed and notarized with Apple Team WCYBD629RJ." \
+              "${prerelease_flag[@]}"
+          fi
 
       - name: Verify published release
         env:
