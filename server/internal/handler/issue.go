@@ -2881,6 +2881,17 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if req.Status != nil {
+		issueForCompletionCheck := prevIssue
+		if req.Title != nil {
+			issueForCompletionCheck.Title = *req.Title
+		}
+		if !h.canCompleteUIDesignIssue(r.Context(), issueForCompletionCheck, *req.Status) {
+			writeError(w, http.StatusConflict, uiDesignDeliveryRequiredBeforeDoneMessage)
+			return
+		}
+	}
+
 	attachmentIDs, ok := parseUUIDSliceOrBadRequest(w, req.AttachmentIDs, "attachment_ids")
 	if !ok {
 		return
@@ -3201,6 +3212,13 @@ type BatchUpdateIssuesRequest struct {
 	Updates  UpdateIssueRequest `json:"updates"`
 }
 
+type BatchUpdateIssueSkippedResponse struct {
+	IssueID    string `json:"issue_id"`
+	Identifier string `json:"identifier,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Reason     string `json:"reason"`
+}
+
 func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -3274,6 +3292,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated := 0
+	skipped := []BatchUpdateIssueSkippedResponse{}
 	// Children that transitioned into a terminal status this batch, collected so
 	// the parent/stage notification is evaluated once against the final state
 	// after the loop (MUL-4155) rather than per-child mid-batch.
@@ -3429,6 +3448,23 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		if req.Updates.Status != nil {
+			issueForCompletionCheck := prevIssue
+			if req.Updates.Title != nil {
+				issueForCompletionCheck.Title = *req.Updates.Title
+			}
+			if !h.canCompleteUIDesignIssue(r.Context(), issueForCompletionCheck, *req.Updates.Status) {
+				prefix := h.getIssuePrefix(r.Context(), prevIssue.WorkspaceID)
+				skipped = append(skipped, BatchUpdateIssueSkippedResponse{
+					IssueID:    uuidToString(prevIssue.ID),
+					Identifier: prefix + "-" + strconv.Itoa(int(prevIssue.Number)),
+					Title:      prevIssue.Title,
+					Reason:     uiDesignDeliveryRequiredBeforeDoneMessage,
+				})
+				continue
+			}
+		}
+
 		issue, err := h.Queries.UpdateIssue(r.Context(), params)
 		if err != nil {
 			slog.Warn("batch update issue failed", "issue_id", issueID, "error", err)
@@ -3497,7 +3533,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	h.notifyParentsOfBatchChildDone(r.Context(), childDoneCompleted)
 
 	slog.Info("batch update issues", append(logger.RequestAttrs(r), "count", updated)...)
-	writeJSON(w, http.StatusOK, map[string]any{"updated": updated})
+	writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "skipped": skipped})
 }
 
 type BatchDeleteIssuesRequest struct {

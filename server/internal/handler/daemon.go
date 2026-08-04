@@ -2317,6 +2317,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// prompt come from the task's context JSONB. Resolve workspace from
 	// there so the isolation check below has something to compare.
 	hasQuickCreate := false
+	hasUIDraftCreate := false
+	hasDesignRestore := false
+	hasDesignSystemProfileAnalyze := false
 	if task.Context != nil && !task.IssueID.Valid && !task.ChatSessionID.Valid && !task.AutopilotRunID.Valid {
 		var qc service.QuickCreateContext
 		if json.Unmarshal(task.Context, &qc) == nil && qc.Type == service.QuickCreateContextType {
@@ -2447,6 +2450,37 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 			}
 		}
+
+		var draftCtx service.UIDraftCreateContext
+		if json.Unmarshal(task.Context, &draftCtx) == nil && draftCtx.Type == service.UIDraftCreateContextType {
+			hasUIDraftCreate = true
+			resp.WorkspaceID = draftCtx.WorkspaceID
+			resp.UIDraftCreateContext = json.RawMessage(task.Context)
+			h.populateContextTaskProject(r.Context(), &resp, draftCtx.ProjectID, draftCtx.WorkspaceID)
+		}
+
+		var restoreCtx service.DesignRestoreTaskContext
+		if json.Unmarshal(task.Context, &restoreCtx) == nil && restoreCtx.Type == service.DesignRestoreTaskContextType {
+			hasDesignRestore = true
+			resp.WorkspaceID = restoreCtx.WorkspaceID
+			resp.DesignRestoreContext = json.RawMessage(task.Context)
+			projectID := strings.TrimSpace(restoreCtx.ProjectID)
+			var restoreInput struct {
+				ProjectID string `json:"projectId"`
+			}
+			if projectID == "" && json.Unmarshal(restoreCtx.Input, &restoreInput) == nil {
+				projectID = strings.TrimSpace(restoreInput.ProjectID)
+			}
+			h.populateContextTaskProject(r.Context(), &resp, projectID, restoreCtx.WorkspaceID)
+		}
+
+		var profileCtx service.DesignSystemProfileAnalyzeContext
+		if json.Unmarshal(task.Context, &profileCtx) == nil && profileCtx.Type == service.DesignSystemProfileAnalyzeContextType {
+			hasDesignSystemProfileAnalyze = true
+			resp.WorkspaceID = profileCtx.WorkspaceID
+			resp.DesignSystemProfileAnalyzeContext = json.RawMessage(task.Context)
+			resp.ProjectID = profileCtx.ProjectID
+		}
 	}
 
 	// Workspace isolation check: the daemon uses this response's workspace_id
@@ -2467,6 +2501,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			"has_chat", task.ChatSessionID.Valid,
 			"has_autopilot_run", task.AutopilotRunID.Valid,
 			"has_quick_create", hasQuickCreate,
+			"has_ui_draft_create", hasUIDraftCreate,
+			"has_design_restore", hasDesignRestore,
+			"has_design_system_profile_analyze", hasDesignSystemProfileAnalyze,
 		)
 		if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
 			slog.Error("task claim: cancel after workspace check failed",
@@ -2498,6 +2535,63 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	}
 
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
+}
+
+func (h *Handler) populateContextTaskProject(ctx context.Context, resp *AgentTaskResponse, projectID, workspaceID string) {
+	projectID = strings.TrimSpace(projectID)
+	if resp == nil || projectID == "" || strings.TrimSpace(workspaceID) == "" {
+		return
+	}
+	projectUUID, err := util.ParseUUID(projectID)
+	if err != nil {
+		return
+	}
+	workspaceUUID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return
+	}
+	project, err := h.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: projectUUID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		return
+	}
+	resp.ProjectID = projectID
+	resp.ProjectTitle = project.Title
+	resp.ProjectDescription = project.Description.String
+	rows := h.listProjectResourcesForProject(ctx, projectUUID)
+	if len(rows) == 0 {
+		return
+	}
+	resources := make([]ProjectResourceData, 0, len(rows))
+	var repos []RepoData
+	for _, row := range rows {
+		label := ""
+		if row.Label.Valid {
+			label = row.Label.String
+		}
+		ref := json.RawMessage(row.ResourceRef)
+		if len(ref) == 0 {
+			ref = json.RawMessage("{}")
+		}
+		resources = append(resources, ProjectResourceData{
+			ID:           uuidToString(row.ID),
+			ResourceType: row.ResourceType,
+			ResourceRef:  ref,
+			Label:        label,
+		})
+		if row.ResourceType == "github_repo" {
+			var payload struct {
+				URL string `json:"url"`
+				Ref string `json:"ref,omitempty"`
+			}
+			if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
+				repos = append(repos, RepoData{URL: payload.URL, Ref: strings.TrimSpace(payload.Ref)})
+			}
+		}
+	}
+	resp.ProjectResources = resources
+	if len(repos) > 0 {
+		resp.Repos = repos
+	}
 }
 
 // ClaimTaskByRuntime atomically claims the next queued task for a runtime.
@@ -2840,9 +2934,31 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := h.markDesignRestoreTaskRunning(r.Context(), *task); err != nil {
+		slog.Warn("design restore task start: failed to mark restore task running", "task_id", taskID, "error", err)
+	}
 
 	slog.Info("task started", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
+}
+
+func (h *Handler) markDesignRestoreTaskRunning(ctx context.Context, task db.AgentTaskQueue) error {
+	var restoreCtx service.DesignRestoreTaskContext
+	if err := json.Unmarshal(task.Context, &restoreCtx); err != nil || restoreCtx.Type != service.DesignRestoreTaskContextType {
+		return nil
+	}
+	restoreTask, err := h.Queries.GetDesignRestoreTaskByAgentTask(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	_, err = h.Queries.UpdateDesignRestoreTask(ctx, db.UpdateDesignRestoreTaskParams{
+		ID:          restoreTask.ID,
+		WorkspaceID: restoreTask.WorkspaceID,
+		Status:      pgtype.Text{String: "running", Valid: true},
+		Result:      restoreTask.Result,
+		Error:       restoreTask.Error,
+	})
+	return err
 }
 
 // TaskWaitLocalDirectoryRequest is the body the daemon POSTs when it parks
@@ -2939,7 +3055,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
 	// Verify the caller owns this task's workspace.
-	_, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
+	existingTask, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
 	if !ok {
 		return
 	}
@@ -2950,12 +3066,64 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var createdDraft *db.DesignDraft
+	var analyzedProfile *db.DesignSystemProfile
+	var profileOutput *designSystemProfileAnalyzeOutput
+	if existingTask.Status == "running" && isUIDraftCreateTaskContext(existingTask.Context) {
+		draft, draftErr := h.createDesignDraftFromAgentTaskOutput(r.Context(), existingTask, req.Output)
+		if draftErr != nil {
+			slog.Warn("ui agent draft completion: invalid draft output", "task_id", taskID, "error", draftErr)
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), draftErr.Error(), req.SessionID, req.WorkDir, "ui_draft_invalid_output", req.SessionRolloutMissing, req.RetiredSessionID)
+			if failErr != nil {
+				slog.Warn("ui agent draft completion: failed to mark task failed", "task_id", taskID, "error", failErr)
+			} else if failedTask != nil {
+				h.TaskService.NotifyTaskFinished(*failedTask)
+				if err := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); err != nil {
+					slog.Warn("complete task: failed to revoke task tokens after ui draft failure", "task_id", uuidToString(failedTask.ID), "error", err)
+				}
+			}
+			writeError(w, http.StatusBadRequest, "invalid ui draft output: "+draftErr.Error())
+			return
+		}
+		createdDraft = draft
+	}
+	if existingTask.Status == "running" && isDesignSystemProfileAnalyzeTaskContext(existingTask.Context) {
+		parsed, profileErr := parseDesignSystemProfileAnalyzeOutput(req.Output)
+		if profileErr != nil {
+			slog.Warn("design system profile analysis completion: invalid output", "task_id", taskID, "error", profileErr)
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), profileErr.Error(), req.SessionID, req.WorkDir, "design_system_profile_invalid_output", req.SessionRolloutMissing, req.RetiredSessionID)
+			if failErr != nil {
+				slog.Warn("design system profile analysis completion: failed to mark task failed", "task_id", taskID, "error", failErr)
+			} else if failedTask != nil {
+				h.TaskService.NotifyTaskFinished(*failedTask)
+				if err := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); err != nil {
+					slog.Warn("complete task: failed to revoke task tokens after design system profile failure", "task_id", uuidToString(failedTask.ID), "error", err)
+				}
+			}
+			writeError(w, http.StatusBadRequest, "invalid design system profile output: "+profileErr.Error())
+			return
+		}
+		profileOutput = &parsed
+	}
+
 	result, _ := json.Marshal(req)
 	// MUL-5305: SessionRolloutMissing is applied inside CompleteTask's terminal
 	// transaction (force session_id NULL + flag the row), so an auto-retry the
 	// same commit creates and wakes can never observe the withheld pointer or a
 	// missing continuity-gap flag.
-	task, err := h.TaskService.CompleteTask(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.SessionRolloutMissing, req.RetiredSessionID)
+	var task *db.AgentTaskQueue
+	var err error
+	if profileOutput != nil {
+		task, err = h.TaskService.CompleteTaskWithMutationAndSessionState(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.SessionRolloutMissing, req.RetiredSessionID, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
+			profile, updateErr := h.updateDesignSystemProfileFromAgentTaskOutput(r.Context(), qtx, completedTask, *profileOutput)
+			if updateErr == nil {
+				analyzedProfile = profile
+			}
+			return updateErr
+		})
+	} else {
+		task, err = h.TaskService.CompleteTask(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.SessionRolloutMissing, req.RetiredSessionID)
+	}
 	if err != nil {
 		// A CompleteTask error is an infrastructure failure (transaction /
 		// assistant-outcome write), not a bad request: an already-finalized
@@ -2968,6 +3136,22 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.emitIssueExecutedOnFirstCompletion(r, task)
+	if createdDraft != nil {
+		slog.Info("ui agent draft created from task", "task_id", taskID, "draft_id", uuidToString(createdDraft.ID))
+		h.publish(protocol.EventDesignDraftReady, workspaceID, "agent", uuidToString(task.AgentID), map[string]any{
+			"design_draft_id":     uuidToString(createdDraft.ID),
+			"issue_id":            uuidToPtr(createdDraft.IssueID),
+			"catalog_template_id": uuidToPtr(createdDraft.CatalogTemplateID),
+			"status":              createdDraft.Status,
+			"title":               createdDraft.Title,
+		})
+	}
+	if analyzedProfile != nil {
+		slog.Info("design system profile analyzed from task", "task_id", taskID, "design_system_profile_id", uuidToString(analyzedProfile.ID))
+	}
+	if err := h.updateDesignRestoreTaskFromAgentCompletion(r.Context(), *task, req); err != nil {
+		slog.Warn("design restore task completion: failed to update restore task", "task_id", taskID, "error", err)
+	}
 
 	// MUL-4195: guarantee at-least-once processing. If a member posted a
 	// deliberate comment while this run was executing (or one was merged into
@@ -2993,6 +3177,58 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("task completed", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
+}
+
+func (h *Handler) updateDesignRestoreTaskFromAgentCompletion(ctx context.Context, task db.AgentTaskQueue, req TaskCompleteRequest) error {
+	var restoreCtx service.DesignRestoreTaskContext
+	if err := json.Unmarshal(task.Context, &restoreCtx); err != nil || restoreCtx.Type != service.DesignRestoreTaskContextType {
+		return nil
+	}
+	restoreTask, err := h.Queries.GetDesignRestoreTaskByAgentTask(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	summary := parseDesignRestoreResultSummary(req.Output)
+	status := "completed"
+	if summary.Status == "blocked" || summary.Status == "failed" || strings.Contains(strings.ToLower(req.Output), "blocked") || strings.Contains(strings.ToLower(req.Output), "阻塞") {
+		status = "failed"
+	}
+	policyViolation := designRestorePolicyViolation(restoreCtx, req.Output, summary)
+	if policyViolation != "" {
+		status = "failed"
+	}
+	policyWarning := designRestorePolicyWarning(restoreCtx, summary)
+	result := map[string]any{
+		"output":           req.Output,
+		"summary":          summary,
+		"pr_url":           req.PRURL,
+		"session_id":       req.SessionID,
+		"work_dir":         req.WorkDir,
+		"policy_violation": policyViolation,
+		"policy_warning":   policyWarning,
+	}
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	if _, err := h.Queries.UpdateDesignRestoreTask(ctx, db.UpdateDesignRestoreTaskParams{
+		ID:          restoreTask.ID,
+		WorkspaceID: restoreTask.WorkspaceID,
+		Status:      pgtype.Text{String: status, Valid: true},
+		Result:      resultJSON,
+		Error:       pgtype.Text{Valid: false},
+	}); err != nil {
+		return err
+	}
+	if err := h.replaceDesignRestoreMappingsFromSummary(ctx, restoreTask, summary); err != nil {
+		return err
+	}
+	if err := h.advanceIssueAfterDesignRestoreCompletion(ctx, restoreTask, status); err != nil {
+		return err
+	}
+	agentLabel := designRestoreAgentLabelFromInput(restoreTask.Input)
+	h.createDesignRestoreIssueSystemComment(ctx, restoreTask.IssueID, designRestoreCompletionComment(agentLabel, status, policyViolation, policyWarning, summary))
+	return nil
 }
 
 // emitIssueExecutedOnFirstCompletion atomically flips issue.first_executed_at
@@ -3628,6 +3864,9 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if err := h.updateDesignRestoreTaskFromAgentFailure(r.Context(), *task, req); err != nil {
+		slog.Warn("design restore task failure: failed to update restore task", "task_id", taskID, "error", err)
+	}
 	h.TaskService.NotifyTaskFinished(*task)
 
 	// Best-effort revoke of the mat_ task token minted at claim. Same
@@ -3639,6 +3878,41 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("task failed", "task_id", taskID, "agent_id", uuidToString(task.AgentID), "task_error", req.Error, "failure_reason", req.FailureReason)
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
+}
+
+func (h *Handler) updateDesignRestoreTaskFromAgentFailure(ctx context.Context, task db.AgentTaskQueue, req TaskFailRequest) error {
+	var restoreCtx service.DesignRestoreTaskContext
+	if err := json.Unmarshal(task.Context, &restoreCtx); err != nil || restoreCtx.Type != service.DesignRestoreTaskContextType {
+		return nil
+	}
+	restoreTask, err := h.Queries.GetDesignRestoreTaskByAgentTask(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	resultJSON, err := json.Marshal(map[string]any{
+		"error":          req.Error,
+		"session_id":     req.SessionID,
+		"work_dir":       req.WorkDir,
+		"failure_reason": req.FailureReason,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := h.Queries.UpdateDesignRestoreTask(ctx, db.UpdateDesignRestoreTaskParams{
+		ID:          restoreTask.ID,
+		WorkspaceID: restoreTask.WorkspaceID,
+		Status:      pgtype.Text{String: "failed", Valid: true},
+		Result:      resultJSON,
+		Error:       pgtype.Text{String: req.Error, Valid: strings.TrimSpace(req.Error) != ""},
+	}); err != nil {
+		return err
+	}
+	if err := h.advanceIssueAfterDesignRestoreCompletion(ctx, restoreTask, "failed"); err != nil {
+		return err
+	}
+	agentLabel := designRestoreAgentLabelFromInput(restoreTask.Input)
+	h.createDesignRestoreIssueSystemComment(ctx, restoreTask.IssueID, designRestoreCompletionComment(agentLabel, "failed", "Agent 执行失败", "", designRestoreResultSummary{Status: "failed", Blockers: []string{req.Error}}))
+	return nil
 }
 
 // ---------------------------------------------------------------------------

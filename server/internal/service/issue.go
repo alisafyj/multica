@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -298,6 +300,23 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("create issue: %w", err)
 	}
+	if p.ParentIssueID.Valid {
+		if role := inferIssueDesignRoleFromTitle(p.Title); role != "" {
+			value, marshalErr := json.Marshal(role)
+			if marshalErr != nil {
+				return IssueCreateResult{}, fmt.Errorf("marshal issue design role: %w", marshalErr)
+			}
+			issue, err = qtx.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+				Key:         issueDesignRoleMetadataKey,
+				Value:       value,
+				ID:          issue.ID,
+				WorkspaceID: issue.WorkspaceID,
+			})
+			if err != nil {
+				return IssueCreateResult{}, fmt.Errorf("set issue design role: %w", err)
+			}
+		}
+	}
 
 	// Attach labels inside the create transaction so the issue and its
 	// labels commit together — the old flow created the issue first and
@@ -331,6 +350,26 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID)
 
 	return IssueCreateResult{Issue: issue, Attachments: attachments, Labels: labels}, nil
+}
+
+const (
+	issueDesignRoleMetadataKey = "design_role"
+	issueDesignRoleUI          = "ui_design"
+	issueDesignRoleFrontend    = "frontend_dev"
+)
+
+func inferIssueDesignRoleFromTitle(title string) string {
+	normalized := strings.ToLower(strings.TrimSpace(title))
+	if normalized == "" {
+		return ""
+	}
+	if strings.Contains(normalized, "ui") || strings.Contains(normalized, "设计") {
+		return issueDesignRoleUI
+	}
+	if strings.Contains(normalized, "前端") || strings.Contains(normalized, "frontend") {
+		return issueDesignRoleFrontend
+	}
+	return ""
 }
 
 // validateIssueLabels checks that every requested label exists in the

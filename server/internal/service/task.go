@@ -1312,7 +1312,7 @@ type QuickCreateContext struct {
 const QuickCreateContextType = "quick_create"
 
 // UIDraftCreateContext marks a task as a UI draft generation job.
-const UIDraftCreateContextType = "ui_draft_create"
+const UIDraftCreateContextType = "ui_agent_draft_create"
 
 // DesignSystemProfileAnalyzeContext marks a task as a design-system analysis job.
 const DesignSystemProfileAnalyzeContextType = "design_system_profile_analyze"
@@ -1949,8 +1949,20 @@ func (s *TaskService) CancelTasksForIssue(ctx context.Context, issueID pgtype.UU
 //
 // Returns the cancelled rows so callers can report counts / log them.
 func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
-	cancelled, err := s.Queries.CancelAgentTasksByAgent(ctx, agentID)
-	if err != nil {
+	var cancelled []db.AgentTaskQueue
+	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		rows, err := qtx.CancelAgentTasksByAgent(ctx, agentID)
+		if err != nil {
+			return err
+		}
+		for _, task := range rows {
+			if err := s.markDesignSystemProfileAnalysisFailed(ctx, qtx, task, "design system profile analysis was cancelled"); err != nil {
+				return err
+			}
+		}
+		cancelled = rows
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	for _, t := range cancelled {
@@ -1989,6 +2001,7 @@ func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID
 // that the tx might still roll back.
 func (s *TaskService) BroadcastCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue) {
 	for _, t := range cancelled {
+		s.markCancelledDesignSystemProfile(ctx, t)
 		s.captureTaskCancelled(ctx, t)
 		s.ReconcileAgentStatus(ctx, t.AgentID)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
@@ -1998,7 +2011,17 @@ func (s *TaskService) BroadcastCancelledTasks(ctx context.Context, cancelled []d
 
 func (s *TaskService) CaptureCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue) {
 	for _, t := range cancelled {
+		s.markCancelledDesignSystemProfile(ctx, t)
 		s.captureTaskCancelled(ctx, t)
+	}
+}
+
+func (s *TaskService) markCancelledDesignSystemProfile(ctx context.Context, task db.AgentTaskQueue) {
+	if err := s.markDesignSystemProfileAnalysisFailed(ctx, s.Queries, task, "design system profile analysis was cancelled"); err != nil {
+		slog.Warn("cancel task: failed to update design system profile",
+			"task_id", util.UUIDToString(task.ID),
+			"error", err,
+		)
 	}
 }
 
@@ -2048,8 +2071,21 @@ func (s *TaskService) CancelTask(ctx context.Context, taskID pgtype.UUID) (*db.A
 // CancelTaskWithResult cancels a single task and returns any chat-specific
 // cleanup result needed by user-facing callers.
 func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UUID, opts CancelTaskOptions) (*CancelTaskResult, error) {
-	task, err := s.Queries.CancelAgentTask(ctx, taskID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	var task db.AgentTaskQueue
+	taskTransitioned := false
+	err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		cancelled, err := qtx.CancelAgentTask(ctx, taskID)
+		if err != nil {
+			return err
+		}
+		task = cancelled
+		taskTransitioned = true
+		if err := s.markDesignSystemProfileAnalysisFailed(ctx, qtx, cancelled, "design system profile analysis was cancelled"); err != nil {
+			return fmt.Errorf("mark design system profile analysis cancelled: %w", err)
+		}
+		return nil
+	})
+	if errors.Is(err, pgx.ErrNoRows) && !taskTransitioned {
 		existing, err := s.Queries.GetAgentTask(ctx, taskID)
 		if err != nil {
 			return nil, fmt.Errorf("cancel task: %w", err)
@@ -2939,7 +2975,12 @@ func (s *TaskService) MarkTaskWaitingLocalDirectory(ctx context.Context, taskID 
 // flipping to 'completed' and chat_session.session_id being refreshed,
 // causing the new task to resume against a stale (or NULL) session.
 func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string) (*db.AgentTaskQueue, error) {
+	return s.completeTask(ctx, taskID, result, sessionID, workDir, sessionRolloutMissing, retiredSessionID, nil)
+}
+
+func (s *TaskService) completeTask(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string, mutate func(*db.Queries, db.AgentTaskQueue) error) (*db.AgentTaskQueue, error) {
 	var task db.AgentTaskQueue
+	taskTransitioned := false
 	// chatAssistantMsg is the single assistant outcome row written for a chat
 	// task inside the completion transaction below. It is broadcast (chat:done)
 	// only after the transaction commits.
@@ -2957,6 +2998,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 			return err
 		}
 		task = t
+		taskTransitioned = true
 
 		if t.ChatSessionID.Valid {
 			// Pin the chat_session's runtime_id alongside the session_id so the
@@ -3006,6 +3048,11 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 			}
 			chatAssistantMsg = msg
 		}
+		if mutate != nil {
+			if err := mutate(qtx, t); err != nil {
+				return err
+			}
+		}
 		return nil
 	}); err != nil {
 		// When parallel agents race, a task may already be completed,
@@ -3013,7 +3060,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		// … WHERE status = 'running' returns no rows in that case.
 		// Treat it as an idempotent success — same pattern as CancelTask.
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+			if errors.Is(err, pgx.ErrNoRows) && !taskTransitioned {
 				slog.Info("complete task: already finalized",
 					"task_id", util.UUIDToString(taskID),
 					"current_status", existing.Status,
@@ -3134,16 +3181,11 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 }
 
 func (s *TaskService) CompleteTaskWithMutation(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir string, mutate func(*db.Queries, db.AgentTaskQueue) error) (*db.AgentTaskQueue, error) {
-	task, err := s.CompleteTask(ctx, taskID, result, sessionID, workDir, false, "")
-	if err != nil {
-		return nil, err
-	}
-	if mutate != nil {
-		if err := mutate(s.Queries, *task); err != nil {
-			return nil, err
-		}
-	}
-	return task, nil
+	return s.completeTask(ctx, taskID, result, sessionID, workDir, false, "", mutate)
+}
+
+func (s *TaskService) CompleteTaskWithMutationAndSessionState(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string, mutate func(*db.Queries, db.AgentTaskQueue) error) (*db.AgentTaskQueue, error) {
+	return s.completeTask(ctx, taskID, result, sessionID, workDir, sessionRolloutMissing, retiredSessionID, mutate)
 }
 
 // chatNoResponseFallback is the non-empty English body stored on a no_response
@@ -3471,6 +3513,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 				return fmt.Errorf("update chat session resume pointer: %w", err)
 			}
 		}
+		if err := s.markDesignSystemProfileAnalysisFailed(ctx, qtx, t, errMsg); err != nil {
+			return fmt.Errorf("mark design system profile analysis failed: %w", err)
+		}
 
 		// Create the retry child atomically with the fail. CreateRetryTask reads
 		// the just-failed parent row (same tx), so it inherits chat_input_task_id
@@ -3587,11 +3632,77 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	return &task, nil
 }
 
-func (s *TaskService) FailTasksWithProfileSync(ctx context.Context, mutate func(*db.Queries) ([]db.AgentTaskQueue, error)) ([]db.AgentTaskQueue, error) {
-	if mutate == nil {
+func (s *TaskService) FailTasksWithProfileSync(ctx context.Context, fail func(*db.Queries) ([]db.AgentTaskQueue, error)) ([]db.AgentTaskQueue, error) {
+	if fail == nil {
 		return nil, nil
 	}
-	return mutate(s.Queries)
+	var tasks []db.AgentTaskQueue
+	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		failed, err := fail(qtx)
+		if err != nil {
+			return err
+		}
+		for _, task := range failed {
+			message := "design system profile analysis failed"
+			if task.Error.Valid && strings.TrimSpace(task.Error.String) != "" {
+				message = task.Error.String
+			} else if task.FailureReason.Valid && strings.TrimSpace(task.FailureReason.String) != "" {
+				message = task.FailureReason.String
+			}
+			if err := s.markDesignSystemProfileAnalysisFailed(ctx, qtx, task, message); err != nil {
+				return err
+			}
+		}
+		tasks = failed
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
+func (s *TaskService) markDesignSystemProfileAnalysisFailed(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue, message string) error {
+	profileCtx, ok := s.parseDesignSystemProfileAnalyzeContext(task)
+	if !ok {
+		return nil
+	}
+	workspaceID, err := util.ParseUUID(profileCtx.WorkspaceID)
+	if err != nil {
+		return fmt.Errorf("parse workspace id: %w", err)
+	}
+	profileID, err := util.ParseUUID(profileCtx.DesignSystemProfileID)
+	if err != nil {
+		return fmt.Errorf("parse design system profile id: %w", err)
+	}
+	profile, err := queries.GetDesignSystemProfileInWorkspace(ctx, db.GetDesignSystemProfileInWorkspaceParams{
+		ID:          profileID,
+		WorkspaceID: workspaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if profile.Status != "analyzing" {
+		return nil
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "design system profile analysis failed"
+	}
+	errorsJSON, err := json.Marshal([]map[string]any{{"severity": "error", "message": message}})
+	if err != nil {
+		return err
+	}
+	_, err = queries.UpdateDesignSystemProfileAnalysis(ctx, db.UpdateDesignSystemProfileAnalysisParams{
+		ID:             profileID,
+		WorkspaceID:    workspaceID,
+		Status:         "failed",
+		ProfileJson:    profile.ProfileJson,
+		AnalysisErrors: errorsJSON,
+	})
+	return err
 }
 
 // retryableReasons enumerates failure reasons that the auto-retry path is
@@ -4074,6 +4185,19 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 	retried := 0
 
 	for _, t := range tasks {
+		failureMessage := "design system profile analysis failed"
+		if t.Error.Valid && strings.TrimSpace(t.Error.String) != "" {
+			failureMessage = t.Error.String
+		} else if t.FailureReason.Valid && strings.TrimSpace(t.FailureReason.String) != "" {
+			failureMessage = t.FailureReason.String
+		}
+		if err := s.markDesignSystemProfileAnalysisFailed(ctx, s.Queries, t, failureMessage); err != nil {
+			slog.Warn("handle failed tasks: failed to update design system profile",
+				"task_id", util.UUIDToString(t.ID),
+				"error", err,
+			)
+		}
+
 		// Auto-retry first so the issue stays in_progress rather than
 		// flapping todo → in_progress within a tick.
 		if child, _ := s.MaybeRetryFailedTask(ctx, t); child != nil {
@@ -4543,6 +4667,15 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 	if qc, ok := s.parseQuickCreateContext(task); ok {
 		return qc.WorkspaceID
 	}
+	if dc, ok := s.parseUIDraftCreateContext(task); ok {
+		return dc.WorkspaceID
+	}
+	if rc, ok := s.parseDesignRestoreTaskContext(task); ok {
+		return rc.WorkspaceID
+	}
+	if pc, ok := s.parseDesignSystemProfileAnalyzeContext(task); ok {
+		return pc.WorkspaceID
+	}
 	return ""
 }
 
@@ -4758,6 +4891,39 @@ func (s *TaskService) parseQuickCreateContext(task db.AgentTaskQueue) (QuickCrea
 		return QuickCreateContext{}, false
 	}
 	return qc, true
+}
+
+func (s *TaskService) parseUIDraftCreateContext(task db.AgentTaskQueue) (UIDraftCreateContext, bool) {
+	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || len(task.Context) == 0 {
+		return UIDraftCreateContext{}, false
+	}
+	var dc UIDraftCreateContext
+	if err := json.Unmarshal(task.Context, &dc); err != nil || dc.Type != UIDraftCreateContextType {
+		return UIDraftCreateContext{}, false
+	}
+	return dc, true
+}
+
+func (s *TaskService) parseDesignRestoreTaskContext(task db.AgentTaskQueue) (DesignRestoreTaskContext, bool) {
+	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || len(task.Context) == 0 {
+		return DesignRestoreTaskContext{}, false
+	}
+	var rc DesignRestoreTaskContext
+	if err := json.Unmarshal(task.Context, &rc); err != nil || rc.Type != DesignRestoreTaskContextType {
+		return DesignRestoreTaskContext{}, false
+	}
+	return rc, true
+}
+
+func (s *TaskService) parseDesignSystemProfileAnalyzeContext(task db.AgentTaskQueue) (DesignSystemProfileAnalyzeContext, bool) {
+	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || len(task.Context) == 0 {
+		return DesignSystemProfileAnalyzeContext{}, false
+	}
+	var pc DesignSystemProfileAnalyzeContext
+	if err := json.Unmarshal(task.Context, &pc); err != nil || pc.Type != DesignSystemProfileAnalyzeContextType {
+		return DesignSystemProfileAnalyzeContext{}, false
+	}
+	return pc, true
 }
 
 // maxQuickCreateFailureDetailRunes bounds the failure reason lifted from a
