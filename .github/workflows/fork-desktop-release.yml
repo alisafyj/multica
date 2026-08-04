@@ -1,6 +1,9 @@
 name: Fork Desktop Release
 
 on:
+  push:
+    tags:
+      - "desktop-v*.*.*-sso.*"
   workflow_dispatch:
     inputs:
       version:
@@ -17,7 +20,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: fork-desktop-release-${{ inputs.version }}
+  group: fork-desktop-release-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
   cancel-in-progress: false
 
 env:
@@ -30,6 +33,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       release_tag: ${{ steps.version.outputs.release_tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - name: Restrict publishing to the SSO fork
         if: github.repository != env.FORK_REPOSITORY
@@ -40,15 +44,30 @@ jobs:
       - name: Validate version
         id: version
         env:
-          VERSION: ${{ inputs.version }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
         shell: bash
         run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^desktop-v[0-9]+\.[0-9]+\.[0-9]+-sso\.[0-9]+$ ]]; then
+              echo "::error::Tag must look like desktop-v0.4.17-sso.1; got '$GITHUB_REF_NAME'."
+              exit 1
+            fi
+            VERSION="${GITHUB_REF_NAME#desktop-v}"
+            RELEASE_TAG="$GITHUB_REF_NAME"
+            PRERELEASE="true"
+          else
+            VERSION="$INPUT_VERSION"
+            RELEASE_TAG="desktop-v$VERSION"
+            PRERELEASE="$INPUT_PRERELEASE"
+          fi
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::Version must look like 0.4.16 or 0.4.16-sso.1; got '$VERSION'."
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "release_tag=desktop-v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
 
   build:
     needs: validate
@@ -229,7 +248,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
           VERSION: ${{ needs.validate.outputs.version }}
-          PRERELEASE: ${{ inputs.prerelease }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         shell: bash
         run: |
           prerelease_flag=()

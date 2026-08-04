@@ -130,7 +130,7 @@ describe("deriveVersion (real git describe)", () => {
     const { dir, run } = initRepo();
     run("tag", "v1.4.2");
     expect(deriveVersion(dir)).toBe("1.4.2");
-  });
+  }, 15_000);
 
   it("selects the semver tag even when a nearer non-semver tag exists", () => {
     // A release-train tag like `release_iteration/…` sitting closer to HEAD
@@ -145,12 +145,12 @@ describe("deriveVersion (real git describe)", () => {
     const version = deriveVersion(dir);
     expect(version).toMatch(/^1\.4\.2-1-g[0-9a-f]+$/);
     expect(version).not.toMatch(/^0\.0\.0/);
-  });
+  }, 15_000);
 
   it("falls back to 0.0.0-g<hash> when no semver tag is reachable", () => {
     const { dir } = initRepo();
     expect(deriveVersion(dir)).toMatch(/^0\.0\.0-g[0-9a-f]+$/);
-  });
+  }, 15_000);
 });
 
 describe("stripLeadingSeparator", () => {

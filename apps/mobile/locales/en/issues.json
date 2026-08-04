@@ -118,6 +118,8 @@
       "unassigned": "Unassigned",
       "agent_tag": "Agent",
       "squad_tag": "Squad",
+      "needs_runtime": "Needs runtime",
+      "leader_needs_runtime": "Leader needs runtime",
       "no_matches": "No matches."
     },
     "label": {
@@ -133,6 +135,8 @@
       "everyone": "Everyone (@all)",
       "agent_tag": "Agent",
       "squad_tag": "Squad",
+      "needs_runtime": "Needs runtime",
+      "leader_needs_runtime": "Leader needs runtime",
       "no_matches": "No matches."
     },
     "priority": {

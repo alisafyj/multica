@@ -32,6 +32,8 @@ import { squadListOptions } from "@/data/queries/squads";
 import { useWorkspaceStore } from "@/data/workspace-store";
 import { useScrollToTopOnChange } from "@/lib/use-scroll-to-top-on-change";
 import { THEME } from "@/lib/theme";
+import { cn } from "@/lib/utils";
+import { isAgentRuntimeBound } from "@/lib/is-agent-runtime-bound";
 
 const AVATAR_SIZE = 36;
 
@@ -68,6 +70,15 @@ export function AssigneePickerBody({ value, query, onChange }: Props) {
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: squads = [] } = useQuery(squadListOptions(wsId));
+  const runnableAgentIds = useMemo(
+    () =>
+      new Set(
+        agents
+          .filter((agent) => !agent.archived_at && isAgentRuntimeBound(agent))
+          .map((agent) => agent.id),
+      ),
+    [agents],
+  );
   const listRef = useScrollToTopOnChange(query);
   const { colorScheme } = useColorScheme();
   // Tint color for the checkmark accessory. Project uses a monochrome
@@ -141,10 +152,19 @@ export function AssigneePickerBody({ value, query, onChange }: Props) {
         if (row.kind === "agent") return `a:${row.agent.id}`;
         return `s:${row.squad.id}`;
       }}
-      renderItem={({ item }) => (
-        <Pressable
+      renderItem={({ item }) => {
+        const needsRuntime =
+          (item.kind === "agent" && !isAgentRuntimeBound(item.agent)) ||
+          (item.kind === "squad" &&
+            !runnableAgentIds.has(item.squad.leader_id));
+        return (
+          <Pressable
+          disabled={needsRuntime}
           onPress={() => select(item)}
-          className="flex-row items-center gap-3 px-4 py-3 active:bg-secondary"
+          className={cn(
+            "flex-row items-center gap-3 px-4 py-3 active:bg-secondary",
+            needsRuntime && "opacity-50",
+          )}
         >
           {item.kind === "unassigned" ? (
             <View
@@ -179,18 +199,23 @@ export function AssigneePickerBody({ value, query, onChange }: Props) {
               the same row. Members carry no tag (they're the default actor). */}
           {item.kind === "agent" ? (
             <Text className="text-sm text-muted-foreground">
-              {t("picker_body.assignee.agent_tag")}
+              {isAgentRuntimeBound(item.agent)
+                ? t("picker_body.assignee.agent_tag")
+                : t("picker_body.assignee.needs_runtime")}
             </Text>
           ) : item.kind === "squad" ? (
             <Text className="text-sm text-muted-foreground">
-              {t("picker_body.assignee.squad_tag")}
+              {needsRuntime
+                ? t("picker_body.assignee.leader_needs_runtime")
+                : t("picker_body.assignee.squad_tag")}
             </Text>
           ) : null}
           {isSelected(item) ? (
             <Ionicons name="checkmark" size={20} color={checkColor} />
           ) : null}
-        </Pressable>
-      )}
+          </Pressable>
+        );
+      }}
       ListEmptyComponent={
         <View className="px-3 py-8 items-center">
           <Text className="text-sm text-muted-foreground">

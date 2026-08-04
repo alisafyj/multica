@@ -118,6 +118,8 @@
       "unassigned": "未分配",
       "agent_tag": "智能体",
       "squad_tag": "小队",
+      "needs_runtime": "需要绑定运行时",
+      "leader_needs_runtime": "负责人需要绑定运行时",
       "no_matches": "没有匹配结果。"
     },
     "label": {
@@ -133,6 +135,8 @@
       "everyone": "所有人（@all）",
       "agent_tag": "智能体",
       "squad_tag": "小队",
+      "needs_runtime": "需要绑定运行时",
+      "leader_needs_runtime": "负责人需要绑定运行时",
       "no_matches": "没有匹配结果。"
     },
     "priority": {
