@@ -31,7 +31,7 @@
 --
 -- Actions archive (status='archived') instead of deleting so historical
 -- `quick_action` comments stay resolvable to a name.
-CREATE TABLE quick_action (
+CREATE TABLE IF NOT EXISTS quick_action (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL,
     name TEXT NOT NULL,

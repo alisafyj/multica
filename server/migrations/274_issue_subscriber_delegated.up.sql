@@ -33,4 +33,4 @@ ALTER TABLE issue_subscriber VALIDATE CONSTRAINT issue_subscriber_reason_check;
 
 -- Nullable, no default, so this is a catalog-only change in PostgreSQL 11+
 -- and does not rewrite the table.
-ALTER TABLE issue_subscriber ADD COLUMN unsubscribed_at TIMESTAMPTZ;
+ALTER TABLE issue_subscriber ADD COLUMN IF NOT EXISTS unsubscribed_at TIMESTAMPTZ;

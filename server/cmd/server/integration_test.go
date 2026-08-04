@@ -317,7 +317,6 @@ func TestRouterAuthMode(t *testing.T) {
 		{http.MethodPost, "/auth/sso/session"},
 		{http.MethodGet, "/auth/sso/authorize"},
 		{http.MethodPost, "/auth/sso/token"},
-		{http.MethodGet, "/api/workspaces/00000000-0000-0000-0000-000000000000/service-account"},
 	}
 	for _, route := range ssoRoutes {
 		assertStatus("SSO route absent in legacy", testServer.URL, route.method, route.path, http.StatusNotFound)
@@ -327,6 +326,9 @@ func TestRouterAuthMode(t *testing.T) {
 		}
 		assertStatus("SSO route exists", ssoServer.URL, route.method, route.path, want)
 	}
+	serviceAccountPath := "/api/workspaces/00000000-0000-0000-0000-000000000000/service-account"
+	assertStatus("service account route protected in legacy", testServer.URL, http.MethodGet, serviceAccountPath, http.StatusUnauthorized)
+	assertStatus("service account route protected in SSO", ssoServer.URL, http.MethodGet, serviceAccountPath, http.StatusUnauthorized)
 	assertStatus("legacy logout", testServer.URL, http.MethodPost, "/auth/logout", http.StatusOK)
 	assertStatus("SSO logout", ssoServer.URL, http.MethodPost, "/auth/logout", http.StatusOK)
 }

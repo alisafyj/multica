@@ -8,7 +8,7 @@
 --
 -- NULL means "not opted out" (the row is an active subscription). Only a
 -- tombstoned row carries a scope.
-ALTER TABLE issue_subscriber ADD COLUMN opt_out_scope TEXT
+ALTER TABLE issue_subscriber ADD COLUMN IF NOT EXISTS opt_out_scope TEXT
     CHECK (opt_out_scope IN ('issue', 'subtree'));
 
 -- Rows tombstoned by 249 predate the distinction. They were all written by a
