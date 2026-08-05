@@ -9,11 +9,15 @@ import {
 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { api } from "@multica/core/api";
+import {
+  isCliReleaseVersion,
+  isNewerCliReleaseVersion,
+} from "@multica/core/runtimes";
 import type { RuntimeUpdateStatus } from "@multica/core/types";
 import { useT } from "../../i18n";
 
 const GITHUB_RELEASES_URL =
-  "https://api.github.com/repos/coder-zkl1988/multica/releases/tags/v0.4.16-sso.1";
+  "https://api.github.com/repos/coder-zkl1988/multica/releases/tags/v0.4.18-sso.1";
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 let cachedLatestVersion: string | null = null;
@@ -35,49 +39,6 @@ async function fetchLatestVersion(): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-/**
- * Parses a released CLI version ("v0.4.17" / "0.4.17") into comparable parts,
- * or null when the string is not a release version.
- *
- * A daemon built from source reports a `git describe` string
- * ("v0.4.17-12-gabc1234") or the ldflags default ("dev"), and neither can be
- * ordered against a release tag. This mirrors `IsReleaseVersion` in
- * server/internal/cli/update.go, which is how the daemon's own auto-update
- * loop decides the same question.
- */
-function parseReleaseVersion(v: string): number[] | null {
-  const parts = v.trim().replace(/^v/, "").split(".");
-  if (parts.length !== 3) return null;
-  const parsed: number[] = [];
-  for (const part of parts) {
-    if (!/^\d+$/.test(part)) return null;
-    parsed.push(Number(part));
-  }
-  return parsed;
-}
-
-/**
- * True when `latest` is strictly newer than `current`.
- *
- * An unparseable version on either side compares as "no update available".
- * Number("dev") is NaN, and every NaN comparison is false, so the old
- * component-wise scan fell through to the next component and reported an
- * upgrade for a version string it had never actually read — inviting the
- * operator to replace a locally built binary on the strength of a claim we
- * could not make.
- */
-function isNewer(latest: string, current: string): boolean {
-  const l = parseReleaseVersion(latest);
-  const c = parseReleaseVersion(current);
-  if (!l || !c) return false;
-  for (const [i, lv] of l.entries()) {
-    const cv = c[i] ?? 0;
-    if (lv > cv) return true;
-    if (lv < cv) return false;
-  }
-  return false;
 }
 
 const statusConfig: Record<
@@ -151,7 +112,7 @@ export function UpdateSection({
 
   useEffect(() => {
     if (!updating || !targetVersion || !currentVersion) return;
-    if (!isNewer(targetVersion, currentVersion)) {
+    if (!isNewerCliReleaseVersion(targetVersion, currentVersion)) {
       markCompleted(`Updated to ${targetVersion}`);
     }
   }, [currentVersion, markCompleted, targetVersion, updating]);
@@ -201,14 +162,14 @@ export function UpdateSection({
   const hasUpdate =
     currentVersion &&
     latestVersion &&
-    isNewer(latestVersion, currentVersion);
+    isNewerCliReleaseVersion(latestVersion, currentVersion);
 
   // A source build cannot be ordered against a release tag, so neither
   // "update available" nor "Latest" is a claim we can make. Say that, rather
   // than defaulting to "Latest" and telling the operator their local binary is
   // up to date when we never parsed its version.
   const isLocalBuild =
-    !!currentVersion && parseReleaseVersion(currentVersion) === null;
+    !!currentVersion && !isCliReleaseVersion(currentVersion);
 
   const config = status ? statusConfig[status] : null;
   const Icon = config?.icon;

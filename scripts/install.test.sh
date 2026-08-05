@@ -353,7 +353,7 @@ STUB
   printf '#!/usr/bin/env bash\nexit 0\n' >"$stub_bin/brew"
   chmod +x "$stub_bin/brew"
 
-  printf '#!/usr/bin/env bash\necho "multica v0.4.16-sso.1 (commit: test)"\n' >"$stub_bin/multica"
+  printf '#!/usr/bin/env bash\necho "multica v0.4.18-sso.1 (commit: test)"\n' >"$stub_bin/multica"
   chmod +x "$stub_bin/multica"
 
   # curl records every probed URL so the health-check port can be asserted.

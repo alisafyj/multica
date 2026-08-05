@@ -105,7 +105,7 @@ describe("UpdateSection read-only status", () => {
 // precisely because a human made an informed decision, and that decision has to
 // rest on something we actually parsed.
 describe("UpdateSection non-release versions", () => {
-  const LATEST = "v0.4.20";
+  const LATEST = "v0.4.20-sso.1";
 
   // fetchLatestVersion memoizes the GitHub tag in module scope for 10 minutes,
   // so without advancing the clock every case here would silently reuse the tag
@@ -158,6 +158,18 @@ describe("UpdateSection non-release versions", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("available")).toBeInTheDocument();
     expect(screen.queryByText("Local build")).not.toBeInTheDocument();
+  });
+
+  it("compares the SSO build number when the base version is unchanged", async () => {
+    renderSection({
+      runtimeId: "runtime-1",
+      currentVersion: "v0.4.20-sso.0",
+    });
+
+    expect(
+      await screen.findByRole("button", { name: "Update" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("available")).toBeInTheDocument();
   });
 
   it("reports a release version on the latest tag as Latest", async () => {

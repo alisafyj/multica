@@ -16,8 +16,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 REPO_URL="https://github.com/coder-zkl1988/multica.git"
 REPO_WEB_URL="https://github.com/coder-zkl1988/multica"  # without .git, for GitHub web APIs
-CLI_RELEASE_TAG="v0.4.16-sso.1"
-CLI_VERSION="0.4.16-sso.1"
+CLI_RELEASE_TAG="v0.4.18-sso.1"
+CLI_VERSION="0.4.18-sso.1"
 INSTALL_DIR="${MULTICA_INSTALL_DIR:-$HOME/.multica/server}"
 
 # Host ports Compose reported after `up -d`; set by setup_server and reused by
