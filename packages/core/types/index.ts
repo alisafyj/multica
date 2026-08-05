@@ -148,6 +148,27 @@ export type {
   UpdateProjectResourceRequest,
   ListProjectResourcesResponse,
 } from "./project";
+export type {
+  TestCase,
+  TestCasePriority,
+  TestCaseStatus,
+  TestCaseOrigin,
+  TestCaseScope,
+  TestCaseExecutionMode,
+  TestCaseRepoRole,
+  TestCaseChangeKind,
+  TestCaseType,
+  TestCaseStep,
+  TestCaseRepo,
+  TestCaseRepoInput,
+  TestCaseRevision,
+  TestCaseModule,
+  CreateTestCaseRequest,
+  UpdateTestCaseRequest,
+  ListTestCasesResponse,
+  ListTestCaseModulesResponse,
+  ListTestCaseRevisionsResponse,
+} from "./testing";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type {
   GitHubInstallation,

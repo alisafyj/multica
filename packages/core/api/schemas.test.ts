@@ -17,6 +17,14 @@ import {
   BatchDeleteIssuesResponseSchema,
   BatchUpdateIssuesResponseSchema,
   DesignRestoreTaskSchema,
+  TestCaseSchema,
+  ListTestCasesResponseSchema,
+  ListTestCaseModulesResponseSchema,
+  ListTestCaseRevisionsResponseSchema,
+  EMPTY_TEST_CASE,
+  EMPTY_LIST_TEST_CASES_RESPONSE,
+  EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
+  EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE,
   ListDesignDeliveriesResponseSchema,
   ListDesignRestoreTasksResponseSchema,
   DuplicateIssueErrorBodySchema,
@@ -1388,5 +1396,123 @@ describe("RuntimeModelListRequestSchema", () => {
     expect((parsed as unknown as { future_field?: string }).future_field).toBe(
       "keep me",
     );
+  });
+});
+
+describe("TestCaseSchema", () => {
+  it("fills defaults when the backend omits fields", () => {
+    const parsed = parseWithFallback(
+      { id: "c1", title: "下单成功" },
+      TestCaseSchema,
+      EMPTY_TEST_CASE,
+      { endpoint: "test" },
+    );
+    expect(parsed.id).toBe("c1");
+    expect(parsed.title).toBe("下单成功");
+    expect(parsed.steps).toEqual([]);
+    expect(parsed.repos).toEqual([]);
+    expect(parsed.status).toBe("draft");
+    expect(parsed.version).toBe(1);
+    expect(parsed.generation_job_id).toBeNull();
+  });
+
+  it("falls back when the payload is not an object", () => {
+    const parsed = parseWithFallback("nope", TestCaseSchema, EMPTY_TEST_CASE, {
+      endpoint: "test",
+    });
+    expect(parsed).toBe(EMPTY_TEST_CASE);
+  });
+
+  it("keeps an unknown status rather than dropping the case", () => {
+    const parsed = parseWithFallback(
+      { id: "c1", status: "quarantined", case_type: "chaos" },
+      TestCaseSchema,
+      EMPTY_TEST_CASE,
+      { endpoint: "test" },
+    );
+    expect(parsed.status).toBe("quarantined");
+    expect(parsed.case_type).toBe("chaos");
+  });
+
+  it("drops a malformed step array to empty instead of failing the case", () => {
+    const parsed = parseWithFallback(
+      { id: "c1", steps: "not-an-array" },
+      TestCaseSchema,
+      EMPTY_TEST_CASE,
+      { endpoint: "test" },
+    );
+    expect(parsed).toBe(EMPTY_TEST_CASE);
+  });
+
+  it("parses repo bindings with their role and path globs", () => {
+    const parsed = parseWithFallback(
+      {
+        id: "c1",
+        repos: [
+          { project_resource_id: "r1", alias: "admin-web", role: "driver" },
+          { project_resource_id: "r2", alias: "mobile-app", path_globs: ["src/**"] },
+        ],
+      },
+      TestCaseSchema,
+      EMPTY_TEST_CASE,
+      { endpoint: "test" },
+    );
+    expect(parsed.repos).toHaveLength(2);
+    expect(parsed.repos[0]?.role).toBe("driver");
+    expect(parsed.repos[1]?.role).toBe("under_test");
+    expect(parsed.repos[1]?.path_globs).toEqual(["src/**"]);
+  });
+
+  it("keeps unknown server fields instead of stripping them", () => {
+    const parsed = parseWithFallback(
+      { id: "c1", future_field: "keep me" },
+      TestCaseSchema,
+      EMPTY_TEST_CASE,
+      { endpoint: "test" },
+    );
+    expect((parsed as unknown as { future_field?: string }).future_field).toBe("keep me");
+  });
+});
+
+describe("test case list schemas", () => {
+  it("recovers a list response missing the array", () => {
+    const parsed = parseWithFallback(
+      {},
+      ListTestCasesResponseSchema,
+      EMPTY_LIST_TEST_CASES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.test_cases).toEqual([]);
+    expect(parsed.total).toBe(0);
+  });
+
+  it("recovers a modules response missing the array", () => {
+    const parsed = parseWithFallback(
+      {},
+      ListTestCaseModulesResponseSchema,
+      EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.modules).toEqual([]);
+  });
+
+  it("recovers a revisions response missing the array", () => {
+    const parsed = parseWithFallback(
+      {},
+      ListTestCaseRevisionsResponseSchema,
+      EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.revisions).toEqual([]);
+  });
+
+  it("defaults a module row that omits its count", () => {
+    const parsed = parseWithFallback(
+      { modules: [{ module: "订单" }] },
+      ListTestCaseModulesResponseSchema,
+      EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.modules[0]).toEqual({ module: "订单", case_count: 0 });
   });
 });

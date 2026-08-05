@@ -11,6 +11,7 @@ import { defaultStorage } from "../platform/storage";
 import { getCurrentWsId, getCurrentSlug } from "../platform/workspace-storage";
 import { issueKeys } from "../issues/queries";
 import { projectKeys } from "../projects/queries";
+import { testCaseKeys } from "../testing/keys";
 import { designKeys } from "../designs/keys";
 import { pinKeys } from "../pins/queries";
 import { autopilotKeys } from "../autopilots/queries";
@@ -744,6 +745,10 @@ export function useRealtimeSync(
       project: () => {
         const wsId = getCurrentWsId();
         if (wsId) qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
+      },
+      test_case: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) qc.invalidateQueries({ queryKey: testCaseKeys.all(wsId) });
       },
       squad: () => {
         const wsId = getCurrentWsId();

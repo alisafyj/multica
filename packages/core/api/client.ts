@@ -217,6 +217,12 @@ import type {
   ListDesignTemplatesResponse,
   PublishDesignTemplateRequest,
   UpdateDesignRestorePlanRequest,
+  TestCase,
+  CreateTestCaseRequest,
+  UpdateTestCaseRequest,
+  ListTestCasesResponse,
+  ListTestCaseModulesResponse,
+  ListTestCaseRevisionsResponse,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
@@ -229,6 +235,16 @@ import { type Logger, noopLogger } from "../logger";
 import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
+import {
+  TestCaseSchema,
+  ListTestCasesResponseSchema,
+  ListTestCaseModulesResponseSchema,
+  ListTestCaseRevisionsResponseSchema,
+  EMPTY_TEST_CASE,
+  EMPTY_LIST_TEST_CASES_RESPONSE,
+  EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
+  EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE,
+} from "./schemas";
 import {
   AgentTaskListSchema,
   AgentTemplateSchema,
@@ -2701,6 +2717,97 @@ export class ApiClient {
 
   async getProject(id: string): Promise<Project> {
     return this.fetch(`/api/projects/${id}`);
+  }
+
+  // Test cases
+  //
+  // `ref` is either a TC-<n> key or a UUID; the server resolves both. Every
+  // method goes through parseWithFallback — an older backend that drops a field
+  // must degrade the field, not white-screen the page.
+
+  async listTestCases(params?: {
+    projectId?: string;
+    status?: string;
+    module?: string;
+    priority?: string;
+    caseType?: string;
+    origin?: string;
+  }): Promise<ListTestCasesResponse> {
+    const search = new URLSearchParams();
+    if (params?.projectId) search.set("project_id", params.projectId);
+    if (params?.status) search.set("status", params.status);
+    if (params?.module) search.set("module", params.module);
+    if (params?.priority) search.set("priority", params.priority);
+    if (params?.caseType) search.set("case_type", params.caseType);
+    if (params?.origin) search.set("origin", params.origin);
+    const raw = await this.fetch<unknown>(`/api/test-cases?${search}`);
+    return parseWithFallback(raw, ListTestCasesResponseSchema, EMPTY_LIST_TEST_CASES_RESPONSE, {
+      endpoint: "GET /api/test-cases",
+    });
+  }
+
+  async listTestCaseModules(projectId: string): Promise<ListTestCaseModulesResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-cases/modules?project_id=${encodeURIComponent(projectId)}`,
+    );
+    return parseWithFallback(
+      raw,
+      ListTestCaseModulesResponseSchema,
+      EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
+      { endpoint: "GET /api/test-cases/modules" },
+    );
+  }
+
+  async getTestCase(ref: string): Promise<TestCase> {
+    const raw = await this.fetch<unknown>(`/api/test-cases/${encodeURIComponent(ref)}`);
+    return parseWithFallback(raw, TestCaseSchema, { ...EMPTY_TEST_CASE, id: ref }, {
+      endpoint: "GET /api/test-cases/:ref",
+    });
+  }
+
+  async createTestCase(data: CreateTestCaseRequest): Promise<TestCase> {
+    const raw = await this.fetch<unknown>("/api/test-cases", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestCaseSchema, EMPTY_TEST_CASE, {
+      endpoint: "POST /api/test-cases",
+    });
+  }
+
+  async updateTestCase(ref: string, data: UpdateTestCaseRequest): Promise<TestCase> {
+    const raw = await this.fetch<unknown>(`/api/test-cases/${encodeURIComponent(ref)}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestCaseSchema, { ...EMPTY_TEST_CASE, id: ref }, {
+      endpoint: "PUT /api/test-cases/:ref",
+    });
+  }
+
+  async approveTestCase(ref: string): Promise<TestCase> {
+    const raw = await this.fetch<unknown>(`/api/test-cases/${encodeURIComponent(ref)}/approve`, {
+      method: "POST",
+    });
+    return parseWithFallback(raw, TestCaseSchema, { ...EMPTY_TEST_CASE, id: ref }, {
+      endpoint: "POST /api/test-cases/:ref/approve",
+    });
+  }
+
+  async deleteTestCase(ref: string): Promise<void> {
+    await this.fetch(`/api/test-cases/${encodeURIComponent(ref)}`, { method: "DELETE" });
+  }
+
+  async listTestCaseRevisions(ref: string): Promise<ListTestCaseRevisionsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-cases/${encodeURIComponent(ref)}/revisions`,
+    );
+    return parseWithFallback(
+      raw,
+      ListTestCaseRevisionsResponseSchema,
+      EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE,
+      { endpoint: "GET /api/test-cases/:ref/revisions" },
+    );
   }
 
   async createProject(data: CreateProjectRequest): Promise<Project> {

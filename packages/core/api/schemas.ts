@@ -15,6 +15,11 @@ import type {
   BillingTopupsPage,
   BillingTransactionsPage,
   CancelTaskResponse,
+  TestCase,
+  TestCaseRevision,
+  ListTestCasesResponse,
+  ListTestCaseModulesResponse,
+  ListTestCaseRevisionsResponse,
   ChatMessage,
   ChatDraftRestoresResponse,
   ChatPendingTask,
@@ -2315,4 +2320,142 @@ export const MALFORMED_RUNTIME_MODEL_LIST_REQUEST: RuntimeModelListRequest = {
   error: "invalid model discovery response",
   created_at: "",
   updated_at: "",
+};
+
+// --- Test cases -------------------------------------------------------------
+// Enums stay z.string(): a backend that adds a new case_type or status must not
+// blank the whole case on an older frontend. Every field carries a default so a
+// partial payload degrades field-by-field rather than falling back wholesale.
+
+const TestCaseStepSchema = z.object({
+  index: z.number().default(0),
+  action: z.string().default(""),
+  expected: z.string().default(""),
+  repo: z.string().optional(),
+}).loose();
+
+const TestCaseRepoSchema = z.object({
+  project_resource_id: z.string().default(""),
+  alias: z.string().default(""),
+  role: z.string().default("under_test"),
+  path_globs: z.array(z.string()).default([]),
+}).loose();
+
+export const TestCaseSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  project_id: z.string().default(""),
+  case_number: z.number().default(0),
+  key: z.string().default(""),
+  title: z.string().default(""),
+  module: z.string().default(""),
+  preconditions: z.string().default(""),
+  steps: z.array(TestCaseStepSchema).default([]),
+  expected_result: z.string().default(""),
+  test_data: z.record(z.string(), z.unknown()).default({}),
+  priority: z.string().default("p2"),
+  case_type: z.string().default("functional"),
+  scope: z.string().default("single_repo"),
+  execution_mode: z.string().default("manual"),
+  required_capabilities: z.array(z.record(z.string(), z.unknown())).default([]),
+  business_rules_ref: z.array(z.string()).default([]),
+  status: z.string().default("draft"),
+  origin: z.string().default("human"),
+  source_refs: z.record(z.string(), z.unknown()).default({}),
+  generation_job_id: z.string().nullable().default(null),
+  version: z.number().default(1),
+  repos: z.array(TestCaseRepoSchema).default([]),
+  created_by: z.string().nullable().default(null),
+  updated_by: z.string().nullable().default(null),
+  reviewed_by: z.string().nullable().default(null),
+  reviewed_at: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const ListTestCasesResponseSchema = z.object({
+  test_cases: z.array(TestCaseSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const TestCaseModuleSchema = z.object({
+  module: z.string().default(""),
+  case_count: z.number().default(0),
+}).loose();
+
+export const ListTestCaseModulesResponseSchema = z.object({
+  modules: z.array(TestCaseModuleSchema).default([]),
+}).loose();
+
+export const TestCaseRevisionSchema = z.object({
+  id: z.string().default(""),
+  test_case_id: z.string().default(""),
+  version: z.number().default(0),
+  snapshot: z.record(z.string(), z.unknown()).default({}),
+  change_kind: z.string().default("human_edit"),
+  changed_by: z.string().nullable().default(null),
+  changed_by_type: z.string().default("member"),
+  note: z.string().default(""),
+  created_at: z.string().default(""),
+}).loose();
+
+export const ListTestCaseRevisionsResponseSchema = z.object({
+  revisions: z.array(TestCaseRevisionSchema).default([]),
+}).loose();
+
+export const EMPTY_TEST_CASE: TestCase = {
+  id: "",
+  workspace_id: "",
+  project_id: "",
+  case_number: 0,
+  key: "",
+  title: "",
+  module: "",
+  preconditions: "",
+  steps: [],
+  expected_result: "",
+  test_data: {},
+  priority: "p2",
+  case_type: "functional",
+  scope: "single_repo",
+  execution_mode: "manual",
+  required_capabilities: [],
+  business_rules_ref: [],
+  status: "draft",
+  origin: "human",
+  source_refs: {},
+  generation_job_id: null,
+  version: 1,
+  repos: [],
+  created_by: null,
+  updated_by: null,
+  reviewed_by: null,
+  reviewed_at: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_TEST_CASE_REVISION: TestCaseRevision = {
+  id: "",
+  test_case_id: "",
+  version: 0,
+  snapshot: {},
+  change_kind: "human_edit",
+  changed_by: null,
+  changed_by_type: "member",
+  note: "",
+  created_at: "",
+};
+
+export const EMPTY_LIST_TEST_CASES_RESPONSE: ListTestCasesResponse = {
+  test_cases: [],
+  total: 0,
+};
+
+export const EMPTY_LIST_TEST_CASE_MODULES_RESPONSE: ListTestCaseModulesResponse = {
+  modules: [],
+};
+
+export const EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE: ListTestCaseRevisionsResponse = {
+  revisions: [],
 };
