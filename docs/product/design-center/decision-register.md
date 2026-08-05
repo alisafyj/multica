@@ -42,7 +42,7 @@
 - 决策：研究 Open Design 的主页与模板、设计体系和本地 Project，但只接入适合 Multica 的部分能力。
 - 证据：[open-design-evidence.md](./open-design-evidence.md)
 - 影响：不复制其 daemon，不新增与 Multica Project 竞争的第二套 Project 模型。
-- 替代原因：该表述仍允许 Multica 在设计体系生成、导入、深化和审计环节发明平行流程。2026-07-31 用户确认直接采用 Open Design 的设计体系引擎与资产流程，Multica 只做云端控制面和适配，见 DC-037。
+- 替代原因：该表述曾在 2026-07-31 被“直接采用 Open Design 引擎”替代；2026-08-05 又收敛为以 Open Design 为核心参照、由 Multica 原生翻新，见 DC-039。
 
 ### DC-005 产品结论必须有可复核依据
 
@@ -77,20 +77,20 @@
 - 从零创建：用户明确发起并提供产品定位、品牌材料或参考风格后，Agent 可以创建设计体系草稿；用户可通过在线 UI Kit 预览调整并保存。
 - 影响：项目创建与设计体系生成解耦；“无体系”是合法状态，不应触发隐藏的自动生成任务。
 
-### DC-015 第一版直接采用 Open Design 的设计体系规则基线
+### DC-015 第一版采用 Open Design 的设计体系规则基线
 
 - 状态：`confirmed`
 - 日期：2026-07-28
-- 决策：Multica 第一版不再另行发明设计体系分类、固定 UI 规范表单或新的 Token 分层，直接采用 Open Design 已验证的基础规则作为设计体系契约。
+- 决策：Multica 第一版不再另行发明设计体系分类、固定 UI 规范表单或新的 Token 分层，参照采用 Open Design 已验证的基础规则作为设计体系契约。
 - 最小正式包：`manifest.json`、`DESIGN.md`、`tokens.css`。
 - 可选丰富内容：`USAGE.md`、组件 fixture 与 manifest、Design Tokens JSON、Tailwind 映射、预览、来源证据、资产和字体；项目没有真实证据时不强制伪造这些内容。
 - Token 规则：沿用 `A1-identity`、`A1-structure`、`A2`、`B-slot` 和 `C-extension` 的职责与 fallback/alias 规则。
 - 内容规则：`DESIGN.md` 保持自由章节结构，不要求用户填写统一 UI 规范表单；体系按来源成熟度逐步丰富。
 - 使用规则：Project 可以不绑定设计体系；只允许已发布体系作为主强约束；额外设计体系只能作为弱参考，不覆盖主体系 Tokens。
 - 生命周期：第一阶段只采用未建立、生成中、草稿和已保存的必要状态，不采用 Open Design 的 pending revision 接受/拒绝工作流；具体见 DC-021。
-- 边界：采用的是设计体系契约和产品规则，不复制 Open Design 的本地 Project、文件系统注册表，也不重写其 daemon。固定版本 daemon/engine 仅作为 headless worker 运行，Multica 仍使用现有云端 Project、Issue 和 Agent 控制面。
+- 边界：采用的是设计体系契约和产品规则，不复制 Open Design 的本地 Project、文件系统注册表，也不运行或重写其 daemon/worker。Multica 使用现有云端 Project、Issue、Agent 和 daemon 原生实现。
 - 依据：`OD-009`、`OD-011`、`OD-012`、`OD-013`、`OD-014`。
-- 影响：后续不再讨论是否重新设计一套通用设计体系模型；生成与资产流程进一步由 DC-037 固定为直接采用 Open Design 上游实现语义。
+- 影响：后续不再讨论是否重新设计一套通用设计体系模型；生成与资产流程按 DC-039 以 Open Design 为行为基线原生翻新。
 
 ### DC-016 旧决策：先实现 Open Design 契约的最小云端映射
 
@@ -112,7 +112,7 @@
 - 决策：在项目设计模块中，让用户主动创建或生成设计体系；用户可以提供项目定位、品牌资料、参考风格或已有设计资产，Agent 按 Open Design 规则生成设计规则、Tokens、组件和在线 UI Kit，用户预览、调整后保存为项目长期资产。
 - 成功标准：用户实际获得一套可理解、可视化且对项目有价值的设计体系，不能用数据库模型完整、Agent Task completed 或文件包生成代替产品成功。
 - 输入边界：Figma UI 规范是可选输入，也可以在未来由设计体系派生；没有用户主动发起时，空项目不得自动生成。
-- 阶段边界：暂不接设计还原，也不迁移旧 `design_system_profile`。Multica 不自研 revision、binding 或 Package Audit 的平行实现；生成和包校验直接采用 DC-037 的 Open Design 引擎。
+- 阶段边界：暂不接设计还原，也不迁移旧 `design_system_profile`。生成、包校验和 Preview 使用 DC-039 的 Multica 原生引擎，保持现有草稿和保存语义。
 - 影响：必须先完成并确认入口、输入、生成产物、在线预览、调整和保存流程的产品设计，再编写实施计划。
 
 ### DC-018 第一阶段不新增隐式前置仓库扫描 Agent
@@ -166,14 +166,14 @@
 - 展示边界：Multica 在隔离环境中渲染静态 HTML/CSS，不执行任意脚本。
 - 依据：Open Design 的分层包、`components.html` 和 preview/showcase 机制，见 `OD-004`、`OD-005`、`OD-009`。
 - 排除项：第一阶段不使用只能展示固定组件的 Multica Token 渲染器，也不建设 Figma 类画布和结构化编辑模型。
-- 替代原因：固定三文件的一次性 Agent 生成只是 Multica 阶段性实验，不能把静态样例等同于真实组件库。后续 UI Kit、Preview、组件 manifest 和丰富产物均遵循 Open Design 包与工作空间流程，见 DC-037。
+- 替代原因：固定三文件的一次性 Agent 生成只是 Multica 阶段性实验，不能把静态样例等同于真实组件库。后续 UI Kit、Preview、组件 manifest 和丰富产物参照 Open Design 分层包与工作空间语义，由 Multica 原生实现，见 DC-039。
 
 ### DC-024 使用组件定位和自然语言调整草稿
 
 - 状态：`confirmed`
 - 日期：2026-07-28，更新于 2026-07-31
 - 决策：用户可以对整个体系输入自然语言调整要求，也可以先在在线 UI Kit 中定位某个组件或区块，再输入局部调整要求。
-- Agent 契约：一次调整必须通过 Open Design 工作空间同步维护受影响的事实源、派生产物和预览，不能只改变 UI Kit 表面；完成后执行对应 Package Audit 并刷新 Preview/UI Kit。
+- Agent 契约：一次调整必须通过 Multica Agent 工作空间同步维护受影响的事实源、派生产物和预览，不能只改变 UI Kit 表面；完成后执行对应 Package Audit 并刷新 Preview/UI Kit。
 - 失败边界：调整失败时保留调整前的草稿，不产生半更新文件。
 - 排除项：第一阶段不提供 Token 表单、代码编辑器、拖拽画布或 pending revision 工作流。
 
@@ -293,7 +293,7 @@
 
 ### DC-037 设计体系引擎与资产流程直接采用 Open Design
 
-- 状态：`confirmed`
+- 状态：`superseded`
 - 日期：2026-07-31
 - 决策：Multica 不再参考 Open Design 后自行设计一套设计体系生成流程，而是直接采用 Open Design 的设计体系引擎、来源采集、确定性提取、分层资源包、Agent 工作空间深化、Package Audit、Preview/UI Kit 和模板资源协议作为上游实现标准。
 - 停止项：停止继续扩展“一次 Prompt 直接生成固定三文件”、自定义组件识别、自定义 Token 推导和与 Open Design 平行的 UI Kit 生成流程；现有实现只作为阶段性验证和迁移输入，不再定义目标架构。
@@ -302,10 +302,11 @@
 - 证据边界：版本和模块复用必须绑定 Open Design 的固定提交与源码证据；遇到云端适配差异时优先增加薄适配层，不得先发明替代流程。
 - 依据：`OD-004`、`OD-008`、`OD-009`、`OD-010`、`OD-011`、`OD-012`。
 - 方案：[open-design-engine-integration.md](./open-design-engine-integration.md)。
+- 替代原因：2026-08-05 用户确认不接受专用 Open Design Worker 或 Runtime 作为 Multica 正式运行依赖，但要求产品流程、能力语义和分层资源包继续以 Open Design 为核心参照。替代决策见 DC-039。
 
 ### DC-038 固定 Open Design v0.16.1 并采用外部编排 workspace
 
-- 状态：`confirmed`
+- 状态：`superseded`
 - 日期：2026-07-31
 - 版本：第一接入基线固定为官方稳定 Release `open-design-v0.16.1`，commit `276b4d8e970bc143d7ad060181a89a834e3d9caf`；不跟随 `main` 或 `latest` 静默升级。
 - 执行：本地 Multica daemon 和云端隔离 worker 运行同源 Open Design headless 制品，并由 Multica 将用户选择的 Agent 显式映射到上游 adapter；不支持时派发前失败，不能静默换 Agent。
@@ -313,6 +314,21 @@
 - 成功边界：必须同时取得 `open-design.run-result-package.v1`、完整设计体系包、上游 Package Audit 和可渲染 Preview/UI Kit；run 或 task 终态不能代替这些证据。
 - 迁移顺序：先完成不改主流程的 Phase 0 集成 spike，再依次接入运行时/云端包、切换创建与调整、清理自研引擎；详细方案见 [open-design-engine-integration.md](./open-design-engine-integration.md)。
 - 依据：`OD-016`、`OD-017`、`OD-018`、`OD-019`、`OD-020`。
+- 替代原因：固定版本实验已经提供真实 Agent、隔离工作空间、Audit、Preview、失败隔离和草稿门禁证据，但 Runtime 分发、Worker 生命周期和上游协议兼容不进入目标架构。替代决策见 DC-039。
+
+### DC-039 以 Open Design 为核心参照翻新 Multica 原生设计引擎
+
+- 状态：`confirmed`
+- 日期：2026-08-05
+- 决策：Multica 不运行、分发或托管 Open Design Worker、Daemon 和 Runtime；使用现有 Project、Issue、Agent、daemon、任务队列、对象存储和设计中心，原生实现设计体系与后续在线设计能力。
+- 核心参照：统一设计任务入口、多来源取证、确定性提取与 Agent 深化、稳定内核加可选扩展的分层资源包、可持续调整工作空间、可执行模板、固定输入快照、Package Audit、Preview/UI Kit 和坏草稿隔离均以 Open Design 的固定版本源码与实验事实为行为基线。
+- 执行边界：设计语义、布局和组件判断由用户明确选择的 Agent 完成；Multica 负责输入快照、任务编排、隔离工作区、产物协议、安全收集、对象存储、Audit、真实浏览器预览、draft/saved 生命周期和权限。不存在专用 Design Worker。
+- 产物边界：项目设计体系采用 Multica 自有版本化资源包，保留 `manifest.json`、`DESIGN.md`、`tokens.css`、来源证据和可选组件/UI Kit 的分层语义；后续在线设计稿采用语义 brief 加可运行原型，不要求 Agent 直接生成巨大 Figma/Native JSON，也不恢复 PageSpec 通用 DSL。
+- 产品边界：继续使用项目设计体系强约束、模板弱参考、用户选择 Agent、草稿/保存、不引入审核、内容主视图和 Issue 协作等既有决策。
+- 迁移边界：保留 Worker Phase 0 的实验和质量证据；停止扩展 `open_design_run`、Runtime resolver、archive installer、adapter 和 Worker supervisor。现有数据和代码先隔离，原生链路稳定后再单独清理，不执行破坏性迁移。
+- 第一阶段：只替换项目设计体系的生成和调整内核，保持现有设计中心工作区，通过 CRM 真实仓库、真实 Agent、真实 UI Kit 和 Chrome 视觉结果完成验收；首页、设计稿、社区模板和还原按后续阶段推进。
+- 方案：[2026-08-05-multica-native-design-engine-design.md](../../superpowers/specs/2026-08-05-multica-native-design-engine-design.md)。
+- 依据：`OD-001` 至 `OD-013` 的产品与包语义证据，以及 `OD-021` 至 `OD-044` 的执行、失败和质量门禁实验。
 
 ## 当前提案
 
@@ -369,4 +385,4 @@
 
 ## 下一项需要形成的决策
 
-完成 `DC-038` 的 Phase 0 固定版本集成验证。验收必须证明所选 Agent 真实执行、确定性处理与 Agent 深化均发生、完整 Open Design 包通过 audit 和视觉预览、取消与失败可区分、源仓库零修改。未满足这些证据前不进入业务链路替换。
+用户复核 DC-039 的完整方案后，只为原生项目设计体系闭环编写实施计划。实施前必须盘点现有 Worker 专属代码和可复用门禁，明确 feature flag、数据保留和回滚边界；不得直接继续 Runtime、Worker 或首页开发。
