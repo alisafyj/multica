@@ -1,0 +1,135 @@
+{
+  "page": {
+    "title": "테스트 케이스",
+    "empty": "테스트 케이스가 없습니다",
+    "emptyHint": "새로 만들거나 다른 프로젝트를 선택하세요",
+    "new": "새 케이스",
+    "selectProject": "프로젝트 선택"
+  },
+  "filters": {
+    "all": "전체",
+    "module": "모듈",
+    "status": "상태",
+    "priority": "우선순위",
+    "type": "유형",
+    "origin": "출처",
+    "reviewQueue": "검토 대기",
+    "clear": "필터 지우기",
+    "search": "케이스 검색..."
+  },
+  "columns": {
+    "key": "키",
+    "title": "제목",
+    "module": "모듈",
+    "type": "유형",
+    "priority": "우선순위",
+    "status": "상태",
+    "origin": "출처",
+    "repos": "저장소",
+    "updated": "수정일"
+  },
+  "status": {
+    "draft": "검토 대기",
+    "active": "활성",
+    "deprecated": "폐기"
+  },
+  "origin": {
+    "ai": "AI 생성",
+    "human": "수동"
+  },
+  "priority": {
+    "p0": "P0",
+    "p1": "P1",
+    "p2": "P2",
+    "p3": "P3"
+  },
+  "scope": {
+    "single_repo": "단일 저장소",
+    "cross_repo": "교차 저장소",
+    "no_repo": "저장소 없음"
+  },
+  "executionMode": {
+    "manual": "수동",
+    "agent": "에이전트",
+    "both": "수동 또는 에이전트"
+  },
+  "caseType": {
+    "functional": "기능",
+    "business_flow": "업무 흐름",
+    "api": "API",
+    "ui": "UI",
+    "e2e": "종단 간",
+    "regression": "회귀",
+    "boundary": "경계값",
+    "exception": "예외",
+    "permission": "권한",
+    "data_consistency": "데이터 정합성",
+    "compatibility": "호환성",
+    "performance": "성능",
+    "security": "보안"
+  },
+  "detail": {
+    "preconditions": "사전 조건",
+    "steps": "단계",
+    "expected": "예상 결과",
+    "testData": "테스트 데이터",
+    "repos": "저장소",
+    "revisions": "변경 이력",
+    "project": "프로젝트",
+    "module": "모듈",
+    "priority": "우선순위",
+    "type": "유형",
+    "scope": "범위",
+    "executionMode": "실행 방식",
+    "notFound": "테스트 케이스를 찾을 수 없습니다",
+    "untitled": "제목 없는 케이스"
+  },
+  "steps": {
+    "add": "단계 추가",
+    "action": "동작",
+    "expected": "예상 결과",
+    "repo": "저장소",
+    "remove": "이 단계 삭제",
+    "empty": "단계가 없습니다",
+    "actionPlaceholder": "동작을 입력하세요...",
+    "expectedPlaceholder": "예상 결과를 입력하세요...",
+    "noRepo": "지정 안 함"
+  },
+  "repos": {
+    "add": "저장소 연결",
+    "alias": "별칭",
+    "role": "역할",
+    "pathGlobs": "경로 범위",
+    "remove": "제거",
+    "empty": "연결된 저장소가 없습니다",
+    "aliasPlaceholder": "단계에서 참조할 짧은 이름",
+    "pathGlobsPlaceholder": "src/order/**, 쉼표로 구분",
+    "noResources": "이 프로젝트에 연결된 저장소가 없습니다",
+    "crossRepoNeedsRepos": "교차 저장소 케이스에는 저장소가 두 개 이상 필요합니다",
+    "crossRepoNeedsRoles": "교차 저장소 케이스에는 서로 다른 역할이 필요합니다"
+  },
+  "revisions": {
+    "empty": "변경 이력이 없습니다",
+    "version": "버전 {{version}}",
+    "human_edit": "수동 편집",
+    "proposal_accepted": "AI 제안 반영",
+    "status_change": "상태 변경",
+    "restore": "복원"
+  },
+  "actions": {
+    "approve": "승인",
+    "delete": "삭제",
+    "save": "저장",
+    "cancel": "취소",
+    "edit": "편집",
+    "confirmDelete": "이 테스트 케이스를 삭제할까요?"
+  },
+  "toast": {
+    "created": "테스트 케이스를 만들었습니다",
+    "saved": "변경 사항을 저장했습니다",
+    "approved": "테스트 케이스를 승인했습니다",
+    "deleted": "테스트 케이스를 삭제했습니다",
+    "saveFailed": "변경 사항을 저장할 수 없습니다",
+    "deleteFailed": "테스트 케이스를 삭제할 수 없습니다"
+  }
+}

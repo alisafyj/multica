@@ -1,0 +1,135 @@
+{
+  "page": {
+    "title": "テストケース",
+    "empty": "テストケースがありません",
+    "emptyHint": "新規作成するか、別のプロジェクトを選択してください",
+    "new": "新規ケース",
+    "selectProject": "プロジェクトを選択"
+  },
+  "filters": {
+    "all": "すべて",
+    "module": "モジュール",
+    "status": "ステータス",
+    "priority": "優先度",
+    "type": "種別",
+    "origin": "作成元",
+    "reviewQueue": "レビュー待ち",
+    "clear": "フィルターをクリア",
+    "search": "ケースを検索..."
+  },
+  "columns": {
+    "key": "キー",
+    "title": "タイトル",
+    "module": "モジュール",
+    "type": "種別",
+    "priority": "優先度",
+    "status": "ステータス",
+    "origin": "作成元",
+    "repos": "リポジトリ",
+    "updated": "更新日時"
+  },
+  "status": {
+    "draft": "レビュー待ち",
+    "active": "有効",
+    "deprecated": "廃止"
+  },
+  "origin": {
+    "ai": "AI 生成",
+    "human": "手動"
+  },
+  "priority": {
+    "p0": "P0",
+    "p1": "P1",
+    "p2": "P2",
+    "p3": "P3"
+  },
+  "scope": {
+    "single_repo": "単一リポジトリ",
+    "cross_repo": "複数リポジトリ",
+    "no_repo": "リポジトリなし"
+  },
+  "executionMode": {
+    "manual": "手動",
+    "agent": "エージェント",
+    "both": "手動またはエージェント"
+  },
+  "caseType": {
+    "functional": "機能",
+    "business_flow": "業務フロー",
+    "api": "API",
+    "ui": "UI",
+    "e2e": "エンドツーエンド",
+    "regression": "リグレッション",
+    "boundary": "境界値",
+    "exception": "例外",
+    "permission": "権限",
+    "data_consistency": "データ整合性",
+    "compatibility": "互換性",
+    "performance": "パフォーマンス",
+    "security": "セキュリティ"
+  },
+  "detail": {
+    "preconditions": "事前条件",
+    "steps": "手順",
+    "expected": "期待結果",
+    "testData": "テストデータ",
+    "repos": "リポジトリ",
+    "revisions": "変更履歴",
+    "project": "プロジェクト",
+    "module": "モジュール",
+    "priority": "優先度",
+    "type": "種別",
+    "scope": "範囲",
+    "executionMode": "実行方法",
+    "notFound": "テストケースが見つかりません",
+    "untitled": "無題のケース"
+  },
+  "steps": {
+    "add": "手順を追加",
+    "action": "操作",
+    "expected": "期待結果",
+    "repo": "リポジトリ",
+    "remove": "この手順を削除",
+    "empty": "手順がありません",
+    "actionPlaceholder": "操作を入力...",
+    "expectedPlaceholder": "期待結果を入力...",
+    "noRepo": "指定なし"
+  },
+  "repos": {
+    "add": "リポジトリを追加",
+    "alias": "エイリアス",
+    "role": "役割",
+    "pathGlobs": "パス範囲",
+    "remove": "削除",
+    "empty": "リポジトリが未設定です",
+    "aliasPlaceholder": "手順で参照する短い名前",
+    "pathGlobsPlaceholder": "src/order/**、カンマ区切り",
+    "noResources": "このプロジェクトにはリポジトリが紐付いていません",
+    "crossRepoNeedsRepos": "複数リポジトリのケースには 2 つ以上のリポジトリが必要です",
+    "crossRepoNeedsRoles": "複数リポジトリのケースには異なる役割が必要です"
+  },
+  "revisions": {
+    "empty": "変更履歴がありません",
+    "version": "バージョン {{version}}",
+    "human_edit": "手動編集",
+    "proposal_accepted": "AI 提案を採用",
+    "status_change": "ステータス変更",
+    "restore": "復元"
+  },
+  "actions": {
+    "approve": "承認",
+    "delete": "削除",
+    "save": "保存",
+    "cancel": "キャンセル",
+    "edit": "編集",
+    "confirmDelete": "このテストケースを削除しますか？"
+  },
+  "toast": {
+    "created": "テストケースを作成しました",
+    "saved": "変更を保存しました",
+    "approved": "テストケースを承認しました",
+    "deleted": "テストケースを削除しました",
+    "saveFailed": "変更を保存できません",
+    "deleteFailed": "テストケースを削除できません"
+  }
+}

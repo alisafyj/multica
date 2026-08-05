@@ -1,0 +1,135 @@
+{
+  "page": {
+    "title": "Test Cases",
+    "empty": "No test cases yet",
+    "emptyHint": "Create one, or pick another project",
+    "new": "New case",
+    "selectProject": "Select a project"
+  },
+  "filters": {
+    "all": "All",
+    "module": "Module",
+    "status": "Status",
+    "priority": "Priority",
+    "type": "Type",
+    "origin": "Origin",
+    "reviewQueue": "Needs review",
+    "clear": "Clear filters",
+    "search": "Search cases..."
+  },
+  "columns": {
+    "key": "Key",
+    "title": "Title",
+    "module": "Module",
+    "type": "Type",
+    "priority": "Priority",
+    "status": "Status",
+    "origin": "Origin",
+    "repos": "Repositories",
+    "updated": "Updated"
+  },
+  "status": {
+    "draft": "Draft",
+    "active": "Active",
+    "deprecated": "Deprecated"
+  },
+  "origin": {
+    "ai": "AI",
+    "human": "Manual"
+  },
+  "priority": {
+    "p0": "P0",
+    "p1": "P1",
+    "p2": "P2",
+    "p3": "P3"
+  },
+  "scope": {
+    "single_repo": "Single repo",
+    "cross_repo": "Cross repo",
+    "no_repo": "No repo"
+  },
+  "executionMode": {
+    "manual": "Manual",
+    "agent": "Agent",
+    "both": "Manual or agent"
+  },
+  "caseType": {
+    "functional": "Functional",
+    "business_flow": "Business flow",
+    "api": "API",
+    "ui": "UI",
+    "e2e": "End to end",
+    "regression": "Regression",
+    "boundary": "Boundary",
+    "exception": "Exception",
+    "permission": "Permission",
+    "data_consistency": "Data consistency",
+    "compatibility": "Compatibility",
+    "performance": "Performance",
+    "security": "Security"
+  },
+  "detail": {
+    "preconditions": "Preconditions",
+    "steps": "Steps",
+    "expected": "Expected result",
+    "testData": "Test data",
+    "repos": "Repositories",
+    "revisions": "History",
+    "project": "Project",
+    "module": "Module",
+    "priority": "Priority",
+    "type": "Type",
+    "scope": "Scope",
+    "executionMode": "Execution",
+    "notFound": "Test case not found",
+    "untitled": "Untitled case"
+  },
+  "steps": {
+    "add": "Add step",
+    "action": "Action",
+    "expected": "Expected",
+    "repo": "Repository",
+    "remove": "Remove this step",
+    "empty": "No steps yet",
+    "actionPlaceholder": "Describe the action...",
+    "expectedPlaceholder": "Describe the expected result...",
+    "noRepo": "Unspecified"
+  },
+  "repos": {
+    "add": "Add repository",
+    "alias": "Alias",
+    "role": "Role",
+    "pathGlobs": "Path scope",
+    "remove": "Remove",
+    "empty": "No repositories linked",
+    "aliasPlaceholder": "Short name used in steps",
+    "pathGlobsPlaceholder": "src/order/**, comma separated",
+    "noResources": "This project has no repositories attached",
+    "crossRepoNeedsRepos": "A cross-repo case needs at least two repositories",
+    "crossRepoNeedsRoles": "A cross-repo case needs more than one repository role"
+  },
+  "revisions": {
+    "empty": "No changes recorded",
+    "version": "Version {{version}}",
+    "human_edit": "Manual edit",
+    "proposal_accepted": "AI suggestion accepted",
+    "status_change": "Status change",
+    "restore": "Restore"
+  },
+  "actions": {
+    "approve": "Approve",
+    "delete": "Delete",
+    "save": "Save",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "confirmDelete": "Delete this test case?"
+  },
+  "toast": {
+    "created": "Test case created",
+    "saved": "Changes saved",
+    "approved": "Test case approved",
+    "deleted": "Test case deleted",
+    "saveFailed": "Could not save changes",
+    "deleteFailed": "Could not delete the test case"
+  }
+}

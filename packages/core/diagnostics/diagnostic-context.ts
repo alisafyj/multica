@@ -62,6 +62,8 @@ const WORKSPACE_ROUTES: readonly RoutePattern[] = [
   ["designs", "restore-tasks", ":id"],
   ["designs", ":id"],
   ["designs", ":id", "frames", ":frameId"],
+  ["tests"],
+  ["tests", ":id"],
   ["autopilots"],
   ["autopilots", ":id"],
   ["agents"],

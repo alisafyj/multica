@@ -39,6 +39,9 @@ function workspaceScoped(slug: string) {
     designFrameDetail: (id: string, frameId: string, options: RevisionPathOptions = {}) => withQuery(`${ws}/designs/${encode(id)}/frames/${encode(frameId)}`, { revision_id: options.revisionId }),
     designDraftDetail: (id: string) => `${ws}/designs/drafts/${encode(id)}`,
     designRestoreTaskDetail: (id: string) => `${ws}/designs/restore-tasks/${encode(id)}`,
+    tests: () => `${ws}/tests`,
+    // Accepts either a TC-<n> key or a UUID; the server resolves both.
+    testCaseDetail: (ref: string) => `${ws}/tests/${encode(ref)}`,
     autopilots: () => `${ws}/autopilots`,
     autopilotDetail: (id: string) => `${ws}/autopilots/${encode(id)}`,
     agents: () => `${ws}/agents`,
