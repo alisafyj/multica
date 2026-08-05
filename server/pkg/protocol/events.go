@@ -96,6 +96,11 @@ const (
 	EventProjectResourceUpdated = "project_resource:updated"
 	EventProjectResourceDeleted = "project_resource:deleted"
 
+	// Test case events
+	EventTestCaseCreated = "test_case:created"
+	EventTestCaseUpdated = "test_case:updated"
+	EventTestCaseDeleted = "test_case:deleted"
+
 	// Gallery Native design events
 	EventDesignReady         = "design:ready"
 	EventDesignTemplateReady = "design_template:ready"

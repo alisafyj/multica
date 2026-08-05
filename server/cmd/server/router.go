@@ -1259,6 +1259,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
+			// Test cases
+			r.Route("/api/test-cases", func(r chi.Router) {
+				// Literal sub-paths are registered before {ref}, which accepts
+				// either a TC-<n> key or a UUID.
+				r.Get("/modules", h.ListTestCaseModules)
+				r.Get("/", h.ListTestCases)
+				r.Post("/", h.CreateTestCase)
+				r.Route("/{ref}", func(r chi.Router) {
+					r.Get("/", h.GetTestCase)
+					r.Put("/", h.UpdateTestCase)
+					r.Delete("/", h.DeleteTestCase)
+					r.Post("/approve", h.ApproveTestCase)
+					r.Get("/revisions", h.ListTestCaseRevisions)
+				})
+			})
+
 			// Gallery Native design files
 			r.Get("/api/design-folders", h.ListDesignFolders)
 			r.Post("/api/design-folders", h.CreateDesignFolder)
