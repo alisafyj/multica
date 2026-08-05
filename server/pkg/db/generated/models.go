@@ -1264,6 +1264,19 @@ type SquadMember struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+type SsoAuthorizationCode struct {
+	ID               pgtype.UUID        `json:"id"`
+	CodeHash         []byte             `json:"code_hash"`
+	UserID           pgtype.UUID        `json:"user_id"`
+	ClientID         string             `json:"client_id"`
+	RedirectUri      string             `json:"redirect_uri"`
+	CodeChallenge    string             `json:"code_challenge"`
+	SessionExpiresAt pgtype.Timestamptz `json:"session_expires_at"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type SysCronExecution struct {
 	ID           pgtype.UUID        `json:"id"`
 	JobName      string             `json:"job_name"`
@@ -1287,19 +1300,6 @@ type SysCronExecution struct {
 	ErrorMsg     pgtype.Text        `json:"error_msg"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-}
-
-type SsoAuthorizationCode struct {
-	ID               pgtype.UUID        `json:"id"`
-	CodeHash         []byte             `json:"code_hash"`
-	UserID           pgtype.UUID        `json:"user_id"`
-	ClientID         string             `json:"client_id"`
-	RedirectUri      string             `json:"redirect_uri"`
-	CodeChallenge    string             `json:"code_challenge"`
-	SessionExpiresAt pgtype.Timestamptz `json:"session_expires_at"`
-	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
-	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type TaskMessage struct {
@@ -1382,6 +1382,59 @@ type TaskUsageHourlyRollupState struct {
 	LastRunFinishedAt pgtype.Timestamptz `json:"last_run_finished_at"`
 	LastRunRows       int64              `json:"last_run_rows"`
 	LastError         pgtype.Text        `json:"last_error"`
+}
+
+type TestCase struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	CaseNumber           int32              `json:"case_number"`
+	Title                string             `json:"title"`
+	Module               string             `json:"module"`
+	Preconditions        string             `json:"preconditions"`
+	Steps                []byte             `json:"steps"`
+	ExpectedResult       string             `json:"expected_result"`
+	TestData             []byte             `json:"test_data"`
+	Priority             string             `json:"priority"`
+	CaseType             string             `json:"case_type"`
+	Scope                string             `json:"scope"`
+	ExecutionMode        string             `json:"execution_mode"`
+	RequiredCapabilities []byte             `json:"required_capabilities"`
+	BusinessRulesRef     []byte             `json:"business_rules_ref"`
+	Status               string             `json:"status"`
+	Origin               string             `json:"origin"`
+	SourceRefs           []byte             `json:"source_refs"`
+	GenerationJobID      pgtype.UUID        `json:"generation_job_id"`
+	Version              int32              `json:"version"`
+	CreatedBy            pgtype.UUID        `json:"created_by"`
+	UpdatedBy            pgtype.UUID        `json:"updated_by"`
+	ReviewedBy           pgtype.UUID        `json:"reviewed_by"`
+	ReviewedAt           pgtype.Timestamptz `json:"reviewed_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TestCaseRepo struct {
+	TestCaseID        pgtype.UUID        `json:"test_case_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
+	Alias             string             `json:"alias"`
+	Role              string             `json:"role"`
+	PathGlobs         []byte             `json:"path_globs"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type TestCaseRevision struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	TestCaseID    pgtype.UUID        `json:"test_case_id"`
+	Version       int32              `json:"version"`
+	Snapshot      []byte             `json:"snapshot"`
+	ChangeKind    string             `json:"change_kind"`
+	ChangedBy     pgtype.UUID        `json:"changed_by"`
+	ChangedByType string             `json:"changed_by_type"`
+	Note          string             `json:"note"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 type User struct {
@@ -1519,7 +1572,8 @@ type Workspace struct {
 	IssueCounter int32              `json:"issue_counter"`
 	AvatarUrl    pgtype.Text        `json:"avatar_url"`
 	// When TRUE, an agent run that resolves to no precise accountable human (would be owner_fallback) is refused at enqueue instead of degrading to the agent owner (MUL-4302 §3.5). Default FALSE = owner_fallback. Never affects authorization (originator_user_id).
-	AttributionFailClosed bool `json:"attribution_fail_closed"`
+	AttributionFailClosed bool  `json:"attribution_fail_closed"`
+	TestCaseCounter       int32 `json:"test_case_counter"`
 }
 
 type WorkspaceInvitation struct {
