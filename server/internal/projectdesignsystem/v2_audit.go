@@ -172,22 +172,7 @@ func validV2SourceReference(reference string) bool {
 }
 
 func v2URLFragmentContainsCredential(fragment string) bool {
-	values, err := url.ParseQuery(fragment)
-	if err != nil {
-		return false
-	}
-	for key, candidates := range values {
-		normalized := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(key)), "-", "_")
-		switch normalized {
-		case "access_token", "api_key", "apikey", "authorization", "client_secret", "credential", "credentials", "password", "secret", "token":
-			for _, candidate := range candidates {
-				if strings.TrimSpace(candidate) != "" {
-					return true
-				}
-			}
-		}
-	}
-	return false
+	return strings.ContainsAny(fragment, "=&")
 }
 
 func validSourceID(value string) bool {
@@ -383,7 +368,8 @@ func inspectV2CSS(
 ) v2CSSAudit {
 	result := v2CSSAudit{references: make(map[string]struct{})}
 	parser := css.NewParser(parse.NewInputString(source), inline)
-	atRuleDepth := 0
+	atRuleStack := make([]bool, 0)
+	screenApplicable := true
 	documentRule := false
 	for {
 		grammar, _, data := parser.Next()
@@ -396,13 +382,15 @@ func inspectV2CSS(
 		values := parser.Values()
 		switch grammar {
 		case css.BeginAtRuleGrammar:
-			atRuleDepth++
+			atRuleStack = append(atRuleStack, screenApplicable)
+			screenApplicable = screenApplicable && v2AtRuleMayAffectScreen(data, values)
 		case css.EndAtRuleGrammar:
-			if atRuleDepth > 0 {
-				atRuleDepth--
+			if len(atRuleStack) > 0 {
+				screenApplicable = atRuleStack[len(atRuleStack)-1]
+				atRuleStack = atRuleStack[:len(atRuleStack)-1]
 			}
 		case css.BeginRulesetGrammar:
-			documentRule = atRuleDepth == 0 && v2SelectorTargetsDocumentRoot(values)
+			documentRule = screenApplicable && v2SelectorTargetsDocumentRoot(values)
 		case css.EndRulesetGrammar:
 			documentRule = false
 		}
@@ -431,32 +419,111 @@ func inspectV2CSS(
 }
 
 func v2SelectorTargetsDocumentRoot(tokens []css.Token) bool {
-	start := 0
-	for index, token := range tokens {
-		if token.TokenType == css.CommaToken {
-			if v2DocumentRootSelectorGroup(tokens[start:index]) {
-				return true
-			}
-			start = index + 1
+	for _, group := range v2TopLevelCSSTokenGroups(tokens) {
+		if v2DocumentRootSelectorGroup(group) {
+			return true
 		}
 	}
-	return v2DocumentRootSelectorGroup(tokens[start:])
+	return false
 }
 
 func v2DocumentRootSelectorGroup(tokens []css.Token) bool {
-	filtered := make([]css.Token, 0, len(tokens))
-	for _, token := range tokens {
+	compoundStart := 0
+	depth := 0
+	for index, token := range tokens {
+		if depth == 0 && (token.TokenType == css.WhitespaceToken || v2CSSSelectorCombinator(token)) {
+			compoundStart = index + 1
+		}
+		depth = v2CSSNestingDepth(depth, token)
+	}
+	firstGroupToken := len(tokens)
+	for index, token := range tokens {
 		if token.TokenType != css.WhitespaceToken && token.TokenType != css.CommentToken {
-			filtered = append(filtered, token)
+			firstGroupToken = index
+			break
 		}
 	}
-	if len(filtered) == 1 {
-		value := strings.ToLower(strings.TrimSpace(string(filtered[0].Data)))
-		return (filtered[0].TokenType == css.IdentToken && (value == "html" || value == "body")) ||
-			(filtered[0].TokenType == css.DelimToken && value == "*")
+	subject := make([]css.Token, 0, len(tokens)-compoundStart)
+	for _, token := range tokens[compoundStart:] {
+		if token.TokenType != css.WhitespaceToken && token.TokenType != css.CommentToken {
+			subject = append(subject, token)
+		}
 	}
-	return len(filtered) == 2 && filtered[0].TokenType == css.ColonToken &&
-		filtered[1].TokenType == css.IdentToken && strings.EqualFold(strings.TrimSpace(string(filtered[1].Data)), "root")
+	if len(subject) == 0 {
+		return false
+	}
+	if compoundStart <= firstGroupToken && len(subject) == 1 && subject[0].TokenType == css.DelimToken && strings.TrimSpace(string(subject[0].Data)) == "*" {
+		return true
+	}
+	if subject[0].TokenType == css.IdentToken {
+		value := strings.ToLower(strings.TrimSpace(string(subject[0].Data)))
+		if value == "html" || value == "body" {
+			return len(subject) == 1 || subject[1].TokenType != css.DelimToken || strings.TrimSpace(string(subject[1].Data)) != "|"
+		}
+	}
+	return len(subject) >= 2 && subject[0].TokenType == css.ColonToken &&
+		subject[1].TokenType == css.IdentToken && strings.EqualFold(strings.TrimSpace(string(subject[1].Data)), "root")
+}
+
+func v2AtRuleMayAffectScreen(name []byte, tokens []css.Token) bool {
+	if strings.TrimPrefix(strings.ToLower(strings.TrimSpace(string(name))), "@") != "media" {
+		return true
+	}
+	for _, group := range v2TopLevelCSSTokenGroups(tokens) {
+		filtered := make([]css.Token, 0, len(group))
+		for _, token := range group {
+			if token.TokenType != css.WhitespaceToken && token.TokenType != css.CommentToken {
+				filtered = append(filtered, token)
+			}
+		}
+		index := 0
+		if len(filtered) > 0 && filtered[0].TokenType == css.IdentToken && strings.EqualFold(strings.TrimSpace(string(filtered[0].Data)), "only") {
+			index++
+		}
+		if index >= len(filtered) || filtered[index].TokenType != css.IdentToken || !strings.EqualFold(strings.TrimSpace(string(filtered[index].Data)), "print") {
+			return true
+		}
+	}
+	return false
+}
+
+func v2TopLevelCSSTokenGroups(tokens []css.Token) [][]css.Token {
+	groups := make([][]css.Token, 0, 1)
+	start := 0
+	depth := 0
+	for index, token := range tokens {
+		if depth == 0 && token.TokenType == css.CommaToken {
+			groups = append(groups, tokens[start:index])
+			start = index + 1
+			continue
+		}
+		depth = v2CSSNestingDepth(depth, token)
+	}
+	return append(groups, tokens[start:])
+}
+
+func v2CSSNestingDepth(depth int, token css.Token) int {
+	switch token.TokenType {
+	case css.FunctionToken, css.LeftParenthesisToken, css.LeftBracketToken:
+		return depth + 1
+	case css.RightParenthesisToken, css.RightBracketToken:
+		if depth > 0 {
+			return depth - 1
+		}
+	}
+	return depth
+}
+
+func v2CSSSelectorCombinator(token css.Token) bool {
+	if token.TokenType != css.DelimToken {
+		return false
+	}
+	switch strings.TrimSpace(string(token.Data)) {
+	case ">", "+", "~":
+		return true
+	default:
+		return false
+	}
 }
 
 func inspectV2CSSTokens(

@@ -296,3 +296,63 @@ func TestAuditV2RejectsNamedHomeAndSecretFragmentSourceReferences(t *testing.T) 
 		}
 	})
 }
+
+func TestAuditV2RejectsNestedDocumentSelectorsWithoutRejectingDescendantStates(t *testing.T) {
+	for _, stylesheet := range []string{
+		`html body { display: none; }`,
+		`@media screen { body { display: none; } }`,
+	} {
+		t.Run("hidden "+stylesheet, func(t *testing.T) {
+			root := copyV2Fixture(t)
+			html := `<style>` + stylesheet + ` .workspace { color: var(--color-action); }</style><main class="workspace" data-design-node-id="orders" data-design-node-kind="block" data-design-node-label="Orders">Orders</main>`
+			if err := os.WriteFile(filepath.Join(root, "ui-kit", "index.html"), []byte(html), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			collected, err := CollectV2Directory(root, validV2Binding())
+			assertV2DiagnosticCode(t, collected.Audit, err, "ui_kit_not_visible")
+		})
+	}
+
+	for _, stylesheet := range []string{
+		`.modal { display: none; }`,
+		`body .modal { display: none; }`,
+		`@media print { body { display: none; } }`,
+	} {
+		t.Run("component state "+stylesheet, func(t *testing.T) {
+			root := copyV2Fixture(t)
+			html := `<style>` + stylesheet + ` .workspace { color: var(--color-action); }</style><main class="workspace" data-design-node-id="orders" data-design-node-kind="block" data-design-node-label="Orders">Orders<div class="modal">Hidden state</div></main>`
+			if err := os.WriteFile(filepath.Join(root, "ui-kit", "index.html"), []byte(html), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := CollectV2Directory(root, validV2Binding()); err != nil {
+				t.Fatalf("CollectV2Directory() rejected a descendant component state: %v", err)
+			}
+		})
+	}
+}
+
+func TestAuditV2RejectsQueryLikeHTTPSFragments(t *testing.T) {
+	for _, reference := range []string{
+		"https://example.com/#refresh_token=secret",
+		"https://example.com/#id_token=secret",
+		"https://example.com/#auth_token=secret",
+	} {
+		t.Run(reference, func(t *testing.T) {
+			root := copyV2Fixture(t)
+			writeV2SourceIndex(t, root, SourceIndex{
+				SchemaVersion:       SourceIndexSchemaV1,
+				InputSnapshotSHA256: validV2Binding().InputSnapshotSHA256,
+				Evidence: []SourceEvidence{{
+					ID:         "secret-fragment",
+					Kind:       "external_reference",
+					Summary:    "Query-like HTTPS fragments must not carry source credentials.",
+					References: []string{reference},
+				}},
+				Conflicts: []SourceConflict{},
+				Fallbacks: []SourceFallback{},
+			})
+			collected, err := CollectV2Directory(root, validV2Binding())
+			assertV2DiagnosticCode(t, collected.Audit, err, "source_reference_invalid")
+		})
+	}
+}
