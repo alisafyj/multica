@@ -397,13 +397,14 @@ func validateV2DirectoryPath(name string) error {
 	if _, err := validateV2ArchivePath(name); err != nil {
 		return err
 	}
-	first := strings.SplitN(name, "/", 2)[0]
-	switch first {
+	switch name {
 	case "source", "ui-kit", "preview", "assets", "fonts":
 		return nil
-	default:
-		return archiveV2Error("archive_path_undeclared", name, "directory is outside the V2 package contract")
 	}
+	if strings.HasPrefix(name, "assets/") || strings.HasPrefix(name, "fonts/") {
+		return nil
+	}
+	return archiveV2Error("archive_path_undeclared", name, "directory is outside the V2 package contract")
 }
 
 func validateV2Binding(binding PackageBinding) error {

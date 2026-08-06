@@ -169,3 +169,63 @@ func TestAuditV2ValidatesSourceIndexWithoutKeywordTaxonomy(t *testing.T) {
 		}
 	})
 }
+
+func TestAuditV2RejectsHomeRelativeSourceReference(t *testing.T) {
+	root := copyV2Fixture(t)
+	writeV2SourceIndex(t, root, SourceIndex{
+		SchemaVersion:       SourceIndexSchemaV1,
+		InputSnapshotSHA256: validV2Binding().InputSnapshotSHA256,
+		Evidence: []SourceEvidence{{
+			ID:         "local-source",
+			Kind:       "repository_fact",
+			Summary:    "A local source path must not escape the repository reference boundary.",
+			References: []string{"~/source.ts"},
+		}},
+		Conflicts: []SourceConflict{},
+		Fallbacks: []SourceFallback{},
+	})
+	if _, err := CollectV2Directory(root, validV2Binding()); err == nil {
+		t.Fatal("CollectV2Directory() accepted a home-relative source reference")
+	}
+}
+
+func TestAuditV2RejectsEmbeddedSourceTextReference(t *testing.T) {
+	root := copyV2Fixture(t)
+	writeV2SourceIndex(t, root, SourceIndex{
+		SchemaVersion:       SourceIndexSchemaV1,
+		InputSnapshotSHA256: validV2Binding().InputSnapshotSHA256,
+		Evidence: []SourceEvidence{{
+			ID:         "embedded-source",
+			Kind:       "repository_fact",
+			Summary:    "Source references must identify evidence without embedding its contents.",
+			References: []string{"src/app.ts\nconst apiKey = \"secret\""},
+		}},
+		Conflicts: []SourceConflict{},
+		Fallbacks: []SourceFallback{},
+	})
+	if _, err := CollectV2Directory(root, validV2Binding()); err == nil {
+		t.Fatal("CollectV2Directory() accepted embedded source text as a source reference")
+	}
+}
+
+func TestAuditV2RejectsActiveSVGNetworkReferences(t *testing.T) {
+	t.Run("inline SVG", func(t *testing.T) {
+		root := copyV2Fixture(t)
+		html := `<main data-design-node-id="orders" data-design-node-kind="block" data-design-node-label="Orders" style="color:var(--color-action)"><svg><image id="logo" href="#local"></image><set href="#logo" attributeName="href" to="https://example.com/logo.svg"></set></svg>Orders</main>`
+		if err := os.WriteFile(filepath.Join(root, "ui-kit", "index.html"), []byte(html), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		collected, err := CollectV2Directory(root, validV2Binding())
+		assertV2DiagnosticCode(t, collected.Audit, err, "html_forbidden_element")
+	})
+
+	t.Run("SVG asset", func(t *testing.T) {
+		root := copyV2Fixture(t)
+		svg := `<svg xmlns="http://www.w3.org/2000/svg"><image id="logo" href="#local"/><set href="#logo" attributeName="href" to="https://example.com/logo.svg"/></svg>`
+		if err := os.WriteFile(filepath.Join(root, "assets", "crm-mark.svg"), []byte(svg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		collected, err := CollectV2Directory(root, validV2Binding())
+		assertV2DiagnosticCode(t, collected.Audit, err, "svg_unsafe")
+	})
+}

@@ -151,7 +151,11 @@ func auditV2SourceRecord(id, kind, summary string, references []string, referenc
 }
 
 func validV2SourceReference(reference string) bool {
-	if reference == "" || reference != strings.TrimSpace(reference) || len(reference) > 2048 || strings.Contains(reference, "\\") {
+	if reference == "" || reference != strings.TrimSpace(reference) || len(reference) > 2048 || strings.Contains(reference, "\\") ||
+		strings.IndexFunc(reference, func(character rune) bool { return character < 0x20 || character == 0x7f }) >= 0 {
+		return false
+	}
+	if strings.HasPrefix(reference, "~/") {
 		return false
 	}
 	parsed, err := url.Parse(reference)
@@ -289,7 +293,8 @@ func walkV2HTML(
 
 func forbiddenV2HTMLElement(tag string) bool {
 	switch tag {
-	case "base", "embed", "form", "frame", "frameset", "iframe", "link", "object", "script":
+	case "animate", "animatemotion", "animatetransform", "base", "discard", "embed", "foreignobject",
+		"form", "frame", "frameset", "iframe", "link", "object", "script", "set":
 		return true
 	default:
 		return false
@@ -535,7 +540,8 @@ func auditV2SVG(name string, raw []byte, files map[string][]byte, artifacts map[
 			diagnostics = append(diagnostics, errorDiagnostic("svg_unsafe", name, "SVG directives and processing instructions are not allowed"))
 		case xml.StartElement:
 			tag := strings.ToLower(value.Name.Local)
-			if tag == "script" || tag == "foreignobject" || tag == "iframe" || tag == "style" {
+			switch tag {
+			case "animate", "animatemotion", "animatetransform", "discard", "foreignobject", "iframe", "script", "set", "style":
 				diagnostics = append(diagnostics, errorDiagnostic("svg_unsafe", name, "active SVG content is not allowed"))
 			}
 			for _, attribute := range value.Attr {

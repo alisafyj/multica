@@ -33,6 +33,11 @@ func DiscoverV2PreviewTargets(index []ArtifactIndexEntry) ([]PreviewTarget, erro
 			previews = append(previews, PreviewTarget{ID: id, Kind: "preview", Path: entry.Path})
 		}
 	}
+	if hasUIKit {
+		if _, exists := seenIDs["ui-kit"]; exists {
+			return nil, errors.New("V2 Preview target IDs must be unique")
+		}
+	}
 	sort.Slice(previews, func(left, right int) bool {
 		return previews[left].Path < previews[right].Path
 	})

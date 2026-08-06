@@ -98,6 +98,19 @@ func TestCollectV2DirectoryRejectsUnknownTopLevelFiles(t *testing.T) {
 	}
 }
 
+func TestCollectV2DirectoryRejectsUndeclaredDirectories(t *testing.T) {
+	for _, name := range []string{"source/private", "ui-kit/nested", "preview/nested"} {
+		t.Run(name, func(t *testing.T) {
+			root := copyV2Fixture(t)
+			if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(name)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			_, err := CollectV2Directory(root, validV2Binding())
+			assertV2ErrorCode(t, err, "archive_path_undeclared")
+		})
+	}
+}
+
 func TestCollectV2DirectoryRejectsSymlinkHardlinkAndTraversal(t *testing.T) {
 	t.Run("symlink", func(t *testing.T) {
 		root := copyV2Fixture(t)
@@ -267,6 +280,16 @@ func TestDiscoverV2PreviewTargetsPrefersUIKitAndSortsPreviews(t *testing.T) {
 	}
 	if _, err := DiscoverV2PreviewTargets(tooMany); err == nil {
 		t.Fatal("DiscoverV2PreviewTargets() accepted more than eight targets")
+	}
+}
+
+func TestDiscoverV2PreviewTargetsRejectsUIKitIDCollision(t *testing.T) {
+	index := []ArtifactIndexEntry{
+		{Path: "ui-kit/index.html", Role: "ui_kit", MediaType: "text/html; charset=utf-8"},
+		{Path: "preview/ui-kit.html", Role: "preview", MediaType: "text/html; charset=utf-8"},
+	}
+	if _, err := DiscoverV2PreviewTargets(index); err == nil {
+		t.Fatal("DiscoverV2PreviewTargets() accepted duplicate UI Kit and Preview target IDs")
 	}
 }
 
