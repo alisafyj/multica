@@ -620,9 +620,7 @@ func inspectV2CSSTokens(
 		case css.BadURLToken:
 			result.diagnostics = append(result.diagnostics, errorDiagnostic("tokens_css_url_unsafe", basePath, "CSS contains a malformed URL"))
 		case css.StringToken:
-			value := strings.Trim(strings.TrimSpace(string(token.Data)), "\"'")
-			parsed, err := url.Parse(value)
-			if strings.HasPrefix(value, "//") || (err == nil && parsed.Scheme != "") {
+			if v2CSSStringIsRemoteURL(token.Data) {
 				result.diagnostics = append(result.diagnostics, errorDiagnostic("tokens_css_url_unsafe", basePath, "CSS cannot contain remote URL strings"))
 			}
 		case css.CustomPropertyValueToken:
@@ -665,9 +663,7 @@ func inspectV2CSSValue(value []byte, basePath string, artifacts map[string]Artif
 			result.diagnostics = append(result.diagnostics, errorDiagnostic("tokens_css_url_unsafe", basePath, "CSS contains a malformed URL"))
 			expectVariable = false
 		case css.StringToken:
-			candidate := strings.Trim(strings.TrimSpace(string(data)), "\"'")
-			parsed, err := url.Parse(candidate)
-			if strings.HasPrefix(candidate, "//") || (err == nil && parsed.Scheme != "") {
+			if v2CSSStringIsRemoteURL(data) {
 				result.diagnostics = append(result.diagnostics, errorDiagnostic("tokens_css_url_unsafe", basePath, "CSS cannot contain remote URL strings"))
 			}
 			expectVariable = false
@@ -676,6 +672,88 @@ func inspectV2CSSValue(value []byte, basePath string, artifacts map[string]Artif
 			expectVariable = false
 		}
 	}
+}
+
+func v2CSSStringIsRemoteURL(data []byte) bool {
+	value := v2DecodeCSSStringForURLPolicy(data)
+	parsed, err := url.Parse(value)
+	return strings.HasPrefix(value, "//") || (err == nil && parsed.Scheme != "")
+}
+
+func v2DecodeCSSStringForURLPolicy(data []byte) string {
+	value := strings.TrimSpace(string(data))
+	if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) {
+		value = value[1 : len(value)-1]
+	}
+	var decoded strings.Builder
+	decoded.Grow(len(value))
+	for index := 0; index < len(value); {
+		if value[index] != '\\' {
+			decoded.WriteByte(value[index])
+			index++
+			continue
+		}
+		index++
+		if index == len(value) {
+			break
+		}
+		if digit, ok := v2CSSHexDigit(value[index]); ok {
+			codePoint := uint32(digit)
+			digits := 1
+			index++
+			for index < len(value) && digits < 6 {
+				digit, ok = v2CSSHexDigit(value[index])
+				if !ok {
+					break
+				}
+				codePoint = codePoint*16 + uint32(digit)
+				digits++
+				index++
+			}
+			if index < len(value) && v2CSSWhitespace(value[index]) {
+				if value[index] == '\r' && index+1 < len(value) && value[index+1] == '\n' {
+					index++
+				}
+				index++
+			}
+			if codePoint == 0 || codePoint > 0x10ffff || (0xd800 <= codePoint && codePoint <= 0xdfff) {
+				decoded.WriteRune('\uFFFD')
+			} else {
+				decoded.WriteRune(rune(codePoint))
+			}
+			continue
+		}
+		switch value[index] {
+		case '\n', '\f':
+			index++
+		case '\r':
+			index++
+			if index < len(value) && value[index] == '\n' {
+				index++
+			}
+		default:
+			decoded.WriteByte(value[index])
+			index++
+		}
+	}
+	return decoded.String()
+}
+
+func v2CSSHexDigit(value byte) (byte, bool) {
+	switch {
+	case '0' <= value && value <= '9':
+		return value - '0', true
+	case 'a' <= value && value <= 'f':
+		return value - 'a' + 10, true
+	case 'A' <= value && value <= 'F':
+		return value - 'A' + 10, true
+	default:
+		return 0, false
+	}
+}
+
+func v2CSSWhitespace(value byte) bool {
+	return value == ' ' || value == '\t' || value == '\n' || value == '\r' || value == '\f'
 }
 
 func validV2LocalCSSResource(raw, basePath string, artifacts map[string]ArtifactIndexEntry) bool {
