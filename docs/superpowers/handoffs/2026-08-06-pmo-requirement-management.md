@@ -176,6 +176,47 @@ rtk git commit -m "feat(pmo): configure and start sync runs"
 7. Continue Tasks 5 through 10 from the implementation plan. Task 5 is
    required before a PMO Agent task can complete into a stored preview.
 
+## Completion Update (2026-08-07)
+
+This section supersedes "Current Uncommitted Task 4 Work" and
+"Exact Next Steps" above.
+
+- Committed through Task 9 plus two integration fixes:
+  `a88b612e0` Task 4, `ed9a351fc` Task 5, `1120b0e69` Task 6, `97455210e`
+  Task 7, `5bf8530f7` Task 8, `dbf027ffe` Task 9, `dce8e7d94` and
+  `b1cf7280d` integration fixes.
+- Task 4 review items resolved: `root_external_key` is immutable after the
+  first applied run (`ErrPMORootKeyLocked`, 400); `decodePMORequest` rejects
+  trailing JSON; `StartRun` stamps the runtime MCP overlay like every other
+  enqueue path; scheduled trigger uses trigger-owner style attribution with a
+  NULL originator and the workspace owner-fallback policy.
+- Task 10 gates green: gofmt and sqlc no drift; `go test -race`
+  (service/handler/scheduler/cmd); full `scripts/test-go.sh --race`;
+  `pnpm typecheck`; `pnpm test`. Two regressions found by `-race` and fixed:
+  duplicate-create result propagation in `IssueService.Create`, and the
+  workspace-deletion manifest entries for the three PMO tables.
+- `make check` step 0 cannot use the docker compose wrapper on this host; the
+  five stages were run manually. Playwright: 21-22 of 30 pass; 8 failures are
+  pre-existing/environmental and untouched by this branch (agent-mcp x2,
+  issue-table x3, onboarding zh-Hans cookie port 13442, settings x2).
+- E2E fixtures require `USE_SY_SSO=true` in `.env.worktree` (fixtures sign
+  `auth_source: "sso"` HS256 tokens verified with `JWT_SECRET`), plus a dummy
+  `SSO_PUBLIC_KEY_PATH`/`SSO_EXPECTED_SUB`; all local-only, and
+  `.env.worktree` is gitignored.
+- PMO browser smoke verified with fictional data only: `/{slug}/pmo` empty
+  state, create dialog (fixed in `b1cf7280d` to mount from the empty state),
+  seeded `preview_ready` run rendering the full diff surface (creates,
+  incoming, local-only, conflict controls, external-removed row, unresolved
+  owner tab, gated Apply), schedule switch off with guard hint; 1440x900 and
+  390x844 screenshots show no overflow or overlap.
+
+### Remaining (user action)
+
+- Authorized runtime-only smoke preview, per the design doc: in the running
+  UI create one config with the user's selected Agent and a runtime-only
+  external key, start one manual run, verify `preview_ready`. Do not Apply,
+  do not log payloads, do not commit keys or returned data.
+
 ## Non-Negotiable Constraints
 
 - The user chooses an existing Multica Agent. Never hardcode an Agent,
