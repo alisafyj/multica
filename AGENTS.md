@@ -49,7 +49,7 @@ See CLAUDE.md for the complete command reference.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **multica** (32915 symbols, 96435 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **multica** (32920 symbols, 96478 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
@@ -93,6 +93,6 @@ This project is indexed by GitNexus as **multica** (32915 symbols, 96435 relatio
 
 ## 当前任务状态（会话交接 - 每次会话结束更新）
 
-- **做了什么**: Task 2 收尾已提交到 `2da542c`：真实 Chrome 覆盖 visible opaque/fade mask 与 `clip-path + pointer-events:none/!important`，修复可见性误杀；两包普通/race 89 项、vet、diff-check 通过
-- **做到哪**: 工作树仍在 `~/.config/superpowers/worktrees/multica/native-design-engine` 的 `codex/multica-native-design-engine`；Task 2 代码无未提交改动，GitNexus analyze 刷新失败于 `Failed calling LOWER: Invalid UTF-8`，staged detect-changes 为 low
-- **下一步**: 按 Phase 1 计划进入 Task 3（Persist And Upload Immutable Native Package Archives）；先重读 Design Center README/计划并做目标符号 impact，不要合并 `codex/open-design-native-slots`
+- **做了什么**: Task 3 已提交到 `6e37f76`：migration 134 持久化原生 archive 元数据，新增任务绑定 V2 ZIP 上传、daemon 固定字节重试与草稿字段原子复制
+- **做到哪**: 工作树仍在 `~/.config/superpowers/worktrees/multica/native-design-engine` 的 `codex/multica-native-design-engine`；四包 579 项、聚焦 race、vet、sqlc、diff-check 通过，staged detect-changes 为 low/0 processes
+- **下一步**: 按 Phase 1 计划进入 Task 4（Materialize The Native Agent Workspace And Contract）；先重读 Design Center README/计划并 impact `marshalProjectDesignSystemTaskContext`、`writeProjectDesignSystemContext`、`BuildPrompt`，不要合并 `codex/open-design-native-slots`
