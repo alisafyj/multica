@@ -1383,6 +1383,26 @@ type DesignRestoreTaskContext struct {
 	OutputPolicy  json.RawMessage `json:"output_policy,omitempty"`
 }
 
+// TestGenerationContextType marks a task as a test case generation job.
+const TestGenerationContextType = "test_generation"
+
+// TestGenerationContext is the payload stored on test case generation tasks.
+// Plan is the human-approved scope contract; the agent may not read outside it.
+// Generated cases are written back through the authenticated CLI rather than
+// scraped from stdout, so nothing here describes a result format beyond the
+// summary marker.
+type TestGenerationContext struct {
+	Type        string          `json:"type"`
+	Prompt      string          `json:"prompt,omitempty"`
+	RequesterID string          `json:"requester_id"`
+	WorkspaceID string          `json:"workspace_id"`
+	ProjectID   string          `json:"project_id"`
+	AgentID     string          `json:"agent_id"`
+	JobID       string          `json:"job_id"`
+	Plan        json.RawMessage `json:"plan,omitempty"`
+	Input       json.RawMessage `json:"input,omitempty"`
+}
+
 // EnqueueQuickCreateTask creates a queued task that has no issue / chat /
 // autopilot link — the user's natural-language prompt is stored in the
 // task's context JSONB and the agent is expected to translate it into a

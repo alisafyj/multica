@@ -101,6 +101,13 @@ const (
 	EventTestCaseUpdated = "test_case:updated"
 	EventTestCaseDeleted = "test_case:deleted"
 
+	// Test generation events. design_restore has no websocket event and leans on
+	// a 3-second client poll instead; these exist so the generation UI does not
+	// have to.
+	EventTestGenerationJobUpdated = "test_generation_job:updated"
+	EventTestCaseProposalCreated  = "test_case_proposal:created"
+	EventTestCaseProposalUpdated  = "test_case_proposal:updated"
+
 	// Gallery Native design events
 	EventDesignReady         = "design:ready"
 	EventDesignTemplateReady = "design_template:ready"

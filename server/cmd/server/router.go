@@ -1272,8 +1272,27 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/", h.DeleteTestCase)
 					r.Post("/approve", h.ApproveTestCase)
 					r.Get("/revisions", h.ListTestCaseRevisions)
+					r.Get("/proposals", h.ListTestCaseProposals)
 				})
 			})
+
+			// AI test case generation
+			r.Route("/api/test-generation-jobs", func(r chi.Router) {
+				r.Get("/", h.ListTestGenerationJobs)
+				r.Post("/", h.CreateTestGenerationJob)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetTestGenerationJob)
+					r.Get("/plan", h.GetTestGenerationPlan)
+					r.Put("/plan", h.UpdateTestGenerationPlan)
+					r.Post("/plan/generate", h.GenerateTestGenerationPlan)
+					r.Post("/plan/approve", h.ApproveTestGenerationPlan)
+					r.Post("/dispatch", h.DispatchTestGenerationJob)
+					// Agent writeback, gated on the job's own task token.
+					r.Post("/propose", h.ProposeTestCases)
+				})
+			})
+			r.Post("/api/test-case-proposals/{id}/accept", h.AcceptTestCaseProposal)
+			r.Post("/api/test-case-proposals/{id}/reject", h.RejectTestCaseProposal)
 
 			// Gallery Native design files
 			r.Get("/api/design-folders", h.ListDesignFolders)

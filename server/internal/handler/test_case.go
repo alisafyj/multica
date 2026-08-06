@@ -850,11 +850,17 @@ func (h *Handler) DeleteTestCase(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 
-	// Repo bindings and revisions have no cascade, so they are swept here.
-	// Atomic with the delete: a partial sweep would orphan rows that no
-	// surviving row points at.
+	// Repo bindings, revisions and pending AI proposals have no cascade, so
+	// they are swept here. Atomic with the delete: a partial sweep would orphan
+	// rows that no surviving row points at.
 	if err := qtx.DeleteTestCaseRepos(r.Context(), db.DeleteTestCaseReposParams{
 		TestCaseID: testCase.ID, WorkspaceID: testCase.WorkspaceID,
+	}); err != nil {
+		h.writeTestCaseWriteError(w, r, err, "delete")
+		return
+	}
+	if err := qtx.DeleteTestCaseProposalsForCase(r.Context(), db.DeleteTestCaseProposalsForCaseParams{
+		TargetCaseID: testCase.ID, WorkspaceID: testCase.WorkspaceID,
 	}); err != nil {
 		h.writeTestCaseWriteError(w, r, err, "delete")
 		return
