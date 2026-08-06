@@ -254,6 +254,9 @@ func ReadV2Artifact(archive []byte, index []ArtifactIndexEntry, name string) ([]
 }
 
 func readAndIndexV2Archive(archive []byte) (map[string][]byte, []ArtifactIndexEntry, []byte, error) {
+	if err := preflightV2ArchiveEOCD(archive); err != nil {
+		return nil, nil, nil, err
+	}
 	reader, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
 	if err != nil {
 		return nil, nil, nil, archiveV2Error("archive_invalid", "", "archive is not a valid ZIP")
@@ -329,6 +332,59 @@ func readAndIndexV2Archive(archive []byte) (map[string][]byte, []ArtifactIndexEn
 	}
 	sort.Slice(index, func(left, right int) bool { return index[left].Path < index[right].Path })
 	return files, index, manifestJSON, nil
+}
+
+func preflightV2ArchiveEOCD(archive []byte) error {
+	const (
+		eocdSignature       = 0x06054b50
+		zip64Locator        = 0x07064b50
+		eocdSize            = 22
+		maximumCommentBytes = 65535
+	)
+	if len(archive) < eocdSize {
+		return archiveV2Error("archive_invalid", "", "archive is not a valid ZIP")
+	}
+	searchStart := len(archive) - (eocdSize + maximumCommentBytes)
+	if searchStart < 0 {
+		searchStart = 0
+	}
+	eocdOffset := -1
+	for offset := len(archive) - eocdSize; offset >= searchStart; offset-- {
+		if binary.LittleEndian.Uint32(archive[offset:offset+4]) != eocdSignature {
+			continue
+		}
+		commentLength := int(binary.LittleEndian.Uint16(archive[offset+20 : offset+22]))
+		if offset+eocdSize+commentLength == len(archive) {
+			eocdOffset = offset
+			break
+		}
+	}
+	if eocdOffset < 0 {
+		return archiveV2Error("archive_invalid", "", "archive is not a valid ZIP")
+	}
+	eocd := archive[eocdOffset : eocdOffset+eocdSize]
+	diskNumber := binary.LittleEndian.Uint16(eocd[4:6])
+	centralDirectoryDisk := binary.LittleEndian.Uint16(eocd[6:8])
+	entriesOnDisk := binary.LittleEndian.Uint16(eocd[8:10])
+	totalEntries := binary.LittleEndian.Uint16(eocd[10:12])
+	centralDirectorySize := binary.LittleEndian.Uint32(eocd[12:16])
+	centralDirectoryOffset := binary.LittleEndian.Uint32(eocd[16:20])
+	if diskNumber == ^uint16(0) || centralDirectoryDisk == ^uint16(0) ||
+		entriesOnDisk == ^uint16(0) || totalEntries == ^uint16(0) ||
+		centralDirectorySize == ^uint32(0) || centralDirectoryOffset == ^uint32(0) ||
+		(eocdOffset >= 20 && binary.LittleEndian.Uint32(archive[eocdOffset-20:eocdOffset-16]) == zip64Locator) {
+		return archiveV2Error("archive_invalid", "", "ZIP64 archives are not supported")
+	}
+	if diskNumber != 0 || centralDirectoryDisk != 0 || entriesOnDisk != totalEntries {
+		return archiveV2Error("archive_invalid", "", "multi-disk ZIP archives are not supported")
+	}
+	if totalEntries > maxV2Files {
+		return archiveV2Error("archive_file_count_exceeded", "", "archive contains too many entries")
+	}
+	if uint64(centralDirectoryOffset)+uint64(centralDirectorySize) > uint64(eocdOffset) {
+		return archiveV2Error("archive_invalid", "", "archive central directory is out of bounds")
+	}
+	return nil
 }
 
 func classifyV2Artifact(name string) (string, string, int64, error) {

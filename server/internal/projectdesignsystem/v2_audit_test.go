@@ -356,3 +356,64 @@ func TestAuditV2RejectsQueryLikeHTTPSFragments(t *testing.T) {
 		})
 	}
 }
+
+func TestAuditV2RejectsUnsupportedCSSBlockAtRules(t *testing.T) {
+	for _, stylesheet := range []string{
+		`@container workspace (min-width: 1px) { .workspace { --secondary: url("https://example.com/container.svg"); } }`,
+		`@scope (.workspace) { .workspace { --secondary: url("https://example.com/scope.svg"); } }`,
+		`@property --secondary { syntax: "<image>"; inherits: false; initial-value: url("https://example.com/property.svg"); }`,
+	} {
+		t.Run(stylesheet, func(t *testing.T) {
+			root := copyV2Fixture(t)
+			html := `<style>` + stylesheet + `</style><main class="workspace" data-design-node-id="orders" data-design-node-kind="block" data-design-node-label="Orders" style="color:var(--color-action)">Orders</main>`
+			if err := os.WriteFile(filepath.Join(root, "ui-kit", "index.html"), []byte(html), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			collected, err := CollectV2Directory(root, validV2Binding())
+			assertV2DiagnosticCode(t, collected.Audit, err, "css_block_at_rule_unsupported")
+		})
+	}
+
+	t.Run("supported media with local asset", func(t *testing.T) {
+		root := copyV2Fixture(t)
+		html := `<style>@media screen { .workspace { background-image: url("../assets/crm-mark.svg"); color: var(--color-action); } }</style><main class="workspace" data-design-node-id="orders" data-design-node-kind="block" data-design-node-label="Orders">Orders</main>`
+		if err := os.WriteFile(filepath.Join(root, "ui-kit", "index.html"), []byte(html), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := CollectV2Directory(root, validV2Binding()); err != nil {
+			t.Fatalf("CollectV2Directory() rejected supported @media with a local asset: %v", err)
+		}
+	})
+}
+
+func TestAuditV2RejectsCompleteStaticDocumentHiding(t *testing.T) {
+	t.Run("tokens stylesheet", func(t *testing.T) {
+		root := copyV2Fixture(t)
+		name := filepath.Join(root, "tokens.css")
+		tokens, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, append(tokens, []byte("\nbody { display: none; }\n")...), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		collected, err := CollectV2Directory(root, validV2Binding())
+		assertV2DiagnosticCode(t, collected.Audit, err, "ui_kit_not_visible")
+	})
+
+	for _, stylesheet := range []string{
+		`body { display: none !important; }`,
+		`body { visibility: hidden!important; }`,
+		`body { & .state { color: red; } display: none; }`,
+	} {
+		t.Run(stylesheet, func(t *testing.T) {
+			root := copyV2Fixture(t)
+			html := `<style>` + stylesheet + ` .workspace { color: var(--color-action); }</style><main class="workspace" data-design-node-id="orders" data-design-node-kind="block" data-design-node-label="Orders">Orders</main>`
+			if err := os.WriteFile(filepath.Join(root, "ui-kit", "index.html"), []byte(html), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			collected, err := CollectV2Directory(root, validV2Binding())
+			assertV2DiagnosticCode(t, collected.Audit, err, "ui_kit_not_visible")
+		})
+	}
+}

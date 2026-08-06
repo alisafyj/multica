@@ -3,6 +3,7 @@ package projectdesignsystem
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"os"
@@ -212,6 +213,50 @@ func TestValidateV2ArchiveRecomputesEveryDigest(t *testing.T) {
 	})
 }
 
+func TestValidateV2ArchivePreflightsEOCDMetadata(t *testing.T) {
+	tests := []struct {
+		name    string
+		archive []byte
+		code    string
+	}{
+		{
+			name:    "entry count",
+			archive: buildV2EOCD(nil, 0, 0, maxV2Files+1, maxV2Files+1, 0, 0),
+			code:    "archive_file_count_exceeded",
+		},
+		{
+			name:    "ZIP64 sentinel",
+			archive: buildV2EOCD(nil, 0, 0, ^uint16(0), ^uint16(0), ^uint32(0), ^uint32(0)),
+			code:    "archive_invalid",
+		},
+		{
+			name: "ZIP64 locator",
+			archive: buildV2EOCD([]byte{
+				0x50, 0x4b, 0x06, 0x07,
+				0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			}, 0, 0, 0, 0, 0, 0),
+			code: "archive_invalid",
+		},
+		{
+			name:    "multi disk",
+			archive: buildV2EOCD(nil, 1, 1, 0, 0, 0, 0),
+			code:    "archive_invalid",
+		},
+		{
+			name:    "central directory bounds",
+			archive: buildV2EOCD(nil, 0, 0, 0, 0, 1, 22),
+			code:    "archive_invalid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pkg, err := ValidateV2Archive(tt.archive, validV2Binding())
+			assertV2DiagnosticCode(t, pkg.Audit, err, tt.code)
+		})
+	}
+}
+
 func TestValidateV2ArchiveBindsTaskInputAndBaseDigest(t *testing.T) {
 	generate := validV2Binding()
 	collected := collectValidV2(t, generate)
@@ -415,6 +460,20 @@ func buildV2Zip(t *testing.T, entries []v2ZipEntry) []byte {
 func buildV2ZipFromMap(t *testing.T, entries map[string][]byte) []byte {
 	t.Helper()
 	return buildV2Zip(t, v2ZipEntriesFromMap(entries))
+}
+
+func buildV2EOCD(prefix []byte, diskNumber, centralDirectoryDisk, entriesOnDisk, totalEntries uint16, centralDirectorySize, centralDirectoryOffset uint32) []byte {
+	archive := make([]byte, len(prefix)+22)
+	copy(archive, prefix)
+	eocd := archive[len(prefix):]
+	binary.LittleEndian.PutUint32(eocd[0:4], 0x06054b50)
+	binary.LittleEndian.PutUint16(eocd[4:6], diskNumber)
+	binary.LittleEndian.PutUint16(eocd[6:8], centralDirectoryDisk)
+	binary.LittleEndian.PutUint16(eocd[8:10], entriesOnDisk)
+	binary.LittleEndian.PutUint16(eocd[10:12], totalEntries)
+	binary.LittleEndian.PutUint32(eocd[12:16], centralDirectorySize)
+	binary.LittleEndian.PutUint32(eocd[16:20], centralDirectoryOffset)
+	return archive
 }
 
 func v2ZipEntriesFromMap(entries map[string][]byte) []v2ZipEntry {

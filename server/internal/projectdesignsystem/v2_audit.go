@@ -87,7 +87,7 @@ func auditV2Package(
 		htmlAudit := auditV2HTML(target.Path, files[target.Path], files, artifactByPath, tokens.declared, seenLocators)
 		result.locators = append(result.locators, htmlAudit.locators...)
 		diagnostics = append(diagnostics, htmlAudit.diagnostics...)
-		if !htmlAudit.visible {
+		if tokenCSS.documentHidden || !htmlAudit.visible {
 			diagnostics = append(diagnostics, errorDiagnostic("ui_kit_not_visible", target.Path, "Preview target must contain visible content in a stable locator"))
 		}
 		if !htmlAudit.tokenUsed {
@@ -369,6 +369,7 @@ func inspectV2CSS(
 	result := v2CSSAudit{references: make(map[string]struct{})}
 	parser := css.NewParser(parse.NewInputString(source), inline)
 	atRuleStack := make([]bool, 0)
+	documentRuleStack := make([]bool, 0)
 	screenApplicable := true
 	documentRule := false
 	for {
@@ -382,6 +383,9 @@ func inspectV2CSS(
 		values := parser.Values()
 		switch grammar {
 		case css.BeginAtRuleGrammar:
+			if !v2SupportedBlockAtRule(data) {
+				result.diagnostics = append(result.diagnostics, errorDiagnostic("css_block_at_rule_unsupported", basePath, "CSS block at-rule is not supported"))
+			}
 			atRuleStack = append(atRuleStack, screenApplicable)
 			screenApplicable = screenApplicable && v2AtRuleMayAffectScreen(data, values)
 		case css.EndAtRuleGrammar:
@@ -390,9 +394,15 @@ func inspectV2CSS(
 				atRuleStack = atRuleStack[:len(atRuleStack)-1]
 			}
 		case css.BeginRulesetGrammar:
+			documentRuleStack = append(documentRuleStack, documentRule)
 			documentRule = screenApplicable && v2SelectorTargetsDocumentRoot(values)
 		case css.EndRulesetGrammar:
-			documentRule = false
+			if len(documentRuleStack) == 0 {
+				documentRule = false
+			} else {
+				documentRule = documentRuleStack[len(documentRuleStack)-1]
+				documentRuleStack = documentRuleStack[:len(documentRuleStack)-1]
+			}
 		}
 		if grammar == css.AtRuleGrammar || grammar == css.BeginAtRuleGrammar {
 			if strings.TrimPrefix(strings.ToLower(strings.TrimSpace(string(data))), "@") == "import" {
@@ -404,9 +414,7 @@ func inspectV2CSS(
 		}
 		if grammar == css.DeclarationGrammar {
 			property := strings.ToLower(strings.TrimSpace(string(data)))
-			value := strings.ToLower(cssTokenText(values))
-			if (property == "display" && strings.TrimSpace(value) == "none") ||
-				(property == "visibility" && strings.TrimSpace(value) == "hidden") {
+			if v2CSSDeclarationHides(property, values) {
 				result.hidden = true
 				if documentRule {
 					result.documentHidden = true
@@ -416,6 +424,36 @@ func inspectV2CSS(
 		inspectV2CSSTokens(values, basePath, files, artifacts, declaredTokens, &result)
 	}
 	return result
+}
+
+func v2SupportedBlockAtRule(name []byte) bool {
+	switch strings.TrimPrefix(strings.ToLower(strings.TrimSpace(string(name))), "@") {
+	case "document", "font-face", "keyframes", "layer", "media", "page", "supports":
+		return true
+	default:
+		return false
+	}
+}
+
+func v2CSSDeclarationHides(property string, tokens []css.Token) bool {
+	filtered := make([]css.Token, 0, len(tokens))
+	for _, token := range tokens {
+		if token.TokenType != css.WhitespaceToken && token.TokenType != css.CommentToken {
+			filtered = append(filtered, token)
+		}
+	}
+	if len(filtered) == 0 || filtered[0].TokenType != css.IdentToken {
+		return false
+	}
+	value := strings.ToLower(strings.TrimSpace(string(filtered[0].Data)))
+	if (property != "display" || value != "none") && (property != "visibility" || value != "hidden") {
+		return false
+	}
+	if len(filtered) == 1 {
+		return true
+	}
+	return len(filtered) == 3 && strings.TrimSpace(string(filtered[1].Data)) == "!" &&
+		filtered[2].TokenType == css.IdentToken && strings.EqualFold(strings.TrimSpace(string(filtered[2].Data)), "important")
 }
 
 func v2SelectorTargetsDocumentRoot(tokens []css.Token) bool {
