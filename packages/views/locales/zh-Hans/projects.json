@@ -126,7 +126,8 @@
     "document_summary_placeholder": "简要描述...",
     "document_submit": "添加",
     "toast_document_attached": "已添加文档",
-    "toast_document_attach_failed": "添加文档失败"
+    "toast_document_attach_failed": "添加文档失败",
+    "document_cancel": "取消"
   },
   "delete_dialog": {
     "title": "删除项目",

@@ -126,7 +126,8 @@
     "document_summary_placeholder": "簡単な説明...",
     "document_submit": "追加",
     "toast_document_attached": "ドキュメントを追加しました",
-    "toast_document_attach_failed": "ドキュメントを追加できませんでした"
+    "toast_document_attach_failed": "ドキュメントを追加できませんでした",
+    "document_cancel": "キャンセル"
   },
   "delete_dialog": {
     "title": "プロジェクトを削除",

@@ -25,7 +25,7 @@ import { AutopilotsPage } from "@multica/views/autopilots/components";
 import { MyIssuesPage } from "@multica/views/my-issues";
 import { SkillsPage } from "@multica/views/skills";
 import { DesignDraftPage, DesignFilePage, DesignFramePage, DesignRestoreTaskPage, DesignsPage } from "@multica/views/designs";
-import { TestCaseDetail, TestCasesPage } from "@multica/views/testing";
+import { TestCaseDetail, TestCasesPage, TestGenerationJobPage } from "@multica/views/testing";
 import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
 import { DesktopAgentsPage } from "./components/desktop-agents-page";
 import {
@@ -74,6 +74,11 @@ function DesktopSettingsRoute() {
 function DesktopTestCaseDetailRoute() {
   const { id = "" } = useParams();
   return <TestCaseDetail refId={id} />;
+}
+
+function DesktopTestGenerationJobRoute() {
+  const { jobId = "" } = useParams();
+  return <TestGenerationJobPage jobId={jobId} />;
 }
 
 function DesktopDesignFileRoute() {
@@ -185,6 +190,11 @@ export const appRoutes: RouteObject[] = [
             path: "tests/:id",
             element: <DesktopTestCaseDetailRoute />,
             handle: { title: "Test Case" },
+          },
+          {
+            path: "tests/jobs/:jobId",
+            element: <DesktopTestGenerationJobRoute />,
+            handle: { title: "Generation Job" },
           },
           {
             path: "designs/drafts/:draftId",

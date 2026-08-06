@@ -20,6 +20,11 @@ import type {
   ListTestCasesResponse,
   ListTestCaseModulesResponse,
   ListTestCaseRevisionsResponse,
+  TestGenerationJob,
+  TestGenerationPlan,
+  TestCaseProposal,
+  ListTestGenerationJobsResponse,
+  ListTestCaseProposalsResponse,
   ChatMessage,
   ChatDraftRestoresResponse,
   ChatPendingTask,
@@ -2459,3 +2464,133 @@ export const EMPTY_LIST_TEST_CASE_MODULES_RESPONSE: ListTestCaseModulesResponse 
 export const EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE: ListTestCaseRevisionsResponse = {
   revisions: [],
 };
+
+// ---------------------------------------------------------------------------
+// Test generation job schemas — Phase 2
+//
+// Same leniency policy as the TestCase schemas above: string enums stay
+// z.string() so a newer server adding a status/kind value does not parse-fail
+// an installed desktop client. Every numeric field defaults to 0, every
+// nullable string to null, every record to {}, every array to [].
+// ---------------------------------------------------------------------------
+
+export const TestGenerationJobSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  project_id: z.string().default(""),
+  agent_id: z.string().nullable().default(null),
+  agent_task_id: z.string().nullable().default(null),
+  // Stays z.string(), not z.enum — a future backend adding "paused" must not
+  // crash an older frontend; UI falls back to the default branch.
+  status: z.string().default("queued"),
+  input: z.record(z.string(), z.unknown()).default({}),
+  result: z.record(z.string(), z.unknown()).default({}),
+  error: z.string().nullable().default(null),
+  created_by: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const ListTestGenerationJobsResponseSchema = z.object({
+  jobs: z.array(TestGenerationJobSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_TEST_GENERATION_JOB: TestGenerationJob = {
+  id: "",
+  workspace_id: "",
+  project_id: "",
+  agent_id: null,
+  agent_task_id: null,
+  status: "queued",
+  input: {},
+  result: {},
+  error: null,
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_LIST_TEST_GENERATION_JOBS_RESPONSE: ListTestGenerationJobsResponse = {
+  jobs: [],
+  total: 0,
+};
+
+export const TestGenerationPlanSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  job_id: z.string().default(""),
+  // Stays z.string() — "archived" or future states must not crash the UI.
+  status: z.string().default("draft"),
+  // The plan JSON is a free-form record: the specific plan shape is defined in
+  // TestGenerationPlanPayload in types/testing.ts and is only read when the
+  // user is editing it, not on every render.
+  plan: z.record(z.string(), z.unknown()).default({}),
+  review_notes: z.string().default(""),
+  approved_by: z.string().nullable().default(null),
+  approved_at: z.string().nullable().default(null),
+  created_by: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const EMPTY_TEST_GENERATION_PLAN: TestGenerationPlan = {
+  id: "",
+  workspace_id: "",
+  job_id: "",
+  status: "draft",
+  plan: {},
+  review_notes: "",
+  approved_by: null,
+  approved_at: null,
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const TestCaseProposalSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  job_id: z.string().default(""),
+  target_case_id: z.string().default(""),
+  // z.string() — future kinds ("merge"?) must not fail parse; UI has a default
+  // branch that renders an unknown kind.
+  kind: z.string().default("update"),
+  // payload carries the proposed case fields; consumed field-by-field by the
+  // diff panel, so loose record is the correct shape.
+  payload: z.record(z.string(), z.unknown()).default({}),
+  rationale: z.string().default(""),
+  status: z.string().default("pending"),
+  reviewed_by: z.string().nullable().default(null),
+  reviewed_at: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+}).loose();
+
+export const ListTestCaseProposalsResponseSchema = z.object({
+  proposals: z.array(TestCaseProposalSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_TEST_CASE_PROPOSAL: TestCaseProposal = {
+  id: "",
+  workspace_id: "",
+  job_id: "",
+  target_case_id: "",
+  kind: "update",
+  payload: {},
+  rationale: "",
+  status: "pending",
+  reviewed_by: null,
+  reviewed_at: null,
+  created_at: "",
+};
+
+export const EMPTY_LIST_TEST_CASE_PROPOSALS_RESPONSE: ListTestCaseProposalsResponse = {
+  proposals: [],
+  total: 0,
+};
+
+export const DispatchTestGenerationJobResponseSchema = z.object({
+  job: TestGenerationJobSchema,
+  agent_task_id: z.string().default(""),
+}).loose();

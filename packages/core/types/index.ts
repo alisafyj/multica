@@ -144,6 +144,7 @@ export type {
   ProjectResourceRef,
   GithubRepoResourceRef,
   LocalDirectoryResourceRef,
+  DocumentResourceRef,
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,
   ListProjectResourcesResponse,
@@ -168,6 +169,22 @@ export type {
   ListTestCasesResponse,
   ListTestCaseModulesResponse,
   ListTestCaseRevisionsResponse,
+  // Phase 2 — test generation
+  TestGenerationJobStatus,
+  TestGenerationPlanStatus,
+  TestCaseProposalKind,
+  TestCaseProposalStatus,
+  TestGenerationPlanRepo,
+  TestGenerationPlanPayload,
+  TestGenerationJob,
+  TestGenerationPlan,
+  TestCaseProposal,
+  CreateTestGenerationJobRequest,
+  UpdateTestGenerationPlanRequest,
+  DispatchTestGenerationJobRequest,
+  ListTestGenerationJobsResponse,
+  ListTestCaseProposalsResponse,
+  DispatchTestGenerationJobResponse,
 } from "./testing";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type {

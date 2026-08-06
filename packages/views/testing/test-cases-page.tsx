@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { FlaskConical, Plus } from "lucide-react";
+import { FlaskConical, Plus, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -14,6 +15,9 @@ import {
   TEST_CASE_STATUS_TONE,
   testCaseListOptions,
   testCaseModulesOptions,
+  useApproveTestCase,
+  useCreateTestCase,
+  useCreateTestGenerationJob,
   useTestCaseViewStore,
 } from "@multica/core/testing";
 import type {
@@ -26,7 +30,7 @@ import type {
 import { Button } from "@multica/ui/components/ui/button";
 import { NativeSelect } from "@multica/ui/components/ui/native-select";
 import { PageHeader } from "../layout/page-header";
-import { AppLink } from "../navigation";
+import { AppLink, useNavigation } from "../navigation";
 import { useT } from "../i18n";
 import { formatRepoSummary, knownEnumKey } from "./case-summary";
 
@@ -39,6 +43,10 @@ export function TestCasesPage() {
   const { t } = useT("testing");
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBatchApproving, setIsBatchApproving] = useState(false);
+  const approveCase = useApproveTestCase();
 
   const projectId = useTestCaseViewStore((state) => state.projectId);
   const activeModule = useTestCaseViewStore((state) => state.module);
@@ -69,6 +77,85 @@ export function TestCasesPage() {
     [filters, activeModule],
   );
 
+  const allVisibleSelected =
+    cases.length > 0 && cases.every((c) => selectedIds.has(c.id));
+
+  function toggleSelectAll() {
+    if (allVisibleSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(cases.map((c) => c.id)));
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  const navigation = useNavigation();
+  const createCase = useCreateTestCase();
+  const createGenerationJob = useCreateTestGenerationJob();
+  const [isStartingGeneration, setIsStartingGeneration] = useState(false);
+
+  // Create-then-edit: the detail page already owns the full editor, so the
+  // list only has to mint a case and hand over. Navigation waits for the
+  // server because the new case's key comes back with the response.
+  async function createAndOpenCase() {
+    if (selectedProjectId.length === 0) return;
+    try {
+      const created = await createCase.mutateAsync({
+        project_id: selectedProjectId,
+        title: t(($) => $.page.untitled),
+      });
+      navigation.push(paths.testCaseDetail(created.key));
+    } catch {
+      toast.error(t(($) => $.toast.createFailed));
+    }
+  }
+
+  // A generation run is not dispatched here: creating the job opens its scope
+  // for review first, which is the whole point of the plan gate.
+  async function startGeneration() {
+    if (selectedProjectId.length === 0) return;
+    setIsStartingGeneration(true);
+    try {
+      const job = await createGenerationJob.mutateAsync({ project_id: selectedProjectId });
+      toast.success(t(($) => $.toast.generationStarted));
+      navigation.push(paths.testGenerationJobDetail(job.id));
+    } catch {
+      toast.error(t(($) => $.toast.generationFailed));
+    } finally {
+      setIsStartingGeneration(false);
+    }
+  }
+
+  async function batchApprove() {
+    setIsBatchApproving(true);
+    const ids = [...selectedIds];
+    let count = 0;
+    for (const id of ids) {
+      try {
+        await approveCase.mutateAsync(id);
+        count++;
+      } catch {
+        // individual failures are silent here; the cache rolls back per case
+      }
+    }
+    setIsBatchApproving(false);
+    if (count > 0) {
+      toast.success(t(($) => $.toast.batchApproved, { count }));
+      setSelectedIds(new Set());
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader>
@@ -76,7 +163,20 @@ export function TestCasesPage() {
           <FlaskConical className="size-4 shrink-0 text-muted-foreground" />
           <h1 className="truncate text-body font-medium">{t(($) => $.page.title)}</h1>
         </div>
-        <Button size="sm" disabled={selectedProjectId.length === 0}>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={selectedProjectId.length === 0 || isStartingGeneration}
+          onClick={() => void startGeneration()}
+        >
+          <Sparkles className="size-4" />
+          {isStartingGeneration ? t(($) => $.page.generating) : t(($) => $.page.generate)}
+        </Button>
+        <Button
+          size="sm"
+          disabled={selectedProjectId.length === 0 || createCase.isPending}
+          onClick={() => void createAndOpenCase()}
+        >
           <Plus className="size-4" />
           {t(($) => $.page.new)}
         </Button>
@@ -157,6 +257,25 @@ export function TestCasesPage() {
             >
               {t(($) => $.filters.reviewQueue)}
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setFilter("statuses", ["draft"]);
+                setFilter("origins", ["ai"]);
+              }}
+            >
+              {t(($) => $.filters.aiReviewQueue)}
+            </Button>
+            {selectedIds.size > 0 ? (
+              <Button
+                size="sm"
+                disabled={isBatchApproving}
+                onClick={() => void batchApprove()}
+              >
+                {t(($) => $.actions.batchApprove)} ({selectedIds.size})
+              </Button>
+            ) : null}
             {hasFilters ? (
               <Button
                 size="sm"
@@ -164,6 +283,7 @@ export function TestCasesPage() {
                 onClick={() => {
                   clearFilters();
                   setModule(null);
+                  setSelectedIds(new Set());
                 }}
               >
                 {t(($) => $.filters.clear)}
@@ -181,6 +301,14 @@ export function TestCasesPage() {
               <table className="w-full text-body">
                 <thead>
                   <tr className="border-b border-border text-caption text-muted-foreground">
+                    <th className="w-8 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        aria-label={t(($) => $.actions.selectAll)}
+                        checked={allVisibleSelected}
+                        onChange={toggleSelectAll}
+                      />
+                    </th>
                     <Th>{t(($) => $.columns.key)}</Th>
                     <Th>{t(($) => $.columns.title)}</Th>
                     <Th>{t(($) => $.columns.module)}</Th>
@@ -193,7 +321,13 @@ export function TestCasesPage() {
                 </thead>
                 <tbody>
                   {cases.map((testCase) => (
-                    <CaseRow key={testCase.id} testCase={testCase} href={paths.testCaseDetail(testCase.key)} />
+                    <CaseRow
+                      key={testCase.id}
+                      testCase={testCase}
+                      href={paths.testCaseDetail(testCase.key)}
+                      selected={selectedIds.has(testCase.id)}
+                      onToggleSelect={toggleSelect}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -265,7 +399,17 @@ function FilterSelect({
   );
 }
 
-function CaseRow({ testCase, href }: { testCase: TestCase; href: string }) {
+function CaseRow({
+  testCase,
+  href,
+  selected,
+  onToggleSelect,
+}: {
+  testCase: TestCase;
+  href: string;
+  selected: boolean;
+  onToggleSelect: (id: string) => void;
+}) {
   const { t } = useT("testing");
   const status = knownEnumKey<TestCaseStatus>(testCase.status, TEST_CASE_STATUSES);
   const priority = knownEnumKey<TestCasePriority>(testCase.priority, TEST_CASE_PRIORITIES);
@@ -273,7 +417,15 @@ function CaseRow({ testCase, href }: { testCase: TestCase; href: string }) {
   const repoSummary = formatRepoSummary(testCase);
 
   return (
-    <tr className="border-b border-border hover:bg-accent">
+    <tr className="border-b border-border hover:bg-accent" data-active={selected || undefined}>
+      <td className="w-8 px-3 py-2">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => onToggleSelect(testCase.id)}
+          aria-label={testCase.key}
+        />
+      </td>
       <td className="px-3 py-2 text-muted-foreground tabular-nums">
         <AppLink href={href}>{testCase.key}</AppLink>
       </td>

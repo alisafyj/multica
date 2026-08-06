@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Trash2 } from "lucide-react";
+import { CheckCircle2, Trash2, XCircle } from "lucide-react";
+import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
@@ -11,11 +12,15 @@ import {
   TEST_CASE_SCOPES,
   TEST_CASE_TYPES,
   testCaseDetailOptions,
+  testCaseProposalsOptions,
   testCaseRevisionsOptions,
+  useAcceptTestCaseProposal,
   useApproveTestCase,
   useDeleteTestCase,
+  useRejectTestCaseProposal,
   useUpdateTestCase,
 } from "@multica/core/testing";
+import type { TestCaseProposal } from "@multica/core/types";
 import type {
   TestCase,
   TestCaseChangeKind,
@@ -78,9 +83,12 @@ export function TestCaseDetail({ refId }: TestCaseDetailProps) {
 
   const { data: testCase, isLoading } = useQuery(testCaseDetailOptions(wsId, refId));
   const { data: revisions = [] } = useQuery(testCaseRevisionsOptions(wsId, refId));
+  const { data: proposals = [] } = useQuery(testCaseProposalsOptions(wsId, refId));
   const updateCase = useUpdateTestCase();
   const approveCase = useApproveTestCase();
   const deleteCase = useDeleteTestCase();
+  const acceptProposal = useAcceptTestCaseProposal();
+  const rejectProposal = useRejectTestCaseProposal();
 
   const [draft, setDraft] = useState<DraftState | null>(null);
   // Version is the server's change counter, so re-seeding on it picks up both
@@ -289,8 +297,171 @@ export function TestCaseDetail({ refId }: TestCaseDetailProps) {
               </ul>
             )}
           </Field>
+
+          {/* AI Suggestions panel — proposals from the generation job */}
+          <Field label={t(($) => $.proposals.title)}>
+            {proposals.length === 0 ? (
+              <p className="text-caption text-muted-foreground">
+                {t(($) => $.proposals.empty)}
+              </p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {proposals.map((proposal) => (
+                  <ProposalCard
+                    key={proposal.id}
+                    proposal={proposal}
+                    testCase={loaded}
+                    busy={acceptProposal.isPending || rejectProposal.isPending}
+                    onAccept={() =>
+                      acceptProposal.mutate(
+                        { id: proposal.id, caseRef: refId },
+                        {
+                          onSuccess: () =>
+                            toast.success(t(($) => $.toast.proposalAccepted)),
+                          onError: (err) =>
+                            toast.error(
+                              err instanceof Error
+                                ? err.message
+                                : t(($) => $.toast.proposalFailed),
+                            ),
+                        },
+                      )
+                    }
+                    onReject={() =>
+                      rejectProposal.mutate(
+                        { id: proposal.id, caseRef: refId },
+                        {
+                          onSuccess: () =>
+                            toast.success(t(($) => $.toast.proposalRejected)),
+                          onError: (err) =>
+                            toast.error(
+                              err instanceof Error
+                                ? err.message
+                                : t(($) => $.toast.proposalFailed),
+                            ),
+                        },
+                      )
+                    }
+                  />
+                ))}
+              </div>
+            )}
+          </Field>
         </aside>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Proposal diff card
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders one AI proposal with a two-column field diff: current value on the
+ * left, suggested value on the right. Each changed field is highlighted so
+ * the reviewer can spot the delta without reading both columns in full.
+ */
+function ProposalCard({
+  proposal,
+  testCase,
+  busy,
+  onAccept,
+  onReject,
+}: {
+  proposal: TestCaseProposal;
+  testCase: TestCase;
+  busy: boolean;
+  onAccept: () => void;
+  onReject: () => void;
+}) {
+  const { t } = useT("testing");
+  const isPending = proposal.status === "pending";
+  const fieldEntries = Object.entries(proposal.payload);
+
+  function renderValue(value: unknown): string {
+    if (value === null || value === undefined) return "—";
+    if (typeof value === "string") return value || "—";
+    return JSON.stringify(value, null, 2);
+  }
+
+  function currentValue(field: string): unknown {
+    return (testCase as unknown as Record<string, unknown>)[field];
+  }
+
+  return (
+    <div className="rounded-md border bg-muted/30 p-2 text-caption">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <span className="rounded bg-muted px-1.5 py-0.5 font-medium">
+            {t(($) => $.proposals.kind[proposal.kind as keyof typeof $.proposals.kind]) ?? proposal.kind}
+          </span>
+          {!isPending ? (
+            <span className="text-muted-foreground">
+              {t(($) => $.proposals.status[proposal.status as keyof typeof $.proposals.status]) ?? proposal.status}
+            </span>
+          ) : null}
+        </div>
+        {isPending ? (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onAccept}
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-caption font-medium hover:bg-accent disabled:opacity-50"
+            >
+              <CheckCircle2 className="h-3 w-3" />
+              {t(($) => $.proposals.accept)}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onReject}
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-caption hover:bg-accent disabled:opacity-50"
+            >
+              <XCircle className="h-3 w-3" />
+              {t(($) => $.proposals.reject)}
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      {proposal.rationale ? (
+        <p className="mt-1.5 text-muted-foreground">
+          <span className="font-medium">{t(($) => $.proposals.rationale)}:</span>{" "}
+          {proposal.rationale}
+        </p>
+      ) : null}
+
+      {fieldEntries.length > 0 ? (
+        <div className="mt-2 grid grid-cols-2 gap-1 rounded-md border">
+          <div className="border-b border-r px-2 py-1 font-medium text-muted-foreground">
+            {t(($) => $.proposals.current)}
+          </div>
+          <div className="border-b px-2 py-1 font-medium text-muted-foreground">
+            {t(($) => $.proposals.suggested)}
+          </div>
+          {fieldEntries.map(([field, suggested]) => {
+            const current = currentValue(field);
+            const hasChange = JSON.stringify(current) !== JSON.stringify(suggested);
+            return (
+              <div key={field} className="contents">
+                <div className={`border-r px-2 py-1 ${hasChange ? "bg-destructive/5" : ""}`}>
+                  <span className="font-medium">{field}:</span>{" "}
+                  <span className="break-all text-muted-foreground">
+                    {renderValue(current)}
+                  </span>
+                </div>
+                <div className={`px-2 py-1 ${hasChange ? "bg-primary/5 font-medium" : ""}`}>
+                  <span className="break-all">
+                    {renderValue(suggested)}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -42,6 +42,8 @@ function workspaceScoped(slug: string) {
     tests: () => `${ws}/tests`,
     // Accepts either a TC-<n> key or a UUID; the server resolves both.
     testCaseDetail: (ref: string) => `${ws}/tests/${encode(ref)}`,
+    // Generation job detail. The jobId is always a UUID.
+    testGenerationJobDetail: (jobId: string) => `${ws}/tests/jobs/${encode(jobId)}`,
     autopilots: () => `${ws}/autopilots`,
     autopilotDetail: (id: string) => `${ws}/autopilots/${encode(id)}`,
     agents: () => `${ws}/agents`,

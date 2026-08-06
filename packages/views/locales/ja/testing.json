@@ -4,7 +4,10 @@
     "empty": "テストケースがありません",
     "emptyHint": "新規作成するか、別のプロジェクトを選択してください",
     "new": "新規ケース",
-    "selectProject": "プロジェクトを選択"
+    "selectProject": "プロジェクトを選択",
+    "generate": "AI で生成",
+    "generating": "開始中…",
+    "untitled": "無題のケース"
   },
   "filters": {
     "all": "すべて",
@@ -14,6 +17,7 @@
     "type": "種別",
     "origin": "作成元",
     "reviewQueue": "レビュー待ち",
+    "aiReviewQueue": "AI生成レビュー待ち",
     "clear": "フィルターをクリア",
     "search": "ケースを検索..."
   },
@@ -129,7 +133,9 @@
     "save": "保存",
     "cancel": "キャンセル",
     "edit": "編集",
-    "confirmDelete": "このテストケースを削除しますか？"
+    "confirmDelete": "このテストケースを削除しますか？",
+    "batchApprove": "選択したケースを承認",
+    "selectAll": "すべて選択"
   },
   "toast": {
     "created": "テストケースを作成しました",
@@ -137,6 +143,109 @@
     "approved": "テストケースを承認しました",
     "deleted": "テストケースを削除しました",
     "saveFailed": "変更を保存できません",
-    "deleteFailed": "テストケースを削除できません"
+    "deleteFailed": "テストケースを削除できません",
+    "planGenerated": "プランを生成しました",
+    "planSaved": "プランを保存しました",
+    "planApproved": "プランを承認しました",
+    "dispatched": "エージェントに派遣しました",
+    "planFailed": "プランを生成できません",
+    "planSaveFailed": "プランを保存できません",
+    "planApproveFailed": "プランを承認できません",
+    "dispatchFailed": "派遣できません",
+    "proposalAccepted": "提案を採用しました",
+    "proposalRejected": "提案を拒否しました",
+    "proposalFailed": "提案を更新できません",
+    "batchApproved": "{{count}} 件のケースを承認しました",
+    "generationStarted": "生成ジョブを作成しました。ディスパッチ前に範囲を確認してください。",
+    "generationFailed": "生成ジョブを作成できませんでした。",
+    "createFailed": "テストケースを作成できませんでした。"
+  },
+  "job": {
+    "title": "生成ジョブ",
+    "back": "戻る",
+    "loading": "読み込み中...",
+    "error": "ジョブを読み込めません",
+    "retry": "再試行",
+    "meta": {
+      "status": "ステータス",
+      "createdAt": "作成日時",
+      "agentTask": "エージェントタスク",
+      "notDispatched": "未派遣",
+      "proposals": "提案数"
+    },
+    "jobStatus": {
+      "queued": "待機中",
+      "running": "実行中",
+      "completed": "完了",
+      "failed": "失敗",
+      "cancelled": "キャンセル"
+    },
+    "planStatus": {
+      "draft": "レビュー待ち",
+      "approved": "承認済み",
+      "dispatched": "派遣済み",
+      "archived": "アーカイブ"
+    },
+    "stats": {
+      "total": "合計",
+      "pending": "保留中",
+      "accepted": "採用済み",
+      "rejected": "拒否済み"
+    },
+    "plan": {
+      "title": "生成プラン",
+      "generate": "プランを生成",
+      "regenerate": "再生成",
+      "save": "プランを保存",
+      "approve": "プランを承認",
+      "reviewNotes": "レビューメモ",
+      "reviewNotesPlaceholder": "任意: レビューコメント",
+      "rawJson": "プラン JSON",
+      "editJson": "生の JSON を編集",
+      "editJsonHint": "承認前に編集可能",
+      "noPlan": "プランがありません",
+      "noPlanHint": "まずプランを生成し、範囲を確認してから承認してください。",
+      "repos": "リポジトリ",
+      "modules": "モジュール",
+      "instructions": "指示",
+      "notSet": "未設定",
+      "approvedAt": "承認日時"
+    },
+    "dispatch": {
+      "title": "エージェントに派遣",
+      "hint": "承認済みプランを実行してテストケースを生成するエージェントを選択します。",
+      "agent": "エージェント",
+      "noAgent": "利用可能なエージェントがありません",
+      "button": "派遣",
+      "dispatching": "派遣中...",
+      "running": "実行中...",
+      "redispatch": "再派遣",
+      "needsPlan": "派遣前にプランを承認してください。"
+    },
+    "result": {
+      "title": "実行結果",
+      "proposals": "AI提案一覧",
+      "noProposals": "提案はありません"
+    }
+  },
+  "proposals": {
+    "title": "AI提案",
+    "empty": "このケースへのAI提案はありません",
+    "loading": "提案を読み込み中...",
+    "accept": "採用",
+    "reject": "拒否",
+    "rationale": "理由",
+    "current": "現在の値",
+    "suggested": "提案値",
+    "noChange": "変更なし",
+    "kind": {
+      "update": "更新",
+      "obsolete": "廃止"
+    },
+    "status": {
+      "pending": "保留中",
+      "accepted": "採用済み",
+      "rejected": "拒否済み"
+    }
   }
 }

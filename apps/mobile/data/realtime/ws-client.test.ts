@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { WSClient } from "./ws-client";
+import { WSClient, type WSClientOptions } from "./ws-client";
 
 class MockWebSocket {
   static readonly CONNECTING = 0;
@@ -89,5 +89,58 @@ describe("WSClient application heartbeat", () => {
 
     expect(MockWebSocket.instances).toHaveLength(1);
     client.disconnect();
+  });
+});
+
+describe("WSClient upgrade URL client metadata", () => {
+  beforeEach(() => {
+    vi.stubGlobal("WebSocket", MockWebSocket);
+    MockWebSocket.instances = [];
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function dial(extra: Partial<WSClientOptions> = {}) {
+    const client = new WSClient({
+      url: "wss://example.test/ws",
+      token: "token",
+      workspaceSlug: "workspace",
+      ...extra,
+    });
+    client.connect();
+    // Read the socket this call just opened — `instances` accumulates for the
+    // whole test, so index 0 would be a previous dial's URL.
+    const socket = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    const url = new URL(socket.url);
+    client.disconnect();
+    return url;
+  }
+
+  it("reports the OS it was given rather than a baked-in constant", () => {
+    // Regression: this was hardcoded to "ios", so Android devices identified
+    // themselves as iPhones in every server log line.
+    expect(dial({ clientOs: "android" }).searchParams.get("client_os")).toBe(
+      "android",
+    );
+    expect(dial({ clientOs: "ios" }).searchParams.get("client_os")).toBe("ios");
+  });
+
+  it("omits client_os when the caller has none, rather than guessing", () => {
+    // The server treats a missing value as "unknown"; inventing one would put
+    // a wrong platform into logs, which is what this regression was.
+    expect(dial().searchParams.has("client_os")).toBe(false);
+  });
+
+  it("always identifies the platform as mobile", () => {
+    expect(dial().searchParams.get("client_platform")).toBe("mobile");
+  });
+
+  it("carries workspace slug and client version", () => {
+    const url = dial({ clientVersion: "0.1.0" });
+    expect(url.searchParams.get("workspace_slug")).toBe("workspace");
+    expect(url.searchParams.get("client_version")).toBe("0.1.0");
   });
 });

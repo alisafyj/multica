@@ -25,6 +25,16 @@ import {
   EMPTY_LIST_TEST_CASES_RESPONSE,
   EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
   EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE,
+  TestGenerationJobSchema,
+  TestGenerationPlanSchema,
+  TestCaseProposalSchema,
+  ListTestGenerationJobsResponseSchema,
+  ListTestCaseProposalsResponseSchema,
+  EMPTY_TEST_GENERATION_JOB,
+  EMPTY_TEST_GENERATION_PLAN,
+  EMPTY_TEST_CASE_PROPOSAL,
+  EMPTY_LIST_TEST_GENERATION_JOBS_RESPONSE,
+  EMPTY_LIST_TEST_CASE_PROPOSALS_RESPONSE,
   ListDesignDeliveriesResponseSchema,
   ListDesignRestoreTasksResponseSchema,
   DuplicateIssueErrorBodySchema,
@@ -1514,5 +1524,140 @@ describe("test case list schemas", () => {
       { endpoint: "test" },
     );
     expect(parsed.modules[0]).toEqual({ module: "订单", case_count: 0 });
+  });
+});
+
+describe("TestGenerationJobSchema", () => {
+  it("fills defaults when the backend omits optional fields", () => {
+    const parsed = parseWithFallback(
+      { id: "job-1", workspace_id: "ws-1", project_id: "p-1", status: "queued", created_at: "2024-01-01T00:00:00Z", updated_at: "2024-01-01T00:00:00Z" },
+      TestGenerationJobSchema,
+      EMPTY_TEST_GENERATION_JOB,
+      { endpoint: "test" },
+    );
+    expect(parsed.id).toBe("job-1");
+    expect(parsed.agent_id).toBeNull();
+    expect(parsed.agent_task_id).toBeNull();
+    expect(parsed.input).toEqual({});
+    expect(parsed.result).toEqual({});
+    expect(parsed.error).toBeNull();
+  });
+
+  it("falls back when the payload is not an object", () => {
+    const parsed = parseWithFallback("nope", TestGenerationJobSchema, EMPTY_TEST_GENERATION_JOB, {
+      endpoint: "test",
+    });
+    expect(parsed).toBe(EMPTY_TEST_GENERATION_JOB);
+  });
+
+  it("keeps an unknown status rather than dropping the job", () => {
+    const parsed = parseWithFallback(
+      { id: "job-1", status: "paused", created_at: "", updated_at: "" },
+      TestGenerationJobSchema,
+      EMPTY_TEST_GENERATION_JOB,
+      { endpoint: "test" },
+    );
+    expect(parsed.status).toBe("paused");
+  });
+
+  it("keeps unknown server fields instead of stripping them", () => {
+    const parsed = parseWithFallback(
+      { id: "job-1", future_field: "keep me", created_at: "", updated_at: "" },
+      TestGenerationJobSchema,
+      EMPTY_TEST_GENERATION_JOB,
+      { endpoint: "test" },
+    );
+    expect((parsed as unknown as { future_field?: string }).future_field).toBe("keep me");
+  });
+});
+
+describe("TestGenerationPlanSchema", () => {
+  it("fills defaults for missing optional fields", () => {
+    const parsed = parseWithFallback(
+      { id: "plan-1", workspace_id: "ws-1", job_id: "job-1", status: "draft", created_at: "", updated_at: "" },
+      TestGenerationPlanSchema,
+      EMPTY_TEST_GENERATION_PLAN,
+      { endpoint: "test" },
+    );
+    expect(parsed.id).toBe("plan-1");
+    expect(parsed.plan).toEqual({});
+    expect(parsed.review_notes).toBe("");
+    expect(parsed.approved_by).toBeNull();
+    expect(parsed.approved_at).toBeNull();
+  });
+
+  it("falls back when the payload is not an object", () => {
+    const parsed = parseWithFallback(null, TestGenerationPlanSchema, EMPTY_TEST_GENERATION_PLAN, {
+      endpoint: "test",
+    });
+    expect(parsed).toBe(EMPTY_TEST_GENERATION_PLAN);
+  });
+
+  it("parses plan JSON as a record", () => {
+    const plan = { version: "1.0", repos: [], issues: [], modules: [] };
+    const parsed = parseWithFallback(
+      { id: "plan-1", plan, created_at: "", updated_at: "" },
+      TestGenerationPlanSchema,
+      EMPTY_TEST_GENERATION_PLAN,
+      { endpoint: "test" },
+    );
+    expect(parsed.plan).toEqual(plan);
+  });
+});
+
+describe("TestCaseProposalSchema", () => {
+  it("fills defaults for missing optional fields", () => {
+    const parsed = parseWithFallback(
+      { id: "prop-1", workspace_id: "ws-1", job_id: "job-1", target_case_id: "case-1", kind: "update", status: "pending", created_at: "" },
+      TestCaseProposalSchema,
+      EMPTY_TEST_CASE_PROPOSAL,
+      { endpoint: "test" },
+    );
+    expect(parsed.id).toBe("prop-1");
+    expect(parsed.payload).toEqual({});
+    expect(parsed.rationale).toBe("");
+    expect(parsed.reviewed_by).toBeNull();
+    expect(parsed.reviewed_at).toBeNull();
+  });
+
+  it("falls back when the payload is not an object", () => {
+    const parsed = parseWithFallback(42, TestCaseProposalSchema, EMPTY_TEST_CASE_PROPOSAL, {
+      endpoint: "test",
+    });
+    expect(parsed).toBe(EMPTY_TEST_CASE_PROPOSAL);
+  });
+
+  it("keeps an unknown kind rather than dropping the proposal", () => {
+    const parsed = parseWithFallback(
+      { id: "prop-1", kind: "future_kind", status: "pending", created_at: "" },
+      TestCaseProposalSchema,
+      EMPTY_TEST_CASE_PROPOSAL,
+      { endpoint: "test" },
+    );
+    expect(parsed.kind).toBe("future_kind");
+  });
+});
+
+describe("test generation list schemas", () => {
+  it("recovers a jobs list response missing the array", () => {
+    const parsed = parseWithFallback(
+      {},
+      ListTestGenerationJobsResponseSchema,
+      EMPTY_LIST_TEST_GENERATION_JOBS_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.jobs).toEqual([]);
+    expect(parsed.total).toBe(0);
+  });
+
+  it("recovers a proposals list response missing the array", () => {
+    const parsed = parseWithFallback(
+      {},
+      ListTestCaseProposalsResponseSchema,
+      EMPTY_LIST_TEST_CASE_PROPOSALS_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.proposals).toEqual([]);
+    expect(parsed.total).toBe(0);
   });
 });

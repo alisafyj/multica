@@ -11,7 +11,7 @@ import { defaultStorage } from "../platform/storage";
 import { getCurrentWsId, getCurrentSlug } from "../platform/workspace-storage";
 import { issueKeys } from "../issues/queries";
 import { projectKeys } from "../projects/queries";
-import { testCaseKeys } from "../testing/keys";
+import { testCaseKeys, testGenerationJobKeys } from "../testing/keys";
 import { designKeys } from "../designs/keys";
 import { pinKeys } from "../pins/queries";
 import { autopilotKeys } from "../autopilots/queries";
@@ -749,6 +749,19 @@ export function useRealtimeSync(
       test_case: () => {
         const wsId = getCurrentWsId();
         if (wsId) qc.invalidateQueries({ queryKey: testCaseKeys.all(wsId) });
+      },
+      test_generation_job: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) qc.invalidateQueries({ queryKey: testGenerationJobKeys.all(wsId) });
+      },
+      test_case_proposal: () => {
+        // Proposals are nested under test_cases; invalidate both caches so the
+        // diff panel and the proposal count on the detail page stay in sync.
+        const wsId = getCurrentWsId();
+        if (wsId) {
+          qc.invalidateQueries({ queryKey: testCaseKeys.all(wsId) });
+          qc.invalidateQueries({ queryKey: testGenerationJobKeys.all(wsId) });
+        }
       },
       squad: () => {
         const wsId = getCurrentWsId();

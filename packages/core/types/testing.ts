@@ -155,3 +155,126 @@ export interface ListTestCaseModulesResponse {
 export interface ListTestCaseRevisionsResponse {
   revisions: TestCaseRevision[];
 }
+
+// ---------------------------------------------------------------------------
+// Test generation jobs — Phase 2
+// ---------------------------------------------------------------------------
+
+export type TestGenerationJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type TestGenerationPlanStatus = "draft" | "approved" | "dispatched" | "archived";
+export type TestCaseProposalKind = "update" | "obsolete";
+export type TestCaseProposalStatus = "pending" | "accepted" | "rejected";
+
+/**
+ * One repository the generation run may read, scoped to specific path globs.
+ * Bound by project_resource_id because repository URLs change but resource IDs
+ * are stable within the workspace.
+ */
+export interface TestGenerationPlanRepo {
+  project_resource_id: string;
+  alias: string;
+  url?: string;
+  ref?: string;
+  path_globs: string[];
+}
+
+/**
+ * The human-reviewed scope contract. A human edits and approves this before any
+ * tokens are spent on generation.
+ */
+export interface TestGenerationPlanPayload {
+  version: string;
+  repos: TestGenerationPlanRepo[];
+  issues: string[];
+  modules: string[];
+  knowledge_refs: string[];
+  attachment_ids: string[];
+  expected_case_types: string[];
+  existing_case_digest_count: number;
+  instructions: string;
+}
+
+export interface TestGenerationJob {
+  id: string;
+  workspace_id: string;
+  project_id: string;
+  agent_id: string | null;
+  agent_task_id: string | null;
+  status: TestGenerationJobStatus;
+  input: Record<string, unknown>;
+  result: Record<string, unknown>;
+  error: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TestGenerationPlan {
+  id: string;
+  workspace_id: string;
+  job_id: string;
+  status: TestGenerationPlanStatus;
+  plan: Record<string, unknown>;
+  review_notes: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * A suggested change to an existing test case. `new` cases land directly as
+ * drafts; only `update` and `obsolete` against an approved case come through
+ * here so a human can decide.
+ */
+export interface TestCaseProposal {
+  id: string;
+  workspace_id: string;
+  job_id: string;
+  target_case_id: string;
+  kind: TestCaseProposalKind;
+  payload: Record<string, unknown>;
+  rationale: string;
+  status: TestCaseProposalStatus;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+// Request types
+
+export interface CreateTestGenerationJobRequest {
+  project_id: string;
+  issue_ids?: string[];
+  modules?: string[];
+  attachment_ids?: string[];
+  instructions?: string;
+}
+
+export interface UpdateTestGenerationPlanRequest {
+  plan?: TestGenerationPlanPayload;
+  review_notes?: string;
+}
+
+export interface DispatchTestGenerationJobRequest {
+  agent_id: string;
+  prompt?: string;
+}
+
+// Response types
+
+export interface ListTestGenerationJobsResponse {
+  jobs: TestGenerationJob[];
+  total: number;
+}
+
+export interface ListTestCaseProposalsResponse {
+  proposals: TestCaseProposal[];
+  total: number;
+}
+
+export interface DispatchTestGenerationJobResponse {
+  job: TestGenerationJob;
+  agent_task_id: string;
+}

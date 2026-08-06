@@ -4,7 +4,10 @@
     "empty": "No test cases yet",
     "emptyHint": "Create one, or pick another project",
     "new": "New case",
-    "selectProject": "Select a project"
+    "selectProject": "Select a project",
+    "generate": "Generate with AI",
+    "generating": "Starting…",
+    "untitled": "Untitled case"
   },
   "filters": {
     "all": "All",
@@ -14,6 +17,7 @@
     "type": "Type",
     "origin": "Origin",
     "reviewQueue": "Needs review",
+    "aiReviewQueue": "AI pending review",
     "clear": "Clear filters",
     "search": "Search cases..."
   },
@@ -129,7 +133,9 @@
     "save": "Save",
     "cancel": "Cancel",
     "edit": "Edit",
-    "confirmDelete": "Delete this test case?"
+    "confirmDelete": "Delete this test case?",
+    "batchApprove": "Approve selected",
+    "selectAll": "Select all"
   },
   "toast": {
     "created": "Test case created",
@@ -137,6 +143,109 @@
     "approved": "Test case approved",
     "deleted": "Test case deleted",
     "saveFailed": "Could not save changes",
-    "deleteFailed": "Could not delete the test case"
+    "deleteFailed": "Could not delete the test case",
+    "planGenerated": "Plan generated",
+    "planSaved": "Plan saved",
+    "planApproved": "Plan approved",
+    "dispatched": "Dispatched to agent",
+    "planFailed": "Could not generate plan",
+    "planSaveFailed": "Could not save plan",
+    "planApproveFailed": "Could not approve plan",
+    "dispatchFailed": "Could not dispatch",
+    "proposalAccepted": "Suggestion accepted",
+    "proposalRejected": "Suggestion rejected",
+    "proposalFailed": "Could not update suggestion",
+    "batchApproved": "Approved {{count}} cases",
+    "generationStarted": "Generation job created. Review its scope before dispatching.",
+    "generationFailed": "Could not start the generation job.",
+    "createFailed": "Could not create the test case."
+  },
+  "job": {
+    "title": "Generation Job",
+    "back": "Back",
+    "loading": "Loading job...",
+    "error": "Could not load this job",
+    "retry": "Retry",
+    "meta": {
+      "status": "Status",
+      "createdAt": "Created",
+      "agentTask": "Agent task",
+      "notDispatched": "Not dispatched",
+      "proposals": "Proposals"
+    },
+    "jobStatus": {
+      "queued": "Queued",
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "planStatus": {
+      "draft": "Draft",
+      "approved": "Approved",
+      "dispatched": "Dispatched",
+      "archived": "Archived"
+    },
+    "stats": {
+      "total": "Total",
+      "pending": "Pending",
+      "accepted": "Accepted",
+      "rejected": "Rejected"
+    },
+    "plan": {
+      "title": "Generation Plan",
+      "generate": "Generate Plan",
+      "regenerate": "Regenerate Plan",
+      "save": "Save Plan",
+      "approve": "Approve Plan",
+      "reviewNotes": "Review notes",
+      "reviewNotesPlaceholder": "Optional: reviewer notes",
+      "rawJson": "Plan JSON",
+      "editJson": "Edit raw JSON",
+      "editJsonHint": "Editable before approval",
+      "noPlan": "No plan yet",
+      "noPlanHint": "Generate a plan first, confirm the scope, then approve it.",
+      "repos": "Repositories",
+      "modules": "Modules",
+      "instructions": "Instructions",
+      "notSet": "Not set",
+      "approvedAt": "Approved"
+    },
+    "dispatch": {
+      "title": "Dispatch to Agent",
+      "hint": "Select an agent to run the approved plan and generate test cases.",
+      "agent": "Agent",
+      "noAgent": "No agents available",
+      "button": "Dispatch",
+      "dispatching": "Dispatching...",
+      "running": "Running...",
+      "redispatch": "Re-dispatch",
+      "needsPlan": "Approve the plan before dispatching."
+    },
+    "result": {
+      "title": "Results",
+      "proposals": "AI proposals",
+      "noProposals": "No proposals yet"
+    }
+  },
+  "proposals": {
+    "title": "AI Suggestions",
+    "empty": "No AI suggestions for this case",
+    "loading": "Loading suggestions...",
+    "accept": "Accept",
+    "reject": "Reject",
+    "rationale": "Rationale",
+    "current": "Current",
+    "suggested": "Suggested",
+    "noChange": "No change",
+    "kind": {
+      "update": "Update",
+      "obsolete": "Mark obsolete"
+    },
+    "status": {
+      "pending": "Pending",
+      "accepted": "Accepted",
+      "rejected": "Rejected"
+    }
   }
 }

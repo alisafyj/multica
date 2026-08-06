@@ -11,6 +11,7 @@ import {
   Plus,
   Search,
   Trash2,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -529,10 +530,15 @@ function ResourceRow({
     );
   }
 
+  // The guards above exhaust every resource_type this build knows, so TS
+  // narrows `resource` to never here. resource_type is a free TEXT column on
+  // the server precisely so new types can ship without a client release, and
+  // an older client must still render one as a neutral row rather than crash.
+  const unknownResource = resource as ProjectResource;
   return (
     <div className="flex items-center gap-2 text-caption text-muted-foreground">
       <span className="truncate flex-1">
-        {resource.label || resource.resource_type}
+        {unknownResource.label || unknownResource.resource_type}
       </span>
       <button
         type="button"
@@ -784,8 +790,9 @@ function DocumentForm({
           size="sm"
           className="h-6 px-2 text-caption"
           onClick={onCancel}
+          aria-label={t(($) => $.resources.document_cancel)}
         >
-          ✕
+          <X className="size-3.5" />
         </Button>
         <Button
           type="submit"

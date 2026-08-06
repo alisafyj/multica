@@ -223,6 +223,15 @@ import type {
   ListTestCasesResponse,
   ListTestCaseModulesResponse,
   ListTestCaseRevisionsResponse,
+  TestGenerationJob,
+  TestGenerationPlan,
+  TestCaseProposal,
+  ListTestGenerationJobsResponse,
+  ListTestCaseProposalsResponse,
+  CreateTestGenerationJobRequest,
+  UpdateTestGenerationPlanRequest,
+  DispatchTestGenerationJobRequest,
+  DispatchTestGenerationJobResponse,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
@@ -401,6 +410,17 @@ import {
   EMPTY_LIST_GITHUB_REPOSITORIES_RESPONSE,
   RuntimeModelListRequestSchema,
   MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
+  TestGenerationJobSchema,
+  TestGenerationPlanSchema,
+  TestCaseProposalSchema,
+  ListTestGenerationJobsResponseSchema,
+  ListTestCaseProposalsResponseSchema,
+  DispatchTestGenerationJobResponseSchema,
+  EMPTY_TEST_GENERATION_JOB,
+  EMPTY_TEST_GENERATION_PLAN,
+  EMPTY_TEST_CASE_PROPOSAL,
+  EMPTY_LIST_TEST_GENERATION_JOBS_RESPONSE,
+  EMPTY_LIST_TEST_CASE_PROPOSALS_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -2807,6 +2827,150 @@ export class ApiClient {
       ListTestCaseRevisionsResponseSchema,
       EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE,
       { endpoint: "GET /api/test-cases/:ref/revisions" },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Test generation jobs — Phase 2
+  // ---------------------------------------------------------------------------
+
+  async listTestGenerationJobs(params?: {
+    projectId?: string;
+    status?: string;
+    limit?: number;
+  }): Promise<ListTestGenerationJobsResponse> {
+    const query = new URLSearchParams();
+    if (params?.projectId) query.set("project_id", params.projectId);
+    if (params?.status) query.set("status", params.status);
+    if (params?.limit) query.set("limit", String(params.limit));
+    const qs = query.toString();
+    const raw = await this.fetch<unknown>(
+      qs ? `/api/test-generation-jobs?${qs}` : "/api/test-generation-jobs",
+    );
+    return parseWithFallback(
+      raw,
+      ListTestGenerationJobsResponseSchema,
+      EMPTY_LIST_TEST_GENERATION_JOBS_RESPONSE,
+      { endpoint: "GET /api/test-generation-jobs" },
+    );
+  }
+
+  async createTestGenerationJob(data: CreateTestGenerationJobRequest): Promise<TestGenerationJob> {
+    const raw = await this.fetch<unknown>("/api/test-generation-jobs", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestGenerationJobSchema, EMPTY_TEST_GENERATION_JOB, {
+      endpoint: "POST /api/test-generation-jobs",
+    });
+  }
+
+  async getTestGenerationJob(id: string): Promise<TestGenerationJob> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-generation-jobs/${encodeURIComponent(id)}`,
+    );
+    return parseWithFallback(raw, TestGenerationJobSchema, { ...EMPTY_TEST_GENERATION_JOB, id }, {
+      endpoint: "GET /api/test-generation-jobs/:id",
+    });
+  }
+
+  async getTestGenerationPlan(jobId: string): Promise<TestGenerationPlan> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-generation-jobs/${encodeURIComponent(jobId)}/plan`,
+    );
+    return parseWithFallback(raw, TestGenerationPlanSchema, EMPTY_TEST_GENERATION_PLAN, {
+      endpoint: "GET /api/test-generation-jobs/:id/plan",
+    });
+  }
+
+  async generateTestGenerationPlan(jobId: string): Promise<TestGenerationPlan> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-generation-jobs/${encodeURIComponent(jobId)}/plan/generate`,
+      { method: "POST" },
+    );
+    return parseWithFallback(raw, TestGenerationPlanSchema, EMPTY_TEST_GENERATION_PLAN, {
+      endpoint: "POST /api/test-generation-jobs/:id/plan/generate",
+    });
+  }
+
+  async updateTestGenerationPlan(
+    jobId: string,
+    data: UpdateTestGenerationPlanRequest,
+  ): Promise<TestGenerationPlan> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-generation-jobs/${encodeURIComponent(jobId)}/plan`,
+      { method: "PUT", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(raw, TestGenerationPlanSchema, EMPTY_TEST_GENERATION_PLAN, {
+      endpoint: "PUT /api/test-generation-jobs/:id/plan",
+    });
+  }
+
+  async approveTestGenerationPlan(jobId: string): Promise<TestGenerationPlan> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-generation-jobs/${encodeURIComponent(jobId)}/plan/approve`,
+      { method: "POST" },
+    );
+    return parseWithFallback(raw, TestGenerationPlanSchema, EMPTY_TEST_GENERATION_PLAN, {
+      endpoint: "POST /api/test-generation-jobs/:id/plan/approve",
+    });
+  }
+
+  async dispatchTestGenerationJob(
+    id: string,
+    data: DispatchTestGenerationJobRequest,
+  ): Promise<DispatchTestGenerationJobResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-generation-jobs/${encodeURIComponent(id)}/dispatch`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(
+      raw,
+      DispatchTestGenerationJobResponseSchema,
+      { job: EMPTY_TEST_GENERATION_JOB, agent_task_id: "" },
+      { endpoint: "POST /api/test-generation-jobs/:id/dispatch" },
+    );
+  }
+
+  async listTestCaseProposals(
+    caseRef: string,
+    status?: string,
+  ): Promise<ListTestCaseProposalsResponse> {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+    const raw = await this.fetch<unknown>(
+      `/api/test-cases/${encodeURIComponent(caseRef)}/proposals${qs}`,
+    );
+    return parseWithFallback(
+      raw,
+      ListTestCaseProposalsResponseSchema,
+      EMPTY_LIST_TEST_CASE_PROPOSALS_RESPONSE,
+      { endpoint: "GET /api/test-cases/:ref/proposals" },
+    );
+  }
+
+  async acceptTestCaseProposal(id: string): Promise<TestCaseProposal> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-case-proposals/${encodeURIComponent(id)}/accept`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      TestCaseProposalSchema,
+      { ...EMPTY_TEST_CASE_PROPOSAL, id },
+      { endpoint: "POST /api/test-case-proposals/:id/accept" },
+    );
+  }
+
+  async rejectTestCaseProposal(id: string): Promise<TestCaseProposal> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-case-proposals/${encodeURIComponent(id)}/reject`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      TestCaseProposalSchema,
+      { ...EMPTY_TEST_CASE_PROPOSAL, id },
+      { endpoint: "POST /api/test-case-proposals/:id/reject" },
     );
   }
 

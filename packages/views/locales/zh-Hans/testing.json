@@ -4,7 +4,10 @@
     "empty": "还没有测试用例",
     "emptyHint": "新建一条，或选择其他项目",
     "new": "新建用例",
-    "selectProject": "选择项目"
+    "selectProject": "选择项目",
+    "generate": "AI 生成用例",
+    "generating": "正在发起…",
+    "untitled": "未命名用例"
   },
   "filters": {
     "all": "全部",
@@ -14,6 +17,7 @@
     "type": "类型",
     "origin": "来源",
     "reviewQueue": "待审",
+    "aiReviewQueue": "AI 生成待审",
     "clear": "清除筛选",
     "search": "搜索用例..."
   },
@@ -129,7 +133,9 @@
     "save": "保存",
     "cancel": "取消",
     "edit": "编辑",
-    "confirmDelete": "确定删除这条用例吗？"
+    "confirmDelete": "确定删除这条用例吗？",
+    "batchApprove": "批量通过审查",
+    "selectAll": "全选"
   },
   "toast": {
     "created": "用例已创建",
@@ -137,6 +143,109 @@
     "approved": "用例已通过审查",
     "deleted": "用例已删除",
     "saveFailed": "无法保存修改",
-    "deleteFailed": "无法删除用例"
+    "deleteFailed": "无法删除用例",
+    "planGenerated": "已生成 Plan",
+    "planSaved": "已保存 Plan",
+    "planApproved": "已批准 Plan",
+    "dispatched": "已派发给 Agent",
+    "planFailed": "生成 Plan 失败",
+    "planSaveFailed": "保存 Plan 失败",
+    "planApproveFailed": "批准 Plan 失败",
+    "dispatchFailed": "派发失败",
+    "proposalAccepted": "已采纳建议",
+    "proposalRejected": "已拒绝建议",
+    "proposalFailed": "更新建议状态失败",
+    "batchApproved": "已批量通过 {{count}} 条用例",
+    "generationStarted": "已创建生成任务，派发前先确认覆盖范围。",
+    "generationFailed": "生成任务创建失败。",
+    "createFailed": "用例创建失败。"
+  },
+  "job": {
+    "title": "生成任务",
+    "back": "返回",
+    "loading": "加载中…",
+    "error": "无法加载此任务",
+    "retry": "重试",
+    "meta": {
+      "status": "状态",
+      "createdAt": "创建时间",
+      "agentTask": "Agent 任务",
+      "notDispatched": "尚未派发",
+      "proposals": "建议数"
+    },
+    "jobStatus": {
+      "queued": "排队中",
+      "running": "执行中",
+      "completed": "已完成",
+      "failed": "失败",
+      "cancelled": "已取消"
+    },
+    "planStatus": {
+      "draft": "待审",
+      "approved": "已批准",
+      "dispatched": "已派发",
+      "archived": "已归档"
+    },
+    "stats": {
+      "total": "总数",
+      "pending": "待审",
+      "accepted": "已采纳",
+      "rejected": "已拒绝"
+    },
+    "plan": {
+      "title": "生成计划",
+      "generate": "生成 Plan",
+      "regenerate": "重新生成",
+      "save": "保存 Plan",
+      "approve": "批准 Plan",
+      "reviewNotes": "审核备注",
+      "reviewNotesPlaceholder": "可选：记录审核意见",
+      "rawJson": "Plan JSON",
+      "editJson": "编辑原始 JSON",
+      "editJsonHint": "批准前可编辑",
+      "noPlan": "还没有 Plan",
+      "noPlanHint": "先生成计划，确认范围后再批准。",
+      "repos": "仓库",
+      "modules": "模块",
+      "instructions": "指令",
+      "notSet": "未设置",
+      "approvedAt": "批准时间"
+    },
+    "dispatch": {
+      "title": "派发给 Agent",
+      "hint": "选择 Agent 执行已批准的计划，生成测试用例。",
+      "agent": "Agent",
+      "noAgent": "暂无可用 Agent",
+      "button": "派发",
+      "dispatching": "派发中…",
+      "running": "执行中…",
+      "redispatch": "重新派发",
+      "needsPlan": "请先批准 Plan 再派发。"
+    },
+    "result": {
+      "title": "执行结果",
+      "proposals": "AI 建议列表",
+      "noProposals": "暂无建议"
+    }
+  },
+  "proposals": {
+    "title": "AI 建议",
+    "empty": "暂无 AI 建议",
+    "loading": "加载建议中…",
+    "accept": "采纳",
+    "reject": "拒绝",
+    "rationale": "原因",
+    "current": "当前值",
+    "suggested": "建议值",
+    "noChange": "无变更",
+    "kind": {
+      "update": "更新",
+      "obsolete": "废弃"
+    },
+    "status": {
+      "pending": "待审",
+      "accepted": "已采纳",
+      "rejected": "已拒绝"
+    }
   }
 }

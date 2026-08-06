@@ -127,7 +127,8 @@
     "document_summary_placeholder": "Brief description...",
     "document_submit": "Add",
     "toast_document_attached": "Document attached",
-    "toast_document_attach_failed": "Failed to attach document"
+    "toast_document_attach_failed": "Failed to attach document",
+    "document_cancel": "Cancel"
   },
   "delete_dialog": {
     "title": "Delete project",
