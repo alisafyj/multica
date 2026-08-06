@@ -485,6 +485,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/start", h.StartTask)
 		r.Post("/tasks/{taskId}/wait-local-directory", h.MarkTaskWaitingLocalDirectory)
 		r.Post("/tasks/{taskId}/progress", h.ReportTaskProgress)
+		r.Post("/tasks/{taskId}/project-design-system/package", h.UploadProjectDesignSystemPackage)
 		r.Get("/tasks/{taskId}/open-design/base-archive", h.DownloadOpenDesignBaseArchive)
 		r.Post("/tasks/{taskId}/open-design/preflight", h.RecordOpenDesignRunPreflight)
 		r.Post("/tasks/{taskId}/open-design/start", h.StartOpenDesignRun)

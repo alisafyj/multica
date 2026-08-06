@@ -85,6 +85,130 @@ func (q *Queries) ClearDefaultDesignSystemProfilesForProject(ctx context.Context
 	return err
 }
 
+const clearProjectDesignSystemActiveTask = `-- name: ClearProjectDesignSystemActiveTask :one
+UPDATE project_design_system SET
+    active_task_id = NULL,
+    active_operation = NULL,
+    last_error = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND active_task_id = $3
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+`
+
+type ClearProjectDesignSystemActiveTaskParams struct {
+	ID           pgtype.UUID `json:"id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	ActiveTaskID pgtype.UUID `json:"active_task_id"`
+}
+
+func (q *Queries) ClearProjectDesignSystemActiveTask(ctx context.Context, arg ClearProjectDesignSystemActiveTaskParams) (ProjectDesignSystem, error) {
+	row := q.db.QueryRow(ctx, clearProjectDesignSystemActiveTask, arg.ID, arg.WorkspaceID, arg.ActiveTaskID)
+	var i ProjectDesignSystem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Platform,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+	)
+	return i, err
+}
+
+const clearProjectDesignSystemDraftState = `-- name: ClearProjectDesignSystemDraftState :one
+UPDATE project_design_system SET
+    last_error = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+`
+
+type ClearProjectDesignSystemDraftStateParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) ClearProjectDesignSystemDraftState(ctx context.Context, arg ClearProjectDesignSystemDraftStateParams) (ProjectDesignSystem, error) {
+	row := q.db.QueryRow(ctx, clearProjectDesignSystemDraftState, arg.ID, arg.WorkspaceID)
+	var i ProjectDesignSystem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Platform,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+	)
+	return i, err
+}
+
+const completeProjectDesignSystemRepositoryAnalysis = `-- name: CompleteProjectDesignSystemRepositoryAnalysis :one
+UPDATE project_design_system SET
+    active_task_id = NULL,
+    active_operation = NULL,
+    input_snapshot = $1,
+    last_error = NULL,
+    updated_at = now()
+WHERE id = $2
+  AND workspace_id = $3
+  AND active_task_id = $4
+  AND active_operation = 'repository_analysis'
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+`
+
+type CompleteProjectDesignSystemRepositoryAnalysisParams struct {
+	InputSnapshot []byte      `json:"input_snapshot"`
+	ID            pgtype.UUID `json:"id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ActiveTaskID  pgtype.UUID `json:"active_task_id"`
+}
+
+func (q *Queries) CompleteProjectDesignSystemRepositoryAnalysis(ctx context.Context, arg CompleteProjectDesignSystemRepositoryAnalysisParams) (ProjectDesignSystem, error) {
+	row := q.db.QueryRow(ctx, completeProjectDesignSystemRepositoryAnalysis,
+		arg.InputSnapshot,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.ActiveTaskID,
+	)
+	var i ProjectDesignSystem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Platform,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+	)
+	return i, err
+}
+
 const consumeDesignImportCode = `-- name: ConsumeDesignImportCode :exec
 UPDATE design_import_code
 SET consumed_at = now()
@@ -1003,6 +1127,82 @@ func (q *Queries) CreateDesignTemplateRevision(ctx context.Context, arg CreateDe
 	return i, err
 }
 
+const createProjectDesignSystem = `-- name: CreateProjectDesignSystem :one
+INSERT INTO project_design_system (
+    workspace_id,
+    project_id,
+    name,
+    platform,
+    current_agent_id,
+    active_task_id,
+    active_operation,
+    input_snapshot,
+    last_error,
+    created_by
+)
+SELECT
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10
+FROM project
+WHERE project.id = $2
+  AND project.workspace_id = $1
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+`
+
+type CreateProjectDesignSystemParams struct {
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	ProjectID       pgtype.UUID `json:"project_id"`
+	Name            string      `json:"name"`
+	Platform        string      `json:"platform"`
+	CurrentAgentID  pgtype.UUID `json:"current_agent_id"`
+	ActiveTaskID    pgtype.UUID `json:"active_task_id"`
+	ActiveOperation pgtype.Text `json:"active_operation"`
+	InputSnapshot   []byte      `json:"input_snapshot"`
+	LastError       []byte      `json:"last_error"`
+	CreatedBy       pgtype.UUID `json:"created_by"`
+}
+
+func (q *Queries) CreateProjectDesignSystem(ctx context.Context, arg CreateProjectDesignSystemParams) (ProjectDesignSystem, error) {
+	row := q.db.QueryRow(ctx, createProjectDesignSystem,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Name,
+		arg.Platform,
+		arg.CurrentAgentID,
+		arg.ActiveTaskID,
+		arg.ActiveOperation,
+		arg.InputSnapshot,
+		arg.LastError,
+		arg.CreatedBy,
+	)
+	var i ProjectDesignSystem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Platform,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+	)
+	return i, err
+}
+
 const deleteDesignFile = `-- name: DeleteDesignFile :exec
 DELETE FROM design_file WHERE id = $1 AND workspace_id = $2
 `
@@ -1029,6 +1229,29 @@ type DeleteDesignRestoreMappingsByTaskParams struct {
 
 func (q *Queries) DeleteDesignRestoreMappingsByTask(ctx context.Context, arg DeleteDesignRestoreMappingsByTaskParams) error {
 	_, err := q.db.Exec(ctx, deleteDesignRestoreMappingsByTask, arg.RestoreTaskID, arg.WorkspaceID)
+	return err
+}
+
+const deleteProjectDesignSystemPackageSlot = `-- name: DeleteProjectDesignSystemPackageSlot :exec
+DELETE FROM project_design_system_package
+WHERE design_system_id = $1
+  AND slot = $2
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = project_design_system_package.design_system_id
+        AND project_design_system.workspace_id = $3
+  )
+`
+
+type DeleteProjectDesignSystemPackageSlotParams struct {
+	DesignSystemID pgtype.UUID `json:"design_system_id"`
+	Slot           string      `json:"slot"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) DeleteProjectDesignSystemPackageSlot(ctx context.Context, arg DeleteProjectDesignSystemPackageSlotParams) error {
+	_, err := q.db.Exec(ctx, deleteProjectDesignSystemPackageSlot, arg.DesignSystemID, arg.Slot, arg.WorkspaceID)
 	return err
 }
 
@@ -2033,6 +2256,157 @@ func (q *Queries) GetNextDesignTemplateRevisionNumber(ctx context.Context, templ
 	return next_revision_number, err
 }
 
+const getProjectDesignSystemByProject = `-- name: GetProjectDesignSystemByProject :one
+
+SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at FROM project_design_system
+WHERE workspace_id = $1
+  AND project_id = $2
+`
+
+type GetProjectDesignSystemByProjectParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+// Project design systems
+func (q *Queries) GetProjectDesignSystemByProject(ctx context.Context, arg GetProjectDesignSystemByProjectParams) (ProjectDesignSystem, error) {
+	row := q.db.QueryRow(ctx, getProjectDesignSystemByProject, arg.WorkspaceID, arg.ProjectID)
+	var i ProjectDesignSystem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Platform,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+	)
+	return i, err
+}
+
+const getProjectDesignSystemInWorkspace = `-- name: GetProjectDesignSystemInWorkspace :one
+SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at FROM project_design_system
+WHERE id = $1
+  AND workspace_id = $2
+`
+
+type GetProjectDesignSystemInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetProjectDesignSystemInWorkspace(ctx context.Context, arg GetProjectDesignSystemInWorkspaceParams) (ProjectDesignSystem, error) {
+	row := q.db.QueryRow(ctx, getProjectDesignSystemInWorkspace, arg.ID, arg.WorkspaceID)
+	var i ProjectDesignSystem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Platform,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+	)
+	return i, err
+}
+
+const getProjectDesignSystemInWorkspaceForUpdate = `-- name: GetProjectDesignSystemInWorkspaceForUpdate :one
+SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at FROM project_design_system
+WHERE id = $1
+  AND workspace_id = $2
+FOR UPDATE
+`
+
+type GetProjectDesignSystemInWorkspaceForUpdateParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetProjectDesignSystemInWorkspaceForUpdate(ctx context.Context, arg GetProjectDesignSystemInWorkspaceForUpdateParams) (ProjectDesignSystem, error) {
+	row := q.db.QueryRow(ctx, getProjectDesignSystemInWorkspaceForUpdate, arg.ID, arg.WorkspaceID)
+	var i ProjectDesignSystem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Platform,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+	)
+	return i, err
+}
+
+const getProjectDesignSystemPackageBySlot = `-- name: GetProjectDesignSystemPackageBySlot :one
+SELECT id, design_system_id, slot, design_md, tokens_css, components_html, manifest, validation, integrity_sha256, source_task_id, agent_id, instruction, scope, created_at, updated_at, render_status, render_report, rendered_at, package_schema, archive_object_key, artifact_index, input_snapshot_sha256, base_package_sha256 FROM project_design_system_package
+WHERE design_system_id = $1
+  AND slot = $2
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = project_design_system_package.design_system_id
+        AND project_design_system.workspace_id = $3
+  )
+`
+
+type GetProjectDesignSystemPackageBySlotParams struct {
+	DesignSystemID pgtype.UUID `json:"design_system_id"`
+	Slot           string      `json:"slot"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetProjectDesignSystemPackageBySlot(ctx context.Context, arg GetProjectDesignSystemPackageBySlotParams) (ProjectDesignSystemPackage, error) {
+	row := q.db.QueryRow(ctx, getProjectDesignSystemPackageBySlot, arg.DesignSystemID, arg.Slot, arg.WorkspaceID)
+	var i ProjectDesignSystemPackage
+	err := row.Scan(
+		&i.ID,
+		&i.DesignSystemID,
+		&i.Slot,
+		&i.DesignMd,
+		&i.TokensCss,
+		&i.ComponentsHtml,
+		&i.Manifest,
+		&i.Validation,
+		&i.IntegritySha256,
+		&i.SourceTaskID,
+		&i.AgentID,
+		&i.Instruction,
+		&i.Scope,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RenderStatus,
+		&i.RenderReport,
+		&i.RenderedAt,
+		&i.PackageSchema,
+		&i.ArchiveObjectKey,
+		&i.ArtifactIndex,
+		&i.InputSnapshotSha256,
+		&i.BasePackageSha256,
+	)
+	return i, err
+}
+
 const getReusableDesignRestoreTaskByDelivery = `-- name: GetReusableDesignRestoreTaskByDelivery :one
 SELECT id, workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, error, created_by, created_at, updated_at, delivery_id FROM design_restore_task
 WHERE workspace_id = $1
@@ -2989,6 +3363,73 @@ func (q *Queries) ListDesignTemplates(ctx context.Context, workspaceID pgtype.UU
 	return items, nil
 }
 
+const listProjectDesignSystemTasks = `-- name: ListProjectDesignSystemTasks :many
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason FROM agent_task_queue
+WHERE context->>'project_design_system_id' = $1::uuid::text
+  AND context->>'workspace_id' = $2::uuid::text
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = $1
+        AND project_design_system.workspace_id = $2
+  )
+ORDER BY created_at DESC
+LIMIT $3
+`
+
+type ListProjectDesignSystemTasksParams struct {
+	ProjectDesignSystemID pgtype.UUID `json:"project_design_system_id"`
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	LimitCount            int32       `json:"limit_count"`
+}
+
+func (q *Queries) ListProjectDesignSystemTasks(ctx context.Context, arg ListProjectDesignSystemTasksParams) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, listProjectDesignSystemTasks, arg.ProjectDesignSystemID, arg.WorkspaceID, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markDesignImportCodeFailed = `-- name: MarkDesignImportCodeFailed :exec
 UPDATE design_import_code
 SET failed_attempts = failed_attempts + 1,
@@ -3029,6 +3470,155 @@ func (q *Queries) MarkDesignRestorePlanDispatched(ctx context.Context, arg MarkD
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markProjectDesignSystemSaved = `-- name: MarkProjectDesignSystemSaved :one
+UPDATE project_design_system SET
+    saved_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+`
+
+type MarkProjectDesignSystemSavedParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) MarkProjectDesignSystemSaved(ctx context.Context, arg MarkProjectDesignSystemSavedParams) (ProjectDesignSystem, error) {
+	row := q.db.QueryRow(ctx, markProjectDesignSystemSaved, arg.ID, arg.WorkspaceID)
+	var i ProjectDesignSystem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Platform,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+	)
+	return i, err
+}
+
+const saveProjectDesignSystemDraft = `-- name: SaveProjectDesignSystemDraft :one
+INSERT INTO project_design_system_package (
+    design_system_id,
+    slot,
+    design_md,
+    tokens_css,
+    components_html,
+    manifest,
+    validation,
+    integrity_sha256,
+    source_task_id,
+    agent_id,
+    instruction,
+    scope,
+    render_status,
+    render_report,
+    rendered_at,
+    package_schema,
+    archive_object_key,
+    artifact_index,
+    input_snapshot_sha256,
+    base_package_sha256
+)
+SELECT
+    project_design_system_package.design_system_id,
+    'saved',
+    project_design_system_package.design_md,
+    project_design_system_package.tokens_css,
+    project_design_system_package.components_html,
+    project_design_system_package.manifest,
+    project_design_system_package.validation,
+    project_design_system_package.integrity_sha256,
+    project_design_system_package.source_task_id,
+    project_design_system_package.agent_id,
+    project_design_system_package.instruction,
+    project_design_system_package.scope,
+    project_design_system_package.render_status,
+    project_design_system_package.render_report,
+    project_design_system_package.rendered_at,
+    project_design_system_package.package_schema,
+    project_design_system_package.archive_object_key,
+    project_design_system_package.artifact_index,
+    project_design_system_package.input_snapshot_sha256,
+    project_design_system_package.base_package_sha256
+FROM project_design_system_package
+WHERE project_design_system_package.design_system_id = $1
+  AND project_design_system_package.slot = 'draft'
+  AND project_design_system_package.render_status = 'passed'
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = project_design_system_package.design_system_id
+        AND project_design_system.workspace_id = $2
+  )
+ON CONFLICT (design_system_id, slot) DO UPDATE SET
+    design_md = EXCLUDED.design_md,
+    tokens_css = EXCLUDED.tokens_css,
+    components_html = EXCLUDED.components_html,
+    manifest = EXCLUDED.manifest,
+    validation = EXCLUDED.validation,
+    integrity_sha256 = EXCLUDED.integrity_sha256,
+    source_task_id = EXCLUDED.source_task_id,
+    agent_id = EXCLUDED.agent_id,
+    instruction = EXCLUDED.instruction,
+    scope = EXCLUDED.scope,
+    render_status = EXCLUDED.render_status,
+    render_report = EXCLUDED.render_report,
+    rendered_at = EXCLUDED.rendered_at,
+    package_schema = EXCLUDED.package_schema,
+    archive_object_key = EXCLUDED.archive_object_key,
+    artifact_index = EXCLUDED.artifact_index,
+    input_snapshot_sha256 = EXCLUDED.input_snapshot_sha256,
+    base_package_sha256 = EXCLUDED.base_package_sha256,
+    updated_at = now()
+RETURNING id, design_system_id, slot, design_md, tokens_css, components_html, manifest, validation, integrity_sha256, source_task_id, agent_id, instruction, scope, created_at, updated_at, render_status, render_report, rendered_at, package_schema, archive_object_key, artifact_index, input_snapshot_sha256, base_package_sha256
+`
+
+type SaveProjectDesignSystemDraftParams struct {
+	DesignSystemID pgtype.UUID `json:"design_system_id"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) SaveProjectDesignSystemDraft(ctx context.Context, arg SaveProjectDesignSystemDraftParams) (ProjectDesignSystemPackage, error) {
+	row := q.db.QueryRow(ctx, saveProjectDesignSystemDraft, arg.DesignSystemID, arg.WorkspaceID)
+	var i ProjectDesignSystemPackage
+	err := row.Scan(
+		&i.ID,
+		&i.DesignSystemID,
+		&i.Slot,
+		&i.DesignMd,
+		&i.TokensCss,
+		&i.ComponentsHtml,
+		&i.Manifest,
+		&i.Validation,
+		&i.IntegritySha256,
+		&i.SourceTaskID,
+		&i.AgentID,
+		&i.Instruction,
+		&i.Scope,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RenderStatus,
+		&i.RenderReport,
+		&i.RenderedAt,
+		&i.PackageSchema,
+		&i.ArchiveObjectKey,
+		&i.ArtifactIndex,
+		&i.InputSnapshotSha256,
+		&i.BasePackageSha256,
 	)
 	return i, err
 }
@@ -3102,6 +3692,52 @@ func (q *Queries) SetDesignSystemProfileDefault(ctx context.Context, arg SetDesi
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setProjectDesignSystemFailure = `-- name: SetProjectDesignSystemFailure :one
+UPDATE project_design_system SET
+    active_task_id = NULL,
+    active_operation = NULL,
+    last_error = $1,
+    updated_at = now()
+WHERE id = $2
+  AND workspace_id = $3
+  AND active_task_id = $4
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+`
+
+type SetProjectDesignSystemFailureParams struct {
+	LastError    []byte      `json:"last_error"`
+	ID           pgtype.UUID `json:"id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	ActiveTaskID pgtype.UUID `json:"active_task_id"`
+}
+
+func (q *Queries) SetProjectDesignSystemFailure(ctx context.Context, arg SetProjectDesignSystemFailureParams) (ProjectDesignSystem, error) {
+	row := q.db.QueryRow(ctx, setProjectDesignSystemFailure,
+		arg.LastError,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.ActiveTaskID,
+	)
+	var i ProjectDesignSystem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Platform,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
 	)
 	return i, err
 }
@@ -3465,6 +4101,123 @@ func (q *Queries) UpdateDesignSystemProfileAnalysis(ctx context.Context, arg Upd
 	return i, err
 }
 
+const updateProjectDesignSystemInputAndTask = `-- name: UpdateProjectDesignSystemInputAndTask :one
+UPDATE project_design_system SET
+    platform = $1,
+    current_agent_id = $2,
+    active_task_id = $3,
+    active_operation = $4,
+    input_snapshot = $5,
+    last_error = NULL,
+    updated_at = now()
+WHERE id = $6
+  AND workspace_id = $7
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+`
+
+type UpdateProjectDesignSystemInputAndTaskParams struct {
+	Platform        string      `json:"platform"`
+	CurrentAgentID  pgtype.UUID `json:"current_agent_id"`
+	ActiveTaskID    pgtype.UUID `json:"active_task_id"`
+	ActiveOperation pgtype.Text `json:"active_operation"`
+	InputSnapshot   []byte      `json:"input_snapshot"`
+	ID              pgtype.UUID `json:"id"`
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) UpdateProjectDesignSystemInputAndTask(ctx context.Context, arg UpdateProjectDesignSystemInputAndTaskParams) (ProjectDesignSystem, error) {
+	row := q.db.QueryRow(ctx, updateProjectDesignSystemInputAndTask,
+		arg.Platform,
+		arg.CurrentAgentID,
+		arg.ActiveTaskID,
+		arg.ActiveOperation,
+		arg.InputSnapshot,
+		arg.ID,
+		arg.WorkspaceID,
+	)
+	var i ProjectDesignSystem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Platform,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+	)
+	return i, err
+}
+
+const updateProjectDesignSystemPackageRenderValidation = `-- name: UpdateProjectDesignSystemPackageRenderValidation :one
+UPDATE project_design_system_package SET
+    render_status = $1,
+    render_report = $2,
+    rendered_at = now(),
+    updated_at = now()
+WHERE design_system_id = $3
+  AND slot = 'draft'
+  AND integrity_sha256 = $4
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = project_design_system_package.design_system_id
+        AND project_design_system.workspace_id = $5
+  )
+RETURNING id, design_system_id, slot, design_md, tokens_css, components_html, manifest, validation, integrity_sha256, source_task_id, agent_id, instruction, scope, created_at, updated_at, render_status, render_report, rendered_at, package_schema, archive_object_key, artifact_index, input_snapshot_sha256, base_package_sha256
+`
+
+type UpdateProjectDesignSystemPackageRenderValidationParams struct {
+	RenderStatus    string      `json:"render_status"`
+	RenderReport    []byte      `json:"render_report"`
+	DesignSystemID  pgtype.UUID `json:"design_system_id"`
+	IntegritySha256 string      `json:"integrity_sha256"`
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) UpdateProjectDesignSystemPackageRenderValidation(ctx context.Context, arg UpdateProjectDesignSystemPackageRenderValidationParams) (ProjectDesignSystemPackage, error) {
+	row := q.db.QueryRow(ctx, updateProjectDesignSystemPackageRenderValidation,
+		arg.RenderStatus,
+		arg.RenderReport,
+		arg.DesignSystemID,
+		arg.IntegritySha256,
+		arg.WorkspaceID,
+	)
+	var i ProjectDesignSystemPackage
+	err := row.Scan(
+		&i.ID,
+		&i.DesignSystemID,
+		&i.Slot,
+		&i.DesignMd,
+		&i.TokensCss,
+		&i.ComponentsHtml,
+		&i.Manifest,
+		&i.Validation,
+		&i.IntegritySha256,
+		&i.SourceTaskID,
+		&i.AgentID,
+		&i.Instruction,
+		&i.Scope,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RenderStatus,
+		&i.RenderReport,
+		&i.RenderedAt,
+		&i.PackageSchema,
+		&i.ArchiveObjectKey,
+		&i.ArtifactIndex,
+		&i.InputSnapshotSha256,
+		&i.BasePackageSha256,
+	)
+	return i, err
+}
+
 const upsertDesignAsset = `-- name: UpsertDesignAsset :one
 INSERT INTO design_asset (
     file_id, revision_id, workspace_id, asset_key, kind, url, content_type, size_bytes, metadata, created_by
@@ -3583,537 +4336,6 @@ func (q *Queries) UpsertDesignTemplateSlot(ctx context.Context, arg UpsertDesign
 	return i, err
 }
 
-const clearProjectDesignSystemActiveTask = `-- name: ClearProjectDesignSystemActiveTask :one
-UPDATE project_design_system SET
-    active_task_id = NULL,
-    active_operation = NULL,
-    last_error = NULL,
-    updated_at = now()
-WHERE id = $1
-  AND workspace_id = $2
-  AND active_task_id = $3
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
-`
-
-type ClearProjectDesignSystemActiveTaskParams struct {
-	ID           pgtype.UUID `json:"id"`
-	WorkspaceID  pgtype.UUID `json:"workspace_id"`
-	ActiveTaskID pgtype.UUID `json:"active_task_id"`
-}
-
-func (q *Queries) ClearProjectDesignSystemActiveTask(ctx context.Context, arg ClearProjectDesignSystemActiveTaskParams) (ProjectDesignSystem, error) {
-	row := q.db.QueryRow(ctx, clearProjectDesignSystemActiveTask, arg.ID, arg.WorkspaceID, arg.ActiveTaskID)
-	var i ProjectDesignSystem
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.ProjectID,
-		&i.Name,
-		&i.Platform,
-		&i.CurrentAgentID,
-		&i.ActiveTaskID,
-		&i.ActiveOperation,
-		&i.InputSnapshot,
-		&i.LastError,
-		&i.CreatedBy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.SavedAt,
-	)
-	return i, err
-}
-
-const createProjectDesignSystem = `-- name: CreateProjectDesignSystem :one
-INSERT INTO project_design_system (
-    workspace_id,
-    project_id,
-    name,
-    platform,
-    current_agent_id,
-    active_task_id,
-    active_operation,
-    input_snapshot,
-    last_error,
-    created_by
-)
-SELECT
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $10
-FROM project
-WHERE project.id = $2
-  AND project.workspace_id = $1
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
-`
-
-type CreateProjectDesignSystemParams struct {
-	WorkspaceID     pgtype.UUID `json:"workspace_id"`
-	ProjectID       pgtype.UUID `json:"project_id"`
-	Name            string      `json:"name"`
-	Platform        string      `json:"platform"`
-	CurrentAgentID  pgtype.UUID `json:"current_agent_id"`
-	ActiveTaskID    pgtype.UUID `json:"active_task_id"`
-	ActiveOperation pgtype.Text `json:"active_operation"`
-	InputSnapshot   []byte      `json:"input_snapshot"`
-	LastError       []byte      `json:"last_error"`
-	CreatedBy       pgtype.UUID `json:"created_by"`
-}
-
-func (q *Queries) CreateProjectDesignSystem(ctx context.Context, arg CreateProjectDesignSystemParams) (ProjectDesignSystem, error) {
-	row := q.db.QueryRow(ctx, createProjectDesignSystem,
-		arg.WorkspaceID,
-		arg.ProjectID,
-		arg.Name,
-		arg.Platform,
-		arg.CurrentAgentID,
-		arg.ActiveTaskID,
-		arg.ActiveOperation,
-		arg.InputSnapshot,
-		arg.LastError,
-		arg.CreatedBy,
-	)
-	var i ProjectDesignSystem
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.ProjectID,
-		&i.Name,
-		&i.Platform,
-		&i.CurrentAgentID,
-		&i.ActiveTaskID,
-		&i.ActiveOperation,
-		&i.InputSnapshot,
-		&i.LastError,
-		&i.CreatedBy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.SavedAt,
-	)
-	return i, err
-}
-
-const deleteProjectDesignSystemPackageSlot = `-- name: DeleteProjectDesignSystemPackageSlot :exec
-DELETE FROM project_design_system_package
-WHERE design_system_id = $1
-  AND slot = $2
-  AND EXISTS (
-      SELECT 1
-      FROM project_design_system
-      WHERE project_design_system.id = project_design_system_package.design_system_id
-        AND project_design_system.workspace_id = $3
-  )
-`
-
-type DeleteProjectDesignSystemPackageSlotParams struct {
-	DesignSystemID pgtype.UUID `json:"design_system_id"`
-	Slot           string      `json:"slot"`
-	WorkspaceID    pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) DeleteProjectDesignSystemPackageSlot(ctx context.Context, arg DeleteProjectDesignSystemPackageSlotParams) error {
-	_, err := q.db.Exec(ctx, deleteProjectDesignSystemPackageSlot, arg.DesignSystemID, arg.Slot, arg.WorkspaceID)
-	return err
-}
-
-const getProjectDesignSystemByProject = `-- name: GetProjectDesignSystemByProject :one
-
-SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at FROM project_design_system
-WHERE workspace_id = $1
-  AND project_id = $2
-`
-
-type GetProjectDesignSystemByProjectParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	ProjectID   pgtype.UUID `json:"project_id"`
-}
-
-// Project design systems
-func (q *Queries) GetProjectDesignSystemByProject(ctx context.Context, arg GetProjectDesignSystemByProjectParams) (ProjectDesignSystem, error) {
-	row := q.db.QueryRow(ctx, getProjectDesignSystemByProject, arg.WorkspaceID, arg.ProjectID)
-	var i ProjectDesignSystem
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.ProjectID,
-		&i.Name,
-		&i.Platform,
-		&i.CurrentAgentID,
-		&i.ActiveTaskID,
-		&i.ActiveOperation,
-		&i.InputSnapshot,
-		&i.LastError,
-		&i.CreatedBy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.SavedAt,
-	)
-	return i, err
-}
-
-const getProjectDesignSystemInWorkspace = `-- name: GetProjectDesignSystemInWorkspace :one
-SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at FROM project_design_system
-WHERE id = $1
-  AND workspace_id = $2
-`
-
-type GetProjectDesignSystemInWorkspaceParams struct {
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) GetProjectDesignSystemInWorkspace(ctx context.Context, arg GetProjectDesignSystemInWorkspaceParams) (ProjectDesignSystem, error) {
-	row := q.db.QueryRow(ctx, getProjectDesignSystemInWorkspace, arg.ID, arg.WorkspaceID)
-	var i ProjectDesignSystem
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.ProjectID,
-		&i.Name,
-		&i.Platform,
-		&i.CurrentAgentID,
-		&i.ActiveTaskID,
-		&i.ActiveOperation,
-		&i.InputSnapshot,
-		&i.LastError,
-		&i.CreatedBy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.SavedAt,
-	)
-	return i, err
-}
-
-const getProjectDesignSystemPackageBySlot = `-- name: GetProjectDesignSystemPackageBySlot :one
-SELECT id, design_system_id, slot, design_md, tokens_css, components_html, manifest, validation, integrity_sha256, source_task_id, agent_id, instruction, scope, created_at, updated_at FROM project_design_system_package
-WHERE design_system_id = $1
-  AND slot = $2
-  AND EXISTS (
-      SELECT 1
-      FROM project_design_system
-      WHERE project_design_system.id = project_design_system_package.design_system_id
-        AND project_design_system.workspace_id = $3
-  )
-`
-
-type GetProjectDesignSystemPackageBySlotParams struct {
-	DesignSystemID pgtype.UUID `json:"design_system_id"`
-	Slot           string      `json:"slot"`
-	WorkspaceID    pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) GetProjectDesignSystemPackageBySlot(ctx context.Context, arg GetProjectDesignSystemPackageBySlotParams) (ProjectDesignSystemPackage, error) {
-	row := q.db.QueryRow(ctx, getProjectDesignSystemPackageBySlot, arg.DesignSystemID, arg.Slot, arg.WorkspaceID)
-	var i ProjectDesignSystemPackage
-	err := row.Scan(
-		&i.ID,
-		&i.DesignSystemID,
-		&i.Slot,
-		&i.DesignMd,
-		&i.TokensCss,
-		&i.ComponentsHtml,
-		&i.Manifest,
-		&i.Validation,
-		&i.IntegritySha256,
-		&i.SourceTaskID,
-		&i.AgentID,
-		&i.Instruction,
-		&i.Scope,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const listProjectDesignSystemTasks = `-- name: ListProjectDesignSystemTasks :many
-SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason FROM agent_task_queue
-WHERE context->>'project_design_system_id' = $1::uuid::text
-  AND context->>'workspace_id' = $2::uuid::text
-  AND EXISTS (
-      SELECT 1
-      FROM project_design_system
-      WHERE project_design_system.id = $1
-        AND project_design_system.workspace_id = $2
-  )
-ORDER BY created_at DESC
-LIMIT $3
-`
-
-type ListProjectDesignSystemTasksParams struct {
-	ProjectDesignSystemID pgtype.UUID `json:"project_design_system_id"`
-	WorkspaceID           pgtype.UUID `json:"workspace_id"`
-	LimitCount            int32       `json:"limit_count"`
-}
-
-func (q *Queries) ListProjectDesignSystemTasks(ctx context.Context, arg ListProjectDesignSystemTasksParams) ([]AgentTaskQueue, error) {
-	rows, err := q.db.Query(ctx, listProjectDesignSystemTasks, arg.ProjectDesignSystemID, arg.WorkspaceID, arg.LimitCount)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []AgentTaskQueue{}
-	for rows.Next() {
-		var i AgentTaskQueue
-		if err := rows.Scan(
-			&i.ID,
-			&i.AgentID,
-			&i.IssueID,
-			&i.Status,
-			&i.Priority,
-			&i.DispatchedAt,
-			&i.StartedAt,
-			&i.CompletedAt,
-			&i.Result,
-			&i.Error,
-			&i.CreatedAt,
-			&i.Context,
-			&i.RuntimeID,
-			&i.SessionID,
-			&i.WorkDir,
-			&i.TriggerCommentID,
-			&i.ChatSessionID,
-			&i.AutopilotRunID,
-			&i.Attempt,
-			&i.MaxAttempts,
-			&i.ParentTaskID,
-			&i.FailureReason,
-			&i.TriggerSummary,
-			&i.ForceFreshSession,
-			&i.IsLeaderTask,
-			&i.WaitReason,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const markProjectDesignSystemSaved = `-- name: MarkProjectDesignSystemSaved :one
-UPDATE project_design_system SET
-    saved_at = now(),
-    updated_at = now()
-WHERE id = $1
-  AND workspace_id = $2
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
-`
-
-type MarkProjectDesignSystemSavedParams struct {
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) MarkProjectDesignSystemSaved(ctx context.Context, arg MarkProjectDesignSystemSavedParams) (ProjectDesignSystem, error) {
-	row := q.db.QueryRow(ctx, markProjectDesignSystemSaved, arg.ID, arg.WorkspaceID)
-	var i ProjectDesignSystem
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.ProjectID,
-		&i.Name,
-		&i.Platform,
-		&i.CurrentAgentID,
-		&i.ActiveTaskID,
-		&i.ActiveOperation,
-		&i.InputSnapshot,
-		&i.LastError,
-		&i.CreatedBy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.SavedAt,
-	)
-	return i, err
-}
-
-const saveProjectDesignSystemDraft = `-- name: SaveProjectDesignSystemDraft :one
-INSERT INTO project_design_system_package (
-    design_system_id,
-    slot,
-    design_md,
-    tokens_css,
-    components_html,
-    manifest,
-    validation,
-    integrity_sha256,
-    source_task_id,
-    agent_id,
-    instruction,
-    scope
-)
-SELECT
-    project_design_system_package.design_system_id,
-    'saved',
-    project_design_system_package.design_md,
-    project_design_system_package.tokens_css,
-    project_design_system_package.components_html,
-    project_design_system_package.manifest,
-    project_design_system_package.validation,
-    project_design_system_package.integrity_sha256,
-    project_design_system_package.source_task_id,
-    project_design_system_package.agent_id,
-    project_design_system_package.instruction,
-    project_design_system_package.scope
-FROM project_design_system_package
-WHERE project_design_system_package.design_system_id = $1
-  AND project_design_system_package.slot = 'draft'
-  AND EXISTS (
-      SELECT 1
-      FROM project_design_system
-      WHERE project_design_system.id = project_design_system_package.design_system_id
-        AND project_design_system.workspace_id = $2
-  )
-ON CONFLICT (design_system_id, slot) DO UPDATE SET
-    design_md = EXCLUDED.design_md,
-    tokens_css = EXCLUDED.tokens_css,
-    components_html = EXCLUDED.components_html,
-    manifest = EXCLUDED.manifest,
-    validation = EXCLUDED.validation,
-    integrity_sha256 = EXCLUDED.integrity_sha256,
-    source_task_id = EXCLUDED.source_task_id,
-    agent_id = EXCLUDED.agent_id,
-    instruction = EXCLUDED.instruction,
-    scope = EXCLUDED.scope,
-    updated_at = now()
-RETURNING id, design_system_id, slot, design_md, tokens_css, components_html, manifest, validation, integrity_sha256, source_task_id, agent_id, instruction, scope, created_at, updated_at
-`
-
-type SaveProjectDesignSystemDraftParams struct {
-	DesignSystemID pgtype.UUID `json:"design_system_id"`
-	WorkspaceID    pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) SaveProjectDesignSystemDraft(ctx context.Context, arg SaveProjectDesignSystemDraftParams) (ProjectDesignSystemPackage, error) {
-	row := q.db.QueryRow(ctx, saveProjectDesignSystemDraft, arg.DesignSystemID, arg.WorkspaceID)
-	var i ProjectDesignSystemPackage
-	err := row.Scan(
-		&i.ID,
-		&i.DesignSystemID,
-		&i.Slot,
-		&i.DesignMd,
-		&i.TokensCss,
-		&i.ComponentsHtml,
-		&i.Manifest,
-		&i.Validation,
-		&i.IntegritySha256,
-		&i.SourceTaskID,
-		&i.AgentID,
-		&i.Instruction,
-		&i.Scope,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const setProjectDesignSystemFailure = `-- name: SetProjectDesignSystemFailure :one
-UPDATE project_design_system SET
-    active_task_id = NULL,
-    active_operation = NULL,
-    last_error = $1,
-    updated_at = now()
-WHERE id = $2
-  AND workspace_id = $3
-  AND active_task_id = $4
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
-`
-
-type SetProjectDesignSystemFailureParams struct {
-	LastError    []byte      `json:"last_error"`
-	ID           pgtype.UUID `json:"id"`
-	WorkspaceID  pgtype.UUID `json:"workspace_id"`
-	ActiveTaskID pgtype.UUID `json:"active_task_id"`
-}
-
-func (q *Queries) SetProjectDesignSystemFailure(ctx context.Context, arg SetProjectDesignSystemFailureParams) (ProjectDesignSystem, error) {
-	row := q.db.QueryRow(ctx, setProjectDesignSystemFailure,
-		arg.LastError,
-		arg.ID,
-		arg.WorkspaceID,
-		arg.ActiveTaskID,
-	)
-	var i ProjectDesignSystem
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.ProjectID,
-		&i.Name,
-		&i.Platform,
-		&i.CurrentAgentID,
-		&i.ActiveTaskID,
-		&i.ActiveOperation,
-		&i.InputSnapshot,
-		&i.LastError,
-		&i.CreatedBy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.SavedAt,
-	)
-	return i, err
-}
-
-const updateProjectDesignSystemInputAndTask = `-- name: UpdateProjectDesignSystemInputAndTask :one
-UPDATE project_design_system SET
-    platform = $1,
-    current_agent_id = $2,
-    active_task_id = $3,
-    active_operation = $4,
-    input_snapshot = $5,
-    last_error = NULL,
-    updated_at = now()
-WHERE id = $6
-  AND workspace_id = $7
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
-`
-
-type UpdateProjectDesignSystemInputAndTaskParams struct {
-	Platform        string      `json:"platform"`
-	CurrentAgentID  pgtype.UUID `json:"current_agent_id"`
-	ActiveTaskID    pgtype.UUID `json:"active_task_id"`
-	ActiveOperation pgtype.Text `json:"active_operation"`
-	InputSnapshot   []byte      `json:"input_snapshot"`
-	ID              pgtype.UUID `json:"id"`
-	WorkspaceID     pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) UpdateProjectDesignSystemInputAndTask(ctx context.Context, arg UpdateProjectDesignSystemInputAndTaskParams) (ProjectDesignSystem, error) {
-	row := q.db.QueryRow(ctx, updateProjectDesignSystemInputAndTask,
-		arg.Platform,
-		arg.CurrentAgentID,
-		arg.ActiveTaskID,
-		arg.ActiveOperation,
-		arg.InputSnapshot,
-		arg.ID,
-		arg.WorkspaceID,
-	)
-	var i ProjectDesignSystem
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.ProjectID,
-		&i.Name,
-		&i.Platform,
-		&i.CurrentAgentID,
-		&i.ActiveTaskID,
-		&i.ActiveOperation,
-		&i.InputSnapshot,
-		&i.LastError,
-		&i.CreatedBy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.SavedAt,
-	)
-	return i, err
-}
-
 const upsertProjectDesignSystemPackage = `-- name: UpsertProjectDesignSystemPackage :one
 INSERT INTO project_design_system_package (
     design_system_id,
@@ -4127,7 +4349,15 @@ INSERT INTO project_design_system_package (
     source_task_id,
     agent_id,
     instruction,
-    scope
+    scope,
+    render_status,
+    render_report,
+    rendered_at,
+    package_schema,
+    archive_object_key,
+    artifact_index,
+    input_snapshot_sha256,
+    base_package_sha256
 )
 SELECT
     $1,
@@ -4141,12 +4371,20 @@ SELECT
     $9,
     $10,
     $11,
-    $12
+    $12,
+    'pending',
+    '{}'::jsonb,
+    NULL::timestamptz,
+    COALESCE(NULLIF($13::text, ''), 'legacy'),
+    $14::text,
+    COALESCE($15::jsonb, '[]'::jsonb),
+    $16::text,
+    $17::text
 WHERE EXISTS (
     SELECT 1
     FROM project_design_system
     WHERE project_design_system.id = $1
-      AND project_design_system.workspace_id = $13
+      AND project_design_system.workspace_id = $18
 )
 ON CONFLICT (design_system_id, slot) DO UPDATE SET
     design_md = EXCLUDED.design_md,
@@ -4159,24 +4397,37 @@ ON CONFLICT (design_system_id, slot) DO UPDATE SET
     agent_id = EXCLUDED.agent_id,
     instruction = EXCLUDED.instruction,
     scope = EXCLUDED.scope,
+    render_status = EXCLUDED.render_status,
+    render_report = EXCLUDED.render_report,
+    rendered_at = EXCLUDED.rendered_at,
+    package_schema = EXCLUDED.package_schema,
+    archive_object_key = EXCLUDED.archive_object_key,
+    artifact_index = EXCLUDED.artifact_index,
+    input_snapshot_sha256 = EXCLUDED.input_snapshot_sha256,
+    base_package_sha256 = EXCLUDED.base_package_sha256,
     updated_at = now()
-RETURNING id, design_system_id, slot, design_md, tokens_css, components_html, manifest, validation, integrity_sha256, source_task_id, agent_id, instruction, scope, created_at, updated_at
+RETURNING id, design_system_id, slot, design_md, tokens_css, components_html, manifest, validation, integrity_sha256, source_task_id, agent_id, instruction, scope, created_at, updated_at, render_status, render_report, rendered_at, package_schema, archive_object_key, artifact_index, input_snapshot_sha256, base_package_sha256
 `
 
 type UpsertProjectDesignSystemPackageParams struct {
-	DesignSystemID  pgtype.UUID `json:"design_system_id"`
-	Slot            string      `json:"slot"`
-	DesignMd        string      `json:"design_md"`
-	TokensCss       string      `json:"tokens_css"`
-	ComponentsHtml  string      `json:"components_html"`
-	Manifest        []byte      `json:"manifest"`
-	Validation      []byte      `json:"validation"`
-	IntegritySha256 string      `json:"integrity_sha256"`
-	SourceTaskID    pgtype.UUID `json:"source_task_id"`
-	AgentID         pgtype.UUID `json:"agent_id"`
-	Instruction     pgtype.Text `json:"instruction"`
-	Scope           []byte      `json:"scope"`
-	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	DesignSystemID      pgtype.UUID `json:"design_system_id"`
+	Slot                string      `json:"slot"`
+	DesignMd            string      `json:"design_md"`
+	TokensCss           string      `json:"tokens_css"`
+	ComponentsHtml      string      `json:"components_html"`
+	Manifest            []byte      `json:"manifest"`
+	Validation          []byte      `json:"validation"`
+	IntegritySha256     string      `json:"integrity_sha256"`
+	SourceTaskID        pgtype.UUID `json:"source_task_id"`
+	AgentID             pgtype.UUID `json:"agent_id"`
+	Instruction         pgtype.Text `json:"instruction"`
+	Scope               []byte      `json:"scope"`
+	PackageSchema       string      `json:"package_schema"`
+	ArchiveObjectKey    pgtype.Text `json:"archive_object_key"`
+	ArtifactIndex       []byte      `json:"artifact_index"`
+	InputSnapshotSha256 pgtype.Text `json:"input_snapshot_sha256"`
+	BasePackageSha256   pgtype.Text `json:"base_package_sha256"`
+	WorkspaceID         pgtype.UUID `json:"workspace_id"`
 }
 
 func (q *Queries) UpsertProjectDesignSystemPackage(ctx context.Context, arg UpsertProjectDesignSystemPackageParams) (ProjectDesignSystemPackage, error) {
@@ -4193,6 +4444,11 @@ func (q *Queries) UpsertProjectDesignSystemPackage(ctx context.Context, arg Upse
 		arg.AgentID,
 		arg.Instruction,
 		arg.Scope,
+		arg.PackageSchema,
+		arg.ArchiveObjectKey,
+		arg.ArtifactIndex,
+		arg.InputSnapshotSha256,
+		arg.BasePackageSha256,
 		arg.WorkspaceID,
 	)
 	var i ProjectDesignSystemPackage
@@ -4212,123 +4468,14 @@ func (q *Queries) UpsertProjectDesignSystemPackage(ctx context.Context, arg Upse
 		&i.Scope,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const clearProjectDesignSystemDraftState = `-- name: ClearProjectDesignSystemDraftState :one
-UPDATE project_design_system SET
-    last_error = NULL,
-    updated_at = now()
-WHERE id = $1
-  AND workspace_id = $2
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
-`
-
-type ClearProjectDesignSystemDraftStateParams struct {
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) ClearProjectDesignSystemDraftState(ctx context.Context, arg ClearProjectDesignSystemDraftStateParams) (ProjectDesignSystem, error) {
-	row := q.db.QueryRow(ctx, clearProjectDesignSystemDraftState, arg.ID, arg.WorkspaceID)
-	var i ProjectDesignSystem
-	err := row.Scan(
-		&i.ID, &i.WorkspaceID, &i.ProjectID, &i.Name, &i.Platform,
-		&i.CurrentAgentID, &i.ActiveTaskID, &i.ActiveOperation, &i.InputSnapshot,
-		&i.LastError, &i.CreatedBy, &i.CreatedAt, &i.UpdatedAt, &i.SavedAt,
-	)
-	return i, err
-}
-
-const completeProjectDesignSystemRepositoryAnalysis = `-- name: CompleteProjectDesignSystemRepositoryAnalysis :one
-UPDATE project_design_system SET
-    active_task_id = NULL,
-    active_operation = NULL,
-    input_snapshot = $1,
-    last_error = NULL,
-    updated_at = now()
-WHERE id = $2
-  AND workspace_id = $3
-  AND active_task_id = $4
-  AND active_operation = 'repository_analysis'
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
-`
-
-type CompleteProjectDesignSystemRepositoryAnalysisParams struct {
-	InputSnapshot []byte      `json:"input_snapshot"`
-	ID            pgtype.UUID `json:"id"`
-	WorkspaceID   pgtype.UUID `json:"workspace_id"`
-	ActiveTaskID  pgtype.UUID `json:"active_task_id"`
-}
-
-func (q *Queries) CompleteProjectDesignSystemRepositoryAnalysis(ctx context.Context, arg CompleteProjectDesignSystemRepositoryAnalysisParams) (ProjectDesignSystem, error) {
-	row := q.db.QueryRow(ctx, completeProjectDesignSystemRepositoryAnalysis, arg.InputSnapshot, arg.ID, arg.WorkspaceID, arg.ActiveTaskID)
-	var i ProjectDesignSystem
-	err := row.Scan(
-		&i.ID, &i.WorkspaceID, &i.ProjectID, &i.Name, &i.Platform,
-		&i.CurrentAgentID, &i.ActiveTaskID, &i.ActiveOperation, &i.InputSnapshot,
-		&i.LastError, &i.CreatedBy, &i.CreatedAt, &i.UpdatedAt, &i.SavedAt,
-	)
-	return i, err
-}
-
-const getProjectDesignSystemInWorkspaceForUpdate = `-- name: GetProjectDesignSystemInWorkspaceForUpdate :one
-SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at FROM project_design_system
-WHERE id = $1
-  AND workspace_id = $2
-FOR UPDATE
-`
-
-type GetProjectDesignSystemInWorkspaceForUpdateParams struct {
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) GetProjectDesignSystemInWorkspaceForUpdate(ctx context.Context, arg GetProjectDesignSystemInWorkspaceForUpdateParams) (ProjectDesignSystem, error) {
-	row := q.db.QueryRow(ctx, getProjectDesignSystemInWorkspaceForUpdate, arg.ID, arg.WorkspaceID)
-	var i ProjectDesignSystem
-	err := row.Scan(
-		&i.ID, &i.WorkspaceID, &i.ProjectID, &i.Name, &i.Platform,
-		&i.CurrentAgentID, &i.ActiveTaskID, &i.ActiveOperation, &i.InputSnapshot,
-		&i.LastError, &i.CreatedBy, &i.CreatedAt, &i.UpdatedAt, &i.SavedAt,
-	)
-	return i, err
-}
-
-const updateProjectDesignSystemPackageRenderValidation = `-- name: UpdateProjectDesignSystemPackageRenderValidation :one
-UPDATE project_design_system_package SET
-    render_status = $1,
-    render_report = $2,
-    rendered_at = now(),
-    updated_at = now()
-WHERE design_system_id = $3
-  AND slot = 'draft'
-  AND integrity_sha256 = $4
-  AND EXISTS (
-      SELECT 1 FROM project_design_system
-      WHERE project_design_system.id = project_design_system_package.design_system_id
-        AND project_design_system.workspace_id = $5
-  )
-RETURNING id, design_system_id, slot, design_md, tokens_css, components_html, manifest, validation, integrity_sha256, source_task_id, agent_id, instruction, scope, created_at, updated_at, render_status, render_report, rendered_at
-`
-
-type UpdateProjectDesignSystemPackageRenderValidationParams struct {
-	RenderStatus    string      `json:"render_status"`
-	RenderReport    []byte      `json:"render_report"`
-	DesignSystemID  pgtype.UUID `json:"design_system_id"`
-	IntegritySha256 string      `json:"integrity_sha256"`
-	WorkspaceID     pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) UpdateProjectDesignSystemPackageRenderValidation(ctx context.Context, arg UpdateProjectDesignSystemPackageRenderValidationParams) (ProjectDesignSystemPackage, error) {
-	row := q.db.QueryRow(ctx, updateProjectDesignSystemPackageRenderValidation, arg.RenderStatus, arg.RenderReport, arg.DesignSystemID, arg.IntegritySha256, arg.WorkspaceID)
-	var i ProjectDesignSystemPackage
-	err := row.Scan(
-		&i.ID, &i.DesignSystemID, &i.Slot, &i.DesignMd, &i.TokensCss,
-		&i.ComponentsHtml, &i.Manifest, &i.Validation, &i.IntegritySha256,
-		&i.SourceTaskID, &i.AgentID, &i.Instruction, &i.Scope, &i.CreatedAt,
-		&i.UpdatedAt, &i.RenderStatus, &i.RenderReport, &i.RenderedAt,
+		&i.RenderStatus,
+		&i.RenderReport,
+		&i.RenderedAt,
+		&i.PackageSchema,
+		&i.ArchiveObjectKey,
+		&i.ArtifactIndex,
+		&i.InputSnapshotSha256,
+		&i.BasePackageSha256,
 	)
 	return i, err
 }

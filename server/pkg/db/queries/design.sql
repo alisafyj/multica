@@ -997,7 +997,12 @@ INSERT INTO project_design_system_package (
     scope,
     render_status,
     render_report,
-    rendered_at
+    rendered_at,
+    package_schema,
+    archive_object_key,
+    artifact_index,
+    input_snapshot_sha256,
+    base_package_sha256
 )
 SELECT
     sqlc.arg('design_system_id'),
@@ -1014,7 +1019,12 @@ SELECT
     sqlc.narg('scope'),
     'pending',
     '{}'::jsonb,
-    NULL::timestamptz
+    NULL::timestamptz,
+    COALESCE(NULLIF(sqlc.arg('package_schema')::text, ''), 'legacy'),
+    sqlc.narg('archive_object_key')::text,
+    COALESCE(sqlc.arg('artifact_index')::jsonb, '[]'::jsonb),
+    sqlc.narg('input_snapshot_sha256')::text,
+    sqlc.narg('base_package_sha256')::text
 WHERE EXISTS (
     SELECT 1
     FROM project_design_system
@@ -1035,6 +1045,11 @@ ON CONFLICT (design_system_id, slot) DO UPDATE SET
     render_status = EXCLUDED.render_status,
     render_report = EXCLUDED.render_report,
     rendered_at = EXCLUDED.rendered_at,
+    package_schema = EXCLUDED.package_schema,
+    archive_object_key = EXCLUDED.archive_object_key,
+    artifact_index = EXCLUDED.artifact_index,
+    input_snapshot_sha256 = EXCLUDED.input_snapshot_sha256,
+    base_package_sha256 = EXCLUDED.base_package_sha256,
     updated_at = now()
 RETURNING *;
 
@@ -1054,7 +1069,12 @@ INSERT INTO project_design_system_package (
     scope,
     render_status,
     render_report,
-    rendered_at
+    rendered_at,
+    package_schema,
+    archive_object_key,
+    artifact_index,
+    input_snapshot_sha256,
+    base_package_sha256
 )
 SELECT
     project_design_system_package.design_system_id,
@@ -1071,7 +1091,12 @@ SELECT
     project_design_system_package.scope,
     project_design_system_package.render_status,
     project_design_system_package.render_report,
-    project_design_system_package.rendered_at
+    project_design_system_package.rendered_at,
+    project_design_system_package.package_schema,
+    project_design_system_package.archive_object_key,
+    project_design_system_package.artifact_index,
+    project_design_system_package.input_snapshot_sha256,
+    project_design_system_package.base_package_sha256
 FROM project_design_system_package
 WHERE project_design_system_package.design_system_id = sqlc.arg('design_system_id')
   AND project_design_system_package.slot = 'draft'
@@ -1096,6 +1121,11 @@ ON CONFLICT (design_system_id, slot) DO UPDATE SET
     render_status = EXCLUDED.render_status,
     render_report = EXCLUDED.render_report,
     rendered_at = EXCLUDED.rendered_at,
+    package_schema = EXCLUDED.package_schema,
+    archive_object_key = EXCLUDED.archive_object_key,
+    artifact_index = EXCLUDED.artifact_index,
+    input_snapshot_sha256 = EXCLUDED.input_snapshot_sha256,
+    base_package_sha256 = EXCLUDED.base_package_sha256,
     updated_at = now()
 RETURNING *;
 
@@ -1122,4 +1152,3 @@ WHERE context->>'project_design_system_id' = sqlc.arg('project_design_system_id'
   )
 ORDER BY created_at DESC
 LIMIT sqlc.arg('limit_count');
-

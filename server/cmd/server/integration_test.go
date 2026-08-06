@@ -466,6 +466,28 @@ func TestProjectDesignSystemRoutesRequireAuth(t *testing.T) {
 	}
 }
 
+func TestProjectDesignSystemPackageRouteRequiresDaemonAuth(t *testing.T) {
+	const taskID = "00000000-0000-0000-0000-000000000001"
+	req, err := http.NewRequest(
+		http.MethodPost,
+		testServer.URL+"/api/daemon/tasks/"+taskID+"/project-design-system/package",
+		bytes.NewReader([]byte("archive")),
+	)
+	if err != nil {
+		t.Fatalf("create package upload request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/zip")
+	req.Header.Set("X-Multica-Design-Package-Digest", "sha256:"+strings.Repeat("a", 64))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("package upload request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", resp.StatusCode)
+	}
+}
+
 func TestInvalidJWT(t *testing.T) {
 	cases := []struct {
 		name  string
