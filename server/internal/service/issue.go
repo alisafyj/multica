@@ -188,6 +188,28 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
 
+	res, err := s.createInTx(ctx, tx, qtx, p)
+	if err != nil {
+		return IssueCreateResult{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
+	}
+
+	return s.afterCreate(ctx, res, p, opts), nil
+}
+
+// createInTx runs the transaction-local steps of Create (parent/project
+// validation, label validation, duplicate guard, counter, position, row
+// insert with optional origin, design-role metadata, label attach) against
+// the caller-owned transaction. It makes NO commit and NO post-commit side
+// effects. Public Create owns begin/commit; PMO apply reuses this inside its
+// own multi-entity transaction so the whole hierarchy commits atomically
+// with the same validation semantics. p.AllowDuplicate lets the caller opt
+// out of the duplicate guard — PMO apply passes true because it owns entity
+// identity through pmo_sync_link.
+func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Queries, p IssueCreateParams) (IssueCreateResult, error) {
 	// Resolve and validate parent / project before reading from the
 	// duplicate guard so a forged parent or project ID is rejected
 	// before we touch the issue counter. Both checks scope by
@@ -334,11 +356,19 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
-	}
+	return IssueCreateResult{Issue: issue, Labels: labels}, nil
+}
 
+// afterCreate runs the post-commit effects for a created issue: attachment
+// linking, issue:created event, analytics, and assignment-driven enqueue.
+// Called by public Create after its own commit; PMO apply calls it once per
+// created issue after the apply transaction commits. Attachment linking
+// uses s.Queries (post-commit is outside the caller's transaction).
+func (s *IssueService) afterCreate(ctx context.Context, res IssueCreateResult, p IssueCreateParams, opts IssueCreateOpts) IssueCreateResult {
+	issue := res.Issue
+	labels := res.Labels
 	attachments := s.linkAttachments(ctx, issue, p.AttachmentIDs)
+	res.Attachments = attachments
 
 	actorID := opts.ActorID
 	if actorID == "" {
@@ -349,7 +379,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
 	s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID)
 
-	return IssueCreateResult{Issue: issue, Attachments: attachments, Labels: labels}, nil
+	return res
 }
 
 const (

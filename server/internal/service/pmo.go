@@ -74,6 +74,14 @@ type PMOService struct {
 	Queries   *db.Queries
 	TxStarter TxStarter
 	TaskSvc   *TaskService
+	// IssueSvc shares the issue-creation pipeline so PMO apply creates issues
+	// with identical numbering / duplicate-guard / position semantics, inside
+	// the apply transaction. Wired post-construction to break the init cycle.
+	IssueSvc *IssueService
+
+	// applyTestHook lets tests inject a failure inside the apply transaction
+	// to prove rollback semantics. Never set outside tests.
+	applyTestHook func(ctx context.Context, qtx *db.Queries) error
 }
 
 type CreatePMOConfigParams struct {

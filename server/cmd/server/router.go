@@ -1266,8 +1266,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Put("/configs/{id}", h.UpdatePMOConfig)
 				r.Delete("/configs/{id}", h.DeletePMOConfig)
 				r.Post("/configs/{id}/runs", h.StartPMORun)
+				r.Put("/configs/{id}/assignees/{externalKey}", h.SetPMOAssigneeMapping)
 				r.Get("/runs", h.ListPMORuns)
 				r.Get("/runs/{id}", h.GetPMORun)
+				r.Post("/runs/{id}/apply", h.ApplyPMORun)
 			})
 
 			// Gallery Native design files

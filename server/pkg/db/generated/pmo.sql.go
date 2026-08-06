@@ -60,6 +60,46 @@ func (q *Queries) ClaimDuePMOSyncConfig(ctx context.Context) (PmoSyncConfig, err
 	return i, err
 }
 
+const clearPMOSyncLinkExternallyRemoved = `-- name: ClearPMOSyncLinkExternallyRemoved :one
+UPDATE pmo_sync_link
+SET externally_removed_at = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND externally_removed_at IS NOT NULL
+RETURNING id, workspace_id, config_id, external_type, external_key, external_display_number, external_numeric_id, external_task_id, parent_external_key, local_type, local_id, baseline_external, baseline_local, external_metadata, externally_removed_at, created_at, updated_at
+`
+
+type ClearPMOSyncLinkExternallyRemovedParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) ClearPMOSyncLinkExternallyRemoved(ctx context.Context, arg ClearPMOSyncLinkExternallyRemovedParams) (PmoSyncLink, error) {
+	row := q.db.QueryRow(ctx, clearPMOSyncLinkExternallyRemoved, arg.ID, arg.WorkspaceID)
+	var i PmoSyncLink
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ConfigID,
+		&i.ExternalType,
+		&i.ExternalKey,
+		&i.ExternalDisplayNumber,
+		&i.ExternalNumericID,
+		&i.ExternalTaskID,
+		&i.ParentExternalKey,
+		&i.LocalType,
+		&i.LocalID,
+		&i.BaselineExternal,
+		&i.BaselineLocal,
+		&i.ExternalMetadata,
+		&i.ExternallyRemovedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createPMOSyncConfig = `-- name: CreatePMOSyncConfig :one
 INSERT INTO pmo_sync_config (
     workspace_id, name, agent_id, root_external_key, created_by
@@ -317,6 +357,37 @@ func (q *Queries) GetActivePMOSyncRun(ctx context.Context, arg GetActivePMOSyncR
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.AppliedAt,
+	)
+	return i, err
+}
+
+const getIssuePropertyByWorkspaceAndName = `-- name: GetIssuePropertyByWorkspaceAndName :one
+SELECT id, workspace_id, name, type, description, config, position, archived_at, created_at, updated_at, icon FROM issue_property
+WHERE workspace_id = $1 AND name = $2
+`
+
+type GetIssuePropertyByWorkspaceAndNameParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Name        string      `json:"name"`
+}
+
+// Reuse path for the PMO-owned numeric workload property: one definition per
+// workspace, shared by every PMO configuration in it.
+func (q *Queries) GetIssuePropertyByWorkspaceAndName(ctx context.Context, arg GetIssuePropertyByWorkspaceAndNameParams) (IssueProperty, error) {
+	row := q.db.QueryRow(ctx, getIssuePropertyByWorkspaceAndName, arg.WorkspaceID, arg.Name)
+	var i IssueProperty
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Type,
+		&i.Description,
+		&i.Config,
+		&i.Position,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Icon,
 	)
 	return i, err
 }
@@ -797,6 +868,46 @@ func (q *Queries) MarkPMOSyncConfigRunStarted(ctx context.Context, arg MarkPMOSy
 		&i.LastRunAt,
 		&i.LastAppliedAt,
 		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markPMOSyncLinkExternallyRemoved = `-- name: MarkPMOSyncLinkExternallyRemoved :one
+UPDATE pmo_sync_link
+SET externally_removed_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND externally_removed_at IS NULL
+RETURNING id, workspace_id, config_id, external_type, external_key, external_display_number, external_numeric_id, external_task_id, parent_external_key, local_type, local_id, baseline_external, baseline_local, external_metadata, externally_removed_at, created_at, updated_at
+`
+
+type MarkPMOSyncLinkExternallyRemovedParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) MarkPMOSyncLinkExternallyRemoved(ctx context.Context, arg MarkPMOSyncLinkExternallyRemovedParams) (PmoSyncLink, error) {
+	row := q.db.QueryRow(ctx, markPMOSyncLinkExternallyRemoved, arg.ID, arg.WorkspaceID)
+	var i PmoSyncLink
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ConfigID,
+		&i.ExternalType,
+		&i.ExternalKey,
+		&i.ExternalDisplayNumber,
+		&i.ExternalNumericID,
+		&i.ExternalTaskID,
+		&i.ParentExternalKey,
+		&i.LocalType,
+		&i.LocalID,
+		&i.BaselineExternal,
+		&i.BaselineLocal,
+		&i.ExternalMetadata,
+		&i.ExternallyRemovedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

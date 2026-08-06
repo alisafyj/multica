@@ -55,7 +55,10 @@ type PMORequirement struct {
 	StartDate     *string           `json:"start_date"`
 	DueDate       *string           `json:"due_date"`
 	Workload      *float64          `json:"workload"`
-	Tasks         []PMOTask         `json:"tasks,omitempty"`
+	// No omitempty: the stored normalized snapshot must stay round-trip
+	// re-validatable (tasks arrays are required), so empty arrays marshal
+	// explicitly rather than disappearing.
+	Tasks []PMOTask `json:"tasks"`
 }
 
 type PMOTask struct {

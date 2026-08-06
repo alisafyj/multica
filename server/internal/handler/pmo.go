@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -322,6 +323,147 @@ func (h *Handler) GetPMORun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, pmoRunToResponse(run))
+}
+
+type applyPMORunRequest struct {
+	ConflictResolutions []applyPMOConflictResolution `json:"conflict_resolutions"`
+}
+
+type applyPMOConflictResolution struct {
+	ExternalType string `json:"external_type"`
+	ExternalKey  string `json:"external_key"`
+	Field        string `json:"field"`
+	Choice       string `json:"choice"` // external | local
+}
+
+// ApplyPMORun applies a preview_ready run in one transaction. Owner/admin
+// only; manual apply of a scheduled run is not distinguished here — both
+// flow through PMOService.ApplyRun (Task 7 also calls it with nil
+// resolutions).
+func (h *Handler) ApplyPMORun(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+		return
+	}
+	runID, workspaceUUID, ok := parsePMOResourceIDs(w, r, workspaceID, "run id")
+	if !ok {
+		return
+	}
+
+	var request applyPMORunRequest
+	if r.ContentLength != 0 {
+		if !decodePMORequest(w, r, &request) {
+			return
+		}
+	}
+	resolutions := make([]service.PMOConflictResolution, 0, len(request.ConflictResolutions))
+	for _, raw := range request.ConflictResolutions {
+		resolutions = append(resolutions, service.PMOConflictResolution{
+			ExternalType: raw.ExternalType,
+			ExternalKey:  raw.ExternalKey,
+			Field:        raw.Field,
+			Choice:       raw.Choice,
+		})
+	}
+
+	run, err := h.PMOService.ApplyRun(r.Context(), workspaceUUID, runID, resolutions)
+	if err != nil {
+		switch {
+		case err == service.ErrPMORunNotFound:
+			writeError(w, http.StatusNotFound, "PMO run not found")
+		case err == service.ErrPMORunNotPreviewReady:
+			writeError(w, http.StatusConflict, "PMO run is not ready to apply")
+		case isBadRequestInput(err):
+			writeError(w, http.StatusBadRequest, err.Error())
+		default:
+			// Apply failures roll back entirely; the run stays preview_ready
+			// for retry. Never leak stored error text to the client.
+			slog.Warn("apply pmo run failed", "run_id", chi.URLParam(r, "id"), "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to apply PMO run")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, pmoRunToResponse(run))
+}
+
+// isBadRequestInput classifies the validation errors ApplyRun returns before
+// any database write.
+func isBadRequestInput(err error) bool {
+	return err != nil && (strings.Contains(err.Error(), "invalid conflict resolution choice") ||
+		strings.Contains(err.Error(), "conflict resolution must name"))
+}
+
+type setPMOAssigneeMappingRequest struct {
+	MemberID string `json:"member_id"`
+}
+
+// SetPMOAssigneeMapping maps an external assignee identity to a workspace
+// member BY MEMBER ID. Never matched by display name. Owner/admin only.
+func (h *Handler) SetPMOAssigneeMapping(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+		return
+	}
+	configID, workspaceUUID, ok := parsePMOResourceIDs(w, r, workspaceID, "configuration id")
+	if !ok {
+		return
+	}
+	externalKey := strings.TrimSpace(chi.URLParam(r, "externalKey"))
+	if externalKey == "" {
+		writeError(w, http.StatusBadRequest, "external assignee key is required")
+		return
+	}
+
+	var request setPMOAssigneeMappingRequest
+	if !decodePMORequest(w, r, &request) {
+		return
+	}
+	memberUserID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(request.MemberID), "member_id")
+	if !ok {
+		return
+	}
+
+	link, err := h.PMOService.SetAssigneeMapping(r.Context(), workspaceUUID, configID, externalKey, memberUserID)
+	if err != nil {
+		switch {
+		case err == service.ErrPMOMemberNotFound:
+			writeError(w, http.StatusNotFound, "member not found in this workspace")
+		case err == service.ErrPMORunNotFound:
+			writeError(w, http.StatusNotFound, "PMO configuration not found")
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to map PMO assignee")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, pmoSyncLinkToResponse(link))
+}
+
+func pmoSyncLinkToResponse(link db.PmoSyncLink) map[string]any {
+	return map[string]any{
+		"id":            uuidToString(link.ID),
+		"workspace_id":  uuidToString(link.WorkspaceID),
+		"config_id":     uuidToString(link.ConfigID),
+		"external_type": link.ExternalType,
+		"external_key":  link.ExternalKey,
+		"local_type":    textToPtr(link.LocalType),
+		"local_id":      uuidToPtr(link.LocalID),
+		"external_ids": map[string]any{
+			"display_number": textToPtr(link.ExternalDisplayNumber),
+			"numeric_id":     int64ToPtr(link.ExternalNumericID),
+			"task_id":        textToPtr(link.ExternalTaskID),
+		},
+		"parent_external_key":   textToPtr(link.ParentExternalKey),
+		"externally_removed_at": timestampToPtr(link.ExternallyRemovedAt),
+	}
+}
+
+// int64ToPtr renders a nullable Int8 without leaking the pgtype wrapper.
+func int64ToPtr(v pgtype.Int8) *int64 {
+	if !v.Valid {
+		return nil
+	}
+	n := v.Int64
+	return &n
 }
 
 func decodePMORequest(w http.ResponseWriter, r *http.Request, target any) bool {

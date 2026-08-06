@@ -279,6 +279,30 @@ WHERE workspace_id = $1
   AND NOT (external_key = ANY($4::text[]))
   AND externally_removed_at IS NULL;
 
+-- name: MarkPMOSyncLinkExternallyRemoved :one
+UPDATE pmo_sync_link
+SET externally_removed_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND externally_removed_at IS NULL
+RETURNING *;
+
+-- name: ClearPMOSyncLinkExternallyRemoved :one
+UPDATE pmo_sync_link
+SET externally_removed_at = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND externally_removed_at IS NOT NULL
+RETURNING *;
+
+-- name: GetIssuePropertyByWorkspaceAndName :one
+-- Reuse path for the PMO-owned numeric workload property: one definition per
+-- workspace, shared by every PMO configuration in it.
+SELECT * FROM issue_property
+WHERE workspace_id = $1 AND name = $2;
+
 -- name: DeletePMOSyncLinksByConfig :exec
 DELETE FROM pmo_sync_link
 WHERE workspace_id = $1 AND config_id = $2;
