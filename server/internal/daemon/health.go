@@ -222,6 +222,7 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 			Ref:                 checkoutRef,
 			AgentName:           req.AgentName,
 			TaskID:              req.TaskID,
+			PeerURLs:            d.taskRepoPeerURLs(req.WorkspaceID, req.TaskID),
 			CoAuthoredByEnabled: d.workspaceCoAuthoredByEnabled(req.WorkspaceID),
 			IsolatedGitMetadata: req.CheckoutMode == repoCheckoutModeIsolated,
 		})

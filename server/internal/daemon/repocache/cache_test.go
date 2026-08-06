@@ -1783,3 +1783,108 @@ func TestBarePathIsIndependentOfExistence(t *testing.T) {
 		t.Error("Lookup must still report an uncached repo as absent")
 	}
 }
+
+// TestWorktreeDirNameSingleRepo verifies that a single repo (no peers) keeps
+// landing at its basename, preserving the existing on-disk layout.
+func TestWorktreeDirNameSingleRepo(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		url  string
+		want string
+	}{
+		{"https://github.com/org/my-repo.git", "my-repo"},
+		{"https://github.com/org/my-repo", "my-repo"},
+		{"git@github.com:org/app.git", "app"},
+		{"https://github.com/org/app/", "app"},
+	}
+	for _, tt := range tests {
+		got := worktreeDirName(tt.url, nil)
+		if got != tt.want {
+			t.Errorf("worktreeDirName(%q, nil) = %q, want %q", tt.url, got, tt.want)
+		}
+		// With an explicit self-only peer list the result must be the same.
+		got2 := worktreeDirName(tt.url, []string{tt.url})
+		if got2 != tt.want {
+			t.Errorf("worktreeDirName(%q, [self]) = %q, want %q", tt.url, got2, tt.want)
+		}
+	}
+}
+
+// TestWorktreeDirNameNoCollision verifies that repos with different basenames
+// each keep their basename even when multiple peers are present.
+func TestWorktreeDirNameNoCollision(t *testing.T) {
+	t.Parallel()
+	peers := []string{
+		"https://github.com/org/frontend.git",
+		"https://github.com/org/backend.git",
+		"https://github.com/org/worker.git",
+	}
+	wants := map[string]string{
+		peers[0]: "frontend",
+		peers[1]: "backend",
+		peers[2]: "worker",
+	}
+	for url, want := range wants {
+		got := worktreeDirName(url, peers)
+		if got != want {
+			t.Errorf("worktreeDirName(%q, peers) = %q, want %q", url, got, want)
+		}
+	}
+}
+
+// TestWorktreeDirNameSameBasenameDifferentOrg verifies the silent-collision
+// bug: org-a/app and org-b/app must NOT both land at {workdir}/app.
+func TestWorktreeDirNameSameBasenameDifferentOrg(t *testing.T) {
+	t.Parallel()
+	urlA := "https://github.com/org-a/app.git"
+	urlB := "https://github.com/org-b/app.git"
+	peers := []string{urlA, urlB}
+
+	dirA := worktreeDirName(urlA, peers)
+	dirB := worktreeDirName(urlB, peers)
+
+	if dirA == dirB {
+		t.Errorf("collision: org-a/app and org-b/app both map to %q", dirA)
+	}
+	// Neither should be the bare basename when there is a collision.
+	if dirA == "app" {
+		t.Errorf("org-a/app should not land at bare basename %q when a collision exists", "app")
+	}
+	if dirB == "app" {
+		t.Errorf("org-b/app should not land at bare basename %q when a collision exists", "app")
+	}
+}
+
+// TestWorktreeDirNameSameBasenameDifferentHost verifies cross-host collision:
+// github.com/org/repo and gitlab.com/org/repo must not collide.
+func TestWorktreeDirNameSameBasenameDifferentHost(t *testing.T) {
+	t.Parallel()
+	urlGH := "https://github.com/org/repo.git"
+	urlGL := "https://gitlab.com/org/repo.git"
+	peers := []string{urlGH, urlGL}
+
+	dirGH := worktreeDirName(urlGH, peers)
+	dirGL := worktreeDirName(urlGL, peers)
+
+	if dirGH == dirGL {
+		t.Errorf("cross-host collision: %q and %q both map to %q", urlGH, urlGL, dirGH)
+	}
+}
+
+// TestWorktreeDirNameDeterministic verifies that the result is the same
+// regardless of the order of peer URLs (no checkout-order dependency).
+func TestWorktreeDirNameDeterministic(t *testing.T) {
+	t.Parallel()
+	urlA := "https://github.com/org-a/app.git"
+	urlB := "https://github.com/org-b/app.git"
+
+	peersAB := []string{urlA, urlB}
+	peersBA := []string{urlB, urlA}
+
+	if worktreeDirName(urlA, peersAB) != worktreeDirName(urlA, peersBA) {
+		t.Error("worktreeDirName result must not depend on peer order (order: AB vs BA)")
+	}
+	if worktreeDirName(urlB, peersAB) != worktreeDirName(urlB, peersBA) {
+		t.Error("worktreeDirName result must not depend on peer order (order: AB vs BA)")
+	}
+}

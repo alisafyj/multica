@@ -2104,6 +2104,35 @@ func (d *Daemon) taskRepoDefaultRef(workspaceID, taskID, repoURL string) string 
 	return strings.TrimSpace(ws.taskRepoRefs[taskID][repoURL])
 }
 
+// taskRepoPeerURLs returns every repository URL the server sent for this task.
+// CreateWorktree needs the whole set to notice that two of them share a URL
+// basename: org-a/app and org-b/app would otherwise both land on
+// {workdir}/app, and the second checkout would silently update the first
+// repository's tree using the second's ref.
+func (d *Daemon) taskRepoPeerURLs(workspaceID, taskID string) []string {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	ws, ok := d.workspaces[workspaceID]
+	if !ok || ws.taskRepoRefs == nil {
+		return nil
+	}
+	refs := ws.taskRepoRefs[taskID]
+	if len(refs) < 2 {
+		// A single-repo task cannot collide with itself, and returning nil
+		// keeps its workdir layout byte-identical to before this guard.
+		return nil
+	}
+	urls := make([]string, 0, len(refs))
+	for url := range refs {
+		urls = append(urls, url)
+	}
+	return urls
+}
+
 func (d *Daemon) clearTaskRepoRefs(workspaceID, taskID string) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
