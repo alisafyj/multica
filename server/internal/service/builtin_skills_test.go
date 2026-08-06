@@ -208,6 +208,67 @@ func TestMentioningSkillTeachesTheParserContract(t *testing.T) {
 	}
 }
 
+func TestTestCasesSkillCoversTheDataContract(t *testing.T) {
+	skill, ok := findSkill(t, "multica-test-cases")
+	if !ok {
+		return
+	}
+	fm, body, _ := splitFrontmatter(skill.Content)
+
+	if got := strings.TrimSpace(fm["user-invocable"]); got != "false" {
+		t.Errorf("user-invocable = %q, want false (test case guidance triggers from context)", got)
+	}
+	if got := strings.TrimSpace(fm["allowed-tools"]); !strings.Contains(got, "Bash(multica *)") {
+		t.Errorf("allowed-tools = %q, want access to the Multica CLI", got)
+	}
+
+	// Contract anchors only — exact file:line citations live in the skill's
+	// references/test-cases-source-map.md, so a line shift cannot rot this test.
+	mustContain := []string{
+		"multica testcase list --project <project-id> --output json",
+		"multica testcase get TC-42 --output json",
+		"multica testcase modules --project <project-id> --output json",
+		"--digest",
+		// Steps are the executable contract: structured, renumbered, repo-tagged.
+		"structured JSON array, not markdown",
+		"running order 1..n",
+		// Multi-repo semantics are the reason roles exist at all.
+		"under_test",
+		"driver",
+		"verifier",
+		"cross_repo",
+		"project_resource_id",
+		// Coverage breadth: a library of only functional/api cases under-covers.
+		"business_flow",
+		"permission",
+		"data_consistency",
+		// Honesty about what does not exist yet.
+		"There is no `multica test` command group",
+		"references/test-cases-source-map.md",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(body, want) {
+			t.Errorf("multica-test-cases skill must state %q", want)
+		}
+	}
+
+	// Owned by the runtime brief or by other skills — duplicating them here
+	// makes the two copies drift.
+	mustNotContain := []string{
+		"multica repo checkout <url> [--ref",
+		"multica issue create",
+	}
+	for _, unwanted := range mustNotContain {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("multica-test-cases skill must not restate %q (owned elsewhere)", unwanted)
+		}
+	}
+
+	if !skillHasFile(skill, "references/test-cases-source-map.md") {
+		t.Error("multica-test-cases skill must ship its source map")
+	}
+}
+
 func TestWorkingOnIssuesSkillCoversIssueLoopContracts(t *testing.T) {
 	skill, ok := findSkill(t, "multica-working-on-issues")
 	if !ok {
