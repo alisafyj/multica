@@ -1414,6 +1414,20 @@ type TestCase struct {
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
+type TestCaseProposal struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	JobID        pgtype.UUID        `json:"job_id"`
+	TargetCaseID pgtype.UUID        `json:"target_case_id"`
+	Kind         string             `json:"kind"`
+	Payload      []byte             `json:"payload"`
+	Rationale    string             `json:"rationale"`
+	Status       string             `json:"status"`
+	ReviewedBy   pgtype.UUID        `json:"reviewed_by"`
+	ReviewedAt   pgtype.Timestamptz `json:"reviewed_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type TestCaseRepo struct {
 	TestCaseID        pgtype.UUID        `json:"test_case_id"`
 	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
@@ -1435,6 +1449,35 @@ type TestCaseRevision struct {
 	ChangedByType string             `json:"changed_by_type"`
 	Note          string             `json:"note"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type TestGenerationJob struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	AgentTaskID pgtype.UUID        `json:"agent_task_id"`
+	Status      string             `json:"status"`
+	Input       []byte             `json:"input"`
+	Result      []byte             `json:"result"`
+	Error       pgtype.Text        `json:"error"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TestGenerationPlan struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	JobID       pgtype.UUID        `json:"job_id"`
+	Status      string             `json:"status"`
+	Plan        []byte             `json:"plan"`
+	ReviewNotes string             `json:"review_notes"`
+	ApprovedBy  pgtype.UUID        `json:"approved_by"`
+	ApprovedAt  pgtype.Timestamptz `json:"approved_at"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type User struct {
