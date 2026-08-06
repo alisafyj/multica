@@ -456,6 +456,79 @@ export function PMOPage() {
   }, [diffView, filter]);
 
   // ------------------------------------------------------------------ states
+
+  // Hoisted so EVERY return that offers the create action mounts the dialog —
+  // the empty-configs early return opens it from its CollectionPageState CTA.
+  const createConfigDialog = (
+    <Dialog open={dialogOpen} onOpenChange={(open) => setDialogOpen(open)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t(($) => $.config.create)}</DialogTitle>
+          <DialogDescription>{t(($) => $.subtitle)}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="space-y-1">
+            <label className="text-caption text-muted-foreground" htmlFor="pmo-config-name">
+              {t(($) => $.config.name_label)}
+            </label>
+            <Input
+              id="pmo-config-name"
+              value={formName}
+              onChange={(e) => setFormName(e.target.value)}
+              placeholder={t(($) => $.config.name_placeholder)}
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-caption text-muted-foreground" htmlFor="pmo-config-agent">
+              {t(($) => $.config.agent_label)}
+            </label>
+            <NativeSelect
+              id="pmo-config-agent"
+              className="w-full"
+              value={formAgentId}
+              onChange={(e) => setFormAgentId(e.target.value)}
+            >
+              <NativeSelectOption value="" disabled>
+                {t(($) => $.config.agent_placeholder)}
+              </NativeSelectOption>
+              {activeAgents.map((agent) => (
+                <NativeSelectOption key={agent.id} value={agent.id} disabled={!isAgentRuntimeBound(agent)}>
+                  {agent.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+          <div className="space-y-1">
+            <label className="text-caption text-muted-foreground" htmlFor="pmo-config-root-key">
+              {t(($) => $.config.root_key_label)}
+            </label>
+            <Input
+              id="pmo-config-root-key"
+              className="font-mono"
+              value={formRootKey}
+              onChange={(e) => setFormRootKey(e.target.value)}
+              placeholder={t(($) => $.config.root_key_placeholder)}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          {config ? (
+            <Button variant="destructive" size="sm" onClick={handleDelete}>
+              {confirmDelete ? t(($) => $.config.delete_confirm) : t(($) => $.config.delete)}
+            </Button>
+          ) : null}
+          <Button variant="outline" size="sm" onClick={() => setDialogOpen(false)}>
+            {t(($) => $.config.cancel)}
+          </Button>
+          <Button size="sm" onClick={handleFormSave} disabled={!formName.trim() || !formAgentId || !formRootKey.trim() || createConfig.isPending}>
+            {createConfig.isPending ? <Spinner className="size-3.5" /> : null}
+            {t(($) => $.config.save)}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
   if (configsQuery.isPending) {
     return (
       <div className="flex min-h-0 flex-1 flex-col">
@@ -496,6 +569,7 @@ export function PMOPage() {
             </Button>
           }
         />
+        {createConfigDialog}
       </div>
     );
   }
@@ -966,73 +1040,7 @@ export function PMOPage() {
       </Dialog>
 
       {/* Create / edit config dialog */}
-      <Dialog open={dialogOpen} onOpenChange={(open) => setDialogOpen(open)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t(($) => $.config.create)}</DialogTitle>
-            <DialogDescription>{t(($) => $.subtitle)}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <div className="space-y-1">
-              <label className="text-caption text-muted-foreground" htmlFor="pmo-config-name">
-                {t(($) => $.config.name_label)}
-              </label>
-              <Input
-                id="pmo-config-name"
-                value={formName}
-                onChange={(e) => setFormName(e.target.value)}
-                placeholder={t(($) => $.config.name_placeholder)}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-caption text-muted-foreground" htmlFor="pmo-config-agent">
-                {t(($) => $.config.agent_label)}
-              </label>
-              <NativeSelect
-                id="pmo-config-agent"
-                className="w-full"
-                value={formAgentId}
-                onChange={(e) => setFormAgentId(e.target.value)}
-              >
-                <NativeSelectOption value="" disabled>
-                  {t(($) => $.config.agent_placeholder)}
-                </NativeSelectOption>
-                {activeAgents.map((agent) => (
-                  <NativeSelectOption key={agent.id} value={agent.id} disabled={!isAgentRuntimeBound(agent)}>
-                    {agent.name}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </div>
-            <div className="space-y-1">
-              <label className="text-caption text-muted-foreground" htmlFor="pmo-config-root-key">
-                {t(($) => $.config.root_key_label)}
-              </label>
-              <Input
-                id="pmo-config-root-key"
-                className="font-mono"
-                value={formRootKey}
-                onChange={(e) => setFormRootKey(e.target.value)}
-                placeholder={t(($) => $.config.root_key_placeholder)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            {config ? (
-              <Button variant="destructive" size="sm" onClick={handleDelete}>
-                {confirmDelete ? t(($) => $.config.delete_confirm) : t(($) => $.config.delete)}
-              </Button>
-            ) : null}
-            <Button variant="outline" size="sm" onClick={() => setDialogOpen(false)}>
-              {t(($) => $.config.cancel)}
-            </Button>
-            <Button size="sm" onClick={handleFormSave} disabled={!formName.trim() || !formAgentId || !formRootKey.trim() || createConfig.isPending}>
-              {createConfig.isPending ? <Spinner className="size-3.5" /> : null}
-              {t(($) => $.config.save)}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {createConfigDialog}
     </div>
   );
 }

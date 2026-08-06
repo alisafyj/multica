@@ -326,6 +326,17 @@ describe("PMOPage loading and empty states", () => {
     expect(screen.getByText("No sync config yet")).toBeInTheDocument();
   });
 
+  it("opens the create dialog from the empty state", () => {
+    // Regression: the empty-state CTA opens the same dialog the main view
+    // hosts — it must be mounted in the empty branch too, or the click is dead.
+    queryState.configs = { data: [], isPending: false, isError: false, isSuccess: true };
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "New sync config" }));
+    expect(screen.getByLabelText("Name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Agent")).toBeInTheDocument();
+    expect(screen.getByLabelText("External root key")).toBeInTheDocument();
+  });
+
   it("shows the error state when the config list fails", () => {
     errorConfigs();
     renderPage();
