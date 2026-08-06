@@ -216,6 +216,14 @@ import type {
   ListDesignTemplatesResponse,
   PublishDesignTemplateRequest,
   UpdateDesignRestorePlanRequest,
+  PMOConfig,
+  PMORun,
+  PMOSyncLink,
+  ListPMOConfigsResponse,
+  ListPMORunsResponse,
+  CreatePMOConfigRequest,
+  UpdatePMOConfigRequest,
+  PMOConflictResolution,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
@@ -379,6 +387,16 @@ import {
   EMPTY_LIST_GITHUB_REPOSITORIES_RESPONSE,
   RuntimeModelListRequestSchema,
   MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
+  PMOConfigSchema,
+  PMORunSchema,
+  PMOSyncLinkSchema,
+  ListPMOConfigsResponseSchema,
+  ListPMORunsResponseSchema,
+  EMPTY_PMO_CONFIG,
+  EMPTY_PMO_RUN,
+  EMPTY_PMO_SYNC_LINK,
+  EMPTY_LIST_PMO_CONFIGS_RESPONSE,
+  EMPTY_LIST_PMO_RUNS_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -3698,6 +3716,105 @@ export class ApiClient {
     return this.fetch(`/api/slack/binding/redeem`, {
       method: "POST",
       body: JSON.stringify({ token }),
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // PMO requirement sync. Workspace-scoped under /api/pmo (the workspace
+  // middleware resolves it the same way as /api/projects). Every response
+  // passes through parseWithFallback so contract drift degrades instead of
+  // throwing. The wsId param on these methods exists for query-key scoping
+  // at the call site; the server resolves the workspace from the request
+  // context, so it is not sent in the URL or body.
+  // ---------------------------------------------------------------------
+
+  async listPMOConfigs(_wsId: string): Promise<ListPMOConfigsResponse> {
+    const raw = await this.fetch<unknown>("/api/pmo/configs");
+    return parseWithFallback(raw, ListPMOConfigsResponseSchema, EMPTY_LIST_PMO_CONFIGS_RESPONSE, {
+      endpoint: "GET /api/pmo/configs",
+    });
+  }
+
+  async createPMOConfig(_wsId: string, data: CreatePMOConfigRequest): Promise<PMOConfig> {
+    const raw = await this.fetch<unknown>("/api/pmo/configs", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PMOConfigSchema, EMPTY_PMO_CONFIG, {
+      endpoint: "POST /api/pmo/configs",
+    });
+  }
+
+  async updatePMOConfig(_wsId: string, id: string, data: UpdatePMOConfigRequest): Promise<PMOConfig> {
+    const raw = await this.fetch<unknown>(`/api/pmo/configs/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PMOConfigSchema, EMPTY_PMO_CONFIG, {
+      endpoint: "PUT /api/pmo/configs/:id",
+    });
+  }
+
+  async deletePMOConfig(_wsId: string, id: string): Promise<void> {
+    await this.fetch(`/api/pmo/configs/${id}`, { method: "DELETE" });
+  }
+
+  async startPMORun(_wsId: string, configId: string): Promise<PMORun> {
+    const raw = await this.fetch<unknown>(`/api/pmo/configs/${configId}/runs`, {
+      method: "POST",
+    });
+    return parseWithFallback(raw, PMORunSchema, EMPTY_PMO_RUN, {
+      endpoint: "POST /api/pmo/configs/:id/runs",
+    });
+  }
+
+  async listPMORuns(_wsId: string, params?: { config_id?: string; limit?: number }): Promise<ListPMORunsResponse> {
+    const search = new URLSearchParams();
+    if (params?.config_id) search.set("config_id", params.config_id);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const suffix = search.toString();
+    const raw = await this.fetch<unknown>(`/api/pmo/runs${suffix ? `?${suffix}` : ""}`);
+    return parseWithFallback(raw, ListPMORunsResponseSchema, EMPTY_LIST_PMO_RUNS_RESPONSE, {
+      endpoint: "GET /api/pmo/runs",
+    });
+  }
+
+  async getPMORun(_wsId: string, runId: string): Promise<PMORun> {
+    const raw = await this.fetch<unknown>(`/api/pmo/runs/${runId}`);
+    return parseWithFallback(raw, PMORunSchema, EMPTY_PMO_RUN, {
+      endpoint: "GET /api/pmo/runs/:id",
+    });
+  }
+
+  async applyPMORun(
+    _wsId: string,
+    runId: string,
+    resolutions?: PMOConflictResolution[],
+  ): Promise<PMORun> {
+    const raw = await this.fetch<unknown>(`/api/pmo/runs/${runId}/apply`, {
+      method: "POST",
+      body: JSON.stringify({ conflict_resolutions: resolutions ?? [] }),
+    });
+    return parseWithFallback(raw, PMORunSchema, EMPTY_PMO_RUN, {
+      endpoint: "POST /api/pmo/runs/:id/apply",
+    });
+  }
+
+  async setPMOAssigneeMapping(
+    _wsId: string,
+    configId: string,
+    externalKey: string,
+    memberId: string,
+  ): Promise<PMOSyncLink> {
+    const raw = await this.fetch<unknown>(
+      `/api/pmo/configs/${configId}/assignees/${encodeURIComponent(externalKey)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ member_id: memberId }),
+      },
+    );
+    return parseWithFallback(raw, PMOSyncLinkSchema, EMPTY_PMO_SYNC_LINK, {
+      endpoint: "PUT /api/pmo/configs/:id/assignees/:externalKey",
     });
   }
 }

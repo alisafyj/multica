@@ -251,3 +251,4 @@ export type {
   CreateBillingPortalSessionResponse,
 } from "./billing";
 export type * from "./design";
+export type * from "./pmo";
