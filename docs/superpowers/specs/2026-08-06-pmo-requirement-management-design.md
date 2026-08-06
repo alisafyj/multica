@@ -289,6 +289,8 @@ One row represents one external root requirement:
 - user-visible `name`;
 - selected `agent_id`;
 - `root_external_key` entered at runtime;
+- nullable `workload_property_id`, set when the sync first creates or reuses
+  its numeric issue-property definition;
 - `schedule_enabled`, `next_run_at`, `last_run_at`, `last_applied_at`;
 - `created_by`, `created_at`, `updated_at`.
 
