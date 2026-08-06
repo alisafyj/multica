@@ -1153,6 +1153,10 @@ func marshalProjectDesignSystemTaskContext(
 	if err != nil {
 		return nil, err
 	}
+	canonicalInput, err := json.Marshal(input)
+	if err != nil {
+		return nil, err
+	}
 	outputPolicyValue := map[string]any{
 		"required_artifacts":            []string{"DESIGN.md", "tokens.css", "components.html"},
 		"generation_mode":               "create_new_system",
@@ -1191,7 +1195,7 @@ func marshalProjectDesignSystemTaskContext(
 			return nil, err
 		}
 	}
-	return json.Marshal(service.ProjectDesignSystemTaskContext{
+	taskContext := service.ProjectDesignSystemTaskContext{
 		Type:                  service.ProjectDesignSystemTaskContextType,
 		Operation:             operation,
 		RequesterID:           uuidToString(requesterID),
@@ -1209,7 +1213,63 @@ func marshalProjectDesignSystemTaskContext(
 		RepositoryAnalysis:    repositoryAnalysis,
 		OpenDesignRun:         openDesignRun,
 		OutputPolicy:          outputPolicy,
-	})
+	}
+	// The V2 native agent chain (generate / adjust / regenerate) pins the
+	// package schema, the canonical input digest, and the selected base
+	// digest onto the context. Repository analysis keeps its read-only
+	// JSON contract and intentionally does not get any V2 markers, and
+	// the legacy Open Design flow is identified by openDesignRun alone
+	// (no package_schema) so historical already-queued tasks still parse.
+	if operation != service.ProjectDesignSystemRepositoryAnalysis && len(openDesignRun) == 0 {
+		inputDigest, err := projectdesignsystem.SnapshotDigest(canonicalInput)
+		if err != nil {
+			return nil, err
+		}
+		taskContext.PackageSchema = projectdesignsystem.PackageSchemaV2
+		taskContext.InputSnapshotSHA256 = inputDigest
+		if len(basePackage) > 0 {
+			baseDigest, err := projectDesignSystemBaseDigest(basePackage)
+			if err != nil {
+				return nil, err
+			}
+			taskContext.BasePackageSHA256 = baseDigest
+		}
+	}
+	return json.Marshal(taskContext)
+}
+
+// projectDesignSystemBaseDigest returns the SHA-256 hex digest of the
+// selected base package. For native base packages the digest is the
+// integrity_sha256 field already stamped onto the package by the
+// V2 upload path; for Open Design base packages the digest is the
+// content_digest carried by the reference envelope (with the
+// "sha256:" prefix stripped).
+func projectDesignSystemBaseDigest(basePackage json.RawMessage) (string, error) {
+	if len(basePackage) == 0 {
+		return "", nil
+	}
+	var base map[string]json.RawMessage
+	if err := json.Unmarshal(basePackage, &base); err != nil {
+		return "", err
+	}
+	if rawSchema, ok := base["schema"]; ok {
+		var schema string
+		if err := json.Unmarshal(rawSchema, &schema); err == nil && schema == opendesign.BasePackageReferenceSchema {
+			var reference opendesign.BasePackageReference
+			if err := json.Unmarshal(basePackage, &reference); err != nil {
+				return "", err
+			}
+			return strings.TrimPrefix(reference.ContentDigest, "sha256:"), nil
+		}
+	}
+	if rawDigest, ok := base["integrity_sha256"]; ok {
+		var digest string
+		if err := json.Unmarshal(rawDigest, &digest); err != nil {
+			return "", err
+		}
+		return digest, nil
+	}
+	return "", nil
 }
 
 func (h *Handler) projectDesignSystemRequestScope(w http.ResponseWriter, r *http.Request) (pgtype.UUID, pgtype.UUID, bool) {

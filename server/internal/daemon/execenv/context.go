@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/opendesign"
+	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 )
 
@@ -107,6 +109,17 @@ func writeProjectDesignSystemContext(workDir string, ctx TaskContextForEnv, mani
 		return err
 	}
 
+	// The V2 native agent chain (pinPackageSchema == PackageSchemaV2 in the
+	// task context) is materialized into a read-only bounded sidecar
+	// layout: context/, reference/, and base/ each at 0o555 with files
+	// stamped 0o444 so the agent can read but not mutate the inputs.
+	// The legacy Open Design flow (no package_schema) keeps its previous
+	// single-task.json layout untouched so already-queued tasks still
+	// parse through the Open Design supervisor.
+	if isV2ProjectDesignSystemTask(task) {
+		return writeV2ProjectDesignSystemContext(root, task, operation, manifest)
+	}
+
 	if operation == "adjust" || operation == "regenerate" {
 		var base map[string]json.RawMessage
 		if err := json.Unmarshal(task["base_package"], &base); err != nil {
@@ -172,6 +185,269 @@ func writeProjectDesignSystemContext(workDir string, ctx TaskContextForEnv, mani
 		return err
 	}
 	return nil
+}
+
+// isV2ProjectDesignSystemTask reports whether the task context was
+// stamped with the V2 native agent package schema. The V2 marker is
+// the sole signal that triggers the bounded read-only sidecar layout;
+// historical Open Design contexts that lack the marker continue to
+// flow through the legacy single-file task.json path.
+func isV2ProjectDesignSystemTask(task map[string]json.RawMessage) bool {
+	rawSchema, ok := task["package_schema"]
+	if !ok {
+		return false
+	}
+	var schema string
+	if err := json.Unmarshal(rawSchema, &schema); err != nil {
+		return false
+	}
+	return schema == projectdesignsystem.PackageSchemaV2
+}
+
+// writeV2ProjectDesignSystemContext materializes the V2 native agent
+// workspace under {root}: a read-only context/task.json + optional
+// context/repository-analysis.json, a read-only reference/index.json
+// summarising the brief and references, and an optional read-only
+// base/ tree populated for adjust / regenerate tasks. All three
+// sub-directories are stamped 0o555; all files are stamped 0o444 so
+// the agent can read but not mutate the inputs. The output area
+// (envRoot/output/project-design-system) is intentionally not touched
+// here — it stays writable for the agent's final package.
+func writeV2ProjectDesignSystemContext(root string, task map[string]json.RawMessage, operation string, manifest *sidecarManifest) error {
+	if operation == "repository_analysis" {
+		return writeV2RepositoryAnalysisContext(root, task, manifest)
+	}
+	if operation != "generate" && operation != "adjust" && operation != "regenerate" {
+		return fmt.Errorf("unsupported V2 operation %q", operation)
+	}
+
+	contextDir := filepath.Join(root, "context")
+	if err := recordMkdirAll(contextDir, 0o755, manifest); err != nil {
+		return err
+	}
+	referenceDir := filepath.Join(root, "reference")
+	if err := recordMkdirAll(referenceDir, 0o755, manifest); err != nil {
+		return err
+	}
+
+	taskJSON, err := json.MarshalIndent(task, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode V2 task context: %w", err)
+	}
+	if err := recordWriteFile(filepath.Join(contextDir, "task.json"), taskJSON, 0o444, manifest); err != nil {
+		return err
+	}
+
+	// repository-analysis.json is optional. It is only emitted when the
+	// task context carries a non-empty repository_analysis block; we copy
+	// the block verbatim so the agent can read the source material
+	// without us redacting or reformatting it.
+	if rawAnalysis, ok := task["repository_analysis"]; ok && len(rawAnalysis) > 0 && string(rawAnalysis) != "null" {
+		var probe any
+		if err := json.Unmarshal(rawAnalysis, &probe); err == nil && probe != nil {
+			if err := recordWriteFile(filepath.Join(contextDir, "repository-analysis.json"), rawAnalysis, 0o444, manifest); err != nil {
+				return err
+			}
+		}
+	}
+
+	indexJSON, err := buildV2ReferenceIndex(task)
+	if err != nil {
+		return err
+	}
+	if err := recordWriteFile(filepath.Join(referenceDir, "index.json"), indexJSON, 0o444, manifest); err != nil {
+		return err
+	}
+
+	if operation == "adjust" || operation == "regenerate" {
+		if err := writeV2BaseDirectory(root, task, manifest); err != nil {
+			return err
+		}
+	}
+
+	if err := stampV2ReadOnly(contextDir, referenceDir); err != nil {
+		return err
+	}
+	return nil
+}
+
+// writeV2RepositoryAnalysisContext emits the minimal V2 sidecar layout
+// for the repository_analysis operation: a read-only context/task.json
+// and reference/index.json. The repository-analysis payload stays inline
+// in task.json; the base/ tree is intentionally absent because there is
+// no base package to consult.
+func writeV2RepositoryAnalysisContext(root string, task map[string]json.RawMessage, manifest *sidecarManifest) error {
+	contextDir := filepath.Join(root, "context")
+	if err := recordMkdirAll(contextDir, 0o755, manifest); err != nil {
+		return err
+	}
+	referenceDir := filepath.Join(root, "reference")
+	if err := recordMkdirAll(referenceDir, 0o755, manifest); err != nil {
+		return err
+	}
+	taskJSON, err := json.MarshalIndent(task, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode V2 repository analysis task context: %w", err)
+	}
+	if err := recordWriteFile(filepath.Join(contextDir, "task.json"), taskJSON, 0o444, manifest); err != nil {
+		return err
+	}
+	indexJSON, err := buildV2ReferenceIndex(task)
+	if err != nil {
+		return err
+	}
+	if err := recordWriteFile(filepath.Join(referenceDir, "index.json"), indexJSON, 0o444, manifest); err != nil {
+		return err
+	}
+	if err := stampV2ReadOnly(contextDir, referenceDir); err != nil {
+		return err
+	}
+	return nil
+}
+
+// stampV2ReadOnly tightens the V2 sidecar directories to 0o555 *after*
+// the file writes finish, so the agent can read and traverse the inputs
+// but cannot mutate or replace them. Files inside stay at 0o444. We
+// chmod the directories directly (rather than recording them under
+// 0o555 from the start) because recordMkdirAll at 0o555 would prevent
+// the subsequent recordWriteFile calls from creating files inside.
+func stampV2ReadOnly(dirs ...string) error {
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		if err := os.Chmod(dir, 0o555); err != nil {
+			return fmt.Errorf("stamp V2 read-only on %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// buildV2ReferenceIndex summarises the task input the agent is supposed
+// to read as evidence. The summary intentionally omits the full
+// reference payloads and the full repository-analysis block — those
+// stay in the canonical task.json. The index is the agent's
+// "what is in this task at a glance" surface.
+func buildV2ReferenceIndex(task map[string]json.RawMessage) ([]byte, error) {
+	type referenceSummary struct {
+		Kind  string `json:"kind"`
+		Label string `json:"label,omitempty"`
+	}
+	type repositoryAnalysisSummary struct {
+		FactsCount                   int `json:"facts_count"`
+		SourceFilesCount             int `json:"source_files_count"`
+		RepresentativeWorkflowsCount int `json:"representative_workflows_count"`
+	}
+	index := map[string]any{
+		"schema_version": projectdesignsystem.SourceIndexSchemaV1,
+	}
+	if rawBrief, ok := task["brief"]; ok {
+		var brief string
+		if err := json.Unmarshal(rawBrief, &brief); err == nil {
+			index["brief"] = brief
+		}
+	}
+	if rawPlatform, ok := task["platform"]; ok {
+		var platform string
+		if err := json.Unmarshal(rawPlatform, &platform); err == nil {
+			index["platform"] = platform
+		}
+	}
+	if rawRefs, ok := task["references"]; ok && len(rawRefs) > 0 {
+		var refs []referenceSummary
+		if err := json.Unmarshal(rawRefs, &refs); err == nil {
+			index["references"] = refs
+		}
+	}
+	if rawAnalysis, ok := task["repository_analysis"]; ok && len(rawAnalysis) > 0 && string(rawAnalysis) != "null" {
+		var analysis struct {
+			Facts                   []map[string]any `json:"facts"`
+			SourceFiles             []map[string]any `json:"source_files"`
+			RepresentativeWorkflows []map[string]any `json:"representative_workflows"`
+		}
+		if err := json.Unmarshal(rawAnalysis, &analysis); err == nil {
+			index["repository_analysis"] = repositoryAnalysisSummary{
+				FactsCount:                   len(analysis.Facts),
+				SourceFilesCount:             len(analysis.SourceFiles),
+				RepresentativeWorkflowsCount: len(analysis.RepresentativeWorkflows),
+			}
+		}
+	}
+	return json.MarshalIndent(index, "", "  ")
+}
+
+// writeV2BaseDirectory materialises the read-only base/ tree for
+// adjust / regenerate operations. The base package must already be a
+// V2 native package (no legacy Open Design envelope); the integrity
+// SHA-256 carried in the base must match the base_package_sha256
+// stamped onto the task context, otherwise the task context and the
+// on-disk base disagree and we refuse the workspace.
+func writeV2BaseDirectory(root string, task map[string]json.RawMessage, manifest *sidecarManifest) error {
+	rawBase, ok := task["base_package"]
+	if !ok {
+		return fmt.Errorf("V2 %s task missing base_package", taskOperation(task))
+	}
+	var base map[string]json.RawMessage
+	if err := json.Unmarshal(rawBase, &base); err != nil {
+		return fmt.Errorf("decode V2 base package: %w", err)
+	}
+	if rawSchema, ok := base["schema"]; ok {
+		var schema string
+		if err := json.Unmarshal(rawSchema, &schema); err == nil && schema == opendesign.BasePackageReferenceSchema {
+			return fmt.Errorf("V2 base package uses Open Design reference schema; V2 adjust / regenerate requires a native base package")
+		}
+	}
+	var baseDigest string
+	if rawDigest, ok := base["integrity_sha256"]; ok {
+		if err := json.Unmarshal(rawDigest, &baseDigest); err != nil {
+			return fmt.Errorf("decode V2 base integrity_sha256: %w", err)
+		}
+	}
+	if rawDeclared, ok := task["base_package_sha256"]; ok {
+		var declared string
+		if err := json.Unmarshal(rawDeclared, &declared); err != nil {
+			return fmt.Errorf("decode V2 base_package_sha256: %w", err)
+		}
+		if declared != "" && baseDigest != "" && declared != baseDigest {
+			return fmt.Errorf("V2 base package digest mismatch: task context claims %q, base integrity_sha256 is %q", declared, baseDigest)
+		}
+	}
+	if baseDigest == "" {
+		return fmt.Errorf("V2 base package missing integrity_sha256")
+	}
+
+	baseDir := filepath.Join(root, "base")
+	if err := recordMkdirAll(baseDir, 0o755, manifest); err != nil {
+		return err
+	}
+	files := []struct {
+		key  string
+		name string
+	}{
+		{key: "design_md", name: "DESIGN.md"},
+		{key: "tokens_css", name: "tokens.css"},
+		{key: "components_html", name: "components.html"},
+	}
+	for _, file := range files {
+		var contents string
+		if err := json.Unmarshal(base[file.key], &contents); err != nil {
+			return fmt.Errorf("decode V2 base %s: %w", file.name, err)
+		}
+		if err := recordWriteFile(filepath.Join(baseDir, file.name), []byte(contents), 0o444, manifest); err != nil {
+			return err
+		}
+	}
+	return stampV2ReadOnly(baseDir)
+}
+
+func taskOperation(task map[string]json.RawMessage) string {
+	if raw, ok := task["operation"]; ok {
+		var op string
+		if err := json.Unmarshal(raw, &op); err == nil {
+			return op
+		}
+	}
+	return ""
 }
 
 // projectResourceFile is the on-disk JSON written into the agent's working

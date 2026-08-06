@@ -739,6 +739,22 @@ type ProjectDesignSystemTaskContext struct {
 	RepositoryAnalysis    json.RawMessage              `json:"repository_analysis,omitempty"`
 	OpenDesignRun         json.RawMessage              `json:"open_design_run,omitempty"`
 	OutputPolicy          json.RawMessage              `json:"output_policy"`
+	// PackageSchema pins the V2 native agent output contract. It is set on
+	// generate / adjust / regenerate tasks (the V2 native agent chain) and
+	// intentionally omitted on repository-analysis tasks, which keep their
+	// own read-only JSON contract. The field is also omitted on the legacy
+	// Open Design path so the OpenDesignRun envelope is the sole signal of
+	// that flow.
+	PackageSchema string `json:"package_schema,omitempty"`
+	// InputSnapshotSHA256 is the canonical digest of the marshaled input
+	// snapshot. It lets the agent, the audit, and any future re-derivation
+	// of the manifest agree on the exact input set the task was dispatched
+	// against. Omitted on the analysis path.
+	InputSnapshotSHA256 string `json:"input_snapshot_sha256,omitempty"`
+	// BasePackageSHA256 is the digest of the selected base package the
+	// task is operating on. Empty for generate and analysis tasks; set
+	// on adjust and regenerate when a base package was selected.
+	BasePackageSHA256 string `json:"base_package_sha256,omitempty"`
 }
 
 // EnqueueQuickCreateTask creates a queued task that has no issue / chat /

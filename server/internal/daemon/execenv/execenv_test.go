@@ -4332,3 +4332,159 @@ func TestEnvironmentCleanupStandardModeRemovesWorkdir(t *testing.T) {
 		t.Fatalf("output/ removed by partial cleanup: %v", err)
 	}
 }
+
+func TestWriteProjectDesignSystemContextCreatesReadOnlyContextAndReferenceTrees(t *testing.T) {
+	workDir := t.TempDir()
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"adjust",
+		"package_schema":"multica.project-design-system/v2",
+		"input_snapshot_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"base_package_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+		"brief":"Calm CRM",
+		"base_package":{
+			"design_md":"# base",
+			"tokens_css":":root { --color-brand: #123456; }",
+			"components_html":"<main data-design-node-id=\"base\">Base kit</main>",
+			"integrity_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+		}
+	}`)
+	if err := writeContextFiles(workDir, "opencode", ctx, nil); err != nil {
+		t.Fatalf("writeContextFiles: %v", err)
+	}
+	// Reopen the V2 sidecar directories as writable so t.TempDir can
+	// remove the workspace on cleanup. The production code path stays at
+	// 0o555; this only affects the test's own teardown.
+	t.Cleanup(func() {
+		_ = os.Chmod(filepath.Join(workDir, ".agent_context", "project_design_system", "context"), 0o755)
+		_ = os.Chmod(filepath.Join(workDir, ".agent_context", "project_design_system", "reference"), 0o755)
+		_ = os.Chmod(filepath.Join(workDir, ".agent_context", "project_design_system", "base"), 0o755)
+	})
+
+	root := filepath.Join(workDir, ".agent_context", "project_design_system")
+	for _, file := range []struct {
+		path  string
+		perm  os.FileMode
+		label string
+	}{
+		{filepath.Join(root, "context", "task.json"), 0o444, "context/task.json"},
+		{filepath.Join(root, "reference", "index.json"), 0o444, "reference/index.json"},
+		{filepath.Join(root, "base", "DESIGN.md"), 0o444, "base/DESIGN.md"},
+		{filepath.Join(root, "base", "tokens.css"), 0o444, "base/tokens.css"},
+		{filepath.Join(root, "base", "components.html"), 0o444, "base/components.html"},
+	} {
+		info, err := os.Stat(file.path)
+		if err != nil {
+			t.Fatalf("missing %s: %v", file.label, err)
+		}
+		if info.Mode().Perm() != file.perm {
+			t.Fatalf("%s mode = %o, want %o", file.label, info.Mode().Perm(), file.perm)
+		}
+	}
+	for _, dir := range []struct {
+		path  string
+		perm  os.FileMode
+		label string
+	}{
+		{filepath.Join(root, "context"), 0o555, "context/"},
+		{filepath.Join(root, "reference"), 0o555, "reference/"},
+		{filepath.Join(root, "base"), 0o555, "base/"},
+	} {
+		info, err := os.Stat(dir.path)
+		if err != nil {
+			t.Fatalf("missing %s: %v", dir.label, err)
+		}
+		if info.Mode().Perm() != dir.perm {
+			t.Fatalf("%s mode = %o, want %o", dir.label, info.Mode().Perm(), dir.perm)
+		}
+	}
+	workInfo, err := os.Stat(workDir)
+	if err != nil {
+		t.Fatalf("stat workdir: %v", err)
+	}
+	if workInfo.Mode().Perm()&0o200 == 0 {
+		t.Fatalf("workdir must remain writable for the agent, mode = %o", workInfo.Mode().Perm())
+	}
+
+	refIndex, err := os.ReadFile(filepath.Join(root, "reference", "index.json"))
+	if err != nil {
+		t.Fatalf("read reference/index.json: %v", err)
+	}
+	if !strings.Contains(string(refIndex), `"schema_version"`) {
+		t.Fatalf("reference/index.json missing schema_version: %s", refIndex)
+	}
+}
+
+func TestWriteProjectDesignSystemContextRejectsMismatchedBasePackage(t *testing.T) {
+	workDir := t.TempDir()
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"adjust",
+		"package_schema":"multica.project-design-system/v2",
+		"input_snapshot_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"base_package_sha256":"0000000000000000000000000000000000000000000000000000000000000000",
+		"brief":"Calm CRM",
+		"base_package":{
+			"design_md":"# base",
+			"tokens_css":":root{}",
+			"components_html":"<main>x</main>",
+			"integrity_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+		}
+	}`)
+	if err := writeContextFiles(workDir, "opencode", ctx, nil); err == nil {
+		t.Fatal("expected writeContextFiles to reject mismatched base_package_sha256, got nil")
+	}
+}
+
+func TestPrepareProjectDesignSystemWorkspaceSeparatesWorkAndOutput(t *testing.T) {
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"generate",
+		"package_schema":"multica.project-design-system/v2",
+		"input_snapshot_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	}`)
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: t.TempDir(),
+		WorkspaceID:    "workspace-v2",
+		TaskID:         "task-v2-12345678",
+		Provider:       "opencode",
+		Task:           ctx,
+	}, discardLogger())
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	// t.TempDir cleanup needs the V2 sidecar directories writable, so
+	// re-open them before the implicit RemoveAll. Production code keeps
+	// 0o555; only this test's teardown is affected.
+	t.Cleanup(func() {
+		_ = os.Chmod(filepath.Join(env.WorkDir, ".agent_context", "project_design_system", "context"), 0o755)
+		_ = os.Chmod(filepath.Join(env.WorkDir, ".agent_context", "project_design_system", "reference"), 0o755)
+	})
+	if env.WorkDir == "" || env.OutputDir == "" {
+		t.Fatalf("WorkDir=%q OutputDir=%q, both must be set", env.WorkDir, env.OutputDir)
+	}
+	if env.WorkDir == env.OutputDir {
+		t.Fatalf("WorkDir and OutputDir must be separate, both = %q", env.WorkDir)
+	}
+	if !strings.HasPrefix(env.OutputDir, filepath.Join(env.RootDir, "output", "project-design-system")) {
+		t.Fatalf("OutputDir = %q, want it under env.RootDir/output/project-design-system", env.OutputDir)
+	}
+	if !filepath.IsAbs(env.OutputDir) {
+		t.Fatalf("OutputDir = %q, want absolute path", env.OutputDir)
+	}
+	if info, err := os.Stat(env.OutputDir); err != nil || info.Mode().Perm()&0o200 == 0 {
+		t.Fatalf("output dir must be writable by the agent: info=%v err=%v", info, err)
+	}
+	if info, err := os.Stat(env.WorkDir); err != nil || info.Mode().Perm()&0o200 == 0 {
+		t.Fatalf("workdir must remain writable for the agent: info=%v err=%v", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(env.WorkDir, ".agent_context", "project_design_system", "context", "task.json")); err != nil {
+		t.Fatalf("Prepare must materialize the V2 context/task.json sidecar: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.WorkDir, ".agent_context", "project_design_system", "reference", "index.json")); err != nil {
+		t.Fatalf("Prepare must materialize the V2 reference/index.json sidecar: %v", err)
+	}
+}

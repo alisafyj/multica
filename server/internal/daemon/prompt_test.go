@@ -666,11 +666,11 @@ func TestBuildPromptProjectDesignSystemGenerate(t *testing.T) {
 	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "generate"), "opencode")
 	for _, want := range []string{
 		"design system designer",
-		".agent_context/project_design_system/task.json",
-		"user brief as the primary intent",
-		"Open Design",
-		"one coherent direction",
-		"components.html is a real static UI Kit",
+		".agent_context/project_design_system/context/task.json",
+		"reference/index.json",
+		"one Agent session",
+		"single coherent",
+		"static token-backed UI Kit",
 		"data-design-node-id",
 		"$MULTICA_OUTPUT_DIR/DESIGN.md",
 		"Do not paste file contents into the final response",
@@ -708,7 +708,7 @@ func TestBuildPromptProjectDesignSystemForbidsDelegationBeforeArtifacts(t *testi
 		"Do not use the `task` tool",
 		"delegate to another specialist",
 		"read back all three output files",
-		"delegated or promised work is not completion",
+		"Delegated or promised work is not completion",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("project design system prompt missing anti-delegation rule %q\n--- prompt ---\n%s", want, prompt)
@@ -719,15 +719,75 @@ func TestBuildPromptProjectDesignSystemForbidsDelegationBeforeArtifacts(t *testi
 func TestBuildPromptProjectDesignSystemAdjustRequiresCompleteReplacement(t *testing.T) {
 	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "adjust"), "opencode")
 	for _, want := range []string{
-		"base/DESIGN.md",
-		"base/tokens.css",
-		"base/components.html",
-		"complete mutually consistent replacement",
-		"even when the requested scope is local",
-		"Never write scripts, event attributes, imports, forms, external embeds",
+		"immutable base directory",
+		"complete replacement",
+		"mutually consistent with each other",
+		"local assets",
+		"No scripts",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("project design system adjustment prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+}
+
+func TestBuildPromptProjectDesignSystemV2UsesEvidenceThenDesignStages(t *testing.T) {
+	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "generate"), "opencode")
+	for _, want := range []string{
+		"evidence",
+		"fact",
+		"conflict",
+		"fallback",
+		"coherent",
+		"semantic Tokens",
+		"source- or brief-supported",
+		"static token-backed UI Kit",
+		"local assets",
+		"Read back",
+		"self-check",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("V2 native agent prompt missing evidence→design stage %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+}
+
+func TestBuildPromptProjectDesignSystemV2RequiresCompleteStaticPackage(t *testing.T) {
+	adjust := BuildPrompt(projectDesignSystemPromptTask(t, "adjust"), "opencode")
+	for _, want := range []string{
+		"complete replacement",
+		"immutable base directory",
+		"Task delegation",
+		"hidden follow-up work",
+		"network-dependent final HTML",
+		"scripts",
+		"invented template residue",
+		"short completion summary",
+		"package files are authoritative",
+	} {
+		if !strings.Contains(adjust, want) {
+			t.Fatalf("V2 adjust prompt missing static-package contract %q\n--- prompt ---\n%s", want, adjust)
+		}
+	}
+	generate := BuildPrompt(projectDesignSystemPromptTask(t, "generate"), "opencode")
+	if !strings.Contains(generate, "no scripts") && !strings.Contains(generate, "scripts") {
+		t.Fatalf("V2 generate prompt must forbid scripts, got:\n%s", generate)
+	}
+}
+
+func TestBuildPromptProjectDesignSystemV2NeverMentionsWorkerRuntimeOrFigmaJSON(t *testing.T) {
+	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "generate"), "opencode")
+	for _, forbidden := range []string{
+		"Open Design",
+		"open-design",
+		"open_design",
+		"Figma",
+		"figma",
+		"worker runtime",
+		"WorkerRuntime",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("V2 native agent prompt must not reference %q\n--- prompt ---\n%s", forbidden, prompt)
 		}
 	}
 }
