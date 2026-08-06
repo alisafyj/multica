@@ -3232,6 +3232,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	if pmoSnapshot != nil {
 		// Privacy: log task/run identity only, never snapshot content.
 		slog.Info("pmo sync preview stored", "task_id", taskID, "run_id", pmoSyncCtx.RunID)
+		h.pmoAutoApplyScheduledRun(r.Context(), pmoSyncCtx, taskID)
 	}
 
 	h.emitIssueExecutedOnFirstCompletion(r, task)

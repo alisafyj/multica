@@ -84,6 +84,12 @@ type PMOService struct {
 	applyTestHook func(ctx context.Context, qtx *db.Queries) error
 }
 
+// SetApplyTestHook swaps the test-only ApplyRun failure hook (cross-package
+// tests cannot touch the unexported field). Pass nil to clear.
+func (s *PMOService) SetApplyTestHook(hook func(ctx context.Context, qtx *db.Queries) error) {
+	s.applyTestHook = hook
+}
+
 type CreatePMOConfigParams struct {
 	WorkspaceID     pgtype.UUID
 	Name            string

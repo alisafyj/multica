@@ -83,6 +83,48 @@ func (h *Handler) markPMOSyncRunRunning(ctx context.Context, task db.AgentTaskQu
 	}
 }
 
+// pmoAutoApplyScheduledRun applies the preview automatically when a
+// SCHEDULED run's agent task completes. Scheduled runs apply only safe
+// changes (no conflict overrides — conflicted fields stay local and earn
+// review). Manual runs never reach this: their preview is the review
+// surface.
+//
+// On apply failure the run stays preview_ready with a redacted, bounded
+// error so an admin can review and retry — the acquired snapshot is never
+// discarded. The error is stored via SetPMOSyncRunPreviewError; payload
+// content never enters it (ApplyRun returns validation/DB error text only).
+func (h *Handler) pmoAutoApplyScheduledRun(ctx context.Context, pmoCtx service.PMOSyncContext, taskID string) {
+	runID, err := util.ParseUUID(pmoCtx.RunID)
+	if err != nil {
+		return
+	}
+	workspaceID, err := util.ParseUUID(pmoCtx.WorkspaceID)
+	if err != nil {
+		return
+	}
+	run, err := h.Queries.GetPMOSyncRun(ctx, db.GetPMOSyncRunParams{ID: runID, WorkspaceID: workspaceID})
+	if err != nil {
+		return
+	}
+	if run.Trigger != "scheduled" {
+		return
+	}
+	if _, err := h.PMOService.ApplyRun(ctx, workspaceID, run.ID, nil); err != nil {
+		bounded := boundPMORunError(err.Error())
+		slog.Warn("pmo sync auto-apply failed; run kept preview_ready for review",
+			"task_id", taskID, "run_id", pmoCtx.RunID, "error", bounded)
+		if _, perr := h.Queries.SetPMOSyncRunPreviewError(ctx, db.SetPMOSyncRunPreviewErrorParams{
+			ID:           run.ID,
+			WorkspaceID:  workspaceID,
+			ErrorCode:    pgtype.Text{String: "pmo_apply_failed", Valid: true},
+			ErrorMessage: pgtype.Text{String: bounded, Valid: true},
+		}); perr != nil && !errors.Is(perr, pgx.ErrNoRows) {
+			slog.Warn("pmo sync auto-apply: persist apply error failed",
+				"run_id", pmoCtx.RunID, "error", perr)
+		}
+	}
+}
+
 // storePMOSyncRunPreview persists a validated snapshot as the run's preview:
 // normalized source snapshot + diff + summary, status → preview_ready,
 // completed_at stamped. The diff runs against empty local state: Task 5
