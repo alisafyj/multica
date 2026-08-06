@@ -132,19 +132,20 @@ type TaskContextForEnv struct {
 	// the Output section says text-only instead (MUL-4899). The orthogonal
 	// history-command policy is Slack-only and lives in the per-turn chat prompt
 	// (daemon/prompt.go) — the server has no Feishu history reader.
-	ChatChannelType         string
-	AutopilotRunID          string // non-empty for autopilot run_only tasks
-	AutopilotID             string
-	AutopilotTitle          string
-	AutopilotDescription    string
-	AutopilotSource         string
-	AutopilotTriggerPayload string
-	QuickCreatePrompt       string // non-empty for quick-create tasks
-	UIDraftCreateContext    string // non-empty for UI design draft generation tasks
-	DesignRestoreContext    string // non-empty for Gallery Native restore execution tasks
+	ChatChannelType                   string
+	AutopilotRunID                    string // non-empty for autopilot run_only tasks
+	AutopilotID                       string
+	AutopilotTitle                    string
+	AutopilotDescription              string
+	AutopilotSource                   string
+	AutopilotTriggerPayload           string
+	QuickCreatePrompt                 string // non-empty for quick-create tasks
+	UIDraftCreateContext              string // non-empty for UI design draft generation tasks
+	DesignRestoreContext              string // non-empty for Gallery Native restore execution tasks
 	DesignSystemProfileAnalyzeContext string // non-empty for UI specification profile analysis tasks
-	HandoffNote             string // assignment handoff instruction; rendered into issue_context.md (MUL-3375)
-	IsSquadLeader           bool   // true when the agent is acting as a squad leader (may exit silently on no_action)
+	PMOSyncContext                    string // non-empty for PMO requirement sync tasks (prompt-only, no issue checkout)
+	HandoffNote                       string // assignment handoff instruction; rendered into issue_context.md (MUL-3375)
+	IsSquadLeader                     bool   // true when the agent is acting as a squad leader (may exit silently on no_action)
 	// WorkspaceContext is the workspace-level system prompt (workspace.context
 	// in the DB). Rendered into the brief as `## Workspace Context` when
 	// non-empty so every agent in the workspace sees the same shared context,
@@ -716,6 +717,11 @@ type GCMeta struct {
 }
 
 const GCKindDesignRestore GCMetaKind = "design_restore"
+
+// GCKindPMOSync covers PMO requirement sync task workdirs. Like quick-create,
+// the task has no issue parent, so GC resolves terminal state through the
+// task gc-check endpoint using meta.TaskID.
+const GCKindPMOSync GCMetaKind = "pmo_sync"
 
 const gcMetaFile = ".gc_meta.json"
 

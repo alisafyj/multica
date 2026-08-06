@@ -31,6 +31,45 @@ type PMOSyncContext struct {
 	Prompt      string `json:"prompt"`
 }
 
+// ParsePMOSyncContext returns the PMO sync payload when the given task
+// context JSONB carries type == "pmo_sync"; otherwise ok is false so callers
+// can short-circuit. Shared by the task pipeline (workspace resolution,
+// claim, completion, failure) and exported because the daemon handlers parse
+// contexts they did not create.
+func ParsePMOSyncContext(contextJSON []byte) (PMOSyncContext, bool) {
+	if len(contextJSON) == 0 {
+		return PMOSyncContext{}, false
+	}
+	var pmoCtx PMOSyncContext
+	if err := json.Unmarshal(contextJSON, &pmoCtx); err != nil || pmoCtx.Type != PMOSyncContextType {
+		return PMOSyncContext{}, false
+	}
+	return pmoCtx, true
+}
+
+// PreparePMOSyncRunPreview serializes a validated snapshot into the columns
+// StorePMOSyncRunPreview persists: the normalized source snapshot plus a
+// three-way diff and its summary. Task 5 has no linked canonical entities
+// yet (the apply logic lands in Task 6), so the diff runs against empty
+// local state — every snapshot entity reads as a create proposal and the
+// preview changes no projects or issues.
+func PreparePMOSyncRunPreview(snapshot PMOSnapshot) (sourceSnapshot, diffJSON, summaryJSON []byte, err error) {
+	sourceSnapshot, err = json.Marshal(snapshot)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("marshal pmo source snapshot: %w", err)
+	}
+	diff := DiffPMOSnapshot(PMODiffInput{Snapshot: snapshot})
+	diffJSON, err = json.Marshal(diff)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("marshal pmo diff: %w", err)
+	}
+	summaryJSON, err = json.Marshal(diff.Summary)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("marshal pmo summary: %w", err)
+	}
+	return sourceSnapshot, diffJSON, summaryJSON, nil
+}
+
 type PMOService struct {
 	Queries   *db.Queries
 	TxStarter TxStarter

@@ -492,6 +492,18 @@ func writeWorkflowDesignSystemProfileAnalyze(b *strings.Builder) {
 	b.WriteString("- Do not output markdown fences or prose outside the JSON object.\n\n")
 }
 
+// writeWorkflowPMOSync emits the server-managed PMO requirement sync
+// workflow. The strict acquisition prompt (root key + JSON contract) rides in
+// the user message; this section only keeps the generic issue workflow from
+// overriding that contract and steers the agent away from repo checkouts.
+func writeWorkflowPMOSync(b *strings.Builder) {
+	b.WriteString("**This is a server-managed PMO requirement sync task.** The strict acquisition prompt is embedded in the user message; the server validates and stores your final JSON result as a preview.\n\n")
+	b.WriteString("- Fetch the requirement snapshot with the tools already configured for this Agent, using only the root key named in the prompt.\n")
+	b.WriteString("- Return exactly one JSON object matching the snapshot contract in the prompt — single object, no Markdown fence, no prose.\n")
+	b.WriteString("- Do NOT call `multica issue get`, `multica issue comment add`, `multica issue status`, or `multica repo checkout`; there is no issue or repository for this run.\n")
+	b.WriteString("- Do not create or modify projects, issues, or any workspace data; the server applies change previews separately.\n\n")
+}
+
 // writeWorkflowIssue emits the single issue workflow used by BOTH
 // assignment-triggered and comment-triggered runs.
 //
@@ -711,7 +723,7 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 		} else {
 			b.WriteString("**Delivering files here:** run `multica attachment upload <local-path>` — it binds the file to your reply and it renders as an attachment card. That command is the ONLY way a file reaches the user; a path written into your reply text is not.\n")
 		}
-	case kindUIDraftCreate, kindDesignRestore, kindDesignSystemProfileAnalyze:
+	case kindUIDraftCreate, kindDesignRestore, kindDesignSystemProfileAnalyze, kindPMOSync:
 		b.WriteString("This is a server-managed design task. Your final assistant output is captured automatically and processed by the server; do not post an issue comment. Follow the exact output schema in the user message.\n\n")
 		b.WriteString("**Delivering files here:** the captured result is text-only. Keep generated artifacts in the target repository when the task requires them, and reference repository paths as inline code rather than local links.\n")
 	default:
@@ -807,6 +819,8 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 		writeWorkflowDesignRestore(&b)
 	case kindDesignSystemProfileAnalyze:
 		writeWorkflowDesignSystemProfileAnalyze(&b)
+	case kindPMOSync:
+		writeWorkflowPMOSync(&b)
 	case kindIssue:
 		writeWorkflowIssue(&b, ctx)
 	}

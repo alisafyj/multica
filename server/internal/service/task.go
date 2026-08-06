@@ -4676,6 +4676,9 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 	if pc, ok := s.parseDesignSystemProfileAnalyzeContext(task); ok {
 		return pc.WorkspaceID
 	}
+	if pmoCtx, ok := s.parsePMOSyncContext(task); ok {
+		return pmoCtx.WorkspaceID
+	}
 	return ""
 }
 
@@ -4955,6 +4958,18 @@ func (s *TaskService) parseDesignSystemProfileAnalyzeContext(task db.AgentTaskQu
 		return DesignSystemProfileAnalyzeContext{}, false
 	}
 	return pc, true
+}
+
+// parsePMOSyncContext reports whether this task is a PMO sync task. PMO sync
+// tasks are created exactly like quick-create tasks (no issue / chat /
+// autopilot link, context JSONB only), so the binding guards + strict type
+// match are what distinguish them.
+func (s *TaskService) parsePMOSyncContext(task db.AgentTaskQueue) (PMOSyncContext, bool) {
+	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid {
+		return PMOSyncContext{}, false
+	}
+	pmoCtx, ok := ParsePMOSyncContext(task.Context)
+	return pmoCtx, ok
 }
 
 // maxQuickCreateFailureDetailRunes bounds the failure reason lifted from a

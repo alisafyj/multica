@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -101,6 +102,9 @@ func buildPromptBody(task Task, provider string) string {
 	if len(task.DesignSystemProfileAnalyzeContext) > 0 {
 		return buildDesignSystemProfileAnalyzePrompt(task)
 	}
+	if len(task.PMOSyncContext) > 0 {
+		return buildPMOSyncPrompt(task)
+	}
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
@@ -115,6 +119,41 @@ func buildPromptBody(task Task, provider string) string {
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Scan the threads first with `multica issue comment list %s --roots-only --summary --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. Your runtime workflow file documents the rest of the read surface, including pagination and `--since` for incremental polling.\n", task.IssueID)
 	return b.String()
+}
+
+// buildPMOSyncPrompt renders the opening prompt for a PMO requirement sync
+// task. The strict acquisition prompt generated at enqueue time
+// (service.BuildPMOSyncPrompt) is authoritative — the daemon re-parses the
+// sync context JSONB and renders it directly, without naming any company,
+// domain, or external capability (BuildPMOSyncPrompt already guarantees
+// none appear). The daemon carries no repo/issue context for this kind: the
+// prompt-only path is the whole task.
+func buildPMOSyncPrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a PMO requirement sync agent for a Multica workspace.\n\n")
+	prompt := pmoSyncPromptFromContext(task.PMOSyncContext)
+	if prompt == "" {
+		// Degenerate context: keep the strict JSON-only contract instead of
+		// falling through to the issue workflow, which would tell the agent
+		// to operate on an issue that does not exist for this task.
+		b.WriteString("Your PMO sync context could not be parsed. Return one JSON object only, matching the PMO snapshot contract.\n")
+		return b.String()
+	}
+	b.WriteString(prompt)
+	b.WriteString("\n")
+	return b.String()
+}
+
+// pmoSyncPromptFromContext extracts the acquisition prompt from the raw
+// PMO sync context JSONB. Returns "" when the context is malformed.
+func pmoSyncPromptFromContext(raw string) string {
+	var payload struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Prompt)
 }
 
 func buildDesignSystemProfileAnalyzePrompt(task Task) string {

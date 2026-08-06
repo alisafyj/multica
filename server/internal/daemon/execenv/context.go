@@ -993,6 +993,9 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 	if ctx.DesignSystemProfileAnalyzeContext != "" {
 		return renderDesignSystemProfileAnalyzeContext(ctx)
 	}
+	if ctx.PMOSyncContext != "" {
+		return renderPMOSyncContext(ctx)
+	}
 
 	var b strings.Builder
 
@@ -1079,6 +1082,14 @@ func renderDesignSystemProfileAnalyzeContext(ctx TaskContextForEnv) string {
 		}
 		b.WriteString("\n")
 	}
+	return b.String()
+}
+
+func renderPMOSyncContext(ctx TaskContextForEnv) string {
+	var b strings.Builder
+	b.WriteString("# PMO Requirement Sync\n\n")
+	b.WriteString("**Trigger:** External requirement snapshot acquisition\n\n")
+	b.WriteString("The strict acquisition prompt lives in the user message for this run. Return one JSON object only — no files, no issue comments, no project or issue writes.\n\n")
 	return b.String()
 }
 
