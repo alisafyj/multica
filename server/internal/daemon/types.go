@@ -107,6 +107,7 @@ type Task struct {
 	QuickCreateAttachmentIDs          []string               `json:"quick_create_attachment_ids,omitempty"`      // attachments uploaded in the quick-create prompt and bound by issue create
 	UIDraftCreateContext              string                 `json:"uidraft_create_context,omitempty"`
 	DesignRestoreContext              string                 `json:"design_restore_context,omitempty"`
+	TestGenerationContext             string                 `json:"test_generation_context,omitempty"`
 	DesignSystemProfileAnalyzeContext string                 `json:"design_system_profile_analyze_context,omitempty"`
 	HandoffNote                       string                 `json:"handoff_note,omitempty"` // assignment handoff instruction; rendered into the opening prompt + issue_context.md
 

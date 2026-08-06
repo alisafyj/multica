@@ -2499,6 +2499,15 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			h.populateContextTaskProject(r.Context(), &resp, draftCtx.ProjectID, draftCtx.WorkspaceID)
 		}
 
+		var genCtx service.TestGenerationContext
+		if json.Unmarshal(task.Context, &genCtx) == nil && genCtx.Type == service.TestGenerationContextType {
+			resp.WorkspaceID = genCtx.WorkspaceID
+			resp.TestGenerationContext = json.RawMessage(task.Context)
+			// A generation run reads the project's repositories and documents,
+			// so it needs the same project payload an issue task gets.
+			h.populateContextTaskProject(r.Context(), &resp, genCtx.ProjectID, genCtx.WorkspaceID)
+		}
+
 		var restoreCtx service.DesignRestoreTaskContext
 		if json.Unmarshal(task.Context, &restoreCtx) == nil && restoreCtx.Type == service.DesignRestoreTaskContextType {
 			hasDesignRestore = true
@@ -2977,6 +2986,9 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	if err := h.markDesignRestoreTaskRunning(r.Context(), *task); err != nil {
 		slog.Warn("design restore task start: failed to mark restore task running", "task_id", taskID, "error", err)
 	}
+	if err := h.markTestGenerationJobRunning(r.Context(), *task); err != nil {
+		slog.Warn("test generation start: failed to mark job running", "task_id", taskID, "error", err)
+	}
 
 	slog.Info("task started", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
@@ -3188,6 +3200,9 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if analyzedProfile != nil {
 		slog.Info("design system profile analyzed from task", "task_id", taskID, "design_system_profile_id", uuidToString(analyzedProfile.ID))
+	}
+	if err := h.updateTestGenerationJobFromAgentCompletion(r.Context(), *task, req); err != nil {
+		slog.Warn("test generation complete: failed to record job result", "task_id", taskID, "error", err)
 	}
 	if err := h.updateDesignRestoreTaskFromAgentCompletion(r.Context(), *task, req); err != nil {
 		slog.Warn("design restore task completion: failed to update restore task", "task_id", taskID, "error", err)
@@ -3903,6 +3918,9 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("fail task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if err := h.updateTestGenerationJobFromAgentFailure(r.Context(), *task, req); err != nil {
+		slog.Warn("test generation fail: failed to record job failure", "task_id", taskID, "error", err)
 	}
 	if err := h.updateDesignRestoreTaskFromAgentFailure(r.Context(), *task, req); err != nil {
 		slog.Warn("design restore task failure: failed to update restore task", "task_id", taskID, "error", err)

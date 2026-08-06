@@ -98,6 +98,9 @@ func buildPromptBody(task Task, provider string) string {
 	if len(task.DesignRestoreContext) > 0 {
 		return buildDesignRestorePrompt(task)
 	}
+	if len(task.TestGenerationContext) > 0 {
+		return buildTestGenerationPrompt(task)
+	}
 	if len(task.DesignSystemProfileAnalyzeContext) > 0 {
 		return buildDesignSystemProfileAnalyzePrompt(task)
 	}
@@ -136,6 +139,54 @@ func buildDesignSystemProfileAnalyzePrompt(task Task) string {
 	b.WriteString("Design system profile analysis context JSON:\n")
 	b.WriteString(task.DesignSystemProfileAnalyzeContext)
 	b.WriteString("\n")
+	return b.String()
+}
+
+// buildTestGenerationPrompt drives an AI test case generation run. The scope in
+// `plan` is a human-approved contract, and every generated case is written back
+// through the authenticated CLI rather than printed, so the closing marker only
+// carries a summary.
+func buildTestGenerationPrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a QA engineer for a Multica workspace. Your job is to produce test cases, not to change product code.\n\n")
+	b.WriteString("The approved scope contract is the `plan` object in the context JSON below. It is the result of human review: stay inside it.\n\n")
+
+	b.WriteString("Work in this order:\n")
+	b.WriteString("1. Run `multica testcase list --project <project_id> --digest --output json` first. That is the index of cases that ALREADY exist. Your output must be an increment on top of it, never a re-listing of it.\n")
+	b.WriteString("2. Check out every repository named in `plan.repos` with `multica repo checkout <url>` (or `multica repo checkout --all`). Read only inside each entry's `path_globs` when it is non-empty.\n")
+	b.WriteString("3. Read every document in `plan.knowledge_refs`. These are the authoritative business rules; they outrank your inference from code.\n")
+	b.WriteString("4. For each issue id in `plan.issues`, run `multica issue get <id> --output json` and read its comment thread. Run `multica issue search <keyword>` for decisions that only ever got recorded in comments.\n")
+	b.WriteString("5. Write the cases back with `multica testcase propose --job <job_id> --stdin`.\n\n")
+
+	b.WriteString("What a good case set looks like:\n")
+	b.WriteString("- Cover BUSINESS behaviour, not only code paths: end-to-end flows, permission matrices, state-machine transitions, data consistency across services, money and time-zone edges, and what must NOT happen.\n")
+	b.WriteString("- `plan.expected_case_types` lists the case types this run is expected to produce. Treat a set that is entirely `functional` as a failure to understand the product.\n")
+	b.WriteString("- `steps` is a structured array, not prose. Each step needs a concrete `action` and a checkable `expected`. A human and an agent both have to be able to execute it verbatim.\n")
+	b.WriteString("- Prefer few precise cases over many vague ones. A case nobody can execute is worse than a missing case.\n\n")
+
+	b.WriteString("Multi-repo cases:\n")
+	b.WriteString("- When a scenario spans systems (change data in one service, verify it in another), set `scope` to `cross_repo`, list each repository in `repos` with a distinct `role` (`driver`, `under_test`, `verifier`, `fixture`), and tag each step with the `repo` alias it runs against.\n")
+	b.WriteString("- A `cross_repo` case with fewer than two roles is rejected by the server.\n\n")
+
+	b.WriteString("Increment rules — every proposed item is one of exactly three kinds:\n")
+	b.WriteString("- `new`: behaviour no existing case covers.\n")
+	b.WriteString("- `update`: an existing case that is now wrong or incomplete. Set `target` to its TC-<n> key and give a `rationale` naming what changed.\n")
+	b.WriteString("- `obsolete`: an existing case whose behaviour no longer exists. Set `target` and give a `rationale`.\n")
+	b.WriteString("Do not re-propose a case that already exists unchanged. Duplicates are the main way this feature becomes unusable.\n\n")
+
+	b.WriteString("Rules:\n")
+	b.WriteString("- Do NOT write, refactor, or commit product code. Do NOT open pull requests.\n")
+	b.WriteString("- Do NOT invent endpoints, fields, permissions, or business rules that you did not read in the repositories, documents, or issues.\n")
+	b.WriteString("- If the approved scope is not enough to produce meaningful cases, stop and report `blocked` with the concrete gap. A thin set of guessed cases is worse than an honest blocker.\n")
+	b.WriteString("- Use the `multica` CLI for all Multica reads and writes; do not call the API with curl or wget.\n\n")
+
+	b.WriteString("Context JSON:\n")
+	b.WriteString(task.TestGenerationContext)
+	b.WriteString("\n\n")
+
+	b.WriteString("When you are done, end your final response with a machine-readable JSON block prefixed by exactly `TEST_GENERATION_RESULT_JSON:` with this shape:\n")
+	b.WriteString("{\"status\":\"completed|blocked|failed\",\"summary\":\"one paragraph\",\"stats\":{\"new\":0,\"updated\":0,\"obsolete\":0},\"blockers\":[]}\n")
+	b.WriteString("The cases themselves must already have been written through `multica testcase propose`; this block is a report, not the delivery.\n")
 	return b.String()
 }
 

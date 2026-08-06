@@ -1316,3 +1316,30 @@ func TestBriefModeRouterMatchesPromptMarkers(t *testing.T) {
 		t.Error("brief still routes on the prompt's opening line; it must route on the explicit marker")
 	}
 }
+
+func TestBuildTestGenerationPromptCarriesTheIncrementContract(t *testing.T) {
+	task := Task{TestGenerationContext: `{"type":"test_generation","job_id":"job-1","project_id":"p-1"}`}
+	prompt := BuildPrompt(task, "claude")
+
+	// The whole value of re-running generation is that it produces an
+	// increment; without the digest step the agent re-lists what already exists.
+	for _, want := range []string{
+		"multica testcase list",
+		"--digest",
+		"multica testcase propose",
+		"TEST_GENERATION_RESULT_JSON:",
+		"cross_repo",
+		"obsolete",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt is missing %q", want)
+		}
+	}
+	// A generation run must not turn into a code-change run.
+	if !strings.Contains(prompt, "Do NOT write, refactor, or commit product code") {
+		t.Error("prompt does not forbid product code changes")
+	}
+	if !strings.Contains(prompt, task.TestGenerationContext) {
+		t.Error("prompt does not embed the context JSON")
+	}
+}
