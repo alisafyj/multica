@@ -476,6 +476,33 @@ func TestAuditV2RejectsEscapedSecuritySensitiveCSS(t *testing.T) {
 		assertV2DiagnosticCode(t, collected.Audit, err, "tokens_css_url_unsafe")
 	})
 
+	t.Run("escaped tab in remote URL string declaration", func(t *testing.T) {
+		root := copyV2Fixture(t)
+		html := `<style>.workspace { background-image: image-set("h\9 ttps://example.com/x.png" 1x); color: var(--color-action); }</style><main class="workspace" data-design-node-id="orders" data-design-node-kind="block" data-design-node-label="Orders">Orders</main>`
+		if err := os.WriteFile(filepath.Join(root, "ui-kit", "index.html"), []byte(html), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		collected, err := CollectV2Directory(root, validV2Binding())
+		assertV2DiagnosticCode(t, collected.Audit, err, "tokens_css_url_unsafe")
+	})
+
+	t.Run("escaped tab in remote URL string custom property", func(t *testing.T) {
+		root := copyV2Fixture(t)
+		name := filepath.Join(root, "tokens.css")
+		tokens, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tokens = append(tokens, []byte(`
+:root { --image-logo: image-set("h\9 ttps://example.com/x.png" 1x); }
+`)...)
+		if err := os.WriteFile(name, tokens, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		collected, err := CollectV2Directory(root, validV2Binding())
+		assertV2DiagnosticCode(t, collected.Audit, err, "tokens_css_url_unsafe")
+	})
+
 	t.Run("harmless string escape", func(t *testing.T) {
 		root := copyV2Fixture(t)
 		html := `<style>.workspace::before { content: "line\a break"; } .workspace { color: var(--color-action); }</style><main class="workspace" data-design-node-id="orders" data-design-node-kind="block" data-design-node-label="Orders">Orders</main>`

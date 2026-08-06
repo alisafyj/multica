@@ -675,9 +675,22 @@ func inspectV2CSSValue(value []byte, basePath string, artifacts map[string]Artif
 }
 
 func v2CSSStringIsRemoteURL(data []byte) bool {
-	value := v2DecodeCSSStringForURLPolicy(data)
+	value := v2NormalizeStringForURLPolicy(v2DecodeCSSStringForURLPolicy(data))
 	parsed, err := url.Parse(value)
 	return strings.HasPrefix(value, "//") || (err == nil && parsed.Scheme != "")
+}
+
+func v2NormalizeStringForURLPolicy(value string) string {
+	var normalized strings.Builder
+	normalized.Grow(len(value))
+	for _, character := range value {
+		if character != '\t' && character != '\n' && character != '\r' {
+			normalized.WriteRune(character)
+		}
+	}
+	return strings.TrimFunc(normalized.String(), func(character rune) bool {
+		return character >= 0 && character <= 0x20
+	})
 }
 
 func v2DecodeCSSStringForURLPolicy(data []byte) string {
