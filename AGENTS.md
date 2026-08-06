@@ -49,7 +49,7 @@ See CLAUDE.md for the complete command reference.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **multica** (28561 symbols, 80907 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **multica** (32757 symbols, 95885 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
@@ -90,3 +90,9 @@ This project is indexed by GitNexus as **multica** (28561 symbols, 80907 relatio
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+## 当前任务状态（会话交接 - 每次会话结束更新）
+
+- **做了什么**: Task 1 已完成并通过双重审查；V2 package/Audit 边界位于 `3ee778ea3..31cb42229`，主 Agent fresh 验证普通/race 各 156 项通过
+- **做到哪**: 工作树仍为 `~/.config/superpowers/worktrees/multica/native-design-engine`，分支 `codex/multica-native-design-engine`；主 checkout `feature/fengchen` 未修改
+- **下一步**: 按 Phase 1 计划进入 Task 2（Extract Multica-Owned Browser Preview Verification），先重读 Design Center README，并串行 impact `NewChromiumPreviewVerifier` / `PinnedPreviewVerificationPolicy`
