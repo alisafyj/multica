@@ -46,17 +46,82 @@ const domMetricsExpression = `(() => {
   const elements = Array.from(body.querySelectorAll('*'));
   let renderedElementCount = 0;
   const clips = (value) => value === 'hidden' || value === 'clip' || value === 'scroll' || value === 'auto';
-  const hasPaintHit = (element, left, top, right, bottom) => {
-    const samples = [0.1, 0.25, 0.5, 0.75, 0.9];
-    for (const xRatio of samples) {
-      for (const yRatio of samples) {
-        const x = left + (right - left) * xRatio;
-        const y = top + (bottom - top) * yRatio;
-        const hits = document.elementsFromPoint(x, y);
-        if (hits.some((hit) => hit === element || element.contains(hit))) return true;
+  const maskMayPaint = (maskImage) => {
+    const value = (maskImage || 'none').trim().toLowerCase();
+    if (value === 'none') return true;
+    if (value.includes('url(') || value.includes('image(') || value.includes('paint(')) return true;
+
+    let onlyTransparentColorsSeen = value.includes('transparent');
+    const parseAlpha = (rawAlpha) => {
+      const trimmed = rawAlpha.trim();
+      const alpha = trimmed.endsWith('%') ? Number.parseFloat(trimmed) / 100 : Number.parseFloat(trimmed);
+      return Number.isFinite(alpha) ? alpha : null;
+    };
+    const colorFunctionAlpha = (color) => {
+      const name = color.slice(0, color.indexOf('('));
+      const body = color.slice(color.indexOf('(') + 1, -1);
+      if (body.includes('/')) return parseAlpha(body.slice(body.lastIndexOf('/') + 1));
+      if (name.endsWith('a')) {
+        const parts = body.split(',');
+        if (parts.length >= 4) return parseAlpha(parts[3]);
+      }
+      return null;
+    };
+    const hexColors = value.match(/#[0-9a-f]{3,8}\b/g) || [];
+    for (const color of hexColors) {
+      const hex = color.slice(1);
+      if ((hex.length === 4 && hex[3] === '0') || (hex.length === 8 && hex.slice(6) === '00')) {
+        onlyTransparentColorsSeen = true;
+        continue;
+      }
+      return true;
+    }
+
+    const colorFunctions = value.match(/(?:rgb|hsl)a?\([^)]*\)/g) || [];
+    for (const color of colorFunctions) {
+      const alpha = colorFunctionAlpha(color);
+      if (alpha !== null && alpha <= 0) {
+        onlyTransparentColorsSeen = true;
+        continue;
+      }
+      return true;
+    }
+
+    const namedOpaqueColors = /\b(?:black|white|red|green|blue|yellow|orange|purple|cyan|magenta|gray|grey|currentcolor)\b/.test(value.replace(/transparent/g, ''));
+    if (namedOpaqueColors) return true;
+    return !onlyTransparentColorsSeen;
+  };
+  const withPointerEventsEnabled = (element, action) => {
+    const changed = [];
+    for (let current = element; current; current = current.parentElement) {
+      changed.push([current, current.getAttribute('style')]);
+      current.style.setProperty('pointer-events', 'auto', 'important');
+    }
+    try {
+      return action();
+    } finally {
+      for (const [node, value] of changed) {
+        if (value === null) {
+          node.removeAttribute('style');
+        } else {
+          node.setAttribute('style', value);
+        }
       }
     }
-    return false;
+  };
+  const hasPaintHit = (element, left, top, right, bottom) => {
+    const samples = [0.1, 0.25, 0.5, 0.75, 0.9];
+    return withPointerEventsEnabled(element, () => {
+      for (const xRatio of samples) {
+        for (const yRatio of samples) {
+          const x = left + (right - left) * xRatio;
+          const y = top + (bottom - top) * yRatio;
+          const hits = document.elementsFromPoint(x, y);
+          if (hits.some((hit) => hit === element || element.contains(hit))) return true;
+        }
+      }
+      return false;
+    });
   };
   const isRendered = (element) => {
     const rect = element.getBoundingClientRect();
@@ -73,7 +138,10 @@ const domMetricsExpression = `(() => {
       opacityProduct *= Number.isFinite(currentOpacity) ? currentOpacity : 1;
       if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.contentVisibility === 'hidden' || opacityProduct <= 0) return false;
       const maskImage = style.maskImage || style.webkitMaskImage || 'none';
-      if (maskImage !== 'none') return false;
+      if (maskImage !== 'none') {
+        if (!maskMayPaint(maskImage)) return false;
+        requiresPaintHit = true;
+      }
       if ((style.clipPath && style.clipPath !== 'none') || (style.clip && style.clip !== 'auto')) requiresPaintHit = true;
       if (current !== element && (clips(style.overflowX) || clips(style.overflowY))) {
         const clip = current.getBoundingClientRect();

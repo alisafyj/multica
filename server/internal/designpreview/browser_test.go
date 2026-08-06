@@ -57,6 +57,38 @@ func TestChromiumVerifierAcceptsNativeUIKitTarget(t *testing.T) {
 	}
 }
 
+func TestChromiumVerifierAcceptsVisibleMaskedAndClippedTargets(t *testing.T) {
+	server := newPreviewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/opaque-mask":
+			fmt.Fprint(w, `<!doctype html><html><style>body{margin:0;min-height:900px;background:#f7f8fa;color:#111;font:16px sans-serif}main{width:420px;height:260px;margin:48px;padding:32px;background:linear-gradient(135deg,#0f766e,#2563eb);color:white;-webkit-mask-image:linear-gradient(#000,#000);mask-image:linear-gradient(#000,#000)}.card{height:160px;background:rgba(255,255,255,.22);border:1px solid rgba(255,255,255,.5)}</style><body><main><section class="card">Opaque mask keeps this card visible</section></main></body></html>`)
+		case "/fade-mask":
+			fmt.Fprint(w, `<!doctype html><html><style>body{margin:0;min-height:900px;background:#fff7ed;color:#111;font:16px sans-serif}main{width:460px;height:300px;margin:48px;padding:40px;background:linear-gradient(135deg,#7c2d12,#f97316);color:white;-webkit-mask-image:linear-gradient(to bottom,transparent 0%,#000 22%,#000 78%,transparent 100%);mask-image:linear-gradient(to bottom,transparent 0%,#000 22%,#000 78%,transparent 100%)}.card{height:160px;background:rgba(255,255,255,.24);border:1px solid rgba(255,255,255,.55)}</style><body><main><section class="card">Fade mask still exposes the center content</section></main></body></html>`)
+		case "/clipped-pointer-none":
+			fmt.Fprint(w, `<!doctype html><html><style>body{margin:0;min-height:900px;background:#eef2ff;color:#111;font:16px sans-serif}main{width:440px;height:260px;margin:48px;padding:32px;background:linear-gradient(135deg,#4338ca,#0891b2);color:white;clip-path:inset(0 round 18px);pointer-events:none}.card{height:160px;background:rgba(255,255,255,.24);border:1px solid rgba(255,255,255,.55)}</style><body><main><section class="card">Visible clipped content is not interactive</section></main></body></html>`)
+		case "/clipped-pointer-none-important":
+			fmt.Fprint(w, `<!doctype html><html><style>body{margin:0;min-height:900px;background:#f0fdf4;color:#111;font:16px sans-serif}main{width:440px;height:260px;margin:48px;padding:32px;background:linear-gradient(135deg,#047857,#2563eb);color:white;clip-path:inset(0 round 18px);pointer-events:none!important}.card{height:160px;background:rgba(255,255,255,.24);border:1px solid rgba(255,255,255,.55)}</style><body><main><section class="card">Visible clipped content uses important pointer events</section></main></body></html>`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	verification := verifyPreviewTargets(t, []TargetURL{
+		{Target: Target{Kind: "preview", ID: "opaque-mask", Path: "preview/opaque-mask.html"}, URL: server.URL + "/opaque-mask"},
+		{Target: Target{Kind: "preview", ID: "fade-mask", Path: "preview/fade-mask.html"}, URL: server.URL + "/fade-mask"},
+		{Target: Target{Kind: "preview", ID: "clipped-pointer-none", Path: "preview/clipped-pointer-none.html"}, URL: server.URL + "/clipped-pointer-none"},
+		{Target: Target{Kind: "preview", ID: "clipped-pointer-none-important", Path: "preview/clipped-pointer-none-important.html"}, URL: server.URL + "/clipped-pointer-none-important"},
+	})
+	for _, result := range verification.Targets {
+		result := result
+		t.Run(result.Target.ID, func(t *testing.T) {
+			if !result.Passed {
+				t.Fatalf("visible masked/clipped target = %+v", result)
+			}
+		})
+	}
+}
+
 func TestChromiumVerifierRejectsBlankAndOverflowingTarget(t *testing.T) {
 	server := newPreviewTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
