@@ -158,6 +158,11 @@ vi.mock("../../editor", async () => ({
     tryOpen: () => false,
     modal: null,
   }),
+  // Pass-through: the detail page wraps its column in the image-sequence
+  // provider, but paging between images is covered in
+  // image-sequence-context.test.tsx against the real provider.
+  ImageSequenceProvider: ({ children }: { children: React.ReactNode }) =>
+    children,
   isPreviewable: () => false,
   ReadonlyContent: ({ content }: { content: string }) => (
     <div data-testid="readonly-content">{content}</div>
@@ -731,6 +736,38 @@ describe("IssueDetail (shared)", () => {
     expect(
       screen.getAllByRole("generic").some((el) => el.getAttribute("data-slot") === "skeleton"),
     ).toBe(true);
+  });
+
+  it("gives the skeleton the same horizontal gutters as the loaded column", async () => {
+    // The skeleton is the loaded column's stand-in, so a gutter change has to
+    // land on both or the column jumps sideways at the moment the issue
+    // arrives. Horizontal only: the loaded column also reserves the chat
+    // launcher's corner at its bottom, which the skeleton has no scroll to
+    // reach.
+    const horizontalGutters = (el: Element | null) =>
+      (el?.className ?? "")
+        .split(/\s+/)
+        .filter((cls) => /(^|:)px-/.test(cls))
+        .sort();
+
+    mockApiObj.getIssue.mockReturnValue(new Promise(() => {}));
+    const loadingRender = renderIssueDetail();
+    const skeletonGutters = horizontalGutters(
+      loadingRender.container.querySelector(".max-w-4xl"),
+    );
+    loadingRender.unmount();
+
+    mockApiObj.getIssue.mockResolvedValue(mockIssue);
+    const { container } = renderIssueDetail();
+    await waitFor(() => {
+      expect(screen.getByText("Implement authentication")).toBeInTheDocument();
+    });
+
+    // Non-empty guard: without it a renamed column class passes vacuously.
+    expect(skeletonGutters.length).toBeGreaterThan(0);
+    expect(skeletonGutters).toEqual(
+      horizontalGutters(container.querySelector(".max-w-4xl")),
+    );
   });
 
   it("renders comment bodies without Base UI collapsible panels", async () => {

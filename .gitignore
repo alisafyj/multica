@@ -84,3 +84,7 @@ fengchenDoc/
 
 # deepwork session state
 .slim/deepwork/
+
+# Python (agent tooling)
+__pycache__/
+*.pyc

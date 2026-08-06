@@ -306,9 +306,26 @@ func TestSessionContinuityNoticeLivesOutsideBrief(t *testing.T) {
 		"could NOT be restored",
 		"tell the user up front",
 	} {
-		if !strings.Contains(SessionContinuityNotice, want) {
-			t.Errorf("SessionContinuityNotice missing %q", want)
+		if !strings.Contains(SessionContinuityNoticeUnrecoverable, want) {
+			t.Errorf("SessionContinuityNoticeUnrecoverable missing %q", want)
 		}
+	}
+
+	// MUL-5722: the issue variant carries the same heading and the same
+	// "do not assume continuity" job, but must NOT order an announcement. An
+	// issue's discussion lives in its comments, which the agent re-reads every
+	// turn, so telling the user it was lost describes a loss that did not
+	// happen — they hear "the discussion is gone" when every word survives.
+	if !strings.Contains(SessionContinuityNoticeIssue, "## Session Continuity Notice") {
+		t.Error("SessionContinuityNoticeIssue must keep the section heading")
+	}
+	if strings.Contains(SessionContinuityNoticeIssue, "tell the user") {
+		t.Errorf("issue variant must not script an apology:\n%s", SessionContinuityNoticeIssue)
+	}
+	// It still has to say what genuinely went missing, or the agent silently
+	// assumes it remembers work it no longer has.
+	if !strings.Contains(SessionContinuityNoticeIssue, "your own working memory") {
+		t.Errorf("issue variant must state the real loss:\n%s", SessionContinuityNoticeIssue)
 	}
 
 	lost := TaskContextForEnv{
@@ -389,6 +406,44 @@ func TestSquadLeaderIssueWorkflowKeepsParentInProgress(t *testing.T) {
 
 	if strings.Contains(out, "When done, run `multica issue status <issue-id> in_review`") {
 		t.Errorf("squad-leader issue brief must not contain the ordinary-agent completion step\n---\n%s", out)
+	}
+}
+
+// TestProtocolHeadingInInstructionsGetsNoLeaderBrief is the brief-side half of
+// the MUL-5811 negative regression. IsSquadLeader now comes from the claim's
+// is_leader_task / squad_id, so an ordinary agent that documents a
+// "## Squad Operating Protocol" section in its own instructions must get the
+// ordinary brief — its instructions rendered verbatim under Agent Identity,
+// and not one leader-only branch.
+func TestProtocolHeadingInInstructionsGetsNoLeaderBrief(t *testing.T) {
+	t.Parallel()
+
+	const instructions = "I write docs about squads.\n\n## Squad Operating Protocol\n\nHow leaders dispatch work..."
+	out := buildMetaSkillContent("claude", TaskContextForEnv{
+		IssueID:           "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+		TriggerCommentID:  "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+		AgentName:         "Docs writer",
+		AgentInstructions: instructions,
+		IsSquadLeader:     false,
+	})
+
+	if !strings.Contains(out, instructions) {
+		t.Fatalf("agent instructions must reach the brief verbatim\n---\n%s", out)
+	}
+	for _, banned := range []string{
+		"### Squad maintenance",
+		"multica squad member set-role",
+		"Squad leader rule:",
+		"multica squad activity",
+		`Squad Operating Protocol's "Own the parent issue status"`,
+		"After this initial dispatch, leave the parent issue `in_progress`",
+	} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("ordinary-agent brief leaked leader-only content %q\n---\n%s", banned, out)
+		}
+	}
+	if !strings.Contains(out, "**Posting your reply as a comment is mandatory**") {
+		t.Fatalf("ordinary-agent brief lost the unconditional reply obligation\n---\n%s", out)
 	}
 }
 
@@ -1563,11 +1618,68 @@ func TestMultiThreadReplyInstructionsFanOut(t *testing.T) {
 		{ThreadID: "c1", ParentID: "c1"},
 		{ThreadID: "c2", ParentID: "c2"},
 		{ThreadID: "c3", ParentID: "c3"},
-	})
+	}, false)
 
-	for _, want := range []string{"3 DISTINCT threads", "Post ONE reply per thread", "--parent c1", "--parent c2", "--parent c3"} {
+	for _, want := range []string{
+		"3 DISTINCT threads",
+		"Post ONE reply per thread",
+		"OVERRIDES",
+		"--parent c1", "--parent c2", "--parent c3",
+		"OLDEST thread first",
+		// MUL-5825: the posting mechanism is a pointer at the brief's
+		// canonical section plus the one multi-thread-specific delta.
+		"`## Comment Formatting`",
+		"DISTINCT body file per thread",
+		"never reuse a `--parent` from an earlier turn",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("cross-thread instructions must contain %q, got:\n%s", want, out)
+		}
+	}
+
+	// Pin ledger (MUL-5825): the embedded file-operations cookbook was
+	// retired in favour of the `## Comment Formatting` pointer above — it
+	// triple-wrote the mechanism already carried by the brief and the
+	// single-thread cookbook (~1KB per multi-thread turn). These strings are
+	// the retired machinery; none may reappear in the fan-out block:
+	for _, banned := range []string{
+		"For EACH thread above",                // old cookbook opener
+		"UTF-8 file with your file-write tool", // restated mechanism
+		"multica issue comment add",            // embedded example commands
+		"--content-stdin",                      // restated HEREDOC ban
+		"rm ./reply-",                          // unix cleanup example
+		"Remove-Item",                          // windows cleanup example
+		"Do NOT write literal",                 // restated \n-escape rule
+	} {
+		if strings.Contains(out, banned) {
+			t.Errorf("fan-out block re-grew retired cookbook text %q (mechanism lives in ## Comment Formatting — MUL-5825), got:\n%s", banned, out)
+		}
+	}
+}
+
+// TestMultiThreadReplyInstructionsOSInvariant pins that the fan-out block is
+// byte-identical across host OSes (MUL-5825). The only OS-dependent text was
+// the embedded cleanup command pair (`rm` vs `Remove-Item`), which left with
+// the cookbook; the OS split now lives solely in the brief's
+// `## Comment Formatting`. If this fails, OS-specific mechanism text crept
+// back into the block — move it to the brief instead.
+//
+// Not parallel: mutates the package-level runtimeGOOS.
+func TestMultiThreadReplyInstructionsOSInvariant(t *testing.T) {
+	saved := runtimeGOOS
+	t.Cleanup(func() { runtimeGOOS = saved })
+
+	targets := []ThreadReplyTarget{
+		{ThreadID: "c1", ParentID: "c1"},
+		{ThreadID: "c2", ParentID: "c2"},
+	}
+	for _, leader := range []bool{false, true} {
+		runtimeGOOS = "linux"
+		linux := BuildMultiThreadCommentReplyInstructions("55555555-6666-7777-8888-999999999999", targets, leader)
+		runtimeGOOS = "windows"
+		windows := BuildMultiThreadCommentReplyInstructions("55555555-6666-7777-8888-999999999999", targets, leader)
+		if linux != windows {
+			t.Errorf("fan-out block (leader=%v) must be OS-invariant\nlinux:\n%s\nwindows:\n%s", leader, linux, windows)
 		}
 	}
 }
@@ -1575,7 +1687,7 @@ func TestMultiThreadReplyInstructionsFanOut(t *testing.T) {
 // Single-thread reply cookbook moved to the per-turn prompt (MUL-5377).
 func TestSingleThreadReplyInstructionsKeepSingleParent(t *testing.T) {
 	t.Parallel()
-	out := BuildCommentReplyInstructions("claude", "55555555-6666-7777-8888-999999999999", "c3")
+	out := BuildCommentReplyInstructions("claude", "55555555-6666-7777-8888-999999999999", "c3", false)
 
 	if strings.Contains(out, "DISTINCT threads") {
 		t.Errorf("single/same-thread instructions must not emit the multi-thread fan-out block, got:\n%s", out)
