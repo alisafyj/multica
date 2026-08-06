@@ -1865,14 +1865,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 			}
 
-			if len(projectRepos) > 0 {
-				resp.Repos = projectRepos
-			} else if ws, err := h.Queries.GetWorkspace(r.Context(), issue.WorkspaceID); err == nil && ws.Repos != nil {
-				var repos []RepoData
-				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
-					resp.Repos = repos
-				}
-			}
+			resp.Repos = mergeTaskRepos(projectRepos, h.workspaceRepoData(r.Context(), issue.WorkspaceID))
 		}
 
 		// Load every planned input as one chronological, de-duplicated set.
@@ -2191,14 +2184,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					}
 				}
 			}
-			if len(projectRepos) > 0 {
-				resp.Repos = projectRepos
-			} else if ws, err := h.Queries.GetWorkspace(r.Context(), cs.WorkspaceID); err == nil && ws.Repos != nil {
-				var repos []RepoData
-				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
-					resp.Repos = repos
-				}
-			}
+			resp.Repos = mergeTaskRepos(projectRepos, h.workspaceRepoData(r.Context(), cs.WorkspaceID))
 			if !task.ForceFreshSession {
 				// Resume chat sessions only when the stored pointer was produced
 				// by the same runtime as the claiming task. When the chat_session
@@ -2417,14 +2403,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 			}
 
-			if len(projectRepos) > 0 {
-				resp.Repos = projectRepos
-			} else if ws, err := h.Queries.GetWorkspace(r.Context(), parseUUID(qc.WorkspaceID)); err == nil && ws.Repos != nil {
-				var repos []RepoData
-				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
-					resp.Repos = repos
-				}
-			}
+			resp.Repos = mergeTaskRepos(projectRepos, h.workspaceRepoData(r.Context(), parseUUID(qc.WorkspaceID)))
 
 			// Parent-issue resolution for quick-create tasks opened from
 			// "Add sub issue". The handler already verified workspace
@@ -4502,4 +4481,49 @@ func (h *Handler) GetTaskGCCheck(w http.ResponseWriter, r *http.Request) {
 		"status":       task.Status,
 		"completed_at": task.CompletedAt.Time,
 	})
+}
+
+// mergeTaskRepos combines a project's repositories with the workspace-level
+// ones instead of replacing them.
+//
+// Attaching a single github_repo resource to a project used to hide every other
+// workspace repo from that task: the checkout allowlist is built from this list,
+// so a cross-repo test case whose second repository is only registered at
+// workspace level could not be checked out at all. Project entries win on URL
+// collision because their per-repo `ref` is the more specific instruction.
+func mergeTaskRepos(projectRepos, workspaceRepos []RepoData) []RepoData {
+	if len(projectRepos) == 0 {
+		return workspaceRepos
+	}
+	merged := make([]RepoData, 0, len(projectRepos)+len(workspaceRepos))
+	seen := make(map[string]struct{}, len(projectRepos)+len(workspaceRepos))
+	for _, repo := range projectRepos {
+		if _, dup := seen[repo.URL]; dup {
+			continue
+		}
+		seen[repo.URL] = struct{}{}
+		merged = append(merged, repo)
+	}
+	for _, repo := range workspaceRepos {
+		if _, dup := seen[repo.URL]; dup {
+			continue
+		}
+		seen[repo.URL] = struct{}{}
+		merged = append(merged, repo)
+	}
+	return merged
+}
+
+// workspaceRepoData reads the workspace-level repository list, tolerating a
+// missing or malformed column.
+func (h *Handler) workspaceRepoData(ctx context.Context, workspaceID pgtype.UUID) []RepoData {
+	ws, err := h.Queries.GetWorkspace(ctx, workspaceID)
+	if err != nil || ws.Repos == nil {
+		return nil
+	}
+	var repos []RepoData
+	if json.Unmarshal(ws.Repos, &repos) != nil {
+		return nil
+	}
+	return repos
 }

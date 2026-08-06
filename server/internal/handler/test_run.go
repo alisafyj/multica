@@ -2,14 +2,9 @@ package handler
 
 // Test plan and execution-run HTTP surface.
 //
-// Every handler below is registered in server/cmd/server/router.go. The bodies
-// are implemented in this file; the list here is the contract the router and
-// the CLI both depend on.
-//
-// DispatchTestRun is intentionally left returning 501 — agent dispatch is
-// owned by a parallel task and will be wired in a separate commit. The
-// notImplemented helper is kept alive because the capability handlers in
-// test_capability.go also use it.
+// Every handler here is registered in server/cmd/server/router.go. Agent
+// dispatch lives in test_run_dispatch.go, because it has to resolve execution
+// capabilities before anything is queued.
 
 import (
 	"context"
