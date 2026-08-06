@@ -4353,14 +4353,13 @@ func TestWriteProjectDesignSystemContextCreatesReadOnlyContextAndReferenceTrees(
 	if err := writeContextFiles(workDir, "opencode", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles: %v", err)
 	}
-	// Reopen the V2 sidecar directories as writable so t.TempDir can
-	// remove the workspace on cleanup. The production code path stays at
-	// 0o555; this only affects the test's own teardown.
-	t.Cleanup(func() {
-		_ = os.Chmod(filepath.Join(workDir, ".agent_context", "project_design_system", "context"), 0o755)
-		_ = os.Chmod(filepath.Join(workDir, ".agent_context", "project_design_system", "reference"), 0o755)
-		_ = os.Chmod(filepath.Join(workDir, ".agent_context", "project_design_system", "base"), 0o755)
-	})
+	// This test asserts the on-disk 0o555 / 0o444 mid-run state and
+	// never invokes env.Cleanup, so t.TempDir's auto-remove would
+	// fail with EACCES. RestoreV2SidecarWritability is the production
+	// helper that Environment.Cleanup now calls; reusing it here
+	// keeps the test's own teardown aligned with the production
+	// path it covers the first half of.
+	t.Cleanup(func() { _ = RestoreV2SidecarWritability(workDir) })
 
 	root := filepath.Join(workDir, ".agent_context", "project_design_system")
 	for _, file := range []struct {
@@ -4456,13 +4455,13 @@ func TestPrepareProjectDesignSystemWorkspaceSeparatesWorkAndOutput(t *testing.T)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	// t.TempDir cleanup needs the V2 sidecar directories writable, so
-	// re-open them before the implicit RemoveAll. Production code keeps
-	// 0o555; only this test's teardown is affected.
-	t.Cleanup(func() {
-		_ = os.Chmod(filepath.Join(env.WorkDir, ".agent_context", "project_design_system", "context"), 0o755)
-		_ = os.Chmod(filepath.Join(env.WorkDir, ".agent_context", "project_design_system", "reference"), 0o755)
-	})
+	// This test asserts the V2 layout is on disk and never invokes
+	// env.Cleanup, so t.TempDir's auto-remove would fail with EACCES
+	// on the 0o555 sidecar dirs. RestoreV2SidecarWritability is the
+	// production helper that Environment.Cleanup now calls; reusing
+	// it here keeps the test's teardown aligned with the production
+	// path it covers the first half of.
+	t.Cleanup(func() { _ = RestoreV2SidecarWritability(env.WorkDir) })
 	if env.WorkDir == "" || env.OutputDir == "" {
 		t.Fatalf("WorkDir=%q OutputDir=%q, both must be set", env.WorkDir, env.OutputDir)
 	}
@@ -4486,5 +4485,93 @@ func TestPrepareProjectDesignSystemWorkspaceSeparatesWorkAndOutput(t *testing.T)
 	}
 	if _, err := os.Stat(filepath.Join(env.WorkDir, ".agent_context", "project_design_system", "reference", "index.json")); err != nil {
 		t.Fatalf("Prepare must materialize the V2 reference/index.json sidecar: %v", err)
+	}
+}
+
+// TestEnvironmentCleanupRemovesV2SidecarWorkspace exercises the
+// production Environment.Cleanup path on a V2 materialised workspace.
+// The V2 layout is 0o555 on {context,reference,base} and 0o444 on
+// the files inside, so naive os.RemoveAll fails with EACCES. The
+// fix routes the chmod back to 0o755 through
+// RestoreV2SidecarWritability, called from Environment.Cleanup
+// (and from gc.go's cleanTaskDir for the GC path).
+func TestEnvironmentCleanupRemovesV2SidecarWorkspace(t *testing.T) {
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"adjust",
+		"package_schema":"multica.project-design-system/v2",
+		"input_snapshot_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"base_package_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+		"brief":"Calm CRM",
+		"base_package":{
+			"design_md":"# base",
+			"tokens_css":":root { --color-brand: #123456; }",
+			"components_html":"<main data-design-node-id=\"base\">Base kit</main>",
+			"integrity_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+		}
+	}`)
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: t.TempDir(),
+		WorkspaceID:    "workspace-cleanup",
+		TaskID:         "task-cleanup-12345678",
+		Provider:       "opencode",
+		Task:           ctx,
+	}, discardLogger())
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	// Sanity: the V2 sidecar tree is on disk and stamped read-only
+	// exactly as the brief specifies. Production cleanup must remove
+	// it without the caller chmod'ing anything.
+	for _, name := range []string{"context", "reference", "base"} {
+		path := filepath.Join(env.WorkDir, ".agent_context", "project_design_system", name)
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			t.Fatalf("missing V2 sidecar %s: %v", name, statErr)
+		}
+		if info.Mode().Perm() != 0o555 {
+			t.Fatalf("V2 sidecar %s mode = %o, want 0o555", name, info.Mode().Perm())
+		}
+	}
+	if info, err := os.Stat(filepath.Join(env.WorkDir, ".agent_context", "project_design_system", "context", "task.json")); err != nil {
+		t.Fatalf("missing context/task.json: %v", err)
+	} else if info.Mode().Perm() != 0o444 {
+		t.Fatalf("context/task.json mode = %o, want 0o444", info.Mode().Perm())
+	}
+
+	// Production cleanup. This is the path the daemon and the GC both
+	// take. With the production chmod hook in place, the call must
+	// succeed and the entire envRoot must be gone.
+	if err := env.Cleanup(true); err != nil {
+		t.Fatalf("env.Cleanup(true) on a V2 workspace: %v", err)
+	}
+	if _, err := os.Stat(env.RootDir); !os.IsNotExist(err) {
+		t.Fatalf("env.RootDir still present after Cleanup: stat err = %v", err)
+	}
+	if _, err := os.Stat(env.WorkDir); !os.IsNotExist(err) {
+		t.Fatalf("env.WorkDir still present after Cleanup: stat err = %v", err)
+	}
+
+	// RestoreV2SidecarWritability is a no-op on a path that no
+	// longer has the V2 layout, so re-running it after Cleanup must
+	// not error.
+	if err := RestoreV2SidecarWritability(env.WorkDir); err != nil {
+		t.Fatalf("RestoreV2SidecarWritability after Cleanup: %v", err)
+	}
+}
+
+// TestRestoreV2SidecarWritabilityNoOpOnAbsentLayout verifies the
+// helper is safe to call on paths that never had a V2 sidecar
+// (legacy / Open Design / non-design-system tasks) — those must not
+// error and must not touch anything on disk.
+func TestRestoreV2SidecarWritabilityNoOpOnAbsentLayout(t *testing.T) {
+	workDir := t.TempDir()
+	if err := RestoreV2SidecarWritability(workDir); err != nil {
+		t.Fatalf("RestoreV2SidecarWritability on empty workdir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, ".agent_context")); !os.IsNotExist(err) {
+		t.Fatalf("RestoreV2SidecarWritability must not create the V2 layout: stat err = %v", err)
 	}
 }

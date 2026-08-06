@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -318,6 +319,66 @@ func stampV2ReadOnly(dirs ...string) error {
 		}
 		if err := os.Chmod(dir, 0o555); err != nil {
 			return fmt.Errorf("stamp V2 read-only on %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// v2SidecarDirNames are the bounded read-only sub-directories the
+// V2 native agent chain materializes under
+// {workdir}/.agent_context/project_design_system/. Keep this in sync
+// with the directory names written by writeV2ProjectDesignSystemContext
+// and writeV2BaseDirectory.
+var v2SidecarDirNames = []string{"context", "reference", "base"}
+
+// RestoreV2SidecarWritability chmods the V2 native agent sidecar
+// directories back to 0o755 so production cleanup (os.RemoveAll on
+// envRoot / workdir) can unlink their contents after the run. The
+// 0o555 read-only state is only required *during* the agent's
+// execution; on the way out the daemon must be able to remove the
+// tree. This is the production equivalent of the chmod hook the
+// tests used to install in t.Cleanup.
+//
+// workdir is the agent's working directory (envRoot/workdir for the
+// standard path, or the user-supplied local directory for the
+// local_directory flow). The function is a no-op when the V2
+// sidecar layout is absent (legacy / Open Design / non-design-system
+// tasks) and when an entry is already writable. It does NOT recurse
+// into file permissions: 0o444 files unlink cleanly once their
+// parent directory is writable.
+//
+// Exported because gc.go calls it before its own os.RemoveAll
+// (cleanTaskDir, gc.go:451) — that path bypasses Environment.Cleanup
+// and would otherwise leak the V2 tree with EACCES on unlink.
+func RestoreV2SidecarWritability(workdir string) error {
+	if workdir == "" {
+		return nil
+	}
+	root := filepath.Join(workdir, ".agent_context", "project_design_system")
+	info, err := os.Stat(root)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("stat V2 sidecar root %s: %w", root, err)
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	for _, name := range v2SidecarDirNames {
+		dir := filepath.Join(root, name)
+		dirInfo, statErr := os.Stat(dir)
+		if statErr != nil {
+			if errors.Is(statErr, fs.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("stat V2 sidecar %s: %w", dir, statErr)
+		}
+		if !dirInfo.IsDir() {
+			continue
+		}
+		if err := os.Chmod(dir, 0o755); err != nil {
+			return fmt.Errorf("restore V2 sidecar writability on %s: %w", dir, err)
 		}
 	}
 	return nil
