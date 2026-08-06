@@ -77,6 +77,8 @@ export class TestApiClient {
   private email: string | null = null;
   private createdIssueIds: string[] = [];
   private seededIssueIds: string[] = [];
+  private createdProjectIds: string[] = [];
+  private createdTestCaseIds: string[] = [];
 
   async login(email: string, name: string) {
     const client = new pg.Client(DATABASE_URL);
@@ -336,6 +338,34 @@ export class TestApiClient {
   }
 
   /** Clean up all issues created during this test. */
+  async createProject(title: string, opts?: Record<string, unknown>) {
+    const res = await this.authedFetch("/api/projects", {
+      method: "POST",
+      body: JSON.stringify({ title, ...opts }),
+    });
+    const project = await res.json();
+    this.createdProjectIds.push(project.id);
+    return project;
+  }
+
+  async createProjectResource(projectId: string, body: Record<string, unknown>) {
+    const res = await this.authedFetch(`/api/projects/${projectId}/resources`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  async createTestCase(body: Record<string, unknown>) {
+    const res = await this.authedFetch("/api/test-cases", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    const testCase = await res.json();
+    this.createdTestCaseIds.push(testCase.id);
+    return testCase;
+  }
+
   async cleanup() {
     if (this.seededIssueIds.length > 0 && this.workspaceId) {
       const client = new pg.Client(DATABASE_URL);
@@ -358,6 +388,24 @@ export class TestApiClient {
       }
     }
     this.createdIssueIds = [];
+    // Test cases first: deleting a project does not cascade to them, and the
+    // backend deliberately has no foreign keys.
+    for (const id of this.createdTestCaseIds) {
+      try {
+        await this.authedFetch(`/api/test-cases/${id}`, { method: "DELETE" });
+      } catch {
+        /* ignore — may already be deleted */
+      }
+    }
+    this.createdTestCaseIds = [];
+    for (const id of this.createdProjectIds) {
+      try {
+        await this.authedFetch(`/api/projects/${id}`, { method: "DELETE" });
+      } catch {
+        /* ignore — may already be deleted */
+      }
+    }
+    this.createdProjectIds = [];
   }
 
   getToken() {
