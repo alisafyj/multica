@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strings"
@@ -64,7 +65,48 @@ var testcaseDeleteCmd = &cobra.Command{
 	RunE:  runTestcaseDelete,
 }
 
+// testcaseProposeCmd submits an AI generation batch to the server's writeback
+// endpoint. The caller must pipe the full {"items":[...]} JSON document on
+// stdin; line-delimited formats are not supported.
+var testcaseProposeCmd = &cobra.Command{
+	Use:   "propose",
+	Short: "Submit a generation batch from stdin to a test generation job",
+	RunE:  runTestcasePropose,
+}
+
+// testcaseProposalCmd is the proposal review command group.
+var testcaseProposalCmd = &cobra.Command{
+	Use:   "proposal",
+	Short: "Manage AI-generated test case proposals",
+}
+
+var testcaseProposalListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List proposals for a test case",
+	RunE:  runTestcaseProposalList,
+}
+
+var testcaseProposalAcceptCmd = &cobra.Command{
+	Use:   "accept <proposal-id>",
+	Short: "Accept an AI-generated proposal, applying its changes",
+	Args:  exactArgs(1),
+	RunE:  runTestcaseProposalAccept,
+}
+
+var testcaseProposalRejectCmd = &cobra.Command{
+	Use:   "reject <proposal-id>",
+	Short: "Reject an AI-generated proposal without applying it",
+	Args:  exactArgs(1),
+	RunE:  runTestcaseProposalReject,
+}
+
 func init() {
+	testcaseProposalCmd.AddCommand(
+		testcaseProposalListCmd,
+		testcaseProposalAcceptCmd,
+		testcaseProposalRejectCmd,
+	)
+
 	testcaseCmd.AddCommand(
 		testcaseListCmd,
 		testcaseGetCmd,
@@ -73,6 +115,8 @@ func init() {
 		testcaseUpdateCmd,
 		testcaseApproveCmd,
 		testcaseDeleteCmd,
+		testcaseProposeCmd,
+		testcaseProposalCmd,
 	)
 
 	testcaseListCmd.Flags().String("project", "", "Filter by project id")
@@ -106,6 +150,16 @@ func init() {
 	testcaseUpdateCmd.Flags().String("status", "", "Status: draft, active, deprecated")
 
 	testcaseApproveCmd.Flags().String("output", "json", "Output format: table or json")
+
+	// propose flags
+	testcaseProposeCmd.Flags().String("job", "", "Test generation job ID (required)")
+	testcaseProposeCmd.Flags().Bool("stdin", false, "Read the proposal JSON document from stdin")
+
+	// proposal list flags
+	testcaseProposalListCmd.Flags().String("case", "", "Test case ref: TC-42 or UUID (required)")
+	testcaseProposalListCmd.Flags().String("status", "", "Filter by status: pending, accepted, rejected")
+	testcaseProposalListCmd.Flags().String("output", "table", "Output format: table or json")
+	testcaseProposalListCmd.Flags().Bool("full-id", false, "Show full UUIDs in table output")
 }
 
 // testcaseDigestFields are the keys kept by --digest. A generation task needs to
@@ -465,4 +519,165 @@ func runTestcaseDelete(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "Test case %s deleted.\n", args[0])
 	return nil
+}
+
+// buildProposeBody reads one complete JSON document from r, validates it is
+// non-empty and well-formed JSON, and returns it as a generic map. The server
+// performs full schema validation; this layer only guards against the easy
+// mistakes (empty pipe, malformed JSON) before opening a network connection.
+func buildProposeBody(r io.Reader) (map[string]any, error) {
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("read proposal document: %w", err)
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return nil, fmt.Errorf("empty input: pipe the proposal JSON document to this command via --stdin")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, fmt.Errorf("proposal document is not valid JSON: %w", err)
+	}
+	return body, nil
+}
+
+// proposalListPath builds a workspace-scoped URL for the proposal list
+// endpoint. If status is non-empty it is added as a query parameter.
+func proposalListPath(client *cli.APIClient, caseRef, status string) string {
+	params := url.Values{}
+	if client.WorkspaceID != "" {
+		params.Set("workspace_id", client.WorkspaceID)
+	}
+	if status != "" {
+		params.Set("status", status)
+	}
+	path := "/api/test-cases/" + url.PathEscape(caseRef) + "/proposals"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+	return path
+}
+
+// testGenerationJobPath builds the URL for a test generation job action.
+func testGenerationJobPath(client *cli.APIClient, jobID, action string) string {
+	path := "/api/test-generation-jobs/" + url.PathEscape(jobID)
+	if action != "" {
+		path += "/" + action
+	}
+	if client.WorkspaceID != "" {
+		path += "?workspace_id=" + url.QueryEscape(client.WorkspaceID)
+	}
+	return path
+}
+
+func runTestcasePropose(cmd *cobra.Command, _ []string) error {
+	jobID, _ := cmd.Flags().GetString("job")
+	if strings.TrimSpace(jobID) == "" {
+		return fmt.Errorf("--job is required")
+	}
+
+	body, err := buildProposeBody(cmd.InOrStdin())
+	if err != nil {
+		return err
+	}
+
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	var result map[string]any
+	if err := client.PostJSON(ctx, testGenerationJobPath(client, jobID, "propose"), body, &result); err != nil {
+		return fmt.Errorf("propose test cases: %w", err)
+	}
+	return cli.PrintJSON(os.Stdout, result)
+}
+
+func runTestcaseProposalList(cmd *cobra.Command, _ []string) error {
+	caseRef, _ := cmd.Flags().GetString("case")
+	if strings.TrimSpace(caseRef) == "" {
+		return fmt.Errorf("--case is required")
+	}
+	status, _ := cmd.Flags().GetString("status")
+
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	var result map[string]any
+	if err := client.GetJSON(ctx, proposalListPath(client, caseRef, status), &result); err != nil {
+		return fmt.Errorf("list proposals: %w", err)
+	}
+
+	proposalsRaw, _ := result["proposals"].([]any)
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, proposalsRaw)
+	}
+
+	fullID, _ := cmd.Flags().GetBool("full-id")
+	headers := []string{"PROPOSAL ID", "KIND", "TARGET CASE", "STATUS", "RATIONALE"}
+	if fullID {
+		headers = append([]string{"FULL ID"}, headers[1:]...)
+	}
+	rows := make([][]string, 0, len(proposalsRaw))
+	for _, raw := range proposalsRaw {
+		p, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		id := strVal(p, "id")
+		if !fullID {
+			if len(id) > 8 {
+				id = id[:8]
+			}
+		}
+		rows = append(rows, []string{
+			id,
+			strVal(p, "kind"),
+			strVal(p, "target_case_id"),
+			strVal(p, "status"),
+			strVal(p, "rationale"),
+		})
+	}
+	cli.PrintTable(os.Stdout, headers, rows)
+	return nil
+}
+
+// proposalActionPath returns the URL for accept or reject endpoints. These
+// endpoints do not carry workspace_id as a query param — the token carries the
+// workspace context.
+func proposalActionPath(client *cli.APIClient, proposalID, action string) string {
+	path := "/api/test-case-proposals/" + url.PathEscape(proposalID) + "/" + action
+	if client.WorkspaceID != "" {
+		path += "?workspace_id=" + url.QueryEscape(client.WorkspaceID)
+	}
+	return path
+}
+
+func runTestcaseProposalAccept(cmd *cobra.Command, args []string) error {
+	return runProposalDecision(cmd, args[0], "accept")
+}
+
+func runTestcaseProposalReject(cmd *cobra.Command, args []string) error {
+	return runProposalDecision(cmd, args[0], "reject")
+}
+
+func runProposalDecision(cmd *cobra.Command, proposalID, action string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	var result map[string]any
+	if err := client.PostJSON(ctx, proposalActionPath(client, proposalID, action), map[string]any{}, &result); err != nil {
+		return fmt.Errorf("%s proposal: %w", action, err)
+	}
+	return cli.PrintJSON(os.Stdout, result)
 }

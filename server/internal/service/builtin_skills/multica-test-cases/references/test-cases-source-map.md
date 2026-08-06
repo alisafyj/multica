@@ -76,6 +76,35 @@ a pointer.
 | Approve stamps `reviewed_by` / `reviewed_at` | `server/internal/handler/test_case.go:814` |
 | Delete sweeps repo bindings and revisions in the same transaction — neither has a cascade | `server/internal/handler/test_case.go:838` |
 
+## AI generation — propose endpoint
+
+| Behavior | Source |
+| --- | --- |
+| `testcase propose --job <id> --stdin` reads one complete JSON document from `cmd.InOrStdin()`, not `os.Stdin` | `server/cmd/multica/cmd_testcase.go` (`buildProposeBody`, `runTestcasePropose`) |
+| Empty or whitespace-only input is rejected client-side before any network call | `server/cmd/multica/cmd_testcase.go` (`buildProposeBody`) |
+| The body is validated with `json.Unmarshal` before posting | `server/cmd/multica/cmd_testcase.go` (`buildProposeBody`) |
+| POSTs to `POST /api/test-generation-jobs/{id}/propose` | `server/cmd/server/router.go:1291` |
+| The batch is one JSON document `{"items":[...]}`, not line-delimited | `server/internal/handler/test_generation_propose.go:53` (`ProposeTestCasesRequest`) |
+| `kind` values: `new`, `update`, `obsolete` | `server/internal/handler/test_generation_propose.go:24` (`validTestCaseProposalKinds`) |
+| `new` lands in `test_case(status='draft', origin='ai')` immediately | `server/internal/handler/test_generation_propose.go:175` (`insertProposedTestCase`) |
+| `update` against a `draft` case: overwrites directly (no proposal row) | `server/internal/handler/test_generation_propose.go:187` |
+| `update` against an `active` case: creates a `test_case_proposal(pending)` | `server/internal/handler/test_generation_propose.go:197` |
+| `obsolete` against a `draft` case: directly sets `status='deprecated'` | `server/internal/handler/test_generation_propose.go:212` |
+| `obsolete` against an `active` case: creates a `test_case_proposal(pending)` | `server/internal/handler/test_generation_propose.go:225` |
+| Whole batch is atomic — a bad item at index N rolls back everything | `server/internal/handler/test_generation_propose.go:111` (pre-validation before tx) |
+| `cross_repo` case must have ≥ 2 distinct roles; the server returns 400 otherwise | `server/internal/handler/test_generation_propose.go:334` (`validateProposalCaseEnums`) |
+| Max 200 items per call | `server/internal/handler/test_generation_propose.go:19` (`maxTestCaseProposalItems`) |
+
+## AI generation — proposal review
+
+| Behavior | Source |
+| --- | --- |
+| `testcase proposal list --case <ref> [--status pending]` calls `GET /api/test-cases/{ref}/proposals` | `server/cmd/multica/cmd_testcase.go` (`runTestcaseProposalList`, `proposalListPath`), `server/cmd/server/router.go:1275` |
+| `testcase proposal accept <id>` calls `POST /api/test-case-proposals/{id}/accept` | `server/cmd/multica/cmd_testcase.go` (`runTestcaseProposalAccept`), `server/cmd/server/router.go:1294` |
+| `testcase proposal reject <id>` calls `POST /api/test-case-proposals/{id}/reject` | `server/cmd/multica/cmd_testcase.go` (`runTestcaseProposalReject`), `server/cmd/server/router.go:1295` |
+| Accept writes a revision snapshot, then applies the payload or sets `deprecated` | `server/internal/handler/test_generation_propose.go:586` (`reviewTestCaseProposal`) |
+| Accept and reject only work on `pending` proposals — 409 otherwise | `server/internal/handler/test_generation_propose.go:572` |
+
 ## Verification command
 
 ```bash
@@ -84,4 +113,8 @@ cd server && rg -n \
   internal/handler/test_case.go internal/handler/test_case_ref.go cmd/multica/cmd_testcase.go
 rg -n 'CREATE TABLE test_case|CHECK \(|test_case_counter' migrations/280_test_case.up.sql
 rg -n 'name: (List|Get|Create|Update|Delete)TestCase' pkg/db/queries/test_case.sql
+rg -n 'buildProposeBody|proposalListPath|testGenerationJobPath|proposalActionPath|runTestcaseProposal' \
+  cmd/multica/cmd_testcase.go
+rg -n 'ProposeTestCases|ListTestCaseProposals|AcceptTestCaseProposal|RejectTestCaseProposal|maxTestCaseProposalItems|validTestCaseProposalKinds' \
+  internal/handler/test_generation_propose.go
 ```

@@ -1,6 +1,6 @@
 ---
 name: multica-test-cases
-description: "Use when reading, writing, or reviewing Multica test cases — including finding which repositories, project, and issues a case relates to. Executing a case and recording results is not covered: that surface does not exist yet."
+description: "Use when reading, writing, reviewing, or AI-generating Multica test cases — including finding which repositories, project, and issues a case relates to. Executing a case and recording results is not covered: that surface does not exist yet."
 user-invocable: false
 allowed-tools: Bash(multica *)
 ---
@@ -64,9 +64,9 @@ touches and in what capacity:
 | `fixture` | where test data is prepared |
 
 Roles are what make "change the price in the backend, then check the order page
-in the app" machine-readable. A case with `scope: "cross_repo"` is expected to
-name at least two repositories with more than one role; the UI flags a case
-that does not.
+in the app" machine-readable. A case with `scope: "cross_repo"` must name at
+least two repositories with more than one distinct role — the server enforces
+this and rejects the batch item with 400 otherwise.
 
 Each binding points at a `project_resource_id`, not a repo URL — so run
 `multica project resource list <project-id> --output json` to map an alias back
@@ -108,8 +108,84 @@ reaches the database.
 only `functional` and `api` cases is under-covering the product: business flows,
 permission matrices and data-consistency rules are cases too.
 
+## AI generation workflow
+
+A generation job lets an agent read the project's repositories and documents and
+propose test cases through the CLI. The human reviews a generation plan before
+the agent runs.
+
+### Step 1 — survey the existing library first
+
+Before proposing anything, pull a compact index of what already exists:
+
+    multica testcase list --project <project-id> --digest --output json
+
+`--digest` omits step bodies; it gives you identity and classification without
+paying for every step. Use it to detect duplicates and decide what each new
+proposal's `kind` should be.
+
+### Step 2 — produce three kinds of increment
+
+| kind | when to use |
+| --- | --- |
+| `new` | the coverage does not exist at all |
+| `update` | an existing case needs new steps or scope corrections |
+| `obsolete` | the entry point or feature being tested no longer exists |
+
+A generation run must produce only increments relative to the digest, never a
+full dump of cases that already exist.
+
+### Step 3 — submit via `testcase propose`
+
+    multica testcase propose --job <job-id> --stdin < proposals.json
+
+The input must be one complete JSON document (not line-delimited). Shape:
+
+    {
+      "items": [
+        { "kind": "new", "case": { "title": "…", "module": "…", "steps": [...],
+            "case_type": "business_flow", "repos": [...] } },
+        { "kind": "update", "target": "TC-42",
+            "case": { ... }, "rationale": "接口新增了分页参数" },
+        { "kind": "obsolete", "target": "TC-7",
+            "rationale": "该入口已下线" }
+      ]
+    }
+
+Empty input is rejected client-side. The server validates every item before
+writing any; a single invalid item rolls back the whole batch.
+
+### Cross-repo cases
+
+A `cross_repo` case must name at least two repositories with different roles —
+e.g. one `under_test` and one `verifier`. The server returns 400 if only one
+distinct role is present; the UI flags single-role `cross_repo` cases.
+
+### Coverage requirement
+
+Generated cases must cover the business dimension of the feature, not only
+code paths. The plan's `expected_case_types` defaults to:
+
+    business_flow, permission, data_consistency, boundary, exception
+
+A batch that proposes only `functional` or `api` cases is under-delivering
+against the plan contract.
+
+### Reviewing proposals
+
+After a generation run, `update` and `obsolete` proposals against already
+approved cases land in the review queue:
+
+    multica testcase proposal list --case TC-42 --output json
+    multica testcase proposal list --case TC-42 --status pending --output table
+    multica testcase proposal accept <proposal-id>
+    multica testcase proposal reject <proposal-id>
+
+`new` cases land directly in the library as `draft`; they do not go through the
+proposal queue. Review them with `multica testcase list --status draft`.
+
 ## What does not exist yet
 
-There is no `multica test` command group, no generation job, and no run or
-result recording. A case is a durable document you can read, write and review —
-nothing consumes it automatically yet. Do not invent commands for those.
+There is no `multica test` command group, no run or result recording. A case is
+a durable document you can read, write and review — nothing consumes it
+automatically yet. Do not invent commands for those.

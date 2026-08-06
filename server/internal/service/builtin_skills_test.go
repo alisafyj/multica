@@ -245,6 +245,11 @@ func TestTestCasesSkillCoversTheDataContract(t *testing.T) {
 		// Honesty about what does not exist yet.
 		"There is no `multica test` command group",
 		"references/test-cases-source-map.md",
+		// Generation workflow: propose command and three kind values.
+		"testcase propose",
+		"obsolete",
+		// --digest is the explicit incremental-run gate: survey first, propose delta.
+		"multica testcase list --project <project-id> --digest --output json",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(body, want) {
