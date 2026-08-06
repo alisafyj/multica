@@ -287,6 +287,15 @@ deleted_lark_user_bindings AS (
 ),
 deleted_lark_binding_tokens AS (
     DELETE FROM lark_binding_token WHERE workspace_id = $1
+),
+deleted_pmo_links AS (
+    DELETE FROM pmo_sync_link WHERE workspace_id = $1
+),
+deleted_pmo_runs AS (
+    DELETE FROM pmo_sync_run WHERE workspace_id = $1
+),
+deleted_pmo_configs AS (
+    DELETE FROM pmo_sync_config WHERE workspace_id = $1
 )
 -- Keep the two-system cleanup ledger until object storage has been settled.
 -- Moving every row out of pending also prevents a concurrent media bind from

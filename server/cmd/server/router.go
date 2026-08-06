@@ -1259,6 +1259,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
+			// PMO requirement management
+			r.Route("/api/pmo", func(r chi.Router) {
+				r.Get("/configs", h.ListPMOConfigs)
+				r.Post("/configs", h.CreatePMOConfig)
+				r.Put("/configs/{id}", h.UpdatePMOConfig)
+				r.Delete("/configs/{id}", h.DeletePMOConfig)
+				r.Post("/configs/{id}/runs", h.StartPMORun)
+				r.Get("/runs", h.ListPMORuns)
+				r.Get("/runs/{id}", h.GetPMORun)
+			})
+
 			// Gallery Native design files
 			r.Get("/api/design-folders", h.ListDesignFolders)
 			r.Post("/api/design-folders", h.CreateDesignFolder)
