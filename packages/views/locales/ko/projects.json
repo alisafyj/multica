@@ -116,7 +116,17 @@
     "local_validate_not_a_directory": "디렉터리가 아닙니다.",
     "local_validate_not_readable": "디렉터리를 읽을 수 없습니다.",
     "local_validate_not_writable": "디렉터리에 쓸 수 없습니다.",
-    "local_validate_unsupported": "로컬 디렉터리는 데스크톱 앱에서만 선택할 수 있습니다."
+    "local_validate_unsupported": "로컬 디렉터리는 데스크톱 앱에서만 선택할 수 있습니다.",
+    "add_document_button": "문서 추가",
+    "document_url_label": "URL",
+    "document_url_placeholder": "https://example.com/spec.md",
+    "document_title_label": "제목",
+    "document_title_placeholder": "문서 제목",
+    "document_summary_label": "요약 (선택사항)",
+    "document_summary_placeholder": "간단한 설명...",
+    "document_submit": "추가",
+    "toast_document_attached": "문서가 추가되었습니다",
+    "toast_document_attach_failed": "문서를 추가하지 못했습니다"
   },
   "delete_dialog": {
     "title": "프로젝트 삭제",

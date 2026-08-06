@@ -76,6 +76,8 @@ func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (
 		return validateGithubRepoRef(ref)
 	case "local_directory":
 		return validateLocalDirectoryRef(ref)
+	case "document":
+		return validateDocumentRef(ref)
 	default:
 		return nil, fmt.Errorf("unknown resource_type %q", resourceType)
 	}
@@ -138,6 +140,49 @@ func validateLocalDirectoryRef(ref json.RawMessage) (json.RawMessage, error) {
 		return nil, errors.New("local_directory: daemon_id is required")
 	}
 	payload.Label = strings.TrimSpace(payload.Label)
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// maxDocumentSummaryLen is the maximum allowed byte length for the optional
+// document summary field. Generous enough for a meaningful description that
+// still fits in an agent brief without dominating it.
+const maxDocumentSummaryLen = 500
+
+// documentResourceRef is the JSONB shape stored for resource_type=document.
+// It points to an external specification or business-rule page. Agents read
+// these URLs as authoritative context before implementing or testing anything
+// the document describes.
+type documentResourceRef struct {
+	URL     string `json:"url"`
+	Title   string `json:"title"`
+	Summary string `json:"summary,omitempty"`
+}
+
+func validateDocumentRef(ref json.RawMessage) (json.RawMessage, error) {
+	var payload documentResourceRef
+	if err := json.Unmarshal(ref, &payload); err != nil {
+		return nil, fmt.Errorf("invalid document payload: %w", err)
+	}
+	payload.URL = strings.TrimSpace(payload.URL)
+	if payload.URL == "" {
+		return nil, errors.New("document: url is required")
+	}
+	u, err := url.Parse(payload.URL)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return nil, errors.New("document: url must be an http or https URL")
+	}
+	payload.Title = strings.TrimSpace(payload.Title)
+	if payload.Title == "" {
+		return nil, errors.New("document: title is required")
+	}
+	payload.Summary = strings.TrimSpace(payload.Summary)
+	if len(payload.Summary) > maxDocumentSummaryLen {
+		return nil, fmt.Errorf("document: summary must not exceed %d characters", maxDocumentSummaryLen)
+	}
 	out, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err

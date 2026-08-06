@@ -1,6 +1,7 @@
 package execenv
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1856,4 +1857,161 @@ func TestBriefSkillsListIsNamesOnly(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFormatProjectResourceDocument verifies that formatProjectResource renders
+// document resources in the expected format with title, URL, and optional
+// summary and label fields.
+func TestFormatProjectResourceDocument(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		ref     map[string]string
+		label   string
+		wantIn  []string
+		wantOut []string
+	}{
+		{
+			name:  "url and title only",
+			ref:   map[string]string{"url": "https://example.com/billing-rules", "title": "Billing Rules"},
+			label: "",
+			wantIn: []string{
+				"**Document**",
+				"«Billing Rules»",
+				"https://example.com/billing-rules",
+			},
+			wantOut: []string{"—"},
+		},
+		{
+			name:   "with summary",
+			ref:    map[string]string{"url": "https://example.com/spec", "title": "API Spec", "summary": "OpenAPI 3 schema."},
+			label:  "",
+			wantIn: []string{"**Document**", "«API Spec»", "https://example.com/spec", "— OpenAPI 3 schema."},
+		},
+		{
+			name:   "with label",
+			ref:    map[string]string{"url": "https://example.com/api", "title": "API Spec"},
+			label:  "v2",
+			wantIn: []string{"**Document**", "«API Spec»", "(v2)"},
+		},
+		{
+			name:  "summary and label",
+			ref:   map[string]string{"url": "https://example.com/spec", "title": "Spec", "summary": "Short desc."},
+			label: "Draft",
+			wantIn: []string{
+				"**Document**",
+				"«Spec»",
+				"— Short desc.",
+				"(Draft)",
+			},
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rawRef, err := json.Marshal(tc.ref)
+			if err != nil {
+				t.Fatalf("marshal ref: %v", err)
+			}
+			r := ProjectResourceForEnv{
+				ResourceType: "document",
+				ResourceRef:  json.RawMessage(rawRef),
+				Label:        tc.label,
+			}
+			got := formatProjectResource(r)
+			for _, want := range tc.wantIn {
+				if !strings.Contains(got, want) {
+					t.Errorf("formatProjectResource missing %q in %q", want, got)
+				}
+			}
+			for _, banned := range tc.wantOut {
+				if strings.Contains(got, banned) {
+					t.Errorf("formatProjectResource should not contain %q in %q", banned, got)
+				}
+			}
+		})
+	}
+}
+
+// TestWriteProjectContextDocumentGuidance verifies that writeProjectContext emits
+// document-specific guidance when at least one document resource is present, and
+// does not emit it when there are no document resources. It also verifies the
+// multi-repo exception clause is always present in the github_repo guidance.
+func TestWriteProjectContextDocumentGuidance(t *testing.T) {
+	t.Parallel()
+
+	makeDocRef := func(url, title string) json.RawMessage {
+		b, _ := json.Marshal(map[string]string{"url": url, "title": title})
+		return json.RawMessage(b)
+	}
+	makeGithubRef := func(url string) json.RawMessage {
+		b, _ := json.Marshal(map[string]string{"url": url})
+		return json.RawMessage(b)
+	}
+
+	t.Run("document guidance present when document resource exists", func(t *testing.T) {
+		t.Parallel()
+		out := buildMetaSkillContent("claude", TaskContextForEnv{
+			ProjectID:    "proj-1",
+			ProjectTitle: "Billing",
+			ProjectResources: []ProjectResourceForEnv{
+				{
+					ResourceType: "github_repo",
+					ResourceRef:  makeGithubRef("https://github.com/example/repo"),
+				},
+				{
+					ResourceType: "document",
+					ResourceRef:  makeDocRef("https://example.com/billing-rules", "Billing Rules"),
+				},
+			},
+		})
+
+		for _, want := range []string{
+			"## Project Context",
+			"**Document** «Billing Rules»",
+			"document` resources, fetch the URL",
+			"business specification documents carry the same weight as code",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("expected %q in brief:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("document guidance absent when no document resources", func(t *testing.T) {
+		t.Parallel()
+		out := buildMetaSkillContent("claude", TaskContextForEnv{
+			ProjectID:    "proj-2",
+			ProjectTitle: "Code Only",
+			ProjectResources: []ProjectResourceForEnv{
+				{
+					ResourceType: "github_repo",
+					ResourceRef:  makeGithubRef("https://github.com/example/repo"),
+				},
+			},
+		})
+
+		if strings.Contains(out, "business specification documents") {
+			t.Errorf("document guidance should not appear when no document resources:\n%s", out)
+		}
+	})
+
+	t.Run("multi-repo exception present when resources exist", func(t *testing.T) {
+		t.Parallel()
+		out := buildMetaSkillContent("claude", TaskContextForEnv{
+			ProjectID:    "proj-3",
+			ProjectTitle: "Multi",
+			ProjectResources: []ProjectResourceForEnv{
+				{
+					ResourceType: "github_repo",
+					ResourceRef:  makeGithubRef("https://github.com/example/repo"),
+				},
+			},
+		})
+
+		if !strings.Contains(out, "when the task spans multiple repositories") {
+			t.Errorf("multi-repo exception clause missing:\n%s", out)
+		}
+	})
 }

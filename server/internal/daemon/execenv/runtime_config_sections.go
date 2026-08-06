@@ -353,7 +353,19 @@ func writeProjectContext(b *strings.Builder, ctx TaskContextForEnv) {
 			fmt.Fprintf(b, "- %s\n", formatProjectResource(r))
 		}
 		b.WriteString("\nResources are pointers — open them only when relevant to the task. ")
-		b.WriteString("For `github_repo` resources, use `multica repo checkout <url>` to fetch the code. Add `--ref <branch-or-sha>` when a task or handoff names an exact revision.\n\n")
+		b.WriteString("For `github_repo` resources, use `multica repo checkout <url>` to fetch the code; when the task spans multiple repositories in this project, check out each relevant one. ")
+		b.WriteString("Add `--ref <branch-or-sha>` when a task or handoff names an exact revision.")
+		// Emit document-specific guidance only when the project carries at least one
+		// document resource. The guidance is stable for a session because resource
+		// composition derives from durable project state, satisfying the brief
+		// byte-stability requirement (MUL-5377).
+		for _, r := range ctx.ProjectResources {
+			if r.ResourceType == "document" {
+				b.WriteString(" For `document` resources, fetch the URL and read its content before implementing or testing anything the specification describes — business specification documents carry the same weight as code.")
+				break
+			}
+		}
+		b.WriteString("\n\n")
 	} else {
 		b.WriteString("This project has no resources attached yet.\n\n")
 	}

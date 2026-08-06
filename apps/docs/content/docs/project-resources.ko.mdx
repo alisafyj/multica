@@ -1,18 +1,19 @@
 ---
 title: 프로젝트 리소스
-description: 프로젝트에 GitHub 저장소나 로컬 디렉터리를 연결해 이후 실행에 안정적인 작업 컨텍스트를 제공합니다.
+description: 프로젝트에 GitHub 저장소, 로컬 디렉터리, 또는 외부 문서를 연결해 이후 실행에 안정적인 작업 컨텍스트를 제공합니다.
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 
 [프로젝트](/projects) 리소스는 이 작업 묶음에 어떤 코드가 필요하며 어디에서 실행할지 에이전트에게 알려 줍니다. 리소스는 프로젝트에 계속 연결되어 있으므로 각 이슈에 저장소 주소나 로컬 경로를 반복해서 붙여 넣을 필요가 없습니다.
 
-현재 두 가지 리소스를 지원합니다.
+현재 세 가지 리소스를 지원합니다.
 
 | 리소스 | 적합한 경우 | 실행 위치 |
 |---|---|---|
 | **GitHub 저장소** | 팀이 공유하는 코드베이스이며 런타임이 checkout을 관리해야 할 때 | 런타임이 관리하는 작업 디렉터리 |
 | **로컬 디렉터리** | 이미 존재하는 checkout, 매우 큰 저장소, 로컬 변경 내용을 직접 확인해야 할 때 | 지정한 컴퓨터의 원본 디렉터리 |
+| **문서** | PRD, API 레퍼런스, 업무 규칙 페이지 등 에이전트가 작업 시작 전 읽어야 하는 명세 | 해당 없음 — 에이전트가 URL을 직접 가져옴 |
 
 ## 리소스가 실행에 들어가는 방식
 
@@ -69,6 +70,18 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 Multica가 실행 환경을 정리할 때 연결된 로컬 디렉터리는 삭제하지 않습니다. 에이전트가 이 디렉터리에 만든 변경은 터미널에서 AI 코딩 도구를 직접 실행해 만든 변경과 성격이 같으므로 동일하게 검토해야 합니다.
 
+## 문서를 추가
+
+문서 리소스는 외부 페이지(PRD, API 사양, 업무 규칙 가이드)를 프로젝트의 지속적인 컨텍스트로 고정합니다. 에이전트는 해당 명세에 기술된 내용을 구현하거나 테스트하기 전에 URL을 가져와 읽습니다.
+
+1. 프로젝트의 **리소스**를 엽니다.
+2. "문서 추가"를 선택합니다.
+3. URL(`http://` 또는 `https://`로 시작해야 합니다), 제목(필수), 선택적 요약을 입력합니다.
+
+URL은 생성 시 검증하며 상대 경로와 비-HTTP 스킴은 거부됩니다. 제목은 필수입니다. 선택적 요약(최대 500자)은 에이전트에게 문서 내용에 대한 짧은 설명을 제공하며 URL과 함께 에이전트 브리프에 표시됩니다.
+
+에이전트는 문서 리소스를 코드와 동일한 권위 있는 출처로 취급합니다. 태스크가 문서에 기술된 기능이나 API와 관련된 경우 에이전트는 먼저 문서를 확인한 뒤 작업을 시작합니다.
+
 ## CLI로 리소스 관리
 
 ```bash
@@ -89,6 +102,19 @@ multica project resource add <project-id> \
   --type local_directory \
   --local-path /absolute/path/to/repo \
   --daemon-id <daemon-id>
+
+# 문서 연결 (PRD, API 사양, 업무 규칙 페이지)
+multica project resource add <project-id> \
+  --type document \
+  --url https://example.com/billing-rules \
+  --title "청구 규칙"
+
+# 요약 포함
+multica project resource add <project-id> \
+  --type document \
+  --url https://example.com/openapi.yaml \
+  --title "OpenAPI 3 스키마" \
+  --summary "청구 서비스의 권위 있는 API 계약."
 
 # 리소스 제거
 multica project resource remove <project-id> <resource-id>

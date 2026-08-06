@@ -117,7 +117,17 @@
     "local_validate_not_a_directory": "Path is not a directory.",
     "local_validate_not_readable": "Directory is not readable.",
     "local_validate_not_writable": "Directory is not writable.",
-    "local_validate_unsupported": "Local directories can only be picked on the desktop app."
+    "local_validate_unsupported": "Local directories can only be picked on the desktop app.",
+    "add_document_button": "Add document",
+    "document_url_label": "URL",
+    "document_url_placeholder": "https://example.com/spec.md",
+    "document_title_label": "Title",
+    "document_title_placeholder": "Document title",
+    "document_summary_label": "Summary (optional)",
+    "document_summary_placeholder": "Brief description...",
+    "document_submit": "Add",
+    "toast_document_attached": "Document attached",
+    "toast_document_attach_failed": "Failed to attach document"
   },
   "delete_dialog": {
     "title": "Delete project",

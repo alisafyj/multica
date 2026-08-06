@@ -64,7 +64,9 @@ export interface ListProjectsResponse {
 //   - github_repo: cloud-side git checkout, ref = { url, ref?, default_branch_hint? }
 //   - local_directory: in-place agent execution on a specific daemon,
 //     ref = { local_path, daemon_id, label? }
-export type ProjectResourceType = "github_repo" | "local_directory";
+//   - document: external specification or business-rule page,
+//     ref = { url, title, summary? }
+export type ProjectResourceType = "github_repo" | "local_directory" | "document";
 
 export interface GithubRepoResourceRef {
   url: string;
@@ -78,9 +80,16 @@ export interface LocalDirectoryResourceRef {
   label?: string;
 }
 
+export interface DocumentResourceRef {
+  url: string;
+  title: string;
+  summary?: string;
+}
+
 export type ProjectResourceRef =
   | GithubRepoResourceRef
   | LocalDirectoryResourceRef
+  | DocumentResourceRef
   | Record<string, unknown>;
 
 export interface ProjectResource {

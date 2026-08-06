@@ -148,12 +148,14 @@ func init() {
 	// payload works without further CLI changes. github_repo is supported via
 	// dedicated shortcuts; for that type, a non-JSON --ref value is treated as
 	// the default checkout ref.
-	projectResourceAddCmd.Flags().String("type", "github_repo", "Resource type (e.g. github_repo, local_directory — see docs)")
-	projectResourceAddCmd.Flags().String("url", "", "Shortcut: the repo URL (only used when --type github_repo)")
+	projectResourceAddCmd.Flags().String("type", "github_repo", "Resource type (e.g. github_repo, local_directory, document — see docs)")
+	projectResourceAddCmd.Flags().String("url", "", "Shortcut: the repo URL (github_repo) or the document URL (document)")
 	projectResourceAddCmd.Flags().String("default-branch-hint", "", "Shortcut: optional default branch hint (only used when --type github_repo)")
 	projectResourceAddCmd.Flags().String("local-path", "", "Shortcut: absolute path to the working directory (only used when --type local_directory)")
 	projectResourceAddCmd.Flags().String("daemon-id", "", "Shortcut: id of the daemon that owns the local path (only used when --type local_directory)")
 	projectResourceAddCmd.Flags().String("ref-label", "", "Shortcut: optional label embedded in resource_ref (only used when --type local_directory)")
+	projectResourceAddCmd.Flags().String("title", "", "Shortcut: document title (only used when --type document)")
+	projectResourceAddCmd.Flags().String("summary", "", "Shortcut: optional document summary (only used when --type document)")
 	projectResourceAddCmd.Flags().String("ref", "", "Generic JSON resource_ref payload, or a github_repo checkout ref when used with --url")
 	projectResourceAddCmd.Flags().String("label", "", "Optional human-readable label")
 	projectResourceAddCmd.Flags().String("output", "json", "Output format: table or json")
@@ -608,6 +610,19 @@ func runProjectResourceAdd(cmd *cobra.Command, args []string) error {
 				ref["label"] = strings.TrimSpace(refLabel)
 			}
 			body["resource_ref"] = ref
+		case "document":
+			urlVal, _ := cmd.Flags().GetString("url")
+			urlVal = strings.TrimSpace(urlVal)
+			titleVal, _ := cmd.Flags().GetString("title")
+			titleVal = strings.TrimSpace(titleVal)
+			if urlVal == "" || titleVal == "" {
+				return fmt.Errorf("document requires --url and --title (or pass a JSON payload via --ref)")
+			}
+			ref := map[string]any{"url": urlVal, "title": titleVal}
+			if summary, _ := cmd.Flags().GetString("summary"); strings.TrimSpace(summary) != "" {
+				ref["summary"] = strings.TrimSpace(summary)
+			}
+			body["resource_ref"] = ref
 		default:
 			return fmt.Errorf("type %q has no built-in CLI shortcut; pass the payload via --ref '<json>'", resourceType)
 		}
@@ -889,11 +904,61 @@ func buildResourceRefFromFlags(cmd *cobra.Command, resourceType string, existing
 			return nil, false, fmt.Errorf("local_directory: --daemon-id is required (no existing daemon_id to merge with)")
 		}
 		return ref, true, nil
+	case "document":
+		urlSet := cmd.Flags().Changed("url")
+		titleSet := cmd.Flags().Changed("title")
+		summarySet := cmd.Flags().Changed("summary")
+		if !urlSet && !titleSet && !summarySet {
+			return nil, false, nil
+		}
+		ref := map[string]any{}
+		if existingRef != nil {
+			if u, ok := existingRef["url"].(string); ok && strings.TrimSpace(u) != "" {
+				ref["url"] = strings.TrimSpace(u)
+			}
+			if tt, ok := existingRef["title"].(string); ok && strings.TrimSpace(tt) != "" {
+				ref["title"] = strings.TrimSpace(tt)
+			}
+			if s, ok := existingRef["summary"].(string); ok && strings.TrimSpace(s) != "" {
+				ref["summary"] = strings.TrimSpace(s)
+			}
+		}
+		if urlSet {
+			urlVal := strings.TrimSpace(mustString(cmd, "url"))
+			if urlVal == "" {
+				return nil, false, fmt.Errorf("--url cannot be empty")
+			}
+			ref["url"] = urlVal
+		}
+		if titleSet {
+			titleVal := strings.TrimSpace(mustString(cmd, "title"))
+			if titleVal == "" {
+				delete(ref, "title")
+			} else {
+				ref["title"] = titleVal
+			}
+		}
+		if summarySet {
+			summaryVal := strings.TrimSpace(mustString(cmd, "summary"))
+			if summaryVal == "" {
+				delete(ref, "summary")
+			} else {
+				ref["summary"] = summaryVal
+			}
+		}
+		if v, ok := ref["url"].(string); !ok || v == "" {
+			return nil, false, fmt.Errorf("document: --url is required (no existing url to merge with)")
+		}
+		if v, ok := ref["title"].(string); !ok || v == "" {
+			return nil, false, fmt.Errorf("document: --title is required (no existing title to merge with)")
+		}
+		return ref, true, nil
 	default:
 		// Unknown type or empty (resource not found) — caller must use --ref.
 		if cmd.Flags().Changed("url") || cmd.Flags().Changed("default-branch-hint") ||
 			cmd.Flags().Changed("local-path") || cmd.Flags().Changed("daemon-id") ||
-			cmd.Flags().Changed("ref-label") {
+			cmd.Flags().Changed("ref-label") || cmd.Flags().Changed("title") ||
+			cmd.Flags().Changed("summary") {
 			return nil, false, fmt.Errorf("no built-in shortcut for resource type %q; pass the full payload via --ref '<json>'", resourceType)
 		}
 		return nil, false, nil
@@ -939,12 +1004,20 @@ func summarizeResourceRef(raw any) string {
 	if !ok {
 		return ""
 	}
+	// document: show «title»: url
+	if title, ok := m["title"].(string); ok && title != "" {
+		if u, ok := m["url"].(string); ok && u != "" {
+			return fmt.Sprintf("«%s»: %s", title, u)
+		}
+	}
+	// github_repo: show url (@ ref if pinned)
 	if u, ok := m["url"].(string); ok && u != "" {
 		if ref, ok := m["ref"].(string); ok && strings.TrimSpace(ref) != "" {
 			return u + " @ " + strings.TrimSpace(ref)
 		}
 		return u
 	}
+	// local_directory: show path
 	if p, ok := m["local_path"].(string); ok && p != "" {
 		return p
 	}

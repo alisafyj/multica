@@ -140,6 +140,23 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 			out += " — " + label
 		}
 		return out
+	case "document":
+		// External specification or business-rule page. Agents should fetch and
+		// read the URL before implementing or testing anything the spec describes.
+		var payload struct {
+			URL     string `json:"url"`
+			Title   string `json:"title"`
+			Summary string `json:"summary,omitempty"`
+		}
+		_ = json.Unmarshal(r.ResourceRef, &payload)
+		out := fmt.Sprintf("**Document** «%s»: %s", payload.Title, payload.URL)
+		if payload.Summary != "" {
+			out += " — " + payload.Summary
+		}
+		if label != "" {
+			out += " (" + label + ")"
+		}
+		return out
 	default:
 		ref := string(r.ResourceRef)
 		if ref == "" {

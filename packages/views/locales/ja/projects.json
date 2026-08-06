@@ -116,7 +116,17 @@
     "local_validate_not_a_directory": "パスはディレクトリではありません。",
     "local_validate_not_readable": "ディレクトリを読み取れません。",
     "local_validate_not_writable": "ディレクトリに書き込めません。",
-    "local_validate_unsupported": "ローカルディレクトリはデスクトップアプリでのみ選択できます。"
+    "local_validate_unsupported": "ローカルディレクトリはデスクトップアプリでのみ選択できます。",
+    "add_document_button": "ドキュメントを追加",
+    "document_url_label": "URL",
+    "document_url_placeholder": "https://example.com/spec.md",
+    "document_title_label": "タイトル",
+    "document_title_placeholder": "ドキュメントタイトル",
+    "document_summary_label": "概要（任意）",
+    "document_summary_placeholder": "簡単な説明...",
+    "document_submit": "追加",
+    "toast_document_attached": "ドキュメントを追加しました",
+    "toast_document_attach_failed": "ドキュメントを追加できませんでした"
   },
   "delete_dialog": {
     "title": "プロジェクトを削除",

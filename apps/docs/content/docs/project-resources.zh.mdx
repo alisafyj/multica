@@ -1,18 +1,19 @@
 ---
 title: 项目资源
-description: 为项目关联 GitHub 仓库或本地目录，让后续执行获得稳定的工作上下文。
+description: 为项目关联 GitHub 仓库、本地目录或外部文档，让后续执行获得稳定的工作上下文。
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 
 [项目](/projects)资源告诉智能体这组工作会用到哪些代码，以及在哪里执行。资源会持续关联在项目上，不必在每条 issue 中重复粘贴仓库地址或本地路径。
 
-目前支持两种资源：
+目前支持三种资源：
 
 | 资源 | 适用场景 | 执行位置 |
 |---|---|---|
 | **GitHub 仓库** | 团队共享的代码库，希望由运行时管理 checkout | 运行时管理的工作目录 |
 | **本地目录** | 已经存在的 checkout、很大的仓库，或需要直接查看本地改动 | 指定电脑上的原目录 |
+| **文档** | PRD、API 文档、业务规则页面，或智能体在开始任务前需要阅读的任何规格说明 | 不适用——智能体会直接请求该 URL |
 
 ## 资源进入执行的方式
 
@@ -69,6 +70,18 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 Multica 清理执行环境时不会删除关联的本地目录。智能体对该目录的改动，与你在终端中直接运行 AI 编程工具的改动性质相同，需要同样的审查。
 
+## 添加文档
+
+文档资源将一个外部页面——PRD、API 规格、业务规则说明——作为持久项目上下文固定下来。智能体在实现或测试规格中描述的任何内容之前，会先拉取并阅读该 URL。
+
+1. 打开项目的 **资源**。
+2. 选择"添加文档"。
+3. 填入 URL（必须以 `http://` 或 `https://` 开头）、标题（必填）和可选的摘要。
+
+URL 在创建时会做校验，相对路径和非 HTTP 协议会被拒绝。摘要字段最多 500 个字符，给智能体一段对文档内容的简短说明，会和 URL 一起出现在智能体的执行上下文中。
+
+智能体会把文档资源视为与代码同等权威的来源。任务涉及文档中描述的功能或 API 时，智能体会先查阅文档再动手。
+
 ## 使用 CLI 管理资源
 
 ```bash
@@ -89,6 +102,19 @@ multica project resource add <project-id> \
   --type local_directory \
   --local-path /absolute/path/to/repo \
   --daemon-id <daemon-id>
+
+# 关联文档（PRD、API 规格、业务规则页面）
+multica project resource add <project-id> \
+  --type document \
+  --url https://example.com/billing-rules \
+  --title "计费规则"
+
+# 带摘要
+multica project resource add <project-id> \
+  --type document \
+  --url https://example.com/openapi.yaml \
+  --title "OpenAPI 3 规格" \
+  --summary "计费服务的权威 API 合约。"
 
 # 移除资源
 multica project resource remove <project-id> <resource-id>

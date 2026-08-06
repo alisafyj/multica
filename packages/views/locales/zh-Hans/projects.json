@@ -116,7 +116,17 @@
     "local_validate_not_a_directory": "该路径不是目录。",
     "local_validate_not_readable": "目录不可读。",
     "local_validate_not_writable": "目录不可写。",
-    "local_validate_unsupported": "本地目录仅能在桌面端选择。"
+    "local_validate_unsupported": "本地目录仅能在桌面端选择。",
+    "add_document_button": "添加文档",
+    "document_url_label": "网址",
+    "document_url_placeholder": "https://example.com/spec.md",
+    "document_title_label": "标题",
+    "document_title_placeholder": "文档标题",
+    "document_summary_label": "摘要（可选）",
+    "document_summary_placeholder": "简要描述...",
+    "document_submit": "添加",
+    "toast_document_attached": "已添加文档",
+    "toast_document_attach_failed": "添加文档失败"
   },
   "delete_dialog": {
     "title": "删除项目",
