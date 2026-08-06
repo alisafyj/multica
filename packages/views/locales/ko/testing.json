@@ -108,9 +108,16 @@
     "crossRepoNeedsRepos": "교차 저장소 케이스에는 저장소가 두 개 이상 필요합니다",
     "crossRepoNeedsRoles": "교차 저장소 케이스에는 서로 다른 역할이 필요합니다"
   },
+  "role": {
+    "under_test": "테스트 대상",
+    "driver": "드라이버",
+    "verifier": "검증",
+    "fixture": "데이터 준비"
+  },
   "revisions": {
     "empty": "변경 이력이 없습니다",
     "version": "버전 {{version}}",
+    "separator": " · ",
     "human_edit": "수동 편집",
     "proposal_accepted": "AI 제안 반영",
     "status_change": "상태 변경",

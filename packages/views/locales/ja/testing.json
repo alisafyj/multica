@@ -108,9 +108,16 @@
     "crossRepoNeedsRepos": "複数リポジトリのケースには 2 つ以上のリポジトリが必要です",
     "crossRepoNeedsRoles": "複数リポジトリのケースには異なる役割が必要です"
   },
+  "role": {
+    "under_test": "テスト対象",
+    "driver": "ドライバー",
+    "verifier": "検証",
+    "fixture": "データ準備"
+  },
   "revisions": {
     "empty": "変更履歴がありません",
     "version": "バージョン {{version}}",
+    "separator": " · ",
     "human_edit": "手動編集",
     "proposal_accepted": "AI 提案を採用",
     "status_change": "ステータス変更",

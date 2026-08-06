@@ -108,9 +108,16 @@
     "crossRepoNeedsRepos": "跨仓库用例至少需要关联两个仓库",
     "crossRepoNeedsRoles": "跨仓库用例的仓库角色不能全部相同"
   },
+  "role": {
+    "under_test": "被测",
+    "driver": "驱动",
+    "verifier": "验证",
+    "fixture": "数据准备"
+  },
   "revisions": {
     "empty": "还没有变更记录",
     "version": "版本 {{version}}",
+    "separator": " · ",
     "human_edit": "人工编辑",
     "proposal_accepted": "采纳 AI 建议",
     "status_change": "状态变更",
