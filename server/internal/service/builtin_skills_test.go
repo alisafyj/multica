@@ -642,6 +642,65 @@ func TestProjectsAndResourcesSkillCoversDurableContext(t *testing.T) {
 	}
 }
 
+func TestRunningTestsSkillCoversExecutionContract(t *testing.T) {
+	skill, ok := findSkill(t, "multica-running-tests")
+	if !ok {
+		return
+	}
+	fm, body, _ := splitFrontmatter(skill.Content)
+
+	if got := strings.TrimSpace(fm["user-invocable"]); got != "false" {
+		t.Errorf("user-invocable = %q, want false (running-tests guidance triggers from context)", got)
+	}
+	if got := strings.TrimSpace(fm["allowed-tools"]); !strings.Contains(got, "Bash(multica *)") {
+		t.Errorf("allowed-tools = %q, want access to the Multica CLI", got)
+	}
+
+	// Contract anchors — exact file:line citations live in the skill's
+	// references/running-tests-source-map.md, so a line shift cannot rot this test.
+	mustContain := []string{
+		// Capability discovery is the mandatory first step.
+		"multica test capability list --run <run-id> --output json",
+		"multica test run get <run-id> --output json",
+		// The resolved map is the only valid source of capability keys.
+		"resolved",
+		// No-host-probe rule: adb and xcrun must be named as banned tools.
+		"adb",
+		"xcrun simctl",
+		// blocked ≠ failed is the core semantic contract.
+		"blocked",
+		"`blocked` is not `failed`",
+		// Recording commands.
+		"multica test result set <run-case-id> --result passed|failed|blocked|skipped",
+		"multica test evidence add <run-case-id> --file",
+		"multica test defect open <run-case-id> --title",
+		// Evidence is required for failures.
+		"failed` or `blocked",
+		// Supporting file must ship.
+		"references/running-tests-source-map.md",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(body, want) {
+			t.Errorf("running-tests skill must state %q", want)
+		}
+	}
+
+	// These actions belong to the test-cases skill, not the execution skill.
+	mustNotContain := []string{
+		"multica testcase create",
+		"multica testcase update",
+	}
+	for _, unwanted := range mustNotContain {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("running-tests skill must not teach test-case authoring command %q (owned by multica-test-cases)", unwanted)
+		}
+	}
+
+	if !skillHasFile(skill, "references/running-tests-source-map.md") {
+		t.Error("running-tests skill must ship its source map")
+	}
+}
+
 func findSkill(t *testing.T, name string) (AgentSkillData, bool) {
 	t.Helper()
 	for _, s := range loadBuiltinSkills() {
