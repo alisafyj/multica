@@ -93,6 +93,6 @@ This project is indexed by GitNexus as **multica** (32920 symbols, 96478 relatio
 
 ## 当前任务状态（会话交接 - 每次会话结束更新）
 
-- **做了什么**: Task 3 已提交到 `6e37f76`：migration 134 持久化原生 archive 元数据，新增任务绑定 V2 ZIP 上传、daemon 固定字节重试与草稿字段原子复制
-- **做到哪**: 工作树仍在 `~/.config/superpowers/worktrees/multica/native-design-engine` 的 `codex/multica-native-design-engine`；四包 579 项、聚焦 race、vet、sqlc、diff-check 通过，staged detect-changes 为 low/0 processes
-- **下一步**: 按 Phase 1 计划进入 Task 4（Materialize The Native Agent Workspace And Contract）；先重读 Design Center README/计划并 impact `marshalProjectDesignSystemTaskContext`、`writeProjectDesignSystemContext`、`BuildPrompt`，不要合并 `codex/open-design-native-slots`
+- **做了什么**: Task 4 已提交（`4dca0d56f` + 修复 `51e85af42`、`4bb43264b`）：任务上下文固定 V2 schema + 双 digest，daemon env root 物化只读 `.agent_context`（0444/0555、symlink 安全、生产清理路径可回收），六阶段原生 prompt 契约替换三文件契约；spec 评审通过，两轮修复后评审干净
+- **做到哪**: 仍在该工作树 `codex/multica-native-design-engine`；handler/execenv/daemon/service 聚焦回归与 `go build ./...` 通过，detect-changes low；4 个 minor 留待最终分支评审（台账 `.superpowers/sdd/2026-08-06-multica-native-design-system-phase-1/progress.md`）；`TestSaveProjectDesignSystemRequiresValidatedDraft` 为基线已失败（`ff6b06065` 引入 preview 门禁早于 Task 1），未处理待用户决策
+- **下一步**: 按 Phase 1 计划进入 Task 5（Collect, Preview And Upload Agent Packages In The Daemon）；不要合并 `codex/open-design-native-slots`
