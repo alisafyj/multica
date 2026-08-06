@@ -257,6 +257,34 @@ func TestValidateV2ArchivePreflightsEOCDMetadata(t *testing.T) {
 	}
 }
 
+func TestValidateV2ArchivePreflightCountsActualCentralDirectoryEntries(t *testing.T) {
+	entries := make([]v2ZipEntry, 0, maxV2Files+1)
+	for index := 0; index <= maxV2Files; index++ {
+		entries = append(entries, v2ZipEntry{
+			name:     "assets/generated/" + formatV2TestIndex(index) + ".png",
+			contents: []byte("x"),
+		})
+	}
+	archive := buildV2Zip(t, entries)
+	eocdOffset := findV2EOCDForTest(t, archive)
+	binary.LittleEndian.PutUint16(archive[eocdOffset+8:eocdOffset+10], 1)
+	binary.LittleEndian.PutUint16(archive[eocdOffset+10:eocdOffset+12], 1)
+
+	pkg, err := ValidateV2Archive(archive, validV2Binding())
+	assertV2DiagnosticCode(t, pkg.Audit, err, "archive_file_count_exceeded")
+}
+
+func TestValidateV2ArchivePreflightRejectsAmbiguousEOCDInComment(t *testing.T) {
+	archive := buildV2Zip(t, nil)
+	actualEOCD := findV2EOCDForTest(t, archive)
+	fakeEOCD := buildV2EOCD(nil, 0, 0, 0, 0, 0, 0)
+	archive = append(archive, fakeEOCD...)
+	binary.LittleEndian.PutUint16(archive[actualEOCD+20:actualEOCD+22], uint16(len(fakeEOCD)))
+
+	pkg, err := ValidateV2Archive(archive, validV2Binding())
+	assertV2DiagnosticCode(t, pkg.Audit, err, "archive_invalid")
+}
+
 func TestValidateV2ArchiveBindsTaskInputAndBaseDigest(t *testing.T) {
 	generate := validV2Binding()
 	collected := collectValidV2(t, generate)
@@ -474,6 +502,17 @@ func buildV2EOCD(prefix []byte, diskNumber, centralDirectoryDisk, entriesOnDisk,
 	binary.LittleEndian.PutUint32(eocd[12:16], centralDirectorySize)
 	binary.LittleEndian.PutUint32(eocd[16:20], centralDirectoryOffset)
 	return archive
+}
+
+func findV2EOCDForTest(t *testing.T, archive []byte) int {
+	t.Helper()
+	for offset := len(archive) - 22; offset >= 0; offset-- {
+		if binary.LittleEndian.Uint32(archive[offset:offset+4]) == 0x06054b50 {
+			return offset
+		}
+	}
+	t.Fatal("ZIP archive has no EOCD")
+	return -1
 }
 
 func v2ZipEntriesFromMap(entries map[string][]byte) []v2ZipEntry {

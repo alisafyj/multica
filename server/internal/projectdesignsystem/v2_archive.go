@@ -336,10 +336,13 @@ func readAndIndexV2Archive(archive []byte) (map[string][]byte, []ArtifactIndexEn
 
 func preflightV2ArchiveEOCD(archive []byte) error {
 	const (
-		eocdSignature       = 0x06054b50
-		zip64Locator        = 0x07064b50
-		eocdSize            = 22
-		maximumCommentBytes = 65535
+		eocdSignature         = 0x06054b50
+		centralFileSignature  = 0x02014b50
+		zip64Locator          = 0x07064b50
+		zip64ExtraTag         = 0x0001
+		eocdSize              = 22
+		centralFileHeaderSize = 46
+		maximumCommentBytes   = 65535
 	)
 	if len(archive) < eocdSize {
 		return archiveV2Error("archive_invalid", "", "archive is not a valid ZIP")
@@ -354,9 +357,16 @@ func preflightV2ArchiveEOCD(archive []byte) error {
 			continue
 		}
 		commentLength := int(binary.LittleEndian.Uint16(archive[offset+20 : offset+22]))
-		if offset+eocdSize+commentLength == len(archive) {
+		commentEnd := offset + eocdSize + commentLength
+		if eocdOffset < 0 {
+			if commentEnd != len(archive) {
+				return archiveV2Error("archive_invalid", "", "archive has an invalid end record")
+			}
 			eocdOffset = offset
-			break
+			continue
+		}
+		if commentEnd == len(archive) {
+			return archiveV2Error("archive_invalid", "", "archive has ambiguous end records")
 		}
 	}
 	if eocdOffset < 0 {
@@ -381,8 +391,57 @@ func preflightV2ArchiveEOCD(archive []byte) error {
 	if totalEntries > maxV2Files {
 		return archiveV2Error("archive_file_count_exceeded", "", "archive contains too many entries")
 	}
-	if uint64(centralDirectoryOffset)+uint64(centralDirectorySize) > uint64(eocdOffset) {
+	if uint64(centralDirectoryOffset)+uint64(centralDirectorySize) != uint64(eocdOffset) {
 		return archiveV2Error("archive_invalid", "", "archive central directory is out of bounds")
+	}
+
+	centralStart := int(centralDirectoryOffset)
+	centralEnd := eocdOffset
+	cursor := centralStart
+	actualEntries := 0
+	for cursor < centralEnd {
+		if centralEnd-cursor < centralFileHeaderSize || binary.LittleEndian.Uint32(archive[cursor:cursor+4]) != centralFileSignature {
+			return archiveV2Error("archive_invalid", "", "archive central directory is malformed")
+		}
+		compressedSize := binary.LittleEndian.Uint32(archive[cursor+20 : cursor+24])
+		uncompressedSize := binary.LittleEndian.Uint32(archive[cursor+24 : cursor+28])
+		nameLength := int(binary.LittleEndian.Uint16(archive[cursor+28 : cursor+30]))
+		extraLength := int(binary.LittleEndian.Uint16(archive[cursor+30 : cursor+32]))
+		commentLength := int(binary.LittleEndian.Uint16(archive[cursor+32 : cursor+34]))
+		startingDisk := binary.LittleEndian.Uint16(archive[cursor+34 : cursor+36])
+		localHeaderOffset := binary.LittleEndian.Uint32(archive[cursor+42 : cursor+46])
+		recordEnd := cursor + centralFileHeaderSize + nameLength + extraLength + commentLength
+		if recordEnd > centralEnd || startingDisk != 0 {
+			return archiveV2Error("archive_invalid", "", "archive central directory is malformed")
+		}
+		if compressedSize == ^uint32(0) || uncompressedSize == ^uint32(0) || localHeaderOffset == ^uint32(0) {
+			return archiveV2Error("archive_invalid", "", "ZIP64 archives are not supported")
+		}
+		extraOffset := cursor + centralFileHeaderSize + nameLength
+		extraEnd := extraOffset + extraLength
+		for extraOffset < extraEnd {
+			if extraEnd-extraOffset < 4 {
+				return archiveV2Error("archive_invalid", "", "archive central directory extra data is malformed")
+			}
+			tag := binary.LittleEndian.Uint16(archive[extraOffset : extraOffset+2])
+			fieldLength := int(binary.LittleEndian.Uint16(archive[extraOffset+2 : extraOffset+4]))
+			extraOffset += 4
+			if fieldLength > extraEnd-extraOffset {
+				return archiveV2Error("archive_invalid", "", "archive central directory extra data is malformed")
+			}
+			if tag == zip64ExtraTag {
+				return archiveV2Error("archive_invalid", "", "ZIP64 archives are not supported")
+			}
+			extraOffset += fieldLength
+		}
+		actualEntries++
+		if actualEntries > maxV2Files {
+			return archiveV2Error("archive_file_count_exceeded", "", "archive contains too many entries")
+		}
+		cursor = recordEnd
+	}
+	if cursor != centralEnd || actualEntries != int(totalEntries) {
+		return archiveV2Error("archive_invalid", "", "archive central directory metadata is inconsistent")
 	}
 	return nil
 }

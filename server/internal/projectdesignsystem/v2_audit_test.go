@@ -401,10 +401,42 @@ func TestAuditV2RejectsCompleteStaticDocumentHiding(t *testing.T) {
 		assertV2DiagnosticCode(t, collected.Audit, err, "ui_kit_not_visible")
 	})
 
+	for _, tt := range []struct {
+		stylesheet string
+		code       string
+	}{
+		{stylesheet: `body { display: none !important; }`, code: "ui_kit_not_visible"},
+		{stylesheet: `body { visibility: hidden!important; }`, code: "ui_kit_not_visible"},
+		{stylesheet: `body { & .state { color: red; } display: none; }`, code: "css_nesting_unsupported"},
+	} {
+		t.Run(tt.stylesheet, func(t *testing.T) {
+			root := copyV2Fixture(t)
+			html := `<style>` + tt.stylesheet + ` .workspace { color: var(--color-action); }</style><main class="workspace" data-design-node-id="orders" data-design-node-kind="block" data-design-node-label="Orders">Orders</main>`
+			if err := os.WriteFile(filepath.Join(root, "ui-kit", "index.html"), []byte(html), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			collected, err := CollectV2Directory(root, validV2Binding())
+			assertV2DiagnosticCode(t, collected.Audit, err, tt.code)
+		})
+	}
+}
+
+func TestAuditV2RejectsEscapedSecuritySensitiveCSS(t *testing.T) {
+	t.Run("escaped import and URL function", func(t *testing.T) {
+		root := copyV2Fixture(t)
+		name := filepath.Join(root, "tokens.css")
+		tokens := `@\69mport u\72l(https://example.com/x); :root { --color-action: #1677ff; }`
+		if err := os.WriteFile(name, []byte(tokens), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		collected, err := CollectV2Directory(root, validV2Binding())
+		assertV2DiagnosticCode(t, collected.Audit, err, "css_structural_escape_unsupported")
+	})
+
 	for _, stylesheet := range []string{
-		`body { display: none !important; }`,
-		`body { visibility: hidden!important; }`,
-		`body { & .state { color: red; } display: none; }`,
+		`b\6fdy { display: none; }`,
+		`body { dis\70lay: none; }`,
+		`body { display: n\6fne; }`,
 	} {
 		t.Run(stylesheet, func(t *testing.T) {
 			root := copyV2Fixture(t)
@@ -413,7 +445,44 @@ func TestAuditV2RejectsCompleteStaticDocumentHiding(t *testing.T) {
 				t.Fatal(err)
 			}
 			collected, err := CollectV2Directory(root, validV2Binding())
-			assertV2DiagnosticCode(t, collected.Audit, err, "ui_kit_not_visible")
+			assertV2DiagnosticCode(t, collected.Audit, err, "css_structural_escape_unsupported")
+		})
+	}
+
+	t.Run("harmless string escape", func(t *testing.T) {
+		root := copyV2Fixture(t)
+		html := `<style>.workspace::before { content: "line\a break"; } .workspace { color: var(--color-action); }</style><main class="workspace" data-design-node-id="orders" data-design-node-kind="block" data-design-node-label="Orders">Orders</main>`
+		if err := os.WriteFile(filepath.Join(root, "ui-kit", "index.html"), []byte(html), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := CollectV2Directory(root, validV2Binding()); err != nil {
+			t.Fatalf("CollectV2Directory() rejected a harmless CSS string escape: %v", err)
+		}
+	})
+}
+
+func TestAuditV2RejectsCSSNestingWithoutRejectingDescendantStates(t *testing.T) {
+	root := copyV2Fixture(t)
+	html := `<style>body { & { display: none; } } .workspace { color: var(--color-action); }</style><main class="workspace" data-design-node-id="orders" data-design-node-kind="block" data-design-node-label="Orders">Orders</main>`
+	if err := os.WriteFile(filepath.Join(root, "ui-kit", "index.html"), []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	collected, err := CollectV2Directory(root, validV2Binding())
+	assertV2DiagnosticCode(t, collected.Audit, err, "css_nesting_unsupported")
+
+	for _, stylesheet := range []string{
+		`.modal { display: none; }`,
+		`body .modal { visibility: hidden; }`,
+	} {
+		t.Run("control "+stylesheet, func(t *testing.T) {
+			controlRoot := copyV2Fixture(t)
+			controlHTML := `<style>` + stylesheet + ` .workspace { color: var(--color-action); }</style><main class="workspace" data-design-node-id="orders" data-design-node-kind="block" data-design-node-label="Orders">Orders<div class="modal">Hidden state</div></main>`
+			if err := os.WriteFile(filepath.Join(controlRoot, "ui-kit", "index.html"), []byte(controlHTML), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := CollectV2Directory(controlRoot, validV2Binding()); err != nil {
+				t.Fatalf("CollectV2Directory() rejected a descendant component state: %v", err)
+			}
 		})
 	}
 }

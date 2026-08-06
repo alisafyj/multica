@@ -394,6 +394,9 @@ func inspectV2CSS(
 				atRuleStack = atRuleStack[:len(atRuleStack)-1]
 			}
 		case css.BeginRulesetGrammar:
+			if v2CSSSelectorUsesNesting(values) {
+				result.diagnostics = append(result.diagnostics, errorDiagnostic("css_nesting_unsupported", basePath, "CSS nesting is not supported"))
+			}
 			documentRuleStack = append(documentRuleStack, documentRule)
 			documentRule = screenApplicable && v2SelectorTargetsDocumentRoot(values)
 		case css.EndRulesetGrammar:
@@ -405,6 +408,7 @@ func inspectV2CSS(
 			}
 		}
 		if grammar == css.AtRuleGrammar || grammar == css.BeginAtRuleGrammar {
+			v2RejectEscapedCSSStructure(data, basePath, &result)
 			if strings.TrimPrefix(strings.ToLower(strings.TrimSpace(string(data))), "@") == "import" {
 				result.diagnostics = append(result.diagnostics, errorDiagnostic("tokens_css_import_forbidden", basePath, "CSS @import is not allowed"))
 			}
@@ -413,6 +417,7 @@ func inspectV2CSS(
 			result.diagnostics = append(result.diagnostics, errorDiagnostic("html_token_declaration_forbidden", basePath, "Preview HTML cannot declare a second Token source"))
 		}
 		if grammar == css.DeclarationGrammar {
+			v2RejectEscapedCSSStructure(data, basePath, &result)
 			property := strings.ToLower(strings.TrimSpace(string(data)))
 			if v2CSSDeclarationHides(property, values) {
 				result.hidden = true
@@ -424,6 +429,21 @@ func inspectV2CSS(
 		inspectV2CSSTokens(values, basePath, files, artifacts, declaredTokens, &result)
 	}
 	return result
+}
+
+func v2RejectEscapedCSSStructure(data []byte, basePath string, result *v2CSSAudit) {
+	if bytes.IndexByte(data, '\\') >= 0 {
+		result.diagnostics = append(result.diagnostics, errorDiagnostic("css_structural_escape_unsupported", basePath, "CSS escapes are not supported in structural tokens"))
+	}
+}
+
+func v2CSSSelectorUsesNesting(tokens []css.Token) bool {
+	for _, token := range tokens {
+		if token.TokenType == css.DelimToken && strings.TrimSpace(string(token.Data)) == "&" {
+			return true
+		}
+	}
+	return false
 }
 
 func v2SupportedBlockAtRule(name []byte) bool {
@@ -575,6 +595,7 @@ func inspectV2CSSTokens(
 	for index, token := range tokens {
 		switch token.TokenType {
 		case css.FunctionToken:
+			v2RejectEscapedCSSStructure(token.Data, basePath, result)
 			if strings.EqualFold(strings.TrimSpace(string(token.Data)), "var(") {
 				for next := index + 1; next < len(tokens); next++ {
 					candidate := strings.TrimSpace(string(tokens[next].Data))
@@ -589,7 +610,10 @@ func inspectV2CSSTokens(
 					}
 				}
 			}
+		case css.IdentToken, css.AtKeywordToken, css.HashToken, css.CustomPropertyNameToken:
+			v2RejectEscapedCSSStructure(token.Data, basePath, result)
 		case css.URLToken:
+			v2RejectEscapedCSSStructure(token.Data, basePath, result)
 			if !validV2LocalCSSResource(cssURLValue(string(token.Data)), basePath, artifacts) {
 				result.diagnostics = append(result.diagnostics, errorDiagnostic("tokens_css_url_unsafe", basePath, "CSS resources must be package-local assets or fonts"))
 			}
@@ -617,8 +641,10 @@ func inspectV2CSSValue(value []byte, basePath string, artifacts map[string]Artif
 		}
 		switch tokenType {
 		case css.FunctionToken:
+			v2RejectEscapedCSSStructure(data, basePath, result)
 			expectVariable = strings.EqualFold(strings.TrimSpace(string(data)), "var(")
 		case css.IdentToken, css.CustomPropertyNameToken:
+			v2RejectEscapedCSSStructure(data, basePath, result)
 			if expectVariable {
 				candidate := strings.TrimSpace(string(data))
 				if strings.HasPrefix(candidate, "--") {
@@ -630,6 +656,7 @@ func inspectV2CSSValue(value []byte, basePath string, artifacts map[string]Artif
 			}
 			expectVariable = false
 		case css.URLToken:
+			v2RejectEscapedCSSStructure(data, basePath, result)
 			if !validV2LocalCSSResource(cssURLValue(string(data)), basePath, artifacts) {
 				result.diagnostics = append(result.diagnostics, errorDiagnostic("tokens_css_url_unsafe", basePath, "CSS resources must be package-local assets or fonts"))
 			}
