@@ -366,6 +366,30 @@ export class TestApiClient {
     return testCase;
   }
 
+  async createTestGenerationJob(body: Record<string, unknown>) {
+    const res = await this.authedFetch("/api/test-generation-jobs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  async generateTestGenerationPlan(jobId: string) {
+    const res = await this.authedFetch(
+      `/api/test-generation-jobs/${jobId}/plan/generate`,
+      { method: "POST" },
+    );
+    return res.json();
+  }
+
+  async approveTestGenerationPlan(jobId: string) {
+    const res = await this.authedFetch(
+      `/api/test-generation-jobs/${jobId}/plan/approve`,
+      { method: "POST" },
+    );
+    return res.json();
+  }
+
   async cleanup() {
     if (this.seededIssueIds.length > 0 && this.workspaceId) {
       const client = new pg.Client(DATABASE_URL);
@@ -424,6 +448,17 @@ export class TestApiClient {
       throw new Error("test api client not logged in");
     }
     return { token: this.token, csrfToken: this.csrfToken, expiresAt: this.expiresAt };
+  }
+
+  /**
+   * Raw POST for tests that assert on a rejection status rather than a body.
+   * authedFetch does not throw on non-2xx, so the Response comes back intact.
+   */
+  async post(path: string, body?: Record<string, unknown>) {
+    return this.authedFetch(path, {
+      method: "POST",
+      body: body ? JSON.stringify(body) : undefined,
+    });
   }
 
   private async authedFetch(path: string, init?: RequestInit) {
