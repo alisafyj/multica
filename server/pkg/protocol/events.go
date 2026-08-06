@@ -108,6 +108,14 @@ const (
 	EventTestCaseProposalCreated  = "test_case_proposal:created"
 	EventTestCaseProposalUpdated  = "test_case_proposal:updated"
 
+	// Test plan and execution events
+	EventTestPlanCreated    = "test_plan:created"
+	EventTestPlanUpdated    = "test_plan:updated"
+	EventTestPlanDeleted    = "test_plan:deleted"
+	EventTestRunUpdated     = "test_run:updated"
+	EventTestRunCaseUpdated = "test_run_case:updated"
+	EventTestCapabilityUpdated = "test_capability:updated"
+
 	// Gallery Native design events
 	EventDesignReady         = "design:ready"
 	EventDesignTemplateReady = "design_template:ready"

@@ -1273,6 +1273,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/approve", h.ApproveTestCase)
 					r.Get("/revisions", h.ListTestCaseRevisions)
 					r.Get("/proposals", h.ListTestCaseProposals)
+					// Regression history for one case, across every round it
+					// appeared in.
+					r.Get("/results", h.ListTestCaseResultTimeline)
 				})
 			})
 
@@ -1293,6 +1296,42 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 			r.Post("/api/test-case-proposals/{id}/accept", h.AcceptTestCaseProposal)
 			r.Post("/api/test-case-proposals/{id}/reject", h.RejectTestCaseProposal)
+
+			// Test plans
+			r.Route("/api/test-plans", func(r chi.Router) {
+				r.Get("/", h.ListTestPlans)
+				r.Post("/", h.CreateTestPlan)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetTestPlan)
+					r.Put("/", h.UpdateTestPlan)
+					r.Delete("/", h.DeleteTestPlan)
+					r.Get("/cases", h.ListTestPlanCases)
+					r.Post("/cases", h.AddTestPlanCases)
+					r.Delete("/cases/{caseId}", h.RemoveTestPlanCase)
+				})
+			})
+
+			// Test runs
+			r.Route("/api/test-runs", func(r chi.Router) {
+				r.Get("/", h.ListTestRuns)
+				r.Post("/", h.CreateTestRun)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetTestRun)
+					r.Get("/cases", h.ListTestRunCases)
+					r.Get("/capabilities", h.ListTestRunCapabilities)
+					r.Post("/start", h.StartTestRun)
+					r.Post("/dispatch", h.DispatchTestRun)
+					r.Post("/retry", h.RetryTestRun)
+				})
+			})
+			// Result write and defect creation are per run-case; both are also
+			// reachable by the run's own agent through its task token.
+			r.Put("/api/test-run-cases/{id}/result", h.UpdateTestRunCaseResult)
+			r.Post("/api/test-run-cases/{id}/defect", h.OpenTestRunCaseDefect)
+
+			// Execution capabilities
+			r.Get("/api/test-capabilities", h.ListTestCapabilities)
+			r.Post("/api/runtimes/{id}/capabilities", h.RequestRuntimeCapabilityScan)
 
 			// Gallery Native design files
 			r.Get("/api/design-folders", h.ListDesignFolders)

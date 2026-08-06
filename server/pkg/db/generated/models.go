@@ -184,6 +184,7 @@ type Attachment struct {
 	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
 	ChatMessageID pgtype.UUID        `json:"chat_message_id"`
 	TaskID        pgtype.UUID        `json:"task_id"`
+	TestRunCaseID pgtype.UUID        `json:"test_run_case_id"`
 }
 
 type Autopilot struct {
@@ -1384,6 +1385,21 @@ type TaskUsageHourlyRollupState struct {
 	LastError         pgtype.Text        `json:"last_error"`
 }
 
+type TestCapability struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	DaemonID      string             `json:"daemon_id"`
+	RuntimeID     pgtype.UUID        `json:"runtime_id"`
+	Kind          string             `json:"kind"`
+	CapabilityKey string             `json:"capability_key"`
+	Target        []byte             `json:"target"`
+	Status        string             `json:"status"`
+	Probe         []byte             `json:"probe"`
+	LastProbeAt   pgtype.Timestamptz `json:"last_probe_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type TestCase struct {
 	ID                   pgtype.UUID        `json:"id"`
 	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
@@ -1478,6 +1494,69 @@ type TestGenerationPlan struct {
 	CreatedBy   pgtype.UUID        `json:"created_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TestPlan struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	Status      string             `json:"status"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TestPlanCase struct {
+	PlanID      pgtype.UUID        `json:"plan_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	TestCaseID  pgtype.UUID        `json:"test_case_id"`
+	Position    int32              `json:"position"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type TestRun struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	PlanID            pgtype.UUID        `json:"plan_id"`
+	Title             string             `json:"title"`
+	ExecutorType      string             `json:"executor_type"`
+	ExecutorID        pgtype.UUID        `json:"executor_id"`
+	AgentTaskID       pgtype.UUID        `json:"agent_task_id"`
+	Environment       string             `json:"environment"`
+	BuildRef          string             `json:"build_ref"`
+	CapabilityBinding []byte             `json:"capability_binding"`
+	Status            string             `json:"status"`
+	SourceRunID       pgtype.UUID        `json:"source_run_id"`
+	RetryScope        pgtype.Text        `json:"retry_scope"`
+	Error             pgtype.Text        `json:"error"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TestRunCase struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	TestCaseID     pgtype.UUID        `json:"test_case_id"`
+	CaseSnapshot   []byte             `json:"case_snapshot"`
+	Position       int32              `json:"position"`
+	Result         string             `json:"result"`
+	Notes          string             `json:"notes"`
+	Evidence       []byte             `json:"evidence"`
+	StepResults    []byte             `json:"step_results"`
+	DurationMs     pgtype.Int4        `json:"duration_ms"`
+	ExecutedByType pgtype.Text        `json:"executed_by_type"`
+	ExecutedByID   pgtype.UUID        `json:"executed_by_id"`
+	ExecutedAt     pgtype.Timestamptz `json:"executed_at"`
+	DefectIssueID  pgtype.UUID        `json:"defect_issue_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type User struct {
