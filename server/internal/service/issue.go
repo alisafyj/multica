@@ -190,6 +190,11 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 
 	res, err := s.createInTx(ctx, tx, qtx, p)
 	if err != nil {
+		// The duplicate guard aborts before any insert commits; surface the
+		// blocking row so the handler renders a 409 with the existing issue.
+		if errors.Is(err, ErrActiveDuplicate) {
+			return res, err
+		}
 		return IssueCreateResult{}, err
 	}
 
