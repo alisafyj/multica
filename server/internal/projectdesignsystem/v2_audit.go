@@ -16,16 +16,18 @@ import (
 )
 
 type v2CSSAudit struct {
-	references  map[string]struct{}
-	diagnostics []Diagnostic
-	hidden      bool
+	references     map[string]struct{}
+	diagnostics    []Diagnostic
+	hidden         bool
+	documentHidden bool
 }
 
 type v2HTMLAudit struct {
-	locators    []Locator
-	diagnostics []Diagnostic
-	tokenUsed   bool
-	visible     bool
+	locators       []Locator
+	diagnostics    []Diagnostic
+	tokenUsed      bool
+	visible        bool
+	documentHidden bool
 }
 
 func auditV2Package(
@@ -155,17 +157,37 @@ func validV2SourceReference(reference string) bool {
 		strings.IndexFunc(reference, func(character rune) bool { return character < 0x20 || character == 0x7f }) >= 0 {
 		return false
 	}
-	if strings.HasPrefix(reference, "~/") {
+	if strings.HasPrefix(reference, "~") && strings.IndexByte(reference, '/') > 0 {
 		return false
 	}
 	parsed, err := url.Parse(reference)
 	if err == nil && parsed.Scheme != "" {
-		return parsed.Scheme == "https" && parsed.Host != "" && parsed.User == nil && parsed.RawQuery == "" && !strings.Contains(parsed.Host, "@")
+		return parsed.Scheme == "https" && parsed.Host != "" && parsed.User == nil && parsed.RawQuery == "" &&
+			!strings.Contains(parsed.Host, "@") && !v2URLFragmentContainsCredential(parsed.Fragment)
 	}
 	if strings.Contains(reference, "/") {
 		return !strings.Contains(reference, ":") && !strings.HasPrefix(reference, "/") && fs.ValidPath(reference) && path.Clean(reference) == reference
 	}
 	return validSourceID(reference)
+}
+
+func v2URLFragmentContainsCredential(fragment string) bool {
+	values, err := url.ParseQuery(fragment)
+	if err != nil {
+		return false
+	}
+	for key, candidates := range values {
+		normalized := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(key)), "-", "_")
+		switch normalized {
+		case "access_token", "api_key", "apikey", "authorization", "client_secret", "credential", "credentials", "password", "secret", "token":
+			for _, candidate := range candidates {
+				if strings.TrimSpace(candidate) != "" {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func validSourceID(value string) bool {
@@ -197,6 +219,9 @@ func auditV2HTML(
 		return result
 	}
 	walkV2HTML(document, false, name, files, artifacts, declaredTokens, seenLocators, &result)
+	if result.documentHidden {
+		result.visible = false
+	}
 	if len(result.locators) == 0 {
 		result.diagnostics = append(result.diagnostics, errorDiagnostic("locator_missing", name, "Preview target requires at least one stable locator"))
 	}
@@ -261,6 +286,9 @@ func walkV2HTML(
 			}
 			style := inspectV2CSS(source.String(), false, name, files, artifacts, declaredTokens, true)
 			result.diagnostics = append(result.diagnostics, style.diagnostics...)
+			if style.documentHidden {
+				result.documentHidden = true
+			}
 			if containsDeclaredV2Token(style.references, declaredTokens) {
 				result.tokenUsed = true
 			}
@@ -355,6 +383,8 @@ func inspectV2CSS(
 ) v2CSSAudit {
 	result := v2CSSAudit{references: make(map[string]struct{})}
 	parser := css.NewParser(parse.NewInputString(source), inline)
+	atRuleDepth := 0
+	documentRule := false
 	for {
 		grammar, _, data := parser.Next()
 		if grammar == css.ErrorGrammar {
@@ -362,6 +392,19 @@ func inspectV2CSS(
 				result.diagnostics = append(result.diagnostics, errorDiagnostic("css_invalid", basePath, "CSS is invalid"))
 			}
 			break
+		}
+		values := parser.Values()
+		switch grammar {
+		case css.BeginAtRuleGrammar:
+			atRuleDepth++
+		case css.EndAtRuleGrammar:
+			if atRuleDepth > 0 {
+				atRuleDepth--
+			}
+		case css.BeginRulesetGrammar:
+			documentRule = atRuleDepth == 0 && v2SelectorTargetsDocumentRoot(values)
+		case css.EndRulesetGrammar:
+			documentRule = false
 		}
 		if grammar == css.AtRuleGrammar || grammar == css.BeginAtRuleGrammar {
 			if strings.TrimPrefix(strings.ToLower(strings.TrimSpace(string(data))), "@") == "import" {
@@ -373,15 +416,47 @@ func inspectV2CSS(
 		}
 		if grammar == css.DeclarationGrammar {
 			property := strings.ToLower(strings.TrimSpace(string(data)))
-			value := strings.ToLower(cssTokenText(parser.Values()))
+			value := strings.ToLower(cssTokenText(values))
 			if (property == "display" && strings.TrimSpace(value) == "none") ||
 				(property == "visibility" && strings.TrimSpace(value) == "hidden") {
 				result.hidden = true
+				if documentRule {
+					result.documentHidden = true
+				}
 			}
 		}
-		inspectV2CSSTokens(parser.Values(), basePath, files, artifacts, declaredTokens, &result)
+		inspectV2CSSTokens(values, basePath, files, artifacts, declaredTokens, &result)
 	}
 	return result
+}
+
+func v2SelectorTargetsDocumentRoot(tokens []css.Token) bool {
+	start := 0
+	for index, token := range tokens {
+		if token.TokenType == css.CommaToken {
+			if v2DocumentRootSelectorGroup(tokens[start:index]) {
+				return true
+			}
+			start = index + 1
+		}
+	}
+	return v2DocumentRootSelectorGroup(tokens[start:])
+}
+
+func v2DocumentRootSelectorGroup(tokens []css.Token) bool {
+	filtered := make([]css.Token, 0, len(tokens))
+	for _, token := range tokens {
+		if token.TokenType != css.WhitespaceToken && token.TokenType != css.CommentToken {
+			filtered = append(filtered, token)
+		}
+	}
+	if len(filtered) == 1 {
+		value := strings.ToLower(strings.TrimSpace(string(filtered[0].Data)))
+		return (filtered[0].TokenType == css.IdentToken && (value == "html" || value == "body")) ||
+			(filtered[0].TokenType == css.DelimToken && value == "*")
+	}
+	return len(filtered) == 2 && filtered[0].TokenType == css.ColonToken &&
+		filtered[1].TokenType == css.IdentToken && strings.EqualFold(strings.TrimSpace(string(filtered[1].Data)), "root")
 }
 
 func inspectV2CSSTokens(

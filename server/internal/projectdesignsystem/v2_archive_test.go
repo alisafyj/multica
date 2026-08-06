@@ -293,6 +293,27 @@ func TestDiscoverV2PreviewTargetsRejectsUIKitIDCollision(t *testing.T) {
 	}
 }
 
+func TestDiscoverV2PreviewTargetsRejectsInvalidPreviewPaths(t *testing.T) {
+	for _, previewPath := range []string{
+		"preview/nested/a.html",
+		"preview/../a.html",
+		"preview//a.html",
+		"preview/./a.html",
+		`preview\a.html`,
+		"assets/a.html",
+	} {
+		t.Run(previewPath, func(t *testing.T) {
+			index := []ArtifactIndexEntry{
+				{Path: "ui-kit/index.html", Role: "ui_kit", MediaType: "text/html; charset=utf-8"},
+				{Path: previewPath, Role: "preview", MediaType: "text/html; charset=utf-8"},
+			}
+			if _, err := DiscoverV2PreviewTargets(index); err == nil {
+				t.Fatalf("DiscoverV2PreviewTargets() accepted invalid Preview path %q", previewPath)
+			}
+		})
+	}
+}
+
 func validV2Binding() PackageBinding {
 	return PackageBinding{
 		WorkspaceID:         "workspace-1",

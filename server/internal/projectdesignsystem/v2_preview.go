@@ -12,6 +12,11 @@ func DiscoverV2PreviewTargets(index []ArtifactIndexEntry) ([]PreviewTarget, erro
 	hasUIKit := false
 	seenIDs := make(map[string]struct{})
 	for _, entry := range index {
+		if entry.Role == "preview" {
+			if _, err := validateV2ArchivePath(entry.Path); err != nil || path.Dir(entry.Path) != "preview" || path.Ext(entry.Path) != ".html" {
+				return nil, errors.New("V2 Preview path is invalid")
+			}
+		}
 		switch {
 		case entry.Path == "ui-kit/index.html":
 			if hasUIKit || entry.Role != "ui_kit" || entry.MediaType != "text/html; charset=utf-8" {

@@ -229,3 +229,70 @@ func TestAuditV2RejectsActiveSVGNetworkReferences(t *testing.T) {
 		assertV2DiagnosticCode(t, collected.Audit, err, "svg_unsafe")
 	})
 }
+
+func TestAuditV2RejectsStylesheetHiddenDocumentWithoutRejectingHiddenStates(t *testing.T) {
+	t.Run("document hidden", func(t *testing.T) {
+		root := copyV2Fixture(t)
+		html := `<style>body { display: none; } .workspace { color: var(--color-action); }</style><main class="workspace" data-design-node-id="orders" data-design-node-kind="block" data-design-node-label="Orders">Orders</main>`
+		if err := os.WriteFile(filepath.Join(root, "ui-kit", "index.html"), []byte(html), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		collected, err := CollectV2Directory(root, validV2Binding())
+		assertV2DiagnosticCode(t, collected.Audit, err, "ui_kit_not_visible")
+	})
+
+	t.Run("hidden component state", func(t *testing.T) {
+		root := copyV2Fixture(t)
+		html := `<style>.modal { display: none; } .workspace { color: var(--color-action); }</style><main class="workspace" data-design-node-id="orders" data-design-node-kind="block" data-design-node-label="Orders">Orders<div class="modal">Hidden state</div></main>`
+		if err := os.WriteFile(filepath.Join(root, "ui-kit", "index.html"), []byte(html), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := CollectV2Directory(root, validV2Binding()); err != nil {
+			t.Fatalf("CollectV2Directory() rejected a legitimate hidden component state: %v", err)
+		}
+	})
+}
+
+func TestAuditV2RejectsNamedHomeAndSecretFragmentSourceReferences(t *testing.T) {
+	for _, reference := range []string{
+		"~alice/repo/file.ts",
+		"https://example.com/#access_token=secret",
+	} {
+		t.Run(reference, func(t *testing.T) {
+			root := copyV2Fixture(t)
+			writeV2SourceIndex(t, root, SourceIndex{
+				SchemaVersion:       SourceIndexSchemaV1,
+				InputSnapshotSHA256: validV2Binding().InputSnapshotSHA256,
+				Evidence: []SourceEvidence{{
+					ID:         "restricted-reference",
+					Kind:       "repository_fact",
+					Summary:    "Restricted local paths and credentials must not enter source references.",
+					References: []string{reference},
+				}},
+				Conflicts: []SourceConflict{},
+				Fallbacks: []SourceFallback{},
+			})
+			collected, err := CollectV2Directory(root, validV2Binding())
+			assertV2DiagnosticCode(t, collected.Audit, err, "source_reference_invalid")
+		})
+	}
+
+	t.Run("credential-free HTTPS fragment", func(t *testing.T) {
+		root := copyV2Fixture(t)
+		writeV2SourceIndex(t, root, SourceIndex{
+			SchemaVersion:       SourceIndexSchemaV1,
+			InputSnapshotSHA256: validV2Binding().InputSnapshotSHA256,
+			Evidence: []SourceEvidence{{
+				ID:         "documentation-anchor",
+				Kind:       "external_reference",
+				Summary:    "A stable documentation section is valid source evidence.",
+				References: []string{"https://example.com/design-system#tokens"},
+			}},
+			Conflicts: []SourceConflict{},
+			Fallbacks: []SourceFallback{},
+		})
+		if _, err := CollectV2Directory(root, validV2Binding()); err != nil {
+			t.Fatalf("CollectV2Directory() rejected a credential-free HTTPS fragment: %v", err)
+		}
+	})
+}
