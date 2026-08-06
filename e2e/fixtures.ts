@@ -450,6 +450,44 @@ export class TestApiClient {
     return { token: this.token, csrfToken: this.csrfToken, expiresAt: this.expiresAt };
   }
 
+  async createTestPlan(body: Record<string, unknown>) {
+    const res = await this.authedFetch("/api/test-plans", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  async createTestRun(body: Record<string, unknown>) {
+    const res = await this.authedFetch("/api/test-runs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  async listTestRunCases(runId: string) {
+    const res = await this.authedFetch(`/api/test-runs/${runId}/cases`);
+    const body = await res.json();
+    return body.run_cases ?? body.cases ?? body;
+  }
+
+  async setTestRunCaseResult(runCaseId: string, body: Record<string, unknown>) {
+    const res = await this.authedFetch(`/api/test-run-cases/${runCaseId}/result`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  async retryTestRun(runId: string, body: Record<string, unknown>) {
+    const res = await this.authedFetch(`/api/test-runs/${runId}/retry`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
   /**
    * Raw POST for tests that assert on a rejection status rather than a body.
    * authedFetch does not throw on non-2xx, so the Response comes back intact.
