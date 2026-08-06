@@ -158,7 +158,24 @@
     "batchApproved": "Approved {{count}} cases",
     "generationStarted": "Generation job created. Review its scope before dispatching.",
     "generationFailed": "Could not start the generation job.",
-    "createFailed": "Could not create the test case."
+    "createFailed": "Could not create the test case.",
+    "planCreated": "Test plan created",
+    "planDeleted": "Test plan deleted",
+    "planCreateFailed": "Could not create test plan",
+    "planDeleteFailed": "Could not delete test plan",
+    "runCreated": "Test run created",
+    "runCreateFailed": "Could not create test run",
+    "runStarted": "Run started",
+    "runStartFailed": "Could not start run",
+    "runAborted": "Run aborted",
+    "runAbortFailed": "Could not abort run",
+    "runDispatched": "Dispatched to agent",
+    "runDispatchFailed": "Could not dispatch run",
+    "runDispatchBlocked": "Missing capability: {{kind}}",
+    "runResultSaved": "Result saved",
+    "runResultFailed": "Could not save result",
+    "defectOpened": "Defect issue created",
+    "defectFailed": "Could not open defect"
   },
   "job": {
     "title": "Generation Job",
@@ -247,5 +264,116 @@
       "accepted": "Accepted",
       "rejected": "Rejected"
     }
+  },
+  "plans": {
+    "title": "Test Plans",
+    "new": "New plan",
+    "empty": "No test plans yet",
+    "emptyHint": "Create a plan to organize test cases for a release.",
+    "createTitle": "Plan title",
+    "run": "Create run",
+    "status": {
+      "draft": "Draft",
+      "active": "Active",
+      "archived": "Archived"
+    },
+    "columns": {
+      "title": "Title",
+      "status": "Status",
+      "cases": "Cases",
+      "created": "Created"
+    },
+    "detail": {
+      "back": "Back",
+      "cases": "Cases",
+      "empty": "No cases in this plan",
+      "emptyHint": "Add cases from the test library.",
+      "addCases": "Add cases",
+      "createRun": "Create run",
+      "runTitle": "Run title",
+      "environment": "Environment",
+      "buildRef": "Build ref",
+      "remove": "Remove",
+      "caseCount_one": "{{count}} case",
+      "caseCount_other": "{{count}} cases"
+    }
+  },
+  "run": {
+    "title": "Test Run",
+    "back": "Back",
+    "error": "Could not load this run",
+    "retry": "Retry",
+    "start": "Start",
+    "abort": "Abort",
+    "retryAll": "Retry all",
+    "retryFailed": "Retry failed",
+    "empty": "No cases in this run",
+    "meta": {
+      "status": "Status",
+      "environment": "Environment",
+      "buildRef": "Build",
+      "plan": "Plan",
+      "executor": "Executor",
+      "started": "Started",
+      "completed": "Completed"
+    },
+    "counts": {
+      "passed": "Passed",
+      "failed": "Failed",
+      "pending": "Pending",
+      "blocked": "Blocked",
+      "skipped": "Skipped"
+    },
+    "status": {
+      "pending": "Pending",
+      "running": "Running",
+      "completed": "Completed",
+      "aborted": "Aborted",
+      "blocked": "Blocked"
+    },
+    "result": {
+      "pending": "Pending",
+      "running": "Running",
+      "passed": "Passed",
+      "failed": "Failed",
+      "blocked": "Blocked",
+      "skipped": "Skipped"
+    },
+    "dispatch": {
+      "title": "Dispatch to Agent",
+      "hint": "Select an agent to execute this run.",
+      "agent": "Agent",
+      "noAgent": "No agents available",
+      "button": "Dispatch",
+      "dispatching": "Dispatching...",
+      "running": "Running...",
+      "blocked": "Missing capability: {{kind}}"
+    }
+  },
+  "runCase": {
+    "notes": "Notes",
+    "notesPlaceholder": "Tester notes...",
+    "defect": "Open defect",
+    "defectTitle": "Defect title",
+    "defectTitlePlaceholder": "Describe the defect...",
+    "defectOpen": "Open",
+    "evidence": "Evidence",
+    "step": "Step {{index}}",
+    "columns": {
+      "case": "Case",
+      "result": "Result",
+      "executor": "Executor",
+      "duration": "Duration",
+      "defect": "Defect"
+    }
+  },
+  "timeline": {
+    "title": "Run History",
+    "empty": "No runs yet",
+    "run": "Run",
+    "result": "Result",
+    "environment": "Environment",
+    "buildRef": "Build",
+    "executedAt": "Executed"
   }
 }

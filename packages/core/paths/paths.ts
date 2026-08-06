@@ -44,6 +44,11 @@ function workspaceScoped(slug: string) {
     testCaseDetail: (ref: string) => `${ws}/tests/${encode(ref)}`,
     // Generation job detail. The jobId is always a UUID.
     testGenerationJobDetail: (jobId: string) => `${ws}/tests/jobs/${encode(jobId)}`,
+    // Test plan list and detail.
+    testPlans: () => `${ws}/tests/plans`,
+    testPlanDetail: (id: string) => `${ws}/tests/plans/${encode(id)}`,
+    // Test run detail.
+    testRunDetail: (id: string) => `${ws}/tests/runs/${encode(id)}`,
     autopilots: () => `${ws}/autopilots`,
     autopilotDetail: (id: string) => `${ws}/autopilots/${encode(id)}`,
     agents: () => `${ws}/agents`,

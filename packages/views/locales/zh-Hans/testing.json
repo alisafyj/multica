@@ -158,7 +158,24 @@
     "batchApproved": "已批量通过 {{count}} 条用例",
     "generationStarted": "已创建生成任务，派发前先确认覆盖范围。",
     "generationFailed": "生成任务创建失败。",
-    "createFailed": "用例创建失败。"
+    "createFailed": "用例创建失败。",
+    "planCreated": "测试计划已创建",
+    "planDeleted": "测试计划已删除",
+    "planCreateFailed": "创建测试计划失败",
+    "planDeleteFailed": "删除测试计划失败",
+    "runCreated": "执行轮次已创建",
+    "runCreateFailed": "创建执行轮次失败",
+    "runStarted": "轮次已开始",
+    "runStartFailed": "无法开始轮次",
+    "runAborted": "轮次已中止",
+    "runAbortFailed": "无法中止轮次",
+    "runDispatched": "已派发给 Agent",
+    "runDispatchFailed": "派发失败",
+    "runDispatchBlocked": "缺少能力：{{kind}}",
+    "runResultSaved": "结果已保存",
+    "runResultFailed": "无法保存结果",
+    "defectOpened": "已创建缺陷 issue",
+    "defectFailed": "创建缺陷失败"
   },
   "job": {
     "title": "生成任务",
@@ -247,5 +264,115 @@
       "accepted": "已采纳",
       "rejected": "已拒绝"
     }
+  },
+  "plans": {
+    "title": "测试计划",
+    "new": "新建计划",
+    "empty": "还没有测试计划",
+    "emptyHint": "创建计划，以组织某个版本的测试用例。",
+    "createTitle": "计划名称",
+    "run": "创建轮次",
+    "status": {
+      "draft": "草稿",
+      "active": "进行中",
+      "archived": "已归档"
+    },
+    "columns": {
+      "title": "名称",
+      "status": "状态",
+      "cases": "用例数",
+      "created": "创建时间"
+    },
+    "detail": {
+      "back": "返回",
+      "cases": "用例",
+      "empty": "该计划还没有用例",
+      "emptyHint": "从用例库添加用例。",
+      "addCases": "添加用例",
+      "createRun": "创建执行轮次",
+      "runTitle": "轮次名称",
+      "environment": "环境",
+      "buildRef": "构建版本",
+      "remove": "移除",
+      "caseCount_other": "{{count}} 条用例"
+    }
+  },
+  "run": {
+    "title": "执行轮次",
+    "back": "返回",
+    "error": "无法加载此轮次",
+    "retry": "重试",
+    "start": "开始",
+    "abort": "中止",
+    "retryAll": "全量重跑",
+    "retryFailed": "仅重跑失败",
+    "empty": "该轮次没有用例",
+    "meta": {
+      "status": "状态",
+      "environment": "环境",
+      "buildRef": "构建版本",
+      "plan": "关联计划",
+      "executor": "执行人",
+      "started": "开始时间",
+      "completed": "完成时间"
+    },
+    "counts": {
+      "passed": "通过",
+      "failed": "失败",
+      "pending": "待执行",
+      "blocked": "阻塞",
+      "skipped": "已跳过"
+    },
+    "status": {
+      "pending": "待开始",
+      "running": "执行中",
+      "completed": "已完成",
+      "aborted": "已中止",
+      "blocked": "已阻塞"
+    },
+    "result": {
+      "pending": "待执行",
+      "running": "执行中",
+      "passed": "通过",
+      "failed": "失败",
+      "blocked": "阻塞",
+      "skipped": "跳过"
+    },
+    "dispatch": {
+      "title": "派发给 Agent",
+      "hint": "选择 Agent 执行本轮次。",
+      "agent": "Agent",
+      "noAgent": "暂无可用 Agent",
+      "button": "派发",
+      "dispatching": "派发中…",
+      "running": "执行中…",
+      "blocked": "缺少能力：{{kind}}"
+    }
+  },
+  "runCase": {
+    "notes": "备注",
+    "notesPlaceholder": "测试人员备注…",
+    "defect": "创建缺陷",
+    "defectTitle": "缺陷标题",
+    "defectTitlePlaceholder": "描述缺陷…",
+    "defectOpen": "创建",
+    "evidence": "证据",
+    "step": "步骤 {{index}}",
+    "columns": {
+      "case": "用例",
+      "result": "结果",
+      "executor": "执行人",
+      "duration": "用时",
+      "defect": "缺陷"
+    }
+  },
+  "timeline": {
+    "title": "历史执行记录",
+    "empty": "还没有执行记录",
+    "run": "轮次",
+    "result": "结果",
+    "environment": "环境",
+    "buildRef": "构建版本",
+    "executedAt": "执行时间"
   }
 }

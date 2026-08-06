@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { FlaskConical, Plus, Sparkles } from "lucide-react";
+import { ClipboardList, FlaskConical, Plus, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -163,6 +163,13 @@ export function TestCasesPage() {
           <FlaskConical className="size-4 shrink-0 text-muted-foreground" />
           <h1 className="truncate text-body font-medium">{t(($) => $.page.title)}</h1>
         </div>
+        {/* The plans surface is otherwise unreachable: its own breadcrumbs are
+            the only thing that links to it, which only helps someone already
+            there. */}
+        <Button size="sm" variant="ghost" onClick={() => navigation.push(paths.testPlans())}>
+          <ClipboardList className="size-4" />
+          {t(($) => $.plans.title)}
+        </Button>
         <Button
           size="sm"
           variant="outline"

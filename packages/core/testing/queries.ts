@@ -1,6 +1,18 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
-import { testCaseKeys, testGenerationJobKeys, type TestCaseListFilters, type TestGenerationJobListFilters } from "./keys";
+import {
+  testCaseKeys,
+  testGenerationJobKeys,
+  testPlanKeys,
+  testRunKeys,
+  testCapabilityKeys,
+  testCaseTimelineKeys,
+  type TestCaseListFilters,
+  type TestGenerationJobListFilters,
+  type TestPlanListFilters,
+  type TestRunListFilters,
+  type TestCapabilityListFilters,
+} from "./keys";
 
 export function testCaseListOptions(wsId: string, filters: TestCaseListFilters = {}) {
   return queryOptions({
@@ -73,5 +85,91 @@ export function testGenerationPlanOptions(wsId: string, jobId: string) {
     queryKey: testGenerationJobKeys.plan(wsId, jobId),
     queryFn: () => api.getTestGenerationPlan(jobId),
     enabled: jobId.length > 0,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Test plan queries — Phase 3/4
+// ---------------------------------------------------------------------------
+
+export function testPlanListOptions(wsId: string, filters: TestPlanListFilters = {}) {
+  return queryOptions({
+    queryKey: testPlanKeys.list(wsId, filters),
+    queryFn: () => api.listTestPlans(filters),
+    select: (data) => data.test_plans,
+  });
+}
+
+export function testPlanDetailOptions(wsId: string, id: string) {
+  return queryOptions({
+    queryKey: testPlanKeys.detail(wsId, id),
+    queryFn: () => api.getTestPlan(id),
+    enabled: id.length > 0,
+  });
+}
+
+export function testPlanCasesOptions(wsId: string, planId: string) {
+  return queryOptions({
+    queryKey: testPlanKeys.cases(wsId, planId),
+    queryFn: () => api.listTestPlanCases(planId),
+    select: (data) => data.cases,
+    enabled: planId.length > 0,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Test run queries — Phase 3/4
+// ---------------------------------------------------------------------------
+
+export function testRunListOptions(wsId: string, filters: TestRunListFilters = {}) {
+  return queryOptions({
+    queryKey: testRunKeys.list(wsId, filters),
+    queryFn: () => api.listTestRuns(filters),
+    select: (data) => data.test_runs,
+  });
+}
+
+export function testRunDetailOptions(wsId: string, id: string) {
+  return queryOptions({
+    queryKey: testRunKeys.detail(wsId, id),
+    queryFn: () => api.getTestRun(id),
+    enabled: id.length > 0,
+  });
+}
+
+export function testRunCasesOptions(wsId: string, runId: string) {
+  return queryOptions({
+    queryKey: testRunKeys.cases(wsId, runId),
+    queryFn: () => api.listTestRunCases(runId),
+    select: (data) => data.cases,
+    enabled: runId.length > 0,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Test capability queries — Phase 4
+// ---------------------------------------------------------------------------
+
+export function testCapabilityListOptions(
+  wsId: string,
+  filters: TestCapabilityListFilters = {},
+) {
+  return queryOptions({
+    queryKey: testCapabilityKeys.list(wsId, filters),
+    queryFn: () => api.listTestCapabilities(filters),
+    select: (data) => data.capabilities,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Case result timeline — Phase 3/4
+// ---------------------------------------------------------------------------
+
+export function testCaseResultTimelineOptions(wsId: string, ref: string) {
+  return queryOptions({
+    queryKey: testCaseTimelineKeys.timeline(wsId, ref),
+    queryFn: () => api.listTestCaseResultTimeline(ref),
+    select: (data) => data.timeline,
+    enabled: ref.length > 0,
   });
 }

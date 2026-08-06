@@ -54,6 +54,7 @@ vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
     testCaseDetail: (ref: string) => `/acme/tests/${ref}`,
     testGenerationJobDetail: (id: string) => `/acme/tests/jobs/${id}`,
+    testPlans: () => "/acme/tests/plans",
   }),
 }));
 
@@ -147,4 +148,18 @@ describe("TestCasesPage entry points", () => {
 
     expect(adapter.push).not.toHaveBeenCalled();
   });
+});
+
+// The plans surface shipped with only its own breadcrumbs pointing at it, which
+// helps nobody who is not already there. This asserts the way in.
+it("links to the test plans surface", async () => {
+  const adapter = makeAdapter();
+  renderPage(adapter);
+
+  const buttons = await screen.findAllByRole("button");
+  const plans = buttons.find((b) => b.textContent?.match(/计划|Plans|プラン|계획/));
+  expect(plans, "the cases page must offer a way to reach test plans").toBeTruthy();
+  await userEvent.click(plans!);
+
+  expect(adapter.push).toHaveBeenCalledWith("/acme/tests/plans");
 });

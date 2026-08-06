@@ -232,6 +232,25 @@ import type {
   UpdateTestGenerationPlanRequest,
   DispatchTestGenerationJobRequest,
   DispatchTestGenerationJobResponse,
+  TestPlan,
+  TestPlanCase,
+  TestRun,
+  TestRunCase,
+  ListTestPlansResponse,
+  ListTestPlanCasesResponse,
+  ListTestRunsResponse,
+  ListTestRunCasesResponse,
+  TestCaseResultTimelineResponse,
+  ListTestCapabilitiesResponse,
+  DispatchTestRunResponse,
+  CreateTestPlanRequest,
+  UpdateTestPlanRequest,
+  AddTestPlanCasesRequest,
+  CreateTestRunRequest,
+  RetryTestRunRequest,
+  DispatchTestRunRequest,
+  UpdateTestRunCaseResultRequest,
+  OpenTestRunCaseDefectRequest,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
@@ -421,6 +440,25 @@ import {
   EMPTY_TEST_CASE_PROPOSAL,
   EMPTY_LIST_TEST_GENERATION_JOBS_RESPONSE,
   EMPTY_LIST_TEST_CASE_PROPOSALS_RESPONSE,
+  TestPlanSchema,
+  TestRunSchema,
+  TestRunCaseSchema,
+  ListTestPlansResponseSchema,
+  ListTestPlanCasesResponseSchema,
+  ListTestRunsResponseSchema,
+  ListTestRunCasesResponseSchema,
+  TestCaseResultTimelineResponseSchema,
+  ListTestCapabilitiesResponseSchema,
+  DispatchTestRunResponseSchema,
+  EMPTY_TEST_PLAN,
+  EMPTY_TEST_RUN,
+  EMPTY_TEST_RUN_CASE,
+  EMPTY_LIST_TEST_PLANS_RESPONSE,
+  EMPTY_LIST_TEST_PLAN_CASES_RESPONSE,
+  EMPTY_LIST_TEST_RUNS_RESPONSE,
+  EMPTY_LIST_TEST_RUN_CASES_RESPONSE,
+  EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE,
+  EMPTY_LIST_TEST_CAPABILITIES_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -4019,6 +4057,226 @@ export class ApiClient {
     return this.fetch(`/api/slack/binding/redeem`, {
       method: "POST",
       body: JSON.stringify({ token }),
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Test plans — Phase 3/4
+  // ---------------------------------------------------------------------------
+
+  async listTestPlans(params?: {
+    projectId?: string;
+    status?: string;
+  }): Promise<ListTestPlansResponse> {
+    const qs = new URLSearchParams();
+    if (params?.projectId) qs.set("project_id", params.projectId);
+    if (params?.status) qs.set("status", params.status);
+    const query = qs.toString() ? `?${qs}` : "";
+    const raw = await this.fetch<unknown>(`/api/test-plans${query}`);
+    return parseWithFallback(raw, ListTestPlansResponseSchema, EMPTY_LIST_TEST_PLANS_RESPONSE, {
+      endpoint: "GET /api/test-plans",
+    });
+  }
+
+  async createTestPlan(data: CreateTestPlanRequest): Promise<TestPlan> {
+    const raw = await this.fetch<unknown>(`/api/test-plans`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestPlanSchema, EMPTY_TEST_PLAN, {
+      endpoint: "POST /api/test-plans",
+    });
+  }
+
+  async getTestPlan(id: string): Promise<TestPlan> {
+    const raw = await this.fetch<unknown>(`/api/test-plans/${encodeURIComponent(id)}`);
+    return parseWithFallback(raw, TestPlanSchema, { ...EMPTY_TEST_PLAN, id }, {
+      endpoint: "GET /api/test-plans/:id",
+    });
+  }
+
+  async updateTestPlan(id: string, data: UpdateTestPlanRequest): Promise<TestPlan> {
+    const raw = await this.fetch<unknown>(`/api/test-plans/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestPlanSchema, { ...EMPTY_TEST_PLAN, id }, {
+      endpoint: "PUT /api/test-plans/:id",
+    });
+  }
+
+  async deleteTestPlan(id: string): Promise<void> {
+    await this.fetch(`/api/test-plans/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async listTestPlanCases(planId: string): Promise<ListTestPlanCasesResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-plans/${encodeURIComponent(planId)}/cases`,
+    );
+    return parseWithFallback(raw, ListTestPlanCasesResponseSchema, EMPTY_LIST_TEST_PLAN_CASES_RESPONSE, {
+      endpoint: "GET /api/test-plans/:id/cases",
+    });
+  }
+
+  async addTestPlanCases(planId: string, data: AddTestPlanCasesRequest): Promise<{ cases: TestPlanCase[] }> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-plans/${encodeURIComponent(planId)}/cases`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(raw, ListTestPlanCasesResponseSchema, EMPTY_LIST_TEST_PLAN_CASES_RESPONSE, {
+      endpoint: "POST /api/test-plans/:id/cases",
+    });
+  }
+
+  async removeTestPlanCase(planId: string, caseId: string): Promise<void> {
+    await this.fetch(
+      `/api/test-plans/${encodeURIComponent(planId)}/cases/${encodeURIComponent(caseId)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Test runs — Phase 3/4
+  // ---------------------------------------------------------------------------
+
+  async listTestRuns(params?: {
+    projectId?: string;
+    planId?: string;
+    status?: string;
+    limit?: number;
+  }): Promise<ListTestRunsResponse> {
+    const qs = new URLSearchParams();
+    if (params?.projectId) qs.set("project_id", params.projectId);
+    if (params?.planId) qs.set("plan_id", params.planId);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const query = qs.toString() ? `?${qs}` : "";
+    const raw = await this.fetch<unknown>(`/api/test-runs${query}`);
+    return parseWithFallback(raw, ListTestRunsResponseSchema, EMPTY_LIST_TEST_RUNS_RESPONSE, {
+      endpoint: "GET /api/test-runs",
+    });
+  }
+
+  async createTestRun(data: CreateTestRunRequest): Promise<TestRun> {
+    const raw = await this.fetch<unknown>(`/api/test-runs`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestRunSchema, EMPTY_TEST_RUN, {
+      endpoint: "POST /api/test-runs",
+    });
+  }
+
+  async getTestRun(id: string): Promise<TestRun> {
+    const raw = await this.fetch<unknown>(`/api/test-runs/${encodeURIComponent(id)}`);
+    return parseWithFallback(raw, TestRunSchema, { ...EMPTY_TEST_RUN, id }, {
+      endpoint: "GET /api/test-runs/:id",
+    });
+  }
+
+  async startTestRun(id: string): Promise<TestRun> {
+    const raw = await this.fetch<unknown>(`/api/test-runs/${encodeURIComponent(id)}/start`, {
+      method: "POST",
+    });
+    return parseWithFallback(raw, TestRunSchema, { ...EMPTY_TEST_RUN, id }, {
+      endpoint: "POST /api/test-runs/:id/start",
+    });
+  }
+
+  async abortTestRun(id: string, reason?: string): Promise<TestRun> {
+    const raw = await this.fetch<unknown>(`/api/test-runs/${encodeURIComponent(id)}/abort`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason ?? "" }),
+    });
+    return parseWithFallback(raw, TestRunSchema, { ...EMPTY_TEST_RUN, id }, {
+      endpoint: "POST /api/test-runs/:id/abort",
+    });
+  }
+
+  async retryTestRun(id: string, data: RetryTestRunRequest): Promise<TestRun> {
+    const raw = await this.fetch<unknown>(`/api/test-runs/${encodeURIComponent(id)}/retry`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestRunSchema, EMPTY_TEST_RUN, {
+      endpoint: "POST /api/test-runs/:id/retry",
+    });
+  }
+
+  async dispatchTestRun(id: string, data: DispatchTestRunRequest): Promise<DispatchTestRunResponse> {
+    const raw = await this.fetch<unknown>(`/api/test-runs/${encodeURIComponent(id)}/dispatch`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DispatchTestRunResponseSchema, { test_run: { ...EMPTY_TEST_RUN, id }, agent_task_id: "" }, {
+      endpoint: "POST /api/test-runs/:id/dispatch",
+    });
+  }
+
+  async listTestRunCases(runId: string): Promise<ListTestRunCasesResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-runs/${encodeURIComponent(runId)}/cases`,
+    );
+    return parseWithFallback(raw, ListTestRunCasesResponseSchema, EMPTY_LIST_TEST_RUN_CASES_RESPONSE, {
+      endpoint: "GET /api/test-runs/:id/cases",
+    });
+  }
+
+  async updateTestRunCaseResult(
+    id: string,
+    data: UpdateTestRunCaseResultRequest,
+  ): Promise<TestRunCase> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-run-cases/${encodeURIComponent(id)}/result`,
+      { method: "PUT", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(raw, TestRunCaseSchema, { ...EMPTY_TEST_RUN_CASE, id }, {
+      endpoint: "PUT /api/test-run-cases/:id/result",
+    });
+  }
+
+  async openTestRunCaseDefect(
+    id: string,
+    data: OpenTestRunCaseDefectRequest,
+  ): Promise<{ test_run_case: TestRunCase; issue: unknown }> {
+    return this.fetch<{ test_run_case: TestRunCase; issue: unknown }>(
+      `/api/test-run-cases/${encodeURIComponent(id)}/defect`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+  }
+
+  async listTestCaseResultTimeline(
+    ref: string,
+    params?: { limit?: number },
+  ): Promise<TestCaseResultTimelineResponse> {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const query = qs.toString() ? `?${qs}` : "";
+    const raw = await this.fetch<unknown>(
+      `/api/test-cases/${encodeURIComponent(ref)}/results${query}`,
+    );
+    return parseWithFallback(raw, TestCaseResultTimelineResponseSchema, EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE, {
+      endpoint: "GET /api/test-cases/:ref/results",
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Test capabilities — Phase 4
+  // ---------------------------------------------------------------------------
+
+  async listTestCapabilities(params?: {
+    kind?: string;
+    status?: string;
+    daemonId?: string;
+  }): Promise<ListTestCapabilitiesResponse> {
+    const qs = new URLSearchParams();
+    if (params?.kind) qs.set("kind", params.kind);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.daemonId) qs.set("daemon_id", params.daemonId);
+    const query = qs.toString() ? `?${qs}` : "";
+    const raw = await this.fetch<unknown>(`/api/test-capabilities${query}`);
+    return parseWithFallback(raw, ListTestCapabilitiesResponseSchema, EMPTY_LIST_TEST_CAPABILITIES_RESPONSE, {
+      endpoint: "GET /api/test-capabilities",
     });
   }
 }

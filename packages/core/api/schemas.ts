@@ -72,6 +72,15 @@ import type {
   ListDesignDeliveriesResponse,
   ListDesignSystemProfilesResponse,
   ListDesignRestoreTasksResponse,
+  TestPlan,
+  TestRun,
+  TestRunCase,
+  ListTestPlansResponse,
+  ListTestPlanCasesResponse,
+  ListTestRunsResponse,
+  ListTestRunCasesResponse,
+  TestCaseResultTimelineResponse,
+  ListTestCapabilitiesResponse,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
@@ -2594,3 +2603,224 @@ export const DispatchTestGenerationJobResponseSchema = z.object({
   job: TestGenerationJobSchema,
   agent_task_id: z.string().default(""),
 }).loose();
+
+// ---------------------------------------------------------------------------
+// Test plans, runs and capabilities — Phase 3/4
+// ---------------------------------------------------------------------------
+
+export const TestPlanSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  project_id: z.string().default(""),
+  title: z.string().default(""),
+  description: z.string().default(""),
+  status: z.string().default("draft"),
+  created_by: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const TestPlanCaseSchema = z.object({
+  plan_id: z.string().default(""),
+  test_case_id: z.string().default(""),
+  position: z.number().default(0),
+  created_at: z.string().default(""),
+}).loose();
+
+export const ListTestPlansResponseSchema = z.object({
+  test_plans: z.array(TestPlanSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const ListTestPlanCasesResponseSchema = z.object({
+  cases: z.array(TestPlanCaseSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+const TestRunExecutionStatusSchema = z.object({
+  phase: z.string().default(""),
+  reason: z.string().nullable().default(null),
+  severity: z.string().nullable().default(null),
+}).loose();
+
+export const TestRunSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  project_id: z.string().default(""),
+  plan_id: z.string().nullable().default(null),
+  title: z.string().default(""),
+  executor_type: z.string().default("member"),
+  executor_id: z.string().default(""),
+  agent_task_id: z.string().nullable().default(null),
+  environment: z.string().default(""),
+  build_ref: z.string().default(""),
+  capability_binding: z.record(z.string(), z.unknown()).default({}),
+  status: z.string().default("pending"),
+  source_run_id: z.string().nullable().default(null),
+  retry_scope: z.string().nullable().default(null),
+  error: z.string().nullable().default(null),
+  started_at: z.string().nullable().default(null),
+  completed_at: z.string().nullable().default(null),
+  created_by: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+  execution_status: TestRunExecutionStatusSchema.nullable().optional(),
+  result_counts: z.record(z.string(), z.number()).optional(),
+}).loose();
+
+export const TestRunCaseSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  run_id: z.string().default(""),
+  test_case_id: z.string().default(""),
+  case_snapshot: z.record(z.string(), z.unknown()).default({}),
+  position: z.number().default(0),
+  result: z.string().default("pending"),
+  notes: z.string().default(""),
+  evidence: z.array(z.unknown()).default([]),
+  step_results: z.array(z.unknown()).default([]),
+  duration_ms: z.number().nullable().default(null),
+  executed_by_type: z.string().nullable().default(null),
+  executed_by_id: z.string().nullable().default(null),
+  executed_at: z.string().nullable().default(null),
+  defect_issue_id: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const ListTestRunsResponseSchema = z.object({
+  test_runs: z.array(TestRunSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const ListTestRunCasesResponseSchema = z.object({
+  cases: z.array(TestRunCaseSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const TestCaseResultTimelineEntrySchema = z.object({
+  id: z.string().default(""),
+  run_id: z.string().default(""),
+  run_title: z.string().default(""),
+  environment: z.string().default(""),
+  build_ref: z.string().default(""),
+  result: z.string().default("pending"),
+  executed_at: z.string().nullable().default(null),
+  executed_by_type: z.string().nullable().default(null),
+  executed_by_id: z.string().nullable().default(null),
+  defect_issue_id: z.string().nullable().default(null),
+  run_created_at: z.string().default(""),
+}).loose();
+
+export const TestCaseResultTimelineResponseSchema = z.object({
+  timeline: z.array(TestCaseResultTimelineEntrySchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const TestCapabilitySchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  daemon_id: z.string().default(""),
+  runtime_id: z.string().default(""),
+  kind: z.string().default("browser"),
+  capability_key: z.string().default(""),
+  target: z.record(z.string(), z.string()).default({}),
+  status: z.string().default("unknown"),
+  last_probe_at: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+}).loose();
+
+export const ListTestCapabilitiesResponseSchema = z.object({
+  capabilities: z.array(TestCapabilitySchema).default([]),
+}).loose();
+
+export const DispatchTestRunResponseSchema = z.object({
+  test_run: TestRunSchema,
+  agent_task_id: z.string().default(""),
+}).loose();
+
+// EMPTY_* fallbacks
+
+export const EMPTY_TEST_PLAN: TestPlan = {
+  id: "",
+  workspace_id: "",
+  project_id: "",
+  title: "",
+  description: "",
+  status: "draft",
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_LIST_TEST_PLANS_RESPONSE: ListTestPlansResponse = {
+  test_plans: [],
+  total: 0,
+};
+
+export const EMPTY_LIST_TEST_PLAN_CASES_RESPONSE: ListTestPlanCasesResponse = {
+  cases: [],
+  total: 0,
+};
+
+export const EMPTY_TEST_RUN: TestRun = {
+  id: "",
+  workspace_id: "",
+  project_id: "",
+  plan_id: null,
+  title: "",
+  executor_type: "member",
+  executor_id: "",
+  agent_task_id: null,
+  environment: "",
+  build_ref: "",
+  capability_binding: {},
+  status: "pending",
+  source_run_id: null,
+  retry_scope: null,
+  error: null,
+  started_at: null,
+  completed_at: null,
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_LIST_TEST_RUNS_RESPONSE: ListTestRunsResponse = {
+  test_runs: [],
+  total: 0,
+};
+
+export const EMPTY_TEST_RUN_CASE: TestRunCase = {
+  id: "",
+  workspace_id: "",
+  run_id: "",
+  test_case_id: "",
+  case_snapshot: {},
+  position: 0,
+  result: "pending",
+  notes: "",
+  evidence: [],
+  step_results: [],
+  duration_ms: null,
+  executed_by_type: null,
+  executed_by_id: null,
+  executed_at: null,
+  defect_issue_id: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_LIST_TEST_RUN_CASES_RESPONSE: ListTestRunCasesResponse = {
+  cases: [],
+  total: 0,
+};
+
+export const EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE: TestCaseResultTimelineResponse = {
+  timeline: [],
+  total: 0,
+};
+
+export const EMPTY_LIST_TEST_CAPABILITIES_RESPONSE: ListTestCapabilitiesResponse = {
+  capabilities: [],
+};

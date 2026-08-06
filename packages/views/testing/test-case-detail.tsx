@@ -6,6 +6,7 @@ import { CheckCircle2, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { AppLink } from "../navigation";
 import {
   TEST_CASE_EXECUTION_MODES,
   TEST_CASE_PRIORITIES,
@@ -14,11 +15,14 @@ import {
   testCaseDetailOptions,
   testCaseProposalsOptions,
   testCaseRevisionsOptions,
+  testCaseResultTimelineOptions,
   useAcceptTestCaseProposal,
   useApproveTestCase,
   useDeleteTestCase,
   useRejectTestCaseProposal,
   useUpdateTestCase,
+  TEST_RUN_RESULTS,
+  TEST_RUN_RESULT_TONE,
 } from "@multica/core/testing";
 import type { TestCaseProposal } from "@multica/core/types";
 import type {
@@ -38,7 +42,7 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { PageHeader } from "../layout/page-header";
 import { useNavigation } from "../navigation";
 import { useT } from "../i18n";
-import { crossRepoWarning, repoAliases } from "./case-summary";
+import { crossRepoWarning, repoAliases, knownEnumKey } from "./case-summary";
 import { TestCaseStepsEditor } from "./components/test-case-steps-editor";
 import { TestCaseReposField } from "./components/test-case-repos-field";
 
@@ -84,6 +88,7 @@ export function TestCaseDetail({ refId }: TestCaseDetailProps) {
   const { data: testCase, isLoading } = useQuery(testCaseDetailOptions(wsId, refId));
   const { data: revisions = [] } = useQuery(testCaseRevisionsOptions(wsId, refId));
   const { data: proposals = [] } = useQuery(testCaseProposalsOptions(wsId, refId));
+  const { data: timeline = [] } = useQuery(testCaseResultTimelineOptions(wsId, refId));
   const updateCase = useUpdateTestCase();
   const approveCase = useApproveTestCase();
   const deleteCase = useDeleteTestCase();
@@ -292,6 +297,47 @@ export function TestCaseDetail({ refId }: TestCaseDetailProps) {
                     </span>
                     {t(($) => $.revisions.separator)}
                     {t(($) => $.revisions[revision.change_kind as TestCaseChangeKind])}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Field>
+
+          {/* Cross-run result timeline — regression value view */}
+          <Field label={t(($) => $.timeline.title)}>
+            {timeline.length === 0 ? (
+              <p className="text-caption text-muted-foreground">
+                {t(($) => $.timeline.empty)}
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-1.5">
+                {timeline.map((entry) => (
+                  <li
+                    key={entry.id}
+                    className="flex items-center gap-2 text-caption"
+                  >
+                    <span
+                      className={`inline-block w-14 shrink-0 text-center font-medium ${
+                        TEST_RUN_RESULT_TONE[entry.result] ?? "text-muted-foreground"
+                      }`}
+                    >
+                      {t(($) => $.run.result[knownEnumKey(entry.result, TEST_RUN_RESULTS) ?? "pending"])}
+                    </span>
+                    {/* The round has to be reachable from here. Without this
+                        link a past run is unfindable once you leave it — there
+                        is no runs index. */}
+                    <AppLink
+                      href={paths.testRunDetail(entry.run_id)}
+                      className="min-w-0 flex-1 truncate text-muted-foreground hover:text-foreground hover:underline"
+                      title={entry.run_title}
+                    >
+                      {entry.run_title}
+                    </AppLink>
+                    {entry.executed_at ? (
+                      <span className="shrink-0 text-muted-foreground tabular-nums">
+                        {entry.executed_at.slice(0, 10)}
+                      </span>
+                    ) : null}
                   </li>
                 ))}
               </ul>

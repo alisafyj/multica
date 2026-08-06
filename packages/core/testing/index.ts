@@ -1,8 +1,15 @@
 export {
   testCaseKeys,
   testGenerationJobKeys,
+  testPlanKeys,
+  testRunKeys,
+  testCapabilityKeys,
+  testCaseTimelineKeys,
   type TestCaseListFilters,
   type TestGenerationJobListFilters,
+  type TestPlanListFilters,
+  type TestRunListFilters,
+  type TestCapabilityListFilters,
 } from "./keys";
 export {
   testCaseListOptions,
@@ -13,6 +20,14 @@ export {
   testGenerationJobListOptions,
   testGenerationJobDetailOptions,
   testGenerationPlanOptions,
+  testPlanListOptions,
+  testPlanDetailOptions,
+  testPlanCasesOptions,
+  testRunListOptions,
+  testRunDetailOptions,
+  testRunCasesOptions,
+  testCapabilityListOptions,
+  testCaseResultTimelineOptions,
 } from "./queries";
 export {
   useCreateTestCase,
@@ -26,6 +41,18 @@ export {
   useDispatchTestGenerationJob,
   useAcceptTestCaseProposal,
   useRejectTestCaseProposal,
+  useCreateTestPlan,
+  useUpdateTestPlan,
+  useDeleteTestPlan,
+  useAddTestPlanCases,
+  useRemoveTestPlanCase,
+  useCreateTestRun,
+  useStartTestRun,
+  useAbortTestRun,
+  useRetryTestRun,
+  useDispatchTestRun,
+  useUpdateTestRunCaseResult,
+  useOpenTestRunCaseDefect,
 } from "./mutations";
 export * from "./config";
 export {

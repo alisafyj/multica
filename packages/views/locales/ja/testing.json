@@ -158,7 +158,24 @@
     "batchApproved": "{{count}} 件のケースを承認しました",
     "generationStarted": "生成ジョブを作成しました。ディスパッチ前に範囲を確認してください。",
     "generationFailed": "生成ジョブを作成できませんでした。",
-    "createFailed": "テストケースを作成できませんでした。"
+    "createFailed": "テストケースを作成できませんでした。",
+    "planCreated": "テスト計画を作成しました",
+    "planDeleted": "テスト計画を削除しました",
+    "planCreateFailed": "テスト計画を作成できませんでした",
+    "planDeleteFailed": "テスト計画を削除できませんでした",
+    "runCreated": "テスト実行を作成しました",
+    "runCreateFailed": "テスト実行を作成できませんでした",
+    "runStarted": "実行を開始しました",
+    "runStartFailed": "実行を開始できませんでした",
+    "runAborted": "実行を中止しました",
+    "runAbortFailed": "実行を中止できませんでした",
+    "runDispatched": "エージェントに派遣しました",
+    "runDispatchFailed": "実行を派遣できませんでした",
+    "runDispatchBlocked": "不足している能力: {{kind}}",
+    "runResultSaved": "結果を保存しました",
+    "runResultFailed": "結果を保存できませんでした",
+    "defectOpened": "不具合issueを作成しました",
+    "defectFailed": "不具合を開けませんでした"
   },
   "job": {
     "title": "生成ジョブ",
@@ -247,5 +264,115 @@
       "accepted": "採用済み",
       "rejected": "拒否済み"
     }
+  },
+  "plans": {
+    "title": "テスト計画",
+    "new": "新規計画",
+    "empty": "テスト計画がありません",
+    "emptyHint": "リリースのテストケースをまとめるために計画を作成してください。",
+    "createTitle": "計画名",
+    "run": "実行を作成",
+    "status": {
+      "draft": "下書き",
+      "active": "進行中",
+      "archived": "アーカイブ済み"
+    },
+    "columns": {
+      "title": "タイトル",
+      "status": "ステータス",
+      "cases": "ケース数",
+      "created": "作成日"
+    },
+    "detail": {
+      "back": "戻る",
+      "cases": "ケース",
+      "empty": "この計画にはケースがありません",
+      "emptyHint": "テストライブラリからケースを追加してください。",
+      "addCases": "ケースを追加",
+      "createRun": "実行を作成",
+      "runTitle": "実行タイトル",
+      "environment": "環境",
+      "buildRef": "ビルドRef",
+      "remove": "削除",
+      "caseCount_other": "{{count}}件のケース"
+    }
+  },
+  "run": {
+    "title": "テスト実行",
+    "back": "戻る",
+    "error": "この実行を読み込めませんでした",
+    "retry": "再試行",
+    "start": "開始",
+    "abort": "中止",
+    "retryAll": "全件再実行",
+    "retryFailed": "失敗のみ再実行",
+    "empty": "この実行にはケースがありません",
+    "meta": {
+      "status": "ステータス",
+      "environment": "環境",
+      "buildRef": "ビルド",
+      "plan": "計画",
+      "executor": "実行者",
+      "started": "開始日時",
+      "completed": "完了日時"
+    },
+    "counts": {
+      "passed": "合格",
+      "failed": "失敗",
+      "pending": "未実行",
+      "blocked": "ブロック",
+      "skipped": "スキップ"
+    },
+    "status": {
+      "pending": "待機中",
+      "running": "実行中",
+      "completed": "完了",
+      "aborted": "中止済み",
+      "blocked": "ブロック済み"
+    },
+    "result": {
+      "pending": "未実行",
+      "running": "実行中",
+      "passed": "合格",
+      "failed": "失敗",
+      "blocked": "ブロック",
+      "skipped": "スキップ"
+    },
+    "dispatch": {
+      "title": "エージェントへ派遣",
+      "hint": "この実行を実行するエージェントを選択してください。",
+      "agent": "エージェント",
+      "noAgent": "利用可能なエージェントがありません",
+      "button": "派遣",
+      "dispatching": "派遣中...",
+      "running": "実行中...",
+      "blocked": "不足している能力: {{kind}}"
+    }
+  },
+  "runCase": {
+    "notes": "メモ",
+    "notesPlaceholder": "テスターのメモ...",
+    "defect": "不具合を開く",
+    "defectTitle": "不具合タイトル",
+    "defectTitlePlaceholder": "不具合を説明してください...",
+    "defectOpen": "開く",
+    "evidence": "証拠",
+    "step": "ステップ {{index}}",
+    "columns": {
+      "case": "ケース",
+      "result": "結果",
+      "executor": "実行者",
+      "duration": "所要時間",
+      "defect": "不具合"
+    }
+  },
+  "timeline": {
+    "title": "実行履歴",
+    "empty": "実行記録がありません",
+    "run": "実行",
+    "result": "結果",
+    "environment": "環境",
+    "buildRef": "ビルド",
+    "executedAt": "実行日時"
   }
 }

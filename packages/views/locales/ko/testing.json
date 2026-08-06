@@ -158,7 +158,24 @@
     "batchApproved": "{{count}}개의 케이스를 승인했습니다",
     "generationStarted": "생성 작업을 만들었습니다. 디스패치 전에 범위를 확인하세요.",
     "generationFailed": "생성 작업을 만들지 못했습니다.",
-    "createFailed": "테스트 케이스를 만들지 못했습니다."
+    "createFailed": "테스트 케이스를 만들지 못했습니다.",
+    "planCreated": "테스트 계획을 만들었습니다",
+    "planDeleted": "테스트 계획을 삭제했습니다",
+    "planCreateFailed": "테스트 계획을 만들지 못했습니다",
+    "planDeleteFailed": "테스트 계획을 삭제하지 못했습니다",
+    "runCreated": "테스트 실행을 만들었습니다",
+    "runCreateFailed": "테스트 실행을 만들지 못했습니다",
+    "runStarted": "실행을 시작했습니다",
+    "runStartFailed": "실행을 시작할 수 없습니다",
+    "runAborted": "실행을 중단했습니다",
+    "runAbortFailed": "실행을 중단할 수 없습니다",
+    "runDispatched": "에이전트에 전달했습니다",
+    "runDispatchFailed": "실행을 전달하지 못했습니다",
+    "runDispatchBlocked": "누락된 기능: {{kind}}",
+    "runResultSaved": "결과를 저장했습니다",
+    "runResultFailed": "결과를 저장할 수 없습니다",
+    "defectOpened": "결함 이슈를 만들었습니다",
+    "defectFailed": "결함을 열지 못했습니다"
   },
   "job": {
     "title": "생성 작업",
@@ -247,5 +264,115 @@
       "accepted": "반영됨",
       "rejected": "거부됨"
     }
+  },
+  "plans": {
+    "title": "테스트 계획",
+    "new": "새 계획",
+    "empty": "테스트 계획이 없습니다",
+    "emptyHint": "릴리스의 테스트 케이스를 정리하려면 계획을 만드세요.",
+    "createTitle": "계획 이름",
+    "run": "실행 만들기",
+    "status": {
+      "draft": "초안",
+      "active": "진행 중",
+      "archived": "보관됨"
+    },
+    "columns": {
+      "title": "제목",
+      "status": "상태",
+      "cases": "케이스 수",
+      "created": "생성일"
+    },
+    "detail": {
+      "back": "뒤로",
+      "cases": "케이스",
+      "empty": "이 계획에 케이스가 없습니다",
+      "emptyHint": "테스트 라이브러리에서 케이스를 추가하세요.",
+      "addCases": "케이스 추가",
+      "createRun": "실행 만들기",
+      "runTitle": "실행 제목",
+      "environment": "환경",
+      "buildRef": "빌드 참조",
+      "remove": "제거",
+      "caseCount_other": "케이스 {{count}}개"
+    }
+  },
+  "run": {
+    "title": "테스트 실행",
+    "back": "뒤로",
+    "error": "이 실행을 불러올 수 없습니다",
+    "retry": "재시도",
+    "start": "시작",
+    "abort": "중단",
+    "retryAll": "전체 재실행",
+    "retryFailed": "실패만 재실행",
+    "empty": "이 실행에 케이스가 없습니다",
+    "meta": {
+      "status": "상태",
+      "environment": "환경",
+      "buildRef": "빌드",
+      "plan": "계획",
+      "executor": "실행자",
+      "started": "시작 시간",
+      "completed": "완료 시간"
+    },
+    "counts": {
+      "passed": "통과",
+      "failed": "실패",
+      "pending": "대기 중",
+      "blocked": "차단됨",
+      "skipped": "건너뜀"
+    },
+    "status": {
+      "pending": "대기 중",
+      "running": "실행 중",
+      "completed": "완료",
+      "aborted": "중단됨",
+      "blocked": "차단됨"
+    },
+    "result": {
+      "pending": "대기 중",
+      "running": "실행 중",
+      "passed": "통과",
+      "failed": "실패",
+      "blocked": "차단됨",
+      "skipped": "건너뜀"
+    },
+    "dispatch": {
+      "title": "에이전트에게 전달",
+      "hint": "이 실행을 수행할 에이전트를 선택하세요.",
+      "agent": "에이전트",
+      "noAgent": "사용 가능한 에이전트 없음",
+      "button": "전달",
+      "dispatching": "전달 중...",
+      "running": "실행 중...",
+      "blocked": "누락된 기능: {{kind}}"
+    }
+  },
+  "runCase": {
+    "notes": "메모",
+    "notesPlaceholder": "테스터 메모...",
+    "defect": "결함 열기",
+    "defectTitle": "결함 제목",
+    "defectTitlePlaceholder": "결함을 설명하세요...",
+    "defectOpen": "열기",
+    "evidence": "증거",
+    "step": "단계 {{index}}",
+    "columns": {
+      "case": "케이스",
+      "result": "결과",
+      "executor": "실행자",
+      "duration": "소요 시간",
+      "defect": "결함"
+    }
+  },
+  "timeline": {
+    "title": "실행 기록",
+    "empty": "아직 실행 기록이 없습니다",
+    "run": "실행",
+    "result": "결과",
+    "environment": "환경",
+    "buildRef": "빌드",
+    "executedAt": "실행 시간"
   }
 }

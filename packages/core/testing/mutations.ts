@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useWorkspaceId } from "../hooks";
-import { testCaseKeys, testGenerationJobKeys } from "./keys";
+import { testCaseKeys, testGenerationJobKeys, testPlanKeys, testRunKeys } from "./keys";
 import type {
   CreateTestCaseRequest,
   TestCase,
@@ -12,6 +12,17 @@ import type {
   CreateTestGenerationJobRequest,
   UpdateTestGenerationPlanRequest,
   DispatchTestGenerationJobRequest,
+  TestPlan,
+  TestRun,
+  TestRunCase,
+  CreateTestPlanRequest,
+  UpdateTestPlanRequest,
+  AddTestPlanCasesRequest,
+  CreateTestRunRequest,
+  RetryTestRunRequest,
+  DispatchTestRunRequest,
+  UpdateTestRunCaseResultRequest,
+  OpenTestRunCaseDefectRequest,
 } from "../types";
 
 /**
@@ -324,6 +335,237 @@ export function useRejectTestCaseProposal() {
     onSettled: (_data, _error, { caseRef }) => {
       qc.invalidateQueries({ queryKey: testCaseKeys.proposals(wsId, caseRef) });
       qc.invalidateQueries({ queryKey: testCaseKeys.detail(wsId, caseRef) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Test plan mutations — Phase 3/4
+// ---------------------------------------------------------------------------
+
+/** Create awaits the server: plan id is needed to navigate to detail. */
+export function useCreateTestPlan() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (data: CreateTestPlanRequest) => api.createTestPlan(data),
+    onSuccess: (created) => {
+      qc.setQueryData<TestPlan>(testPlanKeys.detail(wsId, created.id), created);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: testPlanKeys.all(wsId) });
+    },
+  });
+}
+
+/**
+ * Update: optimistic — user stays on the same detail screen,
+ * rollback is trivial, server keeps only a subset of mutable fields.
+ */
+export function useUpdateTestPlan() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string } & UpdateTestPlanRequest) =>
+      api.updateTestPlan(id, data),
+    onMutate: async ({ id, ...data }) => {
+      await qc.cancelQueries({ queryKey: testPlanKeys.detail(wsId, id) });
+      const previous = qc.getQueryData<TestPlan>(testPlanKeys.detail(wsId, id));
+      if (previous) {
+        qc.setQueryData<TestPlan>(testPlanKeys.detail(wsId, id), {
+          ...previous,
+          ...(data.title !== undefined ? { title: data.title } : {}),
+          ...(data.description !== undefined ? { description: data.description } : {}),
+          ...(data.status !== undefined ? { status: data.status } : {}),
+        });
+      }
+      return { previous, id };
+    },
+    onError: (_error, _vars, ctx) => {
+      if (ctx?.previous) {
+        qc.setQueryData(testPlanKeys.detail(wsId, ctx.id), ctx.previous);
+      }
+    },
+    onSettled: (_data, _error, { id }) => {
+      qc.invalidateQueries({ queryKey: testPlanKeys.detail(wsId, id) });
+      qc.invalidateQueries({ queryKey: testPlanKeys.all(wsId) });
+    },
+  });
+}
+
+/** Delete awaits the server; navigates away on success. */
+export function useDeleteTestPlan() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteTestPlan(id),
+    onSuccess: (_data, id) => {
+      qc.removeQueries({ queryKey: testPlanKeys.detail(wsId, id) });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: testPlanKeys.all(wsId) });
+    },
+  });
+}
+
+/** Add cases: awaits server since positions are server-authoritative. */
+export function useAddTestPlanCases() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ planId, data }: { planId: string; data: AddTestPlanCasesRequest }) =>
+      api.addTestPlanCases(planId, data),
+    onSettled: (_data, _error, { planId }) => {
+      qc.invalidateQueries({ queryKey: testPlanKeys.cases(wsId, planId) });
+    },
+  });
+}
+
+/** Remove a single plan case; awaits server for consistency. */
+export function useRemoveTestPlanCase() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ planId, caseId }: { planId: string; caseId: string }) =>
+      api.removeTestPlanCase(planId, caseId),
+    onSettled: (_data, _error, { planId }) => {
+      qc.invalidateQueries({ queryKey: testPlanKeys.cases(wsId, planId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Test run mutations — Phase 3/4
+// ---------------------------------------------------------------------------
+
+/** Create awaits the server: the server allocates the run id we navigate to. */
+export function useCreateTestRun() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (data: CreateTestRunRequest) => api.createTestRun(data),
+    onSuccess: (created) => {
+      qc.setQueryData<TestRun>(testRunKeys.detail(wsId, created.id), created);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: testRunKeys.all(wsId) });
+    },
+  });
+}
+
+/** Start: awaits the server to authorise the transition. */
+export function useStartTestRun() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (id: string) => api.startTestRun(id),
+    onSuccess: (updated) => {
+      qc.setQueryData<TestRun>(testRunKeys.detail(wsId, updated.id), updated);
+    },
+    onSettled: (_data, _error, id) => {
+      qc.invalidateQueries({ queryKey: testRunKeys.detail(wsId, id) });
+    },
+  });
+}
+
+/** Abort: awaits the server. */
+export function useAbortTestRun() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      api.abortTestRun(id, reason),
+    onSuccess: (updated) => {
+      qc.setQueryData<TestRun>(testRunKeys.detail(wsId, updated.id), updated);
+    },
+    onSettled: (_data, _error, { id }) => {
+      qc.invalidateQueries({ queryKey: testRunKeys.detail(wsId, id) });
+    },
+  });
+}
+
+/**
+ * Retry: navigates to the new run, so it must await the server.
+ * Source run history is preserved by the server (immutable).
+ */
+export function useRetryTestRun() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: RetryTestRunRequest }) =>
+      api.retryTestRun(id, data),
+    onSuccess: (newRun) => {
+      qc.setQueryData<TestRun>(testRunKeys.detail(wsId, newRun.id), newRun);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: testRunKeys.all(wsId) });
+    },
+  });
+}
+
+/** Dispatch: awaits the server; creates an agent task. */
+export function useDispatchTestRun() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: DispatchTestRunRequest }) =>
+      api.dispatchTestRun(id, data),
+    onSuccess: ({ test_run }) => {
+      qc.setQueryData<TestRun>(testRunKeys.detail(wsId, test_run.id), test_run);
+    },
+    onSettled: (_data, _error, { id }) => {
+      qc.invalidateQueries({ queryKey: testRunKeys.detail(wsId, id) });
+    },
+  });
+}
+
+/**
+ * Update one case result: optimistic.
+ *
+ * Four-part test passes:
+ *  1. Outcome is locally predictable — caller supplies the new result directly.
+ *  2. User stays on the run-detail screen (no navigation).
+ *  3. Failure is rare — the server only rejects bad enums or wrong ownership.
+ *  4. Rollback is trivial — restore the single cache entry.
+ */
+export function useUpdateTestRunCaseResult() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; runId: string; data: UpdateTestRunCaseResultRequest }) =>
+      api.updateTestRunCaseResult(id, data),
+    onMutate: async ({ id, runId, data }) => {
+      await qc.cancelQueries({ queryKey: testRunKeys.cases(wsId, runId) });
+      const previous = qc.getQueryData<TestRunCase[]>(testRunKeys.cases(wsId, runId));
+      if (previous) {
+        qc.setQueryData<TestRunCase[]>(
+          testRunKeys.cases(wsId, runId),
+          previous.map((c) => (c.id === id ? { ...c, result: data.result, notes: data.notes ?? c.notes } : c)),
+        );
+      }
+      return { previous, runId };
+    },
+    onError: (_error, _vars, ctx) => {
+      if (ctx?.previous) {
+        qc.setQueryData(testRunKeys.cases(wsId, ctx.runId), ctx.previous);
+      }
+    },
+    onSettled: (_data, _error, { runId }) => {
+      qc.invalidateQueries({ queryKey: testRunKeys.cases(wsId, runId) });
+      qc.invalidateQueries({ queryKey: testRunKeys.detail(wsId, runId) });
+    },
+  });
+}
+
+/** Open defect: awaits the server; creates an issue we may link to. */
+export function useOpenTestRunCaseDefect() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; runId: string; data: OpenTestRunCaseDefectRequest }) =>
+      api.openTestRunCaseDefect(id, data),
+    onSettled: (_data, _error, { runId }) => {
+      qc.invalidateQueries({ queryKey: testRunKeys.cases(wsId, runId) });
     },
   });
 }

@@ -11,7 +11,7 @@ import { defaultStorage } from "../platform/storage";
 import { getCurrentWsId, getCurrentSlug } from "../platform/workspace-storage";
 import { issueKeys } from "../issues/queries";
 import { projectKeys } from "../projects/queries";
-import { testCaseKeys, testGenerationJobKeys } from "../testing/keys";
+import { testCaseKeys, testGenerationJobKeys, testPlanKeys, testRunKeys, testCapabilityKeys } from "../testing/keys";
 import { designKeys } from "../designs/keys";
 import { pinKeys } from "../pins/queries";
 import { autopilotKeys } from "../autopilots/queries";
@@ -762,6 +762,27 @@ export function useRealtimeSync(
           qc.invalidateQueries({ queryKey: testCaseKeys.all(wsId) });
           qc.invalidateQueries({ queryKey: testGenerationJobKeys.all(wsId) });
         }
+      },
+      test_plan: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) qc.invalidateQueries({ queryKey: testPlanKeys.all(wsId) });
+      },
+      test_run: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) qc.invalidateQueries({ queryKey: testRunKeys.all(wsId) });
+      },
+      test_run_case: () => {
+        // Case updates also shift result counts on the parent run, so invalidate
+        // both the cases list and the run detail (which carries result_counts).
+        const wsId = getCurrentWsId();
+        if (wsId) {
+          qc.invalidateQueries({ queryKey: testRunKeys.all(wsId) });
+          qc.invalidateQueries({ queryKey: testCaseKeys.all(wsId) });
+        }
+      },
+      test_capability: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) qc.invalidateQueries({ queryKey: testCapabilityKeys.all(wsId) });
       },
       squad: () => {
         const wsId = getCurrentWsId();

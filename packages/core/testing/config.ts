@@ -6,6 +6,7 @@ import type {
   TestCaseScope,
   TestCaseStatus,
   TestCaseType,
+  TestRunCaseResult,
 } from "../types";
 
 /**
@@ -45,6 +46,26 @@ export const TEST_CASE_STATUS_TONE: Record<TestCaseStatus, string> = {
   draft: "text-warning",
   active: "text-success",
   deprecated: "text-muted-foreground",
+};
+
+export const TEST_RUN_RESULTS: TestRunCaseResult[] = [
+  "pending",
+  "running",
+  "passed",
+  "failed",
+  "blocked",
+  "skipped",
+];
+
+/** Semantic tone per run-case result. Hardcoded palette values would not
+ *  follow the theme; these ride the same tokens as every other status. */
+export const TEST_RUN_RESULT_TONE: Record<TestRunCaseResult, string> = {
+  pending: "text-muted-foreground",
+  running: "text-muted-foreground",
+  passed: "text-success",
+  failed: "text-destructive",
+  blocked: "text-warning",
+  skipped: "text-muted-foreground",
 };
 
 export const TEST_CASE_PRIORITY_TONE: Record<TestCasePriority, string> = {
