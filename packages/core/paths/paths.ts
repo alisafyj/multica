@@ -33,6 +33,7 @@ function workspaceScoped(slug: string) {
     issues: () => `${ws}/issues`,
     issueDetail: (id: string) => `${ws}/issues/${encode(id)}`,
     projects: () => `${ws}/projects`,
+    pmo: () => `${ws}/pmo`,
     projectDetail: (id: string) => `${ws}/projects/${encode(id)}`,
     designs: () => `${ws}/designs`,
     designDetail: (id: string, options: RevisionPathOptions = {}) => withQuery(`${ws}/designs/${encode(id)}`, { revision_id: options.revisionId }),
