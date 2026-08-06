@@ -1343,3 +1343,31 @@ func TestBuildTestGenerationPromptCarriesTheIncrementContract(t *testing.T) {
 		t.Error("prompt does not embed the context JSON")
 	}
 }
+
+func TestBuildTestRunPromptForbidsProbingTheHost(t *testing.T) {
+	task := Task{TestRunContext: `{"type":"test_run","run_id":"run-1"}`}
+	prompt := BuildPrompt(task, "claude")
+
+	for _, want := range []string{
+		"multica test run get",
+		"multica test capability list",
+		"multica test result set",
+		"TEST_RUN_RESULT_JSON:",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt is missing %q", want)
+		}
+	}
+	// The capability binding is the whole safety story: an agent that goes
+	// hunting for an adb on the host has escaped it.
+	if !strings.Contains(prompt, "Do NOT go looking for adb") {
+		t.Error("prompt does not forbid probing the host for devices")
+	}
+	// blocked must not become a dumping ground for real failures.
+	if !strings.Contains(prompt, "It is NOT a synonym for failed") {
+		t.Error("prompt does not distinguish blocked from failed")
+	}
+	if !strings.Contains(prompt, task.TestRunContext) {
+		t.Error("prompt does not embed the context JSON")
+	}
+}

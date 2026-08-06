@@ -1111,9 +1111,6 @@ func (h *Handler) AbortTestRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// DispatchTestRun is owned by a parallel agent and intentionally left as 501.
-func (h *Handler) DispatchTestRun(w http.ResponseWriter, r *http.Request) { notImplemented(w) }
-
 type RetryTestRunRequest struct {
 	// Scope controls which cases from the source run are carried forward.
 	// "all" retries every case, "failed_only" retries failed/blocked/skipped,

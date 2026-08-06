@@ -20,6 +20,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/internal/integrations/testcapability"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
@@ -290,35 +291,103 @@ type runtimeMCPOverlayData struct {
 	ConnectedApps json.RawMessage
 }
 
-// buildRuntimeMCPOverlay computes the optional per-task Composio MCP overlay.
-// Enqueue paths call this BEFORE inserting the queued row so the daemon cannot
-// claim a task during the network round-trip to Composio and miss the overlay.
+// buildRuntimeMCPOverlay computes the optional per-task MCP overlay by
+// collecting results from all registered overlay providers and merging their
+// mcpServers maps. Enqueue paths call this BEFORE inserting the queued row so
+// the daemon cannot claim a task during provider round-trips and miss the
+// overlay.
+//
+// Providers (in order):
+//  1. Composio — user-connected apps (gated by composio_mcp_apps flag).
+//  2. testcapability — browser/device MCP servers resolved for the run
+//     (gated by test_capability_mcp flag; reads resolved entries from ctx via
+//     testcapability.WithResolvedCapabilities; returns empty for non-test tasks).
+//
+// Each provider is fail-soft: an error causes a warning log and that provider
+// is skipped; the task still runs with whatever overlay the remaining providers
+// produced.
 func (s *TaskService) buildRuntimeMCPOverlay(ctx context.Context, originatorUserID pgtype.UUID, agent db.Agent) runtimeMCPOverlayData {
-	if s == nil || s.Composio == nil {
+	if s == nil {
 		return runtimeMCPOverlayData{}
 	}
-	if !featureflags.ComposioMCPAppsEnabled(ctx, s.FeatureFlags) {
+
+	var allResults []runtimeapps.MCPOverlayResult
+
+	// Provider 1: Composio (existing behavior preserved).
+	if s.Composio != nil && featureflags.ComposioMCPAppsEnabled(ctx, s.FeatureFlags) {
+		result, err := s.Composio.BuildTaskOverlay(ctx, originatorUserID, agent)
+		if err != nil {
+			slog.Warn("runtime mcp overlay: BuildTaskOverlay failed; task will run without composio overlay",
+				"originator_user_id", util.UUIDToString(originatorUserID),
+				"agent_id", util.UUIDToString(agent.ID),
+				"error", err,
+			)
+		} else if len(result.MCPOverlay) > 0 {
+			allResults = append(allResults, result)
+		} else {
+			slog.Debug("runtime mcp overlay: no composio overlay for task",
+				"originator_user_id", util.UUIDToString(originatorUserID),
+				"agent_id", util.UUIDToString(agent.ID),
+			)
+		}
+	}
+
+	// Provider 2: test capability (fail-soft; returns empty for non-test tasks).
+	if testcapability.IsEnabled(ctx, s.FeatureFlags) {
+		result, err := testcapability.BuildTaskOverlay(ctx, originatorUserID, agent)
+		if err != nil {
+			slog.Warn("runtime mcp overlay: testcapability BuildTaskOverlay failed; task will run without capability overlay",
+				"originator_user_id", util.UUIDToString(originatorUserID),
+				"agent_id", util.UUIDToString(agent.ID),
+				"error", err,
+			)
+		} else if len(result.MCPOverlay) > 0 {
+			allResults = append(allResults, result)
+		}
+	}
+
+	if len(allResults) == 0 {
 		return runtimeMCPOverlayData{}
 	}
-	result, err := s.Composio.BuildTaskOverlay(ctx, originatorUserID, agent)
+
+	// Merge all provider overlays. Each overlay is {"mcpServers": {...}};
+	// later providers win on key collision (last-writer-wins by append order).
+	mergedServers := map[string]json.RawMessage{}
+	var mergedApps []runtimeapps.ConnectedApp
+
+	for _, r := range allResults {
+		var top struct {
+			MCPServers map[string]json.RawMessage `json:"mcpServers"`
+		}
+		if err := json.Unmarshal(r.MCPOverlay, &top); err != nil {
+			slog.Warn("runtime mcp overlay: failed to unmarshal provider overlay for merge; skipping",
+				"error", err,
+			)
+			continue
+		}
+		for k, v := range top.MCPServers {
+			mergedServers[k] = v
+		}
+		mergedApps = append(mergedApps, r.ConnectedApps...)
+	}
+
+	if len(mergedServers) == 0 {
+		return runtimeMCPOverlayData{}
+	}
+
+	rawOverlay, err := json.Marshal(map[string]any{"mcpServers": mergedServers})
 	if err != nil {
-		slog.Warn("runtime mcp overlay: BuildTaskOverlay failed; task will run without composio overlay",
+		slog.Warn("runtime mcp overlay: failed to marshal merged overlay",
 			"originator_user_id", util.UUIDToString(originatorUserID),
 			"agent_id", util.UUIDToString(agent.ID),
 			"error", err,
 		)
 		return runtimeMCPOverlayData{}
 	}
-	if len(result.MCPOverlay) == 0 {
-		slog.Debug("runtime mcp overlay: no composio overlay for task",
-			"originator_user_id", util.UUIDToString(originatorUserID),
-			"agent_id", util.UUIDToString(agent.ID),
-		)
-		return runtimeMCPOverlayData{}
-	}
-	data := runtimeMCPOverlayData{Overlay: result.MCPOverlay}
-	if len(result.ConnectedApps) > 0 {
-		raw, err := json.Marshal(result.ConnectedApps)
+
+	data := runtimeMCPOverlayData{Overlay: rawOverlay}
+	if len(mergedApps) > 0 {
+		rawApps, err := json.Marshal(mergedApps)
 		if err != nil {
 			slog.Warn("runtime mcp overlay: marshal connected app metadata failed",
 				"originator_user_id", util.UUIDToString(originatorUserID),
@@ -327,7 +396,7 @@ func (s *TaskService) buildRuntimeMCPOverlay(ctx context.Context, originatorUser
 			)
 			return data
 		}
-		data.ConnectedApps = raw
+		data.ConnectedApps = rawApps
 	}
 	return data
 }
@@ -1401,6 +1470,24 @@ type TestGenerationContext struct {
 	JobID       string          `json:"job_id"`
 	Plan        json.RawMessage `json:"plan,omitempty"`
 	Input       json.RawMessage `json:"input,omitempty"`
+}
+
+// TestRunContextType marks a task as a test execution round.
+const TestRunContextType = "test_run"
+
+// TestRunContext is the payload stored on test execution tasks. The capability
+// binding is frozen at dispatch so a retry reproduces the same environment; the
+// agent discovers what it may drive through `multica test capability list`,
+// never by probing the host itself.
+type TestRunContext struct {
+	Type              string          `json:"type"`
+	Prompt            string          `json:"prompt,omitempty"`
+	RequesterID       string          `json:"requester_id"`
+	WorkspaceID       string          `json:"workspace_id"`
+	ProjectID         string          `json:"project_id"`
+	AgentID           string          `json:"agent_id"`
+	RunID             string          `json:"run_id"`
+	CapabilityBinding json.RawMessage `json:"capability_binding,omitempty"`
 }
 
 // EnqueueQuickCreateTask creates a queued task that has no issue / chat /

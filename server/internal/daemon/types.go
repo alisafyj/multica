@@ -108,6 +108,7 @@ type Task struct {
 	UIDraftCreateContext              string                 `json:"uidraft_create_context,omitempty"`
 	DesignRestoreContext              string                 `json:"design_restore_context,omitempty"`
 	TestGenerationContext             string                 `json:"test_generation_context,omitempty"`
+	TestRunContext                    string                 `json:"test_run_context,omitempty"`
 	DesignSystemProfileAnalyzeContext string                 `json:"design_system_profile_analyze_context,omitempty"`
 	HandoffNote                       string                 `json:"handoff_note,omitempty"` // assignment handoff instruction; rendered into the opening prompt + issue_context.md
 

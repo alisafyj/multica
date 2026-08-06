@@ -145,3 +145,11 @@ DELETE FROM attachment WHERE id = $1 AND workspace_id = $2;
 SELECT * FROM attachment
 WHERE id = ANY(sqlc.arg(attachment_ids)::uuid[]) AND workspace_id = sqlc.arg(workspace_id)
 ORDER BY created_at ASC;
+
+-- name: SetAttachmentTestRunCase :exec
+-- Tags an upload with the test-run case that produced it. Called after
+-- CreateAttachment so the insert parameter list stays stable. The caller must
+-- verify workspace membership before invoking this query.
+UPDATE attachment
+SET test_run_case_id = $1
+WHERE id = $2 AND workspace_id = $3;

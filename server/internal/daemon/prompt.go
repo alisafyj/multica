@@ -101,6 +101,9 @@ func buildPromptBody(task Task, provider string) string {
 	if len(task.TestGenerationContext) > 0 {
 		return buildTestGenerationPrompt(task)
 	}
+	if len(task.TestRunContext) > 0 {
+		return buildTestRunPrompt(task)
+	}
 	if len(task.DesignSystemProfileAnalyzeContext) > 0 {
 		return buildDesignSystemProfileAnalyzePrompt(task)
 	}
@@ -146,6 +149,50 @@ func buildDesignSystemProfileAnalyzePrompt(task Task) string {
 // `plan` is a human-approved contract, and every generated case is written back
 // through the authenticated CLI rather than printed, so the closing marker only
 // carries a summary.
+// buildTestRunPrompt drives one execution round. The agent may only drive the
+// devices the server already bound to this run: probing the host for an adb or
+// a browser would silently escape the capability contract.
+func buildTestRunPrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a QA engineer executing one test round for a Multica workspace.\n\n")
+
+	b.WriteString("Work in this order:\n")
+	b.WriteString("1. `multica test run get <run_id> --output json` — the cases to execute, each with its frozen snapshot. Execute the SNAPSHOT, not the current case definition.\n")
+	b.WriteString("2. `multica test capability list --run <run_id> --output json` — the devices, desktops and browsers this round is allowed to drive.\n")
+	b.WriteString("3. Check out any repository a case names, with `multica repo checkout <url>`.\n")
+	b.WriteString("4. Execute each case's steps in order and record the outcome as you go — do not batch the writes to the end, a crashed run should still have recorded what it got through.\n\n")
+
+	b.WriteString("Recording results:\n")
+	b.WriteString("```\n")
+	b.WriteString("multica test result set <run-case-id> --result passed|failed|blocked|skipped [--note \"…\"]\n")
+	b.WriteString("multica test evidence add <run-case-id> --file ./shot.png --kind screenshot\n")
+	b.WriteString("multica test defect open <run-case-id> --title \"…\"\n")
+	b.WriteString("```\n")
+	b.WriteString("- `failed` means the product behaved differently from the expected result. Open a defect for it.\n")
+	b.WriteString("- `blocked` means you could not run the case at all — a missing capability, an environment that would not come up, a precondition you could not reach. It is NOT a synonym for failed, and it must never be used to hide a real failure.\n")
+	b.WriteString("- `skipped` means the case did not apply to this round.\n")
+	b.WriteString("- Attach a screenshot or log for every `failed` and every `blocked`. A result nobody can audit is barely a result.\n\n")
+
+	b.WriteString("Capability rules — these are hard:\n")
+	b.WriteString("- Use ONLY the `capability_key` values returned by `capability list`. Drive them through the MCP servers that were mounted for this run.\n")
+	b.WriteString("- If `capability list` is empty, or a case needs a kind that is not in it, mark that case `blocked` and say which kind is missing.\n")
+	b.WriteString("- Do NOT go looking for adb, a simulator, a browser binary, or any other device on the host. If it was not bound to this run, you may not drive it.\n\n")
+
+	b.WriteString("Rules:\n")
+	b.WriteString("- Do NOT modify product code, and do NOT open pull requests. You are observing behaviour, not changing it.\n")
+	b.WriteString("- Do NOT mark a case `passed` unless you actually observed the expected result. An unverified pass is worse than a blocked case, because it hides a regression.\n")
+	b.WriteString("- Use the `multica` CLI for all Multica reads and writes; do not call the API with curl or wget.\n\n")
+
+	b.WriteString("Context JSON:\n")
+	b.WriteString(task.TestRunContext)
+	b.WriteString("\n\n")
+
+	b.WriteString("End your final response with a machine-readable JSON block prefixed by exactly `TEST_RUN_RESULT_JSON:`:\n")
+	b.WriteString("{\"status\":\"completed|blocked\",\"summary\":\"one paragraph\",\"blockers\":[]}\n")
+	b.WriteString("Per-case results must already be recorded through `multica test result set`; this block only closes the round.\n")
+	return b.String()
+}
+
 func buildTestGenerationPrompt(task Task) string {
 	var b strings.Builder
 	b.WriteString("You are running as a QA engineer for a Multica workspace. Your job is to produce test cases, not to change product code.\n\n")

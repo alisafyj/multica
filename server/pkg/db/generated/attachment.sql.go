@@ -718,3 +718,23 @@ func (q *Queries) ReplaceCommentAttachments(ctx context.Context, arg ReplaceComm
 	_, err := q.db.Exec(ctx, replaceCommentAttachments, arg.CommentID, arg.IssueID, arg.AttachmentIds)
 	return err
 }
+
+const setAttachmentTestRunCase = `-- name: SetAttachmentTestRunCase :exec
+UPDATE attachment
+SET test_run_case_id = $1
+WHERE id = $2 AND workspace_id = $3
+`
+
+type SetAttachmentTestRunCaseParams struct {
+	TestRunCaseID pgtype.UUID `json:"test_run_case_id"`
+	ID            pgtype.UUID `json:"id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+// Tags an upload with the test-run case that produced it. Called after
+// CreateAttachment so the insert parameter list stays stable. The caller must
+// verify workspace membership before invoking this query.
+func (q *Queries) SetAttachmentTestRunCase(ctx context.Context, arg SetAttachmentTestRunCaseParams) error {
+	_, err := q.db.Exec(ctx, setAttachmentTestRunCase, arg.TestRunCaseID, arg.ID, arg.WorkspaceID)
+	return err
+}

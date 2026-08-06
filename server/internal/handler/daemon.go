@@ -2499,6 +2499,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			h.populateContextTaskProject(r.Context(), &resp, draftCtx.ProjectID, draftCtx.WorkspaceID)
 		}
 
+		var runCtx service.TestRunContext
+		if json.Unmarshal(task.Context, &runCtx) == nil && runCtx.Type == service.TestRunContextType {
+			resp.WorkspaceID = runCtx.WorkspaceID
+			resp.TestRunContext = json.RawMessage(task.Context)
+			h.populateContextTaskProject(r.Context(), &resp, runCtx.ProjectID, runCtx.WorkspaceID)
+		}
+
 		var genCtx service.TestGenerationContext
 		if json.Unmarshal(task.Context, &genCtx) == nil && genCtx.Type == service.TestGenerationContextType {
 			resp.WorkspaceID = genCtx.WorkspaceID
@@ -2986,6 +2993,9 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	if err := h.markDesignRestoreTaskRunning(r.Context(), *task); err != nil {
 		slog.Warn("design restore task start: failed to mark restore task running", "task_id", taskID, "error", err)
 	}
+	if err := h.markTestRunRunning(r.Context(), *task); err != nil {
+		slog.Warn("test run start: failed to mark run running", "task_id", taskID, "error", err)
+	}
 	if err := h.markTestGenerationJobRunning(r.Context(), *task); err != nil {
 		slog.Warn("test generation start: failed to mark job running", "task_id", taskID, "error", err)
 	}
@@ -3200,6 +3210,9 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if analyzedProfile != nil {
 		slog.Info("design system profile analyzed from task", "task_id", taskID, "design_system_profile_id", uuidToString(analyzedProfile.ID))
+	}
+	if err := h.updateTestRunFromAgentCompletion(r.Context(), *task, req); err != nil {
+		slog.Warn("test run complete: failed to close the round", "task_id", taskID, "error", err)
 	}
 	if err := h.updateTestGenerationJobFromAgentCompletion(r.Context(), *task, req); err != nil {
 		slog.Warn("test generation complete: failed to record job result", "task_id", taskID, "error", err)
@@ -3918,6 +3931,9 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("fail task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if err := h.updateTestRunFromAgentFailure(r.Context(), *task, req); err != nil {
+		slog.Warn("test run fail: failed to record the aborted round", "task_id", taskID, "error", err)
 	}
 	if err := h.updateTestGenerationJobFromAgentFailure(r.Context(), *task, req); err != nil {
 		slog.Warn("test generation fail: failed to record job failure", "task_id", taskID, "error", err)

@@ -363,6 +363,7 @@ type AgentTaskResponse struct {
 	UIDraftCreateContext              json.RawMessage        `json:"ui_draft_create_context,omitempty"`               // typed context for design draft generation tasks
 	DesignRestoreContext              json.RawMessage        `json:"design_restore_context,omitempty"`                // typed context for Gallery Native restore execution tasks
 	TestGenerationContext             json.RawMessage        `json:"test_generation_context,omitempty"`               // typed context for AI test case generation runs
+	TestRunContext                    json.RawMessage        `json:"test_run_context,omitempty"`                      // typed context for test execution rounds
 	DesignSystemProfileAnalyzeContext json.RawMessage        `json:"design_system_profile_analyze_context,omitempty"` // typed context for UI specification profile analysis tasks
 	HandoffNote                       string                 `json:"handoff_note,omitempty"`                          // assignment handoff instruction; rendered into the run's opening prompt + issue_context.md (omitempty so old daemons ignore it)
 	SquadID                           string                 `json:"squad_id,omitempty"`                              // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
