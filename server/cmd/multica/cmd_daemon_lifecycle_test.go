@@ -444,3 +444,64 @@ func TestDaemonStopTransitionsStateToStopped(t *testing.T) {
 		t.Fatalf("PID file after stop: %v", err)
 	}
 }
+
+// A daemon started with MULTICA_DAEMON_ID never writes that id to daemon.id —
+// config.go only persists an identity when nothing pinned one. Recovery has to
+// resolve the expected id the same way the daemon did, or a live daemon whose
+// PID file was lost reads as stopped and `daemon start` spawns a second one.
+func TestDaemonStateRecoversPinnedDaemonIDFromEnv(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const profile = "state-pinned-env-id"
+	const pinnedID = "daemon-pinned-by-env"
+	// The machine file holds a different id, exactly as it would after any
+	// earlier non-pinned run.
+	writeCanonicalDaemonID(t, "daemon-persisted-elsewhere")
+	t.Setenv("MULTICA_DAEMON_ID", pinnedID)
+	startLifecycleHealthServer(t, profile, &lifecycleHealth{
+		status: "running", pid: os.Getpid(), daemonID: pinnedID, version: "test",
+	})
+
+	state := daemonStateForProfile(context.Background(), profile)
+	if !daemonAlive(state) {
+		t.Fatalf("state = %v, want the pinned-id daemon recognised as running", state)
+	}
+	got, err := readDaemonPIDFile(profile)
+	if err != nil {
+		t.Fatalf("readDaemonPIDFile: %v", err)
+	}
+	if want := (daemonPIDRecord{PID: os.Getpid(), DaemonID: pinnedID}); got != want {
+		t.Fatalf("repaired PID record = %+v, want %+v", got, want)
+	}
+}
+
+// The pin must not become a skeleton key: a daemon announcing some other id is
+// still not ours.
+func TestDaemonStateRejectsMismatchedPinnedDaemonID(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const profile = "state-pinned-mismatch"
+	writeCanonicalDaemonID(t, "daemon-persisted-elsewhere")
+	t.Setenv("MULTICA_DAEMON_ID", "daemon-we-expect")
+	startLifecycleHealthServer(t, profile, &lifecycleHealth{
+		status: "running", pid: os.Getpid(), daemonID: "daemon-someone-else", version: "test",
+	})
+
+	state := daemonStateForProfile(context.Background(), profile)
+	if daemonAlive(state) {
+		t.Fatalf("state = %v, want stopped when the announced id is not the expected one", state)
+	}
+}
+
+// With no pin and no machine file there is no identity to verify against, so
+// adoption must be refused rather than assumed.
+func TestDaemonStateRejectsRecoveryWithoutAnyKnownIdentity(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const profile = "state-no-identity"
+	startLifecycleHealthServer(t, profile, &lifecycleHealth{
+		status: "running", pid: os.Getpid(), daemonID: "daemon-unverifiable", version: "test",
+	})
+
+	state := daemonStateForProfile(context.Background(), profile)
+	if daemonAlive(state) {
+		t.Fatalf("state = %v, want stopped when no expected identity exists", state)
+	}
+}

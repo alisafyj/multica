@@ -186,6 +186,10 @@ func daemonPIDPathForProfile(profile string) string {
 	return filepath.Join(daemonDirForProfile(profile), "daemon.pid")
 }
 
+// daemonIDFileName is the machine-wide daemon identity file. Profiles share
+// one id: see TestEnsureDaemonID in internal/daemon.
+const daemonIDFileName = "daemon.id"
+
 type daemonPIDRecord struct {
 	PID      int    `json:"pid"`
 	DaemonID string `json:"daemon_id"`
@@ -265,6 +269,31 @@ func daemonHealthIdentity(health map[string]any) (int, string, bool) {
 	return int(rawPID), strings.TrimSpace(daemonID), true
 }
 
+// expectedDaemonIdentity reports the daemon_id this machine's daemon should be
+// announcing, following the same precedence internal/daemon/config.go applies:
+// MULTICA_DAEMON_ID first, then the persisted machine UUID.
+//
+// Read-only on purpose. EnsureDaemonID would create the file as a side effect,
+// and `daemon status` must not mint an identity just by being run.
+//
+// The env leg is what makes recovery work for a daemon started with a pinned
+// id — the documented path for embedded environments (see the daemon_id
+// resolution comment in internal/daemon/config.go). Without it the id on disk
+// never matches the one such a daemon reports, so a live, healthy daemon whose
+// PID file was lost is reported as stopped, which is exactly the state this
+// recovery path exists to repair.
+func expectedDaemonIdentity() (string, bool) {
+	if id := strings.TrimSpace(os.Getenv("MULTICA_DAEMON_ID")); id != "" {
+		return id, true
+	}
+	data, err := os.ReadFile(filepath.Join(daemonDirForProfile(""), daemonIDFileName))
+	if err != nil {
+		return "", false
+	}
+	id := strings.TrimSpace(string(data))
+	return id, id != ""
+}
+
 func daemonStateForProfile(ctx context.Context, profile string) map[string]any {
 	health := checkDaemonHealthOnPort(ctx, healthPortForProfile(profile))
 	healthPID, healthDaemonID, validHealth := daemonHealthIdentity(health)
@@ -276,8 +305,8 @@ func daemonStateForProfile(ctx context.Context, profile string) map[string]any {
 		if !validHealth || !daemonAlive(health) || !daemonProcessExists(healthPID) {
 			return map[string]any{"status": "stopped"}
 		}
-		persistedID, readErr := os.ReadFile(filepath.Join(daemonDirForProfile(""), "daemon.id"))
-		if readErr != nil || strings.TrimSpace(string(persistedID)) != healthDaemonID {
+		expectedID, haveExpectedID := expectedDaemonIdentity()
+		if !haveExpectedID || expectedID != healthDaemonID {
 			return map[string]any{"status": "stopped"}
 		}
 		if err := writeDaemonPIDFile(profile, daemonPIDRecord{PID: healthPID, DaemonID: healthDaemonID}); err != nil {
