@@ -1321,6 +1321,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/capabilities", h.ListTestRunCapabilities)
 					r.Post("/start", h.StartTestRun)
 					r.Post("/dispatch", h.DispatchTestRun)
+					r.Post("/abort", h.AbortTestRun)
 					r.Post("/retry", h.RetryTestRun)
 				})
 			})
