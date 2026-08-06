@@ -4575,3 +4575,165 @@ func TestRestoreV2SidecarWritabilityNoOpOnAbsentLayout(t *testing.T) {
 		t.Fatalf("RestoreV2SidecarWritability must not create the V2 layout: stat err = %v", err)
 	}
 }
+
+// TestRestoreV2SidecarWritabilityRejectsPlantedSymlink is the
+// symlink-safety covering test. The agent workspace is
+// semi-untrusted — a compromised or buggy agent can replace any
+// component of the V2 sidecar path with a symlink. The helper
+// must NOT follow that link, because the link target lives
+// outside the workdir and chmod'ing it would escape the V2
+// isolation contract.
+//
+// The test plants a symlink at
+// {workdir}/.agent_context/project_design_system/base pointing at
+// a temp dir outside the workdir whose mode is seeded to a known
+// non-default value. After calling the helper:
+//
+//	(a) the external target's mode is unchanged, and
+//	(b) the helper returns nil (no catastrophic error), so the
+//	    surrounding cleanup is not derailed by a planted symlink.
+func TestRestoreV2SidecarWritabilityRejectsPlantedSymlink(t *testing.T) {
+	workDir := t.TempDir()
+
+	// Seed an external target with a recognisable mode so the
+	// "mode is unchanged" assertion has something to check.
+	externalDir := t.TempDir()
+	externalMode := os.FileMode(0o700)
+	if err := os.Chmod(externalDir, externalMode); err != nil {
+		t.Fatalf("seed external dir mode: %v", err)
+	}
+
+	// Build the legit V2 sidecar tree on the workdir side, then
+	// overwrite the `base` entry with a symlink to the external
+	// dir. The two honest sidecars stay real so the helper
+	// has to walk past them and only short-circuit on `base`.
+	for _, name := range []string{"context", "reference", "base"} {
+		if err := os.MkdirAll(filepath.Join(workDir, ".agent_context", "project_design_system", name), 0o755); err != nil {
+			t.Fatalf("create honest sidecar %s: %v", name, err)
+		}
+	}
+	for _, name := range []string{"context", "reference"} {
+		if err := os.Chmod(filepath.Join(workDir, ".agent_context", "project_design_system", name), 0o555); err != nil {
+			t.Fatalf("stamp honest sidecar %s read-only: %v", name, err)
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(workDir, ".agent_context", "project_design_system", "base")); err != nil {
+		t.Fatalf("remove honest base dir: %v", err)
+	}
+	if err := os.Symlink(externalDir, filepath.Join(workDir, ".agent_context", "project_design_system", "base")); err != nil {
+		t.Fatalf("plant symlink at sidecar base: %v", err)
+	}
+
+	if err := RestoreV2SidecarWritability(workDir); err != nil {
+		t.Fatalf("RestoreV2SidecarWritability must not error on a planted symlink: %v", err)
+	}
+
+	// (a) External target's mode is unchanged. If the helper had
+	// followed the link (the pre-fix behavior), the chmod would
+	// have flipped the external target to 0o755.
+	info, err := os.Stat(externalDir)
+	if err != nil {
+		t.Fatalf("stat external target: %v", err)
+	}
+	if info.Mode().Perm() != externalMode {
+		t.Fatalf("external target mode = %o, want %o (helper followed the planted symlink)", info.Mode().Perm(), externalMode)
+	}
+
+	// (b) The honest sidecars (context, reference) were still
+	// chmod'd back to 0o755, proving the helper walked the path
+	// and only stopped at the planted link.
+	for _, name := range []string{"context", "reference"} {
+		path := filepath.Join(workDir, ".agent_context", "project_design_system", name)
+		if info, err := os.Lstat(path); err != nil {
+			t.Fatalf("Lstat %s: %v", name, err)
+		} else if info.Mode().Perm() != 0o755 {
+			t.Fatalf("honest sidecar %s mode = %o, want 0o755", name, info.Mode().Perm())
+		}
+	}
+}
+
+// TestEnvironmentCleanupRemovesV2SidecarWorkspaceWithPlantedSymlink
+// exercises the full production cleanup path on a V2 workspace
+// that contains a planted symlink. The cleanup must complete
+// without erroring catastrophically; the symlink is removed (per
+// os.RemoveAll semantics, the link itself, not the target) and
+// the external target's mode survives intact.
+func TestEnvironmentCleanupRemovesV2SidecarWorkspaceWithPlantedSymlink(t *testing.T) {
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"adjust",
+		"package_schema":"multica.project-design-system/v2",
+		"input_snapshot_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"base_package_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+		"brief":"Calm CRM",
+		"base_package":{
+			"design_md":"# base",
+			"tokens_css":":root { --color-brand: #123456; }",
+			"components_html":"<main data-design-node-id=\"base\">Base kit</main>",
+			"integrity_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+		}
+	}`)
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: t.TempDir(),
+		WorkspaceID:    "workspace-symlink",
+		TaskID:         "task-symlink-12345678",
+		Provider:       "opencode",
+		Task:           ctx,
+	}, discardLogger())
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	// Plant a symlink at one of the sidecar entries pointing
+	// outside the workdir. Pick `base` (the brief's canonical
+	// example) and seed the target with a known mode. The honest
+	// base/ is 0o555 with 0o444 files inside, so we use the
+	// production helper to unlock it before removing it.
+	externalDir := t.TempDir()
+	externalMode := os.FileMode(0o700)
+	if err := os.Chmod(externalDir, externalMode); err != nil {
+		t.Fatalf("seed external target mode: %v", err)
+	}
+	baseLink := filepath.Join(env.WorkDir, ".agent_context", "project_design_system", "base")
+	if err := RestoreV2SidecarWritability(env.WorkDir); err != nil {
+		t.Fatalf("RestoreV2SidecarWritability pre-plant: %v", err)
+	}
+	if err := os.RemoveAll(baseLink); err != nil {
+		t.Fatalf("remove honest base: %v", err)
+	}
+	if err := os.Symlink(externalDir, baseLink); err != nil {
+		t.Fatalf("plant symlink at sidecar base: %v", err)
+	}
+
+	// (b) Production cleanup must not error catastrophically. A
+	// non-nil return is acceptable as long as it isn't a panic
+	// or a confusing escape; we expect a clean nil here because
+	// the helper bails out on the planted link and os.RemoveAll
+	// unlinks the symlink itself rather than chasing it.
+	if err := env.Cleanup(true); err != nil {
+		t.Fatalf("env.Cleanup(true) on a V2 workspace with planted symlink: %v", err)
+	}
+
+	// (a) External target's mode is unchanged across the whole
+	// cleanup, confirming nothing in the daemon's path followed
+	// the link.
+	info, err := os.Stat(externalDir)
+	if err != nil {
+		t.Fatalf("stat external target: %v", err)
+	}
+	if info.Mode().Perm() != externalMode {
+		t.Fatalf("external target mode = %o, want %o (cleanup followed the planted symlink)", info.Mode().Perm(), externalMode)
+	}
+
+	// Workdir is gone (envRoot cleanup, symlink unlinked by
+	// os.RemoveAll which only touches the link, not the target).
+	if _, err := os.Stat(env.WorkDir); !os.IsNotExist(err) {
+		t.Fatalf("env.WorkDir still present after Cleanup: stat err = %v", err)
+	}
+	// The external target survives — os.RemoveAll does not chase
+	// the symlink.
+	if _, err := os.Stat(externalDir); err != nil {
+		t.Fatalf("external target vanished during cleanup (os.RemoveAll followed the symlink?): %v", err)
+	}
+}

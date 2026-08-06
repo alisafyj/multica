@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -350,31 +349,42 @@ var v2SidecarDirNames = []string{"context", "reference", "base"}
 // Exported because gc.go calls it before its own os.RemoveAll
 // (cleanTaskDir, gc.go:451) — that path bypasses Environment.Cleanup
 // and would otherwise leak the V2 tree with EACCES on unlink.
+//
+// Symlink safety: the agent runs inside workdir and can plant
+// symlinks at any component of the V2 sidecar path
+// (.agent_context, .agent_context/project_design_system, or one of
+// the {context,reference,base} sidecar entries). The helper must
+// NOT follow those symlinks — the chmod and the subsequent
+// os.RemoveAll would then act on a path outside the workdir,
+// violating the V2 isolation contract. Every path component is
+// Lstat'd (not Stat'd) and the helper bails out (without
+// erroring) the moment it sees a symlink, a non-directory, or a
+// missing entry. Cleanup callers treat the bail-out as a no-op
+// and let os.RemoveAll surface a clear EACCES / ENOTDIR if the
+// planted symlink still blocks the unlink.
 func RestoreV2SidecarWritability(workdir string) error {
 	if workdir == "" {
 		return nil
 	}
-	root := filepath.Join(workdir, ".agent_context", "project_design_system")
-	info, err := os.Stat(root)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+	// Walk every ancestor of the V2 sidecar root with Lstat and
+	// refuse to follow symlinks. The first component that is not
+	// a real directory short-circuits the helper: there is
+	// nothing legitimate to chmod below a planted symlink, and
+	// the caller can surface the leftover tree via os.RemoveAll's
+	// own error.
+	ancestors := []string{
+		filepath.Join(workdir, ".agent_context"),
+		filepath.Join(workdir, ".agent_context", "project_design_system"),
+	}
+	for _, path := range ancestors {
+		if !isRealDirectory(path) {
 			return nil
 		}
-		return fmt.Errorf("stat V2 sidecar root %s: %w", root, err)
 	}
-	if !info.IsDir() {
-		return nil
-	}
+	root := ancestors[1]
 	for _, name := range v2SidecarDirNames {
 		dir := filepath.Join(root, name)
-		dirInfo, statErr := os.Stat(dir)
-		if statErr != nil {
-			if errors.Is(statErr, fs.ErrNotExist) {
-				continue
-			}
-			return fmt.Errorf("stat V2 sidecar %s: %w", dir, statErr)
-		}
-		if !dirInfo.IsDir() {
+		if !isRealDirectory(dir) {
 			continue
 		}
 		if err := os.Chmod(dir, 0o755); err != nil {
@@ -382,6 +392,25 @@ func RestoreV2SidecarWritability(workdir string) error {
 		}
 	}
 	return nil
+}
+
+// isRealDirectory returns true only when path resolves (via Lstat,
+// no symlink traversal) to an existing real directory. Any other
+// outcome — missing, symlink, regular file, anything else — returns
+// false with no error. Callers use the false branch to silently
+// skip a sidecar entry they cannot verify; the symlink hazard
+// (which is the reason this helper exists) demands "skip" rather
+// than "escalate" so a planted link cannot turn a cleanup into a
+// cross-workdir chmod.
+func isRealDirectory(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	return info.IsDir()
 }
 
 // buildV2ReferenceIndex summarises the task input the agent is supposed
