@@ -9,10 +9,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"math"
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/multica-ai/multica/server/internal/designpreview"
 )
 
 const (
@@ -24,6 +25,7 @@ const (
 	PreviewFailureDOMEmpty               = "dom_empty"
 	PreviewFailureComputedHidden         = "computed_visibility_hidden"
 	PreviewFailureRenderedContentMissing = "rendered_content_not_visible"
+	PreviewFailurePageDimensions         = "page_dimensions_exceeded"
 	PreviewFailureResourceLoad           = "resource_load_failed"
 	PreviewFailureOutboundRequest        = "outbound_request_blocked"
 	PreviewFailureConsoleError           = "console_error"
@@ -38,9 +40,6 @@ const (
 	previewTargetMaxCount   = 64
 	previewTargetIDMaxBytes = 128
 	previewPathMaxBytes     = 4 << 10
-	previewMetricMaxCount   = 1_000_000
-	previewDimensionMax     = 100_000
-	previewScreenshotMax    = 32 << 20
 )
 
 type PreviewTarget struct {
@@ -280,45 +279,10 @@ func validatePreviewHTMLPath(value string) (string, error) {
 }
 
 func EvaluatePreviewCapture(capture PreviewCapture, policy PreviewVerificationPolicy) PreviewTargetVerification {
-	verification := PreviewTargetVerification{
-		Target:                    capture.Target,
-		DocumentLoaded:            capture.DocumentLoaded,
-		DOMPresent:                capture.DOMPresent,
-		ComputedVisibilityVisible: capture.ComputedVisibilityVisible,
-		RenderedElementCount:      capture.RenderedElementCount,
-		VisibleTextLength:         capture.VisibleTextLength,
-		BodyWidth:                 capture.BodyWidth,
-		BodyHeight:                capture.BodyHeight,
-		ImageCount:                capture.ImageCount,
-		FailedImageCount:          capture.FailedImageCount,
-		FailedResourceCount:       capture.FailedResourceCount,
-		ConsoleErrorCount:         capture.ConsoleErrorCount,
-		OutboundRequestCount:      capture.OutboundRequestCount,
-		Screenshot:                capture.Screenshot,
-	}
-	switch {
-	case !capture.DocumentLoaded:
-		verification.FailureCode = PreviewFailureDocumentNotLoaded
-	case !capture.DOMPresent || capture.BodyWidth <= 0 || capture.BodyHeight <= 0:
-		verification.FailureCode = PreviewFailureDOMEmpty
-	case !capture.ComputedVisibilityVisible:
-		verification.FailureCode = PreviewFailureComputedHidden
-	case capture.RenderedElementCount <= 0:
-		verification.FailureCode = PreviewFailureRenderedContentMissing
-	case policy.RequireSameOrigin && capture.OutboundRequestCount > 0:
-		verification.FailureCode = PreviewFailureOutboundRequest
-	case policy.RequireResourcesClean && (capture.FailedImageCount > 0 || capture.FailedResourceCount > 0):
-		verification.FailureCode = PreviewFailureResourceLoad
-	case policy.RequireConsoleClean && capture.ConsoleErrorCount > 0:
-		verification.FailureCode = PreviewFailureConsoleError
-	case capture.Screenshot.SHA256 == "" || capture.Screenshot.Bytes <= 0 || capture.Screenshot.Width <= 0 || capture.Screenshot.Height <= 0:
-		verification.FailureCode = PreviewFailureScreenshotMissing
-	case capture.Screenshot.Entropy < policy.MinEntropy || capture.Screenshot.MaxChannelStddev < policy.MinMaxChannelStddev:
-		verification.FailureCode = PreviewFailureScreenshotUniform
-	default:
-		verification.Passed = true
-	}
-	return verification
+	return fromDesignPreviewTargetVerification(designpreview.EvaluateCapture(
+		toDesignPreviewCapture(capture),
+		toDesignPreviewPolicy(policy),
+	))
 }
 
 func NewPreviewVerificationReceipt(engine EngineIdentity, contentDigest string, verification PreviewVerification) (PreviewVerificationReceipt, error) {
@@ -344,70 +308,120 @@ func ValidatePreviewVerificationReceipt(receipt PreviewVerificationReceipt) erro
 	if err := ValidateContentDigest(receipt.ContentDigest); err != nil {
 		return err
 	}
-	verification := receipt.Verification
-	if strings.TrimSpace(verification.Browser.Name) == "" || strings.TrimSpace(verification.Browser.Version) == "" ||
-		len(verification.Browser.Name) > 128 || len(verification.Browser.Version) > 256 {
-		return errors.New("Open Design Preview browser identity is invalid")
-	}
-	if verification.Policy != PinnedPreviewVerificationPolicy() {
-		return errors.New("Open Design Preview verification policy is not pinned")
-	}
-	if len(verification.Targets) == 0 || len(verification.Targets) > previewTargetMaxCount {
-		return errors.New("Open Design Preview verification has an invalid target count")
-	}
-	seen := make(map[string]struct{}, len(verification.Targets))
-	allPassed := true
-	for _, target := range verification.Targets {
-		if err := validatePreviewTargetVerification(target, verification.Policy); err != nil {
+	for _, target := range receipt.Verification.Targets {
+		if err := validatePreviewTarget(target.Target); err != nil {
 			return err
 		}
-		key := target.Target.Kind + "\x00" + target.Target.ID + "\x00" + target.Target.Path
-		if _, exists := seen[key]; exists {
-			return errors.New("Open Design Preview verification repeats a target")
-		}
-		seen[key] = struct{}{}
-		allPassed = allPassed && target.Passed
 	}
-	if verification.Passed != allPassed {
-		return errors.New("Open Design Preview overall result does not match its targets")
-	}
-	return nil
+	return designpreview.ValidateVerification(
+		toDesignPreviewVerification(receipt.Verification),
+		toDesignPreviewPolicy(PinnedPreviewVerificationPolicy()),
+	)
 }
 
 func ValidatePreviewVerificationTargetSet(verification PreviewVerification, expected []PreviewTarget) error {
-	if len(verification.Targets) != len(expected) {
-		return errors.New("Open Design Preview verification target count does not match the declared package targets")
+	genericExpected := make([]designpreview.Target, 0, len(expected))
+	for _, target := range expected {
+		genericExpected = append(genericExpected, toDesignPreviewTarget(target))
 	}
-	for index, target := range verification.Targets {
-		if target.Target != expected[index] {
-			return fmt.Errorf("Open Design Preview verification target %d does not match the declared package target", index)
-		}
+	return designpreview.ValidateTargetSet(toDesignPreviewVerification(verification), genericExpected)
+}
+
+func validatePreviewTarget(target PreviewTarget) error {
+	if err := designpreview.ValidateTarget(toDesignPreviewTarget(target)); err != nil {
+		return err
+	}
+	if target.Kind == PreviewTargetKindPreview && !strings.HasPrefix(target.Path, "preview/") {
+		return errors.New("Open Design Preview target is outside preview/")
+	}
+	if target.Kind == PreviewTargetKindUIKit && target.Path != previewUIKitPath {
+		return errors.New("Open Design UI Kit target path is invalid")
 	}
 	return nil
 }
 
-func validatePreviewTargetVerification(target PreviewTargetVerification, policy PreviewVerificationPolicy) error {
-	if err := validatePreviewTarget(target.Target); err != nil {
-		return err
+func toDesignPreviewTarget(target PreviewTarget) designpreview.Target {
+	return designpreview.Target{Kind: target.Kind, ID: target.ID, Path: target.Path}
+}
+
+func fromDesignPreviewTarget(target designpreview.Target) PreviewTarget {
+	return PreviewTarget{Kind: target.Kind, ID: target.ID, Path: target.Path}
+}
+
+func toDesignPreviewTargetURL(target PreviewURL) designpreview.TargetURL {
+	return designpreview.TargetURL{Target: toDesignPreviewTarget(target.Target), URL: target.URL}
+}
+
+func toDesignPreviewPolicy(policy PreviewVerificationPolicy) designpreview.Policy {
+	return designpreview.Policy{
+		ViewportWidth:         policy.ViewportWidth,
+		ViewportHeight:        policy.ViewportHeight,
+		MinEntropy:            policy.MinEntropy,
+		MinMaxChannelStddev:   policy.MinMaxChannelStddev,
+		RequireSameOrigin:     policy.RequireSameOrigin,
+		RequireConsoleClean:   policy.RequireConsoleClean,
+		RequireResourcesClean: policy.RequireResourcesClean,
 	}
-	for _, value := range []int{
-		target.RenderedElementCount, target.VisibleTextLength, target.ImageCount,
-		target.FailedImageCount, target.FailedResourceCount, target.ConsoleErrorCount,
-		target.OutboundRequestCount,
-	} {
-		if value < 0 || value > previewMetricMaxCount {
-			return errors.New("Open Design Preview target has an invalid count")
-		}
+}
+
+func fromDesignPreviewPolicy(policy designpreview.Policy) PreviewVerificationPolicy {
+	return PreviewVerificationPolicy{
+		ViewportWidth:         policy.ViewportWidth,
+		ViewportHeight:        policy.ViewportHeight,
+		MinEntropy:            policy.MinEntropy,
+		MinMaxChannelStddev:   policy.MinMaxChannelStddev,
+		RequireSameOrigin:     policy.RequireSameOrigin,
+		RequireConsoleClean:   policy.RequireConsoleClean,
+		RequireResourcesClean: policy.RequireResourcesClean,
 	}
-	if target.FailedImageCount > target.ImageCount || target.BodyWidth < 0 || target.BodyWidth > previewDimensionMax ||
-		target.BodyHeight < 0 || target.BodyHeight > previewDimensionMax {
-		return errors.New("Open Design Preview target has invalid dimensions or image counts")
+}
+
+func toDesignPreviewScreenshot(screenshot PreviewScreenshot) designpreview.Screenshot {
+	return designpreview.Screenshot{
+		SHA256:           screenshot.SHA256,
+		Bytes:            screenshot.Bytes,
+		Width:            screenshot.Width,
+		Height:           screenshot.Height,
+		Entropy:          screenshot.Entropy,
+		MaxChannelStddev: screenshot.MaxChannelStddev,
 	}
-	if err := validatePreviewScreenshot(target.Screenshot, target.Passed); err != nil {
-		return err
+}
+
+func fromDesignPreviewScreenshot(screenshot designpreview.Screenshot) PreviewScreenshot {
+	return PreviewScreenshot{
+		SHA256:           screenshot.SHA256,
+		Bytes:            screenshot.Bytes,
+		Width:            screenshot.Width,
+		Height:           screenshot.Height,
+		Entropy:          screenshot.Entropy,
+		MaxChannelStddev: screenshot.MaxChannelStddev,
 	}
-	capture := PreviewCapture{
-		Target:                    target.Target,
+}
+
+func toDesignPreviewCapture(capture PreviewCapture) designpreview.Capture {
+	return designpreview.Capture{
+		Target:                    toDesignPreviewTarget(capture.Target),
+		DocumentLoaded:            capture.DocumentLoaded,
+		DOMPresent:                capture.DOMPresent,
+		ComputedVisibilityVisible: capture.ComputedVisibilityVisible,
+		RenderedElementCount:      capture.RenderedElementCount,
+		VisibleTextLength:         capture.VisibleTextLength,
+		BodyWidth:                 capture.BodyWidth,
+		BodyHeight:                capture.BodyHeight,
+		ImageCount:                capture.ImageCount,
+		FailedImageCount:          capture.FailedImageCount,
+		FailedResourceCount:       capture.FailedResourceCount,
+		ConsoleErrorCount:         capture.ConsoleErrorCount,
+		OutboundRequestCount:      capture.OutboundRequestCount,
+		Screenshot:                toDesignPreviewScreenshot(capture.Screenshot),
+	}
+}
+
+func toDesignPreviewTargetVerification(target PreviewTargetVerification) designpreview.TargetVerification {
+	return designpreview.TargetVerification{
+		Target:                    toDesignPreviewTarget(target.Target),
+		Passed:                    target.Passed,
+		FailureCode:               target.FailureCode,
 		DocumentLoaded:            target.DocumentLoaded,
 		DOMPresent:                target.DOMPresent,
 		ComputedVisibilityVisible: target.ComputedVisibilityVisible,
@@ -420,54 +434,61 @@ func validatePreviewTargetVerification(target PreviewTargetVerification, policy 
 		FailedResourceCount:       target.FailedResourceCount,
 		ConsoleErrorCount:         target.ConsoleErrorCount,
 		OutboundRequestCount:      target.OutboundRequestCount,
-		Screenshot:                target.Screenshot,
+		Screenshot:                toDesignPreviewScreenshot(target.Screenshot),
 	}
-	evaluated := EvaluatePreviewCapture(capture, policy)
-	if evaluated.Passed != target.Passed || evaluated.FailureCode != target.FailureCode {
-		return errors.New("Open Design Preview passed target does not match its visual signals")
-	}
-	return nil
 }
 
-func validatePreviewTarget(target PreviewTarget) error {
-	if target.Kind != PreviewTargetKindPreview && target.Kind != PreviewTargetKindUIKit {
-		return errors.New("Open Design Preview target kind is invalid")
+func fromDesignPreviewTargetVerification(target designpreview.TargetVerification) PreviewTargetVerification {
+	return PreviewTargetVerification{
+		Target:                    fromDesignPreviewTarget(target.Target),
+		Passed:                    target.Passed,
+		FailureCode:               target.FailureCode,
+		DocumentLoaded:            target.DocumentLoaded,
+		DOMPresent:                target.DOMPresent,
+		ComputedVisibilityVisible: target.ComputedVisibilityVisible,
+		RenderedElementCount:      target.RenderedElementCount,
+		VisibleTextLength:         target.VisibleTextLength,
+		BodyWidth:                 target.BodyWidth,
+		BodyHeight:                target.BodyHeight,
+		ImageCount:                target.ImageCount,
+		FailedImageCount:          target.FailedImageCount,
+		FailedResourceCount:       target.FailedResourceCount,
+		ConsoleErrorCount:         target.ConsoleErrorCount,
+		OutboundRequestCount:      target.OutboundRequestCount,
+		Screenshot:                fromDesignPreviewScreenshot(target.Screenshot),
 	}
-	if target.ID == "" || strings.TrimSpace(target.ID) != target.ID || len(target.ID) > previewTargetIDMaxBytes {
-		return errors.New("Open Design Preview target id is invalid")
-	}
-	if len(target.Path) > previewPathMaxBytes {
-		return errors.New("Open Design Preview target path exceeds the size limit")
-	}
-	if _, err := validateArchivePath(target.Path); err != nil || strings.ToLower(path.Ext(target.Path)) != ".html" {
-		return errors.New("Open Design Preview target path is invalid")
-	}
-	if target.Kind == PreviewTargetKindPreview && !strings.HasPrefix(target.Path, "preview/") {
-		return errors.New("Open Design Preview target is outside preview/")
-	}
-	if target.Kind == PreviewTargetKindUIKit && target.Path != previewUIKitPath {
-		return errors.New("Open Design UI Kit target path is invalid")
-	}
-	return nil
 }
 
-func validatePreviewScreenshot(screenshot PreviewScreenshot, required bool) error {
-	empty := screenshot.SHA256 == "" && screenshot.Bytes == 0 && screenshot.Width == 0 && screenshot.Height == 0 &&
-		screenshot.Entropy == 0 && screenshot.MaxChannelStddev == 0
-	if empty && !required {
-		return nil
+func toDesignPreviewVerification(verification PreviewVerification) designpreview.Verification {
+	targets := make([]designpreview.TargetVerification, 0, len(verification.Targets))
+	for _, target := range verification.Targets {
+		targets = append(targets, toDesignPreviewTargetVerification(target))
 	}
-	if err := ValidateContentDigest(screenshot.SHA256); err != nil {
-		return errors.New("Open Design Preview screenshot digest is invalid")
+	return designpreview.Verification{
+		Browser: designpreview.BrowserIdentity{
+			Name:    verification.Browser.Name,
+			Version: verification.Browser.Version,
+		},
+		Policy:  toDesignPreviewPolicy(verification.Policy),
+		Targets: targets,
+		Passed:  verification.Passed,
 	}
-	if screenshot.Bytes <= 0 || screenshot.Bytes > previewScreenshotMax ||
-		screenshot.Width <= 0 || screenshot.Width > previewDimensionMax ||
-		screenshot.Height <= 0 || screenshot.Height > previewDimensionMax ||
-		math.IsNaN(screenshot.Entropy) || math.IsInf(screenshot.Entropy, 0) || screenshot.Entropy < 0 || screenshot.Entropy > 8 ||
-		math.IsNaN(screenshot.MaxChannelStddev) || math.IsInf(screenshot.MaxChannelStddev, 0) || screenshot.MaxChannelStddev < 0 || screenshot.MaxChannelStddev > 128 {
-		return errors.New("Open Design Preview screenshot metrics are invalid")
+}
+
+func fromDesignPreviewVerification(verification designpreview.Verification) PreviewVerification {
+	targets := make([]PreviewTargetVerification, 0, len(verification.Targets))
+	for _, target := range verification.Targets {
+		targets = append(targets, fromDesignPreviewTargetVerification(target))
 	}
-	return nil
+	return PreviewVerification{
+		Browser: PreviewBrowserIdentity{
+			Name:    verification.Browser.Name,
+			Version: verification.Browser.Version,
+		},
+		Policy:  fromDesignPreviewPolicy(verification.Policy),
+		Targets: targets,
+		Passed:  verification.Passed,
+	}
 }
 
 func PreviewVerificationFailure(verification PreviewVerification) json.RawMessage {

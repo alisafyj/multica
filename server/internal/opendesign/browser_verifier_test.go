@@ -1,48 +1,16 @@
 package opendesign
 
 import (
-	"bytes"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
-	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/designpreview"
 )
-
-func TestAnalyzePreviewScreenshotMeasuresVisualVariation(t *testing.T) {
-	t.Parallel()
-
-	imageData := image.NewNRGBA(image.Rect(0, 0, 64, 64))
-	for y := range 64 {
-		for x := range 64 {
-			imageData.SetNRGBA(x, y, color.NRGBA{
-				R: uint8(x * 4),
-				G: uint8(y * 4),
-				B: uint8((x + y) * 2),
-				A: 255,
-			})
-		}
-	}
-	var encoded bytes.Buffer
-	if err := png.Encode(&encoded, imageData); err != nil {
-		t.Fatalf("encode screenshot: %v", err)
-	}
-
-	metrics, err := analyzePreviewScreenshot(encoded.Bytes())
-	if err != nil {
-		t.Fatalf("analyzePreviewScreenshot: %v", err)
-	}
-	if metrics.Width != 64 || metrics.Height != 64 || metrics.Bytes != encoded.Len() ||
-		metrics.SHA256 == "" || metrics.Entropy <= 0.1 || metrics.MaxChannelStddev <= 1 {
-		t.Fatalf("screenshot metrics = %+v", metrics)
-	}
-}
 
 func TestChromiumPreviewVerifierCapturesVisiblePageAndBlocksOutboundRequests(t *testing.T) {
 	browserPath := installedTestBrowser(t)
@@ -100,30 +68,20 @@ func TestChromiumPreviewVerifierCapturesVisiblePageAndBlocksOutboundRequests(t *
 	if outboundRequests.Load() != 0 {
 		t.Fatalf("blocked external server received %d request(s)", outboundRequests.Load())
 	}
+	_, err = verifier.Verify(t.Context(), []PreviewURL{{
+		Target: PreviewTarget{Kind: PreviewTargetKindUIKit, ID: "ui-kit", Path: "ui-kit/index.html"},
+		URL:    server.URL + "/good",
+	}})
+	if err == nil || !strings.Contains(err.Error(), "UI Kit target path") {
+		t.Fatalf("native UI Kit target error = %v", err)
+	}
 }
 
 func installedTestBrowser(t *testing.T) string {
 	t.Helper()
-	if configured := os.Getenv("MULTICA_OPEN_DESIGN_BROWSER_PATH"); configured != "" {
-		return configured
+	browserPath, err := designpreview.ResolveBrowserPath(os.Getenv("MULTICA_OPEN_DESIGN_BROWSER_PATH"))
+	if err != nil {
+		t.Skipf("no Chromium browser is installed: %v", err)
 	}
-	candidates := []string{
-		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-		"/usr/bin/google-chrome",
-		"/usr/bin/google-chrome-stable",
-		"/usr/bin/chromium",
-		"/usr/bin/chromium-browser",
-	}
-	for _, candidate := range candidates {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate
-		}
-	}
-	for _, name := range []string{"google-chrome", "chromium", "chromium-browser"} {
-		if candidate, err := exec.LookPath(name); err == nil {
-			return candidate
-		}
-	}
-	t.Skipf("no Chromium browser is installed on %s", runtime.GOOS)
-	return ""
+	return browserPath
 }

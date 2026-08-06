@@ -439,8 +439,6 @@ func TestSupervisorPersistsRejectedPreviewWithoutCreatingSuccess(t *testing.T) {
 		audit:         successfulPackageAudit(),
 	}
 	failedVerification := successfulPreviewVerification()
-	failedVerification.Targets[0].Screenshot.Entropy = 0
-	failedVerification.Targets[0].Screenshot.MaxChannelStddev = 0
 	failedVerification.Targets[0] = EvaluatePreviewCapture(PreviewCapture{
 		Target:                    failedVerification.Targets[0].Target,
 		DocumentLoaded:            true,
@@ -448,7 +446,7 @@ func TestSupervisorPersistsRejectedPreviewWithoutCreatingSuccess(t *testing.T) {
 		ComputedVisibilityVisible: true,
 		RenderedElementCount:      41,
 		VisibleTextLength:         317,
-		BodyWidth:                 1425,
+		BodyWidth:                 100_001,
 		BodyHeight:                1064,
 		Screenshot:                failedVerification.Targets[0].Screenshot,
 	}, failedVerification.Policy)
@@ -480,6 +478,9 @@ func TestSupervisorPersistsRejectedPreviewWithoutCreatingSuccess(t *testing.T) {
 	}
 	if result.Status != RunStatusPreviewFailed || len(callbacks.previews) != 1 || callbacks.previews[0].Verification.Passed || len(callbacks.terminals) != 0 {
 		t.Fatalf("result = %+v, callbacks = %+v", result, callbacks)
+	}
+	if callbacks.previews[0].Verification.Targets[0].FailureCode != PreviewFailurePageDimensions {
+		t.Fatalf("preview failure = %+v", callbacks.previews[0].Verification.Targets[0])
 	}
 	if strings.Join(callbacks.lifecycle, ",") != "archive,result,audit,preview" {
 		t.Fatalf("callback lifecycle = %#v", callbacks.lifecycle)
