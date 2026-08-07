@@ -226,7 +226,7 @@ export default function UsagePage() {
   // Per-metric chart data. Cost/Tokens are stacked series (input/output/
   // cache-write for Cost — cache-read excluded; input/output/cache-read/
   // cache-write for Tokens); Time is a single unstacked series; Tasks is
-  // a stacked 2-series (completed/failed) — mirrors DashboardPage's
+  // a stacked 3-series (completed/failed/cancelled) — mirrors DashboardPage's
   // DailyCostChart/DailyTokensChart/DailyTimeChart/DailyTasksChart (and
   // their Weekly siblings) exactly, per
   // packages/views/runtimes/components/charts/*.
@@ -245,6 +245,8 @@ export default function UsagePage() {
       cacheWrite: theme.chart3,
       completed: theme.chart1,
       failed: theme.chart5,
+      // chart3 matches web's DailyTasksChart/WeeklyTasksChart cancelled series.
+      cancelled: theme.chart3,
       single: theme.chart1,
     };
     const stacked = (
@@ -292,6 +294,7 @@ export default function UsagePage() {
       [
         { key: "completed", color: stackColors.completed },
         { key: "failed", color: stackColors.failed },
+        { key: "cancelled", color: stackColors.cancelled },
       ],
       (r, k) => r[k],
     );

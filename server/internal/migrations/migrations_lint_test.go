@@ -48,6 +48,31 @@ var legacyDuplicateMigrationStems = map[string][]string{
 	"128": {"128_agent_task_queue_runtime_mcp_overlay", "128_autopilot_collaborator", "128_comment_routing_escalation"},
 }
 
+// mergedDuplicateMigrationStems records prefix collisions created by merging
+// upstream into this fork, where BOTH sides had already been applied to a live
+// database before the merge. The runner keys schema_migrations on the full stem
+// (see ExtractVersion), not the numeric prefix, so these apply and record
+// independently — nothing is skipped. Renumbering either side would change its
+// stem and make an applied migration run a second time, which for a
+// CREATE INDEX CONCURRENTLY is a hard failure.
+//
+// This is NOT an escape hatch for new work. A collision qualifies only when
+// both stems have already shipped and can no longer be renamed. Anything still
+// in review takes the next free prefix instead — the whole point of the
+// uniqueness rule is that ordering between two same-numbered files is decided
+// by the rest of the filename, which is alphabetical accident rather than
+// intent.
+var mergedDuplicateMigrationStems = map[string][]string{
+	"255": {"255_agent_task_queue_chat_pending_deferred_v3", "255_service_account_token_primary_key"},
+	"256": {"256_drop_agent_task_queue_chat_pending_v2", "256_service_account_token_hash_index"},
+	"257": {"257_agent_task_queue_channel_media_pending_unique_v2", "257_service_account_token_active_index"},
+	"258": {"258_drop_pending_issue_agent_v1", "258_user_service_account_index"},
+	"259": {"259_agent_task_queue_retired_session_id", "259_issue_origin_dingtalk_chat"},
+	"260": {"260_chat_message_quick_actions", "260_issue_origin_dingtalk_chat_validate"},
+	"261": {"261_agent_task_queue_terminal_completed_at_v2", "261_agent_task_quick_actions_disabled"},
+	"262": {"262_drop_agent_task_queue_terminal_completed_at_v1", "262_quick_action"},
+}
+
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)
 
 func TestMigrationFilesHaveMatchingDirections(t *testing.T) {
@@ -78,12 +103,12 @@ func TestMigrationNumericPrefixesStayUniqueAfterLegacySet(t *testing.T) {
 	for prefix, stems := range stemsByPrefix {
 		sort.Strings(stems)
 
-		legacyStems, isLegacyDuplicate := legacyDuplicateMigrationStems[prefix]
-		if isLegacyDuplicate {
-			expected := append([]string(nil), legacyStems...)
+		allowed, kind := allowedDuplicateMigrationStems(prefix)
+		if kind != "" {
+			expected := append([]string(nil), allowed...)
 			sort.Strings(expected)
 			if !reflect.DeepEqual(stems, expected) {
-				t.Errorf("legacy duplicate migration prefix %s changed: got %v, want %v; do not add to or rename historical duplicate-prefix migrations", prefix, stems, expected)
+				t.Errorf("%s duplicate migration prefix %s changed: got %v, want %v; do not add to or rename already-applied duplicate-prefix migrations", kind, prefix, stems, expected)
 			}
 			continue
 		}
@@ -195,6 +220,19 @@ func splitMigrationFilename(name string) (stem, direction string, ok bool) {
 		}
 	}
 	return "", "", false
+}
+
+// allowedDuplicateMigrationStems returns the recorded stems for a prefix that
+// is permitted to be duplicated, plus a label naming why. An empty label means
+// the prefix must be unique.
+func allowedDuplicateMigrationStems(prefix string) ([]string, string) {
+	if stems, ok := legacyDuplicateMigrationStems[prefix]; ok {
+		return stems, "legacy"
+	}
+	if stems, ok := mergedDuplicateMigrationStems[prefix]; ok {
+		return stems, "merged"
+	}
+	return nil, ""
 }
 
 func isKnownLegacyPrefix(prefix string) bool {

@@ -148,15 +148,22 @@ export interface DailyTasksData {
   label: string;
   completed: number;
   failed: number;
+  cancelled: number;
 }
 
+// Mirrors aggregateDailyTasks in packages/views/dashboard/utils.ts.
+// failed_count and cancelled_count are disjoint subsets of task_count, so the
+// succeeded count is the remainder. Subtracting cancelled matters: MUL-5823
+// widened the run-time rollups to include 'cancelled' in task_count, so
+// without it every run the user stopped renders in the "completed" segment.
 export function aggregateDailyTasks(rows: DashboardRunTimeDaily[]): DailyTasksData[] {
   return [...rows]
     .sort((a, b) => a.date.localeCompare(b.date))
     .map((r) => {
       const failed = r.failed_count;
-      const completed = Math.max(0, r.task_count - failed);
-      return { date: r.date, label: formatDateLabel(r.date), completed, failed };
+      const cancelled = r.cancelled_count;
+      const completed = Math.max(0, r.task_count - failed - cancelled);
+      return { date: r.date, label: formatDateLabel(r.date), completed, failed, cancelled };
     });
 }
 
@@ -327,24 +334,28 @@ export function aggregateWeeklyTime(rows: DashboardRunTimeDaily[], tz: string, w
 export interface WeeklyTasksData extends WeekShell {
   completed: number;
   failed: number;
+  cancelled: number;
 }
 
+// Weekly sibling of aggregateDailyTasks; same disjoint-subset arithmetic.
 export function aggregateWeeklyTasks(rows: DashboardRunTimeDaily[], tz: string, weekCount: number): WeeklyTasksData[] {
   const shells = buildWeekShells(tz, weekCount);
-  const buckets = new Map<string, { completed: number; failed: number }>();
-  for (const shell of shells) buckets.set(shell.weekStart, { completed: 0, failed: 0 });
+  const buckets = new Map<string, { completed: number; failed: number; cancelled: number }>();
+  for (const shell of shells) buckets.set(shell.weekStart, { completed: 0, failed: 0, cancelled: 0 });
   for (const r of rows) {
     const wkStart = weekStartIso(r.date);
     const bucket = buckets.get(wkStart);
     if (!bucket) continue;
     const failed = r.failed_count;
-    const completed = Math.max(0, r.task_count - failed);
+    const cancelled = r.cancelled_count;
+    const completed = Math.max(0, r.task_count - failed - cancelled);
     bucket.completed += completed;
     bucket.failed += failed;
+    bucket.cancelled += cancelled;
   }
   return shells.map((s) => {
-    const b = buckets.get(s.weekStart) ?? { completed: 0, failed: 0 };
-    return { ...s, completed: b.completed, failed: b.failed };
+    const b = buckets.get(s.weekStart) ?? { completed: 0, failed: 0, cancelled: 0 };
+    return { ...s, completed: b.completed, failed: b.failed, cancelled: b.cancelled };
   });
 }
 
