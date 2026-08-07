@@ -19,8 +19,10 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/designpreview"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -1916,6 +1918,26 @@ type TaskCompleteRequest struct {
 	SessionID                    string                        `json:"session_id"` // Claude session ID for future resumption
 	WorkDir                      string                        `json:"work_dir"`   // working directory used during execution
 	ProjectDesignSystemArtifacts *ProjectDesignSystemArtifacts `json:"project_design_system_artifacts,omitempty"`
+	// ProjectDesignSystemPackage is the V2-native receipt the daemon sends
+	// back from its server-collected, browser-verified native Agent chain
+	// (Task 5). The handler independently re-validates every field
+	// before persisting it as the new draft.
+	ProjectDesignSystemPackage *ProjectDesignSystemPackageReceipt `json:"project_design_system_package,omitempty"`
+}
+
+// ProjectDesignSystemPackageReceipt mirrors the daemon-side
+// daemon.ProjectDesignSystemPackageReceipt (the wire format the daemon
+// sends on CompleteTask). The handler keeps its own copy to avoid an
+// internal/daemon import that would force a reverse dependency from
+// handler → daemon (the daemon already imports handler types via
+// opendesign + service).
+type ProjectDesignSystemPackageReceipt struct {
+	SchemaVersion string                                   `json:"schema_version"`
+	ObjectKey     string                                   `json:"object_key"`
+	ContentDigest string                                   `json:"content_digest"`
+	ArtifactIndex []projectdesignsystem.ArtifactIndexEntry `json:"artifact_index"`
+	Audit         projectdesignsystem.AuditReport          `json:"audit"`
+	Preview       designpreview.Receipt                    `json:"preview"`
 }
 
 const taskCompleteRequestMaxBytes int64 = 2 << 20
@@ -1947,7 +1969,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	var completedProjectDesignSystem *db.ProjectDesignSystem
 	var preparedProjectDesignSystem *preparedProjectDesignSystemCompletion
 	if existingTask.Status == "running" && isProjectDesignSystemTaskContext(existingTask) {
-		prepared, prepareErr := h.prepareProjectDesignSystemCompletion(r.Context(), existingTask, workspaceID, req.ProjectDesignSystemArtifacts)
+		prepared, prepareErr := h.prepareProjectDesignSystemCompletion(r.Context(), existingTask, workspaceID, req.ProjectDesignSystemArtifacts, req.ProjectDesignSystemPackage)
 		if prepareErr != nil {
 			h.failInvalidProjectDesignSystemCompletion(r.Context(), existingTask, req, prepareErr)
 			writeError(w, http.StatusBadRequest, prepareErr.Error())
