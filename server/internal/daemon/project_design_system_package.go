@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -184,7 +186,7 @@ func finalizeProjectDesignSystemResult(
 		result.FailureReason = finalizeFailurePreviewMissing
 		return result, nil
 	}
-	server, baseURL, listenErr := startLoopbackPreviewServer(collected.Archive, manifestForServer(collected.Manifest), prefix, deps.ServerBaseAddr, deps.ServerTimeout)
+	server, baseURL, listenErr := startLoopbackPreviewServer(collected.Archive, manifestForServer(collected.Manifest), collected.Manifest.PreviewTargets, prefix, deps.ServerBaseAddr, deps.ServerTimeout)
 	if listenErr != nil {
 		result.Status = "blocked"
 		result.Comment = "project design system preview unavailable: " + listenErr.Error()
@@ -365,11 +367,13 @@ func randomLoopbackPrefix() (string, error) {
 //	GET /<prefix>/manifest.json     → manifest bytes
 //	GET /<prefix>/<archive entry>   → matching file from the archive
 //
-// CSP / sandbox are not added at the http layer because the verifier
-// (chromedp) is the only client and it applies its own page-level CSP via
-// the response handler in designpreview. The server's job is just to bind
-// the loopback interface, serve files, and shut down deterministically.
-func startLoopbackPreviewServer(archive []byte, manifest []byte, prefix, bindAddr string, timeout time.Duration) (*http.Server, string, error) {
+// Validated HTML preview targets (ui-kit/index.html and preview/*.html per
+// the package's PreviewTargets list) get the trusted CSP header and the
+// tokens.css + selection/measurement bridge injection. Everything else is
+// served raw — only validated HTML targets carry the bridge and CSP, so
+// a malformed file slipping into assets/ or fonts/ can't trick the
+// verifier into executing arbitrary script.
+func startLoopbackPreviewServer(archive []byte, manifest []byte, previewTargets []projectdesignsystem.PreviewTarget, prefix, bindAddr string, timeout time.Duration) (*http.Server, string, error) {
 	files, err := openArchiveFiles(archive)
 	if err != nil {
 		return nil, "", fmt.Errorf("open preview archive: %w", err)
@@ -378,6 +382,15 @@ func startLoopbackPreviewServer(archive []byte, manifest []byte, prefix, bindAdd
 	if err != nil {
 		return nil, "", fmt.Errorf("bind preview server: %w", err)
 	}
+	validatedHTML := make(map[string]struct{}, len(previewTargets))
+	for _, target := range previewTargets {
+		if target.Kind != "ui_kit" && target.Kind != "preview" {
+			continue
+		}
+		validatedHTML[strings.TrimPrefix(target.Path, "/")] = struct{}{}
+	}
+	bridgeScriptHash := sha256BridgeScriptHash()
+	cspHeader := buildPreviewCSP(bridgeScriptHash)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/"+prefix+"/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -400,6 +413,13 @@ func startLoopbackPreviewServer(archive []byte, manifest []byte, prefix, bindAdd
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		if _, isHTML := validatedHTML[relative]; isHTML {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Content-Security-Policy", cspHeader)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(injectBridgeAndTokens(contents))
+			return
+		}
 		w.Header().Set("Content-Type", contentTypeForPath(relative))
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(contents)
@@ -416,6 +436,80 @@ func startLoopbackPreviewServer(archive []byte, manifest []byte, prefix, bindAdd
 	}()
 	baseURL := "http://" + listener.Addr().String()
 	return server, baseURL, nil
+}
+
+// selectionBridgeScript is the trusted selection/measurement bridge the
+// preview verifier injects into validated HTML targets. It forwards
+// every click on a `data-design-node-id` element to the parent window via
+// postMessage so the platform can pair the rendered UI with its design
+// contract. The script body MUST stay byte-stable: the SHA-256 hash
+// below is what the CSP whitelists, and any drift here will silently
+// brick the verifier. The bridge shape mirrors the legacy
+// projectdesignsystem.BuildPreviewHTML helper that served the same role
+// for the pre-V2 collector — re-derived here because that helper expects
+// the legacy `ValidatedPackage` schema and cannot be invoked on V2
+// archives.
+const selectionBridgeScript = "(()=>{document.addEventListener(\"click\",event=>{const target=event.target;const node=target instanceof Element?target.closest(\"[data-design-node-id]\"):null;if(!node)return;event.preventDefault();parent.postMessage({type:\"multica:project-design-system-select\",id:node.dataset.designNodeId},\"*\")})})();"
+
+// sha256BridgeScriptHash returns the SHA-256 of the trusted bridge source,
+// base64-encoded so it slots directly into a CSP `script-src 'sha256-…'`
+// directive. Computed at call time so the package compiles without a
+// pre-baked digest and a hash mismatch is caught at startup by the
+// preview self-check rather than by a silent runtime CSP mismatch.
+func sha256BridgeScriptHash() string {
+	digest := sha256.Sum256([]byte(selectionBridgeScript))
+	return base64.StdEncoding.EncodeToString(digest[:])
+}
+
+// buildPreviewCSP assembles the trusted CSP header applied to every
+// validated HTML preview target. The directives match the brief verbatim:
+//
+//	default-src 'self' data:
+//	script-src 'sha256-<bridge-hash>'
+//	connect-src 'none'
+//	object-src 'none'
+//	frame-src 'none'
+//	form-action 'none'
+//	base-uri 'none'
+//
+// The script hash pins the trusted bridge so the verifier cannot be
+// tricked into executing an inline script the Agent may have smuggled
+// into the package, even when those bytes happen to live inside a
+// validated HTML target.
+func buildPreviewCSP(bridgeScriptHash string) string {
+	return "default-src 'self' data:; script-src 'sha256-" + bridgeScriptHash +
+		"'; connect-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"
+}
+
+// injectBridgeAndTokens inserts the tokens.css stylesheet link and the
+// trusted selection/measurement bridge into a validated HTML preview
+// target. It is the runtime analogue of the legacy BuildPreviewHTML
+// helper and only runs on files whose path is in the package's
+// PreviewTargets list — every other archive entry is served verbatim so
+// a malformed asset cannot accidentally pick up the bridge.
+//
+// Insertion strategy: tokens.css is injected immediately before `</head>`
+// when present, otherwise prepended to the document. The bridge script
+// is injected immediately before `</body>` when present, otherwise
+// appended. The CSP header on the response makes the script-src hash
+// the only allowed script origin, so even an inline `<script>evil()</script>`
+// the agent left in the fragment will not execute — the verifier
+// receives a CSP-locked page that only runs the trusted bridge.
+func injectBridgeAndTokens(html []byte) []byte {
+	const linkTag = `<link rel="stylesheet" href="tokens.css">`
+	scriptTag := "<script>" + selectionBridgeScript + "</script>"
+	body := string(html)
+	if idx := strings.Index(body, "</head>"); idx >= 0 {
+		body = body[:idx] + linkTag + body[idx:]
+	} else {
+		body = linkTag + body
+	}
+	if idx := strings.Index(body, "</body>"); idx >= 0 {
+		body = body[:idx] + scriptTag + body[idx:]
+	} else {
+		body = body + scriptTag
+	}
+	return []byte(body)
 }
 
 func contentTypeForPath(path string) string {
@@ -579,7 +673,7 @@ func readProjectDesignSystemArtifacts(outputDir string) (ProjectDesignSystemArti
 	if err != nil {
 		return ProjectDesignSystemArtifacts{}, fmt.Errorf("resolve output directory: %w", err)
 	}
-	rootInfo, err := os.Stat(root)
+	rootInfo, err := os.Lstat(root)
 	if err != nil {
 		return ProjectDesignSystemArtifacts{}, fmt.Errorf("inspect output directory: %w", err)
 	}

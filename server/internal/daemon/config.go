@@ -128,14 +128,12 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	openDesignBrowserPath := strings.TrimSpace(os.Getenv("MULTICA_OPEN_DESIGN_BROWSER_PATH"))
 	// DesignPreviewBrowserPath is the V2-native Chromium path. Native V2
 	// finalize MUST NOT consult the MULTICA_OPEN_DESIGN_* env vars; that
-	// group is owned by the legacy Open Design chain. We only fall back to
-	// OpenDesignBrowserPath when the new env var is unset so an operator
-	// who already pinned a Chromium for Open Design can reuse it without
-	// duplicating configuration — the path itself is the same binary.
+	// group is owned by the legacy Open Design chain. When the dedicated
+	// env var is unset we leave the field empty so finalize-time
+	// ResolveBrowserPath falls through to its platform / PATH lookup;
+	// an unresolved browser is a task failure with
+	// project_design_system_preview_unavailable (no skip semantics).
 	designPreviewBrowserPath := strings.TrimSpace(os.Getenv("MULTICA_DESIGN_PREVIEW_BROWSER_PATH"))
-	if designPreviewBrowserPath == "" {
-		designPreviewBrowserPath = openDesignBrowserPath
-	}
 
 	// Probe available agent CLIs. exec.LookPath is the primary path, but on
 	// macOS/Linux a GUI-launched daemon (Electron, Launchpad) does not

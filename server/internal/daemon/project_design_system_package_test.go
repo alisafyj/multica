@@ -619,3 +619,292 @@ type recordingSupervisor struct{}
 func (recordingSupervisor) Run(context.Context, opendesign.SupervisorRunRequest) (opendesign.SupervisorRunResult, error) {
 	panic("recordingSupervisor.Run called: V2 task must not invoke the open design supervisor")
 }
+
+// TestLoopbackPreviewServerAppliesCSPAndInjectionToValidatedHTMLTargets asserts
+// that the loopback server sets the brief's CSP header and injects tokens.css
+// + the trusted bridge ONLY for paths in the package's PreviewTargets list.
+// Every other archive entry — manifest.json, tokens.css itself, assets — is
+// served raw so a malformed file cannot pick up the bridge.
+func TestLoopbackPreviewServerAppliesCSPAndInjectionToValidatedHTMLTargets(t *testing.T) {
+	envRoot := t.TempDir()
+	stageProjectDesignSystemV2Package(t, envRoot)
+
+	collected, err := collectV2ForTest(t, envRoot)
+	if err != nil {
+		t.Fatalf("collect V2: %v", err)
+	}
+
+	baseURL, prefix, cleanup := startLoopbackPreviewServerForTest(t, collected)
+	defer cleanup()
+
+	uiKitURL := baseURL + "/" + prefix + "/ui-kit/index.html"
+	previewURL := baseURL + "/" + prefix + "/preview/dashboard.html"
+	tokensURL := baseURL + "/" + prefix + "/tokens.css"
+	manifestURL := baseURL + "/" + prefix + "/manifest.json"
+	assetURL := baseURL + "/" + prefix + "/DESIGN.md"
+
+	// Validated HTML targets must carry the CSP header and the
+	// tokens.css + bridge injection.
+	for _, target := range []struct {
+		name string
+		url  string
+		path string
+	}{
+		{"ui-kit", uiKitURL, "ui-kit/index.html"},
+		{"preview", previewURL, "preview/dashboard.html"},
+	} {
+		t.Run("validated:"+target.name, func(t *testing.T) {
+			body, csp, contentType, status := fetchLoopbackURL(t, target.url)
+			if status != 200 {
+				t.Fatalf("status = %d, want 200", status)
+			}
+			if contentType != "text/html; charset=utf-8" {
+				t.Fatalf("content-type = %q, want text/html; charset=utf-8", contentType)
+			}
+			if !strings.Contains(csp, "default-src 'self' data:") {
+				t.Fatalf("CSP missing default-src: %q", csp)
+			}
+			if !strings.Contains(csp, "script-src 'sha256-") {
+				t.Fatalf("CSP missing script-src sha256 pin: %q", csp)
+			}
+			if !strings.Contains(csp, "connect-src 'none'") {
+				t.Fatalf("CSP missing connect-src 'none': %q", csp)
+			}
+			if !strings.Contains(csp, "object-src 'none'") {
+				t.Fatalf("CSP missing object-src 'none': %q", csp)
+			}
+			if !strings.Contains(csp, "frame-src 'none'") {
+				t.Fatalf("CSP missing frame-src 'none': %q", csp)
+			}
+			if !strings.Contains(csp, "form-action 'none'") {
+				t.Fatalf("CSP missing form-action 'none': %q", csp)
+			}
+			if !strings.Contains(csp, "base-uri 'none'") {
+				t.Fatalf("CSP missing base-uri 'none': %q", csp)
+			}
+			// The CSP's script-src hash MUST be the SHA-256 of the
+			// trusted bridge source. Drift here would silently break
+			// the verifier — the bridge would be injected but CSP
+			// would refuse to run it.
+			wantHash := sha256BridgeScriptHash()
+			if !strings.Contains(csp, "'sha256-"+wantHash+"'") {
+				t.Fatalf("CSP script-src hash mismatch: want sha256-%s, got %q", wantHash, csp)
+			}
+			if !strings.Contains(body, `<link rel="stylesheet" href="tokens.css">`) {
+				t.Fatalf("body missing tokens.css link: %q", body)
+			}
+			if !strings.Contains(body, selectionBridgeScript) {
+				t.Fatalf("body missing trusted bridge script: %q", body)
+			}
+		})
+	}
+
+	// Non-HTML archive entries — manifest, tokens.css, assets — must NOT
+	// carry the CSP header or the injection. A malformed asset slipping
+	// into the package must never get the bridge glued onto it.
+	for _, target := range []struct {
+		name       string
+		url        string
+		wantType   string
+		wantNoLink bool
+		wantNoCSP  bool
+		wantNoBrdg bool
+	}{
+		{"manifest", manifestURL, "application/json; charset=utf-8", true, true, true},
+		{"tokens.css", tokensURL, "text/css; charset=utf-8", true, true, true},
+		{"asset", assetURL, "application/octet-stream", true, true, true},
+	} {
+		t.Run("unvalidated:"+target.name, func(t *testing.T) {
+			body, csp, contentType, status := fetchLoopbackURL(t, target.url)
+			if status != 200 {
+				t.Fatalf("status = %d, want 200", status)
+			}
+			if contentType != target.wantType {
+				t.Fatalf("content-type = %q, want %q", contentType, target.wantType)
+			}
+			if csp != "" {
+				t.Fatalf("non-HTML response carries CSP header: %q", csp)
+			}
+			if target.wantNoLink && strings.Contains(body, `<link rel="stylesheet" href="tokens.css">`) {
+				t.Fatalf("non-HTML response carries tokens.css link injection: %q", body)
+			}
+			if target.wantNoBrdg && strings.Contains(body, selectionBridgeScript) {
+				t.Fatalf("non-HTML response carries bridge injection: %q", body)
+			}
+		})
+	}
+}
+
+// TestLoopbackPreviewServerBridgeInjectionRespectsDocumentStructure asserts
+// that the tokens.css link lands inside `<head>` (or before any body
+// content) and the bridge script lands inside `<body>` (or after all
+// content) when the HTML is a complete document. A naive prepend+append
+// implementation would inject the bridge before the user's <body>
+// payload, which CSP would still allow but would not pair correctly with
+// the bridge's postMessage contract.
+func TestLoopbackPreviewServerBridgeInjectionRespectsDocumentStructure(t *testing.T) {
+	html := `<!doctype html><html><head><title>Sample</title></head><body><main>Body</main></body></html>`
+	injected := injectBridgeAndTokens([]byte(html))
+
+	got := string(injected)
+	linkIdx := strings.Index(got, `<link rel="stylesheet" href="tokens.css">`)
+	bodyOpenIdx := strings.Index(got, "<body>")
+	bodyCloseIdx := strings.Index(got, "</body>")
+	bridgeIdx := strings.Index(got, selectionBridgeScript)
+	scriptTagStart := strings.Index(got, "<script>")
+
+	if linkIdx < 0 {
+		t.Fatalf("tokens.css link not injected: %q", got)
+	}
+	if bridgeIdx < 0 {
+		t.Fatalf("bridge not injected: %q", got)
+	}
+	// Link must land before </head>, i.e. before the body opens.
+	if linkIdx > bodyOpenIdx {
+		t.Fatalf("tokens.css link injected after <body>: linkIdx=%d bodyOpenIdx=%d", linkIdx, bodyOpenIdx)
+	}
+	// Bridge must land inside the body, i.e. after <body> opens and
+	// before </body> closes.
+	if bridgeIdx <= bodyOpenIdx {
+		t.Fatalf("bridge injected before <body>: bridgeIdx=%d bodyOpenIdx=%d", bridgeIdx, bodyOpenIdx)
+	}
+	if bridgeIdx >= bodyCloseIdx {
+		t.Fatalf("bridge injected after </body>: bridgeIdx=%d bodyCloseIdx=%d", bridgeIdx, bodyCloseIdx)
+	}
+	if scriptTagStart < 0 || scriptTagStart > bridgeIdx {
+		t.Fatalf("bridge not wrapped in <script>: %q", got)
+	}
+}
+
+// TestLoopbackPreviewServerBridgeInjectionWorksOnFragmentHTML covers the
+// real V2 case: the agent's HTML fragments are deliberately incomplete
+// (no <html>/<head>/<body>) per the prompt contract. The injection
+// strategy must still attach the link and the script on fragments.
+func TestLoopbackPreviewServerBridgeInjectionWorksOnFragmentHTML(t *testing.T) {
+	fragment := `<main data-design-node-id="overview" data-design-node-kind="block">Body</main>`
+	injected := injectBridgeAndTokens([]byte(fragment))
+
+	got := string(injected)
+	if !strings.Contains(got, `<link rel="stylesheet" href="tokens.css">`) {
+		t.Fatalf("fragment missing tokens.css link: %q", got)
+	}
+	if !strings.Contains(got, selectionBridgeScript) {
+		t.Fatalf("fragment missing bridge: %q", got)
+	}
+	if !strings.HasPrefix(got, `<link rel="stylesheet" href="tokens.css">`) {
+		t.Fatalf("fragment link not prepended: %q", got)
+	}
+	if !strings.HasSuffix(got, "</script>") {
+		t.Fatalf("fragment bridge not appended: %q", got)
+	}
+}
+
+// TestLoopbackPreviewServerRejectsOutOfPrefixRequests locks the per-run
+// prefix boundary: a hostile local process guessing a path outside the
+// prefix must get 404 so the bridge can never leak outside the per-run
+// scope.
+func TestLoopbackPreviewServerRejectsOutOfPrefixRequests(t *testing.T) {
+	envRoot := t.TempDir()
+	stageProjectDesignSystemV2Package(t, envRoot)
+
+	collected, err := collectV2ForTest(t, envRoot)
+	if err != nil {
+		t.Fatalf("collect V2: %v", err)
+	}
+
+	baseURL, prefix, cleanup := startLoopbackPreviewServerForTest(t, collected)
+	defer cleanup()
+
+	// The listener's baseURL is /<prefix>; the same prefix is the only
+	// valid root. A request for the same path with a different prefix
+	// (or no prefix) must 404.
+	otherPrefixURL := baseURL + "/ffffffffffffffff/ui-kit/index.html"
+	status := fetchLoopbackStatus(t, otherPrefixURL)
+	if status != 404 {
+		t.Fatalf("out-of-prefix UI Kit returned %d, want 404", status)
+	}
+
+	// Parent-directory escapes must 404 even with the correct prefix.
+	escape := baseURL + "/" + prefix + "/../etc/passwd"
+	status = fetchLoopbackStatus(t, escape)
+	if status != 404 {
+		t.Fatalf("parent-directory escape returned %d, want 404", status)
+	}
+}
+
+// collectV2ForTest is a tiny test helper that collects the V2 directory
+// rooted at envRoot/output/project-design-system with the binding fields
+// the daemon populates from the task context.
+func collectV2ForTest(t *testing.T, envRoot string) (projectdesignsystem.CollectedV2Package, error) {
+	t.Helper()
+	binding := projectdesignsystem.PackageBinding{
+		WorkspaceID:         "33333333-3333-3333-3333-333333333333",
+		ProjectID:           "22222222-2222-2222-2222-222222222222",
+		DesignSystemID:      "11111111-1111-1111-1111-111111111111",
+		TaskID:              "task-1",
+		AgentID:             "44444444-4444-4444-4444-444444444444",
+		Operation:           "generate",
+		InputSnapshotSHA256: "sha256:" + strings.Repeat("a", 64),
+	}
+	collectRoot := filepath.Join(envRoot, "output", "project-design-system")
+	return projectdesignsystem.CollectV2Directory(collectRoot, binding)
+}
+
+// startLoopbackPreviewServerForTest starts a loopback preview server with
+// a tiny timeout so the test can shut it down deterministically. Returns
+// the public base URL (including the prefix) and a cleanup hook the
+// caller must defer. The base URL is the loopback listener address; the
+// caller appends `/<archive-path>` directly so requests hit the mounted
+// handler rooted at `/<prefix>/`.
+func startLoopbackPreviewServerForTest(t *testing.T, collected projectdesignsystem.CollectedV2Package) (string, string, func()) {
+	t.Helper()
+	prefix := "testprefix12345678"
+	server, baseURL, err := startLoopbackPreviewServer(collected.Archive, manifestForServer(collected.Manifest), collected.Manifest.PreviewTargets, prefix, "127.0.0.1", 5*time.Second)
+	if err != nil {
+		t.Fatalf("start loopback server: %v", err)
+	}
+	cleanup := func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+	}
+	return baseURL, prefix, cleanup
+}
+
+// fetchLoopbackURL performs a GET against the loopback server, returning
+// the body bytes, the Content-Security-Policy header (empty when unset),
+// the Content-Type header, and the HTTP status.
+func fetchLoopbackURL(t *testing.T, url string) (body, csp, contentType string, status int) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	bytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return string(bytes), resp.Header.Get("Content-Security-Policy"), resp.Header.Get("Content-Type"), resp.StatusCode
+}
+
+func fetchLoopbackStatus(t *testing.T, url string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}

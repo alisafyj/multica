@@ -597,10 +597,9 @@ func pinNonCodexAgentsToMissingPaths(t *testing.T) {
 
 // TestLoadConfig_DesignPreviewBrowserPath_PrefersNativeEnvVar locks down the
 // resolution order for the V2-native finalize gate's Chromium path. The
-// native env var wins over MULTICA_OPEN_DESIGN_BROWSER_PATH so a daemon that
-// runs both chains can pin them independently; the Open Design env var
-// remains a fallback so an operator who already configured one Chromium
-// for Open Design doesn't have to duplicate it just to enable V2.
+// native env var wins when set; an unset native env var leaves the field
+// empty so finalize-time ResolveBrowserPath falls through to its platform /
+// PATH lookup.
 func TestLoadConfig_DesignPreviewBrowserPath_PrefersNativeEnvVar(t *testing.T) {
 	stageFakeAgent(t)
 	native := filepath.Join(t.TempDir(), "native-chromium")
@@ -623,11 +622,13 @@ func TestLoadConfig_DesignPreviewBrowserPath_PrefersNativeEnvVar(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_DesignPreviewBrowserPath_FallsBackToOpenDesignPath covers
-// the operator-friendly default: when the new env var is unset, the V2
-// gate reuses the Chromium the operator already pinned for the legacy
-// Open Design chain rather than reporting an empty path.
-func TestLoadConfig_DesignPreviewBrowserPath_FallsBackToOpenDesignPath(t *testing.T) {
+// TestLoadConfig_DesignPreviewBrowserPath_DoesNotFallBackToOpenDesignPath
+// locks down the brief's "never read MULTICA_OPEN_DESIGN_* for native tasks"
+// constraint at the config layer. An operator who pins MULTICA_OPEN_DESIGN_BROWSER_PATH
+// but not MULTICA_DESIGN_PREVIEW_BROWSER_PATH must see the V2 field empty —
+// native finalize must consult only its own env var (or platform/PATH) and
+// never reach across the chains.
+func TestLoadConfig_DesignPreviewBrowserPath_DoesNotFallBackToOpenDesignPath(t *testing.T) {
 	stageFakeAgent(t)
 	legacy := filepath.Join(t.TempDir(), "open-design-chromium")
 	t.Setenv("MULTICA_DESIGN_PREVIEW_BROWSER_PATH", "")
@@ -640,7 +641,10 @@ func TestLoadConfig_DesignPreviewBrowserPath_FallsBackToOpenDesignPath(t *testin
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.DesignPreviewBrowserPath != legacy {
-		t.Fatalf("DesignPreviewBrowserPath = %q, want fallback %q", cfg.DesignPreviewBrowserPath, legacy)
+	if cfg.DesignPreviewBrowserPath != "" {
+		t.Fatalf("DesignPreviewBrowserPath = %q, want empty (must not fall back to MULTICA_OPEN_DESIGN_BROWSER_PATH)", cfg.DesignPreviewBrowserPath)
+	}
+	if cfg.OpenDesignBrowserPath != legacy {
+		t.Fatalf("OpenDesignBrowserPath = %q, want legacy %q (Open Design chain should keep its value)", cfg.OpenDesignBrowserPath, legacy)
 	}
 }
