@@ -10,10 +10,7 @@ import { useTranslation } from "react-i18next";
 import type { ProjectStatus } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
 import { ProjectStatusIcon } from "@/components/ui/project-status-icon";
-import {
-  PROJECT_STATUSES,
-  PROJECT_STATUS_LABEL,
-} from "@/lib/project-status";
+import { PROJECT_STATUSES, projectStatusLabel } from "@/lib/project-status";
 import { THEME } from "@/lib/theme";
 
 interface Props {
@@ -45,7 +42,7 @@ export function ProjectStatusPickerBody({ value, onChange }: Props) {
             >
               <ProjectStatusIcon status={status} size={18} />
               <Text className="flex-1 text-base text-foreground">
-                {PROJECT_STATUS_LABEL[status]}
+                {projectStatusLabel(t, status)}
               </Text>
               {selected ? (
                 <Ionicons name="checkmark" size={20} color={checkColor} />

@@ -14,10 +14,7 @@ import { Text } from "@/components/ui/text";
 import { ProjectIcon } from "@/components/ui/project-icon";
 import { ProjectStatusIcon } from "@/components/ui/project-status-icon";
 import { ProjectPriorityIcon } from "@/components/ui/project-priority-icon";
-import {
-  projectPriorityLabel,
-  projectStatusLabel,
-} from "@/lib/project-status";
+import { useProjectLabels } from "@/lib/use-project-labels";
 import { timeAgo } from "@/lib/time-ago";
 
 interface Props {
@@ -26,6 +23,7 @@ interface Props {
 }
 
 export function ProjectRow({ project, onPress }: Props) {
+  const { statusLabel, priorityLabel } = useProjectLabels();
   const totalIssues = project.issue_count;
   const showCount = totalIssues > 0;
 
@@ -44,14 +42,14 @@ export function ProjectRow({ project, onPress }: Props) {
             <View className="flex-row items-center gap-1.5">
               <ProjectStatusIcon status={project.status} size={12} />
               <Text className="text-xs text-muted-foreground">
-                {projectStatusLabel(project.status)}
+                {statusLabel(project.status)}
               </Text>
             </View>
             {project.priority !== "none" ? (
               <View className="flex-row items-center gap-1.5">
                 <ProjectPriorityIcon priority={project.priority} size={12} />
                 <Text className="text-xs text-muted-foreground">
-                  {projectPriorityLabel(project.priority)}
+                  {priorityLabel(project.priority)}
                 </Text>
               </View>
             ) : null}

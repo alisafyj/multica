@@ -233,7 +233,7 @@ export default function NewProject() {
                 >
                   <ProjectStatusIcon status={status} size={16} />
                   <Text className="text-sm text-foreground flex-1">
-                    {projectStatusLabel(status)}
+                    {projectStatusLabel(t, status)}
                   </Text>
                 </Pressable>
               </Field>
@@ -246,7 +246,7 @@ export default function NewProject() {
                 >
                   <ProjectPriorityIcon priority={priority} size={16} />
                   <Text className="text-sm text-foreground flex-1">
-                    {projectPriorityLabel(priority)}
+                    {projectPriorityLabel(t, priority)}
                   </Text>
                 </Pressable>
               </Field>

@@ -23,6 +23,7 @@ import { Text } from "@/components/ui/text";
 import { StatusIcon } from "@/components/ui/status-icon";
 import { PriorityIcon } from "@/components/ui/priority-icon";
 import { useActorLookup } from "@/data/use-actor-name";
+import { useIssueLabels } from "@/lib/use-issue-labels";
 import { cn } from "@/lib/utils";
 
 // due_date is a calendar day — format timezone-safely (no offset day shift).
@@ -43,12 +44,11 @@ export function InboxDetailLabel({
 }) {
   const { getName } = useActorLookup();
   const { t } = useTranslation("inbox");
+  // Status / priority labels come from the shared "issues" namespace so the
+  // inbox row and the issue screens can never drift apart.
+  const { statusLabel, priorityLabel } = useIssueLabels();
   const details = item.details ?? {};
 
-  const statusLabel = (status: IssueStatus) =>
-    t(`status_label.${status}`, { defaultValue: status });
-  const priorityLabel = (priority: IssuePriority) =>
-    t(`priority_label.${priority}`, { defaultValue: priority });
   const typeLabel = (type: InboxItemType) =>
     t(`type_label.${type}`, { defaultValue: type });
 

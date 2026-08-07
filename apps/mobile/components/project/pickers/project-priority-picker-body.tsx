@@ -12,7 +12,7 @@ import { Text } from "@/components/ui/text";
 import { ProjectPriorityIcon } from "@/components/ui/project-priority-icon";
 import {
   PROJECT_PRIORITIES,
-  PROJECT_PRIORITY_LABEL,
+  projectPriorityLabel,
 } from "@/lib/project-status";
 import { THEME } from "@/lib/theme";
 
@@ -45,7 +45,7 @@ export function ProjectPriorityPickerBody({ value, onChange }: Props) {
             >
               <ProjectPriorityIcon priority={priority} size={18} />
               <Text className="flex-1 text-base text-foreground">
-                {PROJECT_PRIORITY_LABEL[priority]}
+                {projectPriorityLabel(t, priority)}
               </Text>
               {selected ? (
                 <Ionicons name="checkmark" size={20} color={checkColor} />

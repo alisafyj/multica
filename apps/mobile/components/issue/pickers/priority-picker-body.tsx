@@ -9,7 +9,7 @@ import { useTranslation } from "react-i18next";
 import type { IssuePriority } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
 import { PriorityIcon } from "@/components/ui/priority-icon";
-import { PRIORITY_LABEL } from "@/lib/issue-status";
+import { issuePriorityLabel } from "@/lib/issue-status";
 import { THEME } from "@/lib/theme";
 
 // Display order: severity descending (urgent → none).
@@ -50,7 +50,7 @@ export function PriorityPickerBody({ value, onChange }: Props) {
             >
               <PriorityIcon priority={v} size={16} />
               <Text className="flex-1 text-base text-foreground">
-                {PRIORITY_LABEL[v]}
+                {issuePriorityLabel(t, v)}
               </Text>
               {selected ? (
                 <Ionicons name="checkmark" size={20} color={checkColor} />

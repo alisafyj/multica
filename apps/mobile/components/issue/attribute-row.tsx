@@ -31,7 +31,7 @@ import { AttributeChip } from "./attribute-chip";
 import { useActorLookup } from "@/data/use-actor-name";
 import { findProject, projectListOptions } from "@/data/queries/projects";
 import { useWorkspaceStore } from "@/data/workspace-store";
-import { STATUS_LABEL, PRIORITY_LABEL } from "@/lib/issue-status";
+import { issueStatusLabel, issuePriorityLabel } from "@/lib/issue-status";
 
 /**
  * The picker fields the issue-detail attribute row can open. Bound to a
@@ -93,7 +93,7 @@ export function AttributeRow({ issue }: { issue: Issue }) {
   const priorityChipLabel =
     issue.priority === "none"
       ? t("attribute.priority_placeholder")
-      : PRIORITY_LABEL[issue.priority];
+      : issuePriorityLabel(t, issue.priority);
 
   const openPicker = (field: IssuePickerField) => {
     if (!wsSlug) return;
@@ -108,7 +108,7 @@ export function AttributeRow({ issue }: { issue: Issue }) {
       {/* Status — always shown */}
       <AttributeChip
         icon={<StatusIcon status={issue.status} size={14} />}
-        label={STATUS_LABEL[issue.status]}
+        label={issueStatusLabel(t, issue.status)}
         variant="filled"
         onPress={() => openPicker("status")}
       />
