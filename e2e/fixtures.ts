@@ -77,6 +77,8 @@ export class TestApiClient {
   private email: string | null = null;
   private createdIssueIds: string[] = [];
   private seededIssueIds: string[] = [];
+  private createdProjectIds: string[] = [];
+  private createdTestCaseIds: string[] = [];
 
   async login(email: string, name: string) {
     const client = new pg.Client(DATABASE_URL);
@@ -336,6 +338,58 @@ export class TestApiClient {
   }
 
   /** Clean up all issues created during this test. */
+  async createProject(title: string, opts?: Record<string, unknown>) {
+    const res = await this.authedFetch("/api/projects", {
+      method: "POST",
+      body: JSON.stringify({ title, ...opts }),
+    });
+    const project = await res.json();
+    this.createdProjectIds.push(project.id);
+    return project;
+  }
+
+  async createProjectResource(projectId: string, body: Record<string, unknown>) {
+    const res = await this.authedFetch(`/api/projects/${projectId}/resources`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  async createTestCase(body: Record<string, unknown>) {
+    const res = await this.authedFetch("/api/test-cases", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    const testCase = await res.json();
+    this.createdTestCaseIds.push(testCase.id);
+    return testCase;
+  }
+
+  async createTestGenerationJob(body: Record<string, unknown>) {
+    const res = await this.authedFetch("/api/test-generation-jobs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  async generateTestGenerationPlan(jobId: string) {
+    const res = await this.authedFetch(
+      `/api/test-generation-jobs/${jobId}/plan/generate`,
+      { method: "POST" },
+    );
+    return res.json();
+  }
+
+  async approveTestGenerationPlan(jobId: string) {
+    const res = await this.authedFetch(
+      `/api/test-generation-jobs/${jobId}/plan/approve`,
+      { method: "POST" },
+    );
+    return res.json();
+  }
+
   async cleanup() {
     if (this.seededIssueIds.length > 0 && this.workspaceId) {
       const client = new pg.Client(DATABASE_URL);
@@ -358,6 +412,24 @@ export class TestApiClient {
       }
     }
     this.createdIssueIds = [];
+    // Test cases first: deleting a project does not cascade to them, and the
+    // backend deliberately has no foreign keys.
+    for (const id of this.createdTestCaseIds) {
+      try {
+        await this.authedFetch(`/api/test-cases/${id}`, { method: "DELETE" });
+      } catch {
+        /* ignore — may already be deleted */
+      }
+    }
+    this.createdTestCaseIds = [];
+    for (const id of this.createdProjectIds) {
+      try {
+        await this.authedFetch(`/api/projects/${id}`, { method: "DELETE" });
+      } catch {
+        /* ignore — may already be deleted */
+      }
+    }
+    this.createdProjectIds = [];
   }
 
   getToken() {
@@ -376,6 +448,55 @@ export class TestApiClient {
       throw new Error("test api client not logged in");
     }
     return { token: this.token, csrfToken: this.csrfToken, expiresAt: this.expiresAt };
+  }
+
+  async createTestPlan(body: Record<string, unknown>) {
+    const res = await this.authedFetch("/api/test-plans", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  async createTestRun(body: Record<string, unknown>) {
+    const res = await this.authedFetch("/api/test-runs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  async listTestRunCases(runId: string) {
+    const res = await this.authedFetch(`/api/test-runs/${runId}/cases`);
+    const body = await res.json();
+    return body.run_cases ?? body.cases ?? body;
+  }
+
+  async setTestRunCaseResult(runCaseId: string, body: Record<string, unknown>) {
+    const res = await this.authedFetch(`/api/test-run-cases/${runCaseId}/result`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  async retryTestRun(runId: string, body: Record<string, unknown>) {
+    const res = await this.authedFetch(`/api/test-runs/${runId}/retry`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  /**
+   * Raw POST for tests that assert on a rejection status rather than a body.
+   * authedFetch does not throw on non-2xx, so the Response comes back intact.
+   */
+  async post(path: string, body?: Record<string, unknown>) {
+    return this.authedFetch(path, {
+      method: "POST",
+      body: body ? JSON.stringify(body) : undefined,
+    });
   }
 
   private async authedFetch(path: string, init?: RequestInit) {

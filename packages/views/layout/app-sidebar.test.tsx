@@ -4,8 +4,9 @@ import { ApiError } from "@multica/core/api";
 import { renderWithI18n } from "../test/i18n";
 import { AppSidebar } from "./app-sidebar";
 
-const { appForeground, chatSessions, chatStore, detail, deletePin, inboxItems, navigation, pins, summary, workspaces } = vi.hoisted(() => ({
+const { appForeground, chatSessions, chatStore, detail, deletePin, inboxItems, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
   appForeground: { current: true },
+  sidebarState: { setOpenMobile: vi.fn() },
   chatSessions: { current: [] as { id?: string; unread_count?: number }[] },
   chatStore: { current: { activeSessionId: null as string | null, isOpen: false } },
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
@@ -68,6 +69,7 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
   ),
   SidebarMenuItem: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarRail: () => null,
+  useSidebar: () => ({ setOpenMobile: sidebarState.setOpenMobile }),
 }));
 vi.mock("@multica/ui/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -128,6 +130,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     projects: () => "/acme/projects",
     pmo: () => "/acme/pmo",
     designs: () => "/acme/designs",
+    tests: () => "/acme/tests",
     autopilots: () => "/acme/autopilots",
     agents: () => "/acme/agents",
     squads: () => "/acme/squads",
@@ -252,6 +255,36 @@ describe("workspace nav — Requirements", () => {
     expect(pmoNav?.textContent).toContain("Requirements");
     const projectsNav = container.querySelector<HTMLElement>('button[data-href="/acme/projects"]');
     expect(projectsNav?.nextElementSibling).toBe(pmoNav);
+  });
+});
+
+// On a phone the sidebar is a Sheet laid over the page, so a nav tap that
+// leaves it open renders the destination underneath and reads as a dead tap.
+describe("mobile sheet dismissal", () => {
+  beforeEach(() => {
+    sidebarState.setOpenMobile.mockClear();
+    navigation.current = { pathname: "/acme/issues" };
+  });
+
+  it("dismisses the sheet once the route changes", () => {
+    const { rerender } = render(<AppSidebar />);
+    sidebarState.setOpenMobile.mockClear();
+
+    navigation.current = { pathname: "/acme/inbox" };
+    rerender(<AppSidebar />);
+
+    expect(sidebarState.setOpenMobile).toHaveBeenCalledWith(false);
+  });
+
+  // Closing on `pathname` rather than per-link keeps every route out of the
+  // sidebar covered at once — nav groups, pins, and the switcher's own push.
+  it("does not re-dismiss while the route holds still", () => {
+    const { rerender } = render(<AppSidebar />);
+    sidebarState.setOpenMobile.mockClear();
+
+    rerender(<AppSidebar />);
+
+    expect(sidebarState.setOpenMobile).not.toHaveBeenCalled();
   });
 });
 

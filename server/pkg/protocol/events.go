@@ -3,10 +3,11 @@ package protocol
 // Event types for WebSocket communication between server, web clients, and daemon.
 const (
 	// Issue events
-	EventIssueCreated         = "issue:created"
-	EventIssueUpdated         = "issue:updated"
-	EventIssueDeleted         = "issue:deleted"
-	EventIssueMetadataChanged = "issue_metadata:changed"
+	EventIssueCreated            = "issue:created"
+	EventIssueUpdated            = "issue:updated"
+	EventIssueDeleted            = "issue:deleted"
+	EventIssueMetadataChanged    = "issue_metadata:changed"
+	EventIssueAttachmentsChanged = "issue_attachments:changed"
 
 	// Comment events
 	EventCommentCreated       = "comment:created"
@@ -95,6 +96,26 @@ const (
 	EventProjectResourceCreated = "project_resource:created"
 	EventProjectResourceUpdated = "project_resource:updated"
 	EventProjectResourceDeleted = "project_resource:deleted"
+
+	// Test case events
+	EventTestCaseCreated = "test_case:created"
+	EventTestCaseUpdated = "test_case:updated"
+	EventTestCaseDeleted = "test_case:deleted"
+
+	// Test generation events. design_restore has no websocket event and leans on
+	// a 3-second client poll instead; these exist so the generation UI does not
+	// have to.
+	EventTestGenerationJobUpdated = "test_generation_job:updated"
+	EventTestCaseProposalCreated  = "test_case_proposal:created"
+	EventTestCaseProposalUpdated  = "test_case_proposal:updated"
+
+	// Test plan and execution events
+	EventTestPlanCreated    = "test_plan:created"
+	EventTestPlanUpdated    = "test_plan:updated"
+	EventTestPlanDeleted    = "test_plan:deleted"
+	EventTestRunUpdated     = "test_run:updated"
+	EventTestRunCaseUpdated = "test_run_case:updated"
+	EventTestCapabilityUpdated = "test_capability:updated"
 
 	// Gallery Native design events
 	EventDesignReady         = "design:ready"
@@ -186,4 +207,9 @@ const (
 	// invalidate the Slack installations query on either.
 	EventSlackInstallationCreated = "slack_installation:created"
 	EventSlackInstallationRevoked = "slack_installation:revoked"
+
+	// DingTalk installation lifecycle follows the same create/revoke semantics
+	// as Slack's BYO channel installation.
+	EventDingTalkInstallationCreated = "dingtalk_installation:created"
+	EventDingTalkInstallationRevoked = "dingtalk_installation:revoked"
 )

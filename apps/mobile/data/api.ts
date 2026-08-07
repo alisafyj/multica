@@ -133,6 +133,7 @@ import {
 } from "./schemas";
 import type { ZodType } from "zod";
 import { getCurrentSlug } from "./workspace-store";
+import { CLIENT_OS, CLIENT_VERSION } from "@/lib/client-identity";
 import { parseWithFallback } from "@/lib/parse-response";
 import { createRequestId } from "@/lib/request-id";
 
@@ -219,8 +220,8 @@ class ApiClient {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "X-Client-Platform": "mobile",
-      "X-Client-OS": "ios",
-      "X-Client-Version": "0.1.0",
+      "X-Client-OS": CLIENT_OS,
+      "X-Client-Version": CLIENT_VERSION,
       "X-Request-ID": rid,
       ...((init.headers as Record<string, string>) ?? {}),
     };
@@ -1337,8 +1338,8 @@ class ApiClient {
     const headers: Record<string, string> = {
       // No Content-Type — let fetch set the multipart boundary.
       "X-Client-Platform": "mobile",
-      "X-Client-OS": "ios",
-      "X-Client-Version": "0.1.0",
+      "X-Client-OS": CLIENT_OS,
+      "X-Client-Version": CLIENT_VERSION,
       "X-Request-ID": rid,
     };
     if (this.token) headers["Authorization"] = `Bearer ${this.token}`;

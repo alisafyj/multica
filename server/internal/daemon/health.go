@@ -42,7 +42,12 @@ type HealthResponse struct {
 	// render as an absent runtime, which is what made GH #6077 unactionable for
 	// the reporter (MUL-5439).
 	SkippedAgents map[string]string `json:"skipped_agents,omitempty"`
-	Workspaces    []healthWorkspace `json:"workspaces"`
+	// ReloadPendingReason explains why the daemon has confirmed a multica
+	// version change on disk but hasn't restarted into it yet — it was busy at
+	// the last barrier check and will retry when idle. Omitted when empty, so
+	// older consumers see no change. Diagnostic only: nothing keys off it.
+	ReloadPendingReason string            `json:"reload_pending_reason,omitempty"`
+	Workspaces          []healthWorkspace `json:"workspaces"`
 }
 
 type healthWorkspace struct {
@@ -114,7 +119,9 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 			ActiveTaskCount: d.activeTasks.Load(),
 			Agents:          agents,
 			SkippedAgents:   d.skippedAgentsSnapshot(),
-			Workspaces:      wsList,
+
+			ReloadPendingReason: d.reloadPending(),
+			Workspaces:          wsList,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -222,6 +229,7 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 			Ref:                 checkoutRef,
 			AgentName:           req.AgentName,
 			TaskID:              req.TaskID,
+			PeerURLs:            d.taskRepoPeerURLs(req.WorkspaceID, req.TaskID),
 			CoAuthoredByEnabled: d.workspaceCoAuthoredByEnabled(req.WorkspaceID),
 			IsolatedGitMetadata: req.CheckoutMode == repoCheckoutModeIsolated,
 		})

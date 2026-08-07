@@ -1,0 +1,378 @@
+{
+  "page": {
+    "title": "テストケース",
+    "empty": "テストケースがありません",
+    "emptyHint": "新規作成するか、別のプロジェクトを選択してください",
+    "new": "新規ケース",
+    "selectProject": "プロジェクトを選択",
+    "generate": "AI で生成",
+    "generating": "開始中…",
+    "untitled": "無題のケース"
+  },
+  "filters": {
+    "all": "すべて",
+    "module": "モジュール",
+    "status": "ステータス",
+    "priority": "優先度",
+    "type": "種別",
+    "origin": "作成元",
+    "reviewQueue": "レビュー待ち",
+    "aiReviewQueue": "AI生成レビュー待ち",
+    "clear": "フィルターをクリア",
+    "search": "ケースを検索..."
+  },
+  "columns": {
+    "key": "キー",
+    "title": "タイトル",
+    "module": "モジュール",
+    "type": "種別",
+    "priority": "優先度",
+    "status": "ステータス",
+    "origin": "作成元",
+    "repos": "リポジトリ",
+    "updated": "更新日時"
+  },
+  "status": {
+    "draft": "レビュー待ち",
+    "active": "有効",
+    "deprecated": "廃止"
+  },
+  "origin": {
+    "ai": "AI 生成",
+    "human": "手動"
+  },
+  "priority": {
+    "p0": "P0",
+    "p1": "P1",
+    "p2": "P2",
+    "p3": "P3"
+  },
+  "scope": {
+    "single_repo": "単一リポジトリ",
+    "cross_repo": "複数リポジトリ",
+    "no_repo": "リポジトリなし"
+  },
+  "executionMode": {
+    "manual": "手動",
+    "agent": "エージェント",
+    "both": "手動またはエージェント"
+  },
+  "caseType": {
+    "functional": "機能",
+    "business_flow": "業務フロー",
+    "api": "API",
+    "ui": "UI",
+    "e2e": "エンドツーエンド",
+    "regression": "リグレッション",
+    "boundary": "境界値",
+    "exception": "例外",
+    "permission": "権限",
+    "data_consistency": "データ整合性",
+    "compatibility": "互換性",
+    "performance": "パフォーマンス",
+    "security": "セキュリティ"
+  },
+  "detail": {
+    "preconditions": "事前条件",
+    "steps": "手順",
+    "expected": "期待結果",
+    "testData": "テストデータ",
+    "repos": "リポジトリ",
+    "revisions": "変更履歴",
+    "project": "プロジェクト",
+    "module": "モジュール",
+    "priority": "優先度",
+    "type": "種別",
+    "scope": "範囲",
+    "executionMode": "実行方法",
+    "notFound": "テストケースが見つかりません",
+    "untitled": "無題のケース"
+  },
+  "steps": {
+    "add": "手順を追加",
+    "action": "操作",
+    "expected": "期待結果",
+    "repo": "リポジトリ",
+    "remove": "この手順を削除",
+    "empty": "手順がありません",
+    "actionPlaceholder": "操作を入力...",
+    "expectedPlaceholder": "期待結果を入力...",
+    "noRepo": "指定なし"
+  },
+  "repos": {
+    "add": "リポジトリを追加",
+    "alias": "エイリアス",
+    "role": "役割",
+    "pathGlobs": "パス範囲",
+    "remove": "削除",
+    "empty": "リポジトリが未設定です",
+    "aliasPlaceholder": "手順で参照する短い名前",
+    "pathGlobsPlaceholder": "src/order/**、カンマ区切り",
+    "noResources": "このプロジェクトにはリポジトリが紐付いていません",
+    "crossRepoNeedsRepos": "複数リポジトリのケースには 2 つ以上のリポジトリが必要です",
+    "crossRepoNeedsRoles": "複数リポジトリのケースには異なる役割が必要です"
+  },
+  "role": {
+    "under_test": "テスト対象",
+    "driver": "ドライバー",
+    "verifier": "検証",
+    "fixture": "データ準備"
+  },
+  "revisions": {
+    "empty": "変更履歴がありません",
+    "version": "バージョン {{version}}",
+    "separator": " · ",
+    "human_edit": "手動編集",
+    "proposal_accepted": "AI 提案を採用",
+    "status_change": "ステータス変更",
+    "restore": "復元"
+  },
+  "actions": {
+    "approve": "承認",
+    "delete": "削除",
+    "save": "保存",
+    "cancel": "キャンセル",
+    "edit": "編集",
+    "confirmDelete": "このテストケースを削除しますか？",
+    "batchApprove": "選択したケースを承認",
+    "selectAll": "すべて選択"
+  },
+  "toast": {
+    "created": "テストケースを作成しました",
+    "saved": "変更を保存しました",
+    "approved": "テストケースを承認しました",
+    "deleted": "テストケースを削除しました",
+    "saveFailed": "変更を保存できません",
+    "deleteFailed": "テストケースを削除できません",
+    "planGenerated": "プランを生成しました",
+    "planSaved": "プランを保存しました",
+    "planApproved": "プランを承認しました",
+    "dispatched": "エージェントに派遣しました",
+    "planFailed": "プランを生成できません",
+    "planSaveFailed": "プランを保存できません",
+    "planApproveFailed": "プランを承認できません",
+    "dispatchFailed": "派遣できません",
+    "proposalAccepted": "提案を採用しました",
+    "proposalRejected": "提案を拒否しました",
+    "proposalFailed": "提案を更新できません",
+    "batchApproved": "{{count}} 件のケースを承認しました",
+    "generationStarted": "生成ジョブを作成しました。ディスパッチ前に範囲を確認してください。",
+    "generationFailed": "生成ジョブを作成できませんでした。",
+    "createFailed": "テストケースを作成できませんでした。",
+    "planCreated": "テスト計画を作成しました",
+    "planDeleted": "テスト計画を削除しました",
+    "planCreateFailed": "テスト計画を作成できませんでした",
+    "planDeleteFailed": "テスト計画を削除できませんでした",
+    "runCreated": "テスト実行を作成しました",
+    "runCreateFailed": "テスト実行を作成できませんでした",
+    "runStarted": "実行を開始しました",
+    "runStartFailed": "実行を開始できませんでした",
+    "runAborted": "実行を中止しました",
+    "runAbortFailed": "実行を中止できませんでした",
+    "runDispatched": "エージェントに派遣しました",
+    "runDispatchFailed": "実行を派遣できませんでした",
+    "runDispatchBlocked": "不足している能力: {{kind}}",
+    "runResultSaved": "結果を保存しました",
+    "runResultFailed": "結果を保存できませんでした",
+    "defectOpened": "不具合issueを作成しました",
+    "defectFailed": "不具合を開けませんでした"
+  },
+  "job": {
+    "title": "生成ジョブ",
+    "back": "戻る",
+    "loading": "読み込み中...",
+    "error": "ジョブを読み込めません",
+    "retry": "再試行",
+    "meta": {
+      "status": "ステータス",
+      "createdAt": "作成日時",
+      "agentTask": "エージェントタスク",
+      "notDispatched": "未派遣",
+      "proposals": "提案数"
+    },
+    "jobStatus": {
+      "queued": "待機中",
+      "running": "実行中",
+      "completed": "完了",
+      "failed": "失敗",
+      "cancelled": "キャンセル"
+    },
+    "planStatus": {
+      "draft": "レビュー待ち",
+      "approved": "承認済み",
+      "dispatched": "派遣済み",
+      "archived": "アーカイブ"
+    },
+    "stats": {
+      "total": "合計",
+      "pending": "保留中",
+      "accepted": "採用済み",
+      "rejected": "拒否済み"
+    },
+    "plan": {
+      "title": "生成プラン",
+      "generate": "プランを生成",
+      "regenerate": "再生成",
+      "save": "プランを保存",
+      "approve": "プランを承認",
+      "reviewNotes": "レビューメモ",
+      "reviewNotesPlaceholder": "任意: レビューコメント",
+      "rawJson": "プラン JSON",
+      "editJson": "生の JSON を編集",
+      "editJsonHint": "承認前に編集可能",
+      "noPlan": "プランがありません",
+      "noPlanHint": "まずプランを生成し、範囲を確認してから承認してください。",
+      "repos": "リポジトリ",
+      "modules": "モジュール",
+      "instructions": "指示",
+      "notSet": "未設定",
+      "approvedAt": "承認日時"
+    },
+    "dispatch": {
+      "title": "エージェントに派遣",
+      "hint": "承認済みプランを実行してテストケースを生成するエージェントを選択します。",
+      "agent": "エージェント",
+      "noAgent": "利用可能なエージェントがありません",
+      "button": "派遣",
+      "dispatching": "派遣中...",
+      "running": "実行中...",
+      "redispatch": "再派遣",
+      "needsPlan": "派遣前にプランを承認してください。"
+    },
+    "result": {
+      "title": "実行結果",
+      "proposals": "AI提案一覧",
+      "noProposals": "提案はありません"
+    }
+  },
+  "proposals": {
+    "title": "AI提案",
+    "empty": "このケースへのAI提案はありません",
+    "loading": "提案を読み込み中...",
+    "accept": "採用",
+    "reject": "拒否",
+    "rationale": "理由",
+    "current": "現在の値",
+    "suggested": "提案値",
+    "noChange": "変更なし",
+    "kind": {
+      "update": "更新",
+      "obsolete": "廃止"
+    },
+    "status": {
+      "pending": "保留中",
+      "accepted": "採用済み",
+      "rejected": "拒否済み"
+    }
+  },
+  "plans": {
+    "title": "テスト計画",
+    "new": "新規計画",
+    "empty": "テスト計画がありません",
+    "emptyHint": "リリースのテストケースをまとめるために計画を作成してください。",
+    "createTitle": "計画名",
+    "run": "実行を作成",
+    "status": {
+      "draft": "下書き",
+      "active": "進行中",
+      "archived": "アーカイブ済み"
+    },
+    "columns": {
+      "title": "タイトル",
+      "status": "ステータス",
+      "cases": "ケース数",
+      "created": "作成日"
+    },
+    "detail": {
+      "back": "戻る",
+      "cases": "ケース",
+      "empty": "この計画にはケースがありません",
+      "emptyHint": "テストライブラリからケースを追加してください。",
+      "addCases": "ケースを追加",
+      "createRun": "実行を作成",
+      "runTitle": "実行タイトル",
+      "environment": "環境",
+      "buildRef": "ビルドRef",
+      "remove": "削除",
+      "caseCount_other": "{{count}}件のケース"
+    }
+  },
+  "run": {
+    "title": "テスト実行",
+    "back": "戻る",
+    "error": "この実行を読み込めませんでした",
+    "retry": "再試行",
+    "start": "開始",
+    "abort": "中止",
+    "retryAll": "全件再実行",
+    "retryFailed": "失敗のみ再実行",
+    "empty": "この実行にはケースがありません",
+    "meta": {
+      "status": "ステータス",
+      "environment": "環境",
+      "buildRef": "ビルド",
+      "plan": "計画",
+      "executor": "実行者",
+      "started": "開始日時",
+      "completed": "完了日時"
+    },
+    "counts": {
+      "passed": "合格",
+      "failed": "失敗",
+      "pending": "未実行",
+      "blocked": "ブロック",
+      "skipped": "スキップ"
+    },
+    "status": {
+      "pending": "待機中",
+      "running": "実行中",
+      "completed": "完了",
+      "aborted": "中止済み",
+      "blocked": "ブロック済み"
+    },
+    "result": {
+      "pending": "未実行",
+      "running": "実行中",
+      "passed": "合格",
+      "failed": "失敗",
+      "blocked": "ブロック",
+      "skipped": "スキップ"
+    },
+    "dispatch": {
+      "title": "エージェントへ派遣",
+      "hint": "この実行を実行するエージェントを選択してください。",
+      "agent": "エージェント",
+      "noAgent": "利用可能なエージェントがありません",
+      "button": "派遣",
+      "dispatching": "派遣中...",
+      "running": "実行中...",
+      "blocked": "不足している能力: {{kind}}"
+    }
+  },
+  "runCase": {
+    "notes": "メモ",
+    "notesPlaceholder": "テスターのメモ...",
+    "defect": "不具合を開く",
+    "defectTitle": "不具合タイトル",
+    "defectTitlePlaceholder": "不具合を説明してください...",
+    "defectOpen": "開く",
+    "evidence": "証拠",
+    "step": "ステップ {{index}}",
+    "columns": {
+      "case": "ケース",
+      "result": "結果",
+      "executor": "実行者",
+      "duration": "所要時間",
+      "defect": "不具合"
+    }
+  },
+  "timeline": {
+    "title": "実行履歴",
+    "empty": "実行記録がありません",
+    "run": "実行",
+    "result": "結果",
+    "environment": "環境",
+    "buildRef": "ビルド",
+    "executedAt": "実行日時"
+  }
+}

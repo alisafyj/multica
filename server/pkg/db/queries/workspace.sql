@@ -1,7 +1,8 @@
 -- name: ListWorkspaces :many
 SELECT w.id, w.name, w.slug, w.description, w.settings,
        w.created_at, w.updated_at, w.context, w.repos,
-       w.issue_prefix, w.issue_counter, w.avatar_url, w.attribution_fail_closed
+       w.issue_prefix, w.issue_counter, w.avatar_url, w.attribution_fail_closed,
+       w.test_case_counter
 FROM member m
 JOIN workspace w ON w.id = m.workspace_id
 WHERE m.user_id = $1
@@ -61,6 +62,13 @@ RETURNING *;
 UPDATE workspace SET issue_counter = issue_counter + 1
 WHERE id = $1
 RETURNING issue_counter;
+
+-- name: IncrementTestCaseCounter :one
+-- Mirrors IncrementIssueCounter: takes the workspace row lock so two concurrent
+-- creates in the same workspace cannot allocate the same case number.
+UPDATE workspace SET test_case_counter = test_case_counter + 1
+WHERE id = $1
+RETURNING test_case_counter;
 
 -- name: LockWorkspaceForDelete :one
 -- Taken first by DeleteWorkspace, before it enumerates the workspace's chat

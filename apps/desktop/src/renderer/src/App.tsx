@@ -25,7 +25,6 @@ import { RESOURCES } from "@multica/views/locales";
 import { DesktopClientUsageReporter } from "./platform/client-usage-reporter";
 import { DiagnosticRouteReporter } from "./platform/diagnostic-route-reporter";
 import { flushFreezeBreadcrumb } from "./freeze-flush";
-import { DiagnosticsControlReporter } from "./platform/diagnostics-control-reporter";
 import type { StorageAdapter } from "@multica/core/types";
 
 // BCP-47 region tags for the <html lang> attribute, mirroring
@@ -213,7 +212,8 @@ function AppContent() {
     };
   }, [qc]);
 
-  // Sync token and start the daemon whenever the user logs in.
+  // Sync token and start the daemon whenever the user logs in. The ordering
+  // inside syncDaemonOnLogin is load-bearing — see that module.
   useEffect(() => {
     if (!user || useSySso === null) return;
     const token = desktopStorage.getItem("multica_token");
@@ -497,7 +497,6 @@ export default function App() {
         >
           <DesktopAuthSessionBridge />
           {windowContext.kind === "main" && <DiagnosticRouteReporter />}
-          <DiagnosticsControlReporter />
           {windowContext.kind === "main" && (
             <DesktopClientUsageReporter
               apiUrl={runtimeConfigResult.config.apiUrl}

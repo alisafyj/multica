@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS test_generation_job_project_status_idx;

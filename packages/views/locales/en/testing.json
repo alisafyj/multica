@@ -1,0 +1,379 @@
+{
+  "page": {
+    "title": "Test Cases",
+    "empty": "No test cases yet",
+    "emptyHint": "Create one, or pick another project",
+    "new": "New case",
+    "selectProject": "Select a project",
+    "generate": "Generate with AI",
+    "generating": "Starting…",
+    "untitled": "Untitled case"
+  },
+  "filters": {
+    "all": "All",
+    "module": "Module",
+    "status": "Status",
+    "priority": "Priority",
+    "type": "Type",
+    "origin": "Origin",
+    "reviewQueue": "Needs review",
+    "aiReviewQueue": "AI pending review",
+    "clear": "Clear filters",
+    "search": "Search cases..."
+  },
+  "columns": {
+    "key": "Key",
+    "title": "Title",
+    "module": "Module",
+    "type": "Type",
+    "priority": "Priority",
+    "status": "Status",
+    "origin": "Origin",
+    "repos": "Repositories",
+    "updated": "Updated"
+  },
+  "status": {
+    "draft": "Draft",
+    "active": "Active",
+    "deprecated": "Deprecated"
+  },
+  "origin": {
+    "ai": "AI",
+    "human": "Manual"
+  },
+  "priority": {
+    "p0": "P0",
+    "p1": "P1",
+    "p2": "P2",
+    "p3": "P3"
+  },
+  "scope": {
+    "single_repo": "Single repo",
+    "cross_repo": "Cross repo",
+    "no_repo": "No repo"
+  },
+  "executionMode": {
+    "manual": "Manual",
+    "agent": "Agent",
+    "both": "Manual or agent"
+  },
+  "caseType": {
+    "functional": "Functional",
+    "business_flow": "Business flow",
+    "api": "API",
+    "ui": "UI",
+    "e2e": "End to end",
+    "regression": "Regression",
+    "boundary": "Boundary",
+    "exception": "Exception",
+    "permission": "Permission",
+    "data_consistency": "Data consistency",
+    "compatibility": "Compatibility",
+    "performance": "Performance",
+    "security": "Security"
+  },
+  "detail": {
+    "preconditions": "Preconditions",
+    "steps": "Steps",
+    "expected": "Expected result",
+    "testData": "Test data",
+    "repos": "Repositories",
+    "revisions": "History",
+    "project": "Project",
+    "module": "Module",
+    "priority": "Priority",
+    "type": "Type",
+    "scope": "Scope",
+    "executionMode": "Execution",
+    "notFound": "Test case not found",
+    "untitled": "Untitled case"
+  },
+  "steps": {
+    "add": "Add step",
+    "action": "Action",
+    "expected": "Expected",
+    "repo": "Repository",
+    "remove": "Remove this step",
+    "empty": "No steps yet",
+    "actionPlaceholder": "Describe the action...",
+    "expectedPlaceholder": "Describe the expected result...",
+    "noRepo": "Unspecified"
+  },
+  "repos": {
+    "add": "Add repository",
+    "alias": "Alias",
+    "role": "Role",
+    "pathGlobs": "Path scope",
+    "remove": "Remove",
+    "empty": "No repositories linked",
+    "aliasPlaceholder": "Short name used in steps",
+    "pathGlobsPlaceholder": "src/order/**, comma separated",
+    "noResources": "This project has no repositories attached",
+    "crossRepoNeedsRepos": "A cross-repo case needs at least two repositories",
+    "crossRepoNeedsRoles": "A cross-repo case needs more than one repository role"
+  },
+  "role": {
+    "under_test": "Under test",
+    "driver": "Driver",
+    "verifier": "Verifier",
+    "fixture": "Fixture"
+  },
+  "revisions": {
+    "empty": "No changes recorded",
+    "version": "Version {{version}}",
+    "separator": " · ",
+    "human_edit": "Manual edit",
+    "proposal_accepted": "AI suggestion accepted",
+    "status_change": "Status change",
+    "restore": "Restore"
+  },
+  "actions": {
+    "approve": "Approve",
+    "delete": "Delete",
+    "save": "Save",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "confirmDelete": "Delete this test case?",
+    "batchApprove": "Approve selected",
+    "selectAll": "Select all"
+  },
+  "toast": {
+    "created": "Test case created",
+    "saved": "Changes saved",
+    "approved": "Test case approved",
+    "deleted": "Test case deleted",
+    "saveFailed": "Could not save changes",
+    "deleteFailed": "Could not delete the test case",
+    "planGenerated": "Plan generated",
+    "planSaved": "Plan saved",
+    "planApproved": "Plan approved",
+    "dispatched": "Dispatched to agent",
+    "planFailed": "Could not generate plan",
+    "planSaveFailed": "Could not save plan",
+    "planApproveFailed": "Could not approve plan",
+    "dispatchFailed": "Could not dispatch",
+    "proposalAccepted": "Suggestion accepted",
+    "proposalRejected": "Suggestion rejected",
+    "proposalFailed": "Could not update suggestion",
+    "batchApproved": "Approved {{count}} cases",
+    "generationStarted": "Generation job created. Review its scope before dispatching.",
+    "generationFailed": "Could not start the generation job.",
+    "createFailed": "Could not create the test case.",
+    "planCreated": "Test plan created",
+    "planDeleted": "Test plan deleted",
+    "planCreateFailed": "Could not create test plan",
+    "planDeleteFailed": "Could not delete test plan",
+    "runCreated": "Test run created",
+    "runCreateFailed": "Could not create test run",
+    "runStarted": "Run started",
+    "runStartFailed": "Could not start run",
+    "runAborted": "Run aborted",
+    "runAbortFailed": "Could not abort run",
+    "runDispatched": "Dispatched to agent",
+    "runDispatchFailed": "Could not dispatch run",
+    "runDispatchBlocked": "Missing capability: {{kind}}",
+    "runResultSaved": "Result saved",
+    "runResultFailed": "Could not save result",
+    "defectOpened": "Defect issue created",
+    "defectFailed": "Could not open defect"
+  },
+  "job": {
+    "title": "Generation Job",
+    "back": "Back",
+    "loading": "Loading job...",
+    "error": "Could not load this job",
+    "retry": "Retry",
+    "meta": {
+      "status": "Status",
+      "createdAt": "Created",
+      "agentTask": "Agent task",
+      "notDispatched": "Not dispatched",
+      "proposals": "Proposals"
+    },
+    "jobStatus": {
+      "queued": "Queued",
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "planStatus": {
+      "draft": "Draft",
+      "approved": "Approved",
+      "dispatched": "Dispatched",
+      "archived": "Archived"
+    },
+    "stats": {
+      "total": "Total",
+      "pending": "Pending",
+      "accepted": "Accepted",
+      "rejected": "Rejected"
+    },
+    "plan": {
+      "title": "Generation Plan",
+      "generate": "Generate Plan",
+      "regenerate": "Regenerate Plan",
+      "save": "Save Plan",
+      "approve": "Approve Plan",
+      "reviewNotes": "Review notes",
+      "reviewNotesPlaceholder": "Optional: reviewer notes",
+      "rawJson": "Plan JSON",
+      "editJson": "Edit raw JSON",
+      "editJsonHint": "Editable before approval",
+      "noPlan": "No plan yet",
+      "noPlanHint": "Generate a plan first, confirm the scope, then approve it.",
+      "repos": "Repositories",
+      "modules": "Modules",
+      "instructions": "Instructions",
+      "notSet": "Not set",
+      "approvedAt": "Approved"
+    },
+    "dispatch": {
+      "title": "Dispatch to Agent",
+      "hint": "Select an agent to run the approved plan and generate test cases.",
+      "agent": "Agent",
+      "noAgent": "No agents available",
+      "button": "Dispatch",
+      "dispatching": "Dispatching...",
+      "running": "Running...",
+      "redispatch": "Re-dispatch",
+      "needsPlan": "Approve the plan before dispatching."
+    },
+    "result": {
+      "title": "Results",
+      "proposals": "AI proposals",
+      "noProposals": "No proposals yet"
+    }
+  },
+  "proposals": {
+    "title": "AI Suggestions",
+    "empty": "No AI suggestions for this case",
+    "loading": "Loading suggestions...",
+    "accept": "Accept",
+    "reject": "Reject",
+    "rationale": "Rationale",
+    "current": "Current",
+    "suggested": "Suggested",
+    "noChange": "No change",
+    "kind": {
+      "update": "Update",
+      "obsolete": "Mark obsolete"
+    },
+    "status": {
+      "pending": "Pending",
+      "accepted": "Accepted",
+      "rejected": "Rejected"
+    }
+  },
+  "plans": {
+    "title": "Test Plans",
+    "new": "New plan",
+    "empty": "No test plans yet",
+    "emptyHint": "Create a plan to organize test cases for a release.",
+    "createTitle": "Plan title",
+    "run": "Create run",
+    "status": {
+      "draft": "Draft",
+      "active": "Active",
+      "archived": "Archived"
+    },
+    "columns": {
+      "title": "Title",
+      "status": "Status",
+      "cases": "Cases",
+      "created": "Created"
+    },
+    "detail": {
+      "back": "Back",
+      "cases": "Cases",
+      "empty": "No cases in this plan",
+      "emptyHint": "Add cases from the test library.",
+      "addCases": "Add cases",
+      "createRun": "Create run",
+      "runTitle": "Run title",
+      "environment": "Environment",
+      "buildRef": "Build ref",
+      "remove": "Remove",
+      "caseCount_one": "{{count}} case",
+      "caseCount_other": "{{count}} cases"
+    }
+  },
+  "run": {
+    "title": "Test Run",
+    "back": "Back",
+    "error": "Could not load this run",
+    "retry": "Retry",
+    "start": "Start",
+    "abort": "Abort",
+    "retryAll": "Retry all",
+    "retryFailed": "Retry failed",
+    "empty": "No cases in this run",
+    "meta": {
+      "status": "Status",
+      "environment": "Environment",
+      "buildRef": "Build",
+      "plan": "Plan",
+      "executor": "Executor",
+      "started": "Started",
+      "completed": "Completed"
+    },
+    "counts": {
+      "passed": "Passed",
+      "failed": "Failed",
+      "pending": "Pending",
+      "blocked": "Blocked",
+      "skipped": "Skipped"
+    },
+    "status": {
+      "pending": "Pending",
+      "running": "Running",
+      "completed": "Completed",
+      "aborted": "Aborted",
+      "blocked": "Blocked"
+    },
+    "result": {
+      "pending": "Pending",
+      "running": "Running",
+      "passed": "Passed",
+      "failed": "Failed",
+      "blocked": "Blocked",
+      "skipped": "Skipped"
+    },
+    "dispatch": {
+      "title": "Dispatch to Agent",
+      "hint": "Select an agent to execute this run.",
+      "agent": "Agent",
+      "noAgent": "No agents available",
+      "button": "Dispatch",
+      "dispatching": "Dispatching...",
+      "running": "Running...",
+      "blocked": "Missing capability: {{kind}}"
+    }
+  },
+  "runCase": {
+    "notes": "Notes",
+    "notesPlaceholder": "Tester notes...",
+    "defect": "Open defect",
+    "defectTitle": "Defect title",
+    "defectTitlePlaceholder": "Describe the defect...",
+    "defectOpen": "Open",
+    "evidence": "Evidence",
+    "step": "Step {{index}}",
+    "columns": {
+      "case": "Case",
+      "result": "Result",
+      "executor": "Executor",
+      "duration": "Duration",
+      "defect": "Defect"
+    }
+  },
+  "timeline": {
+    "title": "Run History",
+    "empty": "No runs yet",
+    "run": "Run",
+    "result": "Result",
+    "environment": "Environment",
+    "buildRef": "Build",
+    "executedAt": "Executed"
+  }
+}

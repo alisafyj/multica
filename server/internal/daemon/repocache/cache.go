@@ -485,6 +485,13 @@ type WorktreeParams struct {
 	AgentName           string // for branch naming
 	TaskID              string // for branch naming uniqueness
 	CoAuthoredByEnabled bool   // install prepare-commit-msg hook for Co-authored-by trailer
+	// PeerURLs is the full list of repository URLs that will be checked out
+	// into this same WorkDir (including RepoURL itself). When two or more
+	// entries share the same basename, each receives a fully-qualified
+	// directory name (bareDirName-style) so they don't silently collide.
+	// Leave nil or empty when only one repo is expected; a single repo always
+	// lands at its basename, preserving the existing on-disk layout.
+	PeerURLs []string
 	// IsolatedGitMetadata creates a local clone whose .git directory lives
 	// inside WorkDir instead of a linked worktree whose gitdir lives under the
 	// shared cache. Linux Codex tasks need this because workspace-write keeps a
@@ -561,8 +568,10 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 	// Build branch name: agent/{sanitized-name}/{short-task-id}
 	branchName := fmt.Sprintf("agent/%s/%s", sanitizeName(params.AgentName), shortID(params.TaskID))
 
-	// Derive directory name from repo URL.
-	dirName := repoNameFromURL(params.RepoURL)
+	// Derive directory name from repo URL. When multiple repos share the same
+	// basename (e.g. org-a/app and org-b/app), worktreeDirName returns a
+	// qualified name for each so they land in distinct directories.
+	dirName := worktreeDirName(params.RepoURL, params.PeerURLs)
 	worktreePath := filepath.Join(params.WorkDir, dirName)
 
 	// Once a workdir has moved to isolated metadata, keep using that safer
@@ -1372,6 +1381,31 @@ func repoNameFromURL(url string) string {
 		return "repo"
 	}
 	return name
+}
+
+// worktreeDirName returns the directory name to use for a worktree inside a
+// shared WorkDir. It preserves the existing on-disk layout (basename only) for
+// the common single-repo case. When another URL in peerURLs would produce the
+// same basename, both repos receive their fully-qualified name derived from
+// bareDirName (sans the trailing ".git") to avoid silent directory reuse.
+//
+// The result is deterministic: the same URL with the same peer set always
+// produces the same directory name, regardless of the order of peerURLs.
+func worktreeDirName(url string, peerURLs []string) string {
+	base := repoNameFromURL(url)
+	for _, peer := range peerURLs {
+		if peer == url {
+			continue
+		}
+		if repoNameFromURL(peer) == base {
+			// At least one other URL shares this basename. Use the
+			// full qualified name so the two repos land in distinct
+			// directories. bareDirName is already collision-free
+			// (see TestBareDirName*).
+			return strings.TrimSuffix(bareDirName(url), ".git")
+		}
+	}
+	return base
 }
 
 var nonAlphanumeric = regexp.MustCompile(`[^a-z0-9]+`)

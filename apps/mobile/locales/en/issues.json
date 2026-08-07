@@ -16,6 +16,10 @@
       "assigned": "No issues assigned to you.",
       "created": "You haven't created any issues.",
       "agents": "No issues assigned to your agents or squads yet."
+    },
+    "view_mode": {
+      "switch_to_list": "Switch to list view",
+      "switch_to_board": "Switch to board view"
     }
   },
   "all_issues": {

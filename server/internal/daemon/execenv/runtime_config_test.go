@@ -1,6 +1,7 @@
 package execenv
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -275,7 +276,6 @@ func TestResumedCommentsHintSkipsDefaultThreadRead(t *testing.T) {
 	for _, want := range []string{
 		"triggering comment is already included above",
 		"No other new comments on this issue since your last run",
-		"active thread anchor `thread-root-1` and triggering comment ID `trigger-1`",
 		"If your reply depends on thread context",
 		"do not rely only on resumed session memory",
 		"multica issue comment list " + issueID + " --thread thread-root-1 --tail 30 --output json",
@@ -283,6 +283,11 @@ func TestResumedCommentsHintSkipsDefaultThreadRead(t *testing.T) {
 		if !strings.Contains(hint, want) {
 			t.Errorf("resumed/no-delta hint missing %q\n--- output ---\n%s", want, hint)
 		}
+	}
+	// The anchor-restating sentence is gone (MUL-5721 OPT-1): the read command
+	// carries the thread anchor and the reply cookbook carries the trigger id.
+	if strings.Contains(hint, "active thread anchor") {
+		t.Errorf("resumed/no-delta hint must not restate anchors outside the commands, got:\n%s", hint)
 	}
 	if strings.Contains(hint, "scoped to the triggering thread") {
 		t.Errorf("resumed/no-delta hint must not claim the delta is thread-scoped, got:\n%s", hint)
@@ -301,9 +306,26 @@ func TestSessionContinuityNoticeLivesOutsideBrief(t *testing.T) {
 		"could NOT be restored",
 		"tell the user up front",
 	} {
-		if !strings.Contains(SessionContinuityNotice, want) {
-			t.Errorf("SessionContinuityNotice missing %q", want)
+		if !strings.Contains(SessionContinuityNoticeUnrecoverable, want) {
+			t.Errorf("SessionContinuityNoticeUnrecoverable missing %q", want)
 		}
+	}
+
+	// MUL-5722: the issue variant carries the same heading and the same
+	// "do not assume continuity" job, but must NOT order an announcement. An
+	// issue's discussion lives in its comments, which the agent re-reads every
+	// turn, so telling the user it was lost describes a loss that did not
+	// happen — they hear "the discussion is gone" when every word survives.
+	if !strings.Contains(SessionContinuityNoticeIssue, "## Session Continuity Notice") {
+		t.Error("SessionContinuityNoticeIssue must keep the section heading")
+	}
+	if strings.Contains(SessionContinuityNoticeIssue, "tell the user") {
+		t.Errorf("issue variant must not script an apology:\n%s", SessionContinuityNoticeIssue)
+	}
+	// It still has to say what genuinely went missing, or the agent silently
+	// assumes it remembers work it no longer has.
+	if !strings.Contains(SessionContinuityNoticeIssue, "your own working memory") {
+		t.Errorf("issue variant must state the real loss:\n%s", SessionContinuityNoticeIssue)
 	}
 
 	lost := TaskContextForEnv{
@@ -334,13 +356,13 @@ func TestIssueWorkflowHonorsAgentIdentity(t *testing.T) {
 		// MUL-5442: the forbids-clause is stated once on the Ownership-mode
 		// header instead of once per status bullet.
 		"skip any status call below that your Agent Identity forbids",
-		"Before step 4, run `multica issue status " + issueID + " in_progress`.",
+		"Before step 4, run `multica issue status <issue-id> in_progress`.",
 		"Complete the task within your Agent Identity boundaries",
 		// Step 4 keeps only what the enumeration cannot express: a
 		// delegation-only role stops once the delegation is delivered.
 		"If your role is delegation-only, perform the allowed delegation work and stop once that outcome is delivered",
-		"When done, run `multica issue status " + issueID + " in_review`.",
-		"If blocked, run `multica issue status " + issueID + " blocked`, and post a comment explaining the blocker unless your Agent Identity forbids issue comments.",
+		"When done, run `multica issue status <issue-id> in_review`.",
+		"If blocked, run `multica issue status <issue-id> blocked`, and post a comment explaining the blocker unless your Agent Identity forbids issue comments.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("issue brief missing identity-bound workflow text %q\n---\n%s", want, out)
@@ -369,9 +391,12 @@ func TestSquadLeaderIssueWorkflowKeepsParentInProgress(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"Before step 4, run `multica issue status " + issueID + " in_progress`.",
+		"Before step 4, run `multica issue status <issue-id> in_progress`.",
 		"After this initial dispatch, leave the parent issue `in_progress`",
-		"do NOT run `multica issue status " + issueID + " in_review` or `done` on this turn",
+		// The guest-leader contract test (handler side) bans any runnable
+		// in_review command shape from reaching a guest — the dispatch rule
+		// therefore states the prohibition without a command form.
+		"do NOT move it to `in_review` or `done` on this turn",
 		"only then, if the overall goal is met, move the parent to `in_review`",
 	} {
 		if !strings.Contains(out, want) {
@@ -379,8 +404,46 @@ func TestSquadLeaderIssueWorkflowKeepsParentInProgress(t *testing.T) {
 		}
 	}
 
-	if strings.Contains(out, "When done, run `multica issue status "+issueID+" in_review`") {
+	if strings.Contains(out, "When done, run `multica issue status <issue-id> in_review`") {
 		t.Errorf("squad-leader issue brief must not contain the ordinary-agent completion step\n---\n%s", out)
+	}
+}
+
+// TestProtocolHeadingInInstructionsGetsNoLeaderBrief is the brief-side half of
+// the MUL-5811 negative regression. IsSquadLeader now comes from the claim's
+// is_leader_task / squad_id, so an ordinary agent that documents a
+// "## Squad Operating Protocol" section in its own instructions must get the
+// ordinary brief — its instructions rendered verbatim under Agent Identity,
+// and not one leader-only branch.
+func TestProtocolHeadingInInstructionsGetsNoLeaderBrief(t *testing.T) {
+	t.Parallel()
+
+	const instructions = "I write docs about squads.\n\n## Squad Operating Protocol\n\nHow leaders dispatch work..."
+	out := buildMetaSkillContent("claude", TaskContextForEnv{
+		IssueID:           "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+		TriggerCommentID:  "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+		AgentName:         "Docs writer",
+		AgentInstructions: instructions,
+		IsSquadLeader:     false,
+	})
+
+	if !strings.Contains(out, instructions) {
+		t.Fatalf("agent instructions must reach the brief verbatim\n---\n%s", out)
+	}
+	for _, banned := range []string{
+		"### Squad maintenance",
+		"multica squad member set-role",
+		"Squad leader rule:",
+		"multica squad activity",
+		`Squad Operating Protocol's "Own the parent issue status"`,
+		"After this initial dispatch, leave the parent issue `in_progress`",
+	} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("ordinary-agent brief leaked leader-only content %q\n---\n%s", banned, out)
+		}
+	}
+	if !strings.Contains(out, "**Posting your reply as a comment is mandatory**") {
+		t.Fatalf("ordinary-agent brief lost the unconditional reply obligation\n---\n%s", out)
 	}
 }
 
@@ -893,6 +956,7 @@ func TestInjectRuntimeConfigPreservesUserContent(t *testing.T) {
 		{"pi", "AGENTS.md"},
 		{"cursor", "AGENTS.md"},
 		{"kimi", "AGENTS.md"},
+		{"reasonix", "AGENTS.md"},
 		{"kiro", "AGENTS.md"},
 		{"antigravity", "AGENTS.md"},
 		{"qwen", "QWEN.md"},
@@ -1267,6 +1331,7 @@ func TestCleanupRuntimeConfigByProvider(t *testing.T) {
 		{"pi", "AGENTS.md"},
 		{"cursor", "AGENTS.md"},
 		{"kimi", "AGENTS.md"},
+		{"reasonix", "AGENTS.md"},
 		{"kiro", "AGENTS.md"},
 		{"antigravity", "AGENTS.md"},
 		{"qwen", "QWEN.md"},
@@ -1553,11 +1618,68 @@ func TestMultiThreadReplyInstructionsFanOut(t *testing.T) {
 		{ThreadID: "c1", ParentID: "c1"},
 		{ThreadID: "c2", ParentID: "c2"},
 		{ThreadID: "c3", ParentID: "c3"},
-	})
+	}, false)
 
-	for _, want := range []string{"3 DISTINCT threads", "Post ONE reply per thread", "--parent c1", "--parent c2", "--parent c3"} {
+	for _, want := range []string{
+		"3 DISTINCT threads",
+		"Post ONE reply per thread",
+		"OVERRIDES",
+		"--parent c1", "--parent c2", "--parent c3",
+		"OLDEST thread first",
+		// MUL-5825: the posting mechanism is a pointer at the brief's
+		// canonical section plus the one multi-thread-specific delta.
+		"`## Comment Formatting`",
+		"DISTINCT body file per thread",
+		"never reuse a `--parent` from an earlier turn",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("cross-thread instructions must contain %q, got:\n%s", want, out)
+		}
+	}
+
+	// Pin ledger (MUL-5825): the embedded file-operations cookbook was
+	// retired in favour of the `## Comment Formatting` pointer above — it
+	// triple-wrote the mechanism already carried by the brief and the
+	// single-thread cookbook (~1KB per multi-thread turn). These strings are
+	// the retired machinery; none may reappear in the fan-out block:
+	for _, banned := range []string{
+		"For EACH thread above",                // old cookbook opener
+		"UTF-8 file with your file-write tool", // restated mechanism
+		"multica issue comment add",            // embedded example commands
+		"--content-stdin",                      // restated HEREDOC ban
+		"rm ./reply-",                          // unix cleanup example
+		"Remove-Item",                          // windows cleanup example
+		"Do NOT write literal",                 // restated \n-escape rule
+	} {
+		if strings.Contains(out, banned) {
+			t.Errorf("fan-out block re-grew retired cookbook text %q (mechanism lives in ## Comment Formatting — MUL-5825), got:\n%s", banned, out)
+		}
+	}
+}
+
+// TestMultiThreadReplyInstructionsOSInvariant pins that the fan-out block is
+// byte-identical across host OSes (MUL-5825). The only OS-dependent text was
+// the embedded cleanup command pair (`rm` vs `Remove-Item`), which left with
+// the cookbook; the OS split now lives solely in the brief's
+// `## Comment Formatting`. If this fails, OS-specific mechanism text crept
+// back into the block — move it to the brief instead.
+//
+// Not parallel: mutates the package-level runtimeGOOS.
+func TestMultiThreadReplyInstructionsOSInvariant(t *testing.T) {
+	saved := runtimeGOOS
+	t.Cleanup(func() { runtimeGOOS = saved })
+
+	targets := []ThreadReplyTarget{
+		{ThreadID: "c1", ParentID: "c1"},
+		{ThreadID: "c2", ParentID: "c2"},
+	}
+	for _, leader := range []bool{false, true} {
+		runtimeGOOS = "linux"
+		linux := BuildMultiThreadCommentReplyInstructions("55555555-6666-7777-8888-999999999999", targets, leader)
+		runtimeGOOS = "windows"
+		windows := BuildMultiThreadCommentReplyInstructions("55555555-6666-7777-8888-999999999999", targets, leader)
+		if linux != windows {
+			t.Errorf("fan-out block (leader=%v) must be OS-invariant\nlinux:\n%s\nwindows:\n%s", leader, linux, windows)
 		}
 	}
 }
@@ -1565,7 +1687,7 @@ func TestMultiThreadReplyInstructionsFanOut(t *testing.T) {
 // Single-thread reply cookbook moved to the per-turn prompt (MUL-5377).
 func TestSingleThreadReplyInstructionsKeepSingleParent(t *testing.T) {
 	t.Parallel()
-	out := BuildCommentReplyInstructions("claude", "55555555-6666-7777-8888-999999999999", "c3")
+	out := BuildCommentReplyInstructions("claude", "55555555-6666-7777-8888-999999999999", "c3", false)
 
 	if strings.Contains(out, "DISTINCT threads") {
 		t.Errorf("single/same-thread instructions must not emit the multi-thread fan-out block, got:\n%s", out)
@@ -1656,10 +1778,27 @@ func TestInjectRuntimeConfigByteIdenticalAcrossTriggers(t *testing.T) {
 
 	// Non-vacuity guard: the brief must still depend on its stable inputs, or
 	// this whole test would pass on a function that ignores ctx entirely.
-	otherIssue := base
-	otherIssue.IssueID = "99999999-8888-7777-6666-555555555555"
-	if buildMetaSkillContent("claude", base) == buildMetaSkillContent("claude", otherIssue) {
-		t.Fatal("brief does not vary with issue id — byte-identity assertions below would be vacuous")
+	// Since MUL-5442's cross-channel dedup the brief is deliberately
+	// issue-id-independent (the per-turn message carries the ids), so the
+	// guard now varies a different stable input: the agent identity.
+	otherAgent := base
+	otherAgent.AgentName = "Someone Else"
+	if buildMetaSkillContent("claude", base) == buildMetaSkillContent("claude", otherAgent) {
+		t.Fatal("brief does not vary with agent identity — byte-identity assertions below would be vacuous")
+	}
+
+	// The stronger MUL-5442 invariant this PR claims as a design benefit:
+	// with identical stable inputs, two DIFFERENT issue ids must render the
+	// byte-identical brief — this is what makes a cross-issue shared cache
+	// prefix possible. Asserted directly, per provider, so a truncated,
+	// transformed, or id-conditional use of the issue id cannot slip past
+	// the Contains-based negative check.
+	for _, provider := range []string{"claude", "codex"} {
+		otherIssue := base
+		otherIssue.IssueID = "99999999-8888-7777-6666-555555555555"
+		if buildMetaSkillContent(provider, base) != buildMetaSkillContent(provider, otherIssue) {
+			t.Fatalf("%s brief differs across issue ids — the cross-issue cache invariant is broken", provider)
+		}
 	}
 
 	for _, provider := range []string{"claude", "codex"} {
@@ -1830,4 +1969,161 @@ func TestBriefSkillsListIsNamesOnly(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFormatProjectResourceDocument verifies that formatProjectResource renders
+// document resources in the expected format with title, URL, and optional
+// summary and label fields.
+func TestFormatProjectResourceDocument(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		ref     map[string]string
+		label   string
+		wantIn  []string
+		wantOut []string
+	}{
+		{
+			name:  "url and title only",
+			ref:   map[string]string{"url": "https://example.com/billing-rules", "title": "Billing Rules"},
+			label: "",
+			wantIn: []string{
+				"**Document**",
+				"«Billing Rules»",
+				"https://example.com/billing-rules",
+			},
+			wantOut: []string{"—"},
+		},
+		{
+			name:   "with summary",
+			ref:    map[string]string{"url": "https://example.com/spec", "title": "API Spec", "summary": "OpenAPI 3 schema."},
+			label:  "",
+			wantIn: []string{"**Document**", "«API Spec»", "https://example.com/spec", "— OpenAPI 3 schema."},
+		},
+		{
+			name:   "with label",
+			ref:    map[string]string{"url": "https://example.com/api", "title": "API Spec"},
+			label:  "v2",
+			wantIn: []string{"**Document**", "«API Spec»", "(v2)"},
+		},
+		{
+			name:  "summary and label",
+			ref:   map[string]string{"url": "https://example.com/spec", "title": "Spec", "summary": "Short desc."},
+			label: "Draft",
+			wantIn: []string{
+				"**Document**",
+				"«Spec»",
+				"— Short desc.",
+				"(Draft)",
+			},
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rawRef, err := json.Marshal(tc.ref)
+			if err != nil {
+				t.Fatalf("marshal ref: %v", err)
+			}
+			r := ProjectResourceForEnv{
+				ResourceType: "document",
+				ResourceRef:  json.RawMessage(rawRef),
+				Label:        tc.label,
+			}
+			got := formatProjectResource(r)
+			for _, want := range tc.wantIn {
+				if !strings.Contains(got, want) {
+					t.Errorf("formatProjectResource missing %q in %q", want, got)
+				}
+			}
+			for _, banned := range tc.wantOut {
+				if strings.Contains(got, banned) {
+					t.Errorf("formatProjectResource should not contain %q in %q", banned, got)
+				}
+			}
+		})
+	}
+}
+
+// TestWriteProjectContextDocumentGuidance verifies that writeProjectContext emits
+// document-specific guidance when at least one document resource is present, and
+// does not emit it when there are no document resources. It also verifies the
+// multi-repo exception clause is always present in the github_repo guidance.
+func TestWriteProjectContextDocumentGuidance(t *testing.T) {
+	t.Parallel()
+
+	makeDocRef := func(url, title string) json.RawMessage {
+		b, _ := json.Marshal(map[string]string{"url": url, "title": title})
+		return json.RawMessage(b)
+	}
+	makeGithubRef := func(url string) json.RawMessage {
+		b, _ := json.Marshal(map[string]string{"url": url})
+		return json.RawMessage(b)
+	}
+
+	t.Run("document guidance present when document resource exists", func(t *testing.T) {
+		t.Parallel()
+		out := buildMetaSkillContent("claude", TaskContextForEnv{
+			ProjectID:    "proj-1",
+			ProjectTitle: "Billing",
+			ProjectResources: []ProjectResourceForEnv{
+				{
+					ResourceType: "github_repo",
+					ResourceRef:  makeGithubRef("https://github.com/example/repo"),
+				},
+				{
+					ResourceType: "document",
+					ResourceRef:  makeDocRef("https://example.com/billing-rules", "Billing Rules"),
+				},
+			},
+		})
+
+		for _, want := range []string{
+			"## Project Context",
+			"**Document** «Billing Rules»",
+			"document` resources, fetch the URL",
+			"business specification documents carry the same weight as code",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("expected %q in brief:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("document guidance absent when no document resources", func(t *testing.T) {
+		t.Parallel()
+		out := buildMetaSkillContent("claude", TaskContextForEnv{
+			ProjectID:    "proj-2",
+			ProjectTitle: "Code Only",
+			ProjectResources: []ProjectResourceForEnv{
+				{
+					ResourceType: "github_repo",
+					ResourceRef:  makeGithubRef("https://github.com/example/repo"),
+				},
+			},
+		})
+
+		if strings.Contains(out, "business specification documents") {
+			t.Errorf("document guidance should not appear when no document resources:\n%s", out)
+		}
+	})
+
+	t.Run("multi-repo exception present when resources exist", func(t *testing.T) {
+		t.Parallel()
+		out := buildMetaSkillContent("claude", TaskContextForEnv{
+			ProjectID:    "proj-3",
+			ProjectTitle: "Multi",
+			ProjectResources: []ProjectResourceForEnv{
+				{
+					ResourceType: "github_repo",
+					ResourceRef:  makeGithubRef("https://github.com/example/repo"),
+				},
+			},
+		})
+
+		if !strings.Contains(out, "when the task spans multiple repositories") {
+			t.Errorf("multi-repo exception clause missing:\n%s", out)
+		}
+	})
 }

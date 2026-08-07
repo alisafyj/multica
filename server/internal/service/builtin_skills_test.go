@@ -208,6 +208,72 @@ func TestMentioningSkillTeachesTheParserContract(t *testing.T) {
 	}
 }
 
+func TestTestCasesSkillCoversTheDataContract(t *testing.T) {
+	skill, ok := findSkill(t, "multica-test-cases")
+	if !ok {
+		return
+	}
+	fm, body, _ := splitFrontmatter(skill.Content)
+
+	if got := strings.TrimSpace(fm["user-invocable"]); got != "false" {
+		t.Errorf("user-invocable = %q, want false (test case guidance triggers from context)", got)
+	}
+	if got := strings.TrimSpace(fm["allowed-tools"]); !strings.Contains(got, "Bash(multica *)") {
+		t.Errorf("allowed-tools = %q, want access to the Multica CLI", got)
+	}
+
+	// Contract anchors only — exact file:line citations live in the skill's
+	// references/test-cases-source-map.md, so a line shift cannot rot this test.
+	mustContain := []string{
+		"multica testcase list --project <project-id> --output json",
+		"multica testcase get TC-42 --output json",
+		"multica testcase modules --project <project-id> --output json",
+		"--digest",
+		// Steps are the executable contract: structured, renumbered, repo-tagged.
+		"structured JSON array, not markdown",
+		"running order 1..n",
+		// Multi-repo semantics are the reason roles exist at all.
+		"under_test",
+		"driver",
+		"verifier",
+		"cross_repo",
+		"project_resource_id",
+		// Coverage breadth: a library of only functional/api cases under-covers.
+		"business_flow",
+		"permission",
+		"data_consistency",
+		// Honesty about what does not exist yet.
+		"There is no `multica test` command group",
+		"references/test-cases-source-map.md",
+		// Generation workflow: propose command and three kind values.
+		"testcase propose",
+		"obsolete",
+		// --digest is the explicit incremental-run gate: survey first, propose delta.
+		"multica testcase list --project <project-id> --digest --output json",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(body, want) {
+			t.Errorf("multica-test-cases skill must state %q", want)
+		}
+	}
+
+	// Owned by the runtime brief or by other skills — duplicating them here
+	// makes the two copies drift.
+	mustNotContain := []string{
+		"multica repo checkout <url> [--ref",
+		"multica issue create",
+	}
+	for _, unwanted := range mustNotContain {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("multica-test-cases skill must not restate %q (owned elsewhere)", unwanted)
+		}
+	}
+
+	if !skillHasFile(skill, "references/test-cases-source-map.md") {
+		t.Error("multica-test-cases skill must ship its source map")
+	}
+}
+
 func TestWorkingOnIssuesSkillCoversIssueLoopContracts(t *testing.T) {
 	skill, ok := findSkill(t, "multica-working-on-issues")
 	if !ok {
@@ -234,7 +300,10 @@ func TestWorkingOnIssuesSkillCoversIssueLoopContracts(t *testing.T) {
 		"include the PR URL when a PR exists",
 		"Closes MUL-2759",
 		"--status backlog",
-		"pr_url",
+		// The only sanctioned pr_url reference is the negative compatibility
+		// warning about pre-existing data — not a write recommendation
+		// (MUL-5442 owner ruling: no curated key vocabulary).
+		"`pr_url` metadata (which can be",
 		"references/working-on-issues-source-map.md",
 		// MUL-5442: the brief's Sub-issue Creation section is now a one-line
 		// map pointing here. These anchors are the demoted playbook — if they
@@ -243,6 +312,21 @@ func TestWorkingOnIssuesSkillCoversIssueLoopContracts(t *testing.T) {
 		"`--stage <N>`",
 		"when a whole stage finishes",
 		"multica issue status <child-id> todo",
+		// MUL-5442: the brief's Issue Metadata section defers the full
+		// write discipline here. Every relocated ban is anchored
+		// individually — both defining categories AND each example —
+		// so no single item or category boundary can be dropped while
+		// the brief still points at this skill (round-3 review).
+		"Never store secrets, tokens, or API keys",
+		"Not metadata: logs or summaries",
+		"bookkeeping such as timestamps",
+		"attempt counts, or agent IDs",
+		"other single-run details",
+		"files touched and investigation notes",
+		"belong in the result comment",
+		// Owner ruling: metadata is deliberately free-form custom state;
+		// the platform curates no key vocabulary.
+		"the platform curates no vocabulary",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(body, want) {
@@ -251,6 +335,13 @@ func TestWorkingOnIssuesSkillCoversIssueLoopContracts(t *testing.T) {
 	}
 
 	mustNotContain := []string{
+		// A curated key list is the "recommended fields" concept the owner
+		// ruled out on MUL-5442 — it must not creep back into the skill
+		// that loads exactly when an agent is about to write metadata.
+		"High-signal keys",
+		"reuse these names so queries stay consistent",
+		"scratchpad for run state",
+		"(`pr_url`, `waiting_on`",
 		"Start from the trigger, not from memory",
 		"multica issue get <issue-id> --output json",
 		"multica issue metadata list <issue-id> --output json",
@@ -425,6 +516,19 @@ func TestSquadsSkillCoversLeaderRoutingContract(t *testing.T) {
 		}
 	}
 
+	// MUL-5696: no unbounded comment pull anywhere in the skill. #6347 fixed
+	// the quick start's `--recent 10` but missed a second unbounded
+	// `issue comment list` in the CLI section; both shapes contradict the
+	// brief's "two bounded reads, never one bulk pull" doctrine.
+	for _, banned := range []string{
+		"multica issue comment list <issue-id> --output json",
+		"--recent 10",
+	} {
+		if strings.Contains(body, banned) {
+			t.Errorf("squads skill carries the unbounded comment read %q (MUL-5696)", banned)
+		}
+	}
+
 	if !skillHasFile(skill, "references/squad-source-map.md") {
 		t.Errorf("squads skill missing supporting file references/squad-source-map.md")
 	}
@@ -535,6 +639,65 @@ func TestProjectsAndResourcesSkillCoversDurableContext(t *testing.T) {
 	}
 	if !skillHasFile(skill, "references/projects-and-resources-source-map.md") {
 		t.Errorf("projects-and-resources skill missing supporting file references/projects-and-resources-source-map.md")
+	}
+}
+
+func TestRunningTestsSkillCoversExecutionContract(t *testing.T) {
+	skill, ok := findSkill(t, "multica-running-tests")
+	if !ok {
+		return
+	}
+	fm, body, _ := splitFrontmatter(skill.Content)
+
+	if got := strings.TrimSpace(fm["user-invocable"]); got != "false" {
+		t.Errorf("user-invocable = %q, want false (running-tests guidance triggers from context)", got)
+	}
+	if got := strings.TrimSpace(fm["allowed-tools"]); !strings.Contains(got, "Bash(multica *)") {
+		t.Errorf("allowed-tools = %q, want access to the Multica CLI", got)
+	}
+
+	// Contract anchors — exact file:line citations live in the skill's
+	// references/running-tests-source-map.md, so a line shift cannot rot this test.
+	mustContain := []string{
+		// Capability discovery is the mandatory first step.
+		"multica test capability list --run <run-id> --output json",
+		"multica test run get <run-id> --output json",
+		// The resolved map is the only valid source of capability keys.
+		"resolved",
+		// No-host-probe rule: adb and xcrun must be named as banned tools.
+		"adb",
+		"xcrun simctl",
+		// blocked ≠ failed is the core semantic contract.
+		"blocked",
+		"`blocked` is not `failed`",
+		// Recording commands.
+		"multica test result set <run-case-id> --result passed|failed|blocked|skipped",
+		"multica test evidence add <run-case-id> --file",
+		"multica test defect open <run-case-id> --title",
+		// Evidence is required for failures.
+		"failed` or `blocked",
+		// Supporting file must ship.
+		"references/running-tests-source-map.md",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(body, want) {
+			t.Errorf("running-tests skill must state %q", want)
+		}
+	}
+
+	// These actions belong to the test-cases skill, not the execution skill.
+	mustNotContain := []string{
+		"multica testcase create",
+		"multica testcase update",
+	}
+	for _, unwanted := range mustNotContain {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("running-tests skill must not teach test-case authoring command %q (owned by multica-test-cases)", unwanted)
+		}
+	}
+
+	if !skillHasFile(skill, "references/running-tests-source-map.md") {
+		t.Error("running-tests skill must ship its source map")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -224,5 +225,176 @@ func TestRunRepoCheckoutForwardsManagedCheckoutMode(t *testing.T) {
 	}
 	if got := body["ref"]; got != "release/v2" {
 		t.Fatalf("ref = %q, want release/v2", got)
+	}
+}
+
+// TestRunRepoCheckoutAllChecksOutEachGithubRepo verifies that --all reads
+// resources.json and issues one checkout request per github_repo resource,
+// honouring each resource's own ref when present.
+func TestRunRepoCheckoutAllChecksOutEachGithubRepo(t *testing.T) {
+	var requests []map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/repo/checkout" {
+			http.NotFound(w, r)
+			return
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode checkout body: %v", err)
+		}
+		requests = append(requests, body)
+		// Return a fake result whose path is based on the requested URL so we
+		// can verify ordering independently.
+		json.NewEncoder(w).Encode(map[string]string{
+			"path":        "/work/" + body["url"],
+			"branch_name": "agent/test/task",
+		})
+	}))
+	defer srv.Close()
+
+	// Write a resources.json that contains two github_repo resources plus one
+	// local_directory resource (which must be ignored by --all).
+	workDir := t.TempDir()
+	resourcesDir := workDir + "/.multica/project"
+	if err := os.MkdirAll(resourcesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resourcesJSON := `{
+		"project_id": "proj-1",
+		"resources": [
+			{
+				"id": "r-1",
+				"resource_type": "github_repo",
+				"resource_ref": {"url": "https://github.com/org-a/app.git"}
+			},
+			{
+				"id": "r-2",
+				"resource_type": "github_repo",
+				"resource_ref": {"url": "https://github.com/org-b/app.git", "ref": "feature/x"}
+			},
+			{
+				"id": "r-3",
+				"resource_type": "local_directory",
+				"resource_ref": {"local_path": "/tmp/local", "daemon_id": "d-1"}
+			}
+		]
+	}`
+	if err := os.WriteFile(resourcesDir+"/resources.json", []byte(resourcesJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("MULTICA_DAEMON_PORT", strings.TrimPrefix(srv.URL, "http://127.0.0.1:"))
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_AGENT_NAME", "Test Agent")
+	t.Setenv("MULTICA_TASK_ID", "task-1")
+	t.Setenv("MULTICA_REPO_CHECKOUT_MODE", "")
+
+	if err := runRepoCheckoutAll(workDir); err != nil {
+		t.Fatalf("runRepoCheckoutAll: %v", err)
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("expected 2 checkout requests, got %d", len(requests))
+	}
+
+	// Build a url→ref map from the actual requests.
+	byURL := make(map[string]string, len(requests))
+	for _, req := range requests {
+		byURL[req["url"]] = req["ref"]
+	}
+
+	if _, ok := byURL["https://github.com/org-a/app.git"]; !ok {
+		t.Error("expected checkout request for org-a/app.git")
+	}
+	if byURL["https://github.com/org-a/app.git"] != "" {
+		t.Errorf("org-a/app.git ref = %q, want empty (use default)", byURL["https://github.com/org-a/app.git"])
+	}
+	if _, ok := byURL["https://github.com/org-b/app.git"]; !ok {
+		t.Error("expected checkout request for org-b/app.git")
+	}
+	if byURL["https://github.com/org-b/app.git"] != "feature/x" {
+		t.Errorf("org-b/app.git ref = %q, want feature/x", byURL["https://github.com/org-b/app.git"])
+	}
+}
+
+// TestRunRepoCheckoutAllReportsPartialFailure verifies that --all exits non-zero
+// when at least one repo checkout fails, and continues to attempt the remaining repos.
+func TestRunRepoCheckoutAllReportsPartialFailure(t *testing.T) {
+	var requested []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/repo/checkout" {
+			http.NotFound(w, r)
+			return
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode checkout body: %v", err)
+		}
+		requested = append(requested, body["url"])
+		if strings.Contains(body["url"], "bad") {
+			http.Error(w, "checkout failed: repo not found", http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{
+			"path":        "/work/good",
+			"branch_name": "agent/test/task",
+		})
+	}))
+	defer srv.Close()
+
+	workDir := t.TempDir()
+	resourcesDir := workDir + "/.multica/project"
+	if err := os.MkdirAll(resourcesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resourcesJSON := `{
+		"project_id": "proj-1",
+		"resources": [
+			{"id": "r-1", "resource_type": "github_repo", "resource_ref": {"url": "https://github.com/org/good.git"}},
+			{"id": "r-2", "resource_type": "github_repo", "resource_ref": {"url": "https://github.com/org/bad.git"}}
+		]
+	}`
+	if err := os.WriteFile(resourcesDir+"/resources.json", []byte(resourcesJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("MULTICA_DAEMON_PORT", strings.TrimPrefix(srv.URL, "http://127.0.0.1:"))
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_AGENT_NAME", "Test Agent")
+	t.Setenv("MULTICA_TASK_ID", "task-1")
+	t.Setenv("MULTICA_REPO_CHECKOUT_MODE", "")
+
+	err := runRepoCheckoutAll(workDir)
+	if err == nil {
+		t.Fatal("expected non-nil error when at least one checkout fails")
+	}
+
+	// Both repos must have been attempted despite the failure.
+	if len(requested) != 2 {
+		t.Fatalf("expected 2 checkout attempts, got %d: %v", len(requested), requested)
+	}
+}
+
+// TestRunRepoCheckoutAllNoResources verifies that --all succeeds (exit 0) when
+// resources.json has no github_repo entries.
+func TestRunRepoCheckoutAllNoResources(t *testing.T) {
+	workDir := t.TempDir()
+	resourcesDir := workDir + "/.multica/project"
+	if err := os.MkdirAll(resourcesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resourcesJSON := `{"project_id": "proj-1", "resources": []}`
+	if err := os.WriteFile(resourcesDir+"/resources.json", []byte(resourcesJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("MULTICA_DAEMON_PORT", "9999")
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_AGENT_NAME", "Test Agent")
+	t.Setenv("MULTICA_TASK_ID", "task-1")
+	t.Setenv("MULTICA_REPO_CHECKOUT_MODE", "")
+
+	if err := runRepoCheckoutAll(workDir); err != nil {
+		t.Fatalf("runRepoCheckoutAll with no github_repos: %v", err)
 	}
 }

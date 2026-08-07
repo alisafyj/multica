@@ -104,6 +104,7 @@ func init() {
 	f.Int("max-concurrent-tasks", 0, "Max tasks running in parallel (env: MULTICA_DAEMON_MAX_CONCURRENT_TASKS)")
 	f.Bool("no-auto-update", false, "Disable periodic CLI self-update (env: MULTICA_DAEMON_AUTO_UPDATE=false)")
 	f.Duration("auto-update-interval", 0, "How often to poll GitHub for a newer release (env: MULTICA_DAEMON_AUTO_UPDATE_INTERVAL)")
+	f.Bool("no-auto-reload", false, "Disable restarting when the multica binary on disk changes version (env: MULTICA_DAEMON_AUTO_RELOAD=false)")
 
 	daemonLogsCmd.Flags().BoolP("follow", "f", false, "Follow log output")
 	daemonLogsCmd.Flags().IntP("lines", "n", 50, "Number of lines to show")
@@ -124,6 +125,7 @@ func init() {
 	rf.Int("max-concurrent-tasks", 0, "Max tasks running in parallel (env: MULTICA_DAEMON_MAX_CONCURRENT_TASKS)")
 	rf.Bool("no-auto-update", false, "Disable periodic CLI self-update (env: MULTICA_DAEMON_AUTO_UPDATE=false)")
 	rf.Duration("auto-update-interval", 0, "How often to poll GitHub for a newer release (env: MULTICA_DAEMON_AUTO_UPDATE_INTERVAL)")
+	rf.Bool("no-auto-reload", false, "Disable restarting when the multica binary on disk changes version (env: MULTICA_DAEMON_AUTO_RELOAD=false)")
 
 	df := daemonDiskUsageCmd.Flags()
 	df.Bool("by-workspace", false, "Aggregate output by workspace instead of by task")
@@ -184,6 +186,151 @@ func daemonDirForProfile(profile string) string {
 
 func daemonPIDPathForProfile(profile string) string {
 	return filepath.Join(daemonDirForProfile(profile), "daemon.pid")
+}
+
+// daemonIDFileName is the machine-wide daemon identity file. Profiles share
+// one id: see TestEnsureDaemonID in internal/daemon.
+const daemonIDFileName = "daemon.id"
+
+type daemonPIDRecord struct {
+	PID      int    `json:"pid"`
+	DaemonID string `json:"daemon_id"`
+}
+
+func writeDaemonPIDFile(profile string, record daemonPIDRecord) error {
+	if record.PID <= 0 || strings.TrimSpace(record.DaemonID) == "" {
+		return fmt.Errorf("invalid daemon PID record")
+	}
+	dir := daemonDirForProfile(profile)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create daemon directory: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, ".daemon-*.pid.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary PID file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := json.NewEncoder(tmp).Encode(record); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temporary PID file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temporary PID file: %w", err)
+	}
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
+		return fmt.Errorf("chmod temporary PID file: %w", err)
+	}
+	if err := replaceDaemonPIDFile(tmpPath, daemonPIDPathForProfile(profile)); err != nil {
+		return fmt.Errorf("replace PID file: %w", err)
+	}
+	return nil
+}
+
+func readDaemonPIDFile(profile string) (daemonPIDRecord, error) {
+	data, err := os.ReadFile(daemonPIDPathForProfile(profile))
+	if err != nil {
+		return daemonPIDRecord{}, err
+	}
+	var record daemonPIDRecord
+	if err := json.Unmarshal(data, &record); err == nil && record.PID > 0 && strings.TrimSpace(record.DaemonID) != "" {
+		return record, nil
+	}
+	// Numeric PID files were written by CLI versions before the record also
+	// carried daemon_id. Migrate them after /health confirms the identity.
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return daemonPIDRecord{}, fmt.Errorf("invalid daemon PID file")
+	}
+	return daemonPIDRecord{PID: pid}, nil
+}
+
+func removeDaemonPIDFile(profile string, owner daemonPIDRecord) error {
+	current, err := readDaemonPIDFile(profile)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if current != owner {
+		return nil
+	}
+	return os.Remove(daemonPIDPathForProfile(profile))
+}
+
+func daemonHealthIdentity(health map[string]any) (int, string, bool) {
+	rawPID, ok := health["pid"].(float64)
+	if !ok || rawPID <= 0 || float64(int(rawPID)) != rawPID {
+		return 0, "", false
+	}
+	daemonID, ok := health["daemon_id"].(string)
+	if !ok || strings.TrimSpace(daemonID) == "" {
+		return 0, "", false
+	}
+	return int(rawPID), strings.TrimSpace(daemonID), true
+}
+
+// expectedDaemonIdentity reports the daemon_id this machine's daemon should be
+// announcing, following the same precedence internal/daemon/config.go applies:
+// MULTICA_DAEMON_ID first, then the persisted machine UUID.
+//
+// Read-only on purpose. EnsureDaemonID would create the file as a side effect,
+// and `daemon status` must not mint an identity just by being run.
+//
+// The env leg is what makes recovery work for a daemon started with a pinned
+// id — the documented path for embedded environments (see the daemon_id
+// resolution comment in internal/daemon/config.go). Without it the id on disk
+// never matches the one such a daemon reports, so a live, healthy daemon whose
+// PID file was lost is reported as stopped, which is exactly the state this
+// recovery path exists to repair.
+func expectedDaemonIdentity() (string, bool) {
+	if id := strings.TrimSpace(os.Getenv("MULTICA_DAEMON_ID")); id != "" {
+		return id, true
+	}
+	data, err := os.ReadFile(filepath.Join(daemonDirForProfile(""), daemonIDFileName))
+	if err != nil {
+		return "", false
+	}
+	id := strings.TrimSpace(string(data))
+	return id, id != ""
+}
+
+func daemonStateForProfile(ctx context.Context, profile string) map[string]any {
+	health := checkDaemonHealthOnPort(ctx, healthPortForProfile(profile))
+	healthPID, healthDaemonID, validHealth := daemonHealthIdentity(health)
+	record, err := readDaemonPIDFile(profile)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			_ = os.Remove(daemonPIDPathForProfile(profile))
+		}
+		if !validHealth || !daemonAlive(health) || !daemonProcessExists(healthPID) {
+			return map[string]any{"status": "stopped"}
+		}
+		expectedID, haveExpectedID := expectedDaemonIdentity()
+		if !haveExpectedID || expectedID != healthDaemonID {
+			return map[string]any{"status": "stopped"}
+		}
+		if err := writeDaemonPIDFile(profile, daemonPIDRecord{PID: healthPID, DaemonID: healthDaemonID}); err != nil {
+			return map[string]any{"status": "stopped"}
+		}
+		return health
+	}
+
+	if validHealth && (record.PID != healthPID || (record.DaemonID != "" && record.DaemonID != healthDaemonID)) {
+		_ = removeDaemonPIDFile(profile, record)
+		return map[string]any{"status": "stopped"}
+	}
+	if !validHealth || !daemonAlive(health) {
+		if !daemonProcessExists(record.PID) {
+			_ = removeDaemonPIDFile(profile, record)
+		}
+		return map[string]any{"status": "stopped"}
+	}
+	if record.DaemonID == "" {
+		_ = writeDaemonPIDFile(profile, daemonPIDRecord{PID: record.PID, DaemonID: healthDaemonID})
+	}
+	return health
 }
 
 func daemonLogPathForProfile(profile string) string {
@@ -316,12 +463,11 @@ func runDaemonStart(cmd *cobra.Command, _ []string) error {
 
 func runDaemonBackground(cmd *cobra.Command) error {
 	profile := resolveProfile(cmd)
-	healthPort := healthPortForProfile(profile)
 
 	// Check if daemon is already running.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	health := checkDaemonHealthOnPort(ctx, healthPort)
+	health := daemonStateForProfile(ctx, profile)
 	if daemonAlive(health) {
 		label := "daemon"
 		if profile != "" {
@@ -415,12 +561,6 @@ func runDaemonBackground(cmd *cobra.Command) error {
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- child.Wait() }()
 
-	// Write PID file.
-	pidPath := daemonPIDPathForProfile(profile)
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not write PID file: %v\n", err)
-	}
-
 	// Poll the health endpoint until the daemon reports ready ("running") or we
 	// time out. The daemon binds the health port almost immediately but reports
 	// status:"starting" until preflight finishes (PAT renew + initial workspace
@@ -443,7 +583,7 @@ func runDaemonBackground(cmd *cobra.Command) error {
 		case <-time.After(500 * time.Millisecond):
 		}
 		hctx, hcancel := context.WithTimeout(context.Background(), 2*time.Second)
-		health = checkDaemonHealthOnPort(hctx, healthPort)
+		health = daemonStateForProfile(hctx, profile)
 		hcancel()
 		lastStatus, _ = health["status"].(string)
 		if lastStatus == "running" {
@@ -458,6 +598,9 @@ func runDaemonBackground(cmd *cobra.Command) error {
 			fmt.Fprintf(os.Stderr, "Daemon may not have started successfully. Check logs:\n  %s\n  %s (crash output)\n", logPath, errLogPath)
 		}
 		return nil
+	}
+	if healthPID, _, ok := daemonHealthIdentity(health); ok {
+		pid = healthPID
 	}
 
 	if profile != "" {
@@ -647,6 +790,9 @@ func buildDaemonStartArgs(cmd *cobra.Command) []string {
 	if d, _ := cmd.Flags().GetDuration("auto-update-interval"); d > 0 {
 		args = append(args, "--auto-update-interval", d.String())
 	}
+	if b, _ := cmd.Flags().GetBool("no-auto-reload"); b {
+		args = append(args, "--no-auto-reload")
+	}
 
 	// Forward global persistent flags.
 	if v, _ := cmd.Flags().GetString("server-url"); v != "" {
@@ -780,8 +926,15 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	// treated as an override signal here — LoadConfig honors the raw env
 	// itself for the affirmative case.
 	noAutoUpdateFlag, _ := cmd.Flags().GetBool("no-auto-update")
-	if resolveDaemonDisableAutoUpdate(noAutoUpdateFlag, "MULTICA_DAEMON_AUTO_UPDATE", fileCfg.DisableAutoUpdate) {
+	if resolveDaemonDisableSignal(noAutoUpdateFlag, "MULTICA_DAEMON_AUTO_UPDATE", fileCfg.DisableAutoUpdate) {
 		overrides.DisableAutoUpdate = true
+	}
+	// Same single-direction shape for the on-disk version watcher, resolved
+	// through its own env var: turning off GitHub polling must not also stop the
+	// daemon from following a binary the operator replaced by hand.
+	noAutoReloadFlag, _ := cmd.Flags().GetBool("no-auto-reload")
+	if resolveDaemonDisableSignal(noAutoReloadFlag, "MULTICA_DAEMON_AUTO_RELOAD", fileCfg.DisableAutoReload) {
+		overrides.DisableAutoReload = true
 	}
 	autoUpdateFlag, _ := cmd.Flags().GetDuration("auto-update-interval")
 	autoUpdateOverride, err := resolveDaemonDurationOverride(autoUpdateFlag, "MULTICA_DAEMON_AUTO_UPDATE_INTERVAL", fileCfg.AutoUpdateCheckInterval)
@@ -806,12 +959,15 @@ func runDaemonForeground(cmd *cobra.Command) error {
 
 	d := daemon.New(cfg, logger)
 
-	// Write PID file so "daemon stop" can find us.
-	if dir := daemonDirForProfile(profile); dir != "" {
-		os.MkdirAll(dir, 0o755)
-		os.WriteFile(daemonPIDPathForProfile(profile), []byte(strconv.Itoa(os.Getpid())), 0o644)
+	pidRecord := daemonPIDRecord{PID: os.Getpid(), DaemonID: cfg.DaemonID}
+	if err := writeDaemonPIDFile(profile, pidRecord); err != nil {
+		return fmt.Errorf("write daemon PID file: %w", err)
 	}
-	defer os.Remove(daemonPIDPathForProfile(profile))
+	defer func() {
+		if err := removeDaemonPIDFile(profile, pidRecord); err != nil {
+			logger.Warn("failed to remove daemon PID file", "error", err)
+		}
+	}()
 
 	if err := d.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
@@ -876,10 +1032,6 @@ func runDaemonForeground(cmd *cobra.Command) error {
 		logFile.Close()
 		child.Process.Release()
 
-		// Write new PID file.
-		pidPath := daemonPIDPathForProfile(profile)
-		os.WriteFile(pidPath, []byte(strconv.Itoa(child.Process.Pid)), 0o644)
-
 		logger.Info("new daemon started", "pid", child.Process.Pid)
 	}
 
@@ -940,7 +1092,7 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	health := checkDaemonHealthOnPort(ctx, healthPort)
+	health := daemonStateForProfile(ctx, profile)
 	if daemonAlive(health) {
 		// Validate the restart can succeed BEFORE the stop phase, not just
 		// inside the start phase: a missing/revoked token or an unreachable
@@ -952,11 +1104,11 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 		if err := requireDaemonRestartPreflight(cmd, profile); err != nil {
 			return err
 		}
-		pid, _ := health["pid"].(float64)
-		if pid > 0 {
-			fmt.Fprintf(os.Stderr, "Stopping daemon (pid %d)...\n", int(pid))
+		pid, _, ok := daemonHealthIdentity(health)
+		if ok {
+			fmt.Fprintf(os.Stderr, "Stopping daemon (pid %d)...\n", pid)
 			if err := requestDaemonShutdown(healthPort); err != nil {
-				if p, perr := os.FindProcess(int(pid)); perr == nil {
+				if p, perr := os.FindProcess(pid); perr == nil {
 					_ = p.Kill()
 				}
 			}
@@ -965,7 +1117,7 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 			for i := 0; i < 10; i++ {
 				time.Sleep(500 * time.Millisecond)
 				sctx, scancel := context.WithTimeout(context.Background(), 1*time.Second)
-				h := checkDaemonHealthOnPort(sctx, healthPort)
+				h := daemonStateForProfile(sctx, profile)
 				scancel()
 				if !daemonAlive(h) {
 					break
@@ -987,7 +1139,7 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	health := checkDaemonHealthOnPort(ctx, healthPort)
+	health := daemonStateForProfile(ctx, profile)
 	if !daemonAlive(health) {
 		label := "Daemon"
 		if profile != "" {
@@ -997,14 +1149,14 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	pid, ok := health["pid"].(float64)
-	if !ok || pid == 0 {
+	pid, daemonID, ok := daemonHealthIdentity(health)
+	if !ok {
 		return fmt.Errorf("could not determine daemon PID from health endpoint")
 	}
 
-	process, err := os.FindProcess(int(pid))
+	process, err := os.FindProcess(pid)
 	if err != nil {
-		return fmt.Errorf("find process %d: %w", int(pid), err)
+		return fmt.Errorf("find process %d: %w", pid, err)
 	}
 
 	// Request graceful shutdown via the daemon's HTTP /shutdown endpoint
@@ -1016,20 +1168,20 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 	if err := requestDaemonShutdown(healthPort); err != nil {
 		fmt.Fprintf(os.Stderr, "Graceful shutdown request failed: %v — falling back to forced kill.\n", err)
 		if kerr := process.Kill(); kerr != nil {
-			return fmt.Errorf("kill daemon (pid %d): %w", int(pid), kerr)
+			return fmt.Errorf("kill daemon (pid %d): %w", pid, kerr)
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Stopping daemon (pid %d)...\n", int(pid))
+	fmt.Fprintf(os.Stderr, "Stopping daemon (pid %d)...\n", pid)
 
 	// Poll health endpoint until daemon is gone.
 	for i := 0; i < 10; i++ {
 		time.Sleep(500 * time.Millisecond)
 		ctx2, cancel2 := context.WithTimeout(context.Background(), 1*time.Second)
-		h := checkDaemonHealthOnPort(ctx2, healthPort)
+		h := daemonStateForProfile(ctx2, profile)
 		cancel2()
 		if !daemonAlive(h) {
-			os.Remove(daemonPIDPathForProfile(profile))
+			_ = removeDaemonPIDFile(profile, daemonPIDRecord{PID: pid, DaemonID: daemonID})
 			fmt.Fprintln(os.Stderr, "Daemon stopped.")
 			return nil
 		}
@@ -1064,12 +1216,10 @@ func requestDaemonShutdown(healthPort int) error {
 
 func runDaemonStatus(cmd *cobra.Command, _ []string) error {
 	profile := resolveProfile(cmd)
-	healthPort := healthPortForProfile(profile)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	health := checkDaemonHealthOnPort(ctx, healthPort)
+	health := daemonStateForProfile(ctx, profile)
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
@@ -1102,6 +1252,11 @@ func printDaemonStatusReport(w io.Writer, label string, health map[string]any) {
 	}
 	if version, ok := health["cli_version"].(string); ok && version != "" {
 		rows = append(rows, row{"Version", version})
+	}
+	// Only present while a confirmed on-disk version change is waiting for the
+	// daemon to go idle, so it reads as an explanation rather than a status line.
+	if reason, ok := health["reload_pending_reason"].(string); ok && reason != "" {
+		rows = append(rows, row{"Restart pending", reason})
 	}
 	if agents, ok := health["agents"].([]any); ok && len(agents) > 0 {
 		parts := make([]string, len(agents))
@@ -1168,6 +1323,9 @@ func checkDaemonHealthOnPort(ctx context.Context, port int) map[string]any {
 		return map[string]any{"status": "stopped"}
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return map[string]any{"status": "stopped"}
+	}
 
 	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -1290,8 +1448,9 @@ func resolveDaemonAgentTimeoutOverride(cmd *cobra.Command, envName string, cfgVa
 	return &parsed, nil
 }
 
-// resolveDaemonDisableAutoUpdate resolves the single-direction disable
-// signal for auto-update. Precedence:
+// resolveDaemonDisableSignal resolves a single-direction disable signal —
+// auto-update (--no-auto-update) and auto-reload (--no-auto-reload) share the
+// shape. Precedence, using auto-update as the example:
 //
 //  1. --no-auto-update flag passed -> disable.
 //  2. MULTICA_DAEMON_AUTO_UPDATE explicitly set to a falsy value ->
@@ -1301,7 +1460,7 @@ func resolveDaemonAgentTimeoutOverride(cmd *cobra.Command, envName string, cfgVa
 //  3. config.json disable_auto_update=true (only when both flag and env
 //     are silent) -> disable.
 //  4. Otherwise -> leave the override off; LoadConfig picks the default.
-func resolveDaemonDisableAutoUpdate(flagValue bool, envName string, cfgValue bool) bool {
+func resolveDaemonDisableSignal(flagValue bool, envName string, cfgValue bool) bool {
 	if flagValue {
 		return true
 	}

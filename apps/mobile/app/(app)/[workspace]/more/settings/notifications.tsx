@@ -1,5 +1,5 @@
 /**
- * Notification preferences subscreen. 5 inbox groups + system_notifications
+ * Notification preferences subscreen. 6 inbox groups + system_notifications
  * toggle, each backed by an optimistic PATCH /api/notification-preferences.
  *
  * Copy mirrors packages/views/settings/components/notifications-tab.tsx in
@@ -50,6 +50,11 @@ export default function NotificationsSettingsScreen() {
       key: "comments",
       label: t("notifications.groups.comments.label"),
       description: t("notifications.groups.comments.description"),
+    },
+    {
+      key: "mentions",
+      label: t("notifications.groups.mentions.label"),
+      description: t("notifications.groups.mentions.description"),
     },
     {
       key: "updates",

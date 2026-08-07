@@ -58,6 +58,7 @@ apps/web/test-results/
 
 # local settings
 .claude/
+.codex/
 .tool-versions
 
 # feature tracking
@@ -83,3 +84,7 @@ fengchenDoc/
 
 # deepwork session state
 .slim/deepwork/
+
+# Python (agent tooling)
+__pycache__/
+*.pyc

@@ -15,13 +15,29 @@ import type {
   BillingTopupsPage,
   BillingTransactionsPage,
   CancelTaskResponse,
+  TestCase,
+  TestCaseRevision,
+  ListTestCasesResponse,
+  ListTestCaseModulesResponse,
+  ListTestCaseRevisionsResponse,
+  TestGenerationJob,
+  TestGenerationPlan,
+  TestCaseProposal,
+  ListTestGenerationJobsResponse,
+  ListTestCaseProposalsResponse,
   ChatMessage,
   ChatDraftRestoresResponse,
+  ChatPendingTask,
+  PrioritizeQueuedChatTaskResponse,
+  SendChatMessageResponse,
   Comment,
   CreateAgentFromTemplateResponse,
   CreateBillingCheckoutSessionResponse,
   CreateBillingPortalSessionResponse,
   CronPreviewResponse,
+  DingTalkInstallation,
+  ListDingTalkInstallationsResponse,
+  RedeemDingTalkBindingTokenResponse,
   GroupedIssuesResponse,
   GitHubConnectResponse,
   GitHubPullRequest,
@@ -64,6 +80,15 @@ import type {
   PMOSyncLink,
   ListPMOConfigsResponse,
   ListPMORunsResponse,
+  TestPlan,
+  TestRun,
+  TestRunCase,
+  ListTestPlansResponse,
+  ListTestPlanCasesResponse,
+  ListTestRunsResponse,
+  ListTestRunCasesResponse,
+  TestCaseResultTimelineResponse,
+  ListTestCapabilitiesResponse,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
@@ -434,7 +459,10 @@ export const ChatMessageSchema = z.object({
   attachments: z.array(AttachmentSchema).optional(),
   failure_reason: z.string().nullable().optional(),
   elapsed_ms: z.number().nullable().optional(),
-  message_kind: z.enum(["message", "no_response"]).catch("message").optional(),
+  message_kind: z
+    .enum(["message", "no_response", "onboarding_kickoff", "onboarding_opening"])
+    .catch("message")
+    .optional(),
   // Optional additive data degrades independently: a malformed suggestion
   // must not hide the assistant reply that contains it.
   quick_actions: z.array(ChatQuickActionSchema).catch([]).optional().default([]),
@@ -1227,11 +1255,15 @@ const DashboardUsageByAgentSchema = z.object({
 
 export const DashboardUsageByAgentListSchema = z.array(DashboardUsageByAgentSchema);
 
+// `cancelled_count` defaults to 0 so an installed client pointed at a
+// backend that predates it still renders: those rows simply carry no
+// cancelled segment, which is exactly what that backend measured.
 const DashboardAgentRunTimeSchema = z.object({
   agent_id: z.string().default(""),
   total_seconds: z.number().default(0),
   task_count: z.number().default(0),
   failed_count: z.number().default(0),
+  cancelled_count: z.number().default(0),
 }).loose();
 
 export const DashboardAgentRunTimeListSchema = z.array(DashboardAgentRunTimeSchema);
@@ -1241,6 +1273,7 @@ const DashboardRunTimeDailySchema = z.object({
   total_seconds: z.number().default(0),
   task_count: z.number().default(0),
   failed_count: z.number().default(0),
+  cancelled_count: z.number().default(0),
 }).loose();
 
 export const DashboardRunTimeDailyListSchema = z.array(DashboardRunTimeDailySchema);
@@ -1367,6 +1400,20 @@ const OptionalStringArraySchema = z.preprocess(
   z.array(z.string()).optional(),
 );
 
+// One (provider, model) slice of a run's token usage. Token counts default to
+// 0 rather than failing the row: a slice missing one counter is still worth
+// pricing on the counters it does have, and the "we have no usage at all" case
+// is carried by the field's absence, not by a zeroed entry.
+const TaskUsageSchema = z.object({
+  provider: z.string().optional(),
+  model: z.string().default(""),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+  cost_usd_ticks: z.number().optional(),
+}).loose();
+
 export const AgentTaskSchema = z.object({
   id: z.string(),
   agent_id: z.string().default(""),
@@ -1397,6 +1444,12 @@ export const AgentTaskSchema = z.object({
   work_dir: z.string().optional(),
   relative_work_dir: z.string().optional(),
   attribution: TaskAttributionSchema.optional(),
+  // Per-run token usage. Same independent-degradation rule as the coverage
+  // arrays above: usage is additive display metadata, so one malformed entry
+  // must cost the row its usage figure, not erase the whole execution log.
+  // `.catch(undefined)` collapses a bad array to "no usage recorded", which
+  // the UI already renders as an em dash.
+  usage: z.array(TaskUsageSchema).optional().catch(undefined),
 }).loose();
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
@@ -1437,6 +1490,52 @@ const ChatDraftRestoreSchema = z.object({
 export const ChatDraftRestoresResponseSchema = z.object({
   restores: z.array(ChatDraftRestoreSchema).default([]),
 }).loose();
+
+const ChatQueuedTaskSchema = z.object({
+  task_id: z.string(),
+  status: z.string().default("queued"),
+  created_at: z.string().default(""),
+  message_id: z.string().optional(),
+  content: z.string().optional(),
+}).loose();
+
+const ChatQueuedTasksSchema = z.array(z.unknown()).transform((tasks) =>
+  tasks.flatMap((task) => {
+    const parsed = ChatQueuedTaskSchema.safeParse(task);
+    return parsed.success ? [parsed.data] : [];
+  }),
+);
+
+// Root fields retain the legacy single-task response shape. Keep additive
+// fields optional so callers can distinguish an older server from an empty
+// queue. A malformed queue row is ignored without discarding a valid head.
+export const ChatPendingTaskSchema: z.ZodType<ChatPendingTask> = z.object({
+  task_id: z.string().optional(),
+  status: z.string().optional(),
+  created_at: z.string().optional(),
+  supports_queue: z.boolean().optional(),
+  queued_tasks: ChatQueuedTasksSchema.optional(),
+}).loose();
+
+export const EMPTY_CHAT_PENDING_TASK: ChatPendingTask = {};
+
+export const SendChatMessageResponseSchema: z.ZodType<SendChatMessageResponse> = z.object({
+  message_id: z.string().min(1),
+  task_id: z.string().min(1),
+  supports_queue: z.boolean().optional(),
+  queued: z.boolean().optional().catch(undefined),
+  created_at: z.string().min(1),
+  attachment_ids: z.array(z.string()).nullish().transform((ids) => ids ?? undefined),
+}).loose();
+
+export const PrioritizeQueuedChatTaskResponseSchema:
+  z.ZodType<PrioritizeQueuedChatTaskResponse> = z.object({
+    task_id: z.string(),
+    active_task_id: z.string().optional(),
+  }).loose();
+
+export const EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE:
+  PrioritizeQueuedChatTaskResponse = { task_id: "" };
 
 export const EMPTY_CHAT_DRAFT_RESTORES: ChatDraftRestoresResponse = {
   restores: [],
@@ -1504,6 +1603,8 @@ export const AgentTemplateSchema = AgentTemplateSummarySchemaBase.extend({
   // Detail-only field. Default "" so a malformed detail still renders the
   // header + skill list; the user just sees an empty Instructions block.
   instructions: z.string().default(""),
+  system_key: z.string().optional(),
+  system_instructions: z.string().optional(),
 }).loose();
 
 // Used as the parse fallback for `GET /api/agent-templates/:slug`. Slug comes
@@ -1666,6 +1767,8 @@ export const SquadSchema = z.object({
   name: z.string(),
   description: z.string().default(""),
   instructions: z.string().default(""),
+  system_key: z.string().optional(),
+  system_instructions: z.string().optional(),
   avatar_url: z.string().nullable().optional().transform((v) => v ?? null),
   leader_id: z.string(),
   creator_id: z.string(),
@@ -2316,6 +2419,130 @@ export const EMPTY_PMO_CONFIG: PMOConfig = {
   updated_at: "",
 };
 
+// --- Test cases -------------------------------------------------------------
+// Enums stay z.string(): a backend that adds a new case_type or status must not
+// blank the whole case on an older frontend. Every field carries a default so a
+// partial payload degrades field-by-field rather than falling back wholesale.
+
+const TestCaseStepSchema = z.object({
+  index: z.number().default(0),
+  action: z.string().default(""),
+  expected: z.string().default(""),
+  repo: z.string().optional(),
+}).loose();
+
+const TestCaseRepoSchema = z.object({
+  project_resource_id: z.string().default(""),
+  alias: z.string().default(""),
+  role: z.string().default("under_test"),
+  path_globs: z.array(z.string()).default([]),
+}).loose();
+
+export const TestCaseSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  project_id: z.string().default(""),
+  case_number: z.number().default(0),
+  key: z.string().default(""),
+  title: z.string().default(""),
+  module: z.string().default(""),
+  preconditions: z.string().default(""),
+  steps: z.array(TestCaseStepSchema).default([]),
+  expected_result: z.string().default(""),
+  test_data: z.record(z.string(), z.unknown()).default({}),
+  priority: z.string().default("p2"),
+  case_type: z.string().default("functional"),
+  scope: z.string().default("single_repo"),
+  execution_mode: z.string().default("manual"),
+  required_capabilities: z.array(z.record(z.string(), z.unknown())).default([]),
+  business_rules_ref: z.array(z.string()).default([]),
+  status: z.string().default("draft"),
+  origin: z.string().default("human"),
+  source_refs: z.record(z.string(), z.unknown()).default({}),
+  generation_job_id: z.string().nullable().default(null),
+  version: z.number().default(1),
+  repos: z.array(TestCaseRepoSchema).default([]),
+  created_by: z.string().nullable().default(null),
+  updated_by: z.string().nullable().default(null),
+  reviewed_by: z.string().nullable().default(null),
+  reviewed_at: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const DingTalkInstallationSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string().default(""),
+  agent_id: z.string().default(""),
+  installer_user_id: z.string().default(""),
+  status: z.string().default("revoked"),
+  installed_at: z.string().default(""),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const ListTestCasesResponseSchema = z.object({
+  test_cases: z.array(TestCaseSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const TestCaseModuleSchema = z.object({
+  module: z.string().default(""),
+  case_count: z.number().default(0),
+}).loose();
+
+export const ListTestCaseModulesResponseSchema = z.object({
+  modules: z.array(TestCaseModuleSchema).default([]),
+}).loose();
+
+export const TestCaseRevisionSchema = z.object({
+  id: z.string().default(""),
+  test_case_id: z.string().default(""),
+  version: z.number().default(0),
+  snapshot: z.record(z.string(), z.unknown()).default({}),
+  change_kind: z.string().default("human_edit"),
+  changed_by: z.string().nullable().default(null),
+  changed_by_type: z.string().default("member"),
+  note: z.string().default(""),
+  created_at: z.string().default(""),
+}).loose();
+
+export const ListTestCaseRevisionsResponseSchema = z.object({
+  revisions: z.array(TestCaseRevisionSchema).default([]),
+}).loose();
+
+export const EMPTY_TEST_CASE: TestCase = {
+  id: "",
+  workspace_id: "",
+  project_id: "",
+  case_number: 0,
+  key: "",
+  title: "",
+  module: "",
+  preconditions: "",
+  steps: [],
+  expected_result: "",
+  test_data: {},
+  priority: "p2",
+  case_type: "functional",
+  scope: "single_repo",
+  execution_mode: "manual",
+  required_capabilities: [],
+  business_rules_ref: [],
+  status: "draft",
+  origin: "human",
+  source_refs: {},
+  generation_job_id: null,
+  version: 1,
+  repos: [],
+  created_by: null,
+  updated_by: null,
+  reviewed_by: null,
+  reviewed_at: null,
+  created_at: "",
+  updated_at: "",
+};
+
 // Trigger / status are kept as `z.string()` at the boundary (server-driven
 // enums must stay open), with a typed fallback the parse helpers coerce to.
 // An unknown status degrades to `"failed"` — the only honest read-only
@@ -2443,3 +2670,413 @@ export function parsePMOSyncLink(data: unknown): PMOSyncLink {
   const result = PMOSyncLinkSchema.safeParse(data);
   return result.success ? (result.data as PMOSyncLink) : EMPTY_PMO_SYNC_LINK;
 }
+
+export const EMPTY_DINGTALK_INSTALLATION: DingTalkInstallation = {
+  id: "",
+  workspace_id: "",
+  agent_id: "",
+  installer_user_id: "",
+  status: "revoked",
+  installed_at: "",
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_TEST_CASE_REVISION: TestCaseRevision = {
+  id: "",
+  test_case_id: "",
+  version: 0,
+  snapshot: {},
+  change_kind: "human_edit",
+  changed_by: null,
+  changed_by_type: "member",
+  note: "",
+  created_at: "",
+};
+
+export const EMPTY_LIST_TEST_CASES_RESPONSE: ListTestCasesResponse = {
+  test_cases: [],
+  total: 0,
+};
+
+export const EMPTY_LIST_TEST_CASE_MODULES_RESPONSE: ListTestCaseModulesResponse = {
+  modules: [],
+};
+
+export const EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE: ListTestCaseRevisionsResponse = {
+  revisions: [],
+};
+
+// ---------------------------------------------------------------------------
+// Test generation job schemas — Phase 2
+//
+// Same leniency policy as the TestCase schemas above: string enums stay
+// z.string() so a newer server adding a status/kind value does not parse-fail
+// an installed desktop client. Every numeric field defaults to 0, every
+// nullable string to null, every record to {}, every array to [].
+// ---------------------------------------------------------------------------
+
+export const TestGenerationJobSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  project_id: z.string().default(""),
+  agent_id: z.string().nullable().default(null),
+  agent_task_id: z.string().nullable().default(null),
+  // Stays z.string(), not z.enum — a future backend adding "paused" must not
+  // crash an older frontend; UI falls back to the default branch.
+  status: z.string().default("queued"),
+  input: z.record(z.string(), z.unknown()).default({}),
+  result: z.record(z.string(), z.unknown()).default({}),
+  error: z.string().nullable().default(null),
+  created_by: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const ListTestGenerationJobsResponseSchema = z.object({
+  jobs: z.array(TestGenerationJobSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_TEST_GENERATION_JOB: TestGenerationJob = {
+  id: "",
+  workspace_id: "",
+  project_id: "",
+  agent_id: null,
+  agent_task_id: null,
+  status: "queued",
+  input: {},
+  result: {},
+  error: null,
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_LIST_TEST_GENERATION_JOBS_RESPONSE: ListTestGenerationJobsResponse = {
+  jobs: [],
+  total: 0,
+};
+
+export const TestGenerationPlanSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  job_id: z.string().default(""),
+  // Stays z.string() — "archived" or future states must not crash the UI.
+  status: z.string().default("draft"),
+  // The plan JSON is a free-form record: the specific plan shape is defined in
+  // TestGenerationPlanPayload in types/testing.ts and is only read when the
+  // user is editing it, not on every render.
+  plan: z.record(z.string(), z.unknown()).default({}),
+  review_notes: z.string().default(""),
+  approved_by: z.string().nullable().default(null),
+  approved_at: z.string().nullable().default(null),
+  created_by: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const EMPTY_TEST_GENERATION_PLAN: TestGenerationPlan = {
+  id: "",
+  workspace_id: "",
+  job_id: "",
+  status: "draft",
+  plan: {},
+  review_notes: "",
+  approved_by: null,
+  approved_at: null,
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const TestCaseProposalSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  job_id: z.string().default(""),
+  target_case_id: z.string().default(""),
+  // z.string() — future kinds ("merge"?) must not fail parse; UI has a default
+  // branch that renders an unknown kind.
+  kind: z.string().default("update"),
+  // payload carries the proposed case fields; consumed field-by-field by the
+  // diff panel, so loose record is the correct shape.
+  payload: z.record(z.string(), z.unknown()).default({}),
+  rationale: z.string().default(""),
+  status: z.string().default("pending"),
+  reviewed_by: z.string().nullable().default(null),
+  reviewed_at: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+}).loose();
+
+export const ListTestCaseProposalsResponseSchema = z.object({
+  proposals: z.array(TestCaseProposalSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_TEST_CASE_PROPOSAL: TestCaseProposal = {
+  id: "",
+  workspace_id: "",
+  job_id: "",
+  target_case_id: "",
+  kind: "update",
+  payload: {},
+  rationale: "",
+  status: "pending",
+  reviewed_by: null,
+  reviewed_at: null,
+  created_at: "",
+};
+
+export const EMPTY_LIST_TEST_CASE_PROPOSALS_RESPONSE: ListTestCaseProposalsResponse = {
+  proposals: [],
+  total: 0,
+};
+
+export const DispatchTestGenerationJobResponseSchema = z.object({
+  job: TestGenerationJobSchema,
+  agent_task_id: z.string().default(""),
+}).loose();
+
+// ---------------------------------------------------------------------------
+// Test plans, runs and capabilities — Phase 3/4
+// ---------------------------------------------------------------------------
+
+export const TestPlanSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  project_id: z.string().default(""),
+  title: z.string().default(""),
+  description: z.string().default(""),
+  status: z.string().default("draft"),
+  created_by: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const TestPlanCaseSchema = z.object({
+  plan_id: z.string().default(""),
+  test_case_id: z.string().default(""),
+  position: z.number().default(0),
+  created_at: z.string().default(""),
+}).loose();
+
+export const ListTestPlansResponseSchema = z.object({
+  test_plans: z.array(TestPlanSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const ListTestPlanCasesResponseSchema = z.object({
+  cases: z.array(TestPlanCaseSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+const TestRunExecutionStatusSchema = z.object({
+  phase: z.string().default(""),
+  reason: z.string().nullable().default(null),
+  severity: z.string().nullable().default(null),
+}).loose();
+
+export const TestRunSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  project_id: z.string().default(""),
+  plan_id: z.string().nullable().default(null),
+  title: z.string().default(""),
+  executor_type: z.string().default("member"),
+  executor_id: z.string().default(""),
+  agent_task_id: z.string().nullable().default(null),
+  environment: z.string().default(""),
+  build_ref: z.string().default(""),
+  capability_binding: z.record(z.string(), z.unknown()).default({}),
+  status: z.string().default("pending"),
+  source_run_id: z.string().nullable().default(null),
+  retry_scope: z.string().nullable().default(null),
+  error: z.string().nullable().default(null),
+  started_at: z.string().nullable().default(null),
+  completed_at: z.string().nullable().default(null),
+  created_by: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+  execution_status: TestRunExecutionStatusSchema.nullable().optional(),
+  result_counts: z.record(z.string(), z.number()).optional(),
+}).loose();
+
+export const TestRunCaseSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  run_id: z.string().default(""),
+  test_case_id: z.string().default(""),
+  case_snapshot: z.record(z.string(), z.unknown()).default({}),
+  position: z.number().default(0),
+  result: z.string().default("pending"),
+  notes: z.string().default(""),
+  evidence: z.array(z.unknown()).default([]),
+  step_results: z.array(z.unknown()).default([]),
+  duration_ms: z.number().nullable().default(null),
+  executed_by_type: z.string().nullable().default(null),
+  executed_by_id: z.string().nullable().default(null),
+  executed_at: z.string().nullable().default(null),
+  defect_issue_id: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const ListTestRunsResponseSchema = z.object({
+  test_runs: z.array(TestRunSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const ListTestRunCasesResponseSchema = z.object({
+  cases: z.array(TestRunCaseSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const TestCaseResultTimelineEntrySchema = z.object({
+  id: z.string().default(""),
+  run_id: z.string().default(""),
+  run_title: z.string().default(""),
+  environment: z.string().default(""),
+  build_ref: z.string().default(""),
+  result: z.string().default("pending"),
+  executed_at: z.string().nullable().default(null),
+  executed_by_type: z.string().nullable().default(null),
+  executed_by_id: z.string().nullable().default(null),
+  defect_issue_id: z.string().nullable().default(null),
+  run_created_at: z.string().default(""),
+}).loose();
+
+export const TestCaseResultTimelineResponseSchema = z.object({
+  timeline: z.array(TestCaseResultTimelineEntrySchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const TestCapabilitySchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  daemon_id: z.string().default(""),
+  runtime_id: z.string().default(""),
+  kind: z.string().default("browser"),
+  capability_key: z.string().default(""),
+  target: z.record(z.string(), z.string()).default({}),
+  status: z.string().default("unknown"),
+  last_probe_at: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+}).loose();
+
+export const ListTestCapabilitiesResponseSchema = z.object({
+  capabilities: z.array(TestCapabilitySchema).default([]),
+}).loose();
+
+export const DispatchTestRunResponseSchema = z.object({
+  test_run: TestRunSchema,
+  agent_task_id: z.string().default(""),
+}).loose();
+
+// EMPTY_* fallbacks
+
+export const EMPTY_TEST_PLAN: TestPlan = {
+  id: "",
+  workspace_id: "",
+  project_id: "",
+  title: "",
+  description: "",
+  status: "draft",
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_LIST_TEST_PLANS_RESPONSE: ListTestPlansResponse = {
+  test_plans: [],
+  total: 0,
+};
+
+export const EMPTY_LIST_TEST_PLAN_CASES_RESPONSE: ListTestPlanCasesResponse = {
+  cases: [],
+  total: 0,
+};
+
+export const EMPTY_TEST_RUN: TestRun = {
+  id: "",
+  workspace_id: "",
+  project_id: "",
+  plan_id: null,
+  title: "",
+  executor_type: "member",
+  executor_id: "",
+  agent_task_id: null,
+  environment: "",
+  build_ref: "",
+  capability_binding: {},
+  status: "pending",
+  source_run_id: null,
+  retry_scope: null,
+  error: null,
+  started_at: null,
+  completed_at: null,
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_LIST_TEST_RUNS_RESPONSE: ListTestRunsResponse = {
+  test_runs: [],
+  total: 0,
+};
+
+export const EMPTY_TEST_RUN_CASE: TestRunCase = {
+  id: "",
+  workspace_id: "",
+  run_id: "",
+  test_case_id: "",
+  case_snapshot: {},
+  position: 0,
+  result: "pending",
+  notes: "",
+  evidence: [],
+  step_results: [],
+  duration_ms: null,
+  executed_by_type: null,
+  executed_by_id: null,
+  executed_at: null,
+  defect_issue_id: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_LIST_TEST_RUN_CASES_RESPONSE: ListTestRunCasesResponse = {
+  cases: [],
+  total: 0,
+};
+
+export const EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE: TestCaseResultTimelineResponse = {
+  timeline: [],
+  total: 0,
+};
+
+export const EMPTY_LIST_TEST_CAPABILITIES_RESPONSE: ListTestCapabilitiesResponse = {
+  capabilities: [],
+};
+
+export const ListDingTalkInstallationsResponseSchema = z.object({
+  installations: z.array(DingTalkInstallationSchema).default([]),
+  configured: z.boolean().default(false),
+  install_supported: z.boolean().optional(),
+}).loose();
+
+export const EMPTY_LIST_DINGTALK_INSTALLATIONS_RESPONSE: ListDingTalkInstallationsResponse = {
+  installations: [],
+  configured: false,
+};
+
+export const RedeemDingTalkBindingTokenResponseSchema = z.object({
+  workspace_id: z.string().default(""),
+  installation_id: z.string().default(""),
+  dingtalk_user_id: z.string().default(""),
+}).loose();
+
+export const EMPTY_REDEEM_DINGTALK_BINDING_TOKEN_RESPONSE: RedeemDingTalkBindingTokenResponse = {
+  workspace_id: "",
+  installation_id: "",
+  dingtalk_user_id: "",
+};

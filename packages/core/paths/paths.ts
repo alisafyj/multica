@@ -40,6 +40,16 @@ function workspaceScoped(slug: string) {
     designFrameDetail: (id: string, frameId: string, options: RevisionPathOptions = {}) => withQuery(`${ws}/designs/${encode(id)}/frames/${encode(frameId)}`, { revision_id: options.revisionId }),
     designDraftDetail: (id: string) => `${ws}/designs/drafts/${encode(id)}`,
     designRestoreTaskDetail: (id: string) => `${ws}/designs/restore-tasks/${encode(id)}`,
+    tests: () => `${ws}/tests`,
+    // Accepts either a TC-<n> key or a UUID; the server resolves both.
+    testCaseDetail: (ref: string) => `${ws}/tests/${encode(ref)}`,
+    // Generation job detail. The jobId is always a UUID.
+    testGenerationJobDetail: (jobId: string) => `${ws}/tests/jobs/${encode(jobId)}`,
+    // Test plan list and detail.
+    testPlans: () => `${ws}/tests/plans`,
+    testPlanDetail: (id: string) => `${ws}/tests/plans/${encode(id)}`,
+    // Test run detail.
+    testRunDetail: (id: string) => `${ws}/tests/runs/${encode(id)}`,
     autopilots: () => `${ws}/autopilots`,
     autopilotDetail: (id: string) => `${ws}/autopilots/${encode(id)}`,
     agents: () => `${ws}/agents`,
@@ -59,6 +69,10 @@ function workspaceScoped(slug: string) {
     squadDetail: (id: string) => `${ws}/squads/${encode(id)}`,
     inbox: () => `${ws}/inbox`,
     chat: () => `${ws}/chat`,
+    chatWithAgent: (agentId: string) =>
+      `${ws}/chat?agent=${encode(agentId)}`,
+    chatSession: (sessionId: string) =>
+      `${ws}/chat?session=${encode(sessionId)}`,
     myIssues: () => `${ws}/my-issues`,
     runtimes: () => `${ws}/runtimes`,
     runtimeDetail: (id: string) => `${ws}/runtimes/${encode(id)}`,

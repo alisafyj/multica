@@ -22,6 +22,7 @@ import type {
   IssueTableRowsRequest,
   IssueTableRowsResponse,
   Agent,
+  MikaBootstrapResponse,
   CreateAgentRequest,
   AgentTemplate,
   AgentTemplateSummary,
@@ -92,9 +93,11 @@ import type {
   ChatMessagesPage,
   ChatDraftRestoresResponse,
   ChatPendingTask,
+  PrioritizeQueuedChatTaskResponse,
   PendingChatTasksResponse,
   HasPendingChatTasksResponse,
   SendChatMessageResponse,
+  StartMikaOnboardingResponse,
   CancelTaskResponse,
   Project,
   CreateProjectRequest,
@@ -160,6 +163,10 @@ import type {
   ListSlackInstallationsResponse,
   RegisterSlackBYORequest,
   RedeemSlackBindingTokenResponse,
+  DingTalkInstallation,
+  ListDingTalkInstallationsResponse,
+  RegisterDingTalkBYORequest,
+  RedeemDingTalkBindingTokenResponse,
   Squad,
   SquadMember,
   SquadMemberStatusListResponse,
@@ -224,6 +231,40 @@ import type {
   CreatePMOConfigRequest,
   UpdatePMOConfigRequest,
   PMOConflictResolution,
+  TestCase,
+  CreateTestCaseRequest,
+  UpdateTestCaseRequest,
+  ListTestCasesResponse,
+  ListTestCaseModulesResponse,
+  ListTestCaseRevisionsResponse,
+  TestGenerationJob,
+  TestGenerationPlan,
+  TestCaseProposal,
+  ListTestGenerationJobsResponse,
+  ListTestCaseProposalsResponse,
+  CreateTestGenerationJobRequest,
+  UpdateTestGenerationPlanRequest,
+  DispatchTestGenerationJobRequest,
+  DispatchTestGenerationJobResponse,
+  TestPlan,
+  TestPlanCase,
+  TestRun,
+  TestRunCase,
+  ListTestPlansResponse,
+  ListTestPlanCasesResponse,
+  ListTestRunsResponse,
+  ListTestRunCasesResponse,
+  TestCaseResultTimelineResponse,
+  ListTestCapabilitiesResponse,
+  DispatchTestRunResponse,
+  CreateTestPlanRequest,
+  UpdateTestPlanRequest,
+  AddTestPlanCasesRequest,
+  CreateTestRunRequest,
+  RetryTestRunRequest,
+  DispatchTestRunRequest,
+  UpdateTestRunCaseResultRequest,
+  OpenTestRunCaseDefectRequest,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
@@ -237,6 +278,16 @@ import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
 import {
+  TestCaseSchema,
+  ListTestCasesResponseSchema,
+  ListTestCaseModulesResponseSchema,
+  ListTestCaseRevisionsResponseSchema,
+  EMPTY_TEST_CASE,
+  EMPTY_LIST_TEST_CASES_RESPONSE,
+  EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
+  EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE,
+} from "./schemas";
+import {
   AgentTaskListSchema,
   AgentTemplateSchema,
   AgentTemplateSummaryListSchema,
@@ -247,6 +298,9 @@ import {
   BatchUpdateIssuesResponseSchema,
   ChatMessageListSchema,
   ChatMessagesPageSchema,
+  ChatPendingTaskSchema,
+  PrioritizeQueuedChatTaskResponseSchema,
+  SendChatMessageResponseSchema,
   ChildIssuesResponseSchema,
   CommentsListSchema,
   CommentTriggerPreviewSchema,
@@ -272,6 +326,8 @@ import {
   EMPTY_BATCH_DELETE_ISSUES_RESPONSE,
   EMPTY_BATCH_UPDATE_ISSUES_RESPONSE,
   EMPTY_CHAT_MESSAGE_LIST,
+  EMPTY_CHAT_PENDING_TASK,
+  EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE,
   EMPTY_CLOUD_RUNTIME_NODE,
   EMPTY_CLOUD_RUNTIME_NODE_LIST,
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
@@ -326,6 +382,12 @@ import {
   CreateBillingCheckoutSessionResponseSchema,
   BillingCheckoutSessionStatusSchema,
   CreateBillingPortalSessionResponseSchema,
+  DingTalkInstallationSchema,
+  ListDingTalkInstallationsResponseSchema,
+  RedeemDingTalkBindingTokenResponseSchema,
+  EMPTY_DINGTALK_INSTALLATION,
+  EMPTY_LIST_DINGTALK_INSTALLATIONS_RESPONSE,
+  EMPTY_REDEEM_DINGTALK_BINDING_TOKEN_RESPONSE,
   EMPTY_BILLING_BALANCE,
   EMPTY_BILLING_TRANSACTIONS_PAGE,
   EMPTY_BILLING_BATCHES_PAGE,
@@ -397,6 +459,36 @@ import {
   EMPTY_PMO_SYNC_LINK,
   EMPTY_LIST_PMO_CONFIGS_RESPONSE,
   EMPTY_LIST_PMO_RUNS_RESPONSE,
+  TestGenerationJobSchema,
+  TestGenerationPlanSchema,
+  TestCaseProposalSchema,
+  ListTestGenerationJobsResponseSchema,
+  ListTestCaseProposalsResponseSchema,
+  DispatchTestGenerationJobResponseSchema,
+  EMPTY_TEST_GENERATION_JOB,
+  EMPTY_TEST_GENERATION_PLAN,
+  EMPTY_TEST_CASE_PROPOSAL,
+  EMPTY_LIST_TEST_GENERATION_JOBS_RESPONSE,
+  EMPTY_LIST_TEST_CASE_PROPOSALS_RESPONSE,
+  TestPlanSchema,
+  TestRunSchema,
+  TestRunCaseSchema,
+  ListTestPlansResponseSchema,
+  ListTestPlanCasesResponseSchema,
+  ListTestRunsResponseSchema,
+  ListTestRunCasesResponseSchema,
+  TestCaseResultTimelineResponseSchema,
+  ListTestCapabilitiesResponseSchema,
+  DispatchTestRunResponseSchema,
+  EMPTY_TEST_PLAN,
+  EMPTY_TEST_RUN,
+  EMPTY_TEST_RUN_CASE,
+  EMPTY_LIST_TEST_PLANS_RESPONSE,
+  EMPTY_LIST_TEST_PLAN_CASES_RESPONSE,
+  EMPTY_LIST_TEST_RUNS_RESPONSE,
+  EMPTY_LIST_TEST_RUN_CASES_RESPONSE,
+  EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE,
+  EMPTY_LIST_TEST_CAPABILITIES_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -512,6 +604,23 @@ function subscriberTarget(
   if (userId) body.user_id = userId;
   if (userType) body.user_type = userType;
   return body;
+}
+
+/**
+ * Per-call override for the workspace a request targets.
+ *
+ * `authHeaders()` normally stamps `X-Workspace-Slug` from the global
+ * current-workspace singleton, and the server resolves the workspace from that
+ * header BEFORE any `workspace_id` query param. Anything that acts on a
+ * workspace the user is not currently "in" — notably the create-workspace flow,
+ * which provisions a workspace it has not navigated to yet — must say so
+ * explicitly, or a concurrent writer of that singleton silently redirects the
+ * write to the wrong workspace.
+ */
+function workspaceHeader(
+  slug?: string,
+): Record<string, string> | undefined {
+  return slug ? { "X-Workspace-Slug": slug } : undefined;
 }
 
 export class ApiClient {
@@ -1234,6 +1343,35 @@ export class ApiClient {
     });
   }
 
+  /**
+   * Provisions the workspace's built-in Chief of Staff, or returns the
+   * existing one.
+   *
+   * Only a runtime and a language are sent: name, description, avatar,
+   * permissions, and the system instruction layer are server constants, so a
+   * client cannot mint an agent that would claim them. The server is also the
+   * idempotency boundary — calling twice yields the same agent.
+   */
+  async createMikaAgent(
+    data: {
+      runtime_id: string;
+      language: "en" | "zh" | "ko" | "ja";
+      /** Empty means "whatever the runtime defaults to". */
+      model?: string;
+      /** Label for the onboarding conversation, used only if this call is the
+       *  one that creates it. The session's identity is the member and Mika,
+       *  never this string — it is localized. */
+      session_title?: string;
+    },
+    workspaceSlug?: string,
+  ): Promise<MikaBootstrapResponse> {
+    return this.fetch("/api/agents/mika", {
+      method: "POST",
+      headers: workspaceHeader(workspaceSlug),
+      body: JSON.stringify(data),
+    });
+  }
+
   async createAgentBuilderSession(data: {
     runtime_id: string;
     model?: string;
@@ -1406,11 +1544,19 @@ export class ApiClient {
     return this.fetch(`/api/agents/${id}/cancel-tasks`, { method: "POST" });
   }
 
-  async listRuntimes(params?: { workspace_id?: string; owner?: "me" }): Promise<AgentRuntime[]> {
+  async listRuntimes(
+    params?: { workspace_id?: string; owner?: "me" },
+    workspaceSlug?: string,
+  ): Promise<AgentRuntime[]> {
     const search = new URLSearchParams();
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     if (params?.owner) search.set("owner", params.owner);
-    return this.fetch(`/api/runtimes?${search}`);
+    // workspace_id alone is not enough: the server resolves the workspace from
+    // the slug header first, so a caller listing another workspace's runtimes
+    // must override the header too.
+    return this.fetch(`/api/runtimes?${search}`, {
+      headers: workspaceHeader(workspaceSlug),
+    });
   }
 
   async listCloudRuntimeNodes(
@@ -2130,9 +2276,7 @@ export class ApiClient {
   ): Promise<NotificationPreferenceResponse> {
     const raw = await this.fetch<unknown>("/api/notification-preferences", {
       method: "PATCH",
-      headers: workspaceSlug
-        ? { "X-Workspace-Slug": workspaceSlug }
-        : undefined,
+      headers: workspaceHeader(workspaceSlug),
       body: JSON.stringify({ preferences }),
     });
     return parseWithFallback(
@@ -2381,22 +2525,31 @@ export class ApiClient {
   }
 
   // Chat Sessions
-  async listChatSessions(params?: { status?: string }): Promise<ChatSession[]> {
+  async listChatSessions(
+    params?: { status?: string },
+    workspaceSlug?: string,
+  ): Promise<ChatSession[]> {
     const query = params?.status ? `?status=${params.status}` : "";
-    return this.fetch(`/api/chat/sessions${query}`);
+    return this.fetch(`/api/chat/sessions${query}`, {
+      headers: workspaceHeader(workspaceSlug),
+    });
   }
 
   async getChatSession(id: string): Promise<ChatSession> {
     return this.fetch(`/api/chat/sessions/${id}`);
   }
 
-  async createChatSession(data: {
-    agent_id: string;
-    title?: string;
-    project_id?: string | null;
-  }): Promise<ChatSession> {
+  async createChatSession(
+    data: {
+      agent_id: string;
+      title?: string;
+      project_id?: string | null;
+    },
+    workspaceSlug?: string,
+  ): Promise<ChatSession> {
     return this.fetch("/api/chat/sessions", {
       method: "POST",
+      headers: workspaceHeader(workspaceSlug),
       body: JSON.stringify(data),
     });
   }
@@ -2523,14 +2676,63 @@ export class ApiClient {
     if (attachmentIds && attachmentIds.length > 0) {
       body.attachment_ids = attachmentIds;
     }
-    return this.fetch(`/api/chat/sessions/${sessionId}/messages`, {
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/messages`, {
       method: "POST",
       body: JSON.stringify(body),
+    });
+    const response = parseWithFallback<SendChatMessageResponse | null>(
+      raw,
+      SendChatMessageResponseSchema,
+      null,
+      { endpoint: "POST /api/chat/sessions/:id/messages" },
+    );
+    if (!response) throw new Error("invalid send chat message response");
+    return response;
+  }
+
+  async startMikaOnboarding(
+    sessionId: string,
+    data: {
+      language: "en" | "zh" | "ko" | "ja";
+      /** True when this member has onboarded in another workspace already. */
+      returning?: boolean;
+    },
+    workspaceSlug?: string,
+  ): Promise<StartMikaOnboardingResponse> {
+    return this.fetch(`/api/chat/sessions/${sessionId}/onboarding`, {
+      method: "POST",
+      headers: workspaceHeader(workspaceSlug),
+      body: JSON.stringify(data),
     });
   }
 
   async getPendingChatTask(sessionId: string): Promise<ChatPendingTask> {
-    return this.fetch(`/api/chat/sessions/${sessionId}/pending-task`);
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/pending-task`);
+    return parseWithFallback(raw, ChatPendingTaskSchema, EMPTY_CHAT_PENDING_TASK, {
+      endpoint: "GET /api/chat/sessions/:id/pending-task",
+    });
+  }
+
+  async prioritizeQueuedChatTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<PrioritizeQueuedChatTaskResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/chat/sessions/${sessionId}/queued-tasks/${taskId}/prioritize`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      PrioritizeQueuedChatTaskResponseSchema,
+      EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE,
+      { endpoint: "POST /api/chat/sessions/:id/queued-tasks/:taskId/prioritize" },
+    );
+  }
+
+  async clearQueuedChatTasks(sessionId: string): Promise<void> {
+    await this.fetch(`/api/chat/sessions/${sessionId}/queued-tasks`, {
+      method: "DELETE",
+    });
   }
 
   /**
@@ -2576,8 +2778,19 @@ export class ApiClient {
   // defers the empty-transcript judgment — and therefore only withholds the
   // synchronous restore from the response — for clients that send this; without
   // it we would be treated as a pre-#5219 client and get the legacy behaviour.
-  async cancelTaskById(taskId: string): Promise<CancelTaskResponse> {
-    const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/cancel`, {
+  async cancelTaskById(
+    taskId: string,
+    options?: { queuedAction?: "edit" | "remove"; sessionId?: string },
+  ): Promise<CancelTaskResponse> {
+    const params = new URLSearchParams();
+    if (options?.queuedAction) {
+      if (!options.sessionId) throw new Error("sessionId is required for queued-only cancellation");
+      params.set("expected_status", "queued");
+      params.set("chat_session_id", options.sessionId);
+      params.set("queue_action", options.queuedAction);
+    }
+    const query = params.size > 0 ? `?${params}` : "";
+    const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/cancel${query}`, {
       method: "POST",
       headers: { "X-Client-Capabilities": CHAT_DRAFT_RESTORE_CAPABILITY },
     });
@@ -2669,6 +2882,241 @@ export class ApiClient {
 
   async getProject(id: string): Promise<Project> {
     return this.fetch(`/api/projects/${id}`);
+  }
+
+  // Test cases
+  //
+  // `ref` is either a TC-<n> key or a UUID; the server resolves both. Every
+  // method goes through parseWithFallback — an older backend that drops a field
+  // must degrade the field, not white-screen the page.
+
+  async listTestCases(params?: {
+    projectId?: string;
+    status?: string;
+    module?: string;
+    priority?: string;
+    caseType?: string;
+    origin?: string;
+  }): Promise<ListTestCasesResponse> {
+    const search = new URLSearchParams();
+    if (params?.projectId) search.set("project_id", params.projectId);
+    if (params?.status) search.set("status", params.status);
+    if (params?.module) search.set("module", params.module);
+    if (params?.priority) search.set("priority", params.priority);
+    if (params?.caseType) search.set("case_type", params.caseType);
+    if (params?.origin) search.set("origin", params.origin);
+    const raw = await this.fetch<unknown>(`/api/test-cases?${search}`);
+    return parseWithFallback(raw, ListTestCasesResponseSchema, EMPTY_LIST_TEST_CASES_RESPONSE, {
+      endpoint: "GET /api/test-cases",
+    });
+  }
+
+  async listTestCaseModules(projectId: string): Promise<ListTestCaseModulesResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-cases/modules?project_id=${encodeURIComponent(projectId)}`,
+    );
+    return parseWithFallback(
+      raw,
+      ListTestCaseModulesResponseSchema,
+      EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
+      { endpoint: "GET /api/test-cases/modules" },
+    );
+  }
+
+  async getTestCase(ref: string): Promise<TestCase> {
+    const raw = await this.fetch<unknown>(`/api/test-cases/${encodeURIComponent(ref)}`);
+    return parseWithFallback(raw, TestCaseSchema, { ...EMPTY_TEST_CASE, id: ref }, {
+      endpoint: "GET /api/test-cases/:ref",
+    });
+  }
+
+  async createTestCase(data: CreateTestCaseRequest): Promise<TestCase> {
+    const raw = await this.fetch<unknown>("/api/test-cases", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestCaseSchema, EMPTY_TEST_CASE, {
+      endpoint: "POST /api/test-cases",
+    });
+  }
+
+  async updateTestCase(ref: string, data: UpdateTestCaseRequest): Promise<TestCase> {
+    const raw = await this.fetch<unknown>(`/api/test-cases/${encodeURIComponent(ref)}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestCaseSchema, { ...EMPTY_TEST_CASE, id: ref }, {
+      endpoint: "PUT /api/test-cases/:ref",
+    });
+  }
+
+  async approveTestCase(ref: string): Promise<TestCase> {
+    const raw = await this.fetch<unknown>(`/api/test-cases/${encodeURIComponent(ref)}/approve`, {
+      method: "POST",
+    });
+    return parseWithFallback(raw, TestCaseSchema, { ...EMPTY_TEST_CASE, id: ref }, {
+      endpoint: "POST /api/test-cases/:ref/approve",
+    });
+  }
+
+  async deleteTestCase(ref: string): Promise<void> {
+    await this.fetch(`/api/test-cases/${encodeURIComponent(ref)}`, { method: "DELETE" });
+  }
+
+  async listTestCaseRevisions(ref: string): Promise<ListTestCaseRevisionsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-cases/${encodeURIComponent(ref)}/revisions`,
+    );
+    return parseWithFallback(
+      raw,
+      ListTestCaseRevisionsResponseSchema,
+      EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE,
+      { endpoint: "GET /api/test-cases/:ref/revisions" },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Test generation jobs — Phase 2
+  // ---------------------------------------------------------------------------
+
+  async listTestGenerationJobs(params?: {
+    projectId?: string;
+    status?: string;
+    limit?: number;
+  }): Promise<ListTestGenerationJobsResponse> {
+    const query = new URLSearchParams();
+    if (params?.projectId) query.set("project_id", params.projectId);
+    if (params?.status) query.set("status", params.status);
+    if (params?.limit) query.set("limit", String(params.limit));
+    const qs = query.toString();
+    const raw = await this.fetch<unknown>(
+      qs ? `/api/test-generation-jobs?${qs}` : "/api/test-generation-jobs",
+    );
+    return parseWithFallback(
+      raw,
+      ListTestGenerationJobsResponseSchema,
+      EMPTY_LIST_TEST_GENERATION_JOBS_RESPONSE,
+      { endpoint: "GET /api/test-generation-jobs" },
+    );
+  }
+
+  async createTestGenerationJob(data: CreateTestGenerationJobRequest): Promise<TestGenerationJob> {
+    const raw = await this.fetch<unknown>("/api/test-generation-jobs", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestGenerationJobSchema, EMPTY_TEST_GENERATION_JOB, {
+      endpoint: "POST /api/test-generation-jobs",
+    });
+  }
+
+  async getTestGenerationJob(id: string): Promise<TestGenerationJob> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-generation-jobs/${encodeURIComponent(id)}`,
+    );
+    return parseWithFallback(raw, TestGenerationJobSchema, { ...EMPTY_TEST_GENERATION_JOB, id }, {
+      endpoint: "GET /api/test-generation-jobs/:id",
+    });
+  }
+
+  async getTestGenerationPlan(jobId: string): Promise<TestGenerationPlan> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-generation-jobs/${encodeURIComponent(jobId)}/plan`,
+    );
+    return parseWithFallback(raw, TestGenerationPlanSchema, EMPTY_TEST_GENERATION_PLAN, {
+      endpoint: "GET /api/test-generation-jobs/:id/plan",
+    });
+  }
+
+  async generateTestGenerationPlan(jobId: string): Promise<TestGenerationPlan> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-generation-jobs/${encodeURIComponent(jobId)}/plan/generate`,
+      { method: "POST" },
+    );
+    return parseWithFallback(raw, TestGenerationPlanSchema, EMPTY_TEST_GENERATION_PLAN, {
+      endpoint: "POST /api/test-generation-jobs/:id/plan/generate",
+    });
+  }
+
+  async updateTestGenerationPlan(
+    jobId: string,
+    data: UpdateTestGenerationPlanRequest,
+  ): Promise<TestGenerationPlan> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-generation-jobs/${encodeURIComponent(jobId)}/plan`,
+      { method: "PUT", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(raw, TestGenerationPlanSchema, EMPTY_TEST_GENERATION_PLAN, {
+      endpoint: "PUT /api/test-generation-jobs/:id/plan",
+    });
+  }
+
+  async approveTestGenerationPlan(jobId: string): Promise<TestGenerationPlan> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-generation-jobs/${encodeURIComponent(jobId)}/plan/approve`,
+      { method: "POST" },
+    );
+    return parseWithFallback(raw, TestGenerationPlanSchema, EMPTY_TEST_GENERATION_PLAN, {
+      endpoint: "POST /api/test-generation-jobs/:id/plan/approve",
+    });
+  }
+
+  async dispatchTestGenerationJob(
+    id: string,
+    data: DispatchTestGenerationJobRequest,
+  ): Promise<DispatchTestGenerationJobResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-generation-jobs/${encodeURIComponent(id)}/dispatch`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(
+      raw,
+      DispatchTestGenerationJobResponseSchema,
+      { job: EMPTY_TEST_GENERATION_JOB, agent_task_id: "" },
+      { endpoint: "POST /api/test-generation-jobs/:id/dispatch" },
+    );
+  }
+
+  async listTestCaseProposals(
+    caseRef: string,
+    status?: string,
+  ): Promise<ListTestCaseProposalsResponse> {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+    const raw = await this.fetch<unknown>(
+      `/api/test-cases/${encodeURIComponent(caseRef)}/proposals${qs}`,
+    );
+    return parseWithFallback(
+      raw,
+      ListTestCaseProposalsResponseSchema,
+      EMPTY_LIST_TEST_CASE_PROPOSALS_RESPONSE,
+      { endpoint: "GET /api/test-cases/:ref/proposals" },
+    );
+  }
+
+  async acceptTestCaseProposal(id: string): Promise<TestCaseProposal> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-case-proposals/${encodeURIComponent(id)}/accept`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      TestCaseProposalSchema,
+      { ...EMPTY_TEST_CASE_PROPOSAL, id },
+      { endpoint: "POST /api/test-case-proposals/:id/accept" },
+    );
+  }
+
+  async rejectTestCaseProposal(id: string): Promise<TestCaseProposal> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-case-proposals/${encodeURIComponent(id)}/reject`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      TestCaseProposalSchema,
+      { ...EMPTY_TEST_CASE_PROPOSAL, id },
+      { endpoint: "POST /api/test-case-proposals/:id/reject" },
+    );
   }
 
   async createProject(data: CreateProjectRequest): Promise<Project> {
@@ -3816,5 +4264,281 @@ export class ApiClient {
     return parseWithFallback(raw, PMOSyncLinkSchema, EMPTY_PMO_SYNC_LINK, {
       endpoint: "PUT /api/pmo/configs/:id/assignees/:externalKey",
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Test plans — Phase 3/4
+  // ---------------------------------------------------------------------------
+
+  async listTestPlans(params?: {
+    projectId?: string;
+    status?: string;
+  }): Promise<ListTestPlansResponse> {
+    const qs = new URLSearchParams();
+    if (params?.projectId) qs.set("project_id", params.projectId);
+    if (params?.status) qs.set("status", params.status);
+    const query = qs.toString() ? `?${qs}` : "";
+    const raw = await this.fetch<unknown>(`/api/test-plans${query}`);
+    return parseWithFallback(raw, ListTestPlansResponseSchema, EMPTY_LIST_TEST_PLANS_RESPONSE, {
+      endpoint: "GET /api/test-plans",
+    });
+  }
+
+  async createTestPlan(data: CreateTestPlanRequest): Promise<TestPlan> {
+    const raw = await this.fetch<unknown>(`/api/test-plans`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestPlanSchema, EMPTY_TEST_PLAN, {
+      endpoint: "POST /api/test-plans",
+    });
+  }
+
+  async getTestPlan(id: string): Promise<TestPlan> {
+    const raw = await this.fetch<unknown>(`/api/test-plans/${encodeURIComponent(id)}`);
+    return parseWithFallback(raw, TestPlanSchema, { ...EMPTY_TEST_PLAN, id }, {
+      endpoint: "GET /api/test-plans/:id",
+    });
+  }
+
+  async updateTestPlan(id: string, data: UpdateTestPlanRequest): Promise<TestPlan> {
+    const raw = await this.fetch<unknown>(`/api/test-plans/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestPlanSchema, { ...EMPTY_TEST_PLAN, id }, {
+      endpoint: "PUT /api/test-plans/:id",
+    });
+  }
+
+  async deleteTestPlan(id: string): Promise<void> {
+    await this.fetch(`/api/test-plans/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async listTestPlanCases(planId: string): Promise<ListTestPlanCasesResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-plans/${encodeURIComponent(planId)}/cases`,
+    );
+    return parseWithFallback(raw, ListTestPlanCasesResponseSchema, EMPTY_LIST_TEST_PLAN_CASES_RESPONSE, {
+      endpoint: "GET /api/test-plans/:id/cases",
+    });
+  }
+
+  async addTestPlanCases(planId: string, data: AddTestPlanCasesRequest): Promise<{ cases: TestPlanCase[] }> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-plans/${encodeURIComponent(planId)}/cases`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(raw, ListTestPlanCasesResponseSchema, EMPTY_LIST_TEST_PLAN_CASES_RESPONSE, {
+      endpoint: "POST /api/test-plans/:id/cases",
+    });
+  }
+
+  async removeTestPlanCase(planId: string, caseId: string): Promise<void> {
+    await this.fetch(
+      `/api/test-plans/${encodeURIComponent(planId)}/cases/${encodeURIComponent(caseId)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Test runs — Phase 3/4
+  // ---------------------------------------------------------------------------
+
+  async listTestRuns(params?: {
+    projectId?: string;
+    planId?: string;
+    status?: string;
+    limit?: number;
+  }): Promise<ListTestRunsResponse> {
+    const qs = new URLSearchParams();
+    if (params?.projectId) qs.set("project_id", params.projectId);
+    if (params?.planId) qs.set("plan_id", params.planId);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const query = qs.toString() ? `?${qs}` : "";
+    const raw = await this.fetch<unknown>(`/api/test-runs${query}`);
+    return parseWithFallback(raw, ListTestRunsResponseSchema, EMPTY_LIST_TEST_RUNS_RESPONSE, {
+      endpoint: "GET /api/test-runs",
+    });
+  }
+
+  async createTestRun(data: CreateTestRunRequest): Promise<TestRun> {
+    const raw = await this.fetch<unknown>(`/api/test-runs`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestRunSchema, EMPTY_TEST_RUN, {
+      endpoint: "POST /api/test-runs",
+    });
+  }
+
+  async getTestRun(id: string): Promise<TestRun> {
+    const raw = await this.fetch<unknown>(`/api/test-runs/${encodeURIComponent(id)}`);
+    return parseWithFallback(raw, TestRunSchema, { ...EMPTY_TEST_RUN, id }, {
+      endpoint: "GET /api/test-runs/:id",
+    });
+  }
+
+  async startTestRun(id: string): Promise<TestRun> {
+    const raw = await this.fetch<unknown>(`/api/test-runs/${encodeURIComponent(id)}/start`, {
+      method: "POST",
+    });
+    return parseWithFallback(raw, TestRunSchema, { ...EMPTY_TEST_RUN, id }, {
+      endpoint: "POST /api/test-runs/:id/start",
+    });
+  }
+
+  async abortTestRun(id: string, reason?: string): Promise<TestRun> {
+    const raw = await this.fetch<unknown>(`/api/test-runs/${encodeURIComponent(id)}/abort`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason ?? "" }),
+    });
+    return parseWithFallback(raw, TestRunSchema, { ...EMPTY_TEST_RUN, id }, {
+      endpoint: "POST /api/test-runs/:id/abort",
+    });
+  }
+
+  async retryTestRun(id: string, data: RetryTestRunRequest): Promise<TestRun> {
+    const raw = await this.fetch<unknown>(`/api/test-runs/${encodeURIComponent(id)}/retry`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestRunSchema, EMPTY_TEST_RUN, {
+      endpoint: "POST /api/test-runs/:id/retry",
+    });
+  }
+
+  async dispatchTestRun(id: string, data: DispatchTestRunRequest): Promise<DispatchTestRunResponse> {
+    const raw = await this.fetch<unknown>(`/api/test-runs/${encodeURIComponent(id)}/dispatch`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DispatchTestRunResponseSchema, { test_run: { ...EMPTY_TEST_RUN, id }, agent_task_id: "" }, {
+      endpoint: "POST /api/test-runs/:id/dispatch",
+    });
+  }
+
+  async listTestRunCases(runId: string): Promise<ListTestRunCasesResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-runs/${encodeURIComponent(runId)}/cases`,
+    );
+    return parseWithFallback(raw, ListTestRunCasesResponseSchema, EMPTY_LIST_TEST_RUN_CASES_RESPONSE, {
+      endpoint: "GET /api/test-runs/:id/cases",
+    });
+  }
+
+  async updateTestRunCaseResult(
+    id: string,
+    data: UpdateTestRunCaseResultRequest,
+  ): Promise<TestRunCase> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-run-cases/${encodeURIComponent(id)}/result`,
+      { method: "PUT", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(raw, TestRunCaseSchema, { ...EMPTY_TEST_RUN_CASE, id }, {
+      endpoint: "PUT /api/test-run-cases/:id/result",
+    });
+  }
+
+  async openTestRunCaseDefect(
+    id: string,
+    data: OpenTestRunCaseDefectRequest,
+  ): Promise<{ test_run_case: TestRunCase; issue: unknown }> {
+    return this.fetch<{ test_run_case: TestRunCase; issue: unknown }>(
+      `/api/test-run-cases/${encodeURIComponent(id)}/defect`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+  }
+
+  async listTestCaseResultTimeline(
+    ref: string,
+    params?: { limit?: number },
+  ): Promise<TestCaseResultTimelineResponse> {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const query = qs.toString() ? `?${qs}` : "";
+    const raw = await this.fetch<unknown>(
+      `/api/test-cases/${encodeURIComponent(ref)}/results${query}`,
+    );
+    return parseWithFallback(raw, TestCaseResultTimelineResponseSchema, EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE, {
+      endpoint: "GET /api/test-cases/:ref/results",
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Test capabilities — Phase 4
+  // ---------------------------------------------------------------------------
+
+  async listTestCapabilities(params?: {
+    kind?: string;
+    status?: string;
+    daemonId?: string;
+  }): Promise<ListTestCapabilitiesResponse> {
+    const qs = new URLSearchParams();
+    if (params?.kind) qs.set("kind", params.kind);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.daemonId) qs.set("daemon_id", params.daemonId);
+    const query = qs.toString() ? `?${qs}` : "";
+    const raw = await this.fetch<unknown>(`/api/test-capabilities${query}`);
+    return parseWithFallback(raw, ListTestCapabilitiesResponseSchema, EMPTY_LIST_TEST_CAPABILITIES_RESPONSE, {
+      endpoint: "GET /api/test-capabilities",
+    });
+  }
+
+  // DingTalk integration
+  async listDingTalkInstallations(
+    workspaceId: string,
+  ): Promise<ListDingTalkInstallationsResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/dingtalk/installations`);
+    return parseWithFallback(
+      raw,
+      ListDingTalkInstallationsResponseSchema,
+      EMPTY_LIST_DINGTALK_INSTALLATIONS_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/dingtalk/installations" },
+    );
+  }
+
+  // registerDingTalkBYO performs a bring-your-own-app install: the admin pastes
+  // the AppKey (client id) + AppSecret (client secret) of the DingTalk
+  // Stream-mode robot they created, and the backend validates + persists it,
+  // returning the new installation.
+  async registerDingTalkBYO(
+    workspaceId: string,
+    agentId: string,
+    body: RegisterDingTalkBYORequest,
+  ): Promise<DingTalkInstallation> {
+    const search = new URLSearchParams({ agent_id: agentId });
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/dingtalk/install/byo?${search.toString()}`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    );
+    return parseWithFallback(raw, DingTalkInstallationSchema, EMPTY_DINGTALK_INSTALLATION, {
+      endpoint: "POST /api/workspaces/:id/dingtalk/install/byo",
+    });
+  }
+
+  async deleteDingTalkInstallation(workspaceId: string, installationId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/dingtalk/installations/${installationId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async redeemDingTalkBindingToken(
+    token: string,
+  ): Promise<RedeemDingTalkBindingTokenResponse> {
+    const raw = await this.fetch<unknown>(`/api/dingtalk/binding/redeem`, {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    });
+    return parseWithFallback(
+      raw,
+      RedeemDingTalkBindingTokenResponseSchema,
+      EMPTY_REDEEM_DINGTALK_BINDING_TOKEN_RESPONSE,
+      { endpoint: "POST /api/dingtalk/binding/redeem" },
+    );
   }
 }

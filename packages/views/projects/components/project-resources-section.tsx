@@ -4,12 +4,14 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ChevronRight,
+  FileText,
   FolderGit,
   FolderOpen,
   Pencil,
   Plus,
   Search,
   Trash2,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -21,6 +23,7 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import type {
+  DocumentResourceRef,
   GithubRepoResourceRef,
   LocalDirectoryResourceRef,
   ProjectResource,
@@ -64,6 +67,12 @@ function isLocalDirectoryRef(r: ProjectResource): r is ProjectResource & {
   return r.resource_type === "local_directory";
 }
 
+function isDocumentRef(r: ProjectResource): r is ProjectResource & {
+  resource_ref: DocumentResourceRef;
+} {
+  return r.resource_type === "document";
+}
+
 export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
@@ -73,6 +82,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const [addOpen, setAddOpen] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
   const [picking, setPicking] = useState(false);
+  const [docFormOpen, setDocFormOpen] = useState(false);
 
   const { data: resources = [] } = useQuery(
     projectResourcesOptions(wsId, projectId),
@@ -382,6 +392,39 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
               )}
             </div>
           )}
+          <div className="flex flex-col">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 justify-start px-2 text-caption text-muted-foreground hover:text-foreground"
+              onClick={() => setDocFormOpen(!docFormOpen)}
+            >
+              <FileText className="size-3" />
+              {t(($) => $.resources.add_document_button)}
+            </Button>
+            {docFormOpen && (
+              <DocumentForm
+                pending={createResource.isPending}
+                onSubmit={async (url, title, summary) => {
+                  try {
+                    await createResource.mutateAsync({
+                      resource_type: "document",
+                      resource_ref: { url, title, ...(summary ? { summary } : {}) },
+                    });
+                    toast.success(t(($) => $.resources.toast_document_attached));
+                    setDocFormOpen(false);
+                  } catch (err) {
+                    const msg =
+                      err instanceof Error
+                        ? err.message
+                        : t(($) => $.resources.toast_document_attach_failed);
+                    toast.error(msg);
+                  }
+                }}
+                onCancel={() => setDocFormOpen(false)}
+              />
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -453,10 +496,49 @@ function ResourceRow({
     );
   }
 
+  if (isDocumentRef(resource)) {
+    const ref = resource.resource_ref;
+    const display = resource.label || ref.title;
+    const tooltip = ref.summary ? `${ref.url}\n${ref.summary}` : ref.url;
+    return (
+      <div className="flex items-center gap-2 text-caption group">
+        <FileText className="size-3.5 text-muted-foreground shrink-0" />
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <a
+                href={ref.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="truncate flex-1 hover:underline"
+              >
+                {display}
+              </a>
+            }
+          />
+          <TooltipContent side="top" className="whitespace-pre-line">{tooltip}</TooltipContent>
+        </Tooltip>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
+          title={t(($) => $.resources.remove_tooltip)}
+        >
+          <Trash2 className="size-3 text-muted-foreground" />
+        </button>
+      </div>
+    );
+  }
+
+  // The guards above exhaust every resource_type this build knows, so TS
+  // narrows `resource` to never here. resource_type is a free TEXT column on
+  // the server precisely so new types can ship without a client release, and
+  // an older client must still render one as a neutral row rather than crash.
+  const unknownResource = resource as ProjectResource;
   return (
     <div className="flex items-center gap-2 text-caption text-muted-foreground">
       <span className="truncate flex-1">
-        {resource.label || resource.resource_type}
+        {unknownResource.label || unknownResource.resource_type}
       </span>
       <button
         type="button"
@@ -623,6 +705,105 @@ function CustomRepoForm({
       >
         {t(($) => $.resources.url_submit)}
       </Button>
+    </form>
+  );
+}
+
+function DocumentForm({
+  pending,
+  onSubmit,
+  onCancel,
+}: {
+  pending: boolean;
+  onSubmit: (url: string, title: string, summary: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const { t } = useT("projects");
+  const [url, setUrl] = useState("");
+  const [title, setTitle] = useState("");
+  const [summary, setSummary] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedUrl = url.trim();
+    const trimmedTitle = title.trim();
+    if (!trimmedUrl || !trimmedTitle) return;
+    setSubmitting(true);
+    try {
+      await onSubmit(trimmedUrl, trimmedTitle, summary.trim());
+      setUrl("");
+      setTitle("");
+      setSummary("");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form
+      onSubmit={handle}
+      className="mt-1 ml-2 space-y-1.5 border-l pl-2"
+    >
+      <div className="flex flex-col gap-0.5">
+        <label className="text-micro text-muted-foreground">
+          {t(($) => $.resources.document_url_label)}
+        </label>
+        <input
+          type="url"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder={t(($) => $.resources.document_url_placeholder)}
+          required
+          className="h-7 w-full rounded-md border bg-transparent px-2 text-caption outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        />
+      </div>
+      <div className="flex flex-col gap-0.5">
+        <label className="text-micro text-muted-foreground">
+          {t(($) => $.resources.document_title_label)}
+        </label>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder={t(($) => $.resources.document_title_placeholder)}
+          required
+          className="h-7 w-full rounded-md border bg-transparent px-2 text-caption outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        />
+      </div>
+      <div className="flex flex-col gap-0.5">
+        <label className="text-micro text-muted-foreground">
+          {t(($) => $.resources.document_summary_label)}
+        </label>
+        <input
+          type="text"
+          value={summary}
+          onChange={(e) => setSummary(e.target.value)}
+          placeholder={t(($) => $.resources.document_summary_placeholder)}
+          className="h-7 w-full rounded-md border bg-transparent px-2 text-caption outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        />
+      </div>
+      <div className="flex justify-end gap-1.5 pt-0.5">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-6 px-2 text-caption"
+          onClick={onCancel}
+          aria-label={t(($) => $.resources.document_cancel)}
+        >
+          <X className="size-3.5" />
+        </Button>
+        <Button
+          type="submit"
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-caption"
+          disabled={!url.trim() || !title.trim() || submitting || pending}
+        >
+          {t(($) => $.resources.document_submit)}
+        </Button>
+      </div>
     </form>
   );
 }

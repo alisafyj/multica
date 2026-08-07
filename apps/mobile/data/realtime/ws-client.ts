@@ -56,6 +56,12 @@ export interface WSClientOptions {
   workspaceSlug: string;
   /** Mobile app version, surfaced to server logs for debuggability. */
   clientVersion?: string;
+  /** Device OS (`Platform.OS`), surfaced to server logs alongside the version.
+   *  Injected rather than read here so this layer stays free of `react-native`
+   *  imports — that is what keeps it testable in the Node-only vitest lane.
+   *  Omitted from the URL when absent; the server treats a missing value as
+   *  "unknown", which beats logging a guessed platform. */
+  clientOs?: string;
   logger?: Logger;
 }
 
@@ -199,7 +205,9 @@ export class WSClient {
     const url = new URL(this.opts.url);
     url.searchParams.set("workspace_slug", this.opts.workspaceSlug);
     url.searchParams.set("client_platform", "mobile");
-    url.searchParams.set("client_os", "ios");
+    if (this.opts.clientOs) {
+      url.searchParams.set("client_os", this.opts.clientOs);
+    }
     if (this.opts.clientVersion) {
       url.searchParams.set("client_version", this.opts.clientVersion);
     }

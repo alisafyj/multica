@@ -184,6 +184,7 @@ type Attachment struct {
 	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
 	ChatMessageID pgtype.UUID        `json:"chat_message_id"`
 	TaskID        pgtype.UUID        `json:"task_id"`
+	TestRunCaseID pgtype.UUID        `json:"test_run_case_id"`
 }
 
 type Autopilot struct {
@@ -1439,6 +1440,180 @@ type TaskUsageHourlyRollupState struct {
 	LastError         pgtype.Text        `json:"last_error"`
 }
 
+type TestCapability struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	DaemonID      string             `json:"daemon_id"`
+	RuntimeID     pgtype.UUID        `json:"runtime_id"`
+	Kind          string             `json:"kind"`
+	CapabilityKey string             `json:"capability_key"`
+	Target        []byte             `json:"target"`
+	Status        string             `json:"status"`
+	Probe         []byte             `json:"probe"`
+	LastProbeAt   pgtype.Timestamptz `json:"last_probe_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TestCase struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	CaseNumber           int32              `json:"case_number"`
+	Title                string             `json:"title"`
+	Module               string             `json:"module"`
+	Preconditions        string             `json:"preconditions"`
+	Steps                []byte             `json:"steps"`
+	ExpectedResult       string             `json:"expected_result"`
+	TestData             []byte             `json:"test_data"`
+	Priority             string             `json:"priority"`
+	CaseType             string             `json:"case_type"`
+	Scope                string             `json:"scope"`
+	ExecutionMode        string             `json:"execution_mode"`
+	RequiredCapabilities []byte             `json:"required_capabilities"`
+	BusinessRulesRef     []byte             `json:"business_rules_ref"`
+	Status               string             `json:"status"`
+	Origin               string             `json:"origin"`
+	SourceRefs           []byte             `json:"source_refs"`
+	GenerationJobID      pgtype.UUID        `json:"generation_job_id"`
+	Version              int32              `json:"version"`
+	CreatedBy            pgtype.UUID        `json:"created_by"`
+	UpdatedBy            pgtype.UUID        `json:"updated_by"`
+	ReviewedBy           pgtype.UUID        `json:"reviewed_by"`
+	ReviewedAt           pgtype.Timestamptz `json:"reviewed_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TestCaseProposal struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	JobID        pgtype.UUID        `json:"job_id"`
+	TargetCaseID pgtype.UUID        `json:"target_case_id"`
+	Kind         string             `json:"kind"`
+	Payload      []byte             `json:"payload"`
+	Rationale    string             `json:"rationale"`
+	Status       string             `json:"status"`
+	ReviewedBy   pgtype.UUID        `json:"reviewed_by"`
+	ReviewedAt   pgtype.Timestamptz `json:"reviewed_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type TestCaseRepo struct {
+	TestCaseID        pgtype.UUID        `json:"test_case_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
+	Alias             string             `json:"alias"`
+	Role              string             `json:"role"`
+	PathGlobs         []byte             `json:"path_globs"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type TestCaseRevision struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	TestCaseID    pgtype.UUID        `json:"test_case_id"`
+	Version       int32              `json:"version"`
+	Snapshot      []byte             `json:"snapshot"`
+	ChangeKind    string             `json:"change_kind"`
+	ChangedBy     pgtype.UUID        `json:"changed_by"`
+	ChangedByType string             `json:"changed_by_type"`
+	Note          string             `json:"note"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type TestGenerationJob struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	AgentTaskID pgtype.UUID        `json:"agent_task_id"`
+	Status      string             `json:"status"`
+	Input       []byte             `json:"input"`
+	Result      []byte             `json:"result"`
+	Error       pgtype.Text        `json:"error"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TestGenerationPlan struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	JobID       pgtype.UUID        `json:"job_id"`
+	Status      string             `json:"status"`
+	Plan        []byte             `json:"plan"`
+	ReviewNotes string             `json:"review_notes"`
+	ApprovedBy  pgtype.UUID        `json:"approved_by"`
+	ApprovedAt  pgtype.Timestamptz `json:"approved_at"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TestPlan struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	Status      string             `json:"status"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TestPlanCase struct {
+	PlanID      pgtype.UUID        `json:"plan_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	TestCaseID  pgtype.UUID        `json:"test_case_id"`
+	Position    int32              `json:"position"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type TestRun struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	PlanID            pgtype.UUID        `json:"plan_id"`
+	Title             string             `json:"title"`
+	ExecutorType      string             `json:"executor_type"`
+	ExecutorID        pgtype.UUID        `json:"executor_id"`
+	AgentTaskID       pgtype.UUID        `json:"agent_task_id"`
+	Environment       string             `json:"environment"`
+	BuildRef          string             `json:"build_ref"`
+	CapabilityBinding []byte             `json:"capability_binding"`
+	Status            string             `json:"status"`
+	SourceRunID       pgtype.UUID        `json:"source_run_id"`
+	RetryScope        pgtype.Text        `json:"retry_scope"`
+	Error             pgtype.Text        `json:"error"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TestRunCase struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	TestCaseID     pgtype.UUID        `json:"test_case_id"`
+	CaseSnapshot   []byte             `json:"case_snapshot"`
+	Position       int32              `json:"position"`
+	Result         string             `json:"result"`
+	Notes          string             `json:"notes"`
+	Evidence       []byte             `json:"evidence"`
+	StepResults    []byte             `json:"step_results"`
+	DurationMs     pgtype.Int4        `json:"duration_ms"`
+	ExecutedByType pgtype.Text        `json:"executed_by_type"`
+	ExecutedByID   pgtype.UUID        `json:"executed_by_id"`
+	ExecutedAt     pgtype.Timestamptz `json:"executed_at"`
+	DefectIssueID  pgtype.UUID        `json:"defect_issue_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type User struct {
 	ID                      pgtype.UUID        `json:"id"`
 	Name                    string             `json:"name"`
@@ -1574,7 +1749,8 @@ type Workspace struct {
 	IssueCounter int32              `json:"issue_counter"`
 	AvatarUrl    pgtype.Text        `json:"avatar_url"`
 	// When TRUE, an agent run that resolves to no precise accountable human (would be owner_fallback) is refused at enqueue instead of degrading to the agent owner (MUL-4302 §3.5). Default FALSE = owner_fallback. Never affects authorization (originator_user_id).
-	AttributionFailClosed bool `json:"attribution_fail_closed"`
+	AttributionFailClosed bool  `json:"attribution_fail_closed"`
+	TestCaseCounter       int32 `json:"test_case_counter"`
 }
 
 type WorkspaceInvitation struct {

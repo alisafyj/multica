@@ -1,6 +1,6 @@
 ---
 name: multica-projects-and-resources
-description: "Use when creating, inspecting, updating, or debugging Multica projects and their resources (github_repo, local_directory)."
+description: "Use when creating, inspecting, updating, or debugging Multica projects and their resources (github_repo, local_directory, document)."
 user-invocable: false
 allowed-tools: Bash(multica *)
 ---
@@ -29,7 +29,8 @@ A project's `description` is also durable context: when an issue (or a quick-cre
 Common resource types:
 
 - `github_repo` — durable GitHub repo context, with `resource_ref.url`, optional checkout `ref`, and optional prompt-only `default_branch_hint`;
-- `local_directory` — daemon-local path context, with `resource_ref.local_path`, `daemon_id`, and optional label.
+- `local_directory` — daemon-local path context, with `resource_ref.local_path`, `daemon_id`, and optional label;
+- `document` — external specification or business-rule page, with `resource_ref.url` (http/https only), required `title`, and optional `summary` (≤500 chars). Agents fetch and read the URL before implementing or testing anything the spec describes.
 
 ## CLI
 
@@ -46,6 +47,8 @@ multica project resource list <project-id> --output json
 multica project resource add <project-id> --type github_repo --url <github-url> --output json
 multica project resource add <project-id> --type github_repo --url <github-url> --ref <branch-or-sha> --output json
 multica project resource add <project-id> --type local_directory --local-path <abs-path> --daemon-id <daemon-id> --output json
+multica project resource add <project-id> --type document --url <https-url> --title "<title>" --output json
+multica project resource add <project-id> --type document --url <https-url> --title "<title>" --summary "<summary>" --output json
 multica project resource update <project-id> <resource-id> --url <new-github-url> --output json
 multica project resource update <project-id> <resource-id> --ref <branch-or-sha> --output json
 multica project resource remove <project-id> <resource-id> --output json
@@ -77,7 +80,7 @@ pasted URL is handed to the system browser and takes the reader out of the app.
 
 ## When to add a resource
 
-Add/update a project resource when the user asks for durable project context: "把这个 GitHub repo 绑到项目上", "以后都用这个 repo", "agent 总是拿不到这个项目的仓库", or "这个项目要在我的本地目录里跑".
+Add/update a project resource when the user asks for durable project context: "把这个 GitHub repo 绑到项目上", "以后都用这个 repo", "agent 总是拿不到这个项目的仓库", "这个项目要在我的本地目录里跑", or "把这个 PRD / API 文档绑到项目上". Use `document` for any external specification, PRD, API-reference, or business-rule page the agent should read before each task.
 
 Project resources are durable and affect future tasks. `multica repo checkout`
 is task-local checkout state.
@@ -86,7 +89,7 @@ is task-local checkout state.
 
 1. `multica project get <project-id> --output json`.
 2. `multica project resource list <project-id> --output json`.
-3. Check `github_repo.resource_ref.url`, optional `ref`, `default_branch_hint`, and `local_directory.resource_ref.daemon_id`.
+3. Check `github_repo.resource_ref.url`, optional `ref`, `default_branch_hint`; `local_directory.resource_ref.daemon_id`; and `document.resource_ref.url` + `title`.
 4. Updating resources is a durable mutation. After an update, listing the
    resource is the verification path.
 5. If resources match the expected task context, inspect runtime/repo checkout

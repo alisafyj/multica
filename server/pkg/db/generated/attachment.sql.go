@@ -85,7 +85,7 @@ VALUES (
   $1, $2, $9, $10, $11, $12,
   $3, $4, $5, $6, $7, $8
 )
-RETURNING id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id
+RETURNING id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, test_run_case_id
 `
 
 type CreateAttachmentParams struct {
@@ -134,6 +134,7 @@ func (q *Queries) CreateAttachment(ctx context.Context, arg CreateAttachmentPara
 		&i.ChatSessionID,
 		&i.ChatMessageID,
 		&i.TaskID,
+		&i.TestRunCaseID,
 	)
 	return i, err
 }
@@ -158,7 +159,7 @@ SET chat_message_id = NULL
 WHERE chat_message_id IN (
   SELECT id FROM chat_message WHERE chat_message.task_id = $1 AND role = 'user'
 )
-RETURNING id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id
+RETURNING id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, test_run_case_id
 `
 
 // When an empty chat task is cancelled, its user message is deleted. The
@@ -190,6 +191,7 @@ func (q *Queries) DetachAttachmentsFromUserChatMessageByTask(ctx context.Context
 			&i.ChatSessionID,
 			&i.ChatMessageID,
 			&i.TaskID,
+			&i.TestRunCaseID,
 		); err != nil {
 			return nil, err
 		}
@@ -202,7 +204,7 @@ func (q *Queries) DetachAttachmentsFromUserChatMessageByTask(ctx context.Context
 }
 
 const getAttachment = `-- name: GetAttachment :one
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, test_run_case_id FROM attachment
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -229,12 +231,13 @@ func (q *Queries) GetAttachment(ctx context.Context, arg GetAttachmentParams) (A
 		&i.ChatSessionID,
 		&i.ChatMessageID,
 		&i.TaskID,
+		&i.TestRunCaseID,
 	)
 	return i, err
 }
 
 const getAttachmentByIDOnly = `-- name: GetAttachmentByIDOnly :one
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, test_run_case_id FROM attachment
 WHERE id = $1
 `
 
@@ -262,6 +265,7 @@ func (q *Queries) GetAttachmentByIDOnly(ctx context.Context, id pgtype.UUID) (At
 		&i.ChatSessionID,
 		&i.ChatMessageID,
 		&i.TaskID,
+		&i.TestRunCaseID,
 	)
 	return i, err
 }
@@ -410,7 +414,7 @@ func (q *Queries) ListAttachmentURLsByIssueOrComments(ctx context.Context, issue
 }
 
 const listAttachmentsByChatMessage = `-- name: ListAttachmentsByChatMessage :many
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, test_run_case_id FROM attachment
 WHERE chat_message_id = $1 AND workspace_id = $2
 ORDER BY created_at ASC
 `
@@ -444,6 +448,7 @@ func (q *Queries) ListAttachmentsByChatMessage(ctx context.Context, arg ListAtta
 			&i.ChatSessionID,
 			&i.ChatMessageID,
 			&i.TaskID,
+			&i.TestRunCaseID,
 		); err != nil {
 			return nil, err
 		}
@@ -456,7 +461,7 @@ func (q *Queries) ListAttachmentsByChatMessage(ctx context.Context, arg ListAtta
 }
 
 const listAttachmentsByChatMessageIDs = `-- name: ListAttachmentsByChatMessageIDs :many
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, test_run_case_id FROM attachment
 WHERE chat_message_id = ANY($1::uuid[]) AND workspace_id = $2
 ORDER BY created_at ASC
 `
@@ -490,6 +495,7 @@ func (q *Queries) ListAttachmentsByChatMessageIDs(ctx context.Context, arg ListA
 			&i.ChatSessionID,
 			&i.ChatMessageID,
 			&i.TaskID,
+			&i.TestRunCaseID,
 		); err != nil {
 			return nil, err
 		}
@@ -502,7 +508,7 @@ func (q *Queries) ListAttachmentsByChatMessageIDs(ctx context.Context, arg ListA
 }
 
 const listAttachmentsByComment = `-- name: ListAttachmentsByComment :many
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, test_run_case_id FROM attachment
 WHERE comment_id = $1 AND workspace_id = $2
 ORDER BY created_at ASC
 `
@@ -536,6 +542,7 @@ func (q *Queries) ListAttachmentsByComment(ctx context.Context, arg ListAttachme
 			&i.ChatSessionID,
 			&i.ChatMessageID,
 			&i.TaskID,
+			&i.TestRunCaseID,
 		); err != nil {
 			return nil, err
 		}
@@ -548,7 +555,7 @@ func (q *Queries) ListAttachmentsByComment(ctx context.Context, arg ListAttachme
 }
 
 const listAttachmentsByCommentIDs = `-- name: ListAttachmentsByCommentIDs :many
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, test_run_case_id FROM attachment
 WHERE comment_id = ANY($1::uuid[]) AND workspace_id = $2
 ORDER BY created_at ASC
 `
@@ -582,6 +589,7 @@ func (q *Queries) ListAttachmentsByCommentIDs(ctx context.Context, arg ListAttac
 			&i.ChatSessionID,
 			&i.ChatMessageID,
 			&i.TaskID,
+			&i.TestRunCaseID,
 		); err != nil {
 			return nil, err
 		}
@@ -594,7 +602,7 @@ func (q *Queries) ListAttachmentsByCommentIDs(ctx context.Context, arg ListAttac
 }
 
 const listAttachmentsByIDs = `-- name: ListAttachmentsByIDs :many
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, test_run_case_id FROM attachment
 WHERE id = ANY($1::uuid[]) AND workspace_id = $2
 ORDER BY created_at ASC
 `
@@ -628,6 +636,7 @@ func (q *Queries) ListAttachmentsByIDs(ctx context.Context, arg ListAttachmentsB
 			&i.ChatSessionID,
 			&i.ChatMessageID,
 			&i.TaskID,
+			&i.TestRunCaseID,
 		); err != nil {
 			return nil, err
 		}
@@ -640,7 +649,7 @@ func (q *Queries) ListAttachmentsByIDs(ctx context.Context, arg ListAttachmentsB
 }
 
 const listAttachmentsByIssue = `-- name: ListAttachmentsByIssue :many
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, test_run_case_id FROM attachment
 WHERE issue_id = $1 AND workspace_id = $2
 ORDER BY created_at ASC
 `
@@ -674,6 +683,7 @@ func (q *Queries) ListAttachmentsByIssue(ctx context.Context, arg ListAttachment
 			&i.ChatSessionID,
 			&i.ChatMessageID,
 			&i.TaskID,
+			&i.TestRunCaseID,
 		); err != nil {
 			return nil, err
 		}
@@ -706,5 +716,25 @@ type ReplaceCommentAttachmentsParams struct {
 
 func (q *Queries) ReplaceCommentAttachments(ctx context.Context, arg ReplaceCommentAttachmentsParams) error {
 	_, err := q.db.Exec(ctx, replaceCommentAttachments, arg.CommentID, arg.IssueID, arg.AttachmentIds)
+	return err
+}
+
+const setAttachmentTestRunCase = `-- name: SetAttachmentTestRunCase :exec
+UPDATE attachment
+SET test_run_case_id = $1
+WHERE id = $2 AND workspace_id = $3
+`
+
+type SetAttachmentTestRunCaseParams struct {
+	TestRunCaseID pgtype.UUID `json:"test_run_case_id"`
+	ID            pgtype.UUID `json:"id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+// Tags an upload with the test-run case that produced it. Called after
+// CreateAttachment so the insert parameter list stays stable. The caller must
+// verify workspace membership before invoking this query.
+func (q *Queries) SetAttachmentTestRunCase(ctx context.Context, arg SetAttachmentTestRunCaseParams) error {
+	_, err := q.db.Exec(ctx, setAttachmentTestRunCase, arg.TestRunCaseID, arg.ID, arg.WorkspaceID)
 	return err
 }

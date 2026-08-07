@@ -5,10 +5,17 @@
  * (`involves_user_id`, MUL-2397) surfaces both the user's owned agents and
  * squads they're involved in (member / leader / has an owned agent inside).
  *
- * Issues are grouped by status using SectionList in `BOARD_STATUSES` order;
+ * Two view modes, mirroring web's `modes={["board", "list", …]}` with board
+ * as the default (`packages/views/my-issues/components/my-issues-page.tsx:35`);
+ * mobile ships the two that survive a phone-width viewport.
+ *
+ * List mode groups by status using SectionList in `BOARD_STATUSES` order;
  * empty status sections are filtered out so the screen doesn't fill with
  * "(0)" headers. Section grouping uses `BOARD_STATUSES` (cancelled excluded)
  * to match web — same source `packages/views/my-issues/components/my-issues-page.tsx:117-125`.
+ * Board mode keeps empty columns instead, so the swipe order is stable —
+ * see `lib/board-columns.ts`. Both modes render the same filtered array, so
+ * the visible issue set never depends on which one you're in.
  *
  * Status + Priority filters mirror web's MyIssuesHeader filter sub-menus.
  * Filter state lives in `useMyIssuesViewStore` and is cleared on workspace
@@ -28,6 +35,7 @@ import { Header } from "@/components/ui/header";
 import { HeaderActions } from "@/components/ui/app-header-actions";
 import { StatusIcon } from "@/components/ui/status-icon";
 import { IssueRow } from "@/components/issue/issue-row";
+import { IssueBoard } from "@/components/issue/issue-board";
 import { IssuesLoading } from "@/components/issue/issues-loading";
 import {
   buildMyIssuesFilter,
@@ -36,7 +44,10 @@ import {
 import type { MyIssuesScope } from "@/data/queries/issue-keys";
 import { useAuthStore } from "@/data/auth-store";
 import { useWorkspaceStore } from "@/data/workspace-store";
-import { useMyIssuesViewStore } from "@/data/stores/my-issues-view-store";
+import {
+  useMyIssuesViewStore,
+  type MyIssuesViewMode,
+} from "@/data/stores/my-issues-view-store";
 import { useClearFiltersOnWorkspaceChange } from "@/lib/use-clear-filters-on-workspace-change";
 import {
   BOARD_STATUSES,
@@ -70,6 +81,8 @@ export default function MyIssues() {
 
   const scope = useMyIssuesViewStore((s) => s.scope);
   const setScope = useMyIssuesViewStore((s) => s.setScope);
+  const viewMode = useMyIssuesViewStore((s) => s.viewMode);
+  const setViewMode = useMyIssuesViewStore((s) => s.setViewMode);
   const statusFilters = useMyIssuesViewStore((s) => s.statusFilters);
   const priorityFilters = useMyIssuesViewStore((s) => s.priorityFilters);
 
@@ -137,6 +150,10 @@ export default function MyIssues() {
         onChange={(v) => setScope(v)}
         onOpenFilter={openFilter}
         hasActiveFilters={hasActiveFilters}
+        viewMode={viewMode}
+        onToggleViewMode={() =>
+          setViewMode(viewMode === "board" ? "list" : "board")
+        }
       />
       {hasActiveFilters ? (
         <ActiveFilterChips
@@ -169,6 +186,16 @@ export default function MyIssues() {
               ? t("my_issues.empty.no_active_filters")
               : emptyMessageForScope(t, scope)
           }
+        />
+      ) : viewMode === "board" ? (
+        <IssueBoard
+          issues={filtered}
+          statusFilters={statusFilters}
+          onPressIssue={(issue) => {
+            if (wsSlug) router.push(`/${wsSlug}/issue/${issue.id}`);
+          }}
+          refreshing={isFocused && isRefetching}
+          onRefresh={refetch}
         />
       ) : (
         <SectionList
@@ -258,12 +285,16 @@ function ScopeToolbar<S extends string>({
   onChange,
   onOpenFilter,
   hasActiveFilters,
+  viewMode,
+  onToggleViewMode,
 }: {
   scopes: { value: S; label: string }[];
   scope: S;
   onChange: (value: S) => void;
   onOpenFilter: () => void;
   hasActiveFilters: boolean;
+  viewMode: MyIssuesViewMode;
+  onToggleViewMode: () => void;
 }) {
   return (
     <View className="flex-row items-center justify-between px-4 pt-2 pb-2">
@@ -289,11 +320,49 @@ function ScopeToolbar<S extends string>({
           );
         })}
       </View>
-      <FilterButton
-        onPress={onOpenFilter}
-        hasActiveFilters={hasActiveFilters}
-      />
+      <View className="flex-row items-center">
+        <ViewModeButton viewMode={viewMode} onPress={onToggleViewMode} />
+        <FilterButton
+          onPress={onOpenFilter}
+          hasActiveFilters={hasActiveFilters}
+        />
+      </View>
     </View>
+  );
+}
+
+/**
+ * Toggles board ⇄ list. Sits next to the filter trigger and copies its
+ * outline/square shape so the two read as one control group. The icon shows
+ * the mode you'd switch TO, which is how the rest of the app's toggles read.
+ */
+function ViewModeButton({
+  viewMode,
+  onPress,
+}: {
+  viewMode: MyIssuesViewMode;
+  onPress: () => void;
+}) {
+  const { colorScheme } = useColorScheme();
+  const { t } = useTranslation("issues");
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onPress={onPress}
+      accessibilityLabel={
+        viewMode === "board"
+          ? t("my_issues.view_mode.switch_to_list")
+          : t("my_issues.view_mode.switch_to_board")
+      }
+      className="w-9 px-0"
+    >
+      <Ionicons
+        name={viewMode === "board" ? "list-outline" : "grid-outline"}
+        size={16}
+        color={THEME[colorScheme].mutedForeground}
+      />
+    </Button>
   );
 }
 

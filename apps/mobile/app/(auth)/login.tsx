@@ -17,16 +17,19 @@ import { MulticaLogo } from "@/components/brand/multica-logo";
 import { api } from "@/data/api";
 import { useAuthStore } from "@/data/auth-store";
 import { mapAuthError } from "@/lib/auth-error";
+import { SSO_CALLBACK_PATH, SSO_CALLBACK_URL } from "@/lib/sso-callback";
 
 WebBrowser.maybeCompleteAuthSession();
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, "");
 if (!API_URL) throw new Error("EXPO_PUBLIC_API_URL is not set");
 
+// Keep in sync with `app/+native-intent.ts` — it cancels router navigation for
+// exactly this URL so Android's redirect doesn't unmount this screen.
 const redirectUri = makeRedirectUri({
-  native: "multica://auth/mobile-callback",
+  native: SSO_CALLBACK_URL,
   scheme: "multica",
-  path: "auth/mobile-callback",
+  path: SSO_CALLBACK_PATH,
 });
 
 export default function Login() {

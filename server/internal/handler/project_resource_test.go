@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -973,6 +974,137 @@ func TestProjectResourceLocalDirectoryDaemonScopedConflict(t *testing.T) {
 	testHandler.UpdateProjectResource(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("in-place rename: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestProjectResourceDocumentValidation pins the schema rejection surface for the
+// document resource type: missing url, non-http scheme, missing title, and
+// summary exceeding the allowed limit must all return 400, while valid inputs
+// must succeed with normalized JSON.
+func TestProjectResourceDocumentValidation(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Document validation project",
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
+	}
+	var project ProjectResponse
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode CreateProject: %v", err)
+	}
+	defer func() {
+		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
+		r = withURLParam(r, "id", project.ID)
+		testHandler.DeleteProject(httptest.NewRecorder(), r)
+	}()
+
+	longSummary := strings.Repeat("x", 501)
+
+	cases := []struct {
+		name    string
+		ref     any
+		wantBad bool
+	}{
+		{"missing url", map[string]any{"title": "Billing Rules"}, true},
+		{"empty url", map[string]any{"url": "", "title": "Billing Rules"}, true},
+		{"blank url", map[string]any{"url": "   ", "title": "Billing Rules"}, true},
+		{"ftp scheme", map[string]any{"url": "ftp://example.com/spec", "title": "Billing Rules"}, true},
+		{"file scheme", map[string]any{"url": "file:///tmp/spec.md", "title": "Billing Rules"}, true},
+		{"no scheme", map[string]any{"url": "example.com/spec", "title": "Billing Rules"}, true},
+		{"missing title", map[string]any{"url": "https://example.com/spec"}, true},
+		{"empty title", map[string]any{"url": "https://example.com/spec", "title": ""}, true},
+		{"blank title", map[string]any{"url": "https://example.com/spec", "title": "  "}, true},
+		{"summary too long", map[string]any{"url": "https://example.com/spec", "title": "Spec", "summary": longSummary}, true},
+		// Happy path
+		{"valid http no summary", map[string]any{"url": "http://example.com/spec", "title": "Spec"}, false},
+		{"valid https with summary", map[string]any{"url": "https://example.com/spec", "title": "Billing Rules", "summary": "Billing flow"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+				"resource_type": "document",
+				"resource_ref":  tc.ref,
+			})
+			req = withURLParam(req, "id", project.ID)
+			testHandler.CreateProjectResource(w, req)
+			if tc.wantBad {
+				if w.Code != http.StatusBadRequest {
+					t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+				}
+				return
+			}
+			if w.Code != http.StatusCreated {
+				t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
+			}
+			var created ProjectResourceResponse
+			if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if created.ResourceType != "document" {
+				t.Errorf("ResourceType = %q, want document", created.ResourceType)
+			}
+		})
+	}
+}
+
+// TestProjectResourceDocumentNormalizesRef verifies that the document validator
+// trims whitespace and returns a clean, marshalled ref.
+func TestProjectResourceDocumentNormalizesRef(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Document normalization project",
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
+	}
+	var project ProjectResponse
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode CreateProject: %v", err)
+	}
+	defer func() {
+		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
+		r = withURLParam(r, "id", project.ID)
+		testHandler.DeleteProject(httptest.NewRecorder(), r)
+	}()
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+		"resource_type": "document",
+		"resource_ref": map[string]any{
+			"url":     "  https://example.com/billing-rules  ",
+			"title":   "  Billing Rules  ",
+			"summary": "  Covers pricing logic.  ",
+		},
+	})
+	req = withURLParam(req, "id", project.ID)
+	testHandler.CreateProjectResource(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created ProjectResourceResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var ref struct {
+		URL     string `json:"url"`
+		Title   string `json:"title"`
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal(created.ResourceRef, &ref); err != nil {
+		t.Fatalf("decode resource_ref: %v", err)
+	}
+	if ref.URL != "https://example.com/billing-rules" {
+		t.Errorf("url not trimmed: %q", ref.URL)
+	}
+	if ref.Title != "Billing Rules" {
+		t.Errorf("title not trimmed: %q", ref.Title)
+	}
+	if ref.Summary != "Covers pricing logic." {
+		t.Errorf("summary not trimmed: %q", ref.Summary)
 	}
 }
 

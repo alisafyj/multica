@@ -77,6 +77,51 @@ func TestHealthHandlerReportsCLIVersionAndActiveTaskCount(t *testing.T) {
 	}
 }
 
+// TestHealthHandlerReportsDeferredReload covers the "while waiting to restart,
+// the reason and state are visible" criterion. When trySelfReload has confirmed
+// a multica version change but the daemon was busy at the barrier check, the
+// only way a user can tell why the daemon is still on the old version is this
+// field. It is omitempty, so an idle daemon must not emit the key at all.
+func TestHealthHandlerReportsDeferredReload(t *testing.T) {
+	t.Parallel()
+
+	newHealthProbe := func(t *testing.T) (*Daemon, func() map[string]any) {
+		t.Helper()
+		d := &Daemon{
+			cfg:        Config{CLIVersion: "0.3.7"},
+			workspaces: map[string]*workspaceState{},
+			logger:     slog.Default(),
+		}
+		d.ready.Store(true)
+		return d, func() map[string]any {
+			rec := httptest.NewRecorder()
+			d.healthHandler(time.Now()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+			var raw map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+				t.Fatalf("decode raw response: %v", err)
+			}
+			return raw
+		}
+	}
+
+	t.Run("absent when nothing pending", func(t *testing.T) {
+		_, probe := newHealthProbe(t)
+		if _, present := probe()["reload_pending_reason"]; present {
+			t.Error("reload_pending_reason must be omitted when no restart is pending")
+		}
+	})
+
+	t.Run("explains a deferred restart", func(t *testing.T) {
+		d, probe := newHealthProbe(t)
+		d.setReloadPending("multica binary on disk reports 0.3.8, running 0.3.7")
+
+		got, _ := probe()["reload_pending_reason"].(string)
+		if !strings.Contains(got, "0.3.8") {
+			t.Errorf("reload_pending_reason = %q, want it to name the version on disk", got)
+		}
+	})
+}
+
 // TestHealthHandlerReportsStartingUntilReady pins the liveness/readiness split:
 // the health server binds and answers before preflight finishes, but it must
 // report "starting" until d.ready is set, and only then "running". Otherwise a
@@ -305,7 +350,10 @@ func TestRepoCheckoutRejectsUnknownMode(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if got := cache.lastCreateParams(); got != (repocache.WorktreeParams{}) {
+	// WorktreeParams carries a slice (PeerURLs), so it is no longer comparable
+	// with ==. RepoURL staying empty is the assertion that matters: it proves
+	// the handler rejected the request before touching the cache.
+	if got := cache.lastCreateParams(); got.RepoURL != "" {
 		t.Fatalf("invalid checkout mode reached repo cache: %+v", got)
 	}
 }
@@ -439,5 +487,54 @@ func assertActiveTaskCount(t *testing.T, h http.HandlerFunc, want int64) {
 	}
 	if resp.ActiveTaskCount != want {
 		t.Errorf("active_task_count: got %d, want %d", resp.ActiveTaskCount, want)
+	}
+}
+
+// The collision guard in repocache only engages when CreateWorktree is told
+// which other repositories share the workdir. Without this wiring the guard is
+// dead code: PeerURLs stays nil, every repo keeps its bare basename, and two
+// same-named repos still overwrite each other's tree.
+func TestRepoCheckoutPassesPeerURLsForMultiRepoTask(t *testing.T) {
+	const workspaceID = "ws-peers"
+	const repoA = "https://github.com/org-a/app.git"
+	const repoB = "https://github.com/org-b/app.git"
+
+	cache := &recordingRepoCache{lookupPath: "/cache/org-a/app.git"}
+	d := newRepoCheckoutTestDaemon(t, workspaceID, repoA, cache)
+	d.registerTaskRepos(workspaceID, "task-1", []RepoData{{URL: repoA}, {URL: repoB}})
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"url":"` + repoA + `","workspace_id":"` + workspaceID + `","workdir":"/tmp/work","task_id":"task-1"}`)
+	d.repoCheckoutHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/repo/checkout", body))
+
+	got := cache.lastCreateParams()
+	if len(got.PeerURLs) != 2 {
+		t.Fatalf("PeerURLs = %v, want both task repos so the collision guard can engage", got.PeerURLs)
+	}
+	seen := map[string]bool{}
+	for _, url := range got.PeerURLs {
+		seen[url] = true
+	}
+	if !seen[repoA] || !seen[repoB] {
+		t.Fatalf("PeerURLs = %v, want %s and %s", got.PeerURLs, repoA, repoB)
+	}
+}
+
+// A single-repo task must keep its workdir layout byte-identical to before the
+// guard existed, so nothing in flight moves on disk.
+func TestRepoCheckoutOmitsPeerURLsForSingleRepoTask(t *testing.T) {
+	const workspaceID = "ws-single-peer"
+	const repoURL = "https://github.com/org/repo.git"
+
+	cache := &recordingRepoCache{lookupPath: "/cache/org/repo.git"}
+	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, cache)
+	d.registerTaskRepos(workspaceID, "task-1", []RepoData{{URL: repoURL}})
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"/tmp/work","task_id":"task-1"}`)
+	d.repoCheckoutHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/repo/checkout", body))
+
+	if got := cache.lastCreateParams(); len(got.PeerURLs) != 0 {
+		t.Fatalf("PeerURLs = %v, want empty for a single-repo task", got.PeerURLs)
 	}
 }

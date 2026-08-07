@@ -6,21 +6,44 @@ import {
   FALLBACK_AUTOPILOT_RUN,
   CommentTriggerPreviewSchema,
   DashboardAgentRunTimeListSchema,
+  DashboardRunTimeDailyListSchema,
   DashboardFailureByAgentListSchema,
   DashboardFailureDailyListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
   ChatDraftRestoresResponseSchema,
+  ChatPendingTaskSchema,
+  PrioritizeQueuedChatTaskResponseSchema,
   CreateFeedbackResponseSchema,
   BatchDeleteIssuesResponseSchema,
   BatchUpdateIssuesResponseSchema,
   DesignRestoreTaskSchema,
+  TestCaseSchema,
+  ListTestCasesResponseSchema,
+  ListTestCaseModulesResponseSchema,
+  ListTestCaseRevisionsResponseSchema,
+  EMPTY_TEST_CASE,
+  EMPTY_LIST_TEST_CASES_RESPONSE,
+  EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
+  EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE,
+  TestGenerationJobSchema,
+  TestGenerationPlanSchema,
+  TestCaseProposalSchema,
+  ListTestGenerationJobsResponseSchema,
+  ListTestCaseProposalsResponseSchema,
+  EMPTY_TEST_GENERATION_JOB,
+  EMPTY_TEST_GENERATION_PLAN,
+  EMPTY_TEST_CASE_PROPOSAL,
+  EMPTY_LIST_TEST_GENERATION_JOBS_RESPONSE,
+  EMPTY_LIST_TEST_CASE_PROPOSALS_RESPONSE,
   ListDesignDeliveriesResponseSchema,
   ListDesignRestoreTasksResponseSchema,
   DuplicateIssueErrorBodySchema,
   EMPTY_BATCH_DELETE_ISSUES_RESPONSE,
   EMPTY_BATCH_UPDATE_ISSUES_RESPONSE,
   EMPTY_CHAT_DRAFT_RESTORES,
+  EMPTY_CHAT_PENDING_TASK,
+  EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE,
   EMPTY_CREATE_FEEDBACK_RESPONSE,
   EMPTY_INBOX_ITEMS,
   EMPTY_INBOX_UNREAD_SUMMARY,
@@ -38,6 +61,7 @@ import {
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByHourListSchema,
   RuntimeUsageListSchema,
+  SendChatMessageResponseSchema,
   SquadListSchema,
   SquadSchema,
   TimelineEntriesSchema,
@@ -51,6 +75,23 @@ import {
   ListPMORunsResponseSchema,
   EMPTY_LIST_PMO_CONFIGS_RESPONSE,
   EMPTY_LIST_PMO_RUNS_RESPONSE,
+  TestPlanSchema,
+  TestRunSchema,
+  TestRunCaseSchema,
+  TestCaseResultTimelineEntrySchema,
+  ListTestPlansResponseSchema,
+  ListTestRunsResponseSchema,
+  ListTestRunCasesResponseSchema,
+  TestCaseResultTimelineResponseSchema,
+  ListTestCapabilitiesResponseSchema,
+  EMPTY_TEST_PLAN,
+  EMPTY_TEST_RUN,
+  EMPTY_TEST_RUN_CASE,
+  EMPTY_LIST_TEST_PLANS_RESPONSE,
+  EMPTY_LIST_TEST_RUNS_RESPONSE,
+  EMPTY_LIST_TEST_RUN_CASES_RESPONSE,
+  EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE,
+  EMPTY_LIST_TEST_CAPABILITIES_RESPONSE,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
 
@@ -423,6 +464,113 @@ describe("ChatDraftRestoresResponseSchema", () => {
       { endpoint: "test" },
     );
     expect(parsed).toEqual(EMPTY_CHAT_DRAFT_RESTORES);
+  });
+});
+
+describe("ChatPendingTaskSchema", () => {
+  const ENDPOINT = { endpoint: "GET /api/chat/sessions/:id/pending-task" };
+
+  it("keeps legacy responses compatible when queued_tasks is absent", () => {
+    const parsed = parseWithFallback(
+      {
+        task_id: "task-active",
+        status: "running",
+        created_at: "2026-07-01T00:00:00Z",
+      },
+      ChatPendingTaskSchema,
+      EMPTY_CHAT_PENDING_TASK,
+      ENDPOINT,
+    );
+
+    expect(parsed).toMatchObject({
+      task_id: "task-active",
+      status: "running",
+    });
+    expect(parsed.queued_tasks).toBeUndefined();
+  });
+
+  it("parses queued task summaries", () => {
+    const parsed = ChatPendingTaskSchema.parse({
+      task_id: "task-active",
+      status: "running",
+      queued_tasks: [
+        {
+          task_id: "task-queued",
+          status: "queued",
+          content: "Follow up after the current task",
+          created_at: "2026-07-01T00:01:00Z",
+        },
+      ],
+    });
+
+    expect(parsed.queued_tasks).toEqual([
+      expect.objectContaining({
+        task_id: "task-queued",
+        content: "Follow up after the current task",
+      }),
+    ]);
+  });
+
+  it("keeps a valid head and ignores only malformed queued rows", () => {
+    const parsed = parseWithFallback(
+      {
+        task_id: "task-active",
+        queued_tasks: [{ task_id: 42, status: "queued" }],
+      },
+      ChatPendingTaskSchema,
+      EMPTY_CHAT_PENDING_TASK,
+      ENDPOINT,
+    );
+
+    expect(parsed).toEqual({
+      task_id: "task-active",
+      queued_tasks: [],
+    });
+  });
+});
+
+describe("SendChatMessageResponseSchema", () => {
+  const base = {
+    message_id: "message-1",
+    task_id: "task-1",
+    created_at: "2026-08-05T00:00:00Z",
+  };
+
+  it("parses the server-authoritative queue position", () => {
+    expect(SendChatMessageResponseSchema.parse({ ...base, queued: false }).queued).toBe(false);
+  });
+
+  it("ignores a malformed additive queue position without losing the accepted send", () => {
+    expect(SendChatMessageResponseSchema.parse({ ...base, queued: "no" }).queued).toBeUndefined();
+  });
+});
+
+describe("PrioritizeQueuedChatTaskResponseSchema", () => {
+  const ENDPOINT = {
+    endpoint: "POST /api/chat/sessions/:id/queued-tasks/:taskId/prioritize",
+  };
+
+  it("parses the prioritized task id", () => {
+    expect(
+      PrioritizeQueuedChatTaskResponseSchema.parse({
+        task_id: "task-queued",
+        active_task_id: "task-active",
+      }),
+    ).toEqual({
+      task_id: "task-queued",
+      active_task_id: "task-active",
+    });
+  });
+
+  it("falls back when task_id is malformed", () => {
+    expect(
+      parseWithFallback(
+        { task_id: 42 },
+        PrioritizeQueuedChatTaskResponseSchema,
+        EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE,
+        ENDPOINT,
+      ),
+    ).toBe(EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE);
   });
 });
 
@@ -807,6 +955,23 @@ describe("dashboard + runtime usage schema drift", () => {
     ]);
     expect(parsed).toHaveLength(1);
     expect(parsed[0]?.agent_id).toBe("");
+  });
+
+  it("defaults a missing cancelled_count to 0 so a pre-cancelled-count server still renders", () => {
+    // cancelled_count was added when the run-time rollups started counting
+    // runs the user stopped mid-flight. A backend predating it omits the
+    // field; the row must survive with a 0 segment rather than drop the
+    // whole series (installed desktop clients hit older backends).
+    expect(
+      DashboardAgentRunTimeListSchema.parse([
+        { agent_id: "a", total_seconds: 42, task_count: 3, failed_count: 0 },
+      ])[0]?.cancelled_count,
+    ).toBe(0);
+    expect(
+      DashboardRunTimeDailyListSchema.parse([
+        { date: "2026-05-19", total_seconds: 42, task_count: 3, failed_count: 0 },
+      ])[0]?.cancelled_count,
+    ).toBe(0);
   });
 
   it("coerces a missing agent_id key to \"\" for the usage-by-agent panel", () => {
@@ -1412,5 +1577,514 @@ describe("PMO schemas", () => {
         { endpoint: "GET /api/pmo/runs" },
       ),
     ).toEqual(EMPTY_LIST_PMO_RUNS_RESPONSE);
+  });
+});
+
+describe("TestCaseSchema", () => {
+  it("fills defaults when the backend omits fields", () => {
+    const parsed = parseWithFallback(
+      { id: "c1", title: "下单成功" },
+      TestCaseSchema,
+      EMPTY_TEST_CASE,
+      { endpoint: "test" },
+    );
+    expect(parsed.id).toBe("c1");
+    expect(parsed.title).toBe("下单成功");
+    expect(parsed.steps).toEqual([]);
+    expect(parsed.repos).toEqual([]);
+    expect(parsed.status).toBe("draft");
+    expect(parsed.version).toBe(1);
+    expect(parsed.generation_job_id).toBeNull();
+  });
+
+  it("falls back when the payload is not an object", () => {
+    const parsed = parseWithFallback("nope", TestCaseSchema, EMPTY_TEST_CASE, {
+      endpoint: "test",
+    });
+    expect(parsed).toBe(EMPTY_TEST_CASE);
+  });
+
+  it("keeps an unknown status rather than dropping the case", () => {
+    const parsed = parseWithFallback(
+      { id: "c1", status: "quarantined", case_type: "chaos" },
+      TestCaseSchema,
+      EMPTY_TEST_CASE,
+      { endpoint: "test" },
+    );
+    expect(parsed.status).toBe("quarantined");
+    expect(parsed.case_type).toBe("chaos");
+  });
+
+  it("drops a malformed step array to empty instead of failing the case", () => {
+    const parsed = parseWithFallback(
+      { id: "c1", steps: "not-an-array" },
+      TestCaseSchema,
+      EMPTY_TEST_CASE,
+      { endpoint: "test" },
+    );
+    expect(parsed).toBe(EMPTY_TEST_CASE);
+  });
+
+  it("parses repo bindings with their role and path globs", () => {
+    const parsed = parseWithFallback(
+      {
+        id: "c1",
+        repos: [
+          { project_resource_id: "r1", alias: "admin-web", role: "driver" },
+          { project_resource_id: "r2", alias: "mobile-app", path_globs: ["src/**"] },
+        ],
+      },
+      TestCaseSchema,
+      EMPTY_TEST_CASE,
+      { endpoint: "test" },
+    );
+    expect(parsed.repos).toHaveLength(2);
+    expect(parsed.repos[0]?.role).toBe("driver");
+    expect(parsed.repos[1]?.role).toBe("under_test");
+    expect(parsed.repos[1]?.path_globs).toEqual(["src/**"]);
+  });
+
+  it("keeps unknown server fields instead of stripping them", () => {
+    const parsed = parseWithFallback(
+      { id: "c1", future_field: "keep me" },
+      TestCaseSchema,
+      EMPTY_TEST_CASE,
+      { endpoint: "test" },
+    );
+    expect((parsed as unknown as { future_field?: string }).future_field).toBe("keep me");
+  });
+});
+
+describe("test case list schemas", () => {
+  it("recovers a list response missing the array", () => {
+    const parsed = parseWithFallback(
+      {},
+      ListTestCasesResponseSchema,
+      EMPTY_LIST_TEST_CASES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.test_cases).toEqual([]);
+    expect(parsed.total).toBe(0);
+  });
+
+  it("recovers a modules response missing the array", () => {
+    const parsed = parseWithFallback(
+      {},
+      ListTestCaseModulesResponseSchema,
+      EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.modules).toEqual([]);
+  });
+
+  it("recovers a revisions response missing the array", () => {
+    const parsed = parseWithFallback(
+      {},
+      ListTestCaseRevisionsResponseSchema,
+      EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.revisions).toEqual([]);
+  });
+
+  it("defaults a module row that omits its count", () => {
+    const parsed = parseWithFallback(
+      { modules: [{ module: "订单" }] },
+      ListTestCaseModulesResponseSchema,
+      EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.modules[0]).toEqual({ module: "订单", case_count: 0 });
+  });
+});
+
+describe("TestGenerationJobSchema", () => {
+  it("fills defaults when the backend omits optional fields", () => {
+    const parsed = parseWithFallback(
+      { id: "job-1", workspace_id: "ws-1", project_id: "p-1", status: "queued", created_at: "2024-01-01T00:00:00Z", updated_at: "2024-01-01T00:00:00Z" },
+      TestGenerationJobSchema,
+      EMPTY_TEST_GENERATION_JOB,
+      { endpoint: "test" },
+    );
+    expect(parsed.id).toBe("job-1");
+    expect(parsed.agent_id).toBeNull();
+    expect(parsed.agent_task_id).toBeNull();
+    expect(parsed.input).toEqual({});
+    expect(parsed.result).toEqual({});
+    expect(parsed.error).toBeNull();
+  });
+
+  it("falls back when the payload is not an object", () => {
+    const parsed = parseWithFallback("nope", TestGenerationJobSchema, EMPTY_TEST_GENERATION_JOB, {
+      endpoint: "test",
+    });
+    expect(parsed).toBe(EMPTY_TEST_GENERATION_JOB);
+  });
+
+  it("keeps an unknown status rather than dropping the job", () => {
+    const parsed = parseWithFallback(
+      { id: "job-1", status: "paused", created_at: "", updated_at: "" },
+      TestGenerationJobSchema,
+      EMPTY_TEST_GENERATION_JOB,
+      { endpoint: "test" },
+    );
+    expect(parsed.status).toBe("paused");
+  });
+
+  it("keeps unknown server fields instead of stripping them", () => {
+    const parsed = parseWithFallback(
+      { id: "job-1", future_field: "keep me", created_at: "", updated_at: "" },
+      TestGenerationJobSchema,
+      EMPTY_TEST_GENERATION_JOB,
+      { endpoint: "test" },
+    );
+    expect((parsed as unknown as { future_field?: string }).future_field).toBe("keep me");
+  });
+});
+
+describe("TestGenerationPlanSchema", () => {
+  it("fills defaults for missing optional fields", () => {
+    const parsed = parseWithFallback(
+      { id: "plan-1", workspace_id: "ws-1", job_id: "job-1", status: "draft", created_at: "", updated_at: "" },
+      TestGenerationPlanSchema,
+      EMPTY_TEST_GENERATION_PLAN,
+      { endpoint: "test" },
+    );
+    expect(parsed.id).toBe("plan-1");
+    expect(parsed.plan).toEqual({});
+    expect(parsed.review_notes).toBe("");
+    expect(parsed.approved_by).toBeNull();
+    expect(parsed.approved_at).toBeNull();
+  });
+
+  it("falls back when the payload is not an object", () => {
+    const parsed = parseWithFallback(null, TestGenerationPlanSchema, EMPTY_TEST_GENERATION_PLAN, {
+      endpoint: "test",
+    });
+    expect(parsed).toBe(EMPTY_TEST_GENERATION_PLAN);
+  });
+
+  it("parses plan JSON as a record", () => {
+    const plan = { version: "1.0", repos: [], issues: [], modules: [] };
+    const parsed = parseWithFallback(
+      { id: "plan-1", plan, created_at: "", updated_at: "" },
+      TestGenerationPlanSchema,
+      EMPTY_TEST_GENERATION_PLAN,
+      { endpoint: "test" },
+    );
+    expect(parsed.plan).toEqual(plan);
+  });
+});
+
+describe("TestCaseProposalSchema", () => {
+  it("fills defaults for missing optional fields", () => {
+    const parsed = parseWithFallback(
+      { id: "prop-1", workspace_id: "ws-1", job_id: "job-1", target_case_id: "case-1", kind: "update", status: "pending", created_at: "" },
+      TestCaseProposalSchema,
+      EMPTY_TEST_CASE_PROPOSAL,
+      { endpoint: "test" },
+    );
+    expect(parsed.id).toBe("prop-1");
+    expect(parsed.payload).toEqual({});
+    expect(parsed.rationale).toBe("");
+    expect(parsed.reviewed_by).toBeNull();
+    expect(parsed.reviewed_at).toBeNull();
+  });
+
+  it("falls back when the payload is not an object", () => {
+    const parsed = parseWithFallback(42, TestCaseProposalSchema, EMPTY_TEST_CASE_PROPOSAL, {
+      endpoint: "test",
+    });
+    expect(parsed).toBe(EMPTY_TEST_CASE_PROPOSAL);
+  });
+
+  it("keeps an unknown kind rather than dropping the proposal", () => {
+    const parsed = parseWithFallback(
+      { id: "prop-1", kind: "future_kind", status: "pending", created_at: "" },
+      TestCaseProposalSchema,
+      EMPTY_TEST_CASE_PROPOSAL,
+      { endpoint: "test" },
+    );
+    expect(parsed.kind).toBe("future_kind");
+  });
+});
+
+describe("test generation list schemas", () => {
+  it("recovers a jobs list response missing the array", () => {
+    const parsed = parseWithFallback(
+      {},
+      ListTestGenerationJobsResponseSchema,
+      EMPTY_LIST_TEST_GENERATION_JOBS_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.jobs).toEqual([]);
+    expect(parsed.total).toBe(0);
+  });
+
+  it("recovers a proposals list response missing the array", () => {
+    const parsed = parseWithFallback(
+      {},
+      ListTestCaseProposalsResponseSchema,
+      EMPTY_LIST_TEST_CASE_PROPOSALS_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.proposals).toEqual([]);
+    expect(parsed.total).toBe(0);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Test plan / run / capability schemas — Phase 3/4
+// ---------------------------------------------------------------------------
+
+describe("TestPlanSchema", () => {
+  it("parses a full plan row correctly", () => {
+    const plan = {
+      id: "plan-1",
+      workspace_id: "ws-1",
+      project_id: "proj-1",
+      title: "Smoke tests",
+      description: "Daily smoke run",
+      status: "active",
+      created_by: "user-1",
+      created_at: "2026-08-01T00:00:00Z",
+      updated_at: "2026-08-01T00:00:00Z",
+    };
+    const parsed = TestPlanSchema.parse(plan);
+    expect(parsed.id).toBe("plan-1");
+    expect(parsed.status).toBe("active");
+  });
+
+  it("defaults status to draft when the field is absent", () => {
+    const { status: _omit, ...withoutStatus } = {
+      id: "plan-1",
+      workspace_id: "ws-1",
+      project_id: "proj-1",
+      title: "My plan",
+      description: "",
+      status: "draft",
+      created_by: null,
+      created_at: "",
+      updated_at: "",
+    };
+    const parsed = TestPlanSchema.parse(withoutStatus);
+    expect(parsed.status).toBe("draft");
+  });
+
+  it("accepts an unknown future status (string passthrough)", () => {
+    const plan = { ...EMPTY_TEST_PLAN, status: "future_status" };
+    const parsed = TestPlanSchema.parse(plan);
+    expect(parsed.status).toBe("future_status");
+  });
+
+  it("recovers from malformed plan response via parseWithFallback", () => {
+    const parsed = parseWithFallback(
+      null,
+      TestPlanSchema,
+      EMPTY_TEST_PLAN,
+      { endpoint: "GET /api/test-plans/:id" },
+    );
+    expect(parsed.id).toBe("");
+  });
+});
+
+describe("ListTestPlansResponseSchema", () => {
+  it("defaults to empty array when test_plans is absent", () => {
+    const parsed = parseWithFallback(
+      {},
+      ListTestPlansResponseSchema,
+      EMPTY_LIST_TEST_PLANS_RESPONSE,
+      { endpoint: "GET /api/test-plans" },
+    );
+    expect(parsed.test_plans).toEqual([]);
+    expect(parsed.total).toBe(0);
+  });
+});
+
+describe("TestRunSchema", () => {
+  const BASE_RUN = {
+    id: "run-1",
+    workspace_id: "ws-1",
+    project_id: "proj-1",
+    plan_id: null,
+    title: "Sprint 1 run",
+    executor_type: "member",
+    executor_id: "user-1",
+    agent_task_id: null,
+    environment: "staging",
+    build_ref: "v1.2.3",
+    capability_binding: {},
+    status: "pending",
+    source_run_id: null,
+    retry_scope: null,
+    error: null,
+    started_at: null,
+    completed_at: null,
+    created_by: "user-1",
+    created_at: "2026-08-01T00:00:00Z",
+    updated_at: "2026-08-01T00:00:00Z",
+  };
+
+  it("parses a standard run row", () => {
+    const parsed = TestRunSchema.parse(BASE_RUN);
+    expect(parsed.id).toBe("run-1");
+    expect(parsed.status).toBe("pending");
+    expect(parsed.capability_binding).toEqual({});
+  });
+
+  it("accepts execution_status when present", () => {
+    const parsed = TestRunSchema.parse({
+      ...BASE_RUN,
+      execution_status: { phase: "running", reason: null, severity: null },
+    });
+    expect(parsed.execution_status?.phase).toBe("running");
+  });
+
+  it("defaults status to pending when the field is absent", () => {
+    const { status: _omit, ...withoutStatus } = BASE_RUN;
+    const parsed = TestRunSchema.parse(withoutStatus);
+    expect(parsed.status).toBe("pending");
+  });
+
+  it("recovers from malformed run response via parseWithFallback", () => {
+    const parsed = parseWithFallback(
+      null,
+      TestRunSchema,
+      EMPTY_TEST_RUN,
+      { endpoint: "GET /api/test-runs/:id" },
+    );
+    expect(parsed.id).toBe("");
+  });
+});
+
+describe("ListTestRunsResponseSchema", () => {
+  it("defaults to empty array when test_runs is absent", () => {
+    const parsed = parseWithFallback(
+      {},
+      ListTestRunsResponseSchema,
+      EMPTY_LIST_TEST_RUNS_RESPONSE,
+      { endpoint: "GET /api/test-runs" },
+    );
+    expect(parsed.test_runs).toEqual([]);
+  });
+});
+
+describe("TestRunCaseSchema", () => {
+  it("parses a run case with all required fields", () => {
+    const rc = {
+      id: "rc-1",
+      workspace_id: "ws-1",
+      run_id: "run-1",
+      test_case_id: "tc-1",
+      case_snapshot: { title: "Login test" },
+      position: 0,
+      result: "passed",
+      notes: "All good",
+      evidence: [],
+      step_results: [],
+      duration_ms: 1500,
+      executed_by_type: "member",
+      executed_by_id: "user-1",
+      executed_at: "2026-08-01T12:00:00Z",
+      defect_issue_id: null,
+      created_at: "2026-08-01T00:00:00Z",
+      updated_at: "2026-08-01T12:00:00Z",
+    };
+    const parsed = TestRunCaseSchema.parse(rc);
+    expect(parsed.result).toBe("passed");
+    expect(parsed.duration_ms).toBe(1500);
+  });
+
+  it("defaults result to pending when absent", () => {
+    const { result: _omit, ...withoutResult } = {
+      id: "rc-1",
+      workspace_id: "ws-1",
+      run_id: "run-1",
+      test_case_id: "tc-1",
+      case_snapshot: {},
+      position: 0,
+      result: "pending",
+      notes: "",
+      evidence: [],
+      step_results: [],
+      duration_ms: null,
+      executed_by_type: null,
+      executed_by_id: null,
+      executed_at: null,
+      defect_issue_id: null,
+      created_at: "",
+      updated_at: "",
+    };
+    const parsed = TestRunCaseSchema.parse(withoutResult);
+    expect(parsed.result).toBe("pending");
+  });
+
+  it("recovers from malformed run case via parseWithFallback", () => {
+    const parsed = parseWithFallback(
+      null,
+      TestRunCaseSchema,
+      EMPTY_TEST_RUN_CASE,
+      { endpoint: "PUT /api/test-run-cases/:id/result" },
+    );
+    expect(parsed.id).toBe("");
+    expect(parsed.result).toBe("pending");
+  });
+});
+
+describe("ListTestRunCasesResponseSchema", () => {
+  it("defaults to empty array when cases is absent", () => {
+    const parsed = parseWithFallback(
+      {},
+      ListTestRunCasesResponseSchema,
+      EMPTY_LIST_TEST_RUN_CASES_RESPONSE,
+      { endpoint: "GET /api/test-runs/:id/cases" },
+    );
+    expect(parsed.cases).toEqual([]);
+  });
+});
+
+describe("TestCaseResultTimelineEntrySchema", () => {
+  it("parses a timeline entry correctly", () => {
+    const entry = {
+      id: "rc-1",
+      run_id: "run-1",
+      run_title: "Sprint 1",
+      environment: "prod",
+      build_ref: "v1.0.0",
+      result: "failed",
+      executed_at: "2026-08-01T12:00:00Z",
+      executed_by_type: "agent",
+      executed_by_id: "agent-1",
+      defect_issue_id: "issue-1",
+      run_created_at: "2026-08-01T00:00:00Z",
+    };
+    const parsed = TestCaseResultTimelineEntrySchema.parse(entry);
+    expect(parsed.result).toBe("failed");
+    expect(parsed.defect_issue_id).toBe("issue-1");
+  });
+});
+
+describe("TestCaseResultTimelineResponseSchema", () => {
+  it("defaults to empty timeline when absent", () => {
+    const parsed = parseWithFallback(
+      {},
+      TestCaseResultTimelineResponseSchema,
+      EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE,
+      { endpoint: "GET /api/test-cases/:ref/results" },
+    );
+    expect(parsed.timeline).toEqual([]);
+  });
+});
+
+describe("ListTestCapabilitiesResponseSchema", () => {
+  it("defaults to empty capabilities when absent", () => {
+    const parsed = parseWithFallback(
+      {},
+      ListTestCapabilitiesResponseSchema,
+      EMPTY_LIST_TEST_CAPABILITIES_RESPONSE,
+      { endpoint: "GET /api/test-capabilities" },
+    );
+    expect(parsed.capabilities).toEqual([]);
   });
 });

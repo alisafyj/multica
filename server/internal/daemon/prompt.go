@@ -8,18 +8,38 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
-// freshSessionRetryPrompt prefixes an explicit context-loss disclosure onto the
-// (already cold-rebuilt) prompt used for the daemon's single fresh-session
-// retry. When a resumed run is refused — the transcript is gone, belongs to
-// another account, or (GH #5975) carries history the provider now rejects —
-// the retry starts a brand-new provider session with none of the prior
-// conversation. Stating that up front stops the agent from assuming continuity
-// (e.g. "as I said earlier", relying on files/state it never created) and steers
-// it to re-read the issue and triggering thread before acting. The current user
-// prompt is preserved verbatim below the notice.
-func freshSessionRetryPrompt(prompt string) string {
-	const notice = "⚠️ Note: a previous provider session for this task could not be resumed, so this is a brand-new session. None of the earlier provider conversation context is available to you now. Do not assume any prior back-and-forth, in-memory state, or uncommitted work carried over — re-read the issue and the triggering thread to reconstruct what you need before acting.\n\n"
-	return notice + prompt
+// sessionContinuityNoticeFor picks the notice matching what this surface
+// actually lost. See the constants in execenv for the full reasoning; the
+// question is whether the conversation is still READABLE, not whether it is a
+// chat — an issue's comments and a Slack channel's history both are, a web
+// chat's and a Feishu channel's are not (MUL-5722).
+func sessionContinuityNoticeFor(task Task) string {
+	if task.ChatSessionID == "" {
+		return execenv.SessionContinuityNoticeIssue
+	}
+	if task.ChatChannelType == execenv.ChannelTypeSlack {
+		return execenv.SessionContinuityNoticeChannelHistory
+	}
+	// Web chat (no channel type) and every channel Multica cannot read back.
+	return execenv.SessionContinuityNoticeUnrecoverable
+}
+
+// backendResumeContinuityNotice returns the notice the BACKEND should inject if
+// it lands on a fresh thread, or "" when the prompt already carries one.
+//
+// Only one notice may reach a turn. Two paths can produce it — the daemon,
+// which appends it to the prompt whenever it already knows the resume is gone,
+// and the backend, which is the only one that can see a live resume RPC being
+// rejected mid-run. Before MUL-5722 both fired on the codex overflow retry, so
+// the same paragraph was paid for twice in one turn and maintained as two
+// hand-written strings. Deriving the backend's copy from the daemon's, and
+// suppressing it exactly when the prompt already said it, makes a duplicate
+// structurally impossible rather than merely unlikely.
+func backendResumeContinuityNotice(task Task) string {
+	if task.PriorSessionResumeUnavailable {
+		return ""
+	}
+	return sessionContinuityNoticeFor(task)
 }
 
 // Turn-mode markers consumed by the runtime brief's mode router
@@ -52,7 +72,7 @@ const (
 func perTurnContextBlocks(task Task) string {
 	var b strings.Builder
 	if task.PriorSessionResumeUnavailable {
-		b.WriteString(execenv.SessionContinuityNotice)
+		b.WriteString(sessionContinuityNoticeFor(task))
 	}
 	b.WriteString(execenv.BuildTaskInitiatorBlock(task.InitiatorType, task.InitiatorName, task.InitiatorEmail))
 	b.WriteString(execenv.BuildConnectedAppsBlock(task.ConnectedApps))
@@ -99,6 +119,12 @@ func buildPromptBody(task Task, provider string) string {
 	if len(task.DesignRestoreContext) > 0 {
 		return buildDesignRestorePrompt(task)
 	}
+	if len(task.TestGenerationContext) > 0 {
+		return buildTestGenerationPrompt(task)
+	}
+	if len(task.TestRunContext) > 0 {
+		return buildTestRunPrompt(task)
+	}
 	if len(task.DesignSystemProfileAnalyzeContext) > 0 {
 		return buildDesignSystemProfileAnalyzePrompt(task)
 	}
@@ -117,7 +143,7 @@ func buildPromptBody(task Task, provider string) string {
 		fmt.Fprintf(&b, "> %s\n\n", task.HandoffNote)
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
-	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Scan the threads first with `multica issue comment list %s --roots-only --summary --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. Your runtime workflow file documents the rest of the read surface, including pagination and `--since` for incremental polling.\n", task.IssueID)
+	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Scan the threads first with `multica issue comment list %s --roots-only --summary --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. For `--since` incremental polling, pagination, and folding, see `multica issue comment list --help`.\n", task.IssueID)
 	return b.String()
 }
 
@@ -175,6 +201,98 @@ func buildDesignSystemProfileAnalyzePrompt(task Task) string {
 	b.WriteString("Design system profile analysis context JSON:\n")
 	b.WriteString(task.DesignSystemProfileAnalyzeContext)
 	b.WriteString("\n")
+	return b.String()
+}
+
+// buildTestGenerationPrompt drives an AI test case generation run. The scope in
+// `plan` is a human-approved contract, and every generated case is written back
+// through the authenticated CLI rather than printed, so the closing marker only
+// carries a summary.
+// buildTestRunPrompt drives one execution round. The agent may only drive the
+// devices the server already bound to this run: probing the host for an adb or
+// a browser would silently escape the capability contract.
+func buildTestRunPrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a QA engineer executing one test round for a Multica workspace.\n\n")
+
+	b.WriteString("Work in this order:\n")
+	b.WriteString("1. `multica test run get <run_id> --output json` — the cases to execute, each with its frozen snapshot. Execute the SNAPSHOT, not the current case definition.\n")
+	b.WriteString("2. `multica test capability list --run <run_id> --output json` — the devices, desktops and browsers this round is allowed to drive.\n")
+	b.WriteString("3. Check out any repository a case names, with `multica repo checkout <url>`.\n")
+	b.WriteString("4. Execute each case's steps in order and record the outcome as you go — do not batch the writes to the end, a crashed run should still have recorded what it got through.\n\n")
+
+	b.WriteString("Recording results:\n")
+	b.WriteString("```\n")
+	b.WriteString("multica test result set <run-case-id> --result passed|failed|blocked|skipped [--note \"…\"]\n")
+	b.WriteString("multica test evidence add <run-case-id> --file ./shot.png --kind screenshot\n")
+	b.WriteString("multica test defect open <run-case-id> --title \"…\"\n")
+	b.WriteString("```\n")
+	b.WriteString("- `failed` means the product behaved differently from the expected result. Open a defect for it.\n")
+	b.WriteString("- `blocked` means you could not run the case at all — a missing capability, an environment that would not come up, a precondition you could not reach. It is NOT a synonym for failed, and it must never be used to hide a real failure.\n")
+	b.WriteString("- `skipped` means the case did not apply to this round.\n")
+	b.WriteString("- Attach a screenshot or log for every `failed` and every `blocked`. A result nobody can audit is barely a result.\n\n")
+
+	b.WriteString("Capability rules — these are hard:\n")
+	b.WriteString("- Use ONLY the `capability_key` values returned by `capability list`. Drive them through the MCP servers that were mounted for this run.\n")
+	b.WriteString("- If `capability list` is empty, or a case needs a kind that is not in it, mark that case `blocked` and say which kind is missing.\n")
+	b.WriteString("- Do NOT go looking for adb, a simulator, a browser binary, or any other device on the host. If it was not bound to this run, you may not drive it.\n\n")
+
+	b.WriteString("Rules:\n")
+	b.WriteString("- Do NOT modify product code, and do NOT open pull requests. You are observing behaviour, not changing it.\n")
+	b.WriteString("- Do NOT mark a case `passed` unless you actually observed the expected result. An unverified pass is worse than a blocked case, because it hides a regression.\n")
+	b.WriteString("- Use the `multica` CLI for all Multica reads and writes; do not call the API with curl or wget.\n\n")
+
+	b.WriteString("Context JSON:\n")
+	b.WriteString(task.TestRunContext)
+	b.WriteString("\n\n")
+
+	b.WriteString("End your final response with a machine-readable JSON block prefixed by exactly `TEST_RUN_RESULT_JSON:`:\n")
+	b.WriteString("{\"status\":\"completed|blocked\",\"summary\":\"one paragraph\",\"blockers\":[]}\n")
+	b.WriteString("Per-case results must already be recorded through `multica test result set`; this block only closes the round.\n")
+	return b.String()
+}
+
+func buildTestGenerationPrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a QA engineer for a Multica workspace. Your job is to produce test cases, not to change product code.\n\n")
+	b.WriteString("The approved scope contract is the `plan` object in the context JSON below. It is the result of human review: stay inside it.\n\n")
+
+	b.WriteString("Work in this order:\n")
+	b.WriteString("1. Run `multica testcase list --project <project_id> --digest --output json` first. That is the index of cases that ALREADY exist. Your output must be an increment on top of it, never a re-listing of it.\n")
+	b.WriteString("2. Check out every repository named in `plan.repos` with `multica repo checkout <url>` (or `multica repo checkout --all`). Read only inside each entry's `path_globs` when it is non-empty.\n")
+	b.WriteString("3. Read every document in `plan.knowledge_refs`. These are the authoritative business rules; they outrank your inference from code.\n")
+	b.WriteString("4. For each issue id in `plan.issues`, run `multica issue get <id> --output json` and read its comment thread. Run `multica issue search <keyword>` for decisions that only ever got recorded in comments.\n")
+	b.WriteString("5. Write the cases back with `multica testcase propose --job <job_id> --stdin`.\n\n")
+
+	b.WriteString("What a good case set looks like:\n")
+	b.WriteString("- Cover BUSINESS behaviour, not only code paths: end-to-end flows, permission matrices, state-machine transitions, data consistency across services, money and time-zone edges, and what must NOT happen.\n")
+	b.WriteString("- `plan.expected_case_types` lists the case types this run is expected to produce. Treat a set that is entirely `functional` as a failure to understand the product.\n")
+	b.WriteString("- `steps` is a structured array, not prose. Each step needs a concrete `action` and a checkable `expected`. A human and an agent both have to be able to execute it verbatim.\n")
+	b.WriteString("- Prefer few precise cases over many vague ones. A case nobody can execute is worse than a missing case.\n\n")
+
+	b.WriteString("Multi-repo cases:\n")
+	b.WriteString("- When a scenario spans systems (change data in one service, verify it in another), set `scope` to `cross_repo`, list each repository in `repos` with a distinct `role` (`driver`, `under_test`, `verifier`, `fixture`), and tag each step with the `repo` alias it runs against.\n")
+	b.WriteString("- A `cross_repo` case with fewer than two roles is rejected by the server.\n\n")
+
+	b.WriteString("Increment rules — every proposed item is one of exactly three kinds:\n")
+	b.WriteString("- `new`: behaviour no existing case covers.\n")
+	b.WriteString("- `update`: an existing case that is now wrong or incomplete. Set `target` to its TC-<n> key and give a `rationale` naming what changed.\n")
+	b.WriteString("- `obsolete`: an existing case whose behaviour no longer exists. Set `target` and give a `rationale`.\n")
+	b.WriteString("Do not re-propose a case that already exists unchanged. Duplicates are the main way this feature becomes unusable.\n\n")
+
+	b.WriteString("Rules:\n")
+	b.WriteString("- Do NOT write, refactor, or commit product code. Do NOT open pull requests.\n")
+	b.WriteString("- Do NOT invent endpoints, fields, permissions, or business rules that you did not read in the repositories, documents, or issues.\n")
+	b.WriteString("- If the approved scope is not enough to produce meaningful cases, stop and report `blocked` with the concrete gap. A thin set of guessed cases is worse than an honest blocker.\n")
+	b.WriteString("- Use the `multica` CLI for all Multica reads and writes; do not call the API with curl or wget.\n\n")
+
+	b.WriteString("Context JSON:\n")
+	b.WriteString(task.TestGenerationContext)
+	b.WriteString("\n\n")
+
+	b.WriteString("When you are done, end your final response with a machine-readable JSON block prefixed by exactly `TEST_GENERATION_RESULT_JSON:` with this shape:\n")
+	b.WriteString("{\"status\":\"completed|blocked|failed\",\"summary\":\"one paragraph\",\"stats\":{\"new\":0,\"updated\":0,\"obsolete\":0},\"blockers\":[]}\n")
+	b.WriteString("The cases themselves must already have been written through `multica testcase propose`; this block is a report, not the delivery.\n")
 	return b.String()
 }
 
@@ -344,7 +462,7 @@ func buildQuickCreatePrompt(task Task) string {
 		}
 	}
 	b.WriteString("- **status**: omit (defaults to `todo`).\n")
-	b.WriteString("- **attachments**: do NOT pass `--attachment`. The flag only accepts LOCAL file paths. Any image URL in the user input is already markdown — keep it inline in `--description` instead.\n\n")
+	b.WriteString("- **attachments**: `--attachment` takes LOCAL file paths, never URLs. Image URLs in the user input are already markdown — keep them inline. Files you produced: see `## Output`.\n\n")
 
 	// output format
 	b.WriteString("Output format:\n")
@@ -454,10 +572,7 @@ func buildCommentPrompt(task Task, provider string) string {
 			fmt.Fprintf(&b, "Fetch each id you still need directly: `multica issue comment list %s --thread <comment-id> --tail 30 --output json`. `--thread` accepts a reply id, not just a thread root, so you do not need to know which thread the comment lives in. If it is older than those 30 replies, page back with the `Next reply cursor` values (`--before` / `--before-id`) until it appears. Do not finish this turn until every id above is accounted for.\n\n",
 				task.IssueID)
 		}
-		if task.TriggerAuthorType == "agent" {
-			b.WriteString("⚠️ The triggering comment was posted by another agent. Decide whether a reply is warranted. If you produced actual work this turn (investigated, fixed something, answered a real question), post the result as a normal reply — that is NOT a noise comment, and the standard rule that final results must be delivered via comment still applies. If the triggering comment was a pure acknowledgment, thanks, or sign-off AND you produced no work this turn, do NOT reply — and do NOT post a comment saying 'No reply needed' or similar. Simply exit with no output. Silence is the preferred way to end agent-to-agent threads. If you do reply, do not @mention the other agent as a sign-off (that re-triggers them and starts a loop).\n\n")
-		}
-		if task.Agent != nil && strings.Contains(task.Agent.Instructions, "## Squad Operating Protocol") {
+		if taskIsSquadLeader(task) {
 			fmt.Fprintf(&b, "⚠️ **Squad leader no_action rule:** If you decide no action is needed, call `multica squad activity %s no_action --reason \"...\"` and EXIT. DO NOT post any comment — not even one that says \"no action needed\" or \"exiting silently\". The squad activity call records your decision; a comment is redundant noise.\n\n", task.IssueID)
 		}
 	}
@@ -483,9 +598,9 @@ func buildCommentPrompt(task Task, provider string) string {
 	// group upstream, so they keep the ordinary single-parent path below and can
 	// never be split into duplicate replies.
 	if targets := commentReplyThreads(task); len(targets) >= 2 {
-		b.WriteString(execenv.BuildMultiThreadCommentReplyInstructions(task.IssueID, targets))
+		b.WriteString(execenv.BuildMultiThreadCommentReplyInstructions(task.IssueID, targets, taskIsSquadLeader(task)))
 	} else {
-		b.WriteString(execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID))
+		b.WriteString(execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID, taskIsSquadLeader(task)))
 	}
 	return b.String()
 }
@@ -553,10 +668,8 @@ func commentReplyThreads(task Task) []execenv.ThreadReplyTarget {
 
 // buildChatPrompt constructs a prompt for interactive chat tasks.
 func buildChatPrompt(task Task) string {
-	// Proactive self-introduction: the agent was just created and is opening the
-	// conversation. There is no user message to reply to — the agent sends the
-	// first message so the thread reads as the agent messaging its creator, not
-	// the creator prompting the agent (MUL-4230).
+	// Legacy compatibility for historical proactive-introduction sessions.
+	// New agent creation no longer creates a chat or runs this prompt.
 	if task.ChatIntro {
 		var b strings.Builder
 		b.WriteString("You are running as a chat assistant for a Multica workspace.\n")
@@ -566,7 +679,18 @@ func buildChatPrompt(task Task) string {
 
 	var b strings.Builder
 	b.WriteString("You are running as a chat assistant for a Multica workspace.\n")
-	b.WriteString("A user is chatting with you directly. Respond to their message.\n\n")
+	// Audience is per-session context, so keep it out of the cached runtime
+	// brief. The compact anchors here preserve the non-inferable boundaries: a
+	// group reply is not private to its sender and people not otherwise present
+	// in the run context may read it. Unknown never defaults to private.
+	switch execenv.AudienceOf(task.ChatChannelType, task.ChatType) {
+	case execenv.ChatAudienceGroup:
+		b.WriteString("Audience: group room; not private; unseen members may read replies.\n\n")
+	case execenv.ChatAudienceUnknown:
+		b.WriteString("Audience: unknown.\n\n")
+	default:
+		b.WriteString("Audience: direct room.\n\n")
+	}
 	// Channel awareness (MUL-3871). When the session is backed by an IM channel,
 	// the agent must KNOW it is operating inside that channel — otherwise an ask
 	// like "what did you just talk about" sends it to read Multica instead of the
@@ -714,6 +838,46 @@ func buildAutopilotPrompt(task Task) string {
 	} else {
 		b.WriteString("Complete the instructions above.\n")
 	}
-	b.WriteString("Do not run `multica issue get`; this run does not have an issue ID.\n")
+	// The issue-command boundary (execenv.AutopilotIssueCommandsGuard) is NOT
+	// restated here: the brief's autopilot workflow section is its single
+	// emission point, and a second hand-maintained per-turn copy is exactly
+	// how the two surfaces drifted into conflict before (MUL-5696).
 	return b.String()
+}
+
+// squadBriefingMarker is the first heading of the squad-leader briefing the
+// server appends to Instructions. It is ONLY a legacy role signal — see
+// taskIsSquadLeader — never a role signal against a current server.
+const squadBriefingMarker = "## Squad Operating Protocol"
+
+// taskIsSquadLeader reports whether THIS TASK runs the agent as a squad
+// leader. Leadership is a PER-TASK role — the same agent can be leader one
+// turn and worker the next — and a current server says so explicitly on the
+// wire: `is_leader_task` for issue-bound leader runs, `squad_id` for
+// quick-create runs the squad picker routed to its leader. The claim handler
+// sets each field on exactly the responses it injected a briefing into, and
+// advertises that it did so with `leader_role_resolved`.
+//
+// The role used to be inferred by sniffing Instructions for the briefing's
+// first heading, which made detection depend on user-writable Markdown: any
+// ordinary agent whose own instructions happened to contain that heading was
+// promoted to leader and handed the leader rules (mandatory `multica squad
+// activity`, silent no_action exit).
+//
+// The capability gate is load-bearing, not ceremony. Servers without it split
+// into two groups, and neither can be read by fields alone. Before #4951 the
+// claim response carried no `is_leader_task` at all, so a real leader arrives
+// with the full briefing and both fields at zero — reading fields would
+// silently demote it to a worker. From #4951 until the capability landed the
+// flag IS sent, but nothing yet guaranteed it implies an injected briefing, so
+// a true flag can arrive with no roster and no protocol. Absent capability
+// therefore means "this server never authoritatively answered the question",
+// and the legacy text inference — exactly today's behavior against both
+// groups — is the only correct read. Drop this branch once a minimum server
+// version is enforced (MUL-5811).
+func taskIsSquadLeader(task Task) bool {
+	if !task.LeaderRoleResolved {
+		return task.Agent != nil && strings.Contains(task.Agent.Instructions, squadBriefingMarker)
+	}
+	return task.IsLeaderTask || task.SquadID != ""
 }

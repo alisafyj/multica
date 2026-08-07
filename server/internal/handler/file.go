@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -363,6 +364,39 @@ func (h *Handler) groupChatMessageAttachments(ctx context.Context, workspaceID s
 }
 
 // ---------------------------------------------------------------------------
+// test_run_case evidence helpers
+// ---------------------------------------------------------------------------
+
+// testRunCaseEvidenceEntry is one item in the test_run_case.evidence JSONB
+// array appended by the agent when it uploads a test artifact.
+// IMPORTANT: never store download_url (signed, short-lived); markdown_url is
+// the stable URL persisted for display.
+type testRunCaseEvidenceEntry struct {
+	AttachmentID string `json:"attachment_id"`
+	Kind         string `json:"kind"`
+	MarkdownURL  string `json:"markdown_url"`
+	CapturedAt   string `json:"captured_at"`
+}
+
+// appendTestRunCaseEvidence reads the existing evidence JSONB, appends a new
+// entry, and returns the updated JSON to pass to UpdateTestRunCaseResult.
+// A nil or empty existing value is treated as an empty array.
+func appendTestRunCaseEvidence(existing []byte, attachmentID, kind, markdownURL string) []byte {
+	var entries []testRunCaseEvidenceEntry
+	if len(existing) > 0 && string(existing) != "null" {
+		_ = json.Unmarshal(existing, &entries)
+	}
+	entries = append(entries, testRunCaseEvidenceEntry{
+		AttachmentID: attachmentID,
+		Kind:         kind,
+		MarkdownURL:  markdownURL,
+		CapturedAt:   time.Now().UTC().Format(time.RFC3339),
+	})
+	raw, _ := json.Marshal(entries)
+	return raw
+}
+
+// ---------------------------------------------------------------------------
 // UploadFile — POST /api/upload-file
 // ---------------------------------------------------------------------------
 
@@ -546,6 +580,75 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			params.ChatSessionID = task.ChatSessionID
 		}
 
+		// test_run_case_id upload: an agent producing evidence for a test-run
+		// case (screenshot, log file, etc.). The attachment is linked to the
+		// run-case and an evidence entry is appended to test_run_case.evidence.
+		//
+		// Gate (three-part, mirrors the task_id gate above):
+		//  1. X-Actor-Source == "task_token" (task-scoped token, not a PAT).
+		//  2. X-Task-ID must equal the test_run's agent_task_id UUID.
+		//  3. The authenticated agent must be the run's executor.
+		//
+		// Additional constraint: the run-case must belong to the test_run
+		// identified by the task token.
+		//
+		// pendingRunCase stores the validated run-case so the evidence update
+		// can proceed after CreateAttachment without a second DB round-trip.
+		type pendingRunCaseState struct {
+			runCaseID pgtype.UUID
+			runID     pgtype.UUID
+			kind      string
+		}
+		var pendingRunCase *pendingRunCaseState
+
+		if caseIDStr := r.FormValue("test_run_case_id"); caseIDStr != "" {
+			if r.Header.Get("X-Actor-Source") != "task_token" {
+				writeError(w, http.StatusForbidden, "test_run_case_id upload is only available from within an agent task")
+				return
+			}
+			caseUUID, ok := parseUUIDOrBadRequest(w, caseIDStr, "test_run_case_id")
+			if !ok {
+				return
+			}
+			boundTaskID := strings.TrimSpace(r.Header.Get("X-Task-ID"))
+			if boundTaskID == "" {
+				writeError(w, http.StatusForbidden, "test_run_case_id upload requires a task-scoped token")
+				return
+			}
+			taskUUID, ok := parseUUIDOrBadRequest(w, boundTaskID, "X-Task-ID")
+			if !ok {
+				return
+			}
+			// Load the test_run by agent_task_id to validate the uploader.
+			run, err := h.Queries.GetTestRunByAgentTask(r.Context(), db.GetTestRunByAgentTaskParams{
+				AgentTaskID: taskUUID,
+				WorkspaceID: parseUUID(workspaceID),
+			})
+			if err != nil {
+				writeError(w, http.StatusForbidden, "invalid task token for test_run")
+				return
+			}
+			// Gate 3: the uploader must be the run's executor agent.
+			if uploaderType != "agent" || !run.ExecutorID.Valid || uuidToString(run.ExecutorID) != uploaderID {
+				writeError(w, http.StatusForbidden, "test_run_case_id upload requires the run's own agent")
+				return
+			}
+			// Validate the run-case belongs to this test_run.
+			runCase, err := h.Queries.GetTestRunCaseInWorkspace(r.Context(), db.GetTestRunCaseInWorkspaceParams{
+				ID:          caseUUID,
+				WorkspaceID: parseUUID(workspaceID),
+			})
+			if err != nil || uuidToString(runCase.RunID) != uuidToString(run.ID) {
+				writeError(w, http.StatusForbidden, "invalid test_run_case_id for this run")
+				return
+			}
+			pendingRunCase = &pendingRunCaseState{
+				runCaseID: caseUUID,
+				runID:     run.ID,
+				kind:      strings.TrimSpace(r.FormValue("kind")),
+			}
+		}
+
 		link, err := h.Storage.Upload(r.Context(), key, data, contentType, header.Filename)
 		if err != nil {
 			slog.Error("file upload failed", "error", err)
@@ -560,6 +663,57 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			// S3 upload succeeded but DB record failed — still return the link
 			// so the file is usable. Log the error for investigation.
 		} else {
+			// test_run_case evidence: link the attachment and append the
+			// evidence entry. Errors here are best-effort (the attachment row
+			// already exists and the file was uploaded); we log and continue
+			// rather than returning an error that would confuse the agent.
+			if pendingRunCase != nil {
+				if linkErr := h.Queries.SetAttachmentTestRunCase(r.Context(), db.SetAttachmentTestRunCaseParams{
+					TestRunCaseID: pendingRunCase.runCaseID,
+					ID:            att.ID,
+					WorkspaceID:   parseUUID(workspaceID),
+				}); linkErr != nil {
+					slog.Warn("test_run_case upload: SetAttachmentTestRunCase failed",
+						"attachment_id", uuidToString(att.ID),
+						"run_case_id", uuidToString(pendingRunCase.runCaseID),
+						"error", linkErr,
+					)
+				}
+
+				// Re-read the run-case to get the current evidence so we can
+				// append without a race (read-append-write).
+				rc, rcErr := h.Queries.GetTestRunCaseInWorkspace(r.Context(), db.GetTestRunCaseInWorkspaceParams{
+					ID:          pendingRunCase.runCaseID,
+					WorkspaceID: parseUUID(workspaceID),
+				})
+				if rcErr != nil {
+					slog.Warn("test_run_case upload: failed to read run-case for evidence append",
+						"run_case_id", uuidToString(pendingRunCase.runCaseID),
+						"error", rcErr,
+					)
+				} else {
+					markdownURL := h.buildMarkdownURL(att, uuidToString(att.ID))
+					updatedEvidence := appendTestRunCaseEvidence(
+						rc.Evidence,
+						uuidToString(att.ID),
+						pendingRunCase.kind,
+						markdownURL,
+					)
+					if _, evErr := h.Queries.UpdateTestRunCaseResult(r.Context(), db.UpdateTestRunCaseResultParams{
+						ID:          pendingRunCase.runCaseID,
+						WorkspaceID: parseUUID(workspaceID),
+						Evidence:    updatedEvidence,
+						// All other COALESCE fields are left as zero-values
+						// (nil / pgtype zero) so they are preserved.
+					}); evErr != nil {
+						slog.Warn("test_run_case upload: evidence append failed",
+							"run_case_id", uuidToString(pendingRunCase.runCaseID),
+							"attachment_id", uuidToString(att.ID),
+							"error", evErr,
+						)
+					}
+				}
+			}
 			writeJSON(w, http.StatusOK, h.attachmentToResponse(att, attachmentURLModeFromRequest(r)))
 			return
 		}

@@ -7,6 +7,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// newProjectResourceAddTestCmd mirrors the add-command flag surface for unit
+// tests that exercise shortcut-flag plumbing without a running server.
+func newProjectResourceAddTestCmd() *cobra.Command {
+	c := &cobra.Command{Use: "add"}
+	c.Flags().String("type", "github_repo", "")
+	c.Flags().String("url", "", "")
+	c.Flags().String("default-branch-hint", "", "")
+	c.Flags().String("local-path", "", "")
+	c.Flags().String("daemon-id", "", "")
+	c.Flags().String("ref-label", "", "")
+	c.Flags().String("title", "", "")
+	c.Flags().String("summary", "", "")
+	c.Flags().String("ref", "", "")
+	c.Flags().String("label", "", "")
+	c.Flags().String("output", "json", "")
+	return c
+}
+
 // validateProjectStatus must accept the five DB-backed statuses and reject
 // anything else with a message that lists the valid values. `project create`,
 // `project update`, and `project status` all share it (#3925: `--status active`
@@ -36,6 +54,8 @@ func newProjectResourceUpdateTestCmd() *cobra.Command {
 	c.Flags().String("local-path", "", "")
 	c.Flags().String("daemon-id", "", "")
 	c.Flags().String("ref-label", "", "")
+	c.Flags().String("title", "", "")
+	c.Flags().String("summary", "", "")
 	c.Flags().String("ref", "", "")
 	c.Flags().String("label", "", "")
 	c.Flags().Bool("clear-label", false, "")
@@ -323,6 +343,117 @@ func TestBuildResourceRefFromFlagsLocalDirectoryMerges(t *testing.T) {
 		}
 		if _, ok := ref["label"]; ok {
 			t.Errorf("expected embedded label to be cleared, got %v", ref["label"])
+		}
+	})
+}
+
+// TestBuildResourceRefFromFlagsDocument pins the document shortcut plumbing:
+// --url and --title are required for new resources, and partial updates
+// that only set --summary must preserve the existing url and title from the
+// existing ref.
+func TestBuildResourceRefFromFlagsDocument(t *testing.T) {
+	t.Run("url and title required for add", func(t *testing.T) {
+		// No flags set — no change requested.
+		cmd := newProjectResourceAddTestCmd()
+		ref, has, err := buildResourceRefFromFlags(cmd, "document", nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if has {
+			t.Fatalf("expected has=false when no document flags set, got ref=%v", ref)
+		}
+	})
+
+	t.Run("url only missing title returns error", func(t *testing.T) {
+		cmd := newProjectResourceAddTestCmd()
+		_ = cmd.Flags().Set("url", "https://example.com/spec")
+		_, _, err := buildResourceRefFromFlags(cmd, "document", nil)
+		if err == nil {
+			t.Fatal("expected error when title is missing for new resource")
+		}
+		if !strings.Contains(err.Error(), "title") {
+			t.Errorf("error should mention title, got: %v", err)
+		}
+	})
+
+	t.Run("url and title builds ref", func(t *testing.T) {
+		cmd := newProjectResourceAddTestCmd()
+		_ = cmd.Flags().Set("url", "https://example.com/billing")
+		_ = cmd.Flags().Set("title", "Billing Rules")
+		ref, has, err := buildResourceRefFromFlags(cmd, "document", nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !has {
+			t.Fatalf("expected has=true")
+		}
+		if ref["url"] != "https://example.com/billing" {
+			t.Errorf("url = %v", ref["url"])
+		}
+		if ref["title"] != "Billing Rules" {
+			t.Errorf("title = %v", ref["title"])
+		}
+	})
+
+	t.Run("url and title and summary builds ref", func(t *testing.T) {
+		cmd := newProjectResourceAddTestCmd()
+		_ = cmd.Flags().Set("url", "https://example.com/billing")
+		_ = cmd.Flags().Set("title", "Billing Rules")
+		_ = cmd.Flags().Set("summary", "Covers pricing.")
+		ref, has, err := buildResourceRefFromFlags(cmd, "document", nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !has {
+			t.Fatalf("expected has=true")
+		}
+		if ref["summary"] != "Covers pricing." {
+			t.Errorf("summary = %v", ref["summary"])
+		}
+	})
+
+	t.Run("summary-only update merges existing url and title", func(t *testing.T) {
+		cmd := newProjectResourceUpdateTestCmd()
+		_ = cmd.Flags().Set("summary", "Updated desc.")
+		existing := map[string]any{
+			"url":   "https://example.com/billing",
+			"title": "Billing Rules",
+		}
+		ref, has, err := buildResourceRefFromFlags(cmd, "document", existing)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !has {
+			t.Fatalf("expected has=true")
+		}
+		if ref["url"] != "https://example.com/billing" {
+			t.Errorf("url not preserved: %v", ref["url"])
+		}
+		if ref["title"] != "Billing Rules" {
+			t.Errorf("title not preserved: %v", ref["title"])
+		}
+		if ref["summary"] != "Updated desc." {
+			t.Errorf("summary = %v", ref["summary"])
+		}
+	})
+
+	t.Run("summary cleared on empty input", func(t *testing.T) {
+		cmd := newProjectResourceUpdateTestCmd()
+		_ = cmd.Flags().Set("summary", "")
+		existing := map[string]any{
+			"url":     "https://example.com/billing",
+			"title":   "Billing Rules",
+			"summary": "Old summary",
+		}
+		ref, has, err := buildResourceRefFromFlags(cmd, "document", existing)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !has {
+			t.Fatalf("expected has=true")
+		}
+		if _, ok := ref["summary"]; ok {
+			t.Errorf("expected summary cleared, got %v", ref["summary"])
 		}
 	})
 }

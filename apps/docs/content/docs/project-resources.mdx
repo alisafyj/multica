@@ -1,18 +1,19 @@
 ---
 title: Project resources
-description: Link GitHub repositories or local directories to a project so later runs get a stable working context.
+description: Link GitHub repositories, local directories, or external documents to a project so later runs get a stable working context.
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 
 [Project](/projects) resources tell agents which code this body of work uses and where to run. Resources stay linked to the project, so there is no need to re-paste repository URLs or local paths into every issue.
 
-Two resource types are supported today:
+Three resource types are supported today:
 
 | Resource | Best for | Where runs happen |
 |---|---|---|
 | **GitHub repository** | Code shared by the team, with checkouts managed by the runtime | A runtime-managed working directory |
 | **Local directory** | An existing checkout, a very large repository, or when you want to inspect local changes directly | The original directory on a specific computer |
+| **Document** | PRDs, API references, business-rule pages, or any specification the agent should read before starting a task | Not applicable — the agent fetches the URL |
 
 ## How resources enter a run
 
@@ -69,6 +70,18 @@ Beyond the code changes the agent makes, the runtime may also write into the dir
 
 Multica never deletes a linked local directory when cleaning up run environments. The agent's changes to the directory are the same kind of changes as running an AI coding tool in your terminal yourself, and need the same review.
 
+## Add a document
+
+A document resource pins an external page — a PRD, API spec, or business-rule guide — as durable project context. The agent fetches and reads the URL before implementing or testing anything the specification describes.
+
+1. Open the project's **Resources**.
+2. Choose "Add document".
+3. Enter the URL (must start with `http://` or `https://`), a title, and an optional summary.
+
+The URL is validated at creation time; relative paths and non-HTTP schemes are rejected. The title is required. The optional summary gives the agent a short description of what the document covers; it appears in the agent's brief alongside the URL.
+
+Agents treat document resources as carrying the same authority as code. When a task involves a feature or API the document describes, the agent is expected to check the document first.
+
 ## Manage resources with the CLI
 
 ```bash
@@ -89,6 +102,19 @@ multica project resource add <project-id> \
   --type local_directory \
   --local-path /absolute/path/to/repo \
   --daemon-id <daemon-id>
+
+# Link a document (PRD, API spec, business-rule page)
+multica project resource add <project-id> \
+  --type document \
+  --url https://example.com/billing-rules \
+  --title "Billing Rules"
+
+# With an optional summary
+multica project resource add <project-id> \
+  --type document \
+  --url https://example.com/openapi.yaml \
+  --title "OpenAPI 3 Schema" \
+  --summary "Authoritative API contract for the billing service."
 
 # Remove a resource
 multica project resource remove <project-id> <resource-id>

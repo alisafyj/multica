@@ -140,6 +140,23 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 			out += " — " + label
 		}
 		return out
+	case "document":
+		// External specification or business-rule page. Agents should fetch and
+		// read the URL before implementing or testing anything the spec describes.
+		var payload struct {
+			URL     string `json:"url"`
+			Title   string `json:"title"`
+			Summary string `json:"summary,omitempty"`
+		}
+		_ = json.Unmarshal(r.ResourceRef, &payload)
+		out := fmt.Sprintf("**Document** «%s»: %s", payload.Title, payload.URL)
+		if payload.Summary != "" {
+			out += " — " + payload.Summary
+		}
+		if label != "" {
+			out += " (" + label + ")"
+		}
+		return out
 	default:
 		ref := string(r.ResourceRef)
 		if ref == "" {
@@ -167,6 +184,7 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 // For Pi:       writes {workDir}/AGENTS.md  (skills discovered natively from .pi/skills/)
 // For Cursor:   writes {workDir}/AGENTS.md  (skills discovered natively from .cursor/skills/)
 // For Kimi:        writes {workDir}/AGENTS.md  (Kimi Code CLI reads AGENTS.md natively; skills auto-discovered from project skills dirs)
+// For Reasonix:    writes {workDir}/AGENTS.md  (Reasonix reads AGENTS.md and .reasonix/skills/ natively)
 // For Kiro:        writes {workDir}/AGENTS.md  (Kiro CLI reads AGENTS.md natively; skills auto-discovered from project skills dirs)
 // For Qoder/Qoder CN: writes {workDir}/AGENTS.md  (skills discovered from .qoder/skills/; user-level roots are unaffected)
 // For Antigravity: writes {workDir}/AGENTS.md  (agy CLI reads AGENTS.md natively; skills discovered natively from .agents/skills/ — see https://antigravity.google/docs/gcli-migration)
@@ -201,7 +219,7 @@ func runtimeConfigPath(workDir, provider string) string {
 		return filepath.Join(workDir, "CODEBUDDY.md")
 	case "qwen":
 		return filepath.Join(workDir, "QWEN.md")
-	case "codex", "copilot", "opencode", "deveco", "openclaw", "hermes", "pi", "cursor", "kimi", "kiro", "antigravity", "qoder", "qoderclicn", "traecli", "grok":
+	case "codex", "copilot", "opencode", "deveco", "openclaw", "hermes", "pi", "cursor", "kimi", "reasonix", "kiro", "antigravity", "qoder", "qoderclicn", "traecli", "grok", "qwenpaw":
 		return filepath.Join(workDir, "AGENTS.md")
 	default:
 		return ""

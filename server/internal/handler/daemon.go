@@ -30,6 +30,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
+	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
 // ---------------------------------------------------------------------------
@@ -1635,6 +1636,12 @@ type claimBuildFailure struct {
 func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
+	// Claim-only capability: this server resolves the squad-leader role on the
+	// wire (is_leader_task / squad_id), so the daemon must not re-derive it
+	// from the briefing text. Set unconditionally — on every claim, leader or
+	// not — because its absence is what tells an upgraded daemon it is talking
+	// to a server too old to have answered the question (MUL-5811).
+	resp.LeaderRoleResolved = true
 	supportsCoalescedComments := requestHasClientCapability(r, protocol.DaemonCapabilityCoalescedCommentsV1)
 	// Empty-but-non-nil so pgx persists '{}' rather than NULL for tasks without
 	// comment input. Comment tasks replace this with the ids actually embedded
@@ -1695,6 +1702,18 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			ServiceTier:           agent.ServiceTier.String,
 			RuntimeConfig:         runtimeConfig,
 			DisabledRuntimeSkills: disabledRuntimeSkillsFor(agent.DisabledRuntimeSkills, runtimeID, runtime.Provider),
+		}
+		// System agents carry a product-owned instruction layer that ships with
+		// this binary instead of being copied into their row at creation. That
+		// is what makes it hot-updatable: editing the embedded file and
+		// deploying reaches every existing workspace on its next task, with no
+		// migration and no client upgrade. agent.Instructions holds only the
+		// workspace's own notes, so a release can never overwrite them.
+		//
+		// Composing here covers every task kind, because this is the single
+		// place a claimed task's agent payload is assembled.
+		if agent.SystemKey.String == service.MikaSystemKey {
+			resp.Agent.Instructions = service.ComposeMikaInstructions(agent.Name, agent.Instructions)
 		}
 		if useSkillRefs {
 			_, skillRefs := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID)
@@ -1793,33 +1812,53 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			// (No FK on squad_id — see migration 127.) We append (not replace)
 			// so per-agent instructions stay authoritative; the squad briefing
 			// stacks on top as task-specific squad context.
-			if resp.Agent != nil && task.IsLeaderTask && task.SquadID.Valid {
-				if squad, err := h.Queries.GetSquadInWorkspace(r.Context(), db.GetSquadInWorkspaceParams{
-					ID:          task.SquadID,
-					WorkspaceID: issue.WorkspaceID,
-				}); err == nil && uuidToString(squad.LeaderID) == resp.Agent.ID {
-					// Parent-status authority is deliberately NARROWER than
-					// briefing injection. Injection is keyed off is_leader_task
-					// (see above) and therefore also fires on the MUL-3724 path,
-					// where the issue belongs to a plain agent and this squad was
-					// only @mentioned for help. Granting status ownership there
-					// would let a guest squad push someone else's in-flight issue
-					// to in_review, so we gate it on the issue actually being
-					// assigned to this squad.
-					ownsIssueStatus := issue.AssigneeType.Valid &&
-						issue.AssigneeType.String == "squad" &&
-						uuidToString(issue.AssigneeID) == uuidToString(squad.ID)
-					briefing := buildSquadLeaderBriefing(r.Context(), h.Queries, squad, ownsIssueStatus)
-					if strings.TrimSpace(resp.Agent.Instructions) == "" {
-						resp.Agent.Instructions = briefing
-					} else {
-						resp.Agent.Instructions = resp.Agent.Instructions + "\n\n" + briefing
+			if task.IsLeaderTask {
+				injected := false
+				if resp.Agent != nil && task.SquadID.Valid {
+					if squad, err := h.Queries.GetSquadInWorkspace(r.Context(), db.GetSquadInWorkspaceParams{
+						ID:          task.SquadID,
+						WorkspaceID: issue.WorkspaceID,
+					}); err == nil && uuidToString(squad.LeaderID) == resp.Agent.ID {
+						// Parent-status authority is deliberately NARROWER than
+						// briefing injection. Injection is keyed off is_leader_task
+						// (see above) and therefore also fires on the MUL-3724 path,
+						// where the issue belongs to a plain agent and this squad was
+						// only @mentioned for help. Granting status ownership there
+						// would let a guest squad push someone else's in-flight issue
+						// to in_review, so we gate it on the issue actually being
+						// assigned to this squad.
+						ownsIssueStatus := issue.AssigneeType.Valid &&
+							issue.AssigneeType.String == "squad" &&
+							uuidToString(issue.AssigneeID) == uuidToString(squad.ID)
+						briefing := buildSquadLeaderBriefing(r.Context(), h.Queries, squad, ownsIssueStatus)
+						if strings.TrimSpace(resp.Agent.Instructions) == "" {
+							resp.Agent.Instructions = briefing
+						} else {
+							resp.Agent.Instructions = resp.Agent.Instructions + "\n\n" + briefing
+						}
+						injected = true
+						slog.Debug("injected squad leader briefing",
+							"squad_id", uuidToString(squad.ID),
+							"squad_name", squad.Name,
+							"leader_agent_id", resp.Agent.ID,
+							"owns_issue_status", ownsIssueStatus,
+						)
 					}
-					slog.Debug("injected squad leader briefing",
-						"squad_id", uuidToString(squad.ID),
-						"squad_name", squad.Name,
-						"leader_agent_id", resp.Agent.ID,
-						"owns_issue_status", ownsIssueStatus,
+				}
+				// Every skip above (NULL squad_id, squad hard-deleted, leader
+				// swapped after enqueue) leaves a task the daemon must NOT run
+				// as a leader: it has no roster to delegate to and no protocol
+				// to follow. The daemon derives its leader role from this flag
+				// (MUL-5811), so clearing it here is what keeps
+				// "is_leader_task on the wire ⇔ briefing injected" true, and the
+				// run degrades to an ordinary agent turn exactly as it did when
+				// the daemon inferred the role from the briefing text itself.
+				if !injected {
+					resp.IsLeaderTask = false
+					slog.Warn("squad leader briefing not injected; claim delivered as a non-leader task",
+						"task_id", uuidToString(task.ID),
+						"squad_id", uuidToString(task.SquadID),
+						"agent_id", uuidToString(task.AgentID),
 					)
 				}
 			}
@@ -1865,14 +1904,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 			}
 
-			if len(projectRepos) > 0 {
-				resp.Repos = projectRepos
-			} else if ws, err := h.Queries.GetWorkspace(r.Context(), issue.WorkspaceID); err == nil && ws.Repos != nil {
-				var repos []RepoData
-				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
-					resp.Repos = repos
-				}
-			}
+			resp.Repos = mergeTaskRepos(projectRepos, h.workspaceRepoData(r.Context(), issue.WorkspaceID))
 		}
 
 		// Load every planned input as one chronological, de-duplicated set.
@@ -2102,10 +2134,10 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.WorkspaceID = uuidToString(cs.WorkspaceID)
 			resp.ChatSessionID = uuidToString(cs.ID)
 			resp.ThreadName = cs.Title
-			// An is_agent_intro session carries no user message: the agent opens
-			// the conversation by introducing itself. Flag it so the daemon builds
-			// a self-introduction prompt rather than a "reply to their message"
-			// prompt (MUL-4230). The is_agent_intro column stays true for the
+			// Legacy compatibility: agent creation no longer creates intro chats,
+			// but historical is_agent_intro sessions can still be resumed. Such a
+			// session carries no user message on its opening turn, so flag it for
+			// the historical self-introduction prompt (MUL-4230). The column stays true for the
 			// session's whole life, so gate the intro prompt on the session still
 			// having zero human messages — otherwise every follow-up turn after the
 			// creator replies would re-run the "introduce yourself" prompt and the
@@ -2137,8 +2169,17 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			// endpoints are hardwired to h.SlackHistory (chat_history.go) — there
 			// is no history reader on any other channel, so the flag has nothing
 			// to select between there and must not imply one exists.
+			//
+			// chat_type rides along on the same row. It is what lets the
+			// per-turn prompt tell the agent whether this chat_session is a room
+			// shared by many people or a 1:1 with the bot; the prompt used to
+			// describe every chat run as a private 1:1 whatever the room. The
+			// shared session service writes the column for every channel
+			// (channel/engine/session.go), so no channel needs naming here
+			// either.
 			if binding, berr := h.Queries.GetChannelChatSessionBindingBySessionAny(r.Context(), cs.ID); berr == nil {
 				resp.ChatChannelType = binding.ChannelType
+				resp.ChatType = binding.ChatType
 				if binding.ChannelType == string(slack.TypeSlack) {
 					// The latest trigger was a thread reply iff its reply-target
 					// thread (last_thread_id) differs from its own message id (a
@@ -2191,14 +2232,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					}
 				}
 			}
-			if len(projectRepos) > 0 {
-				resp.Repos = projectRepos
-			} else if ws, err := h.Queries.GetWorkspace(r.Context(), cs.WorkspaceID); err == nil && ws.Repos != nil {
-				var repos []RepoData
-				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
-					resp.Repos = repos
-				}
-			}
+			resp.Repos = mergeTaskRepos(projectRepos, h.workspaceRepoData(r.Context(), cs.WorkspaceID))
 			if !task.ForceFreshSession {
 				// Resume chat sessions only when the stored pointer was produced
 				// by the same runtime as the claiming task. When the chat_session
@@ -2248,7 +2282,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			var inputLoadErr error
 			if task.ChatInputTaskID.Valid {
 				unanswered, inputLoadErr = h.Queries.ListChatInputMessages(r.Context(), task.ChatInputTaskID)
-			} else if msgs, err := h.Queries.ListChatMessages(r.Context(), cs.ID); err == nil {
+			} else if msgs, err := h.Queries.ListChatMessagesForLegacyTask(r.Context(), cs.ID); err == nil {
 				unanswered = trailingUserMessages(msgs)
 			} else {
 				inputLoadErr = err
@@ -2418,14 +2452,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 			}
 
-			if len(projectRepos) > 0 {
-				resp.Repos = projectRepos
-			} else if ws, err := h.Queries.GetWorkspace(r.Context(), parseUUID(qc.WorkspaceID)); err == nil && ws.Repos != nil {
-				var repos []RepoData
-				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
-					resp.Repos = repos
-				}
-			}
+			resp.Repos = mergeTaskRepos(projectRepos, h.workspaceRepoData(r.Context(), parseUUID(qc.WorkspaceID)))
 
 			// Parent-issue resolution for quick-create tasks opened from
 			// "Add sub issue". The handler already verified workspace
@@ -2498,6 +2525,22 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.WorkspaceID = draftCtx.WorkspaceID
 			resp.UIDraftCreateContext = json.RawMessage(task.Context)
 			h.populateContextTaskProject(r.Context(), &resp, draftCtx.ProjectID, draftCtx.WorkspaceID)
+		}
+
+		var runCtx service.TestRunContext
+		if json.Unmarshal(task.Context, &runCtx) == nil && runCtx.Type == service.TestRunContextType {
+			resp.WorkspaceID = runCtx.WorkspaceID
+			resp.TestRunContext = json.RawMessage(task.Context)
+			h.populateContextTaskProject(r.Context(), &resp, runCtx.ProjectID, runCtx.WorkspaceID)
+		}
+
+		var genCtx service.TestGenerationContext
+		if json.Unmarshal(task.Context, &genCtx) == nil && genCtx.Type == service.TestGenerationContextType {
+			resp.WorkspaceID = genCtx.WorkspaceID
+			resp.TestGenerationContext = json.RawMessage(task.Context)
+			// A generation run reads the project's repositories and documents,
+			// so it needs the same project payload an issue task gets.
+			h.populateContextTaskProject(r.Context(), &resp, genCtx.ProjectID, genCtx.WorkspaceID)
 		}
 
 		var restoreCtx service.DesignRestoreTaskContext
@@ -2988,6 +3031,12 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("design restore task start: failed to mark restore task running", "task_id", taskID, "error", err)
 	}
 	h.markPMOSyncRunRunning(r.Context(), *task)
+	if err := h.markTestRunRunning(r.Context(), *task); err != nil {
+		slog.Warn("test run start: failed to mark run running", "task_id", taskID, "error", err)
+	}
+	if err := h.markTestGenerationJobRunning(r.Context(), *task); err != nil {
+		slog.Warn("test generation start: failed to mark job running", "task_id", taskID, "error", err)
+	}
 
 	slog.Info("task started", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
@@ -3114,6 +3163,33 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	var req TaskCompleteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// GH #6402: a daemon whose backend does not (yet) read the provider's
+	// structured terminal reason reports a context-exhausted run as a clean
+	// success, with the CLI's "your context window is full" notice as the
+	// answer. Re-route it to the failure path here so the fix does not have to
+	// wait for every installed daemon to update: an un-upgraded host would
+	// otherwise keep publishing that notice as the agent's reply AND keep the
+	// dead session pinned as the resume pointer, which is a permanently stuck
+	// (agent, issue) pair rather than a mislabelled row. Same argument, and the
+	// same shared classifier, as taskfailure.NormalizeDaemonReason on the fail
+	// boundary (MUL-5370). A current daemon classifies this before it ever calls
+	// /complete, so this branch is dead weight for it — by design.
+	if taskfailure.ContextExhaustedCompletion(req.Output) {
+		slog.Warn("complete task: output is a provider context-exhaustion notice, recording as failed",
+			"task_id", taskID,
+			"failure_reason", taskfailure.ReasonAgentContextOverflow,
+		)
+		h.failTask(w, r, taskID, workspaceID, TaskFailRequest{
+			Error:                 req.Output,
+			FailureReason:         string(taskfailure.ReasonAgentContextOverflow),
+			SessionID:             req.SessionID,
+			WorkDir:               req.WorkDir,
+			SessionRolloutMissing: req.SessionRolloutMissing,
+			RetiredSessionID:      req.RetiredSessionID,
+		})
 		return
 	}
 
@@ -3248,6 +3324,12 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if analyzedProfile != nil {
 		slog.Info("design system profile analyzed from task", "task_id", taskID, "design_system_profile_id", uuidToString(analyzedProfile.ID))
+	}
+	if err := h.updateTestRunFromAgentCompletion(r.Context(), *task, req); err != nil {
+		slog.Warn("test run complete: failed to close the round", "task_id", taskID, "error", err)
+	}
+	if err := h.updateTestGenerationJobFromAgentCompletion(r.Context(), *task, req); err != nil {
+		slog.Warn("test generation complete: failed to record job result", "task_id", taskID, "error", err)
 	}
 	if err := h.updateDesignRestoreTaskFromAgentCompletion(r.Context(), *task, req); err != nil {
 		slog.Warn("design restore task completion: failed to update restore task", "task_id", taskID, "error", err)
@@ -3946,6 +4028,15 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.failTask(w, r, taskID, workspaceID, req)
+}
+
+// failTask records a terminal failure and writes the response. Shared by the
+// /fail endpoint and by CompleteTask's context-exhaustion normalization so a
+// run re-classified at the /complete boundary lands through exactly the same
+// transaction, token revocation and runtime wake-up as one the daemon reported
+// as failed itself.
+func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, workspaceID string, req TaskFailRequest) {
 	// MUL-5305: SessionRolloutMissing is applied inside FailTask's terminal
 	// transaction — forcing session_id NULL (overriding the COALESCE that would
 	// keep a stale mid-flight pin) and flagging the row in the same commit that
@@ -3963,6 +4054,12 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("fail task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if err := h.updateTestRunFromAgentFailure(r.Context(), *task, req); err != nil {
+		slog.Warn("test run fail: failed to record the aborted round", "task_id", taskID, "error", err)
+	}
+	if err := h.updateTestGenerationJobFromAgentFailure(r.Context(), *task, req); err != nil {
+		slog.Warn("test generation fail: failed to record job failure", "task_id", taskID, "error", err)
 	}
 	if err := h.updateDesignRestoreTaskFromAgentFailure(r.Context(), *task, req); err != nil {
 		slog.Warn("design restore task failure: failed to update restore task", "task_id", taskID, "error", err)
@@ -4264,8 +4361,52 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 	// issue-facing surface must resolve initiator/originator names (departed-safe,
 	// one batch) — otherwise the badge falls back to "someone" on issue detail.
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
+	h.hydrateTaskUsage(r.Context(), issue.ID, resp)
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// hydrateTaskUsage attaches each run's own token usage to the execution-log
+// rows. One query for the whole issue, then a map join — not one query per
+// task, which would be an N+1 over a list the UI always renders in full.
+//
+// Usage is display metadata: a failure here must not take the execution log
+// down with it, so the error is swallowed and every row keeps its nil Usage,
+// which the UI already renders as "no usage recorded".
+func (h *Handler) hydrateTaskUsage(ctx context.Context, issueID pgtype.UUID, resp []AgentTaskResponse) {
+	if len(resp) == 0 {
+		return
+	}
+
+	rows, err := h.Queries.ListIssueTaskUsage(ctx, issueID)
+	if err != nil || len(rows) == 0 {
+		return
+	}
+
+	byTask := make(map[string][]TaskUsageData, len(resp))
+	for _, row := range rows {
+		var cost *int64
+		if row.CostUsdTicks.Valid {
+			v := row.CostUsdTicks.Int64
+			cost = &v
+		}
+		taskID := uuidToString(row.TaskID)
+		byTask[taskID] = append(byTask[taskID], TaskUsageData{
+			Provider:         row.Provider,
+			Model:            row.Model,
+			InputTokens:      row.InputTokens,
+			OutputTokens:     row.OutputTokens,
+			CacheReadTokens:  row.CacheReadTokens,
+			CacheWriteTokens: row.CacheWriteTokens,
+			CostUsdTicks:     cost,
+		})
+	}
+
+	for i := range resp {
+		if usage, ok := byTask[resp[i].ID]; ok {
+			resp[i].Usage = usage
+		}
+	}
 }
 
 // ListTaskMessagesByUser returns task messages for a task.
@@ -4535,4 +4676,49 @@ func (h *Handler) GetTaskGCCheck(w http.ResponseWriter, r *http.Request) {
 		"status":       task.Status,
 		"completed_at": task.CompletedAt.Time,
 	})
+}
+
+// mergeTaskRepos combines a project's repositories with the workspace-level
+// ones instead of replacing them.
+//
+// Attaching a single github_repo resource to a project used to hide every other
+// workspace repo from that task: the checkout allowlist is built from this list,
+// so a cross-repo test case whose second repository is only registered at
+// workspace level could not be checked out at all. Project entries win on URL
+// collision because their per-repo `ref` is the more specific instruction.
+func mergeTaskRepos(projectRepos, workspaceRepos []RepoData) []RepoData {
+	if len(projectRepos) == 0 {
+		return workspaceRepos
+	}
+	merged := make([]RepoData, 0, len(projectRepos)+len(workspaceRepos))
+	seen := make(map[string]struct{}, len(projectRepos)+len(workspaceRepos))
+	for _, repo := range projectRepos {
+		if _, dup := seen[repo.URL]; dup {
+			continue
+		}
+		seen[repo.URL] = struct{}{}
+		merged = append(merged, repo)
+	}
+	for _, repo := range workspaceRepos {
+		if _, dup := seen[repo.URL]; dup {
+			continue
+		}
+		seen[repo.URL] = struct{}{}
+		merged = append(merged, repo)
+	}
+	return merged
+}
+
+// workspaceRepoData reads the workspace-level repository list, tolerating a
+// missing or malformed column.
+func (h *Handler) workspaceRepoData(ctx context.Context, workspaceID pgtype.UUID) []RepoData {
+	ws, err := h.Queries.GetWorkspace(ctx, workspaceID)
+	if err != nil || ws.Repos == nil {
+		return nil
+	}
+	var repos []RepoData
+	if json.Unmarshal(ws.Repos, &repos) != nil {
+		return nil
+	}
+	return repos
 }

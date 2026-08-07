@@ -27,6 +27,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composiointeg "github.com/multica-ai/multica/server/internal/integrations/composio"
+	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -598,6 +599,54 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("slack integration disabled (MULTICA_SLACK_SECRET_KEY not set)")
 	}
 
+	// DingTalk uses one outbound Stream connection per BYO installation. The
+	// AppSecret is encrypted at rest and the integration is inert unless its
+	// dedicated deployment key is configured.
+	if dingtalkKey, err := secretbox.LoadKey("MULTICA_DINGTALK_SECRET_KEY"); err == nil {
+		box, err := secretbox.New(dingtalkKey)
+		if err != nil {
+			slog.Error("dingtalk: secretbox.New failed; integration disabled", "error", err)
+		} else {
+			dingtalkClient := dingtalk.NewClient(nil, "")
+			bindingSvc := dingtalk.NewBindingTokenService(queries, pool)
+			h.DingTalkBindingTokens = bindingSvc
+			replier := dingtalk.NewOutboundReplier(dingtalk.OutboundReplierConfig{
+				Binding: bindingSvc,
+				Decrypt: box.Open,
+				Client:  dingtalkClient,
+				AppURL:  appURLFromEnv(),
+				Logger:  slog.Default(),
+			})
+			ack := dingtalk.NewAckNotifier(dingtalkClient, box.Open, slog.Default())
+			var media engine.MediaResolver
+			if store != nil {
+				media = dingtalk.NewMediaResolver(
+					dingtalkClient,
+					box.Open,
+					store,
+					engine.NewDBMediaIntentLedger(queries),
+					slog.Default(),
+				)
+			}
+			channelRouter.Register(dingtalk.TypeDingTalk, dingtalk.NewDingTalkResolverSet(queries, pool, replier, ack, media))
+			dingtalk.NewOutbound(queries, box.Open, dingtalkClient, slog.Default()).Register(bus)
+			dingtalk.RegisterDingTalk(channelRegistry, dingtalk.ChannelDeps{
+				Decrypt: box.Open,
+				Client:  dingtalkClient,
+				Logger:  slog.Default(),
+			})
+			installSvc, installErr := dingtalk.NewInstallService(queries, pool, box, slog.Default())
+			if installErr != nil {
+				slog.Error("dingtalk: InstallService init failed; install disabled", "error", installErr)
+			} else {
+				h.DingTalkInstall = installSvc
+			}
+			slog.Info("dingtalk integration enabled (BYO per-installation stream mode)")
+		}
+	} else {
+		slog.Info("dingtalk integration disabled (MULTICA_DINGTALK_SECRET_KEY not set)")
+	}
+
 	// Composio integration (MUL-3720). Gated by COMPOSIO_API_KEY plus the
 	// composio_mcp_apps feature flag. The env var is the project-scoped key the
 	// standalone SDK authenticates Composio with (sent as x-api-key; the project
@@ -1067,6 +1116,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/slack/installations/{installationId}", h.RevokeSlackInstallation)
 					r.Post("/slack/install/byo", h.RegisterSlackBYO)
 				})
+
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
+					r.Get("/dingtalk/installations", h.ListDingTalkInstallations)
+				})
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
+					r.Delete("/dingtalk/installations/{installationId}", h.RevokeDingTalkInstallation)
+					r.Post("/dingtalk/install/byo", h.RegisterDingTalkBYO)
+				})
 			})
 		})
 
@@ -1083,6 +1142,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// logged-in user (from the session) is bound to the Slack id the token
 		// carries.
 		r.Post("/api/slack/binding/redeem", h.RedeemSlackBindingToken)
+		// DingTalk binding redemption is user-scoped for the same reason as
+		// Slack: the token is redeemed before workspace context is selected.
+		r.Post("/api/dingtalk/binding/redeem", h.RedeemDingTalkBindingToken)
 
 		// Composio integration (MUL-3720). User-scoped (no workspace context):
 		// a connection belongs to a user. These four require a logged-in
@@ -1272,6 +1334,81 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/runs/{id}/apply", h.ApplyPMORun)
 			})
 
+			// Test cases
+			r.Route("/api/test-cases", func(r chi.Router) {
+				// Literal sub-paths are registered before {ref}, which accepts
+				// either a TC-<n> key or a UUID.
+				r.Get("/modules", h.ListTestCaseModules)
+				r.Get("/", h.ListTestCases)
+				r.Post("/", h.CreateTestCase)
+				r.Route("/{ref}", func(r chi.Router) {
+					r.Get("/", h.GetTestCase)
+					r.Put("/", h.UpdateTestCase)
+					r.Delete("/", h.DeleteTestCase)
+					r.Post("/approve", h.ApproveTestCase)
+					r.Get("/revisions", h.ListTestCaseRevisions)
+					r.Get("/proposals", h.ListTestCaseProposals)
+					// Regression history for one case, across every round it
+					// appeared in.
+					r.Get("/results", h.ListTestCaseResultTimeline)
+				})
+			})
+
+			// AI test case generation
+			r.Route("/api/test-generation-jobs", func(r chi.Router) {
+				r.Get("/", h.ListTestGenerationJobs)
+				r.Post("/", h.CreateTestGenerationJob)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetTestGenerationJob)
+					r.Get("/plan", h.GetTestGenerationPlan)
+					r.Put("/plan", h.UpdateTestGenerationPlan)
+					r.Post("/plan/generate", h.GenerateTestGenerationPlan)
+					r.Post("/plan/approve", h.ApproveTestGenerationPlan)
+					r.Post("/dispatch", h.DispatchTestGenerationJob)
+					// Agent writeback, gated on the job's own task token.
+					r.Post("/propose", h.ProposeTestCases)
+				})
+			})
+			r.Post("/api/test-case-proposals/{id}/accept", h.AcceptTestCaseProposal)
+			r.Post("/api/test-case-proposals/{id}/reject", h.RejectTestCaseProposal)
+
+			// Test plans
+			r.Route("/api/test-plans", func(r chi.Router) {
+				r.Get("/", h.ListTestPlans)
+				r.Post("/", h.CreateTestPlan)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetTestPlan)
+					r.Put("/", h.UpdateTestPlan)
+					r.Delete("/", h.DeleteTestPlan)
+					r.Get("/cases", h.ListTestPlanCases)
+					r.Post("/cases", h.AddTestPlanCases)
+					r.Delete("/cases/{caseId}", h.RemoveTestPlanCase)
+				})
+			})
+
+			// Test runs
+			r.Route("/api/test-runs", func(r chi.Router) {
+				r.Get("/", h.ListTestRuns)
+				r.Post("/", h.CreateTestRun)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetTestRun)
+					r.Get("/cases", h.ListTestRunCases)
+					r.Get("/capabilities", h.ListTestRunCapabilities)
+					r.Post("/start", h.StartTestRun)
+					r.Post("/dispatch", h.DispatchTestRun)
+					r.Post("/abort", h.AbortTestRun)
+					r.Post("/retry", h.RetryTestRun)
+				})
+			})
+			// Result write and defect creation are per run-case; both are also
+			// reachable by the run's own agent through its task token.
+			r.Put("/api/test-run-cases/{id}/result", h.UpdateTestRunCaseResult)
+			r.Post("/api/test-run-cases/{id}/defect", h.OpenTestRunCaseDefect)
+
+			// Execution capabilities
+			r.Get("/api/test-capabilities", h.ListTestCapabilities)
+			r.Post("/api/runtimes/{id}/capabilities", h.RequestRuntimeCapabilityScan)
+
 			// Gallery Native design files
 			r.Get("/api/design-folders", h.ListDesignFolders)
 			r.Post("/api/design-folders", h.CreateDesignFolder)
@@ -1406,6 +1543,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// workspace (find-or-create by name) and creates the agent
 				// with the template's instructions in one transaction.
 				r.Post("/from-template", h.CreateAgentFromTemplate)
+				// The workspace's built-in Chief of Staff. Server-owned: the
+				// caller supplies only a runtime and a language, so a client
+				// cannot mint an agent carrying `system_key` and thereby claim
+				// the system instruction layer. Idempotent per workspace.
+				r.Post("/mika", h.CreateMikaAgent)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAgent)
 					r.Put("/", h.UpdateAgent)
@@ -1560,12 +1702,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/archive", h.SetChatSessionArchived)
 					r.Delete("/", h.DeleteChatSession)
 					r.Post("/messages", h.SendChatMessage)
+					r.Post("/onboarding", h.StartMikaOnboarding)
 					// Explicit "refresh" of a turn's quick actions: re-runs the
 					// daemon suggestion pass for the latest assistant reply (MUL-5149).
 					r.Post("/quick-actions/regenerate", h.RegenerateChatQuickActions)
 					r.Get("/messages", h.ListChatMessages)
 					r.Get("/messages/page", h.ListChatMessagesPage)
 					r.Get("/pending-task", h.GetPendingChatTask)
+					r.Delete("/queued-tasks", h.ClearQueuedChatTasks)
+					r.Post("/queued-tasks/{taskId}/prioritize", h.PrioritizeQueuedChatTask)
 					r.Post("/read", h.MarkChatSessionRead)
 					// Deferred-cancellation draft restores (#5219):
 					// creator-only fetch + idempotent consume.

@@ -83,6 +83,10 @@
         "label": "Comments",
         "description": "New comments on issues you're subscribed to."
       },
+      "mentions": {
+        "label": "Mentions",
+        "description": "When someone @mentions you, including @all and @squad."
+      },
       "updates": {
         "label": "Issue updates",
         "description": "Edits to title, description, labels, priority, or due date."

@@ -16,6 +16,10 @@
       "assigned": "没有分配给你的 issue。",
       "created": "你还没有创建任何 issue。",
       "agents": "还没有分配给你的智能体或小队的 issue。"
+    },
+    "view_mode": {
+      "switch_to_list": "切换到列表视图",
+      "switch_to_board": "切换到看板视图"
     }
   },
   "all_issues": {

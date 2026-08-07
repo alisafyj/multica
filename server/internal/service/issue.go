@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -114,6 +115,12 @@ type IssueCreateOpts struct {
 	// daemon / lark / autopilot). Derived from middleware's client
 	// metadata at the handler layer.
 	Platform string
+
+	// AssignedAgentRunFireAt creates the automatic assigned-agent task in a
+	// durable deferred state. Channel /issue uses this while detached media is
+	// still resolving, then promotes the returned task after attachment binding.
+	// Zero preserves the ordinary immediate enqueue path.
+	AssignedAgentRunFireAt time.Time
 }
 
 // ErrActiveDuplicate signals that the duplicate guard found an active
@@ -151,6 +158,9 @@ var ErrIssueLabelNotFound = errors.New("issue label not found in this workspace"
 type IssueCreateResult struct {
 	Issue       db.Issue
 	Attachments []db.Attachment
+	// AssignedTaskID is populated when Create enqueues the automatic task for
+	// an agent assignee, including a task deferred by AssignedAgentRunFireAt.
+	AssignedTaskID pgtype.UUID
 	// Labels is the authoritative set of labels attached to the new issue in
 	// the create transaction (empty when none were requested). Callers echo it
 	// on the create response + issue:created event so every client renders the
@@ -158,6 +168,12 @@ type IssueCreateResult struct {
 	// understood label_ids (see the create handler's compatibility contract).
 	Labels         []db.IssueLabel
 	DuplicateIssue *db.Issue
+	// deferredAssignedTask carries the tx-inserted media-gated deferred task
+	// row (when AssignedAgentRunFireAt fired) from Create to afterCreate so
+	// the post-commit overlay hydration operates on the exact committed row.
+	// Unexported because it is an internal hand-off, not part of the public
+	// result contract handlers consume.
+	deferredAssignedTask db.AgentTaskQueue
 }
 
 // Create runs the full issue-creation pipeline atomically end-to-end:
@@ -169,10 +185,13 @@ type IssueCreateResult struct {
 //  5. Insert the issue row (with optional origin stamping).
 //  6. Commit.
 //  7. Link any pre-uploaded attachments (post-commit, idempotent).
-//  8. Publish EventIssueCreated to the bus (payload via opts.BroadcastPayload).
-//  9. Capture the IssueCreated analytics event.
-//  10. Enqueue an agent task or trigger the squad leader when the issue is
-//     assigned and not in `backlog`.
+//  8. For a media-gated channel issue, persist its deferred assigned-agent
+//     task in the issue transaction so both rows become visible atomically.
+//     Ordinary creates keep their existing event-before-enqueue ordering.
+//  9. Publish EventIssueCreated to the bus (payload via opts.BroadcastPayload).
+//  10. Capture the IssueCreated analytics event.
+//  11. Enqueue the ordinary agent task or trigger the squad leader when the
+//     issue is assigned and not in `backlog`.
 //
 // Validation that lives in the service (parent existence, project
 // workspace membership, parent → project back-fill) is enforced here so
@@ -196,6 +215,18 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			return res, err
 		}
 		return IssueCreateResult{}, err
+	}
+
+	if !opts.AssignedAgentRunFireAt.IsZero() && s.shouldEnqueueAgentTaskWithQueries(ctx, qtx, res.Issue) {
+		// The issue must never become visible without its media-gated assigned
+		// task. Inserting both rows through qtx makes the unique-index winner
+		// deterministic: any observer that can discover the committed issue also
+		// sees the inert deferred task and must merge into it.
+		assignedTask, err := s.TaskService.createDeferredChannelIssueTaskWithQueries(ctx, qtx, res.Issue, opts.AssignedAgentRunFireAt)
+		if err != nil {
+			return IssueCreateResult{}, fmt.Errorf("create deferred channel issue task: %w", err)
+		}
+		res.deferredAssignedTask = assignedTask
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -380,10 +411,35 @@ func (s *IssueService) afterCreate(ctx context.Context, res IssueCreateResult, p
 		actorID = util.UUIDToString(issue.CreatorID)
 	}
 
+	var assignedTaskID pgtype.UUID
+	if !opts.AssignedAgentRunFireAt.IsZero() {
+		assignedTask := res.deferredAssignedTask
+		assignedTaskID = assignedTask.ID
+		if assignedTaskID.Valid {
+			if err := s.TaskService.hydrateDeferredChannelIssueTaskOverlay(ctx, assignedTask); err != nil {
+				// Runtime overlays are best-effort on every enqueue path. The task is
+				// already durable and safely deferred, so an optional integration
+				// failure must not turn a committed issue into a retry duplicate.
+				slog.Warn("hydrate deferred channel issue task overlay failed",
+					"issue_id", util.UUIDToString(issue.ID),
+					"task_id", util.UUIDToString(assignedTask.ID),
+					"error", err)
+			}
+		} else if s.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
+			// AssignedAgentRunFireAt currently belongs to channel /issue, which
+			// always resolves an agent assignee. Preserve the ordinary squad path
+			// for any future caller that supplies the option with a squad.
+			s.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, p.CreatorType, actorID)
+		}
+	}
+
 	s.publishIssueCreated(issue, attachments, labels, p.CreatorType, actorID, opts)
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
-	s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID)
+	if opts.AssignedAgentRunFireAt.IsZero() {
+		assignedTaskID = s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, opts.AssignedAgentRunFireAt)
+	}
 
+	res.AssignedTaskID = assignedTaskID
 	return res
 }
 
@@ -504,6 +560,25 @@ func (s *IssueService) publishIssueCreated(issue db.Issue, attachments []db.Atta
 	})
 }
 
+// PublishAttachmentsChanged refreshes the per-issue attachment cache after a
+// detached channel media transaction. Issue creation is broadcast before the
+// remote download finishes, so this follow-up event closes the realtime gap
+// for a detail page opened from the immediate /issue confirmation.
+func (s *IssueService) PublishAttachmentsChanged(issue db.Issue, actorID pgtype.UUID) {
+	if s.Bus == nil {
+		return
+	}
+	s.Bus.Publish(events.Event{
+		Type:        protocol.EventIssueAttachmentsChanged,
+		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
+		ActorType:   "member",
+		ActorID:     util.UUIDToString(actorID),
+		Payload: map[string]any{
+			"issue_id": util.UUIDToString(issue.ID),
+		},
+	})
+}
+
 func (s *IssueService) captureCreatedAnalytics(issue db.Issue, creatorType, actorID string, opts IssueCreateOpts) {
 	if s.Analytics == nil {
 		return
@@ -552,20 +627,30 @@ func classifyOrigin(issue db.Issue, opts IssueCreateOpts) (source, taskID, autop
 	}
 }
 
-func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue, creatorType, actorID string) {
+func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue, creatorType, actorID string, agentRunFireAt time.Time) pgtype.UUID {
 	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
-		return
+		return pgtype.UUID{}
 	}
 	if s.shouldEnqueueAgentTask(ctx, issue) {
-		if _, err := s.TaskService.EnqueueTaskForIssue(ctx, issue); err != nil {
+		var task db.AgentTaskQueue
+		var err error
+		if agentRunFireAt.IsZero() {
+			task, err = s.TaskService.EnqueueTaskForIssue(ctx, issue)
+		} else {
+			task, err = s.TaskService.EnqueueDeferredChannelIssueTask(ctx, issue, agentRunFireAt)
+		}
+		if err != nil {
 			slog.Warn("enqueue agent task on create failed",
 				"issue_id", util.UUIDToString(issue.ID),
 				"error", err)
+		} else {
+			return task.ID
 		}
 	}
 	if s.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
 		s.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, creatorType, actorID)
 	}
+	return pgtype.UUID{}
 }
 
 // shouldEnqueueAgentTask returns true when an issue create or assignment
@@ -574,17 +659,21 @@ func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue,
 // Mirrors handler.shouldEnqueueAgentTask; kept here to make the service
 // self-contained, since both code paths must move together.
 func (s *IssueService) shouldEnqueueAgentTask(ctx context.Context, issue db.Issue) bool {
+	return s.shouldEnqueueAgentTaskWithQueries(ctx, s.Queries, issue)
+}
+
+func (s *IssueService) shouldEnqueueAgentTaskWithQueries(ctx context.Context, q *db.Queries, issue db.Issue) bool {
 	if issue.Status == "backlog" {
 		return false
 	}
-	return s.isAgentAssigneeReady(ctx, issue)
+	return isAgentAssigneeReadyWithQueries(ctx, q, issue)
 }
 
-func (s *IssueService) isAgentAssigneeReady(ctx context.Context, issue db.Issue) bool {
+func isAgentAssigneeReadyWithQueries(ctx context.Context, q *db.Queries, issue db.Issue) bool {
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
 		return false
 	}
-	agent, err := s.Queries.GetAgent(ctx, issue.AssigneeID)
+	agent, err := q.GetAgent(ctx, issue.AssigneeID)
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 		return false
 	}
