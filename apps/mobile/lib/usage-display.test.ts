@@ -73,7 +73,7 @@ describe("mergeAgentDashboardRows", () => {
   it("prefers the run-time rollup's task count over the token rollup's", () => {
     const merged = mergeAgentDashboardRows(
       [{ agentId: "agent-a", tokens: 1000, cost: 1, taskCount: 5 }],
-      [{ agent_id: "agent-a", total_seconds: 120, task_count: 3, failed_count: 0 }],
+      [{ agent_id: "agent-a", total_seconds: 120, task_count: 3, failed_count: 0, cancelled_count: 0 }],
     );
     expect(merged[0]).toMatchObject({
       agentId: "agent-a",
@@ -87,7 +87,7 @@ describe("mergeAgentDashboardRows", () => {
   it("includes agents with run-time rows but zero tokens (errored before producing usage)", () => {
     const merged = mergeAgentDashboardRows(
       [],
-      [{ agent_id: "agent-a", total_seconds: 5, task_count: 1, failed_count: 1 }],
+      [{ agent_id: "agent-a", total_seconds: 5, task_count: 1, failed_count: 1, cancelled_count: 0 }],
     );
     expect(merged).toEqual([
       { agentId: "agent-a", tokens: 0, cost: 0, seconds: 5, taskCount: 1 },
@@ -239,8 +239,8 @@ describe("weekly aggregation (today pinned to 2026-07-15T12:00:00Z)", () => {
     it("sums total_seconds per trailing week", () => {
       const weeks = aggregateWeeklyTime(
         [
-          { date: "2026-07-06", total_seconds: 120, task_count: 2, failed_count: 0 },
-          { date: "2026-07-15", total_seconds: 60, task_count: 1, failed_count: 0 },
+          { date: "2026-07-06", total_seconds: 120, task_count: 2, failed_count: 0, cancelled_count: 0 },
+          { date: "2026-07-15", total_seconds: 60, task_count: 1, failed_count: 0, cancelled_count: 0 },
         ],
         "UTC",
         2,
@@ -254,8 +254,8 @@ describe("weekly aggregation (today pinned to 2026-07-15T12:00:00Z)", () => {
     it("splits completed/failed per trailing week", () => {
       const weeks = aggregateWeeklyTasks(
         [
-          { date: "2026-07-06", total_seconds: 0, task_count: 5, failed_count: 2 },
-          { date: "2026-07-15", total_seconds: 0, task_count: 3, failed_count: 1 },
+          { date: "2026-07-06", total_seconds: 0, task_count: 5, failed_count: 2, cancelled_count: 0 },
+          { date: "2026-07-15", total_seconds: 0, task_count: 3, failed_count: 1, cancelled_count: 0 },
         ],
         "UTC",
         2,
