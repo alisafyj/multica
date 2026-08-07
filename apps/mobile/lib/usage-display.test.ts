@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   aggregateAgentTokens,
   aggregateByWeek,
+  aggregateDailyTasks,
   aggregateWeeklyTasks,
   aggregateWeeklyTime,
   bucketUnknownAgentRows,
@@ -73,7 +74,7 @@ describe("mergeAgentDashboardRows", () => {
   it("prefers the run-time rollup's task count over the token rollup's", () => {
     const merged = mergeAgentDashboardRows(
       [{ agentId: "agent-a", tokens: 1000, cost: 1, taskCount: 5 }],
-      [{ agent_id: "agent-a", total_seconds: 120, task_count: 3, failed_count: 0 }],
+      [{ agent_id: "agent-a", total_seconds: 120, task_count: 3, failed_count: 0, cancelled_count: 0 }],
     );
     expect(merged[0]).toMatchObject({
       agentId: "agent-a",
@@ -87,7 +88,7 @@ describe("mergeAgentDashboardRows", () => {
   it("includes agents with run-time rows but zero tokens (errored before producing usage)", () => {
     const merged = mergeAgentDashboardRows(
       [],
-      [{ agent_id: "agent-a", total_seconds: 5, task_count: 1, failed_count: 1 }],
+      [{ agent_id: "agent-a", total_seconds: 5, task_count: 1, failed_count: 1, cancelled_count: 0 }],
     );
     expect(merged).toEqual([
       { agentId: "agent-a", tokens: 0, cost: 0, seconds: 5, taskCount: 1 },
@@ -239,8 +240,8 @@ describe("weekly aggregation (today pinned to 2026-07-15T12:00:00Z)", () => {
     it("sums total_seconds per trailing week", () => {
       const weeks = aggregateWeeklyTime(
         [
-          { date: "2026-07-06", total_seconds: 120, task_count: 2, failed_count: 0 },
-          { date: "2026-07-15", total_seconds: 60, task_count: 1, failed_count: 0 },
+          { date: "2026-07-06", total_seconds: 120, task_count: 2, failed_count: 0, cancelled_count: 0 },
+          { date: "2026-07-15", total_seconds: 60, task_count: 1, failed_count: 0, cancelled_count: 0 },
         ],
         "UTC",
         2,
@@ -250,18 +251,51 @@ describe("weekly aggregation (today pinned to 2026-07-15T12:00:00Z)", () => {
     });
   });
 
+  // Mirrors packages/views/dashboard/utils.ts aggregateDailyTasks. Mobile and
+  // web must report the same outcome split for the same rows.
+  describe("aggregateDailyTasks", () => {
+    it("treats failed and cancelled as disjoint subsets of task_count", () => {
+      const days = aggregateDailyTasks([
+        { date: "2026-07-15", total_seconds: 0, task_count: 9, failed_count: 2, cancelled_count: 4 },
+        { date: "2026-07-06", total_seconds: 0, task_count: 3, failed_count: 0, cancelled_count: 0 },
+      ]);
+      // Sorted ascending so the x-axis reads oldest-to-newest.
+      expect(days.map((d) => d.date)).toEqual(["2026-07-06", "2026-07-15"]);
+      expect(days[0]).toMatchObject({ completed: 3, failed: 0, cancelled: 0 });
+      expect(days[1]).toMatchObject({ completed: 3, failed: 2, cancelled: 4 });
+    });
+
+    it("never reports a negative completed count", () => {
+      const days = aggregateDailyTasks([
+        { date: "2026-07-15", total_seconds: 0, task_count: 1, failed_count: 1, cancelled_count: 3 },
+      ]);
+      expect(days[0].completed).toBe(0);
+    });
+  });
+
   describe("aggregateWeeklyTasks", () => {
     it("splits completed/failed per trailing week", () => {
       const weeks = aggregateWeeklyTasks(
         [
-          { date: "2026-07-06", total_seconds: 0, task_count: 5, failed_count: 2 },
-          { date: "2026-07-15", total_seconds: 0, task_count: 3, failed_count: 1 },
+          { date: "2026-07-06", total_seconds: 0, task_count: 5, failed_count: 2, cancelled_count: 0 },
+          { date: "2026-07-15", total_seconds: 0, task_count: 3, failed_count: 1, cancelled_count: 0 },
         ],
         "UTC",
         2,
       );
       expect(weeks[0]).toMatchObject({ weekStart: "2026-07-06", completed: 3, failed: 2 });
       expect(weeks[1]).toMatchObject({ weekStart: "2026-07-13", completed: 2, failed: 1 });
+    });
+
+    // MUL-5823 put cancelled runs inside task_count. Counting them as
+    // completed would show a run the user stopped as a success.
+    it("keeps cancelled runs out of the completed count", () => {
+      const weeks = aggregateWeeklyTasks(
+        [{ date: "2026-07-15", total_seconds: 0, task_count: 5, failed_count: 1, cancelled_count: 3 }],
+        "UTC",
+        1,
+      );
+      expect(weeks[0]).toMatchObject({ completed: 1, failed: 1, cancelled: 3 });
     });
   });
 });
