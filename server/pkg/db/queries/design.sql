@@ -1100,7 +1100,7 @@ SELECT
 FROM project_design_system_package
 WHERE project_design_system_package.design_system_id = sqlc.arg('design_system_id')
   AND project_design_system_package.slot = 'draft'
-  AND project_design_system_package.render_status = 'passed'
+  AND project_design_system_package.render_status <> 'failed'
   AND EXISTS (
       SELECT 1
       FROM project_design_system

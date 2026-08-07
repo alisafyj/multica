@@ -520,11 +520,19 @@ func (h *Handler) SaveProjectDesignSystem(w http.ResponseWriter, r *http.Request
 		writeProjectDesignSystemError(w, http.StatusUnprocessableEntity, "draft_invalid", "draft has not passed validation")
 		return
 	}
-	if draft.RenderStatus == "pending" {
+	// Render-status gate. V2 native drafts ship with render_status='passed'
+	// stamped by the completion path (server-side audit + preview
+	// verification); V1 drafts with valid static validation are accepted
+	// without an explicit /preview-verification call (the gate was added
+	// in commit ff6b06065 specifically for the Open Design flow, and the
+	// legacy V1 insert path never carried the verification evidence). The
+	// 'failed' status still rejects — only 'pending' on legacy V1 inserts
+	// is treated as "no verification run was required".
+	if draft.RenderStatus == "pending" && draft.PackageSchema == projectdesignsystem.PackageSchemaV2 {
 		writeProjectDesignSystemError(w, http.StatusConflict, "preview_verification_required", "design system preview must be verified before saving")
 		return
 	}
-	if draft.RenderStatus != "passed" {
+	if draft.RenderStatus == "failed" {
 		writeProjectDesignSystemError(w, http.StatusUnprocessableEntity, "preview_verification_failed", "design system preview failed verification")
 		return
 	}
