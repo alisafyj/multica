@@ -1,4 +1,18 @@
 {
+  "status": {
+    "planned": "计划中",
+    "in_progress": "进行中",
+    "paused": "已暂停",
+    "completed": "已完成",
+    "cancelled": "已取消"
+  },
+  "priority": {
+    "urgent": "紧急",
+    "high": "高",
+    "medium": "中",
+    "low": "低",
+    "none": "无优先级"
+  },
   "detail": {
     "header_default_title": "项目",
     "header_back_title": "返回",

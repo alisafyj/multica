@@ -45,8 +45,8 @@ import {
   useViewedIssuesStore,
 } from "@/data/viewed-issues-store";
 import { issueDetailOptions } from "@/data/queries/issues";
-import { STATUS_LABEL } from "@/lib/issue-status";
-import { projectStatusLabel } from "@/lib/project-status";
+import { useIssueLabels } from "@/lib/use-issue-labels";
+import { useProjectLabels } from "@/lib/use-project-labels";
 
 const DEBOUNCE_MS = 300;
 const ISSUE_LIMIT = 20;
@@ -162,9 +162,9 @@ function SearchIssueRow({ item, query, slug }: SearchIssueRowProps) {
   // (packages/views/search/search-command.tsx:632) and the backend only
   // populates `matched_snippet` for comment matches anyway
   // (server/internal/handler/issue.go:592). Keep mobile strictly aligned.
+  const { statusLabel } = useIssueLabels();
   const showSnippet =
     item.match_source === "comment" && !!item.matched_snippet;
-  const statusLabel = STATUS_LABEL[item.status as IssueStatus] ?? item.status;
   return (
     <Pressable
       onPress={() => navigateOnTap(slug, `/${slug}/issue/${item.id}`)}
@@ -185,7 +185,7 @@ function SearchIssueRow({ item, query, slug }: SearchIssueRowProps) {
           />
         </View>
         <Text className={`text-xs shrink-0 ${issueIconColor(item.status as IssueStatus)}`}>
-          {statusLabel}
+          {statusLabel(item.status)}
         </Text>
       </View>
       {showSnippet ? (
@@ -217,6 +217,7 @@ interface SearchProjectRowProps {
 }
 
 function SearchProjectRow({ item, query, slug }: SearchProjectRowProps) {
+  const { statusLabel } = useProjectLabels();
   const showSnippet =
     item.match_source === "description" && !!item.matched_snippet;
   return (
@@ -237,7 +238,7 @@ function SearchProjectRow({ item, query, slug }: SearchProjectRowProps) {
         <View className="flex-row items-center gap-1.5 shrink-0">
           <ProjectStatusIcon status={item.status} size={12} />
           <Text className="text-xs text-muted-foreground">
-            {projectStatusLabel(item.status)}
+            {statusLabel(item.status)}
           </Text>
         </View>
       </View>
@@ -263,7 +264,7 @@ interface RecentRowProps {
 }
 
 function RecentRow({ item, slug }: RecentRowProps) {
-  const statusLabel = STATUS_LABEL[item.status as IssueStatus] ?? item.status;
+  const { statusLabel } = useIssueLabels();
   return (
     <Pressable
       onPress={() => navigateOnTap(slug, `/${slug}/issue/${item.id}`)}
@@ -278,7 +279,7 @@ function RecentRow({ item, slug }: RecentRowProps) {
           {item.title}
         </Text>
         <Text className={`text-xs shrink-0 ${issueIconColor(item.status as IssueStatus)}`}>
-          {statusLabel}
+          {statusLabel(item.status)}
         </Text>
       </View>
     </Pressable>

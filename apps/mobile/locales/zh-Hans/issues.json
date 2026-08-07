@@ -4,6 +4,22 @@
     "unknown": "未知错误",
     "retry": "重试"
   },
+  "status": {
+    "backlog": "待规划",
+    "todo": "待办",
+    "in_progress": "进行中",
+    "in_review": "审核中",
+    "done": "已完成",
+    "blocked": "已阻塞",
+    "cancelled": "已取消"
+  },
+  "priority": {
+    "urgent": "紧急",
+    "high": "高",
+    "medium": "中",
+    "low": "低",
+    "none": "无优先级"
+  },
   "my_issues": {
     "tab_title": "我的 issue",
     "scope": {
@@ -20,6 +36,9 @@
     "view_mode": {
       "switch_to_list": "切换到列表视图",
       "switch_to_board": "切换到看板视图"
+    },
+    "board": {
+      "empty_column": "暂无{{status}}任务"
     }
   },
   "all_issues": {
@@ -223,7 +242,33 @@
       "accessibility_label_message": "跳转到 {{count}} 条新消息",
       "accessibility_label_messages": "跳转到 {{count}} 条新消息"
     },
-    "unread_divider": "新消息"
+    "unread_divider": "新消息",
+    "verb": {
+      "created": "创建了这个任务",
+      "self_assigned": "把这个任务分配给了自己",
+      "assigned_to": "分配给 {{name}}",
+      "removed_assignee": "移除了负责人",
+      "changed_assignee": "更改了负责人",
+      "status_changed": "状态从 {{from}} 改为 {{to}}",
+      "priority_changed": "优先级从 {{from}} 改为 {{to}}",
+      "start_date_set": "开始日期设为 {{date}}",
+      "start_date_removed": "移除了开始日期",
+      "due_date_set": "截止日期设为 {{date}}",
+      "due_date_removed": "移除了截止日期",
+      "title_renamed": "把这个任务从\"{{from}}\"重命名为\"{{to}}\"",
+      "description_updated": "更新了描述",
+      "task_completed_one": "完成了 task",
+      "task_completed_other": "完成了 task（{{count}} 次）",
+      "task_failed_one": "task 失败",
+      "task_failed_other": "task 失败（{{count}} 次）",
+      "squad_leader_evaluated": "评估了小队触发",
+      "squad_leader_action": "已评估并采取了操作",
+      "squad_leader_action_reason": "已评估并采取了操作：{{reason}}",
+      "squad_leader_no_action": "已评估：无需操作",
+      "squad_leader_no_action_reason": "已评估：无需操作（{{reason}}）",
+      "squad_leader_failed": "评估失败",
+      "squad_leader_failed_reason": "评估失败：{{reason}}"
+    }
   },
   "attribute": {
     "assignee_placeholder": "负责人",

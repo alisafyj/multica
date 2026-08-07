@@ -38,6 +38,7 @@ import {
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { Issue, IssueStatus, Project } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
 import { CardPressable } from "@/components/ui/card";
@@ -49,7 +50,7 @@ import { findProject, projectListOptions } from "@/data/queries/projects";
 import { useWorkspaceStore } from "@/data/workspace-store";
 import { buildBoardColumns, type BoardColumn } from "@/lib/board-columns";
 import { descriptionPreview } from "@/lib/description-preview";
-import { STATUS_LABEL } from "@/lib/issue-status";
+import { issueStatusLabel } from "@/lib/issue-status";
 import { timeAgo } from "@/lib/time-ago";
 
 interface Props {
@@ -195,6 +196,7 @@ function StatusStrip({
   activeIndex: number;
   onSelect: (index: number) => void;
 }) {
+  const { t } = useTranslation("issues");
   const scrollRef = useRef<ScrollView>(null);
   const tabLayouts = useRef<Record<number, { x: number; width: number }>>({});
   const stripWidth = useRef(0);
@@ -254,7 +256,7 @@ function StatusStrip({
                   : "text-xs text-muted-foreground"
               }
             >
-              {STATUS_LABEL[column.status]}
+              {issueStatusLabel(t, column.status)}
             </Text>
             <Text
               className={
@@ -287,6 +289,7 @@ function BoardColumnPage({
   refreshing: boolean;
   onRefresh: () => void;
 }) {
+  const { t } = useTranslation("issues");
   // `width` is set as a style, never via a `flex-*` class: `flex: 1` implies
   // `flexBasis: 0`, which in this row-direction list overrides the explicit
   // width and desynchronises page N from offset N * width — the pager then
@@ -299,7 +302,12 @@ function BoardColumnPage({
       >
         <StatusIcon status={column.status} size={22} />
         <Text className="pt-3 text-sm text-muted-foreground text-center">
-          {`Nothing in ${STATUS_LABEL[column.status]}`}
+          {/* Web's board.empty_column is a bare "No issues"; mobile names the
+              status because the board is a swipe pager showing one column at
+              a time, so the surrounding context web relies on isn't there. */}
+          {t("my_issues.board.empty_column", {
+            status: issueStatusLabel(t, column.status),
+          })}
         </Text>
       </View>
     );

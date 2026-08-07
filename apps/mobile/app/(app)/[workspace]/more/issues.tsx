@@ -43,11 +43,8 @@ import {
   type IssuesScope,
 } from "@/data/stores/issues-view-store";
 import { useClearFiltersOnWorkspaceChange } from "@/lib/use-clear-filters-on-workspace-change";
-import {
-  BOARD_STATUSES,
-  PRIORITY_LABEL,
-  STATUS_LABEL,
-} from "@/lib/issue-status";
+import { BOARD_STATUSES } from "@/lib/issue-status";
+import { useIssueLabels } from "@/lib/use-issue-labels";
 import { filterIssues } from "@/lib/filter-issues";
 import { useColorScheme } from "@/lib/use-color-scheme";
 import { THEME } from "@/lib/theme";
@@ -309,19 +306,20 @@ function ActiveFilterChips({
   onClearStatus: (s: IssueStatus) => void;
   onClearPriority: (p: IssuePriority) => void;
 }) {
+  const { statusLabel, priorityLabel } = useIssueLabels();
   return (
     <View className="flex-row flex-wrap gap-1.5 px-4 pb-2">
       {statusFilters.map((s) => (
         <Chip
           key={`s-${s}`}
-          label={STATUS_LABEL[s]}
+          label={statusLabel(s)}
           onClear={() => onClearStatus(s)}
         />
       ))}
       {priorityFilters.map((p) => (
         <Chip
           key={`p-${p}`}
-          label={PRIORITY_LABEL[p]}
+          label={priorityLabel(p)}
           onClear={() => onClearPriority(p)}
         />
       ))}
@@ -353,11 +351,12 @@ function SectionHeader({
   status: IssueStatus;
   count: number;
 }) {
+  const { statusLabel } = useIssueLabels();
   return (
     <View className="flex-row items-center gap-2 px-4 py-2 bg-background">
       <StatusIcon status={status} size={14} />
       <Text className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
-        {STATUS_LABEL[status]}
+        {statusLabel(status)}
       </Text>
       <Text className="text-xs text-muted-foreground/60">{count}</Text>
     </View>

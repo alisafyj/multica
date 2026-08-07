@@ -4,6 +4,22 @@
     "unknown": "unknown error",
     "retry": "Retry"
   },
+  "status": {
+    "backlog": "Backlog",
+    "todo": "Todo",
+    "in_progress": "In Progress",
+    "in_review": "In Review",
+    "done": "Done",
+    "blocked": "Blocked",
+    "cancelled": "Cancelled"
+  },
+  "priority": {
+    "urgent": "Urgent",
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low",
+    "none": "No priority"
+  },
   "my_issues": {
     "tab_title": "My Issues",
     "scope": {
@@ -20,6 +36,9 @@
     "view_mode": {
       "switch_to_list": "Switch to list view",
       "switch_to_board": "Switch to board view"
+    },
+    "board": {
+      "empty_column": "Nothing in {{status}}"
     }
   },
   "all_issues": {
@@ -223,7 +242,33 @@
       "accessibility_label_message": "Jump to {{count}} new message",
       "accessibility_label_messages": "Jump to {{count}} new messages"
     },
-    "unread_divider": "New"
+    "unread_divider": "New",
+    "verb": {
+      "created": "created this issue",
+      "self_assigned": "self-assigned this issue",
+      "assigned_to": "assigned to {{name}}",
+      "removed_assignee": "removed assignee",
+      "changed_assignee": "changed assignee",
+      "status_changed": "changed status from {{from}} to {{to}}",
+      "priority_changed": "changed priority from {{from}} to {{to}}",
+      "start_date_set": "set start date to {{date}}",
+      "start_date_removed": "removed start date",
+      "due_date_set": "set due date to {{date}}",
+      "due_date_removed": "removed due date",
+      "title_renamed": "renamed this issue from \"{{from}}\" to \"{{to}}\"",
+      "description_updated": "updated the description",
+      "task_completed_one": "completed the task",
+      "task_completed_other": "completed the task ({{count}} times)",
+      "task_failed_one": "task failed",
+      "task_failed_other": "task failed ({{count}} times)",
+      "squad_leader_evaluated": "evaluated the squad trigger",
+      "squad_leader_action": "evaluated and took action",
+      "squad_leader_action_reason": "evaluated and took action: {{reason}}",
+      "squad_leader_no_action": "evaluated: no action needed",
+      "squad_leader_no_action_reason": "evaluated: no action needed ({{reason}})",
+      "squad_leader_failed": "evaluation failed",
+      "squad_leader_failed_reason": "evaluation failed: {{reason}}"
+    }
   },
   "attribute": {
     "assignee_placeholder": "Assignee",

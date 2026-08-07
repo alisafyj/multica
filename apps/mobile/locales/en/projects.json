@@ -1,4 +1,18 @@
 {
+  "status": {
+    "planned": "Planned",
+    "in_progress": "In Progress",
+    "paused": "Paused",
+    "completed": "Completed",
+    "cancelled": "Cancelled"
+  },
+  "priority": {
+    "urgent": "Urgent",
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low",
+    "none": "No priority"
+  },
   "detail": {
     "header_default_title": "Project",
     "header_back_title": "Back",

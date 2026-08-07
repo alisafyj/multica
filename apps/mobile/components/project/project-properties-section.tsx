@@ -53,7 +53,7 @@ export function ProjectPropertiesSection({
         left={<ProjectStatusIcon status={project.status} size={16} />}
         right={
           <Text className="text-sm text-foreground">
-            {projectStatusLabel(project.status)}
+            {projectStatusLabel(t, project.status)}
           </Text>
         }
       />
@@ -64,7 +64,7 @@ export function ProjectPropertiesSection({
         left={<ProjectPriorityIcon priority={project.priority} size={16} />}
         right={
           <Text className="text-sm text-foreground">
-            {projectPriorityLabel(project.priority)}
+            {projectPriorityLabel(t, project.priority)}
           </Text>
         }
       />

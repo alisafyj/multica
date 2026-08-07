@@ -23,7 +23,7 @@ import { formatDateOnly } from "@multica/core/issues/date";
 import { useActorLookup } from "@/data/use-actor-name";
 import { useNewIssueDraftStore } from "@/data/stores/new-issue-draft-store";
 import { useWorkspaceStore } from "@/data/workspace-store";
-import { PRIORITY_LABEL, STATUS_LABEL } from "@/lib/issue-status";
+import { issuePriorityLabel, issueStatusLabel } from "@/lib/issue-status";
 
 /**
  * Picker fields the new-issue draft form can open. Bound to a typed map
@@ -61,7 +61,7 @@ export function CreateFormAttributeRow() {
   const priorityLabel =
     priority === "none"
       ? t("attribute.priority_placeholder")
-      : PRIORITY_LABEL[priority];
+      : issuePriorityLabel(t, priority);
 
   const open = (field: NewIssuePickerField) => {
     if (!wsSlug) return;
@@ -76,7 +76,7 @@ export function CreateFormAttributeRow() {
       <View className="flex-row flex-wrap gap-2">
         <AttributeChip
           icon={<StatusIcon status={status} size={12} />}
-          label={STATUS_LABEL[status]}
+          label={issueStatusLabel(t, status)}
           variant="filled"
           onPress={() => open("status")}
         />
