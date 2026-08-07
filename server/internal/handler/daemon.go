@@ -1904,7 +1904,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 			}
 
-			resp.Repos = mergeTaskRepos(projectRepos, h.workspaceRepoData(r.Context(), issue.WorkspaceID))
+			resp.Repos = taskRepos(projectRepos, h.workspaceRepoData(r.Context(), issue.WorkspaceID))
 		}
 
 		// Load every planned input as one chronological, de-duplicated set.
@@ -2232,7 +2232,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					}
 				}
 			}
-			resp.Repos = mergeTaskRepos(projectRepos, h.workspaceRepoData(r.Context(), cs.WorkspaceID))
+			resp.Repos = taskRepos(projectRepos, h.workspaceRepoData(r.Context(), cs.WorkspaceID))
 			if !task.ForceFreshSession {
 				// Resume chat sessions only when the stored pointer was produced
 				// by the same runtime as the claiming task. When the chat_session
@@ -2451,7 +2451,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 			}
 
-			resp.Repos = mergeTaskRepos(projectRepos, h.workspaceRepoData(r.Context(), parseUUID(qc.WorkspaceID)))
+			resp.Repos = taskRepos(projectRepos, h.workspaceRepoData(r.Context(), parseUUID(qc.WorkspaceID)))
 
 			// Parent-issue resolution for quick-create tasks opened from
 			// "Add sub issue". The handler already verified workspace
@@ -4611,35 +4611,21 @@ func (h *Handler) GetTaskGCCheck(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// mergeTaskRepos combines a project's repositories with the workspace-level
-// ones instead of replacing them.
+// taskRepos resolves the repository list a claimed task is allowed to check
+// out. A project's own repositories REPLACE the workspace-level list rather
+// than adding to it: declaring repos on a project is a scoping statement, not
+// a supplement, and the workspace list is only the fallback for projects that
+// declare none.
 //
-// Attaching a single github_repo resource to a project used to hide every other
-// workspace repo from that task: the checkout allowlist is built from this list,
-// so a cross-repo test case whose second repository is only registered at
-// workspace level could not be checked out at all. Project entries win on URL
-// collision because their per-repo `ref` is the more specific instruction.
-func mergeTaskRepos(projectRepos, workspaceRepos []RepoData) []RepoData {
-	if len(projectRepos) == 0 {
-		return workspaceRepos
+// Do not turn this back into a union. A task scoped to one project must not
+// receive checkout access to every other repository in the workspace, and
+// TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos plus
+// TestClaimTaskByRuntime_ChatProjectContext both assert the replacement.
+func taskRepos(projectRepos, workspaceRepos []RepoData) []RepoData {
+	if len(projectRepos) > 0 {
+		return projectRepos
 	}
-	merged := make([]RepoData, 0, len(projectRepos)+len(workspaceRepos))
-	seen := make(map[string]struct{}, len(projectRepos)+len(workspaceRepos))
-	for _, repo := range projectRepos {
-		if _, dup := seen[repo.URL]; dup {
-			continue
-		}
-		seen[repo.URL] = struct{}{}
-		merged = append(merged, repo)
-	}
-	for _, repo := range workspaceRepos {
-		if _, dup := seen[repo.URL]; dup {
-			continue
-		}
-		seen[repo.URL] = struct{}{}
-		merged = append(merged, repo)
-	}
-	return merged
+	return workspaceRepos
 }
 
 // workspaceRepoData reads the workspace-level repository list, tolerating a

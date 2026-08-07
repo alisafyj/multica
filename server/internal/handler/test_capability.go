@@ -209,7 +209,8 @@ func satisfiesConstraint(value, constraint string) bool {
 
 // compareVersionLike compares two version strings by splitting on "." and
 // comparing each numeric component in turn. A non-numeric component falls back
-// to lexicographic comparison for that component only.
+// to lexicographic comparison for that component only. Versions of unequal
+// length compare as if the shorter one were zero-padded, so "1.0" equals "1".
 func compareVersionLike(a, b string) int {
 	aParts := strings.Split(a, ".")
 	bParts := strings.Split(b, ".")
@@ -218,7 +219,10 @@ func compareVersionLike(a, b string) int {
 		maxLen = len(bParts)
 	}
 	for i := 0; i < maxLen; i++ {
-		var aSeg, bSeg string
+		// A missing trailing segment is zero, not empty. Defaulting to "" sends
+		// the pair into the lexicographic branch below, where "0" > "" would
+		// report "1.0" as newer than "1".
+		aSeg, bSeg := "0", "0"
 		if i < len(aParts) {
 			aSeg = aParts[i]
 		}

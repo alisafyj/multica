@@ -780,12 +780,17 @@ func TestRetryTestRunRejectsInvalidScope(t *testing.T) {
 // the value is decoration. A run whose agent died has to be closable.
 func TestAbortTestRunEndsTheRoundWithoutErasingResults(t *testing.T) {
 	projectID := newTestRunProject(t)
-	testCase := createTestCaseForRun(t, projectID)
-	run := createTestRunFromCases(t, "中止轮次", []string{testCase.ID})
+	// Two cases on purpose. Resolving the last pending case auto-completes the
+	// run, and AbortTestRun correctly refuses a completed one — so a run built
+	// from a single case can never reach the state this test is about. The
+	// round has to still be in flight for aborting it to mean anything.
+	resolvedCase := createTestCaseForRun(t, projectID)
+	pendingCase := createTestCaseForRun(t, projectID)
+	run := createTestRunFromCases(t, "中止轮次", []string{resolvedCase.ID, pendingCase.ID})
 
 	runCases := listRunCases(t, run.ID)
-	if len(runCases) != 1 {
-		t.Fatalf("run cases = %d, want 1", len(runCases))
+	if len(runCases) != 2 {
+		t.Fatalf("run cases = %d, want 2", len(runCases))
 	}
 	setRunCaseResult(t, runCases[0].ID, "passed")
 
@@ -817,6 +822,17 @@ func TestAbortTestRunEndsTheRoundWithoutErasingResults(t *testing.T) {
 	}
 	if result != "passed" {
 		t.Fatalf("run case result = %q, want the recorded pass preserved", result)
+	}
+
+	// The case the round never got to stays pending rather than being forced to
+	// a result nobody observed. "We stopped here" is the honest record.
+	var unresolved string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT result FROM test_run_case WHERE id = $1`, runCases[1].ID).Scan(&unresolved); err != nil {
+		t.Fatalf("read back unresolved run case: %v", err)
+	}
+	if unresolved != "pending" {
+		t.Fatalf("unresolved run case result = %q, want it left pending", unresolved)
 	}
 }
 
