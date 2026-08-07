@@ -93,6 +93,6 @@ This project is indexed by GitNexus as **multica** (32920 symbols, 96478 relatio
 
 ## 当前任务状态（会话交接 - 每次会话结束更新）
 
-- **做了什么**: Task 5 已提交（`9660c5331` + 修复 `92785a6b4`）：daemon 在 provider 退出后收集 → 静态 Audit → 真实浏览器 Preview → 上传 V2 包，任务完成改带 `ProjectDesignSystemPackageReceipt`（经 `CompleteTask` 以 `project_design_system_package` 送达），任一门禁失败结果转 blocked、带稳定失败原因、不触达服务端完成接口；loopback Preview 服务器（`127.0.0.1:0` + 不可猜前缀）对已验证 HTML 目标注入 tokens.css/可信桥脚本并套 CSP；浏览器路径只认 `MULTICA_DESIGN_PREVIEW_BROWSER_PATH` + 平台解析，未解析即失败不跳过；legacy 三文件路径字节级保留；一轮修复（CSP 注入、`os.Lstat` 回归、移除 `MULTICA_OPEN_DESIGN_BROWSER_PATH` 回退）后评审干净
-- **做到哪**: 仍在该工作树 `codex/multica-native-design-engine`；daemon 全套 443 + design 包 176 测试通过，detect-changes LOW；6 个 minor（t5-m1..m6）+ 1 个观察项（t5-o1 桥脚本 postMessage 顶层导航下空转）连同 Task 4 的 4 个 minor 留最终分支评审（台账 `.superpowers/sdd/2026-08-06-multica-native-design-system-phase-1/progress.md`）
-- **下一步**: 按 Phase 1 计划进入 Task 6（Gate Draft Persistence On Independent Server Validation），一并处理 `TestSaveProjectDesignSystemRequiresValidatedDraft` 基线失败（用户已确认留到 Task 6）；不要合并 `codex/open-design-native-slots`
+- **做了什么**: Task 6 已提交（`7b81a0526` carry-in + `fab2dbe98` 门禁 + `97979ca62` 测试补强）：服务端完成路径独立复验 V2 receipt（派生 object key → 限 64MiB 读回存档 → 重建索引/摘要 → binding 复验 → 重跑静态 Audit → 验证 Preview receipt → 有界提取），全程不信 daemon 声明；在同一事务内原子落 `render_status='passed'` 的 draft 并完成任务；V2 拒内联产物 / v1 保留内联 / Open Design 走历史回调的三态分派；按用户决定一并调和 save 门禁基线失败（`pending` 拦截收窄到 V2、仅拒 `failed`，评审确认 Open Design 独立门禁未破）
+- **做到哪**: 仍在该工作树 `codex/multica-native-design-engine`；handler+service 1489 测试通过，carry-in 测试转绿；1 个预存基线失败 `TestListDesignFilesHidesManagedAssetSources` 经控制层在 BASE 复现确认与本任务无关（台账 t6-b1）；5 个 minor（t6-m1..m5）+ 1 条备注（t6-o1）连同 Task 4/5 遗留留最终分支评审（台账 `.superpowers/sdd/2026-08-06-multica-native-design-system-phase-1/progress.md`）
+- **下一步**: 按 Phase 1 计划进入 Task 7（Switch New Tasks To Native Execution And Preserve The Product Lifecycle）；不要合并 `codex/open-design-native-slots`
