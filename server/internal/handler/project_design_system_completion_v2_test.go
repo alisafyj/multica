@@ -279,36 +279,215 @@ func TestCompleteProjectDesignSystemV2CreatesPassedDraftAfterAllEvidenceMatches(
 }
 
 func TestCompleteProjectDesignSystemV2RejectsWrongTaskInputAgentAndBaseDigest(t *testing.T) {
-	// The completion fixture creates the system with no prior base
-	// package, so an Adjust/Regenerate binding derivation fails. Use
-	// Generate so the binding derivation succeeds; the test then mutates
-	// the receipt's content digest to one that doesn't match the
-	// recomputed archive digest, which is what a daemon sending a wrong
-	// task input / agent produces.
-	fixture := newNativeV2CompletionFixture(t, service.ProjectDesignSystemGenerate)
-
+	// The brief requires this named test to demonstrate that each
+	// binding control in the V2 completion path rejects its own kind
+	// of perturbation:
+	//   * outer prepare (project_design_system_completion.go:94-97)
+	//     — taskContext.AgentID must match task.AgentID;
+	//   * nativePackageBindingForTaskContext (:278-280)
+	//     — pinnedInputDigest must match the snapshot derived from the
+	//     system row's InputSnapshot column;
+	//   * nativePackageBindingForTaskContext (:281-283) +
+	//     ValidateV2Archive — for non-generate operations, the
+	//     BasePackageSHA256 must round-trip into the V2 binding and
+	//     match what the daemon actually collected against.
+	//
+	// Each sub-case mutates exactly one control, posts a well-formed
+	// receipt+archive, and asserts both the rejection AND that the
+	// pre-seeded draft/saved packages survive byte-distinct.
 	queries := db.New(testPool)
-	draftDigest := strings.Repeat("d", 64)
-	savedDigest := strings.Repeat("s", 64)
-	upsertProjectDesignSystemPackageForTest(t, queries, fixture.Completion.System.ID, "draft", "draft-before-rejected", draftDigest)
-	upsertProjectDesignSystemPackageForTest(t, queries, fixture.Completion.System.ID, "saved", "saved-before-rejected", savedDigest)
 
-	body := fixture.buildPackagePayload(t, func(r *ProjectDesignSystemPackageReceipt) {
-		// Replace the digest with one that points at a different archive,
-		// mimicking a daemon that re-ran against a different input or a
-		// different agent's output. The server's recomputed digest will
-		// not match.
-		r.ContentDigest = "sha256:" + strings.Repeat("e", 64)
+	t.Run("mutated task input snapshot digest", func(t *testing.T) {
+		fixture := newNativeV2CompletionFixture(t, service.ProjectDesignSystemGenerate)
+		draftDigest := strings.Repeat("d", 64)
+		savedDigest := strings.Repeat("s", 64)
+		upsertProjectDesignSystemPackageForTest(t, queries, fixture.Completion.System.ID, "draft", "draft-before-input-mismatch", draftDigest)
+		upsertProjectDesignSystemPackageForTest(t, queries, fixture.Completion.System.ID, "saved", "saved-before-input-mismatch", savedDigest)
+
+		rewriteTaskContextFields(t, fixture.Completion.TaskID, func(ctx *service.ProjectDesignSystemTaskContext) {
+			// Pin a snapshot digest that is NOT what the system row's
+			// InputSnapshot columns digest to. The
+			// nativePackageBindingForTaskContext check at
+			// project_design_system_completion.go:278-280 must reject.
+			ctx.InputSnapshotSHA256 = "sha256:" + strings.Repeat("9", 64)
+		})
+
+		w := fixture.completeTask(t, fixture.buildPackagePayload(t, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("CompleteTask status = %d, body = %s", w.Code, w.Body.String())
+		}
+		assertProjectDesignSystemTaskFailed(t, fixture.Completion.TaskID, "project_design_system_invalid_artifacts")
+		assertProjectDesignSystemFailureState(t, fixture.Completion.System.ID, fixture.Completion.TaskID, "project_design_system_invalid_artifacts")
+		assertProjectDesignSystemPackageDigest(t, queries, fixture.Completion.System.ID, "draft", draftDigest)
+		assertProjectDesignSystemPackageDigest(t, queries, fixture.Completion.System.ID, "saved", savedDigest)
 	})
-	w := fixture.completeTask(t, body)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("CompleteTask status = %d, body = %s", w.Code, w.Body.String())
-	}
 
-	assertProjectDesignSystemTaskFailed(t, fixture.Completion.TaskID, "project_design_system_invalid_artifacts")
-	assertProjectDesignSystemFailureState(t, fixture.Completion.System.ID, fixture.Completion.TaskID, "project_design_system_invalid_artifacts")
-	assertProjectDesignSystemPackageDigest(t, queries, fixture.Completion.System.ID, "draft", draftDigest)
-	assertProjectDesignSystemPackageDigest(t, queries, fixture.Completion.System.ID, "saved", savedDigest)
+	t.Run("mutated task AgentID does not match task row", func(t *testing.T) {
+		fixture := newNativeV2CompletionFixture(t, service.ProjectDesignSystemGenerate)
+		draftDigest := strings.Repeat("d", 64)
+		savedDigest := strings.Repeat("s", 64)
+		upsertProjectDesignSystemPackageForTest(t, queries, fixture.Completion.System.ID, "draft", "draft-before-agent-mismatch", draftDigest)
+		upsertProjectDesignSystemPackageForTest(t, queries, fixture.Completion.System.ID, "saved", "saved-before-agent-mismatch", savedDigest)
+
+		rewriteTaskContextFields(t, fixture.Completion.TaskID, func(ctx *service.ProjectDesignSystemTaskContext) {
+			// The outer prepare at :94-97 reads taskContext.AgentID and
+			// compares to task.AgentID (the task row's column). Use a
+			// well-formed UUID that is NOT the row's agent to trip the
+			// "project design system agent does not match task" guard
+			// before the V2 path is even entered.
+			ctx.AgentID = "00000000-0000-0000-0000-000000000001"
+		})
+
+		w := fixture.completeTask(t, fixture.buildPackagePayload(t, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("CompleteTask status = %d, body = %s", w.Code, w.Body.String())
+		}
+		// The agent mismatch is detected in two layers — once in
+		// prepareProjectDesignSystemCompletion (rejects with 400), and
+		// again by the task-service's own agent guard when the
+		// completion handler tries to mark the task failed. The second
+		// guard refuses to transition a task whose stored agent no
+		// longer matches the system; the task stays running but the
+		// completion still failed and no draft was persisted. The
+		// critical invariant for this sub-case is: the response is
+		// 400 AND the seeded draft + saved packages are byte-distinct.
+		task, err := queries.GetAgentTask(context.Background(), parseUUID(fixture.Completion.TaskID))
+		if err != nil {
+			t.Fatalf("get task: %v", err)
+		}
+		if task.Status == "completed" {
+			t.Fatalf("task was marked completed despite agent binding rejection")
+		}
+		assertProjectDesignSystemPackageDigest(t, queries, fixture.Completion.System.ID, "draft", draftDigest)
+		assertProjectDesignSystemPackageDigest(t, queries, fixture.Completion.System.ID, "saved", savedDigest)
+	})
+
+	t.Run("mutated base package digest on adjust", func(t *testing.T) {
+		// Adjust requires a base package digest in the binding (see
+		// validateV2Binding at projectdesignsystem/v2_archive.go:540
+		// — adjust/regenerate bindings REQUIRE a valid base package
+		// digest). Build a base-digest-bearing fixture: seed a "saved"
+		// package on the system with a valid integrity_sha256, derive
+		// the binding from that digest, then perturb the task context's
+		// BasePackageSHA256 so the validator's recomputed binding
+		// mismatches the manifest's binding.
+		completion := createProjectDesignSystemCompletionFixture(t, service.ProjectDesignSystemAdjust)
+		baseDigest := strings.Repeat("a", 64)
+		upsertProjectDesignSystemPackageForTest(t, queries, completion.System.ID, "saved", "saved-base-for-adjust", baseDigest)
+
+		binding := nativePackageBindingWithBase(t, nativePackageUploadFixture{
+			System:  completion.System,
+			TaskID:  completion.TaskID,
+			AgentID: completion.AgentID,
+		}, service.ProjectDesignSystemAdjust, "sha256:"+baseDigest)
+		rewriteTaskContextForV2(t, completion, binding)
+		collected := collectNativePackageArchive(t, binding)
+
+		fixture := &nativeV2CompletionFixture{
+			Completion: completion,
+			Binding:    binding,
+			Collected:  collected,
+		}
+		fixture.installStorage(t)
+
+		draftDigest := strings.Repeat("d", 64)
+		upsertProjectDesignSystemPackageForTest(t, queries, completion.System.ID, "draft", "draft-before-base-mismatch", draftDigest)
+
+		rewriteTaskContextFields(t, completion.TaskID, func(ctx *service.ProjectDesignSystemTaskContext) {
+			// A different but well-formed base digest. The manifest
+			// embedded in the archive was collected against
+			// "sha256:<baseDigest>"; pinning a different digest on the
+			// context means the binding the V2 validator builds will
+			// not equal the manifest's binding.
+			ctx.BasePackageSHA256 = "sha256:" + strings.Repeat("b", 64)
+		})
+
+		w := fixture.completeTask(t, fixture.buildPackagePayload(t, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("CompleteTask status = %d, body = %s", w.Code, w.Body.String())
+		}
+		assertProjectDesignSystemTaskFailed(t, completion.TaskID, "project_design_system_invalid_artifacts")
+		assertProjectDesignSystemFailureState(t, completion.System.ID, completion.TaskID, "project_design_system_invalid_artifacts")
+		assertProjectDesignSystemPackageDigest(t, queries, completion.System.ID, "draft", draftDigest)
+		assertProjectDesignSystemPackageDigest(t, queries, completion.System.ID, "saved", baseDigest)
+	})
+}
+
+// rewriteTaskContextFields loads the task row's stored context JSON,
+// applies mutator, and writes it back. Used to exercise the binding
+// controls that read from the DB-seeded task context (AgentID,
+// input_snapshot_sha256, base_package_sha256) — see
+// project_design_system_completion.go:94-97 and
+// nativePackageBindingForTaskContext at :278-283.
+func rewriteTaskContextFields(t *testing.T, taskID string, mutator func(*service.ProjectDesignSystemTaskContext)) {
+	t.Helper()
+	var rawContext []byte
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT context FROM agent_task_queue WHERE id = $1`, taskID,
+	).Scan(&rawContext); err != nil {
+		t.Fatalf("load task context: %v", err)
+	}
+	var ctx service.ProjectDesignSystemTaskContext
+	if err := json.Unmarshal(rawContext, &ctx); err != nil {
+		t.Fatalf("decode task context: %v", err)
+	}
+	mutator(&ctx)
+	encoded, err := json.Marshal(ctx)
+	if err != nil {
+		t.Fatalf("re-marshal task context: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(),
+		`UPDATE agent_task_queue SET context = $1 WHERE id = $2`,
+		encoded, taskID); err != nil {
+		t.Fatalf("update task context: %v", err)
+	}
+}
+
+// nativePackageBindingWithBase is a sibling of the existing
+// nativePackageBinding helper that stamps the package binding with
+// a caller-supplied base package digest. Adjust / Regenerate flows
+// require a non-empty base digest in the binding.
+func nativePackageBindingWithBase(t *testing.T, fixture nativePackageUploadFixture, operation service.ProjectDesignSystemOperation, baseDigest string) projectdesignsystem.PackageBinding {
+	t.Helper()
+	inputDigest, err := projectdesignsystem.SnapshotDigest(fixture.System.InputSnapshot)
+	if err != nil {
+		t.Fatalf("digest input snapshot: %v", err)
+	}
+	return projectdesignsystem.PackageBinding{
+		WorkspaceID:         testWorkspaceID,
+		ProjectID:           uuidToString(fixture.System.ProjectID),
+		DesignSystemID:      uuidToString(fixture.System.ID),
+		TaskID:              fixture.TaskID,
+		AgentID:             fixture.AgentID,
+		Operation:           string(operation),
+		InputSnapshotSHA256: inputDigest,
+		BasePackageSHA256:   baseDigest,
+	}
+}
+
+// installStorage uploads the fixture's archive into a fresh mockStorage
+// under the daemon-derived object key and swaps testHandler.Storage to
+// it for the duration of the test. Mirrors the storage install path in
+// newNativeV2CompletionFixture for sub-cases that build their own
+// fixture inline.
+func (f *nativeV2CompletionFixture) installStorage(t *testing.T) {
+	t.Helper()
+	storage := &mockStorage{}
+	digestHex := strings.TrimPrefix(f.Collected.Manifest.ContentDigest, "sha256:")
+	objectKey := fmt.Sprintf("%s/%s/%s/%s/%s.zip",
+		nativePackageObjectKeyRoot,
+		f.Binding.WorkspaceID,
+		f.Binding.DesignSystemID,
+		f.Binding.TaskID,
+		digestHex,
+	)
+	if _, err := storage.Upload(context.Background(), objectKey, f.Collected.Archive, "application/zip", "native.zip"); err != nil {
+		t.Fatalf("seed archive in storage: %v", err)
+	}
+	previousStorage := testHandler.Storage
+	testHandler.Storage = storage
+	t.Cleanup(func() { testHandler.Storage = previousStorage })
+	f.Storage = storage
 }
 
 func TestCompleteProjectDesignSystemV2RejectsMissingOrMutatedStoredArchive(t *testing.T) {
