@@ -1,5 +1,147 @@
 # PMO Requirement Management Handoff
 
+## OpenCode Resume Brief (Latest, 2026-08-07)
+
+This section is the current source of truth. The detailed Task 1-10 history
+below is retained for audit context, but its old "Current Uncommitted Task 4"
+and "Exact Next Steps" sections are superseded.
+
+### Checkout State
+
+- Branch: `feat/pm-task-sync`
+- HEAD: `a20b22fde` (`docs(pmo): note completion status in handoff`)
+- Remote-tracking ref: `origin/feat/pm-task-sync` at the same commit
+- Working tree was clean before this handoff update.
+- Current directory: `/private/tmp/multica-worktrees/feat-pm-task-sync`
+
+Important: the original Git worktree directory disappeared and was reported as
+`prunable`. Codex recreated this path as a standalone shared clone for
+diagnosis. In this clone, `origin` currently points to the main local checkout,
+not directly to the GitHub remote. It is safe for reading and local testing,
+but verify `rtk git remote -v` and restore a proper remote/worktree setup before
+assuming a push reaches GitHub.
+
+The main checkout is on an unrelated branch and has user-owned modifications
+to `AGENTS.md` and `CLAUDE.md`. Do not modify, discard, or reset those changes.
+
+### Implementation Status
+
+The PMO requirement-management implementation is complete through Task 10 and
+committed. The branch includes:
+
+- PMO persistence, tenant-scoped sqlc queries, and migrations 278-287.
+- Strict Agent snapshot validation and normalization.
+- Deterministic three-way diff/conflict handling.
+- Config CRUD with user-selected Agent; no Agent or capability is hardcoded.
+- Manual preview runs, Agent task result processing, apply flow, and schedule.
+- Web and desktop `/pmo` routes, shared React Query data layer, sidebar entry,
+  four locale bundles, empty/configured/diff states, and conflict controls.
+- Workspace cleanup coverage and duplicate issue-create race fix.
+- Integration fixes through `b1cf7280d`, including mounting the config dialog
+  from the empty state.
+
+No company domain, external-system credential, real external ID, real Agent
+payload, or external capability name was added to the branch.
+
+### Verification Re-run By Codex
+
+The following checks passed on `a20b22fde`:
+
+```text
+pnpm typecheck
+  6/6 tasks passed
+
+pnpm --filter @multica/web build
+  Next.js 16.2.6 production build passed
+  /[workspaceSlug]/pmo was included in the route manifest
+
+pnpm --filter @multica/views test
+  312 test files passed
+  3586 tests passed
+```
+
+Development-mode evidence:
+
+- `GET /demo/pmo` returned HTTP 200 after compilation.
+- Browser console contained no React, hydration, or PMO runtime error.
+- Without the full backend/auth environment the dashboard remained at the
+  global loading state; that is expected and is not evidence of a PMO page
+  failure.
+
+### Local Preview State And Blocker
+
+The diagnostic Next.js server has been stopped. Nothing is currently listening
+for this checkout.
+
+`.env.worktree` was generated locally and is gitignored:
+
+```text
+Database: multica_feat_pm_task_sync_221
+Backend:  http://localhost:18301
+Frontend: http://localhost:13221
+```
+
+`rtk make setup-worktree` installed dependencies, then stopped while starting
+PostgreSQL because this machine does not expose the Docker Compose CLI plugin:
+
+```text
+docker compose version
+  docker: unknown command: docker compose
+
+docker-compose version
+  Docker Compose version 2.34.0
+```
+
+Use the installed Compose v2 standalone executable as the Make override:
+
+```bash
+rtk make setup-worktree COMPOSE=docker-compose
+rtk make start-worktree COMPOSE=docker-compose
+```
+
+Then verify both services before opening the UI:
+
+```bash
+rtk curl -fsS http://localhost:18301/health
+rtk curl -fsSIL http://localhost:13221
+```
+
+Open `http://localhost:13221`, not `http://127.0.0.1:13221`.
+
+### Next.js Warning Found During Diagnosis
+
+When the browser used `127.0.0.1`, Next.js logged:
+
+```text
+Blocked cross-origin request to Next.js dev resource /_next/webpack-hmr from
+"127.0.0.1". To allow this host in development, add it to allowedDevOrigins.
+```
+
+This warning is unrelated to the PMO implementation and did not prevent the
+page request from returning 200. The existing `apps/web/next.config.ts` intends
+to derive `allowedDevOrigins` hostnames from `CORS_ALLOWED_ORIGINS`, but uses
+`new URL(...).host`, which retains the port. Next.js 16 compares hostnames, so
+the likely root-cause fix is `.hostname`. No code change was made because the
+user had only requested diagnosis at that point.
+
+If OpenCode fixes this warning, keep it as a minimal, tested change. Run the
+required GitNexus upstream impact analysis before editing the symbol and run
+`detect-changes --scope compare --base-ref main` before committing.
+
+### Immediate Resume Steps
+
+1. Read `CLAUDE.md`, the design spec, and the implementation plan.
+2. Confirm checkout state and remotes; do not touch main-checkout user changes.
+3. Run the two `COMPOSE=docker-compose` commands above and wait for both health
+   checks to pass.
+4. Open the frontend using `localhost` and perform only the authorized manual
+   preview smoke: choose an existing Agent, provide a runtime-only external
+   key, start one run, and verify `preview_ready`.
+5. Do not Apply external data during the smoke test. Do not log or commit the
+   external key or Agent output.
+6. If the exact reported browser error differs from the HMR warning above,
+   collect the complete terminal/browser stack trace before changing code.
+
 ## Resume Location
 
 - Worktree: `/private/tmp/multica-worktrees/feat-pm-task-sync`
