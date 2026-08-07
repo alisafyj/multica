@@ -5285,36 +5285,30 @@ func TestAckTaskCancelled(t *testing.T) {
 	}
 }
 
-// Attaching one github_repo resource to a project used to hide every
-// workspace-level repository from that task, because the claim handler replaced
-// the list instead of merging it. A cross-repo test case whose second repo is
-// only registered at workspace level then could not be checked out at all: the
-// allowlist is built from this list.
-func TestMergeTaskReposKeepsWorkspaceReposAlongsideProjectRepos(t *testing.T) {
+// A project that declares its own repositories is scoping the task to them.
+// The workspace list is a fallback, never an addition — the checkout allowlist
+// is built from this list, so unioning the two would hand a project-scoped task
+// access to every other repository in the workspace.
+func TestTaskReposLetProjectReposReplaceWorkspaceRepos(t *testing.T) {
 	project := []RepoData{{URL: "https://github.com/acme/billing-api.git", Ref: "release/v2"}}
 	workspace := []RepoData{
 		{URL: "https://github.com/acme/mobile-app.git"},
 		{URL: "https://github.com/acme/billing-api.git", Ref: "main"},
 	}
 
-	merged := mergeTaskRepos(project, workspace)
-	if len(merged) != 2 {
-		t.Fatalf("merged = %+v, want both repos", merged)
+	got := taskRepos(project, workspace)
+	if len(got) != 1 {
+		t.Fatalf("repos = %+v, want only the project's list", got)
 	}
-	// The project entry wins on collision: its per-repo ref is the more
-	// specific instruction.
-	if merged[0].URL != "https://github.com/acme/billing-api.git" || merged[0].Ref != "release/v2" {
-		t.Fatalf("merged[0] = %+v, want the project's pinned ref to win", merged[0])
-	}
-	if merged[1].URL != "https://github.com/acme/mobile-app.git" {
-		t.Fatalf("merged[1] = %+v, want the workspace-only repo preserved", merged[1])
+	if got[0].URL != "https://github.com/acme/billing-api.git" || got[0].Ref != "release/v2" {
+		t.Fatalf("repos[0] = %+v, want the project entry with its pinned ref", got[0])
 	}
 }
 
-func TestMergeTaskReposFallsBackToWorkspaceWhenProjectHasNone(t *testing.T) {
+func TestTaskReposFallBackToWorkspaceWhenProjectHasNone(t *testing.T) {
 	workspace := []RepoData{{URL: "https://github.com/acme/web.git"}}
-	merged := mergeTaskRepos(nil, workspace)
-	if len(merged) != 1 || merged[0].URL != "https://github.com/acme/web.git" {
-		t.Fatalf("merged = %+v, want the workspace list unchanged", merged)
+	got := taskRepos(nil, workspace)
+	if len(got) != 1 || got[0].URL != "https://github.com/acme/web.git" {
+		t.Fatalf("repos = %+v, want the workspace list unchanged", got)
 	}
 }
