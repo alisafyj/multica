@@ -296,6 +296,39 @@ deleted_pmo_runs AS (
 ),
 deleted_pmo_configs AS (
     DELETE FROM pmo_sync_config WHERE workspace_id = $1
+),
+deleted_test_run_cases AS (
+    DELETE FROM test_run_case WHERE workspace_id = $1
+),
+deleted_test_runs AS (
+    DELETE FROM test_run WHERE workspace_id = $1
+),
+deleted_test_plan_cases AS (
+    DELETE FROM test_plan_case WHERE workspace_id = $1
+),
+deleted_test_plans AS (
+    DELETE FROM test_plan WHERE workspace_id = $1
+),
+deleted_test_case_proposals AS (
+    DELETE FROM test_case_proposal WHERE workspace_id = $1
+),
+deleted_test_generation_plans AS (
+    DELETE FROM test_generation_plan WHERE workspace_id = $1
+),
+deleted_test_generation_jobs AS (
+    DELETE FROM test_generation_job WHERE workspace_id = $1
+),
+deleted_test_case_revisions AS (
+    DELETE FROM test_case_revision WHERE workspace_id = $1
+),
+deleted_test_case_repos AS (
+    DELETE FROM test_case_repo WHERE workspace_id = $1
+),
+deleted_test_cases AS (
+    DELETE FROM test_case WHERE workspace_id = $1
+),
+deleted_test_capabilities AS (
+    DELETE FROM test_capability WHERE workspace_id = $1
 )
 -- Keep the two-system cleanup ledger until object storage has been settled.
 -- Moving every row out of pending also prevents a concurrent media bind from
