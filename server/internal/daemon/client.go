@@ -345,7 +345,7 @@ func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages
 	}, nil)
 }
 
-func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, artifacts *ProjectDesignSystemArtifacts) error {
+func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, artifacts *ProjectDesignSystemArtifacts, pkg *ProjectDesignSystemPackageReceipt) error {
 	body := map[string]any{"output": output}
 	if branchName != "" {
 		body["branch_name"] = branchName
@@ -358,6 +358,9 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 	}
 	if artifacts != nil {
 		body["project_design_system_artifacts"] = artifacts
+	}
+	if pkg != nil {
+		body["project_design_system_package"] = pkg
 	}
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, nil, defaultTerminalRetrySchedule)
 }

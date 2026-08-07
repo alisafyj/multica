@@ -1,6 +1,11 @@
 package daemon
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/multica-ai/multica/server/internal/designpreview"
+	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
+)
 
 // AgentEntry describes a single available agent CLI.
 type AgentEntry struct {
@@ -142,20 +147,41 @@ type TaskUsageEntry struct {
 
 // TaskResult is the outcome of executing a task.
 type TaskResult struct {
-	Status                       string                        `json:"status"`
-	Comment                      string                        `json:"comment"`
-	BranchName                   string                        `json:"branch_name,omitempty"`
-	EnvType                      string                        `json:"env_type,omitempty"`
-	SessionID                    string                        `json:"session_id,omitempty"` // Claude session ID for future resumption
-	WorkDir                      string                        `json:"work_dir,omitempty"`   // working directory used during execution
-	EnvRoot                      string                        `json:"-"`                    // env root dir for writing GC metadata (not sent to server)
-	FailureReason                string                        `json:"-"`                    // classifier forwarded to FailTask on the blocked path; empty falls back to 'agent_error'
-	Usage                        []TaskUsageEntry              `json:"usage,omitempty"`      // per-model token usage
-	ProjectDesignSystemArtifacts *ProjectDesignSystemArtifacts `json:"-"`                    // collected after the provider exits; sent only on specialized completion
+	Status                       string                             `json:"status"`
+	Comment                      string                             `json:"comment"`
+	BranchName                   string                             `json:"branch_name,omitempty"`
+	EnvType                      string                             `json:"env_type,omitempty"`
+	SessionID                    string                             `json:"session_id,omitempty"` // Claude session ID for future resumption
+	WorkDir                      string                             `json:"work_dir,omitempty"`   // working directory used during execution
+	EnvRoot                      string                             `json:"-"`                    // env root dir for writing GC metadata (not sent to server)
+	FailureReason                string                             `json:"-"`                    // classifier forwarded to FailTask on the blocked path; empty falls back to 'agent_error'
+	Usage                        []TaskUsageEntry                   `json:"usage,omitempty"`      // per-model token usage
+	ProjectDesignSystemArtifacts *ProjectDesignSystemArtifacts      `json:"-"`                    // legacy three-file inline payload; collected for non-V2 tasks only
+	ProjectDesignSystemPackage   *ProjectDesignSystemPackageReceipt `json:"-"`                    // V2-native package receipt (archive + audit + preview); populated only on the V2 path
 }
 
+// ProjectDesignSystemArtifacts is the legacy inline three-file payload the
+// Open Design supervisor used to ship on task completion. It is kept here so
+// legacy server-side decode still works for tasks that flow through the
+// Open Design chain; the V2 native path replaces it with the package receipt
+// below. Removal of this struct is Task 7.
 type ProjectDesignSystemArtifacts struct {
 	DesignMD       string `json:"design_md"`
 	TokensCSS      string `json:"tokens_css"`
 	ComponentsHTML string `json:"components_html"`
+}
+
+// ProjectDesignSystemPackageReceipt is the daemon-side carrier for the
+// V2-native project-design-system result. It carries the bare minimum the
+// server needs to publish a completed design system: the uploaded archive's
+// object key, the package's content digest, the artifact index for server-side
+// cross-checks, the static audit report, and the designpreview.Receipt that
+// proves a real browser rendered every Preview target without CSP violations.
+type ProjectDesignSystemPackageReceipt struct {
+	SchemaVersion string                                   `json:"schema_version"`
+	ObjectKey     string                                   `json:"object_key"`
+	ContentDigest string                                   `json:"content_digest"`
+	ArtifactIndex []projectdesignsystem.ArtifactIndexEntry `json:"artifact_index"`
+	Audit         projectdesignsystem.AuditReport          `json:"audit"`
+	Preview       designpreview.Receipt                    `json:"preview"`
 }

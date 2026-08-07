@@ -114,6 +114,7 @@ func TestClientCompleteTaskSerializesOptionalProjectDesignSystemArtifacts(t *tes
 		"session-1",
 		"/tmp/workdir",
 		&want,
+		nil,
 	); err != nil {
 		t.Fatalf("complete task: %v", err)
 	}
@@ -139,7 +140,7 @@ func TestClientCompleteTaskOmitsProjectDesignSystemArtifactsWhenNil(t *testing.T
 	t.Cleanup(srv.Close)
 
 	client := NewClient(srv.URL)
-	if err := client.CompleteTask(context.Background(), "task-1", "done", "", "", "", nil); err != nil {
+	if err := client.CompleteTask(context.Background(), "task-1", "done", "", "", "", nil, nil); err != nil {
 		t.Fatalf("complete task: %v", err)
 	}
 	if _, exists := payload["project_design_system_artifacts"]; exists {
