@@ -221,8 +221,84 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  android:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # apps/mobile/android is intentionally untracked (Expo prebuild
+      # output), so every release regenerates it here with the production
+      # variant. EXPO_PUBLIC_* must be present both at prebuild time and at
+      # Gradle time: the JS bundle is produced inside assembleRelease and
+      # bakes the API endpoint in, and process env takes precedence over
+      # apps/mobile/.env.production (which points at upstream's cloud).
+      - name: Prebuild Android project
+        working-directory: apps/mobile
+        env:
+          APP_ENV: production
+          EXPO_PUBLIC_API_URL: https://iworker.soyoung.com
+          EXPO_PUBLIC_WEB_URL: https://iworker.soyoung.com
+          EXPO_APP_VERSION: ${{ needs.validate.outputs.version }}
+          EXPO_ANDROID_VERSION_CODE: ${{ github.run_number }}
+        run: pnpm exec expo prebuild --platform android --no-install
+
+      - name: Build release APK
+        working-directory: apps/mobile/android
+        env:
+          APP_ENV: production
+          EXPO_PUBLIC_API_URL: https://iworker.soyoung.com
+          EXPO_PUBLIC_WEB_URL: https://iworker.soyoung.com
+          EXPO_APP_VERSION: ${{ needs.validate.outputs.version }}
+          EXPO_ANDROID_VERSION_CODE: ${{ github.run_number }}
+        run: |
+          echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m" >> gradle.properties
+          ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Rename APK with release version
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          apk_dir="apps/mobile/android/app/build/outputs/apk/release"
+          if [[ ! -f "$apk_dir/app-release.apk" ]]; then
+            echo "::error::Expected release APK at $apk_dir/app-release.apk"
+            exit 1
+          fi
+          mv "$apk_dir/app-release.apk" "$apk_dir/multica-android-${VERSION}.apk"
+          ls -lh "$apk_dir"
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: apps/mobile/android/app/build/outputs/apk/release/multica-android-*.apk
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
-    needs: [validate, build]
+    needs: [validate, build, android]
     runs-on: ubuntu-latest
     steps:
       - name: Download packaged artifacts
@@ -237,7 +313,7 @@ jobs:
           while IFS= read -r -d '' asset; do
             cp "$asset" release-assets/
           done < <(
-            find artifacts -type f \( -name 'multica-desktop-*' -o -name 'latest*.yml' \) -print0
+            find artifacts -type f \( -name 'multica-desktop-*' -o -name 'latest*.yml' -o -name 'multica-android-*.apk' \) -print0
           )
           if [[ -z "$(find release-assets -type f -print -quit)" ]]; then
             echo "::error::No release assets were collected."
@@ -266,7 +342,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "Multica Desktop ${VERSION} (SSO fork)" \
-              --notes "Desktop installers built from coder-zkl1988/multica with the fork's SSO support. macOS artifacts are signed and notarized with Apple Team WCYBD629RJ." \
+              --notes "Desktop installers and the Android APK built from coder-zkl1988/multica with the fork's SSO support. macOS artifacts are signed and notarized with Apple Team WCYBD629RJ. multica-android-*.apk targets the fork server and installs by sideload (scan the QR code on the /download page)." \
               "${prerelease_flag[@]}"
           fi
 

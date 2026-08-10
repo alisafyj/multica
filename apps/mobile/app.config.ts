@@ -22,7 +22,10 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         ? "Multica (Staging)"
         : "Multica (Dev)",
     slug: "multica-mobile",
-    version: "0.1.0",
+    // EXPO_APP_VERSION is a release-engineering override set only by the
+    // fork's Android release workflow, which stamps the release tag's
+    // version onto the APK. Interactive dev and iOS builds leave it unset.
+    version: process.env.EXPO_APP_VERSION ?? "0.1.0",
     orientation: "portrait",
     userInterfaceStyle: "automatic",
     scheme: "multica",
@@ -63,6 +66,12 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         foregroundImage: "./assets/adaptive-icon-foreground.png",
         backgroundColor: "#1B1F2B",
       },
+      // Monotonic across CI builds (GitHub run number) so a sideloaded
+      // APK always upgrades over the previous one. Unset locally, where
+      // prebuild's default of 1 is fine.
+      ...(process.env.EXPO_ANDROID_VERSION_CODE
+        ? { versionCode: Number(process.env.EXPO_ANDROID_VERSION_CODE) }
+        : {}),
     },
     plugins: [
       "expo-router",
