@@ -4049,6 +4049,13 @@ func TestClaimProjectDesignSystemTaskReturnsExactContext(t *testing.T) {
 	ctx := context.Background()
 	projectID := createProjectForDesignTest(t, "Project design system claim")
 	agentID, runtimeID := createProjectDesignSystemAgent(t, "online")
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_resource (
+			project_id, workspace_id, resource_type, resource_ref, position
+		) VALUES ($1, $2, 'github_repo', '{"url":"https://github.com/example/adjust-source"}'::jsonb, 0)
+	`, projectID, testWorkspaceID); err != nil {
+		t.Fatalf("create adjust project resource: %v", err)
+	}
 	designSystemID := uuid.NewString()
 	contextPayload := service.ProjectDesignSystemTaskContext{
 		Type:                  service.ProjectDesignSystemTaskContextType,
@@ -4145,15 +4152,22 @@ func TestClaimProjectDesignSystemRepositoryAnalysisReturnsProjectResources(t *te
 	ctx := context.Background()
 	projectID := createProjectForDesignTest(t, "Project design system repository analysis claim")
 	agentID, runtimeID := createProjectDesignSystemAgent(t, "online")
+	const matchingDaemonID = "0192a7c0-0011-7ee9-9c21-30a5bcf86aa1"
+	const otherDaemonID = "0192a7c0-0011-7ee9-9c21-30a5bcf86aa2"
+	if _, err := testPool.Exec(ctx, `UPDATE agent_runtime SET daemon_id = $1 WHERE id = $2`, matchingDaemonID, runtimeID); err != nil {
+		t.Fatalf("set repository analysis runtime daemon_id: %v", err)
+	}
 	const projectRepoURL = "https://github.com/example/design-system-source"
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO project_resource (
 			project_id, workspace_id, resource_type, resource_ref, position
 		) VALUES
 			($1, $2, 'local_directory', $3::jsonb, 0),
-			($1, $2, 'github_repo', $4::jsonb, 1)
+			($1, $2, 'local_directory', $4::jsonb, 1),
+			($1, $2, 'github_repo', $5::jsonb, 2)
 	`, projectID, testWorkspaceID,
-		`{"local_path":"/tmp/multica-design-system-source","daemon_id":"`+runtimeID+`"}`,
+		`{"local_path":"/tmp/multica-design-system-source","daemon_id":"`+matchingDaemonID+`"}`,
+		`{"local_path":"/tmp/multica-other-design-system-source","daemon_id":"`+otherDaemonID+`"}`,
 		`{"url":"`+projectRepoURL+`"}`,
 	); err != nil {
 		t.Fatalf("create project resources: %v", err)
@@ -4212,14 +4226,25 @@ func TestClaimProjectDesignSystemRepositoryAnalysisReturnsProjectResources(t *te
 		t.Fatalf("claimed task = %#v, want %s", response.Task, taskID)
 	}
 	if len(response.Task.ProjectResources) != 2 {
-		t.Fatalf("project resources = %v, want local_directory and github_repo", response.Task.ProjectResources)
+		t.Fatalf("project resources = %v, want matching local_directory and github_repo", response.Task.ProjectResources)
 	}
-	resourceTypes := map[string]bool{}
+	resourceTypeCounts := map[string]int{}
 	for _, resource := range response.Task.ProjectResources {
-		resourceTypes[resource.ResourceType] = true
+		resourceTypeCounts[resource.ResourceType]++
+		if resource.ResourceType == "local_directory" {
+			var ref struct {
+				DaemonID string `json:"daemon_id"`
+			}
+			if err := json.Unmarshal(resource.ResourceRef, &ref); err != nil {
+				t.Fatalf("decode local_directory resource_ref: %v", err)
+			}
+			if ref.DaemonID != matchingDaemonID {
+				t.Fatalf("local_directory daemon_id = %q, want %q", ref.DaemonID, matchingDaemonID)
+			}
+		}
 	}
-	if !resourceTypes["local_directory"] || !resourceTypes["github_repo"] {
-		t.Fatalf("project resource types = %v, want local_directory and github_repo", resourceTypes)
+	if resourceTypeCounts["local_directory"] != 1 || resourceTypeCounts["github_repo"] != 1 {
+		t.Fatalf("project resource type counts = %v, want one local_directory and one github_repo", resourceTypeCounts)
 	}
 	if len(response.Task.Repos) != 1 || response.Task.Repos[0].URL != projectRepoURL {
 		t.Fatalf("repos = %v, want project repository %s", response.Task.Repos, projectRepoURL)

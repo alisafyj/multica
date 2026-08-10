@@ -1672,7 +1672,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 					resp.ProjectTitle = project.Title
 					if projectDesignSystemCtx.Operation == service.ProjectDesignSystemRepositoryAnalysis {
 						var projectRepos []RepoData
-						if rows := h.listProjectResourcesForProject(r.Context(), projectUUID); len(rows) > 0 {
+						if rows := projectDesignSystemResourcesForRuntime(h.listProjectResourcesForProject(r.Context(), projectUUID), runtime.DaemonID.String); len(rows) > 0 {
 							out := make([]ProjectResourceData, 0, len(rows))
 							for _, row := range rows {
 								label := ""
