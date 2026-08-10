@@ -113,10 +113,12 @@ func writeProjectDesignSystemContext(workDir string, ctx TaskContextForEnv, mani
 	// task context) is materialized into a read-only bounded sidecar
 	// layout: context/, reference/, and base/ each at 0o555 with files
 	// stamped 0o444 so the agent can read but not mutate the inputs.
+	// Repository analysis also uses this layout, but does not declare a
+	// package schema because it produces context rather than a package.
 	// The legacy Open Design flow (no package_schema) keeps its previous
 	// single-task.json layout untouched so already-queued tasks still
 	// parse through the Open Design supervisor.
-	if isV2ProjectDesignSystemTask(task) {
+	if operation == "repository_analysis" || isV2ProjectDesignSystemTask(task) {
 		return writeV2ProjectDesignSystemContext(root, task, operation, manifest)
 	}
 

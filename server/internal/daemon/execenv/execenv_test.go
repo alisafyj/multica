@@ -512,6 +512,51 @@ func TestProjectDesignSystemGenerateContextOmitsBaseFiles(t *testing.T) {
 	}
 }
 
+func TestProjectDesignSystemRepositoryAnalysisUsesNativeReadOnlyContext(t *testing.T) {
+	workDir := t.TempDir()
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"repository_analysis",
+		"brief":"Analyze the CRM repository read-only"
+	}`)
+
+	if err := writeContextFiles(workDir, "codex", ctx, nil); err != nil {
+		t.Fatalf("write repository analysis context: %v", err)
+	}
+	t.Cleanup(func() { _ = RestoreV2SidecarWritability(workDir) })
+
+	root := filepath.Join(workDir, ".agent_context", "project_design_system")
+	for _, path := range []string{
+		filepath.Join(root, "context", "task.json"),
+		filepath.Join(root, "reference", "index.json"),
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("native repository analysis sidecar %s: %v", path, err)
+		}
+		if info.Mode().Perm() != 0o444 {
+			t.Fatalf("native repository analysis sidecar %s mode = %o, want 0444", path, info.Mode().Perm())
+		}
+	}
+	for _, name := range []string{"context", "reference"} {
+		path := filepath.Join(root, name)
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("native repository analysis directory %s: %v", path, err)
+		}
+		if info.Mode().Perm() != 0o555 {
+			t.Fatalf("native repository analysis directory %s mode = %o, want 0555", path, info.Mode().Perm())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "base")); !os.IsNotExist(err) {
+		t.Fatalf("repository analysis must not create base directory: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "task.json")); !os.IsNotExist(err) {
+		t.Fatalf("repository analysis must not use the legacy task.json layout: %v", err)
+	}
+}
+
 func TestPrepareProjectDesignSystemOutputDir(t *testing.T) {
 	ctx := TaskContextForEnv{}
 	setProjectDesignSystemContextForTest(t, &ctx, `{"type":"project_design_system_task","operation":"generate"}`)
