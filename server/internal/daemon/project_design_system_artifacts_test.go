@@ -154,3 +154,29 @@ func TestCompletedProjectDesignSystemRepositoryAnalysisSkipsLegacyArtifacts(t *t
 		t.Fatalf("repository analysis failure reason = %q, want empty", got.FailureReason)
 	}
 }
+
+func TestRepositoryAnalysisRequiresProjectDesignSystemTaskDiscriminator(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		context string
+	}{
+		{name: "missing type", context: `{"operation":"repository_analysis"}`},
+		{name: "wrong type", context: `{"type":"other_task","operation":"repository_analysis"}`},
+		{name: "malformed type", context: `{"type":123,"operation":"repository_analysis"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			envRoot := t.TempDir()
+			want := writeProjectDesignSystemArtifactFiles(t, filepath.Join(envRoot, "output", "project-design-system"))
+			got := attachProjectDesignSystemArtifacts(Task{
+				ProjectDesignSystemContext: []byte(tc.context),
+			}, TaskResult{Status: "completed", EnvRoot: envRoot})
+
+			if got.Status != "completed" {
+				t.Fatalf("status = %q, want completed", got.Status)
+			}
+			if got.ProjectDesignSystemArtifacts == nil || *got.ProjectDesignSystemArtifacts != want {
+				t.Fatalf("legacy artifacts were skipped: got=%+v want=%+v", got.ProjectDesignSystemArtifacts, want)
+			}
+		})
+	}
+}

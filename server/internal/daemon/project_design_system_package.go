@@ -306,12 +306,13 @@ func isProjectDesignSystemRepositoryAnalysisTask(task Task) bool {
 		return false
 	}
 	var envelope struct {
+		Type      string `json:"type"`
 		Operation string `json:"operation"`
 	}
 	if err := jsonUnmarshal(task.ProjectDesignSystemContext, &envelope); err != nil {
 		return false
 	}
-	return envelope.Operation == "repository_analysis"
+	return envelope.Type == "project_design_system_task" && envelope.Operation == "repository_analysis"
 }
 
 // decodeV2TaskBinding extracts the V2 PackageBinding fields the finalize

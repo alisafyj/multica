@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -405,6 +406,133 @@ func TestCleanupSidecarsNoOpWhenManifestMissing(t *testing.T) {
 	}
 	if err := CleanupSidecars(""); err != nil {
 		t.Errorf("CleanupSidecars with empty envRoot returned error: %v", err)
+	}
+}
+
+func TestCleanupLocalDirectorySidecarsDoesNotFollowManagedDirectorySymlink(t *testing.T) {
+	workDir := t.TempDir()
+	envRoot := t.TempDir()
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"repository_analysis",
+		"brief":"Analyze the repository"
+	}`)
+	manifest := &sidecarManifest{}
+	if err := writeContextFiles(workDir, "codex", ctx, manifest); err != nil {
+		t.Fatalf("writeContextFiles: %v", err)
+	}
+	if err := writeSidecarManifest(envRoot, manifest); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	root := filepath.Join(workDir, ".agent_context", "project_design_system")
+	contextDir := filepath.Join(root, "context")
+	if err := RestoreV2SidecarWritability(workDir); err != nil {
+		t.Fatalf("restore sidecar before planting symlink: %v", err)
+	}
+	if err := os.RemoveAll(contextDir); err != nil {
+		t.Fatalf("remove managed context directory: %v", err)
+	}
+	externalDir := t.TempDir()
+	externalTask := filepath.Join(externalDir, "task.json")
+	if err := os.WriteFile(externalTask, []byte("external user data"), 0o644); err != nil {
+		t.Fatalf("write external task: %v", err)
+	}
+	if err := os.Symlink(externalDir, contextDir); err != nil {
+		t.Skipf("symlink not supported on this platform: %v", err)
+	}
+
+	if err := CleanupLocalDirectorySidecars(envRoot, workDir); err != nil {
+		t.Fatalf("CleanupLocalDirectorySidecars: %v", err)
+	}
+	got, err := os.ReadFile(externalTask)
+	if err != nil {
+		t.Fatalf("external task must survive cleanup: %v", err)
+	}
+	if string(got) != "external user data" {
+		t.Fatalf("external task changed: %q", got)
+	}
+	if _, err := os.Lstat(contextDir); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("managed context symlink remains after cleanup: %v", err)
+	}
+}
+
+func TestCleanupLocalDirectorySidecarsDoesNotChmodUnownedV2Directories(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix directory permission bits")
+	}
+	workDir := t.TempDir()
+	envRoot := t.TempDir()
+	v2Root := filepath.Join(workDir, ".agent_context", "project_design_system")
+	for _, name := range v2SidecarDirNames {
+		dir := filepath.Join(v2Root, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("create pre-existing %s directory: %v", name, err)
+		}
+		if err := os.Chmod(dir, 0o555); err != nil {
+			t.Fatalf("chmod pre-existing %s directory: %v", name, err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	}
+
+	ordinaryDir := filepath.Join(workDir, ".multica")
+	ordinaryFile := filepath.Join(ordinaryDir, "task.json")
+	if err := os.MkdirAll(ordinaryDir, 0o755); err != nil {
+		t.Fatalf("create ordinary sidecar directory: %v", err)
+	}
+	if err := os.WriteFile(ordinaryFile, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write ordinary sidecar: %v", err)
+	}
+	if err := writeSidecarManifest(envRoot, &sidecarManifest{
+		Files: []string{ordinaryFile},
+		Dirs:  []string{ordinaryDir},
+	}); err != nil {
+		t.Fatalf("write ordinary manifest: %v", err)
+	}
+
+	if err := CleanupLocalDirectorySidecars(envRoot, workDir); err != nil {
+		t.Fatalf("CleanupLocalDirectorySidecars: %v", err)
+	}
+	for _, name := range v2SidecarDirNames {
+		info, err := os.Stat(filepath.Join(v2Root, name))
+		if err != nil {
+			t.Fatalf("stat pre-existing %s directory: %v", name, err)
+		}
+		if info.Mode().Perm() != 0o555 {
+			t.Errorf("pre-existing %s mode = %o, want 0555", name, info.Mode().Perm())
+		}
+	}
+}
+
+func TestCleanupSidecarsKeepsManifestAfterPartialFailure(t *testing.T) {
+	workDir := t.TempDir()
+	envRoot := t.TempDir()
+	managedFile := filepath.Join(workDir, "managed.txt")
+	if err := os.WriteFile(managedFile, []byte("managed"), 0o644); err != nil {
+		t.Fatalf("write managed file: %v", err)
+	}
+	invalidPath := "invalid\x00path"
+	if err := writeSidecarManifest(envRoot, &sidecarManifest{
+		Files: []string{managedFile, invalidPath},
+	}); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	err := CleanupSidecars(envRoot)
+	if err == nil {
+		t.Fatal("CleanupSidecars must report the deterministic invalid-path failure")
+	}
+	if _, err := os.Stat(managedFile); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("successful cleanup entry was not removed: %v", err)
+	}
+	manifestPath := filepath.Join(envRoot, sidecarManifestFile)
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("manifest must remain for retry after partial failure: %v", err)
+	}
+	if !strings.Contains(string(raw), `invalid\u0000path`) {
+		t.Fatalf("retained manifest lost failed entry: %s", raw)
 	}
 }
 

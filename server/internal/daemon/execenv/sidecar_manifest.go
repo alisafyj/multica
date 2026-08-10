@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // sidecarManifestFile is the on-disk JSON Prepare writes into envRoot to
@@ -261,17 +262,33 @@ func CleanupSidecars(envRoot string) error {
 	if envRoot == "" {
 		return nil
 	}
+	manifestPath, m, err := readSidecarManifest(envRoot)
+	if err != nil || m == nil {
+		return err
+	}
+	return cleanupSidecarManifest(manifestPath, m, "", false)
+}
+
+func readSidecarManifest(envRoot string) (string, *sidecarManifest, error) {
 	manifestPath := filepath.Join(envRoot, sidecarManifestFile)
 	data, err := os.ReadFile(manifestPath)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return manifestPath, nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("read sidecar manifest %s: %w", manifestPath, err)
+		return manifestPath, nil, fmt.Errorf("read sidecar manifest %s: %w", manifestPath, err)
 	}
 	var m sidecarManifest
 	if err := json.Unmarshal(data, &m); err != nil {
-		return fmt.Errorf("parse sidecar manifest %s: %w", manifestPath, err)
+		return manifestPath, nil, fmt.Errorf("parse sidecar manifest %s: %w", manifestPath, err)
+	}
+	return manifestPath, &m, nil
+}
+
+func cleanupSidecarManifest(manifestPath string, m *sidecarManifest, workDir string, preserveManifest bool) error {
+	managedDirs := make(map[string]struct{}, len(m.Dirs))
+	for _, dir := range m.Dirs {
+		managedDirs[filepath.Clean(dir)] = struct{}{}
 	}
 
 	var firstErr error
@@ -281,8 +298,29 @@ func CleanupSidecars(envRoot string) error {
 		}
 	}
 
+	// Remove any managed directory that was replaced by a symlink before
+	// considering child files. This unlinks the sidecar entry itself and
+	// prevents a later child path from resolving through it.
+	if workDir != "" {
+		for _, d := range m.Dirs {
+			if _, err := removeRecordedPathNoFollow(workDir, d, managedDirs); err != nil {
+				captureErr(fmt.Errorf("inspect managed dir %s: %w", d, err))
+			}
+		}
+	}
+
 	for _, f := range m.Files {
-		if err := os.Remove(f); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		var err error
+		if workDir == "" {
+			err = os.Remove(f)
+		} else {
+			var isDir bool
+			isDir, err = removeRecordedPathNoFollow(workDir, f, managedDirs)
+			if err == nil && isDir {
+				err = os.Remove(f)
+			}
+		}
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			captureErr(fmt.Errorf("remove %s: %w", f, err))
 		}
 	}
@@ -293,7 +331,19 @@ func CleanupSidecars(envRoot string) error {
 	// (permission denied, busy, etc. — capture and surface).
 	for i := len(m.Dirs) - 1; i >= 0; i-- {
 		d := m.Dirs[i]
-		err := os.Remove(d)
+		var err error
+		if workDir == "" {
+			err = os.Remove(d)
+		} else {
+			var isDir bool
+			isDir, err = removeRecordedPathNoFollow(workDir, d, managedDirs)
+			if err == nil && !isDir {
+				continue
+			}
+			if err == nil {
+				err = os.Remove(d)
+			}
+		}
 		if err == nil || errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
@@ -324,8 +374,10 @@ func CleanupSidecars(envRoot string) error {
 		}
 	}
 
-	if err := os.Remove(manifestPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		captureErr(fmt.Errorf("remove manifest %s: %w", manifestPath, err))
+	if firstErr == nil && !preserveManifest {
+		if err := os.Remove(manifestPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			captureErr(fmt.Errorf("remove manifest %s: %w", manifestPath, err))
+		}
 	}
 
 	return firstErr
@@ -334,9 +386,100 @@ func CleanupSidecars(envRoot string) error {
 // CleanupLocalDirectorySidecars restores native read-only inputs before
 // removing only the files and directories recorded in the sidecar manifest.
 func CleanupLocalDirectorySidecars(envRoot, workDir string) error {
-	restoreErr := RestoreV2SidecarWritability(workDir)
-	cleanupErr := CleanupSidecars(envRoot)
+	if envRoot == "" {
+		return nil
+	}
+	manifestPath, m, err := readSidecarManifest(envRoot)
+	if err != nil || m == nil {
+		return err
+	}
+	restoreErr := restoreOwnedV2SidecarWritability(workDir, m)
+	cleanupErr := cleanupSidecarManifest(manifestPath, m, workDir, restoreErr != nil)
 	return errors.Join(restoreErr, cleanupErr)
+}
+
+func restoreOwnedV2SidecarWritability(workDir string, m *sidecarManifest) error {
+	ownedDirs := make(map[string]struct{}, len(m.Dirs))
+	for _, dir := range m.Dirs {
+		ownedDirs[filepath.Clean(dir)] = struct{}{}
+	}
+	root := filepath.Join(workDir, ".agent_context", "project_design_system")
+	for _, name := range v2SidecarDirNames {
+		dir := filepath.Join(root, name)
+		if _, owned := ownedDirs[filepath.Clean(dir)]; !owned {
+			continue
+		}
+		component, info, exists, err := lstatPathNoFollow(workDir, dir)
+		if err != nil {
+			return fmt.Errorf("inspect owned V2 sidecar %s: %w", dir, err)
+		}
+		if !exists || component != filepath.Clean(dir) || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		if err := os.Chmod(dir, 0o755); err != nil {
+			return fmt.Errorf("restore owned V2 sidecar writability on %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// removeRecordedPathNoFollow checks every component below workDir with
+// Lstat. It removes non-directory targets immediately and reports real
+// directories to the caller for the existing non-empty-directory handling.
+func removeRecordedPathNoFollow(workDir, target string, managedDirs map[string]struct{}) (bool, error) {
+	cleanTarget := filepath.Clean(target)
+	component, info, exists, err := lstatPathNoFollow(workDir, cleanTarget)
+	if err != nil || !exists {
+		return false, err
+	}
+	if component != cleanTarget {
+		if info.Mode()&os.ModeSymlink != 0 {
+			if _, owned := managedDirs[component]; owned {
+				return false, os.Remove(component)
+			}
+		}
+		return false, fmt.Errorf("refuse to follow non-directory component %s", component)
+	}
+	if info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+		return true, nil
+	}
+	return false, os.Remove(cleanTarget)
+}
+
+func lstatPathNoFollow(root, target string) (string, fs.FileInfo, bool, error) {
+	cleanRoot := filepath.Clean(root)
+	cleanTarget := filepath.Clean(target)
+	rel, err := filepath.Rel(cleanRoot, cleanTarget)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", nil, false, fmt.Errorf("path %s escapes workdir %s", cleanTarget, cleanRoot)
+	}
+
+	current := cleanRoot
+	info, err := os.Lstat(current)
+	if errors.Is(err, fs.ErrNotExist) {
+		return current, nil, false, nil
+	}
+	if err != nil {
+		return current, nil, false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || rel == "." {
+		return current, info, true, nil
+	}
+
+	for _, part := range strings.Split(rel, string(os.PathSeparator)) {
+		current = filepath.Join(current, part)
+		info, err = os.Lstat(current)
+		if errors.Is(err, fs.ErrNotExist) {
+			return current, nil, false, nil
+		}
+		if err != nil {
+			return current, nil, false, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || current == cleanTarget || !info.IsDir() {
+			return current, info, true, nil
+		}
+	}
+	return cleanTarget, info, true, nil
 }
 
 // removeReusedManagedSkillDirs force-removes the skill directories the prior
