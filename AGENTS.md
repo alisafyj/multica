@@ -93,6 +93,6 @@ This project is indexed by GitNexus as **multica** (33203 symbols, 98167 relatio
 
 ## 当前任务状态（会话交接 - 每次会话结束更新）
 
-- **做了什么**: Task 7 已提交（`8ccb672ba` 主实现 + `a91f741fb` binding/capability 修复 + `2ca6e0bcb` 生命周期覆盖 + `a7a858faf`/`3a3611c58` 渲染证据补强）：新建/调整/重新生成统一切到原生 V2，不再创建 Open Design Run；新增任务绑定 base-package、通用 package-preview 与受限 bridge，历史 v1/Open Design 继续只读兼容；所有 V2 metadata/file/base/response 均以 source task context 独立复验对象存储 archive binding
-- **做到哪**: Task 7 经 1 次完整评审 + 4 轮 scoped fix/re-review 后 Critical/Important 全关闭；8 个命名生命周期测试、handler/router、core 40 项、views 30 项和 `pnpm typecheck` 通过；GitNexus 刷新后的新符号映射存在跨无关模块的伪 CRITICAL fan-out，实际 staged scope 已逐次人工核对并记录在台账
-- **下一步**: 按 Phase 1 计划进入 Task 8（Verify The Real CRM Workflow And Record Evidence）：只启动该隔离工作树服务，使用 CRM 项目与用户选择的本地 Agent，完成生成/视觉/调整/保存/失败隔离/放弃证据；不要合并 `codex/open-design-native-slots`
+- **做了什么**: Task 8 仓库分析阻塞修复已提交到 `7ccf8c6ec`（API/原生工作区/完成生命周期 `10acc4aef..8a300be70`，sidecar no-follow 与 manifest 所有权加固 `de2c8033b..7ccf8c6ec`）；未运行 Open Design Worker/Runtime
+- **做到哪**: 安全 checkpoint clean；`8a300be70` Spec PASS，Quality review 的 3 项已关闭，最后 cloud Reuse symlink 修复 `7ccf8c6ec` 仅跑 5 项 focused GREEN，尚未 scoped re-review/完整两包复验；backend `18460`、web `13380` 保留，Task 8 daemon 已停；staffrnapp 只剩用户原有 `.vscode/settings.json`（SHA256 `d65f8b33...15764a`）
+- **下一步**: 先 scoped re-review `de2c8033b..7ccf8c6ec` 并跑完整 `internal/daemon/execenv` + `internal/daemon`；再重建/只启动 Task 8 daemon，使 orphan task `1d276b49-e199-4506-a505-398f0e206e2a` 收敛；任何新 CRM Agent 运行前先让用户选择低-token或严格完整验收，勿动主仓库/旧 daemon/`codex/open-design-native-slots`
