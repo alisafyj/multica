@@ -13,6 +13,7 @@ import {
 import { useModalStore } from "@multica/core/modals";
 import { useConfigStore } from "@multica/core/config";
 import { DISCORD_URL, DiscordIcon } from "./discord";
+import { useDownloadPageUrl } from "./use-download-page-url";
 import { useT } from "../i18n";
 
 const DOCS_URL = "https://multica.ai/docs";
@@ -21,12 +22,7 @@ const CHANGELOG_URL = "https://multica.ai/changelog";
 export function HelpLauncher() {
   const { t } = useT("layout");
   const serverVersion = useConfigStore((state) => state.serverVersion);
-  // The /download landing page lives on the web origin. On web an empty
-  // daemonAppUrl degrades to a same-origin relative link; on desktop the
-  // renderer is not the web origin, so the absolute URL from /api/config
-  // is what makes the item land in the system browser correctly.
-  const daemonAppUrl = useConfigStore((state) => state.daemonAppUrl);
-  const downloadUrl = `${daemonAppUrl.replace(/\/+$/, "")}/download`;
+  const downloadUrl = useDownloadPageUrl();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger

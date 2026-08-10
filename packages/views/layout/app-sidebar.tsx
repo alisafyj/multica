@@ -5,7 +5,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
 import { AppLink, useNavigation } from "../navigation";
 import { HelpLauncher } from "./help-launcher";
-import { JoinDiscordCard } from "./join-discord-card";
+import { DownloadClientsRow } from "./download-clients-row";
 import {
   DndContext,
   PointerSensor,
@@ -881,11 +881,10 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
         </SidebarContent>
 
         <SidebarFooter className="p-2">
-          {/* One utility strip: the Discord link takes the leading space the
-              help trigger was leaving empty. `justify-end` keeps the trigger
-              right-aligned once the Discord link is dismissed. */}
+          {/* One utility strip: the download-clients link takes the leading
+              space the help trigger was leaving empty. */}
           <div className="flex items-center justify-end gap-1">
-            <JoinDiscordCard />
+            <DownloadClientsRow />
             <HelpLauncher />
           </div>
         </SidebarFooter>
