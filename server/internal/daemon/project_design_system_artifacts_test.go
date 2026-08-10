@@ -129,3 +129,28 @@ func TestCompletedProjectDesignSystemWithoutArtifactsBecomesBlocked(t *testing.T
 		t.Fatal("invalid artifact result retained a payload")
 	}
 }
+
+func TestCompletedProjectDesignSystemRepositoryAnalysisSkipsLegacyArtifacts(t *testing.T) {
+	want := TaskResult{
+		Status:    "completed",
+		Comment:   "REPOSITORY_DESIGN_CONTEXT_JSON:{\"schema_version\":\"multica.repository-design-context/v1\"}",
+		EnvRoot:   t.TempDir(),
+		SessionID: "repository-analysis-session",
+	}
+	got := attachProjectDesignSystemArtifacts(Task{
+		ProjectDesignSystemContext: []byte(`{
+			"type":"project_design_system_task",
+			"operation":"repository_analysis"
+		}`),
+	}, want)
+
+	if got.Status != want.Status || got.Comment != want.Comment || got.SessionID != want.SessionID {
+		t.Fatalf("repository analysis result changed: got=%+v want=%+v", got, want)
+	}
+	if got.ProjectDesignSystemArtifacts != nil {
+		t.Fatal("repository analysis result unexpectedly attached legacy artifacts")
+	}
+	if got.FailureReason != "" {
+		t.Fatalf("repository analysis failure reason = %q, want empty", got.FailureReason)
+	}
+}

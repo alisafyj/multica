@@ -2687,7 +2687,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			// CLAUDE.md / AGENTS.md / GEMINI.md; CleanupSidecars handles
 			// every other file Prepare placed under WorkDir. Together
 			// they round-trip the workdir to its exact pre-task bytes.
-			if cerr := execenv.CleanupSidecars(env.RootDir); cerr != nil {
+			if cerr := execenv.CleanupLocalDirectorySidecars(env.RootDir, env.WorkDir); cerr != nil {
 				d.logger.Warn("execenv: cleanup sidecars failed (non-fatal)", "error", cerr)
 			}
 		}()

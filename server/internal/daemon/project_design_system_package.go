@@ -301,6 +301,19 @@ func isV2ProjectDesignSystemTask(task Task) bool {
 	return envelope.PackageSchema == projectdesignsystem.PackageSchemaV2
 }
 
+func isProjectDesignSystemRepositoryAnalysisTask(task Task) bool {
+	if len(task.ProjectDesignSystemContext) == 0 {
+		return false
+	}
+	var envelope struct {
+		Operation string `json:"operation"`
+	}
+	if err := jsonUnmarshal(task.ProjectDesignSystemContext, &envelope); err != nil {
+		return false
+	}
+	return envelope.Operation == "repository_analysis"
+}
+
 // decodeV2TaskBinding extracts the V2 PackageBinding fields the finalize
 // gate needs from the task context. The binding shape is exactly what
 // CollectV2Directory validates, so we reuse the same field names and let
@@ -624,23 +637,22 @@ func buildPreviewTargetURLs(targets []projectdesignsystem.PreviewTarget, baseURL
 }
 
 // attachProjectDesignSystemArtifacts keeps the legacy inline three-file
-// path working for non-V2 tasks. It is a no-op for V2 tasks (the new
-// finalize gate handles those) so the legacy Server decode support
-// survives until Task 7 retires it.
+// path working for package-producing non-V2 tasks. It is a no-op for V2
+// tasks (the new finalize gate handles those) and repository analysis
+// (which returns structured context rather than package files).
 //
-// The implementation is unchanged from the pre-Task-5 baseline — V2
-// tasks skip this function entirely and the legacy path remains live
-// for any non-V2 project-design-system task that still flows through
-// the daemon. Tests for this function live in
+// The legacy collector remains live for package-producing non-V2
+// project-design-system tasks that still flow through the daemon.
+// Tests for this function live in
 // project_design_system_artifacts_test.go.
 func attachProjectDesignSystemArtifacts(task Task, result TaskResult) TaskResult {
 	if len(task.ProjectDesignSystemContext) == 0 || result.Status != "completed" {
 		return result
 	}
-	if isV2ProjectDesignSystemTask(task) {
-		// V2 tasks produce the package via finalizeProjectDesignSystemResult.
-		// attachProjectDesignSystemArtifacts is a no-op so it never sets
-		// ProjectDesignSystemArtifacts alongside the new package receipt.
+	if isProjectDesignSystemRepositoryAnalysisTask(task) || isV2ProjectDesignSystemTask(task) {
+		// V2 tasks produce the package via finalizeProjectDesignSystemResult;
+		// repository analysis produces no package. Neither path may attach
+		// the legacy inline payload.
 		return result
 	}
 	if strings.TrimSpace(result.EnvRoot) == "" {

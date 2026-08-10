@@ -331,6 +331,14 @@ func CleanupSidecars(envRoot string) error {
 	return firstErr
 }
 
+// CleanupLocalDirectorySidecars restores native read-only inputs before
+// removing only the files and directories recorded in the sidecar manifest.
+func CleanupLocalDirectorySidecars(envRoot, workDir string) error {
+	restoreErr := RestoreV2SidecarWritability(workDir)
+	cleanupErr := CleanupSidecars(envRoot)
+	return errors.Join(restoreErr, cleanupErr)
+}
+
 // removeReusedManagedSkillDirs force-removes the skill directories the prior
 // dispatch recorded under skillsParent in its sidecar manifest at envRoot,
 // even when they are now non-empty. It is the reuse-path companion to

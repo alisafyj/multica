@@ -557,6 +557,32 @@ func TestProjectDesignSystemRepositoryAnalysisUsesNativeReadOnlyContext(t *testi
 	}
 }
 
+func TestCleanupLocalDirectorySidecarsRemovesNativeRepositoryAnalysisContext(t *testing.T) {
+	envRoot := t.TempDir()
+	workDir := t.TempDir()
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"repository_analysis",
+		"brief":"Analyze the CRM repository read-only"
+	}`)
+	manifest := &sidecarManifest{}
+	if err := writeContextFiles(workDir, "codex", ctx, manifest); err != nil {
+		t.Fatalf("write repository analysis context: %v", err)
+	}
+	t.Cleanup(func() { _ = RestoreV2SidecarWritability(workDir) })
+	if err := writeSidecarManifest(envRoot, manifest); err != nil {
+		t.Fatalf("write sidecar manifest: %v", err)
+	}
+
+	if err := CleanupLocalDirectorySidecars(envRoot, workDir); err != nil {
+		t.Fatalf("cleanup local-directory sidecars: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, ".agent_context")); !os.IsNotExist(err) {
+		t.Fatalf("managed .agent_context remains after cleanup: %v", err)
+	}
+}
+
 func TestPrepareProjectDesignSystemOutputDir(t *testing.T) {
 	ctx := TaskContextForEnv{}
 	setProjectDesignSystemContextForTest(t, &ctx, `{"type":"project_design_system_task","operation":"generate"}`)
