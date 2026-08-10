@@ -29,7 +29,7 @@ to `AGENTS.md` and `CLAUDE.md`. Do not modify, discard, or reset those changes.
 The PMO requirement-management implementation is complete through Task 10 and
 committed. The branch includes:
 
-- PMO persistence, tenant-scoped sqlc queries, and migrations 278-287.
+- PMO persistence, tenant-scoped sqlc queries, and migrations 306-315.
 - Strict Agent snapshot validation and normalization.
 - Deterministic three-way diff/conflict handling.
 - Config CRUD with user-selected Agent; no Agent or capability is hardcoded.

@@ -35,26 +35,26 @@ Frontend ownership:
 
 **Files:**
 
-- Create: `server/migrations/278_pmo_sync_tables.up.sql`
-- Create: `server/migrations/278_pmo_sync_tables.down.sql`
-- Create: `server/migrations/279_pmo_sync_config_id_index.up.sql`
-- Create: `server/migrations/279_pmo_sync_config_id_index.down.sql`
-- Create: `server/migrations/280_pmo_sync_run_id_index.up.sql`
-- Create: `server/migrations/280_pmo_sync_run_id_index.down.sql`
-- Create: `server/migrations/281_pmo_sync_link_id_index.up.sql`
-- Create: `server/migrations/281_pmo_sync_link_id_index.down.sql`
-- Create: `server/migrations/282_pmo_sync_primary_keys.up.sql`
-- Create: `server/migrations/282_pmo_sync_primary_keys.down.sql`
-- Create: `server/migrations/283_pmo_sync_config_root_index.up.sql`
-- Create: `server/migrations/283_pmo_sync_config_root_index.down.sql`
-- Create: `server/migrations/284_pmo_sync_run_history_index.up.sql`
-- Create: `server/migrations/284_pmo_sync_run_history_index.down.sql`
-- Create: `server/migrations/285_pmo_sync_run_active_index.up.sql`
-- Create: `server/migrations/285_pmo_sync_run_active_index.down.sql`
-- Create: `server/migrations/286_pmo_sync_run_agent_task_index.up.sql`
-- Create: `server/migrations/286_pmo_sync_run_agent_task_index.down.sql`
-- Create: `server/migrations/287_pmo_sync_link_identity_index.up.sql`
-- Create: `server/migrations/287_pmo_sync_link_identity_index.down.sql`
+- Create: `server/migrations/306_pmo_sync_tables.up.sql`
+- Create: `server/migrations/306_pmo_sync_tables.down.sql`
+- Create: `server/migrations/307_pmo_sync_config_id_index.up.sql`
+- Create: `server/migrations/307_pmo_sync_config_id_index.down.sql`
+- Create: `server/migrations/308_pmo_sync_run_id_index.up.sql`
+- Create: `server/migrations/308_pmo_sync_run_id_index.down.sql`
+- Create: `server/migrations/309_pmo_sync_link_id_index.up.sql`
+- Create: `server/migrations/309_pmo_sync_link_id_index.down.sql`
+- Create: `server/migrations/310_pmo_sync_primary_keys.up.sql`
+- Create: `server/migrations/310_pmo_sync_primary_keys.down.sql`
+- Create: `server/migrations/311_pmo_sync_config_root_index.up.sql`
+- Create: `server/migrations/311_pmo_sync_config_root_index.down.sql`
+- Create: `server/migrations/312_pmo_sync_run_history_index.up.sql`
+- Create: `server/migrations/312_pmo_sync_run_history_index.down.sql`
+- Create: `server/migrations/313_pmo_sync_run_active_index.up.sql`
+- Create: `server/migrations/313_pmo_sync_run_active_index.down.sql`
+- Create: `server/migrations/314_pmo_sync_run_agent_task_index.up.sql`
+- Create: `server/migrations/314_pmo_sync_run_agent_task_index.down.sql`
+- Create: `server/migrations/315_pmo_sync_link_identity_index.up.sql`
+- Create: `server/migrations/315_pmo_sync_link_identity_index.down.sql`
 - Create: `server/pkg/db/queries/pmo.sql`
 - Generate: `server/pkg/db/generated/pmo.sql.go`
 - Modify generated: `server/pkg/db/generated/models.go`
@@ -77,19 +77,19 @@ func readMigrationForLint(t *testing.T, name string) string {
 }
 
 func TestPMOSyncMigrationsStayTenantScopedAndConcurrent(t *testing.T) {
-    tables := strings.ToUpper(readMigrationForLint(t, "278_pmo_sync_tables.up.sql"))
+    tables := strings.ToUpper(readMigrationForLint(t, "306_pmo_sync_tables.up.sql"))
     if strings.Contains(tables, "REFERENCES") || strings.Contains(tables, "FOREIGN KEY") {
         t.Fatal("PMO sync tables must not create foreign keys")
     }
     indexes := []string{
-        "279_pmo_sync_config_id_index.up.sql",
-        "280_pmo_sync_run_id_index.up.sql",
-        "281_pmo_sync_link_id_index.up.sql",
-        "283_pmo_sync_config_root_index.up.sql",
-        "284_pmo_sync_run_history_index.up.sql",
-        "285_pmo_sync_run_active_index.up.sql",
-        "286_pmo_sync_run_agent_task_index.up.sql",
-        "287_pmo_sync_link_identity_index.up.sql",
+        "307_pmo_sync_config_id_index.up.sql",
+        "308_pmo_sync_run_id_index.up.sql",
+        "309_pmo_sync_link_id_index.up.sql",
+        "311_pmo_sync_config_root_index.up.sql",
+        "312_pmo_sync_run_history_index.up.sql",
+        "313_pmo_sync_run_active_index.up.sql",
+        "314_pmo_sync_run_agent_task_index.up.sql",
+        "315_pmo_sync_link_identity_index.up.sql",
     }
     for _, name := range indexes {
         sql := strings.TrimSpace(readMigrationForLint(t, name))
