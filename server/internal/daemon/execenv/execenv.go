@@ -46,6 +46,9 @@ type PrepareParams struct {
 	Provider     string // agent provider (determines runtime config and skill injection paths)
 	CodexVersion string // detected Codex CLI version (only used when Provider == "codex")
 	OpenclawBin  string // resolved openclaw CLI path (only used when Provider == "openclaw"); empty = look up on PATH
+	// OpenclawAgentID is the registered agent selected for this task. The
+	// OpenClaw config preparer uses it to retain that agent's native skills.
+	OpenclawAgentID string
 	// McpConfig is the agent's saved `mcp_config` JSON, forwarded to the
 	// provider-specific config preparer when that provider materialises MCP
 	// via a per-task config file. Cursor and OpenClaw consume it here; other
@@ -397,6 +400,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	if params.Provider == "openclaw" {
 		result, err := prepareOpenclawConfig(envRoot, workDir, OpenclawConfigPrep{
 			OpenclawBin: params.OpenclawBin,
+			AgentID:     params.OpenclawAgentID,
 			McpConfig:   params.McpConfig,
 			Gateway:     params.OpenclawGateway,
 		})
@@ -431,6 +435,7 @@ type ReuseParams struct {
 	// it. Empty means a fresh thread. See prepareCodexSessionsDir (MUL-4424).
 	ResumeSessionID string
 	OpenclawBin     string // only used when Provider == "openclaw"; empty = PATH lookup
+	OpenclawAgentID string // mirrors PrepareParams.OpenclawAgentID on reuse
 	// McpConfig is the agent's saved `mcp_config` JSON. Reused on reuse so a
 	// freshly-saved managed set re-materialises into the wrapper before the
 	// task starts — without this a stale wrapper from a prior run would keep
@@ -628,6 +633,7 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	if params.Provider == "openclaw" {
 		result, err := prepareOpenclawConfig(env.RootDir, params.WorkDir, OpenclawConfigPrep{
 			OpenclawBin: params.OpenclawBin,
+			AgentID:     params.OpenclawAgentID,
 			McpConfig:   params.McpConfig,
 			Gateway:     params.OpenclawGateway,
 		})

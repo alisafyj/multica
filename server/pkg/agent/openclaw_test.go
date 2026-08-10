@@ -1001,6 +1001,27 @@ func TestBuildOpenclawArgsCustomAgentWinsOverModel(t *testing.T) {
 	}
 }
 
+func TestResolveOpenclawAgentID(t *testing.T) {
+	tests := []struct {
+		name       string
+		model      string
+		customArgs []string
+		want       string
+	}{
+		{name: "model selection", model: "pmo", want: "pmo"},
+		{name: "separate custom flag wins", model: "main", customArgs: []string{"--agent", "pmo"}, want: "pmo"},
+		{name: "inline quoted custom flag wins", model: "main", customArgs: []string{"--agent='pmo'"}, want: "pmo"},
+		{name: "missing custom flag value fails closed", model: "main", customArgs: []string{"--agent"}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ResolveOpenclawAgentID(tt.model, tt.customArgs); got != tt.want {
+				t.Fatalf("ResolveOpenclawAgentID(%q, %v) = %q, want %q", tt.model, tt.customArgs, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildOpenclawArgsPrependsSystemPromptToMessage(t *testing.T) {
 	t.Parallel()
 

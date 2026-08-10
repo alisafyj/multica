@@ -1494,6 +1494,65 @@ func TestIsOpenclawKeyMissing(t *testing.T) {
 	}
 }
 
+func TestPrepareOpenclawConfigLoadsSelectedAgentWorkspaceSkills(t *testing.T) {
+	envRoot := t.TempDir()
+	workDir := filepath.Join(envRoot, "workdir")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("mkdir workdir: %v", err)
+	}
+	userConfigPath := filepath.Join(t.TempDir(), "openclaw.json")
+	if err := os.WriteFile(userConfigPath, []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("write user cfg: %v", err)
+	}
+
+	mainWorkspace := filepath.Join(t.TempDir(), "main-workspace")
+	pmoWorkspace := filepath.Join(t.TempDir(), "pmo-workspace")
+	registryBytes, err := json.Marshal([]map[string]any{
+		{"id": "main", "workspace": mainWorkspace, "isDefault": true},
+		{"id": "pmo", "workspace": pmoWorkspace},
+	})
+	if err != nil {
+		t.Fatalf("marshal registry: %v", err)
+	}
+	existingExtraDir := filepath.Join(t.TempDir(), "shared-skills")
+	existingExtraDirs, err := json.Marshal([]string{existingExtraDir})
+	if err != nil {
+		t.Fatalf("marshal existing extra dirs: %v", err)
+	}
+
+	stub := installOpenclawStub(t, map[string]openclawResponse{
+		"config file":                             {stdout: userConfigPath},
+		"config get agents.list --json":           {err: errors.New("Config path not found: agents.list")},
+		"agents list --json":                      {stdout: string(registryBytes)},
+		"config get skills.load.extraDirs --json": {stdout: string(existingExtraDirs)},
+	})
+
+	result, err := prepareOpenclawConfig(envRoot, workDir, OpenclawConfigPrep{
+		OpenclawBin: stub.bin,
+		AgentID:     "pmo",
+	})
+	if err != nil {
+		t.Fatalf("prepareOpenclawConfig: %v", err)
+	}
+	got := mustReadJSON(t, result.ConfigPath)
+	load := got["skills"].(map[string]any)["load"].(map[string]any)
+	extraDirs := load["extraDirs"].([]any)
+	want := []string{existingExtraDir, filepath.Join(pmoWorkspace, "skills")}
+	if len(extraDirs) != len(want) {
+		t.Fatalf("skills.load.extraDirs = %v, want %v", extraDirs, want)
+	}
+	for i := range want {
+		if extraDirs[i] != want[i] {
+			t.Errorf("skills.load.extraDirs[%d] = %v, want %q", i, extraDirs[i], want[i])
+		}
+	}
+	for _, dir := range extraDirs {
+		if dir == filepath.Join(mainWorkspace, "skills") {
+			t.Fatalf("unselected agent skills leaked into task config: %v", extraDirs)
+		}
+	}
+}
+
 // TestPrepareOpenclawConfigNewSchemaOmitsAgentsList — OpenClaw 2026.6.x
 // removed the `agents.list` config path; `config get agents.list` exits
 // non-zero with "Config path not found" and the agents live in a sqlite

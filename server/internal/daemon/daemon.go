@@ -5053,6 +5053,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		agentEnvOverrides = task.Agent.CustomEnv
 		agentCustomArgs = task.Agent.CustomArgs
 	}
+	var openclawAgentID string
+	if provider == "openclaw" {
+		configuredAgentID := entry.Model
+		if task.Agent != nil && task.Agent.Model != "" {
+			configuredAgentID = task.Agent.Model
+		}
+		openclawAgentID = agent.ResolveOpenclawAgentID(configuredAgentID, agentCustomArgs)
+	}
 	// Effective Codex CLI args the task will launch with, normalized through the
 	// same agent.NormalizeCodexLaunchArgs pipeline buildCodexArgs uses (shell
 	// unquoting + blocked-flag filtering), preserving its ExtraArgs
@@ -5114,6 +5122,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			CodexVersion:          codexVersion,
 			ResumeSessionID:       task.PriorSessionID,
 			OpenclawBin:           openclawBin,
+			OpenclawAgentID:       openclawAgentID,
 			McpConfig:             effectiveMcpConfig,
 			CursorMcpAuthSource:   cursorMcpAuthSource,
 			OpenclawGateway:       openclawGateway,
@@ -5138,6 +5147,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			Provider:              provider,
 			CodexVersion:          codexVersion,
 			OpenclawBin:           openclawBin,
+			OpenclawAgentID:       openclawAgentID,
 			McpConfig:             effectiveMcpConfig,
 			CursorMcpAuthSource:   cursorMcpAuthSource,
 			OpenclawGateway:       openclawGateway,
