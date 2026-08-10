@@ -698,6 +698,30 @@ func TestBuildPromptProjectDesignSystemRepositoryAnalysisUsesMarkerContract(t *t
 		"REPOSITORY_DESIGN_CONTEXT_JSON:",
 		"multica.repository-design-context/v1",
 		"exactly one complete JSON object",
+		`"summary":`,
+		`"suggested_brief":`,
+		`"facts": [`,
+		`"source_files": [`,
+		`"representative_workflows": [`,
+		`"regions": [`,
+		`"visible_text": [`,
+		`"controls": [`,
+		`"behaviors": [`,
+		`"conditions": [`,
+		`"layout": [`,
+		`"appearance": [`,
+		`"assets": [`,
+		`"role":`,
+		`"reference":`,
+		`"source_path":`,
+		`"guardrails": [`,
+		`"commit_sha":`,
+		`"confidence": 0.0`,
+		`"conflicts": [`,
+		"repository-relative paths",
+		"must not be absolute",
+		"`..` traversal",
+		"between 0 and 1 inclusive",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("repository analysis prompt missing %q\n--- prompt ---\n%s", want, prompt)
@@ -715,6 +739,27 @@ func TestBuildPromptProjectDesignSystemRepositoryAnalysisUsesMarkerContract(t *t
 	}
 	if strings.Count(prompt, "REPOSITORY_DESIGN_CONTEXT_JSON:") != 1 {
 		t.Fatalf("repository analysis prompt must mention the final marker exactly once\n--- prompt ---\n%s", prompt)
+	}
+}
+
+func TestBuildPromptProjectDesignSystemRepositoryAnalysisRequiresMatchingType(t *testing.T) {
+	tests := []struct {
+		name    string
+		context json.RawMessage
+	}{
+		{name: "missing type", context: json.RawMessage(`{"operation":"repository_analysis"}`)},
+		{name: "wrong type", context: json.RawMessage(`{"type":"other_task","operation":"repository_analysis"}`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prompt := BuildPrompt(Task{ProjectDesignSystemContext: tt.context}, "opencode")
+			if !strings.Contains(prompt, "$MULTICA_OUTPUT_DIR/DESIGN.md") {
+				t.Fatalf("non-matching context type must use package prompt\n--- prompt ---\n%s", prompt)
+			}
+			if strings.Contains(prompt, "REPOSITORY_DESIGN_CONTEXT_JSON:") {
+				t.Fatalf("non-matching context type must not use repository analysis prompt\n--- prompt ---\n%s", prompt)
+			}
+		})
 	}
 }
 

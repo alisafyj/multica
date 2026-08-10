@@ -76,11 +76,18 @@ func persistProjectDesignSystemRepositoryAnalysisCompletion(
 	if err != nil {
 		return db.ProjectDesignSystem{}, fmt.Errorf("load repository analysis input snapshot: %w", err)
 	}
-	var input projectDesignSystemInputSnapshot
+	var input map[string]json.RawMessage
 	if err := json.Unmarshal(system.InputSnapshot, &input); err != nil {
 		return db.ProjectDesignSystem{}, fmt.Errorf("decode repository analysis input snapshot: %w", err)
 	}
-	input.RepositoryAnalysis = &prepared.Value
+	if input == nil {
+		return db.ProjectDesignSystem{}, errors.New("decode repository analysis input snapshot: expected JSON object")
+	}
+	repositoryAnalysisJSON, err := json.Marshal(prepared.Value)
+	if err != nil {
+		return db.ProjectDesignSystem{}, fmt.Errorf("encode repository analysis value: %w", err)
+	}
+	input["repository_analysis"] = repositoryAnalysisJSON
 	inputJSON, err := json.Marshal(input)
 	if err != nil || len(inputJSON) > maxProjectDesignSystemSnapshotBytes {
 		return db.ProjectDesignSystem{}, errors.New("encode repository analysis input snapshot")

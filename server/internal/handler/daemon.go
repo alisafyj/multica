@@ -2006,7 +2006,10 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), analysisErr.Error(), req.SessionID, req.WorkDir, "project_design_system_repository_analysis_invalid_output")
 			if failErr != nil {
 				slog.Warn("project design system repository analysis completion: failed to mark task failed", "task_id", taskID, "error", failErr)
-			} else if failedTask != nil {
+				writeError(w, http.StatusInternalServerError, "failed to fail repository analysis task")
+				return
+			}
+			if failedTask != nil {
 				if err := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); err != nil {
 					slog.Warn("complete task: failed to revoke task tokens after repository analysis failure", "task_id", uuidToString(failedTask.ID), "error", err)
 				}

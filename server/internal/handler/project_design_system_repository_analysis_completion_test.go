@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -31,6 +32,16 @@ func TestCompleteProjectDesignSystemRepositoryAnalysisPersistsValidatedContext(t
 		}},
 	}
 	beforeJSON := setProjectDesignSystemInputSnapshotForTest(t, fixture.System.ID, before)
+	var beforeDocument map[string]json.RawMessage
+	if err := json.Unmarshal(beforeJSON, &beforeDocument); err != nil {
+		t.Fatalf("decode input snapshot document: %v", err)
+	}
+	beforeDocument["future_input_contract"] = json.RawMessage(`{"enabled":true,"mode":"preserve"}`)
+	beforeWithSentinel, err := json.Marshal(beforeDocument)
+	if err != nil {
+		t.Fatalf("marshal input snapshot sentinel: %v", err)
+	}
+	beforeJSON = setProjectDesignSystemRawInputSnapshotForTest(t, fixture.System.ID, beforeWithSentinel)
 
 	analysis := projectdesignsystem.RepositoryDesignContext{
 		SchemaVersion:  projectdesignsystem.RepositoryDesignContextSchemaVersion,
@@ -96,7 +107,67 @@ func TestCompleteProjectDesignSystemRepositoryAnalysisPersistsValidatedContext(t
 	if len(storedAnalysis.SourceFiles) != 1 || storedAnalysis.SourceFiles[0].Path != "apps/web/customer/page.tsx" || storedAnalysis.SourceFiles[0].Kind != "page" {
 		t.Fatalf("stored source files were not normalized: %+v", storedAnalysis.SourceFiles)
 	}
+	var originalDocument map[string]json.RawMessage
+	var storedDocument map[string]json.RawMessage
+	if err := json.Unmarshal(beforeJSON, &originalDocument); err != nil {
+		t.Fatalf("decode original input document: %v", err)
+	}
+	if err := json.Unmarshal(system.InputSnapshot, &storedDocument); err != nil {
+		t.Fatalf("decode stored input document: %v", err)
+	}
+	if !bytes.Equal(storedDocument["future_input_contract"], originalDocument["future_input_contract"]) {
+		t.Fatalf("future input field changed: got %s want %s", storedDocument["future_input_contract"], originalDocument["future_input_contract"])
+	}
 	assertNoProjectDesignSystemPackages(t, queries, fixture.System.ID)
+}
+
+func TestCompleteProjectDesignSystemRepositoryAnalysisReturnsServerErrorWhenFailTaskRollsBack(t *testing.T) {
+	fixture := createProjectDesignSystemCompletionFixture(t, service.ProjectDesignSystemRepositoryAnalysis)
+	queries := db.New(testPool)
+	before, err := queries.GetProjectDesignSystemInWorkspace(context.Background(), db.GetProjectDesignSystemInWorkspaceParams{
+		ID: fixture.System.ID, WorkspaceID: parseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatalf("load active project design system: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_task_queue
+		SET context = jsonb_set(context, '{workspace_id}', to_jsonb($1::text))
+		WHERE id = $2
+	`, "invalid-workspace", fixture.TaskID); err != nil {
+		t.Fatalf("invalidate repository analysis workspace context: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+fixture.TaskID+"/complete", map[string]any{"output": `{}`}, "invalid-workspace", "project-design-system-test")
+	req = withURLParam(req, "taskId", fixture.TaskID)
+	testHandler.CompleteTask(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("CompleteTask status = %d, want 500: %s", w.Code, w.Body.String())
+	}
+	task, err := queries.GetAgentTask(context.Background(), parseUUID(fixture.TaskID))
+	if err != nil {
+		t.Fatalf("load retryable repository analysis task: %v", err)
+	}
+	if task.Status != "running" {
+		t.Fatalf("task status = %q, want running", task.Status)
+	}
+	system, err := queries.GetProjectDesignSystemInWorkspace(context.Background(), db.GetProjectDesignSystemInWorkspaceParams{
+		ID: fixture.System.ID, WorkspaceID: parseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatalf("load retryable project design system: %v", err)
+	}
+	if !system.ActiveTaskID.Valid || uuidToString(system.ActiveTaskID) != fixture.TaskID ||
+		!system.ActiveOperation.Valid || system.ActiveOperation.String != string(service.ProjectDesignSystemRepositoryAnalysis) {
+		t.Fatalf("repository analysis operation is not retryable: %+v", system)
+	}
+	if system.LastError != nil {
+		t.Fatalf("last_error changed after rolled-back failure: %s", system.LastError)
+	}
+	if !bytes.Equal(system.InputSnapshot, before.InputSnapshot) {
+		t.Fatalf("input snapshot changed after rolled-back failure: got %s want %s", system.InputSnapshot, before.InputSnapshot)
+	}
 }
 
 func TestCompleteProjectDesignSystemRepositoryAnalysisRejectsInvalidOutput(t *testing.T) {
@@ -156,6 +227,11 @@ func setProjectDesignSystemInputSnapshotForTest(t *testing.T, systemID pgtype.UU
 	if err != nil {
 		t.Fatalf("marshal input snapshot: %v", err)
 	}
+	return setProjectDesignSystemRawInputSnapshotForTest(t, systemID, encoded)
+}
+
+func setProjectDesignSystemRawInputSnapshotForTest(t *testing.T, systemID pgtype.UUID, encoded []byte) []byte {
+	t.Helper()
 	if _, err := testPool.Exec(context.Background(), `UPDATE project_design_system SET input_snapshot = $1 WHERE id = $2`, encoded, systemID); err != nil {
 		t.Fatalf("set input snapshot: %v", err)
 	}

@@ -39,9 +39,12 @@ func BuildPrompt(task Task, provider string) string {
 	}
 	if len(task.ProjectDesignSystemContext) > 0 {
 		var context struct {
+			Type      string `json:"type"`
 			Operation string `json:"operation"`
 		}
-		if json.Unmarshal(task.ProjectDesignSystemContext, &context) == nil && context.Operation == "repository_analysis" {
+		if json.Unmarshal(task.ProjectDesignSystemContext, &context) == nil &&
+			context.Type == "project_design_system_task" &&
+			context.Operation == "repository_analysis" {
 			return buildProjectDesignSystemRepositoryAnalysisPrompt()
 		}
 		return buildProjectDesignSystemPrompt()
@@ -63,6 +66,62 @@ func buildProjectDesignSystemRepositoryAnalysisPrompt() string {
 	b.WriteString("- Do not create generated package files or any other output files.\n")
 	b.WriteString("- Do not delegate, spawn sub-agents, or leave follow-up work.\n")
 	b.WriteString("- Do not call external design services or Multica write commands.\n")
+	b.WriteString("- All source paths in facts, source files, workflows, assets, and conflicts must be repository-relative paths. They must not be absolute and must not contain `..` traversal.\n")
+	b.WriteString("- Every confidence value must be between 0 and 1 inclusive.\n\n")
+	b.WriteString("Use this canonical JSON template, preserving every top-level and nested field:\n")
+	b.WriteString(`{
+  "schema_version": "multica.repository-design-context/v1",
+  "summary": "Repository-backed product and design summary",
+  "suggested_brief": "Suggested design-system brief",
+  "facts": [
+    {
+      "kind": "layout",
+      "label": "Observed pattern",
+      "value": "Evidence-backed value",
+      "source_paths": ["path/to/source"],
+      "confidence": 0.0
+    }
+  ],
+  "source_files": [
+    {"path": "path/to/source", "kind": "page"}
+  ],
+  "representative_workflows": [
+    {
+      "name": "Workflow name",
+      "purpose": "Workflow purpose",
+      "source_paths": ["path/to/source"],
+      "confidence": 0.0,
+      "regions": [
+        {
+          "name": "Region name",
+          "purpose": "Region purpose",
+          "visible_text": ["Visible text"],
+          "controls": ["Control"],
+          "behaviors": ["Behavior"],
+          "conditions": ["Condition"],
+          "layout": ["Layout observation"],
+          "appearance": ["Appearance observation"],
+          "assets": [
+            {"role": "Asset role", "reference": "path/to/asset", "source_path": "path/to/source"}
+          ]
+        }
+      ],
+      "guardrails": ["Evidence-backed guardrail"]
+    }
+  ],
+  "commit_sha": "",
+  "confidence": 0.0,
+  "conflicts": [
+    {
+      "label": "Conflict label",
+      "repository_fact": "Observed repository fact",
+      "user_intent": "Conflicting user intent",
+      "source_paths": ["path/to/source"]
+    }
+  ]
+}
+
+`)
 	b.WriteString("- Your final response must contain no markdown fence or leading or trailing prose. Return the final marker `REPOSITORY_DESIGN_CONTEXT_JSON:` followed by exactly one complete JSON object using schema_version `multica.repository-design-context/v1`.\n")
 	return b.String()
 }
