@@ -1001,7 +1001,7 @@ func (h *Handler) loadProjectDesignSystemBasePackage(
 		return nil, projectdesignsystem.ValidatedPackage{}, false, nil
 	}
 	if selected.PackageSchema == projectdesignsystem.PackageSchemaV2 {
-		manifest, err := h.loadNativeProjectDesignSystemPackageManifest(ctx, selected)
+		manifest, err := h.loadNativeProjectDesignSystemPackageManifest(ctx, system, selected)
 		if err != nil {
 			return nil, projectdesignsystem.ValidatedPackage{}, false, err
 		}
@@ -1238,12 +1238,9 @@ func marshalProjectDesignSystemTaskContext(
 	return json.Marshal(taskContext)
 }
 
-// projectDesignSystemBaseDigest returns the SHA-256 hex digest of the
-// selected base package. For native base packages the digest is the
-// integrity_sha256 field already stamped onto the package by the
-// V2 upload path; for Open Design base packages the digest is the
-// content_digest carried by the reference envelope (with the
-// "sha256:" prefix stripped).
+// projectDesignSystemBaseDigest returns the V2 binding digest of the selected
+// base package. Package rows store integrity_sha256 as bare hex, while task
+// contexts and manifests use the required sha256: prefixed representation.
 func projectDesignSystemBaseDigest(basePackage json.RawMessage) (string, error) {
 	if len(basePackage) == 0 {
 		return "", nil
@@ -1259,7 +1256,7 @@ func projectDesignSystemBaseDigest(basePackage json.RawMessage) (string, error) 
 			if err := json.Unmarshal(basePackage, &reference); err != nil {
 				return "", err
 			}
-			return strings.TrimPrefix(reference.ContentDigest, "sha256:"), nil
+			return reference.ContentDigest, nil
 		}
 	}
 	if rawDigest, ok := base["integrity_sha256"]; ok {
@@ -1267,7 +1264,7 @@ func projectDesignSystemBaseDigest(basePackage json.RawMessage) (string, error) 
 		if err := json.Unmarshal(rawDigest, &digest); err != nil {
 			return "", err
 		}
-		return digest, nil
+		return "sha256:" + digest, nil
 	}
 	return "", nil
 }
@@ -1561,7 +1558,7 @@ func (h *Handler) projectDesignSystemResponse(ctx context.Context, system db.Pro
 		response.Content.IntegritySHA256 = selected.IntegritySha256
 		response.Content.PackageSchema = selected.PackageSchema
 		if selected.PackageSchema == projectdesignsystem.PackageSchemaV2 {
-			manifest, err := h.loadNativeProjectDesignSystemPackageManifest(ctx, selected)
+			manifest, err := h.loadNativeProjectDesignSystemPackageManifest(ctx, system, selected)
 			if err != nil {
 				response.LastError = json.RawMessage(`{"code":"native_package_invalid"}`)
 			} else {
@@ -1570,6 +1567,21 @@ func (h *Handler) projectDesignSystemResponse(ctx context.Context, system db.Pro
 				response.Content.Locators = manifest.Locators
 				response.Content.PreviewTargets = manifest.PreviewTargets
 				response.Content.SelectionEnabled = true
+			}
+		} else if isOpenDesignProjectDesignSystemPackage(selected) {
+			loaded, err := h.loadOpenDesignArchivePreviewPackage(ctx, h.Queries, system, selected)
+			if err != nil {
+				response.LastError = json.RawMessage(`{"code":"open_design_package_invalid"}`)
+			} else if artifacts, artifactErr := opendesign.ExtractDraftCompatibilityArtifacts(loaded.Archive, loaded.ArtifactIndex, loaded.ContentDigest); artifactErr != nil {
+				response.LastError = json.RawMessage(`{"code":"open_design_package_invalid"}`)
+			} else if targets, targetErr := opendesign.DiscoverPreviewTargets(loaded.Archive); targetErr != nil {
+				response.LastError = json.RawMessage(`{"code":"open_design_package_invalid"}`)
+			} else {
+				response.Content.PreviewHTML = artifacts.ComponentsHTML
+				response.Content.PreviewTargets = make([]projectdesignsystem.PreviewTarget, 0, len(targets))
+				for _, target := range targets {
+					response.Content.PreviewTargets = append(response.Content.PreviewTargets, projectdesignsystem.PreviewTarget{ID: target.ID, Kind: string(target.Kind), Path: target.Path})
+				}
 			}
 		} else {
 			validated, err := projectdesignsystem.Validate(projectdesignsystem.ArtifactInput{

@@ -24,8 +24,6 @@ import (
 
 const nativePackagePreviewSchema = "multica.project-design-system-package-preview/v1"
 
-const nativePackagePreviewBridgeScript = "(()=>{document.addEventListener(\"click\",event=>{const target=event.target;const node=target instanceof Element?target.closest(\"[data-design-node-id]\"):null;if(!node)return;event.preventDefault();parent.postMessage({type:\"multica:project-design-system-select\",id:node.dataset.designNodeId},\"*\")})})();"
-
 type projectDesignSystemPackagePreviewResponse struct {
 	Schema                  string                              `json:"schema"`
 	Slot                    string                              `json:"slot"`
@@ -58,7 +56,7 @@ func (h *Handler) GetProjectDesignSystemPackagePreview(w http.ResponseWriter, r 
 	}
 
 	if selected.PackageSchema == projectdesignsystem.PackageSchemaV2 {
-		manifest, err := h.loadNativeProjectDesignSystemPackageManifest(r.Context(), selected)
+		manifest, err := h.loadNativeProjectDesignSystemPackageManifest(r.Context(), system, selected)
 		if err != nil {
 			writeProjectDesignSystemError(w, http.StatusConflict, "native_package_preview_unavailable", "native design package preview is unavailable")
 			return
@@ -109,7 +107,7 @@ func (h *Handler) GetProjectDesignSystemPackagePreviewFile(w http.ResponseWriter
 		h.GetProjectDesignSystemArchivePreviewFile(w, r)
 		return
 	}
-	manifest, archive, err := h.loadNativeProjectDesignSystemPackageArchive(r.Context(), selected)
+	manifest, archive, err := h.loadNativeProjectDesignSystemPackageArchive(r.Context(), system, selected)
 	if err != nil {
 		writeProjectDesignSystemError(w, http.StatusConflict, "native_package_preview_unavailable", "native design package preview is unavailable")
 		return
@@ -130,8 +128,9 @@ func (h *Handler) GetProjectDesignSystemPackagePreviewFile(w http.ResponseWriter
 		return
 	}
 	if nativePackagePreviewTarget(manifest.PreviewTargets, artifactPath) {
-		artifact = injectNativePackagePreviewBridge(artifact)
-		w.Header().Set("Content-Security-Policy", nativePackagePreviewCSP())
+		accessToken := chi.URLParam(r, "accessToken")
+		artifact = injectNativePackagePreviewBridge(artifact, accessToken)
+		w.Header().Set("Content-Security-Policy", nativePackagePreviewCSP(accessToken))
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(artifact)))
@@ -189,7 +188,7 @@ func (h *Handler) DownloadProjectDesignSystemBasePackage(w http.ResponseWriter, 
 		writeNativeBasePackageUnavailable(w)
 		return
 	}
-	manifest, archive, err := h.loadNativeProjectDesignSystemPackageArchive(r.Context(), selected)
+	manifest, archive, err := h.loadNativeProjectDesignSystemPackageArchive(r.Context(), system, selected)
 	if err != nil || manifest.ContentDigest != "sha256:"+reference.IntegritySHA256 {
 		writeNativeBasePackageUnavailable(w)
 		return
@@ -221,22 +220,30 @@ func (h *Handler) loadProjectDesignSystemPreviewPackage(ctx context.Context, sys
 	return db.ProjectDesignSystemPackage{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "package_preview_unavailable", message: "design package preview is unavailable"}
 }
 
-func (h *Handler) loadNativeProjectDesignSystemPackageManifest(_ context.Context, selected db.ProjectDesignSystemPackage) (projectdesignsystem.ManifestV2, error) {
-	if selected.PackageSchema != projectdesignsystem.PackageSchemaV2 || !selected.SourceTaskID.Valid || !selected.ArchiveObjectKey.Valid || selected.ArchiveObjectKey.String == "" || !validNativePackageDigest("sha256:"+selected.IntegritySha256) {
+func (h *Handler) loadNativeProjectDesignSystemPackageManifest(ctx context.Context, system db.ProjectDesignSystem, selected db.ProjectDesignSystemPackage) (projectdesignsystem.ManifestV2, error) {
+	expected, err := h.expectedNativeProjectDesignSystemPackageBinding(ctx, system, selected)
+	if err != nil {
+		return projectdesignsystem.ManifestV2{}, err
+	}
+	if selected.PackageSchema != projectdesignsystem.PackageSchemaV2 || !selected.ArchiveObjectKey.Valid || selected.ArchiveObjectKey.String == "" || !validNativePackageDigest("sha256:"+selected.IntegritySha256) {
 		return projectdesignsystem.ManifestV2{}, errors.New("native package metadata is invalid")
 	}
 	var manifest projectdesignsystem.ManifestV2
 	var index []projectdesignsystem.ArtifactIndexEntry
 	if json.Unmarshal(selected.Manifest, &manifest) != nil || json.Unmarshal(selected.ArtifactIndex, &index) != nil ||
 		manifest.SchemaVersion != projectdesignsystem.PackageSchemaV2 || manifest.ContentDigest != "sha256:"+selected.IntegritySha256 ||
-		!reflect.DeepEqual(manifest.Files, index) {
+		manifest.Binding != expected || !reflect.DeepEqual(manifest.Files, index) {
 		return projectdesignsystem.ManifestV2{}, errors.New("native package manifest is invalid")
 	}
 	return manifest, nil
 }
 
-func (h *Handler) loadNativeProjectDesignSystemPackageArchive(ctx context.Context, selected db.ProjectDesignSystemPackage) (projectdesignsystem.ManifestV2, []byte, error) {
-	manifest, err := h.loadNativeProjectDesignSystemPackageManifest(ctx, selected)
+func (h *Handler) loadNativeProjectDesignSystemPackageArchive(ctx context.Context, system db.ProjectDesignSystem, selected db.ProjectDesignSystemPackage) (projectdesignsystem.ManifestV2, []byte, error) {
+	expected, err := h.expectedNativeProjectDesignSystemPackageBinding(ctx, system, selected)
+	if err != nil {
+		return projectdesignsystem.ManifestV2{}, nil, err
+	}
+	manifest, err := h.loadNativeProjectDesignSystemPackageManifest(ctx, system, selected)
 	if err != nil {
 		return projectdesignsystem.ManifestV2{}, nil, err
 	}
@@ -247,10 +254,64 @@ func (h *Handler) loadNativeProjectDesignSystemPackageArchive(ctx context.Contex
 	if err != nil {
 		return projectdesignsystem.ManifestV2{}, nil, err
 	}
-	if _, err := projectdesignsystem.ReadV2Artifact(archive, manifest.Files, "DESIGN.md"); err != nil {
+	validated, err := projectdesignsystem.ValidateV2Archive(archive, expected)
+	if err != nil || !reflect.DeepEqual(validated.Manifest, manifest) ||
+		validated.Manifest.ContentDigest != "sha256:"+selected.IntegritySha256 ||
+		!reflect.DeepEqual(validated.Manifest.Files, manifest.Files) {
+		if err == nil {
+			err = errors.New("native package archive evidence is invalid")
+		}
 		return projectdesignsystem.ManifestV2{}, nil, err
 	}
 	return manifest, archive, nil
+}
+
+// expectedNativeProjectDesignSystemPackageBinding binds persisted package
+// evidence to its immutable source task. It deliberately does not recompute
+// an input digest from the current system row: later edits must not make a
+// historically valid package unreadable.
+func (h *Handler) expectedNativeProjectDesignSystemPackageBinding(ctx context.Context, system db.ProjectDesignSystem, selected db.ProjectDesignSystemPackage) (projectdesignsystem.PackageBinding, error) {
+	if selected.PackageSchema != projectdesignsystem.PackageSchemaV2 || !selected.SourceTaskID.Valid ||
+		uuidToString(selected.DesignSystemID) != uuidToString(system.ID) || !selected.AgentID.Valid {
+		return projectdesignsystem.PackageBinding{}, errors.New("native package ownership is invalid")
+	}
+	task, err := h.Queries.GetAgentTask(ctx, selected.SourceTaskID)
+	if err != nil {
+		return projectdesignsystem.PackageBinding{}, errors.New("native package source task is unavailable")
+	}
+	var taskContext service.ProjectDesignSystemTaskContext
+	if json.Unmarshal(task.Context, &taskContext) != nil || taskContext.Type != service.ProjectDesignSystemTaskContextType ||
+		taskContext.PackageSchema != projectdesignsystem.PackageSchemaV2 || !validNativePackageOperation(taskContext.Operation) {
+		return projectdesignsystem.PackageBinding{}, errors.New("native package task context is invalid")
+	}
+	if taskContext.WorkspaceID != uuidToString(system.WorkspaceID) || taskContext.ProjectID != uuidToString(system.ProjectID) ||
+		taskContext.ProjectDesignSystemID != uuidToString(system.ID) || taskContext.AgentID != uuidToString(task.AgentID) ||
+		taskContext.AgentID != uuidToString(selected.AgentID) {
+		return projectdesignsystem.PackageBinding{}, errors.New("native package task ownership is invalid")
+	}
+	if !validNativePackageDigest(taskContext.InputSnapshotSHA256) || !selected.InputSnapshotSha256.Valid ||
+		selected.InputSnapshotSha256.String != taskContext.InputSnapshotSHA256 {
+		return projectdesignsystem.PackageBinding{}, errors.New("native package source binding is invalid")
+	}
+	baseDigest := taskContext.BasePackageSHA256
+	if taskContext.Operation == service.ProjectDesignSystemGenerate {
+		if baseDigest != "" || (selected.BasePackageSha256.Valid && selected.BasePackageSha256.String != "") {
+			return projectdesignsystem.PackageBinding{}, errors.New("native generate package has a base digest")
+		}
+		baseDigest = ""
+	} else if !validNativePackageDigest(baseDigest) || !selected.BasePackageSha256.Valid || selected.BasePackageSha256.String != strings.TrimPrefix(baseDigest, "sha256:") {
+		return projectdesignsystem.PackageBinding{}, errors.New("native package base binding is invalid")
+	}
+	return projectdesignsystem.PackageBinding{
+		WorkspaceID:         taskContext.WorkspaceID,
+		ProjectID:           taskContext.ProjectID,
+		DesignSystemID:      taskContext.ProjectDesignSystemID,
+		TaskID:              uuidToString(task.ID),
+		AgentID:             taskContext.AgentID,
+		Operation:           string(taskContext.Operation),
+		InputSnapshotSHA256: taskContext.InputSnapshotSHA256,
+		BasePackageSHA256:   baseDigest,
+	}, nil
 }
 
 func nativePackagePreviewTarget(targets []projectdesignsystem.PreviewTarget, artifactPath string) bool {
@@ -289,15 +350,19 @@ func nativePackagePreviewContentType(artifactPath string) (string, bool) {
 	}
 }
 
-func nativePackagePreviewCSP() string {
-	digest := sha256.Sum256([]byte(nativePackagePreviewBridgeScript))
+func nativePackagePreviewBridgeScript(capability string) string {
+	return "(()=>{const capability=" + strconv.Quote(capability) + ";document.addEventListener(\"click\",event=>{const target=event.target;const node=target instanceof Element?target.closest(\"[data-design-node-id]\"):null;if(!node)return;event.preventDefault();parent.postMessage({type:\"multica:project-design-system-select\",id:node.dataset.designNodeId,capability},\"*\")})})();"
+}
+
+func nativePackagePreviewCSP(capability string) string {
+	digest := sha256.Sum256([]byte(nativePackagePreviewBridgeScript(capability)))
 	return "default-src 'self' data:; script-src 'sha256-" + base64.StdEncoding.EncodeToString(digest[:]) + "'; connect-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"
 }
 
-func injectNativePackagePreviewBridge(html []byte) []byte {
+func injectNativePackagePreviewBridge(html []byte, capability string) []byte {
 	body := string(html)
 	const link = `<link rel="stylesheet" href="tokens.css">`
-	script := "<script>" + nativePackagePreviewBridgeScript + "</script>"
+	script := "<script>" + nativePackagePreviewBridgeScript(capability) + "</script>"
 	if index := strings.Index(body, "</head>"); index >= 0 {
 		body = body[:index] + link + body[index:]
 	} else {

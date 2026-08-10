@@ -44,6 +44,15 @@ function archiveTargetLabel(target: ProjectDesignSystemPreviewTarget): string {
   }
 }
 
+function archiveTargetCapability(target: ArchivePreviewTarget | undefined): string | null {
+  if (!target) return null;
+  const baseURL = typeof window === "undefined" ? "http://localhost" : window.location.origin;
+  const pathname = new URL(target.url, baseURL).pathname.split("/").filter(Boolean);
+  const filesIndex = pathname.indexOf("files");
+  if (filesIndex < 1) return null;
+  return pathname[filesIndex - 1] || null;
+}
+
 function previewViewport(platform: string): { label: string; width: number; mobile: boolean } {
   if (platform.trim().toLowerCase() === "mobile") {
     return { label: "移动端", width: 390, mobile: true };
@@ -138,6 +147,7 @@ export function ProjectDesignSystemPreview({
     [archiveTargets, preferredArchiveTarget, selectedArchiveKey],
   );
   const activeArchiveKey = selectedArchiveTarget ? archiveTargetKey(selectedArchiveTarget) : "";
+  const archiveCapability = archiveTargetCapability(selectedArchiveTarget);
 
   const verificationKey = `${integritySha256}:${verificationAttempt}`;
   const finishVerification = useCallback((receipt: ProjectDesignSystemPreviewVerificationReceipt) => {
@@ -193,8 +203,14 @@ export function ProjectDesignSystemPreview({
     const handleMessage = (event: MessageEvent<unknown>) => {
       if (event.source !== frameRef.current?.contentWindow) return;
       if (!event.data || typeof event.data !== "object" || Array.isArray(event.data)) return;
-      const message = event.data as { type?: unknown; id?: unknown };
-      if (selectionEnabled && message.type === SELECTION_MESSAGE && typeof message.id === "string") {
+      const message = event.data as { type?: unknown; id?: unknown; capability?: unknown };
+      if (
+        selectionEnabled &&
+        archiveCapability &&
+        message.type === SELECTION_MESSAGE &&
+        typeof message.id === "string" &&
+        message.capability === archiveCapability
+      ) {
         const locator = locatorById.get(message.id);
         if (!locator) return;
         onSelect({ kind: locator.kind, id: locator.id });
@@ -207,7 +223,7 @@ export function ProjectDesignSystemPreview({
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [finishVerification, integritySha256, locatorById, onSelect, packageSchema, selectedArchiveTarget, selectionEnabled]);
+  }, [archiveCapability, finishVerification, integritySha256, locatorById, onSelect, packageSchema, selectedArchiveTarget, selectionEnabled]);
 
   if ((!selectedArchiveTarget && !previewHtml.trim()) || loadFailed) {
     return (

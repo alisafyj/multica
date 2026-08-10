@@ -77,7 +77,10 @@ func TestCreateProjectDesignSystemRequiresPlatformAndBrief(t *testing.T) {
 	}
 }
 
-func TestCreateProjectDesignSystemSnapshotsExactInputs(t *testing.T) {
+func TestCreateProjectDesignSystemAlwaysEnqueuesNativeV2WhenOpenDesignFlagIsTrue(t *testing.T) {
+	previousOpenDesign := testHandler.cfg.OpenDesignEnabled
+	testHandler.cfg.OpenDesignEnabled = true
+	t.Cleanup(func() { testHandler.cfg.OpenDesignEnabled = previousOpenDesign })
 	projectID := createProjectForDesignTest(t, "Snapshot project")
 	if _, err := testPool.Exec(context.Background(), `UPDATE project SET description = $2 WHERE id = $1`, projectID, "Current CRM for service teams"); err != nil {
 		t.Fatalf("update project description: %v", err)
@@ -165,6 +168,9 @@ func TestCreateProjectDesignSystemSnapshotsExactInputs(t *testing.T) {
 	}
 	if taskContext["type"] != "project_design_system_task" || taskContext["operation"] != "generate" {
 		t.Fatalf("task discriminator = %#v", taskContext)
+	}
+	if taskContext["package_schema"] != projectdesignsystem.PackageSchemaV2 || taskContext["open_design_run"] != nil {
+		t.Fatalf("new task did not use the native V2 contract: %#v", taskContext)
 	}
 	if taskContext["agent_id"] != agentID || taskContext["project_id"] != projectID || taskContext["project_design_system_id"] != created.ID {
 		t.Fatalf("task identity snapshot = %#v", taskContext)
@@ -346,7 +352,7 @@ func TestGetProjectDesignSystemReturnsUnestablishedAfterFailedFirstRun(t *testin
 	}
 }
 
-func TestAdjustProjectDesignSystemValidatesScopeAgainstManifest(t *testing.T) {
+func TestAdjustHistoricalV1PackageUsesLegacyReadOnlyBase(t *testing.T) {
 	projectID := createProjectForDesignTest(t, "Scoped adjustment project")
 	agentID, _ := createProjectDesignSystemAgent(t, "online")
 	input := projectDesignSystemInputSnapshot{
@@ -404,7 +410,7 @@ func TestAdjustProjectDesignSystemValidatesScopeAgainstManifest(t *testing.T) {
 	}
 }
 
-func TestRegenerateProjectDesignSystemPreservesCurrentPackage(t *testing.T) {
+func TestRegenerateProjectDesignSystemBindsCurrentBaseDigest(t *testing.T) {
 	projectID := createProjectForDesignTest(t, "Regeneration project")
 	agentID, _ := createProjectDesignSystemAgent(t, "online")
 	input := projectDesignSystemInputSnapshot{
@@ -455,6 +461,9 @@ func TestRegenerateProjectDesignSystemPreservesCurrentPackage(t *testing.T) {
 	}
 	if taskContext["operation"] != "regenerate" || taskContext["platform"] != "mobile" || taskContext["brief"] != "A touch-first field operations system." {
 		t.Fatalf("regenerate task context = %#v", taskContext)
+	}
+	if taskContext["base_package_sha256"] != "sha256:"+pkg.Manifest.Digest {
+		t.Fatalf("regenerate base digest = %#v, want %q", taskContext["base_package_sha256"], "sha256:"+pkg.Manifest.Digest)
 	}
 	references := taskContext["references"].([]any)
 	if len(references) != 1 || references[0].(map[string]any)["value"] != "#2463EB" {
@@ -623,8 +632,8 @@ func TestMarshalProjectDesignSystemTaskContextPinsV2SchemaAndDigests(t *testing.
 	if got, _ := adjusted["input_snapshot_sha256"].(string); got != expectedInputDigest {
 		t.Fatalf("adjust input_snapshot_sha256 = %q, want %q", got, expectedInputDigest)
 	}
-	if got, _ := adjusted["base_package_sha256"].(string); got != "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2" {
-		t.Fatalf("adjust base_package_sha256 = %q, want integrity_sha256 from base", got)
+	if got, _ := adjusted["base_package_sha256"].(string); got != "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2" {
+		t.Fatalf("adjust base_package_sha256 = %q, want sha256-prefixed integrity from base", got)
 	}
 	if _, present := adjusted["open_design_run"]; present {
 		t.Fatalf("adjust must not synthesize open_design_run, got %v", adjusted["open_design_run"])

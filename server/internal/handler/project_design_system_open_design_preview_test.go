@@ -17,7 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 )
 
-func TestGetProjectDesignSystemArchivePreviewReturnsVerifiedTargets(t *testing.T) {
+func TestHistoricalV1AndOpenDesignPackagesRemainReadable(t *testing.T) {
 	fixture := preparePassedOpenDesignPreviewDraft(t, "Open Design archive preview manifest")
 
 	response := performProjectDesignSystemArchivePreviewRequest(t, fixture.SystemID)
@@ -110,7 +110,7 @@ func TestGetProjectDesignSystemArchivePreviewRejectsUnverifiedPackage(t *testing
 	assertProjectDesignSystemErrorCode(t, response, http.StatusConflict, "open_design_preview_unavailable")
 }
 
-func TestSaveProjectDesignSystemPromotesVerifiedOpenDesignArchive(t *testing.T) {
+func TestSaveAndDiscardProjectDesignSystemPreserveNativeArchiveMetadata(t *testing.T) {
 	fixture := preparePassedOpenDesignPreviewDraft(t, "Open Design archive save")
 	var draftDesignMD, draftTokensCSS, draftComponentsHTML string
 	var draftManifest, draftValidation []byte
