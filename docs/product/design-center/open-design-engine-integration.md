@@ -1,9 +1,11 @@
-# Open Design 引擎接入与迁移方案
+# Open Design 引擎接入与迁移方案（历史）
 
-> 状态：`confirmed`
+> 状态：`superseded`
 > 日期：2026-07-31
 > 当前范围：设计体系创建、调整、预览和保存
 > 上游基线：`open-design-v0.16.1` / `276b4d8e970bc143d7ad060181a89a834e3d9caf`
+
+> 2026-08-05 路线更新：本文记录的固定 Worker、Runtime 和上游直接运行方案不再是产品目标。Open Design 继续作为核心产品和能力语义参考，Multica 原生实现对应设计引擎，见 [Multica 原生设计引擎产品与技术方案](../../superpowers/specs/2026-08-05-multica-native-design-engine-design.md) 和 `DC-039`。本文的实验结果继续作为隔离工作空间、失败模型、Audit、Preview 和草稿门禁证据，不得据此继续接入 Worker。
 
 本文是 `P-009` / `DC-037` 的目标技术方案。它替代 Multica 参考 Open Design 后自行实现生成、Token 推导、组件识别、Package Audit 和 UI Kit 的路线，但不改变 Multica 已确认的 Project、Issue、Agent、草稿和保存产品语义。
 

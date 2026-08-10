@@ -666,11 +666,11 @@ func TestBuildPromptProjectDesignSystemGenerate(t *testing.T) {
 	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "generate"), "opencode")
 	for _, want := range []string{
 		"design system designer",
-		".agent_context/project_design_system/task.json",
-		"user brief as the primary intent",
-		"Open Design",
-		"one coherent direction",
-		"components.html is a real static UI Kit",
+		".agent_context/project_design_system/context/task.json",
+		"reference/index.json",
+		"one Agent session",
+		"single coherent",
+		"static token-backed UI Kit",
 		"data-design-node-id",
 		"$MULTICA_OUTPUT_DIR/DESIGN.md",
 		"Do not paste file contents into the final response",
@@ -682,6 +682,84 @@ func TestBuildPromptProjectDesignSystemGenerate(t *testing.T) {
 	}
 	if strings.Contains(prompt, "Calm CRM") {
 		t.Fatal("project design system prompt must read task.json instead of embedding the full context")
+	}
+}
+
+func TestBuildPromptProjectDesignSystemRepositoryAnalysisUsesMarkerContract(t *testing.T) {
+	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "repository_analysis"), "opencode")
+	for _, want := range []string{
+		"provided project repository and resources",
+		"read-only",
+		"Do not modify the repository",
+		"Do not create generated package files",
+		"Do not delegate",
+		"external design services",
+		"Multica write commands",
+		"REPOSITORY_DESIGN_CONTEXT_JSON:",
+		"multica.repository-design-context/v1",
+		"exactly one complete JSON object",
+		`"summary":`,
+		`"suggested_brief":`,
+		`"facts": [`,
+		`"source_files": [`,
+		`"representative_workflows": [`,
+		`"regions": [`,
+		`"visible_text": [`,
+		`"controls": [`,
+		`"behaviors": [`,
+		`"conditions": [`,
+		`"layout": [`,
+		`"appearance": [`,
+		`"assets": [`,
+		`"role":`,
+		`"reference":`,
+		`"source_path":`,
+		`"guardrails": [`,
+		`"commit_sha":`,
+		`"confidence": 0.0`,
+		`"conflicts": [`,
+		"repository-relative paths",
+		"must not be absolute",
+		"`..` traversal",
+		"between 0 and 1 inclusive",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("repository analysis prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{
+		"$MULTICA_OUTPUT_DIR",
+		"DESIGN.md",
+		"tokens.css",
+		"components.html",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("repository analysis prompt must not mention %q\n--- prompt ---\n%s", forbidden, prompt)
+		}
+	}
+	if strings.Count(prompt, "REPOSITORY_DESIGN_CONTEXT_JSON:") != 1 {
+		t.Fatalf("repository analysis prompt must mention the final marker exactly once\n--- prompt ---\n%s", prompt)
+	}
+}
+
+func TestBuildPromptProjectDesignSystemRepositoryAnalysisRequiresMatchingType(t *testing.T) {
+	tests := []struct {
+		name    string
+		context json.RawMessage
+	}{
+		{name: "missing type", context: json.RawMessage(`{"operation":"repository_analysis"}`)},
+		{name: "wrong type", context: json.RawMessage(`{"type":"other_task","operation":"repository_analysis"}`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prompt := BuildPrompt(Task{ProjectDesignSystemContext: tt.context}, "opencode")
+			if !strings.Contains(prompt, "$MULTICA_OUTPUT_DIR/DESIGN.md") {
+				t.Fatalf("non-matching context type must use package prompt\n--- prompt ---\n%s", prompt)
+			}
+			if strings.Contains(prompt, "REPOSITORY_DESIGN_CONTEXT_JSON:") {
+				t.Fatalf("non-matching context type must not use repository analysis prompt\n--- prompt ---\n%s", prompt)
+			}
+		})
 	}
 }
 
@@ -708,7 +786,7 @@ func TestBuildPromptProjectDesignSystemForbidsDelegationBeforeArtifacts(t *testi
 		"Do not use the `task` tool",
 		"delegate to another specialist",
 		"read back all three output files",
-		"delegated or promised work is not completion",
+		"Delegated or promised work is not completion",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("project design system prompt missing anti-delegation rule %q\n--- prompt ---\n%s", want, prompt)
@@ -719,15 +797,75 @@ func TestBuildPromptProjectDesignSystemForbidsDelegationBeforeArtifacts(t *testi
 func TestBuildPromptProjectDesignSystemAdjustRequiresCompleteReplacement(t *testing.T) {
 	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "adjust"), "opencode")
 	for _, want := range []string{
-		"base/DESIGN.md",
-		"base/tokens.css",
-		"base/components.html",
-		"complete mutually consistent replacement",
-		"even when the requested scope is local",
-		"Never write scripts, event attributes, imports, forms, external embeds",
+		"immutable base directory",
+		"complete replacement",
+		"mutually consistent with each other",
+		"local assets",
+		"No scripts",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("project design system adjustment prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+}
+
+func TestBuildPromptProjectDesignSystemV2UsesEvidenceThenDesignStages(t *testing.T) {
+	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "generate"), "opencode")
+	for _, want := range []string{
+		"evidence",
+		"fact",
+		"conflict",
+		"fallback",
+		"coherent",
+		"semantic Tokens",
+		"source- or brief-supported",
+		"static token-backed UI Kit",
+		"local assets",
+		"Read back",
+		"self-check",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("V2 native agent prompt missing evidence→design stage %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+}
+
+func TestBuildPromptProjectDesignSystemV2RequiresCompleteStaticPackage(t *testing.T) {
+	adjust := BuildPrompt(projectDesignSystemPromptTask(t, "adjust"), "opencode")
+	for _, want := range []string{
+		"complete replacement",
+		"immutable base directory",
+		"Task delegation",
+		"hidden follow-up work",
+		"network-dependent final HTML",
+		"scripts",
+		"invented template residue",
+		"short completion summary",
+		"package files are authoritative",
+	} {
+		if !strings.Contains(adjust, want) {
+			t.Fatalf("V2 adjust prompt missing static-package contract %q\n--- prompt ---\n%s", want, adjust)
+		}
+	}
+	generate := BuildPrompt(projectDesignSystemPromptTask(t, "generate"), "opencode")
+	if !strings.Contains(generate, "no scripts") && !strings.Contains(generate, "scripts") {
+		t.Fatalf("V2 generate prompt must forbid scripts, got:\n%s", generate)
+	}
+}
+
+func TestBuildPromptProjectDesignSystemV2NeverMentionsWorkerRuntimeOrFigmaJSON(t *testing.T) {
+	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "generate"), "opencode")
+	for _, forbidden := range []string{
+		"Open Design",
+		"open-design",
+		"open_design",
+		"Figma",
+		"figma",
+		"worker runtime",
+		"WorkerRuntime",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("V2 native agent prompt must not reference %q\n--- prompt ---\n%s", forbidden, prompt)
 		}
 	}
 }

@@ -123,9 +123,17 @@ func TestNewPreviewVerificationReceiptBindsEngineDigestAndVisualSignals(t *testi
 	}
 
 	invalid := receipt
+	invalid.Verification.Targets = append([]PreviewTargetVerification(nil), receipt.Verification.Targets...)
 	invalid.Verification.Targets[0].Screenshot.Entropy = 0
 	if err := ValidatePreviewVerificationReceipt(invalid); err == nil || !strings.Contains(err.Error(), "passed target") {
 		t.Fatalf("ValidatePreviewVerificationReceipt error = %v, want inconsistent passed target", err)
+	}
+
+	nativeUIKit := receipt
+	nativeUIKit.Verification.Targets = append([]PreviewTargetVerification(nil), receipt.Verification.Targets...)
+	nativeUIKit.Verification.Targets[1].Target = PreviewTarget{Kind: PreviewTargetKindUIKit, ID: "ui-kit", Path: "ui-kit/index.html"}
+	if err := ValidatePreviewVerificationReceipt(nativeUIKit); err == nil || !strings.Contains(err.Error(), "UI Kit target path") {
+		t.Fatalf("native UI Kit target error = %v", err)
 	}
 }
 

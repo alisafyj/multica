@@ -83,6 +83,25 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
   });
 });
 
+describe("ProjectDesignSystemSchema package preview drift", () => {
+  it("defaults malformed native package preview fields without dropping content", () => {
+    const parsed = ProjectDesignSystemSchema.parse({
+      ...EMPTY_PROJECT_DESIGN_SYSTEM,
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      content: {
+        preview_targets: null,
+        package_schema: null,
+        selection_enabled: "true",
+      },
+    });
+
+    expect(parsed.content.package_schema).toBe("");
+    expect(parsed.content.preview_targets).toEqual([]);
+    expect(parsed.content.selection_enabled).toBe(false);
+  });
+});
+
 describe("batch issue response schemas", () => {
   it("defaults missing counts to zero", () => {
     expect(BatchUpdateIssuesResponseSchema.parse({}).updated).toBe(0);
@@ -218,6 +237,9 @@ describe("ProjectDesignSystemSchema", () => {
       locators: [],
       preview_html: "",
       integrity_sha256: "",
+      package_schema: "",
+      preview_targets: [],
+      selection_enabled: false,
     });
     expect(parsed.activity).toEqual([]);
   });

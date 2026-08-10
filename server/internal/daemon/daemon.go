@@ -149,6 +149,7 @@ type Daemon struct {
 	runner                      taskRunner // executes agent tasks; set to d.runTask by New(), overridable in tests
 	openDesignSupervisorFactory openDesignSupervisorFactory
 	cancelPollInterval          time.Duration // how often handleTask polls for server-side cancellation; overridable in tests
+	designPreviewBrowserPath    string        // Chromium path used by finalizeProjectDesignSystemResult; defaults to cfg.DesignPreviewBrowserPath
 	// runUpdateFn executes the brew-or-download upgrade. Set to d.runUpdate by
 	// New() and overridable in tests so the auto-update poller can be exercised
 	// without touching the real network or the brew CLI.
@@ -182,6 +183,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 	d.runner = taskRunnerFunc(d.runTask)
 	d.openDesignSupervisorFactory = d.newOpenDesignSupervisor
 	d.runUpdateFn = d.runUpdate
+	d.designPreviewBrowserPath = cfg.DesignPreviewBrowserPath
 	return d
 }
 
@@ -2221,7 +2223,21 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 
+	// V2-native finalize runs after attachProjectDesignSystemArtifacts (which is
+	// a no-op for V2 tasks) and before the completion callback. The gate collects
+	// the agent's package, audits it, runs a real-browser preview, uploads the
+	// archive, and stamps the receipt onto the TaskResult. A failure at any
+	// stage turns the result into "blocked" with a stable failure reason — the
+	// server's complete callback is never called, the agent's work is not
+	// silently discarded.
 	result = attachProjectDesignSystemArtifacts(task, result)
+	if isV2ProjectDesignSystemTask(task) {
+		finalized, finalizeErr := d.finalizeProjectDesignSystemResultFromDaemon(ctx, task, result)
+		if finalizeErr != nil {
+			taskLog.Error("project design system finalize failed", "error", finalizeErr)
+		}
+		result = finalized
+	}
 
 	_ = d.client.ReportProgress(ctx, task.ID, "Finishing task", 2, 2)
 
@@ -2388,7 +2404,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 	switch result.Status {
 	case "completed":
 		taskLog.Info("task completed", "status", result.Status)
-		err := d.client.CompleteTask(ctx, taskID, result.Comment, result.BranchName, result.SessionID, result.WorkDir, result.ProjectDesignSystemArtifacts)
+		err := d.client.CompleteTask(ctx, taskID, result.Comment, result.BranchName, result.SessionID, result.WorkDir, result.ProjectDesignSystemArtifacts, result.ProjectDesignSystemPackage)
 		if err == nil {
 			return
 		}
@@ -2671,7 +2687,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			// CLAUDE.md / AGENTS.md / GEMINI.md; CleanupSidecars handles
 			// every other file Prepare placed under WorkDir. Together
 			// they round-trip the workdir to its exact pre-task bytes.
-			if cerr := execenv.CleanupSidecars(env.RootDir); cerr != nil {
+			if cerr := execenv.CleanupLocalDirectorySidecars(env.RootDir, env.WorkDir); cerr != nil {
 				d.logger.Warn("execenv: cleanup sidecars failed (non-fatal)", "error", cerr)
 			}
 		}()

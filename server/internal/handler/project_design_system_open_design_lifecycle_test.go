@@ -54,6 +54,7 @@ func TestFinalizeOpenDesignRunAcceptsAgentFailureBeforeWorkerRunStarts(t *testin
 	if created.ActiveTask == nil {
 		t.Fatal("create response has no active task")
 	}
+	seedHistoricalOpenDesignRun(t, projectID, created.ID, created.ActiveTask.ID, agentID)
 	if _, err := testPool.Exec(context.Background(), `
 		UPDATE open_design_run
 		SET status = 'ready', preflight = '{"status":"ready"}'::jsonb
@@ -725,6 +726,7 @@ func prepareOpenDesignRunForAuditTest(t *testing.T, name string) (string, string
 	if created.ActiveTask == nil {
 		t.Fatal("create response has no active task")
 	}
+	seedHistoricalOpenDesignRun(t, projectID, created.ID, created.ActiveTask.ID, agentID)
 	runID := "11111111-1111-4111-8111-111111111111"
 	archive, resultPackage, artifactIndex, contentDigest := openDesignDraftArchiveFixture(t, runID)
 	archiveObjectKey := "workspaces/test/open-design-package.zip"
@@ -753,6 +755,46 @@ func prepareOpenDesignRunForAuditTest(t *testing.T, name string) (string, string
 		t.Fatalf("prepare run-succeeded Open Design row: %v", err)
 	}
 	return created.ActiveTask.ID, runID, contentDigest
+}
+
+func seedHistoricalOpenDesignRun(t *testing.T, projectID, designSystemID, taskID, agentID string) {
+	t.Helper()
+	identity := opendesign.PinnedEngineIdentity()
+	var supervisorRunID string
+	if err := testPool.QueryRow(context.Background(), `SELECT gen_random_uuid()`).Scan(&supervisorRunID); err != nil {
+		t.Fatalf("create historical Open Design run ID: %v", err)
+	}
+	contextJSON, err := json.Marshal(map[string]any{
+		"schema": opendesign.RunSchema,
+		"run_id": supervisorRunID,
+		"engine": identity,
+		"agent":  map[string]any{"multica_agent_id": agentID, "adapter_id": "opencode"},
+	})
+	if err != nil {
+		t.Fatalf("marshal historical Open Design context: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_task_queue
+		SET context = jsonb_set(context, '{open_design_run}', $2::jsonb)
+		WHERE id = $1
+	`, taskID, contextJSON); err != nil {
+		t.Fatalf("seed historical Open Design task context: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO open_design_run (
+			id, workspace_id, project_id, design_system_id, task_id, operation, status,
+			engine_release, engine_commit, engine_lockfile_sha256, engine_dist_sha256,
+			agent_id, agent_snapshot, adapter_id, input_snapshot, workspace_provenance
+		) VALUES (
+			$1, $2, $3, $4, $5, 'generate', 'preflight_pending',
+			$6, $7, $8, $9,
+			$10, $11::jsonb, 'opencode', $12::jsonb, $13::jsonb
+		)
+	`, supervisorRunID, testWorkspaceID, projectID, designSystemID, taskID,
+		identity.Release, identity.Commit, identity.LockfileSHA256, identity.DistSHA256,
+		agentID, `{"multica_agent_id":"`+agentID+`","adapter_id":"opencode"}`, `{}`, `{"kind":"historical"}`); err != nil {
+		t.Fatalf("seed historical Open Design run: %v", err)
+	}
 }
 
 func openDesignDraftArchiveFixture(t *testing.T, runID string) ([]byte, json.RawMessage, []opendesign.ArtifactIndexEntry, string) {
@@ -848,6 +890,7 @@ func testRecoverOrphanedOpenDesignRun(t *testing.T, initialTaskStatus, initialRu
 	if created.ActiveTask == nil {
 		t.Fatal("create response has no active task")
 	}
+	seedHistoricalOpenDesignRun(t, projectID, created.ID, created.ActiveTask.ID, agentID)
 	if _, err := testPool.Exec(context.Background(), `
 		UPDATE agent_task_queue
 		SET status = $2,

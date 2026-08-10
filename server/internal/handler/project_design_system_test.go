@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -76,7 +77,10 @@ func TestCreateProjectDesignSystemRequiresPlatformAndBrief(t *testing.T) {
 	}
 }
 
-func TestCreateProjectDesignSystemSnapshotsExactInputs(t *testing.T) {
+func TestCreateProjectDesignSystemAlwaysEnqueuesNativeV2WhenOpenDesignFlagIsTrue(t *testing.T) {
+	previousOpenDesign := testHandler.cfg.OpenDesignEnabled
+	testHandler.cfg.OpenDesignEnabled = true
+	t.Cleanup(func() { testHandler.cfg.OpenDesignEnabled = previousOpenDesign })
 	projectID := createProjectForDesignTest(t, "Snapshot project")
 	if _, err := testPool.Exec(context.Background(), `UPDATE project SET description = $2 WHERE id = $1`, projectID, "Current CRM for service teams"); err != nil {
 		t.Fatalf("update project description: %v", err)
@@ -164,6 +168,9 @@ func TestCreateProjectDesignSystemSnapshotsExactInputs(t *testing.T) {
 	}
 	if taskContext["type"] != "project_design_system_task" || taskContext["operation"] != "generate" {
 		t.Fatalf("task discriminator = %#v", taskContext)
+	}
+	if taskContext["package_schema"] != projectdesignsystem.PackageSchemaV2 || taskContext["open_design_run"] != nil {
+		t.Fatalf("new task did not use the native V2 contract: %#v", taskContext)
 	}
 	if taskContext["agent_id"] != agentID || taskContext["project_id"] != projectID || taskContext["project_design_system_id"] != created.ID {
 		t.Fatalf("task identity snapshot = %#v", taskContext)
@@ -345,7 +352,7 @@ func TestGetProjectDesignSystemReturnsUnestablishedAfterFailedFirstRun(t *testin
 	}
 }
 
-func TestAdjustProjectDesignSystemValidatesScopeAgainstManifest(t *testing.T) {
+func TestAdjustHistoricalV1PackageUsesLegacyReadOnlyBase(t *testing.T) {
 	projectID := createProjectForDesignTest(t, "Scoped adjustment project")
 	agentID, _ := createProjectDesignSystemAgent(t, "online")
 	input := projectDesignSystemInputSnapshot{
@@ -403,7 +410,7 @@ func TestAdjustProjectDesignSystemValidatesScopeAgainstManifest(t *testing.T) {
 	}
 }
 
-func TestRegenerateProjectDesignSystemPreservesCurrentPackage(t *testing.T) {
+func TestRegenerateProjectDesignSystemBindsCurrentBaseDigest(t *testing.T) {
 	projectID := createProjectForDesignTest(t, "Regeneration project")
 	agentID, _ := createProjectDesignSystemAgent(t, "online")
 	input := projectDesignSystemInputSnapshot{
@@ -454,6 +461,9 @@ func TestRegenerateProjectDesignSystemPreservesCurrentPackage(t *testing.T) {
 	}
 	if taskContext["operation"] != "regenerate" || taskContext["platform"] != "mobile" || taskContext["brief"] != "A touch-first field operations system." {
 		t.Fatalf("regenerate task context = %#v", taskContext)
+	}
+	if taskContext["base_package_sha256"] != "sha256:"+pkg.Manifest.Digest {
+		t.Fatalf("regenerate base digest = %#v, want %q", taskContext["base_package_sha256"], "sha256:"+pkg.Manifest.Digest)
 	}
 	references := taskContext["references"].([]any)
 	if len(references) != 1 || references[0].(map[string]any)["value"] != "#2463EB" {
@@ -551,6 +561,161 @@ func TestProjectDesignSystemRoutesRejectForeignWorkspace(t *testing.T) {
 			response := performProjectDesignSystemIDRequest(t, tt.handler, http.MethodPost, tt.path, systemID, tt.body)
 			assertProjectDesignSystemErrorCode(t, response, http.StatusNotFound, "project_design_system_not_found")
 		})
+	}
+}
+
+func TestMarshalProjectDesignSystemTaskContextPinsV2SchemaAndDigests(t *testing.T) {
+	systemID := parseUUID("11111111-1111-1111-1111-111111111111")
+	workspaceID := parseUUID("22222222-2222-2222-2222-222222222222")
+	projectID := parseUUID("33333333-3333-3333-3333-333333333333")
+	agentID := parseUUID("44444444-4444-4444-4444-444444444444")
+	requesterID := parseUUID("55555555-5555-5555-5555-555555555555")
+	system := db.ProjectDesignSystem{ID: systemID, WorkspaceID: workspaceID, ProjectID: projectID}
+	project := db.Project{ID: projectID, Title: "Native agent design system", Description: pgtype.Text{String: "Test", Valid: true}}
+	input := projectDesignSystemInputSnapshot{
+		AgentID:  agentID.String(),
+		Platform: "web",
+		Brief:    "Calm CRM",
+		References: []projectDesignSystemReferenceSnapshot{
+			{Kind: "brand_color", Label: "Primary", Value: "#123456"},
+		},
+	}
+	canonicalInput, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal input snapshot: %v", err)
+	}
+	expectedInputDigest, err := projectdesignsystem.SnapshotDigest(canonicalInput)
+	if err != nil {
+		t.Fatalf("digest input snapshot: %v", err)
+	}
+	basePackage := json.RawMessage(`{"design_md":"# base","tokens_css":":root{}","components_html":"<main>x</main>","integrity_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}`)
+	legacyOpenDesignRun := json.RawMessage(`{"schema":"open-design/v1","run":{"id":"run-legacy","status":"pending"}}`)
+
+	generateJSON, err := marshalProjectDesignSystemTaskContext(
+		system, project, requesterID, agentID, input,
+		service.ProjectDesignSystemGenerate, nil, "", nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("marshal generate context: %v", err)
+	}
+	var generated map[string]any
+	if err := json.Unmarshal(generateJSON, &generated); err != nil {
+		t.Fatalf("decode generate context: %v", err)
+	}
+	if generated["package_schema"] != projectdesignsystem.PackageSchemaV2 {
+		t.Fatalf("generate package_schema = %v, want %s", generated["package_schema"], projectdesignsystem.PackageSchemaV2)
+	}
+	if got, _ := generated["input_snapshot_sha256"].(string); got != expectedInputDigest {
+		t.Fatalf("generate input_snapshot_sha256 = %q, want %q", got, expectedInputDigest)
+	}
+	if _, present := generated["base_package_sha256"]; present {
+		t.Fatalf("generate must not set base_package_sha256 without a base, got %v", generated["base_package_sha256"])
+	}
+	if generated["open_design_run"] != nil {
+		t.Fatalf("generate must not synthesize open_design_run, got %v", generated["open_design_run"])
+	}
+
+	adjustJSON, err := marshalProjectDesignSystemTaskContext(
+		system, project, requesterID, agentID, input,
+		service.ProjectDesignSystemAdjust, basePackage, "tighten the spacing", json.RawMessage(`{"kind":"all"}`), nil,
+	)
+	if err != nil {
+		t.Fatalf("marshal adjust context: %v", err)
+	}
+	var adjusted map[string]any
+	if err := json.Unmarshal(adjustJSON, &adjusted); err != nil {
+		t.Fatalf("decode adjust context: %v", err)
+	}
+	if adjusted["package_schema"] != projectdesignsystem.PackageSchemaV2 {
+		t.Fatalf("adjust package_schema = %v, want %s", adjusted["package_schema"], projectdesignsystem.PackageSchemaV2)
+	}
+	if got, _ := adjusted["input_snapshot_sha256"].(string); got != expectedInputDigest {
+		t.Fatalf("adjust input_snapshot_sha256 = %q, want %q", got, expectedInputDigest)
+	}
+	if got, _ := adjusted["base_package_sha256"].(string); got != "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2" {
+		t.Fatalf("adjust base_package_sha256 = %q, want sha256-prefixed integrity from base", got)
+	}
+	if _, present := adjusted["open_design_run"]; present {
+		t.Fatalf("adjust must not synthesize open_design_run, got %v", adjusted["open_design_run"])
+	}
+
+	// Legacy Open Design tasks keep parsing: the open_design_run envelope
+	// remains in the struct, but the V2 markers are not stamped onto the
+	// Open Design path so the V2 contract is opt-in.
+	legacyJSON, err := marshalProjectDesignSystemTaskContext(
+		system, project, requesterID, agentID, input,
+		service.ProjectDesignSystemAdjust, basePackage, "tighten the spacing", json.RawMessage(`{"kind":"all"}`), legacyOpenDesignRun,
+	)
+	if err != nil {
+		t.Fatalf("marshal legacy adjust context: %v", err)
+	}
+	var legacy map[string]any
+	if err := json.Unmarshal(legacyJSON, &legacy); err != nil {
+		t.Fatalf("decode legacy adjust context: %v", err)
+	}
+	if _, present := legacy["package_schema"]; present {
+		t.Fatalf("legacy open-design adjust must not set package_schema, got %v", legacy["package_schema"])
+	}
+	if got, _ := legacy["open_design_run"].(map[string]any); got["run"].(map[string]any)["id"] != "run-legacy" {
+		t.Fatalf("legacy adjust must preserve open_design_run, got %v", legacy["open_design_run"])
+	}
+}
+
+func TestMarshalRepositoryAnalysisContextKeepsRepositoryContract(t *testing.T) {
+	systemID := parseUUID("11111111-1111-1111-1111-111111111111")
+	workspaceID := parseUUID("22222222-2222-2222-2222-222222222222")
+	projectID := parseUUID("33333333-3333-3333-3333-333333333333")
+	agentID := parseUUID("44444444-4444-4444-4444-444444444444")
+	requesterID := parseUUID("55555555-5555-5555-5555-555555555555")
+	system := db.ProjectDesignSystem{ID: systemID, WorkspaceID: workspaceID, ProjectID: projectID}
+	project := db.Project{ID: projectID, Title: "Repo analysis", Description: pgtype.Text{String: "Test", Valid: true}}
+	input := projectDesignSystemInputSnapshot{
+		AgentID:  agentID.String(),
+		Platform: "web",
+		Brief:    "Analyse the existing repo",
+		References: []projectDesignSystemReferenceSnapshot{
+			{Kind: "brand_color", Label: "Primary", Value: "#abcdef"},
+		},
+	}
+
+	contextJSON, err := marshalProjectDesignSystemTaskContext(
+		system, project, requesterID, agentID, input,
+		service.ProjectDesignSystemRepositoryAnalysis, nil, "", nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("marshal repository analysis context: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(contextJSON, &decoded); err != nil {
+		t.Fatalf("decode repository analysis context: %v", err)
+	}
+	if decoded["operation"] != string(service.ProjectDesignSystemRepositoryAnalysis) {
+		t.Fatalf("repository analysis operation = %v, want %s", decoded["operation"], service.ProjectDesignSystemRepositoryAnalysis)
+	}
+	if decoded["type"] != service.ProjectDesignSystemTaskContextType {
+		t.Fatalf("repository analysis type = %v, want %s", decoded["type"], service.ProjectDesignSystemTaskContextType)
+	}
+	if _, present := decoded["package_schema"]; present {
+		t.Fatalf("repository analysis must not set package_schema, got %v", decoded["package_schema"])
+	}
+	if _, present := decoded["input_snapshot_sha256"]; present {
+		t.Fatalf("repository analysis must not set input_snapshot_sha256, got %v", decoded["input_snapshot_sha256"])
+	}
+	if _, present := decoded["base_package_sha256"]; present {
+		t.Fatalf("repository analysis must not set base_package_sha256, got %v", decoded["base_package_sha256"])
+	}
+	policyRaw, ok := decoded["output_policy"].(map[string]any)
+	if !ok {
+		t.Fatalf("repository analysis output_policy missing or wrong type: %v", decoded["output_policy"])
+	}
+	if policyRaw["result_marker"] != "REPOSITORY_DESIGN_CONTEXT_JSON:" {
+		t.Fatalf("repository analysis output_policy.result_marker = %v, want REPOSITORY_DESIGN_CONTEXT_JSON:", policyRaw["result_marker"])
+	}
+	if policyRaw["read_only"] != true {
+		t.Fatalf("repository analysis output_policy.read_only = %v, want true", policyRaw["read_only"])
+	}
+	if policyRaw["scripts_allowed"] != false {
+		t.Fatalf("repository analysis output_policy.scripts_allowed = %v, want false", policyRaw["scripts_allowed"])
 	}
 }
 

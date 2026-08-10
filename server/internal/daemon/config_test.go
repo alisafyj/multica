@@ -594,3 +594,57 @@ func pinNonCodexAgentsToMissingPaths(t *testing.T) {
 		t.Setenv(name, filepath.Join(missingDir, strings.ToLower(name)))
 	}
 }
+
+// TestLoadConfig_DesignPreviewBrowserPath_PrefersNativeEnvVar locks down the
+// resolution order for the V2-native finalize gate's Chromium path. The
+// native env var wins when set; an unset native env var leaves the field
+// empty so finalize-time ResolveBrowserPath falls through to its platform /
+// PATH lookup.
+func TestLoadConfig_DesignPreviewBrowserPath_PrefersNativeEnvVar(t *testing.T) {
+	stageFakeAgent(t)
+	native := filepath.Join(t.TempDir(), "native-chromium")
+	legacy := filepath.Join(t.TempDir(), "open-design-chromium")
+	t.Setenv("MULTICA_DESIGN_PREVIEW_BROWSER_PATH", native)
+	t.Setenv("MULTICA_OPEN_DESIGN_BROWSER_PATH", legacy)
+
+	cfg, err := LoadConfig(Overrides{
+		ServerURL:      "http://localhost:0",
+		WorkspacesRoot: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.DesignPreviewBrowserPath != native {
+		t.Fatalf("DesignPreviewBrowserPath = %q, want native %q", cfg.DesignPreviewBrowserPath, native)
+	}
+	if cfg.OpenDesignBrowserPath != legacy {
+		t.Fatalf("OpenDesignBrowserPath = %q, want legacy %q", cfg.OpenDesignBrowserPath, legacy)
+	}
+}
+
+// TestLoadConfig_DesignPreviewBrowserPath_DoesNotFallBackToOpenDesignPath
+// locks down the brief's "never read MULTICA_OPEN_DESIGN_* for native tasks"
+// constraint at the config layer. An operator who pins MULTICA_OPEN_DESIGN_BROWSER_PATH
+// but not MULTICA_DESIGN_PREVIEW_BROWSER_PATH must see the V2 field empty —
+// native finalize must consult only its own env var (or platform/PATH) and
+// never reach across the chains.
+func TestLoadConfig_DesignPreviewBrowserPath_DoesNotFallBackToOpenDesignPath(t *testing.T) {
+	stageFakeAgent(t)
+	legacy := filepath.Join(t.TempDir(), "open-design-chromium")
+	t.Setenv("MULTICA_DESIGN_PREVIEW_BROWSER_PATH", "")
+	t.Setenv("MULTICA_OPEN_DESIGN_BROWSER_PATH", legacy)
+
+	cfg, err := LoadConfig(Overrides{
+		ServerURL:      "http://localhost:0",
+		WorkspacesRoot: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.DesignPreviewBrowserPath != "" {
+		t.Fatalf("DesignPreviewBrowserPath = %q, want empty (must not fall back to MULTICA_OPEN_DESIGN_BROWSER_PATH)", cfg.DesignPreviewBrowserPath)
+	}
+	if cfg.OpenDesignBrowserPath != legacy {
+		t.Fatalf("OpenDesignBrowserPath = %q, want legacy %q (Open Design chain should keep its value)", cfg.OpenDesignBrowserPath, legacy)
+	}
+}

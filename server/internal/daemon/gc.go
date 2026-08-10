@@ -449,6 +449,17 @@ func isAgentTaskTerminal(status string) bool {
 
 // cleanTaskDir removes a task directory and logs the result.
 func (d *Daemon) cleanTaskDir(taskDir string) {
+	// The V2 native agent chain stamps the .agent_context/project_design_system/
+	// {context,reference,base} sidecar directories to 0o555 so the agent
+	// cannot mutate its inputs. os.RemoveAll cannot unlink children of
+	// a 0o555 directory (unlink needs write on the parent), so we have
+	// to restore writability on the workdir's sidecar tree before the
+	// removal. The chmod is best-effort: a failure here surfaces in the
+	// os.RemoveAll error as EACCES so the operator sees the leak instead
+	// of it being silently swallowed.
+	if err := execenv.RestoreV2SidecarWritability(filepath.Join(taskDir, "workdir")); err != nil {
+		d.logger.Warn("gc: restore V2 sidecar writability failed", "dir", taskDir, "error", err)
+	}
 	if err := os.RemoveAll(taskDir); err != nil {
 		d.logger.Warn("gc: remove task dir failed", "dir", taskDir, "error", err)
 	} else {

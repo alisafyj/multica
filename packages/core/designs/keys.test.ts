@@ -24,13 +24,13 @@ describe("designKeys", () => {
       "system",
       "system-1",
     ]);
-    expect(designKeys.projectDesignSystemArchivePreview("ws-1", "system-1")).toEqual([
+    expect(designKeys.projectDesignSystemPackagePreview("ws-1", "system-1")).toEqual([
       "designs",
       "ws-1",
       "project-design-systems",
       "system",
       "system-1",
-      "archive-preview",
+      "package-preview",
     ]);
   });
 

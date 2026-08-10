@@ -49,7 +49,7 @@ See CLAUDE.md for the complete command reference.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **multica** (28561 symbols, 80907 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **multica** (33203 symbols, 98167 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
@@ -90,3 +90,9 @@ This project is indexed by GitNexus as **multica** (28561 symbols, 80907 relatio
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+## 当前任务状态（会话交接 - 每次会话结束更新）
+
+- **做了什么**: Task 8 仓库分析阻塞修复已提交到 `7ccf8c6ec`（API/原生工作区/完成生命周期 `10acc4aef..8a300be70`，sidecar no-follow 与 manifest 所有权加固 `de2c8033b..7ccf8c6ec`）；未运行 Open Design Worker/Runtime
+- **做到哪**: 安全 checkpoint clean；`8a300be70` Spec PASS，Quality review 的 3 项已关闭，最后 cloud Reuse symlink 修复 `7ccf8c6ec` 仅跑 5 项 focused GREEN，尚未 scoped re-review/完整两包复验；backend `18460`、web `13380` 保留，Task 8 daemon 已停；staffrnapp 只剩用户原有 `.vscode/settings.json`（SHA256 `d65f8b33...15764a`）
+- **下一步**: 先读 `.codex-handoff/HANDOFF-2026-08-10-TASK-8.md` 与配套 `PROMPT-2026-08-10-TASK-8.md`；scoped re-review `de2c8033b..7ccf8c6ec` 并跑完整 daemon 两包，再收敛 orphan task；任何新 CRM Agent 前先让用户选择 token 档位，勿动主仓库/旧 daemon/`codex/open-design-native-slots`

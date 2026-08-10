@@ -1,0 +1,13 @@
+:root {
+  --color-action: #1677ff;
+  --color-surface: #ffffff;
+  --color-border: #d9d9d9;
+  --color-text: #1f2329;
+  --space-control: 8px;
+  --radius-control: 4px;
+}
+
+.crm-token-contract {
+  color: var(--color-text);
+  border-color: var(--color-border);
+}

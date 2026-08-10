@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -98,6 +99,11 @@ type Client struct {
 	platform string
 	version  string
 	os       string
+}
+
+type ProjectDesignSystemPackageUpload struct {
+	ObjectKey     string `json:"object_key"`
+	ContentDigest string `json:"content_digest"`
 }
 
 // NewClient creates a new daemon API client.
@@ -206,6 +212,44 @@ func (c *Client) UploadOpenDesignRunArchive(ctx context.Context, taskID, openDes
 	}
 }
 
+func (c *Client) UploadProjectDesignSystemPackage(
+	ctx context.Context,
+	taskID string,
+	contentDigest string,
+	archive []byte,
+) (ProjectDesignSystemPackageUpload, error) {
+	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(taskID) != taskID {
+		return ProjectDesignSystemPackageUpload{}, errors.New("project design system package task ID is required")
+	}
+	if !validProjectDesignSystemPackageDigest(contentDigest) {
+		return ProjectDesignSystemPackageUpload{}, errors.New("project design system package digest is invalid")
+	}
+	if len(archive) == 0 || len(archive) > 64<<20 {
+		return ProjectDesignSystemPackageUpload{}, errors.New("project design system package archive has an invalid size")
+	}
+	requestPath := fmt.Sprintf("/api/daemon/tasks/%s/project-design-system/package", taskID)
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		result, err := c.uploadProjectDesignSystemPackage(ctx, requestPath, contentDigest, archive)
+		if err == nil {
+			if result.ObjectKey == "" {
+				return ProjectDesignSystemPackageUpload{}, errors.New("project design system package response has no object key")
+			}
+			if result.ContentDigest != contentDigest {
+				return ProjectDesignSystemPackageUpload{}, errors.New("project design system package response digest does not match request")
+			}
+			return result, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil || !isTransientError(err) || attempt >= len(defaultTerminalRetrySchedule) {
+			return ProjectDesignSystemPackageUpload{}, lastErr
+		}
+		if sleepErr := retrySleep(ctx, defaultTerminalRetrySchedule[attempt]); sleepErr != nil {
+			return ProjectDesignSystemPackageUpload{}, lastErr
+		}
+	}
+}
+
 func (c *Client) DownloadOpenDesignBaseArchive(ctx context.Context, taskID string, reference opendesign.BasePackageReference) ([]byte, error) {
 	if strings.TrimSpace(taskID) == "" {
 		return nil, errors.New("Open Design base archive task ID is required")
@@ -301,7 +345,7 @@ func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages
 	}, nil)
 }
 
-func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, artifacts *ProjectDesignSystemArtifacts) error {
+func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, artifacts *ProjectDesignSystemArtifacts, pkg *ProjectDesignSystemPackageReceipt) error {
 	body := map[string]any{"output": output}
 	if branchName != "" {
 		body["branch_name"] = branchName
@@ -314,6 +358,9 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 	}
 	if artifacts != nil {
 		body["project_design_system_artifacts"] = artifacts
+	}
+	if pkg != nil {
+		body["project_design_system_package"] = pkg
 	}
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, nil, defaultTerminalRetrySchedule)
 }
@@ -390,8 +437,8 @@ type (
 func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string) (*HeartbeatResponse, error) {
 	var resp HeartbeatResponse
 	if err := c.postJSON(ctx, "/api/daemon/heartbeat", map[string]any{
-		"runtime_id":             runtimeID,
-		"supports_batch_import":  true,
+		"runtime_id":            runtimeID,
+		"supports_batch_import": true,
 	}, &resp); err != nil {
 		return nil, err
 	}
@@ -737,6 +784,53 @@ func (c *Client) uploadOpenDesignRunArchive(ctx context.Context, path, openDesig
 		return "", errors.New("Open Design archive response has no object key")
 	}
 	return response.ArchiveObjectKey, nil
+}
+
+func (c *Client) uploadProjectDesignSystemPackage(
+	ctx context.Context,
+	requestPath string,
+	contentDigest string,
+	archive []byte,
+) (ProjectDesignSystemPackageUpload, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+requestPath, bytes.NewReader(archive))
+	if err != nil {
+		return ProjectDesignSystemPackageUpload{}, err
+	}
+	req.Header.Set("Content-Type", "application/zip")
+	req.Header.Set("X-Multica-Design-Package-Digest", contentDigest)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	c.setIdentityHeaders(req)
+
+	archiveClient := *c.client
+	if archiveClient.Timeout == 0 || archiveClient.Timeout < openDesignArchiveUploadTimeout {
+		archiveClient.Timeout = openDesignArchiveUploadTimeout
+	}
+	resp, err := archiveClient.Do(req)
+	if err != nil {
+		return ProjectDesignSystemPackageUpload{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return ProjectDesignSystemPackageUpload{}, &requestError{Method: http.MethodPost, Path: requestPath, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+	}
+	var result ProjectDesignSystemPackageUpload
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&result); err != nil {
+		return ProjectDesignSystemPackageUpload{}, fmt.Errorf("decode project design system package response: %w", err)
+	}
+	result.ObjectKey = strings.TrimSpace(result.ObjectKey)
+	return result, nil
+}
+
+func validProjectDesignSystemPackageDigest(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	raw := strings.TrimPrefix(value, "sha256:")
+	decoded, err := hex.DecodeString(raw)
+	return err == nil && hex.EncodeToString(decoded) == raw
 }
 
 func (c *Client) downloadOpenDesignBaseArchive(ctx context.Context, path string, reference opendesign.BasePackageReference) ([]byte, error) {

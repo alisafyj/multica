@@ -912,24 +912,29 @@ type ProjectDesignSystem struct {
 }
 
 type ProjectDesignSystemPackage struct {
-	ID              pgtype.UUID        `json:"id"`
-	DesignSystemID  pgtype.UUID        `json:"design_system_id"`
-	Slot            string             `json:"slot"`
-	DesignMd        string             `json:"design_md"`
-	TokensCss       string             `json:"tokens_css"`
-	ComponentsHtml  string             `json:"components_html"`
-	Manifest        []byte             `json:"manifest"`
-	Validation      []byte             `json:"validation"`
-	IntegritySha256 string             `json:"integrity_sha256"`
-	SourceTaskID    pgtype.UUID        `json:"source_task_id"`
-	AgentID         pgtype.UUID        `json:"agent_id"`
-	Instruction     pgtype.Text        `json:"instruction"`
-	Scope           []byte             `json:"scope"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	RenderStatus    string             `json:"render_status"`
-	RenderReport    []byte             `json:"render_report"`
-	RenderedAt      pgtype.Timestamptz `json:"rendered_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	DesignSystemID      pgtype.UUID        `json:"design_system_id"`
+	Slot                string             `json:"slot"`
+	DesignMd            string             `json:"design_md"`
+	TokensCss           string             `json:"tokens_css"`
+	ComponentsHtml      string             `json:"components_html"`
+	Manifest            []byte             `json:"manifest"`
+	Validation          []byte             `json:"validation"`
+	IntegritySha256     string             `json:"integrity_sha256"`
+	SourceTaskID        pgtype.UUID        `json:"source_task_id"`
+	AgentID             pgtype.UUID        `json:"agent_id"`
+	Instruction         pgtype.Text        `json:"instruction"`
+	Scope               []byte             `json:"scope"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	RenderStatus        string             `json:"render_status"`
+	RenderReport        []byte             `json:"render_report"`
+	RenderedAt          pgtype.Timestamptz `json:"rendered_at"`
+	PackageSchema       string             `json:"package_schema"`
+	ArchiveObjectKey    pgtype.Text        `json:"archive_object_key"`
+	ArtifactIndex       []byte             `json:"artifact_index"`
+	InputSnapshotSha256 pgtype.Text        `json:"input_snapshot_sha256"`
+	BasePackageSha256   pgtype.Text        `json:"base_package_sha256"`
 }
 
 type ProjectResource struct {

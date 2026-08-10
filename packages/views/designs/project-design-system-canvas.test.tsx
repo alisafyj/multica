@@ -8,8 +8,8 @@ const apiMocks = vi.hoisted(() => ({
   adjustProjectDesignSystem: vi.fn(),
   cancelTaskById: vi.fn(),
   discardProjectDesignSystemDraft: vi.fn(),
-  getProjectDesignSystemArchivePreview: vi.fn(),
-  getProjectDesignSystemArchivePreviewFileURL: vi.fn(),
+  getProjectDesignSystemPackagePreview: vi.fn(),
+  getProjectDesignSystemPackagePreviewFileURL: vi.fn(),
   listTaskMessages: vi.fn(),
   regenerateProjectDesignSystem: vi.fn(),
   saveProjectDesignSystem: vi.fn(),
@@ -152,7 +152,7 @@ describe("ProjectDesignSystemCanvas", () => {
   beforeEach(() => {
     for (const mock of Object.values(apiMocks)) mock.mockReset();
     apiMocks.listTaskMessages.mockResolvedValue([]);
-    apiMocks.getProjectDesignSystemArchivePreview.mockResolvedValue({
+    apiMocks.getProjectDesignSystemPackagePreview.mockResolvedValue({
       schema: "multica.open-design-archive-preview/v1",
       slot: "",
       content_digest: "",
@@ -160,14 +160,14 @@ describe("ProjectDesignSystemCanvas", () => {
       resource_access_expires_at: "",
       targets: [],
     });
-    apiMocks.getProjectDesignSystemArchivePreviewFileURL.mockImplementation(
+    apiMocks.getProjectDesignSystemPackagePreviewFileURL.mockImplementation(
       (_systemId: string, _workspaceId: string, _digest: string, _accessToken: string, path: string) => `/api/archive/${path}`,
     );
   });
 
   it("prefers the verified Open Design archive over the compatibility preview", async () => {
     const digest = `sha256:${"a".repeat(64)}`;
-    apiMocks.getProjectDesignSystemArchivePreview.mockResolvedValue({
+    apiMocks.getProjectDesignSystemPackagePreview.mockResolvedValue({
       schema: "multica.open-design-archive-preview/v1",
       slot: "draft",
       content_digest: digest,
@@ -185,7 +185,7 @@ describe("ProjectDesignSystemCanvas", () => {
     const frame = await screen.findByTitle("项目设计体系 UI Kit");
     await waitFor(() => expect(frame).toHaveAttribute("src", "/api/archive/ui_kits/app/index.html"));
     expect(frame).not.toHaveAttribute("srcdoc");
-    expect(apiMocks.getProjectDesignSystemArchivePreviewFileURL).toHaveBeenCalledWith(
+    expect(apiMocks.getProjectDesignSystemPackagePreviewFileURL).toHaveBeenCalledWith(
       "system-1",
       "ws-1",
       digest,
@@ -197,7 +197,7 @@ describe("ProjectDesignSystemCanvas", () => {
   it("enables save and discard for a verified Open Design archive without compatibility content", async () => {
     const user = userEvent.setup();
     const digest = `sha256:${"a".repeat(64)}`;
-    apiMocks.getProjectDesignSystemArchivePreview.mockResolvedValue({
+    apiMocks.getProjectDesignSystemPackagePreview.mockResolvedValue({
       schema: "multica.open-design-archive-preview/v1",
       slot: "draft",
       content_digest: digest,

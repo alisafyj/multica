@@ -350,10 +350,10 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// No-op when RootDir is empty (legacy local_directory reuse, which the
 	// daemon skips anyway) or when no prior manifest exists (older build).
 	if env.RootDir != "" {
-		if err := removeReusedManagedSkillDirs(env.RootDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
+		if err := removeReusedManagedSkillDirs(env.RootDir, params.WorkDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
 			logger.Warn("execenv: reclaim managed skill dirs on reuse failed", "error", err)
 		}
-		if err := CleanupSidecars(env.RootDir); err != nil {
+		if err := CleanupSidecars(env.RootDir, params.WorkDir); err != nil {
 			logger.Warn("execenv: roll back prior sidecars on reuse failed", "error", err)
 		}
 	}
@@ -557,6 +557,19 @@ func (env *Environment) Cleanup(removeAll bool) error {
 			}
 		}
 		return nil
+	}
+
+	// The V2 native agent chain stamps the .agent_context/project_design_system/
+	// {context,reference,base} sidecar directories to 0o555 so the agent
+	// cannot mutate its inputs. os.RemoveAll cannot unlink children of
+	// a 0o555 directory (unlink needs write on the parent), so we have
+	// to restore writability here, before the actual removal. The chmod
+	// is best-effort: if it fails the next os.RemoveAll will surface a
+	// clearer EACCES error than a silent leak.
+	if env.WorkDir != "" {
+		if err := RestoreV2SidecarWritability(env.WorkDir); err != nil {
+			env.logger.Warn("execenv: restore V2 sidecar writability failed", "workdir", env.WorkDir, "error", err)
+		}
 	}
 
 	if removeAll {

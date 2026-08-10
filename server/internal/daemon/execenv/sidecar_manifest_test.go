@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -130,7 +131,7 @@ func runPrepareLikeCycle(t *testing.T, workDir, envRoot, provider string, ctx Ta
 	if err := CleanupRuntimeConfig(workDir, provider); err != nil {
 		t.Fatalf("CleanupRuntimeConfig(%s): %v", provider, err)
 	}
-	if err := CleanupSidecars(envRoot); err != nil {
+	if err := CleanupSidecars(envRoot, workDir); err != nil {
 		t.Fatalf("CleanupSidecars(%s): %v", provider, err)
 	}
 }
@@ -400,11 +401,182 @@ func TestPrepareThenCleanupSidecarsWithProjectResources(t *testing.T) {
 func TestCleanupSidecarsNoOpWhenManifestMissing(t *testing.T) {
 	t.Parallel()
 	envRoot := t.TempDir()
-	if err := CleanupSidecars(envRoot); err != nil {
+	if err := CleanupSidecars(envRoot, envRoot); err != nil {
 		t.Errorf("CleanupSidecars on empty envRoot returned error: %v", err)
 	}
-	if err := CleanupSidecars(""); err != nil {
+	if err := CleanupSidecars("", ""); err != nil {
 		t.Errorf("CleanupSidecars with empty envRoot returned error: %v", err)
+	}
+}
+
+func TestCleanupLocalDirectorySidecarsDoesNotFollowManagedDirectorySymlink(t *testing.T) {
+	workDir := t.TempDir()
+	envRoot := t.TempDir()
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"repository_analysis",
+		"brief":"Analyze the repository"
+	}`)
+	manifest := &sidecarManifest{}
+	if err := writeContextFiles(workDir, "codex", ctx, manifest); err != nil {
+		t.Fatalf("writeContextFiles: %v", err)
+	}
+	if err := writeSidecarManifest(envRoot, manifest); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	root := filepath.Join(workDir, ".agent_context", "project_design_system")
+	contextDir := filepath.Join(root, "context")
+	if err := RestoreV2SidecarWritability(workDir); err != nil {
+		t.Fatalf("restore sidecar before planting symlink: %v", err)
+	}
+	if err := os.RemoveAll(contextDir); err != nil {
+		t.Fatalf("remove managed context directory: %v", err)
+	}
+	externalDir := t.TempDir()
+	externalTask := filepath.Join(externalDir, "task.json")
+	if err := os.WriteFile(externalTask, []byte("external user data"), 0o644); err != nil {
+		t.Fatalf("write external task: %v", err)
+	}
+	if err := os.Symlink(externalDir, contextDir); err != nil {
+		t.Skipf("symlink not supported on this platform: %v", err)
+	}
+
+	if err := CleanupLocalDirectorySidecars(envRoot, workDir); err != nil {
+		t.Fatalf("CleanupLocalDirectorySidecars: %v", err)
+	}
+	got, err := os.ReadFile(externalTask)
+	if err != nil {
+		t.Fatalf("external task must survive cleanup: %v", err)
+	}
+	if string(got) != "external user data" {
+		t.Fatalf("external task changed: %q", got)
+	}
+	if _, err := os.Lstat(contextDir); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("managed context symlink remains after cleanup: %v", err)
+	}
+}
+
+func TestCleanupLocalDirectorySidecarsDoesNotChmodUnownedV2Directories(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix directory permission bits")
+	}
+	workDir := t.TempDir()
+	envRoot := t.TempDir()
+	v2Root := filepath.Join(workDir, ".agent_context", "project_design_system")
+	for _, name := range v2SidecarDirNames {
+		dir := filepath.Join(v2Root, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("create pre-existing %s directory: %v", name, err)
+		}
+		if err := os.Chmod(dir, 0o555); err != nil {
+			t.Fatalf("chmod pre-existing %s directory: %v", name, err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	}
+
+	ordinaryDir := filepath.Join(workDir, ".multica")
+	ordinaryFile := filepath.Join(ordinaryDir, "task.json")
+	if err := os.MkdirAll(ordinaryDir, 0o755); err != nil {
+		t.Fatalf("create ordinary sidecar directory: %v", err)
+	}
+	if err := os.WriteFile(ordinaryFile, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write ordinary sidecar: %v", err)
+	}
+	if err := writeSidecarManifest(envRoot, &sidecarManifest{
+		Files: []string{ordinaryFile},
+		Dirs:  []string{ordinaryDir},
+	}); err != nil {
+		t.Fatalf("write ordinary manifest: %v", err)
+	}
+
+	if err := CleanupLocalDirectorySidecars(envRoot, workDir); err != nil {
+		t.Fatalf("CleanupLocalDirectorySidecars: %v", err)
+	}
+	for _, name := range v2SidecarDirNames {
+		info, err := os.Stat(filepath.Join(v2Root, name))
+		if err != nil {
+			t.Fatalf("stat pre-existing %s directory: %v", name, err)
+		}
+		if info.Mode().Perm() != 0o555 {
+			t.Errorf("pre-existing %s mode = %o, want 0555", name, info.Mode().Perm())
+		}
+	}
+}
+
+func TestCleanupSidecarsKeepsManifestAfterPartialFailure(t *testing.T) {
+	workDir := t.TempDir()
+	envRoot := t.TempDir()
+	managedFile := filepath.Join(workDir, "managed.txt")
+	if err := os.WriteFile(managedFile, []byte("managed"), 0o644); err != nil {
+		t.Fatalf("write managed file: %v", err)
+	}
+	invalidPath := "invalid\x00path"
+	if err := writeSidecarManifest(envRoot, &sidecarManifest{
+		Files: []string{managedFile, invalidPath},
+	}); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	err := CleanupSidecars(envRoot, workDir)
+	if err == nil {
+		t.Fatal("CleanupSidecars must report the deterministic invalid-path failure")
+	}
+	if _, err := os.Stat(managedFile); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("successful cleanup entry was not removed: %v", err)
+	}
+	manifestPath := filepath.Join(envRoot, sidecarManifestFile)
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("manifest must remain for retry after partial failure: %v", err)
+	}
+	if !strings.Contains(string(raw), `invalid\u0000path`) {
+		t.Fatalf("retained manifest lost failed entry: %s", raw)
+	}
+}
+
+func TestRemoveReusedManagedSkillDirsRefusesUnownedSymlinkAncestor(t *testing.T) {
+	workDir := t.TempDir()
+	envRoot := t.TempDir()
+	skillsParent := filepath.Join(workDir, ".claude", "skills")
+	if err := os.MkdirAll(filepath.Dir(skillsParent), 0o755); err != nil {
+		t.Fatalf("create skills parent ancestor: %v", err)
+	}
+	externalDir := t.TempDir()
+	externalManagedDir := filepath.Join(externalDir, "issue-review")
+	if err := os.MkdirAll(externalManagedDir, 0o755); err != nil {
+		t.Fatalf("create external managed directory: %v", err)
+	}
+	externalSentinel := filepath.Join(externalManagedDir, "sentinel.txt")
+	if err := os.WriteFile(externalSentinel, []byte("external sentinel"), 0o644); err != nil {
+		t.Fatalf("write external sentinel: %v", err)
+	}
+	if err := os.Symlink(externalDir, skillsParent); err != nil {
+		t.Skipf("symlink not supported on this platform: %v", err)
+	}
+	managedDir := filepath.Join(skillsParent, "issue-review")
+	if err := writeSidecarManifest(envRoot, &sidecarManifest{Dirs: []string{managedDir}}); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	err := removeReusedManagedSkillDirs(envRoot, workDir, skillsParent)
+	if err == nil {
+		t.Fatal("unowned symlink ancestor must block managed skill reclaim")
+	}
+	got, err := os.ReadFile(externalSentinel)
+	if err != nil {
+		t.Fatalf("external sentinel must survive refused reclaim: %v", err)
+	}
+	if string(got) != "external sentinel" {
+		t.Fatalf("external sentinel changed: %q", got)
+	}
+	info, err := os.Lstat(skillsParent)
+	if err != nil {
+		t.Fatalf("stat unowned skills parent symlink: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("unowned skills parent symlink was removed: mode=%v", info.Mode())
 	}
 }
 
@@ -443,7 +615,7 @@ func TestCleanupSidecarsLeavesUserContentInTrackedDirIntact(t *testing.T) {
 		t.Fatalf("write manifest: %v", err)
 	}
 
-	if err := CleanupSidecars(envRoot); err != nil {
+	if err := CleanupSidecars(envRoot, workDir); err != nil {
 		t.Errorf("CleanupSidecars: %v", err)
 	}
 
@@ -494,7 +666,7 @@ func TestCleanupSidecarsDoesNotRemovePreExistingDirs(t *testing.T) {
 	if err := writeSidecarManifest(envRoot, manifest); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
-	if err := CleanupSidecars(envRoot); err != nil {
+	if err := CleanupSidecars(envRoot, workDir); err != nil {
 		t.Fatalf("CleanupSidecars: %v", err)
 	}
 	if _, err := os.Stat(userDir); err != nil {
@@ -906,7 +1078,7 @@ func TestPrepareThenCleanupSidecarsMultiSkillCollisionFreeAllocation(t *testing.
 	if err := writeSidecarManifest(envRoot, manifest); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
-	if err := CleanupSidecars(envRoot); err != nil {
+	if err := CleanupSidecars(envRoot, workDir); err != nil {
 		t.Fatalf("CleanupSidecars: %v", err)
 	}
 	if _, err := os.Stat(multicaDir); !os.IsNotExist(err) {
@@ -933,11 +1105,12 @@ func TestCleanupSidecarsSwallowsMissingAndNonEmptyDirs(t *testing.T) {
 
 	// Case 1: recorded dir is missing → ENOENT must be swallowed.
 	envRoot1 := t.TempDir()
-	missing := filepath.Join(t.TempDir(), "never-existed")
+	workDir1 := t.TempDir()
+	missing := filepath.Join(workDir1, "never-existed")
 	if err := writeSidecarManifest(envRoot1, &sidecarManifest{Dirs: []string{missing}}); err != nil {
 		t.Fatalf("write missing-dir manifest: %v", err)
 	}
-	if err := CleanupSidecars(envRoot1); err != nil {
+	if err := CleanupSidecars(envRoot1, workDir1); err != nil {
 		t.Errorf("CleanupSidecars(missing dir) should swallow ENOENT silently, got: %v", err)
 	}
 
@@ -956,7 +1129,7 @@ func TestCleanupSidecarsSwallowsMissingAndNonEmptyDirs(t *testing.T) {
 	if err := writeSidecarManifest(envRoot2, &sidecarManifest{Dirs: []string{recordedDir}}); err != nil {
 		t.Fatalf("write non-empty-dir manifest: %v", err)
 	}
-	if err := CleanupSidecars(envRoot2); err != nil {
+	if err := CleanupSidecars(envRoot2, workDir2); err != nil {
 		t.Errorf("CleanupSidecars(non-empty dir) should swallow ENOTEMPTY silently, got: %v", err)
 	}
 	got, err := os.ReadFile(userFile)
@@ -1006,7 +1179,7 @@ func TestCleanupSidecarsSurfacesEACCESOnEmptyRecordedDir(t *testing.T) {
 	// Restore parent permissions for t.TempDir() teardown.
 	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
 
-	err := CleanupSidecars(envRoot)
+	err := CleanupSidecars(envRoot, workDir)
 	if err == nil {
 		t.Fatal("CleanupSidecars should surface the EACCES rmdir error, got nil")
 	}
@@ -1062,7 +1235,7 @@ func TestCleanupSidecarsSurfacesEACCESWhenReadDirFailsToo(t *testing.T) {
 		_ = os.Chmod(recorded, 0o755)
 	})
 
-	err := CleanupSidecars(envRoot)
+	err := CleanupSidecars(envRoot, workDir)
 	if err == nil {
 		t.Fatal("CleanupSidecars should surface the rmdir error even when ReadDir also fails, got nil")
 	}

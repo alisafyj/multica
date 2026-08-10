@@ -19,8 +19,10 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/designpreview"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -1660,13 +1662,43 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			resp.WorkspaceID = projectDesignSystemCtx.WorkspaceID
 			resp.ProjectID = projectDesignSystemCtx.ProjectID
 			resp.ProjectDesignSystemContext = json.RawMessage(task.Context)
-			// This task designs a cloud asset in an isolated scratch workspace.
-			// Project repositories and resources are intentionally not exposed.
+			// Package generation and adjustment use only the frozen repository
+			// analysis snapshot. The repository-analysis operation itself needs
+			// the live project resources to produce that snapshot.
 			resp.Repos = nil
 			resp.ProjectResources = nil
 			if projectUUID, err := util.ParseUUID(projectDesignSystemCtx.ProjectID); err == nil {
 				if project, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: projectUUID, WorkspaceID: runtime.WorkspaceID}); err == nil {
 					resp.ProjectTitle = project.Title
+					if projectDesignSystemCtx.Operation == service.ProjectDesignSystemRepositoryAnalysis {
+						var projectRepos []RepoData
+						if rows := projectDesignSystemResourcesForRuntime(h.listProjectResourcesForProject(r.Context(), projectUUID), runtime.DaemonID.String); len(rows) > 0 {
+							out := make([]ProjectResourceData, 0, len(rows))
+							for _, row := range rows {
+								label := ""
+								if row.Label.Valid {
+									label = row.Label.String
+								}
+								ref := json.RawMessage(row.ResourceRef)
+								if len(ref) == 0 {
+									ref = json.RawMessage("{}")
+								}
+								out = append(out, ProjectResourceData{ID: uuidToString(row.ID), ResourceType: row.ResourceType, ResourceRef: ref, Label: label})
+								if row.ResourceType == "github_repo" {
+									var payload struct {
+										URL string `json:"url"`
+									}
+									if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
+										projectRepos = append(projectRepos, RepoData{URL: payload.URL})
+									}
+								}
+							}
+							resp.ProjectResources = out
+						}
+						if len(projectRepos) > 0 {
+							resp.Repos = projectRepos
+						}
+					}
 				}
 			}
 		}
@@ -1916,6 +1948,26 @@ type TaskCompleteRequest struct {
 	SessionID                    string                        `json:"session_id"` // Claude session ID for future resumption
 	WorkDir                      string                        `json:"work_dir"`   // working directory used during execution
 	ProjectDesignSystemArtifacts *ProjectDesignSystemArtifacts `json:"project_design_system_artifacts,omitempty"`
+	// ProjectDesignSystemPackage is the V2-native receipt the daemon sends
+	// back from its server-collected, browser-verified native Agent chain
+	// (Task 5). The handler independently re-validates every field
+	// before persisting it as the new draft.
+	ProjectDesignSystemPackage *ProjectDesignSystemPackageReceipt `json:"project_design_system_package,omitempty"`
+}
+
+// ProjectDesignSystemPackageReceipt mirrors the daemon-side
+// daemon.ProjectDesignSystemPackageReceipt (the wire format the daemon
+// sends on CompleteTask). The handler keeps its own copy to avoid an
+// internal/daemon import that would force a reverse dependency from
+// handler → daemon (the daemon already imports handler types via
+// opendesign + service).
+type ProjectDesignSystemPackageReceipt struct {
+	SchemaVersion string                                   `json:"schema_version"`
+	ObjectKey     string                                   `json:"object_key"`
+	ContentDigest string                                   `json:"content_digest"`
+	ArtifactIndex []projectdesignsystem.ArtifactIndexEntry `json:"artifact_index"`
+	Audit         projectdesignsystem.AuditReport          `json:"audit"`
+	Preview       designpreview.Receipt                    `json:"preview"`
 }
 
 const taskCompleteRequestMaxBytes int64 = 2 << 20
@@ -1945,9 +1997,29 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	var analyzedProfile *db.DesignSystemProfile
 	var profileOutput *designSystemProfileAnalyzeOutput
 	var completedProjectDesignSystem *db.ProjectDesignSystem
+	var preparedRepositoryAnalysis *preparedProjectDesignSystemRepositoryAnalysis
 	var preparedProjectDesignSystem *preparedProjectDesignSystemCompletion
-	if existingTask.Status == "running" && isProjectDesignSystemTaskContext(existingTask) {
-		prepared, prepareErr := h.prepareProjectDesignSystemCompletion(r.Context(), existingTask, workspaceID, req.ProjectDesignSystemArtifacts)
+	preparedAnalysis, isRepositoryAnalysis, analysisErr := prepareProjectDesignSystemRepositoryAnalysisCompletion(existingTask, req.Output)
+	if existingTask.Status == "running" && isRepositoryAnalysis {
+		if analysisErr != nil {
+			slog.Warn("project design system repository analysis completion: invalid output", "task_id", taskID, "error", analysisErr)
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), analysisErr.Error(), req.SessionID, req.WorkDir, "project_design_system_repository_analysis_invalid_output")
+			if failErr != nil {
+				slog.Warn("project design system repository analysis completion: failed to mark task failed", "task_id", taskID, "error", failErr)
+				writeError(w, http.StatusInternalServerError, "failed to fail repository analysis task")
+				return
+			}
+			if failedTask != nil {
+				if err := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); err != nil {
+					slog.Warn("complete task: failed to revoke task tokens after repository analysis failure", "task_id", uuidToString(failedTask.ID), "error", err)
+				}
+			}
+			writeError(w, http.StatusBadRequest, "invalid repository analysis output: "+analysisErr.Error())
+			return
+		}
+		preparedRepositoryAnalysis = preparedAnalysis
+	} else if existingTask.Status == "running" && isProjectDesignSystemTaskContext(existingTask) {
+		prepared, prepareErr := h.prepareProjectDesignSystemCompletion(r.Context(), existingTask, workspaceID, req.ProjectDesignSystemArtifacts, req.ProjectDesignSystemPackage)
 		if prepareErr != nil {
 			h.failInvalidProjectDesignSystemCompletion(r.Context(), existingTask, req, prepareErr)
 			writeError(w, http.StatusBadRequest, prepareErr.Error())
@@ -1993,7 +2065,15 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	result, _ := json.Marshal(req)
 	var task *db.AgentTaskQueue
 	var err error
-	if profileOutput != nil {
+	if preparedRepositoryAnalysis != nil {
+		task, err = h.TaskService.CompleteTaskWithMutation(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
+			system, saveErr := persistProjectDesignSystemRepositoryAnalysisCompletion(r.Context(), qtx, completedTask, *preparedRepositoryAnalysis)
+			if saveErr == nil {
+				completedProjectDesignSystem = &system
+			}
+			return saveErr
+		})
+	} else if profileOutput != nil {
 		task, err = h.TaskService.CompleteTaskWithMutation(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
 			profile, updateErr := h.updateDesignSystemProfileFromAgentTaskOutput(r.Context(), qtx, completedTask, *profileOutput)
 			if updateErr == nil {

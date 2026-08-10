@@ -129,3 +129,54 @@ func TestCompletedProjectDesignSystemWithoutArtifactsBecomesBlocked(t *testing.T
 		t.Fatal("invalid artifact result retained a payload")
 	}
 }
+
+func TestCompletedProjectDesignSystemRepositoryAnalysisSkipsLegacyArtifacts(t *testing.T) {
+	want := TaskResult{
+		Status:    "completed",
+		Comment:   "REPOSITORY_DESIGN_CONTEXT_JSON:{\"schema_version\":\"multica.repository-design-context/v1\"}",
+		EnvRoot:   t.TempDir(),
+		SessionID: "repository-analysis-session",
+	}
+	got := attachProjectDesignSystemArtifacts(Task{
+		ProjectDesignSystemContext: []byte(`{
+			"type":"project_design_system_task",
+			"operation":"repository_analysis"
+		}`),
+	}, want)
+
+	if got.Status != want.Status || got.Comment != want.Comment || got.SessionID != want.SessionID {
+		t.Fatalf("repository analysis result changed: got=%+v want=%+v", got, want)
+	}
+	if got.ProjectDesignSystemArtifacts != nil {
+		t.Fatal("repository analysis result unexpectedly attached legacy artifacts")
+	}
+	if got.FailureReason != "" {
+		t.Fatalf("repository analysis failure reason = %q, want empty", got.FailureReason)
+	}
+}
+
+func TestRepositoryAnalysisRequiresProjectDesignSystemTaskDiscriminator(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		context string
+	}{
+		{name: "missing type", context: `{"operation":"repository_analysis"}`},
+		{name: "wrong type", context: `{"type":"other_task","operation":"repository_analysis"}`},
+		{name: "malformed type", context: `{"type":123,"operation":"repository_analysis"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			envRoot := t.TempDir()
+			want := writeProjectDesignSystemArtifactFiles(t, filepath.Join(envRoot, "output", "project-design-system"))
+			got := attachProjectDesignSystemArtifacts(Task{
+				ProjectDesignSystemContext: []byte(tc.context),
+			}, TaskResult{Status: "completed", EnvRoot: envRoot})
+
+			if got.Status != "completed" {
+				t.Fatalf("status = %q, want completed", got.Status)
+			}
+			if got.ProjectDesignSystemArtifacts == nil || *got.ProjectDesignSystemArtifacts != want {
+				t.Fatalf("legacy artifacts were skipped: got=%+v want=%+v", got.ProjectDesignSystemArtifacts, want)
+			}
+		})
+	}
+}

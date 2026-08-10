@@ -15,9 +15,9 @@ const locators: ProjectDesignSystemLocator[] = [
 
 afterEach(() => vi.useRealTimers());
 
-function dispatchSelection(id: string, source: MessageEventSource | null) {
-  const event = new MessageEvent("message", {
-    data: { type: "multica:project-design-system-select", id },
+function dispatchSelection(id: string, source: MessageEventSource | null, capability?: string) {
+	const event = new MessageEvent("message", {
+    data: { type: "multica:project-design-system-select", id, capability },
   });
   Object.defineProperty(event, "source", { value: source });
   window.dispatchEvent(event);
@@ -155,7 +155,13 @@ describe("ProjectDesignSystemPreview", () => {
     const onSelect = vi.fn<(scope: ProjectDesignSystemScope) => void>();
     render(
       <ProjectDesignSystemPreview
-        previewHtml="<!doctype html><html><body><button>Save</button></body></html>"
+        previewHtml=""
+        archiveTargets={[{
+          kind: "ui_kit",
+          id: "app",
+          path: "ui_kits/app/index.html",
+          url: "/api/project-design-system-previews/workspace/system/digest/resource-capability/files/ui_kits/app/index.html",
+        }]}
         locators={locators}
         integritySha256="digest-1"
         onVerification={vi.fn()}
@@ -164,13 +170,36 @@ describe("ProjectDesignSystemPreview", () => {
     );
 
     const frame = screen.getByTitle("项目设计体系 UI Kit") as HTMLIFrameElement;
-    dispatchSelection("button-primary", window);
-    dispatchSelection("unknown", frame.contentWindow);
+    dispatchSelection("button-primary", window, "resource-capability");
+    dispatchSelection("unknown", frame.contentWindow, "resource-capability");
+    dispatchSelection("button-primary", frame.contentWindow);
+    dispatchSelection("button-primary", frame.contentWindow, "wrong-capability");
     expect(onSelect).not.toHaveBeenCalled();
 
-    dispatchSelection("button-primary", frame.contentWindow);
+    dispatchSelection("button-primary", frame.contentWindow, "resource-capability");
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith({ kind: "component", id: "button-primary" });
+  });
+
+  it("uses the native archive selection bridge without submitting browser verification", () => {
+    const onVerification = vi.fn();
+    const onSelect = vi.fn<(scope: ProjectDesignSystemScope) => void>();
+    render(
+      <ProjectDesignSystemPreview
+        previewHtml=""
+        archiveTargets={[{ kind: "ui_kit", id: "app", path: "ui_kits/app/index.html", url: "/api/project-design-system-previews/workspace/system/digest/resource-capability/files/ui_kits/app/index.html" }]}
+        locators={locators}
+        integritySha256="digest-1"
+        packageSchema="multica.project-design-system/v2"
+        onVerification={onVerification}
+        onSelect={onSelect}
+      />,
+    );
+    const frame = screen.getByTitle("项目设计体系 UI Kit") as HTMLIFrameElement;
+    dispatchSelection("button-primary", frame.contentWindow, "resource-capability");
+    dispatchVerification({}, frame.contentWindow);
+    expect(onSelect).toHaveBeenCalledWith({ kind: "component", id: "button-primary" });
+    expect(onVerification).not.toHaveBeenCalled();
   });
 
   it("accepts one matching verification receipt from its own iframe", () => {

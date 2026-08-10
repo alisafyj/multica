@@ -122,6 +122,45 @@ describe("ApiClient", () => {
       expect(byProject.content.sections).toEqual([]);
       expect(detail.activity).toEqual([]);
     });
+
+    it("posts repository analysis requests with a safe response fallback", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ project_id: 42 }), {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      const result = await client.analyzeProjectDesignSystemRepository({
+        project_id: "project /1",
+        agent_id: "agent-1",
+        platform: "web",
+        brief: "CRM customer management",
+        references: [],
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.example.test/api/project-design-systems/repository-analysis",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            project_id: "project /1",
+            agent_id: "agent-1",
+            platform: "web",
+            brief: "CRM customer management",
+            references: [],
+          }),
+        }),
+      );
+      expect(result).toMatchObject({
+        project_id: "project /1",
+        platform: "web",
+        current_agent_id: "agent-1",
+        status: "unestablished",
+      });
+    });
   });
 
   it("preserves HTTP status on failed requests", async () => {

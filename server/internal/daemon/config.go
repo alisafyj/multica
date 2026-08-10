@@ -67,6 +67,7 @@ type Config struct {
 	OpenDesignWorkerToken          string                // bearer token for the local Open Design worker; never logged
 	OpenDesignArtifactRoot         string                // root of the pinned Open Design checkout verified before every run
 	OpenDesignBrowserPath          string                // executable Chromium path used for isolated Preview verification
+	DesignPreviewBrowserPath       string                // executable Chromium path used for native V2 package Preview verification; takes MULTICA_DESIGN_PREVIEW_BROWSER_PATH, falls back to OpenDesignBrowserPath, falls back to platform resolver
 	KeepEnvAfterTask               bool                  // preserve env after task for debugging
 	HealthPort                     int                   // local HTTP port for health checks (default: 19514)
 	MaxConcurrentTasks             int                   // max tasks running in parallel (default: 20)
@@ -125,6 +126,14 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	openDesignWorkerToken := strings.TrimSpace(os.Getenv("MULTICA_OPEN_DESIGN_WORKER_TOKEN"))
 	openDesignArtifactRoot := strings.TrimSpace(os.Getenv("MULTICA_OPEN_DESIGN_ARTIFACT_ROOT"))
 	openDesignBrowserPath := strings.TrimSpace(os.Getenv("MULTICA_OPEN_DESIGN_BROWSER_PATH"))
+	// DesignPreviewBrowserPath is the V2-native Chromium path. Native V2
+	// finalize MUST NOT consult the MULTICA_OPEN_DESIGN_* env vars; that
+	// group is owned by the legacy Open Design chain. When the dedicated
+	// env var is unset we leave the field empty so finalize-time
+	// ResolveBrowserPath falls through to its platform / PATH lookup;
+	// an unresolved browser is a task failure with
+	// project_design_system_preview_unavailable (no skip semantics).
+	designPreviewBrowserPath := strings.TrimSpace(os.Getenv("MULTICA_DESIGN_PREVIEW_BROWSER_PATH"))
 
 	// Probe available agent CLIs. exec.LookPath is the primary path, but on
 	// macOS/Linux a GUI-launched daemon (Electron, Launchpad) does not
@@ -424,6 +433,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		OpenDesignWorkerToken:          openDesignWorkerToken,
 		OpenDesignArtifactRoot:         openDesignArtifactRoot,
 		OpenDesignBrowserPath:          openDesignBrowserPath,
+		DesignPreviewBrowserPath:       designPreviewBrowserPath,
 		KeepEnvAfterTask:               keepEnv,
 		GCEnabled:                      gcEnabled,
 		GCInterval:                     gcInterval,

@@ -484,7 +484,7 @@ func TestProjectDesignSystemContextWritesTaskAndBasePackageFiles(t *testing.T) {
 		}
 	}
 
-	if err := CleanupSidecars(envRoot); err != nil {
+	if err := CleanupSidecars(envRoot, workDir); err != nil {
 		t.Fatalf("cleanup project design system sidecars: %v", err)
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
@@ -509,6 +509,77 @@ func TestProjectDesignSystemGenerateContextOmitsBaseFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "base")); !os.IsNotExist(err) {
 		t.Fatalf("generate task must not create base directory: %v", err)
+	}
+}
+
+func TestProjectDesignSystemRepositoryAnalysisUsesNativeReadOnlyContext(t *testing.T) {
+	workDir := t.TempDir()
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"repository_analysis",
+		"brief":"Analyze the CRM repository read-only"
+	}`)
+
+	if err := writeContextFiles(workDir, "codex", ctx, nil); err != nil {
+		t.Fatalf("write repository analysis context: %v", err)
+	}
+	t.Cleanup(func() { _ = RestoreV2SidecarWritability(workDir) })
+
+	root := filepath.Join(workDir, ".agent_context", "project_design_system")
+	for _, path := range []string{
+		filepath.Join(root, "context", "task.json"),
+		filepath.Join(root, "reference", "index.json"),
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("native repository analysis sidecar %s: %v", path, err)
+		}
+		if info.Mode().Perm() != 0o444 {
+			t.Fatalf("native repository analysis sidecar %s mode = %o, want 0444", path, info.Mode().Perm())
+		}
+	}
+	for _, name := range []string{"context", "reference"} {
+		path := filepath.Join(root, name)
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("native repository analysis directory %s: %v", path, err)
+		}
+		if info.Mode().Perm() != 0o555 {
+			t.Fatalf("native repository analysis directory %s mode = %o, want 0555", path, info.Mode().Perm())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "base")); !os.IsNotExist(err) {
+		t.Fatalf("repository analysis must not create base directory: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "task.json")); !os.IsNotExist(err) {
+		t.Fatalf("repository analysis must not use the legacy task.json layout: %v", err)
+	}
+}
+
+func TestCleanupLocalDirectorySidecarsRemovesNativeRepositoryAnalysisContext(t *testing.T) {
+	envRoot := t.TempDir()
+	workDir := t.TempDir()
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"repository_analysis",
+		"brief":"Analyze the CRM repository read-only"
+	}`)
+	manifest := &sidecarManifest{}
+	if err := writeContextFiles(workDir, "codex", ctx, manifest); err != nil {
+		t.Fatalf("write repository analysis context: %v", err)
+	}
+	t.Cleanup(func() { _ = RestoreV2SidecarWritability(workDir) })
+	if err := writeSidecarManifest(envRoot, manifest); err != nil {
+		t.Fatalf("write sidecar manifest: %v", err)
+	}
+
+	if err := CleanupLocalDirectorySidecars(envRoot, workDir); err != nil {
+		t.Fatalf("cleanup local-directory sidecars: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, ".agent_context")); !os.IsNotExist(err) {
+		t.Fatalf("managed .agent_context remains after cleanup: %v", err)
 	}
 }
 
@@ -749,6 +820,58 @@ func TestReuseRefreshesSkillsWithoutDuplicating(t *testing.T) {
 	}
 }
 
+func TestReuseCleanupSidecarsDoesNotFollowManagedIntermediateSymlink(t *testing.T) {
+	workspacesRoot := t.TempDir()
+	task := TaskContextForEnv{IssueID: "reuse-sidecar-symlink"}
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: workspacesRoot,
+		WorkspaceID:    "ws-reuse-sidecar-symlink",
+		TaskID:         "11112222-3333-4444-5555-999900001111",
+		Provider:       "claude",
+		Task:           task,
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer env.Cleanup(true)
+
+	managedContextDir := filepath.Join(env.WorkDir, ".agent_context")
+	if err := os.RemoveAll(managedContextDir); err != nil {
+		t.Fatalf("remove managed context directory: %v", err)
+	}
+	externalDir := t.TempDir()
+	externalSentinel := filepath.Join(externalDir, "issue_context.md")
+	if err := os.WriteFile(externalSentinel, []byte("external sentinel"), 0o644); err != nil {
+		t.Fatalf("write external sentinel: %v", err)
+	}
+	if err := os.Symlink(externalDir, managedContextDir); err != nil {
+		t.Skipf("symlink not supported on this platform: %v", err)
+	}
+
+	if reused := Reuse(ReuseParams{
+		WorkDir:  env.WorkDir,
+		Provider: "claude",
+		Task:     task,
+	}, testLogger()); reused == nil {
+		t.Fatal("Reuse returned nil")
+	}
+
+	got, err := os.ReadFile(externalSentinel)
+	if err != nil {
+		t.Fatalf("external sentinel must survive Reuse cleanup: %v", err)
+	}
+	if string(got) != "external sentinel" {
+		t.Fatalf("external sentinel changed: %q", got)
+	}
+	info, err := os.Lstat(managedContextDir)
+	if err != nil {
+		t.Fatalf("stat refreshed context directory: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Fatalf("managed context symlink was not replaced by a real directory: mode=%v", info.Mode())
+	}
+}
+
 // TestReuseReclaimsManagedSkillDirWithStrayAgentFile covers the edge case the
 // #3716 review surfaced: a prior-dispatch agent writes a file into the
 // platform's managed skill directory. CleanupSidecars on its own would keep
@@ -817,6 +940,107 @@ func TestReuseReclaimsManagedSkillDirWithStrayAgentFile(t *testing.T) {
 	}
 }
 
+func TestReuseReclaimsManagedSkillSymlinksWithoutFollowing(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		replaceDir func(skillsDir, externalDir string) (string, error)
+	}{
+		{
+			name: "managed skill directory",
+			replaceDir: func(skillsDir, externalDir string) (string, error) {
+				managedDir := filepath.Join(skillsDir, "issue-review")
+				if err := os.RemoveAll(managedDir); err != nil {
+					return "", err
+				}
+				if err := os.WriteFile(filepath.Join(externalDir, "SKILL.md"), []byte("external skill"), 0o644); err != nil {
+					return "", err
+				}
+				if err := os.Symlink(externalDir, managedDir); err != nil {
+					return "", err
+				}
+				return filepath.Join(externalDir, "sentinel.txt"), nil
+			},
+		},
+		{
+			name: "managed skills parent",
+			replaceDir: func(skillsDir, externalDir string) (string, error) {
+				if err := os.RemoveAll(skillsDir); err != nil {
+					return "", err
+				}
+				externalManagedDir := filepath.Join(externalDir, "issue-review")
+				if err := os.MkdirAll(externalManagedDir, 0o755); err != nil {
+					return "", err
+				}
+				if err := os.WriteFile(filepath.Join(externalManagedDir, "SKILL.md"), []byte("external skill"), 0o644); err != nil {
+					return "", err
+				}
+				if err := os.Symlink(externalDir, skillsDir); err != nil {
+					return "", err
+				}
+				return filepath.Join(externalManagedDir, "sentinel.txt"), nil
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspacesRoot := t.TempDir()
+			task := TaskContextForEnv{
+				IssueID: "reuse-managed-skill-symlink",
+				AgentSkills: []SkillContextForEnv{
+					{Name: "Issue Review", Content: "Review the issue."},
+				},
+			}
+			env, err := Prepare(PrepareParams{
+				WorkspacesRoot: workspacesRoot,
+				WorkspaceID:    "ws-reuse-managed-skill-symlink",
+				TaskID:         "aaaabbbb-cccc-dddd-eeee-ffff22223333",
+				Provider:       "claude",
+				Task:           task,
+			}, testLogger())
+			if err != nil {
+				t.Fatalf("Prepare failed: %v", err)
+			}
+			defer env.Cleanup(true)
+
+			skillsDir := filepath.Join(env.WorkDir, ".claude", "skills")
+			externalDir := t.TempDir()
+			externalSentinel, err := tc.replaceDir(skillsDir, externalDir)
+			if err != nil {
+				t.Skipf("replace managed path with symlink: %v", err)
+			}
+			if err := os.WriteFile(externalSentinel, []byte("external sentinel"), 0o644); err != nil {
+				t.Fatalf("write external sentinel: %v", err)
+			}
+
+			if reused := Reuse(ReuseParams{
+				WorkDir:  env.WorkDir,
+				Provider: "claude",
+				Task:     task,
+			}, testLogger()); reused == nil {
+				t.Fatal("Reuse returned nil")
+			}
+
+			got, err := os.ReadFile(externalSentinel)
+			if err != nil {
+				t.Fatalf("external sentinel must survive managed skill reclaim: %v", err)
+			}
+			if string(got) != "external sentinel" {
+				t.Fatalf("external sentinel changed: %q", got)
+			}
+			managedDir := filepath.Join(skillsDir, "issue-review")
+			info, err := os.Lstat(managedDir)
+			if err != nil {
+				t.Fatalf("stat refreshed managed skill directory: %v", err)
+			}
+			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+				t.Fatalf("managed skill symlink was not replaced by a real directory: mode=%v", info.Mode())
+			}
+			if _, err := os.Stat(filepath.Join(managedDir, "SKILL.md")); err != nil {
+				t.Fatalf("refreshed SKILL.md missing: %v", err)
+			}
+		})
+	}
+}
+
 // TestReuseSkillRefreshIsCanonicalAcrossProviders exercises the reuse skill
 // rollback (removeReusedManagedSkillDirs + CleanupSidecars + writeContextFiles
 // — the exact sequence Reuse runs) directly across the file-based providers,
@@ -860,10 +1084,10 @@ func TestReuseSkillRefreshIsCanonicalAcrossProviders(t *testing.T) {
 
 			// Second dispatch: same rollback + refresh sequence Reuse runs.
 			task.AgentSkills[0].Content = "v2"
-			if err := removeReusedManagedSkillDirs(envRoot, skillsDirPath(workDir, provider)); err != nil {
+			if err := removeReusedManagedSkillDirs(envRoot, workDir, skillsDirPath(workDir, provider)); err != nil {
 				t.Fatalf("removeReusedManagedSkillDirs: %v", err)
 			}
-			if err := CleanupSidecars(envRoot); err != nil {
+			if err := CleanupSidecars(envRoot, workDir); err != nil {
 				t.Fatalf("CleanupSidecars: %v", err)
 			}
 			m2 := &sidecarManifest{}
@@ -4330,5 +4554,410 @@ func TestEnvironmentCleanupStandardModeRemovesWorkdir(t *testing.T) {
 	// output/logs should remain.
 	if _, err := os.Stat(filepath.Join(env.RootDir, "output")); err != nil {
 		t.Fatalf("output/ removed by partial cleanup: %v", err)
+	}
+}
+
+func TestWriteProjectDesignSystemContextCreatesReadOnlyContextAndReferenceTrees(t *testing.T) {
+	workDir := t.TempDir()
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"adjust",
+		"package_schema":"multica.project-design-system/v2",
+		"input_snapshot_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"base_package_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+		"brief":"Calm CRM",
+		"base_package":{
+			"design_md":"# base",
+			"tokens_css":":root { --color-brand: #123456; }",
+			"components_html":"<main data-design-node-id=\"base\">Base kit</main>",
+			"integrity_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+		}
+	}`)
+	if err := writeContextFiles(workDir, "opencode", ctx, nil); err != nil {
+		t.Fatalf("writeContextFiles: %v", err)
+	}
+	// This test asserts the on-disk 0o555 / 0o444 mid-run state and
+	// never invokes env.Cleanup, so t.TempDir's auto-remove would
+	// fail with EACCES. RestoreV2SidecarWritability is the production
+	// helper that Environment.Cleanup now calls; reusing it here
+	// keeps the test's own teardown aligned with the production
+	// path it covers the first half of.
+	t.Cleanup(func() { _ = RestoreV2SidecarWritability(workDir) })
+
+	root := filepath.Join(workDir, ".agent_context", "project_design_system")
+	for _, file := range []struct {
+		path  string
+		perm  os.FileMode
+		label string
+	}{
+		{filepath.Join(root, "context", "task.json"), 0o444, "context/task.json"},
+		{filepath.Join(root, "reference", "index.json"), 0o444, "reference/index.json"},
+		{filepath.Join(root, "base", "DESIGN.md"), 0o444, "base/DESIGN.md"},
+		{filepath.Join(root, "base", "tokens.css"), 0o444, "base/tokens.css"},
+		{filepath.Join(root, "base", "components.html"), 0o444, "base/components.html"},
+	} {
+		info, err := os.Stat(file.path)
+		if err != nil {
+			t.Fatalf("missing %s: %v", file.label, err)
+		}
+		if info.Mode().Perm() != file.perm {
+			t.Fatalf("%s mode = %o, want %o", file.label, info.Mode().Perm(), file.perm)
+		}
+	}
+	for _, dir := range []struct {
+		path  string
+		perm  os.FileMode
+		label string
+	}{
+		{filepath.Join(root, "context"), 0o555, "context/"},
+		{filepath.Join(root, "reference"), 0o555, "reference/"},
+		{filepath.Join(root, "base"), 0o555, "base/"},
+	} {
+		info, err := os.Stat(dir.path)
+		if err != nil {
+			t.Fatalf("missing %s: %v", dir.label, err)
+		}
+		if info.Mode().Perm() != dir.perm {
+			t.Fatalf("%s mode = %o, want %o", dir.label, info.Mode().Perm(), dir.perm)
+		}
+	}
+	workInfo, err := os.Stat(workDir)
+	if err != nil {
+		t.Fatalf("stat workdir: %v", err)
+	}
+	if workInfo.Mode().Perm()&0o200 == 0 {
+		t.Fatalf("workdir must remain writable for the agent, mode = %o", workInfo.Mode().Perm())
+	}
+
+	refIndex, err := os.ReadFile(filepath.Join(root, "reference", "index.json"))
+	if err != nil {
+		t.Fatalf("read reference/index.json: %v", err)
+	}
+	if !strings.Contains(string(refIndex), `"schema_version"`) {
+		t.Fatalf("reference/index.json missing schema_version: %s", refIndex)
+	}
+}
+
+func TestWriteProjectDesignSystemContextRejectsMismatchedBasePackage(t *testing.T) {
+	workDir := t.TempDir()
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"adjust",
+		"package_schema":"multica.project-design-system/v2",
+		"input_snapshot_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"base_package_sha256":"0000000000000000000000000000000000000000000000000000000000000000",
+		"brief":"Calm CRM",
+		"base_package":{
+			"design_md":"# base",
+			"tokens_css":":root{}",
+			"components_html":"<main>x</main>",
+			"integrity_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+		}
+	}`)
+	if err := writeContextFiles(workDir, "opencode", ctx, nil); err == nil {
+		t.Fatal("expected writeContextFiles to reject mismatched base_package_sha256, got nil")
+	}
+}
+
+func TestPrepareProjectDesignSystemWorkspaceSeparatesWorkAndOutput(t *testing.T) {
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"generate",
+		"package_schema":"multica.project-design-system/v2",
+		"input_snapshot_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	}`)
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: t.TempDir(),
+		WorkspaceID:    "workspace-v2",
+		TaskID:         "task-v2-12345678",
+		Provider:       "opencode",
+		Task:           ctx,
+	}, discardLogger())
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	// This test asserts the V2 layout is on disk and never invokes
+	// env.Cleanup, so t.TempDir's auto-remove would fail with EACCES
+	// on the 0o555 sidecar dirs. RestoreV2SidecarWritability is the
+	// production helper that Environment.Cleanup now calls; reusing
+	// it here keeps the test's teardown aligned with the production
+	// path it covers the first half of.
+	t.Cleanup(func() { _ = RestoreV2SidecarWritability(env.WorkDir) })
+	if env.WorkDir == "" || env.OutputDir == "" {
+		t.Fatalf("WorkDir=%q OutputDir=%q, both must be set", env.WorkDir, env.OutputDir)
+	}
+	if env.WorkDir == env.OutputDir {
+		t.Fatalf("WorkDir and OutputDir must be separate, both = %q", env.WorkDir)
+	}
+	if !strings.HasPrefix(env.OutputDir, filepath.Join(env.RootDir, "output", "project-design-system")) {
+		t.Fatalf("OutputDir = %q, want it under env.RootDir/output/project-design-system", env.OutputDir)
+	}
+	if !filepath.IsAbs(env.OutputDir) {
+		t.Fatalf("OutputDir = %q, want absolute path", env.OutputDir)
+	}
+	if info, err := os.Stat(env.OutputDir); err != nil || info.Mode().Perm()&0o200 == 0 {
+		t.Fatalf("output dir must be writable by the agent: info=%v err=%v", info, err)
+	}
+	if info, err := os.Stat(env.WorkDir); err != nil || info.Mode().Perm()&0o200 == 0 {
+		t.Fatalf("workdir must remain writable for the agent: info=%v err=%v", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(env.WorkDir, ".agent_context", "project_design_system", "context", "task.json")); err != nil {
+		t.Fatalf("Prepare must materialize the V2 context/task.json sidecar: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.WorkDir, ".agent_context", "project_design_system", "reference", "index.json")); err != nil {
+		t.Fatalf("Prepare must materialize the V2 reference/index.json sidecar: %v", err)
+	}
+}
+
+// TestEnvironmentCleanupRemovesV2SidecarWorkspace exercises the
+// production Environment.Cleanup path on a V2 materialised workspace.
+// The V2 layout is 0o555 on {context,reference,base} and 0o444 on
+// the files inside, so naive os.RemoveAll fails with EACCES. The
+// fix routes the chmod back to 0o755 through
+// RestoreV2SidecarWritability, called from Environment.Cleanup
+// (and from gc.go's cleanTaskDir for the GC path).
+func TestEnvironmentCleanupRemovesV2SidecarWorkspace(t *testing.T) {
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"adjust",
+		"package_schema":"multica.project-design-system/v2",
+		"input_snapshot_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"base_package_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+		"brief":"Calm CRM",
+		"base_package":{
+			"design_md":"# base",
+			"tokens_css":":root { --color-brand: #123456; }",
+			"components_html":"<main data-design-node-id=\"base\">Base kit</main>",
+			"integrity_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+		}
+	}`)
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: t.TempDir(),
+		WorkspaceID:    "workspace-cleanup",
+		TaskID:         "task-cleanup-12345678",
+		Provider:       "opencode",
+		Task:           ctx,
+	}, discardLogger())
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	// Sanity: the V2 sidecar tree is on disk and stamped read-only
+	// exactly as the brief specifies. Production cleanup must remove
+	// it without the caller chmod'ing anything.
+	for _, name := range []string{"context", "reference", "base"} {
+		path := filepath.Join(env.WorkDir, ".agent_context", "project_design_system", name)
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			t.Fatalf("missing V2 sidecar %s: %v", name, statErr)
+		}
+		if info.Mode().Perm() != 0o555 {
+			t.Fatalf("V2 sidecar %s mode = %o, want 0o555", name, info.Mode().Perm())
+		}
+	}
+	if info, err := os.Stat(filepath.Join(env.WorkDir, ".agent_context", "project_design_system", "context", "task.json")); err != nil {
+		t.Fatalf("missing context/task.json: %v", err)
+	} else if info.Mode().Perm() != 0o444 {
+		t.Fatalf("context/task.json mode = %o, want 0o444", info.Mode().Perm())
+	}
+
+	// Production cleanup. This is the path the daemon and the GC both
+	// take. With the production chmod hook in place, the call must
+	// succeed and the entire envRoot must be gone.
+	if err := env.Cleanup(true); err != nil {
+		t.Fatalf("env.Cleanup(true) on a V2 workspace: %v", err)
+	}
+	if _, err := os.Stat(env.RootDir); !os.IsNotExist(err) {
+		t.Fatalf("env.RootDir still present after Cleanup: stat err = %v", err)
+	}
+	if _, err := os.Stat(env.WorkDir); !os.IsNotExist(err) {
+		t.Fatalf("env.WorkDir still present after Cleanup: stat err = %v", err)
+	}
+
+	// RestoreV2SidecarWritability is a no-op on a path that no
+	// longer has the V2 layout, so re-running it after Cleanup must
+	// not error.
+	if err := RestoreV2SidecarWritability(env.WorkDir); err != nil {
+		t.Fatalf("RestoreV2SidecarWritability after Cleanup: %v", err)
+	}
+}
+
+// TestRestoreV2SidecarWritabilityNoOpOnAbsentLayout verifies the
+// helper is safe to call on paths that never had a V2 sidecar
+// (legacy / Open Design / non-design-system tasks) — those must not
+// error and must not touch anything on disk.
+func TestRestoreV2SidecarWritabilityNoOpOnAbsentLayout(t *testing.T) {
+	workDir := t.TempDir()
+	if err := RestoreV2SidecarWritability(workDir); err != nil {
+		t.Fatalf("RestoreV2SidecarWritability on empty workdir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, ".agent_context")); !os.IsNotExist(err) {
+		t.Fatalf("RestoreV2SidecarWritability must not create the V2 layout: stat err = %v", err)
+	}
+}
+
+// TestRestoreV2SidecarWritabilityRejectsPlantedSymlink is the
+// symlink-safety covering test. The agent workspace is
+// semi-untrusted — a compromised or buggy agent can replace any
+// component of the V2 sidecar path with a symlink. The helper
+// must NOT follow that link, because the link target lives
+// outside the workdir and chmod'ing it would escape the V2
+// isolation contract.
+//
+// The test plants a symlink at
+// {workdir}/.agent_context/project_design_system/base pointing at
+// a temp dir outside the workdir whose mode is seeded to a known
+// non-default value. After calling the helper:
+//
+//	(a) the external target's mode is unchanged, and
+//	(b) the helper returns nil (no catastrophic error), so the
+//	    surrounding cleanup is not derailed by a planted symlink.
+func TestRestoreV2SidecarWritabilityRejectsPlantedSymlink(t *testing.T) {
+	workDir := t.TempDir()
+
+	// Seed an external target with a recognisable mode so the
+	// "mode is unchanged" assertion has something to check.
+	externalDir := t.TempDir()
+	externalMode := os.FileMode(0o700)
+	if err := os.Chmod(externalDir, externalMode); err != nil {
+		t.Fatalf("seed external dir mode: %v", err)
+	}
+
+	// Build the legit V2 sidecar tree on the workdir side, then
+	// overwrite the `base` entry with a symlink to the external
+	// dir. The two honest sidecars stay real so the helper
+	// has to walk past them and only short-circuit on `base`.
+	for _, name := range []string{"context", "reference", "base"} {
+		if err := os.MkdirAll(filepath.Join(workDir, ".agent_context", "project_design_system", name), 0o755); err != nil {
+			t.Fatalf("create honest sidecar %s: %v", name, err)
+		}
+	}
+	for _, name := range []string{"context", "reference"} {
+		if err := os.Chmod(filepath.Join(workDir, ".agent_context", "project_design_system", name), 0o555); err != nil {
+			t.Fatalf("stamp honest sidecar %s read-only: %v", name, err)
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(workDir, ".agent_context", "project_design_system", "base")); err != nil {
+		t.Fatalf("remove honest base dir: %v", err)
+	}
+	if err := os.Symlink(externalDir, filepath.Join(workDir, ".agent_context", "project_design_system", "base")); err != nil {
+		t.Fatalf("plant symlink at sidecar base: %v", err)
+	}
+
+	if err := RestoreV2SidecarWritability(workDir); err != nil {
+		t.Fatalf("RestoreV2SidecarWritability must not error on a planted symlink: %v", err)
+	}
+
+	// (a) External target's mode is unchanged. If the helper had
+	// followed the link (the pre-fix behavior), the chmod would
+	// have flipped the external target to 0o755.
+	info, err := os.Stat(externalDir)
+	if err != nil {
+		t.Fatalf("stat external target: %v", err)
+	}
+	if info.Mode().Perm() != externalMode {
+		t.Fatalf("external target mode = %o, want %o (helper followed the planted symlink)", info.Mode().Perm(), externalMode)
+	}
+
+	// (b) The honest sidecars (context, reference) were still
+	// chmod'd back to 0o755, proving the helper walked the path
+	// and only stopped at the planted link.
+	for _, name := range []string{"context", "reference"} {
+		path := filepath.Join(workDir, ".agent_context", "project_design_system", name)
+		if info, err := os.Lstat(path); err != nil {
+			t.Fatalf("Lstat %s: %v", name, err)
+		} else if info.Mode().Perm() != 0o755 {
+			t.Fatalf("honest sidecar %s mode = %o, want 0o755", name, info.Mode().Perm())
+		}
+	}
+}
+
+// TestEnvironmentCleanupRemovesV2SidecarWorkspaceWithPlantedSymlink
+// exercises the full production cleanup path on a V2 workspace
+// that contains a planted symlink. The cleanup must complete
+// without erroring catastrophically; the symlink is removed (per
+// os.RemoveAll semantics, the link itself, not the target) and
+// the external target's mode survives intact.
+func TestEnvironmentCleanupRemovesV2SidecarWorkspaceWithPlantedSymlink(t *testing.T) {
+	ctx := TaskContextForEnv{}
+	setProjectDesignSystemContextForTest(t, &ctx, `{
+		"type":"project_design_system_task",
+		"operation":"adjust",
+		"package_schema":"multica.project-design-system/v2",
+		"input_snapshot_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"base_package_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+		"brief":"Calm CRM",
+		"base_package":{
+			"design_md":"# base",
+			"tokens_css":":root { --color-brand: #123456; }",
+			"components_html":"<main data-design-node-id=\"base\">Base kit</main>",
+			"integrity_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+		}
+	}`)
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: t.TempDir(),
+		WorkspaceID:    "workspace-symlink",
+		TaskID:         "task-symlink-12345678",
+		Provider:       "opencode",
+		Task:           ctx,
+	}, discardLogger())
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	// Plant a symlink at one of the sidecar entries pointing
+	// outside the workdir. Pick `base` (the brief's canonical
+	// example) and seed the target with a known mode. The honest
+	// base/ is 0o555 with 0o444 files inside, so we use the
+	// production helper to unlock it before removing it.
+	externalDir := t.TempDir()
+	externalMode := os.FileMode(0o700)
+	if err := os.Chmod(externalDir, externalMode); err != nil {
+		t.Fatalf("seed external target mode: %v", err)
+	}
+	baseLink := filepath.Join(env.WorkDir, ".agent_context", "project_design_system", "base")
+	if err := RestoreV2SidecarWritability(env.WorkDir); err != nil {
+		t.Fatalf("RestoreV2SidecarWritability pre-plant: %v", err)
+	}
+	if err := os.RemoveAll(baseLink); err != nil {
+		t.Fatalf("remove honest base: %v", err)
+	}
+	if err := os.Symlink(externalDir, baseLink); err != nil {
+		t.Fatalf("plant symlink at sidecar base: %v", err)
+	}
+
+	// (b) Production cleanup must not error catastrophically. A
+	// non-nil return is acceptable as long as it isn't a panic
+	// or a confusing escape; we expect a clean nil here because
+	// the helper bails out on the planted link and os.RemoveAll
+	// unlinks the symlink itself rather than chasing it.
+	if err := env.Cleanup(true); err != nil {
+		t.Fatalf("env.Cleanup(true) on a V2 workspace with planted symlink: %v", err)
+	}
+
+	// (a) External target's mode is unchanged across the whole
+	// cleanup, confirming nothing in the daemon's path followed
+	// the link.
+	info, err := os.Stat(externalDir)
+	if err != nil {
+		t.Fatalf("stat external target: %v", err)
+	}
+	if info.Mode().Perm() != externalMode {
+		t.Fatalf("external target mode = %o, want %o (cleanup followed the planted symlink)", info.Mode().Perm(), externalMode)
+	}
+
+	// Workdir is gone (envRoot cleanup, symlink unlinked by
+	// os.RemoveAll which only touches the link, not the target).
+	if _, err := os.Stat(env.WorkDir); !os.IsNotExist(err) {
+		t.Fatalf("env.WorkDir still present after Cleanup: stat err = %v", err)
+	}
+	// The external target survives — os.RemoveAll does not chase
+	// the symlink.
+	if _, err := os.Stat(externalDir); err != nil {
+		t.Fatalf("external target vanished during cleanup (os.RemoveAll followed the symlink?): %v", err)
 	}
 }

@@ -128,6 +128,7 @@ import type {
   CreateDesignRestoreTaskRequest,
   CreateDesignSystemProfileRequest,
   CreateProjectDesignSystemRequest,
+  AnalyzeProjectDesignSystemRepositoryRequest,
   AdjustProjectDesignSystemRequest,
   RegenerateProjectDesignSystemRequest,
   DesignCatalogTemplate,
@@ -142,6 +143,7 @@ import type {
   DesignRevision,
   DesignSystemProfile,
   ProjectDesignSystem,
+  ProjectDesignSystemPackagePreview,
   CreateDesignRepoAnalysisRequest,
   DesignRepoAnalysis,
   DesignRestorePlan,
@@ -245,11 +247,13 @@ import {
   DesignDeliverySchema,
   DesignSystemProfileSchema,
   ProjectDesignSystemSchema,
+  ProjectDesignSystemPackagePreviewSchema,
   DesignRestoreTaskSchema,
   DispatchDesignRestoreTaskResponseSchema,
   EMPTY_DESIGN_DELIVERY,
   EMPTY_DESIGN_SYSTEM_PROFILE,
   EMPTY_PROJECT_DESIGN_SYSTEM,
+  EMPTY_PROJECT_DESIGN_SYSTEM_PACKAGE_PREVIEW,
   EMPTY_DESIGN_RESTORE_TASK,
   EMPTY_DISPATCH_DESIGN_RESTORE_TASK_RESPONSE,
   ListDesignDeliveriesResponseSchema,
@@ -2018,6 +2022,30 @@ export class ApiClient {
     );
   }
 
+  async getProjectDesignSystemPackagePreview(id: string): Promise<ProjectDesignSystemPackagePreview> {
+    const raw = await this.fetch<unknown>(
+      `/api/project-design-systems/${encodeURIComponent(id)}/package-preview`,
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemPackagePreviewSchema,
+      EMPTY_PROJECT_DESIGN_SYSTEM_PACKAGE_PREVIEW,
+      { endpoint: "GET /api/project-design-systems/{id}/package-preview" },
+    );
+  }
+
+  getProjectDesignSystemPackagePreviewFileURL(
+    _systemId: string,
+    workspaceId: string,
+    contentDigest: string,
+    accessToken: string,
+    artifactPath: string,
+  ): string {
+    const digest = contentDigest.startsWith("sha256:") ? contentDigest.slice("sha256:".length) : contentDigest;
+    const encodedPath = artifactPath.split("/").map(encodeURIComponent).join("/");
+    return `${this.baseUrl}/api/project-design-system-previews/${encodeURIComponent(workspaceId)}/${encodeURIComponent(_systemId)}/${encodeURIComponent(digest)}/${encodeURIComponent(accessToken)}/files/${encodedPath}`;
+  }
+
   async createProjectDesignSystem(
     data: CreateProjectDesignSystemRequest,
   ): Promise<ProjectDesignSystem> {
@@ -2035,6 +2063,26 @@ export class ApiClient {
         current_agent_id: data.agent_id,
       },
       { endpoint: "POST /api/project-design-systems" },
+    );
+  }
+
+  async analyzeProjectDesignSystemRepository(
+    data: AnalyzeProjectDesignSystemRepositoryRequest,
+  ): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>(
+      "/api/project-design-systems/repository-analysis",
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      {
+        ...EMPTY_PROJECT_DESIGN_SYSTEM,
+        project_id: data.project_id,
+        platform: data.platform,
+        current_agent_id: data.agent_id,
+      },
+      { endpoint: "POST /api/project-design-systems/repository-analysis" },
     );
   }
 

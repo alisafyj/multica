@@ -70,11 +70,14 @@ type RegenerateProjectDesignSystemRequest struct {
 }
 
 type ProjectDesignSystemContentResponse struct {
-	Sections        []projectdesignsystem.Section    `json:"sections"`
-	TokenGroups     []projectdesignsystem.TokenGroup `json:"token_groups"`
-	PreviewHTML     string                           `json:"preview_html"`
-	Locators        []projectdesignsystem.Locator    `json:"locators"`
-	IntegritySHA256 string                           `json:"integrity_sha256"`
+	Sections         []projectdesignsystem.Section       `json:"sections"`
+	TokenGroups      []projectdesignsystem.TokenGroup    `json:"token_groups"`
+	PreviewHTML      string                              `json:"preview_html"`
+	Locators         []projectdesignsystem.Locator       `json:"locators"`
+	IntegritySHA256  string                              `json:"integrity_sha256"`
+	PackageSchema    string                              `json:"package_schema,omitempty"`
+	PreviewTargets   []projectdesignsystem.PreviewTarget `json:"preview_targets"`
+	SelectionEnabled bool                                `json:"selection_enabled"`
 }
 
 type ProjectDesignSystemPreviewValidationResponse struct {
@@ -511,7 +514,12 @@ func (h *Handler) SaveProjectDesignSystem(w http.ResponseWriter, r *http.Request
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "draft_lookup_failed", "failed to load draft")
 		return
 	}
-	if isOpenDesignProjectDesignSystemPackage(draft) {
+	if draft.PackageSchema == projectdesignsystem.PackageSchemaV2 {
+		if _, _, err := h.loadNativeProjectDesignSystemPackageArchive(r.Context(), system, draft); err != nil {
+			writeProjectDesignSystemError(w, http.StatusUnprocessableEntity, "draft_invalid", "draft has not passed validation")
+			return
+		}
+	} else if isOpenDesignProjectDesignSystemPackage(draft) {
 		if _, err := h.loadOpenDesignArchivePreviewPackage(r.Context(), queries, system, draft); err != nil {
 			writeProjectDesignSystemRequestError(w, err)
 			return
@@ -520,11 +528,19 @@ func (h *Handler) SaveProjectDesignSystem(w http.ResponseWriter, r *http.Request
 		writeProjectDesignSystemError(w, http.StatusUnprocessableEntity, "draft_invalid", "draft has not passed validation")
 		return
 	}
-	if draft.RenderStatus == "pending" {
+	// Render-status gate. V2 native drafts ship with render_status='passed'
+	// stamped by the completion path (server-side audit + preview
+	// verification); V1 drafts with valid static validation are accepted
+	// without an explicit /preview-verification call (the gate was added
+	// in commit ff6b06065 specifically for the Open Design flow, and the
+	// legacy V1 insert path never carried the verification evidence). The
+	// 'failed' status still rejects — only 'pending' on legacy V1 inserts
+	// is treated as "no verification run was required".
+	if draft.RenderStatus == "pending" && draft.PackageSchema == projectdesignsystem.PackageSchemaV2 {
 		writeProjectDesignSystemError(w, http.StatusConflict, "preview_verification_required", "design system preview must be verified before saving")
 		return
 	}
-	if draft.RenderStatus != "passed" {
+	if draft.RenderStatus == "failed" {
 		writeProjectDesignSystemError(w, http.StatusUnprocessableEntity, "preview_verification_failed", "design system preview failed verification")
 		return
 	}
@@ -713,15 +729,7 @@ func (h *Handler) createProjectDesignSystemTask(
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: reason}
 	}
 
-	openDesignRun, err := h.prepareOpenDesignRun(ctx, queries, agent, service.ProjectDesignSystemGenerate)
-	if err != nil {
-		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, err
-	}
-	var openDesignContext json.RawMessage
-	if openDesignRun != nil {
-		openDesignContext = openDesignRun.Context
-	}
-	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agentID, input, service.ProjectDesignSystemGenerate, nil, "", nil, openDesignContext)
+	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agentID, input, service.ProjectDesignSystemGenerate, nil, "", nil, nil)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
 	}
@@ -733,9 +741,6 @@ func (h *Handler) createProjectDesignSystemTask(
 	})
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("enqueue_failed", "failed to enqueue design system generation")
-	}
-	if err := persistOpenDesignRun(ctx, queries, openDesignRun, system, task, contextJSON); err != nil {
-		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("open_design_run_persist_failed", "failed to persist Open Design run")
 	}
 	system, err = queries.UpdateProjectDesignSystemInputAndTask(ctx, db.UpdateProjectDesignSystemInputAndTaskParams{
 		Platform:        input.Platform,
@@ -917,13 +922,6 @@ func (h *Handler) enqueueExistingProjectDesignSystemTask(
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, err
 	}
-	if openDesignBase && !h.cfg.OpenDesignEnabled {
-		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{
-			status:  http.StatusServiceUnavailable,
-			code:    "open_design_engine_unavailable",
-			message: "Open Design engine is unavailable",
-		}
-	}
 	if operation == service.ProjectDesignSystemAdjust {
 		if basePackage == nil {
 			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "base_package_required", message: "a valid design system package is required for adjustment"}
@@ -955,24 +953,13 @@ func (h *Handler) enqueueExistingProjectDesignSystemTask(
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: reason}
 	}
 
-	openDesignRun, err := h.prepareOpenDesignRun(ctx, queries, agent, operation)
-	if err != nil {
-		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, err
-	}
-	var openDesignContext json.RawMessage
-	if openDesignRun != nil {
-		openDesignContext = openDesignRun.Context
-	}
-	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agent.ID, input, operation, basePackage, instruction, scopeJSON, openDesignContext)
+	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agent.ID, input, operation, basePackage, instruction, scopeJSON, nil)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
 	}
 	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("enqueue_failed", "failed to enqueue design system operation")
-	}
-	if err := persistOpenDesignRun(ctx, queries, openDesignRun, system, task, contextJSON); err != nil {
-		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("open_design_run_persist_failed", "failed to persist Open Design run")
 	}
 	system, err = queries.UpdateProjectDesignSystemInputAndTask(ctx, db.UpdateProjectDesignSystemInputAndTaskParams{
 		Platform:        input.Platform,
@@ -1017,6 +1004,24 @@ func (h *Handler) loadProjectDesignSystemBasePackage(
 	}
 	if !found {
 		return nil, projectdesignsystem.ValidatedPackage{}, false, nil
+	}
+	if selected.PackageSchema == projectdesignsystem.PackageSchemaV2 {
+		manifest, err := h.loadNativeProjectDesignSystemPackageManifest(ctx, system, selected)
+		if err != nil {
+			return nil, projectdesignsystem.ValidatedPackage{}, false, err
+		}
+		payload, err := json.Marshal(map[string]any{
+			"schema":           projectdesignsystem.PackageSchemaV2,
+			"slot":             selected.Slot,
+			"integrity_sha256": selected.IntegritySha256,
+			"source_task_id":   uuidToString(selected.SourceTaskID),
+		})
+		if err != nil {
+			return nil, projectdesignsystem.ValidatedPackage{}, false, projectDesignSystemInternalError("package_context_failed", "failed to snapshot current design system package")
+		}
+		return payload, projectdesignsystem.ValidatedPackage{Manifest: projectdesignsystem.Manifest{
+			Sections: manifest.Sections, TokenGroups: manifest.TokenGroups, Locators: manifest.Locators,
+		}}, false, nil
 	}
 	if isOpenDesignProjectDesignSystemPackage(selected) {
 		loaded, err := h.loadOpenDesignArchivePreviewPackage(ctx, queries, system, selected)
@@ -1153,6 +1158,10 @@ func marshalProjectDesignSystemTaskContext(
 	if err != nil {
 		return nil, err
 	}
+	canonicalInput, err := json.Marshal(input)
+	if err != nil {
+		return nil, err
+	}
 	outputPolicyValue := map[string]any{
 		"required_artifacts":            []string{"DESIGN.md", "tokens.css", "components.html"},
 		"generation_mode":               "create_new_system",
@@ -1191,7 +1200,7 @@ func marshalProjectDesignSystemTaskContext(
 			return nil, err
 		}
 	}
-	return json.Marshal(service.ProjectDesignSystemTaskContext{
+	taskContext := service.ProjectDesignSystemTaskContext{
 		Type:                  service.ProjectDesignSystemTaskContextType,
 		Operation:             operation,
 		RequesterID:           uuidToString(requesterID),
@@ -1209,7 +1218,60 @@ func marshalProjectDesignSystemTaskContext(
 		RepositoryAnalysis:    repositoryAnalysis,
 		OpenDesignRun:         openDesignRun,
 		OutputPolicy:          outputPolicy,
-	})
+	}
+	// The V2 native agent chain (generate / adjust / regenerate) pins the
+	// package schema, the canonical input digest, and the selected base
+	// digest onto the context. Repository analysis keeps its read-only
+	// JSON contract and intentionally does not get any V2 markers, and
+	// the legacy Open Design flow is identified by openDesignRun alone
+	// (no package_schema) so historical already-queued tasks still parse.
+	if operation != service.ProjectDesignSystemRepositoryAnalysis && len(openDesignRun) == 0 {
+		inputDigest, err := projectdesignsystem.SnapshotDigest(canonicalInput)
+		if err != nil {
+			return nil, err
+		}
+		taskContext.PackageSchema = projectdesignsystem.PackageSchemaV2
+		taskContext.InputSnapshotSHA256 = inputDigest
+		if len(basePackage) > 0 {
+			baseDigest, err := projectDesignSystemBaseDigest(basePackage)
+			if err != nil {
+				return nil, err
+			}
+			taskContext.BasePackageSHA256 = baseDigest
+		}
+	}
+	return json.Marshal(taskContext)
+}
+
+// projectDesignSystemBaseDigest returns the V2 binding digest of the selected
+// base package. Package rows store integrity_sha256 as bare hex, while task
+// contexts and manifests use the required sha256: prefixed representation.
+func projectDesignSystemBaseDigest(basePackage json.RawMessage) (string, error) {
+	if len(basePackage) == 0 {
+		return "", nil
+	}
+	var base map[string]json.RawMessage
+	if err := json.Unmarshal(basePackage, &base); err != nil {
+		return "", err
+	}
+	if rawSchema, ok := base["schema"]; ok {
+		var schema string
+		if err := json.Unmarshal(rawSchema, &schema); err == nil && schema == opendesign.BasePackageReferenceSchema {
+			var reference opendesign.BasePackageReference
+			if err := json.Unmarshal(basePackage, &reference); err != nil {
+				return "", err
+			}
+			return reference.ContentDigest, nil
+		}
+	}
+	if rawDigest, ok := base["integrity_sha256"]; ok {
+		var digest string
+		if err := json.Unmarshal(rawDigest, &digest); err != nil {
+			return "", err
+		}
+		return "sha256:" + digest, nil
+	}
+	return "", nil
 }
 
 func (h *Handler) projectDesignSystemRequestScope(w http.ResponseWriter, r *http.Request) (pgtype.UUID, pgtype.UUID, bool) {
@@ -1252,9 +1314,10 @@ func emptyProjectDesignSystemResponse(workspaceID pgtype.UUID, projectID pgtype.
 		Status:        "unestablished",
 		InputSnapshot: json.RawMessage(`{}`),
 		Content: ProjectDesignSystemContentResponse{
-			Sections:    []projectdesignsystem.Section{},
-			TokenGroups: []projectdesignsystem.TokenGroup{},
-			Locators:    []projectdesignsystem.Locator{},
+			Sections:       []projectdesignsystem.Section{},
+			TokenGroups:    []projectdesignsystem.TokenGroup{},
+			Locators:       []projectdesignsystem.Locator{},
+			PreviewTargets: []projectdesignsystem.PreviewTarget{},
 		},
 		PreviewValidation: ProjectDesignSystemPreviewValidationResponse{
 			Status: "none",
@@ -1497,15 +1560,45 @@ func (h *Handler) projectDesignSystemResponse(ctx context.Context, system db.Pro
 			Report:          validJSONOr(selected.RenderReport, json.RawMessage(`{}`)),
 			VerifiedAt:      timestampToPtr(selected.RenderedAt),
 		}
-		validated, err := projectdesignsystem.Validate(projectdesignsystem.ArtifactInput{
-			DesignMD: selected.DesignMd, TokensCSS: selected.TokensCss, ComponentsHTML: selected.ComponentsHtml,
-		}, h.projectDesignSystemAllowedHosts())
-		if err == nil {
-			response.Content.Sections = validated.Manifest.Sections
-			response.Content.TokenGroups = validated.Manifest.TokenGroups
-			response.Content.Locators = validated.Manifest.Locators
-			response.Content.PreviewHTML = projectdesignsystem.BuildPreviewHTML(validated, h.projectDesignSystemAllowedHosts())
-			response.Content.IntegritySHA256 = selected.IntegritySha256
+		response.Content.IntegritySHA256 = selected.IntegritySha256
+		response.Content.PackageSchema = selected.PackageSchema
+		if selected.PackageSchema == projectdesignsystem.PackageSchemaV2 {
+			manifest, _, err := h.loadNativeProjectDesignSystemPackageArchive(ctx, system, selected)
+			if err != nil {
+				response.LastError = json.RawMessage(`{"code":"native_package_invalid"}`)
+			} else {
+				response.Content.Sections = manifest.Sections
+				response.Content.TokenGroups = manifest.TokenGroups
+				response.Content.Locators = manifest.Locators
+				response.Content.PreviewTargets = manifest.PreviewTargets
+				response.Content.SelectionEnabled = true
+			}
+		} else if isOpenDesignProjectDesignSystemPackage(selected) {
+			loaded, err := h.loadOpenDesignArchivePreviewPackage(ctx, h.Queries, system, selected)
+			if err != nil {
+				response.LastError = json.RawMessage(`{"code":"open_design_package_invalid"}`)
+			} else if artifacts, artifactErr := opendesign.ExtractDraftCompatibilityArtifacts(loaded.Archive, loaded.ArtifactIndex, loaded.ContentDigest); artifactErr != nil {
+				response.LastError = json.RawMessage(`{"code":"open_design_package_invalid"}`)
+			} else if targets, targetErr := opendesign.DiscoverPreviewTargets(loaded.Archive); targetErr != nil {
+				response.LastError = json.RawMessage(`{"code":"open_design_package_invalid"}`)
+			} else {
+				response.Content.PreviewHTML = artifacts.ComponentsHTML
+				response.Content.PreviewTargets = make([]projectdesignsystem.PreviewTarget, 0, len(targets))
+				for _, target := range targets {
+					response.Content.PreviewTargets = append(response.Content.PreviewTargets, projectdesignsystem.PreviewTarget{ID: target.ID, Kind: string(target.Kind), Path: target.Path})
+				}
+			}
+		} else {
+			validated, err := projectdesignsystem.Validate(projectdesignsystem.ArtifactInput{
+				DesignMD: selected.DesignMd, TokensCSS: selected.TokensCss, ComponentsHTML: selected.ComponentsHtml,
+			}, h.projectDesignSystemAllowedHosts())
+			if err == nil {
+				response.Content.Sections = validated.Manifest.Sections
+				response.Content.TokenGroups = validated.Manifest.TokenGroups
+				response.Content.Locators = validated.Manifest.Locators
+				response.Content.PreviewHTML = projectdesignsystem.BuildPreviewHTML(validated, h.projectDesignSystemAllowedHosts())
+				response.Content.SelectionEnabled = true
+			}
 		}
 	}
 
