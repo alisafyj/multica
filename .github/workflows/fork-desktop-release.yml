@@ -274,6 +274,11 @@ jobs:
           EXPO_ANDROID_VERSION_CODE: ${{ github.run_number }}
         run: |
           echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m" >> gradle.properties
+          # Sideload distribution targets real phones only, and every phone
+          # this decade is arm64. Dropping the armeabi-v7a/x86/x86_64 native
+          # libs roughly halves the APK; last assignment wins over the
+          # template's four-arch default above.
+          echo "reactNativeArchitectures=arm64-v8a" >> gradle.properties
           ./gradlew :app:assembleRelease --no-daemon
 
       - name: Rename APK with release version
