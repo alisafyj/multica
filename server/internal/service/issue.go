@@ -168,6 +168,12 @@ type IssueCreateResult struct {
 	// understood label_ids (see the create handler's compatibility contract).
 	Labels         []db.IssueLabel
 	DuplicateIssue *db.Issue
+	// deferredAssignedTask carries the tx-inserted media-gated deferred task
+	// row (when AssignedAgentRunFireAt fired) from Create to afterCreate so
+	// the post-commit overlay hydration operates on the exact committed row.
+	// Unexported because it is an internal hand-off, not part of the public
+	// result contract handlers consume.
+	deferredAssignedTask db.AgentTaskQueue
 }
 
 // Create runs the full issue-creation pipeline atomically end-to-end:
@@ -201,6 +207,45 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
 
+	res, err := s.createInTx(ctx, tx, qtx, p)
+	if err != nil {
+		// The duplicate guard aborts before any insert commits; surface the
+		// blocking row so the handler renders a 409 with the existing issue.
+		if errors.Is(err, ErrActiveDuplicate) {
+			return res, err
+		}
+		return IssueCreateResult{}, err
+	}
+
+	if !opts.AssignedAgentRunFireAt.IsZero() && s.shouldEnqueueAgentTaskWithQueries(ctx, qtx, res.Issue) {
+		// The issue must never become visible without its media-gated assigned
+		// task. Inserting both rows through qtx makes the unique-index winner
+		// deterministic: any observer that can discover the committed issue also
+		// sees the inert deferred task and must merge into it.
+		assignedTask, err := s.TaskService.createDeferredChannelIssueTaskWithQueries(ctx, qtx, res.Issue, opts.AssignedAgentRunFireAt)
+		if err != nil {
+			return IssueCreateResult{}, fmt.Errorf("create deferred channel issue task: %w", err)
+		}
+		res.deferredAssignedTask = assignedTask
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
+	}
+
+	return s.afterCreate(ctx, res, p, opts), nil
+}
+
+// createInTx runs the transaction-local steps of Create (parent/project
+// validation, label validation, duplicate guard, counter, position, row
+// insert with optional origin, design-role metadata, label attach) against
+// the caller-owned transaction. It makes NO commit and NO post-commit side
+// effects. Public Create owns begin/commit; PMO apply reuses this inside its
+// own multi-entity transaction so the whole hierarchy commits atomically
+// with the same validation semantics. p.AllowDuplicate lets the caller opt
+// out of the duplicate guard — PMO apply passes true because it owns entity
+// identity through pmo_sync_link.
+func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Queries, p IssueCreateParams) (IssueCreateResult, error) {
 	// Resolve and validate parent / project before reading from the
 	// duplicate guard so a forged parent or project ID is rejected
 	// before we touch the issue counter. Both checks scope by
@@ -269,7 +314,6 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	}
 
 	var issue db.Issue
-	var assignedTask db.AgentTaskQueue
 	if p.OriginType.Valid {
 		issue, err = qtx.CreateIssueWithOrigin(ctx, db.CreateIssueWithOriginParams{
 			WorkspaceID:   p.WorkspaceID,
@@ -348,22 +392,19 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		}
 	}
 
-	if !opts.AssignedAgentRunFireAt.IsZero() && s.shouldEnqueueAgentTaskWithQueries(ctx, qtx, issue) {
-		// The issue must never become visible without its media-gated assigned
-		// task. Inserting both rows through qtx makes the unique-index winner
-		// deterministic: any observer that can discover the committed issue also
-		// sees the inert deferred task and must merge into it.
-		assignedTask, err = s.TaskService.createDeferredChannelIssueTaskWithQueries(ctx, qtx, issue, opts.AssignedAgentRunFireAt)
-		if err != nil {
-			return IssueCreateResult{}, fmt.Errorf("create deferred channel issue task: %w", err)
-		}
-	}
+	return IssueCreateResult{Issue: issue, Labels: labels}, nil
+}
 
-	if err := tx.Commit(ctx); err != nil {
-		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
-	}
-
+// afterCreate runs the post-commit effects for a created issue: attachment
+// linking, issue:created event, analytics, and assignment-driven enqueue.
+// Called by public Create after its own commit; PMO apply calls it once per
+// created issue after the apply transaction commits. Attachment linking
+// uses s.Queries (post-commit is outside the caller's transaction).
+func (s *IssueService) afterCreate(ctx context.Context, res IssueCreateResult, p IssueCreateParams, opts IssueCreateOpts) IssueCreateResult {
+	issue := res.Issue
+	labels := res.Labels
 	attachments := s.linkAttachments(ctx, issue, p.AttachmentIDs)
+	res.Attachments = attachments
 
 	actorID := opts.ActorID
 	if actorID == "" {
@@ -372,6 +413,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 
 	var assignedTaskID pgtype.UUID
 	if !opts.AssignedAgentRunFireAt.IsZero() {
+		assignedTask := res.deferredAssignedTask
 		assignedTaskID = assignedTask.ID
 		if assignedTaskID.Valid {
 			if err := s.TaskService.hydrateDeferredChannelIssueTaskOverlay(ctx, assignedTask); err != nil {
@@ -397,7 +439,8 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		assignedTaskID = s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, opts.AssignedAgentRunFireAt)
 	}
 
-	return IssueCreateResult{Issue: issue, Attachments: attachments, Labels: labels, AssignedTaskID: assignedTaskID}, nil
+	res.AssignedTaskID = assignedTaskID
+	return res
 }
 
 const (

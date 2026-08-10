@@ -66,6 +66,15 @@ import {
   SquadSchema,
   TimelineEntriesSchema,
   UserSchema,
+  parsePMORun,
+  parsePMOConfig,
+  parsePMOSyncLink,
+  EMPTY_PMO_RUN,
+  EMPTY_PMO_SYNC_LINK,
+  ListPMOConfigsResponseSchema,
+  ListPMORunsResponseSchema,
+  EMPTY_LIST_PMO_CONFIGS_RESPONSE,
+  EMPTY_LIST_PMO_RUNS_RESPONSE,
   TestPlanSchema,
   TestRunSchema,
   TestRunCaseSchema,
@@ -1458,6 +1467,116 @@ describe("RuntimeModelListRequestSchema", () => {
     expect((parsed as unknown as { future_field?: string }).future_field).toBe(
       "keep me",
     );
+  });
+});
+
+describe("PMO schemas", () => {
+  const baseRun = {
+    id: "run-1",
+    workspace_id: "ws-1",
+    config_id: "cfg-1",
+    agent_task_id: "task-1",
+    trigger: "scheduled",
+    status: "preview_ready",
+    source_snapshot: { schema_version: "1", snapshot_complete: true },
+    diff: { entities: [] },
+    summary: { created: 1 },
+    error_code: null,
+    error_message: null,
+    requested_by: "user-1",
+    created_at: "2026-08-07T00:00:00Z",
+    started_at: "2026-08-07T00:01:00Z",
+    completed_at: null,
+    applied_at: null,
+  };
+
+  const baseConfig = {
+    id: "cfg-1",
+    workspace_id: "ws-1",
+    name: "Example import",
+    agent_id: "agent-1",
+    root_external_key: "EXT-P-001",
+    workload_property_id: null,
+    schedule_enabled: false,
+    next_run_at: null,
+    last_run_at: null,
+    last_applied_at: null,
+    created_by: "user-1",
+    created_at: "2026-08-07T00:00:00Z",
+    updated_at: "2026-08-07T00:00:00Z",
+  };
+
+  it("parses a complete run and config", () => {
+    expect(parsePMORun(baseRun)).toMatchObject({
+      id: "run-1",
+      trigger: "scheduled",
+      status: "preview_ready",
+      source_snapshot: { schema_version: "1" },
+    });
+    expect(parsePMOConfig(baseConfig)).toMatchObject({
+      id: "cfg-1",
+      root_external_key: "EXT-P-001",
+      schedule_enabled: false,
+    });
+  });
+
+  it("keeps unknown future fields instead of stripping them", () => {
+    const parsed = parsePMORun({ ...baseRun, future_field: "keep" });
+    expect((parsed as unknown as { future_field?: string }).future_field).toBe("keep");
+  });
+
+  // A newer server may add a status; an installed client must not crash,
+  // spin forever, or claim a preview is available. "failed" is the only
+  // honest read-only degradation.
+  it("degrades an unknown status to failed", () => {
+    expect(parsePMORun({ ...baseRun, status: "future_status" }).status).toBe("failed");
+  });
+
+  it("degrades an unknown trigger to manual", () => {
+    expect(parsePMORun({ ...baseRun, trigger: "future_trigger" }).trigger).toBe("manual");
+  });
+
+  it("falls back to EMPTY_ constants on malformed bodies", () => {
+    expect(parsePMORun(null)).toEqual(EMPTY_PMO_RUN);
+    expect(parsePMORun("nope")).toEqual(EMPTY_PMO_RUN);
+    expect(parsePMOConfig({})).toMatchObject({ id: "", name: "" });
+    expect(parsePMOSyncLink(null)).toEqual(EMPTY_PMO_SYNC_LINK);
+  });
+
+  it("applies safe defaults to optional newer fields", () => {
+    const parsed = parsePMORun({ id: "run-1", workspace_id: "ws-1", config_id: "cfg-1" });
+    expect(parsed.trigger).toBe("manual");
+    expect(parsed.status).toBe("failed");
+    expect(parsed.source_snapshot).toBeNull();
+    expect(parsed.requested_by).toBeNull();
+    expect(parsed.applied_at).toBeNull();
+  });
+
+  it("defaults a link's external_ids when absent", () => {
+    const parsed = parsePMOSyncLink({
+      id: "link-1",
+      workspace_id: "ws-1",
+      config_id: "cfg-1",
+      external_type: "assignee",
+      external_key: "EXT-U-001",
+    });
+    expect(parsed.external_ids).toEqual({ display_number: null, numeric_id: null, task_id: null });
+  });
+
+  it("defaults list envelopes when fields are missing or malformed", () => {
+    expect(
+      parseWithFallback({}, ListPMOConfigsResponseSchema, EMPTY_LIST_PMO_CONFIGS_RESPONSE, {
+        endpoint: "GET /api/pmo/configs",
+      }),
+    ).toEqual({ configs: [] });
+    expect(
+      parseWithFallback(
+        { runs: "not-an-array" },
+        ListPMORunsResponseSchema,
+        EMPTY_LIST_PMO_RUNS_RESPONSE,
+        { endpoint: "GET /api/pmo/runs" },
+      ),
+    ).toEqual(EMPTY_LIST_PMO_RUNS_RESPONSE);
   });
 });
 

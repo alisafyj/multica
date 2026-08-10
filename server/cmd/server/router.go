@@ -1321,6 +1321,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
+			// PMO requirement management
+			r.Route("/api/pmo", func(r chi.Router) {
+				r.Get("/configs", h.ListPMOConfigs)
+				r.Post("/configs", h.CreatePMOConfig)
+				r.Put("/configs/{id}", h.UpdatePMOConfig)
+				r.Delete("/configs/{id}", h.DeletePMOConfig)
+				r.Post("/configs/{id}/runs", h.StartPMORun)
+				r.Put("/configs/{id}/assignees/{externalKey}", h.SetPMOAssigneeMapping)
+				r.Get("/runs", h.ListPMORuns)
+				r.Get("/runs/{id}", h.GetPMORun)
+				r.Post("/runs/{id}/apply", h.ApplyPMORun)
+			})
+
 			// Test cases
 			r.Route("/api/test-cases", func(r chi.Router) {
 				// Literal sub-paths are registered before {ref}, which accepts

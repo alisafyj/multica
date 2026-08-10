@@ -380,6 +380,7 @@ type AgentTaskResponse struct {
 	TestGenerationContext             json.RawMessage        `json:"test_generation_context,omitempty"`               // typed context for AI test case generation runs
 	TestRunContext                    json.RawMessage        `json:"test_run_context,omitempty"`                      // typed context for test execution rounds
 	DesignSystemProfileAnalyzeContext json.RawMessage        `json:"design_system_profile_analyze_context,omitempty"` // typed context for UI specification profile analysis tasks
+	PMOSyncContext                    json.RawMessage        `json:"pmo_sync_context,omitempty"`                      // typed context for PMO requirement sync tasks (workspace + run id + acquisition prompt)
 	HandoffNote                       string                 `json:"handoff_note,omitempty"`                          // assignment handoff instruction; rendered into the run's opening prompt + issue_context.md (omitempty so old daemons ignore it)
 	SquadID                           string                 `json:"squad_id,omitempty"`                              // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
 	SquadName                         string                 `json:"squad_name,omitempty"`                            // display name for the picker squad
@@ -830,6 +831,11 @@ func computeTaskKind(t db.AgentTaskQueue) string {
 		var profileCtx service.DesignSystemProfileAnalyzeContext
 		if len(t.Context) > 0 && json.Unmarshal(t.Context, &profileCtx) == nil && profileCtx.Type == service.DesignSystemProfileAnalyzeContextType {
 			return "design_system_profile_analyze"
+		}
+		if len(t.Context) > 0 {
+			if _, ok := service.ParsePMOSyncContext(t.Context); ok {
+				return "pmo_sync"
+			}
 		}
 		return "quick_create"
 	}

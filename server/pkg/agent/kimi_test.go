@@ -829,10 +829,14 @@ func TestScanKimiSessionUsageSkipsPriorRunOnResume(t *testing.T) {
 
 	home := t.TempDir()
 	turnStart := time.Now()
-	writeKimiWireLog(t, home, "session_r", "main",
+	path := writeKimiWireLog(t, home, "session_r", "main",
 		kimiWireRecordLineAt(turnStart.Add(-time.Hour), 5000, 500, 9000, 0), // previous task
 		kimiWireRecordLineAt(turnStart.Add(time.Second), 120, 12, 340, 0),   // this task
 	)
+	coarseMTime := turnStart.Add(-time.Second)
+	if err := os.Chtimes(path, coarseMTime, coarseMTime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
 
 	usage := kimiScanTotal(kimiUsageScan{startTime: turnStart, kimiHome: home, sessionID: "session_r", resumed: true, fallbackModel: "unknown"})
 

@@ -116,7 +116,7 @@ install_cli_binary() {
   local url="${REPO_WEB_URL}/releases/download/${CLI_RELEASE_TAG}/multica-cli-${CLI_VERSION}-${OS}-${ARCH}.tar.gz"
   local tmp_dir
   tmp_dir=$(mktemp -d)
-  trap 'rm -rf "$tmp_dir"' EXIT
+  trap "$(printf 'rm -rf %q' "$tmp_dir")" EXIT
 
   info "Downloading $url ..."
   if ! curl -fsSL "$url" -o "$tmp_dir/multica.tar.gz"; then

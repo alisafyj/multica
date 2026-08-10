@@ -2069,3 +2069,135 @@ describe("ApiClient unsubscribe endpoints", () => {
     ).rejects.toBeInstanceOf(ApiError);
   });
 });
+
+describe("ApiClient PMO endpoints", () => {
+  function stubOK(body?: unknown) {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(body ?? {}), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  function requestOf(fetchMock: ReturnType<typeof vi.fn>) {
+    const [[url, init]] = fetchMock.mock.calls as unknown as [
+      [string, RequestInit],
+    ];
+    return {
+      url,
+      method: init.method ?? "GET",
+      body: init.body ? JSON.parse(init.body as string) : undefined,
+    };
+  }
+
+  it("lists configs without sending wsId in the URL", async () => {
+    const fetchMock = stubOK({ configs: [] });
+    const client = new ApiClient("https://api.example.test");
+    await client.listPMOConfigs("ws-1");
+    expect(requestOf(fetchMock).url).toBe("https://api.example.test/api/pmo/configs");
+  });
+
+  it("creates a config with the exact request body", async () => {
+    const fetchMock = stubOK({ id: "cfg-1" });
+    const client = new ApiClient("https://api.example.test");
+    await client.createPMOConfig("ws-1", {
+      name: "Example import",
+      agent_id: "agent-1",
+      root_external_key: "EXT-P-001",
+    });
+    expect(requestOf(fetchMock)).toMatchObject({
+      url: "https://api.example.test/api/pmo/configs",
+      method: "POST",
+      body: { name: "Example import", agent_id: "agent-1", root_external_key: "EXT-P-001" },
+    });
+  });
+
+  it("updates a config with schedule_enabled in the body", async () => {
+    const fetchMock = stubOK({ id: "cfg-1" });
+    const client = new ApiClient("https://api.example.test");
+    await client.updatePMOConfig("ws-1", "cfg-1", {
+      name: "N",
+      agent_id: "agent-1",
+      root_external_key: "EXT-P-001",
+      schedule_enabled: true,
+    });
+    expect(requestOf(fetchMock)).toMatchObject({
+      url: "https://api.example.test/api/pmo/configs/cfg-1",
+      method: "PUT",
+      body: { schedule_enabled: true },
+    });
+  });
+
+  it("deletes and starts runs on the expected paths", async () => {
+    const fetchMock = stubOK({});
+    const client = new ApiClient("https://api.example.test");
+    await client.deletePMOConfig("ws-1", "cfg-1");
+    expect(requestOf(fetchMock)).toMatchObject({
+      url: "https://api.example.test/api/pmo/configs/cfg-1",
+      method: "DELETE",
+    });
+
+    const startFetch = stubOK({ id: "run-1" });
+    await client.startPMORun("ws-1", "cfg-1");
+    expect(requestOf(startFetch)).toMatchObject({
+      url: "https://api.example.test/api/pmo/configs/cfg-1/runs",
+      method: "POST",
+    });
+  });
+
+  it("lists runs with optional config_id and limit", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ runs: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await client.listPMORuns("ws-1", { config_id: "cfg-1", limit: 5 });
+    const [firstUrl] = fetchMock.mock.calls[0] as [string];
+    expect(firstUrl).toBe("https://api.example.test/api/pmo/runs?config_id=cfg-1&limit=5");
+    await client.listPMORuns("ws-1");
+    const [secondUrl] = fetchMock.mock.calls[1] as [string];
+    expect(secondUrl).toBe("https://api.example.test/api/pmo/runs");
+  });
+
+  it("applies a run and forwards conflict_resolutions in the body", async () => {
+    const fetchMock = stubOK({ id: "run-1" });
+    const client = new ApiClient("https://api.example.test");
+    await client.applyPMORun("ws-1", "run-1", [
+      { external_type: "requirement", external_key: "EXT-I-001", field: "title", choice: "external" },
+    ]);
+    expect(requestOf(fetchMock)).toMatchObject({
+      url: "https://api.example.test/api/pmo/runs/run-1/apply",
+      method: "POST",
+      body: {
+        conflict_resolutions: [
+          { external_type: "requirement", external_key: "EXT-I-001", field: "title", choice: "external" },
+        ],
+      },
+    });
+  });
+
+  it("maps an assignee by member id on the encoded external key path", async () => {
+    const fetchMock = stubOK({ id: "link-1" });
+    const client = new ApiClient("https://api.example.test");
+    await client.setPMOAssigneeMapping("ws-1", "cfg-1", "EXT-U/001", "member-1");
+    expect(requestOf(fetchMock)).toMatchObject({
+      url: "https://api.example.test/api/pmo/configs/cfg-1/assignees/EXT-U%2F001",
+      method: "PUT",
+      body: { member_id: "member-1" },
+    });
+  });
+
+  it("degrades malformed run bodies via the schema, never throwing", async () => {
+    stubOK("not-json"); // non-object body still parses as JSON string; schema rejects → EMPTY_PMO_RUN
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.getPMORun("ws-1", "run-1")).resolves.toMatchObject({ id: "" , status: "failed" });
+  });
+});

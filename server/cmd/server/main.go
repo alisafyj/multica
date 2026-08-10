@@ -512,6 +512,14 @@ func main() {
 	if err := schedulerMgr.Register(scheduler.AutopilotScheduleDispatchJob(pool, queries, autopilotSvc)); err != nil {
 		slog.Warn("scheduler: failed to register autopilot_schedule_dispatch job", "error", err)
 	}
+	// PMO requirement sync dispatch: one minute-cadence global scanner that
+	// claims due configurations (fixed 30-minute cadence lives in the
+	// config row, not the job) and starts their scheduled runs. The same
+	// PMOService the HTTP handler serves, so claim/active-run semantics and
+	// the scheduled auto-apply hook are shared with the manual flow.
+	if err := schedulerMgr.Register(scheduler.PMOSyncDispatchJob(h.PMOService)); err != nil {
+		slog.Warn("scheduler: failed to register pmo_sync_dispatch job", "error", err)
+	}
 	go func() {
 		_ = schedulerMgr.Run(sweepCtx)
 	}()

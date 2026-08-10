@@ -124,6 +124,8 @@
     "./modals": "./modals/index.ts",
     "./onboarding": "./onboarding/index.ts",
     "./paths": "./paths/index.ts",
+    "./pmo/queries": "./pmo/queries.ts",
+    "./pmo/mutations": "./pmo/mutations.ts",
     "./hooks": "./hooks.tsx",
     "./hooks/*": "./hooks/*.ts",
     "./query-client": "./query-client.ts",

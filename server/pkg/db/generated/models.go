@@ -1141,6 +1141,61 @@ type PinnedItem struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type PmoSyncConfig struct {
+	ID                 pgtype.UUID        `json:"id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	Name               string             `json:"name"`
+	AgentID            pgtype.UUID        `json:"agent_id"`
+	RootExternalKey    string             `json:"root_external_key"`
+	WorkloadPropertyID pgtype.UUID        `json:"workload_property_id"`
+	ScheduleEnabled    bool               `json:"schedule_enabled"`
+	NextRunAt          pgtype.Timestamptz `json:"next_run_at"`
+	LastRunAt          pgtype.Timestamptz `json:"last_run_at"`
+	LastAppliedAt      pgtype.Timestamptz `json:"last_applied_at"`
+	CreatedBy          pgtype.UUID        `json:"created_by"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PmoSyncLink struct {
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	ConfigID              pgtype.UUID        `json:"config_id"`
+	ExternalType          string             `json:"external_type"`
+	ExternalKey           string             `json:"external_key"`
+	ExternalDisplayNumber pgtype.Text        `json:"external_display_number"`
+	ExternalNumericID     pgtype.Int8        `json:"external_numeric_id"`
+	ExternalTaskID        pgtype.Text        `json:"external_task_id"`
+	ParentExternalKey     pgtype.Text        `json:"parent_external_key"`
+	LocalType             pgtype.Text        `json:"local_type"`
+	LocalID               pgtype.UUID        `json:"local_id"`
+	BaselineExternal      []byte             `json:"baseline_external"`
+	BaselineLocal         []byte             `json:"baseline_local"`
+	ExternalMetadata      []byte             `json:"external_metadata"`
+	ExternallyRemovedAt   pgtype.Timestamptz `json:"externally_removed_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PmoSyncRun struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	ConfigID       pgtype.UUID        `json:"config_id"`
+	AgentTaskID    pgtype.UUID        `json:"agent_task_id"`
+	Trigger        string             `json:"trigger"`
+	Status         string             `json:"status"`
+	SourceSnapshot []byte             `json:"source_snapshot"`
+	Diff           []byte             `json:"diff"`
+	Summary        []byte             `json:"summary"`
+	ErrorCode      pgtype.Text        `json:"error_code"`
+	ErrorMessage   pgtype.Text        `json:"error_message"`
+	RequestedBy    pgtype.UUID        `json:"requested_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
+	AppliedAt      pgtype.Timestamptz `json:"applied_at"`
+}
+
 type Project struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`

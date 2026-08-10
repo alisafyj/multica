@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
+import { renderWithI18n } from "../test/i18n";
 import { AppSidebar } from "./app-sidebar";
 
 const { appForeground, chatSessions, chatStore, detail, deletePin, inboxItems, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
@@ -127,6 +128,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     myIssues: () => "/acme/my-issues",
     issues: () => "/acme/issues",
     projects: () => "/acme/projects",
+    pmo: () => "/acme/pmo",
     designs: () => "/acme/designs",
     tests: () => "/acme/tests",
     autopilots: () => "/acme/autopilots",
@@ -235,6 +237,24 @@ describe("PinRow", () => {
       "true",
     );
     expect(container.querySelector('button[data-href="/acme/issues"]')).not.toHaveAttribute("data-active");
+  });
+});
+
+describe("workspace nav — Requirements", () => {
+  beforeEach(() => {
+    summary.current = [];
+    workspaces.current = [];
+  });
+
+  it("renders the pmo nav item right after projects", () => {
+    // renderWithI18n so the label resolves from layout.json's nav registry
+    // instead of i18next's uninitialized key fallback.
+    const { container } = renderWithI18n(<AppSidebar />);
+    const pmoNav = container.querySelector<HTMLElement>('button[data-href="/acme/pmo"]');
+    expect(pmoNav).not.toBeNull();
+    expect(pmoNav?.textContent).toContain("Requirements");
+    const projectsNav = container.querySelector<HTMLElement>('button[data-href="/acme/projects"]');
+    expect(projectsNav?.nextElementSibling).toBe(pmoNav);
   });
 });
 

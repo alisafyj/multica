@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS pmo_sync_run_id_idx;

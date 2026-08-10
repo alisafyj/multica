@@ -167,6 +167,7 @@ type Handler struct {
 	TaskService            *service.TaskService
 	IssueService           *service.IssueService
 	AutopilotService       *service.AutopilotService
+	PMOService             *service.PMOService
 	EmailService           *service.EmailService
 	UpdateStore            UpdateStore
 	ModelListStore         ModelListStore
@@ -349,6 +350,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		TaskService:                  taskSvc,
 		IssueService:                 service.NewIssueService(queries, txStarter, bus, analyticsClient, taskSvc),
 		AutopilotService:             service.NewAutopilotService(queries, txStarter, bus, taskSvc),
+		PMOService:                   service.NewPMOService(queries, txStarter, taskSvc),
 		EmailService:                 emailService,
 		UpdateStore:                  NewInMemoryUpdateStore(),
 		ModelListStore:               NewInMemoryModelListStore(),
@@ -371,6 +373,9 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		cfg: cfg,
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
+	// PMO apply reuses the shared issue-creation pipeline inside its own
+	// transaction (same numbering / duplicate guard / position semantics).
+	h.PMOService.IssueSvc = h.IssueService
 
 	// GitHub API snapshot pipeline for PR cards (MUL-5265). Built
 	// unconditionally but inert (every trigger no-ops) when the App private key

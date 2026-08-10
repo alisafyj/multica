@@ -5174,6 +5174,11 @@ func gcMetaForTask(task Task) (execenv.GCMeta, bool) {
 		// state via the task gc-check endpoint.
 		meta.Kind = execenv.GCKindQuickCreate
 		meta.TaskID = task.ID
+	case task.PMOSyncContext != "":
+		// PMO sync tasks never bind an issue: GC resolves terminal state
+		// through the task gc-check endpoint, same as quick-create.
+		meta.Kind = execenv.GCKindPMOSync
+		meta.TaskID = task.ID
 	default:
 		return execenv.GCMeta{}, false
 	}
@@ -5768,6 +5773,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		AutopilotSource:                  task.AutopilotSource,
 		AutopilotTriggerPayload:          strings.TrimSpace(string(task.AutopilotTriggerPayload)),
 		QuickCreatePrompt:                task.QuickCreatePrompt,
+		PMOSyncContext:                   task.PMOSyncContext,
 		HandoffNote:                      task.HandoffNote,
 		IsSquadLeader:                    taskIsSquadLeader(task),
 		RequestingUserName:               task.RequestingUserName,

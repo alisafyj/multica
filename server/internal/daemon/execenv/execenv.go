@@ -132,19 +132,20 @@ type TaskContextForEnv struct {
 	// text-only instead (MUL-4899). The orthogonal audience and history policies
 	// live in the per-turn chat prompt (daemon/prompt.go) — the server has no
 	// history reader for any other channel.
-	ChatChannelType         string
-	AutopilotRunID          string // non-empty for autopilot run_only tasks
-	AutopilotID             string
-	AutopilotTitle          string
-	AutopilotDescription    string
-	AutopilotSource         string
-	AutopilotTriggerPayload string
-	QuickCreatePrompt       string // non-empty for quick-create tasks
-	UIDraftCreateContext    string // non-empty for UI design draft generation tasks
-	DesignRestoreContext    string // non-empty for Gallery Native restore execution tasks
+	ChatChannelType                   string
+	AutopilotRunID                    string // non-empty for autopilot run_only tasks
+	AutopilotID                       string
+	AutopilotTitle                    string
+	AutopilotDescription              string
+	AutopilotSource                   string
+	AutopilotTriggerPayload           string
+	QuickCreatePrompt                 string // non-empty for quick-create tasks
+	UIDraftCreateContext              string // non-empty for UI design draft generation tasks
+	DesignRestoreContext              string // non-empty for Gallery Native restore execution tasks
 	DesignSystemProfileAnalyzeContext string // non-empty for UI specification profile analysis tasks
-	HandoffNote             string // assignment handoff instruction; rendered into issue_context.md (MUL-3375)
-	IsSquadLeader           bool   // true when THIS TASK runs the agent in the squad-leader role (may exit silently on no_action); derived from the claim's is_leader_task / squad_id, never sniffed from instructions text (MUL-5811)
+	PMOSyncContext                    string // non-empty for PMO requirement sync tasks (prompt-only, no issue checkout)
+	HandoffNote                       string // assignment handoff instruction; rendered into issue_context.md (MUL-3375)
+	IsSquadLeader                     bool   // true when THIS TASK runs the agent in the squad-leader role (may exit silently on no_action); derived from the claim's is_leader_task / squad_id, never sniffed from instructions text (MUL-5811)
 	// WorkspaceContext is the workspace-level system prompt (workspace.context
 	// in the DB). Rendered into the brief as `## Workspace Context` when
 	// non-empty so every agent in the workspace sees the same shared context,
@@ -741,6 +742,11 @@ type GCMeta struct {
 }
 
 const GCKindDesignRestore GCMetaKind = "design_restore"
+
+// GCKindPMOSync covers PMO requirement sync task workdirs. Like quick-create,
+// the task has no issue parent, so GC resolves terminal state through the
+// task gc-check endpoint using meta.TaskID.
+const GCKindPMOSync GCMetaKind = "pmo_sync"
 
 const gcMetaFile = ".gc_meta.json"
 

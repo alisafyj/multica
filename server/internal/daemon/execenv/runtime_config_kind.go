@@ -41,6 +41,9 @@ const (
 	// kindDesignSystemProfileAnalyze: server-managed analysis of an uploaded
 	// Figma UI specification whose JSON result is stored by the server.
 	kindDesignSystemProfileAnalyze
+	// kindPMOSync: server-managed external requirement snapshot acquisition
+	// whose validated JSON result is stored as a preview by the server.
+	kindPMOSync
 )
 
 // classifyTask maps a TaskContextForEnv to the single taskKind the slim
@@ -62,6 +65,8 @@ func classifyTask(ctx TaskContextForEnv) taskKind {
 		return kindAutopilotRunOnly
 	case ctx.DesignSystemProfileAnalyzeContext != "":
 		return kindDesignSystemProfileAnalyze
+	case ctx.PMOSyncContext != "":
+		return kindPMOSync
 	case ctx.DesignRestoreContext != "":
 		return kindDesignRestore
 	case ctx.UIDraftCreateContext != "":

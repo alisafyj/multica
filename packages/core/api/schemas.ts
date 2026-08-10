@@ -75,6 +75,11 @@ import type {
   ListDesignDeliveriesResponse,
   ListDesignSystemProfilesResponse,
   ListDesignRestoreTasksResponse,
+  PMOConfig,
+  PMORun,
+  PMOSyncLink,
+  ListPMOConfigsResponse,
+  ListPMORunsResponse,
   TestPlan,
   TestRun,
   TestRunCase,
@@ -2372,6 +2377,48 @@ export const MALFORMED_RUNTIME_MODEL_LIST_REQUEST: RuntimeModelListRequest = {
   updated_at: "",
 };
 
+// ---------------------------------------------------------------------------
+// PMO requirement sync. The server is the authority on every field; unknown
+// enum values (trigger / status) degrade to the safest read-only value so an
+// installed client that predates a new server status keeps rendering instead
+// of white-screening or spinning. String enums stay open per this file's
+// compatibility convention.
+// ---------------------------------------------------------------------------
+
+export const PMOConfigSchema = z
+  .object({
+    id: z.string().default(""),
+    workspace_id: z.string().default(""),
+    name: z.string().default(""),
+    agent_id: z.string().default(""),
+    root_external_key: z.string().default(""),
+    workload_property_id: z.string().nullable().default(null),
+    schedule_enabled: z.boolean().default(false),
+    next_run_at: z.string().nullable().default(null),
+    last_run_at: z.string().nullable().default(null),
+    last_applied_at: z.string().nullable().default(null),
+    created_by: z.string().default(""),
+    created_at: z.string().default(""),
+    updated_at: z.string().default(""),
+  })
+  .loose();
+
+export const EMPTY_PMO_CONFIG: PMOConfig = {
+  id: "",
+  workspace_id: "",
+  name: "",
+  agent_id: "",
+  root_external_key: "",
+  workload_property_id: null,
+  schedule_enabled: false,
+  next_run_at: null,
+  last_run_at: null,
+  last_applied_at: null,
+  created_by: "",
+  created_at: "",
+  updated_at: "",
+};
+
 // --- Test cases -------------------------------------------------------------
 // Enums stay z.string(): a backend that adds a new case_type or status must not
 // blank the whole case on an older frontend. Every field carries a default so a
@@ -2495,6 +2542,134 @@ export const EMPTY_TEST_CASE: TestCase = {
   created_at: "",
   updated_at: "",
 };
+
+// Trigger / status are kept as `z.string()` at the boundary (server-driven
+// enums must stay open), with a typed fallback the parse helpers coerce to.
+// An unknown status degrades to `"failed"` — the only honest read-only
+// value: it never implies pending work (`queued`/`running`), never implies
+// there is a preview to review (`preview_ready`), and never implies the run
+// changed workspace data (`applied*`).
+export const PMORunStatusSchema = z
+  .enum(["queued", "running", "preview_ready", "applied", "applied_with_review", "failed"])
+  .catch("failed");
+
+export const PMORunTriggerSchema = z
+  .enum(["manual", "scheduled"])
+  .catch("manual");
+
+export const PMORunSchema = z
+  .object({
+    id: z.string().default(""),
+    workspace_id: z.string().default(""),
+    config_id: z.string().default(""),
+    agent_task_id: z.string().nullable().default(null),
+    trigger: PMORunTriggerSchema,
+    status: PMORunStatusSchema,
+    source_snapshot: z.unknown().default(null),
+    diff: z.unknown().default(null),
+    summary: z.unknown().default(null),
+    error_code: z.string().nullable().default(null),
+    error_message: z.string().nullable().default(null),
+    requested_by: z.string().nullable().default(null),
+    created_at: z.string().default(""),
+    started_at: z.string().nullable().default(null),
+    completed_at: z.string().nullable().default(null),
+    applied_at: z.string().nullable().default(null),
+  })
+  .loose();
+
+export const EMPTY_PMO_RUN: PMORun = {
+  id: "",
+  workspace_id: "",
+  config_id: "",
+  agent_task_id: null,
+  trigger: "manual",
+  status: "failed",
+  source_snapshot: null,
+  diff: null,
+  summary: null,
+  error_code: null,
+  error_message: null,
+  requested_by: null,
+  created_at: "",
+  started_at: null,
+  completed_at: null,
+  applied_at: null,
+};
+
+export const PMOSyncLinkSchema = z
+  .object({
+    id: z.string().default(""),
+    workspace_id: z.string().default(""),
+    config_id: z.string().default(""),
+    external_type: z.string().default(""),
+    external_key: z.string().default(""),
+    local_type: z.string().nullable().default(null),
+    local_id: z.string().nullable().default(null),
+    external_ids: z
+      .object({
+        display_number: z.string().nullable().default(null),
+        numeric_id: z.number().nullable().default(null),
+        task_id: z.string().nullable().default(null),
+      })
+      .loose()
+      .default(() => ({ display_number: null, numeric_id: null, task_id: null })),
+    parent_external_key: z.string().nullable().default(null),
+    externally_removed_at: z.string().nullable().default(null),
+  })
+  .loose();
+
+export const EMPTY_PMO_SYNC_LINK: PMOSyncLink = {
+  id: "",
+  workspace_id: "",
+  config_id: "",
+  external_type: "",
+  external_key: "",
+  local_type: null,
+  local_id: null,
+  external_ids: { display_number: null, numeric_id: null, task_id: null },
+  parent_external_key: null,
+  externally_removed_at: null,
+};
+
+export const ListPMOConfigsResponseSchema = z
+  .object({
+    configs: z.array(PMOConfigSchema).default([]),
+  })
+  .loose();
+
+export const EMPTY_LIST_PMO_CONFIGS_RESPONSE: ListPMOConfigsResponse = {
+  configs: [],
+};
+
+export const ListPMORunsResponseSchema = z
+  .object({
+    runs: z.array(PMORunSchema).default([]),
+  })
+  .loose();
+
+export const EMPTY_LIST_PMO_RUNS_RESPONSE: ListPMORunsResponse = {
+  runs: [],
+};
+
+// Convenience single-object parsers anchored to their strict TS type. The
+// schemas are intentionally lenient (unknown fields kept, string enums open,
+// scalar defaults), so a malformed body lands on the EMPTY_* fallback rather
+// than throwing.
+export function parsePMOConfig(data: unknown): PMOConfig {
+  const result = PMOConfigSchema.safeParse(data);
+  return result.success ? (result.data as PMOConfig) : EMPTY_PMO_CONFIG;
+}
+
+export function parsePMORun(data: unknown): PMORun {
+  const result = PMORunSchema.safeParse(data);
+  return result.success ? (result.data as PMORun) : EMPTY_PMO_RUN;
+}
+
+export function parsePMOSyncLink(data: unknown): PMOSyncLink {
+  const result = PMOSyncLinkSchema.safeParse(data);
+  return result.success ? (result.data as PMOSyncLink) : EMPTY_PMO_SYNC_LINK;
+}
 
 export const EMPTY_DINGTALK_INSTALLATION: DingTalkInstallation = {
   id: "",

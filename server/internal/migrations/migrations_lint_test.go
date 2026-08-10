@@ -2,6 +2,7 @@ package migrations
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -128,6 +129,44 @@ func TestNewMigrationPrefixesStartAfterLegacyRange(t *testing.T) {
 		}
 		if n <= maxLegacyMigrationPrefix && !isKnownLegacyPrefix(prefix) {
 			t.Errorf("migration prefix %s is in the frozen legacy range 001-%03d: %v; new migrations must start at %03d", prefix, maxLegacyMigrationPrefix, stems, maxLegacyMigrationPrefix+1)
+		}
+	}
+}
+
+func readMigrationForLint(t *testing.T, name string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(realMigrationsDir(t), name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func TestPMOSyncMigrationsStayTenantScopedAndConcurrent(t *testing.T) {
+	tables := strings.ToUpper(readMigrationForLint(t, "306_pmo_sync_tables.up.sql"))
+	if strings.Contains(tables, "REFERENCES") || strings.Contains(tables, "FOREIGN KEY") {
+		t.Fatal("PMO sync tables must not create foreign keys")
+	}
+
+	indexes := []string{
+		"307_pmo_sync_config_id_index.up.sql",
+		"308_pmo_sync_run_id_index.up.sql",
+		"309_pmo_sync_link_id_index.up.sql",
+		"311_pmo_sync_config_root_index.up.sql",
+		"312_pmo_sync_run_history_index.up.sql",
+		"313_pmo_sync_run_active_index.up.sql",
+		"314_pmo_sync_run_agent_task_index.up.sql",
+		"315_pmo_sync_link_identity_index.up.sql",
+	}
+	for _, name := range indexes {
+		sql := strings.TrimSpace(readMigrationForLint(t, name))
+		upper := strings.ToUpper(sql)
+		if !strings.Contains(upper, "CREATE UNIQUE INDEX CONCURRENTLY") &&
+			!strings.Contains(upper, "CREATE INDEX CONCURRENTLY") {
+			t.Errorf("%s must create its index concurrently", name)
+		}
+		if strings.Count(sql, ";") != 1 {
+			t.Errorf("%s must contain one statement", name)
 		}
 	}
 }

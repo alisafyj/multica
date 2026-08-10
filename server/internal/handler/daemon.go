@@ -2394,6 +2394,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	hasUIDraftCreate := false
 	hasDesignRestore := false
 	hasDesignSystemProfileAnalyze := false
+	hasPMOSync := false
 	if task.Context != nil && !task.IssueID.Valid && !task.ChatSessionID.Valid && !task.AutopilotRunID.Valid {
 		var qc service.QuickCreateContext
 		if json.Unmarshal(task.Context, &qc) == nil && qc.Type == service.QuickCreateContextType {
@@ -2564,6 +2565,14 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.DesignSystemProfileAnalyzeContext = json.RawMessage(task.Context)
 			resp.ProjectID = profileCtx.ProjectID
 		}
+
+		// PMO sync task: workspace + prompt travel in the context JSONB.
+		// Expose ONLY the sync context — no quick-create fields ride along.
+		if pmoCtx, ok := service.ParsePMOSyncContext(task.Context); ok {
+			hasPMOSync = true
+			resp.WorkspaceID = pmoCtx.WorkspaceID
+			resp.PMOSyncContext = json.RawMessage(task.Context)
+		}
 	}
 
 	// Workspace isolation check: the daemon uses this response's workspace_id
@@ -2587,6 +2596,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			"has_ui_draft_create", hasUIDraftCreate,
 			"has_design_restore", hasDesignRestore,
 			"has_design_system_profile_analyze", hasDesignSystemProfileAnalyze,
+			"has_pmo_sync", hasPMOSync,
 		)
 		if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
 			slog.Error("task claim: cancel after workspace check failed",
@@ -3020,6 +3030,7 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	if err := h.markDesignRestoreTaskRunning(r.Context(), *task); err != nil {
 		slog.Warn("design restore task start: failed to mark restore task running", "task_id", taskID, "error", err)
 	}
+	h.markPMOSyncRunRunning(r.Context(), *task)
 	if err := h.markTestRunRunning(r.Context(), *task); err != nil {
 		slog.Warn("test run start: failed to mark run running", "task_id", taskID, "error", err)
 	}
@@ -3185,6 +3196,8 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	var createdDraft *db.DesignDraft
 	var analyzedProfile *db.DesignSystemProfile
 	var profileOutput *designSystemProfileAnalyzeOutput
+	var pmoSyncCtx service.PMOSyncContext
+	var pmoSnapshot *service.PMOSnapshot
 	if existingTask.Status == "running" && isUIDraftCreateTaskContext(existingTask.Context) {
 		draft, draftErr := h.createDesignDraftFromAgentTaskOutput(r.Context(), existingTask, req.Output)
 		if draftErr != nil {
@@ -3222,6 +3235,37 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		profileOutput = &parsed
 	}
 
+	// PMO sync completion: parse the agent's final output against the strict
+	// snapshot contract BEFORE the terminal transaction. Invalid output fails
+	// both the task and the run (redacted error, payload never persisted);
+	// valid output flows into the terminal mutation below so task completion
+	// and preview persistence commit together.
+	if existingTask.Status == "running" {
+		if pmoCtx, ok := service.ParsePMOSyncContext(existingTask.Context); ok {
+			snapshot, pmoErr := service.ParsePMOSnapshot(req.Output)
+			if pmoErr != nil {
+				// Validation text only — never the raw output. Bounded before
+				// it reaches the task row, the run row, or this response.
+				bounded := boundPMORunError(pmoErr.Error())
+				slog.Warn("pmo sync completion: invalid snapshot output", "task_id", taskID, "error", bounded)
+				failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), bounded, req.SessionID, req.WorkDir, "pmo_invalid_output", req.SessionRolloutMissing, req.RetiredSessionID)
+				if failErr != nil {
+					slog.Warn("pmo sync completion: failed to mark task failed", "task_id", taskID, "error", failErr)
+				} else if failedTask != nil {
+					h.TaskService.NotifyTaskFinished(*failedTask)
+					if err := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); err != nil {
+						slog.Warn("complete task: failed to revoke task tokens after pmo failure", "task_id", uuidToString(failedTask.ID), "error", err)
+					}
+				}
+				h.failPMOSyncRunForTask(r.Context(), pmoCtx, "pmo_invalid_output", bounded)
+				writeError(w, http.StatusBadRequest, "invalid pmo snapshot output: "+bounded)
+				return
+			}
+			pmoSyncCtx = pmoCtx
+			pmoSnapshot = &snapshot
+		}
+	}
+
 	result, _ := json.Marshal(req)
 	// MUL-5305: SessionRolloutMissing is applied inside CompleteTask's terminal
 	// transaction (force session_id NULL + flag the row), so an auto-retry the
@@ -3237,6 +3281,17 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 			}
 			return updateErr
 		})
+	} else if pmoSnapshot != nil {
+		task, err = h.TaskService.CompleteTaskWithMutationAndSessionState(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.SessionRolloutMissing, req.RetiredSessionID, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
+			// Re-derive the context from the row under the terminal
+			// transaction so a context mutation between parse and commit
+			// cannot split the preview store from a foreign run.
+			pmoCtx, ok := service.ParsePMOSyncContext(completedTask.Context)
+			if !ok {
+				return errors.New("task context is no longer a pmo sync task")
+			}
+			return h.storePMOSyncRunPreview(r.Context(), qtx, pmoCtx, *pmoSnapshot)
+		})
 	} else {
 		task, err = h.TaskService.CompleteTask(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.SessionRolloutMissing, req.RetiredSessionID)
 	}
@@ -3249,6 +3304,11 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("complete task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if pmoSnapshot != nil {
+		// Privacy: log task/run identity only, never snapshot content.
+		slog.Info("pmo sync preview stored", "task_id", taskID, "run_id", pmoSyncCtx.RunID)
+		h.pmoAutoApplyScheduledRun(r.Context(), pmoSyncCtx, taskID)
 	}
 
 	h.emitIssueExecutedOnFirstCompletion(r, task)
@@ -4003,6 +4063,13 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 	}
 	if err := h.updateDesignRestoreTaskFromAgentFailure(r.Context(), *task, req); err != nil {
 		slog.Warn("design restore task failure: failed to update restore task", "task_id", taskID, "error", err)
+	}
+	// PMO sync failure propagation: the agent task failed, so the owning run
+	// must also fail. Only the bounded, redacted transport error is stored —
+	// never the agent payload. slog above already carries req.Error for
+	// operator logs; the run row must stay payload-free.
+	if pmoCtx, ok := service.ParsePMOSyncContext(task.Context); ok {
+		h.failPMOSyncRunForTask(r.Context(), pmoCtx, "agent_failed", req.Error)
 	}
 	h.TaskService.NotifyTaskFinished(*task)
 

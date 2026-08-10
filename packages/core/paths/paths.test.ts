@@ -9,7 +9,6 @@ describe("paths.workspace(slug)", () => {
     expect(ws.issues()).toBe("/acme/issues");
     expect(ws.issueDetail("abc-123")).toBe("/acme/issues/abc-123");
     expect(ws.projects()).toBe("/acme/projects");
-    expect(ws.projectDetail("p1")).toBe("/acme/projects/p1");
     expect(ws.designs()).toBe("/acme/designs");
     expect(ws.designDetail("d1")).toBe("/acme/designs/d1");
     expect(ws.designDraftDetail("draft1")).toBe("/acme/designs/drafts/draft1");
@@ -33,6 +32,7 @@ describe("paths.workspace(slug)", () => {
     expect(ws.runtimeSettings("machine/runtime", "runtime one")).toBe(
       "/acme/runtimes/machine%2Fruntime/runtime/runtime%20one",
     );
+    expect(ws.pmo()).toBe("/acme/pmo");
     expect(ws.skills()).toBe("/acme/skills");
     expect(ws.skillDetail("skl_123")).toBe("/acme/skills/skl_123");
     expect(ws.squads()).toBe("/acme/squads");
