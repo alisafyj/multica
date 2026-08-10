@@ -228,6 +228,17 @@
       "notSet": "未设置",
       "approvedAt": "批准时间"
     },
+    "scopeEdit": {
+      "title": "调整范围",
+      "reposLabel": "代码仓库",
+      "reposEmpty": "先生成计划，以载入项目绑定的仓库。",
+      "modulesLabel": "模块",
+      "modulesPlaceholder": "例如 billing, auth（逗号分隔）",
+      "issuesLabel": "聚焦 issue",
+      "issuesPlaceholder": "例如 MUL-123, MUL-456（逗号分隔）",
+      "instructionsLabel": "补充说明",
+      "instructionsPlaceholder": "要覆盖的路径、要聚焦的行为，以及智能体需要知道的信息。"
+    },
     "dispatch": {
       "title": "派发给 Agent",
       "hint": "选择 Agent 执行已批准的计划，生成测试用例。",

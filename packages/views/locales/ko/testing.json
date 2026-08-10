@@ -228,6 +228,17 @@
       "notSet": "설정되지 않음",
       "approvedAt": "승인일"
     },
+    "scopeEdit": {
+      "title": "범위 조정",
+      "reposLabel": "저장소",
+      "reposEmpty": "플랜을 생성하면 프로젝트의 저장소를 불러옵니다.",
+      "modulesLabel": "모듈",
+      "modulesPlaceholder": "예: billing, auth (쉼표로 구분)",
+      "issuesLabel": "집중할 issue",
+      "issuesPlaceholder": "예: MUL-123, MUL-456 (쉼표로 구분)",
+      "instructionsLabel": "추가 지시",
+      "instructionsPlaceholder": "다룰 경로, 집중할 동작, 에이전트가 알아야 할 정보."
+    },
     "dispatch": {
       "title": "에이전트에 전달",
       "hint": "승인된 플랜을 실행하여 테스트 케이스를 생성할 에이전트를 선택하세요.",

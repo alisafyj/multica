@@ -228,6 +228,17 @@
       "notSet": "Not set",
       "approvedAt": "Approved"
     },
+    "scopeEdit": {
+      "title": "Adjust scope",
+      "reposLabel": "Repositories",
+      "reposEmpty": "Generate the plan to load the project's repositories.",
+      "modulesLabel": "Modules",
+      "modulesPlaceholder": "e.g. billing, auth (comma separated)",
+      "issuesLabel": "Focus issues",
+      "issuesPlaceholder": "e.g. MUL-123, MUL-456 (comma separated)",
+      "instructionsLabel": "Instructions",
+      "instructionsPlaceholder": "Paths to cover, behaviors to focus on, anything the agent must know."
+    },
     "dispatch": {
       "title": "Dispatch to Agent",
       "hint": "Select an agent to run the approved plan and generate test cases.",

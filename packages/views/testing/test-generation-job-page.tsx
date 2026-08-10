@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Bot,
@@ -32,10 +32,16 @@ import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
 import { useT } from "../i18n";
 import {
+  parsePlanDraft,
   planInstructions,
+  planIssues,
   planModules,
   planRepos,
+  splitCommaList,
   validatePlanJson,
+  withPlanInstructions,
+  withPlanList,
+  withPlanRepoToggled,
 } from "./test-generation-job-logic";
 
 // ---------------------------------------------------------------------------
@@ -102,6 +108,54 @@ export function TestGenerationJobPage({ jobId }: { jobId: string }) {
   const canEditPlan = plan?.status === "draft";
   const planDraftError = canEditPlan ? validatePlanJson(planDraft) : null;
   const canApprovePlan = !!plan && canEditPlan && planDraftError === null;
+
+  // Structured scope editing operates on the same JSON draft the advanced
+  // textarea edits: parse, transform, re-serialize. When the draft is not
+  // valid JSON (mid-edit in the textarea) the structured section hides and
+  // the textarea stays the only editor.
+  const parsedPlan = useMemo(() => parsePlanDraft(planDraft), [planDraft]);
+  // Union of every repo object seen since the plan loaded, keyed by alias,
+  // so a repo unticked from the draft can be ticked back without
+  // regenerating the plan.
+  const repoUniverseRef = useRef(new Map<string, Record<string, unknown>>());
+  useEffect(() => {
+    const repos = parsedPlan?.repos;
+    if (!Array.isArray(repos)) return;
+    for (const entry of repos) {
+      if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const alias = (entry as Record<string, unknown>).alias;
+      if (typeof alias === "string" && alias.length > 0) {
+        repoUniverseRef.current.set(alias, entry as Record<string, unknown>);
+      }
+    }
+  }, [parsedPlan]);
+  const includedRepoAliases = parsedPlan ? planRepos(parsedPlan) : [];
+  const knownRepoAliases = Array.from(
+    new Set([...repoUniverseRef.current.keys(), ...includedRepoAliases]),
+  );
+
+  // Comma-list fields keep local text state so a trailing comma survives
+  // typing; the parsed plan is only patched on blur.
+  const [modulesText, setModulesText] = useState("");
+  const [issuesText, setIssuesText] = useState("");
+  useEffect(() => {
+    setModulesText(parsedPlan ? planModules(parsedPlan).join(", ") : "");
+    setIssuesText(parsedPlan ? planIssues(parsedPlan).join(", ") : "");
+    // Re-seed only when a different plan object arrives, not on every
+    // keystroke round-trip through the draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan]);
+
+  function applyPlan(next: Record<string, unknown>) {
+    setPlanDraft(JSON.stringify(next, null, 2));
+  }
+
+  function handleToggleRepo(alias: string, included: boolean) {
+    if (!parsedPlan) return;
+    applyPlan(
+      withPlanRepoToggled(parsedPlan, repoUniverseRef.current, alias, included),
+    );
+  }
 
   const agentTask = agentTasks.find((item) => item.id === job?.agent_task_id);
   const taskAgent = agents.find((agent) => agent.id === agentTask?.agent_id);
@@ -184,14 +238,16 @@ export function TestGenerationJobPage({ jobId }: { jobId: string }) {
             {t(($) => $.job.title)}
           </span>
         }
-        actions={
+        leading={
           <Button
-            size="sm"
-            variant="outline"
+            size="icon-sm"
+            variant="ghost"
+            className="mr-1 shrink-0"
+            aria-label={t(($) => $.job.back)}
+            title={t(($) => $.job.back)}
             onClick={() => navigation.push(paths.tests())}
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            {t(($) => $.job.back)}
+            <ArrowLeft className="size-4" />
           </Button>
         }
       />
@@ -348,6 +404,103 @@ export function TestGenerationJobPage({ jobId }: { jobId: string }) {
                       />
                     </div>
 
+                    {canEditPlan && parsedPlan ? (
+                      <div className="space-y-3 rounded-md border p-3">
+                        <div className="text-caption font-medium">
+                          {t(($) => $.job.scopeEdit.title)}
+                        </div>
+
+                        <div>
+                          <span className="mb-1 block text-caption font-medium text-muted-foreground">
+                            {t(($) => $.job.scopeEdit.reposLabel)}
+                          </span>
+                          {knownRepoAliases.length > 0 ? (
+                            <div className="flex flex-col gap-1">
+                              {knownRepoAliases.map((alias) => (
+                                <label
+                                  key={alias}
+                                  className="flex items-center gap-2 text-caption"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={includedRepoAliases.includes(alias)}
+                                    onChange={(event) =>
+                                      handleToggleRepo(alias, event.target.checked)
+                                    }
+                                  />
+                                  <span className="truncate">{alias}</span>
+                                </label>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-caption text-muted-foreground">
+                              {t(($) => $.job.scopeEdit.reposEmpty)}
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-caption font-medium text-muted-foreground">
+                            {t(($) => $.job.scopeEdit.modulesLabel)}
+                          </label>
+                          <Input
+                            value={modulesText}
+                            onChange={(event) => setModulesText(event.target.value)}
+                            onBlur={() =>
+                              applyPlan(
+                                withPlanList(
+                                  parsedPlan,
+                                  "modules",
+                                  splitCommaList(modulesText),
+                                ),
+                              )
+                            }
+                            className="h-8 text-caption"
+                            placeholder={t(($) => $.job.scopeEdit.modulesPlaceholder)}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-caption font-medium text-muted-foreground">
+                            {t(($) => $.job.scopeEdit.issuesLabel)}
+                          </label>
+                          <Input
+                            value={issuesText}
+                            onChange={(event) => setIssuesText(event.target.value)}
+                            onBlur={() =>
+                              applyPlan(
+                                withPlanList(
+                                  parsedPlan,
+                                  "issues",
+                                  splitCommaList(issuesText),
+                                ),
+                              )
+                            }
+                            className="h-8 text-caption"
+                            placeholder={t(($) => $.job.scopeEdit.issuesPlaceholder)}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-caption font-medium text-muted-foreground">
+                            {t(($) => $.job.scopeEdit.instructionsLabel)}
+                          </label>
+                          <Textarea
+                            value={planInstructions(parsedPlan)}
+                            onChange={(event) =>
+                              applyPlan(
+                                withPlanInstructions(parsedPlan, event.target.value),
+                              )
+                            }
+                            className="min-h-20 text-caption"
+                            placeholder={t(
+                              ($) => $.job.scopeEdit.instructionsPlaceholder,
+                            )}
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+
                     <details className="rounded-md border" open={false}>
                       <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 text-caption font-medium hover:bg-muted/50">
                         <span>{t(($) => $.job.plan.rawJson)}</span>
@@ -359,7 +512,10 @@ export function TestGenerationJobPage({ jobId }: { jobId: string }) {
                       </div>
                     </details>
 
-                    <details className="rounded-md border" open={canEditPlan}>
+                    <details
+                      className="rounded-md border"
+                      open={canEditPlan && parsedPlan === null}
+                    >
                       <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 text-caption font-medium hover:bg-muted/50">
                         <span>{t(($) => $.job.plan.editJson)}</span>
                         <span className="text-muted-foreground">

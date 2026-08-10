@@ -3,9 +3,14 @@ import type { TestCaseProposal } from "@multica/core/types";
 import {
   aggregateProposalStats,
   validatePlanJson,
+  parsePlanDraft,
   planRepos,
   planModules,
   planInstructions,
+  splitCommaList,
+  withPlanInstructions,
+  withPlanList,
+  withPlanRepoToggled,
 } from "./test-generation-job-logic";
 
 function makeProposal(overrides: Partial<TestCaseProposal> = {}): TestCaseProposal {
@@ -169,5 +174,69 @@ describe("planInstructions", () => {
   it("returns an empty string when instructions is not a string", () => {
     expect(planInstructions({ instructions: 123 })).toBe("");
     expect(planInstructions({ instructions: null })).toBe("");
+  });
+});
+
+describe("structured scope editing", () => {
+  const basePlan = (): Record<string, unknown> => ({
+    repos: [
+      { alias: "billing-api", url: "https://github.com/acme/billing-api.git" },
+      { alias: "web", url: "https://github.com/acme/web.git" },
+    ],
+    modules: ["billing"],
+    instructions: "Focus on refunds.",
+  });
+
+  it("parsePlanDraft accepts objects and rejects everything else", () => {
+    expect(parsePlanDraft('{"a":1}')).toEqual({ a: 1 });
+    expect(parsePlanDraft("[1]")).toBeNull();
+    expect(parsePlanDraft("not json")).toBeNull();
+    expect(parsePlanDraft("null")).toBeNull();
+  });
+
+  it("splitCommaList trims and drops empties, including full-width commas", () => {
+    expect(splitCommaList(" a, b ,，c，, ")).toEqual(["a", "b", "c"]);
+    expect(splitCommaList("")).toEqual([]);
+  });
+
+  it("withPlanList replaces and removes list fields", () => {
+    const withIssues = withPlanList(basePlan(), "issues", ["MUL-1", "MUL-2"]);
+    expect(withIssues.issues).toEqual(["MUL-1", "MUL-2"]);
+    const cleared = withPlanList(withIssues, "issues", []);
+    expect("issues" in cleared).toBe(false);
+  });
+
+  it("withPlanInstructions removes the key when blank", () => {
+    const cleared = withPlanInstructions(basePlan(), "   ");
+    expect("instructions" in cleared).toBe(false);
+    expect(withPlanInstructions(basePlan(), "New focus").instructions).toBe("New focus");
+  });
+
+  it("withPlanRepoToggled excludes and restores full repo objects", () => {
+    const plan = basePlan();
+    const universe = new Map<string, Record<string, unknown>>(
+      (plan.repos as Record<string, unknown>[]).map((repo) => [repo.alias as string, repo]),
+    );
+    const without = withPlanRepoToggled(plan, universe, "web", false);
+    expect(planRepos(without)).toEqual(["billing-api"]);
+    const restored = withPlanRepoToggled(without, universe, "web", true);
+    expect(planRepos(restored)).toEqual(["billing-api", "web"]);
+    // The restored entry is the full original object, not just the alias.
+    expect((restored.repos as Record<string, unknown>[])[1]?.url).toBe(
+      "https://github.com/acme/web.git",
+    );
+  });
+
+  it("withPlanRepoToggled is a no-op for unknown aliases and duplicates", () => {
+    const plan = basePlan();
+    const universe = new Map<string, Record<string, unknown>>();
+    expect(withPlanRepoToggled(plan, universe, "ghost", true)).toBe(plan);
+    const dup = withPlanRepoToggled(
+      plan,
+      new Map([["billing-api", { alias: "billing-api" }]]),
+      "billing-api",
+      true,
+    );
+    expect(dup).toBe(plan);
   });
 });

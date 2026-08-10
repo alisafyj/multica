@@ -228,6 +228,17 @@
       "notSet": "未設定",
       "approvedAt": "承認日時"
     },
+    "scopeEdit": {
+      "title": "スコープを調整",
+      "reposLabel": "リポジトリ",
+      "reposEmpty": "プランを生成すると、プロジェクトのリポジトリが読み込まれます。",
+      "modulesLabel": "モジュール",
+      "modulesPlaceholder": "例: billing, auth（カンマ区切り）",
+      "issuesLabel": "対象 issue",
+      "issuesPlaceholder": "例: MUL-123, MUL-456（カンマ区切り）",
+      "instructionsLabel": "補足指示",
+      "instructionsPlaceholder": "対象パス、重点的に見る挙動、エージェントが知るべき情報。"
+    },
     "dispatch": {
       "title": "エージェントに派遣",
       "hint": "承認済みプランを実行してテストケースを生成するエージェントを選択します。",

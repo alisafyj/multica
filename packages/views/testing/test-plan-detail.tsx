@@ -86,14 +86,16 @@ export function TestPlanDetail({ planId }: { planId: string }) {
             {plan?.title ?? "…"}
           </span>
         }
-        actions={
+        leading={
           <Button
-            size="sm"
-            variant="outline"
+            size="icon-sm"
+            variant="ghost"
+            className="mr-1 shrink-0"
+            aria-label={t(($) => $.plans.detail.back)}
+            title={t(($) => $.plans.detail.back)}
             onClick={() => navigation.push(paths.testPlans())}
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            {t(($) => $.plans.detail.back)}
+            <ArrowLeft className="size-4" />
           </Button>
         }
       />

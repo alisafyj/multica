@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   createCase: vi.fn(),
   createGenerationJob: vi.fn(),
   approveCase: vi.fn(),
+  deleteCase: vi.fn(),
   viewState: {
     filters: {
       statuses: [] as string[],
@@ -73,6 +74,7 @@ vi.mock("@multica/core/testing", () => {
     useApproveTestCase: () => ({ mutateAsync: mocks.approveCase, isPending: false }),
     useCreateTestCase: () => ({ mutateAsync: mocks.createCase, isPending: false }),
     useCreateTestGenerationJob: () => ({ mutateAsync: mocks.createGenerationJob, isPending: false }),
+    useDeleteTestCase: () => ({ mutateAsync: mocks.deleteCase, isPending: false }),
     useTestCaseViewStore: store,
   };
 });

@@ -89,3 +89,94 @@ export function planInstructions(plan: Record<string, unknown>): string {
   const instructions = plan.instructions;
   return typeof instructions === "string" ? instructions : "";
 }
+
+// ---------------------------------------------------------------------------
+// Structured scope editing — pure transforms over the plan draft
+// ---------------------------------------------------------------------------
+
+/** Parse the JSON draft into a plan object, or null when it isn't one. */
+export function parsePlanDraft(draft: string): Record<string, unknown> | null {
+  try {
+    const value = JSON.parse(draft) as unknown;
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Extract focus issue references from the plan's `issues` array. */
+export function planIssues(plan: Record<string, unknown>): string[] {
+  const issues = plan.issues;
+  if (!Array.isArray(issues)) return [];
+  return issues.filter((value): value is string => typeof value === "string");
+}
+
+/** Split a comma-separated field into trimmed, non-empty entries. */
+export function splitCommaList(raw: string): string[] {
+  return raw
+    .split(/[,，]/)
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
+/**
+ * Return a new plan with a string-array field replaced. An empty list removes
+ * the key entirely so an untouched plan round-trips byte-identical.
+ */
+export function withPlanList(
+  plan: Record<string, unknown>,
+  key: "modules" | "issues",
+  values: string[],
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...plan };
+  if (values.length === 0) {
+    delete next[key];
+  } else {
+    next[key] = values;
+  }
+  return next;
+}
+
+/** Return a new plan with the free-text instructions replaced (or removed). */
+export function withPlanInstructions(
+  plan: Record<string, unknown>,
+  instructions: string,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...plan };
+  const trimmed = instructions.trim();
+  if (trimmed.length === 0) {
+    delete next.instructions;
+  } else {
+    next.instructions = instructions;
+  }
+  return next;
+}
+
+/**
+ * Return a new plan with one repository included or excluded by alias.
+ * Excluding filters the full repo object out; re-including restores the
+ * object from `universe` — the union of every repo seen since the plan
+ * loaded — because the plan itself no longer carries it.
+ */
+export function withPlanRepoToggled(
+  plan: Record<string, unknown>,
+  universe: ReadonlyMap<string, Record<string, unknown>>,
+  alias: string,
+  included: boolean,
+): Record<string, unknown> {
+  const current = Array.isArray(plan.repos) ? (plan.repos as unknown[]) : [];
+  const aliasOf = (entry: unknown): string | null => {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const value = (entry as Record<string, unknown>).alias;
+    return typeof value === "string" ? value : null;
+  };
+  if (!included) {
+    return { ...plan, repos: current.filter((entry) => aliasOf(entry) !== alias) };
+  }
+  if (current.some((entry) => aliasOf(entry) === alias)) return plan;
+  const stored = universe.get(alias);
+  if (!stored) return plan;
+  return { ...plan, repos: [...current, stored] };
+}

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardList, FlaskConical, Plus, Sparkles } from "lucide-react";
+import { ClipboardList, FlaskConical, Plus, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -18,6 +18,7 @@ import {
   useApproveTestCase,
   useCreateTestCase,
   useCreateTestGenerationJob,
+  useDeleteTestCase,
   useTestCaseViewStore,
 } from "@multica/core/testing";
 import type {
@@ -27,6 +28,15 @@ import type {
   TestCaseStatus,
   TestCaseType,
 } from "@multica/core/types";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@multica/ui/components/ui/alert-dialog";
 import { Button } from "@multica/ui/components/ui/button";
 import { NativeSelect } from "@multica/ui/components/ui/native-select";
 import { PageHeader } from "../layout/page-header";
@@ -103,7 +113,27 @@ export function TestCasesPage() {
   const navigation = useNavigation();
   const createCase = useCreateTestCase();
   const createGenerationJob = useCreateTestGenerationJob();
+  const deleteCase = useDeleteTestCase();
   const [isStartingGeneration, setIsStartingGeneration] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<TestCase | null>(null);
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    try {
+      await deleteCase.mutateAsync(deleteTarget.key);
+      toast.success(t(($) => $.toast.deleted));
+      setSelectedIds((prev) => {
+        if (!prev.has(deleteTarget.id)) return prev;
+        const next = new Set(prev);
+        next.delete(deleteTarget.id);
+        return next;
+      });
+    } catch {
+      toast.error(t(($) => $.toast.deleteFailed));
+    } finally {
+      setDeleteTarget(null);
+    }
+  }
 
   // Create-then-edit: the detail page already owns the full editor, so the
   // list only has to mint a case and hand over. Navigation waits for the
@@ -163,30 +193,34 @@ export function TestCasesPage() {
           <FlaskConical className="size-4 shrink-0 text-muted-foreground" />
           <h1 className="truncate text-body font-medium">{t(($) => $.page.title)}</h1>
         </div>
-        {/* The plans surface is otherwise unreachable: its own breadcrumbs are
-            the only thing that links to it, which only helps someone already
-            there. */}
-        <Button size="sm" variant="ghost" onClick={() => navigation.push(paths.testPlans())}>
-          <ClipboardList className="size-4" />
-          {t(($) => $.plans.title)}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={selectedProjectId.length === 0 || isStartingGeneration}
-          onClick={() => void startGeneration()}
-        >
-          <Sparkles className="size-4" />
-          {isStartingGeneration ? t(($) => $.page.generating) : t(($) => $.page.generate)}
-        </Button>
-        <Button
-          size="sm"
-          disabled={selectedProjectId.length === 0 || createCase.isPending}
-          onClick={() => void createAndOpenCase()}
-        >
-          <Plus className="size-4" />
-          {t(($) => $.page.new)}
-        </Button>
+        {/* PageHeader lays children out without a gap; the action cluster
+            spaces itself. */}
+        <div className="flex shrink-0 items-center gap-2">
+          {/* The plans surface is otherwise unreachable: its own breadcrumbs
+              are the only thing that links to it, which only helps someone
+              already there. */}
+          <Button size="sm" variant="ghost" onClick={() => navigation.push(paths.testPlans())}>
+            <ClipboardList className="size-4" />
+            {t(($) => $.plans.title)}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={selectedProjectId.length === 0 || isStartingGeneration}
+            onClick={() => void startGeneration()}
+          >
+            <Sparkles className="size-4" />
+            {isStartingGeneration ? t(($) => $.page.generating) : t(($) => $.page.generate)}
+          </Button>
+          <Button
+            size="sm"
+            disabled={selectedProjectId.length === 0 || createCase.isPending}
+            onClick={() => void createAndOpenCase()}
+          >
+            <Plus className="size-4" />
+            {t(($) => $.page.new)}
+          </Button>
+        </div>
       </PageHeader>
 
       <div className="flex min-h-0 flex-1">
@@ -324,6 +358,8 @@ export function TestCasesPage() {
                     <Th>{t(($) => $.columns.status)}</Th>
                     <Th>{t(($) => $.columns.origin)}</Th>
                     <Th>{t(($) => $.columns.repos)}</Th>
+                    {/* actions column */}
+                    <th className="w-10 px-2 py-2" />
                   </tr>
                 </thead>
                 <tbody>
@@ -334,6 +370,7 @@ export function TestCasesPage() {
                       href={paths.testCaseDetail(testCase.key)}
                       selected={selectedIds.has(testCase.id)}
                       onToggleSelect={toggleSelect}
+                      onDelete={setDeleteTarget}
                     />
                   ))}
                 </tbody>
@@ -342,6 +379,33 @@ export function TestCasesPage() {
           </div>
         </section>
       </div>
+
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open && !deleteCase.isPending) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t(($) => $.actions.confirmDelete)}</AlertDialogTitle>
+          </AlertDialogHeader>
+          <p className="truncate text-body text-muted-foreground">
+            {deleteTarget ? `${deleteTarget.key} · ${deleteTarget.title}` : ""}
+          </p>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteCase.isPending}>
+              {t(($) => $.actions.cancel)}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteCase.isPending}
+              onClick={() => void confirmDelete()}
+            >
+              {t(($) => $.actions.delete)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -411,11 +475,13 @@ function CaseRow({
   href,
   selected,
   onToggleSelect,
+  onDelete,
 }: {
   testCase: TestCase;
   href: string;
   selected: boolean;
   onToggleSelect: (id: string) => void;
+  onDelete: (testCase: TestCase) => void;
 }) {
   const { t } = useT("testing");
   const status = knownEnumKey<TestCaseStatus>(testCase.status, TEST_CASE_STATUSES);
@@ -424,7 +490,7 @@ function CaseRow({
   const repoSummary = formatRepoSummary(testCase);
 
   return (
-    <tr className="border-b border-border hover:bg-accent" data-active={selected || undefined}>
+    <tr className="group/case border-b border-border hover:bg-accent" data-active={selected || undefined}>
       <td className="w-8 px-3 py-2">
         <input
           type="checkbox"
@@ -458,6 +524,19 @@ function CaseRow({
         <span className="block truncate" title={repoSummary}>
           {repoSummary}
         </span>
+      </td>
+      <td className="w-10 px-2 py-2">
+        {/* Hover-revealed so the dense table stays quiet; always visible on
+            coarse pointers, which never hover. */}
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover/case:opacity-100 [@media(hover:none)]:opacity-100"
+          aria-label={t(($) => $.actions.delete)}
+          onClick={() => onDelete(testCase)}
+        >
+          <Trash2 className="size-3.5" />
+        </Button>
       </td>
     </tr>
   );

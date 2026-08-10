@@ -4,16 +4,19 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ClipboardList, Plus } from "lucide-react";
 import { toast } from "sonner";
+import { projectListOptions } from "@multica/core/projects/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
   testPlanListOptions,
   useCreateTestPlan,
+  useTestCaseViewStore,
 } from "@multica/core/testing";
 import type { TestPlan } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
+import { NativeSelect } from "@multica/ui/components/ui/native-select";
 import { PageHeader } from "../layout/page-header";
 import { AppLink, useNavigation } from "../navigation";
 import { useT } from "../i18n";
@@ -29,20 +32,33 @@ export function TestPlansPage() {
 
   const { data: plans = [], isLoading } = useQuery(testPlanListOptions(wsId));
 
+  // A plan belongs to one project (the server rejects an empty project_id),
+  // so creation shares the library's project selection instead of asking
+  // again — and still shows the picker here for the direct-entry case.
+  const projectId = useTestCaseViewStore((state) => state.projectId);
+  const setProjectId = useTestCaseViewStore((state) => state.setProjectId);
+  const { data: projects = [] } = useQuery(projectListOptions(wsId));
+  const selectedProjectId = projectId ?? projects[0]?.id ?? "";
+
   const createPlan = useCreateTestPlan();
 
   async function handleCreate() {
+    if (selectedProjectId.length === 0) return;
     const title = newTitle.trim() || t(($) => $.plans.title);
     setIsCreating(true);
     try {
       const plan = await createPlan.mutateAsync({
-        project_id: "",
+        project_id: selectedProjectId,
         title,
       });
       toast.success(t(($) => $.toast.planCreated));
       navigation.push(paths.testPlanDetail(plan.id));
-    } catch {
-      toast.error(t(($) => $.toast.planCreateFailed));
+    } catch (err) {
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : t(($) => $.toast.planCreateFailed),
+      );
     } finally {
       setIsCreating(false);
     }
@@ -58,6 +74,18 @@ export function TestPlansPage() {
           </h1>
         </div>
         <div className="flex items-center gap-2">
+          <NativeSelect
+            className="h-8 w-40 text-caption"
+            aria-label={t(($) => $.page.selectProject)}
+            value={selectedProjectId}
+            onChange={(event) => setProjectId(event.target.value)}
+          >
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.title}
+              </option>
+            ))}
+          </NativeSelect>
           <Input
             className="h-8 w-48 text-caption"
             placeholder={t(($) => $.plans.createTitle)}
@@ -69,7 +97,9 @@ export function TestPlansPage() {
           />
           <Button
             size="sm"
-            disabled={isCreating || createPlan.isPending}
+            disabled={
+              selectedProjectId.length === 0 || isCreating || createPlan.isPending
+            }
             onClick={() => void handleCreate()}
           >
             <Plus className="size-4" />

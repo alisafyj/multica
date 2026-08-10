@@ -7,15 +7,25 @@ import { TestPlansPage } from "./test-plans-page";
 
 const mocks = vi.hoisted(() => ({
   plans: [] as unknown[],
+  projects: [{ id: "p-1", title: "Billing" }],
   createPlan: vi.fn(),
+  viewState: {
+    projectId: null as string | null,
+    setProjectId: vi.fn(),
+  },
 }));
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     const key = options.queryKey?.[0];
     if (key === "test-plans") return { data: mocks.plans, isLoading: false };
+    if (key === "projects") return { data: mocks.projects, isLoading: false };
     return { data: [], isLoading: false };
   },
+}));
+
+vi.mock("@multica/core/projects/queries", () => ({
+  projectListOptions: () => ({ queryKey: ["projects", "ws-1"] }),
 }));
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
@@ -28,10 +38,16 @@ vi.mock("@multica/core/paths", () => ({
   }),
 }));
 
-vi.mock("@multica/core/testing", () => ({
-  testPlanListOptions: () => ({ queryKey: ["test-plans", "ws-1", "list"] }),
-  useCreateTestPlan: () => ({ mutateAsync: mocks.createPlan, isPending: false }),
-}));
+vi.mock("@multica/core/testing", () => {
+  const store = (selector?: (s: typeof mocks.viewState) => unknown) =>
+    selector ? selector(mocks.viewState) : mocks.viewState;
+  store.getState = () => mocks.viewState;
+  return {
+    testPlanListOptions: () => ({ queryKey: ["test-plans", "ws-1", "list"] }),
+    useCreateTestPlan: () => ({ mutateAsync: mocks.createPlan, isPending: false }),
+    useTestCaseViewStore: store,
+  };
+});
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -77,7 +93,11 @@ describe("TestPlansPage entry points", () => {
     const create = buttons.find((b) => b.textContent?.match(/New|新建|作成|새/));
     await userEvent.click(create!);
 
-    expect(mocks.createPlan).toHaveBeenCalled();
+    // The server rejects an empty project_id with a 400 — creation must carry
+    // the selected project, not a placeholder.
+    expect(mocks.createPlan).toHaveBeenCalledWith(
+      expect.objectContaining({ project_id: "p-1" }),
+    );
     expect(adapter.push).toHaveBeenCalledWith("/acme/tests/plans/plan-1");
   });
 
