@@ -14,7 +14,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 )
 
-func TestOpenDesignFeatureFlagCreatesPinnedRun(t *testing.T) {
+func TestOpenDesignFeatureFlagUsesNativeV2Task(t *testing.T) {
 	t.Setenv("MULTICA_OPEN_DESIGN_ENABLED", "true")
 	ctx := context.Background()
 
@@ -88,21 +88,38 @@ func TestOpenDesignFeatureFlagCreatesPinnedRun(t *testing.T) {
 	}
 
 	var response struct {
-		ID string `json:"id"`
+		ID         string `json:"id"`
+		ActiveTask *struct {
+			ID string `json:"id"`
+		} `json:"active_task"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		t.Fatalf("decode design system response: %v", err)
 	}
-	var status, operation, engineRelease string
+	if response.ActiveTask == nil {
+		t.Fatal("create response has no active task")
+	}
+	var packageSchema string
 	if err := testPool.QueryRow(ctx, `
-		SELECT status, operation, engine_release
+		SELECT context ->> 'package_schema'
+		FROM agent_task_queue
+		WHERE id = $1
+	`, response.ActiveTask.ID).Scan(&packageSchema); err != nil {
+		t.Fatalf("load native design task: %v", err)
+	}
+	if packageSchema != "multica.project-design-system/v2" {
+		t.Fatalf("native design task package schema = %q", packageSchema)
+	}
+	var openDesignRunCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT COUNT(*)
 		FROM open_design_run
 		WHERE design_system_id = $1
-	`, response.ID).Scan(&status, &operation, &engineRelease); err != nil {
-		t.Fatalf("load pinned Open Design run: %v", err)
+	`, response.ID).Scan(&openDesignRunCount); err != nil {
+		t.Fatalf("count Open Design runs: %v", err)
 	}
-	if status != "preflight_pending" || operation != "generate" || engineRelease != "open-design-v0.16.1" {
-		t.Fatalf("Open Design run = (%q, %q, %q)", status, operation, engineRelease)
+	if openDesignRunCount != 0 {
+		t.Fatalf("Open Design run count = %d, want 0", openDesignRunCount)
 	}
 }
 

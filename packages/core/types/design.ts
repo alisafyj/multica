@@ -330,9 +330,9 @@ export interface ProjectDesignSystemContent {
   locators: ProjectDesignSystemLocator[];
   preview_html: string;
   integrity_sha256: string;
-  package_schema: string;
-  preview_targets: ProjectDesignSystemPreviewTarget[];
-  selection_enabled: boolean;
+  package_schema?: string;
+  preview_targets?: ProjectDesignSystemPreviewTarget[];
+  selection_enabled?: boolean;
 }
 
 export interface ProjectDesignSystemTask {
