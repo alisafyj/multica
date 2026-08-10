@@ -71,6 +71,15 @@ var mergedDuplicateMigrationStems = map[string][]string{
 	"260": {"260_chat_message_quick_actions", "260_issue_origin_dingtalk_chat_validate"},
 	"261": {"261_agent_task_queue_terminal_completed_at_v2", "261_agent_task_quick_actions_disabled"},
 	"262": {"262_drop_agent_task_queue_terminal_completed_at_v1", "262_quick_action"},
+	"263": {"263_issue_origin_wecom_chat", "263_quick_action_workspace_index"},
+	"264": {"264_comment_quick_action", "264_issue_origin_wecom_chat_validate"},
+	"265": {"265_agent_task_regenerate_quick_actions", "265_issue_view"},
+	"266": {"266_comment_parent_lookup_index", "266_issue_view_owner_index"},
+	"267": {"267_issue_view_shared_index", "267_runtime_profile_add_qoderclicn"},
+	"268": {"268_issue_view_preference", "268_workspace_teardown_dirty_trigger_guard"},
+	"269": {"269_issue_dependency_issue_index", "269_issue_view_workspace_variant"},
+	"270": {"270_issue_dependency_depends_on_index", "270_pinned_item_view"},
+	"271": {"271_channel_chat_pending_fresh", "271_inbox_item_issue_index"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)
