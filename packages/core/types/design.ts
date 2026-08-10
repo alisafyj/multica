@@ -273,6 +273,14 @@ export interface CreateProjectDesignSystemRequest {
   references: ProjectDesignSystemReferenceInput[];
 }
 
+export interface AnalyzeProjectDesignSystemRepositoryRequest {
+  project_id: string;
+  agent_id: string;
+  platform: ProjectDesignSystemPlatform;
+  brief: string;
+  references: ProjectDesignSystemReferenceInput[];
+}
+
 export interface AdjustProjectDesignSystemRequest {
   agent_id: string;
   instruction: string;

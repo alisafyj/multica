@@ -128,6 +128,7 @@ import type {
   CreateDesignRestoreTaskRequest,
   CreateDesignSystemProfileRequest,
   CreateProjectDesignSystemRequest,
+  AnalyzeProjectDesignSystemRepositoryRequest,
   AdjustProjectDesignSystemRequest,
   RegenerateProjectDesignSystemRequest,
   DesignCatalogTemplate,
@@ -2062,6 +2063,26 @@ export class ApiClient {
         current_agent_id: data.agent_id,
       },
       { endpoint: "POST /api/project-design-systems" },
+    );
+  }
+
+  async analyzeProjectDesignSystemRepository(
+    data: AnalyzeProjectDesignSystemRepositoryRequest,
+  ): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>(
+      "/api/project-design-systems/repository-analysis",
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      {
+        ...EMPTY_PROJECT_DESIGN_SYSTEM,
+        project_id: data.project_id,
+        platform: data.platform,
+        current_agent_id: data.agent_id,
+      },
+      { endpoint: "POST /api/project-design-systems/repository-analysis" },
     );
   }
 
