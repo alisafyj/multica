@@ -514,7 +514,12 @@ func (h *Handler) SaveProjectDesignSystem(w http.ResponseWriter, r *http.Request
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "draft_lookup_failed", "failed to load draft")
 		return
 	}
-	if isOpenDesignProjectDesignSystemPackage(draft) {
+	if draft.PackageSchema == projectdesignsystem.PackageSchemaV2 {
+		if _, _, err := h.loadNativeProjectDesignSystemPackageArchive(r.Context(), system, draft); err != nil {
+			writeProjectDesignSystemError(w, http.StatusUnprocessableEntity, "draft_invalid", "draft has not passed validation")
+			return
+		}
+	} else if isOpenDesignProjectDesignSystemPackage(draft) {
 		if _, err := h.loadOpenDesignArchivePreviewPackage(r.Context(), queries, system, draft); err != nil {
 			writeProjectDesignSystemRequestError(w, err)
 			return
@@ -1558,7 +1563,7 @@ func (h *Handler) projectDesignSystemResponse(ctx context.Context, system db.Pro
 		response.Content.IntegritySHA256 = selected.IntegritySha256
 		response.Content.PackageSchema = selected.PackageSchema
 		if selected.PackageSchema == projectdesignsystem.PackageSchemaV2 {
-			manifest, err := h.loadNativeProjectDesignSystemPackageManifest(ctx, system, selected)
+			manifest, _, err := h.loadNativeProjectDesignSystemPackageArchive(ctx, system, selected)
 			if err != nil {
 				response.LastError = json.RawMessage(`{"code":"native_package_invalid"}`)
 			} else {

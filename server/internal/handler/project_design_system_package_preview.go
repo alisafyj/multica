@@ -56,7 +56,7 @@ func (h *Handler) GetProjectDesignSystemPackagePreview(w http.ResponseWriter, r 
 	}
 
 	if selected.PackageSchema == projectdesignsystem.PackageSchemaV2 {
-		manifest, err := h.loadNativeProjectDesignSystemPackageManifest(r.Context(), system, selected)
+		manifest, _, err := h.loadNativeProjectDesignSystemPackageArchive(r.Context(), system, selected)
 		if err != nil {
 			writeProjectDesignSystemError(w, http.StatusConflict, "native_package_preview_unavailable", "native design package preview is unavailable")
 			return
