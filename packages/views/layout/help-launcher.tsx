@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, BookOpen, CircleHelp, History, MessageCircle } from "lucide-react";
+import { ArrowUpRight, BookOpen, CircleHelp, Download, History, MessageCircle } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +21,12 @@ const CHANGELOG_URL = "https://multica.ai/changelog";
 export function HelpLauncher() {
   const { t } = useT("layout");
   const serverVersion = useConfigStore((state) => state.serverVersion);
+  // The /download landing page lives on the web origin. On web an empty
+  // daemonAppUrl degrades to a same-origin relative link; on desktop the
+  // renderer is not the web origin, so the absolute URL from /api/config
+  // is what makes the item land in the system browser correctly.
+  const daemonAppUrl = useConfigStore((state) => state.daemonAppUrl);
+  const downloadUrl = `${daemonAppUrl.replace(/\/+$/, "")}/download`;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -56,6 +62,15 @@ export function HelpLauncher() {
         >
           <History className="h-3.5 w-3.5" />
           {t(($) => $.help.changelog)}
+          <ArrowUpRight className="size-3 translate-y-px text-faint-foreground" />
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          render={
+            <a href={downloadUrl} target="_blank" rel="noopener noreferrer" />
+          }
+        >
+          <Download className="h-3.5 w-3.5" />
+          {t(($) => $.help.download_clients)}
           <ArrowUpRight className="size-3 translate-y-px text-faint-foreground" />
         </DropdownMenuItem>
         <DropdownMenuItem

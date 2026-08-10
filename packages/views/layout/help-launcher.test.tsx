@@ -33,12 +33,27 @@ vi.mock("../i18n", () => ({
 // the moment the Help menu opened. Mirroring the throw here keeps the guard.
 // The group context lives inside the factory so it survives vi.mock hoisting.
 vi.mock("@multica/ui/components/ui/dropdown-menu", async () => {
-  const { createContext, useContext } = await import("react");
+  const { createContext, useContext, cloneElement, isValidElement } =
+    await import("react");
   const GroupContext = createContext(false);
   return {
     DropdownMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
     DropdownMenuContent: ({ children }: { children: ReactNode }) => <>{children}</>,
-    DropdownMenuItem: ({ children }: { children: ReactNode }) => <>{children}</>,
+    // Mirrors Base UI's render-prop contract: the item renders the provided
+    // element with the item's children inside it, so tests can assert on the
+    // anchors external menu entries produce.
+    DropdownMenuItem: ({
+      children,
+      render,
+    }: {
+      children: ReactNode;
+      render?: unknown;
+    }) =>
+      isValidElement(render) ? (
+        cloneElement(render as React.ReactElement<{ children?: ReactNode }>, undefined, children)
+      ) : (
+        <>{children}</>
+      ),
     DropdownMenuGroup: ({ children }: { children: ReactNode }) => (
       <GroupContext.Provider value={true}>{children}</GroupContext.Provider>
     ),
@@ -57,9 +72,28 @@ vi.mock("@multica/ui/components/ui/dropdown-menu", async () => {
 
 afterEach(() => {
   configStore.getState().setServerVersion("");
+  configStore.getState().setDaemonConfig({});
 });
 
 describe("HelpLauncher", () => {
+  it("links Download apps to the configured app origin's /download page", () => {
+    configStore
+      .getState()
+      .setDaemonConfig({ daemonAppUrl: "https://app.example.com/" });
+    render(<HelpLauncher />);
+    const link = screen.getByText("Download apps").closest("a");
+    expect(link).toHaveAttribute("href", "https://app.example.com/download");
+    expect(link).toHaveAttribute("target", "_blank");
+  });
+
+  it("degrades to a same-origin /download link before config resolves", () => {
+    render(<HelpLauncher />);
+    expect(screen.getByText("Download apps").closest("a")).toHaveAttribute(
+      "href",
+      "/download",
+    );
+  });
+
   it("does not show a version row when the server omits it", () => {
     render(<HelpLauncher />);
     expect(screen.queryByText(/Server version/)).not.toBeInTheDocument();

@@ -34,6 +34,7 @@
     "trigger": "ヘルプ",
     "docs": "ドキュメント",
     "changelog": "変更ログ",
+    "download_clients": "アプリをダウンロード",
     "discord": "Discord",
     "feedback": "フィードバック",
     "server_version": "サーバーバージョン {{version}}"

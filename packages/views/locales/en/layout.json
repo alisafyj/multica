@@ -34,6 +34,7 @@
     "trigger": "Help",
     "docs": "Docs",
     "changelog": "Change log",
+    "download_clients": "Download apps",
     "discord": "Discord",
     "feedback": "Feedback",
     "server_version": "Server version {{version}}"

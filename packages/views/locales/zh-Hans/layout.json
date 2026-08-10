@@ -34,6 +34,7 @@
     "trigger": "帮助",
     "docs": "文档",
     "changelog": "更新日志",
+    "download_clients": "下载客户端",
     "discord": "Discord",
     "feedback": "反馈",
     "server_version": "服务器版本 {{version}}"
