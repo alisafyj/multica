@@ -192,7 +192,58 @@ func (h *Handler) loadTestGenerationJobForUser(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusNotFound, "test generation job not found")
 		return db.TestGenerationJob{}, pgtype.UUID{}, false
 	}
-	return job, wsUUID, true
+	return h.reconcileTestGenerationJob(r.Context(), job), wsUUID, true
+}
+
+// reconcileTestGenerationJob folds a terminal agent task back into a job that
+// still claims to be queued or running. Task cancellation has no writeback
+// hook — agent edits cancel active tasks (CancelAgentTasksByAgent), runtime
+// unbinds and user cancels end them too — so an affected job would otherwise
+// show "queued" forever and its dispatch guard would wedge. Reads self-heal
+// here instead of trusting the last write. Best-effort: any lookup or update
+// error returns the job unchanged; the next read retries.
+func (h *Handler) reconcileTestGenerationJob(ctx context.Context, job db.TestGenerationJob) db.TestGenerationJob {
+	if job.Status != "queued" && job.Status != "running" {
+		return job
+	}
+	if !job.AgentTaskID.Valid {
+		return job
+	}
+	task, err := h.Queries.GetAgentTaskInWorkspace(ctx, db.GetAgentTaskInWorkspaceParams{
+		ID:          job.AgentTaskID,
+		WorkspaceID: job.WorkspaceID,
+	})
+	if err != nil {
+		return job
+	}
+	var jobError string
+	switch task.Status {
+	case "cancelled":
+		jobError = "the agent task was cancelled before it finished; dispatch again to retry"
+	case "failed":
+		jobError = "the agent task failed without reporting a result"
+		if task.Error.Valid && strings.TrimSpace(task.Error.String) != "" {
+			jobError = task.Error.String
+		}
+	case "completed":
+		// The completion hook normally moves the job; reaching here means it
+		// did not run (or failed). Cases proposed by the run are already in
+		// the library either way.
+		jobError = "the agent task completed but the job was never finalized"
+	default:
+		return job
+	}
+	updated, err := h.Queries.UpdateTestGenerationJob(ctx, db.UpdateTestGenerationJobParams{
+		ID:          job.ID,
+		WorkspaceID: job.WorkspaceID,
+		Status:      pgtype.Text{String: "failed", Valid: true},
+		Error:       pgtype.Text{String: jobError, Valid: true},
+	})
+	if err != nil {
+		slog.Warn("reconcile test generation job failed", "job_id", uuidToString(job.ID), "error", err)
+		return job
+	}
+	return updated
 }
 
 type CreateTestGenerationJobRequest struct {
@@ -239,13 +290,16 @@ func (h *Handler) CreateTestGenerationJob(w http.ResponseWriter, r *http.Request
 	}
 
 	// Idempotent create: an in-flight run for this project is returned rather
-	// than starting a second one that would duplicate its output.
+	// than starting a second one that would duplicate its output. Reconcile
+	// first so a job whose agent task died is not what gets reused.
 	if existing, err := h.Queries.GetReusableTestGenerationJob(r.Context(), db.GetReusableTestGenerationJobParams{
 		WorkspaceID: wsUUID,
 		ProjectID:   project.ID,
 	}); err == nil {
-		writeJSON(w, http.StatusOK, testGenerationJobToResponse(existing))
-		return
+		if healed := h.reconcileTestGenerationJob(r.Context(), existing); healed.Status == existing.Status {
+			writeJSON(w, http.StatusOK, testGenerationJobToResponse(existing))
+			return
+		}
 	} else if err != pgx.ErrNoRows {
 		h.writeTestGenerationWriteError(w, r, err, "create")
 		return
@@ -323,7 +377,7 @@ func (h *Handler) ListTestGenerationJobs(w http.ResponseWriter, r *http.Request)
 	}
 	resp := make([]TestGenerationJobResponse, len(jobs))
 	for i, job := range jobs {
-		resp[i] = testGenerationJobToResponse(job)
+		resp[i] = testGenerationJobToResponse(h.reconcileTestGenerationJob(r.Context(), job))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"jobs": resp, "total": len(resp)})
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -464,5 +465,55 @@ func TestDeleteTestCaseSweepsProposals(t *testing.T) {
 	}
 	if orphans != 0 {
 		t.Fatalf("orphan proposals = %d, want 0", orphans)
+	}
+}
+
+// TestGenerationJobHealsWhenAgentTaskDies covers the read-time reconcile:
+// task cancellation has no writeback hook (agent edits, runtime unbinds and
+// user cancels all end the task without touching the job), so a queued job
+// whose task died must flip to failed on the next read instead of showing
+// "queued" forever and wedging the dispatch guard.
+func TestGenerationJobHealsWhenAgentTaskDies(t *testing.T) {
+	projectID := newTestCaseProject(t)
+	jobID := newTestGenerationJob(t, projectID)
+	agentID := createHandlerTestAgent(t, "gen-heal-"+jobID[:8], nil)
+
+	ctx := context.Background()
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, status, context, completed_at)
+		VALUES ($1, 'cancelled', '{}', now())
+		RETURNING id
+	`, agentID).Scan(&taskID); err != nil {
+		t.Fatalf("create cancelled fixture task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	})
+	if _, err := testPool.Exec(ctx, `
+		UPDATE test_generation_job SET agent_id = $2, agent_task_id = $3 WHERE id = $1
+	`, jobID, agentID, taskID); err != nil {
+		t.Fatalf("point job at fixture task: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := withURLParam(newRequest("GET", "/api/test-generation-jobs/"+jobID+"?workspace_id="+testWorkspaceID, nil), "id", jobID)
+	testHandler.GetTestGenerationJob(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Status string  `json:"status"`
+		Error  *string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "failed" {
+		t.Fatalf("status = %q, want failed after the task died", resp.Status)
+	}
+	if resp.Error == nil || !strings.Contains(*resp.Error, "cancelled") {
+		t.Fatalf("error = %v, want a cancellation explanation", resp.Error)
 	}
 }
