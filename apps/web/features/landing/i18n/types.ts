@@ -57,6 +57,9 @@ export type LandingDict = {
     subheading: string;
     cta: string;
     downloadDesktop: string;
+    downloadAndroid: string;
+    downloadIos: string;
+    iosInDevelopment: string;
     talkToSales: string;
     worksWith: string;
     imageAlt: string;

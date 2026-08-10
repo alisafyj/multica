@@ -14,6 +14,7 @@ import {
   OpenCodeLogo,
   heroButtonClassName,
 } from "./shared";
+import { AndroidIcon, AppleIcon } from "./download/os-icons";
 
 export function LandingHero() {
   const { t } = useLocale();
@@ -51,6 +52,26 @@ export function LandingHero() {
                 <Download className="size-4" aria-hidden />
                 {t.hero.downloadDesktop}
               </Link>
+              <Link
+                href="/download#android"
+                className={heroButtonClassName("ghost")}
+              >
+                <AndroidIcon size={16} aria-hidden />
+                {t.hero.downloadAndroid}
+              </Link>
+              {/* iOS is in development: same pill so the platform row reads
+                  as one set, but non-interactive and dimmed until it ships. */}
+              <span
+                aria-disabled="true"
+                title={t.hero.iosInDevelopment}
+                className={`${heroButtonClassName("ghost")} cursor-default opacity-45 hover:bg-black/16`}
+              >
+                <AppleIcon size={16} aria-hidden />
+                {t.hero.downloadIos}
+                <span className="rounded-full border border-white/25 px-2 py-0.5 text-caption font-medium text-white/75">
+                  {t.hero.iosInDevelopment}
+                </span>
+              </span>
             </div>
           </div>
 
