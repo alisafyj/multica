@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CircleAlert } from "lucide-react";
 import type {
-  ProjectDesignSystemArchivePreviewTarget,
   ProjectDesignSystemLocator,
   ProjectDesignSystemPreviewVerificationReceipt,
+  ProjectDesignSystemPreviewTarget,
   ProjectDesignSystemScope,
 } from "@multica/core/types";
 
@@ -27,15 +27,21 @@ const VERIFICATION_FAILURE_REASONS = new Set([
 ]);
 
 type PreviewSizeMode = (typeof PREVIEW_SIZE_OPTIONS)[number]["value"];
-type ArchivePreviewTarget = ProjectDesignSystemArchivePreviewTarget & { url: string };
+type ArchivePreviewTarget = ProjectDesignSystemPreviewTarget & { url: string };
 
-function archiveTargetKey(target: ProjectDesignSystemArchivePreviewTarget): string {
+function archiveTargetKey(target: ProjectDesignSystemPreviewTarget): string {
   return `${target.kind}:${target.id}`;
 }
 
-function archiveTargetLabel(target: ProjectDesignSystemArchivePreviewTarget): string {
-  if (target.kind === "ui_kit") return "UI Kit";
-  return `Preview · ${target.id.replaceAll("-", " ")}`;
+function archiveTargetLabel(target: ProjectDesignSystemPreviewTarget): string {
+  switch (target.kind) {
+    case "ui_kit":
+      return "UI Kit";
+    case "preview":
+      return `Preview · ${target.id.replaceAll("-", " ")}`;
+    default:
+      return target.id.replaceAll("-", " ") || "Preview";
+  }
 }
 
 function previewViewport(platform: string): { label: string; width: number; mobile: boolean } {
@@ -94,6 +100,8 @@ export function ProjectDesignSystemPreview({
   platform = "web",
   locators,
   integritySha256,
+  selectionEnabled = true,
+  packageSchema = "",
   verificationAttempt = 0,
   onVerification,
   onSelect,
@@ -103,6 +111,8 @@ export function ProjectDesignSystemPreview({
   platform?: string;
   locators: ProjectDesignSystemLocator[];
   integritySha256: string;
+  selectionEnabled?: boolean;
+  packageSchema?: string;
   verificationAttempt?: number;
   onVerification: (receipt: ProjectDesignSystemPreviewVerificationReceipt) => void;
   onSelect: (scope: ProjectDesignSystemScope) => void;
@@ -184,20 +194,20 @@ export function ProjectDesignSystemPreview({
       if (event.source !== frameRef.current?.contentWindow) return;
       if (!event.data || typeof event.data !== "object" || Array.isArray(event.data)) return;
       const message = event.data as { type?: unknown; id?: unknown };
-      if (message.type === SELECTION_MESSAGE && typeof message.id === "string") {
+      if (selectionEnabled && message.type === SELECTION_MESSAGE && typeof message.id === "string") {
         const locator = locatorById.get(message.id);
         if (!locator) return;
         onSelect({ kind: locator.kind, id: locator.id });
         return;
       }
       const receipt = parseVerificationReceipt(event.data);
-      if (selectedArchiveTarget || !receipt || receipt.digest !== integritySha256) return;
+      if (selectedArchiveTarget || packageSchema === "multica.project-design-system/v2" || !receipt || receipt.digest !== integritySha256) return;
       finishVerification(receipt);
     };
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [finishVerification, integritySha256, locatorById, onSelect, selectedArchiveTarget]);
+  }, [finishVerification, integritySha256, locatorById, onSelect, packageSchema, selectedArchiveTarget, selectionEnabled]);
 
   if ((!selectedArchiveTarget && !previewHtml.trim()) || loadFailed) {
     return (

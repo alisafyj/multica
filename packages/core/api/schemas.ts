@@ -29,6 +29,7 @@ import type {
   ListDesignSystemProfilesResponse,
   ListDesignRestoreTasksResponse,
   ProjectDesignSystem,
+  ProjectDesignSystemPackagePreview,
   ProjectDesignSystemStatus,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
@@ -423,6 +424,33 @@ const ProjectDesignSystemLocatorSchema = z.object({
   label: z.string(),
 }).loose();
 
+const ProjectDesignSystemPreviewTargetSchema = z.object({
+  id: z.string().catch("").default(""),
+  kind: z.string().catch("preview").default("preview"),
+  path: z.string().catch("").default(""),
+}).loose();
+
+export const ProjectDesignSystemPackagePreviewSchema = z.object({
+  schema: z.string().catch("").default(""),
+  slot: z.string().catch("").default(""),
+  content_digest: z.string().catch("").default(""),
+  resource_access_token: z.string().catch("").default(""),
+  resource_access_expires_at: z.string().catch("").default(""),
+  targets: z.preprocess(
+    (value) => value == null ? [] : value,
+    z.array(ProjectDesignSystemPreviewTargetSchema).catch([]),
+  ),
+}).loose();
+
+export const EMPTY_PROJECT_DESIGN_SYSTEM_PACKAGE_PREVIEW: ProjectDesignSystemPackagePreview = {
+  schema: "",
+  slot: "",
+  content_digest: "",
+  resource_access_token: "",
+  resource_access_expires_at: "",
+  targets: [],
+};
+
 const ProjectDesignSystemContentSchema = z.preprocess(
   (value) => value == null ? {} : value,
   z.object({
@@ -440,6 +468,12 @@ const ProjectDesignSystemContentSchema = z.preprocess(
     ),
     preview_html: z.string().catch("").default(""),
     integrity_sha256: z.string().catch("").default(""),
+    package_schema: z.string().catch("").default(""),
+    preview_targets: z.preprocess(
+      (value) => value == null ? [] : value,
+      z.array(ProjectDesignSystemPreviewTargetSchema).catch([]),
+    ),
+    selection_enabled: z.boolean().catch(false).default(false),
   }).loose(),
 );
 
@@ -502,6 +536,9 @@ export const EMPTY_PROJECT_DESIGN_SYSTEM: ProjectDesignSystem = {
     locators: [],
     preview_html: "",
     integrity_sha256: "",
+    package_schema: "",
+    preview_targets: [],
+    selection_enabled: false,
   },
   has_unsaved_changes: false,
   last_error: null,

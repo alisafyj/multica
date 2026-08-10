@@ -124,8 +124,9 @@ function isAgentAvailable(agent: Agent | undefined): boolean {
 
 function hasRenderableContent(system: ProjectDesignSystem): boolean {
   return Boolean(
-    system.content.preview_html.trim()
-      && (system.content.sections.length || system.content.token_groups.length),
+    system.content.preview_targets?.length
+      || (system.content.preview_html.trim()
+        && (system.content.sections.length || system.content.token_groups.length)),
   );
 }
 
@@ -499,10 +500,10 @@ export function ProjectDesignSystemCanvas({
 
   const archivePreview = useQuery({
     queryKey: [
-      ...designKeys.projectDesignSystemArchivePreview(wsId, system.id),
+      ...designKeys.projectDesignSystemPackagePreview(wsId, system.id),
       system.preview_validation.integrity_sha256 || "current",
     ],
-    queryFn: () => api.getProjectDesignSystemArchivePreview(system.id),
+    queryFn: () => api.getProjectDesignSystemPackagePreview(system.id),
     enabled: Boolean(system.id && system.preview_validation.status === "passed"),
     retry: false,
   });
@@ -512,7 +513,7 @@ export function ProjectDesignSystemCanvas({
     try {
       return preview.targets.map((target) => ({
         ...target,
-        url: api.getProjectDesignSystemArchivePreviewFileURL(
+        url: api.getProjectDesignSystemPackagePreviewFileURL(
           system.id,
           wsId,
           preview.content_digest,
@@ -899,6 +900,8 @@ export function ProjectDesignSystemCanvas({
                   platform={system.platform}
                   locators={system.content.locators}
                   integritySha256={system.content.integrity_sha256}
+                  selectionEnabled={system.content.selection_enabled}
+                  packageSchema={system.content.package_schema}
                   verificationAttempt={verificationAttempt}
                   onVerification={(receipt) => {
                     if (system.preview_validation.status === "passed" || verifyPreview.isPending) return;

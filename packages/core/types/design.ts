@@ -309,12 +309,30 @@ export interface ProjectDesignSystemLocator {
   label: string;
 }
 
+export interface ProjectDesignSystemPreviewTarget {
+  id: string;
+  kind: string;
+  path: string;
+}
+
+export interface ProjectDesignSystemPackagePreview {
+  schema: string;
+  slot: string;
+  content_digest: string;
+  resource_access_token: string;
+  resource_access_expires_at: string;
+  targets: ProjectDesignSystemPreviewTarget[];
+}
+
 export interface ProjectDesignSystemContent {
   sections: ProjectDesignSystemSection[];
   token_groups: ProjectDesignSystemTokenGroup[];
   locators: ProjectDesignSystemLocator[];
   preview_html: string;
   integrity_sha256: string;
+  package_schema: string;
+  preview_targets: ProjectDesignSystemPreviewTarget[];
+  selection_enabled: boolean;
 }
 
 export interface ProjectDesignSystemTask {

@@ -461,7 +461,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// archive manifest endpoint.
 	r.Get(
 		"/api/project-design-system-previews/{workspaceId}/{systemId}/{digest}/{accessToken}/files/*",
-		h.GetProjectDesignSystemArchivePreviewFile,
+		h.GetProjectDesignSystemPackagePreviewFile,
 	)
 
 	// Daemon API routes (require daemon token or valid user token)
@@ -486,6 +486,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/wait-local-directory", h.MarkTaskWaitingLocalDirectory)
 		r.Post("/tasks/{taskId}/progress", h.ReportTaskProgress)
 		r.Post("/tasks/{taskId}/project-design-system/package", h.UploadProjectDesignSystemPackage)
+		r.Get("/tasks/{taskId}/project-design-system/base-package", h.DownloadProjectDesignSystemBasePackage)
 		r.Get("/tasks/{taskId}/open-design/base-archive", h.DownloadOpenDesignBaseArchive)
 		r.Post("/tasks/{taskId}/open-design/preflight", h.RecordOpenDesignRunPreflight)
 		r.Post("/tasks/{taskId}/open-design/start", h.StartOpenDesignRun)
@@ -766,7 +767,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/api/project-design-systems", h.CreateProjectDesignSystem)
 			r.Post("/api/project-design-systems/repository-analysis", h.AnalyzeProjectDesignSystemRepository)
 			r.Get("/api/project-design-systems/{id}", h.GetProjectDesignSystem)
-			r.Get("/api/project-design-systems/{id}/open-design-preview", h.GetProjectDesignSystemArchivePreview)
+			r.Get("/api/project-design-systems/{id}/package-preview", h.GetProjectDesignSystemPackagePreview)
+			r.Get("/api/project-design-systems/{id}/open-design-preview", h.GetProjectDesignSystemPackagePreview)
 			r.Post("/api/project-design-systems/{id}/adjust", h.AdjustProjectDesignSystem)
 			r.Post("/api/project-design-systems/{id}/regenerate", h.RegenerateProjectDesignSystem)
 			r.Post("/api/project-design-systems/{id}/preview-verification", h.VerifyProjectDesignSystemPreview)

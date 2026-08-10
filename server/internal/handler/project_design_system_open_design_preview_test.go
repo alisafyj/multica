@@ -433,7 +433,7 @@ func TestAdjustProjectDesignSystemPinsVerifiedOpenDesignBaseArchive(t *testing.T
 	}
 }
 
-func TestAdjustProjectDesignSystemRejectsNativeArchiveWhenOpenDesignDisabled(t *testing.T) {
+func TestAdjustHistoricalOpenDesignPackageUsesNativeAllScopeConversion(t *testing.T) {
 	fixture := preparePassedOpenDesignPreviewDraft(t, "Open Design disabled adjustment")
 	save := performProjectDesignSystemIDRequest(
 		t,
@@ -455,11 +455,6 @@ func TestAdjustProjectDesignSystemRejectsNativeArchiveWhenOpenDesignDisabled(t *
 	`, fixture.SystemID).Scan(&agentID); err != nil {
 		t.Fatalf("load Open Design adjustment agent: %v", err)
 	}
-	var taskCountBefore int
-	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM agent_task_queue`).Scan(&taskCountBefore); err != nil {
-		t.Fatalf("count tasks before disabled adjustment: %v", err)
-	}
-
 	previous := testHandler.cfg.OpenDesignEnabled
 	testHandler.cfg.OpenDesignEnabled = false
 	t.Cleanup(func() { testHandler.cfg.OpenDesignEnabled = previous })
@@ -475,14 +470,27 @@ func TestAdjustProjectDesignSystemRejectsNativeArchiveWhenOpenDesignDisabled(t *
 			"scope":       map[string]any{"kind": "all"},
 		},
 	)
-	assertProjectDesignSystemErrorCode(t, response, http.StatusServiceUnavailable, "open_design_engine_unavailable")
-
-	var taskCountAfter int
-	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM agent_task_queue`).Scan(&taskCountAfter); err != nil {
-		t.Fatalf("count tasks after disabled adjustment: %v", err)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("AdjustProjectDesignSystem: status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if taskCountAfter != taskCountBefore {
-		t.Fatalf("disabled Open Design adjustment created %d task(s)", taskCountAfter-taskCountBefore)
+	var adjusted ProjectDesignSystemResponse
+	if err := json.NewDecoder(response.Body).Decode(&adjusted); err != nil || adjusted.ActiveTask == nil {
+		t.Fatalf("decode native historical adjustment: err = %v, response = %+v", err, adjusted)
+	}
+	var contextJSON []byte
+	if err := testPool.QueryRow(context.Background(), `SELECT context FROM agent_task_queue WHERE id = $1`, adjusted.ActiveTask.ID).Scan(&contextJSON); err != nil {
+		t.Fatalf("load native historical adjustment context: %v", err)
+	}
+	var taskContext service.ProjectDesignSystemTaskContext
+	if err := json.Unmarshal(contextJSON, &taskContext); err != nil {
+		t.Fatalf("decode native historical adjustment context: %v", err)
+	}
+	if taskContext.PackageSchema != projectdesignsystem.PackageSchemaV2 || len(taskContext.OpenDesignRun) != 0 {
+		t.Fatalf("historical adjustment context = %+v", taskContext)
+	}
+	var scope ProjectDesignSystemScope
+	if err := json.Unmarshal(taskContext.Scope, &scope); err != nil || scope.Kind != "all" || scope.ID != "" {
+		t.Fatalf("historical adjustment scope: err = %v, scope = %+v", err, scope)
 	}
 }
 
@@ -526,7 +534,76 @@ type passedOpenDesignPreviewFixture struct {
 
 func preparePassedOpenDesignPreviewDraft(t *testing.T, name string) passedOpenDesignPreviewFixture {
 	t.Helper()
-	taskID, runID, contentDigest := prepareOpenDesignRunForPreviewTest(t, name)
+	projectID := createProjectForDesignTest(t, name)
+	agentID, _ := createProjectDesignSystemAgent(t, "online")
+	created := performProjectDesignSystemRequest(t, testHandler.CreateProjectDesignSystem, http.MethodPost, "/api/project-design-systems", map[string]any{
+		"project_id": projectID,
+		"agent_id":   agentID,
+		"platform":   "web",
+		"brief":      "Historical Open Design archive fixture.",
+	})
+	if created.Code != http.StatusAccepted {
+		t.Fatalf("CreateProjectDesignSystem: status = %d, body = %s", created.Code, created.Body.String())
+	}
+	var createdSystem ProjectDesignSystemResponse
+	if err := json.NewDecoder(created.Body).Decode(&createdSystem); err != nil || createdSystem.ActiveTask == nil {
+		t.Fatalf("decode historical task: err = %v, response = %+v", err, createdSystem)
+	}
+	taskID := createdSystem.ActiveTask.ID
+	runID := "11111111-1111-4111-8111-111111111111"
+	archive, resultPackage, artifactIndex, contentDigest := openDesignDraftArchiveFixture(t, runID)
+	archiveObjectKey := "workspaces/test/historical-open-design-package.zip"
+	previousStorage := testHandler.Storage
+	store := &mockStorage{}
+	testHandler.Storage = store
+	t.Cleanup(func() { testHandler.Storage = previousStorage })
+	if _, err := store.Upload(context.Background(), archiveObjectKey, archive, opendesign.RunArchiveContentType, "historical-open-design-package.zip"); err != nil {
+		t.Fatalf("seed historical Open Design archive: %v", err)
+	}
+	identity := opendesign.PinnedEngineIdentity()
+	supervisorRunID := "22222222-2222-4222-8222-222222222222"
+	contextJSON, err := json.Marshal(map[string]any{
+		"schema": opendesign.RunSchema,
+		"run_id": supervisorRunID,
+		"engine": identity,
+		"agent":  map[string]any{"multica_agent_id": agentID, "adapter_id": "opencode"},
+	})
+	if err != nil {
+		t.Fatalf("marshal historical Open Design context: %v", err)
+	}
+	artifactIndexJSON, err := json.Marshal(artifactIndex)
+	if err != nil {
+		t.Fatalf("marshal historical Open Design index: %v", err)
+	}
+	auditReportJSON, err := json.Marshal(validOpenDesignAuditReceipt(contentDigest, true))
+	if err != nil {
+		t.Fatalf("marshal historical Open Design audit report: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_task_queue
+		SET context = jsonb_set(context, '{open_design_run}', $2::jsonb), status = 'running', started_at = now()
+		WHERE id = $1
+	`, taskID, contextJSON); err != nil {
+		t.Fatalf("seed historical Open Design task context: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO open_design_run (
+			id, workspace_id, project_id, design_system_id, task_id, operation, status,
+			engine_release, engine_commit, engine_lockfile_sha256, engine_dist_sha256,
+			agent_id, agent_snapshot, adapter_id, input_snapshot, workspace_provenance,
+			open_design_run_id, result_package, artifact_index, archive_object_key, content_digest, audit_report, started_at
+		) VALUES (
+			$1, $2, $3, $4, $5, 'generate', 'run_succeeded',
+			$6, $7, $8, $9,
+			$10, $11::jsonb, 'opencode', $12::jsonb, $13::jsonb,
+			$14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, now()
+		)
+	`, supervisorRunID, testWorkspaceID, projectID, createdSystem.ID, taskID,
+		identity.Release, identity.Commit, identity.LockfileSHA256, identity.DistSHA256,
+		agentID, `{"multica_agent_id":"`+agentID+`","adapter_id":"opencode"}`, `{}`, `{"kind":"historical"}`,
+		runID, resultPackage, artifactIndexJSON, archiveObjectKey, contentDigest, auditReportJSON); err != nil {
+		t.Fatalf("seed historical Open Design run: %v", err)
+	}
 	response := performOpenDesignDaemonCallbackForTest(
 		t,
 		testHandler.RecordOpenDesignRunPreview,
