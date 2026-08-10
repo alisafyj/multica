@@ -49,7 +49,7 @@ See CLAUDE.md for the complete command reference.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **multica** (32920 symbols, 96478 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **multica** (33203 symbols, 98167 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
@@ -93,6 +93,6 @@ This project is indexed by GitNexus as **multica** (32920 symbols, 96478 relatio
 
 ## 当前任务状态（会话交接 - 每次会话结束更新）
 
-- **做了什么**: Task 6 已提交（`7b81a0526` carry-in + `fab2dbe98` 门禁 + `97979ca62` 测试补强）：服务端完成路径独立复验 V2 receipt（派生 object key → 限 64MiB 读回存档 → 重建索引/摘要 → binding 复验 → 重跑静态 Audit → 验证 Preview receipt → 有界提取），全程不信 daemon 声明；在同一事务内原子落 `render_status='passed'` 的 draft 并完成任务；V2 拒内联产物 / v1 保留内联 / Open Design 走历史回调的三态分派；按用户决定一并调和 save 门禁基线失败（`pending` 拦截收窄到 V2、仅拒 `failed`，评审确认 Open Design 独立门禁未破）
-- **做到哪**: 仍在该工作树 `codex/multica-native-design-engine`；handler+service 1489 测试通过，carry-in 测试转绿；1 个预存基线失败 `TestListDesignFilesHidesManagedAssetSources` 经控制层在 BASE 复现确认与本任务无关（台账 t6-b1）；5 个 minor（t6-m1..m5）+ 1 条备注（t6-o1）连同 Task 4/5 遗留留最终分支评审（台账 `.superpowers/sdd/2026-08-06-multica-native-design-system-phase-1/progress.md`）
-- **下一步**: 按 Phase 1 计划进入 Task 7（Switch New Tasks To Native Execution And Preserve The Product Lifecycle）；不要合并 `codex/open-design-native-slots`
+- **做了什么**: Task 7 已提交（`8ccb672ba` 主实现 + `a91f741fb` binding/capability 修复 + `2ca6e0bcb` 生命周期覆盖 + `a7a858faf`/`3a3611c58` 渲染证据补强）：新建/调整/重新生成统一切到原生 V2，不再创建 Open Design Run；新增任务绑定 base-package、通用 package-preview 与受限 bridge，历史 v1/Open Design 继续只读兼容；所有 V2 metadata/file/base/response 均以 source task context 独立复验对象存储 archive binding
+- **做到哪**: Task 7 经 1 次完整评审 + 4 轮 scoped fix/re-review 后 Critical/Important 全关闭；8 个命名生命周期测试、handler/router、core 40 项、views 30 项和 `pnpm typecheck` 通过；GitNexus 刷新后的新符号映射存在跨无关模块的伪 CRITICAL fan-out，实际 staged scope 已逐次人工核对并记录在台账
+- **下一步**: 按 Phase 1 计划进入 Task 8（Verify The Real CRM Workflow And Record Evidence）：只启动该隔离工作树服务，使用 CRM 项目与用户选择的本地 Agent，完成生成/视觉/调整/保存/失败隔离/放弃证据；不要合并 `codex/open-design-native-slots`
