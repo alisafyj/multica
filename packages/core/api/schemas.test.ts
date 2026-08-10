@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   AppConfigSchema,
+  WecomInstallationSchema,
+  ListWecomInstallationsResponseSchema,
+  RedeemWecomBindingTokenResponseSchema,
+  EMPTY_WECOM_INSTALLATION,
+  EMPTY_LIST_WECOM_INSTALLATIONS_RESPONSE,
+  EMPTY_REDEEM_WECOM_BINDING_TOKEN_RESPONSE,
   AgentTaskListSchema,
   AutopilotRunSchema,
   FALLBACK_AUTOPILOT_RUN,
@@ -93,6 +99,7 @@ import {
   EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE,
   EMPTY_LIST_TEST_CAPABILITIES_RESPONSE,
 } from "./schemas";
+import { IssueViewSchema, IssueViewListSchema } from "./schemas";
 import { parseWithFallback } from "./schema";
 
 const baseIssue = {
@@ -2086,5 +2093,124 @@ describe("ListTestCapabilitiesResponseSchema", () => {
       { endpoint: "GET /api/test-capabilities" },
     );
     expect(parsed.capabilities).toEqual([]);
+  });
+});
+
+describe("IssueViewSchema", () => {
+  const valid = {
+    id: "v1",
+    workspace_id: "ws1",
+    owner_id: "u1",
+    name: "Needs review",
+    scope_type: "workspace",
+    scope_id: null,
+    scope_variant: null,
+    visibility: "workspace",
+    definition_version: 1,
+    query: { statusFilters: ["in_review"] },
+    display: { viewMode: "board" },
+    revision: 3,
+    created_at: "2026-08-06T00:00:00Z",
+    updated_at: "2026-08-06T00:00:00Z",
+  };
+
+  it("parses a well-formed view and keeps unknown future fields", () => {
+    const parsed = IssueViewSchema.parse({ ...valid, future_field: "keep me" });
+    expect(parsed.name).toBe("Needs review");
+    expect(parsed.query).toEqual({ statusFilters: ["in_review"] });
+    expect((parsed as unknown as { future_field?: string }).future_field).toBe("keep me");
+  });
+
+  it("defaults missing definition blobs instead of failing", () => {
+    const parsed = IssueViewSchema.parse({ id: "v2" });
+    expect(parsed.query).toEqual({});
+    expect(parsed.display).toEqual({});
+    expect(parsed.revision).toBe(1);
+  });
+
+  it("degrades a malformed list response to [] via parseWithFallback", () => {
+    expect(
+      parseWithFallback({ nonsense: true }, IssueViewListSchema, [], {
+        endpoint: "GET /api/issue-views",
+      }),
+    ).toEqual([]);
+    expect(
+      parseWithFallback(null, IssueViewListSchema, [], {
+        endpoint: "GET /api/issue-views",
+      }),
+    ).toEqual([]);
+  });
+
+  it("degrades a malformed detail response to null — NOT an error", () => {
+    // The sidebar's pinned view rows hinge on this distinction: a parse
+    // fallback (null, no error) hides the row, while only a REAL 404
+    // error may ever unpin. A malformed body must never destroy a pin.
+    expect(
+      parseWithFallback({ nonsense: true }, IssueViewSchema.nullable(), null, {
+        endpoint: "GET /api/issue-views/{id}",
+      }),
+    ).toBeNull();
+  });
+});
+
+// WeCom smart-bot installation schemas. These gate UI affordances (the Connect
+// dialog, the "ask your operator" state, the revoked-vs-active badge), so a
+// malformed response must degrade to the safe state rather than a broken one.
+describe("WeCom installation schemas", () => {
+  it("parses a well-formed installation", () => {
+    const parsed = WecomInstallationSchema.parse({
+      id: "i1",
+      workspace_id: "w1",
+      agent_id: "a1",
+      bot_id: "aibot_xyz",
+      installer_user_id: "u1",
+      status: "active",
+    });
+    expect(parsed.bot_id).toBe("aibot_xyz");
+    expect(parsed.status).toBe("active");
+  });
+
+  it("defaults a missing status to 'revoked', never 'active'", () => {
+    // A broken read must not render a bot as connected when it may not be.
+    const parsed = WecomInstallationSchema.parse({ id: "i1" });
+    expect(parsed.status).toBe("revoked");
+    expect(parsed.bot_id).toBe("");
+  });
+
+  it("keeps unknown forward-compat fields (loose) instead of failing the parse", () => {
+    const parsed = WecomInstallationSchema.parse({ id: "i1", future_field: "keep" });
+    expect((parsed as unknown as { future_field?: string }).future_field).toBe("keep");
+  });
+
+  it("defaults 'configured' to false so a malformed list renders the operator state", () => {
+    const parsed = ListWecomInstallationsResponseSchema.parse({});
+    expect(parsed.configured).toBe(false);
+    expect(parsed.installations).toEqual([]);
+  });
+
+  it("falls back to the empty list when the response is not an object", () => {
+    const parsed = parseWithFallback(
+      "not json",
+      ListWecomInstallationsResponseSchema,
+      EMPTY_LIST_WECOM_INSTALLATIONS_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/wecom/installations" },
+    );
+    expect(parsed).toEqual(EMPTY_LIST_WECOM_INSTALLATIONS_RESPONSE);
+    expect(parsed.configured).toBe(false);
+  });
+
+  it("falls back on a malformed installation and redeem response", () => {
+    const inst = parseWithFallback(42, WecomInstallationSchema, EMPTY_WECOM_INSTALLATION, {
+      endpoint: "POST /api/workspaces/:id/wecom/install/byo",
+    });
+    expect(inst).toEqual(EMPTY_WECOM_INSTALLATION);
+
+    const redeem = parseWithFallback(
+      null,
+      RedeemWecomBindingTokenResponseSchema,
+      EMPTY_REDEEM_WECOM_BINDING_TOKEN_RESPONSE,
+      { endpoint: "POST /api/wecom/binding/redeem" },
+    );
+    expect(redeem).toEqual(EMPTY_REDEEM_WECOM_BINDING_TOKEN_RESPONSE);
   });
 });

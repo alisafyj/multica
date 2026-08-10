@@ -31,6 +31,7 @@ import {
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { stripChannelMediaMarkers } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
 import { DescriptionField } from "@/components/issue/description-field";
 import { MentionSuggestionBar } from "@/components/issue/mention-suggestion-bar";
@@ -49,6 +50,7 @@ export default function EditIssue() {
   const { t: tCommon } = useTranslation("common");
 
   const [title, setTitle] = useState("");
+  const [descriptionBase, setDescriptionBase] = useState("");
   const description = useMentionInput();
   const [seeded, setSeeded] = useState(false);
   // `useMentionInput` returns `setText` from `useState`, which is a stable
@@ -61,20 +63,22 @@ export default function EditIssue() {
   useEffect(() => {
     if (!detail.data || seeded) return;
     setTitle(detail.data.title);
-    setDescriptionText(detail.data.description ?? "");
+    const initial = detail.data.description ?? "";
+    setDescriptionText(stripChannelMediaMarkers(initial));
+    setDescriptionBase(initial);
     setSeeded(true);
   }, [detail.data, seeded, setDescriptionText]);
 
-  const initialDescription = detail.data?.description ?? "";
   const currentDescription = description.serialize();
 
   const dirty = useMemo(() => {
     if (!detail.data || !seeded) return false;
     return (
       title.trim() !== detail.data.title ||
-      currentDescription.trim() !== initialDescription
+      currentDescription.trim() !==
+        stripChannelMediaMarkers(descriptionBase).trim()
     );
-  }, [detail.data, seeded, title, currentDescription, initialDescription]);
+  }, [detail.data, seeded, title, currentDescription, descriptionBase]);
 
   const canSave =
     seeded && title.trim().length > 0 && dirty && !update.isPending;
@@ -106,6 +110,7 @@ export default function EditIssue() {
     const patch = {
       title: title.trim(),
       description: currentDescription.trim(),
+      description_base: descriptionBase,
     };
     update.mutate(patch, {
       onSuccess: () => router.back(),
@@ -116,7 +121,7 @@ export default function EditIssue() {
         );
       },
     });
-  }, [canSave, title, currentDescription, update, t]);
+  }, [canSave, title, currentDescription, descriptionBase, update, t]);
 
   const headerLeft = useCallback(
     () => (

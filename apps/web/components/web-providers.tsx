@@ -9,6 +9,7 @@ import type { LocaleResources, SupportedLocale } from "@multica/core/i18n";
 import { useWelcomeStore } from "@multica/core/onboarding";
 import packageJson from "../package.json";
 import { WebNavigationProvider } from "@/platform/navigation";
+import { WebScrollRestorationProvider } from "@/platform/scroll-restoration";
 import {
   setLoggedInCookie,
   clearLoggedInCookie,
@@ -88,7 +89,9 @@ export function WebProviders({
       resources={resources}
       localeAdapter={localeAdapter}
     >
-      <WebNavigationProvider>{children}</WebNavigationProvider>
+      <WebNavigationProvider>
+        <WebScrollRestorationProvider>{children}</WebScrollRestorationProvider>
+      </WebNavigationProvider>
     </CoreProvider>
   );
 }

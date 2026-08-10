@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -300,9 +301,10 @@ func TestRepoCheckoutModeFor(t *testing.T) {
 		name, provider, goos, want string
 	}{
 		{name: "Linux Codex isolates Git metadata", provider: "codex", goos: "linux", want: repoCheckoutModeIsolated},
+		{name: "Windows Codex isolates Git metadata", provider: "codex", goos: "windows", want: repoCheckoutModeIsolated},
 		{name: "macOS Codex keeps worktree", provider: "codex", goos: "darwin"},
-		{name: "Windows Codex keeps worktree", provider: "codex", goos: "windows"},
 		{name: "Linux Claude keeps worktree", provider: "claude", goos: "linux"},
+		{name: "Windows Claude keeps worktree", provider: "claude", goos: "windows"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -338,11 +340,12 @@ func TestConfigureCodexTaskShellEnvironment(t *testing.T) {
 			"MULTICA_LLM_API_KEY=daemon-secret",
 		}
 		agentEnv := map[string]string{
-			"CUSTOM_ACCESS_TOKEN": "agent-secret",
-			"CUSTOM_FLAG":         "enabled",
-			"UNAUTHORIZED_TOKEN":  "daemon-secret",
-			"MULTICA_SERVER_URL":  "https://task.example",
-			"MULTICA_TOKEN":       "mat_task",
+			"CUSTOM_ACCESS_TOKEN":      "agent-secret",
+			"CUSTOM_FLAG":              "enabled",
+			"UNAUTHORIZED_TOKEN":       "daemon-secret",
+			"MULTICA_TASK_CONFIG_ROOT": "/task/multica-config",
+			"MULTICA_SERVER_URL":       "https://task.example",
+			"MULTICA_TOKEN":            "mat_task",
 		}
 		agentCustomEnv := map[string]string{
 			"CUSTOM_ACCESS_TOKEN": "agent-secret",
@@ -356,7 +359,7 @@ func TestConfigureCodexTaskShellEnvironment(t *testing.T) {
 			t.Fatalf("read config.toml: %v", err)
 		}
 		config := string(data)
-		for _, want := range []string{"SystemRoot", "USERPROFILE", "CUSTOM_ACCESS_TOKEN", "CUSTOM_FLAG", "MULTICA_SERVER_URL", "MULTICA_TOKEN"} {
+		for _, want := range []string{"SystemRoot", "USERPROFILE", "CUSTOM_ACCESS_TOKEN", "CUSTOM_FLAG", "MULTICA_TASK_CONFIG_ROOT", "MULTICA_SERVER_URL", "MULTICA_TOKEN"} {
 			if !strings.Contains(config, want) {
 				t.Errorf("config.toml missing %q:\n%s", want, config)
 			}
@@ -400,9 +403,10 @@ func TestCodexTaskShellEnvInheritsRealHome(t *testing.T) {
 	// What runTask layers on top for a Codex task: task identity plus the
 	// task-scoped CODEX_HOME, and — since MUL-5578 — no HOME/XDG entry.
 	explicit := map[string]string{
-		"CODEX_HOME":         codexHome,
-		"MULTICA_TOKEN":      "mat_task",
-		"MULTICA_SERVER_URL": "https://task.example",
+		"CODEX_HOME":               codexHome,
+		"MULTICA_TASK_CONFIG_ROOT": "/task/multica-config",
+		"MULTICA_TOKEN":            "mat_task",
+		"MULTICA_SERVER_URL":       "https://task.example",
 	}
 
 	if err := configureCodexTaskShellEnvironment("codex", codexHome, inherited, explicit, nil, slog.Default()); err != nil {
@@ -433,6 +437,9 @@ func TestCodexTaskShellEnvInheritsRealHome(t *testing.T) {
 	// CODEX_HOME is the one home-shaped variable the daemon does own.
 	if !slices.Contains(include, "CODEX_HOME") {
 		t.Errorf("include_only missing CODEX_HOME, got %v", include)
+	}
+	if !slices.Contains(include, "MULTICA_TASK_CONFIG_ROOT") {
+		t.Errorf("include_only missing MULTICA_TASK_CONFIG_ROOT, got %v", include)
 	}
 }
 
@@ -501,6 +508,56 @@ func TestTaskScopedAuthToken(t *testing.T) {
 				t.Fatalf("taskScopedAuthToken() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTaskMulticaEnvironmentIncludesPrivateConfigRoot(t *testing.T) {
+	t.Parallel()
+
+	const (
+		fakeToken      = "mat_task_environment_sentinel"
+		taskRoot       = "/task/private-multica-config"
+		workspacesRoot = "/daemon/multica_workspaces_staging"
+	)
+	task := Task{
+		ID:          "task-test",
+		AgentID:     "agent-test",
+		WorkspaceID: "workspace-test",
+	}
+	env := taskMulticaEnvironment(task, "agent-name", fakeToken, taskRoot, workspacesRoot, "https://task.example", 19514, 3, "/task/tmp")
+
+	want := map[string]string{
+		"MULTICA_TOKEN":                fakeToken,
+		"MULTICA_TASK_CONFIG_ROOT":     taskRoot,
+		"MULTICA_TASK_WORKSPACES_ROOT": workspacesRoot,
+		"MULTICA_SERVER_URL":           "https://task.example",
+		"MULTICA_DAEMON_PORT":          "19514",
+		"MULTICA_WORKSPACE_ID":         "workspace-test",
+		"MULTICA_AGENT_NAME":           "agent-name",
+		"MULTICA_AGENT_ID":             "agent-test",
+		"MULTICA_TASK_ID":              "task-test",
+		"MULTICA_TASK_SLOT":            "3",
+		"TMPDIR":                       "/task/tmp",
+		"TMP":                          "/task/tmp",
+		"TEMP":                         "/task/tmp",
+	}
+	if !maps.Equal(env, want) {
+		t.Fatalf("taskMulticaEnvironment() = %#v, want %#v", env, want)
+	}
+
+	layerCustomEnvAndHermesHome(env, map[string]string{
+		"MULTICA_TASK_CONFIG_ROOT":     "/owner/config",
+		"MULTICA_TASK_WORKSPACES_ROOT": "/owner/multica_workspaces",
+		"MULTICA_TOKEN":                "mul_owner_sentinel",
+	}, "", nil)
+	if env["MULTICA_TASK_CONFIG_ROOT"] != taskRoot {
+		t.Fatalf("custom env replaced task config root: %q", env["MULTICA_TASK_CONFIG_ROOT"])
+	}
+	if env[TaskWorkspacesRootEnv] != workspacesRoot {
+		t.Fatalf("custom env replaced task workspaces root: %q", env[TaskWorkspacesRootEnv])
+	}
+	if env["MULTICA_TOKEN"] != fakeToken {
+		t.Fatal("custom env replaced task-scoped token")
 	}
 }
 
@@ -2800,6 +2857,63 @@ func (blockingBackend) Execute(_ context.Context, _ string, _ agent.ExecOptions)
 	resCh := make(chan agent.Result)
 	close(msgCh)
 	return &agent.Session{Messages: msgCh, Result: resCh}, nil
+}
+
+type countedRunningBackend struct {
+	release <-chan struct{}
+}
+
+func (b countedRunningBackend) Execute(_ context.Context, _ string, _ agent.ExecOptions) (*agent.Session, error) {
+	msgCh := make(chan agent.Message)
+	resCh := make(chan agent.Result, 1)
+	go func() {
+		<-b.release
+		close(msgCh)
+		resCh <- agent.Result{Status: "completed"}
+	}()
+	return &agent.Session{Messages: msgCh, Result: resCh}, nil
+}
+
+func TestExecuteAndDrainTracksRunningTaskCount(t *testing.T) {
+	t.Parallel()
+
+	d := newTestDaemon(t)
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := d.executeAndDrain(
+			context.Background(),
+			countedRunningBackend{release: release},
+			"p",
+			agent.ExecOptions{},
+			slog.Default(),
+			"task-counted-running",
+			"",
+			new(atomic.Int32),
+		)
+		done <- err
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for d.runningTasks.Load() != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := d.runningTasks.Load(); got != 1 {
+		t.Fatalf("running task count while backend is live = %d, want 1", got)
+	}
+
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("executeAndDrain: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("executeAndDrain did not return after backend release")
+	}
+	if got := d.runningTasks.Load(); got != 0 {
+		t.Fatalf("running task count after backend exit = %d, want 0", got)
+	}
 }
 
 func TestExecuteAndDrain_ContextCancelled_ReportsCancelled(t *testing.T) {

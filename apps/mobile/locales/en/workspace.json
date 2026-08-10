@@ -28,7 +28,8 @@
     "section": {
       "recent": "Recent",
       "projects": "Projects",
-      "issues": "Issues"
+      "issues": "Issues",
+      "cancelled": "Cancelled"
     },
     "no_results": "No results for “{{query}}”",
     "empty_prompt": "Type to search issues and projects."

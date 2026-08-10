@@ -122,6 +122,9 @@ func openBrowser(url string) error {
 }
 
 func runAuthLogin(cmd *cobra.Command, args []string) error {
+	if err := requireHumanLocalCommand("login"); err != nil {
+		return err
+	}
 	serverURL := resolveServerURL(cmd)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -667,7 +670,14 @@ func readServiceToken(account string) (string, error) {
 }
 
 func runAuthStatus(cmd *cobra.Command, _ []string) error {
+	if err := requireTaskLocalConfigRoot(); err != nil {
+		return err
+	}
+	taskContext := inDaemonManagedExecutionContext()
 	token := resolveToken(cmd)
+	if taskContext && !strings.HasPrefix(token, "mat_") {
+		return fmt.Errorf("agent execution context requires MULTICA_TOKEN to be a task-scoped mat_ token")
+	}
 	serverURL := resolveServerURL(cmd)
 
 	if token == "" {
@@ -689,11 +699,15 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	if taskContext {
+		fmt.Fprintf(os.Stderr, "Server:  %s\nUser:    %s (%s)\n", serverURL, me.Name, me.Email)
+		return nil
+	}
+
 	prefix := token
 	if len(prefix) > 12 {
 		prefix = prefix[:12] + "..."
 	}
-
 	fmt.Fprintf(os.Stderr, "Server:  %s\nUser:    %s (%s)\nToken:   %s\n", serverURL, me.Name, me.Email, prefix)
 	return nil
 }
@@ -738,6 +752,9 @@ const callbackSuccessHTML = `<!DOCTYPE html>
 </html>`
 
 func runAuthLogout(cmd *cobra.Command, _ []string) error {
+	if err := requireHumanLocalCommand("logout"); err != nil {
+		return err
+	}
 	profile := resolveProfile(cmd)
 	cfg, _ := cli.LoadCLIConfigForProfile(profile)
 	if cfg.Token == "" && cfg.ServiceTokenKeychainAccount == "" {

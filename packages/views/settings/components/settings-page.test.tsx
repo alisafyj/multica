@@ -1,86 +1,107 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const authMode = vi.hoisted(() => ({ value: null as boolean | null }));
+import { SidebarProvider, useSidebar } from "@multica/ui/components/ui/sidebar";
+import { renderWithI18n } from "../../test/i18n";
 
-vi.mock("@multica/core/config", () => ({
-  useConfigStore: (selector: (state: { useSySso: boolean | null }) => unknown) =>
-    selector({ useSySso: authMode.value }),
-}));
+// This file tests the settings SHELL — the chrome around the tabs — so every
+// tab panel is stubbed out. Their contents have their own test files.
+const stub = vi.hoisted(
+  () => (name: string) => () => ({ [name]: () => <div>{name}</div> }),
+);
+vi.mock("./account-tab", stub("AccountTab"));
+vi.mock("./preferences-tab", stub("PreferencesTab"));
+vi.mock("./chat-tab", stub("ChatTab"));
+vi.mock("./issue-tab", stub("IssueTab"));
+vi.mock("./tokens-tab", stub("TokensTab"));
+vi.mock("./workspace-tab", stub("WorkspaceTab"));
+vi.mock("./members-tab", stub("MembersTab"));
+vi.mock("./repositories-tab", stub("RepositoriesTab"));
+vi.mock("./github-tab", stub("GitHubTab"));
+vi.mock("./integrations-tab", stub("IntegrationsTab"));
+vi.mock("./labs-tab", stub("LabsTab"));
+vi.mock("./notifications-tab", stub("NotificationsTab"));
+vi.mock("./labels-tab", stub("LabelsTab"));
+vi.mock("./properties-tab", stub("PropertiesTab"));
+vi.mock("./quick-actions-tab", stub("QuickActionsTab"));
+vi.mock("./keyboard-shortcuts-tab", stub("KeyboardShortcutsTab"));
+
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({ name: "Acme" }),
 }));
+
+const replace = vi.fn();
 vi.mock("../../navigation", () => ({
   useNavigation: () => ({
-    pathname: "/acme/settings",
     searchParams: new URLSearchParams(),
-    replace: vi.fn(),
-  }),
-}));
-vi.mock("@multica/ui/components/ui/tabs", () => ({
-  Tabs: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  TabsList: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  TabsTrigger: ({ children }: { children: React.ReactNode }) => <button>{children}</button>,
-  TabsContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-}));
-vi.mock("../../i18n", () => ({
-  useT: () => ({
-    t: (selector: (resources: Record<string, unknown>) => unknown) =>
-      selector({
-        page: {
-          title: "Settings",
-          my_account: "My account",
-          workspace_fallback: "Workspace",
-          tabs: {
-            profile: "Profile",
-            preferences: "Preferences",
-            notifications: "Notifications",
-            tokens: "API Tokens",
-            general: "General",
-            repositories: "Repositories",
-            github: "GitHub",
-            integrations: "Integrations",
-            labs: "Labs",
-            members: "Members",
-          },
-        },
-      }),
+    pathname: "/acme/settings",
+    replace,
   }),
 }));
 
-vi.mock("./account-tab", () => ({ AccountTab: () => null }));
-vi.mock("./preferences-tab", () => ({ PreferencesTab: () => null }));
-vi.mock("./keyboard-shortcuts-tab", () => ({ KeyboardShortcutsTab: () => null }));
-vi.mock("./issue-tab", () => ({ IssueTab: () => null }));
-vi.mock("./chat-tab", () => ({ ChatTab: () => null }));
-vi.mock("./tokens-tab", () => ({ TokensTab: () => <div>Token settings</div> }));
-vi.mock("./workspace-tab", () => ({ WorkspaceTab: () => null }));
-vi.mock("./members-tab", () => ({ MembersTab: () => null }));
-vi.mock("./repositories-tab", () => ({ RepositoriesTab: () => null }));
-vi.mock("./github-tab", () => ({ GitHubTab: () => null }));
-vi.mock("./integrations-tab", () => ({ IntegrationsTab: () => null }));
-vi.mock("./labs-tab", () => ({ LabsTab: () => null }));
-vi.mock("./notifications-tab", () => ({ NotificationsTab: () => null }));
-vi.mock("./labels-tab", () => ({ LabelsTab: () => null }));
-vi.mock("./properties-tab", () => ({ PropertiesTab: () => null }));
-vi.mock("./quick-actions-tab", () => ({ QuickActionsTab: () => null }));
+// Compact by default: that is the width where the nav is a sheet and this
+// trigger is the only way to reach it.
+const layout = { compact: true };
+vi.mock("@multica/ui/hooks/use-mobile", () => ({
+  useIsMobile: () => layout.compact,
+  useIsCompact: () => layout.compact,
+}));
 
 import { SettingsPage } from "./settings-page";
 
-describe("SettingsPage auth mode", () => {
-  it.each([true, null])("hides PAT settings when useSySso is %s", (mode) => {
-    authMode.value = mode;
-    render(<SettingsPage />);
+function NavStateProbe() {
+  const { openMobile } = useSidebar();
+  return <div data-testid="nav-open">{String(openMobile)}</div>;
+}
 
-    expect(screen.queryByText("API Tokens")).not.toBeInTheDocument();
-    expect(screen.queryByText("Token settings")).not.toBeInTheDocument();
+function trigger() {
+  return screen.getByRole("button", { name: "Toggle Sidebar" });
+}
+
+beforeEach(() => {
+  layout.compact = true;
+  replace.mockClear();
+});
+
+describe("SettingsPage nav trigger", () => {
+  it("opens the nav from settings at compact widths", () => {
+    // Settings builds its own chrome instead of a PageHeader, so without this
+    // control a touch user who lands here has no way back to the nav at all —
+    // the keyboard shortcut is not an answer on a tablet.
+    renderWithI18n(
+      <SidebarProvider>
+        <NavStateProbe />
+        <SettingsPage />
+      </SidebarProvider>,
+    );
+
+    expect(screen.getByTestId("nav-open").textContent).toBe("false");
+
+    fireEvent.click(trigger());
+
+    expect(screen.getByTestId("nav-open").textContent).toBe("true");
   });
 
-  it("shows PAT settings only in legacy mode", () => {
-    authMode.value = false;
-    render(<SettingsPage />);
+  it("hides the trigger only where the nav is a permanent column", () => {
+    // The nav is in-flow from `xl` up, so the control is CSS-gated rather than
+    // unmounted — jsdom applies no stylesheet, hence the class assertion.
+    renderWithI18n(
+      <SidebarProvider>
+        <SettingsPage />
+      </SidebarProvider>,
+    );
 
-    expect(screen.getByText("API Tokens")).toBeInTheDocument();
-    expect(screen.getByText("Token settings")).toBeInTheDocument();
+    expect(trigger().className).toContain("xl:hidden");
+  });
+
+  it("still renders standalone, without a sidebar around it", () => {
+    // Desktop mounts settings inside its own shell; the trigger has to no-op
+    // rather than throw when there is no SidebarProvider above it.
+    renderWithI18n(<SettingsPage />);
+
+    expect(
+      screen.queryByRole("button", { name: "Toggle Sidebar" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Settings")).toBeInTheDocument();
   });
 });
