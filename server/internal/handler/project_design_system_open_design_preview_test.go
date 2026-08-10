@@ -168,8 +168,8 @@ func TestSaveAndDiscardProjectDesignSystemPreserveNativeArchiveMetadata(t *testi
 		return metadata
 	}
 	draftBeforeSave := loadMetadata("draft")
-	if !draftBeforeSave.RenderedAt.Valid {
-		t.Fatalf("completed native draft rendered_at = %+v, want valid timestamp", draftBeforeSave.RenderedAt)
+	if !draftBeforeSave.RenderedAt.Valid || draftBeforeSave.RenderedAt.Time.IsZero() {
+		t.Fatalf("completed native draft rendered_at = %+v, want valid nonzero timestamp", draftBeforeSave.RenderedAt)
 	}
 
 	response := performProjectDesignSystemIDRequest(t, testHandler.SaveProjectDesignSystem, http.MethodPost, "/api/project-design-systems/"+systemID+"/save", systemID, nil)
