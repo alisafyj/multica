@@ -484,7 +484,7 @@ func TestProjectDesignSystemContextWritesTaskAndBasePackageFiles(t *testing.T) {
 		}
 	}
 
-	if err := CleanupSidecars(envRoot); err != nil {
+	if err := CleanupSidecars(envRoot, workDir); err != nil {
 		t.Fatalf("cleanup project design system sidecars: %v", err)
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
@@ -820,6 +820,58 @@ func TestReuseRefreshesSkillsWithoutDuplicating(t *testing.T) {
 	}
 }
 
+func TestReuseCleanupSidecarsDoesNotFollowManagedIntermediateSymlink(t *testing.T) {
+	workspacesRoot := t.TempDir()
+	task := TaskContextForEnv{IssueID: "reuse-sidecar-symlink"}
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: workspacesRoot,
+		WorkspaceID:    "ws-reuse-sidecar-symlink",
+		TaskID:         "11112222-3333-4444-5555-999900001111",
+		Provider:       "claude",
+		Task:           task,
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer env.Cleanup(true)
+
+	managedContextDir := filepath.Join(env.WorkDir, ".agent_context")
+	if err := os.RemoveAll(managedContextDir); err != nil {
+		t.Fatalf("remove managed context directory: %v", err)
+	}
+	externalDir := t.TempDir()
+	externalSentinel := filepath.Join(externalDir, "issue_context.md")
+	if err := os.WriteFile(externalSentinel, []byte("external sentinel"), 0o644); err != nil {
+		t.Fatalf("write external sentinel: %v", err)
+	}
+	if err := os.Symlink(externalDir, managedContextDir); err != nil {
+		t.Skipf("symlink not supported on this platform: %v", err)
+	}
+
+	if reused := Reuse(ReuseParams{
+		WorkDir:  env.WorkDir,
+		Provider: "claude",
+		Task:     task,
+	}, testLogger()); reused == nil {
+		t.Fatal("Reuse returned nil")
+	}
+
+	got, err := os.ReadFile(externalSentinel)
+	if err != nil {
+		t.Fatalf("external sentinel must survive Reuse cleanup: %v", err)
+	}
+	if string(got) != "external sentinel" {
+		t.Fatalf("external sentinel changed: %q", got)
+	}
+	info, err := os.Lstat(managedContextDir)
+	if err != nil {
+		t.Fatalf("stat refreshed context directory: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Fatalf("managed context symlink was not replaced by a real directory: mode=%v", info.Mode())
+	}
+}
+
 // TestReuseReclaimsManagedSkillDirWithStrayAgentFile covers the edge case the
 // #3716 review surfaced: a prior-dispatch agent writes a file into the
 // platform's managed skill directory. CleanupSidecars on its own would keep
@@ -888,6 +940,107 @@ func TestReuseReclaimsManagedSkillDirWithStrayAgentFile(t *testing.T) {
 	}
 }
 
+func TestReuseReclaimsManagedSkillSymlinksWithoutFollowing(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		replaceDir func(skillsDir, externalDir string) (string, error)
+	}{
+		{
+			name: "managed skill directory",
+			replaceDir: func(skillsDir, externalDir string) (string, error) {
+				managedDir := filepath.Join(skillsDir, "issue-review")
+				if err := os.RemoveAll(managedDir); err != nil {
+					return "", err
+				}
+				if err := os.WriteFile(filepath.Join(externalDir, "SKILL.md"), []byte("external skill"), 0o644); err != nil {
+					return "", err
+				}
+				if err := os.Symlink(externalDir, managedDir); err != nil {
+					return "", err
+				}
+				return filepath.Join(externalDir, "sentinel.txt"), nil
+			},
+		},
+		{
+			name: "managed skills parent",
+			replaceDir: func(skillsDir, externalDir string) (string, error) {
+				if err := os.RemoveAll(skillsDir); err != nil {
+					return "", err
+				}
+				externalManagedDir := filepath.Join(externalDir, "issue-review")
+				if err := os.MkdirAll(externalManagedDir, 0o755); err != nil {
+					return "", err
+				}
+				if err := os.WriteFile(filepath.Join(externalManagedDir, "SKILL.md"), []byte("external skill"), 0o644); err != nil {
+					return "", err
+				}
+				if err := os.Symlink(externalDir, skillsDir); err != nil {
+					return "", err
+				}
+				return filepath.Join(externalManagedDir, "sentinel.txt"), nil
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspacesRoot := t.TempDir()
+			task := TaskContextForEnv{
+				IssueID: "reuse-managed-skill-symlink",
+				AgentSkills: []SkillContextForEnv{
+					{Name: "Issue Review", Content: "Review the issue."},
+				},
+			}
+			env, err := Prepare(PrepareParams{
+				WorkspacesRoot: workspacesRoot,
+				WorkspaceID:    "ws-reuse-managed-skill-symlink",
+				TaskID:         "aaaabbbb-cccc-dddd-eeee-ffff22223333",
+				Provider:       "claude",
+				Task:           task,
+			}, testLogger())
+			if err != nil {
+				t.Fatalf("Prepare failed: %v", err)
+			}
+			defer env.Cleanup(true)
+
+			skillsDir := filepath.Join(env.WorkDir, ".claude", "skills")
+			externalDir := t.TempDir()
+			externalSentinel, err := tc.replaceDir(skillsDir, externalDir)
+			if err != nil {
+				t.Skipf("replace managed path with symlink: %v", err)
+			}
+			if err := os.WriteFile(externalSentinel, []byte("external sentinel"), 0o644); err != nil {
+				t.Fatalf("write external sentinel: %v", err)
+			}
+
+			if reused := Reuse(ReuseParams{
+				WorkDir:  env.WorkDir,
+				Provider: "claude",
+				Task:     task,
+			}, testLogger()); reused == nil {
+				t.Fatal("Reuse returned nil")
+			}
+
+			got, err := os.ReadFile(externalSentinel)
+			if err != nil {
+				t.Fatalf("external sentinel must survive managed skill reclaim: %v", err)
+			}
+			if string(got) != "external sentinel" {
+				t.Fatalf("external sentinel changed: %q", got)
+			}
+			managedDir := filepath.Join(skillsDir, "issue-review")
+			info, err := os.Lstat(managedDir)
+			if err != nil {
+				t.Fatalf("stat refreshed managed skill directory: %v", err)
+			}
+			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+				t.Fatalf("managed skill symlink was not replaced by a real directory: mode=%v", info.Mode())
+			}
+			if _, err := os.Stat(filepath.Join(managedDir, "SKILL.md")); err != nil {
+				t.Fatalf("refreshed SKILL.md missing: %v", err)
+			}
+		})
+	}
+}
+
 // TestReuseSkillRefreshIsCanonicalAcrossProviders exercises the reuse skill
 // rollback (removeReusedManagedSkillDirs + CleanupSidecars + writeContextFiles
 // — the exact sequence Reuse runs) directly across the file-based providers,
@@ -931,10 +1084,10 @@ func TestReuseSkillRefreshIsCanonicalAcrossProviders(t *testing.T) {
 
 			// Second dispatch: same rollback + refresh sequence Reuse runs.
 			task.AgentSkills[0].Content = "v2"
-			if err := removeReusedManagedSkillDirs(envRoot, skillsDirPath(workDir, provider)); err != nil {
+			if err := removeReusedManagedSkillDirs(envRoot, workDir, skillsDirPath(workDir, provider)); err != nil {
 				t.Fatalf("removeReusedManagedSkillDirs: %v", err)
 			}
-			if err := CleanupSidecars(envRoot); err != nil {
+			if err := CleanupSidecars(envRoot, workDir); err != nil {
 				t.Fatalf("CleanupSidecars: %v", err)
 			}
 			m2 := &sidecarManifest{}

@@ -350,10 +350,10 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// No-op when RootDir is empty (legacy local_directory reuse, which the
 	// daemon skips anyway) or when no prior manifest exists (older build).
 	if env.RootDir != "" {
-		if err := removeReusedManagedSkillDirs(env.RootDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
+		if err := removeReusedManagedSkillDirs(env.RootDir, params.WorkDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
 			logger.Warn("execenv: reclaim managed skill dirs on reuse failed", "error", err)
 		}
-		if err := CleanupSidecars(env.RootDir); err != nil {
+		if err := CleanupSidecars(env.RootDir, params.WorkDir); err != nil {
 			logger.Warn("execenv: roll back prior sidecars on reuse failed", "error", err)
 		}
 	}

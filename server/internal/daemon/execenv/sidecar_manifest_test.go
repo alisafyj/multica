@@ -131,7 +131,7 @@ func runPrepareLikeCycle(t *testing.T, workDir, envRoot, provider string, ctx Ta
 	if err := CleanupRuntimeConfig(workDir, provider); err != nil {
 		t.Fatalf("CleanupRuntimeConfig(%s): %v", provider, err)
 	}
-	if err := CleanupSidecars(envRoot); err != nil {
+	if err := CleanupSidecars(envRoot, workDir); err != nil {
 		t.Fatalf("CleanupSidecars(%s): %v", provider, err)
 	}
 }
@@ -401,10 +401,10 @@ func TestPrepareThenCleanupSidecarsWithProjectResources(t *testing.T) {
 func TestCleanupSidecarsNoOpWhenManifestMissing(t *testing.T) {
 	t.Parallel()
 	envRoot := t.TempDir()
-	if err := CleanupSidecars(envRoot); err != nil {
+	if err := CleanupSidecars(envRoot, envRoot); err != nil {
 		t.Errorf("CleanupSidecars on empty envRoot returned error: %v", err)
 	}
-	if err := CleanupSidecars(""); err != nil {
+	if err := CleanupSidecars("", ""); err != nil {
 		t.Errorf("CleanupSidecars with empty envRoot returned error: %v", err)
 	}
 }
@@ -519,7 +519,7 @@ func TestCleanupSidecarsKeepsManifestAfterPartialFailure(t *testing.T) {
 		t.Fatalf("write manifest: %v", err)
 	}
 
-	err := CleanupSidecars(envRoot)
+	err := CleanupSidecars(envRoot, workDir)
 	if err == nil {
 		t.Fatal("CleanupSidecars must report the deterministic invalid-path failure")
 	}
@@ -533,6 +533,50 @@ func TestCleanupSidecarsKeepsManifestAfterPartialFailure(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `invalid\u0000path`) {
 		t.Fatalf("retained manifest lost failed entry: %s", raw)
+	}
+}
+
+func TestRemoveReusedManagedSkillDirsRefusesUnownedSymlinkAncestor(t *testing.T) {
+	workDir := t.TempDir()
+	envRoot := t.TempDir()
+	skillsParent := filepath.Join(workDir, ".claude", "skills")
+	if err := os.MkdirAll(filepath.Dir(skillsParent), 0o755); err != nil {
+		t.Fatalf("create skills parent ancestor: %v", err)
+	}
+	externalDir := t.TempDir()
+	externalManagedDir := filepath.Join(externalDir, "issue-review")
+	if err := os.MkdirAll(externalManagedDir, 0o755); err != nil {
+		t.Fatalf("create external managed directory: %v", err)
+	}
+	externalSentinel := filepath.Join(externalManagedDir, "sentinel.txt")
+	if err := os.WriteFile(externalSentinel, []byte("external sentinel"), 0o644); err != nil {
+		t.Fatalf("write external sentinel: %v", err)
+	}
+	if err := os.Symlink(externalDir, skillsParent); err != nil {
+		t.Skipf("symlink not supported on this platform: %v", err)
+	}
+	managedDir := filepath.Join(skillsParent, "issue-review")
+	if err := writeSidecarManifest(envRoot, &sidecarManifest{Dirs: []string{managedDir}}); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	err := removeReusedManagedSkillDirs(envRoot, workDir, skillsParent)
+	if err == nil {
+		t.Fatal("unowned symlink ancestor must block managed skill reclaim")
+	}
+	got, err := os.ReadFile(externalSentinel)
+	if err != nil {
+		t.Fatalf("external sentinel must survive refused reclaim: %v", err)
+	}
+	if string(got) != "external sentinel" {
+		t.Fatalf("external sentinel changed: %q", got)
+	}
+	info, err := os.Lstat(skillsParent)
+	if err != nil {
+		t.Fatalf("stat unowned skills parent symlink: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("unowned skills parent symlink was removed: mode=%v", info.Mode())
 	}
 }
 
@@ -571,7 +615,7 @@ func TestCleanupSidecarsLeavesUserContentInTrackedDirIntact(t *testing.T) {
 		t.Fatalf("write manifest: %v", err)
 	}
 
-	if err := CleanupSidecars(envRoot); err != nil {
+	if err := CleanupSidecars(envRoot, workDir); err != nil {
 		t.Errorf("CleanupSidecars: %v", err)
 	}
 
@@ -622,7 +666,7 @@ func TestCleanupSidecarsDoesNotRemovePreExistingDirs(t *testing.T) {
 	if err := writeSidecarManifest(envRoot, manifest); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
-	if err := CleanupSidecars(envRoot); err != nil {
+	if err := CleanupSidecars(envRoot, workDir); err != nil {
 		t.Fatalf("CleanupSidecars: %v", err)
 	}
 	if _, err := os.Stat(userDir); err != nil {
@@ -1034,7 +1078,7 @@ func TestPrepareThenCleanupSidecarsMultiSkillCollisionFreeAllocation(t *testing.
 	if err := writeSidecarManifest(envRoot, manifest); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
-	if err := CleanupSidecars(envRoot); err != nil {
+	if err := CleanupSidecars(envRoot, workDir); err != nil {
 		t.Fatalf("CleanupSidecars: %v", err)
 	}
 	if _, err := os.Stat(multicaDir); !os.IsNotExist(err) {
@@ -1061,11 +1105,12 @@ func TestCleanupSidecarsSwallowsMissingAndNonEmptyDirs(t *testing.T) {
 
 	// Case 1: recorded dir is missing → ENOENT must be swallowed.
 	envRoot1 := t.TempDir()
-	missing := filepath.Join(t.TempDir(), "never-existed")
+	workDir1 := t.TempDir()
+	missing := filepath.Join(workDir1, "never-existed")
 	if err := writeSidecarManifest(envRoot1, &sidecarManifest{Dirs: []string{missing}}); err != nil {
 		t.Fatalf("write missing-dir manifest: %v", err)
 	}
-	if err := CleanupSidecars(envRoot1); err != nil {
+	if err := CleanupSidecars(envRoot1, workDir1); err != nil {
 		t.Errorf("CleanupSidecars(missing dir) should swallow ENOENT silently, got: %v", err)
 	}
 
@@ -1084,7 +1129,7 @@ func TestCleanupSidecarsSwallowsMissingAndNonEmptyDirs(t *testing.T) {
 	if err := writeSidecarManifest(envRoot2, &sidecarManifest{Dirs: []string{recordedDir}}); err != nil {
 		t.Fatalf("write non-empty-dir manifest: %v", err)
 	}
-	if err := CleanupSidecars(envRoot2); err != nil {
+	if err := CleanupSidecars(envRoot2, workDir2); err != nil {
 		t.Errorf("CleanupSidecars(non-empty dir) should swallow ENOTEMPTY silently, got: %v", err)
 	}
 	got, err := os.ReadFile(userFile)
@@ -1134,7 +1179,7 @@ func TestCleanupSidecarsSurfacesEACCESOnEmptyRecordedDir(t *testing.T) {
 	// Restore parent permissions for t.TempDir() teardown.
 	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
 
-	err := CleanupSidecars(envRoot)
+	err := CleanupSidecars(envRoot, workDir)
 	if err == nil {
 		t.Fatal("CleanupSidecars should surface the EACCES rmdir error, got nil")
 	}
@@ -1190,7 +1235,7 @@ func TestCleanupSidecarsSurfacesEACCESWhenReadDirFailsToo(t *testing.T) {
 		_ = os.Chmod(recorded, 0o755)
 	})
 
-	err := CleanupSidecars(envRoot)
+	err := CleanupSidecars(envRoot, workDir)
 	if err == nil {
 		t.Fatal("CleanupSidecars should surface the rmdir error even when ReadDir also fails, got nil")
 	}

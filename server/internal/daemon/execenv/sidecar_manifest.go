@@ -258,15 +258,18 @@ func writeSidecarManifest(envRoot string, m *sidecarManifest) error {
 // .kimi/skills/, .kiro/skills/, .agents/skills/, fallback
 // .agent_context/skills/). The two together restore the workdir to
 // byte-exact pre-task state.
-func CleanupSidecars(envRoot string) error {
+func CleanupSidecars(envRoot, workDir string) error {
 	if envRoot == "" {
 		return nil
+	}
+	if workDir == "" {
+		return errors.New("cleanup sidecars: workdir is required")
 	}
 	manifestPath, m, err := readSidecarManifest(envRoot)
 	if err != nil || m == nil {
 		return err
 	}
-	return cleanupSidecarManifest(manifestPath, m, "", false)
+	return cleanupSidecarManifest(manifestPath, m, workDir, false)
 }
 
 func readSidecarManifest(envRoot string) (string, *sidecarManifest, error) {
@@ -301,24 +304,16 @@ func cleanupSidecarManifest(manifestPath string, m *sidecarManifest, workDir str
 	// Remove any managed directory that was replaced by a symlink before
 	// considering child files. This unlinks the sidecar entry itself and
 	// prevents a later child path from resolving through it.
-	if workDir != "" {
-		for _, d := range m.Dirs {
-			if _, err := removeRecordedPathNoFollow(workDir, d, managedDirs); err != nil {
-				captureErr(fmt.Errorf("inspect managed dir %s: %w", d, err))
-			}
+	for _, d := range m.Dirs {
+		if _, err := removeRecordedPathNoFollow(workDir, d, managedDirs); err != nil {
+			captureErr(fmt.Errorf("inspect managed dir %s: %w", d, err))
 		}
 	}
 
 	for _, f := range m.Files {
-		var err error
-		if workDir == "" {
+		isDir, err := removeRecordedPathNoFollow(workDir, f, managedDirs)
+		if err == nil && isDir {
 			err = os.Remove(f)
-		} else {
-			var isDir bool
-			isDir, err = removeRecordedPathNoFollow(workDir, f, managedDirs)
-			if err == nil && isDir {
-				err = os.Remove(f)
-			}
 		}
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			captureErr(fmt.Errorf("remove %s: %w", f, err))
@@ -331,18 +326,12 @@ func cleanupSidecarManifest(manifestPath string, m *sidecarManifest, workDir str
 	// (permission denied, busy, etc. — capture and surface).
 	for i := len(m.Dirs) - 1; i >= 0; i-- {
 		d := m.Dirs[i]
-		var err error
-		if workDir == "" {
+		isDir, err := removeRecordedPathNoFollow(workDir, d, managedDirs)
+		if err == nil && !isDir {
+			continue
+		}
+		if err == nil {
 			err = os.Remove(d)
-		} else {
-			var isDir bool
-			isDir, err = removeRecordedPathNoFollow(workDir, d, managedDirs)
-			if err == nil && !isDir {
-				continue
-			}
-			if err == nil {
-				err = os.Remove(d)
-			}
 		}
 		if err == nil || errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -388,6 +377,9 @@ func cleanupSidecarManifest(manifestPath string, m *sidecarManifest, workDir str
 func CleanupLocalDirectorySidecars(envRoot, workDir string) error {
 	if envRoot == "" {
 		return nil
+	}
+	if workDir == "" {
+		return errors.New("cleanup local-directory sidecars: workdir is required")
 	}
 	manifestPath, m, err := readSidecarManifest(envRoot)
 	if err != nil || m == nil {
@@ -507,33 +499,39 @@ func lstatPathNoFollow(root, target string) (string, fs.FileInfo, bool, error) {
 // workdirs (the daemon skips Reuse for local_directory tasks), so there is no
 // user-owned skills tree to protect here in the first place.
 //
-// envRoot or skillsParent empty, a missing manifest, or a parse failure are
-// all no-ops — the refresh simply proceeds. The manifest file is left in
-// place; CleanupSidecars, which runs next, owns deleting it.
-func removeReusedManagedSkillDirs(envRoot, skillsParent string) error {
-	if envRoot == "" || skillsParent == "" {
+// An empty envRoot or missing manifest is a no-op. Missing boundaries and
+// malformed manifests are surfaced so Reuse cannot silently fall back to an
+// unbounded removal. The manifest is left in place; CleanupSidecars, which
+// runs next, owns deleting it after a successful rollback.
+func removeReusedManagedSkillDirs(envRoot, workDir, skillsParent string) error {
+	if envRoot == "" {
 		return nil
 	}
-	data, err := os.ReadFile(filepath.Join(envRoot, sidecarManifestFile))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+	if workDir == "" || skillsParent == "" {
+		return errors.New("reclaim managed skill dirs: workdir and skills parent are required")
 	}
-	if err != nil {
-		return fmt.Errorf("read sidecar manifest for reuse skill rollback: %w", err)
-	}
-	var m sidecarManifest
-	if err := json.Unmarshal(data, &m); err != nil {
-		return fmt.Errorf("parse sidecar manifest for reuse skill rollback: %w", err)
+	_, m, err := readSidecarManifest(envRoot)
+	if err != nil || m == nil {
+		return err
 	}
 
 	cleanParent := filepath.Clean(skillsParent)
+	managedDirs := make(map[string]struct{}, len(m.Dirs))
+	for _, dir := range m.Dirs {
+		managedDirs[filepath.Clean(dir)] = struct{}{}
+	}
 	var firstErr error
 	for _, d := range m.Dirs {
-		if filepath.Dir(filepath.Clean(d)) != cleanParent {
+		cleanDir := filepath.Clean(d)
+		if filepath.Dir(cleanDir) != cleanParent {
 			continue
 		}
-		if err := os.RemoveAll(d); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("remove managed skill dir %s: %w", d, err)
+		isDir, err := removeRecordedPathNoFollow(workDir, cleanDir, managedDirs)
+		if err == nil && isDir {
+			err = os.RemoveAll(cleanDir)
+		}
+		if err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("remove managed skill dir %s: %w", cleanDir, err)
 		}
 	}
 	return firstErr
