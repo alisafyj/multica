@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/opendesign"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -145,7 +146,8 @@ func TestSaveAndDiscardProjectDesignSystemPreserveNativeArchiveMetadata(t *testi
 	systemID := uuidToString(fixture.Completion.System.ID)
 	type nativeMetadata struct {
 		PackageSchema, ArchiveObjectKey, InputSnapshotSHA256, BasePackageSHA256, IntegritySHA256, SourceTaskID, RenderStatus string
-		Manifest, ArtifactIndex, RenderReport                                                                                []byte
+		Manifest, ArtifactIndex, Validation, RenderReport                                                                    []byte
+		RenderedAt                                                                                                           pgtype.Timestamptz
 	}
 	loadMetadata := func(slot string) nativeMetadata {
 		t.Helper()
@@ -153,19 +155,22 @@ func TestSaveAndDiscardProjectDesignSystemPreserveNativeArchiveMetadata(t *testi
 		if err := testPool.QueryRow(context.Background(), `
 			SELECT package_schema, COALESCE(archive_object_key, ''), artifact_index,
 				COALESCE(input_snapshot_sha256, ''), COALESCE(base_package_sha256, ''), manifest,
-				integrity_sha256, source_task_id::text, render_status, render_report
+				integrity_sha256, source_task_id::text, render_status, validation, render_report, rendered_at
 			FROM project_design_system_package
 			WHERE design_system_id = $1 AND slot = $2
 		`, fixture.Completion.System.ID, slot).Scan(
 			&metadata.PackageSchema, &metadata.ArchiveObjectKey, &metadata.ArtifactIndex,
 			&metadata.InputSnapshotSHA256, &metadata.BasePackageSHA256, &metadata.Manifest,
-			&metadata.IntegritySHA256, &metadata.SourceTaskID, &metadata.RenderStatus, &metadata.RenderReport,
+			&metadata.IntegritySHA256, &metadata.SourceTaskID, &metadata.RenderStatus, &metadata.Validation, &metadata.RenderReport, &metadata.RenderedAt,
 		); err != nil {
 			t.Fatalf("load native %s metadata: %v", slot, err)
 		}
 		return metadata
 	}
 	draftBeforeSave := loadMetadata("draft")
+	if !draftBeforeSave.RenderedAt.Valid {
+		t.Fatalf("completed native draft rendered_at = %+v, want valid timestamp", draftBeforeSave.RenderedAt)
+	}
 
 	response := performProjectDesignSystemIDRequest(t, testHandler.SaveProjectDesignSystem, http.MethodPost, "/api/project-design-systems/"+systemID+"/save", systemID, nil)
 	if response.Code != http.StatusOK {
@@ -176,7 +181,8 @@ func TestSaveAndDiscardProjectDesignSystemPreserveNativeArchiveMetadata(t *testi
 		!bytes.Equal(savedBeforeDiscard.ArtifactIndex, draftBeforeSave.ArtifactIndex) || savedBeforeDiscard.InputSnapshotSHA256 != draftBeforeSave.InputSnapshotSHA256 ||
 		savedBeforeDiscard.BasePackageSHA256 != draftBeforeSave.BasePackageSHA256 || !bytes.Equal(savedBeforeDiscard.Manifest, draftBeforeSave.Manifest) ||
 		savedBeforeDiscard.IntegritySHA256 != draftBeforeSave.IntegritySHA256 || savedBeforeDiscard.SourceTaskID != draftBeforeSave.SourceTaskID ||
-		savedBeforeDiscard.RenderStatus != draftBeforeSave.RenderStatus || !bytes.Equal(savedBeforeDiscard.RenderReport, draftBeforeSave.RenderReport) {
+		savedBeforeDiscard.RenderStatus != draftBeforeSave.RenderStatus || !bytes.Equal(savedBeforeDiscard.Validation, draftBeforeSave.Validation) ||
+		!bytes.Equal(savedBeforeDiscard.RenderReport, draftBeforeSave.RenderReport) || savedBeforeDiscard.RenderedAt != draftBeforeSave.RenderedAt {
 		t.Fatalf("saved native metadata = %+v, draft = %+v", savedBeforeDiscard, draftBeforeSave)
 	}
 
@@ -216,7 +222,8 @@ func TestSaveAndDiscardProjectDesignSystemPreserveNativeArchiveMetadata(t *testi
 		!bytes.Equal(savedAfterDiscard.ArtifactIndex, savedBeforeDiscard.ArtifactIndex) || savedAfterDiscard.InputSnapshotSHA256 != savedBeforeDiscard.InputSnapshotSHA256 ||
 		savedAfterDiscard.BasePackageSHA256 != savedBeforeDiscard.BasePackageSHA256 || !bytes.Equal(savedAfterDiscard.Manifest, savedBeforeDiscard.Manifest) ||
 		savedAfterDiscard.IntegritySHA256 != savedBeforeDiscard.IntegritySHA256 || savedAfterDiscard.SourceTaskID != savedBeforeDiscard.SourceTaskID ||
-		savedAfterDiscard.RenderStatus != savedBeforeDiscard.RenderStatus || !bytes.Equal(savedAfterDiscard.RenderReport, savedBeforeDiscard.RenderReport) {
+		savedAfterDiscard.RenderStatus != savedBeforeDiscard.RenderStatus || !bytes.Equal(savedAfterDiscard.Validation, savedBeforeDiscard.Validation) ||
+		!bytes.Equal(savedAfterDiscard.RenderReport, savedBeforeDiscard.RenderReport) || savedAfterDiscard.RenderedAt != savedBeforeDiscard.RenderedAt {
 		t.Fatalf("discard changed saved native metadata: before = %+v, after = %+v", savedBeforeDiscard, savedAfterDiscard)
 	}
 }
