@@ -579,10 +579,9 @@ func scanKimiSessionUsage(scan kimiUsageScan) map[string]TokenUsage {
 
 	usage := make(map[string]TokenUsage)
 	for _, path := range kimiSessionWireLogs(root, scan.sessionID) {
-		// A wire log untouched since before the turn began belongs to an
-		// earlier run of a resumed session; billing it would re-charge
-		// tokens the previous task already reported.
-		if info, err := os.Stat(path); err != nil || info.ModTime().Before(scan.startTime) {
+		// Resumed logs are filtered by each record's timestamp below. Their
+		// file mtime may be coarser than startTime and must not hide new records.
+		if info, err := os.Stat(path); err != nil || (!scan.resumed && info.ModTime().Before(scan.startTime)) {
 			continue
 		}
 		accumulateKimiWireUsage(usage, path, scan)
