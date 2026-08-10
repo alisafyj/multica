@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -37,6 +38,12 @@ func BuildPrompt(task Task, provider string) string {
 		return buildDesignSystemProfileAnalyzePrompt(task)
 	}
 	if len(task.ProjectDesignSystemContext) > 0 {
+		var context struct {
+			Operation string `json:"operation"`
+		}
+		if json.Unmarshal(task.ProjectDesignSystemContext, &context) == nil && context.Operation == "repository_analysis" {
+			return buildProjectDesignSystemRepositoryAnalysisPrompt()
+		}
 		return buildProjectDesignSystemPrompt()
 	}
 	var b strings.Builder
@@ -44,6 +51,19 @@ func BuildPrompt(task Task, provider string) string {
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). On long-running issues use `--recent 20 --output json` to read the 20 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
+	return b.String()
+}
+
+func buildProjectDesignSystemRepositoryAnalysisPrompt() string {
+	var b strings.Builder
+	b.WriteString("You are running as a read-only repository design analysis agent for a Multica workspace.\n\n")
+	b.WriteString("Inspect only the provided project repository and resources. Read the available source files and repository evidence to identify the product's existing visual, structural, and workflow context.\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- This task is read-only. Do not modify the repository or any provided resource.\n")
+	b.WriteString("- Do not create generated package files or any other output files.\n")
+	b.WriteString("- Do not delegate, spawn sub-agents, or leave follow-up work.\n")
+	b.WriteString("- Do not call external design services or Multica write commands.\n")
+	b.WriteString("- Your final response must contain no markdown fence or leading or trailing prose. Return the final marker `REPOSITORY_DESIGN_CONTEXT_JSON:` followed by exactly one complete JSON object using schema_version `multica.repository-design-context/v1`.\n")
 	return b.String()
 }
 

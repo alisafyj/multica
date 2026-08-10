@@ -685,6 +685,39 @@ func TestBuildPromptProjectDesignSystemGenerate(t *testing.T) {
 	}
 }
 
+func TestBuildPromptProjectDesignSystemRepositoryAnalysisUsesMarkerContract(t *testing.T) {
+	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "repository_analysis"), "opencode")
+	for _, want := range []string{
+		"provided project repository and resources",
+		"read-only",
+		"Do not modify the repository",
+		"Do not create generated package files",
+		"Do not delegate",
+		"external design services",
+		"Multica write commands",
+		"REPOSITORY_DESIGN_CONTEXT_JSON:",
+		"multica.repository-design-context/v1",
+		"exactly one complete JSON object",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("repository analysis prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{
+		"$MULTICA_OUTPUT_DIR",
+		"DESIGN.md",
+		"tokens.css",
+		"components.html",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("repository analysis prompt must not mention %q\n--- prompt ---\n%s", forbidden, prompt)
+		}
+	}
+	if strings.Count(prompt, "REPOSITORY_DESIGN_CONTEXT_JSON:") != 1 {
+		t.Fatalf("repository analysis prompt must mention the final marker exactly once\n--- prompt ---\n%s", prompt)
+	}
+}
+
 func TestBuildPromptProjectDesignSystemDefinesArtifactContract(t *testing.T) {
 	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "generate"), "opencode")
 	for _, want := range []string{

@@ -1997,8 +1997,25 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	var analyzedProfile *db.DesignSystemProfile
 	var profileOutput *designSystemProfileAnalyzeOutput
 	var completedProjectDesignSystem *db.ProjectDesignSystem
+	var preparedRepositoryAnalysis *preparedProjectDesignSystemRepositoryAnalysis
 	var preparedProjectDesignSystem *preparedProjectDesignSystemCompletion
-	if existingTask.Status == "running" && isProjectDesignSystemTaskContext(existingTask) {
+	preparedAnalysis, isRepositoryAnalysis, analysisErr := prepareProjectDesignSystemRepositoryAnalysisCompletion(existingTask, req.Output)
+	if existingTask.Status == "running" && isRepositoryAnalysis {
+		if analysisErr != nil {
+			slog.Warn("project design system repository analysis completion: invalid output", "task_id", taskID, "error", analysisErr)
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), analysisErr.Error(), req.SessionID, req.WorkDir, "project_design_system_repository_analysis_invalid_output")
+			if failErr != nil {
+				slog.Warn("project design system repository analysis completion: failed to mark task failed", "task_id", taskID, "error", failErr)
+			} else if failedTask != nil {
+				if err := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); err != nil {
+					slog.Warn("complete task: failed to revoke task tokens after repository analysis failure", "task_id", uuidToString(failedTask.ID), "error", err)
+				}
+			}
+			writeError(w, http.StatusBadRequest, "invalid repository analysis output: "+analysisErr.Error())
+			return
+		}
+		preparedRepositoryAnalysis = preparedAnalysis
+	} else if existingTask.Status == "running" && isProjectDesignSystemTaskContext(existingTask) {
 		prepared, prepareErr := h.prepareProjectDesignSystemCompletion(r.Context(), existingTask, workspaceID, req.ProjectDesignSystemArtifacts, req.ProjectDesignSystemPackage)
 		if prepareErr != nil {
 			h.failInvalidProjectDesignSystemCompletion(r.Context(), existingTask, req, prepareErr)
@@ -2045,7 +2062,15 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	result, _ := json.Marshal(req)
 	var task *db.AgentTaskQueue
 	var err error
-	if profileOutput != nil {
+	if preparedRepositoryAnalysis != nil {
+		task, err = h.TaskService.CompleteTaskWithMutation(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
+			system, saveErr := persistProjectDesignSystemRepositoryAnalysisCompletion(r.Context(), qtx, completedTask, *preparedRepositoryAnalysis)
+			if saveErr == nil {
+				completedProjectDesignSystem = &system
+			}
+			return saveErr
+		})
+	} else if profileOutput != nil {
 		task, err = h.TaskService.CompleteTaskWithMutation(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
 			profile, updateErr := h.updateDesignSystemProfileFromAgentTaskOutput(r.Context(), qtx, completedTask, *profileOutput)
 			if updateErr == nil {
