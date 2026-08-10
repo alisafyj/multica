@@ -4136,3 +4136,103 @@ func TestClaimProjectDesignSystemTaskReturnsExactContext(t *testing.T) {
 		}
 	}
 }
+
+func TestClaimProjectDesignSystemRepositoryAnalysisReturnsProjectResources(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "Project design system repository analysis claim")
+	agentID, runtimeID := createProjectDesignSystemAgent(t, "online")
+	const projectRepoURL = "https://github.com/example/design-system-source"
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_resource (
+			project_id, workspace_id, resource_type, resource_ref, position
+		) VALUES
+			($1, $2, 'local_directory', $3::jsonb, 0),
+			($1, $2, 'github_repo', $4::jsonb, 1)
+	`, projectID, testWorkspaceID,
+		`{"local_path":"/tmp/multica-design-system-source","daemon_id":"`+runtimeID+`"}`,
+		`{"url":"`+projectRepoURL+`"}`,
+	); err != nil {
+		t.Fatalf("create project resources: %v", err)
+	}
+
+	contextPayload := service.ProjectDesignSystemTaskContext{
+		Type:                  service.ProjectDesignSystemTaskContextType,
+		Operation:             service.ProjectDesignSystemRepositoryAnalysis,
+		RequesterID:           testUserID,
+		WorkspaceID:           testWorkspaceID,
+		ProjectID:             projectID,
+		ProjectDesignSystemID: uuid.NewString(),
+		AgentID:               agentID,
+		Project:               json.RawMessage(`{"id":"` + projectID + `","name":"Project design system repository analysis claim"}`),
+		Platform:              "web",
+		Brief:                 "Analyze the existing product repository.",
+		References:            json.RawMessage(`[{"kind":"project_resource","resource_type":"local_directory"}]`),
+		RepositoryAnalysis:    json.RawMessage(`{"mode":"read_only","target":"project"}`),
+		OutputPolicy:          json.RawMessage(`{"read_only":true,"scripts_allowed":false}`),
+	}
+	contextJSON, err := json.Marshal(contextPayload)
+	if err != nil {
+		t.Fatalf("marshal context: %v", err)
+	}
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
+		VALUES ($1, $2, NULL, 'queued', 0, $3::jsonb)
+		RETURNING id
+	`, agentID, runtimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("create repository analysis task: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "project-design-system-repository-analysis-claim")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var response struct {
+		Task *struct {
+			ID                         string                `json:"id"`
+			Repos                      []RepoData            `json:"repos"`
+			ProjectResources           []ProjectResourceData `json:"project_resources"`
+			ProjectDesignSystemContext json.RawMessage       `json:"project_design_system_context"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode claim response: %v", err)
+	}
+	if response.Task == nil || response.Task.ID != taskID {
+		t.Fatalf("claimed task = %#v, want %s", response.Task, taskID)
+	}
+	if len(response.Task.ProjectResources) != 2 {
+		t.Fatalf("project resources = %v, want local_directory and github_repo", response.Task.ProjectResources)
+	}
+	resourceTypes := map[string]bool{}
+	for _, resource := range response.Task.ProjectResources {
+		resourceTypes[resource.ResourceType] = true
+	}
+	if !resourceTypes["local_directory"] || !resourceTypes["github_repo"] {
+		t.Fatalf("project resource types = %v, want local_directory and github_repo", resourceTypes)
+	}
+	if len(response.Task.Repos) != 1 || response.Task.Repos[0].URL != projectRepoURL {
+		t.Fatalf("repos = %v, want project repository %s", response.Task.Repos, projectRepoURL)
+	}
+
+	var wantContext, claimedContext any
+	if err := json.Unmarshal(contextJSON, &wantContext); err != nil {
+		t.Fatalf("decode expected context: %v", err)
+	}
+	if err := json.Unmarshal(response.Task.ProjectDesignSystemContext, &claimedContext); err != nil {
+		t.Fatalf("decode claimed context: %v", err)
+	}
+	if fmt.Sprintf("%#v", claimedContext) != fmt.Sprintf("%#v", wantContext) {
+		t.Fatalf("project design system context changed across claim: got=%s want=%s", response.Task.ProjectDesignSystemContext, contextJSON)
+	}
+}
