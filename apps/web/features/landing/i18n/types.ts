@@ -176,6 +176,15 @@ export type LandingDict = {
       formatRpm: string;
       unavailable: string;
     };
+    android: {
+      title: string;
+      sub: string;
+      downloadApk: string;
+      scanHint: string;
+      unavailable: string;
+      viewAllReleases: string;
+      qrUnavailable: string;
+    };
     cli: {
       title: string;
       sub: string;

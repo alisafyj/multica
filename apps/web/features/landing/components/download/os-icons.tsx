@@ -52,3 +52,20 @@ export function LinuxIcon({ size = 18, ...props }: IconProps) {
     </svg>
   );
 }
+
+export function AndroidIcon({ size = 18, ...props }: IconProps) {
+  // Android robot head — antenna pair, dome, and eyes, matching the
+  // monochrome outline weight of the other platform marks.
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="currentColor"
+      aria-hidden
+      {...props}
+    >
+      <path d="M17.53 8.26l1.6-2.77a.4.4 0 0 0-.14-.55.4.4 0 0 0-.55.15l-1.62 2.8A9.4 9.4 0 0 0 12 7.02c-1.71 0-3.32.31-4.82.87l-1.62-2.8a.4.4 0 0 0-.55-.15.4.4 0 0 0-.14.55l1.6 2.77C3.7 9.87 1.86 12.85 1.5 16.3h21c-.36-3.45-2.2-6.43-4.97-8.04ZM7.62 13.61a.98.98 0 0 1-.98-.98c0-.55.44-.99.98-.99s.98.44.98.99a.98.98 0 0 1-.98.98Zm8.76 0a.98.98 0 0 1-.98-.98c0-.55.44-.99.98-.99s.98.44.98.99a.98.98 0 0 1-.98.98Z" />
+    </svg>
+  );
+}

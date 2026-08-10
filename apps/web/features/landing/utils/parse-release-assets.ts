@@ -31,7 +31,10 @@ export interface DownloadAssets {
   linuxArm64AppImage?: string;
   linuxArm64Deb?: string;
   linuxArm64Rpm?: string;
+  androidApk?: string;
 }
+
+const ANDROID_ARTIFACT_RE = /^multica-android-.+\.apk$/i;
 
 const DESKTOP_ARTIFACT_RE =
   /^multica-desktop-.+-(mac|windows|linux)-([a-z0-9_]+)\.(dmg|zip|exe|AppImage|deb|rpm)$/i;
@@ -53,6 +56,13 @@ export function parseReleaseAssets(raw: GitHubAsset[]): DownloadAssets {
     // DESKTOP_ARTIFACT_RE below.
     if (name.endsWith(".blockmap") || name.endsWith(".yml")) continue;
     if (name.startsWith("checksums")) continue;
+
+    // The Android APK shares the desktop release (see the android job in
+    // .github/workflows/fork-desktop-release.yml).
+    if (ANDROID_ARTIFACT_RE.test(name)) {
+      out.androidApk = asset.browser_download_url;
+      continue;
+    }
 
     const match = DESKTOP_ARTIFACT_RE.exec(name);
     if (!match) continue;

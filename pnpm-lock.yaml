@@ -696,6 +696,9 @@ importers:
       react-markdown:
         specifier: ^10.1.0
         version: 10.1.0(@types/react@19.2.14)(react@19.2.3)
+      react-qr-code:
+        specifier: 'catalog:'
+        version: 2.0.21(react@19.2.3)
       react-resizable-panels:
         specifier: ^4.7.5
         version: 4.7.5(react-dom@19.2.3(react@19.2.3))(react@19.2.3)

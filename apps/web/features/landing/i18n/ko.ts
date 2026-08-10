@@ -2349,6 +2349,15 @@ export function createKoDict(allowSignup: boolean): LandingDict {
         formatRpm: ".rpm",
         unavailable: "사용할 수 없음",
       },
+      android: {
+        title: "Android",
+        sub: "Android 휴대폰에 Multica를 설치하세요. 휴대폰 카메라로 QR 코드를 스캔하면 APK를 바로 다운로드할 수 있습니다.",
+        downloadApk: "APK 다운로드",
+        scanHint: "휴대폰으로 스캔하여 다운로드",
+        unavailable: "Android 빌드는 아직 제공되지 않습니다.",
+        viewAllReleases: "전체 릴리스 보기",
+        qrUnavailable: "QR 코드를 사용할 수 없습니다",
+      },
       cli: {
         title: "CLI가 더 편하신가요?",
         sub: "서버, 원격 개발 환경, headless 환경에 적합합니다. 데스크톱과 동일한 데몬을 터미널에서 바로 설치할 수 있습니다.",

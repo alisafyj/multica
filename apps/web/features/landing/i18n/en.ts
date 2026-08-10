@@ -2823,6 +2823,15 @@ export function createEnDict(allowSignup: boolean): LandingDict {
       formatRpm: ".rpm",
       unavailable: "Not available",
     },
+    android: {
+      title: "Android",
+      sub: "Install Multica on your Android phone. Scan the QR code with your phone camera to download the APK directly.",
+      downloadApk: "Download APK",
+      scanHint: "Scan to download on your phone",
+      unavailable: "The Android build isn't available yet.",
+      viewAllReleases: "View all releases",
+      qrUnavailable: "QR code unavailable",
+    },
     cli: {
       title: "Prefer the CLI?",
       sub: "For servers, remote dev boxes, and headless setups. Same daemon as Desktop, installed via terminal.",

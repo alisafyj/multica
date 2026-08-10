@@ -2822,6 +2822,15 @@ export function createZhDict(allowSignup: boolean): LandingDict {
       formatRpm: ".rpm",
       unavailable: "暂不可用",
     },
+    android: {
+      title: "Android",
+      sub: "在 Android 手机上安装 Multica。用手机相机扫描二维码，即可直接下载 APK 安装包。",
+      downloadApk: "下载 APK",
+      scanHint: "手机扫码下载",
+      unavailable: "Android 安装包暂不可用。",
+      viewAllReleases: "查看全部版本",
+      qrUnavailable: "二维码暂不可用",
+    },
     cli: {
       title: "想用 CLI？",
       sub: "适合服务器、远程开发机、无图形界面环境。底层 daemon 与 Desktop 相同，通过终端安装。",

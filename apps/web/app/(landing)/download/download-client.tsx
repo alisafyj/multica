@@ -5,6 +5,7 @@ import Link from "next/link";
 import { LandingHeader } from "@/features/landing/components/landing-header";
 import { LandingFooter } from "@/features/landing/components/landing-footer";
 import { DownloadHero } from "@/features/landing/components/download/hero";
+import { AndroidSection } from "@/features/landing/components/download/android-section";
 import { AllPlatforms } from "@/features/landing/components/download/all-platforms";
 import { CliSection } from "@/features/landing/components/download/cli-section";
 import { useLocale } from "@/features/landing/i18n";
@@ -51,6 +52,10 @@ export function DownloadClient({ release }: { release: LatestRelease }) {
         />
       </div>
 
+      <AndroidSection
+        assets={release.assets}
+        fallbackHref={ALL_RELEASES_URL}
+      />
       <AllPlatforms
         assets={release.assets}
         fallbackHref={ALL_RELEASES_URL}

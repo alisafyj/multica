@@ -59,6 +59,7 @@
     "react-day-picker": "^9.14.0",
     "react-dom": "catalog:",
     "react-markdown": "^10.1.0",
+    "react-qr-code": "catalog:",
     "react-resizable-panels": "^4.7.5",
     "recharts": "3.8.0",
     "rehype-raw": "^7.0.0",

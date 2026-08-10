@@ -2324,6 +2324,15 @@ export function createJaDict(allowSignup: boolean): LandingDict {
         formatRpm: ".rpm",
         unavailable: "利用できません",
       },
+      android: {
+        title: "Android",
+        sub: "Android スマートフォンに Multica をインストール。カメラで QR コードをスキャンすると、APK を直接ダウンロードできます。",
+        downloadApk: "APK をダウンロード",
+        scanHint: "スマートフォンでスキャンしてダウンロード",
+        unavailable: "Android 版はまだ利用できません。",
+        viewAllReleases: "すべてのリリースを見る",
+        qrUnavailable: "QR コードは利用できません",
+      },
       cli: {
         title: "CLI のほうが便利ですか?",
         sub: "サーバー、リモート開発環境、ヘッドレス環境に最適です。デスクトップと同じデーモンを、ターミナルからインストールできます。",
