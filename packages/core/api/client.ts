@@ -246,21 +246,29 @@ import {
   EMPTY_BILLING_CHECKOUT_SESSION_STATUS,
   EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE,
   DesignDeliverySchema,
+  DesignDraftMaterializeResponseSchema,
+  DesignDraftSchema,
   DesignSystemProfileSchema,
+  CreateDesignDraftAgentTaskResponseSchema,
   ProjectDesignSystemSchema,
   ProjectDesignSystemPackagePreviewSchema,
   DesignRestoreTaskSchema,
   DispatchDesignRestoreTaskResponseSchema,
   EMPTY_DESIGN_DELIVERY,
+  EMPTY_DESIGN_DRAFT,
+  EMPTY_DESIGN_DRAFT_MATERIALIZE_RESPONSE,
   EMPTY_DESIGN_SYSTEM_PROFILE,
+  EMPTY_CREATE_DESIGN_DRAFT_AGENT_TASK_RESPONSE,
   EMPTY_PROJECT_DESIGN_SYSTEM,
   EMPTY_PROJECT_DESIGN_SYSTEM_PACKAGE_PREVIEW,
   EMPTY_DESIGN_RESTORE_TASK,
   EMPTY_DISPATCH_DESIGN_RESTORE_TASK_RESPONSE,
   ListDesignDeliveriesResponseSchema,
+  ListDesignDraftsResponseSchema,
   ListDesignSystemProfilesResponseSchema,
   ListDesignRestoreTasksResponseSchema,
   EMPTY_LIST_DESIGN_DELIVERIES_RESPONSE,
+  EMPTY_LIST_DESIGN_DRAFTS_RESPONSE,
   EMPTY_LIST_DESIGN_SYSTEM_PROFILES_RESPONSE,
   EMPTY_LIST_DESIGN_RESTORE_TASKS_RESPONSE,
 } from "./schemas";
@@ -2162,29 +2170,50 @@ export class ApiClient {
   }
 
   async listDesignDrafts(): Promise<ListDesignDraftsResponse> {
-    return this.fetch("/api/design-drafts");
+    const raw = await this.fetch<unknown>("/api/design-drafts");
+    return parseWithFallback(raw, ListDesignDraftsResponseSchema, EMPTY_LIST_DESIGN_DRAFTS_RESPONSE, {
+      endpoint: "GET /api/design-drafts",
+    });
   }
 
   async createDesignDraft(data: CreateDesignDraftRequest): Promise<DesignDraft> {
-    return this.fetch("/api/design-drafts", {
+    const raw = await this.fetch<unknown>("/api/design-drafts", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignDraftSchema, EMPTY_DESIGN_DRAFT, {
+      endpoint: "POST /api/design-drafts",
     });
   }
 
   async createDesignDraftAgentTask(data: CreateDesignDraftAgentTaskRequest): Promise<CreateDesignDraftAgentTaskResponse> {
-    return this.fetch("/api/design-drafts/agent-tasks", {
+    const raw = await this.fetch<unknown>("/api/design-drafts/agent-tasks", {
       method: "POST",
       body: JSON.stringify(data),
     });
+    return parseWithFallback(
+      raw,
+      CreateDesignDraftAgentTaskResponseSchema,
+      EMPTY_CREATE_DESIGN_DRAFT_AGENT_TASK_RESPONSE,
+      { endpoint: "POST /api/design-drafts/agent-tasks" },
+    );
   }
 
   async getDesignDraft(id: string): Promise<DesignDraft> {
-    return this.fetch(`/api/design-drafts/${encodeURIComponent(id)}`);
+    const raw = await this.fetch<unknown>(`/api/design-drafts/${encodeURIComponent(id)}`);
+    return parseWithFallback(raw, DesignDraftSchema, { ...EMPTY_DESIGN_DRAFT, id }, {
+      endpoint: "GET /api/design-drafts/{id}",
+    });
   }
 
   async materializeDesignDraft(id: string): Promise<DesignDraftMaterializeResponse> {
-    return this.fetch(`/api/design-drafts/${encodeURIComponent(id)}/materialize`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/design-drafts/${encodeURIComponent(id)}/materialize`, { method: "POST" });
+    return parseWithFallback(
+      raw,
+      DesignDraftMaterializeResponseSchema,
+      { ...EMPTY_DESIGN_DRAFT_MATERIALIZE_RESPONSE, draft: { ...EMPTY_DESIGN_DRAFT, id } },
+      { endpoint: "POST /api/design-drafts/{id}/materialize" },
+    );
   }
 
   async listDesignDeliveries(issueId: string): Promise<ListDesignDeliveriesResponse> {

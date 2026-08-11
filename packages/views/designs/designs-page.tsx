@@ -205,11 +205,11 @@ function TemplateCatalogCard({ template, sourceFile, onCreateDraft }: { template
 }
 
 function isSemanticDraft(draft: DesignDraft) {
-  return (draft as { generation_mode?: string }).generation_mode === "semantic_pagespec";
+  return draft.generation_mode === "semantic_pagespec";
 }
 
 function isPendingDesignDraft(draft: DesignDraft) {
-  const status = draft.status as string;
+  const status = draft.status;
   if (status === "compile_failed" || status === "approved" || status === "rejected" || status === "archived" || status === "failed") return false;
   if (isSemanticDraft(draft)) return status === "generated" || status === "generated_with_warnings";
   return !draft.generated_file_id;

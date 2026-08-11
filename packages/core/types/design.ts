@@ -2,7 +2,17 @@ export type DesignSourceType = "upload" | "ai_generated" | "template" | "import"
 export type DesignRevisionStatus = "draft" | "valid" | "invalid";
 export type DesignAssetKind = "frame_preview" | "frame_thumbnail" | "image" | "slice" | "thumbnail" | "source" | "other";
 export type DesignTemplateSlotType = "text" | "number" | "boolean" | "image" | "color" | "enum" | "list" | "object";
-export type DesignDraftStatus = "draft" | "generated" | "validated" | "failed" | "archived";
+export type DesignDraftStatus =
+  | "draft"
+  | "generated"
+  | "generated_with_warnings"
+  | "compile_failed"
+  | "validated"
+  | "approved"
+  | "rejected"
+  | "failed"
+  | "archived";
+export type DesignDraftGenerationMode = "legacy_patch" | "semantic_pagespec";
 export type DesignSystemProfileStatus = "draft" | "analyzing" | "analyzed" | "failed" | "archived";
 export type DesignRestoreTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type DesignRestoreTargetKind = "component" | "file" | "symbol" | "route" | "unknown";
@@ -552,6 +562,14 @@ export interface DesignDraft {
   created_at: string;
   updated_at: string;
   materialized_at?: string | null;
+  generation_mode?: DesignDraftGenerationMode;
+  page_spec?: Record<string, unknown> | null;
+  compiled_native_json?: GalleryNativeJson | null;
+  quality_report?: Record<string, unknown> | null;
+  blueprint_id?: string | null;
+  recipe_set_id?: string | null;
+  parent_draft_id?: string | null;
+  version?: number;
 }
 
 export interface CreateDesignDraftRequest {

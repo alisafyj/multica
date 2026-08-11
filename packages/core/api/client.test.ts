@@ -195,6 +195,53 @@ describe("ApiClient", () => {
     });
   });
 
+  describe("design drafts", () => {
+    it("parses semantic draft list responses through the API schema", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({
+          drafts: [{
+            id: "draft-1",
+            workspace_id: "ws-1",
+            template_id: null,
+            file_id: null,
+            revision_id: null,
+            issue_id: "issue-1",
+            title: "CRM 客户列表",
+            requirement_core: {},
+            slot_values: {},
+            patch: [],
+            status: "generated_with_warnings",
+            validation_errors: [],
+            created_by: null,
+            created_at: "2026-08-11T00:00:00Z",
+            updated_at: "2026-08-11T00:00:00Z",
+            generation_mode: "semantic_pagespec",
+            quality_report: { diagnostics: [{ severity: "warning", code: "minor_spacing" }] },
+            version: 2,
+          }],
+          total: 1,
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      const response = await client.listDesignDrafts();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.example.test/api/design-drafts",
+        expect.objectContaining({ credentials: "include" }),
+      );
+      expect(response.total).toBe(1);
+      expect(response.drafts[0]?.generation_mode).toBe("semantic_pagespec");
+      expect(response.drafts[0]?.quality_report).toMatchObject({
+        diagnostics: [{ severity: "warning" }],
+      });
+    });
+  });
+
   it("preserves HTTP status on failed requests", async () => {
     vi.stubGlobal(
       "fetch",

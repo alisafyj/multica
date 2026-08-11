@@ -20,12 +20,17 @@ import type {
   TimelineEntry,
   User,
   WebhookDelivery,
+  CreateDesignDraftAgentTaskResponse,
   DesignDelivery,
+  DesignDraft,
+  DesignDraftMaterializeResponse,
+  DesignFileDetailResponse,
   DesignSystemProfile,
   DesignRestoreTask,
   DispatchDesignRestoreTaskResponse,
   BatchUpdateIssuesResponse,
   ListDesignDeliveriesResponse,
+  ListDesignDraftsResponse,
   ListDesignSystemProfilesResponse,
   ListDesignRestoreTasksResponse,
   ProjectDesignSystem,
@@ -33,6 +38,7 @@ import type {
   ProjectDesignSystemStatus,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
+import { GalleryNativeJsonSchema } from "../designs/schema";
 
 export interface AppConfigResponse {
   cdn_domain: string;
@@ -341,6 +347,142 @@ export const ListDesignDeliveriesResponseSchema = z.object({
 
 export const EMPTY_LIST_DESIGN_DELIVERIES_RESPONSE: ListDesignDeliveriesResponse = {
   deliveries: [],
+};
+
+const DesignFileSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  project_id: z.string().nullable().optional(),
+  folder_id: z.string().nullable().optional(),
+  title: z.string(),
+  description: z.string().nullable().default(null),
+  source_type: z.string(),
+  source_ref: z.record(z.string(), z.unknown()).default({}),
+  thumbnail_url: z.string().nullable().optional(),
+  current_revision_id: z.string().nullable().default(null),
+  created_by: z.string().nullable().default(null),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+const DesignRevisionSchema = z.object({
+  id: z.string(),
+  file_id: z.string(),
+  workspace_id: z.string(),
+  revision_number: z.number(),
+  status: z.string(),
+  native_json: GalleryNativeJsonSchema,
+  validation_errors: z.array(z.unknown()).default([]),
+  created_by: z.string().nullable().default(null),
+  created_at: z.string(),
+}).loose();
+
+const EMPTY_DESIGN_FILE_DETAIL_RESPONSE: DesignFileDetailResponse = {
+  file: {
+    id: "",
+    workspace_id: "",
+    project_id: null,
+    folder_id: null,
+    title: "",
+    description: null,
+    source_type: "ai_generated",
+    source_ref: {},
+    thumbnail_url: null,
+    current_revision_id: null,
+    created_by: null,
+    created_at: "",
+    updated_at: "",
+  },
+  current_revision: null,
+};
+
+const DesignFileDetailResponseSchema = z.object({
+  file: DesignFileSchema,
+  current_revision: DesignRevisionSchema.nullable().default(null),
+}).loose();
+
+export const DesignDraftSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  template_id: z.string().nullable().default(null),
+  catalog_template_id: z.string().nullable().optional(),
+  template_revision_id: z.string().nullable().optional(),
+  file_id: z.string().nullable().default(null),
+  revision_id: z.string().nullable().default(null),
+  generated_file_id: z.string().nullable().optional(),
+  generated_revision_id: z.string().nullable().optional(),
+  issue_id: z.string().nullable().default(null),
+  title: z.string(),
+  requirement_core: z.record(z.string(), z.unknown()).default({}),
+  slot_values: z.record(z.string(), z.unknown()).default({}),
+  patch: z.array(z.unknown()).default([]),
+  status: z.string(),
+  validation_errors: z.array(z.unknown()).default([]),
+  created_by: z.string().nullable().default(null),
+  created_at: z.string(),
+  updated_at: z.string(),
+  materialized_at: z.string().nullable().optional(),
+  generation_mode: z.string().optional(),
+  page_spec: z.record(z.string(), z.unknown()).nullable().optional(),
+  compiled_native_json: GalleryNativeJsonSchema.nullable().optional(),
+  quality_report: z.record(z.string(), z.unknown()).nullable().optional(),
+  blueprint_id: z.string().nullable().optional(),
+  recipe_set_id: z.string().nullable().optional(),
+  parent_draft_id: z.string().nullable().optional(),
+  version: z.number().optional(),
+}).loose();
+
+export const EMPTY_DESIGN_DRAFT: DesignDraft = {
+  id: "",
+  workspace_id: "",
+  template_id: null,
+  catalog_template_id: null,
+  template_revision_id: null,
+  file_id: null,
+  revision_id: null,
+  generated_file_id: null,
+  generated_revision_id: null,
+  issue_id: null,
+  title: "",
+  requirement_core: {} as DesignDraft["requirement_core"],
+  slot_values: {},
+  patch: [],
+  status: "failed",
+  validation_errors: [],
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+  materialized_at: null,
+};
+
+export const ListDesignDraftsResponseSchema = z.object({
+  drafts: z.array(DesignDraftSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_LIST_DESIGN_DRAFTS_RESPONSE: ListDesignDraftsResponse = {
+  drafts: [],
+  total: 0,
+};
+
+export const CreateDesignDraftAgentTaskResponseSchema = z.object({
+  task_id: z.string(),
+  status: z.string(),
+}).loose();
+
+export const EMPTY_CREATE_DESIGN_DRAFT_AGENT_TASK_RESPONSE: CreateDesignDraftAgentTaskResponse = {
+  task_id: "",
+  status: "failed",
+};
+
+export const DesignDraftMaterializeResponseSchema = z.object({
+  draft: DesignDraftSchema,
+  design_file: DesignFileDetailResponseSchema,
+}).loose();
+
+export const EMPTY_DESIGN_DRAFT_MATERIALIZE_RESPONSE: DesignDraftMaterializeResponse = {
+  draft: EMPTY_DESIGN_DRAFT,
+  design_file: EMPTY_DESIGN_FILE_DETAIL_RESPONSE,
 };
 
 export const DesignSystemProfileSchema = z.object({

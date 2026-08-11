@@ -6,7 +6,9 @@ import {
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
   EMPTY_PROJECT_DESIGN_SYSTEM,
+  DesignDraftSchema,
   DesignRestoreTaskSchema,
+  ListDesignDraftsResponseSchema,
   ListDesignDeliveriesResponseSchema,
   ListDesignRestoreTasksResponseSchema,
   DuplicateIssueErrorBodySchema,
@@ -99,6 +101,47 @@ describe("ProjectDesignSystemSchema package preview drift", () => {
     expect(parsed.content.package_schema).toBe("");
     expect(parsed.content.preview_targets).toEqual([]);
     expect(parsed.content.selection_enabled).toBe(false);
+  });
+});
+
+describe("DesignDraftSchema", () => {
+  it("preserves semantic draft metadata without requiring review endpoints", () => {
+    const parsed = DesignDraftSchema.parse({
+      id: "draft-1",
+      workspace_id: "ws-1",
+      template_id: null,
+      file_id: null,
+      revision_id: null,
+      issue_id: "issue-1",
+      title: "CRM 客户列表",
+      requirement_core: {},
+      slot_values: {},
+      patch: [],
+      status: "generated_with_warnings",
+      validation_errors: [],
+      created_by: null,
+      created_at: "2026-08-11T00:00:00Z",
+      updated_at: "2026-08-11T00:00:00Z",
+      generation_mode: "semantic_pagespec",
+      page_spec: { title: "客户列表" },
+      compiled_native_json: null,
+      quality_report: { diagnostics: [{ severity: "warning", code: "minor_spacing" }] },
+      blueprint_id: "blueprint-crm",
+      recipe_set_id: "recipe-crm",
+      parent_draft_id: null,
+      version: 2,
+    });
+
+    expect(parsed.generation_mode).toBe("semantic_pagespec");
+    expect(parsed.status).toBe("generated_with_warnings");
+    expect(parsed.page_spec).toEqual({ title: "客户列表" });
+    expect(parsed.quality_report).toMatchObject({ diagnostics: [{ severity: "warning" }] });
+    expect(parsed.version).toBe(2);
+  });
+
+  it("defaults missing draft list collections", () => {
+    expect(ListDesignDraftsResponseSchema.parse({}).drafts).toEqual([]);
+    expect(ListDesignDraftsResponseSchema.parse({}).total).toBe(0);
   });
 });
 
