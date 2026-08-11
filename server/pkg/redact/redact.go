@@ -73,6 +73,13 @@ var patterns = []secretPattern{
 	// Connection strings with embedded passwords
 	{regexp.MustCompile(`(?i)(?:postgres|mysql|mongodb|redis|amqp)(?:ql)?://[^:\s]+:[^@\s]+@`), "[REDACTED CONNECTION STRING]@"},
 
+	// Personal data fields (phone numbers, salary). These are commonly the
+	// payload of a scraped or leaked file and are not secret by shape, so
+	// key-name matching is the only reliable signal. CJK field names are
+	// matched explicitly because the generic credential pattern below only
+	// matches ASCII keys.
+	{regexp.MustCompile(`(?i)(["']?[^\s=:]*?(?:phonenumber|phone|mobile|telephone|手机号|电话号码|电话|工资|薪资|月薪|salary|income)[^\s=:]*?["']?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|\[[^\]]*\]|[^\s,;}\]]+)`), `${1}` + credentialPlaceholder},
+
 	// Any assignment whose field name identifies a token or credential. This
 	// also catches custom names such as CUSTOM_SESSION_TOKEN and JSON fields.
 	{regexp.MustCompile(`(?i)(["']?[A-Za-z0-9_.-]*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|private[_-]?key|credential|database_url|db_url|redis_url)[A-Za-z0-9_.-]*["']?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|\[[^\]]*\]|[^\s,;}\]]+)`), `${1}` + credentialPlaceholder},
@@ -82,7 +89,7 @@ var patterns = []secretPattern{
 	{regexp.MustCompile(`(?i)((?:payment[_ -]?pin|card[_ -]?pin|cvv2?|cvc2?|otp|one[_ -]?time[_ -]?password|verification[_ -]?code|recovery[_ -]?code|支付密码|交易密码|银行卡密码|信用卡密码|解锁密码|锁屏密码)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}\]]+)`), `${1}` + credentialPlaceholder},
 }
 
-var secretFieldNamePattern = regexp.MustCompile(`(?i)(?:token|secret|password|passwd|api[_-]?key|apikey|access[_-]?key|private[_-]?key|credential|authorization|payment[_-]?pin|card[_-]?pin|cvv|cvc|otp|verification[_-]?code|recovery[_-]?code)`)
+var secretFieldNamePattern = regexp.MustCompile(`(?i)(?:token|secret|password|passwd|api[_-]?key|apikey|access[_-]?key|private[_-]?key|credential|authorization|payment[_-]?pin|card[_-]?pin|cvv|cvc|otp|verification[_-]?code|recovery[_-]?code|phonenumber|phone|mobile|telephone|手机号|电话号码|电话|工资|薪资|月薪|salary|income)`)
 
 // maxRedactDepth bounds the walk in redactValue. Tool inputs are decoded from
 // daemon-supplied JSON, so nesting depth is attacker-influenced; without a

@@ -119,3 +119,127 @@ func TestPrivacyInstructionNamesNonBypassableBoundary(t *testing.T) {
 		}
 	}
 }
+
+func TestDeniedFileAccessBlocksOutsideWorkspace(t *testing.T) {
+	t.Parallel()
+
+	workspace := "/Users/alice/soyoung-code/multica"
+	blocked := []string{
+		"cat /Users/alice/Documents/work/c.txt",
+		"cat ~/Documents/work/c.txt",
+		"find / -name c.txt",
+		"cat ../secrets.txt",
+		"cat /etc/passwd",
+	}
+	for _, command := range blocked {
+		if denied, _ := DeniedFileAccess(command, workspace); !denied {
+			t.Fatalf("expected out-of-workspace command to be denied: %q", command)
+		}
+	}
+
+	allowed := []string{
+		"git status",
+		"cat src/a.go",
+		"go test ./...",
+		"curl https://example.com/api",
+		"cat .env.example",
+	}
+	for _, command := range allowed {
+		if denied, reason := DeniedFileAccess(command, workspace); denied {
+			t.Fatalf("safe command denied: %q (%s)", command, reason)
+		}
+	}
+}
+
+func TestDeniedPathBlocksEscape(t *testing.T) {
+	t.Parallel()
+
+	workspace := "/tmp/repo"
+	if denied, _ := DeniedPath("/tmp/repo/src/a.go", workspace); denied {
+		t.Fatal("in-workspace path denied")
+	}
+	if denied, _ := DeniedPath("src/a.go", workspace); denied {
+		t.Fatal("relative in-workspace path denied")
+	}
+	if denied, _ := DeniedPath("/etc/passwd", workspace); !denied {
+		t.Fatal("out-of-workspace absolute path allowed")
+	}
+	if denied, _ := DeniedPath("../secret", workspace); !denied {
+		t.Fatal("parent-relative path allowed")
+	}
+}
+
+func TestDeniedFileRequestFindsNestedOutsidePath(t *testing.T) {
+	t.Parallel()
+
+	raw := json.RawMessage(`{"tool":{"name":"shell","arguments":{"command":["zsh","-lc","cat /Users/alice/Documents/work/c.txt"]}}}`)
+	if denied, _ := DeniedFileRequest(raw, "/Users/alice/soyoung-code/multica"); !denied {
+		t.Fatal("expected nested out-of-workspace command to be denied")
+	}
+}
+
+func TestClampFileSystemScopeToWorkspace(t *testing.T) {
+	t.Parallel()
+
+	workspace := "/tmp/repo"
+	read := []string{"/", "/tmp/repo", "/Users/alice/Documents/work"}
+	write := []string{"/tmp/repo", "/etc"}
+	cr, cw := ClampFileSystemScope(read, write, workspace)
+	if len(cr) != 1 || cr[0] != workspace {
+		t.Fatalf("read clamped to %#v, want [%s]", cr, workspace)
+	}
+	if len(cw) != 1 || cw[0] != workspace {
+		t.Fatalf("write clamped to %#v, want [%s]", cw, workspace)
+	}
+	if denied, _ := DeniedPath("/tmp/repo/sub", workspace); denied {
+		t.Fatal("subdirectory of workspace denied")
+	}
+}
+
+func TestDeniedFileAccessBlocksShellExpansionEscapes(t *testing.T) {
+	t.Parallel()
+
+	workspace := "/tmp/repo"
+	blocked := []string{
+		"cat $HOME/Documents/work/c.txt",
+		"cat ${HOME}/Documents/work/c.txt",
+		"ls $HOME",
+		"FOO=$HOME/.ssh/id_rsa; cat \"$FOO\"",
+		"FOO=/etc/passwd; cat \"$FOO\"",
+		"cat $PWD/../secret.txt",
+	}
+	for _, command := range blocked {
+		if denied, _ := DeniedFileAccess(command, workspace); !denied {
+			t.Fatalf("expected shell-expansion escape to be denied: %q", command)
+		}
+	}
+
+	allowed := []string{
+		"echo $PATH",
+		"echo ${PATH}",
+		"git status",
+		"cat src/a.go",
+	}
+	for _, command := range allowed {
+		if denied, reason := DeniedFileAccess(command, workspace); denied {
+			t.Fatalf("safe command denied: %q (%s)", command, reason)
+		}
+	}
+}
+
+func TestClampFileSystemScopeDropsBareGlobs(t *testing.T) {
+	t.Parallel()
+
+	workspace := "/tmp/repo"
+	read := []string{"/", "**", "*", "**/*", "packages/**", workspace}
+	cr, _ := ClampFileSystemScope(read, nil, workspace)
+	want := []string{"packages/**", workspace}
+	if len(cr) != len(want) {
+		t.Fatalf("read clamped to %#v, want %#v", cr, want)
+	}
+	for i := range want {
+		if cr[i] != want[i] {
+			t.Fatalf("read clamped to %#v, want %#v", cr, want)
+		}
+	}
+}
