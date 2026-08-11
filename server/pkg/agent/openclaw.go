@@ -281,6 +281,26 @@ func customArgsContains(args []string, flag string) bool {
 	return false
 }
 
+// ResolveOpenclawAgentID returns the registered agent ID selected by the same
+// model/custom-arg precedence used by buildOpenclawArgs.
+func ResolveOpenclawAgentID(model string, customArgs []string) string {
+	selected := strings.TrimSpace(model)
+	for i := 0; i < len(customArgs); i++ {
+		arg := unshellQuoteArg(customArgs[i])
+		switch {
+		case arg == "--agent":
+			if i+1 >= len(customArgs) {
+				return ""
+			}
+			selected = strings.TrimSpace(unshellQuoteArg(customArgs[i+1]))
+			i++
+		case strings.HasPrefix(arg, "--agent="):
+			selected = strings.TrimSpace(strings.TrimPrefix(arg, "--agent="))
+		}
+	}
+	return selected
+}
+
 // checkOpenclawVersion runs `<execPath> --version` and returns a
 // user-facing error when the installed openclaw is older than
 // minOpenclawVersion. The returned error becomes the task's failure
