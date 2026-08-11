@@ -53,6 +53,11 @@ Common base: `bfd95597ce594717afef1235a38fb7a5c5f5d8a8`
   - `GET /api/design-drafts/{id}`;
   - `POST /api/design-drafts/{id}/materialize`.
 - Removed the local `generation_mode` cast in `designs-page.tsx`.
+- Restored read-only semantic draft detail support:
+  - semantic drafts render `compiled_native_json` directly;
+  - the page shows `PageSpec`, compile quality, version, and blueprint metadata;
+  - template preview loading is skipped for semantic drafts;
+  - approve/reject/revise actions remain unported.
 
 ## Candidate Next Slice
 

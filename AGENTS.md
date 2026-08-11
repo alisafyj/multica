@@ -93,6 +93,6 @@ This project is indexed by GitNexus as **multica** (33203 symbols, 98167 relatio
 
 ## 当前任务状态（会话交接 - 每次会话结束更新）
 
-- **做了什么**: 已从 `codex/feature-fengchen-dirty-recovery-20260810` 抽出设计模块差异清单 `.codex-handoff/RECOVERY-EXTRACTION-2026-08-11-DESIGN.md`，并移植语义设计草稿的只读元数据类型/schema/API fallback；未合并 recovery 分支，未运行 Open Design Worker/Runtime
-- **做到哪**: Tab/项目设计体系创建工作区已在当前主线覆盖；本轮 focused 验证为 core typecheck、core api tests、designs-page tests、`git diff --check` 通过；`@multica/views typecheck` 仍仅剩既有 editor suggestion `signal` 噪音
+- **做了什么**: 已从 `codex/feature-fengchen-dirty-recovery-20260810` 抽出设计模块差异清单 `.codex-handoff/RECOVERY-EXTRACTION-2026-08-11-DESIGN.md`，并移植语义设计草稿只读元数据合约与详情页编译稿展示；未合并 recovery 分支，未运行 Open Design Worker/Runtime
+- **做到哪**: Tab/项目设计体系创建工作区已在当前主线覆盖；本轮 focused 验证为 core typecheck、core api tests、designs-page/design-draft-page tests、`git diff --check` 通过；`@multica/views typecheck` 仍仅剩既有 editor suggestion `signal` 噪音
 - **下一步**: 按清单继续判断是否需要恢复 PageSpec 设计草稿审核链（approve/reject/revise）；若恢复，先确认这是设计草稿历史流程而非 native project design-system Phase 1，再做 GitNexus impact
