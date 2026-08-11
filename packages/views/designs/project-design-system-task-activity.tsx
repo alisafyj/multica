@@ -143,7 +143,7 @@ export function ProjectDesignSystemTaskActivity({
   return (
     <section aria-label="智能体任务活动" className={compact ? "border-t py-5" : "border-b py-5"}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+        <div className="flex min-w-0 items-center gap-2 text-body font-medium">
           {canStop ? <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : null}
           <span>{taskStatusLabel(task.status)}</span>
         </div>
@@ -152,37 +152,37 @@ export function ProjectDesignSystemTaskActivity({
 
       <dl className={`mt-4 grid gap-4 ${compact ? "grid-cols-2" : "sm:grid-cols-4"}`}>
         <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">智能体</dt>
-          <dd className="mt-1 truncate text-sm font-medium">{agent?.name ?? "已选择智能体"}</dd>
+          <dt className="text-caption text-muted-foreground">智能体</dt>
+          <dd className="mt-1 truncate text-body font-medium">{agent?.name ?? "已选择智能体"}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted-foreground">开始时间</dt>
-          <dd className="mt-1 text-sm font-medium">{formatTime(task.started_at)}</dd>
+          <dt className="text-caption text-muted-foreground">开始时间</dt>
+          <dd className="mt-1 text-body font-medium">{formatTime(task.started_at)}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted-foreground">运行时长</dt>
-          <dd className="mt-1 text-sm font-medium">{evidence.elapsed === null ? "尚未开始" : formatDuration(evidence.elapsed)}</dd>
+          <dt className="text-caption text-muted-foreground">运行时长</dt>
+          <dd className="mt-1 text-body font-medium">{evidence.elapsed === null ? "尚未开始" : formatDuration(evidence.elapsed)}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted-foreground">最后活动</dt>
-          <dd className="mt-1 text-sm font-medium">{formatTime(evidence.latestActivity)}</dd>
+          <dt className="text-caption text-muted-foreground">最后活动</dt>
+          <dd className="mt-1 text-body font-medium">{formatTime(evidence.latestActivity)}</dd>
         </div>
       </dl>
 
       {task.status === "queued" ? (
-        <p className="mt-4 text-xs text-muted-foreground">任务已进入队列，智能体尚未接单。</p>
+        <p className="mt-4 text-caption text-muted-foreground">任务已进入队列，智能体尚未接单。</p>
       ) : null}
       {task.status === "waiting_local_directory" && task.wait_reason ? (
-        <p className="mt-4 text-xs text-muted-foreground">{task.wait_reason}</p>
+        <p className="mt-4 text-caption text-muted-foreground">{task.wait_reason}</p>
       ) : null}
       {evidence.stale ? (
-        <div role="alert" className="mt-4 flex items-start gap-2 border-l-2 border-amber-500 bg-amber-500/5 px-3 py-2 text-xs leading-5">
+        <div role="alert" className="mt-4 flex items-start gap-2 border-l-2 border-amber-500 bg-amber-500/5 px-3 py-2 text-caption leading-5">
           <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
           <span>超过 3 分钟没有新的活动，任务可能已停滞。</span>
         </div>
       ) : null}
       {cancelError ? (
-        <div role="alert" className="mt-4 border-l-2 border-destructive bg-destructive/5 px-3 py-2 text-xs text-destructive">
+        <div role="alert" className="mt-4 border-l-2 border-destructive bg-destructive/5 px-3 py-2 text-caption text-destructive">
           {cancelError}
         </div>
       ) : null}

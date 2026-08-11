@@ -11,6 +11,7 @@
  */
 import { Pressable, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTranslation } from "react-i18next";
 import type { Project } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
 import { ActorAvatar } from "@/components/ui/actor-avatar";
@@ -37,6 +38,7 @@ export function ProjectPropertiesSection({
   onPressPriority,
   onPressLead,
 }: Props) {
+  const { t } = useTranslation("projects");
   const { getName } = useActorLookup();
   const leadName =
     project.lead_type && project.lead_id
@@ -46,29 +48,29 @@ export function ProjectPropertiesSection({
   return (
     <View className="border-y border-border bg-background">
       <Row
-        label="Status"
+        label={t("properties.status")}
         onPress={onPressStatus}
         left={<ProjectStatusIcon status={project.status} size={16} />}
         right={
           <Text className="text-sm text-foreground">
-            {projectStatusLabel(project.status)}
+            {projectStatusLabel(t, project.status)}
           </Text>
         }
       />
       <Separator />
       <Row
-        label="Priority"
+        label={t("properties.priority")}
         onPress={onPressPriority}
         left={<ProjectPriorityIcon priority={project.priority} size={16} />}
         right={
           <Text className="text-sm text-foreground">
-            {projectPriorityLabel(project.priority)}
+            {projectPriorityLabel(t, project.priority)}
           </Text>
         }
       />
       <Separator />
       <Row
-        label="Lead"
+        label={t("properties.lead")}
         onPress={onPressLead}
         left={
           leadName ? (
@@ -90,7 +92,7 @@ export function ProjectPropertiesSection({
                 : "text-sm text-muted-foreground"
             }
           >
-            {leadName ?? "Unassigned"}
+            {leadName ?? t("properties.unassigned")}
           </Text>
         }
       />

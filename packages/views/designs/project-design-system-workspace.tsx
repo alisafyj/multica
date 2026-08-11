@@ -43,10 +43,10 @@ function ProjectDesignSystemTaskStatus({
             <LoaderCircle className="h-4 w-4 animate-spin" />
           </span>
           <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold">
+            <h2 className="text-title-sm font-semibold">
               {isRepositoryAnalysis ? "正在分析项目仓库" : "正在生成设计体系"}
             </h2>
-            <p className="mt-1 text-sm text-muted-foreground">{project.title}</p>
+            <p className="mt-1 text-body text-muted-foreground">{project.title}</p>
           </div>
         </div>
         <ProjectDesignSystemTaskActivity system={system} agents={agents} />

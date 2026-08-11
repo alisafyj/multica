@@ -25,6 +25,457 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+func (h *Handler) updateIssueStatusAndPublish(ctx context.Context, issueID, workspaceID pgtype.UUID, status, actorType, actorID string) error {
+	updated, err := h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{ID: issueID, Status: status, WorkspaceID: workspaceID})
+	if err != nil {
+		return err
+	}
+	h.publish(protocol.EventIssueUpdated, uuidToString(workspaceID), actorType, actorID, map[string]any{
+		"issue":          issueToResponse(updated, h.getIssuePrefix(ctx, workspaceID)),
+		"status_changed": true,
+	})
+	return nil
+}
+
+func (h *Handler) uiDesignRestoreCompleted(ctx context.Context, issue db.Issue) bool {
+	tasks, err := h.Queries.ListDesignRestoreTasks(ctx, issue.WorkspaceID)
+	if err != nil {
+		return false
+	}
+	for _, task := range tasks {
+		if task.IssueID.Valid && task.IssueID == issue.ID && task.Status == "completed" {
+			return true
+		}
+	}
+	return false
+}
+
+func designRestoreAgentLabelFromInput(input json.RawMessage) string {
+	var payload struct {
+		Purpose string `json:"purpose"`
+	}
+	if err := json.Unmarshal(input, &payload); err == nil && strings.TrimSpace(payload.Purpose) == "ui_generation" {
+		return "UI Agent"
+	}
+	return "前端 Agent"
+}
+
+func (h *Handler) canCompleteUIDesignIssue(ctx context.Context, issue db.Issue, nextStatus string) bool {
+	if issue.Status == "done" || nextStatus != "done" || !isUIDesignIssue(issue) {
+		return true
+	}
+	return h.uiDesignDelivered(ctx, issue)
+}
+
+type designRestoreResultSummary struct {
+	Status                   string                     `json:"status"`
+	Summary                  string                     `json:"summary"`
+	Files                    []string                   `json:"files"`
+	Checks                   []string                   `json:"checks"`
+	Blockers                 []string                   `json:"blockers"`
+	RestoreMapping           []map[string]any           `json:"restoreMapping"`
+	UsedLayerIDs             []string                   `json:"usedLayerIds"`
+	UsedAssetIDs             []string                   `json:"usedAssetIds"`
+	UsedFullFramePreview     bool                       `json:"usedFullFramePreview"`
+	PolicyViolation          string                     `json:"policyViolation"`
+	ArtifactDocPath          string                     `json:"artifactDocPath,omitempty"`
+	VisualFidelityScore      *float64                   `json:"visualFidelityScore,omitempty"`
+	VisualReview             *designRestoreVisualReview `json:"visualReview,omitempty"`
+	ImplementedRoute         string                     `json:"implementedRoute,omitempty"`
+	DesignScreenshot         string                     `json:"designScreenshot,omitempty"`
+	ImplementationScreenshot string                     `json:"implementationScreenshot,omitempty"`
+	ComparisonScreenshot     string                     `json:"comparisonScreenshot,omitempty"`
+	RemainingDiffs           []string                   `json:"remainingDiffs,omitempty"`
+	Notes                    string                     `json:"notes,omitempty"`
+}
+
+type designRestoreVisualReview struct {
+	ImplementedRoute         string   `json:"implementedRoute,omitempty"`
+	DesignScreenshot         string   `json:"designScreenshot,omitempty"`
+	ImplementationScreenshot string   `json:"implementationScreenshot,omitempty"`
+	ComparisonScreenshot     string   `json:"comparisonScreenshot,omitempty"`
+	RemainingDiffs           []string `json:"remainingDiffs,omitempty"`
+	Notes                    string   `json:"notes,omitempty"`
+}
+
+func (s *designRestoreResultSummary) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	restoreMappingRaw := fields["restoreMapping"]
+	delete(fields, "restoreMapping")
+	rest, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	type summaryNoMethods designRestoreResultSummary
+	var base summaryNoMethods
+	if err := json.Unmarshal(rest, &base); err != nil {
+		return err
+	}
+	*s = designRestoreResultSummary(base)
+	if len(restoreMappingRaw) == 0 || string(restoreMappingRaw) == "null" {
+		return nil
+	}
+	var objectMapping []map[string]any
+	if err := json.Unmarshal(restoreMappingRaw, &objectMapping); err == nil {
+		s.RestoreMapping = objectMapping
+		return nil
+	}
+	var stringMapping []string
+	if err := json.Unmarshal(restoreMappingRaw, &stringMapping); err == nil {
+		s.RestoreMapping = make([]map[string]any, 0, len(stringMapping))
+		for _, item := range stringMapping {
+			if mapping := designRestoreMappingFromString(item); len(mapping) > 0 {
+				s.RestoreMapping = append(s.RestoreMapping, mapping)
+			}
+		}
+	}
+	return nil
+}
+
+func designRestoreMappingFromString(value string) map[string]any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	mapping := map[string]any{
+		"description": value,
+		"targetKind":  "unknown",
+	}
+	for _, sep := range []string{"->", "→", "=>"} {
+		parts := strings.SplitN(value, sep, 2)
+		if len(parts) != 2 {
+			continue
+		}
+		source := strings.TrimSpace(parts[0])
+		target := strings.TrimSpace(parts[1])
+		if source != "" {
+			mapping["sourceLayerId"] = source
+			mapping["layerId"] = source
+		}
+		if target != "" {
+			mapping["targetPath"] = target
+		}
+		break
+	}
+	return mapping
+}
+
+func parseDesignRestoreResultSummary(output string) designRestoreResultSummary {
+	const marker = "RESTORE_RESULT_JSON:"
+	idx := strings.LastIndex(output, marker)
+	if idx < 0 {
+		return designRestoreResultSummary{}
+	}
+	candidate := strings.TrimSpace(output[idx+len(marker):])
+	if strings.HasPrefix(candidate, "```") {
+		candidate = strings.TrimPrefix(candidate, "```")
+		candidate = strings.TrimPrefix(strings.TrimSpace(candidate), "json")
+		if end := strings.Index(candidate, "```"); end >= 0 {
+			candidate = candidate[:end]
+		}
+	}
+	start := strings.Index(candidate, "{")
+	end := strings.LastIndex(candidate, "}")
+	if start < 0 || end < start {
+		return designRestoreResultSummary{}
+	}
+	var summary designRestoreResultSummary
+	if err := json.Unmarshal([]byte(candidate[start:end+1]), &summary); err != nil {
+		return designRestoreResultSummary{}
+	}
+	summary.Status = strings.ToLower(strings.TrimSpace(summary.Status))
+	return summary
+}
+
+func designRestoreFullFramePreviewViolation(ctx service.DesignRestoreTaskContext, output string) string {
+	if len(ctx.RestorePolicy) == 0 || !strings.Contains(string(ctx.RestorePolicy), `"allowFullFramePreview":false`) {
+		return ""
+	}
+	forbidden := designRestoreForbiddenFullFrameAssetIDs(ctx.ItemContexts)
+	if len(forbidden) == 0 {
+		return ""
+	}
+	lowerOutput := strings.ToLower(output)
+	for _, id := range forbidden {
+		if strings.Contains(lowerOutput, strings.ToLower(id)) {
+			return "full_frame_preview_forbidden: " + id
+		}
+	}
+	if strings.Contains(lowerOutput, "usedfullframepreview: true") || strings.Contains(lowerOutput, `"usedfullframepreview":true`) {
+		return "full_frame_preview_forbidden"
+	}
+	return ""
+}
+
+func designRestorePolicyViolation(ctx service.DesignRestoreTaskContext, output string, summary designRestoreResultSummary) string {
+	if strings.TrimSpace(summary.PolicyViolation) != "" {
+		return strings.TrimSpace(summary.PolicyViolation)
+	}
+	if summary.UsedFullFramePreview {
+		return "full_frame_preview_forbidden"
+	}
+	if len(summary.UsedAssetIDs) > 0 {
+		forbidden := designRestoreForbiddenFullFrameAssetIDs(ctx.ItemContexts)
+		forbiddenSet := make(map[string]bool, len(forbidden))
+		for _, id := range forbidden {
+			forbiddenSet[strings.ToLower(id)] = true
+		}
+		for _, id := range summary.UsedAssetIDs {
+			if forbiddenSet[strings.ToLower(strings.TrimSpace(id))] {
+				return "full_frame_preview_forbidden: " + id
+			}
+		}
+	}
+	if len(ctx.RestorePolicy) > 0 {
+		if summary.Status == "" {
+			return "missing_restore_result_json"
+		}
+		if summary.Status == "completed" {
+			switch {
+			case len(summary.Files) == 0:
+				return "completed_result_missing_files"
+			case len(summary.RestoreMapping) == 0:
+				return "completed_result_missing_restore_mapping"
+			case len(summary.UsedLayerIDs) == 0:
+				return "completed_result_missing_used_layer_ids"
+			case designRestoreContextPurpose(ctx) == "ui_generation" && strings.TrimSpace(summary.ArtifactDocPath) == "":
+				return "completed_result_missing_artifact_doc_path"
+			}
+		}
+		if summary.Status == "blocked" && len(summary.Blockers) == 0 {
+			return "blocked_result_missing_blockers"
+		}
+	}
+	return designRestoreFullFramePreviewViolation(ctx, output)
+}
+
+func designRestoreContextPurpose(ctx service.DesignRestoreTaskContext) string {
+	var payload struct {
+		Purpose string `json:"purpose"`
+	}
+	if err := json.Unmarshal(ctx.Input, &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Purpose)
+}
+
+func designRestoreForbiddenFullFrameAssetIDs(itemContexts json.RawMessage) []string {
+	if len(itemContexts) == 0 {
+		return nil
+	}
+	var items []struct {
+		Context struct {
+			Frame struct {
+				Width  float64 `json:"width"`
+				Height float64 `json:"height"`
+			} `json:"frame"`
+			Assets map[string]struct {
+				ID     string  `json:"id"`
+				Kind   string  `json:"kind"`
+				Width  float64 `json:"width"`
+				Height float64 `json:"height"`
+			} `json:"assets"`
+		} `json:"context"`
+	}
+	if err := json.Unmarshal(itemContexts, &items); err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var ids []string
+	for _, item := range items {
+		for key, asset := range item.Context.Assets {
+			id := asset.ID
+			if strings.TrimSpace(id) == "" {
+				id = key
+			}
+			kind := strings.ToLower(asset.Kind)
+			isFrameAsset := kind == "frame_preview" || kind == "frame_thumbnail"
+			isFullFrameSlice := kind == "slice" && item.Context.Frame.Width > 0 && item.Context.Frame.Height > 0 && asset.Width == item.Context.Frame.Width && asset.Height == item.Context.Frame.Height
+			if (isFrameAsset || isFullFrameSlice) && id != "" && !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
+}
+
+func designRestoreCompletionComment(agentLabel, status, policyViolation, policyWarning string, summary designRestoreResultSummary) string {
+	var b strings.Builder
+	if status == "completed" {
+		b.WriteString(agentLabel)
+		b.WriteString(" 已完成设计稿还原。")
+	} else {
+		b.WriteString(agentLabel)
+		b.WriteString(" 设计稿还原未完成，需要处理。")
+	}
+	if summary.Summary != "" {
+		b.WriteString("\n\n摘要：")
+		b.WriteString(summary.Summary)
+	}
+	if len(summary.Files) > 0 {
+		b.WriteString("\n\n变更文件：")
+		for _, file := range summary.Files {
+			b.WriteString("\n- `")
+			b.WriteString(file)
+			b.WriteString("`")
+		}
+	}
+	if len(summary.Checks) > 0 {
+		b.WriteString("\n\n检查：")
+		for _, check := range summary.Checks {
+			b.WriteString("\n- `")
+			b.WriteString(check)
+			b.WriteString("`")
+		}
+	}
+	if len(summary.Blockers) > 0 {
+		b.WriteString("\n\n阻塞项：")
+		for _, blocker := range summary.Blockers {
+			b.WriteString("\n- ")
+			b.WriteString(blocker)
+		}
+	}
+	if len(summary.RestoreMapping) > 0 {
+		b.WriteString(fmt.Sprintf("\n\nRestore Mapping：%d 条", len(summary.RestoreMapping)))
+	}
+	if policyViolation == "" {
+		policyViolation = "无"
+	}
+	b.WriteString("\n\n策略违规：")
+	b.WriteString(policyViolation)
+	if policyWarning != "" {
+		b.WriteString("\n策略警告：")
+		b.WriteString(policyWarning)
+	}
+	b.WriteString("\n整图 preview：")
+	if summary.UsedFullFramePreview {
+		b.WriteString("已使用")
+	} else {
+		b.WriteString("未使用")
+	}
+	return b.String()
+}
+
+func designRestoreMappingFields(mapping map[string]any) (layerID, targetPath, targetKind string) {
+	layerID = firstNonEmptyString(mapping, "layerId", "layer_id", "sourceLayerId", "source_layer_id", "sketchId", "sketch_id", "source")
+	targetPath = firstNonEmptyString(mapping, "targetPath", "target_path", "targetFile", "target_file", "file", "path", "target")
+	targetKind = firstNonEmptyString(mapping, "targetKind", "target_kind", "kind")
+	if targetKind == "" && firstNonEmptyString(mapping, "targetFile", "target_file", "file", "path") != "" {
+		targetKind = "file"
+	}
+	if !validDesignRestoreTargetKind(targetKind) {
+		targetKind = "unknown"
+	}
+	return
+}
+
+func firstNonEmptyString(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := values[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func validDesignRestoreTargetKind(kind string) bool {
+	switch kind {
+	case "component", "file", "symbol", "route", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func float32FromAny(value any, fallback float32) float32 {
+	switch v := value.(type) {
+	case float64:
+		if v >= 0 && v <= 1 {
+			return float32(v)
+		}
+	case float32:
+		if v >= 0 && v <= 1 {
+			return v
+		}
+	case int:
+		if v >= 0 && v <= 1 {
+			return float32(v)
+		}
+	}
+	return fallback
+}
+
+func designRestorePolicyWarning(ctx service.DesignRestoreTaskContext, summary designRestoreResultSummary) string {
+	if len(ctx.RestorePolicy) > 0 && summary.Status == "" {
+		return "missing_restore_result_json"
+	}
+	return ""
+}
+
+func (h *Handler) advanceIssueAfterDesignRestoreCompletion(ctx context.Context, task db.DesignRestoreTask, status string) error {
+	if !task.IssueID.Valid {
+		return nil
+	}
+	issue, err := h.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		return err
+	}
+	if issue.Status == "done" || issue.Status == "cancelled" {
+		return nil
+	}
+	nextStatus := "in_review"
+	if status == "completed" && isUIDesignIssue(issue) {
+		nextStatus = "done"
+	} else if status != "completed" {
+		nextStatus = "blocked"
+	}
+	if err := h.updateIssueStatusAndPublish(ctx, issue.ID, issue.WorkspaceID, nextStatus, "system", ""); err != nil {
+		return err
+	}
+	if nextStatus == "done" && issue.ParentIssueID.Valid {
+		if parent, err := h.Queries.GetIssue(ctx, issue.ParentIssueID); err == nil {
+			h.promoteFrontendSiblingsAfterDesignDone(ctx, issue, parent)
+		}
+	}
+	return nil
+}
+
+func (h *Handler) replaceDesignRestoreMappingsFromSummary(ctx context.Context, task db.DesignRestoreTask, summary designRestoreResultSummary) error {
+	if err := h.Queries.DeleteDesignRestoreMappingsByTask(ctx, db.DeleteDesignRestoreMappingsByTaskParams{RestoreTaskID: task.ID, WorkspaceID: task.WorkspaceID}); err != nil {
+		return err
+	}
+	for _, item := range summary.RestoreMapping {
+		layerID, targetPath, targetKind := designRestoreMappingFields(item)
+		if layerID == "" || targetPath == "" {
+			continue
+		}
+		confidence := float32(0.8)
+		if value, ok := item["confidence"]; ok {
+			confidence = float32FromAny(value, confidence)
+		}
+		metadata, err := json.Marshal(item)
+		if err != nil {
+			metadata = []byte(`{}`)
+		}
+		if _, err := h.Queries.CreateDesignRestoreMapping(ctx, db.CreateDesignRestoreMappingParams{
+			RestoreTaskID: task.ID,
+			WorkspaceID:   task.WorkspaceID,
+			LayerID:       layerID,
+			TargetPath:    targetPath,
+			TargetKind:    targetKind,
+			Confidence:    confidence,
+			Metadata:      metadata,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type DesignFileResponse struct {
 	ID                string          `json:"id"`
 	WorkspaceID       string          `json:"workspace_id"`
@@ -1473,6 +1924,81 @@ func (h *Handler) CreateDesignFolder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, designFolderToResponse(folder))
 }
 
+func designRevisionIDs(revisions []db.DesignRevision) []pgtype.UUID {
+	ids := make([]pgtype.UUID, len(revisions))
+	for i, revision := range revisions {
+		ids[i] = revision.ID
+	}
+	return ids
+}
+
+func designRevisionDeletionRestricted(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID, revisionIDs []pgtype.UUID) (bool, error) {
+	if len(revisionIDs) == 0 {
+		return false, nil
+	}
+	return queries.DesignRevisionsHaveProtectedReferences(ctx, db.DesignRevisionsHaveProtectedReferencesParams{
+		TargetWorkspaceID: workspaceID,
+		RevisionIds:       revisionIDs,
+	})
+}
+
+func cleanupDesignRevisionDeletion(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID, revisionIDs []pgtype.UUID) error {
+	if len(revisionIDs) == 0 {
+		return nil
+	}
+	if err := queries.DetachDesignAssetRevisionReferences(ctx, db.DetachDesignAssetRevisionReferencesParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs}); err != nil {
+		return err
+	}
+	if err := queries.DetachDesignDraftRevisionReferences(ctx, db.DetachDesignDraftRevisionReferencesParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignRestoreMappingsByRevisions(ctx, db.DeleteDesignRestoreMappingsByRevisionsParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignRestorePlansByRevisions(ctx, db.DeleteDesignRestorePlansByRevisionsParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignRestoreTasksByRevisions(ctx, db.DeleteDesignRestoreTasksByRevisionsParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignDeliveriesByRevisions(ctx, db.DeleteDesignDeliveriesByRevisionsParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignSystemProfilesByRevisions(ctx, db.DeleteDesignSystemProfilesByRevisionsParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs}); err != nil {
+		return err
+	}
+	return queries.DeleteDesignRevisionsByIDs(ctx, db.DeleteDesignRevisionsByIDsParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs})
+}
+
+func cleanupDesignFileDeletion(ctx context.Context, queries *db.Queries, workspaceID, fileID pgtype.UUID) error {
+	params := db.DetachDesignDraftFileReferencesParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}
+	if err := queries.DetachDesignDraftFileReferences(ctx, params); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignRestoreMappingsByFile(ctx, db.DeleteDesignRestoreMappingsByFileParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignRestorePlansByFile(ctx, db.DeleteDesignRestorePlansByFileParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignRestoreTasksByFile(ctx, db.DeleteDesignRestoreTasksByFileParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignDeliveriesByFile(ctx, db.DeleteDesignDeliveriesByFileParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignSystemProfilesByFile(ctx, db.DeleteDesignSystemProfilesByFileParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignAssetsByFile(ctx, db.DeleteDesignAssetsByFileParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignRevisionsByFile(ctx, db.DeleteDesignRevisionsByFileParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}); err != nil {
+		return err
+	}
+	return queries.DeleteDesignFile(ctx, db.DeleteDesignFileParams{ID: fileID, WorkspaceID: workspaceID})
+}
+
 func (h *Handler) DeleteDesignFolder(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -1489,15 +2015,53 @@ func (h *Handler) DeleteDesignFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	if _, err := tx.Exec(r.Context(), `DELETE FROM design_file WHERE workspace_id = $1 AND folder_id = $2`, wsUUID, folderUUID); err != nil {
+	qtx := h.Queries.WithTx(tx)
+	if _, err := qtx.GetDesignFolderInWorkspaceForUpdate(r.Context(), db.GetDesignFolderInWorkspaceForUpdateParams{ID: folderUUID, WorkspaceID: wsUUID}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "design folder not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to delete design folder")
+		}
+		return
+	}
+	hasChildren, err := qtx.DesignFolderHasChildren(r.Context(), db.DesignFolderHasChildrenParams{WorkspaceID: wsUUID, ParentID: folderUUID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete design folder")
+		return
+	}
+	if hasChildren {
+		writeError(w, http.StatusConflict, "design folder has child folders")
+		return
+	}
+	files, err := qtx.ListDesignFilesInFolderForUpdate(r.Context(), db.ListDesignFilesInFolderForUpdateParams{WorkspaceID: wsUUID, FolderID: folderUUID})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete designs in folder")
 		return
 	}
-	if tag, err := tx.Exec(r.Context(), `DELETE FROM design_folder WHERE workspace_id = $1 AND id = $2`, wsUUID, folderUUID); err != nil {
+	for _, file := range files {
+		revisions, err := qtx.ListDesignRevisionsInFileForUpdate(r.Context(), db.ListDesignRevisionsInFileForUpdateParams{FileID: file.ID, WorkspaceID: wsUUID})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete designs in folder")
+			return
+		}
+		restricted, err := designRevisionDeletionRestricted(r.Context(), qtx, wsUUID, designRevisionIDs(revisions))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete designs in folder")
+			return
+		}
+		if restricted {
+			writeError(w, http.StatusConflict, "design revision is in use")
+			return
+		}
+	}
+	for _, file := range files {
+		if err := cleanupDesignFileDeletion(r.Context(), qtx, wsUUID, file.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete designs in folder")
+			return
+		}
+	}
+	if _, err := tx.Exec(r.Context(), `DELETE FROM design_folder WHERE workspace_id = $1 AND id = $2`, wsUUID, folderUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete design folder")
-		return
-	} else if tag.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "design folder not found")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -2206,11 +2770,40 @@ func (h *Handler) DeleteDesignFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := h.Queries.GetDesignFileInWorkspace(r.Context(), db.GetDesignFileInWorkspaceParams{ID: idUUID, WorkspaceID: wsUUID}); err != nil {
-		writeError(w, http.StatusNotFound, "design file not found")
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete design file")
 		return
 	}
-	if err := h.Queries.DeleteDesignFile(r.Context(), db.DeleteDesignFileParams{ID: idUUID, WorkspaceID: wsUUID}); err != nil {
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if _, err := qtx.GetDesignFileInWorkspaceForUpdate(r.Context(), db.GetDesignFileInWorkspaceForUpdateParams{ID: idUUID, WorkspaceID: wsUUID}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "design file not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to delete design file")
+		}
+		return
+	}
+	revisions, err := qtx.ListDesignRevisionsInFileForUpdate(r.Context(), db.ListDesignRevisionsInFileForUpdateParams{FileID: idUUID, WorkspaceID: wsUUID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete design file")
+		return
+	}
+	restricted, err := designRevisionDeletionRestricted(r.Context(), qtx, wsUUID, designRevisionIDs(revisions))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete design file")
+		return
+	}
+	if restricted {
+		writeError(w, http.StatusConflict, "design revision is in use")
+		return
+	}
+	if err := cleanupDesignFileDeletion(r.Context(), qtx, wsUUID, idUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete design file")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete design file")
 		return
 	}
@@ -4350,26 +4943,32 @@ func (h *Handler) DeleteDesignFrame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "frame id is required")
 		return
 	}
-	file, err := h.Queries.GetDesignFileInWorkspace(r.Context(), db.GetDesignFileInWorkspaceParams{ID: idUUID, WorkspaceID: wsUUID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "design file not found")
-		return
-	}
-	revisions, err := h.Queries.ListDesignRevisionsWithNativeJSON(r.Context(), file.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list design revisions")
-		return
-	}
-	targetSource := designFrameSourceNodeID(revisions, frameID)
-
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete design frame")
 		return
 	}
 	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	file, err := qtx.GetDesignFileInWorkspaceForUpdate(r.Context(), db.GetDesignFileInWorkspaceForUpdateParams{ID: idUUID, WorkspaceID: wsUUID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "design file not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to delete design frame")
+		}
+		return
+	}
+	revisions, err := qtx.ListDesignRevisionsInFileForUpdate(r.Context(), db.ListDesignRevisionsInFileForUpdateParams{FileID: file.ID, WorkspaceID: wsUUID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list design revisions")
+		return
+	}
+	targetSource := designFrameSourceNodeID(revisions, frameID)
 
 	remaining := make([]db.DesignRevision, 0, len(revisions))
+	updates := make([]db.DesignRevision, 0, len(revisions))
+	deletedRevisionIDs := make([]pgtype.UUID, 0, len(revisions))
 	deletedAny := false
 	for _, revision := range revisions {
 		next, changed, empty, err := removeFrameFromNativeJSON(revision.NativeJson, frameID, targetSource)
@@ -4383,29 +4982,42 @@ func (h *Handler) DeleteDesignFrame(w http.ResponseWriter, r *http.Request) {
 		}
 		deletedAny = true
 		if empty {
-			if _, err := tx.Exec(r.Context(), `DELETE FROM design_revision WHERE id = $1 AND workspace_id = $2`, revision.ID, wsUUID); err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to delete empty design revision")
-				return
-			}
+			deletedRevisionIDs = append(deletedRevisionIDs, revision.ID)
 			continue
 		}
-		if _, err := tx.Exec(r.Context(), `UPDATE design_revision SET native_json = $1 WHERE id = $2 AND workspace_id = $3`, next, revision.ID, wsUUID); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update design revision")
-			return
-		}
 		revision.NativeJson = next
+		updates = append(updates, revision)
 		remaining = append(remaining, revision)
 	}
 	if !deletedAny {
 		writeError(w, http.StatusNotFound, "design frame not found")
 		return
 	}
+	restricted, err := designRevisionDeletionRestricted(r.Context(), qtx, wsUUID, deletedRevisionIDs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete design frame")
+		return
+	}
+	if restricted {
+		writeError(w, http.StatusConflict, "design revision is in use")
+		return
+	}
 	if len(remaining) == 0 {
-		if _, err := tx.Exec(r.Context(), `DELETE FROM design_file WHERE id = $1 AND workspace_id = $2`, file.ID, wsUUID); err != nil {
+		if err := cleanupDesignFileDeletion(r.Context(), qtx, wsUUID, file.ID); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to delete design file")
 			return
 		}
 	} else {
+		if err := cleanupDesignRevisionDeletion(r.Context(), qtx, wsUUID, deletedRevisionIDs); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete empty design revision")
+			return
+		}
+		for _, revision := range updates {
+			if _, err := tx.Exec(r.Context(), `UPDATE design_revision SET native_json = $1 WHERE id = $2 AND workspace_id = $3`, revision.NativeJson, revision.ID, wsUUID); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to update design revision")
+				return
+			}
+		}
 		sort.Slice(remaining, func(i, j int) bool { return remaining[i].RevisionNumber > remaining[j].RevisionNumber })
 		if _, err := tx.Exec(r.Context(), `UPDATE design_file SET current_revision_id = $3, updated_at = now() WHERE id = $1 AND workspace_id = $2`, file.ID, wsUUID, remaining[0].ID); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to update design file")

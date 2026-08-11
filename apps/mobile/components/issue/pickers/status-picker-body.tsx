@@ -11,10 +11,11 @@
 import { Pressable, ScrollView, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useColorScheme } from "nativewind";
+import { useTranslation } from "react-i18next";
 import type { IssueStatus } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
 import { StatusIcon } from "@/components/ui/status-icon";
-import { BOARD_STATUSES, STATUS_LABEL } from "@/lib/issue-status";
+import { BOARD_STATUSES, issueStatusLabel } from "@/lib/issue-status";
 import { THEME } from "@/lib/theme";
 
 const ALL_STATUSES: IssueStatus[] = [...BOARD_STATUSES, "cancelled"];
@@ -25,6 +26,7 @@ interface Props {
 }
 
 export function StatusPickerBody({ value, onChange }: Props) {
+  const { t } = useTranslation("issues");
   const { colorScheme } = useColorScheme();
   const checkColor =
     colorScheme === "dark" ? THEME.dark.primary : THEME.light.primary;
@@ -32,7 +34,9 @@ export function StatusPickerBody({ value, onChange }: Props) {
   return (
     <ScrollView showsVerticalScrollIndicator={false}>
       <View className="px-4 pt-3 pb-2">
-        <Text className="text-lg font-semibold text-foreground">Status</Text>
+        <Text className="text-lg font-semibold text-foreground">
+          {t("picker_body.status.title")}
+        </Text>
       </View>
       <View className="px-2">
         {ALL_STATUSES.map((status) => {
@@ -45,7 +49,7 @@ export function StatusPickerBody({ value, onChange }: Props) {
             >
               <StatusIcon status={status} size={18} />
               <Text className="flex-1 text-base text-foreground">
-                {STATUS_LABEL[status]}
+                {issueStatusLabel(t, status)}
               </Text>
               {selected ? (
                 <Ionicons name="checkmark" size={20} color={checkColor} />

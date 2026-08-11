@@ -21,6 +21,8 @@ export interface GitHubAsset {
 export interface DownloadAssets {
   macArm64Dmg?: string;
   macArm64Zip?: string;
+  macX64Dmg?: string;
+  macX64Zip?: string;
   winX64Exe?: string;
   winArm64Exe?: string;
   linuxAmd64AppImage?: string;
@@ -29,10 +31,13 @@ export interface DownloadAssets {
   linuxArm64AppImage?: string;
   linuxArm64Deb?: string;
   linuxArm64Rpm?: string;
+  androidApk?: string;
 }
 
+const ANDROID_ARTIFACT_RE = /^multica-android-.+\.apk$/i;
+
 const DESKTOP_ARTIFACT_RE =
-  /^multica-desktop-[^-]+-(mac|windows|linux)-([a-z0-9_]+)\.(dmg|zip|exe|AppImage|deb|rpm)$/i;
+  /^multica-desktop-.+-(mac|windows|linux)-([a-z0-9_]+)\.(dmg|zip|exe|AppImage|deb|rpm)$/i;
 
 function normalizeLinuxArch(arch: string): "amd64" | "arm64" | null {
   const a = arch.toLowerCase();
@@ -52,6 +57,13 @@ export function parseReleaseAssets(raw: GitHubAsset[]): DownloadAssets {
     if (name.endsWith(".blockmap") || name.endsWith(".yml")) continue;
     if (name.startsWith("checksums")) continue;
 
+    // The Android APK shares the desktop release (see the android job in
+    // .github/workflows/fork-desktop-release.yml).
+    if (ANDROID_ARTIFACT_RE.test(name)) {
+      out.androidApk = asset.browser_download_url;
+      continue;
+    }
+
     const match = DESKTOP_ARTIFACT_RE.exec(name);
     if (!match) continue;
     const platform = match[1];
@@ -63,9 +75,13 @@ export function parseReleaseAssets(raw: GitHubAsset[]): DownloadAssets {
     const url = asset.browser_download_url;
 
     if (platform === "mac") {
-      if (archLower !== "arm64") continue; // we only ship arm64 today
-      if (extLower === "dmg") out.macArm64Dmg = url;
-      else if (extLower === "zip") out.macArm64Zip = url;
+      if (archLower === "arm64") {
+        if (extLower === "dmg") out.macArm64Dmg = url;
+        else if (extLower === "zip") out.macArm64Zip = url;
+      } else if (archLower === "x64") {
+        if (extLower === "dmg") out.macX64Dmg = url;
+        else if (extLower === "zip") out.macX64Zip = url;
+      }
     } else if (platform === "windows") {
       if (extLower !== "exe") continue;
       if (archLower === "x64") out.winX64Exe = url;

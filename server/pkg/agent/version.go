@@ -14,16 +14,57 @@ var MinVersions = map[string]string{
 	"claude":  "2.0.0",
 	"codex":   "0.100.0", // app-server --listen stdio:// added in 0.100.0
 	"copilot": "1.0.0",   // --output-format json envelope stable from 1.0.x
+	"grok":    "0.2.89",  // ACP + authenticate/session-load/set_model/MCP and --effort thinking flag
+	"qwen":    "0.20.0",  // stream-json protocol captured and verified against Qwen Code 0.20.0
 }
 
 // MinQuickCreateCLIVersion gates the agent-create (quick-create) flow against
 // the multica CLI version reported by the daemon at registration time. The
 // quick-create prompt that the agent runs depends on CLI behavior introduced
-// after this version (attachment URL handling, no-retry semantics on
-// `multica issue create` failure — see PR #1851); older daemons would either
-// double-create issues or mishandle pasted screenshot URLs. Treated as a hard
-// requirement: missing / unparsable / below this threshold all fail closed.
-const MinQuickCreateCLIVersion = "0.2.20"
+// after this version (attachment URL handling, quick-create attachment
+// binding, no-retry semantics on `multica issue create` failure — see PR
+// #1851); older daemons would either double-create issues or mishandle pasted
+// screenshot URLs. Treated as a hard requirement: missing / unparsable / below
+// this threshold all fail closed.
+const MinQuickCreateCLIVersion = "0.2.21"
+
+// MinQuickCreateFieldsCLIVersion is the first daemon release that carries
+// explicit quick-create priority and due-date fields from the claim response
+// into the generated issue-create prompt. Basic quick-create remains on the
+// older floor above; only requests using these optional fields need this gate.
+const MinQuickCreateFieldsCLIVersion = "0.4.3"
+
+// MinHandoffCLIVersion is the lowest multica CLI version whose daemon renders
+// the assignment handoff note into the run's opening prompt + issue_context.md
+// (MUL-3375). Unlike quick-create this is a SOFT gate: assigning an issue with
+// a note never fails on an old daemon — the assignment still takes effect, the
+// note is simply dropped. The frontend reads HandoffSupported to gray out the
+// note box and warn the user, so they aren't surprised by a silently ignored
+// note. Bump this to the release that actually ships the daemon rendering.
+const MinHandoffCLIVersion = "0.3.28"
+
+// HandoffSupported reports whether a daemon reporting cliVersion is new enough
+// to render handoff notes. Reuses the CheckMinCLIVersion parsing (including the
+// git-describe dev-build exemption) but never errors — a missing/old/unparsable
+// version simply means "not supported", which the soft gate degrades gracefully.
+func HandoffSupported(cliVersion string) bool {
+	d := strings.TrimSpace(cliVersion)
+	if d == "" {
+		return false
+	}
+	if devDescribeRe.MatchString(d) {
+		return true
+	}
+	parsed, err := parseSemver(d)
+	if err != nil {
+		return false
+	}
+	min, err := parseSemver(MinHandoffCLIVersion)
+	if err != nil {
+		return false
+	}
+	return !parsed.lessThan(min)
+}
 
 // Errors returned by CheckMinCLIVersion. Callers branch on these to surface
 // "needs upgrade" vs "version not reported" with the right user message.
@@ -49,6 +90,13 @@ var devDescribeRe = regexp.MustCompile(`^v?\d+\.\d+\.\d+-\d+-g[0-9a-fA-F]+`)
 // itself is the shared signal, so the modal pre-check and this server gate
 // agree by construction without needing to compare separate env flags.
 func CheckMinCLIVersion(detected string) error {
+	return CheckMinCLIVersionFor(detected, MinQuickCreateCLIVersion)
+}
+
+// CheckMinCLIVersionFor applies the quick-create version policy against a
+// caller-provided capability floor. It preserves the dev-build exemption so
+// feature-specific server and frontend gates agree with the base gate.
+func CheckMinCLIVersionFor(detected, minimum string) error {
 	d := strings.TrimSpace(detected)
 	if d == "" {
 		return ErrCLIVersionMissing
@@ -60,7 +108,7 @@ func CheckMinCLIVersion(detected string) error {
 	if err != nil {
 		return ErrCLIVersionMissing
 	}
-	min, err := parseSemver(MinQuickCreateCLIVersion)
+	min, err := parseSemver(minimum)
 	if err != nil {
 		// Misconfiguration in the constant itself — fail closed as missing.
 		return ErrCLIVersionMissing
@@ -103,8 +151,26 @@ func (v semver) lessThan(other semver) bool {
 	return v.Patch < other.Patch
 }
 
+// BelowMinimumError reports a version that parsed successfully and is below
+// the configured minimum. It is a distinct type so callers can tell a
+// CONFIRMED too-old verdict apart from "could not parse the version": only
+// the former is evidence strong enough to act on (taking a runtime offline),
+// while an unreadable version must be treated like any other failed
+// detection and leave working runtimes alone.
+type BelowMinimumError struct {
+	AgentType string
+	Detected  string
+	Minimum   string
+}
+
+func (e *BelowMinimumError) Error() string {
+	return fmt.Sprintf("%s version %s is below minimum required %s — please upgrade", e.AgentType, e.Detected, e.Minimum)
+}
+
 // CheckMinVersion validates that detectedVersion meets the minimum for agentType.
-// Returns nil if the version is acceptable or no minimum is defined.
+// Returns nil if the version is acceptable or no minimum is defined, a
+// *BelowMinimumError when the version parsed and is confirmed too old, and a
+// plain error when the version could not be parsed at all.
 func CheckMinVersion(agentType, detectedVersion string) error {
 	minRaw, ok := MinVersions[agentType]
 	if !ok {
@@ -119,7 +185,7 @@ func CheckMinVersion(agentType, detectedVersion string) error {
 		return fmt.Errorf("cannot parse detected %s version %q: %w", agentType, detectedVersion, err)
 	}
 	if detected.lessThan(min) {
-		return fmt.Errorf("%s version %s is below minimum required %s — please upgrade", agentType, detectedVersion, minRaw)
+		return &BelowMinimumError{AgentType: agentType, Detected: detectedVersion, Minimum: minRaw}
 	}
 	return nil
 }

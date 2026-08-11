@@ -162,16 +162,22 @@ describe("DesignsPage", () => {
 
     const homeTab = await screen.findByRole("tab", { name: "首页" });
     expect(homeTab).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel", { name: "首页" })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "首页" })).toBeEmptyDOMElement();
+    expect(screen.queryByText("工作区设计资产")).not.toBeInTheDocument();
+    expect(screen.queryByText("UI 规范")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /关闭.*首页/ })).not.toBeInTheDocument();
 
-    const crmTab = await screen.findByRole("tab", { name: "CRM" });
-    expect(crmTab).toHaveAttribute("aria-selected", "false");
-    expect(screen.getByRole("button", { name: "关闭项目 CRM" })).toBeInTheDocument();
+    await screen.findByRole("menuitem", { name: "staffrnapp" });
+    expect(screen.queryByRole("tab", { name: "CRM" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "staffrnapp" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
 
-    await user.click(crmTab);
+    await user.click(screen.getByRole("button", { name: "打开项目" }));
+    await user.click(screen.getByRole("menuitem", { name: "CRM" }));
+
+    const crmTab = screen.getByRole("tab", { name: "CRM" });
     expect(crmTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "关闭项目 CRM" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "关闭项目 CRM" }));
     expect(screen.queryByRole("tab", { name: "CRM" })).not.toBeInTheDocument();
@@ -211,7 +217,8 @@ describe("DesignsPage", () => {
     });
 
     renderWithClient(<DesignsPage />);
-    await user.click(await screen.findByRole("tab", { name: "CRM" }));
+    await user.click(await screen.findByRole("button", { name: "打开项目" }));
+    await user.click(screen.getByRole("menuitem", { name: "CRM" }));
 
     expect(within(screen.getByRole("tabpanel")).queryByText("客户列表草稿")).not.toBeInTheDocument();
 
@@ -239,7 +246,8 @@ describe("DesignsPage", () => {
       }],
     });
     renderWithClient(<DesignsPage />);
-    await user.click(await screen.findByRole("tab", { name: "CRM" }));
+    await user.click(await screen.findByRole("button", { name: "打开项目" }));
+    await user.click(screen.getByRole("menuitem", { name: "CRM" }));
 
     const designsEntry = await screen.findByRole("tab", { name: /设计稿.*0/ });
     expect(designsEntry).toHaveAttribute("aria-selected", "true");
@@ -297,7 +305,8 @@ describe("DesignsPage", () => {
     });
 
     renderWithClient(<DesignsPage />);
-    await user.click(await screen.findByRole("tab", { name: "CRM" }));
+    await user.click(await screen.findByRole("button", { name: "打开项目" }));
+    await user.click(screen.getByRole("menuitem", { name: "CRM" }));
     await user.click(await screen.findByRole("tab", { name: /设计体系.*1/ }));
 
     expect(await screen.findByRole("heading", { name: "品牌原则" })).toBeInTheDocument();

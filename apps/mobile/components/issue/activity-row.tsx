@@ -30,6 +30,7 @@ import { Text } from "@/components/ui/text";
 import { StatusIcon } from "@/components/ui/status-icon";
 import { PriorityIcon } from "@/components/ui/priority-icon";
 import { ActorAvatar } from "@/components/ui/actor-avatar";
+import { useTranslation } from "react-i18next";
 import { formatActivity } from "@/lib/format-activity";
 import { timeAgo } from "@/lib/time-ago";
 import { useActorLookup } from "@/data/use-actor-name";
@@ -108,6 +109,7 @@ function LeadIcon({
 
 export function ActivityRow({ entry }: { entry: TimelineEntry }) {
   const { getName } = useActorLookup();
+  const { t } = useTranslation("issues");
   const { colorScheme } = useColorScheme();
   const mutedFg = THEME[colorScheme].mutedForeground;
   const resolveName = (
@@ -116,7 +118,7 @@ export function ActivityRow({ entry }: { entry: TimelineEntry }) {
   ): string =>
     getName(type as "member" | "agent" | null | undefined, id);
   const actorName = resolveName(entry.actor_type, entry.actor_id);
-  const verb = formatActivity(entry, resolveName);
+  const verb = formatActivity(entry, resolveName, t);
   const showCoalesceBadge =
     (entry.coalesced_count ?? 1) > 1 &&
     entry.action !== "task_completed" &&

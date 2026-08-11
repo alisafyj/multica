@@ -8,14 +8,99 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
+// sessionContinuityNoticeFor picks the notice matching what this surface
+// actually lost. See the constants in execenv for the full reasoning; the
+// question is whether the conversation is still READABLE, not whether it is a
+// chat — an issue's comments and a Slack channel's history both are, a web
+// chat's and a Feishu channel's are not (MUL-5722).
+func sessionContinuityNoticeFor(task Task) string {
+	if task.ChatSessionID == "" {
+		return execenv.SessionContinuityNoticeIssue
+	}
+	if task.ChatChannelType == execenv.ChannelTypeSlack {
+		return execenv.SessionContinuityNoticeChannelHistory
+	}
+	// Web chat (no channel type) and every channel Multica cannot read back.
+	return execenv.SessionContinuityNoticeUnrecoverable
+}
+
+// backendResumeContinuityNotice returns the notice the BACKEND should inject if
+// it lands on a fresh thread, or "" when the prompt already carries one.
+//
+// Only one notice may reach a turn. Two paths can produce it — the daemon,
+// which appends it to the prompt whenever it already knows the resume is gone,
+// and the backend, which is the only one that can see a live resume RPC being
+// rejected mid-run. Before MUL-5722 both fired on the codex overflow retry, so
+// the same paragraph was paid for twice in one turn and maintained as two
+// hand-written strings. Deriving the backend's copy from the daemon's, and
+// suppressing it exactly when the prompt already said it, makes a duplicate
+// structurally impossible rather than merely unlikely.
+func backendResumeContinuityNotice(task Task) string {
+	if task.PriorSessionResumeUnavailable {
+		return ""
+	}
+	return sessionContinuityNoticeFor(task)
+}
+
+// Turn-mode markers consumed by the runtime brief's mode router
+// (execenv.writeWorkflowIssue). The brief is byte-identical on every run and
+// therefore cannot say what triggered this turn; these lines do, and they are
+// emitted unconditionally from the same branches BuildPrompt uses to pick a
+// path, so the two can never disagree.
+//
+// Reply mode = respond to the triggering comment, do not touch issue status.
+// Ownership mode = an assignment/status change started this run; own the
+// status arc. Applying the wrong one silently changes issue status.
+const (
+	turnModeReply     = "**Turn mode: Reply.** Follow the Reply-mode block in your runtime workflow file for this turn; the Ownership-mode status steps do not apply.\n\n"
+	turnModeOwnership = "**Turn mode: Ownership.** Follow the Ownership-mode block in your runtime workflow file for this turn; the Reply-mode rules do not apply.\n\n"
+)
+
+// perTurnContextBlocks renders the run-scoped context blocks that used to live
+// in the runtime brief (CLAUDE.md / AGENTS.md).
+//
+// Every value here changes from one run to the next on the same issue — the
+// initiator differs whenever another person comments, the continuity notice is
+// true of one run and false of the next, and the connected-app set is resolved
+// per run from the runtime MCP overlay. Claude Code loads the brief into
+// messages[0], ahead of the entire conversation, so rendering these there threw
+// away the prompt cache for the whole history on every resume. Appending them
+// to the per-turn user message puts them after the cached prefix instead, where
+// changing them costs only this turn's own tokens (MUL-5377).
+//
+// Returns "" when none of the blocks apply.
+func perTurnContextBlocks(task Task) string {
+	var b strings.Builder
+	if task.PriorSessionResumeUnavailable {
+		b.WriteString(sessionContinuityNoticeFor(task))
+	}
+	b.WriteString(execenv.BuildTaskInitiatorBlock(task.InitiatorType, task.InitiatorName, task.InitiatorEmail))
+	b.WriteString(execenv.BuildConnectedAppsBlock(task.ConnectedApps))
+	return b.String()
+}
+
 // BuildPrompt constructs the task prompt for an agent CLI.
 // Keep this minimal — detailed instructions live in CLAUDE.md / AGENTS.md
 // injected by execenv.InjectRuntimeConfig. The provider string is threaded
 // through to comment-triggered tasks' per-turn reply template; that template
-// is provider-agnostic now (Linux/macOS → quoted-HEREDOC stdin, Windows →
-// file) because the shell-layer corruption it guards against is not specific
-// to any one provider (MUL-2904).
+// is provider-agnostic AND host-agnostic now (every OS → write a UTF-8 file,
+// post with `--content-file`) because the shell-layer corruption it guards
+// against is not specific to any one provider or host (MUL-2904, #4182).
 func BuildPrompt(task Task, provider string) string {
+	body := buildPromptBody(task, provider)
+	// Run-scoped context is appended, never prepended: everything ahead of it
+	// is stable across runs of a resumed session, and appending keeps it after
+	// the cached prefix (MUL-5377).
+	if blocks := perTurnContextBlocks(task); blocks != "" {
+		if !strings.HasSuffix(body, "\n\n") {
+			body += "\n"
+		}
+		body += blocks
+	}
+	return body
+}
+
+func buildPromptBody(task Task, provider string) string {
 	if task.ChatSessionID != "" {
 		return buildChatPrompt(task)
 	}
@@ -33,6 +118,12 @@ func BuildPrompt(task Task, provider string) string {
 	}
 	if len(task.DesignRestoreContext) > 0 {
 		return buildDesignRestorePrompt(task)
+	}
+	if len(task.TestGenerationContext) > 0 {
+		return buildTestGenerationPrompt(task)
+	}
+	if len(task.TestRunContext) > 0 {
+		return buildTestRunPrompt(task)
 	}
 	if len(task.DesignSystemProfileAnalyzeContext) > 0 {
 		return buildDesignSystemProfileAnalyzePrompt(task)
@@ -52,11 +143,22 @@ func BuildPrompt(task Task, provider string) string {
 		}
 		return buildProjectDesignSystemPrompt()
 	}
+	if len(task.PMOSyncContext) > 0 {
+		return buildPMOSyncPrompt(task)
+	}
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
+	b.WriteString(turnModeOwnership)
+	// Assignment handoff (MUL-3375): a free-text instruction the person who
+	// assigned/promoted this issue left for you. Frame it as a handoff, not a
+	// comment to reply to — there is no comment thread to answer here.
+	if task.HandoffNote != "" {
+		b.WriteString("You were handed this issue with a handoff note. Treat it as the assigner's scoping instruction for this run; follow it before doing anything broader, and do not reply to it as if it were a comment:\n\n")
+		fmt.Fprintf(&b, "> %s\n\n", task.HandoffNote)
+	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
-	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). On long-running issues use `--recent 20 --output json` to read the 20 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
+	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Scan the threads first with `multica issue comment list %s --roots-only --summary --compact --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. For `--since` incremental polling, pagination, and folding, see `multica issue comment list --help`.\n", task.IssueID)
 	return b.String()
 }
 
@@ -179,6 +281,41 @@ func buildDesignTemplateBlueprintAnalyzePrompt(task Task) string {
 	return b.String()
 }
 
+// buildPMOSyncPrompt renders the opening prompt for a PMO requirement sync
+// task. The strict acquisition prompt generated at enqueue time
+// (service.BuildPMOSyncPrompt) is authoritative — the daemon re-parses the
+// sync context JSONB and renders it directly, without naming any company,
+// domain, or external capability (BuildPMOSyncPrompt already guarantees
+// none appear). The daemon carries no repo/issue context for this kind: the
+// prompt-only path is the whole task.
+func buildPMOSyncPrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a PMO requirement sync agent for a Multica workspace.\n\n")
+	prompt := pmoSyncPromptFromContext(task.PMOSyncContext)
+	if prompt == "" {
+		// Degenerate context: keep the strict JSON-only contract instead of
+		// falling through to the issue workflow, which would tell the agent
+		// to operate on an issue that does not exist for this task.
+		b.WriteString("Your PMO sync context could not be parsed. Return one JSON object only, matching the PMO snapshot contract.\n")
+		return b.String()
+	}
+	b.WriteString(prompt)
+	b.WriteString("\n")
+	return b.String()
+}
+
+// pmoSyncPromptFromContext extracts the acquisition prompt from the raw
+// PMO sync context JSONB. Returns "" when the context is malformed.
+func pmoSyncPromptFromContext(raw string) string {
+	var payload struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Prompt)
+}
+
 func buildDesignSystemProfileAnalyzePrompt(task Task) string {
 	var b strings.Builder
 	b.WriteString("You are running as a design system profile analysis agent for a Multica workspace.\n\n")
@@ -198,6 +335,98 @@ func buildDesignSystemProfileAnalyzePrompt(task Task) string {
 	b.WriteString("Design system profile analysis context JSON:\n")
 	b.Write(task.DesignSystemProfileAnalyzeContext)
 	b.WriteString("\n")
+	return b.String()
+}
+
+// buildTestGenerationPrompt drives an AI test case generation run. The scope in
+// `plan` is a human-approved contract, and every generated case is written back
+// through the authenticated CLI rather than printed, so the closing marker only
+// carries a summary.
+// buildTestRunPrompt drives one execution round. The agent may only drive the
+// devices the server already bound to this run: probing the host for an adb or
+// a browser would silently escape the capability contract.
+func buildTestRunPrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a QA engineer executing one test round for a Multica workspace.\n\n")
+
+	b.WriteString("Work in this order:\n")
+	b.WriteString("1. `multica test run get <run_id> --output json` — the cases to execute, each with its frozen snapshot. Execute the SNAPSHOT, not the current case definition.\n")
+	b.WriteString("2. `multica test capability list --run <run_id> --output json` — the devices, desktops and browsers this round is allowed to drive.\n")
+	b.WriteString("3. Check out any repository a case names, with `multica repo checkout <url>`.\n")
+	b.WriteString("4. Execute each case's steps in order and record the outcome as you go — do not batch the writes to the end, a crashed run should still have recorded what it got through.\n\n")
+
+	b.WriteString("Recording results:\n")
+	b.WriteString("```\n")
+	b.WriteString("multica test result set <run-case-id> --result passed|failed|blocked|skipped [--note \"…\"]\n")
+	b.WriteString("multica test evidence add <run-case-id> --file ./shot.png --kind screenshot\n")
+	b.WriteString("multica test defect open <run-case-id> --title \"…\"\n")
+	b.WriteString("```\n")
+	b.WriteString("- `failed` means the product behaved differently from the expected result. Open a defect for it.\n")
+	b.WriteString("- `blocked` means you could not run the case at all — a missing capability, an environment that would not come up, a precondition you could not reach. It is NOT a synonym for failed, and it must never be used to hide a real failure.\n")
+	b.WriteString("- `skipped` means the case did not apply to this round.\n")
+	b.WriteString("- Attach a screenshot or log for every `failed` and every `blocked`. A result nobody can audit is barely a result.\n\n")
+
+	b.WriteString("Capability rules — these are hard:\n")
+	b.WriteString("- Use ONLY the `capability_key` values returned by `capability list`. Drive them through the MCP servers that were mounted for this run.\n")
+	b.WriteString("- If `capability list` is empty, or a case needs a kind that is not in it, mark that case `blocked` and say which kind is missing.\n")
+	b.WriteString("- Do NOT go looking for adb, a simulator, a browser binary, or any other device on the host. If it was not bound to this run, you may not drive it.\n\n")
+
+	b.WriteString("Rules:\n")
+	b.WriteString("- Do NOT modify product code, and do NOT open pull requests. You are observing behaviour, not changing it.\n")
+	b.WriteString("- Do NOT mark a case `passed` unless you actually observed the expected result. An unverified pass is worse than a blocked case, because it hides a regression.\n")
+	b.WriteString("- Use the `multica` CLI for all Multica reads and writes; do not call the API with curl or wget.\n\n")
+
+	b.WriteString("Context JSON:\n")
+	b.WriteString(task.TestRunContext)
+	b.WriteString("\n\n")
+
+	b.WriteString("End your final response with a machine-readable JSON block prefixed by exactly `TEST_RUN_RESULT_JSON:`:\n")
+	b.WriteString("{\"status\":\"completed|blocked\",\"summary\":\"one paragraph\",\"blockers\":[]}\n")
+	b.WriteString("Per-case results must already be recorded through `multica test result set`; this block only closes the round.\n")
+	return b.String()
+}
+
+func buildTestGenerationPrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a QA engineer for a Multica workspace. Your job is to produce test cases, not to change product code.\n\n")
+	b.WriteString("The approved scope contract is the `plan` object in the context JSON below. It is the result of human review: stay inside it.\n\n")
+
+	b.WriteString("Work in this order:\n")
+	b.WriteString("1. Run `multica testcase list --project <project_id> --digest --output json` first. That is the index of cases that ALREADY exist. Your output must be an increment on top of it, never a re-listing of it.\n")
+	b.WriteString("2. Check out every repository named in `plan.repos` with `multica repo checkout <url>` (or `multica repo checkout --all`). Read only inside each entry's `path_globs` when it is non-empty.\n")
+	b.WriteString("3. Read every document in `plan.knowledge_refs`. These are the authoritative business rules; they outrank your inference from code.\n")
+	b.WriteString("4. For each issue id in `plan.issues`, run `multica issue get <id> --output json` and read its comment thread. Run `multica issue search <keyword>` for decisions that only ever got recorded in comments.\n")
+	b.WriteString("5. Write the cases back with `multica testcase propose --job <job_id> --stdin`.\n\n")
+
+	b.WriteString("What a good case set looks like:\n")
+	b.WriteString("- Cover BUSINESS behaviour, not only code paths: end-to-end flows, permission matrices, state-machine transitions, data consistency across services, money and time-zone edges, and what must NOT happen.\n")
+	b.WriteString("- `plan.expected_case_types` lists the case types this run is expected to produce. Treat a set that is entirely `functional` as a failure to understand the product.\n")
+	b.WriteString("- `steps` is a structured array, not prose. Each step needs a concrete `action` and a checkable `expected`. A human and an agent both have to be able to execute it verbatim.\n")
+	b.WriteString("- Prefer few precise cases over many vague ones. A case nobody can execute is worse than a missing case.\n\n")
+
+	b.WriteString("Multi-repo cases:\n")
+	b.WriteString("- When a scenario spans systems (change data in one service, verify it in another), set `scope` to `cross_repo`, list each repository in `repos` with a distinct `role` (`driver`, `under_test`, `verifier`, `fixture`), and tag each step with the `repo` alias it runs against.\n")
+	b.WriteString("- A `cross_repo` case with fewer than two roles is rejected by the server.\n\n")
+
+	b.WriteString("Increment rules — every proposed item is one of exactly three kinds:\n")
+	b.WriteString("- `new`: behaviour no existing case covers.\n")
+	b.WriteString("- `update`: an existing case that is now wrong or incomplete. Set `target` to its TC-<n> key and give a `rationale` naming what changed.\n")
+	b.WriteString("- `obsolete`: an existing case whose behaviour no longer exists. Set `target` and give a `rationale`.\n")
+	b.WriteString("Do not re-propose a case that already exists unchanged. Duplicates are the main way this feature becomes unusable.\n\n")
+
+	b.WriteString("Rules:\n")
+	b.WriteString("- Do NOT write, refactor, or commit product code. Do NOT open pull requests.\n")
+	b.WriteString("- Do NOT invent endpoints, fields, permissions, or business rules that you did not read in the repositories, documents, or issues.\n")
+	b.WriteString("- If the approved scope is not enough to produce meaningful cases, stop and report `blocked` with the concrete gap. A thin set of guessed cases is worse than an honest blocker.\n")
+	b.WriteString("- Use the `multica` CLI for all Multica reads and writes; do not call the API with curl or wget.\n\n")
+
+	b.WriteString("Context JSON:\n")
+	b.WriteString(task.TestGenerationContext)
+	b.WriteString("\n\n")
+
+	b.WriteString("When you are done, end your final response with a machine-readable JSON block prefixed by exactly `TEST_GENERATION_RESULT_JSON:` with this shape:\n")
+	b.WriteString("{\"status\":\"completed|blocked|failed\",\"summary\":\"one paragraph\",\"stats\":{\"new\":0,\"updated\":0,\"obsolete\":0},\"blockers\":[]}\n")
+	b.WriteString("The cases themselves must already have been written through `multica testcase propose`; this block is a report, not the delivery.\n")
 	return b.String()
 }
 
@@ -299,9 +528,14 @@ func buildQuickCreatePrompt(task Task) string {
 	b.WriteString("     CC exception: `multica issue create` has no `--subscriber` flag, and the platform auto-subscribes members whose `[@Name](mention://member/<uuid>)` link appears in the description. When the user wrote \"cc @Y\", strip the verbal \"cc\" wrapper from the User request body and append a final `CC: <mention link(s)>` line to the description so the cc routing still fires.\n\n")
 	b.WriteString("  2. **Context** — include ONLY when the input cited external resources AND you successfully fetched them AND they produced verifiable facts worth recording. Summarize facts only (e.g. \"PR #45 changes auth to JWT\"), not interpretation or unsolicited reference implementations. If you have nothing factual to add, omit the section entirely — never use it as an apology log for resources you could not fetch.\n\n")
 	b.WriteString("  Hard rules: never invent requirements, implementation details, or acceptance criteria the user did not express; never reduce multi-sentence input to a single vague sentence; never echo the title.\n\n")
+	b.WriteString("  Passing the description: a short, single-line body with no code, quotes, backticks, `$()`, or other special characters may go inline via `--description \"...\"`. Anything multi-line, or containing code snippets / file paths / quotes / backticks / `$()` / special characters, or otherwise long — which quick-create descriptions usually are — MUST be written to `./description.md` and passed with `--description-file ./description.md`; passing rich text inline lets the shell rewrite or truncate it (MUL-2904). That file MUST live inside your current working directory (e.g. `./description.md`) — never `/tmp` or any machine-shared path, where a different run may have left a stale file that would silently become this issue's description. If the file write fails for any reason, stop and fix it; never run `--description-file` against a file whose write did not succeed.\n\n")
 
 	// priority
-	b.WriteString("- **priority**: one of `urgent`, `high`, `medium`, `low`, or omit. Map P0/P1 → urgent/high; \"asap\" → urgent. If unspecified, omit.\n\n")
+	if task.QuickCreatePriority != "" {
+		fmt.Fprintf(&b, "- **priority**: required for this run. Pass `--priority %s`; the quick-create selection is authoritative.\n\n", task.QuickCreatePriority)
+	} else {
+		b.WriteString("- **priority**: one of `urgent`, `high`, `medium`, `low`, or omit. Map P0/P1 → urgent/high; \"asap\" → urgent. If unspecified, omit.\n\n")
+	}
 
 	// assignee
 	b.WriteString("- **assignee**:\n")
@@ -332,6 +566,10 @@ func buildQuickCreatePrompt(task Task) string {
 		b.WriteString("    - When the user did NOT name an assignee, default to YOURSELF (the picker agent): pass `--assignee-id <your agent UUID>` (preferred) or `--assignee <your agent name>`. Never leave the issue unassigned.\n\n")
 	}
 
+	if task.QuickCreateDueDate != "" {
+		fmt.Fprintf(&b, "- **due-date**: required for this run. Pass `--due-date %s`; the quick-create selection is authoritative.\n\n", task.QuickCreateDueDate)
+	}
+
 	// project — pinned by the modal when the user picked one, otherwise
 	// omitted so the platform routes to the workspace default. Always pass
 	// the UUID (never a name) so the issue lands in the right project even
@@ -358,7 +596,7 @@ func buildQuickCreatePrompt(task Task) string {
 		}
 	}
 	b.WriteString("- **status**: omit (defaults to `todo`).\n")
-	b.WriteString("- **attachments**: do NOT pass `--attachment`. The flag only accepts LOCAL file paths. Any image URL in the user input is already markdown — keep it inline in `--description` instead.\n\n")
+	b.WriteString("- **attachments**: `--attachment` takes LOCAL file paths, never URLs. Image URLs in the user input are already markdown — keep them inline. Files you produced: see `## Output`.\n\n")
 
 	// output format
 	b.WriteString("Output format:\n")
@@ -380,6 +618,13 @@ func buildCommentPrompt(task Task, provider string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
+	// Mode marker for the brief's router. Emitted unconditionally from the same
+	// branch that selects this code path, so the brief and the prompt can never
+	// disagree about which mode this turn is in. It must NOT be gated on
+	// TriggerCommentContent: an empty comment body (or an older server that
+	// doesn't send one) would otherwise leave the turn unlabelled, and the
+	// agent would fall through to Ownership mode and change the issue status.
+	b.WriteString(turnModeReply)
 	if task.TriggerCommentContent != "" {
 		authorLabel := "A user"
 		if task.TriggerAuthorType == "agent" {
@@ -391,10 +636,77 @@ func buildCommentPrompt(task Task, provider string) string {
 		}
 		fmt.Fprintf(&b, "[NEW COMMENT] %s just left a new comment. Focus on THIS comment — do not confuse it with previous ones:\n\n", authorLabel)
 		fmt.Fprintf(&b, "> %s\n\n", task.TriggerCommentContent)
-		if task.TriggerAuthorType == "agent" {
-			b.WriteString("⚠️ The triggering comment was posted by another agent. Decide whether a reply is warranted. If you produced actual work this turn (investigated, fixed something, answered a real question), post the result as a normal reply — that is NOT a noise comment, and the standard rule that final results must be delivered via comment still applies. If the triggering comment was a pure acknowledgment, thanks, or sign-off AND you produced no work this turn, do NOT reply — and do NOT post a comment saying 'No reply needed' or similar. Simply exit with no output. Silence is the preferred way to end agent-to-agent threads. If you do reply, do not @mention the other agent as a sign-off (that re-triggers them and starts a loop).\n\n")
+		// MUL-4195: comments that arrived before this run started were folded
+		// into it rather than dropped. The trigger above is the newest; the
+		// agent must ALSO address these earlier ones so no deliberate user
+		// instruction is silently lost. Prefer the embedded detail so the agent
+		// does not have to guess which thread each folded comment lives in
+		// (they may span multiple threads — review should-fix #3); fall back to
+		// a thread-agnostic issue-wide fetch hint for old servers that only send
+		// the ids.
+		if len(task.CoalescedComments) > 0 {
+			fmt.Fprintf(&b, "This run also covers %d earlier comment(s) posted before it started — you must read and address them too, not just the one above. They may be in different threads, so each is reproduced here with its own thread:\n\n", len(task.CoalescedComments))
+			for _, cc := range task.CoalescedComments {
+				authorLabel := "A user"
+				if cc.AuthorType == "agent" {
+					name := cc.AuthorName
+					if name == "" {
+						name = "another agent"
+					}
+					authorLabel = fmt.Sprintf("Another agent (%s)", name)
+				} else if cc.AuthorName != "" {
+					authorLabel = cc.AuthorName
+				}
+				fmt.Fprintf(&b, "- comment %s", cc.ID)
+				if cc.CreatedAt != "" {
+					fmt.Fprintf(&b, " (%s, %s)", authorLabel, cc.CreatedAt)
+				} else {
+					fmt.Fprintf(&b, " (%s)", authorLabel)
+				}
+				if cc.ThreadID != "" {
+					fmt.Fprintf(&b, " [thread %s]", cc.ThreadID)
+				}
+				b.WriteString(":\n")
+				fmt.Fprintf(&b, "  > %s\n", strings.ReplaceAll(strings.TrimSpace(cc.Content), "\n", "\n  > "))
+			}
+			fmt.Fprintf(&b, "\nIf you need the surrounding discussion for any of them, fetch its thread with `multica issue comment list %s --thread <thread-id> --tail 30 --compact --output json` using the thread id shown above.\n\n", task.IssueID)
+		} else if len(task.CoalescedCommentIDs) > 0 {
+			// MUL-5442: this fallback used to send the agent at `--recent 30`.
+			// That flag caps THREADS, not comments, and every returned thread
+			// carries all of its descendants — so on an issue with fewer than 30
+			// root threads it returned the entire comment history to locate a
+			// handful of ids. It also contradicted the brief's own catch-up step,
+			// which tells the agent to read in two bounded steps and never make
+			// one bulk pull (MUL-5372): the platform was recommending exactly the
+			// shape it forbids elsewhere.
+			//
+			// The replacement is a per-id lookup, which is what makes it
+			// deterministic: `--thread` accepts ANY comment id, reply or root, and
+			// the server resolves it to the containing thread. So each id can be
+			// fetched directly and bounded, without knowing its thread and without
+			// guessing which threads look recent.
+			//
+			// `--since` is only a prefetch, never the guarantee. Two ways it can
+			// miss an id, so the per-id pass below is unconditional:
+			//   - A retry inherits the previous attempt's coalesced_comment_ids
+			//     verbatim (queries/agent.sql RetryTask), while the anchor is
+			//     recomputed from the last STARTED task's started_at
+			//     (GetLastTaskStartedAtForIssueAndAgent). An inherited id can
+			//     therefore predate the anchor.
+			//   - The anchor is only populated when some comment landed after it,
+			//     which is independent of where these ids sit.
+			// It is also not a precise fetch in the other direction: the window
+			// carries the trigger comment and unrelated comments too.
+			fmt.Fprintf(&b, "This run also covers %d earlier comment(s) posted before it started — you must read and address every one of them, not just the one above: %s. They may be in DIFFERENT threads, so do not assume they share the triggering thread.\n\n",
+				len(task.CoalescedCommentIDs), strings.Join(task.CoalescedCommentIDs, ", "))
+			if task.NewCommentsSince != "" {
+				fmt.Fprintf(&b, "Start with `multica issue comment list %s --since %s --compact --output json`. Treat that as a candidate window, not a guarantee — it also carries unrelated comments, and a retried run can carry ids older than the window. Check every id above against the result.\n\n",
+					task.IssueID, task.NewCommentsSince)
+			}
+			fmt.Fprintf(&b, "Fetch each id you still need directly: `multica issue comment list %s --thread <comment-id> --tail 30 --compact --output json`. `--thread` accepts a reply id, not just a thread root, so you do not need to know which thread the comment lives in. If it is older than those 30 replies, page back with the `Next reply cursor` values (`--before` / `--before-id`) until it appears. Do not finish this turn until every id above is accounted for.\n\n",
+				task.IssueID)
 		}
-		if task.Agent != nil && strings.Contains(task.Agent.Instructions, "## Squad Operating Protocol") {
+		if taskIsSquadLeader(task) {
 			fmt.Fprintf(&b, "⚠️ **Squad leader no_action rule:** If you decide no action is needed, call `multica squad activity %s no_action --reason \"...\"` and EXIT. DO NOT post any comment — not even one that says \"no action needed\" or \"exiting silently\". The squad activity call records your decision; a comment is redundant noise.\n\n", task.IssueID)
 		}
 	}
@@ -405,24 +717,157 @@ func buildCommentPrompt(task Task, provider string) string {
 	// injected, so don't force a duplicate thread read. Cold path: read the
 	// triggering thread, not the flat timeline. Final fallback (no trigger id,
 	// shouldn't happen here): plain read.
-	if hint := execenv.BuildNewCommentsHint(task.IssueID, task.TriggerCommentID, task.NewCommentsSince, task.NewCommentCount); hint != "" {
+	if hint := execenv.BuildNewCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID, task.NewCommentsSince, task.NewCommentCount); hint != "" {
 		b.WriteString(hint)
 	} else if task.PriorSessionID != "" {
-		b.WriteString(execenv.BuildResumedCommentsHint(task.IssueID, task.TriggerCommentID))
-	} else if cold := execenv.BuildColdCommentsHint(task.IssueID, task.TriggerCommentID); cold != "" {
+		b.WriteString(execenv.BuildResumedCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID))
+	} else if cold := execenv.BuildColdCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID); cold != "" {
 		b.WriteString(cold)
 	} else {
-		fmt.Fprintf(&b, "Read the discussion: `multica issue comment list %s --output json` (long issue? use `--recent 20`).\n\n", task.IssueID)
+		fmt.Fprintf(&b, "Read the discussion: scan with `multica issue comment list %s --roots-only --summary --compact --output json`, then expand what matters with `--thread <thread-id> --tail 30`.\n\n", task.IssueID)
 	}
-	b.WriteString(execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID))
+	// Reply routing. When this run coalesced comments spanning MORE THAN ONE
+	// root thread, answer each thread in its own thread instead of dumping one
+	// merged comment (MUL-4348). Same-thread follow-ups collapse to a single
+	// group upstream, so they keep the ordinary single-parent path below and can
+	// never be split into duplicate replies.
+	if targets := commentReplyThreads(task); len(targets) >= 2 {
+		b.WriteString(execenv.BuildMultiThreadCommentReplyInstructions(task.IssueID, targets, taskIsSquadLeader(task)))
+	} else {
+		b.WriteString(execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID, taskIsSquadLeader(task)))
+	}
 	return b.String()
+}
+
+// commentReplyThreads groups this run's trigger + coalesced comments by their
+// root thread, in first-seen order (coalesced comments oldest-first, the newest
+// trigger last). A run that coalesced several @mentions from the SAME thread
+// yields a single group, so same-thread follow-ups get exactly one consolidated
+// reply and can never be split into duplicates; comments from different root
+// threads yield one group each so the agent replies inside each thread instead
+// of merging them into one blob (MUL-4348).
+//
+// The reply for each thread targets the NEWEST comment that triggered this run
+// in that thread (coalesced comments arrive oldest-first and the trigger is the
+// newest overall, so a simple last-write-wins yields the newest per thread).
+// That nests the answer next to the most recent question in the thread rather
+// than at the thread root, and makes the trigger's own thread (--parent =
+// trigger comment) consistent with every other thread instead of a special
+// case. Returns nil when there is no trigger or only a single distinct thread —
+// the caller then keeps the existing single-parent reply path unchanged.
+func commentReplyThreads(task Task) []execenv.ThreadReplyTarget {
+	if task.TriggerCommentID == "" {
+		return nil
+	}
+	// A comment with no explicit thread id is a root comment: it is its own
+	// thread, so fall back to the comment id itself as the thread key.
+	threadKey := func(threadID, commentID string) string {
+		if threadID != "" {
+			return threadID
+		}
+		return commentID
+	}
+
+	order := make([]string, 0, len(task.CoalescedComments)+1)
+	parentByThread := make(map[string]string, len(task.CoalescedComments)+1)
+	// note records first-seen order but lets the newest comment win the reply
+	// target: inputs are chronological (coalesced oldest-first, trigger last),
+	// so the last write for a thread is its newest triggering comment.
+	note := func(threadID, parentID string) {
+		if _, ok := parentByThread[threadID]; !ok {
+			order = append(order, threadID)
+		}
+		parentByThread[threadID] = parentID
+	}
+
+	// Coalesced (older) comments first: reply under the specific comment that
+	// mentioned the agent, not the thread root, so a mid-thread mention gets its
+	// answer next to the question.
+	for _, cc := range task.CoalescedComments {
+		note(threadKey(cc.ThreadID, cc.ID), cc.ID)
+	}
+	// The newest trigger last: it always wins its own thread's reply target,
+	// overriding any earlier coalesced comment that shared the trigger's thread.
+	note(threadKey(task.TriggerThreadID, task.TriggerCommentID), task.TriggerCommentID)
+
+	if len(order) <= 1 {
+		return nil
+	}
+	targets := make([]execenv.ThreadReplyTarget, 0, len(order))
+	for _, tid := range order {
+		targets = append(targets, execenv.ThreadReplyTarget{ThreadID: tid, ParentID: parentByThread[tid]})
+	}
+	return targets
 }
 
 // buildChatPrompt constructs a prompt for interactive chat tasks.
 func buildChatPrompt(task Task) string {
+	// Legacy compatibility for historical proactive-introduction sessions.
+	// New agent creation no longer creates a chat or runs this prompt.
+	if task.ChatIntro {
+		var b strings.Builder
+		b.WriteString("You are running as a chat assistant for a Multica workspace.\n")
+		b.WriteString("You were just created, and this is the very first message in a direct chat with the person who created you. They have not written anything yet — you are opening the conversation. Send a short, warm, first-person introduction: who you are, what you're good at, and how they can work with you. Do NOT phrase it as an answer to a question or repeat any prompt back; just introduce yourself as if you reached out first.\n")
+		return b.String()
+	}
+
 	var b strings.Builder
 	b.WriteString("You are running as a chat assistant for a Multica workspace.\n")
-	b.WriteString("A user is chatting with you directly. Respond to their message.\n\n")
+	// Audience is per-session context, so keep it out of the cached runtime
+	// brief. The compact anchors here preserve the non-inferable boundaries: a
+	// group reply is not private to its sender and people not otherwise present
+	// in the run context may read it. Unknown never defaults to private.
+	switch execenv.AudienceOf(task.ChatChannelType, task.ChatType) {
+	case execenv.ChatAudienceGroup:
+		b.WriteString("Audience: group room; not private; unseen members may read replies.\n\n")
+	case execenv.ChatAudienceUnknown:
+		b.WriteString("Audience: unknown.\n\n")
+	default:
+		b.WriteString("Audience: direct room.\n\n")
+	}
+	// Channel awareness (MUL-3871). When the session is backed by an IM channel,
+	// the agent must KNOW it is operating inside that channel — otherwise an ask
+	// like "what did you just talk about" sends it to read Multica instead of the
+	// channel conversation. A web-only chat session gets no such block — its
+	// history is the Multica chat_session the agent already resumes.
+	//
+	// The history half is Slack-only, and that is a real server constraint, not a
+	// simplification: `multica chat history` / `multica chat thread` are served by
+	// handlers hardwired to h.SlackHistory (handler/chat_history.go), so on a
+	// Feishu session both commands return "no channel integration". Teaching them
+	// there would send the agent down a path that always fails. A Feishu run works
+	// from the context the inbound enricher already injected, so it gets the
+	// awareness statement without the commands, and ChatInThread — which only ever
+	// picks between those two commands — does not apply to it (MUL-4899).
+	//
+	// The no-narration rule is a THIRD axis and belongs to neither half: it is a
+	// property of delivering to an IM channel at all, so it is emitted for every
+	// channel type. #4776 introduced it that way; the MUL-4899 split moved it into
+	// the Slack branch along with the read commands it happened to mention, which
+	// silently dropped it for Feishu/Lark (GH #6006).
+	if task.ChatChannelType != "" {
+		platform := channelDisplayName(task.ChatChannelType)
+		fmt.Fprintf(&b, "You are operating inside a %s conversation — not the Multica web app. This conversation and its history live in %s, NOT in Multica; never look in Multica issues or comments for it.\n", platform, platform)
+		if task.ChatChannelType == execenv.ChannelTypeSlack {
+			b.WriteString("The message below may be only what triggered you. Read the conversation with:\n")
+			b.WriteString("- `multica chat history --output json` — the channel overview: recent top-level messages, each thread tagged with a `thread_id` and `reply_count`. It does NOT expand thread contents.\n")
+			b.WriteString("- `multica chat thread [<thread_id>] --output json` — read one thread's messages; omit the id to read the thread you are in, or pass a `thread_id` from the overview to read a specific thread.\n")
+			if task.ChatInThread {
+				b.WriteString("You were @mentioned inside a thread: start with `multica chat thread` to read it; if you need the wider channel, run `multica chat history` and open a specific thread with `multica chat thread <thread_id>`.\n")
+			} else {
+				b.WriteString("You were @mentioned at the channel top level: start with `multica chat history` to see the channel, then read a specific thread's contents with `multica chat thread <thread_id>`.\n")
+			}
+			// These reads are the agent's private context-gathering; narrating them
+			// into a chat reply reads as noise (the user reported every reply being
+			// prefixed with "我先读取…"). Tell the agent to keep them out of its answer.
+			b.WriteString("Do these reads SILENTLY as an internal step — they are how you gather context, not part of your answer.\n")
+		} else {
+			fmt.Fprintf(&b, "Work from the context already provided to you below — Multica has no history reader for %s, so there is no command that can fetch more of this conversation. If you genuinely need earlier context that is not here, ask the user for it rather than guessing.\n", platform)
+		}
+		// Scoped to process, not results — a completion confirmation IS the deliverable.
+		fmt.Fprintf(&b, "Reply to %s with the final outcome only. Do NOT narrate planned or in-progress steps (\"我先读取…\"); completed actions are part of the outcome.\n", platform)
+		b.WriteString("\n")
+	}
 	if task.Agent != nil && len(task.Agent.Skills) > 0 {
 		refs := ExtractSlashSkills(task.ChatMessage)
 		if len(refs) > 0 {
@@ -471,8 +916,28 @@ func buildChatPrompt(task Task) string {
 			}
 		}
 		b.WriteString("Use `multica attachment download <id>` to fetch each file locally before referring to it.\n")
+		b.WriteString("When creating an issue that should preserve one of these attachments, pass `--attachment-id <id>` to `multica issue create` in addition to keeping the attachment markdown inline.\n")
+	}
+	// Outbound attachments: how the agent puts an image/file INTO its reply.
+	// Web/mobile chat only — for IM-channel chats the reply is delivered to
+	// that platform, not the Multica chat UI, so this binding does not apply.
+	// This is the DELIVERY layer of the channel policy and keys off "is there a
+	// channel at all", unlike the history block above which is Slack-only; the
+	// two layers must not be collapsed into one condition (MUL-4899). The brief's
+	// `## Output` section states the same policy for every surface.
+	if task.ChatChannelType == "" {
+		b.WriteString("\nTo include a file or image you produced in your reply, run `multica attachment upload <local-path>`. The file binds to your reply automatically and appears as an attachment card below it even if you paste nothing. The command also returns a `markdown` snippet you may paste on its own line to place the item where you want it (files render as a card, images inline).\n")
+	} else {
+		fmt.Fprintf(&b, "\nThis reply is delivered to %s as text. You cannot attach a file to it: `multica attachment upload` binds to a Multica chat reply, which this is not. If you produce a file, describe it in words — never write its local path as a link, and never upload it and then write as though it arrived.\n", channelDisplayName(task.ChatChannelType))
 	}
 	return b.String()
+}
+
+// channelDisplayName renders a chat_channel_type for prompt copy. The mapping
+// itself lives in execenv so the per-turn prompt (here) and the runtime brief
+// (execenv.writeOutput) cannot drift into naming the same platform differently.
+func channelDisplayName(channelType string) string {
+	return execenv.ChannelDisplayName(channelType)
 }
 
 // buildAutopilotPrompt constructs a prompt for run_only autopilot tasks.
@@ -507,6 +972,46 @@ func buildAutopilotPrompt(task Task) string {
 	} else {
 		b.WriteString("Complete the instructions above.\n")
 	}
-	b.WriteString("Do not run `multica issue get`; this run does not have an issue ID.\n")
+	// The issue-command boundary (execenv.AutopilotIssueCommandsGuard) is NOT
+	// restated here: the brief's autopilot workflow section is its single
+	// emission point, and a second hand-maintained per-turn copy is exactly
+	// how the two surfaces drifted into conflict before (MUL-5696).
 	return b.String()
+}
+
+// squadBriefingMarker is the first heading of the squad-leader briefing the
+// server appends to Instructions. It is ONLY a legacy role signal — see
+// taskIsSquadLeader — never a role signal against a current server.
+const squadBriefingMarker = "## Squad Operating Protocol"
+
+// taskIsSquadLeader reports whether THIS TASK runs the agent as a squad
+// leader. Leadership is a PER-TASK role — the same agent can be leader one
+// turn and worker the next — and a current server says so explicitly on the
+// wire: `is_leader_task` for issue-bound leader runs, `squad_id` for
+// quick-create runs the squad picker routed to its leader. The claim handler
+// sets each field on exactly the responses it injected a briefing into, and
+// advertises that it did so with `leader_role_resolved`.
+//
+// The role used to be inferred by sniffing Instructions for the briefing's
+// first heading, which made detection depend on user-writable Markdown: any
+// ordinary agent whose own instructions happened to contain that heading was
+// promoted to leader and handed the leader rules (mandatory `multica squad
+// activity`, silent no_action exit).
+//
+// The capability gate is load-bearing, not ceremony. Servers without it split
+// into two groups, and neither can be read by fields alone. Before #4951 the
+// claim response carried no `is_leader_task` at all, so a real leader arrives
+// with the full briefing and both fields at zero — reading fields would
+// silently demote it to a worker. From #4951 until the capability landed the
+// flag IS sent, but nothing yet guaranteed it implies an injected briefing, so
+// a true flag can arrive with no roster and no protocol. Absent capability
+// therefore means "this server never authoritatively answered the question",
+// and the legacy text inference — exactly today's behavior against both
+// groups — is the only correct read. Drop this branch once a minimum server
+// version is enforced (MUL-5811).
+func taskIsSquadLeader(task Task) bool {
+	if !task.LeaderRoleResolved {
+		return task.Agent != nil && strings.Contains(task.Agent.Instructions, squadBriefingMarker)
+	}
+	return task.IsLeaderTask || task.SquadID != ""
 }

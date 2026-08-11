@@ -190,8 +190,8 @@ function ReferenceCheckbox({
     <label className="flex min-w-0 cursor-pointer items-center gap-3 border-b py-2.5 last:border-b-0">
       <input type="checkbox" checked={checked} onChange={onChange} aria-label={label} className="h-4 w-4 shrink-0 accent-primary" />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm">{label}</span>
-        <span className="block truncate text-xs text-muted-foreground">{meta}</span>
+        <span className="block truncate text-body">{label}</span>
+        <span className="block truncate text-caption text-muted-foreground">{meta}</span>
       </span>
     </label>
   );
@@ -379,13 +379,13 @@ export function ProjectDesignSystemCreate({
           <Sparkles className="h-4 w-4" />
         </span>
         <div className="min-w-0">
-          <h2 className="text-base font-semibold">创建设计体系</h2>
-          <p className="mt-1 text-sm text-muted-foreground">{project.title}</p>
+          <h2 className="text-title-sm font-semibold">创建设计体系</h2>
+          <p className="mt-1 text-body text-muted-foreground">{project.title}</p>
         </div>
       </div>
 
       {lastError ? (
-        <div role="alert" className="mt-4 flex items-start gap-2 border-l-2 border-destructive bg-destructive/5 px-3 py-2 text-sm text-destructive">
+        <div role="alert" className="mt-4 flex items-start gap-2 border-l-2 border-destructive bg-destructive/5 px-3 py-2 text-body text-destructive">
           <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{lastError}</span>
         </div>
@@ -393,17 +393,17 @@ export function ProjectDesignSystemCreate({
 
       <section className="grid gap-4 border-b py-5 md:grid-cols-[11rem_minmax(0,1fr)]">
         <div>
-          <h3 className="text-sm font-medium">生成设置</h3>
-          <p className="mt-1 text-xs text-muted-foreground">项目、智能体与目标平台</p>
+          <h3 className="text-body font-medium">生成设置</h3>
+          <p className="mt-1 text-caption text-muted-foreground">项目、智能体与目标平台</p>
         </div>
         <div className="space-y-4">
           <label className="block space-y-1.5">
-            <span className="text-xs font-medium">智能体</span>
+            <span className="text-caption font-medium">智能体</span>
             <select
               aria-label="智能体"
               value={form.agentId}
               onChange={(event) => updateForm((current) => ({ ...current, agentId: event.target.value }))}
-              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+              className="h-9 w-full rounded-md border bg-background px-3 text-body"
             >
               <option value="">选择智能体</option>
               {agentOptions.map((agent) => (
@@ -413,10 +413,10 @@ export function ProjectDesignSystemCreate({
               ))}
             </select>
           </label>
-          {form.agentId && !agentAvailable ? <p className="text-xs text-destructive">当前智能体不可用，请选择其他智能体。</p> : null}
+          {form.agentId && !agentAvailable ? <p className="text-caption text-destructive">当前智能体不可用，请选择其他智能体。</p> : null}
 
           <div className="space-y-1.5">
-            <span className="text-xs font-medium">平台</span>
+            <span className="text-caption font-medium">平台</span>
             <div role="radiogroup" aria-label="平台" className="inline-flex max-w-full overflow-hidden rounded-md border bg-muted/30 p-0.5">
               {PLATFORM_OPTIONS.map((option) => (
                 <button
@@ -424,7 +424,7 @@ export function ProjectDesignSystemCreate({
                   type="button"
                   role="radio"
                   aria-checked={form.platform === option.value}
-                  className={`h-8 min-w-20 px-3 text-sm transition-colors ${form.platform === option.value ? "rounded-sm bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                  className={`h-8 min-w-20 px-3 text-body transition-colors ${form.platform === option.value ? "rounded-sm bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                   onClick={() => updateForm((current) => ({ ...current, platform: option.value }))}
                 >
                   {option.label}
@@ -462,22 +462,22 @@ export function ProjectDesignSystemCreate({
       {repositoryAnalysis ? (
         <section aria-label="仓库背景" className="grid gap-4 border-b py-5 md:grid-cols-[11rem_minmax(0,1fr)]">
           <div>
-            <h3 className="text-sm font-medium">仓库背景</h3>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <h3 className="text-body font-medium">仓库背景</h3>
+            <p className="mt-1 text-caption text-muted-foreground">
               {repositoryAnalysis.commit_sha
                 ? `Commit ${repositoryAnalysis.commit_sha.slice(0, 12)}`
                 : `置信度 ${Math.round(repositoryAnalysis.confidence * 100)}%`}
             </p>
           </div>
           <div className="space-y-5">
-            <p className="text-sm leading-6">{repositoryAnalysis.summary}</p>
+            <p className="text-body leading-6">{repositoryAnalysis.summary}</p>
 
             {repositoryAnalysis.facts.length ? (
               <dl className="border-y">
                 {repositoryAnalysis.facts.map((fact, index) => (
                   <div key={`${fact.kind}-${fact.label}-${index}`} className="grid gap-1 border-b py-3 last:border-b-0 sm:grid-cols-[10rem_minmax(0,1fr)]">
-                    <dt className="text-xs font-medium text-muted-foreground">{fact.label}</dt>
-                    <dd className="text-sm leading-5">{fact.value}</dd>
+                    <dt className="text-caption font-medium text-muted-foreground">{fact.label}</dt>
+                    <dd className="text-body leading-5">{fact.value}</dd>
                   </div>
                 ))}
               </dl>
@@ -486,7 +486,7 @@ export function ProjectDesignSystemCreate({
             {repositoryAnalysis.conflicts.length ? (
               <div className="space-y-3 border-l-2 border-amber-500 bg-amber-500/5 px-3 py-3">
                 {repositoryAnalysis.conflicts.map((conflict, index) => (
-                  <div key={`${conflict.label}-${index}`} className="space-y-1 text-sm">
+                  <div key={`${conflict.label}-${index}`} className="space-y-1 text-body">
                     <p className="font-medium">{conflict.label}</p>
                     <p className="text-muted-foreground">当前：{conflict.repository_fact}</p>
                     <p>目标：{conflict.user_intent}</p>
@@ -497,10 +497,10 @@ export function ProjectDesignSystemCreate({
 
             {repositorySources.length ? (
               <div>
-                <p className="text-xs font-medium text-muted-foreground">来源</p>
+                <p className="text-caption font-medium text-muted-foreground">来源</p>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
                   {repositorySources.map((source) => (
-                    <code key={source} className="break-all text-xs text-muted-foreground">{source}</code>
+                    <code key={source} className="break-all text-caption text-muted-foreground">{source}</code>
                   ))}
                 </div>
               </div>
@@ -509,8 +509,8 @@ export function ProjectDesignSystemCreate({
             {repositoryAnalysis.suggested_brief ? (
               <div className="flex flex-wrap items-start justify-between gap-3 border-t pt-4">
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium text-muted-foreground">建议设计目标</p>
-                  <p className="mt-1 text-sm leading-6">{repositoryAnalysis.suggested_brief}</p>
+                  <p className="text-caption font-medium text-muted-foreground">建议设计目标</p>
+                  <p className="mt-1 text-body leading-6">{repositoryAnalysis.suggested_brief}</p>
                 </div>
                 {repositoryAnalysis.suggested_brief.trim() !== form.brief.trim() ? (
                   <Button
@@ -533,8 +533,8 @@ export function ProjectDesignSystemCreate({
 
       <section className="grid gap-4 border-b py-5 md:grid-cols-[11rem_minmax(0,1fr)]">
         <div>
-          <h3 className="text-sm font-medium">设计目标</h3>
-          <p className="mt-1 text-xs text-muted-foreground">最终提交给智能体的项目描述</p>
+          <h3 className="text-body font-medium">设计目标</h3>
+          <p className="mt-1 text-caption text-muted-foreground">最终提交给智能体的项目描述</p>
         </div>
         <Textarea
           aria-label="设计目标"
@@ -546,14 +546,14 @@ export function ProjectDesignSystemCreate({
 
       <section className="grid gap-4 border-b py-5 md:grid-cols-[11rem_minmax(0,1fr)]">
         <div>
-          <h3 className="text-sm font-medium">参考资料</h3>
-          <p className="mt-1 text-xs text-muted-foreground">可选</p>
+          <h3 className="text-body font-medium">参考资料</h3>
+          <p className="mt-1 text-caption text-muted-foreground">可选</p>
         </div>
         {repositoryAnalysis && !referencesNeedAnalysis ? (
           <div className="flex min-h-14 items-center justify-between gap-4 border-y py-3">
             <div className="min-w-0">
-              <p className="text-xs font-medium">{ANALYZED_REFERENCES_LABEL}</p>
-              <p className="mt-1 truncate text-sm text-muted-foreground">{referenceSummary(form)}</p>
+              <p className="text-caption font-medium">{ANALYZED_REFERENCES_LABEL}</p>
+              <p className="mt-1 truncate text-body text-muted-foreground">{referenceSummary(form)}</p>
             </div>
             <Button
               type="button"
@@ -568,14 +568,14 @@ export function ProjectDesignSystemCreate({
           </div>
         ) : <div className="space-y-5">
           {referencesNeedAnalysis ? (
-            <div role="status" className="flex items-center gap-2 border-l-2 border-amber-500 bg-amber-500/5 px-3 py-2 text-sm">
+            <div role="status" className="flex items-center gap-2 border-l-2 border-amber-500 bg-amber-500/5 px-3 py-2 text-body">
               <CircleAlert className="h-4 w-4 shrink-0 text-amber-600" />
               <span>{REFERENCES_NEED_ANALYSIS_LABEL}</span>
             </div>
           ) : null}
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-sm font-medium"><Upload className="h-4 w-4 text-muted-foreground" />上传资料</div>
+              <div className="flex items-center gap-2 text-body font-medium"><Upload className="h-4 w-4 text-muted-foreground" />上传资料</div>
               <Button type="button" size="sm" variant="outline" disabled={uploading} onClick={() => fileInputRef.current?.click()}>
                 <Upload className="h-3.5 w-3.5" />
                 {uploading ? "上传中…" : "添加"}
@@ -593,7 +593,7 @@ export function ProjectDesignSystemCreate({
               />
             </div>
             {form.attachments.map((item) => (
-              <div key={item.attachmentId} className="flex min-w-0 items-center gap-2 border-t py-2 text-sm">
+              <div key={item.attachmentId} className="flex min-w-0 items-center gap-2 border-t py-2 text-body">
                 <span className="min-w-0 flex-1 truncate">{item.label}</span>
                 <Button
                   type="button"
@@ -615,7 +615,7 @@ export function ProjectDesignSystemCreate({
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="space-y-1.5">
-              <span className="flex items-center gap-2 text-sm font-medium"><Palette className="h-4 w-4 text-muted-foreground" />品牌色</span>
+              <span className="flex items-center gap-2 text-body font-medium"><Palette className="h-4 w-4 text-muted-foreground" />品牌色</span>
               <div className="flex items-center gap-2">
                 <input
                   type="color"
@@ -631,23 +631,23 @@ export function ProjectDesignSystemCreate({
                   onChange={(event) => updateForm((current) => ({ ...current, brandColor: event.target.value }))}
                 />
               </div>
-              {!validColor ? <span className="block text-xs text-destructive">请输入 6 位十六进制颜色。</span> : null}
+              {!validColor ? <span className="block text-caption text-destructive">请输入 6 位十六进制颜色。</span> : null}
             </label>
             <label className="space-y-1.5">
-              <span className="flex items-center gap-2 text-sm font-medium"><LinkIcon className="h-4 w-4 text-muted-foreground" />参考链接</span>
+              <span className="flex items-center gap-2 text-body font-medium"><LinkIcon className="h-4 w-4 text-muted-foreground" />参考链接</span>
               <Input
                 aria-label="参考链接"
                 value={form.link}
                 placeholder="https://"
                 onChange={(event) => updateForm((current) => ({ ...current, link: event.target.value }))}
               />
-              {!validLink ? <span className="block text-xs text-destructive">仅支持 HTTPS 链接。</span> : null}
+              {!validLink ? <span className="block text-caption text-destructive">仅支持 HTTPS 链接。</span> : null}
             </label>
           </div>
 
           <div className="grid gap-5 lg:grid-cols-2">
             <fieldset>
-              <legend className="flex items-center gap-2 text-sm font-medium"><FileImage className="h-4 w-4 text-muted-foreground" />项目设计稿</legend>
+              <legend className="flex items-center gap-2 text-body font-medium"><FileImage className="h-4 w-4 text-muted-foreground" />项目设计稿</legend>
               <div className="mt-2 border-y">
                 {designFiles.length ? designFiles.map((file) => (
                   <ReferenceCheckbox
@@ -657,11 +657,11 @@ export function ProjectDesignSystemCreate({
                     meta="项目设计稿"
                     onChange={() => updateForm((current) => ({ ...current, designFileIds: toggleId(current.designFileIds, file.id) }))}
                   />
-                )) : <p className="py-3 text-xs text-muted-foreground">暂无可用设计稿</p>}
+                )) : <p className="py-3 text-caption text-muted-foreground">暂无可用设计稿</p>}
               </div>
             </fieldset>
             <fieldset>
-              <legend className="flex items-center gap-2 text-sm font-medium"><Bot className="h-4 w-4 text-muted-foreground" />Figma UI 规范</legend>
+              <legend className="flex items-center gap-2 text-body font-medium"><Bot className="h-4 w-4 text-muted-foreground" />Figma UI 规范</legend>
               <div className="mt-2 border-y">
                 {legacyProfiles.length ? legacyProfiles.map((profile) => (
                   <ReferenceCheckbox
@@ -671,7 +671,7 @@ export function ProjectDesignSystemCreate({
                     meta="历史 UI 规范参考"
                     onChange={() => updateForm((current) => ({ ...current, profileIds: toggleId(current.profileIds, profile.id) }))}
                   />
-                )) : <p className="py-3 text-xs text-muted-foreground">暂无可用 UI 规范</p>}
+                )) : <p className="py-3 text-caption text-muted-foreground">暂无可用 UI 规范</p>}
               </div>
             </fieldset>
           </div>

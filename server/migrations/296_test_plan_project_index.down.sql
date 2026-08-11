@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS test_plan_project_idx;

@@ -1,0 +1,1 @@
+-- No schema rollback is required; the data supersession is intentionally irreversible.

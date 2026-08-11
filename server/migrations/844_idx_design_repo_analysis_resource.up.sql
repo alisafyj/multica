@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY idx_design_repo_analysis_resource ON design_repo_analysis(project_resource_id, updated_at DESC);

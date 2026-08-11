@@ -343,25 +343,6 @@ func (q *Queries) CreateDesignComponentRecipeSet(ctx context.Context, arg Create
 	return i, err
 }
 
-const getNextDesignComponentRecipeSetAnalysisVersion = `-- name: GetNextDesignComponentRecipeSetAnalysisVersion :one
-SELECT (COALESCE(MAX(analysis_version), 0) + 1)::int
-FROM design_component_recipe_set
-WHERE workspace_id = $1
-  AND design_system_profile_id = $2
-`
-
-type GetNextDesignComponentRecipeSetAnalysisVersionParams struct {
-	WorkspaceID           pgtype.UUID `json:"workspace_id"`
-	DesignSystemProfileID pgtype.UUID `json:"design_system_profile_id"`
-}
-
-func (q *Queries) GetNextDesignComponentRecipeSetAnalysisVersion(ctx context.Context, arg GetNextDesignComponentRecipeSetAnalysisVersionParams) (int32, error) {
-	row := q.db.QueryRow(ctx, getNextDesignComponentRecipeSetAnalysisVersion, arg.WorkspaceID, arg.DesignSystemProfileID)
-	var column_1 int32
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const createDesignDelivery = `-- name: CreateDesignDelivery :one
 INSERT INTO design_delivery (
     id, workspace_id, project_id, source_issue_id, target_issue_id, file_id, revision_id,
@@ -464,131 +445,6 @@ func (q *Queries) CreateDesignDraft(ctx context.Context, arg CreateDesignDraftPa
 		arg.Status,
 		arg.ValidationErrors,
 		arg.CreatedBy,
-	)
-	var i DesignDraft
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.FileID,
-		&i.RevisionID,
-		&i.IssueID,
-		&i.Title,
-		&i.RequirementCore,
-		&i.SlotValues,
-		&i.Patch,
-		&i.Status,
-		&i.ValidationErrors,
-		&i.CreatedBy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.CatalogTemplateID,
-		&i.TemplateRevisionID,
-		&i.GeneratedFileID,
-		&i.GeneratedRevisionID,
-		&i.MaterializedAt,
-		&i.GenerationMode,
-		&i.PageSpec,
-		&i.CompiledNativeJson,
-		&i.QualityReport,
-		&i.BlueprintID,
-		&i.RecipeSetID,
-		&i.ParentDraftID,
-		&i.Version,
-	)
-	return i, err
-}
-
-const createSemanticDesignDraft = `-- name: CreateSemanticDesignDraft :one
-INSERT INTO design_draft (
-    workspace_id,
-    catalog_template_id,
-    template_revision_id,
-    file_id,
-    revision_id,
-    issue_id,
-    title,
-    requirement_core,
-    slot_values,
-    patch,
-    status,
-    validation_errors,
-    created_by,
-    generation_mode,
-    page_spec,
-    compiled_native_json,
-    quality_report,
-    blueprint_id,
-    recipe_set_id,
-    parent_draft_id,
-    version
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    '{}'::jsonb,
-    '[]'::jsonb,
-    $9,
-    $10,
-    $11,
-    'semantic_pagespec',
-    $12,
-    $13,
-    $14,
-    $15,
-    $16,
-    $17,
-    $18
-)
-RETURNING id, workspace_id, template_id, file_id, revision_id, issue_id, title, requirement_core, slot_values, patch, status, validation_errors, created_by, created_at, updated_at, catalog_template_id, template_revision_id, generated_file_id, generated_revision_id, materialized_at, generation_mode, page_spec, compiled_native_json, quality_report, blueprint_id, recipe_set_id, parent_draft_id, version
-`
-
-type CreateSemanticDesignDraftParams struct {
-	WorkspaceID        pgtype.UUID `json:"workspace_id"`
-	CatalogTemplateID  pgtype.UUID `json:"catalog_template_id"`
-	TemplateRevisionID pgtype.UUID `json:"template_revision_id"`
-	FileID             pgtype.UUID `json:"file_id"`
-	RevisionID         pgtype.UUID `json:"revision_id"`
-	IssueID            pgtype.UUID `json:"issue_id"`
-	Title              string      `json:"title"`
-	RequirementCore    []byte      `json:"requirement_core"`
-	Status             string      `json:"status"`
-	ValidationErrors   []byte      `json:"validation_errors"`
-	CreatedBy          pgtype.UUID `json:"created_by"`
-	PageSpec           []byte      `json:"page_spec"`
-	CompiledNativeJson []byte      `json:"compiled_native_json"`
-	QualityReport      []byte      `json:"quality_report"`
-	BlueprintID        pgtype.UUID `json:"blueprint_id"`
-	RecipeSetID        pgtype.UUID `json:"recipe_set_id"`
-	ParentDraftID      pgtype.UUID `json:"parent_draft_id"`
-	Version            int32       `json:"version"`
-}
-
-func (q *Queries) CreateSemanticDesignDraft(ctx context.Context, arg CreateSemanticDesignDraftParams) (DesignDraft, error) {
-	row := q.db.QueryRow(ctx, createSemanticDesignDraft,
-		arg.WorkspaceID,
-		arg.CatalogTemplateID,
-		arg.TemplateRevisionID,
-		arg.FileID,
-		arg.RevisionID,
-		arg.IssueID,
-		arg.Title,
-		arg.RequirementCore,
-		arg.Status,
-		arg.ValidationErrors,
-		arg.CreatedBy,
-		arg.PageSpec,
-		arg.CompiledNativeJson,
-		arg.QualityReport,
-		arg.BlueprintID,
-		arg.RecipeSetID,
-		arg.ParentDraftID,
-		arg.Version,
 	)
 	var i DesignDraft
 	err := row.Scan(
@@ -1232,25 +1088,6 @@ func (q *Queries) CreateDesignTemplateBlueprint(ctx context.Context, arg CreateD
 	return i, err
 }
 
-const getNextDesignTemplateBlueprintAnalysisVersion = `-- name: GetNextDesignTemplateBlueprintAnalysisVersion :one
-SELECT (COALESCE(MAX(analysis_version), 0) + 1)::int
-FROM design_template_blueprint
-WHERE workspace_id = $1
-  AND template_revision_id = $2
-`
-
-type GetNextDesignTemplateBlueprintAnalysisVersionParams struct {
-	WorkspaceID        pgtype.UUID `json:"workspace_id"`
-	TemplateRevisionID pgtype.UUID `json:"template_revision_id"`
-}
-
-func (q *Queries) GetNextDesignTemplateBlueprintAnalysisVersion(ctx context.Context, arg GetNextDesignTemplateBlueprintAnalysisVersionParams) (int32, error) {
-	row := q.db.QueryRow(ctx, getNextDesignTemplateBlueprintAnalysisVersion, arg.WorkspaceID, arg.TemplateRevisionID)
-	var column_1 int32
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const createDesignTemplateRevision = `-- name: CreateDesignTemplateRevision :one
 INSERT INTO design_template_revision (
     workspace_id, template_id, design_revision_id, revision_number, status, slot_schema, metadata, created_by
@@ -1374,6 +1211,177 @@ func (q *Queries) CreateProjectDesignSystem(ctx context.Context, arg CreateProje
 	return i, err
 }
 
+const createSemanticDesignDraft = `-- name: CreateSemanticDesignDraft :one
+INSERT INTO design_draft (
+    workspace_id,
+    catalog_template_id,
+    template_revision_id,
+    file_id,
+    revision_id,
+    issue_id,
+    title,
+    requirement_core,
+    slot_values,
+    patch,
+    status,
+    validation_errors,
+    created_by,
+    generation_mode,
+    page_spec,
+    compiled_native_json,
+    quality_report,
+    blueprint_id,
+    recipe_set_id,
+    parent_draft_id,
+    version
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    '{}'::jsonb,
+    '[]'::jsonb,
+    $9,
+    $10,
+    $11,
+    'semantic_pagespec',
+    $12,
+    $13,
+    $14,
+    $15,
+    $16,
+    $17,
+    $18
+)
+RETURNING id, workspace_id, template_id, file_id, revision_id, issue_id, title, requirement_core, slot_values, patch, status, validation_errors, created_by, created_at, updated_at, catalog_template_id, template_revision_id, generated_file_id, generated_revision_id, materialized_at, generation_mode, page_spec, compiled_native_json, quality_report, blueprint_id, recipe_set_id, parent_draft_id, version
+`
+
+type CreateSemanticDesignDraftParams struct {
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	CatalogTemplateID  pgtype.UUID `json:"catalog_template_id"`
+	TemplateRevisionID pgtype.UUID `json:"template_revision_id"`
+	FileID             pgtype.UUID `json:"file_id"`
+	RevisionID         pgtype.UUID `json:"revision_id"`
+	IssueID            pgtype.UUID `json:"issue_id"`
+	Title              string      `json:"title"`
+	RequirementCore    []byte      `json:"requirement_core"`
+	Status             string      `json:"status"`
+	ValidationErrors   []byte      `json:"validation_errors"`
+	CreatedBy          pgtype.UUID `json:"created_by"`
+	PageSpec           []byte      `json:"page_spec"`
+	CompiledNativeJson []byte      `json:"compiled_native_json"`
+	QualityReport      []byte      `json:"quality_report"`
+	BlueprintID        pgtype.UUID `json:"blueprint_id"`
+	RecipeSetID        pgtype.UUID `json:"recipe_set_id"`
+	ParentDraftID      pgtype.UUID `json:"parent_draft_id"`
+	Version            int32       `json:"version"`
+}
+
+func (q *Queries) CreateSemanticDesignDraft(ctx context.Context, arg CreateSemanticDesignDraftParams) (DesignDraft, error) {
+	row := q.db.QueryRow(ctx, createSemanticDesignDraft,
+		arg.WorkspaceID,
+		arg.CatalogTemplateID,
+		arg.TemplateRevisionID,
+		arg.FileID,
+		arg.RevisionID,
+		arg.IssueID,
+		arg.Title,
+		arg.RequirementCore,
+		arg.Status,
+		arg.ValidationErrors,
+		arg.CreatedBy,
+		arg.PageSpec,
+		arg.CompiledNativeJson,
+		arg.QualityReport,
+		arg.BlueprintID,
+		arg.RecipeSetID,
+		arg.ParentDraftID,
+		arg.Version,
+	)
+	var i DesignDraft
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.TemplateID,
+		&i.FileID,
+		&i.RevisionID,
+		&i.IssueID,
+		&i.Title,
+		&i.RequirementCore,
+		&i.SlotValues,
+		&i.Patch,
+		&i.Status,
+		&i.ValidationErrors,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CatalogTemplateID,
+		&i.TemplateRevisionID,
+		&i.GeneratedFileID,
+		&i.GeneratedRevisionID,
+		&i.MaterializedAt,
+		&i.GenerationMode,
+		&i.PageSpec,
+		&i.CompiledNativeJson,
+		&i.QualityReport,
+		&i.BlueprintID,
+		&i.RecipeSetID,
+		&i.ParentDraftID,
+		&i.Version,
+	)
+	return i, err
+}
+
+const deleteDesignAssetsByFile = `-- name: DeleteDesignAssetsByFile :exec
+DELETE FROM design_asset
+WHERE workspace_id = $1 AND file_id = $2
+`
+
+type DeleteDesignAssetsByFileParams struct {
+	TargetWorkspaceID pgtype.UUID `json:"target_workspace_id"`
+	TargetFileID      pgtype.UUID `json:"target_file_id"`
+}
+
+func (q *Queries) DeleteDesignAssetsByFile(ctx context.Context, arg DeleteDesignAssetsByFileParams) error {
+	_, err := q.db.Exec(ctx, deleteDesignAssetsByFile, arg.TargetWorkspaceID, arg.TargetFileID)
+	return err
+}
+
+const deleteDesignDeliveriesByFile = `-- name: DeleteDesignDeliveriesByFile :exec
+DELETE FROM design_delivery
+WHERE workspace_id = $1 AND file_id = $2
+`
+
+type DeleteDesignDeliveriesByFileParams struct {
+	TargetWorkspaceID pgtype.UUID `json:"target_workspace_id"`
+	TargetFileID      pgtype.UUID `json:"target_file_id"`
+}
+
+func (q *Queries) DeleteDesignDeliveriesByFile(ctx context.Context, arg DeleteDesignDeliveriesByFileParams) error {
+	_, err := q.db.Exec(ctx, deleteDesignDeliveriesByFile, arg.TargetWorkspaceID, arg.TargetFileID)
+	return err
+}
+
+const deleteDesignDeliveriesByRevisions = `-- name: DeleteDesignDeliveriesByRevisions :exec
+DELETE FROM design_delivery
+WHERE workspace_id = $1
+  AND revision_id = ANY($2::uuid[])
+`
+
+type DeleteDesignDeliveriesByRevisionsParams struct {
+	TargetWorkspaceID pgtype.UUID   `json:"target_workspace_id"`
+	RevisionIds       []pgtype.UUID `json:"revision_ids"`
+}
+
+func (q *Queries) DeleteDesignDeliveriesByRevisions(ctx context.Context, arg DeleteDesignDeliveriesByRevisionsParams) error {
+	_, err := q.db.Exec(ctx, deleteDesignDeliveriesByRevisions, arg.TargetWorkspaceID, arg.RevisionIds)
+	return err
+}
+
 const deleteDesignFile = `-- name: DeleteDesignFile :exec
 DELETE FROM design_file WHERE id = $1 AND workspace_id = $2
 `
@@ -1385,6 +1393,45 @@ type DeleteDesignFileParams struct {
 
 func (q *Queries) DeleteDesignFile(ctx context.Context, arg DeleteDesignFileParams) error {
 	_, err := q.db.Exec(ctx, deleteDesignFile, arg.ID, arg.WorkspaceID)
+	return err
+}
+
+const deleteDesignRestoreMappingsByFile = `-- name: DeleteDesignRestoreMappingsByFile :exec
+DELETE FROM design_restore_mapping AS drm
+WHERE drm.workspace_id = $1
+  AND drm.restore_task_id IN (
+      SELECT id FROM design_restore_task
+      WHERE workspace_id = $1 AND file_id = $2
+  )
+`
+
+type DeleteDesignRestoreMappingsByFileParams struct {
+	TargetWorkspaceID pgtype.UUID `json:"target_workspace_id"`
+	TargetFileID      pgtype.UUID `json:"target_file_id"`
+}
+
+func (q *Queries) DeleteDesignRestoreMappingsByFile(ctx context.Context, arg DeleteDesignRestoreMappingsByFileParams) error {
+	_, err := q.db.Exec(ctx, deleteDesignRestoreMappingsByFile, arg.TargetWorkspaceID, arg.TargetFileID)
+	return err
+}
+
+const deleteDesignRestoreMappingsByRevisions = `-- name: DeleteDesignRestoreMappingsByRevisions :exec
+DELETE FROM design_restore_mapping AS drm
+WHERE drm.workspace_id = $1
+  AND drm.restore_task_id IN (
+      SELECT id FROM design_restore_task
+      WHERE workspace_id = $1
+        AND revision_id = ANY($2::uuid[])
+  )
+`
+
+type DeleteDesignRestoreMappingsByRevisionsParams struct {
+	TargetWorkspaceID pgtype.UUID   `json:"target_workspace_id"`
+	RevisionIds       []pgtype.UUID `json:"revision_ids"`
+}
+
+func (q *Queries) DeleteDesignRestoreMappingsByRevisions(ctx context.Context, arg DeleteDesignRestoreMappingsByRevisionsParams) error {
+	_, err := q.db.Exec(ctx, deleteDesignRestoreMappingsByRevisions, arg.TargetWorkspaceID, arg.RevisionIds)
 	return err
 }
 
@@ -1400,6 +1447,138 @@ type DeleteDesignRestoreMappingsByTaskParams struct {
 
 func (q *Queries) DeleteDesignRestoreMappingsByTask(ctx context.Context, arg DeleteDesignRestoreMappingsByTaskParams) error {
 	_, err := q.db.Exec(ctx, deleteDesignRestoreMappingsByTask, arg.RestoreTaskID, arg.WorkspaceID)
+	return err
+}
+
+const deleteDesignRestorePlansByFile = `-- name: DeleteDesignRestorePlansByFile :exec
+DELETE FROM design_restore_plan AS drp
+WHERE drp.workspace_id = $1
+  AND drp.restore_task_id IN (
+      SELECT id FROM design_restore_task
+      WHERE workspace_id = $1 AND file_id = $2
+  )
+`
+
+type DeleteDesignRestorePlansByFileParams struct {
+	TargetWorkspaceID pgtype.UUID `json:"target_workspace_id"`
+	TargetFileID      pgtype.UUID `json:"target_file_id"`
+}
+
+func (q *Queries) DeleteDesignRestorePlansByFile(ctx context.Context, arg DeleteDesignRestorePlansByFileParams) error {
+	_, err := q.db.Exec(ctx, deleteDesignRestorePlansByFile, arg.TargetWorkspaceID, arg.TargetFileID)
+	return err
+}
+
+const deleteDesignRestorePlansByRevisions = `-- name: DeleteDesignRestorePlansByRevisions :exec
+DELETE FROM design_restore_plan AS drp
+WHERE drp.workspace_id = $1
+  AND drp.restore_task_id IN (
+      SELECT id FROM design_restore_task
+      WHERE workspace_id = $1
+        AND revision_id = ANY($2::uuid[])
+  )
+`
+
+type DeleteDesignRestorePlansByRevisionsParams struct {
+	TargetWorkspaceID pgtype.UUID   `json:"target_workspace_id"`
+	RevisionIds       []pgtype.UUID `json:"revision_ids"`
+}
+
+func (q *Queries) DeleteDesignRestorePlansByRevisions(ctx context.Context, arg DeleteDesignRestorePlansByRevisionsParams) error {
+	_, err := q.db.Exec(ctx, deleteDesignRestorePlansByRevisions, arg.TargetWorkspaceID, arg.RevisionIds)
+	return err
+}
+
+const deleteDesignRestoreTasksByFile = `-- name: DeleteDesignRestoreTasksByFile :exec
+DELETE FROM design_restore_task
+WHERE workspace_id = $1 AND file_id = $2
+`
+
+type DeleteDesignRestoreTasksByFileParams struct {
+	TargetWorkspaceID pgtype.UUID `json:"target_workspace_id"`
+	TargetFileID      pgtype.UUID `json:"target_file_id"`
+}
+
+func (q *Queries) DeleteDesignRestoreTasksByFile(ctx context.Context, arg DeleteDesignRestoreTasksByFileParams) error {
+	_, err := q.db.Exec(ctx, deleteDesignRestoreTasksByFile, arg.TargetWorkspaceID, arg.TargetFileID)
+	return err
+}
+
+const deleteDesignRestoreTasksByRevisions = `-- name: DeleteDesignRestoreTasksByRevisions :exec
+DELETE FROM design_restore_task
+WHERE workspace_id = $1
+  AND revision_id = ANY($2::uuid[])
+`
+
+type DeleteDesignRestoreTasksByRevisionsParams struct {
+	TargetWorkspaceID pgtype.UUID   `json:"target_workspace_id"`
+	RevisionIds       []pgtype.UUID `json:"revision_ids"`
+}
+
+func (q *Queries) DeleteDesignRestoreTasksByRevisions(ctx context.Context, arg DeleteDesignRestoreTasksByRevisionsParams) error {
+	_, err := q.db.Exec(ctx, deleteDesignRestoreTasksByRevisions, arg.TargetWorkspaceID, arg.RevisionIds)
+	return err
+}
+
+const deleteDesignRevisionsByFile = `-- name: DeleteDesignRevisionsByFile :exec
+DELETE FROM design_revision
+WHERE workspace_id = $1 AND file_id = $2
+`
+
+type DeleteDesignRevisionsByFileParams struct {
+	TargetWorkspaceID pgtype.UUID `json:"target_workspace_id"`
+	TargetFileID      pgtype.UUID `json:"target_file_id"`
+}
+
+func (q *Queries) DeleteDesignRevisionsByFile(ctx context.Context, arg DeleteDesignRevisionsByFileParams) error {
+	_, err := q.db.Exec(ctx, deleteDesignRevisionsByFile, arg.TargetWorkspaceID, arg.TargetFileID)
+	return err
+}
+
+const deleteDesignRevisionsByIDs = `-- name: DeleteDesignRevisionsByIDs :exec
+DELETE FROM design_revision
+WHERE workspace_id = $1
+  AND id = ANY($2::uuid[])
+`
+
+type DeleteDesignRevisionsByIDsParams struct {
+	TargetWorkspaceID pgtype.UUID   `json:"target_workspace_id"`
+	RevisionIds       []pgtype.UUID `json:"revision_ids"`
+}
+
+func (q *Queries) DeleteDesignRevisionsByIDs(ctx context.Context, arg DeleteDesignRevisionsByIDsParams) error {
+	_, err := q.db.Exec(ctx, deleteDesignRevisionsByIDs, arg.TargetWorkspaceID, arg.RevisionIds)
+	return err
+}
+
+const deleteDesignSystemProfilesByFile = `-- name: DeleteDesignSystemProfilesByFile :exec
+DELETE FROM design_system_profile
+WHERE workspace_id = $1 AND source_file_id = $2
+`
+
+type DeleteDesignSystemProfilesByFileParams struct {
+	TargetWorkspaceID pgtype.UUID `json:"target_workspace_id"`
+	TargetFileID      pgtype.UUID `json:"target_file_id"`
+}
+
+func (q *Queries) DeleteDesignSystemProfilesByFile(ctx context.Context, arg DeleteDesignSystemProfilesByFileParams) error {
+	_, err := q.db.Exec(ctx, deleteDesignSystemProfilesByFile, arg.TargetWorkspaceID, arg.TargetFileID)
+	return err
+}
+
+const deleteDesignSystemProfilesByRevisions = `-- name: DeleteDesignSystemProfilesByRevisions :exec
+DELETE FROM design_system_profile
+WHERE workspace_id = $1
+  AND source_revision_id = ANY($2::uuid[])
+`
+
+type DeleteDesignSystemProfilesByRevisionsParams struct {
+	TargetWorkspaceID pgtype.UUID   `json:"target_workspace_id"`
+	RevisionIds       []pgtype.UUID `json:"revision_ids"`
+}
+
+func (q *Queries) DeleteDesignSystemProfilesByRevisions(ctx context.Context, arg DeleteDesignSystemProfilesByRevisionsParams) error {
+	_, err := q.db.Exec(ctx, deleteDesignSystemProfilesByRevisions, arg.TargetWorkspaceID, arg.RevisionIds)
 	return err
 }
 
@@ -1423,6 +1602,130 @@ type DeleteProjectDesignSystemPackageSlotParams struct {
 
 func (q *Queries) DeleteProjectDesignSystemPackageSlot(ctx context.Context, arg DeleteProjectDesignSystemPackageSlotParams) error {
 	_, err := q.db.Exec(ctx, deleteProjectDesignSystemPackageSlot, arg.DesignSystemID, arg.Slot, arg.WorkspaceID)
+	return err
+}
+
+const designFolderHasChildren = `-- name: DesignFolderHasChildren :one
+SELECT EXISTS (
+    SELECT 1 FROM design_folder
+    WHERE workspace_id = $1 AND parent_id = $2
+)
+`
+
+type DesignFolderHasChildrenParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ParentID    pgtype.UUID `json:"parent_id"`
+}
+
+func (q *Queries) DesignFolderHasChildren(ctx context.Context, arg DesignFolderHasChildrenParams) (bool, error) {
+	row := q.db.QueryRow(ctx, designFolderHasChildren, arg.WorkspaceID, arg.ParentID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const designRevisionsHaveProtectedReferences = `-- name: DesignRevisionsHaveProtectedReferences :one
+SELECT EXISTS (
+    SELECT 1 FROM design_template_revision AS dtr
+    WHERE dtr.workspace_id = $1
+      AND dtr.design_revision_id = ANY($2::uuid[])
+    UNION ALL
+    SELECT 1 FROM design_template_blueprint AS dtb
+    WHERE dtb.workspace_id = $1
+      AND dtb.source_revision_id = ANY($2::uuid[])
+    UNION ALL
+    SELECT 1 FROM design_component_recipe_set AS dcrs
+    WHERE dcrs.workspace_id = $1
+      AND dcrs.source_revision_id = ANY($2::uuid[])
+)
+`
+
+type DesignRevisionsHaveProtectedReferencesParams struct {
+	TargetWorkspaceID pgtype.UUID   `json:"target_workspace_id"`
+	RevisionIds       []pgtype.UUID `json:"revision_ids"`
+}
+
+func (q *Queries) DesignRevisionsHaveProtectedReferences(ctx context.Context, arg DesignRevisionsHaveProtectedReferencesParams) (bool, error) {
+	row := q.db.QueryRow(ctx, designRevisionsHaveProtectedReferences, arg.TargetWorkspaceID, arg.RevisionIds)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const detachDesignAssetRevisionReferences = `-- name: DetachDesignAssetRevisionReferences :exec
+UPDATE design_asset
+SET revision_id = NULL
+WHERE workspace_id = $1
+  AND revision_id = ANY($2::uuid[])
+`
+
+type DetachDesignAssetRevisionReferencesParams struct {
+	TargetWorkspaceID pgtype.UUID   `json:"target_workspace_id"`
+	RevisionIds       []pgtype.UUID `json:"revision_ids"`
+}
+
+func (q *Queries) DetachDesignAssetRevisionReferences(ctx context.Context, arg DetachDesignAssetRevisionReferencesParams) error {
+	_, err := q.db.Exec(ctx, detachDesignAssetRevisionReferences, arg.TargetWorkspaceID, arg.RevisionIds)
+	return err
+}
+
+const detachDesignDraftFileReferences = `-- name: DetachDesignDraftFileReferences :exec
+UPDATE design_draft AS dd
+SET file_id = CASE WHEN dd.file_id = $1 THEN NULL ELSE dd.file_id END,
+    generated_file_id = CASE WHEN dd.generated_file_id = $1 THEN NULL ELSE dd.generated_file_id END,
+    revision_id = CASE WHEN dd.revision_id IN (
+        SELECT dr.id FROM design_revision AS dr
+        WHERE dr.file_id = $1 AND dr.workspace_id = $2
+    ) THEN NULL ELSE dd.revision_id END,
+    generated_revision_id = CASE WHEN dd.generated_revision_id IN (
+        SELECT dr.id FROM design_revision AS dr
+        WHERE dr.file_id = $1 AND dr.workspace_id = $2
+    ) THEN NULL ELSE dd.generated_revision_id END,
+    updated_at = now()
+WHERE dd.workspace_id = $2
+  AND (
+      dd.file_id = $1
+      OR dd.generated_file_id = $1
+      OR dd.revision_id IN (
+          SELECT dr.id FROM design_revision AS dr
+          WHERE dr.file_id = $1 AND dr.workspace_id = $2
+      )
+      OR dd.generated_revision_id IN (
+          SELECT dr.id FROM design_revision AS dr
+          WHERE dr.file_id = $1 AND dr.workspace_id = $2
+      )
+  )
+`
+
+type DetachDesignDraftFileReferencesParams struct {
+	TargetFileID      pgtype.UUID `json:"target_file_id"`
+	TargetWorkspaceID pgtype.UUID `json:"target_workspace_id"`
+}
+
+func (q *Queries) DetachDesignDraftFileReferences(ctx context.Context, arg DetachDesignDraftFileReferencesParams) error {
+	_, err := q.db.Exec(ctx, detachDesignDraftFileReferences, arg.TargetFileID, arg.TargetWorkspaceID)
+	return err
+}
+
+const detachDesignDraftRevisionReferences = `-- name: DetachDesignDraftRevisionReferences :exec
+UPDATE design_draft
+SET revision_id = CASE WHEN revision_id = ANY($1::uuid[]) THEN NULL ELSE revision_id END,
+    generated_revision_id = CASE WHEN generated_revision_id = ANY($1::uuid[]) THEN NULL ELSE generated_revision_id END,
+    updated_at = now()
+WHERE workspace_id = $2
+  AND (
+      revision_id = ANY($1::uuid[])
+      OR generated_revision_id = ANY($1::uuid[])
+  )
+`
+
+type DetachDesignDraftRevisionReferencesParams struct {
+	RevisionIds       []pgtype.UUID `json:"revision_ids"`
+	TargetWorkspaceID pgtype.UUID   `json:"target_workspace_id"`
+}
+
+func (q *Queries) DetachDesignDraftRevisionReferences(ctx context.Context, arg DetachDesignDraftRevisionReferencesParams) error {
+	_, err := q.db.Exec(ctx, detachDesignDraftRevisionReferences, arg.RevisionIds, arg.TargetWorkspaceID)
 	return err
 }
 
@@ -1836,6 +2139,37 @@ func (q *Queries) GetDesignFileInWorkspace(ctx context.Context, arg GetDesignFil
 	return i, err
 }
 
+const getDesignFileInWorkspaceForUpdate = `-- name: GetDesignFileInWorkspaceForUpdate :one
+SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at FROM design_file
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE
+`
+
+type GetDesignFileInWorkspaceForUpdateParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetDesignFileInWorkspaceForUpdate(ctx context.Context, arg GetDesignFileInWorkspaceForUpdateParams) (DesignFile, error) {
+	row := q.db.QueryRow(ctx, getDesignFileInWorkspaceForUpdate, arg.ID, arg.WorkspaceID)
+	var i DesignFile
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.FolderID,
+		&i.Title,
+		&i.Description,
+		&i.SourceType,
+		&i.SourceRef,
+		&i.CurrentRevisionID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getDesignFolderInProject = `-- name: GetDesignFolderInProject :one
 SELECT id, workspace_id, project_id, parent_id, name, position, created_by, created_at, updated_at FROM design_folder
 WHERE id = $1 AND workspace_id = $2 AND project_id = $3
@@ -1849,6 +2183,34 @@ type GetDesignFolderInProjectParams struct {
 
 func (q *Queries) GetDesignFolderInProject(ctx context.Context, arg GetDesignFolderInProjectParams) (DesignFolder, error) {
 	row := q.db.QueryRow(ctx, getDesignFolderInProject, arg.ID, arg.WorkspaceID, arg.ProjectID)
+	var i DesignFolder
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.ParentID,
+		&i.Name,
+		&i.Position,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getDesignFolderInWorkspaceForUpdate = `-- name: GetDesignFolderInWorkspaceForUpdate :one
+SELECT id, workspace_id, project_id, parent_id, name, position, created_by, created_at, updated_at FROM design_folder
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE
+`
+
+type GetDesignFolderInWorkspaceForUpdateParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetDesignFolderInWorkspaceForUpdate(ctx context.Context, arg GetDesignFolderInWorkspaceForUpdateParams) (DesignFolder, error) {
+	row := q.db.QueryRow(ctx, getDesignFolderInWorkspaceForUpdate, arg.ID, arg.WorkspaceID)
 	var i DesignFolder
 	err := row.Scan(
 		&i.ID,
@@ -2409,6 +2771,25 @@ func (q *Queries) GetLatestValidDesignTemplateBlueprint(ctx context.Context, arg
 	return i, err
 }
 
+const getNextDesignComponentRecipeSetAnalysisVersion = `-- name: GetNextDesignComponentRecipeSetAnalysisVersion :one
+SELECT (COALESCE(MAX(analysis_version), 0) + 1)::int
+FROM design_component_recipe_set
+WHERE workspace_id = $1
+  AND design_system_profile_id = $2
+`
+
+type GetNextDesignComponentRecipeSetAnalysisVersionParams struct {
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	DesignSystemProfileID pgtype.UUID `json:"design_system_profile_id"`
+}
+
+func (q *Queries) GetNextDesignComponentRecipeSetAnalysisVersion(ctx context.Context, arg GetNextDesignComponentRecipeSetAnalysisVersionParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getNextDesignComponentRecipeSetAnalysisVersion, arg.WorkspaceID, arg.DesignSystemProfileID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const getNextDesignRevisionNumber = `-- name: GetNextDesignRevisionNumber :one
 SELECT COALESCE(MAX(revision_number), 0)::int + 1 AS next_revision_number
 FROM design_revision
@@ -2420,6 +2801,25 @@ func (q *Queries) GetNextDesignRevisionNumber(ctx context.Context, fileID pgtype
 	var next_revision_number int32
 	err := row.Scan(&next_revision_number)
 	return next_revision_number, err
+}
+
+const getNextDesignTemplateBlueprintAnalysisVersion = `-- name: GetNextDesignTemplateBlueprintAnalysisVersion :one
+SELECT (COALESCE(MAX(analysis_version), 0) + 1)::int
+FROM design_template_blueprint
+WHERE workspace_id = $1
+  AND template_revision_id = $2
+`
+
+type GetNextDesignTemplateBlueprintAnalysisVersionParams struct {
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	TemplateRevisionID pgtype.UUID `json:"template_revision_id"`
+}
+
+func (q *Queries) GetNextDesignTemplateBlueprintAnalysisVersion(ctx context.Context, arg GetNextDesignTemplateBlueprintAnalysisVersionParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getNextDesignTemplateBlueprintAnalysisVersion, arg.WorkspaceID, arg.TemplateRevisionID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const getNextDesignTemplateRevisionNumber = `-- name: GetNextDesignTemplateRevisionNumber :one
@@ -3140,6 +3540,51 @@ func (q *Queries) ListDesignFilesByProject(ctx context.Context, arg ListDesignFi
 	return items, nil
 }
 
+const listDesignFilesInFolderForUpdate = `-- name: ListDesignFilesInFolderForUpdate :many
+SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at FROM design_file
+WHERE workspace_id = $1 AND folder_id = $2
+ORDER BY id
+FOR UPDATE
+`
+
+type ListDesignFilesInFolderForUpdateParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	FolderID    pgtype.UUID `json:"folder_id"`
+}
+
+func (q *Queries) ListDesignFilesInFolderForUpdate(ctx context.Context, arg ListDesignFilesInFolderForUpdateParams) ([]DesignFile, error) {
+	rows, err := q.db.Query(ctx, listDesignFilesInFolderForUpdate, arg.WorkspaceID, arg.FolderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DesignFile{}
+	for rows.Next() {
+		var i DesignFile
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.FolderID,
+			&i.Title,
+			&i.Description,
+			&i.SourceType,
+			&i.SourceRef,
+			&i.CurrentRevisionID,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDesignFolders = `-- name: ListDesignFolders :many
 
 SELECT id, workspace_id, project_id, parent_id, name, position, created_by, created_at, updated_at FROM design_folder
@@ -3401,6 +3846,48 @@ func (q *Queries) ListDesignRevisions(ctx context.Context, fileID pgtype.UUID) (
 	return items, nil
 }
 
+const listDesignRevisionsInFileForUpdate = `-- name: ListDesignRevisionsInFileForUpdate :many
+SELECT id, file_id, workspace_id, revision_number, status, native_json, validation_errors, created_by, created_at FROM design_revision
+WHERE file_id = $1 AND workspace_id = $2
+ORDER BY revision_number DESC
+FOR UPDATE
+`
+
+type ListDesignRevisionsInFileForUpdateParams struct {
+	FileID      pgtype.UUID `json:"file_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) ListDesignRevisionsInFileForUpdate(ctx context.Context, arg ListDesignRevisionsInFileForUpdateParams) ([]DesignRevision, error) {
+	rows, err := q.db.Query(ctx, listDesignRevisionsInFileForUpdate, arg.FileID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DesignRevision{}
+	for rows.Next() {
+		var i DesignRevision
+		if err := rows.Scan(
+			&i.ID,
+			&i.FileID,
+			&i.WorkspaceID,
+			&i.RevisionNumber,
+			&i.Status,
+			&i.NativeJson,
+			&i.ValidationErrors,
+			&i.CreatedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDesignRevisionsWithNativeJSON = `-- name: ListDesignRevisionsWithNativeJSON :many
 SELECT id, file_id, workspace_id, revision_number, status, native_json, validation_errors, created_by, created_at FROM design_revision
 WHERE file_id = $1
@@ -3571,7 +4058,7 @@ func (q *Queries) ListDesignTemplates(ctx context.Context, workspaceID pgtype.UU
 }
 
 const listProjectDesignSystemTasks = `-- name: ListProjectDesignSystemTasks :many
-SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason FROM agent_task_queue
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for FROM agent_task_queue
 WHERE context->>'project_design_system_id' = $1::uuid::text
   AND context->>'workspace_id' = $2::uuid::text
   AND EXISTS (
@@ -3626,6 +4113,31 @@ func (q *Queries) ListProjectDesignSystemTasks(ctx context.Context, arg ListProj
 			&i.ForceFreshSession,
 			&i.IsLeaderTask,
 			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.ChatFinalizeDeferredAt,
+			&i.OriginatorSource,
+			&i.DelegatedFromTaskID,
+			&i.RetryOfTaskID,
+			&i.RerunOfTaskID,
+			&i.RuleVersionID,
+			&i.TriggerEvidenceKind,
+			&i.TriggerEvidenceRefID,
+			&i.AccountableUserID,
+			&i.SessionRolloutMissing,
+			&i.RetiredSessionID,
+			&i.QuickActionsDisabled,
+			&i.RegenerateQuickActionsFor,
 		); err != nil {
 			return nil, err
 		}

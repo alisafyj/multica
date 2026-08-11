@@ -24,6 +24,7 @@ import { useMemo } from "react";
 import { View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
+import { useTranslation } from "react-i18next";
 import type { Issue, IssueStatus } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
@@ -32,13 +33,15 @@ import { IssueRow } from "@/components/issue/issue-row";
 import { IssuesLoading } from "@/components/issue/issues-loading";
 import { projectIssuesOptions } from "@/data/queries/projects";
 import { useWorkspaceStore } from "@/data/workspace-store";
-import { BOARD_STATUSES, STATUS_LABEL } from "@/lib/issue-status";
+import { BOARD_STATUSES } from "@/lib/issue-status";
+import { useIssueLabels } from "@/lib/use-issue-labels";
 
 interface Props {
   projectId: string;
 }
 
 export function ProjectRelatedIssues({ projectId }: Props) {
+  const { t } = useTranslation("projects");
   const wsId = useWorkspaceStore((s) => s.currentWorkspaceId);
   const wsSlug = useWorkspaceStore((s) => s.currentWorkspaceSlug);
   const { data, isLoading, error, refetch } = useQuery(
@@ -65,11 +68,13 @@ export function ProjectRelatedIssues({ projectId }: Props) {
     return (
       <View className="px-4 py-6 gap-3">
         <Text className="text-sm text-destructive">
-          Failed to load issues:{" "}
-          {error instanceof Error ? error.message : "unknown error"}
+          {t("related_issues.error.load_prefix")}{" "}
+          {error instanceof Error
+            ? error.message
+            : t("related_issues.error.unknown")}
         </Text>
         <Button variant="outline" onPress={() => refetch()}>
-          <Text>Retry</Text>
+          <Text>{t("related_issues.error.retry")}</Text>
         </Button>
       </View>
     );
@@ -78,7 +83,9 @@ export function ProjectRelatedIssues({ projectId }: Props) {
   if ((data?.length ?? 0) === 0) {
     return (
       <View className="px-4 py-6">
-        <Text className="text-sm text-muted-foreground">No issues yet.</Text>
+        <Text className="text-sm text-muted-foreground">
+          {t("related_issues.empty")}
+        </Text>
       </View>
     );
   }
@@ -112,11 +119,14 @@ function SectionHeader({
   status: IssueStatus;
   count: number;
 }) {
+  // Issue status lives in the "issues" namespace — the enclosing screen's `t`
+  // is bound to "projects", so this header takes its own binding.
+  const { statusLabel } = useIssueLabels();
   return (
     <View className="flex-row items-center gap-2 px-4 py-2 bg-background">
       <StatusIcon status={status} size={14} />
       <Text className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
-        {STATUS_LABEL[status]}
+        {statusLabel(status)}
       </Text>
       <Text className="text-xs text-muted-foreground/60">{count}</Text>
     </View>

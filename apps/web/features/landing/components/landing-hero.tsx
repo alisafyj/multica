@@ -2,10 +2,10 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, Download } from "lucide-react";
+import { Download } from "lucide-react";
 import { useAuthStore } from "@multica/core/auth";
-import { captureDownloadIntent } from "@multica/core/analytics";
 import { useLocale } from "../i18n";
+import { useDashboardCtaHref } from "../utils/use-dashboard-cta";
 import {
   ClaudeCodeLogo,
   CodexLogo,
@@ -14,10 +14,12 @@ import {
   OpenCodeLogo,
   heroButtonClassName,
 } from "./shared";
+import { AndroidIcon, AppleIcon } from "./download/os-icons";
 
 export function LandingHero() {
   const { t } = useLocale();
   const user = useAuthStore((s) => s.user);
+  const ctaHref = useDashboardCtaHref();
 
   return (
     <div className="relative min-h-full overflow-hidden bg-[#05070b] text-white">
@@ -29,65 +31,74 @@ export function LandingHero() {
           className="mx-auto max-w-[1320px] px-4 pb-16 pt-28 sm:px-6 sm:pt-32 lg:px-8 lg:pb-24 lg:pt-36"
         >
           <div className="mx-auto max-w-[1120px] text-center">
-            <h1 className="font-[family-name:var(--font-serif)] text-[3.65rem] leading-[0.93] tracking-[-0.038em] text-white drop-shadow-[0_10px_34px_rgba(0,0,0,0.32)] sm:text-[4.85rem] lg:text-[6.4rem]">
+            <h1 className="landing-serif text-[3.65rem] leading-[0.93] tracking-[-0.038em] text-white drop-shadow-[0_10px_34px_rgba(0,0,0,0.32)] sm:text-[4.85rem] lg:text-[6.4rem]">
               {t.hero.headlineLine1}
               <br />
               {t.hero.headlineLine2}
             </h1>
 
-            <p className="mx-auto mt-7 max-w-[820px] text-[15px] leading-7 text-white/84 sm:text-[17px]">
+            <p className="mx-auto mt-7 max-w-[820px] text-body-lg leading-7 text-white/84 sm:text-title">
               {t.hero.subheading}
             </p>
 
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <Link href={user ? "/" : "/login"} className={heroButtonClassName("solid")}>
+              <Link href={ctaHref} className={heroButtonClassName("solid")}>
                 {user ? t.header.dashboard : t.hero.cta}
               </Link>
               <Link
                 href="/download"
                 className={heroButtonClassName("ghost")}
-                onClick={() => captureDownloadIntent("landing_hero")}
               >
                 <Download className="size-4" aria-hidden />
                 {t.hero.downloadDesktop}
               </Link>
               <Link
-                href="/contact-sales"
-                className="group inline-flex items-center justify-center gap-1.5 rounded-[12px] px-3 py-3 text-[14px] font-semibold text-white/80 transition-colors hover:text-white"
+                href="/download#android"
+                className={heroButtonClassName("ghost")}
               >
-                {t.hero.talkToSales}
-                <ArrowRight
-                  className="size-4 transition-transform group-hover:translate-x-0.5"
-                  aria-hidden
-                />
+                <AndroidIcon size={16} aria-hidden />
+                {t.hero.downloadAndroid}
               </Link>
+              {/* iOS is in development: same pill so the platform row reads
+                  as one set, but non-interactive and dimmed until it ships. */}
+              <span
+                aria-disabled="true"
+                title={t.hero.iosInDevelopment}
+                className={`${heroButtonClassName("ghost")} cursor-default opacity-45 hover:bg-black/16`}
+              >
+                <AppleIcon size={16} aria-hidden />
+                {t.hero.downloadIos}
+                <span className="rounded-full border border-white/25 px-2 py-0.5 text-caption font-medium text-white/75">
+                  {t.hero.iosInDevelopment}
+                </span>
+              </span>
             </div>
           </div>
 
           <div className="mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-3">
-            <span className="text-[15px] text-white/50">
+            <span className="text-body-lg text-white/50">
               {t.hero.worksWith}
             </span>
             <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-3">
               <div className="flex items-center gap-2.5 text-white/80">
                 <ClaudeCodeLogo className="size-5" />
-                <span className="text-[15px] font-medium">Claude Code</span>
+                <span className="text-body-lg font-medium">Claude Code</span>
               </div>
               <div className="flex items-center gap-2.5 text-white/80">
                 <CodexLogo className="size-5" />
-                <span className="text-[15px] font-medium">Codex</span>
+                <span className="text-body-lg font-medium">Codex</span>
               </div>
               <div className="flex items-center gap-2.5 text-white/80">
                 <GeminiCliLogo className="size-5" />
-                <span className="text-[15px] font-medium">Gemini CLI</span>
+                <span className="text-body-lg font-medium">Gemini CLI</span>
               </div>
               <div className="flex items-center gap-2.5 text-white/80">
                 <OpenClawLogo className="size-5" />
-                <span className="text-[15px] font-medium">OpenClaw</span>
+                <span className="text-body-lg font-medium">OpenClaw</span>
               </div>
               <div className="flex items-center gap-2.5 text-white/80">
                 <OpenCodeLogo className="size-5" />
-                <span className="text-[15px] font-medium">OpenCode</span>
+                <span className="text-body-lg font-medium">OpenCode</span>
               </div>
             </div>
           </div>

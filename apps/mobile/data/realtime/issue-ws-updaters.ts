@@ -62,6 +62,18 @@ export function clearIssueDetail(
   qc.removeQueries({ queryKey: issueKeys.timeline(wsId, issueId) });
 }
 
+export function invalidateIssueAfterReconnect(
+  qc: QueryClient,
+  wsId: string,
+  issueId: string,
+) {
+  qc.invalidateQueries({ queryKey: issueKeys.detail(wsId, issueId) });
+  qc.invalidateQueries({ queryKey: issueKeys.timeline(wsId, issueId) });
+  qc.invalidateQueries({ queryKey: issueKeys.attachments(wsId, issueId) });
+  qc.invalidateQueries({ queryKey: issueKeys.activeTasks(wsId, issueId) });
+  qc.invalidateQueries({ queryKey: issueKeys.tasks(wsId, issueId) });
+}
+
 // =====================================================
 // Issue timeline (flat TimelineEntry[], ASC oldest-first)
 // =====================================================
@@ -366,5 +378,6 @@ export function commentToTimelineEntry(comment: Comment): TimelineEntry {
     resolved_at: comment.resolved_at,
     resolved_by_type: comment.resolved_by_type,
     resolved_by_id: comment.resolved_by_id,
+    source_task_id: comment.source_task_id,
   };
 }

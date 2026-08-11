@@ -3,8 +3,10 @@
 This file provides guidance to AI agents when working with code in this repository.
 
 > **Single source of truth:** This file is a concise pointer document.
-> All authoritative architecture, coding rules, commands, and conventions
+> All authoritative architecture, coding rules, and conventions
 > live in **CLAUDE.md** at the project root. Read that file first.
+> Use `Makefile`, `package.json`, and `pnpm-workspace.yaml` as the
+> source of truth for the full command list.
 
 ## Quick Reference
 
@@ -12,27 +14,35 @@ This file provides guidance to AI agents when working with code in this reposito
 
 Go backend + monorepo frontend (pnpm workspaces + Turborepo) with shared packages.
 
-- `server/` — Go backend (Chi router, sqlc, gorilla/websocket)
-- `apps/web/` — Next.js frontend (App Router)
-- `apps/desktop/` — Electron desktop app
-- `packages/core/` — Headless business logic (Zustand stores, React Query hooks, API client)
-- `packages/ui/` — Atomic UI components (shadcn/Base UI, zero business logic)
-- `packages/views/` — Shared business pages/components
-- `packages/tsconfig/` — Shared TypeScript config
+- `server/` - Go backend (Chi router, sqlc, gorilla/websocket)
+- `apps/web/` - Next.js frontend (App Router)
+- `apps/desktop/` - Electron desktop app
+- `apps/mobile/` - Expo / React Native iOS app (read `apps/mobile/CLAUDE.md` first)
+- `apps/docs/` - Fumadocs documentation site
+- `packages/core/` - Headless business logic (Zustand stores, React Query hooks, API client)
+- `packages/ui/` - Atomic UI components (shadcn/Base UI, zero business logic)
+- `packages/views/` - Shared business pages/components
+- `packages/tsconfig/` - Shared TypeScript config
+- `packages/eslint-config/` - Shared ESLint config
 
 ### State Management (critical)
 
 - **React Query** owns all server state (issues, members, agents, inbox, workspace list)
-- **Zustand** owns all client state (current workspace selection, view filters, drafts, modals)
-- All Zustand stores live in `packages/core/` — never in `packages/views/` or app directories
-- WS events invalidate React Query — never write directly to stores
+- **Zustand** owns client/view state (view filters, drafts, modals, desktop tab state); current workspace identity is route-driven and only mirrored for platform plumbing
+- All Zustand stores live in `packages/core/` - never in `packages/views/` or app directories
+- WS events update React Query for server data; store writes are only for clearing client-owned pointers with a single responder/self-event guard
 
 ### Package Boundaries (hard rules)
 
-- `packages/core/` — zero react-dom, zero localStorage, zero process.env
-- `packages/ui/` — zero `@multica/core` imports
-- `packages/views/` — zero `next/*`, zero `react-router-dom`, use `NavigationAdapter` for routing
-- `apps/web/platform/` — only place for Next.js APIs
+- `packages/core/` - zero react-dom, zero localStorage, zero process.env
+- `packages/ui/` - zero `@multica/core` imports
+- `packages/views/` - zero `next/*`, zero `react-router-dom`, use `NavigationAdapter` for routing
+- `apps/web/platform/` - only place for Next.js APIs
+
+### Database Migrations (hard rules)
+
+- Never add database foreign keys or cascading actions. Enforce relationships and perform dependent cleanup explicitly in the application layer, using transactions when the operation must be atomic.
+- Every index created by a migration, including unique indexes and indexes on new tables, must use `CREATE [UNIQUE] INDEX CONCURRENTLY`. Keep each concurrent index build in its own single-statement migration file.
 
 ### Commands
 
@@ -44,12 +54,13 @@ make test             # Go tests
 make check            # Full verification pipeline
 ```
 
+See CLAUDE.md for the authoritative rules and common commands.
 See CLAUDE.md for the complete command reference.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **multica** (33203 symbols, 98167 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **multica** (50795 symbols, 152869 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
@@ -93,6 +104,6 @@ This project is indexed by GitNexus as **multica** (33203 symbols, 98167 relatio
 
 ## 当前任务状态（会话交接 - 每次会话结束更新）
 
-- **做了什么**: 从 recovery 抽回模板 Blueprint 分析链：发布项目模板后入队 `design_template_blueprint_analyze`，daemon claim/prompt/complete 识别该任务，完成时原子保存 `design_template_blueprint`；未启用 approve/reject/revise，未恢复 Open Design Worker/Runtime/Daemon
-- **做到哪**: 当前主线 `feature/fengchen-design` 已完成 blueprint checkpoint 的 focused/broader handler、daemon、service 测试和 `git diff --check`；GitNexus `detect-changes` 为 `critical`（触碰 daemon/task 公共入口，已按 scope 核对）；仅剩未跟踪 `.opencode/` 目录未处理
-- **下一步**: 提交本 blueprint checkpoint 后，只剩 `server/internal/designcore` recovery 差异需要判定/抽取；继续避开旧 archive-preview 回退、native V2 删除和 review 状态流
+- **做了什么**: 在 `feature/fengchen` 合并 `main@20207ab31`，解决全部冲突并保留设计中心能力；设计迁移重排到 `800-876`，补齐无 FK 删除清理，恢复空白设计首页，迁移 role typography tokens；修复 Project Design System 永久拒绝被错误升级为 500，以及历史 Open Design 测试 fixture 的固定主键冲突
+- **做到哪**: merge 内容全部 staged，0 unmerged/unstaged/untracked，`git diff --check` 通过；TypeScript typecheck、Core/Views 测试、设计聚焦测试、迁移和全量 Go 均通过。Playwright 在正确 SSO 隔离环境下为 29/48，通过后复用的旧 Next dev 进程断开并出现环境/既有 E2E 失败，未作为本次设计合并回归处理；merge commit 尚未创建
+- **下一步**: 提交 merge commit；GitNexus MCP 不可用，提交前需恢复后运行 `detect_changes(compare main)`，或明确记录沿用此前 daemon/task 公共入口 `critical` 结果与人工 scope 核对。随后认证 `gh` 后 push/建 PR；继续避开旧 archive-preview 回退、native V2 删除和 review 状态流

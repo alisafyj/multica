@@ -57,6 +57,9 @@ export type LandingDict = {
     subheading: string;
     cta: string;
     downloadDesktop: string;
+    downloadAndroid: string;
+    downloadIos: string;
+    iosInDevelopment: string;
     talkToSales: string;
     worksWith: string;
     imageAlt: string;
@@ -145,8 +148,8 @@ export type LandingDict = {
       macIntel: {
         title: string;
         sub: string;
-        disabledCta: string;
-        intelHint: string;
+        primary: string;
+        altZip: string;
       };
       winX64: { title: string; sub: string; primary: string };
       winArm64: { title: string; sub: string; primary: string };
@@ -162,7 +165,8 @@ export type LandingDict = {
     };
     allPlatforms: {
       title: string;
-      macLabel: string;
+      macArm64Label: string;
+      macX64Label: string;
       winX64Label: string;
       winArm64Label: string;
       linuxX64Label: string;
@@ -173,8 +177,16 @@ export type LandingDict = {
       formatAppImage: string;
       formatDeb: string;
       formatRpm: string;
-      intelNote: string;
       unavailable: string;
+    };
+    android: {
+      title: string;
+      sub: string;
+      downloadApk: string;
+      scanHint: string;
+      unavailable: string;
+      viewAllReleases: string;
+      qrUnavailable: string;
     };
     cli: {
       title: string;
@@ -185,7 +197,6 @@ export type LandingDict = {
       copyLabel: string;
       copiedLabel: string;
     };
-    cloud: { title: string; sub: string };
     footer: {
       releaseNotes: string;
       allReleases: string;

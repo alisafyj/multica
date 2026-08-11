@@ -229,14 +229,14 @@ function TokenPreview({ token, value }: { token: ProjectDesignSystemToken; value
   }
   if (normalizedName.includes("font-family")) {
     return (
-      <span aria-hidden="true" data-token-preview="font-family" className="w-10 shrink-0 text-center text-base" style={{ fontFamily: value }}>
+      <span aria-hidden="true" data-token-preview="font-family" className="w-10 shrink-0 text-center text-title-sm" style={{ fontFamily: value }}>
         {TYPOGRAPHY_PREVIEW_SAMPLE}
       </span>
     );
   }
   if (normalizedName.includes("font-weight")) {
     return (
-      <span aria-hidden="true" data-token-preview="font-weight" className="w-10 shrink-0 text-center text-base" style={{ fontWeight: value }}>
+      <span aria-hidden="true" data-token-preview="font-weight" className="w-10 shrink-0 text-center text-title-sm" style={{ fontWeight: value }}>
         {TYPOGRAPHY_PREVIEW_SAMPLE}
       </span>
     );
@@ -347,7 +347,7 @@ function AdjustmentPanel({
   return (
     <div className="min-w-0">
       <section className="border-b pb-5">
-        <div className="flex items-center gap-2 text-sm font-medium">
+        <div className="flex items-center gap-2 text-body font-medium">
           <Bot className="h-4 w-4 text-muted-foreground" />
           执行智能体
         </div>
@@ -355,7 +355,7 @@ function AdjustmentPanel({
           aria-label="执行智能体"
           value={selectedAgentId}
           onChange={(event) => onAgentChange(event.target.value)}
-          className="mt-3 h-9 w-full rounded-md border bg-background px-3 text-sm"
+          className="mt-3 h-9 w-full rounded-md border bg-background px-3 text-body"
         >
           <option value="">选择智能体</option>
           {agentOptions.map((agent) => (
@@ -368,13 +368,13 @@ function AdjustmentPanel({
           ) : null}
         </select>
         {selectedAgentId && !agentAvailable ? (
-          <p className="mt-2 text-xs text-destructive">当前智能体不可用，请明确选择其他智能体。</p>
+          <p className="mt-2 text-caption text-destructive">当前智能体不可用，请明确选择其他智能体。</p>
         ) : null}
       </section>
 
       <section className="border-b py-5">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-medium">调整范围</span>
+          <span className="text-body font-medium">调整范围</span>
           {selectedScope.kind !== "all" ? (
             <Button
               type="button"
@@ -388,7 +388,7 @@ function AdjustmentPanel({
             </Button>
           ) : null}
         </div>
-        <div className="mt-2 flex min-w-0 items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-2 text-xs">
+        <div className="mt-2 flex min-w-0 items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-2 text-caption">
           <Target className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <span data-adjustment-scope className="min-w-0 break-words font-medium">{selectedLabel}</span>
         </div>
@@ -396,7 +396,7 @@ function AdjustmentPanel({
 
       <section className="py-5">
         <label className="block space-y-2">
-          <span className="text-sm font-medium">调整要求</span>
+          <span className="text-body font-medium">调整要求</span>
           <Textarea
             aria-label="调整要求"
             value={instruction}
@@ -418,7 +418,7 @@ function AdjustmentPanel({
 
       {regenerateConfirmation ? (
         <section className="border-t py-5">
-          <div role="alert" className="border-l-2 border-amber-500 bg-amber-500/5 px-3 py-2 text-xs leading-5">
+          <div role="alert" className="border-l-2 border-amber-500 bg-amber-500/5 px-3 py-2 text-caption leading-5">
             已保存内容会继续保留，新的结果将先成为草稿。
           </div>
           <div className="mt-3 flex gap-2">
@@ -444,7 +444,7 @@ function AdjustmentPanel({
       ) : null}
 
       {actionError ? (
-        <div role="alert" className="flex items-start gap-2 border-l-2 border-destructive bg-destructive/5 px-3 py-2 text-xs text-destructive">
+        <div role="alert" className="flex items-start gap-2 border-l-2 border-destructive bg-destructive/5 px-3 py-2 text-caption text-destructive">
           <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>{actionError}</span>
         </div>
@@ -452,10 +452,10 @@ function AdjustmentPanel({
 
       {system.activity.length ? (
         <section className="mt-5 border-t pt-5">
-          <h3 className="text-sm font-medium">最近活动</h3>
+          <h3 className="text-body font-medium">最近活动</h3>
           <ol className="mt-2 space-y-3">
             {system.activity.slice(0, 3).map((task) => (
-              <li key={task.id} className="text-xs">
+              <li key={task.id} className="text-caption">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-medium">{task.operation}</span>
                   <span className="text-muted-foreground">{taskStatusLabel(task.status)}</span>
@@ -691,11 +691,11 @@ export function ProjectDesignSystemCanvas({
       <header className="shrink-0 border-b px-4 py-2 lg:px-6">
         <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            {showSystemTitle ? <h1 className="break-words text-sm font-semibold">{system.name}</h1> : null}
+            {showSystemTitle ? <h1 className="break-words text-body font-semibold">{system.name}</h1> : null}
             <Badge variant="outline">{PLATFORM_LABELS[system.platform] ?? "未指定平台"}</Badge>
             <Badge variant={system.status === "saved" ? "secondary" : "outline"}>{statusLabel(system)}</Badge>
             {system.has_unsaved_changes ? <Badge variant="outline">有未保存更改</Badge> : null}
-            <span className="text-xs text-muted-foreground">最近更新 {formatDate(system.updated_at)}</span>
+            <span className="text-caption text-muted-foreground">最近更新 {formatDate(system.updated_at)}</span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -762,7 +762,7 @@ export function ProjectDesignSystemCanvas({
                   key={item.id}
                   type="button"
                   aria-label={`选择范围：${item.label}`}
-                  className={`block w-full rounded-sm px-2 py-1.5 text-left text-xs leading-5 ${selectedScope.kind === item.scope.kind && selectedScope.id === item.scope.id ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  className={`block w-full rounded-sm px-2 py-1.5 text-left text-caption leading-5 ${selectedScope.kind === item.scope.kind && selectedScope.id === item.scope.id ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:text-foreground"}`}
                   onClick={() => selectAndScroll(item.scope, item.id)}
                 >
                   {item.label}
@@ -770,7 +770,7 @@ export function ProjectDesignSystemCanvas({
               ))}
               <button
                 type="button"
-                className="block w-full rounded-sm px-2 py-1.5 text-left text-xs leading-5 text-muted-foreground hover:text-foreground"
+                className="block w-full rounded-sm px-2 py-1.5 text-left text-caption leading-5 text-muted-foreground hover:text-foreground"
                 onClick={() => document.getElementById("ui-kit")?.scrollIntoView?.({ behavior: "smooth", block: "start" })}
               >
                 在线 UI Kit
@@ -782,7 +782,7 @@ export function ProjectDesignSystemCanvas({
             {system.content.sections.map((section) => (
               <section key={section.id} id={`section-${section.id}`} className="group/design-section scroll-mt-6 border-b pb-8">
                 <div className="mb-4 flex items-start justify-between gap-3">
-                  <h2 className="break-words text-lg font-semibold">{section.title}</h2>
+                  <h2 className="break-words text-title font-semibold">{section.title}</h2>
                   <div className="flex shrink-0 items-center gap-1">
                     {selectedScope.kind === "section" && selectedScope.id === section.id ? (
                       <Badge variant="secondary"><Check className="h-3 w-3" />已定位</Badge>
@@ -803,7 +803,7 @@ export function ProjectDesignSystemCanvas({
                     </Button>
                   </div>
                 </div>
-                <ReadonlyContent content={section.markdown} className="max-w-none text-sm leading-7" />
+                <ReadonlyContent content={section.markdown} className="max-w-none text-body leading-7" />
               </section>
             ))}
 
@@ -812,7 +812,7 @@ export function ProjectDesignSystemCanvas({
               return (
                 <section key={group.id} id={`tokens-${group.id}`} className="group/design-section scroll-mt-6 border-b pb-8">
                   <div className="mb-4 flex items-start justify-between gap-3">
-                    <h2 className="break-words text-lg font-semibold">{label}</h2>
+                    <h2 className="break-words text-title font-semibold">{label}</h2>
                     <div className="flex shrink-0 items-center gap-1">
                       {selectedScope.kind === "token_group" && selectedScope.id === group.id ? (
                         <Badge variant="secondary"><Check className="h-3 w-3" />已定位</Badge>
@@ -841,8 +841,8 @@ export function ProjectDesignSystemCanvas({
                         <div key={token.name} data-token-name={token.name} className="flex min-w-0 items-center gap-3 border-t py-3 first:border-t-0 sm:[&:nth-child(2)]:border-t-0">
                           <TokenPreview token={token} value={resolvedValue} />
                           <div className="min-w-0 flex-1">
-                            <div className="break-all text-xs font-medium">{token.name}</div>
-                            <div title={originalValue} className="mt-0.5 break-all font-mono text-xs text-muted-foreground">{resolvedValue}</div>
+                            <div className="break-all text-caption font-medium">{token.name}</div>
+                            <div title={originalValue} className="mt-0.5 break-all font-mono text-caption text-muted-foreground">{resolvedValue}</div>
                           </div>
                         </div>
                       );
@@ -855,8 +855,8 @@ export function ProjectDesignSystemCanvas({
             <section id="ui-kit" className="scroll-mt-6">
               <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold">在线 UI Kit</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">点击预览中的组件或区块，可将调整范围定位到对应内容。</p>
+                  <h2 className="text-title font-semibold">在线 UI Kit</h2>
+                  <p className="mt-1 text-caption text-muted-foreground">点击预览中的组件或区块，可将调整范围定位到对应内容。</p>
                 </div>
                 {selectedScope.kind === "component" || selectedScope.kind === "block" ? (
                   <div className="flex items-center gap-1">
@@ -875,7 +875,7 @@ export function ProjectDesignSystemCanvas({
                 ) : null}
               </div>
               {system.preview_validation.status === "failed" || verificationError ? (
-                <div role="alert" className="mb-3 flex flex-col gap-3 border-l-2 border-destructive bg-destructive/5 px-3 py-2 text-xs text-destructive sm:flex-row sm:items-center sm:justify-between">
+                <div role="alert" className="mb-3 flex flex-col gap-3 border-l-2 border-destructive bg-destructive/5 px-3 py-2 text-caption text-destructive sm:flex-row sm:items-center sm:justify-between">
                   <span>{verificationError ?? "UI Kit 验证未通过，当前草稿不能保存。"}</span>
                   <Button
                     type="button"

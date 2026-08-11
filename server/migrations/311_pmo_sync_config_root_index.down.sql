@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS pmo_sync_config_workspace_root_idx;

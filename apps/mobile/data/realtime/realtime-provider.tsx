@@ -36,6 +36,7 @@ import {
 } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
+import { CLIENT_OS, CLIENT_VERSION } from "@/lib/client-identity";
 import { useAuthStore } from "@/data/auth-store";
 import { useWorkspaceStore } from "@/data/workspace-store";
 import { getToken } from "@/data/secure-storage";
@@ -90,7 +91,11 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
         url: WS_URL,
         token,
         workspaceSlug: wsSlug,
-        clientVersion: "0.1.0",
+        // Same identity the HTTP client sends — see lib/client-identity.ts.
+        // Injected rather than imported by ws-client.ts so that layer stays
+        // free of native imports and testable in the Node vitest lane.
+        clientVersion: CLIENT_VERSION,
+        clientOs: CLIENT_OS,
         logger: console,
       });
       ws.connect();

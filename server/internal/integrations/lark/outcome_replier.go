@@ -17,23 +17,29 @@ import (
 // appropriate Lark-side reply card. This is the outbound half of the
 // `EventEmitter` contract in hub.go: NeedsBinding sends the binding
 // prompt to the sender's open_id, AgentOffline / AgentArchived send
-// a status notice into the chat. OutcomeIngested is owned by the
-// Patcher (task lifecycle); OutcomeDropped is silent.
+// a status notice into the chat, and FreshPending / IssueUsage send
+// command guidance. OutcomeIngested is owned by the Patcher (task
+// lifecycle); OutcomeDropped is silent.
 //
 // Reply is best-effort by design: a transient Lark outage MUST NOT
-// fail the inbound pipeline (the message is already durable in
-// chat_session by the time we get here for OutcomeIngested, and for
-// the other outcomes there is no durable side effect to undo). Errors
-// are logged and swallowed; the next inbound message for the same
-// user retries the reply on its own.
+// fail the inbound pipeline. Any command state or chat message is already
+// durable by the time we get here, so a reply failure cannot roll it back.
+// Errors are logged and swallowed.
 type OutcomeReplier interface {
-	Reply(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, res DispatchResult)
+	Reply(ctx context.Context, inst Installation, msg InboundMessage, res DispatchResult)
 }
 
 // OutcomeReplierQueries is the narrow subset of *db.Queries the
 // replier needs. Pinned via an interface so tests substitute a fake.
 type OutcomeReplierQueries interface {
 	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
+}
+
+// BindingTokenMinter is the narrow dependency the outcome replier needs from
+// BindingTokenService. Keeping this as an interface lets tests pin the Lark
+// binding URL without constructing a database-backed token service.
+type BindingTokenMinter interface {
+	Mint(ctx context.Context, workspaceID, installationID pgtype.UUID, openID OpenID) (BindingToken, error)
 }
 
 // noopReplier is the safe default when Lark is wired without an
@@ -44,9 +50,9 @@ type noopReplier struct {
 	log *slog.Logger
 }
 
-func (n *noopReplier) Reply(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, res DispatchResult) {
+func (n *noopReplier) Reply(ctx context.Context, inst Installation, msg InboundMessage, res DispatchResult) {
 	switch res.Outcome {
-	case OutcomeNeedsBinding, OutcomeAgentOffline, OutcomeAgentArchived:
+	case OutcomeNeedsBinding, OutcomeAgentOffline, OutcomeAgentArchived, OutcomeFreshPending, OutcomeIssueUsage:
 		n.log.Warn("lark outcome replier: outbound reply skipped (replier not wired)",
 			"outcome", string(res.Outcome),
 			"installation_id", uuidString(inst.ID),
@@ -81,26 +87,28 @@ func NewNoopOutcomeReplier(log *slog.Logger) OutcomeReplier {
 // (the standard implementations are).
 type LarkOutcomeReplier struct {
 	client       APIClient
-	bindingSvc   *BindingTokenService
+	bindingSvc   BindingTokenMinter
 	credentials  CredentialsResolver
 	queries      OutcomeReplierQueries
-	publicURL    string // e.g. https://multica.example, trailing slash trimmed
+	appURL       string // e.g. https://multica.example, trailing slash trimmed
 	bindingPath  string // path component of the binding URL, default "/lark/bind"
 	noticeHeader string // header text used by the offline/archived cards
 	log          *slog.Logger
 }
 
-// OutcomeReplierConfig wires the production replier. PublicURL is the
-// Multica HTTP host the user clicks into to redeem the binding token
-// (e.g. https://multica.example); empty means the binding flow can
-// only log the open_id, not produce a clickable card. The other
-// fields default at construction.
+// OutcomeReplierConfig wires the production replier. AppURL is the Multica web
+// app host the user clicks into to redeem the binding token or open an issue
+// (e.g. https://multica.example). It comes from MULTICA_APP_URL and is
+// intentionally separate from MULTICA_PUBLIC_URL, which is the backend/API
+// public URL used for webhook and daemon-facing endpoints. Empty means the
+// binding flow can only log the open_id, not produce a clickable card. The
+// other fields default at construction.
 type OutcomeReplierConfig struct {
 	APIClient   APIClient
-	BindingSvc  *BindingTokenService
+	BindingSvc  BindingTokenMinter
 	Credentials CredentialsResolver
 	Queries     OutcomeReplierQueries
-	PublicURL   string
+	AppURL      string
 	BindingPath string
 	Logger      *slog.Logger
 }
@@ -120,8 +128,8 @@ func NewLarkOutcomeReplier(cfg OutcomeReplierConfig) OutcomeReplier {
 		log.Warn("lark outcome replier: APIClient.IsConfigured()=false; downgrading to noop replier")
 		return NewNoopOutcomeReplier(log)
 	}
-	if cfg.PublicURL == "" {
-		log.Warn("lark outcome replier: MULTICA_PUBLIC_URL not set; binding prompt CTA will not work")
+	if cfg.AppURL == "" {
+		log.Warn("lark outcome replier: MULTICA_APP_URL not set; binding prompt CTA will not work")
 	}
 	bindingPath := cfg.BindingPath
 	if bindingPath == "" {
@@ -135,7 +143,7 @@ func NewLarkOutcomeReplier(cfg OutcomeReplierConfig) OutcomeReplier {
 		bindingSvc:   cfg.BindingSvc,
 		credentials:  cfg.Credentials,
 		queries:      cfg.Queries,
-		publicURL:    strings.TrimRight(cfg.PublicURL, "/"),
+		appURL:       strings.TrimRight(cfg.AppURL, "/"),
 		bindingPath:  bindingPath,
 		noticeHeader: "Multica",
 		log:          log,
@@ -145,7 +153,7 @@ func NewLarkOutcomeReplier(cfg OutcomeReplierConfig) OutcomeReplier {
 // Reply implements OutcomeReplier. Reads carefully — the switch is
 // the SOURCE OF TRUTH for which outcomes generate a reply, and a
 // missing branch silently drops the user-visible side effect.
-func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, res DispatchResult) {
+func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst Installation, msg InboundMessage, res DispatchResult) {
 	switch res.Outcome {
 	case OutcomeNeedsBinding:
 		if err := r.sendBindingPrompt(ctx, inst, res); err != nil {
@@ -171,19 +179,34 @@ func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst db.LarkInstallation
 				"err", err.Error(),
 			)
 		}
+	case OutcomeFreshPending:
+		if err := r.sendChatNotice(ctx, inst, msg, freshPendingCopy); err != nil {
+			r.log.Warn("lark outcome replier: fresh-start confirmation failed",
+				"installation_id", uuidString(inst.ID),
+				"chat_id", string(msg.ChatID),
+				"err", err.Error(),
+			)
+		}
+	case OutcomeIssueUsage:
+		copy := issueUsageCopy
+		if res.IssueUsageHadMedia {
+			copy = issueUsageWithMediaCopy
+		}
+		if err := r.sendChatNotice(ctx, inst, msg, copy); err != nil {
+			r.log.Warn("lark outcome replier: issue usage reply failed",
+				"installation_id", uuidString(inst.ID),
+				"chat_id", string(msg.ChatID),
+				"err", err.Error(),
+			)
+		}
 	case OutcomeIngested:
-		// The agent's chat reply itself goes through the Patcher (text
-		// message on ChatDone). But /issue does NOT block on the
-		// agent — the user expects an immediate "Created [MUL-42]"
-		// confirmation as soon as the issue row commits, separate
-		// from whatever the agent eventually replies. Without this,
-		// the user types `/issue fix login bug` and just sees the
-		// agent's eventual response, with no clear signal that the
-		// command itself was understood. Gate on IssueID.Valid so a
-		// plain chat message (no /issue) stays silent here.
+		// The agent's chat reply itself goes through the Patcher. An /issue
+		// command gets an immediate product result: either the newly created
+		// issue or the active duplicate that blocked it. Gate on IssueID.Valid
+		// so a plain chat message stays silent here.
 		if res.IssueID.Valid {
-			if err := r.sendIssueCreated(ctx, inst, msg, res); err != nil {
-				r.log.Warn("lark outcome replier: issue-created confirmation failed",
+			if err := r.sendIssueOutcome(ctx, inst, msg, res); err != nil {
+				r.log.Warn("lark outcome replier: issue outcome reply failed",
 					"installation_id", uuidString(inst.ID),
 					"chat_id", string(msg.ChatID),
 					"issue_id", uuidString(res.IssueID),
@@ -196,18 +219,18 @@ func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst db.LarkInstallation
 	}
 }
 
-func (r *LarkOutcomeReplier) sendBindingPrompt(ctx context.Context, inst db.LarkInstallation, res DispatchResult) error {
+func (r *LarkOutcomeReplier) sendBindingPrompt(ctx context.Context, inst Installation, res DispatchResult) error {
 	if res.SenderOpenID == "" {
 		return errors.New("missing sender open_id")
 	}
-	if r.publicURL == "" {
-		return errors.New("public_url not configured")
+	if r.appURL == "" {
+		return errors.New("app_url not configured")
 	}
 	token, err := r.bindingSvc.Mint(ctx, inst.WorkspaceID, inst.ID, res.SenderOpenID)
 	if err != nil {
 		return fmt.Errorf("mint binding token: %w", err)
 	}
-	bindURL := r.publicURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
+	bindURL := r.appURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
 	creds, err := r.installationCredentials(inst)
 	if err != nil {
 		return err
@@ -219,14 +242,9 @@ func (r *LarkOutcomeReplier) sendBindingPrompt(ctx context.Context, inst db.Lark
 	})
 }
 
-// sendIssueCreated posts the "Created [MUL-42] <title>" confirmation
-// as a plain text message. We deliberately send text rather than an
-// interactive card so the confirmation flows inline with the rest of
-// the Lark conversation — consistent with how chat replies render
-// after MUL-2671's plain-text refactor. The link to Multica is
-// included on its own line so Lark's auto-linker turns it into a
-// tappable URL.
-func (r *LarkOutcomeReplier) sendIssueCreated(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, res DispatchResult) error {
+// sendIssueOutcome posts either the created confirmation or active-duplicate
+// conflict as plain text, with a link to the relevant issue when configured.
+func (r *LarkOutcomeReplier) sendIssueOutcome(ctx context.Context, inst Installation, msg InboundMessage, res DispatchResult) error {
 	if msg.ChatID == "" {
 		return errors.New("missing chat_id")
 	}
@@ -234,24 +252,45 @@ func (r *LarkOutcomeReplier) sendIssueCreated(ctx context.Context, inst db.LarkI
 	if err != nil {
 		return err
 	}
-	text := issueCreatedText(res, r.publicURL)
-	if _, err := r.client.SendTextMessage(ctx, SendTextParams{
-		InstallationID: creds,
-		ChatID:         msg.ChatID,
-		Text:           text,
-	}); err != nil {
-		return fmt.Errorf("send issue-created text: %w", err)
+	text := issueCreatedText(res, r.appURL)
+	if res.IssueDuplicate {
+		text = issueDuplicateText(res, r.appURL)
 	}
-	return nil
+	// Share the Patcher's classified fallback: a thread reply that
+	// fails because the topic cannot receive it (recalled trigger,
+	// topics disabled, aggregated message) falls back to a chat-level
+	// send so the product result is not lost; transport/5xx/rate-limit
+	// failures stay failures rather than leaking into the group chat.
+	return sendWithThreadFallback(r.log, "send issue outcome text", inboundReplyTarget(msg), func(t ReplyTarget) error {
+		_, err := r.client.SendTextMessage(ctx, SendTextParams{
+			InstallationID: creds,
+			ChatID:         msg.ChatID,
+			Text:           text,
+			ReplyTarget:    t,
+		})
+		return err
+	})
+}
+
+// inboundReplyTarget threads an outbound reply off the inbound trigger
+// message when that message lived inside a Lark topic (话题). It mirrors
+// threadReplyTarget (used by the event-driven Patcher) but reads the
+// live InboundMessage the replier already holds, so it needs no DB
+// round-trip. An empty thread_id yields the zero ReplyTarget — a
+// chat-level send, i.e. the unchanged behavior for non-thread messages.
+func inboundReplyTarget(msg InboundMessage) ReplyTarget {
+	if msg.ThreadID != "" && msg.MessageID != "" {
+		return ReplyTarget{MessageID: msg.MessageID, InThread: true}
+	}
+	return ReplyTarget{}
 }
 
 // issueCreatedText composes the user-facing confirmation. Identifier
 // always wins over a bare number — DispatchResult.IssueIdentifier
-// already encodes the workspace prefix when available. PublicURL is
-// optional: when empty (self-host operators who haven't configured
-// MULTICA_PUBLIC_URL) the message still confirms the issue, just
-// without a deep link the user can tap.
-func issueCreatedText(res DispatchResult, publicURL string) string {
+// already encodes the workspace prefix when available. AppURL is optional:
+// when empty (self-host operators who haven't configured MULTICA_APP_URL) the
+// message still confirms the issue, just without a deep link the user can tap.
+func issueCreatedText(res DispatchResult, appURL string) string {
 	identifier := res.IssueIdentifier
 	if identifier == "" {
 		identifier = fmt.Sprintf("#%d", res.IssueNumber)
@@ -263,13 +302,31 @@ func issueCreatedText(res DispatchResult, publicURL string) string {
 	} else {
 		line = fmt.Sprintf("Created %s — %s", identifier, title)
 	}
-	if publicURL == "" {
+	if appURL == "" {
 		return line
 	}
-	return line + "\n" + strings.TrimRight(publicURL, "/") + "/issues/" + identifier
+	return line + "\n" + strings.TrimRight(appURL, "/") + "/issues/" + identifier
 }
 
-func (r *LarkOutcomeReplier) sendChatNotice(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, body string) error {
+func issueDuplicateText(res DispatchResult, appURL string) string {
+	identifier := res.IssueIdentifier
+	if identifier == "" {
+		identifier = fmt.Sprintf("#%d", res.IssueNumber)
+	}
+	title := strings.TrimSpace(res.IssueTitle)
+	var line string
+	if title == "" {
+		line = fmt.Sprintf("Not created — active issue %s already exists.", identifier)
+	} else {
+		line = fmt.Sprintf("Not created — active issue %s already exists: %s", identifier, title)
+	}
+	if appURL == "" {
+		return line
+	}
+	return line + "\n" + strings.TrimRight(appURL, "/") + "/issues/" + identifier
+}
+
+func (r *LarkOutcomeReplier) sendChatNotice(ctx context.Context, inst Installation, msg InboundMessage, body string) error {
 	if msg.ChatID == "" {
 		return errors.New("missing chat_id")
 	}
@@ -285,17 +342,21 @@ func (r *LarkOutcomeReplier) sendChatNotice(ctx context.Context, inst db.LarkIns
 	if err != nil {
 		return fmt.Errorf("render notice card: %w", err)
 	}
-	if _, err := r.client.SendInteractiveCard(ctx, SendCardParams{
-		InstallationID: creds,
-		ChatID:         msg.ChatID,
-		CardJSON:       cardJSON,
-	}); err != nil {
-		return fmt.Errorf("send notice card: %w", err)
-	}
-	return nil
+	// Same classified fallback as sendIssueOutcome: only thread-reply
+	// failures that mean the topic cannot receive the message fall back
+	// to a chat-level send; ambiguous/transport failures stay failures.
+	return sendWithThreadFallback(r.log, "send notice card", inboundReplyTarget(msg), func(t ReplyTarget) error {
+		_, err := r.client.SendInteractiveCard(ctx, SendCardParams{
+			InstallationID: creds,
+			ChatID:         msg.ChatID,
+			CardJSON:       cardJSON,
+			ReplyTarget:    t,
+		})
+		return err
+	})
 }
 
-func (r *LarkOutcomeReplier) installationCredentials(inst db.LarkInstallation) (InstallationCredentials, error) {
+func (r *LarkOutcomeReplier) installationCredentials(inst Installation) (InstallationCredentials, error) {
 	secret, err := r.credentials.DecryptAppSecret(inst)
 	if err != nil {
 		return InstallationCredentials{}, fmt.Errorf("decrypt app_secret: %w", err)
@@ -303,6 +364,7 @@ func (r *LarkOutcomeReplier) installationCredentials(inst db.LarkInstallation) (
 	creds := InstallationCredentials{
 		AppID:     inst.AppID,
 		AppSecret: secret,
+		Region:    RegionOrDefault(inst.Region),
 	}
 	if inst.TenantKey.Valid {
 		creds.TenantKey = inst.TenantKey.String
@@ -345,6 +407,9 @@ func renderNoticeCard(header, body string) (string, error) {
 // match the §4.6 design: an offline agent will run when the daemon
 // comes back; an archived agent needs operator action.
 const (
-	agentOfflineCopy  = "Agent 当前离线，消息已记录。下次 daemon 上线后会自动继续处理。"
-	agentArchivedCopy = "这个 Agent 已被归档，无法继续处理消息。请联系工作区管理员恢复或重新绑定。"
+	agentOfflineCopy        = "Agent 当前离线，消息已记录。下次 daemon 上线后会自动继续处理。"
+	agentArchivedCopy       = "这个 Agent 已被归档，无法继续处理消息。请联系工作区管理员恢复或重新绑定。"
+	freshPendingCopy        = "✅ 已准备开始新对话。你的下一条聊天消息将不带之前的上下文运行。"
+	issueUsageCopy          = "请填写任务标题，格式如下：\n\n`/issue <标题>`\n`[描述]`（可选）"
+	issueUsageWithMediaCopy = "请添加标题，并与图片或视频一起重新发送（*图片或视频可以位于命令之前或之后*）：\n\n`/issue <标题>`\n`[描述]`（可选）"
 )

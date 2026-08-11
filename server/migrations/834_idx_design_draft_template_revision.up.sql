@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY idx_design_draft_template_revision ON design_draft(template_revision_id) WHERE template_revision_id IS NOT NULL;

@@ -15,6 +15,23 @@ ORDER BY project_id, parent_id NULLS FIRST, position ASC, name ASC;
 SELECT * FROM design_folder
 WHERE id = $1 AND workspace_id = $2 AND project_id = $3;
 
+-- name: GetDesignFolderInWorkspaceForUpdate :one
+SELECT * FROM design_folder
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;
+
+-- name: DesignFolderHasChildren :one
+SELECT EXISTS (
+    SELECT 1 FROM design_folder
+    WHERE workspace_id = $1 AND parent_id = $2
+);
+
+-- name: ListDesignFilesInFolderForUpdate :many
+SELECT * FROM design_file
+WHERE workspace_id = $1 AND folder_id = $2
+ORDER BY id
+FOR UPDATE;
+
 -- name: CreateDesignFolder :one
 INSERT INTO design_folder (workspace_id, project_id, parent_id, name, position, created_by)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -74,6 +91,11 @@ WHERE id = $1;
 SELECT * FROM design_file
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: GetDesignFileInWorkspaceForUpdate :one
+SELECT * FROM design_file
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;
+
 -- name: GetDesignFileBySourceKeyForUpdate :one
 SELECT * FROM design_file
 WHERE workspace_id = $1
@@ -103,6 +125,69 @@ RETURNING *;
 -- name: DeleteDesignFile :exec
 DELETE FROM design_file WHERE id = $1 AND workspace_id = $2;
 
+-- name: DetachDesignDraftFileReferences :exec
+UPDATE design_draft AS dd
+SET file_id = CASE WHEN dd.file_id = sqlc.arg('target_file_id') THEN NULL ELSE dd.file_id END,
+    generated_file_id = CASE WHEN dd.generated_file_id = sqlc.arg('target_file_id') THEN NULL ELSE dd.generated_file_id END,
+    revision_id = CASE WHEN dd.revision_id IN (
+        SELECT dr.id FROM design_revision AS dr
+        WHERE dr.file_id = sqlc.arg('target_file_id') AND dr.workspace_id = sqlc.arg('target_workspace_id')
+    ) THEN NULL ELSE dd.revision_id END,
+    generated_revision_id = CASE WHEN dd.generated_revision_id IN (
+        SELECT dr.id FROM design_revision AS dr
+        WHERE dr.file_id = sqlc.arg('target_file_id') AND dr.workspace_id = sqlc.arg('target_workspace_id')
+    ) THEN NULL ELSE dd.generated_revision_id END,
+    updated_at = now()
+WHERE dd.workspace_id = sqlc.arg('target_workspace_id')
+  AND (
+      dd.file_id = sqlc.arg('target_file_id')
+      OR dd.generated_file_id = sqlc.arg('target_file_id')
+      OR dd.revision_id IN (
+          SELECT dr.id FROM design_revision AS dr
+          WHERE dr.file_id = sqlc.arg('target_file_id') AND dr.workspace_id = sqlc.arg('target_workspace_id')
+      )
+      OR dd.generated_revision_id IN (
+          SELECT dr.id FROM design_revision AS dr
+          WHERE dr.file_id = sqlc.arg('target_file_id') AND dr.workspace_id = sqlc.arg('target_workspace_id')
+      )
+  );
+
+-- name: DeleteDesignRestoreMappingsByFile :exec
+DELETE FROM design_restore_mapping AS drm
+WHERE drm.workspace_id = sqlc.arg('target_workspace_id')
+  AND drm.restore_task_id IN (
+      SELECT id FROM design_restore_task
+      WHERE workspace_id = sqlc.arg('target_workspace_id') AND file_id = sqlc.arg('target_file_id')
+  );
+
+-- name: DeleteDesignRestorePlansByFile :exec
+DELETE FROM design_restore_plan AS drp
+WHERE drp.workspace_id = sqlc.arg('target_workspace_id')
+  AND drp.restore_task_id IN (
+      SELECT id FROM design_restore_task
+      WHERE workspace_id = sqlc.arg('target_workspace_id') AND file_id = sqlc.arg('target_file_id')
+  );
+
+-- name: DeleteDesignRestoreTasksByFile :exec
+DELETE FROM design_restore_task
+WHERE workspace_id = sqlc.arg('target_workspace_id') AND file_id = sqlc.arg('target_file_id');
+
+-- name: DeleteDesignDeliveriesByFile :exec
+DELETE FROM design_delivery
+WHERE workspace_id = sqlc.arg('target_workspace_id') AND file_id = sqlc.arg('target_file_id');
+
+-- name: DeleteDesignSystemProfilesByFile :exec
+DELETE FROM design_system_profile
+WHERE workspace_id = sqlc.arg('target_workspace_id') AND source_file_id = sqlc.arg('target_file_id');
+
+-- name: DeleteDesignAssetsByFile :exec
+DELETE FROM design_asset
+WHERE workspace_id = sqlc.arg('target_workspace_id') AND file_id = sqlc.arg('target_file_id');
+
+-- name: DeleteDesignRevisionsByFile :exec
+DELETE FROM design_revision
+WHERE workspace_id = sqlc.arg('target_workspace_id') AND file_id = sqlc.arg('target_file_id');
+
 -- name: ListDesignRevisions :many
 SELECT id, file_id, workspace_id, revision_number, status, validation_errors, created_by, created_at FROM design_revision
 WHERE file_id = $1
@@ -112,6 +197,82 @@ ORDER BY revision_number DESC;
 SELECT * FROM design_revision
 WHERE file_id = $1
 ORDER BY revision_number DESC;
+
+-- name: ListDesignRevisionsInFileForUpdate :many
+SELECT * FROM design_revision
+WHERE file_id = $1 AND workspace_id = $2
+ORDER BY revision_number DESC
+FOR UPDATE;
+
+-- name: DesignRevisionsHaveProtectedReferences :one
+SELECT EXISTS (
+    SELECT 1 FROM design_template_revision AS dtr
+    WHERE dtr.workspace_id = sqlc.arg('target_workspace_id')
+      AND dtr.design_revision_id = ANY(sqlc.arg('revision_ids')::uuid[])
+    UNION ALL
+    SELECT 1 FROM design_template_blueprint AS dtb
+    WHERE dtb.workspace_id = sqlc.arg('target_workspace_id')
+      AND dtb.source_revision_id = ANY(sqlc.arg('revision_ids')::uuid[])
+    UNION ALL
+    SELECT 1 FROM design_component_recipe_set AS dcrs
+    WHERE dcrs.workspace_id = sqlc.arg('target_workspace_id')
+      AND dcrs.source_revision_id = ANY(sqlc.arg('revision_ids')::uuid[])
+);
+
+-- name: DetachDesignAssetRevisionReferences :exec
+UPDATE design_asset
+SET revision_id = NULL
+WHERE workspace_id = sqlc.arg('target_workspace_id')
+  AND revision_id = ANY(sqlc.arg('revision_ids')::uuid[]);
+
+-- name: DetachDesignDraftRevisionReferences :exec
+UPDATE design_draft
+SET revision_id = CASE WHEN revision_id = ANY(sqlc.arg('revision_ids')::uuid[]) THEN NULL ELSE revision_id END,
+    generated_revision_id = CASE WHEN generated_revision_id = ANY(sqlc.arg('revision_ids')::uuid[]) THEN NULL ELSE generated_revision_id END,
+    updated_at = now()
+WHERE workspace_id = sqlc.arg('target_workspace_id')
+  AND (
+      revision_id = ANY(sqlc.arg('revision_ids')::uuid[])
+      OR generated_revision_id = ANY(sqlc.arg('revision_ids')::uuid[])
+  );
+
+-- name: DeleteDesignRestoreMappingsByRevisions :exec
+DELETE FROM design_restore_mapping AS drm
+WHERE drm.workspace_id = sqlc.arg('target_workspace_id')
+  AND drm.restore_task_id IN (
+      SELECT id FROM design_restore_task
+      WHERE workspace_id = sqlc.arg('target_workspace_id')
+        AND revision_id = ANY(sqlc.arg('revision_ids')::uuid[])
+  );
+
+-- name: DeleteDesignRestorePlansByRevisions :exec
+DELETE FROM design_restore_plan AS drp
+WHERE drp.workspace_id = sqlc.arg('target_workspace_id')
+  AND drp.restore_task_id IN (
+      SELECT id FROM design_restore_task
+      WHERE workspace_id = sqlc.arg('target_workspace_id')
+        AND revision_id = ANY(sqlc.arg('revision_ids')::uuid[])
+  );
+
+-- name: DeleteDesignRestoreTasksByRevisions :exec
+DELETE FROM design_restore_task
+WHERE workspace_id = sqlc.arg('target_workspace_id')
+  AND revision_id = ANY(sqlc.arg('revision_ids')::uuid[]);
+
+-- name: DeleteDesignDeliveriesByRevisions :exec
+DELETE FROM design_delivery
+WHERE workspace_id = sqlc.arg('target_workspace_id')
+  AND revision_id = ANY(sqlc.arg('revision_ids')::uuid[]);
+
+-- name: DeleteDesignSystemProfilesByRevisions :exec
+DELETE FROM design_system_profile
+WHERE workspace_id = sqlc.arg('target_workspace_id')
+  AND source_revision_id = ANY(sqlc.arg('revision_ids')::uuid[]);
+
+-- name: DeleteDesignRevisionsByIDs :exec
+DELETE FROM design_revision
+WHERE workspace_id = sqlc.arg('target_workspace_id')
+  AND id = ANY(sqlc.arg('revision_ids')::uuid[]);
 
 -- name: GetDesignRevision :one
 SELECT * FROM design_revision

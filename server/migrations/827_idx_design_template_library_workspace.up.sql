@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY idx_design_template_library_workspace ON design_template_library(workspace_id, key);

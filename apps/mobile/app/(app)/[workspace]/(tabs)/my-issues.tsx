@@ -5,10 +5,17 @@
  * (`involves_user_id`, MUL-2397) surfaces both the user's owned agents and
  * squads they're involved in (member / leader / has an owned agent inside).
  *
- * Issues are grouped by status using SectionList in `BOARD_STATUSES` order;
+ * Two view modes, mirroring web's `modes={["board", "list", …]}` with board
+ * as the default (`packages/views/my-issues/components/my-issues-page.tsx:35`);
+ * mobile ships the two that survive a phone-width viewport.
+ *
+ * List mode groups by status using SectionList in `BOARD_STATUSES` order;
  * empty status sections are filtered out so the screen doesn't fill with
  * "(0)" headers. Section grouping uses `BOARD_STATUSES` (cancelled excluded)
  * to match web — same source `packages/views/my-issues/components/my-issues-page.tsx:117-125`.
+ * Board mode keeps empty columns instead, so the swipe order is stable —
+ * see `lib/board-columns.ts`. Both modes render the same filtered array, so
+ * the visible issue set never depends on which one you're in.
  *
  * Status + Priority filters mirror web's MyIssuesHeader filter sub-menus.
  * Filter state lives in `useMyIssuesViewStore` and is cleared on workspace
@@ -17,8 +24,10 @@
 import { useMemo } from "react";
 import { Pressable, SectionList, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
+import { useIsFocused } from "@react-navigation/native";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useTranslation } from "react-i18next";
 import type { Issue, IssuePriority, IssueStatus } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
@@ -26,6 +35,7 @@ import { Header } from "@/components/ui/header";
 import { HeaderActions } from "@/components/ui/app-header-actions";
 import { StatusIcon } from "@/components/ui/status-icon";
 import { IssueRow } from "@/components/issue/issue-row";
+import { IssueBoard } from "@/components/issue/issue-board";
 import { IssuesLoading } from "@/components/issue/issues-loading";
 import {
   buildMyIssuesFilter,
@@ -34,38 +44,42 @@ import {
 import type { MyIssuesScope } from "@/data/queries/issue-keys";
 import { useAuthStore } from "@/data/auth-store";
 import { useWorkspaceStore } from "@/data/workspace-store";
-import { useMyIssuesViewStore } from "@/data/stores/my-issues-view-store";
-import { useClearFiltersOnWorkspaceChange } from "@/lib/use-clear-filters-on-workspace-change";
 import {
-  BOARD_STATUSES,
-  PRIORITY_LABEL,
-  STATUS_LABEL,
-} from "@/lib/issue-status";
+  useMyIssuesViewStore,
+  type MyIssuesViewMode,
+} from "@/data/stores/my-issues-view-store";
+import { useClearFiltersOnWorkspaceChange } from "@/lib/use-clear-filters-on-workspace-change";
+import { BOARD_STATUSES } from "@/lib/issue-status";
+import { useIssueLabels } from "@/lib/use-issue-labels";
 import { filterIssues } from "@/lib/filter-issues";
 import { useColorScheme } from "@/lib/use-color-scheme";
 import { THEME } from "@/lib/theme";
 
-// Mobile pill row has tight width on SE3 (375pt). Three pills + Filter icon
-// must fit in 343pt usable space, so the agents scope renders "Agents" — the
-// full "Agents and Squads" label (~135pt) blows past safe limits and breaks
-// under Dynamic Type. Semantics unchanged: same backend predicate
-// (`involves_user_id`, MUL-2397) covers owned agents + related squads; the
-// empty state copy still says "agents or squads".
-const SCOPES: { value: MyIssuesScope; label: string }[] = [
-  { value: "assigned", label: "Assigned" },
-  { value: "created", label: "Created" },
-  { value: "agents", label: "Agents" },
-];
-
 type IssueSection = { status: IssueStatus; data: Issue[] };
 
 export default function MyIssues() {
+  const isFocused = useIsFocused();
+  const { t } = useTranslation("issues");
   const userId = useAuthStore((s) => s.user?.id ?? null);
   const wsId = useWorkspaceStore((s) => s.currentWorkspaceId);
   const wsSlug = useWorkspaceStore((s) => s.currentWorkspaceSlug);
 
+  // Mobile pill row has tight width on SE3 (375pt). Three pills + Filter icon
+  // must fit in 343pt usable space, so the agents scope renders "Agents" — the
+  // full "Agents and Squads" label (~135pt) blows past safe limits and breaks
+  // under Dynamic Type. Semantics unchanged: same backend predicate
+  // (`involves_user_id`, MUL-2397) covers owned agents + related squads; the
+  // empty state copy still says "agents or squads".
+  const SCOPES: { value: MyIssuesScope; label: string }[] = [
+    { value: "assigned", label: t("my_issues.scope.assigned") },
+    { value: "created", label: t("my_issues.scope.created") },
+    { value: "agents", label: t("my_issues.scope.agents") },
+  ];
+
   const scope = useMyIssuesViewStore((s) => s.scope);
   const setScope = useMyIssuesViewStore((s) => s.setScope);
+  const viewMode = useMyIssuesViewStore((s) => s.viewMode);
+  const setViewMode = useMyIssuesViewStore((s) => s.setViewMode);
   const statusFilters = useMyIssuesViewStore((s) => s.statusFilters);
   const priorityFilters = useMyIssuesViewStore((s) => s.priorityFilters);
 
@@ -126,13 +140,17 @@ export default function MyIssues() {
 
   return (
     <View className="flex-1 bg-background">
-      <Header title="My Issues" right={<HeaderActions />} />
+      <Header title={t("my_issues.tab_title")} right={<HeaderActions />} />
       <ScopeToolbar
         scopes={SCOPES}
         scope={scope}
         onChange={(v) => setScope(v)}
         onOpenFilter={openFilter}
         hasActiveFilters={hasActiveFilters}
+        viewMode={viewMode}
+        onToggleViewMode={() =>
+          setViewMode(viewMode === "board" ? "list" : "board")
+        }
       />
       {hasActiveFilters ? (
         <ActiveFilterChips
@@ -151,20 +169,30 @@ export default function MyIssues() {
       ) : error ? (
         <View className="px-4 gap-3 pt-4">
           <Text className="text-sm text-destructive">
-            Failed to load issues:{" "}
-            {error instanceof Error ? error.message : "unknown error"}
+            {t("error.load_prefix")}{" "}
+            {error instanceof Error ? error.message : t("error.unknown")}
           </Text>
           <Button variant="outline" onPress={() => refetch()}>
-            <Text>Retry</Text>
+            <Text>{t("error.retry")}</Text>
           </Button>
         </View>
       ) : showEmptyState ? (
         <EmptyState
           message={
             hasActiveFilters
-              ? "No issues match the current filters."
-              : emptyMessageForScope(scope)
+              ? t("my_issues.empty.no_active_filters")
+              : emptyMessageForScope(t, scope)
           }
+        />
+      ) : viewMode === "board" ? (
+        <IssueBoard
+          issues={filtered}
+          statusFilters={statusFilters}
+          onPressIssue={(issue) => {
+            if (wsSlug) router.push(`/${wsSlug}/issue/${issue.id}`);
+          }}
+          refreshing={isFocused && isRefetching}
+          onRefresh={refetch}
         />
       ) : (
         <SectionList
@@ -189,7 +217,7 @@ export default function MyIssues() {
               }}
             />
           )}
-          refreshing={isRefetching}
+          refreshing={isFocused && isRefetching}
           onRefresh={refetch}
         />
       )}
@@ -214,13 +242,14 @@ function FilterButton({
   hasActiveFilters: boolean;
 }) {
   const { colorScheme } = useColorScheme();
+  const { t } = useTranslation("issues");
   return (
     <View style={{ position: "relative" }} className="ml-2">
       <Button
         variant="outline"
         size="sm"
         onPress={onPress}
-        accessibilityLabel="Filter"
+        accessibilityLabel={t("filter_button.accessibility_label")}
         className="w-9 px-0"
       >
         <Ionicons
@@ -253,12 +282,16 @@ function ScopeToolbar<S extends string>({
   onChange,
   onOpenFilter,
   hasActiveFilters,
+  viewMode,
+  onToggleViewMode,
 }: {
   scopes: { value: S; label: string }[];
   scope: S;
   onChange: (value: S) => void;
   onOpenFilter: () => void;
   hasActiveFilters: boolean;
+  viewMode: MyIssuesViewMode;
+  onToggleViewMode: () => void;
 }) {
   return (
     <View className="flex-row items-center justify-between px-4 pt-2 pb-2">
@@ -284,11 +317,49 @@ function ScopeToolbar<S extends string>({
           );
         })}
       </View>
-      <FilterButton
-        onPress={onOpenFilter}
-        hasActiveFilters={hasActiveFilters}
-      />
+      <View className="flex-row items-center">
+        <ViewModeButton viewMode={viewMode} onPress={onToggleViewMode} />
+        <FilterButton
+          onPress={onOpenFilter}
+          hasActiveFilters={hasActiveFilters}
+        />
+      </View>
     </View>
+  );
+}
+
+/**
+ * Toggles board ⇄ list. Sits next to the filter trigger and copies its
+ * outline/square shape so the two read as one control group. The icon shows
+ * the mode you'd switch TO, which is how the rest of the app's toggles read.
+ */
+function ViewModeButton({
+  viewMode,
+  onPress,
+}: {
+  viewMode: MyIssuesViewMode;
+  onPress: () => void;
+}) {
+  const { colorScheme } = useColorScheme();
+  const { t } = useTranslation("issues");
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onPress={onPress}
+      accessibilityLabel={
+        viewMode === "board"
+          ? t("my_issues.view_mode.switch_to_list")
+          : t("my_issues.view_mode.switch_to_board")
+      }
+      className="w-9 px-0"
+    >
+      <Ionicons
+        name={viewMode === "board" ? "list-outline" : "grid-outline"}
+        size={16}
+        color={THEME[colorScheme].mutedForeground}
+      />
+    </Button>
   );
 }
 
@@ -303,13 +374,14 @@ function ActiveFilterChips({
   onClearStatus: (s: IssueStatus) => void;
   onClearPriority: (p: IssuePriority) => void;
 }) {
+  const { statusLabel, priorityLabel } = useIssueLabels();
   return (
     <View className="flex-row flex-wrap gap-1.5 px-4 pb-2">
       {statusFilters.map((s) => (
-        <Chip key={`s-${s}`} label={STATUS_LABEL[s]} onClear={() => onClearStatus(s)} />
+        <Chip key={`s-${s}`} label={statusLabel(s)} onClear={() => onClearStatus(s)} />
       ))}
       {priorityFilters.map((p) => (
-        <Chip key={`p-${p}`} label={PRIORITY_LABEL[p]} onClear={() => onClearPriority(p)} />
+        <Chip key={`p-${p}`} label={priorityLabel(p)} onClear={() => onClearPriority(p)} />
       ))}
     </View>
   );
@@ -339,11 +411,12 @@ function SectionHeader({
   status: IssueStatus;
   count: number;
 }) {
+  const { statusLabel } = useIssueLabels();
   return (
     <View className="flex-row items-center gap-2 px-4 py-2 bg-background">
       <StatusIcon status={status} size={14} />
       <Text className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
-        {STATUS_LABEL[status]}
+        {statusLabel(status)}
       </Text>
       <Text className="text-xs text-muted-foreground/60">{count}</Text>
     </View>
@@ -360,14 +433,16 @@ function EmptyState({ message }: { message: string }) {
   );
 }
 
-function emptyMessageForScope(scope: MyIssuesScope): string {
+function emptyMessageForScope(
+  t: (key: string) => string,
+  scope: MyIssuesScope,
+): string {
   switch (scope) {
     case "assigned":
-      return "No issues assigned to you.";
+      return t("my_issues.empty.assigned");
     case "created":
-      return "You haven't created any issues.";
+      return t("my_issues.empty.created");
     case "agents":
-      return "No issues assigned to your agents or squads yet.";
+      return t("my_issues.empty.agents");
   }
 }
-

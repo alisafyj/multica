@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
 // runtimeMarkerBegin and runtimeMarkerEnd delimit the Multica-managed brief
-// inside the runtime config file (CLAUDE.md / AGENTS.md / GEMINI.md). The
+// inside the runtime config file (CLAUDE.md / AGENTS.md). The
 // markers exist so writeRuntimeConfigFile can:
 //
 //   - preserve user-authored content in the same file (the user's repo may
@@ -90,6 +92,27 @@ func sanitizeNameForBriefMarkdown(name string) string {
 	return strings.TrimSpace(b.String())
 }
 
+// sanitizeEmailForBrief returns the email verbatim when it is safe to embed
+// inline in the brief, or "" when it carries a character a real address never
+// has (whitespace, control chars, or a markdown-break risk). Unlike
+// sanitizeNameForBriefMarkdown it does NOT backslash-escape markdown specials:
+// an agent may want to match the initiator's address exactly, and escaping
+// `_`/`+` would corrupt it, while a valid email can't contain a newline to
+// inject a heading anyway. Emails are validated at signup, so this is
+// defense-in-depth, not the primary guard. See MUL-2645.
+func sanitizeEmailForBrief(email string) string {
+	email = strings.TrimSpace(email)
+	if email == "" || !strings.Contains(email, "@") {
+		return ""
+	}
+	for _, r := range email {
+		if r < 0x20 || r == 0x7f || r == ' ' || r == '\\' || r == '`' || r == '*' || r == '<' || r == '>' || r == '[' || r == ']' {
+			return ""
+		}
+	}
+	return email
+}
+
 // formatProjectResource renders a single resource as a human-readable bullet.
 // Unknown resource types fall back to a JSON-encoded ref so the agent can
 // still read what the user attached. New resource types should add a case
@@ -101,14 +124,39 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 		var payload struct {
 			URL               string `json:"url"`
 			DefaultBranchHint string `json:"default_branch_hint,omitempty"`
+			Ref               string `json:"ref,omitempty"`
 		}
 		_ = json.Unmarshal(r.ResourceRef, &payload)
 		out := fmt.Sprintf("**GitHub repo**: %s", payload.URL)
+		details := make([]string, 0, 2)
+		if payload.Ref != "" {
+			details = append(details, fmt.Sprintf("checkout ref: `%s`", payload.Ref))
+		}
 		if payload.DefaultBranchHint != "" {
-			out += fmt.Sprintf(" (default branch: `%s`)", payload.DefaultBranchHint)
+			details = append(details, fmt.Sprintf("default branch hint: `%s`", payload.DefaultBranchHint))
+		}
+		if len(details) > 0 {
+			out += " (" + strings.Join(details, ", ") + ")"
 		}
 		if label != "" {
 			out += " — " + label
+		}
+		return out
+	case "document":
+		// External specification or business-rule page. Agents should fetch and
+		// read the URL before implementing or testing anything the spec describes.
+		var payload struct {
+			URL     string `json:"url"`
+			Title   string `json:"title"`
+			Summary string `json:"summary,omitempty"`
+		}
+		_ = json.Unmarshal(r.ResourceRef, &payload)
+		out := fmt.Sprintf("**Document** «%s»: %s", payload.Title, payload.URL)
+		if payload.Summary != "" {
+			out += " — " + payload.Summary
+		}
+		if label != "" {
+			out += " (" + label + ")"
 		}
 		return out
 	default:
@@ -128,17 +176,24 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 // config file so the agent discovers its environment through its native mechanism.
 //
 // For Claude:   writes {workDir}/CLAUDE.md  (skills discovered natively from .claude/skills/)
+// For CodeBuddy: writes {workDir}/CODEBUDDY.md  (CodeBuddy's native memory filename; skills discovered natively from .codebuddy/skills/)
 // For Codex:    writes {workDir}/AGENTS.md  (skills discovered natively via CODEX_HOME)
 // For Copilot:  writes {workDir}/AGENTS.md  (skills discovered natively from .github/skills/)
 // For OpenCode: writes {workDir}/AGENTS.md  (skills discovered natively from .opencode/skills/)
+// For DevEco Code: writes {workDir}/AGENTS.md  (skills discovered natively from .deveco/skills/)
 // For OpenClaw: writes {workDir}/AGENTS.md  (skills discovered natively from {workDir}/skills/ via per-task openclaw-config.json that pins agents.defaults.workspace)
-// For Hermes:   writes {workDir}/AGENTS.md  (skills fall back to .agent_context/skills/; AGENTS.md points there)
-// For Gemini:   writes {workDir}/GEMINI.md  (discovered natively by the Gemini CLI)
+// For Hermes:   writes {workDir}/AGENTS.md  (skills discovered natively from a per-task HERMES_HOME/skills seeded by the daemon; see hermes_home.go)
 // For Pi:       writes {workDir}/AGENTS.md  (skills discovered natively from .pi/skills/)
+// For Oh-My-Pi (omp): writes {workDir}/AGENTS.md  (omp is a pi fork; skills discovered from .omp/skills/)
 // For Cursor:   writes {workDir}/AGENTS.md  (skills discovered natively from .cursor/skills/)
 // For Kimi:        writes {workDir}/AGENTS.md  (Kimi Code CLI reads AGENTS.md natively; skills auto-discovered from project skills dirs)
+// For Reasonix:    writes {workDir}/AGENTS.md  (Reasonix reads AGENTS.md and .reasonix/skills/ natively)
 // For Kiro:        writes {workDir}/AGENTS.md  (Kiro CLI reads AGENTS.md natively; skills auto-discovered from project skills dirs)
+// For Qoder/Qoder CN: writes {workDir}/AGENTS.md  (skills discovered from .qoder/skills/; user-level roots are unaffected)
 // For Antigravity: writes {workDir}/AGENTS.md  (agy CLI reads AGENTS.md natively; skills discovered natively from .agents/skills/ — see https://antigravity.google/docs/gcli-migration)
+// For Traecli:     writes {workDir}/AGENTS.md  (traecli reads .trae/rules/ not AGENTS.md, so the brief is delivered inline via providerNeedsInlineSystemPrompt; the file is written for parity/visibility only)
+// For Grok:        writes {workDir}/AGENTS.md  (Grok Build CLI reads AGENTS.md natively from the workdir)
+// For Qwen:        writes {workDir}/QWEN.md (Qwen Code's native context file; it also reads AGENTS.md, but QWEN.md avoids cross-runtime ambiguity)
 func InjectRuntimeConfig(workDir, provider string, ctx TaskContextForEnv) (string, error) {
 	content := buildMetaSkillContent(provider, ctx)
 	path := runtimeConfigPath(workDir, provider)
@@ -155,13 +210,28 @@ func InjectRuntimeConfig(workDir, provider string, ctx TaskContextForEnv) (strin
 // Cleanup in lockstep — both paths consult the same table so a new provider
 // added to one side cannot drift past the other.
 func runtimeConfigPath(workDir, provider string) string {
+	// Built-in runtime identities (e.g. "omp") inherit their config file
+	// from their protocol family — resolve the family from the descriptor
+	// and delegate to the family's switch case. This avoids hardcoding
+	// "AGENTS.md" for every descriptor; a compatible runtime on Claude,
+	// CodeBuddy, or Qwen would otherwise write the wrong file.
+	if desc, ok := agent.BuiltinRuntimeByID(provider); ok {
+		return runtimeConfigPath(workDir, desc.ProtocolFamily)
+	}
 	switch provider {
 	case "claude":
 		return filepath.Join(workDir, "CLAUDE.md")
-	case "codex", "copilot", "opencode", "openclaw", "hermes", "pi", "cursor", "kimi", "kiro", "antigravity":
+	case "codebuddy":
+		// CodeBuddy Code's native memory file is CODEBUDDY.md, not
+		// CLAUDE.md — see https://www.codebuddy.ai/docs/cli/codebuddy-dir
+		// ("CODEBUDDY.md / .codebuddy/CODEBUDDY.md — Project-level memory
+		// file"). CodeBuddy only reads CLAUDE.md if the user manually
+		// migrates/symlinks it in.
+		return filepath.Join(workDir, "CODEBUDDY.md")
+	case "qwen":
+		return filepath.Join(workDir, "QWEN.md")
+	case "codex", "copilot", "opencode", "deveco", "openclaw", "hermes", "pi", "cursor", "kimi", "reasonix", "kiro", "antigravity", "qoder", "qoderclicn", "traecli", "grok", "qwenpaw":
 		return filepath.Join(workDir, "AGENTS.md")
-	case "gemini":
-		return filepath.Join(workDir, "GEMINI.md")
 	default:
 		return ""
 	}
@@ -186,7 +256,7 @@ func runtimeConfigPath(workDir, provider string) string {
 //     separator established by the first inject) is preserved verbatim.
 //
 // The previous implementation called os.WriteFile unconditionally, which
-// silently truncated a repository's CLAUDE.md / AGENTS.md / GEMINI.md the
+// silently truncated a repository's CLAUDE.md / AGENTS.md the
 // first time the agent was pointed at the user's own directory via the
 // local_directory project resource flow. See MUL-2753.
 func writeRuntimeConfigFile(path, brief string) error {
@@ -282,7 +352,7 @@ func locateMarkerBlock(content string) (start, end int, found bool) {
 //     PR #3438 review feedback.
 //
 // Required for the local_directory flow (WorkDir is the user's own repo):
-// without this pass, a manual `claude` / `codex` / `gemini` run started by
+// without this pass, a manual `claude` / `codex` run started by
 // the user inside the same directory after a Multica task would pick up
 // the stale brief and act on the previous task's issue id, trigger
 // comment id, and reply rules. Cloud workspace runs never trigger this
@@ -338,9 +408,24 @@ func CleanupRuntimeConfig(workDir, provider string) error {
 	return os.WriteFile(path, []byte(remainder), 0o644)
 }
 
-// buildMetaSkillContent generates the meta skill markdown that teaches the agent
-// about the Multica runtime environment and available CLI tools.
+// buildMetaSkillContent generates the meta skill markdown that teaches the
+// agent about the Multica runtime environment and available CLI tools.
+//
+// The brief is assembled by buildMetaSkillContentSlim (runtime_config_sections.go),
+// which applies kind-driven section gating + per-section prose compression.
+// This used to be gated behind the `runtime_brief_slim` feature flag against a
+// legacy verbose brief; the flag has been retired (MUL-4297) and the slim brief
+// is now the only path.
 func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
+	if ctx.ProjectDesignSystemContext != "" {
+		return buildMetaSkillContentFull(provider, ctx)
+	}
+	return buildMetaSkillContentSlim(provider, ctx)
+}
+
+// buildMetaSkillContentFull retains the project-design-system brief until that
+// task kind is represented by the slim runtime-config section dispatcher.
+func buildMetaSkillContentFull(provider string, ctx TaskContextForEnv) string {
 	var b strings.Builder
 
 	b.WriteString("# Multica Agent Runtime\n\n")
@@ -608,11 +693,11 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("**This task was triggered by a NEW comment.** Your primary job is to respond to THIS specific comment, even if you have handled similar requests before in this session.\n\n")
 		fmt.Fprintf(&b, "1. Run `multica issue get %s --output json` to understand the issue context\n", ctx.IssueID)
 		fmt.Fprintf(&b, "2. Run `multica issue metadata list %s --output json` to see what prior agents pinned — best-effort, empty `{}` and CLI failures are normal. See the `## Issue Metadata` section above for what to look for.\n", ctx.IssueID)
-		if hint := BuildNewCommentsHint(ctx.IssueID, ctx.TriggerCommentID, ctx.NewCommentsSince, ctx.NewCommentCount); hint != "" {
+		if hint := BuildNewCommentsHint(ctx.IssueID, ctx.TriggerCommentID, ctx.TriggerThreadID, ctx.NewCommentsSince, ctx.NewCommentCount); hint != "" {
 			b.WriteString("3. " + hint)
 		} else if ctx.PriorSessionResumed {
-			b.WriteString("3. " + BuildResumedCommentsHint(ctx.IssueID, ctx.TriggerCommentID))
-		} else if cold := BuildColdCommentsHint(ctx.IssueID, ctx.TriggerCommentID); cold != "" {
+			b.WriteString("3. " + BuildResumedCommentsHint(ctx.IssueID, ctx.TriggerCommentID, ctx.TriggerThreadID))
+		} else if cold := BuildColdCommentsHint(ctx.IssueID, ctx.TriggerCommentID, ctx.TriggerThreadID); cold != "" {
 			b.WriteString("3. " + cold)
 		} else {
 			fmt.Fprintf(&b, "3. Catch up on comments — read with `multica issue comment list %s --output json` (long issue? `--recent 20`).\n", ctx.IssueID)
@@ -626,7 +711,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		}
 		b.WriteString("6. If a reply IS warranted: do any requested work first, then **decide whether to include any `@mention` link.** The default is NO mention. Only mention when you are escalating to a human owner who is not yet involved, delegating a concrete new sub-task to another agent for the first time, or the user explicitly asked you to loop someone in. Never @mention the agent you are replying to as a thank-you or sign-off.\n")
 		b.WriteString("7. **If you reply, post it as a comment — this step is mandatory when you reply.** Text in your terminal or run logs is NOT delivered to the user. ")
-		b.WriteString(BuildCommentReplyInstructions(provider, ctx.IssueID, ctx.TriggerCommentID))
+		b.WriteString(BuildCommentReplyInstructions(provider, ctx.IssueID, ctx.TriggerCommentID, ctx.IsSquadLeader))
 		b.WriteString("8. Before exiting: only if this run produced a fact that clears the high bar (important AND likely to be re-read by future runs on this same issue, e.g. a new PR URL or deploy URL), or you noticed a metadata key from entry that is now stale, pin or clear it via `multica issue metadata set`/`delete`. Most runs write nothing here — that is the expected outcome, not a gap. When in doubt, do not write. See the `## Issue Metadata` section above for the full bar.\n")
 		b.WriteString("9. Do NOT change the issue status unless the comment explicitly asks for it\n\n")
 	} else {

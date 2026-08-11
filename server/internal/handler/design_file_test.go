@@ -5692,6 +5692,7 @@ func TestGetDesignRestoreTaskItemContextUnknownItemReturnsNotFound(t *testing.T)
 }
 
 func TestListDesignFilesHidesManagedAssetSources(t *testing.T) {
+	createLocalUIRestoreAgentForDesignTest(t)
 	regular := createDesignFileForTest(t, "Visible Business Design")
 	projectID := createProjectForDesignTest(t, "Managed Asset List Project")
 	token := createPluginTokenForTest(t)

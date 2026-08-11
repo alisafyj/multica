@@ -109,6 +109,34 @@ To run in the foreground (useful for debugging):
 multica daemon start --foreground
 ```
 
+#### Following a replaced binary
+
+A CLI-launched daemon periodically compares its own compile-time version against
+the `--version` output of the `multica` binary it would re-exec. When they differ
+— `brew upgrade multica`, a re-download, a local `make build` — it waits for any
+running task to finish, then restarts into the new binary. A running task is
+never interrupted; if the daemon is busy the restart is deferred to the next
+check, and `multica daemon status` shows why it's still on the old version.
+
+This is separate from the GitHub self-update poller: disabling that does not stop
+the daemon from following a binary you installed yourself. To turn it off:
+
+```bash
+MULTICA_DAEMON_AUTO_RELOAD=0 multica daemon start
+# or
+multica daemon start --no-auto-reload
+# or persist it
+multica config set disable_auto_reload true
+```
+
+Agent CLIs (codex, claude, ...) are handled differently: when one of them is
+upgraded in place, the daemon re-probes its version and re-registers the runtime
+**without restarting**, so subsequent tasks pick up the new CLI while Multica's
+availability stays independent of a third party's release cadence.
+
+Desktop-managed daemons ignore both, because the Desktop app owns its bundled
+CLI's lifecycle.
+
 ### Stop
 
 ```bash
@@ -139,16 +167,25 @@ The daemon auto-detects these AI CLIs on your PATH:
 | CLI | Command | Description |
 |-----|---------|-------------|
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `claude` | Anthropic's coding agent |
+| [Antigravity CLI](https://antigravity.google/docs/cli-install) | `agy` | Google Antigravity CLI |
+| [CodeBuddy Code](https://www.codebuddy.ai/docs/cli/quickstart) | `codebuddy` | Tencent CodeBuddy Code (reads `CODEBUDDY.md`, not `CLAUDE.md`) |
+| [DevEco Code](https://gitcode.com/openharmony-sig/deveco-code) | `deveco` | OpenHarmony DevEco Code |
 | [Codex](https://github.com/openai/codex) | `codex` | OpenAI's coding agent |
 | [GitHub Copilot CLI](https://docs.github.com/en/copilot) | `copilot` | GitHub's coding agent (model routed by your GitHub entitlement) |
 | OpenCode | `opencode` | Open-source coding agent |
 | OpenClaw | `openclaw` | Open-source coding agent |
 | Hermes | `hermes` | Nous Research coding agent |
-| Gemini | `gemini` | Google's coding agent |
 | [Pi](https://pi.dev/) | `pi` | Pi coding agent |
 | [Cursor Agent](https://cursor.com/) | `cursor-agent` | Cursor's headless coding agent |
 | Kimi | `kimi` | Moonshot coding agent |
+| [Reasonix](https://github.com/esengine/DeepSeek-Reasonix) | `reasonix` | DeepSeek-focused ACP coding agent (run `reasonix setup` first) |
 | Kiro CLI | `kiro-cli` | Kiro ACP coding agent |
+| [Qoder CLI](https://docs.qoder.com/) | `qodercli` | Qoder ACP coding agent |
+| [Qoder CN CLI](https://help.aliyun.com/en/lingma/qodercli-cn/product-overview/what-is-qoder-cli-cn) | `qoderclicn` | Qoder CN ACP coding agent |
+| [Trae](https://docs.trae.cn/cli) | `traecli` | ByteDance TRAE CLI (ACP via `traecli acp serve`) |
+| [Grok Build CLI](https://docs.x.ai/) | `grok` | xAI Grok Build CLI (ACP via `grok agent stdio`) |
+| [Qwen Code](https://github.com/QwenLM/qwen-code) | `qwen` | Alibaba Qwen Code (`qwen -p` with stream-json) |
+| [QwenPaw](https://github.com/agentscope-ai/QwenPaw) | `qwenpaw` | QwenPaw ACP coding agent (ACP via `qwenpaw acp`; model is fixed by its own configuration) |
 
 You need at least one installed. The daemon registers each detected CLI as an available runtime.
 
@@ -168,29 +205,38 @@ Daemon behavior is configured via flags or environment variables:
 |---------|------|--------------|---------|
 | Poll interval | `--poll-interval` | `MULTICA_DAEMON_POLL_INTERVAL` | `3s` |
 | Heartbeat interval | `--heartbeat-interval` | `MULTICA_DAEMON_HEARTBEAT_INTERVAL` | `15s` |
-| Agent timeout | `--agent-timeout` | `MULTICA_AGENT_TIMEOUT` | `2h` |
+| Agent timeout | `--agent-timeout` | `MULTICA_AGENT_TIMEOUT` | `0` (no cap; bounded by the watchdogs) |
 | Codex semantic inactivity timeout | `--codex-semantic-inactivity-timeout` | `MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT` | `10m` |
+| OpenCode idle watchdog | — | `MULTICA_OPENCODE_IDLE_WATCHDOG` | `10m` (`0` falls back to the generic idle watchdog; cannot extend it) |
 | Max concurrent tasks | `--max-concurrent-tasks` | `MULTICA_DAEMON_MAX_CONCURRENT_TASKS` | `20` |
 | Daemon ID | `--daemon-id` | `MULTICA_DAEMON_ID` | hostname |
 | Device name | `--device-name` | `MULTICA_DAEMON_DEVICE_NAME` | hostname |
 | Runtime name | `--runtime-name` | `MULTICA_AGENT_RUNTIME_NAME` | `Local Agent` |
 | Workspaces root | — | `MULTICA_WORKSPACES_ROOT` | `~/multica_workspaces` |
 | GC enabled | — | `MULTICA_GC_ENABLED` | `true` (set `false`/`0` to disable) |
-| GC scan interval | — | `MULTICA_GC_INTERVAL` | `1h` |
+| GC scan interval | — | `MULTICA_GC_INTERVAL` | `2h` |
 | GC TTL (done/cancelled issues) | — | `MULTICA_GC_TTL` | `24h` |
 | GC orphan TTL (no `.gc_meta.json`) | — | `MULTICA_GC_ORPHAN_TTL` | `72h` |
 | GC artifact TTL (open issues) | — | `MULTICA_GC_ARTIFACT_TTL` | `12h` (set `0` to disable) |
 | GC artifact patterns | — | `MULTICA_GC_ARTIFACT_PATTERNS` | `node_modules,.next,.turbo` |
+| GC repo cache TTL (`.repos`) | — | `MULTICA_GC_REPO_TTL` | `720h` (30d; set `0` to disable) |
+| GC Hermes memory TTL (per-agent `memories/`) | — | `MULTICA_GC_HERMES_MEMORY_TTL` | `2160h` (90d; set `0` to disable) |
 
 #### Workspace garbage collection
 
-The daemon periodically scans `MULTICA_WORKSPACES_ROOT` and reclaims disk space in three modes:
+The daemon periodically scans `MULTICA_WORKSPACES_ROOT` and reclaims disk space in four modes:
 
 - **Full task cleanup** — when an issue's status is `done` or `cancelled` and has been idle for `MULTICA_GC_TTL`, the entire task directory is removed.
 - **Orphan cleanup** — task directories with no `.gc_meta.json` (e.g. left over from a daemon crash) are removed once they exceed `MULTICA_GC_ORPHAN_TTL`.
-- **Artifact-only cleanup** — when a task has been completed for at least `MULTICA_GC_ARTIFACT_TTL` but the issue is still open, regenerable build outputs whose directory basename matches `MULTICA_GC_ARTIFACT_PATTERNS` are removed; the rest of the workdir (source, `.git`, `output/`, `logs/`, `.gc_meta.json`) is preserved so the agent can resume the same workdir on the next task.
+- **Artifact-only cleanup** — when a task has been completed for at least `MULTICA_GC_ARTIFACT_TTL` but the issue is still open, regenerable build outputs whose directory basename matches `MULTICA_GC_ARTIFACT_PATTERNS` are removed. The daemon also reclaims the exact managed path `codex-home/.sandbox-bin`; old task metadata without `completed_at` becomes eligible for this managed-only cleanup after its `.gc_meta.json` file has been idle for `MULTICA_GC_ORPHAN_TTL`. The rest of the task (source, `.git`, `output/`, `logs/`, `.gc_meta.json`, Codex auth/config/session state) is preserved so the agent can resume it.
 
-Patterns are basename-only — entries containing `/` or `\` are silently dropped — and `.git` subtrees are never descended into. The default list (`node_modules`, `.next`, `.turbo`) is intentionally narrow; extend it per deployment if your repos consistently produce other regenerable directories (for example, `MULTICA_GC_ARTIFACT_PATTERNS=node_modules,.next,.turbo,target,__pycache__`). To disable artifact cleanup entirely, set `MULTICA_GC_ARTIFACT_TTL=0`.
+- **Repo cache eviction** — the bare git clones under `.repos/` are shared object stores: each task workdir is a `git worktree` off one of them rather than its own clone, so a task's `.git` is only a pointer file. They are evicted only when all of the following hold: the repo is no longer attached to any workspace this daemon watches, it has no worktrees left, and no task has created a worktree from it for `MULTICA_GC_REPO_TTL`. A cache created before this stamp existed is not treated as ancient — its clock starts at the first GC cycle that sees it, so upgrading does not wipe every cache. Evicting is safe by construction: the next task that needs the repo re-clones it on demand, so a wrong eviction costs a clone, not a failure.
+
+- **Hermes memory store reclamation** — a Hermes agent's long-term memory (`memories/`) lives at `<profile dir>/hermes-state/<agent-id>/<hermes-profile>/`, outside any task directory, so it survives across tasks and issues (see [Hermes agent memory](#hermes-agent-memory)). A store untouched for `MULTICA_GC_HERMES_MEMORY_TTL` is removed, giving a deleted agent's memory an eventual-reclamation guarantee. The default is deliberately long: these are a handful of markdown files, and reclaiming one is user-visible amnesia rather than a cache miss. A store a running task holds is never reclaimed.
+
+Configured patterns are basename-only — entries containing `/` or `\` are silently dropped — and `.git` subtrees are never descended into. The managed Codex cache is matched by its exact relative path, so a repository's own `.sandbox-bin` is not removed unless an operator explicitly adds that basename to `MULTICA_GC_ARTIFACT_PATTERNS`. The default list (`node_modules`, `.next`, `.turbo`) is intentionally narrow; extend it per deployment if your repos consistently produce other regenerable directories (for example, `MULTICA_GC_ARTIFACT_PATTERNS=node_modules,.next,.turbo,target,__pycache__`). To disable artifact cleanup entirely, including the managed Codex cache, set `MULTICA_GC_ARTIFACT_TTL=0`.
+
+`multica daemon disk-usage` reports the `.repos` footprint on its own line rather than folding it into the per-task totals — every task in a workspace checks out from that shared cache, so attributing it to individual task directories would double-count it. Note that the repo cache is reclaimed on the schedule above and not by any per-issue status change, so it is normal for it to persist after every task directory is gone.
 
 Agent-specific overrides:
 
@@ -199,6 +245,13 @@ Agent-specific overrides:
 | `MULTICA_CLAUDE_PATH` | Custom path to the `claude` binary |
 | `MULTICA_CLAUDE_MODEL` | Override the Claude model used |
 | `MULTICA_CLAUDE_ARGS` | Default extra arguments for Claude Code runs |
+| `MULTICA_ANTIGRAVITY_PATH` | Custom path to the `agy` binary |
+| `MULTICA_ANTIGRAVITY_MODEL` | Override the Antigravity model used |
+| `MULTICA_CODEBUDDY_PATH` | Custom path to the `codebuddy` binary |
+| `MULTICA_CODEBUDDY_MODEL` | Override the CodeBuddy model used |
+| `MULTICA_CODEBUDDY_ARGS` | Default extra arguments for CodeBuddy runs |
+| `MULTICA_DEVECO_PATH` | Custom path to the `deveco` binary |
+| `MULTICA_DEVECO_MODEL` | Override the DevEco Code model used |
 | `MULTICA_CODEX_PATH` | Custom path to the `codex` binary |
 | `MULTICA_CODEX_MODEL` | Override the Codex model used |
 | `MULTICA_CODEX_ARGS` | Default extra arguments for Codex runs |
@@ -210,18 +263,72 @@ Agent-specific overrides:
 | `MULTICA_OPENCLAW_MODEL` | Override the OpenClaw model used |
 | `MULTICA_HERMES_PATH` | Custom path to the `hermes` binary |
 | `MULTICA_HERMES_MODEL` | Override the Hermes model used |
-| `MULTICA_GEMINI_PATH` | Custom path to the `gemini` binary |
-| `MULTICA_GEMINI_MODEL` | Override the Gemini model used |
+| `MULTICA_HERMES_TASK_MEMORY` | Revert Hermes memory to a fresh task-local `memories/` per task (see [Hermes agent memory](#hermes-agent-memory)) |
 | `MULTICA_PI_PATH` | Custom path to the `pi` binary |
 | `MULTICA_PI_MODEL` | Override the Pi model used |
 | `MULTICA_CURSOR_PATH` | Custom path to the `cursor-agent` binary |
 | `MULTICA_CURSOR_MODEL` | Override the Cursor Agent model used |
 | `MULTICA_KIMI_PATH` | Custom path to the `kimi` binary |
 | `MULTICA_KIMI_MODEL` | Override the Kimi model used |
+| `MULTICA_REASONIX_PATH` | Custom path to the `reasonix` binary |
+| `MULTICA_REASONIX_MODEL` | Override the Reasonix model used |
 | `MULTICA_KIRO_PATH` | Custom path to the `kiro-cli` binary |
 | `MULTICA_KIRO_MODEL` | Override the Kiro model used |
+| `MULTICA_QODER_PATH` | Custom path to the `qodercli` binary |
+| `MULTICA_QODER_MODEL` | Override the Qoder model used |
+| `MULTICA_QODERCLICN_PATH` | Custom path to the `qoderclicn` binary |
+| `MULTICA_QODERCLICN_MODEL` | Override the Qoder CN model used |
+| `MULTICA_TRAECLI_PATH` | Custom path to the `traecli` binary |
+| `MULTICA_TRAECLI_MODEL` | Override the Trae model used (a model id from your logged-in traecli catalog, e.g. `Doubao-Seed-2.1-Pro`) |
+| `MULTICA_GROK_PATH` | Custom path to the `grok` binary (defaults to `grok` on PATH; often `~/.grok/bin/grok`) |
+| `MULTICA_GROK_MODEL` | Override the Grok model used (e.g. `grok-4.5`) |
+| `MULTICA_QWEN_PATH` | Custom path to the `qwen` binary |
+| `MULTICA_QWEN_MODEL` | Override the Qwen Code model used |
+| `MULTICA_QWEN_ARGS` | Daemon-wide extra Qwen arguments (POSIX shellword parsing; managed protocol flags are filtered) |
+| `MULTICA_QWENPAW_PATH` | Custom path to the `qwenpaw` binary |
+| `MULTICA_QWENPAW_ARGS` | Daemon-wide extra QwenPaw arguments (POSIX shellword parsing; managed protocol flags are filtered) |
 
-`MULTICA_CLAUDE_ARGS` and `MULTICA_CODEX_ARGS` are parsed with POSIX shellword quoting, so values such as `--model "gpt-5.1 codex" --sandbox read-only` are split like a shell command line. Agent arguments are applied in this order: hardcoded Multica defaults, daemon-wide env defaults, then per-agent `custom_args` from the task.
+If a previously generated `~/.multica/hooks` wrapper is first on `PATH` and calls the same command name again, the daemon skips that hooks directory during built-in agent discovery and records the real binary path behind it. If your interactive shell still recurses when you run `claude`, `codex`, or `hermes` manually, remove the hooks entry from your shell startup file or replace the wrapper body with an absolute `exec /path/to/real-binary "$@"`.
+
+The daemon launches Qoder and Qoder CN as `qodercli --yolo --acp` and `qoderclicn --yolo --acp`, respectively, matching their ACP “bypass permissions” mode so tool runs do not block on interactive approval in headless runs.
+The daemon launches Qwen Code as `qwen -p <prompt> --output-format stream-json`. It writes the task brief to `QWEN.md`; when an agent has managed `mcp_config`, the daemon writes a 0600 per-run JSON file and passes it through `--mcp-config <path>`, then removes it after the process exits. A null config preserves Qwen Code native MCP settings.
+
+#### `mcp_config` on ACP runtimes
+
+ACP-family runtimes — Hermes, Kimi, Kiro, Grok, Qoder, Reasonix, Trae, Qwenpaw, and any custom runtime profile whose `protocol_family` is one of them — receive MCP servers **over the ACP session protocol**, not through a config file. The daemon translates the agent's `mcp_config` into ACP's `McpServer` array and sends it with `session/new`, and again with that runtime's resume request (`session/resume` on Hermes, Kimi, Qoder and Reasonix; `session/load` on Kiro, Grok, Trae and Qwenpaw) so a resumed task keeps the same tools.
+
+Nothing is written to the runtime's own config file, and the runtime's own file is not read or merged. `~/.hermes/…`, `~/.jcode/mcp.json` and the like stay untouched; an agent's servers travel with its tasks instead of being installed per machine.
+
+Two consequences are worth knowing before debugging a missing MCP tool:
+
+- **`mcp_config` must use the canonical envelope**, `{"mcpServers": {"<name>": {…}}}`. Runtime-native config files that nest servers under `servers`, `mcp`, or `mcp_servers` are stored as-is but yield no servers; the daemon logs a warning naming the key it found. Entries themselves use the Claude-style shape (`command`/`args`/`env` for stdio, `url`/`headers`/`type` for remote).
+- **Remote transports depend on what the runtime declares.** ACP v1 requires an omitted capability to be treated as unsupported, so `http` and `sse` entries are dropped with a warning unless the `initialize` response declares `agentCapabilities.mcpCapabilities` with that transport set to true. The built-in Hermes runtime is a verified exception: it declares no `mcpCapabilities` yet accepts both transports, so remote entries are still forwarded to it. That exception covers the Hermes binary only — a custom runtime profile with `protocol_family: hermes` runs a different implementation and keeps the standard rule. Stdio is never gated.
+
+If a configured server produces no tools, check the daemon log for those warnings first, then confirm the runtime itself exposes the server's tools to the model — some ACP adapters apply their own tool-profile filtering after connecting.
+
+
+The daemon launches QwenPaw as `qwenpaw acp --workspace <per-task dir>`. It writes the task brief to `AGENTS.md`, and materialises the run's bound skills into `<per-task dir>/skills/` plus a `skill.json` manifest, so QwenPaw discovers them through its own workspace skill discovery. `acp` and `--workspace` are reserved: `custom_args` cannot override them. QwenPaw is the one runtime with no `MULTICA_QWENPAW_MODEL`: its `session/set_model` writes to a shared, persistent agent config rather than the session, so Multica never sends it a model and leaves that choice to QwenPaw's own configuration.
+
+#### Hermes agent memory
+
+Hermes discovers skills only from its own home, so binding Multica skills to a Hermes agent makes the daemon build a per-task `HERMES_HOME` overlay for that agent. The agent's long-term memory (`memories/`) does **not** live inside that task-scoped overlay: it is linked to a persistent store at
+
+```
+<profile dir>/hermes-state/<agent-id>/<hermes-profile>/
+```
+
+so the same agent keeps its memory across tasks and issues. `<hermes-profile>` is the profile the agent resolves to (`default`, a named profile from `-p/--profile` or `active_profile`, or a hash for an out-of-tree custom `HERMES_HOME`) — pointing an agent at a different profile gives it a different memory line, matching Hermes' own "a profile is an isolated instance" model.
+
+Consequences worth knowing:
+
+- **Memory is agent-scoped but runtime-local.** One agent's memory is never visible to another, and the user's own `~/.hermes/memories` is never read or written. The store lives in this runtime's Multica profile directory, so it does **not** follow the agent to another machine — an agent that runs on two runtimes has a separate memory line on each. Everything else in the home — auth, config, plugins — is still shared from the user's real home by symlink, so the agent does not need its own login.
+- **To carry existing local memory in**, copy it into the store once: `cp -R ~/.hermes/memories/. "<profile dir>/hermes-state/<agent-id>/default/"`. To wipe an agent's memory, delete that directory.
+- **Session history is not covered.** `state.db` and its WAL sidecars stay task-local: sharing a live SQLite database across one agent's concurrent tasks needs lock and consistency handling (plus Windows byte-range locks on `-shm`) that plain memory files do not. The agent remembers accumulated notes, not previous transcripts.
+- **Concurrent tasks of one agent are last-writer-wins.** Hermes rewrites its memory files whole, so two tasks writing memory at the same time can overwrite each other.
+- **Every Hermes agent gets the overlay in practice**, so every one of them gets a persistent memory store. The daemon builds the overlay only when a task carries skills, but the server appends Multica's built-in skills to every agent's skill set (`LoadAgentSkillBundles`), so that list is never empty — leaving an agent's own skill list empty does not opt out of the overlay, and is not a way to keep using the host's `~/.hermes/memories`.
+- `MULTICA_HERMES_TASK_MEMORY=1` on the daemon reverts to the previous behaviour, a fresh task-local `memories/` per task.
+
+`MULTICA_CLAUDE_ARGS`, `MULTICA_CODEX_ARGS`, `MULTICA_CODEBUDDY_ARGS`, `MULTICA_QWEN_ARGS`, and `MULTICA_QWENPAW_ARGS` are parsed with POSIX shellword quoting, so values such as `--model "gpt-5.1 codex" --sandbox read-only` are split like a shell command line. Agent arguments are applied in this order: hardcoded Multica defaults, daemon-wide env defaults, then per-agent `custom_args` from the task.
 
 ### Self-Hosted Server
 
@@ -326,9 +433,13 @@ multica issue list --priority urgent --assignee "Agent Name"
 multica issue list --assignee-id 5fb87ac7-23b5-4a7a-81fa-ed295a54545d
 multica issue list --full-id
 multica issue list --limit 20 --output json
+multica issue list --status todo --sort position       # board order (the default)
+multica issue list --sort created_at --direction desc  # newest first
 ```
 
 Table output shows a routable issue `KEY` such as `MUL-123`; copy that key into follow-up commands like `issue get`, `issue comment list`, `issue status`, or `--parent`. Add `--full-id` when you need canonical UUIDs. Available filters: `--status`, `--priority`, `--assignee` / `--assignee-id`, `--project`, `--metadata`, `--limit`. Use `--assignee-id <uuid>` for unambiguous filtering when names overlap.
+
+Results come back in board order (`position`, ascending) by default. Pass `--sort` to change the column (`position`, `title`, `created_at`, `start_date`, `due_date`, `priority`) and `--direction asc|desc` to flip the order. `position` is always ascending (it is the manual drag order), so `--direction` is rejected when `--sort` is `position` or omitted — use it only with `title`, `created_at`, `start_date`, `due_date`, or `priority`.
 
 Use `--metadata key=value` (repeatable; combined with AND) to filter by per-issue metadata. The value is JSON-parsed: `true`/`false` become bool, numbers become numbers, anything else is a string. Wrap as `'"42"'` to force a string when the value would otherwise sniff as a number:
 
@@ -357,7 +468,23 @@ Flags: `--title` (required), `--description`, `--status`, `--priority`, `--assig
 
 ```bash
 multica issue update <id> --title "New title" --priority urgent
+multica issue update <id> --position 4.5
 ```
+
+`--position` sets the raw ordering value within the board column (lower sorts first). For relative moves, `issue reorder` is easier because it works out the value for you.
+
+### Reorder Issue
+
+Move an issue within its current status column. The new ordering value is computed the same way the board's drag-and-drop computes it, so the CLI and UI agree on where the issue lands.
+
+```bash
+multica issue reorder <id> --top              # top of its status column
+multica issue reorder <id> --bottom           # bottom of its status column
+multica issue reorder <id> --before <other>   # directly above another issue in the same column
+multica issue reorder <id> --after  <other>   # directly below another issue in the same column
+```
+
+Pick exactly one of `--top`, `--bottom`, `--before`, or `--after`. Reorder stays inside the issue's current column, so `--before` / `--after` must name an issue in that same column. To move an issue to a different column, change its status first with `issue status`, then reorder within the new column.
 
 ### Assign Issue
 
@@ -404,12 +531,12 @@ multica issue comment list <issue-id> --thread <comment-id> --tail 30 \
 # Most recently active threads (root + every descendant), grouped by
 # thread. Returns N complete conversational arcs, oldest-active first so
 # the freshest thread sits closest to "now" in an agent prompt.
-multica issue comment list <issue-id> --recent 20
+multica issue comment list <issue-id> --recent 10
 
 # Scroll older threads. Under --recent, --before / --before-id are a
 # THREAD cursor (thread last_activity_at + root id), emitted on stderr as
 # `Next thread cursor: --before <ts> --before-id <root-id>`.
-multica issue comment list <issue-id> --recent 20 \
+multica issue comment list <issue-id> --recent 10 \
     --before <ts> --before-id <root-id>
 
 # Incremental polling. Combines with --thread or --recent; filters out
@@ -514,7 +641,13 @@ multica issue run-messages <task-id> --output json
 
 # Incremental fetch (only messages after a given sequence number)
 multica issue run-messages <task-id> --since 42 --output json
+
+# Aggregated token usage for an issue (sum across all its task runs)
+multica issue usage <issue-id>
+multica issue usage <issue-id> --output json
 ```
+
+The `usage` command returns the aggregated token usage for an issue, summed across all of its task runs: input tokens, output tokens, cache read/write tokens, and the run count (`task_count`). It wraps `GET /api/issues/<id>/usage` — the same figures the issue detail view shows. Use `--output json` to feed billing/cost tooling.
 
 The `runs` command shows all past and current executions for an issue, including running tasks. Table output uses short task UUID prefixes by default; pass `--full-id` to print canonical task UUIDs. The `run-messages` command accepts full task UUIDs directly; copied short task prefixes must be scoped with `--issue <issue-id>` so the CLI only checks that issue's runs. It shows the detailed message log (tool calls, thinking, text, errors) for a single run. Use `--since` for efficient polling of in-progress runs.
 
@@ -546,16 +679,17 @@ multica project get <id> --output json
 multica project create --title "2026 Week 16 Sprint" --icon "🏃" --lead "Lambda"
 ```
 
-Flags: `--title` (required), `--description`, `--status`, `--icon`, `--lead`.
+Flags: `--title` (required), `--description`, `--status`, `--icon`, `--lead`, `--start-date`, `--due-date`. Dates are calendar days (`YYYY-MM-DD`).
 
 ### Update Project
 
 ```bash
 multica project update <id> --title "New title" --status in_progress
 multica project update <id> --lead "Lambda"
+multica project update <id> --due-date 2026-04-15
 ```
 
-Flags: `--title`, `--description`, `--status`, `--icon`, `--lead`.
+Flags: `--title`, `--description`, `--status`, `--icon`, `--lead`, `--start-date`, `--due-date`. For the date flags, pass an empty string (e.g. `--start-date ""`) to clear the date.
 
 ### Change Status
 
@@ -648,14 +782,18 @@ multica autopilot create \
   --title "Nightly bug triage" \
   --description "Scan todo issues and prioritize." \
   --agent "Lambda" \
-  --mode create_issue
+  --mode create_issue \
+  --subscriber "Alice"
 
 multica autopilot update <id> --status paused
 multica autopilot update <id> --description "New prompt"
+multica autopilot update <id> --subscriber "Alice" --subscriber "Bob"
+multica autopilot update <id> --clear-subscribers
 multica autopilot delete <id>
 ```
 
 `--mode` accepts `create_issue` (creates a new issue on each run and assigns it to the agent) or `run_only` (enqueues a direct agent task without creating an issue). `--agent` accepts either a name or UUID.
+`--subscriber` accepts a workspace member name or user ID and may be repeated; on update it replaces the autopilot's subscriber template. Subscribers receive inbox notifications for issues created by a `create_issue` autopilot. Use `--clear-subscribers` to remove all autopilot subscribers.
 
 ### Manual Trigger
 
@@ -698,4 +836,80 @@ Most commands support `--output` with two formats:
 ```bash
 multica issue list --output json
 multica daemon status --output json
+```
+
+## Error Messages
+
+The CLI funnels command errors returned to the top-level handler through a
+single user-facing translation layer (`server/internal/cli/errors.go`) so that
+what you see on the terminal is a short, actionable sentence rather than a raw
+Go error, an HTTP status line, or an internal `resolve issue: ...` chain. (A
+few commands print their own output or run deliberate fast probes — for example
+`setup`'s short `/health` reachability check — and don't go through this
+layer.) The underlying detail is still available on demand (see `--debug`).
+
+### What you see
+
+- **Friendly, single-line message.** Transport failures (timeout, DNS,
+  connection refused, TLS) and HTTP status failures (401/403/404/409/400·422/
+  429/5xx) are each rendered as one clear sentence with a next step — for
+  example a timeout suggests checking the network or raising
+  `MULTICA_HTTP_TIMEOUT`, and a 401 tells you to run `multica login`.
+- **Server-provided validation messages are preserved.** For a 400/422 that
+  carries a message from the server, that message is shown verbatim
+  (`Invalid request: <server message>`); only when there is none do you get the
+  generic "check your values / run with --help" hint.
+- **No leaked internals by default.** Raw URLs, status lines, JSON bodies, and
+  the internal verb chain are hidden unless you ask for them.
+
+### Language
+
+Messages default to **English**, matching the rest of the CLI's help output.
+If a Chinese locale is detected in `LC_ALL`, `LC_MESSAGES`, or `LANG` (in that
+precedence order), messages switch to **Chinese**. No flag is needed; set the
+locale as usual:
+
+```bash
+LANG=zh_CN.UTF-8 multica issue get MUL-9999   # 错误信息显示为中文
+```
+
+### Exit codes
+
+The process exit code is tiered so scripts can branch on the failure class:
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | success |
+| `1` | generic / unclassified error |
+| `2` | network error (timeout, DNS, connection refused, TLS, offline) |
+| `3` | authentication / authorization (HTTP 401, 403) |
+| `4` | not found (HTTP 404) |
+| `5` | validation (HTTP 400, 422) |
+
+```bash
+multica issue get MUL-9999
+if [ $? -eq 4 ]; then echo "no such issue"; fi
+```
+
+### Seeing the full detail (`--debug`)
+
+Pass the global `--debug` flag (or set `MULTICA_DEBUG=1`) to print the complete
+original error chain — the internal verb chain, the request method/path/status,
+and the raw server body — underneath the friendly message. Use it when you need
+to file a bug or understand exactly what the server returned:
+
+```bash
+multica issue list --debug
+MULTICA_DEBUG=1 multica issue update MUL-1234 --title "x"
+```
+
+### Request timeout
+
+API requests use a default timeout of 30 seconds. Override it with
+`MULTICA_HTTP_TIMEOUT` when you are on a slow network; it accepts a Go duration
+(`45s`, `2m`) or a plain number of seconds (`45`). Command-level deadlines are
+always at least this value, so raising it takes effect across all commands.
+
+```bash
+MULTICA_HTTP_TIMEOUT=60s multica issue list
 ```

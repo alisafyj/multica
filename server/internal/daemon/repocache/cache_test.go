@@ -1,12 +1,16 @@
 package repocache
 
 import (
+	"context"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testLogger() *slog.Logger {
@@ -102,6 +106,16 @@ func TestGitEnvPreservesExistingConfig(t *testing.T) {
 	}
 	if !envHas("GIT_CONFIG_KEY_1=http.extraHeader") {
 		t.Error("existing GIT_CONFIG_KEY_1 was lost")
+	}
+}
+
+func TestRunGitOutputTimesOut(t *testing.T) {
+	_, err := runGitOutputWithTimeout(0, "--version")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("runGitOutputWithTimeout error = %v, want deadline exceeded", err)
+	}
+	if !strings.Contains(err.Error(), "timed out after 0s") {
+		t.Fatalf("runGitOutputWithTimeout error = %v, want timeout context", err)
 	}
 }
 
@@ -502,6 +516,318 @@ func TestCreateWorktree(t *testing.T) {
 	}
 }
 
+func TestCreateWorktreeWithIsolatedGitMetadata(t *testing.T) {
+	t.Parallel()
+	sourceRepo := createTestRepo(t)
+	cache := New(t.TempDir(), testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	barePath := cache.Lookup("ws-1", sourceRepo)
+	baseRef := getRemoteDefaultBranch(barePath)
+	baseCommit := gitRefCommit(t, barePath, baseRef)
+	workDir := t.TempDir()
+	result, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID:         "ws-1",
+		RepoURL:             sourceRepo,
+		WorkDir:             workDir,
+		AgentName:           "Linux Codex",
+		TaskID:              "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+		IsolatedGitMetadata: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateWorktree failed: %v", err)
+	}
+
+	gitInfo, err := os.Stat(filepath.Join(result.Path, ".git"))
+	if err != nil || !gitInfo.IsDir() {
+		t.Fatalf("isolated checkout .git must be a directory, info=%v err=%v", gitInfo, err)
+	}
+	if !isIsolatedCheckout(result.Path) {
+		t.Fatal("isolated checkout marker missing")
+	}
+	if _, err := os.Stat(filepath.Join(result.Path, ".git", "objects", "info", "alternates")); !os.IsNotExist(err) {
+		t.Fatalf("isolated checkout must not depend on cache alternates, err=%v", err)
+	}
+
+	origin, err := runGitOutput("-C", result.Path, "remote", "get-url", "origin")
+	if err != nil {
+		t.Fatalf("get origin URL: %v", err)
+	}
+	if got := strings.TrimSpace(string(origin)); got != sourceRepo {
+		t.Fatalf("origin URL = %q, want %q", got, sourceRepo)
+	}
+	if got := gitHead(t, result.Path); got != baseCommit {
+		t.Fatalf("checkout HEAD = %s, want %s", got, baseCommit)
+	}
+	if err := runGit("-C", result.Path, "rev-parse", "--verify", baseRef); err != nil {
+		t.Fatalf("isolated checkout missing cache ref %s: %v", baseRef, err)
+	}
+	if err := runGit("-C", barePath, "show-ref", "--verify", "refs/heads/"+result.BranchName); err == nil {
+		t.Fatalf("isolated branch %s leaked into shared bare cache", result.BranchName)
+	}
+
+	if err := os.WriteFile(filepath.Join(result.Path, "isolated.txt"), []byte("writable\n"), 0o644); err != nil {
+		t.Fatalf("write isolated file: %v", err)
+	}
+	runGitAuthored(t, result.Path, "add", "isolated.txt")
+	runGitAuthored(t, result.Path, "commit", "-m", "isolated commit")
+	if got := gitHead(t, result.Path); got == baseCommit {
+		t.Fatal("git commit did not advance isolated checkout")
+	}
+	if got := gitRefCommit(t, barePath, baseRef); got != baseCommit {
+		t.Fatalf("isolated commit mutated shared cache base: got %s, want %s", got, baseCommit)
+	}
+}
+
+func TestCreateWorktreeReusesIsolatedGitMetadata(t *testing.T) {
+	t.Parallel()
+	sourceRepo := createTestRepo(t)
+	cache := New(t.TempDir(), testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("initial sync failed: %v", err)
+	}
+
+	workDir := t.TempDir()
+	first, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID:         "ws-1",
+		RepoURL:             sourceRepo,
+		WorkDir:             workDir,
+		AgentName:           "Linux Codex",
+		TaskID:              "11111111-1111-1111-1111-111111111111",
+		IsolatedGitMetadata: true,
+	})
+	if err != nil {
+		t.Fatalf("first CreateWorktree failed: %v", err)
+	}
+	const userBranch = "feature/keep-me"
+	runGitAuthored(t, first.Path, "checkout", "-b", userBranch)
+	addEmptyCommit(t, first.Path, "unpublished feature work")
+	userCommit := gitHead(t, first.Path)
+
+	addEmptyCommit(t, sourceRepo, "upstream advance")
+	wantHead := gitHead(t, sourceRepo)
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("refresh sync failed: %v", err)
+	}
+
+	second, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID:         "ws-1",
+		RepoURL:             sourceRepo,
+		WorkDir:             workDir,
+		AgentName:           "Linux Codex",
+		TaskID:              "22222222-2222-2222-2222-222222222222",
+		IsolatedGitMetadata: true,
+	})
+	if err != nil {
+		t.Fatalf("second CreateWorktree failed: %v", err)
+	}
+	if second.Path != first.Path {
+		t.Fatalf("reused checkout path = %q, want %q", second.Path, first.Path)
+	}
+	if second.BranchName == first.BranchName {
+		t.Fatalf("reused checkout kept old branch %q", first.BranchName)
+	}
+	if got := gitHead(t, second.Path); got != wantHead {
+		t.Fatalf("reused checkout HEAD = %s, want refreshed upstream %s", got, wantHead)
+	}
+
+	// Reuse must not accumulate earlier tasks' agent/* branches, but it must
+	// preserve user-created branches and commits that may not exist remotely.
+	if err := runGit("-C", second.Path, "show-ref", "--verify", "refs/heads/"+first.BranchName); err == nil {
+		t.Fatalf("stale branch %s survived reuse", first.BranchName)
+	}
+	if got := gitRefCommit(t, second.Path, "refs/heads/"+userBranch); got != userCommit {
+		t.Fatalf("preserved user branch commit = %s, want %s", got, userCommit)
+	}
+	heads, err := runGitOutput("-C", second.Path, "for-each-ref", "--format=%(refname)", "refs/heads/")
+	if err != nil {
+		t.Fatalf("list local heads: %v", err)
+	}
+	wantHeads := "refs/heads/" + second.BranchName + "\nrefs/heads/" + userBranch
+	if got := strings.TrimSpace(string(heads)); got != wantHeads {
+		t.Fatalf("reused checkout local heads = %q, want %q", got, wantHeads)
+	}
+}
+
+func TestCreateWorktreeMigratesLinkedWorktreeToIsolatedMetadata(t *testing.T) {
+	t.Parallel()
+	sourceRepo := createTestRepo(t)
+	cache := New(t.TempDir(), testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	workDir := t.TempDir()
+	linked, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID: "ws-1",
+		RepoURL:     sourceRepo,
+		WorkDir:     workDir,
+		AgentName:   "Linux Codex",
+		TaskID:      "11111111-1111-1111-1111-111111111111",
+	})
+	if err != nil {
+		t.Fatalf("linked CreateWorktree failed: %v", err)
+	}
+	if !isGitWorktree(linked.Path) {
+		t.Fatal("test setup did not create a linked worktree")
+	}
+
+	isolated, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID:         "ws-1",
+		RepoURL:             sourceRepo,
+		WorkDir:             workDir,
+		AgentName:           "Linux Codex",
+		TaskID:              "22222222-2222-2222-2222-222222222222",
+		IsolatedGitMetadata: true,
+	})
+	if err != nil {
+		t.Fatalf("isolated CreateWorktree failed: %v", err)
+	}
+	if isolated.Path != linked.Path {
+		t.Fatalf("migrated checkout path = %q, want %q", isolated.Path, linked.Path)
+	}
+	if !isIsolatedCheckout(isolated.Path) {
+		t.Fatal("linked worktree was not migrated to isolated metadata")
+	}
+
+	barePath := cache.Lookup("ws-1", sourceRepo)
+	out, err := runGitOutput("-C", barePath, "worktree", "list", "--porcelain")
+	if err != nil {
+		t.Fatalf("list cache worktrees: %v", err)
+	}
+	if strings.Contains(string(out), "worktree "+linked.Path+"\n") {
+		t.Fatalf("shared cache retained migrated worktree admin entry:\n%s", out)
+	}
+}
+
+func TestLocalCloneArgsOnlyDisablesHardlinksOnWindows(t *testing.T) {
+	t.Parallel()
+	const barePath, checkoutPath = "/cache/repo.git", "/task/repo"
+
+	for _, tt := range []struct {
+		goos          string
+		wantNoHardlnk bool
+	}{
+		{goos: "windows", wantNoHardlnk: true},
+		{goos: "linux"},
+		{goos: "darwin"},
+	} {
+		t.Run(tt.goos, func(t *testing.T) {
+			t.Parallel()
+			args := localCloneArgs(tt.goos, barePath, checkoutPath)
+			got := false
+			for _, arg := range args {
+				if arg == "--no-hardlinks" {
+					got = true
+				}
+			}
+			if got != tt.wantNoHardlnk {
+				t.Fatalf("localCloneArgs(%q) --no-hardlinks = %v, want %v (args: %v)", tt.goos, got, tt.wantNoHardlnk, args)
+			}
+			// Inserting a flag must never displace the trailing operands.
+			if src, dst := args[len(args)-2], args[len(args)-1]; src != barePath || dst != checkoutPath {
+				t.Fatalf("localCloneArgs(%q) operands = %q %q, want %q %q", tt.goos, src, dst, barePath, checkoutPath)
+			}
+		})
+	}
+}
+
+// TestIsolatedCheckoutCloneWithoutHardlinksIsIndependent runs the exact clone
+// invocation Windows Codex tasks now use (multica-ai/multica#6449) and proves
+// it still yields a usable checkout whose object files are private copies
+// rather than links back into the daemon-owned cache. Kept platform-agnostic
+// so Linux/macOS CI guards the Windows-only flag.
+func TestIsolatedCheckoutCloneWithoutHardlinksIsIndependent(t *testing.T) {
+	t.Parallel()
+	sourceRepo := createTestRepo(t)
+	cache := New(t.TempDir(), testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+	barePath := cache.Lookup("ws-1", sourceRepo)
+	baseCommit := gitRefCommit(t, barePath, getRemoteDefaultBranch(barePath))
+	checkoutPath := filepath.Join(t.TempDir(), "repo")
+
+	if out, err := runGitCombinedOutput(localCloneArgs("windows", barePath, checkoutPath)...); err != nil {
+		t.Fatalf("windows-shaped local clone failed: %s: %v", strings.TrimSpace(string(out)), err)
+	}
+	if out, err := runGitCombinedOutput("-C", checkoutPath, "checkout", "--detach", baseCommit); err != nil {
+		t.Fatalf("checkout base commit: %s: %v", strings.TrimSpace(string(out)), err)
+	}
+	if got := gitHead(t, checkoutPath); got != baseCommit {
+		t.Fatalf("checkout HEAD = %s, want %s", got, baseCommit)
+	}
+	if _, err := os.Stat(filepath.Join(checkoutPath, ".git", "objects", "info", "alternates")); !os.IsNotExist(err) {
+		t.Fatalf("clone must not borrow cache objects via alternates, err=%v", err)
+	}
+
+	assertObjectsAreNotHardLinked(t, barePath, checkoutPath)
+}
+
+// assertObjectsAreNotHardLinked fails if an object file present in both the
+// cache and the checkout is the same underlying file. os.SameFile compares
+// dev+inode on Unix and the volume serial + file index on Windows, either of
+// which identifies a hard link. Both "nothing in the cache" and "nothing in
+// common" are failures, so the assertion cannot pass vacuously.
+func assertObjectsAreNotHardLinked(t *testing.T, barePath, checkoutPath string) {
+	t.Helper()
+	cacheObjects := filepath.Join(barePath, "objects")
+	checkoutObjects := filepath.Join(checkoutPath, ".git", "objects")
+
+	names := objectFiles(t, cacheObjects)
+	if len(names) == 0 {
+		t.Fatal("cache has no object files; assertion would pass vacuously")
+	}
+	compared := 0
+	for _, rel := range names {
+		cloned, err := os.Stat(filepath.Join(checkoutObjects, rel))
+		if err != nil {
+			continue // repacked differently in the checkout; nothing to compare
+		}
+		cached, err := os.Stat(filepath.Join(cacheObjects, rel))
+		if err != nil {
+			t.Fatalf("stat cache object %s: %v", rel, err)
+		}
+		if os.SameFile(cached, cloned) {
+			t.Errorf("object %s is hard-linked to the shared cache", rel)
+		}
+		compared++
+	}
+	if compared == 0 {
+		t.Fatal("no cache object was found in the checkout; assertion would pass vacuously")
+	}
+}
+
+// objectFiles lists regular files under a Git objects directory, relative to
+// it, skipping the bookkeeping subdirectory that never holds object data.
+func objectFiles(t *testing.T, objectsDir string) []string {
+	t.Helper()
+	var found []string
+	err := filepath.WalkDir(objectsDir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if entry.Name() == "info" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(objectsDir, path)
+		if err != nil {
+			return err
+		}
+		found = append(found, rel)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", objectsDir, err)
+	}
+	return found
+}
+
 func TestCreateWorktreeExcludesOpenCodeSkills(t *testing.T) {
 	t.Parallel()
 	sourceRepo := createTestRepo(t)
@@ -530,6 +856,44 @@ func TestCreateWorktreeExcludesOpenCodeSkills(t *testing.T) {
 	}
 	if strings.Contains(exclude, ".config/opencode") {
 		t.Fatalf("expected .git/info/exclude to not contain stale .config/opencode, got:\n%s", exclude)
+	}
+}
+
+// TestCreateWorktreeExcludesCodebuddySidecars is the regression guard for
+// PR #5224's review feedback: once the daemon started writing
+// .codebuddy/skills/ and CODEBUDDY.md into the task workdir (instead of
+// reusing Claude's .claude/CLAUDE.md, which were already excluded), the
+// repo-cache worktree needed the new CodeBuddy sidecar paths added to
+// .git/info/exclude too — otherwise these daemon-injected files show up in
+// `git status` and risk being committed by the agent.
+func TestCreateWorktreeExcludesCodebuddySidecars(t *testing.T) {
+	t.Parallel()
+	sourceRepo := createTestRepo(t)
+	cacheRoot := t.TempDir()
+
+	cache := New(cacheRoot, testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	workDir := t.TempDir()
+	result, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID: "ws-1",
+		RepoURL:     sourceRepo,
+		WorkDir:     workDir,
+		AgentName:   "CodeBuddy",
+		TaskID:      "codebuddy-exclude-test",
+	})
+	if err != nil {
+		t.Fatalf("CreateWorktree failed: %v", err)
+	}
+
+	exclude := gitInfoExclude(t, result.Path)
+	if !strings.Contains(exclude, ".codebuddy\n") {
+		t.Fatalf("expected .git/info/exclude to contain .codebuddy, got:\n%s", exclude)
+	}
+	if !strings.Contains(exclude, "CODEBUDDY.md\n") {
+		t.Fatalf("expected .git/info/exclude to contain CODEBUDDY.md, got:\n%s", exclude)
 	}
 }
 
@@ -1453,5 +1817,201 @@ func TestGetRemoteDefaultBranchAmbiguousOriginReturnsEmpty(t *testing.T) {
 	got := getRemoteDefaultBranch(barePath)
 	if got != "" {
 		t.Fatalf("getRemoteDefaultBranch = %q, want \"\" (ambiguous origin/* must not guess)", got)
+	}
+}
+
+// TestLastUsedMissingIsUnknownNotAncient pins the distinction the GC's
+// upgrade safety depends on: a cache created before the stamp existed must
+// report "unknown", never a zero time that reads as infinitely idle.
+func TestLastUsedMissingIsUnknownNotAncient(t *testing.T) {
+	t.Parallel()
+	if _, ok := LastUsed(t.TempDir()); ok {
+		t.Fatal("LastUsed on a repo with no stamp must report ok=false")
+	}
+}
+
+// TestMarkUsedRoundTrip covers the stamp write/read pair on its own.
+func TestMarkUsedRoundTrip(t *testing.T) {
+	t.Parallel()
+	barePath := t.TempDir()
+
+	before := time.Now().Add(-time.Second)
+	MarkUsed(barePath, testLogger())
+
+	stamp, ok := LastUsed(barePath)
+	if !ok {
+		t.Fatal("expected a stamp after MarkUsed")
+	}
+	if stamp.Before(before) {
+		t.Errorf("stamp %s is older than the call that wrote it (%s)", stamp, before)
+	}
+	if time.Since(stamp) > time.Hour {
+		t.Errorf("stamp %s is implausibly old", stamp)
+	}
+}
+
+// TestMarkUsedIgnoresUnwritableRepo keeps the stamp best-effort: a failure to
+// record use must not break the checkout that triggered it.
+func TestMarkUsedIgnoresUnwritableRepo(t *testing.T) {
+	t.Parallel()
+	MarkUsed(filepath.Join(t.TempDir(), "does-not-exist"), testLogger())
+	MarkUsed("", testLogger())
+}
+
+// TestCreateWorktreeStampsLastUsed is the one that matters for eviction: the
+// stamp has to be written where "a task really used this repo" happens, since
+// directory mtime cannot distinguish that from a routine fetch.
+func TestCreateWorktreeStampsLastUsed(t *testing.T) {
+	t.Parallel()
+	sourceRepo := createTestRepo(t)
+	cacheRoot := t.TempDir()
+
+	cache := New(cacheRoot, testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	barePath := cache.Lookup("ws-1", sourceRepo)
+	if barePath == "" {
+		t.Fatal("expected cached repo")
+	}
+	// Sync alone must not look like use — only a checkout counts.
+	if _, ok := LastUsed(barePath); ok {
+		t.Fatal("Sync must not stamp last-used; only CreateWorktree does")
+	}
+
+	if _, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID: "ws-1",
+		RepoURL:     sourceRepo,
+		WorkDir:     t.TempDir(),
+		AgentName:   "Code Reviewer",
+		TaskID:      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+	}); err != nil {
+		t.Fatalf("CreateWorktree failed: %v", err)
+	}
+
+	if _, ok := LastUsed(barePath); !ok {
+		t.Error("CreateWorktree must stamp last-used on the bare repo")
+	}
+}
+
+// TestBarePathIsIndependentOfExistence separates the two questions Lookup used
+// to answer at once: Lookup means "is it cached?", BarePath means "where would
+// it live?" — the GC needs the second to map live repo URLs onto directories.
+func TestBarePathIsIndependentOfExistence(t *testing.T) {
+	t.Parallel()
+	cache := New(t.TempDir(), testLogger())
+
+	path := cache.BarePath("ws-1", "https://example.com/acme/widgets.git")
+	if path == "" {
+		t.Fatal("BarePath must return a path even when nothing is cached")
+	}
+	if cache.Lookup("ws-1", "https://example.com/acme/widgets.git") != "" {
+		t.Error("Lookup must still report an uncached repo as absent")
+	}
+}
+
+// TestWorktreeDirNameSingleRepo verifies that a single repo (no peers) keeps
+// landing at its basename, preserving the existing on-disk layout.
+func TestWorktreeDirNameSingleRepo(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		url  string
+		want string
+	}{
+		{"https://github.com/org/my-repo.git", "my-repo"},
+		{"https://github.com/org/my-repo", "my-repo"},
+		{"git@github.com:org/app.git", "app"},
+		{"https://github.com/org/app/", "app"},
+	}
+	for _, tt := range tests {
+		got := worktreeDirName(tt.url, nil)
+		if got != tt.want {
+			t.Errorf("worktreeDirName(%q, nil) = %q, want %q", tt.url, got, tt.want)
+		}
+		// With an explicit self-only peer list the result must be the same.
+		got2 := worktreeDirName(tt.url, []string{tt.url})
+		if got2 != tt.want {
+			t.Errorf("worktreeDirName(%q, [self]) = %q, want %q", tt.url, got2, tt.want)
+		}
+	}
+}
+
+// TestWorktreeDirNameNoCollision verifies that repos with different basenames
+// each keep their basename even when multiple peers are present.
+func TestWorktreeDirNameNoCollision(t *testing.T) {
+	t.Parallel()
+	peers := []string{
+		"https://github.com/org/frontend.git",
+		"https://github.com/org/backend.git",
+		"https://github.com/org/worker.git",
+	}
+	wants := map[string]string{
+		peers[0]: "frontend",
+		peers[1]: "backend",
+		peers[2]: "worker",
+	}
+	for url, want := range wants {
+		got := worktreeDirName(url, peers)
+		if got != want {
+			t.Errorf("worktreeDirName(%q, peers) = %q, want %q", url, got, want)
+		}
+	}
+}
+
+// TestWorktreeDirNameSameBasenameDifferentOrg verifies the silent-collision
+// bug: org-a/app and org-b/app must NOT both land at {workdir}/app.
+func TestWorktreeDirNameSameBasenameDifferentOrg(t *testing.T) {
+	t.Parallel()
+	urlA := "https://github.com/org-a/app.git"
+	urlB := "https://github.com/org-b/app.git"
+	peers := []string{urlA, urlB}
+
+	dirA := worktreeDirName(urlA, peers)
+	dirB := worktreeDirName(urlB, peers)
+
+	if dirA == dirB {
+		t.Errorf("collision: org-a/app and org-b/app both map to %q", dirA)
+	}
+	// Neither should be the bare basename when there is a collision.
+	if dirA == "app" {
+		t.Errorf("org-a/app should not land at bare basename %q when a collision exists", "app")
+	}
+	if dirB == "app" {
+		t.Errorf("org-b/app should not land at bare basename %q when a collision exists", "app")
+	}
+}
+
+// TestWorktreeDirNameSameBasenameDifferentHost verifies cross-host collision:
+// github.com/org/repo and gitlab.com/org/repo must not collide.
+func TestWorktreeDirNameSameBasenameDifferentHost(t *testing.T) {
+	t.Parallel()
+	urlGH := "https://github.com/org/repo.git"
+	urlGL := "https://gitlab.com/org/repo.git"
+	peers := []string{urlGH, urlGL}
+
+	dirGH := worktreeDirName(urlGH, peers)
+	dirGL := worktreeDirName(urlGL, peers)
+
+	if dirGH == dirGL {
+		t.Errorf("cross-host collision: %q and %q both map to %q", urlGH, urlGL, dirGH)
+	}
+}
+
+// TestWorktreeDirNameDeterministic verifies that the result is the same
+// regardless of the order of peer URLs (no checkout-order dependency).
+func TestWorktreeDirNameDeterministic(t *testing.T) {
+	t.Parallel()
+	urlA := "https://github.com/org-a/app.git"
+	urlB := "https://github.com/org-b/app.git"
+
+	peersAB := []string{urlA, urlB}
+	peersBA := []string{urlB, urlA}
+
+	if worktreeDirName(urlA, peersAB) != worktreeDirName(urlA, peersBA) {
+		t.Error("worktreeDirName result must not depend on peer order (order: AB vs BA)")
+	}
+	if worktreeDirName(urlB, peersAB) != worktreeDirName(urlB, peersBA) {
+		t.Error("worktreeDirName result must not depend on peer order (order: AB vs BA)")
 	}
 }

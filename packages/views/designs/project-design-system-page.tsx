@@ -41,7 +41,7 @@ export function ProjectDesignSystemPage({ designSystemId }: { designSystemId: st
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
         <div className="space-y-3">
-          <p className="text-sm font-medium">无法加载此设计体系</p>
+          <p className="text-body font-medium">无法加载此设计体系</p>
           <Button
             size="sm"
             variant="outline"

@@ -590,7 +590,10 @@ func preparePassedOpenDesignPreviewDraft(t *testing.T, name string) passedOpenDe
 		t.Fatalf("seed historical Open Design archive: %v", err)
 	}
 	identity := opendesign.PinnedEngineIdentity()
-	supervisorRunID := "22222222-2222-4222-8222-222222222222"
+	var supervisorRunID string
+	if err := testPool.QueryRow(context.Background(), `SELECT gen_random_uuid()`).Scan(&supervisorRunID); err != nil {
+		t.Fatalf("create historical Open Design run ID: %v", err)
+	}
 	contextJSON, err := json.Marshal(map[string]any{
 		"schema": opendesign.RunSchema,
 		"run_id": supervisorRunID,

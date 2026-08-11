@@ -342,5 +342,5 @@ func (d *Daemon) failOpenDesignPreflight(ctx context.Context, task Task, runCont
 }
 
 func (d *Daemon) failOpenDesignTask(ctx context.Context, task Task, message, reason, workDir string) {
-	_ = d.client.FailTask(ctx, task.ID, message, "", workDir, reason)
+	_ = d.client.FailTask(ctx, task.ID, message, "", workDir, reason, false, "")
 }

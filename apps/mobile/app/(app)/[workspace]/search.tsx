@@ -6,8 +6,9 @@
  * workspace switching in Settings, so a command-palette here would
  * duplicate them (see feedback_mobile_ia_main_vs_more).
  *
- * Result categories, ordering (projects first, issues second), debounce
- * (300ms), abort policy, and Recent rendering mirror the web source.
+ * Result categories, ordering (live projects, then live issues, then a
+ * trailing Cancelled section — see lib/search-rows.ts), debounce (300ms),
+ * abort policy, and Recent rendering mirror the web source.
  * Highlight + snippet line for `match_source` matches preserves the
  * "why did this match" signal users rely on when scanning results.
  */
@@ -26,6 +27,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useQueries } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useTranslation } from "react-i18next";
 import type {
   Issue,
   IssueStatus,
@@ -44,8 +46,9 @@ import {
   useViewedIssuesStore,
 } from "@/data/viewed-issues-store";
 import { issueDetailOptions } from "@/data/queries/issues";
-import { STATUS_LABEL } from "@/lib/issue-status";
-import { projectStatusLabel } from "@/lib/project-status";
+import { useIssueLabels } from "@/lib/use-issue-labels";
+import { useProjectLabels } from "@/lib/use-project-labels";
+import { buildSearchRows, type RowItem } from "@/lib/search-rows";
 
 const DEBOUNCE_MS = 300;
 const ISSUE_LIMIT = 20;
@@ -115,12 +118,8 @@ function HighlightText({
 // =====================================================
 // Row item types — drives the single FlatList render
 // =====================================================
-
-type RowItem =
-  | { kind: "header"; key: string; title: string }
-  | { kind: "issue"; key: string; issue: SearchIssueResult; query: string }
-  | { kind: "project"; key: string; project: SearchProjectResult; query: string }
-  | { kind: "recent"; key: string; issue: Issue };
+// RowItem + buildSearchRows live in lib/search-rows.ts so the ordering rules
+// (including the cancelled partition) are testable without mounting the screen.
 
 function issueIconColor(status: IssueStatus): string {
   // Tag color for the status label at the end of an issue row.
@@ -161,9 +160,9 @@ function SearchIssueRow({ item, query, slug }: SearchIssueRowProps) {
   // (packages/views/search/search-command.tsx:632) and the backend only
   // populates `matched_snippet` for comment matches anyway
   // (server/internal/handler/issue.go:592). Keep mobile strictly aligned.
+  const { statusLabel } = useIssueLabels();
   const showSnippet =
     item.match_source === "comment" && !!item.matched_snippet;
-  const statusLabel = STATUS_LABEL[item.status as IssueStatus] ?? item.status;
   return (
     <Pressable
       onPress={() => navigateOnTap(slug, `/${slug}/issue/${item.id}`)}
@@ -184,7 +183,7 @@ function SearchIssueRow({ item, query, slug }: SearchIssueRowProps) {
           />
         </View>
         <Text className={`text-xs shrink-0 ${issueIconColor(item.status as IssueStatus)}`}>
-          {statusLabel}
+          {statusLabel(item.status)}
         </Text>
       </View>
       {showSnippet ? (
@@ -216,6 +215,7 @@ interface SearchProjectRowProps {
 }
 
 function SearchProjectRow({ item, query, slug }: SearchProjectRowProps) {
+  const { statusLabel } = useProjectLabels();
   const showSnippet =
     item.match_source === "description" && !!item.matched_snippet;
   return (
@@ -236,7 +236,7 @@ function SearchProjectRow({ item, query, slug }: SearchProjectRowProps) {
         <View className="flex-row items-center gap-1.5 shrink-0">
           <ProjectStatusIcon status={item.status} size={12} />
           <Text className="text-xs text-muted-foreground">
-            {projectStatusLabel(item.status)}
+            {statusLabel(item.status)}
           </Text>
         </View>
       </View>
@@ -262,7 +262,7 @@ interface RecentRowProps {
 }
 
 function RecentRow({ item, slug }: RecentRowProps) {
-  const statusLabel = STATUS_LABEL[item.status as IssueStatus] ?? item.status;
+  const { statusLabel } = useIssueLabels();
   return (
     <Pressable
       onPress={() => navigateOnTap(slug, `/${slug}/issue/${item.id}`)}
@@ -277,7 +277,7 @@ function RecentRow({ item, slug }: RecentRowProps) {
           {item.title}
         </Text>
         <Text className={`text-xs shrink-0 ${issueIconColor(item.status as IssueStatus)}`}>
-          {statusLabel}
+          {statusLabel(item.status)}
         </Text>
       </View>
     </Pressable>
@@ -296,6 +296,7 @@ interface SearchResultsState {
 const EMPTY_RESULTS: SearchResultsState = { issues: [], projects: [] };
 
 export default function SearchModal() {
+  const { t } = useTranslation("workspace");
   const wsId = useWorkspaceStore((s) => s.currentWorkspaceId);
   const slug = useWorkspaceStore((s) => s.currentWorkspaceSlug);
 
@@ -389,35 +390,28 @@ export default function SearchModal() {
     results.issues.length > 0 || results.projects.length > 0;
 
   // Build the FlatList data. One flat array of discriminated rows means a
-  // single virtualised list covers Recent (empty-state) and (Projects +
-  // Issues) results without nesting SectionList inside another scroller.
+  // single virtualised list covers Recent (empty-state) and the search results
+  // without nesting SectionList inside another scroller. Ordering lives in
+  // buildSearchRows (lib/search-rows.ts); its English section titles are
+  // remapped here by row key so headers follow the app locale.
   const data = useMemo<RowItem[]>(() => {
-    if (!trimmedQuery) {
-      if (recentIssues.length === 0) return [];
-      return [
-        { kind: "header", key: "h-recent", title: "Recent" },
-        ...recentIssues.map<RowItem>((issue) => ({
-          kind: "recent",
-          key: `r-${issue.id}`,
-          issue,
-        })),
-      ];
-    }
-    const items: RowItem[] = [];
-    if (results.projects.length > 0) {
-      items.push({ kind: "header", key: "h-projects", title: "Projects" });
-      for (const p of results.projects) {
-        items.push({ kind: "project", key: `p-${p.id}`, project: p, query: trimmedQuery });
-      }
-    }
-    if (results.issues.length > 0) {
-      items.push({ kind: "header", key: "h-issues", title: "Issues" });
-      for (const it of results.issues) {
-        items.push({ kind: "issue", key: `i-${it.id}`, issue: it, query: trimmedQuery });
-      }
-    }
-    return items;
-  }, [trimmedQuery, recentIssues, results]);
+    const sectionTitles: Record<string, string> = {
+      "h-recent": t("search.section.recent"),
+      "h-projects": t("search.section.projects"),
+      "h-issues": t("search.section.issues"),
+      "h-cancelled": t("search.section.cancelled"),
+    };
+    return buildSearchRows({
+      query,
+      issues: results.issues,
+      projects: results.projects,
+      recentIssues,
+    }).map((row) =>
+      row.kind === "header"
+        ? { ...row, title: sectionTitles[row.key] ?? row.title }
+        : row,
+    );
+  }, [query, results, recentIssues, t]);
 
   const renderItem = useCallback<ListRenderItem<RowItem>>(
     ({ item }) => {
@@ -451,7 +445,7 @@ export default function SearchModal() {
           <TextInput
             value={query}
             onChangeText={handleChange}
-            placeholder="Search issues and projects"
+            placeholder={t("search.placeholder")}
             placeholderTextColor="#a1a1aa"
             autoFocus
             autoCorrect={false}
@@ -477,13 +471,13 @@ export default function SearchModal() {
             ) : trimmedQuery && !hasResults ? (
               <View className="items-center justify-center py-12 px-6">
                 <Text className="text-sm text-muted-foreground text-center">
-                  No results for &ldquo;{trimmedQuery}&rdquo;
+                  {t("search.no_results", { query: trimmedQuery })}
                 </Text>
               </View>
             ) : !trimmedQuery && recentIssues.length === 0 ? (
               <View className="items-center justify-center py-12 px-6">
                 <Text className="text-sm text-muted-foreground text-center">
-                  Type to search issues and projects.
+                  {t("search.empty_prompt")}
                 </Text>
               </View>
             ) : null

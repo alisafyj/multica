@@ -18,11 +18,21 @@ import { create } from "zustand";
 import type { IssuePriority, IssueStatus } from "@multica/core/types";
 import type { MyIssuesScope } from "@/data/queries/issue-keys";
 
+/**
+ * Board = one status per swipeable page; list = status-grouped SectionList.
+ * Web offers four modes (`board` / `list` / `table` / `swimlane`, see
+ * `packages/views/my-issues/components/my-issues-page.tsx:35`); mobile ships
+ * the two that survive a phone-width viewport. Board is the default on both.
+ */
+export type MyIssuesViewMode = "board" | "list";
+
 interface MyIssuesViewState {
   scope: MyIssuesScope;
+  viewMode: MyIssuesViewMode;
   statusFilters: IssueStatus[];
   priorityFilters: IssuePriority[];
   setScope: (scope: MyIssuesScope) => void;
+  setViewMode: (mode: MyIssuesViewMode) => void;
   toggleStatusFilter: (status: IssueStatus) => void;
   togglePriorityFilter: (priority: IssuePriority) => void;
   clearFilters: () => void;
@@ -30,9 +40,11 @@ interface MyIssuesViewState {
 
 export const useMyIssuesViewStore = create<MyIssuesViewState>((set) => ({
   scope: "assigned",
+  viewMode: "board",
   statusFilters: [],
   priorityFilters: [],
   setScope: (scope) => set({ scope }),
+  setViewMode: (viewMode) => set({ viewMode }),
   toggleStatusFilter: (status) =>
     set((state) => ({
       statusFilters: state.statusFilters.includes(status)

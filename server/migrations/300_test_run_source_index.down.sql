@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS test_run_source_idx;

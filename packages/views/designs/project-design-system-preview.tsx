@@ -229,7 +229,7 @@ export function ProjectDesignSystemPreview({
     return (
       <div
         role="alert"
-        className="flex min-h-64 items-center justify-center gap-2 border-y px-6 text-sm text-muted-foreground"
+        className="flex min-h-64 items-center justify-center gap-2 border-y px-6 text-body text-muted-foreground"
       >
         <CircleAlert className="h-4 w-4 shrink-0" />
         <span>UI Kit 暂时不可用，请重新生成或稍后重试。</span>
@@ -240,14 +240,14 @@ export function ProjectDesignSystemPreview({
   return (
     <div className="bg-background">
       <div className="flex min-h-10 flex-wrap items-center justify-between gap-2 border-b bg-muted/20 px-3 py-2">
-        <span className="text-xs text-muted-foreground">{viewportLabel}</span>
+        <span className="text-caption text-muted-foreground">{viewportLabel}</span>
         <div className="flex items-center gap-2">
           {archiveTargets.length > 1 ? (
             <select
               aria-label="预览内容"
               value={activeArchiveKey}
               onChange={(event) => setSelectedArchiveKey(event.target.value)}
-              className="h-7 max-w-56 rounded-sm border bg-background px-2 text-xs"
+              className="h-7 max-w-56 rounded-sm border bg-background px-2 text-caption"
             >
               {archiveTargets.map((target) => (
                 <option key={archiveTargetKey(target)} value={archiveTargetKey(target)}>
@@ -268,7 +268,7 @@ export function ProjectDesignSystemPreview({
                   key={option.value}
                   type="button"
                   aria-pressed={selected}
-                  className={`rounded-sm px-2 py-1 text-xs font-medium transition-colors ${selected ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                  className={`rounded-sm px-2 py-1 text-caption font-medium transition-colors ${selected ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                   onClick={() => setSizeMode(option.value)}
                 >
                   {option.label}

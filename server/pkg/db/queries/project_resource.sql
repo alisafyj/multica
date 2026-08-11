@@ -32,7 +32,16 @@ WHERE id = $1
 RETURNING *;
 
 -- name: DeleteProjectResource :exec
-DELETE FROM project_resource WHERE id = $1;
+WITH deleted_analyses AS (
+    DELETE FROM design_repo_analysis AS analysis
+    WHERE analysis.workspace_id = sqlc.arg('workspace_id')
+      AND analysis.project_resource_id = sqlc.arg('project_resource_id')
+    RETURNING analysis.id
+)
+DELETE FROM project_resource AS resource
+WHERE resource.id = sqlc.arg('project_resource_id')
+  AND resource.workspace_id = sqlc.arg('workspace_id')
+  AND (SELECT count(*) FROM deleted_analyses) >= 0;
 
 -- name: CountProjectResources :one
 SELECT count(*) FROM project_resource WHERE project_id = $1;
