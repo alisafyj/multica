@@ -144,6 +144,7 @@ import type {
   DesignSystemProfile,
   ProjectDesignSystem,
   ProjectDesignSystemPackagePreview,
+  ProjectDesignSystemPreviewVerificationReceipt,
   CreateDesignRepoAnalysisRequest,
   DesignRepoAnalysis,
   DesignRestorePlan,
@@ -2128,6 +2129,35 @@ export class ApiClient {
       ProjectDesignSystemSchema,
       { ...EMPTY_PROJECT_DESIGN_SYSTEM, id },
       { endpoint: "POST /api/project-design-systems/{id}/save" },
+    );
+  }
+
+  async discardProjectDesignSystemDraft(id: string): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>(
+      `/api/project-design-systems/${encodeURIComponent(id)}/draft`,
+      { method: "DELETE" },
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      { ...EMPTY_PROJECT_DESIGN_SYSTEM, id },
+      { endpoint: "DELETE /api/project-design-systems/{id}/draft" },
+    );
+  }
+
+  async verifyProjectDesignSystemPreview(
+    id: string,
+    receipt: ProjectDesignSystemPreviewVerificationReceipt,
+  ): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>(
+      `/api/project-design-systems/${encodeURIComponent(id)}/preview-verification`,
+      { method: "POST", body: JSON.stringify(receipt) },
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      { ...EMPTY_PROJECT_DESIGN_SYSTEM, id },
+      { endpoint: "POST /api/project-design-systems/{id}/preview-verification" },
     );
   }
 

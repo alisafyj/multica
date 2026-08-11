@@ -10,12 +10,13 @@ export type DesignRestoreTaskPurpose = "frontend_restore" | "ui_generation" | "t
 export type DesignRestoreTaskItemSource = "frame" | "selected_layers" | "selection_bounds" | "template" | "draft";
 export type DesignProjectRulesSource = "project_rules" | "gallery_specs_legacy" | "inline" | "none";
 export type GalleryNativeVersion = "1.0";
-export type ProjectDesignSystemStatus = "unestablished" | "generating" | "draft" | "saved";
+export type ProjectDesignSystemStatus = "unestablished" | "generating" | "validating" | "draft" | "saved";
 export type ProjectDesignSystemPlatform = "web" | "mobile" | "cross_platform";
 export type ProjectDesignSystemReferenceKind = "attachment" | "brand_color" | "link" | "design_file" | "design_system_profile";
 export type ProjectDesignSystemScope =
   | { kind: "all" }
   | { kind: "section" | "token_group" | "component" | "block"; id: string };
+export type ProjectDesignSystemPreviewValidationStatus = "none" | "pending" | "passed" | "failed";
 
 export type GalleryLayerId = string;
 export type GalleryFrameId = string;
@@ -265,6 +266,85 @@ export interface ProjectDesignSystemReferenceInput {
   label?: string;
 }
 
+export interface ProjectDesignSystemReferenceSnapshot extends ProjectDesignSystemReferenceInput {
+  filename?: string;
+  content_type?: string;
+  url?: string;
+  title?: string;
+  thumbnail_url?: string;
+  current_revision_id?: string;
+  source_revision_id?: string;
+  frames?: Array<Record<string, unknown>>;
+  profile?: Record<string, unknown>;
+}
+
+export interface ProjectRepositoryDesignFact {
+  kind: string;
+  label: string;
+  value: string;
+  source_paths: string[];
+  confidence: number;
+}
+
+export interface ProjectRepositoryDesignSourceFile {
+  path: string;
+  kind: string;
+}
+
+export interface ProjectRepositoryDesignConflict {
+  label: string;
+  repository_fact: string;
+  user_intent: string;
+  source_paths: string[];
+}
+
+export interface ProjectRepositoryDesignAsset {
+  role: string;
+  reference: string;
+  source_path: string;
+}
+
+export interface ProjectRepositoryDesignRegion {
+  name: string;
+  purpose: string;
+  visible_text: string[];
+  controls: string[];
+  behaviors: string[];
+  conditions: string[];
+  layout: string[];
+  appearance: string[];
+  assets: ProjectRepositoryDesignAsset[];
+}
+
+export interface ProjectRepositoryDesignWorkflow {
+  name: string;
+  purpose: string;
+  source_paths: string[];
+  confidence: number;
+  regions: ProjectRepositoryDesignRegion[];
+  guardrails: string[];
+}
+
+export interface ProjectRepositoryDesignContext {
+  schema_version: string;
+  summary: string;
+  suggested_brief: string;
+  facts: ProjectRepositoryDesignFact[];
+  source_files: ProjectRepositoryDesignSourceFile[];
+  representative_workflows?: ProjectRepositoryDesignWorkflow[];
+  commit_sha?: string;
+  confidence: number;
+  conflicts: ProjectRepositoryDesignConflict[];
+}
+
+export interface ProjectDesignSystemInputSnapshot {
+  agent_id?: string;
+  platform?: ProjectDesignSystemPlatform | "";
+  brief?: string;
+  references?: ProjectDesignSystemReferenceSnapshot[];
+  repository_analysis?: ProjectRepositoryDesignContext;
+}
+
 export interface CreateProjectDesignSystemRequest {
   project_id: string;
   agent_id: string;
@@ -332,6 +412,25 @@ export interface ProjectDesignSystemPackagePreview {
   targets: ProjectDesignSystemPreviewTarget[];
 }
 
+export interface ProjectDesignSystemPreviewValidation {
+  status: ProjectDesignSystemPreviewValidationStatus;
+  integrity_sha256: string;
+  report: Record<string, unknown>;
+  verified_at: string | null;
+}
+
+export interface ProjectDesignSystemPreviewVerificationReceipt {
+  status: "ready" | "failed";
+  digest: string;
+  reason: string;
+  locator_count: number;
+  visible_locator_count: number;
+  body_width: number;
+  body_height: number;
+  image_count: number;
+  failed_image_count: number;
+}
+
 export interface ProjectDesignSystemContent {
   sections: ProjectDesignSystemSection[];
   token_groups: ProjectDesignSystemTokenGroup[];
@@ -349,7 +448,10 @@ export interface ProjectDesignSystemTask {
   status: string;
   operation: string;
   error: string | null;
+  failure_reason?: string | null;
+  wait_reason?: string | null;
   created_at: string;
+  dispatched_at?: string | null;
   started_at: string | null;
   completed_at: string | null;
 }
@@ -363,8 +465,9 @@ export interface ProjectDesignSystem {
   current_agent_id: string | null;
   status: ProjectDesignSystemStatus;
   active_task: ProjectDesignSystemTask | null;
-  input_snapshot: Record<string, unknown>;
+  input_snapshot: ProjectDesignSystemInputSnapshot;
   content: ProjectDesignSystemContent;
+  preview_validation: ProjectDesignSystemPreviewValidation;
   has_unsaved_changes: boolean;
   last_error: unknown;
   activity: ProjectDesignSystemTask[];

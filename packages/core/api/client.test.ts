@@ -52,6 +52,18 @@ describe("ApiClient", () => {
         brief: "Regenerate for CRM",
       });
       await client.saveProjectDesignSystem("system /1");
+      await client.verifyProjectDesignSystemPreview("system /1", {
+        status: "ready",
+        digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        reason: "",
+        locator_count: 3,
+        visible_locator_count: 3,
+        body_width: 1280,
+        body_height: 900,
+        image_count: 2,
+        failed_image_count: 0,
+      });
+      await client.discardProjectDesignSystemDraft("system /1");
 
       const calls = fetchMock.mock.calls.map(([url, init]) => ({
         url,
@@ -97,6 +109,26 @@ describe("ApiClient", () => {
         {
           url: "https://api.example.test/api/project-design-systems/system%20%2F1/save",
           method: "POST",
+          body: undefined,
+        },
+        {
+          url: "https://api.example.test/api/project-design-systems/system%20%2F1/preview-verification",
+          method: "POST",
+          body: JSON.stringify({
+            status: "ready",
+            digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            reason: "",
+            locator_count: 3,
+            visible_locator_count: 3,
+            body_width: 1280,
+            body_height: 900,
+            image_count: 2,
+            failed_image_count: 0,
+          }),
+        },
+        {
+          url: "https://api.example.test/api/project-design-systems/system%20%2F1/draft",
+          method: "DELETE",
           body: undefined,
         },
       ]);

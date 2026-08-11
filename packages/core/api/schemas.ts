@@ -390,6 +390,7 @@ export const EMPTY_LIST_DESIGN_SYSTEM_PROFILES_RESPONSE: ListDesignSystemProfile
 function normalizeProjectDesignSystemStatus(value: unknown): ProjectDesignSystemStatus {
   switch (value) {
     case "generating":
+    case "validating":
     case "draft":
     case "saved":
       return value;
@@ -397,6 +398,22 @@ function normalizeProjectDesignSystemStatus(value: unknown): ProjectDesignSystem
       return "unestablished";
   }
 }
+
+function normalizeProjectDesignSystemPreviewValidationStatus(value: unknown) {
+  switch (value) {
+    case "pending":
+    case "passed":
+    case "failed":
+      return value;
+    default:
+      return "none";
+  }
+}
+
+const JSONRecordSchema = z.preprocess(
+  (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {},
+  z.record(z.string(), z.unknown()).catch({}),
+);
 
 const ProjectDesignSystemSectionSchema = z.object({
   id: z.string(),
@@ -451,6 +468,147 @@ export const EMPTY_PROJECT_DESIGN_SYSTEM_PACKAGE_PREVIEW: ProjectDesignSystemPac
   targets: [],
 };
 
+const ProjectDesignSystemPlatformSchema = z.union([
+  z.literal("web"),
+  z.literal("mobile"),
+  z.literal("cross_platform"),
+  z.literal(""),
+]).catch("");
+
+const ProjectDesignSystemReferenceSnapshotSchema = z.object({
+  kind: z.union([
+    z.literal("attachment"),
+    z.literal("brand_color"),
+    z.literal("link"),
+    z.literal("design_file"),
+    z.literal("design_system_profile"),
+  ]),
+  attachment_id: z.string().catch("").optional(),
+  design_file_id: z.string().catch("").optional(),
+  design_system_profile_id: z.string().catch("").optional(),
+  value: z.string().catch("").optional(),
+  label: z.string().catch("").optional(),
+  filename: z.string().catch("").optional(),
+  content_type: z.string().catch("").optional(),
+  url: z.string().catch("").optional(),
+  title: z.string().catch("").optional(),
+  thumbnail_url: z.string().catch("").optional(),
+  current_revision_id: z.string().catch("").optional(),
+  source_revision_id: z.string().catch("").optional(),
+  frames: z.preprocess(
+    (value) => value == null ? [] : value,
+    z.array(JSONRecordSchema).catch([]),
+  ).optional(),
+  profile: JSONRecordSchema.optional(),
+}).loose();
+
+const ProjectRepositoryDesignFactSchema = z.object({
+  kind: z.string().catch("").default(""),
+  label: z.string().catch("").default(""),
+  value: z.string().catch("").default(""),
+  source_paths: z.preprocess(
+    (value) => value == null ? [] : value,
+    z.array(z.string()).catch([]),
+  ),
+  confidence: z.number().catch(0).default(0),
+}).loose();
+
+const ProjectRepositoryDesignSourceFileSchema = z.object({
+  path: z.string().catch("").default(""),
+  kind: z.string().catch("").default(""),
+}).loose();
+
+const ProjectRepositoryDesignConflictSchema = z.object({
+  label: z.string().catch("").default(""),
+  repository_fact: z.string().catch("").default(""),
+  user_intent: z.string().catch("").default(""),
+  source_paths: z.preprocess(
+    (value) => value == null ? [] : value,
+    z.array(z.string()).catch([]),
+  ),
+}).loose();
+
+const ProjectRepositoryDesignAssetSchema = z.object({
+  role: z.string().catch("").default(""),
+  reference: z.string().catch("").default(""),
+  source_path: z.string().catch("").default(""),
+}).loose();
+
+const ProjectRepositoryDesignRegionSchema = z.object({
+  name: z.string().catch("").default(""),
+  purpose: z.string().catch("").default(""),
+  visible_text: z.preprocess((value) => value == null ? [] : value, z.array(z.string()).catch([])),
+  controls: z.preprocess((value) => value == null ? [] : value, z.array(z.string()).catch([])),
+  behaviors: z.preprocess((value) => value == null ? [] : value, z.array(z.string()).catch([])),
+  conditions: z.preprocess((value) => value == null ? [] : value, z.array(z.string()).catch([])),
+  layout: z.preprocess((value) => value == null ? [] : value, z.array(z.string()).catch([])),
+  appearance: z.preprocess((value) => value == null ? [] : value, z.array(z.string()).catch([])),
+  assets: z.preprocess(
+    (value) => value == null ? [] : value,
+    z.array(ProjectRepositoryDesignAssetSchema).catch([]),
+  ),
+}).loose();
+
+const ProjectRepositoryDesignWorkflowSchema = z.object({
+  name: z.string().catch("").default(""),
+  purpose: z.string().catch("").default(""),
+  source_paths: z.preprocess((value) => value == null ? [] : value, z.array(z.string()).catch([])),
+  confidence: z.number().catch(0).default(0),
+  regions: z.preprocess(
+    (value) => value == null ? [] : value,
+    z.array(ProjectRepositoryDesignRegionSchema).catch([]),
+  ),
+  guardrails: z.preprocess((value) => value == null ? [] : value, z.array(z.string()).catch([])),
+}).loose();
+
+const ProjectRepositoryDesignContextSchema = z.object({
+  schema_version: z.string().catch("").default(""),
+  summary: z.string().catch("").default(""),
+  suggested_brief: z.string().catch("").default(""),
+  facts: z.preprocess(
+    (value) => value == null ? [] : value,
+    z.array(ProjectRepositoryDesignFactSchema).catch([]),
+  ),
+  source_files: z.preprocess(
+    (value) => value == null ? [] : value,
+    z.array(ProjectRepositoryDesignSourceFileSchema).catch([]),
+  ),
+  representative_workflows: z.preprocess(
+    (value) => value == null ? [] : value,
+    z.array(ProjectRepositoryDesignWorkflowSchema).catch([]),
+  ),
+  commit_sha: z.string().catch("").optional(),
+  confidence: z.number().catch(0).default(0),
+  conflicts: z.preprocess(
+    (value) => value == null ? [] : value,
+    z.array(ProjectRepositoryDesignConflictSchema).catch([]),
+  ),
+}).loose();
+
+const ProjectDesignSystemInputSnapshotSchema = z.preprocess(
+  (value) => value == null ? {} : value,
+  z.object({
+    agent_id: z.string().catch("").optional(),
+    platform: ProjectDesignSystemPlatformSchema.optional(),
+    brief: z.string().catch("").optional(),
+    references: z.preprocess(
+      (value) => value == null ? [] : value,
+      z.array(ProjectDesignSystemReferenceSnapshotSchema).catch([]),
+    ).optional(),
+    repository_analysis: ProjectRepositoryDesignContextSchema.optional(),
+  }).loose(),
+);
+
+const ProjectDesignSystemPreviewValidationSchema = z.preprocess(
+  (value) => value == null ? {} : value,
+  z.object({
+    status: z.unknown().transform(normalizeProjectDesignSystemPreviewValidationStatus),
+    integrity_sha256: z.string().catch("").default(""),
+    report: JSONRecordSchema,
+    verified_at: z.string().nullable().catch(null).default(null),
+  }).loose(),
+);
+
 const ProjectDesignSystemContentSchema = z.preprocess(
   (value) => value == null ? {} : value,
   z.object({
@@ -483,17 +641,13 @@ const ProjectDesignSystemTaskSchema = z.object({
   status: z.string().catch("").default(""),
   operation: z.string().catch("").default(""),
   error: z.string().nullable().catch(null).default(null),
+  failure_reason: z.string().nullable().catch(null).default(null),
+  wait_reason: z.string().nullable().catch(null).default(null),
   created_at: z.string().catch("").default(""),
+  dispatched_at: z.string().nullable().catch(null).default(null),
   started_at: z.string().nullable().catch(null).default(null),
   completed_at: z.string().nullable().catch(null).default(null),
 }).loose();
-
-const ProjectDesignSystemPlatformSchema = z.union([
-  z.literal("web"),
-  z.literal("mobile"),
-  z.literal("cross_platform"),
-  z.literal(""),
-]).catch("");
 
 export const ProjectDesignSystemSchema = z.object({
   id: z.string().catch("").default(""),
@@ -507,8 +661,9 @@ export const ProjectDesignSystemSchema = z.object({
     (value) => value == null ? null : value,
     ProjectDesignSystemTaskSchema.nullable().catch(null),
   ),
-  input_snapshot: z.record(z.string(), z.unknown()).catch({}).default({}),
+  input_snapshot: ProjectDesignSystemInputSnapshotSchema,
   content: ProjectDesignSystemContentSchema,
+  preview_validation: ProjectDesignSystemPreviewValidationSchema,
   has_unsaved_changes: z.boolean().catch(false).default(false),
   last_error: z.unknown().transform((value) => value ?? null),
   activity: z.preprocess(
@@ -539,6 +694,12 @@ export const EMPTY_PROJECT_DESIGN_SYSTEM: ProjectDesignSystem = {
     package_schema: "",
     preview_targets: [],
     selection_enabled: false,
+  },
+  preview_validation: {
+    status: "none",
+    integrity_sha256: "",
+    report: {},
+    verified_at: null,
   },
   has_unsaved_changes: false,
   last_error: null,

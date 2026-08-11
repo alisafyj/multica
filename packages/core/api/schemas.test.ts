@@ -263,6 +263,51 @@ describe("ProjectDesignSystemSchema", () => {
     expect(parsed.content.preview_html).toBe("<main>CRM</main>");
   });
 
+  it("preserves native validation and repository analysis context", () => {
+    const parsed = ProjectDesignSystemSchema.parse({
+      id: "system-1",
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      status: "validating",
+      preview_validation: {
+        status: "pending",
+        integrity_sha256: "abc123",
+        report: { source: "browser" },
+        verified_at: null,
+      },
+      input_snapshot: {
+        agent_id: "agent-1",
+        platform: "web",
+        brief: "CRM design system",
+        references: [{ kind: "brand_color", label: "Primary", value: "#2463EB" }],
+        repository_analysis: {
+          schema_version: "multica.repository-design-context/v1",
+          summary: "CRM workspace with dense tables.",
+          suggested_brief: "Use operational UI patterns.",
+          facts: [{
+            kind: "navigation",
+            label: "Primary nav",
+            value: "Sidebar navigation",
+            source_paths: ["packages/views/designs/designs-page.tsx"],
+            confidence: 0.9,
+          }],
+          source_files: [{ path: "packages/views/designs/designs-page.tsx", kind: "tsx" }],
+          representative_workflows: [],
+          commit_sha: "abcdef123456",
+          confidence: 0.8,
+          conflicts: [],
+        },
+      },
+    });
+
+    expect(parsed.status).toBe("validating");
+    expect(parsed.preview_validation.status).toBe("pending");
+    expect(parsed.preview_validation.report).toEqual({ source: "browser" });
+    expect(parsed.input_snapshot.repository_analysis?.facts[0]?.source_paths).toEqual([
+      "packages/views/designs/designs-page.tsx",
+    ]);
+  });
+
   it("falls back to an empty unestablished response for malformed top-level data", () => {
     const parsed = parseWithFallback(
       null,
