@@ -125,13 +125,25 @@ Common base: `bfd95597ce594717afef1235a38fb7a5c5f5d8a8`
   - GitNexus `detect-changes --scope staged` reported `medium`.
 - Scope note: this slice does not add template Blueprint analysis endpoints/tasks yet, does not port approve/reject/revise, and does not touch native V2 package preview/upload/repository-analysis.
 
+## Template Blueprint Analysis Slice
+
+- Restored the project-scoped template Blueprint analysis chain from recovery without merging old Open Design runtime paths:
+  - publishing a project-owned catalog template now enqueues `design_template_blueprint_analyze`;
+  - daemon claim responses expose `design_template_blueprint_analyze_context` and `BuildPrompt` emits a strict JSON Blueprint classification prompt;
+  - `ResolveTaskWorkspaceID` recognizes the new context type so daemon `/complete` access resolves correctly;
+  - `CompleteTask` parses/validates the Agent classification output and saves `design_template_blueprint` through `DesignGenerationAssetStore.SaveBlueprintAnalysis` inside `CompleteTaskWithMutation`;
+  - added `GetNextDesignTemplateBlueprintAnalysisVersion` for per-template revision analysis versioning.
+- Verification:
+  - `go test -C server -buildvcs=false ./internal/handler -run 'Test(PublishDesignRevisionAsTemplateEnqueuesBlueprintAnalysis|CompleteDesignTemplateBlueprintAnalyzeTaskSavesBlueprint)$' -count=1` passed with the local `DATABASE_URL`;
+  - `go test -C server -buildvcs=false ./internal/handler -run 'Test(PublishDesignRevisionAsTemplate|CompleteDesignTemplateBlueprintAnalyzeTask|DesignGenerationAssetStore)' -count=1` passed with the local `DATABASE_URL`;
+  - `go test -C server -buildvcs=false ./internal/daemon -count=1` passed;
+  - `go test -C server -buildvcs=false ./internal/service -count=1` passed;
+  - `git diff --check` passed;
+  - GitNexus `detect-changes --scope staged` reported `critical` because this slice intentionally touches daemon/task public entrypoints (`ClaimTaskByRuntime`, `BuildPrompt`, `CompleteTask`, task workspace resolution) plus template Blueprint flows.
+- Scope note: this slice does not port approve/reject/revise, does not restore archive-preview/open-design-preview recovery rollback, and does not touch native V2 package preview/upload/repository-analysis.
+
 ## Candidate Next Slice
 
-- Template Blueprint analysis chain:
-  - enqueue a template Blueprint analysis task after publishing a project-scoped catalog template;
-  - parse/validate Agent Blueprint classification output;
-  - save `design_template_blueprint` with a per-template revision analysis version;
-  - keep this separate from project design-system native V2 package preview/upload.
 - `server/internal/designcore` recovery diff triage:
   - inspect whether the remaining compiler, blueprint, recipe, and quality changes are already covered by current mainline;
   - port only behavior that current PageSpec/recipe/blueprint tests prove is still missing.

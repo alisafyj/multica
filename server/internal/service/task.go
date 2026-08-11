@@ -651,6 +651,8 @@ const DesignRestoreTaskContextType = "design_restore_task_execute"
 
 const DesignSystemProfileAnalyzeContextType = "design_system_profile_analyze"
 
+const DesignTemplateBlueprintAnalyzeContextType = "design_template_blueprint_analyze"
+
 const ProjectDesignSystemTaskContextType = "project_design_system_task"
 
 type ProjectDesignSystemOperation string
@@ -726,6 +728,21 @@ type DesignSystemProfileAnalyzeContext struct {
 	Tokens                    json.RawMessage `json:"tokens,omitempty"`
 	TextSamples               json.RawMessage `json:"text_samples,omitempty"`
 	OutputPolicy              json.RawMessage `json:"output_policy"`
+}
+
+type DesignTemplateBlueprintAnalyzeContext struct {
+	Type               string          `json:"type"`
+	Prompt             string          `json:"prompt"`
+	RequesterID        string          `json:"requester_id"`
+	WorkspaceID        string          `json:"workspace_id"`
+	ProjectID          string          `json:"project_id"`
+	AgentID            string          `json:"agent_id"`
+	TemplateID         string          `json:"template_id"`
+	TemplateRevisionID string          `json:"template_revision_id"`
+	SourceRevisionID   string          `json:"source_revision_id"`
+	Structure          json.RawMessage `json:"structure"`
+	SourceRefs         json.RawMessage `json:"source_refs"`
+	OutputPolicy       json.RawMessage `json:"output_policy"`
 }
 
 type ProjectDesignSystemTaskContext struct {
@@ -2449,6 +2466,9 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 	if pc, ok := s.parseDesignSystemProfileAnalyzeContext(task); ok {
 		return pc.WorkspaceID
 	}
+	if bc, ok := s.parseDesignTemplateBlueprintAnalyzeContext(task); ok {
+		return bc.WorkspaceID
+	}
 	if pc, ok := s.parseProjectDesignSystemTaskContext(task); ok {
 		return pc.WorkspaceID
 	}
@@ -2694,6 +2714,23 @@ func (s *TaskService) parseDesignSystemProfileAnalyzeContext(task db.AgentTaskQu
 		return DesignSystemProfileAnalyzeContext{}, false
 	}
 	return pc, true
+}
+
+func (s *TaskService) parseDesignTemplateBlueprintAnalyzeContext(task db.AgentTaskQueue) (DesignTemplateBlueprintAnalyzeContext, bool) {
+	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid {
+		return DesignTemplateBlueprintAnalyzeContext{}, false
+	}
+	if len(task.Context) == 0 {
+		return DesignTemplateBlueprintAnalyzeContext{}, false
+	}
+	var bc DesignTemplateBlueprintAnalyzeContext
+	if err := json.Unmarshal(task.Context, &bc); err != nil {
+		return DesignTemplateBlueprintAnalyzeContext{}, false
+	}
+	if bc.Type != DesignTemplateBlueprintAnalyzeContextType {
+		return DesignTemplateBlueprintAnalyzeContext{}, false
+	}
+	return bc, true
 }
 
 func (s *TaskService) parseProjectDesignSystemTaskContext(task db.AgentTaskQueue) (ProjectDesignSystemTaskContext, bool) {

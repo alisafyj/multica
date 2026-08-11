@@ -93,6 +93,6 @@ This project is indexed by GitNexus as **multica** (33203 symbols, 98167 relatio
 
 ## 当前任务状态（会话交接 - 每次会话结束更新）
 
-- **做了什么**: 从 recovery 抽回设计体系 Profile 分析产物链：Agent 输出契约要求 `recipe_classifications`/`primitive_fallbacks`，完成分析时构建并保存 `design_component_recipe_set`；未启用 approve/reject/revise，未恢复 Open Design Worker/Runtime/Daemon
-- **做到哪**: 当前主线 `feature/fengchen-design` 已提交本 recipe set checkpoint；focused handler 测试已通过，`git diff --check` 已通过，GitNexus `detect-changes` 为 `medium`；仅剩未跟踪 `.opencode/` 目录未处理
-- **下一步**: 提交本 recipe set checkpoint 后，只剩模板 Blueprint 分析链与 `server/internal/designcore` 差异需要判定/抽取；继续避开旧 archive-preview 回退和 native V2 删除
+- **做了什么**: 从 recovery 抽回模板 Blueprint 分析链：发布项目模板后入队 `design_template_blueprint_analyze`，daemon claim/prompt/complete 识别该任务，完成时原子保存 `design_template_blueprint`；未启用 approve/reject/revise，未恢复 Open Design Worker/Runtime/Daemon
+- **做到哪**: 当前主线 `feature/fengchen-design` 已完成 blueprint checkpoint 的 focused/broader handler、daemon、service 测试和 `git diff --check`；GitNexus `detect-changes` 为 `critical`（触碰 daemon/task 公共入口，已按 scope 核对）；仅剩未跟踪 `.opencode/` 目录未处理
+- **下一步**: 提交本 blueprint checkpoint 后，只剩 `server/internal/designcore` recovery 差异需要判定/抽取；继续避开旧 archive-preview 回退、native V2 删除和 review 状态流

@@ -823,6 +823,136 @@ func createCatalogTemplateWithTextSlotForDraftTest(t *testing.T) DesignCatalogTe
 	return published
 }
 
+func TestPublishDesignRevisionAsTemplateEnqueuesBlueprintAnalysis(t *testing.T) {
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "Blueprint Publish Project")
+	design := createDesignFileForTest(t, "Blueprint Template Source")
+	if design.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	attachDesignFileToProjectForTest(t, design.File.ID, projectID)
+	updateGenerationAssetNativeJSON(t, parseUUID(design.CurrentRevision.ID), generationAssetTemplateDocument())
+	agentID := createLocalUIRestoreAgentForDesignTest(t)
+	libraryKey := fmt.Sprintf("blueprint-library-%d", time.Now().UnixNano())
+	templateKey := fmt.Sprintf("blueprint-template-%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_template_library WHERE workspace_id = $1 AND key = $2`, testWorkspaceID, libraryKey)
+	})
+
+	req := newRequest("POST", "/api/design-revisions/"+design.CurrentRevision.ID+"/publish-template?workspace_id="+testWorkspaceID, map[string]any{
+		"library_key":  libraryKey,
+		"template_key": templateKey,
+		"name":         "Blueprint List Template",
+		"category":     "list",
+	})
+	req = withDesignURLParams(req, "revisionId", design.CurrentRevision.ID)
+	w := httptest.NewRecorder()
+	testHandler.PublishDesignRevisionAsTemplate(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("PublishDesignRevisionAsTemplate: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var published DesignCatalogTemplateResponse
+	if err := json.NewDecoder(w.Body).Decode(&published); err != nil {
+		t.Fatalf("decode publish response: %v", err)
+	}
+
+	var taskID string
+	var taskContext []byte
+	if err := testPool.QueryRow(ctx, `
+		SELECT id, context
+		FROM agent_task_queue
+		WHERE agent_id = $1
+		  AND context->>'type' = 'design_template_blueprint_analyze'
+		  AND context->>'template_id' = $2
+		  AND context->>'template_revision_id' = $3
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, agentID, published.ID, *published.CurrentRevisionID).Scan(&taskID, &taskContext); err != nil {
+		t.Fatalf("expected template blueprint analyze task: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	var payload map[string]any
+	if err := json.Unmarshal(taskContext, &payload); err != nil {
+		t.Fatalf("decode blueprint analyze context: %v", err)
+	}
+	if payload["project_id"] != projectID || payload["source_revision_id"] != design.CurrentRevision.ID {
+		t.Fatalf("unexpected blueprint analyze context: %+v", payload)
+	}
+	if _, ok := payload["structure"].(map[string]any); !ok {
+		t.Fatalf("blueprint analyze context missing structure: %+v", payload)
+	}
+}
+
+func TestCompleteDesignTemplateBlueprintAnalyzeTaskSavesBlueprint(t *testing.T) {
+	ctx := context.Background()
+	fixture := createGenerationAssetFixture(t)
+	contextPayload := map[string]any{
+		"type":                 "design_template_blueprint_analyze",
+		"requester_id":         testUserID,
+		"workspace_id":         testWorkspaceID,
+		"project_id":           uuidToString(fixture.ProjectID),
+		"agent_id":             handlerTestAgentID(t),
+		"template_id":          uuidToString(fixture.TemplateID),
+		"template_revision_id": uuidToString(fixture.TemplateRevisionID),
+		"source_revision_id":   uuidToString(fixture.TemplateSourceRevisionID),
+		"structure":            fixture.Structure,
+		"source_refs": map[string]any{
+			"designFileId":       uuidToString(fixture.TemplateSourceFileID),
+			"designRevisionId":   uuidToString(fixture.TemplateSourceRevisionID),
+			"templateRevisionId": uuidToString(fixture.TemplateRevisionID),
+		},
+	}
+	contextJSON, _ := json.Marshal(contextPayload)
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, context)
+		VALUES ($1, $2, NULL, 'running', 0, now(), $3)
+		RETURNING id
+	`, handlerTestAgentID(t), testRuntimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("insert blueprint analyze task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_template_blueprint WHERE template_revision_id = $1`, fixture.TemplateRevisionID)
+	})
+
+	output := map[string]any{
+		"classification": generationAssetBlueprintClassification(),
+		"summary":        "Blueprint analyzed.",
+	}
+	outputJSON, _ := json.Marshal(output)
+	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete", map[string]any{"output": string(outputJSON)}, testWorkspaceID, "template-blueprint-complete")
+	req = withURLParam(req, "taskId", taskID)
+	w := httptest.NewRecorder()
+	testHandler.CompleteTask(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CompleteTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var status string
+	var version int32
+	var blueprintJSON []byte
+	if err := testPool.QueryRow(ctx, `
+		SELECT status, analysis_version, blueprint_json
+		FROM design_template_blueprint
+		WHERE template_revision_id = $1
+		ORDER BY analysis_version DESC
+		LIMIT 1
+	`, fixture.TemplateRevisionID).Scan(&status, &version, &blueprintJSON); err != nil {
+		t.Fatalf("expected template blueprint saved: %v", err)
+	}
+	if status != "valid" || version != 1 {
+		t.Fatalf("blueprint status/version = %s/%d, want valid/1", status, version)
+	}
+	var blueprint map[string]any
+	if err := json.Unmarshal(blueprintJSON, &blueprint); err != nil {
+		t.Fatalf("decode blueprint_json: %v", err)
+	}
+	if blueprint["version"] != "1.0" || blueprint["pageType"] != "list" {
+		t.Fatalf("unexpected blueprint payload: %+v", blueprint)
+	}
+}
+
 func handlerTestAgentID(t *testing.T) string {
 	t.Helper()
 	var id string

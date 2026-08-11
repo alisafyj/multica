@@ -1433,6 +1433,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	hasUIDraftCreate := false
 	hasDesignRestore := false
 	hasDesignSystemProfileAnalyze := false
+	hasDesignTemplateBlueprintAnalyze := false
 	hasProjectDesignSystem := false
 	if task.Context != nil && !task.IssueID.Valid && !task.ChatSessionID.Valid && !task.AutopilotRunID.Valid {
 		var qc service.QuickCreateContext
@@ -1656,6 +1657,19 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			resp.ProjectID = profileCtx.ProjectID
 		}
 
+		var blueprintCtx service.DesignTemplateBlueprintAnalyzeContext
+		if json.Unmarshal(task.Context, &blueprintCtx) == nil && blueprintCtx.Type == service.DesignTemplateBlueprintAnalyzeContextType {
+			hasDesignTemplateBlueprintAnalyze = true
+			resp.WorkspaceID = blueprintCtx.WorkspaceID
+			resp.ProjectID = blueprintCtx.ProjectID
+			resp.TemplateBlueprintAnalyzeContext = json.RawMessage(task.Context)
+			if projectUUID, err := util.ParseUUID(blueprintCtx.ProjectID); err == nil {
+				if project, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: projectUUID, WorkspaceID: runtime.WorkspaceID}); err == nil {
+					resp.ProjectTitle = project.Title
+				}
+			}
+		}
+
 		var projectDesignSystemCtx service.ProjectDesignSystemTaskContext
 		if json.Unmarshal(task.Context, &projectDesignSystemCtx) == nil && projectDesignSystemCtx.Type == service.ProjectDesignSystemTaskContextType {
 			hasProjectDesignSystem = true
@@ -1726,6 +1740,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			"has_ui_draft_create", hasUIDraftCreate,
 			"has_design_restore", hasDesignRestore,
 			"has_design_system_profile_analyze", hasDesignSystemProfileAnalyze,
+			"has_design_template_blueprint_analyze", hasDesignTemplateBlueprintAnalyze,
 			"has_project_design_system", hasProjectDesignSystem,
 		)
 		if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
@@ -1995,10 +2010,12 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 
 	var createdDraft *db.DesignDraft
 	var analyzedProfile *db.DesignSystemProfile
+	var analyzedBlueprint *db.DesignTemplateBlueprint
 	var profileOutput *designSystemProfileAnalyzeOutput
 	var completedProjectDesignSystem *db.ProjectDesignSystem
 	var preparedRepositoryAnalysis *preparedProjectDesignSystemRepositoryAnalysis
 	var preparedProjectDesignSystem *preparedProjectDesignSystemCompletion
+	var preparedBlueprint *preparedDesignTemplateBlueprintAnalysis
 	hasUIDraftCreate := existingTask.Status == "running" && isUIDraftCreateTaskContext(existingTask.Context)
 	preparedAnalysis, isRepositoryAnalysis, analysisErr := prepareProjectDesignSystemRepositoryAnalysisCompletion(existingTask, req.Output)
 	if existingTask.Status == "running" && isRepositoryAnalysis {
@@ -2060,6 +2077,29 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		}
 		profileOutput = &parsed
 	}
+	if existingTask.Status == "running" && isDesignTemplateBlueprintAnalyzeTaskContext(existingTask.Context) {
+		parsed, blueprintErr := parseDesignTemplateBlueprintAnalyzeOutput(req.Output)
+		if blueprintErr == nil {
+			var prepared preparedDesignTemplateBlueprintAnalysis
+			prepared, blueprintErr = prepareDesignTemplateBlueprintAnalysis(existingTask, parsed)
+			if blueprintErr == nil {
+				preparedBlueprint = &prepared
+			}
+		}
+		if blueprintErr != nil {
+			slog.Warn("design template blueprint analysis completion: invalid output", "task_id", taskID, "error", blueprintErr)
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), blueprintErr.Error(), req.SessionID, req.WorkDir, "design_template_blueprint_invalid_output")
+			if failErr != nil {
+				slog.Warn("design template blueprint analysis completion: failed to mark task failed", "task_id", taskID, "error", failErr)
+			} else if failedTask != nil {
+				if err := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); err != nil {
+					slog.Warn("complete task: failed to revoke task tokens after template blueprint failure", "task_id", uuidToString(failedTask.ID), "error", err)
+				}
+			}
+			writeError(w, http.StatusBadRequest, "invalid design template blueprint output: "+blueprintErr.Error())
+			return
+		}
+	}
 
 	result, _ := json.Marshal(req)
 	var task *db.AgentTaskQueue
@@ -2079,6 +2119,14 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 				analyzedProfile = profile
 			}
 			return updateErr
+		})
+	} else if preparedBlueprint != nil {
+		task, err = h.TaskService.CompleteTaskWithMutation(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
+			blueprint, saveErr := saveDesignTemplateBlueprintAnalysis(r.Context(), qtx, *preparedBlueprint)
+			if saveErr == nil {
+				analyzedBlueprint = blueprint
+			}
+			return saveErr
 		})
 	} else if preparedProjectDesignSystem != nil {
 		task, err = h.TaskService.CompleteTaskWithMutation(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
@@ -2128,6 +2176,9 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if analyzedProfile != nil {
 		slog.Info("design system profile analyzed from task", "task_id", taskID, "design_system_profile_id", uuidToString(analyzedProfile.ID))
+	}
+	if analyzedBlueprint != nil {
+		slog.Info("design template blueprint analyzed from task", "task_id", taskID, "design_template_blueprint_id", uuidToString(analyzedBlueprint.ID))
 	}
 	if completedProjectDesignSystem != nil {
 		h.publish("project_design_system:changed", workspaceID, "agent", uuidToString(task.AgentID), map[string]any{

@@ -1232,6 +1232,25 @@ func (q *Queries) CreateDesignTemplateBlueprint(ctx context.Context, arg CreateD
 	return i, err
 }
 
+const getNextDesignTemplateBlueprintAnalysisVersion = `-- name: GetNextDesignTemplateBlueprintAnalysisVersion :one
+SELECT (COALESCE(MAX(analysis_version), 0) + 1)::int
+FROM design_template_blueprint
+WHERE workspace_id = $1
+  AND template_revision_id = $2
+`
+
+type GetNextDesignTemplateBlueprintAnalysisVersionParams struct {
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	TemplateRevisionID pgtype.UUID `json:"template_revision_id"`
+}
+
+func (q *Queries) GetNextDesignTemplateBlueprintAnalysisVersion(ctx context.Context, arg GetNextDesignTemplateBlueprintAnalysisVersionParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getNextDesignTemplateBlueprintAnalysisVersion, arg.WorkspaceID, arg.TemplateRevisionID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createDesignTemplateRevision = `-- name: CreateDesignTemplateRevision :one
 INSERT INTO design_template_revision (
     workspace_id, template_id, design_revision_id, revision_number, status, slot_schema, metadata, created_by

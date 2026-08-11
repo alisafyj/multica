@@ -835,6 +835,12 @@ AND EXISTS (
 )
 RETURNING *;
 
+-- name: GetNextDesignTemplateBlueprintAnalysisVersion :one
+SELECT (COALESCE(MAX(analysis_version), 0) + 1)::int
+FROM design_template_blueprint
+WHERE workspace_id = $1
+  AND template_revision_id = $2;
+
 -- name: GetLatestValidDesignTemplateBlueprint :one
 SELECT * FROM design_template_blueprint
 WHERE design_template_blueprint.workspace_id = sqlc.arg('workspace_id')

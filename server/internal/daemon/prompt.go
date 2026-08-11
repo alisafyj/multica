@@ -37,6 +37,9 @@ func BuildPrompt(task Task, provider string) string {
 	if len(task.DesignSystemProfileAnalyzeContext) > 0 {
 		return buildDesignSystemProfileAnalyzePrompt(task)
 	}
+	if len(task.TemplateBlueprintAnalyzeContext) > 0 {
+		return buildDesignTemplateBlueprintAnalyzePrompt(task)
+	}
 	if len(task.ProjectDesignSystemContext) > 0 {
 		var context struct {
 			Type      string `json:"type"`
@@ -149,6 +152,30 @@ func buildProjectDesignSystemPrompt() string {
 	b.WriteString("- Do not paste file contents into the final response; report only a short completion summary. The package files are authoritative.\n")
 	b.WriteString("- Do not modify a repository, call any external design service, upload a design file, or call Multica write commands.\n")
 	b.WriteString("- Before exiting, read back all three output files and verify they are non-empty. Delegated or promised work is not completion. Do not report success unless every required artifact is on disk.\n")
+	return b.String()
+}
+
+func buildDesignTemplateBlueprintAnalyzePrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a template blueprint analysis agent for a Multica workspace.\n\n")
+	b.WriteString("Use ONLY the design_template_blueprint_analyze context JSON below as the source of truth. This is a semantic classification task for one published list-page template.\n\n")
+	b.WriteString("Return your final answer as exactly one JSON object matching this contract. Replace every placeholder with IDs and values from structure:\n")
+	b.WriteString("{\"classification\":{\"frameId\":\"<structure frame id>\",\"pageType\":\"list\",\"regions\":{\"shell\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":false},\"content\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":false},\"breadcrumb\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":true},\"pageTitle\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":true},\"filters\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":true},\"pageActions\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":true},\"table\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":true},\"pagination\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":true}},\"prototypes\":{\"pageTitle\":{\"rootLayerId\":\"<structure layer id>\",\"bindings\":{\"label\":\"<visible text descendant id>\"}},\"breadcrumbItem\":{\"rootLayerId\":\"<structure layer id>\",\"bindings\":{\"label\":\"<visible text descendant id>\"}},\"tableHeaderCell\":{\"rootLayerId\":\"<structure layer id>\",\"bindings\":{\"label\":\"<visible text descendant id>\"}},\"tableRow\":{\"rootLayerId\":\"<structure layer id>\",\"bindings\":{}}},\"constraints\":{\"contentWidth\":number,\"filterRowHeight\":number,\"tableHeaderHeight\":number,\"tableRowHeight\":number,\"horizontalGap\":number,\"verticalGap\":number,\"filterColumns\":integer,\"pinFirstColumn\":boolean,\"pinActionColumn\":boolean},\"shellAllowlistLayerIds\":[]},\"summary\":\"<concise classification summary>\"}\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- Classify the template as one structured B-end list page. Do not infer detail, form, dashboard, mobile, or C-end page support.\n")
+	b.WriteString("- `classification` must follow the BlueprintClassification contract: `frameId`, `pageType`, `regions`, `prototypes`, `constraints`, and optional `shellAllowlistLayerIds`.\n")
+	b.WriteString("- Do not emit `layerIds`, `replaceable`, or any other fields outside this exact contract. Each region selects exactly one container through `rootLayerId`; it never returns a list of member layers.\n")
+	b.WriteString("- Every referenced frame or layer ID must come from structure; never invent IDs, use hidden IDs, or reference layers from another frame.\n")
+	b.WriteString("- Map the required regions `shell`, `content`, `breadcrumb`, `pageTitle`, `filters`, `pageActions`, `table`, and `pagination`. Business regions must be replaceable and must not overlap by nesting.\n")
+	b.WriteString("- `content.rootLayerId` must be an ancestor of every business region. When the business regions are flat siblings directly under the frame root, use that frame's `rootLayerId` for `content`; do not use a visual background rectangle as the content container.\n")
+	b.WriteString("- Map the required prototypes `pageTitle`, `breadcrumbItem`, `tableHeaderCell`, and `tableRow`; every binding target must be a visible text descendant of its prototype root.\n")
+	b.WriteString("- Choose the smallest reusable visible subtree for each prototype. Do not use the whole frame root when a text layer or compact component subtree represents the prototype.\n")
+	b.WriteString("- Derive positive layout constraints from structure bounds and layout facts. `filterColumns` must be between 1 and 6.\n")
+	b.WriteString("- Do not create files, edit repositories, upload designs, call Figma, or call Multica write commands. The server validates and stores the Blueprint.\n")
+	b.WriteString("- Do not output markdown fences, prose outside JSON, comments, or trailing text.\n\n")
+	b.WriteString("Template blueprint analysis context JSON:\n")
+	b.Write(task.TemplateBlueprintAnalyzeContext)
+	b.WriteString("\n")
 	return b.String()
 }
 

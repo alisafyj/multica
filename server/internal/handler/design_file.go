@@ -336,6 +336,17 @@ type createDesignSystemProfileFromRevisionParams struct {
 	CreatedBy   pgtype.UUID
 }
 
+type enqueueDesignTemplateBlueprintAnalyzeTaskParams struct {
+	WorkspaceID        pgtype.UUID
+	ProjectID          pgtype.UUID
+	TemplateID         pgtype.UUID
+	TemplateRevisionID pgtype.UUID
+	SourceFileID       pgtype.UUID
+	SourceRevisionID   pgtype.UUID
+	SourceNativeJSON   json.RawMessage
+	CreatedBy          pgtype.UUID
+}
+
 type PublishDesignTemplateRequest struct {
 	RevisionID  *string         `json:"revision_id"`
 	LibraryKey  string          `json:"library_key"`
@@ -828,6 +839,52 @@ func (h *Handler) enqueueDesignSystemProfileAnalyzeTask(ctx context.Context, que
 	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("create design system profile analysis task: %w", err)
+	}
+	return task, nil
+}
+
+func (h *Handler) enqueueDesignTemplateBlueprintAnalyzeTask(ctx context.Context, queries *db.Queries, agent db.Agent, params enqueueDesignTemplateBlueprintAnalyzeTaskParams) (db.AgentTaskQueue, error) {
+	sourceDoc, err := designcore.ParseNativeJSON(params.SourceNativeJSON)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("parse template blueprint source: %w", err)
+	}
+	structure := designcore.ExtractTemplateStructure(sourceDoc)
+	if len(structure.Frames) == 0 || len(structure.Layers) == 0 {
+		return db.AgentTaskQueue{}, fmt.Errorf("template blueprint source has no analyzable structure")
+	}
+	structureJSON, err := json.Marshal(structure)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("marshal template blueprint structure: %w", err)
+	}
+	sourceRefsJSON, err := json.Marshal(designcore.BlueprintSourceRefs{
+		DesignFileID:       uuidToString(params.SourceFileID),
+		DesignRevisionID:   uuidToString(params.SourceRevisionID),
+		TemplateRevisionID: uuidToString(params.TemplateRevisionID),
+	})
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("marshal template blueprint source refs: %w", err)
+	}
+	payload := service.DesignTemplateBlueprintAnalyzeContext{
+		Type:               service.DesignTemplateBlueprintAnalyzeContextType,
+		Prompt:             "Analyze the published list-page template structure and return one validated blueprint classification.",
+		RequesterID:        uuidToString(params.CreatedBy),
+		WorkspaceID:        uuidToString(params.WorkspaceID),
+		ProjectID:          uuidToString(params.ProjectID),
+		AgentID:            uuidToString(agent.ID),
+		TemplateID:         uuidToString(params.TemplateID),
+		TemplateRevisionID: uuidToString(params.TemplateRevisionID),
+		SourceRevisionID:   uuidToString(params.SourceRevisionID),
+		Structure:          structureJSON,
+		SourceRefs:         sourceRefsJSON,
+		OutputPolicy:       json.RawMessage(`{"strict_json":true,"required_fields":["classification","summary"],"blueprint_version":"1.0","supported_page_types":["list"],"source_layer_policy":"structure_only"}`),
+	}
+	contextJSON, err := json.Marshal(payload)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("marshal template blueprint analysis context: %w", err)
+	}
+	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("create template blueprint analysis task: %w", err)
 	}
 	return task, nil
 }
@@ -4447,6 +4504,20 @@ func (h *Handler) PublishDesignRevisionAsTemplate(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "failed to get design file")
 		return
 	}
+	var analyzer db.Agent
+	enqueueBlueprintAnalysis := file.ProjectID.Valid
+	if enqueueBlueprintAnalysis {
+		var found bool
+		analyzer, found, err = h.selectDesignSystemProfileAnalyzerAgent(r.Context(), wsUUID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to select template blueprint analyzer")
+			return
+		}
+		if !found {
+			writeError(w, http.StatusInternalServerError, "no available Local UI Restore Agent for template blueprint analysis")
+			return
+		}
+	}
 	libraryKey := slugOrDefault(req.LibraryKey, "workspace")
 	libraryName := strings.TrimSpace(req.LibraryName)
 	if libraryName == "" {
@@ -4498,9 +4569,24 @@ func (h *Handler) PublishDesignRevisionAsTemplate(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "failed to update design template")
 		return
 	}
+	var analysisTask *db.AgentTaskQueue
+	if enqueueBlueprintAnalysis {
+		task, err := h.enqueueDesignTemplateBlueprintAnalyzeTask(r.Context(), qtx, analyzer, enqueueDesignTemplateBlueprintAnalyzeTaskParams{
+			WorkspaceID: wsUUID, ProjectID: file.ProjectID, TemplateID: template.ID, TemplateRevisionID: templateRevision.ID,
+			SourceFileID: file.ID, SourceRevisionID: revision.ID, SourceNativeJSON: revision.NativeJson, CreatedBy: userUUID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to enqueue template blueprint analysis")
+			return
+		}
+		analysisTask = &task
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit design template")
 		return
+	}
+	if h.TaskService != nil && analysisTask != nil {
+		h.TaskService.NotifyTaskEnqueued(r.Context(), *analysisTask)
 	}
 	row := db.GetDesignCatalogTemplateRow{ID: updated.ID, WorkspaceID: updated.WorkspaceID, LibraryID: updated.LibraryID, Key: updated.Key, Name: updated.Name, Description: updated.Description, Category: updated.Category, CurrentRevisionID: updated.CurrentRevisionID, Metadata: updated.Metadata, CreatedBy: updated.CreatedBy, CreatedAt: updated.CreatedAt, UpdatedAt: updated.UpdatedAt, DesignRevisionID: revision.ID, TemplateRevisionNumber: pgtype.Int4{Int32: templateRevision.RevisionNumber, Valid: true}, SlotSchema: templateRevision.SlotSchema, DesignFileID: revision.FileID, DesignFileTitle: strToText(file.Title)}
 	resp := designCatalogTemplateRowToResponse(row)
@@ -5386,6 +5472,119 @@ func (h *Handler) updateDesignSystemProfileFromAgentTaskOutput(ctx context.Conte
 	return &updated, nil
 }
 
+type designTemplateBlueprintAnalyzeOutput struct {
+	Classification designcore.BlueprintClassification `json:"classification"`
+	Summary        string                             `json:"summary"`
+}
+
+type preparedDesignTemplateBlueprintAnalysis struct {
+	WorkspaceID        pgtype.UUID
+	ProjectID          pgtype.UUID
+	TemplateID         pgtype.UUID
+	TemplateRevisionID pgtype.UUID
+	SourceRevisionID   pgtype.UUID
+	CreatedBy          pgtype.UUID
+	Structure          designcore.TemplateStructure
+	Blueprint          designcore.TemplateBlueprint
+}
+
+func prepareDesignTemplateBlueprintAnalysis(task db.AgentTaskQueue, parsed designTemplateBlueprintAnalyzeOutput) (preparedDesignTemplateBlueprintAnalysis, error) {
+	var blueprintCtx service.DesignTemplateBlueprintAnalyzeContext
+	if err := json.Unmarshal(task.Context, &blueprintCtx); err != nil || blueprintCtx.Type != service.DesignTemplateBlueprintAnalyzeContextType {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("invalid design template blueprint analysis context")
+	}
+	workspaceID, err := util.ParseUUID(blueprintCtx.WorkspaceID)
+	if err != nil {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("invalid template blueprint workspace: %w", err)
+	}
+	projectID, err := util.ParseUUID(blueprintCtx.ProjectID)
+	if err != nil {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("invalid template blueprint project: %w", err)
+	}
+	templateID, err := util.ParseUUID(blueprintCtx.TemplateID)
+	if err != nil {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("invalid template blueprint template: %w", err)
+	}
+	templateRevisionID, err := util.ParseUUID(blueprintCtx.TemplateRevisionID)
+	if err != nil {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("invalid template blueprint template revision: %w", err)
+	}
+	sourceRevisionID, err := util.ParseUUID(blueprintCtx.SourceRevisionID)
+	if err != nil {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("invalid template blueprint source revision: %w", err)
+	}
+	createdBy, err := util.ParseUUID(blueprintCtx.RequesterID)
+	if err != nil {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("invalid template blueprint requester: %w", err)
+	}
+	var structure designcore.TemplateStructure
+	if len(blueprintCtx.Structure) == 0 || json.Unmarshal(blueprintCtx.Structure, &structure) != nil || len(structure.Frames) == 0 || len(structure.Layers) == 0 {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("template blueprint structure is invalid")
+	}
+	var sourceRefs designcore.BlueprintSourceRefs
+	if len(blueprintCtx.SourceRefs) == 0 || json.Unmarshal(blueprintCtx.SourceRefs, &sourceRefs) != nil {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("template blueprint source refs are invalid")
+	}
+	if sourceRefs.DesignFileID == "" || sourceRefs.DesignRevisionID != blueprintCtx.SourceRevisionID || sourceRefs.TemplateRevisionID != blueprintCtx.TemplateRevisionID {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("template blueprint source refs do not match analysis context")
+	}
+	blueprint, diagnostics := designcore.BuildTemplateBlueprint(structure, parsed.Classification, sourceRefs)
+	if diagnostics.HasErrors() {
+		validationErr := &service.GenerationAssetValidationError{Diagnostics: diagnostics}
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("%w: %+v", validationErr, diagnostics)
+	}
+	return preparedDesignTemplateBlueprintAnalysis{
+		WorkspaceID: workspaceID, ProjectID: projectID, TemplateID: templateID,
+		TemplateRevisionID: templateRevisionID, SourceRevisionID: sourceRevisionID,
+		CreatedBy: createdBy, Structure: structure, Blueprint: blueprint,
+	}, nil
+}
+
+func saveDesignTemplateBlueprintAnalysis(ctx context.Context, queries *db.Queries, prepared preparedDesignTemplateBlueprintAnalysis) (*db.DesignTemplateBlueprint, error) {
+	if _, err := queries.LockProjectInWorkspaceForUpdate(ctx, db.LockProjectInWorkspaceForUpdateParams{
+		ID: prepared.ProjectID, WorkspaceID: prepared.WorkspaceID,
+	}); err != nil {
+		return nil, fmt.Errorf("lock template blueprint analysis project: %w", err)
+	}
+	analysisVersion, err := queries.GetNextDesignTemplateBlueprintAnalysisVersion(ctx, db.GetNextDesignTemplateBlueprintAnalysisVersionParams{
+		WorkspaceID: prepared.WorkspaceID, TemplateRevisionID: prepared.TemplateRevisionID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get next template blueprint analysis version: %w", err)
+	}
+	store := service.DesignGenerationAssetStore{Queries: queries}
+	record, err := store.SaveBlueprintAnalysis(ctx, service.SaveBlueprintAnalysisParams{
+		WorkspaceID: prepared.WorkspaceID, TargetProjectID: prepared.ProjectID,
+		TemplateID: prepared.TemplateID, TemplateRevisionID: prepared.TemplateRevisionID,
+		SourceRevisionID: prepared.SourceRevisionID, AnalysisVersion: analysisVersion,
+		CreatedBy: prepared.CreatedBy, Structure: prepared.Structure, Blueprint: prepared.Blueprint,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("save template blueprint analysis: %w", err)
+	}
+	return &record, nil
+}
+
+func parseDesignTemplateBlueprintAnalyzeOutput(output string) (designTemplateBlueprintAnalyzeOutput, error) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return designTemplateBlueprintAnalyzeOutput{}, fmt.Errorf("design template blueprint output is empty")
+	}
+	var parsed designTemplateBlueprintAnalyzeOutput
+	decoder := json.NewDecoder(strings.NewReader(output))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&parsed); err != nil {
+		return designTemplateBlueprintAnalyzeOutput{}, fmt.Errorf("design template blueprint output must be a complete JSON object: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return designTemplateBlueprintAnalyzeOutput{}, fmt.Errorf("design template blueprint output must contain exactly one JSON object")
+	}
+	if strings.TrimSpace(parsed.Summary) == "" {
+		return designTemplateBlueprintAnalyzeOutput{}, fmt.Errorf("summary is required")
+	}
+	return parsed, nil
+}
+
 type designSystemProfileAnalyzeOutput struct {
 	ProfileJSON           json.RawMessage                            `json:"profile_json"`
 	AnalysisErrors        json.RawMessage                            `json:"analysis_errors"`
@@ -5571,6 +5770,13 @@ func isDesignSystemProfileAnalyzeTaskContext(raw []byte) bool {
 		Type string `json:"type"`
 	}
 	return json.Unmarshal(raw, &payload) == nil && payload.Type == service.DesignSystemProfileAnalyzeContextType
+}
+
+func isDesignTemplateBlueprintAnalyzeTaskContext(raw []byte) bool {
+	var payload struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(raw, &payload) == nil && payload.Type == service.DesignTemplateBlueprintAnalyzeContextType
 }
 
 func designDraftToResponse(draft db.DesignDraft) DesignDraftResponse {
