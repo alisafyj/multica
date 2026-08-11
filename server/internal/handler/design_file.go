@@ -368,6 +368,14 @@ type DesignDraftResponse struct {
 	CreatedAt           string          `json:"created_at"`
 	UpdatedAt           string          `json:"updated_at"`
 	MaterializedAt      *string         `json:"materialized_at,omitempty"`
+	GenerationMode      string          `json:"generation_mode,omitempty"`
+	PageSpec            json.RawMessage `json:"page_spec,omitempty"`
+	CompiledNativeJSON  json.RawMessage `json:"compiled_native_json,omitempty"`
+	QualityReport       json.RawMessage `json:"quality_report,omitempty"`
+	BlueprintID         *string         `json:"blueprint_id,omitempty"`
+	RecipeSetID         *string         `json:"recipe_set_id,omitempty"`
+	ParentDraftID       *string         `json:"parent_draft_id,omitempty"`
+	Version             int32           `json:"version,omitempty"`
 }
 
 type CreateDesignDraftRequest struct {
@@ -5285,7 +5293,7 @@ func isDesignSystemProfileAnalyzeTaskContext(raw []byte) bool {
 }
 
 func designDraftToResponse(draft db.DesignDraft) DesignDraftResponse {
-	return DesignDraftResponse{ID: uuidToString(draft.ID), WorkspaceID: uuidToString(draft.WorkspaceID), TemplateID: uuidToPtr(draft.TemplateID), CatalogTemplateID: uuidToPtr(draft.CatalogTemplateID), TemplateRevisionID: uuidToPtr(draft.TemplateRevisionID), FileID: uuidToPtr(draft.FileID), RevisionID: uuidToPtr(draft.RevisionID), GeneratedFileID: uuidToPtr(draft.GeneratedFileID), GeneratedRevisionID: uuidToPtr(draft.GeneratedRevisionID), IssueID: uuidToPtr(draft.IssueID), Title: draft.Title, RequirementCore: json.RawMessage(draft.RequirementCore), SlotValues: json.RawMessage(draft.SlotValues), Patch: json.RawMessage(draft.Patch), Status: draft.Status, ValidationErrors: json.RawMessage(draft.ValidationErrors), CreatedBy: uuidToPtr(draft.CreatedBy), CreatedAt: timestampToString(draft.CreatedAt), UpdatedAt: timestampToString(draft.UpdatedAt), MaterializedAt: timestampToPtr(draft.MaterializedAt)}
+	return DesignDraftResponse{ID: uuidToString(draft.ID), WorkspaceID: uuidToString(draft.WorkspaceID), TemplateID: uuidToPtr(draft.TemplateID), CatalogTemplateID: uuidToPtr(draft.CatalogTemplateID), TemplateRevisionID: uuidToPtr(draft.TemplateRevisionID), FileID: uuidToPtr(draft.FileID), RevisionID: uuidToPtr(draft.RevisionID), GeneratedFileID: uuidToPtr(draft.GeneratedFileID), GeneratedRevisionID: uuidToPtr(draft.GeneratedRevisionID), IssueID: uuidToPtr(draft.IssueID), Title: draft.Title, RequirementCore: json.RawMessage(draft.RequirementCore), SlotValues: json.RawMessage(draft.SlotValues), Patch: json.RawMessage(draft.Patch), Status: draft.Status, ValidationErrors: json.RawMessage(draft.ValidationErrors), CreatedBy: uuidToPtr(draft.CreatedBy), CreatedAt: timestampToString(draft.CreatedAt), UpdatedAt: timestampToString(draft.UpdatedAt), MaterializedAt: timestampToPtr(draft.MaterializedAt), GenerationMode: draft.GenerationMode, PageSpec: json.RawMessage(draft.PageSpec), CompiledNativeJSON: json.RawMessage(draft.CompiledNativeJson), QualityReport: json.RawMessage(draft.QualityReport), BlueprintID: uuidToPtr(draft.BlueprintID), RecipeSetID: uuidToPtr(draft.RecipeSetID), ParentDraftID: uuidToPtr(draft.ParentDraftID), Version: draft.Version}
 }
 
 func validateDesignDraftPatch(raw json.RawMessage) error {

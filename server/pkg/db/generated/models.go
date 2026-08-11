@@ -342,6 +342,14 @@ type DesignDraft struct {
 	GeneratedFileID     pgtype.UUID        `json:"generated_file_id"`
 	GeneratedRevisionID pgtype.UUID        `json:"generated_revision_id"`
 	MaterializedAt      pgtype.Timestamptz `json:"materialized_at"`
+	GenerationMode      string             `json:"generation_mode"`
+	PageSpec            []byte             `json:"page_spec"`
+	CompiledNativeJson  []byte             `json:"compiled_native_json"`
+	QualityReport       []byte             `json:"quality_report"`
+	BlueprintID         pgtype.UUID        `json:"blueprint_id"`
+	RecipeSetID         pgtype.UUID        `json:"recipe_set_id"`
+	ParentDraftID       pgtype.UUID        `json:"parent_draft_id"`
+	Version             int32              `json:"version"`
 }
 
 type DesignFile struct {

@@ -78,6 +78,16 @@ Common base: `bfd95597ce594717afef1235a38fb7a5c5f5d8a8`
   - native archive upload, package validation, preview receipt, and repository-analysis completion handlers.
 - Recovery still points design-system generation/preview back toward direct Open Design archive/Worker-era contracts. Do not port those changes into `feature/fengchen-design`.
 
+## Semantic Draft Backend Slice
+
+- Restored semantic draft persistence/read-response foundations without enabling review actions:
+  - new current-mainline migration `135_semantic_design_draft` based on recovery's old `129` shape;
+  - `DesignDraft` generated model fields for `generation_mode`, `page_spec`, `compiled_native_json`, `quality_report`, `blueprint_id`, `recipe_set_id`, `parent_draft_id`, and `version`;
+  - generated design draft query projections updated for the new columns;
+  - `DesignDraftResponse` now returns those fields.
+- `sqlc` was unavailable in the local shell, so the generated Go files were updated manually and verified with focused handler tests.
+- Still unported: semantic draft creation from PageSpec, approve/reject/revise APIs, and frontend review actions.
+
 ## Candidate Next Slice
 
 - Recovery semantic PageSpec review chain:

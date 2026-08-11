@@ -93,6 +93,6 @@ This project is indexed by GitNexus as **multica** (33203 symbols, 98167 relatio
 
 ## 当前任务状态（会话交接 - 每次会话结束更新）
 
-- **做了什么**: 继续从 `codex/feature-fengchen-dirty-recovery-20260810` 抽离历史内容，恢复 4 份 recovery-only 设计/语义草稿计划文档并加历史保护说明；补充 recovery 抽取台账，确认设计体系工作区核心 UI 已覆盖且旧 Open Design archive/Worker 合约不可移植
-- **做到哪**: 当前主线 `feature/fengchen-design` clean checkpoint 准备中；本轮仅文档/台账变更，`git diff --check` 通过，未运行 Open Design Worker/Runtime，未触碰 native V2 package-preview/package-upload/repository-analysis 实现
-- **下一步**: 继续逐块 diff recovery 的 PageSpec/语义设计草稿审核链（approve/reject/revise）与 Blueprint 分析链；任何代码移植前先跑对应 GitNexus impact，HIGH/CRITICAL 先报备
+- **做了什么**: 从 recovery 继续抽离历史设计内容：已提交 4 份恢复计划文档 `52f475271`；当前切片恢复 semantic draft 后端基础合同（135 迁移、生成模型/查询投影、API response 字段和 focused test），未启用 approve/reject/revise
+- **做到哪**: 当前主线 `feature/fengchen-design` 上 focused Go 测试 `Test(CreateDesignDraftFromCatalogTemplate|GetDesignDraftReturnsSemanticMetadata|CreateDesignDraftAgentTaskEnqueuesTaskContext|MaterializeDesignDraftCreatesGeneratedDesign)` 通过；`sqlc` 本机不可用，生成文件已手动同步；未运行 Open Design Worker/Runtime，未触碰 native V2 package-preview/package-upload/repository-analysis 实现
+- **下一步**: 提交 semantic draft 后端基础合同后，继续逐块 diff recovery 的 PageSpec 创建链、approve/reject/revise 审核链与 Blueprint 分析链；任何代码移植前先跑对应 GitNexus impact，HIGH/CRITICAL 先报备

@@ -409,7 +409,7 @@ INSERT INTO design_draft (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 )
-RETURNING id, workspace_id, template_id, file_id, revision_id, issue_id, title, requirement_core, slot_values, patch, status, validation_errors, created_by, created_at, updated_at, catalog_template_id, template_revision_id, generated_file_id, generated_revision_id, materialized_at
+RETURNING id, workspace_id, template_id, file_id, revision_id, issue_id, title, requirement_core, slot_values, patch, status, validation_errors, created_by, created_at, updated_at, catalog_template_id, template_revision_id, generated_file_id, generated_revision_id, materialized_at, generation_mode, page_spec, compiled_native_json, quality_report, blueprint_id, recipe_set_id, parent_draft_id, version
 `
 
 type CreateDesignDraftParams struct {
@@ -468,6 +468,14 @@ func (q *Queries) CreateDesignDraft(ctx context.Context, arg CreateDesignDraftPa
 		&i.GeneratedFileID,
 		&i.GeneratedRevisionID,
 		&i.MaterializedAt,
+		&i.GenerationMode,
+		&i.PageSpec,
+		&i.CompiledNativeJson,
+		&i.QualityReport,
+		&i.BlueprintID,
+		&i.RecipeSetID,
+		&i.ParentDraftID,
+		&i.Version,
 	)
 	return i, err
 }
@@ -1521,7 +1529,7 @@ func (q *Queries) GetDesignDeliveryInWorkspace(ctx context.Context, arg GetDesig
 }
 
 const getDesignDraftInWorkspace = `-- name: GetDesignDraftInWorkspace :one
-SELECT id, workspace_id, template_id, file_id, revision_id, issue_id, title, requirement_core, slot_values, patch, status, validation_errors, created_by, created_at, updated_at, catalog_template_id, template_revision_id, generated_file_id, generated_revision_id, materialized_at FROM design_draft
+SELECT id, workspace_id, template_id, file_id, revision_id, issue_id, title, requirement_core, slot_values, patch, status, validation_errors, created_by, created_at, updated_at, catalog_template_id, template_revision_id, generated_file_id, generated_revision_id, materialized_at, generation_mode, page_spec, compiled_native_json, quality_report, blueprint_id, recipe_set_id, parent_draft_id, version FROM design_draft
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -1554,6 +1562,14 @@ func (q *Queries) GetDesignDraftInWorkspace(ctx context.Context, arg GetDesignDr
 		&i.GeneratedFileID,
 		&i.GeneratedRevisionID,
 		&i.MaterializedAt,
+		&i.GenerationMode,
+		&i.PageSpec,
+		&i.CompiledNativeJson,
+		&i.QualityReport,
+		&i.BlueprintID,
+		&i.RecipeSetID,
+		&i.ParentDraftID,
+		&i.Version,
 	)
 	return i, err
 }
@@ -2766,7 +2782,7 @@ func (q *Queries) ListDesignDeliveriesByIssue(ctx context.Context, arg ListDesig
 
 const listDesignDrafts = `-- name: ListDesignDrafts :many
 
-SELECT id, workspace_id, template_id, file_id, revision_id, issue_id, title, requirement_core, slot_values, patch, status, validation_errors, created_by, created_at, updated_at, catalog_template_id, template_revision_id, generated_file_id, generated_revision_id, materialized_at FROM design_draft
+SELECT id, workspace_id, template_id, file_id, revision_id, issue_id, title, requirement_core, slot_values, patch, status, validation_errors, created_by, created_at, updated_at, catalog_template_id, template_revision_id, generated_file_id, generated_revision_id, materialized_at, generation_mode, page_spec, compiled_native_json, quality_report, blueprint_id, recipe_set_id, parent_draft_id, version FROM design_draft
 WHERE workspace_id = $1
 ORDER BY updated_at DESC, created_at DESC
 `
@@ -2802,6 +2818,14 @@ func (q *Queries) ListDesignDrafts(ctx context.Context, workspaceID pgtype.UUID)
 			&i.GeneratedFileID,
 			&i.GeneratedRevisionID,
 			&i.MaterializedAt,
+			&i.GenerationMode,
+			&i.PageSpec,
+			&i.CompiledNativeJson,
+			&i.QualityReport,
+			&i.BlueprintID,
+			&i.RecipeSetID,
+			&i.ParentDraftID,
+			&i.Version,
 		); err != nil {
 			return nil, err
 		}
@@ -3831,7 +3855,7 @@ UPDATE design_draft SET
     materialized_at = COALESCE($17, materialized_at),
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, template_id, file_id, revision_id, issue_id, title, requirement_core, slot_values, patch, status, validation_errors, created_by, created_at, updated_at, catalog_template_id, template_revision_id, generated_file_id, generated_revision_id, materialized_at
+RETURNING id, workspace_id, template_id, file_id, revision_id, issue_id, title, requirement_core, slot_values, patch, status, validation_errors, created_by, created_at, updated_at, catalog_template_id, template_revision_id, generated_file_id, generated_revision_id, materialized_at, generation_mode, page_spec, compiled_native_json, quality_report, blueprint_id, recipe_set_id, parent_draft_id, version
 `
 
 type UpdateDesignDraftParams struct {
@@ -3896,6 +3920,14 @@ func (q *Queries) UpdateDesignDraft(ctx context.Context, arg UpdateDesignDraftPa
 		&i.GeneratedFileID,
 		&i.GeneratedRevisionID,
 		&i.MaterializedAt,
+		&i.GenerationMode,
+		&i.PageSpec,
+		&i.CompiledNativeJson,
+		&i.QualityReport,
+		&i.BlueprintID,
+		&i.RecipeSetID,
+		&i.ParentDraftID,
+		&i.Version,
 	)
 	return i, err
 }

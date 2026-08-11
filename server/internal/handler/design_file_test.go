@@ -904,6 +904,48 @@ func TestCreateDesignDraftFromCatalogTemplate(t *testing.T) {
 	}
 }
 
+func TestGetDesignDraftReturnsSemanticMetadata(t *testing.T) {
+	template := createCatalogTemplateForDraftTest(t)
+	if template.CurrentRevisionID == nil || template.DesignFileID == nil || template.DesignRevisionID == nil {
+		t.Fatal("expected template revision and source design references")
+	}
+	var draftID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_draft (
+			workspace_id, catalog_template_id, template_revision_id, file_id, revision_id, title,
+			requirement_core, slot_values, patch, status, validation_errors, created_by,
+			generation_mode, page_spec, compiled_native_json, quality_report, version
+		) VALUES (
+			$1, $2, $3, $4, $5, 'Semantic Draft',
+			'{"summary":"semantic"}'::jsonb, '{}'::jsonb, '[]'::jsonb, 'generated_with_warnings', '[]'::jsonb, $6,
+			'semantic_pagespec', '{"version":"1.0","page":{"type":"list"}}'::jsonb,
+			'{"version":"1.0","artboards":[]}'::jsonb, '{"diagnostics":[]}'::jsonb, 3
+		)
+		RETURNING id
+	`, testWorkspaceID, template.ID, *template.CurrentRevisionID, *template.DesignFileID, *template.DesignRevisionID, testUserID).Scan(&draftID); err != nil {
+		t.Fatalf("insert semantic design draft: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM design_draft WHERE id = $1`, draftID) })
+
+	req := newRequest("GET", "/api/design-drafts/"+draftID+"?workspace_id="+testWorkspaceID, nil)
+	req = withDesignURLParams(req, "id", draftID)
+	w := httptest.NewRecorder()
+	testHandler.GetDesignDraft(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetDesignDraft: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var draft DesignDraftResponse
+	if err := json.NewDecoder(w.Body).Decode(&draft); err != nil {
+		t.Fatalf("decode draft response: %v", err)
+	}
+	if draft.GenerationMode != "semantic_pagespec" || draft.Version != 3 {
+		t.Fatalf("semantic metadata = mode %q version %d, want semantic_pagespec v3", draft.GenerationMode, draft.Version)
+	}
+	if string(draft.PageSpec) == "" || string(draft.CompiledNativeJSON) == "" || string(draft.QualityReport) == "" {
+		t.Fatalf("expected semantic page_spec, compiled_native_json, and quality_report in response: %+v", draft)
+	}
+}
+
 func TestCreateDesignSystemProfileFromDesignFile(t *testing.T) {
 	ctx := context.Background()
 	projectID := createProjectForDesignTest(t, "Design System Project")
