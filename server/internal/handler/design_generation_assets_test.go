@@ -112,6 +112,62 @@ func TestDesignGenerationAssetStoreLoadsLatestValidVersions(t *testing.T) {
 	}
 }
 
+func TestDesignGenerationAssetStoreSavesSemanticDesignDraft(t *testing.T) {
+	ctx := context.Background()
+	store := service.DesignGenerationAssetStore{Queries: db.New(testPool)}
+	fixture := createGenerationAssetFixture(t)
+	blueprintRecord, err := store.SaveBlueprintAnalysis(ctx, service.SaveBlueprintAnalysisParams{
+		WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, TemplateID: fixture.TemplateID,
+		TemplateRevisionID: fixture.TemplateRevisionID, SourceRevisionID: fixture.TemplateSourceRevisionID,
+		AnalysisVersion: 1, CreatedBy: fixture.UserID, Structure: fixture.Structure, Blueprint: fixture.Blueprint,
+	})
+	if err != nil {
+		t.Fatalf("save blueprint: %v", err)
+	}
+	recipeRecord, err := store.SaveRecipeSetAnalysis(ctx, service.SaveRecipeSetAnalysisParams{
+		WorkspaceID: fixture.WorkspaceID, TargetProjectID: fixture.ProjectID, DesignSystemProfileID: fixture.DesignSystemProfileID,
+		SourceRevisionID: fixture.RecipeSourceRevisionID, AnalysisVersion: 1, CreatedBy: fixture.UserID, RecipeSet: fixture.RecipeSet,
+	})
+	if err != nil {
+		t.Fatalf("save recipe set: %v", err)
+	}
+	issueID := parseUUID(createIssueForDesignTest(t, "Semantic draft store", uuidToString(fixture.ProjectID)))
+
+	first, err := store.SaveSemanticDesignDraft(ctx, service.SaveSemanticDesignDraftParams{
+		WorkspaceID: fixture.WorkspaceID, CatalogTemplateID: fixture.TemplateID, TemplateRevisionID: fixture.TemplateRevisionID,
+		FileID: fixture.TemplateSourceFileID, RevisionID: fixture.TemplateSourceRevisionID, IssueID: issueID,
+		BlueprintID: blueprintRecord.ID, RecipeSetID: recipeRecord.ID, CreatedBy: fixture.UserID,
+		Title: "Semantic draft one", Status: "generated", RequirementCore: []byte(`{"summary":"one"}`),
+		PageSpec: []byte(`{"version":"1.0","page":{"type":"list"}}`), CompiledNativeJSON: []byte(`{"version":"1.0","artboards":[]}`),
+		QualityReport: []byte(`{"diagnostics":[]}`),
+	})
+	if err != nil {
+		t.Fatalf("save semantic draft: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM design_draft WHERE id = $1`, first.ID) })
+	if first.GenerationMode != "semantic_pagespec" || first.Version != 1 || first.Status != "generated" {
+		t.Fatalf("first semantic draft = %+v", first)
+	}
+
+	second, err := store.SaveSemanticDesignDraft(ctx, service.SaveSemanticDesignDraftParams{
+		WorkspaceID: fixture.WorkspaceID, CatalogTemplateID: fixture.TemplateID, TemplateRevisionID: fixture.TemplateRevisionID,
+		FileID: fixture.TemplateSourceFileID, RevisionID: fixture.TemplateSourceRevisionID, IssueID: issueID,
+		BlueprintID: blueprintRecord.ID, RecipeSetID: recipeRecord.ID, ParentDraftID: first.ID, CreatedBy: fixture.UserID,
+		Title: "Semantic draft two", Status: "generated_with_warnings", RequirementCore: []byte(`{"summary":"two"}`),
+		PageSpec: []byte(`{"version":"1.0","page":{"type":"list"}}`), CompiledNativeJSON: []byte(`{"version":"1.0","artboards":[]}`),
+		QualityReport: []byte(`{"diagnostics":[{"severity":"warning","code":"demo"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("save second semantic draft: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_draft WHERE id = $1`, second.ID)
+	})
+	if second.Version != 2 || second.ParentDraftID != first.ID || second.BlueprintID != blueprintRecord.ID || second.RecipeSetID != recipeRecord.ID {
+		t.Fatalf("second semantic draft linkage = %+v", second)
+	}
+}
+
 func TestDesignGenerationAssetStoreRejectsStaleAssets(t *testing.T) {
 	t.Run("source revision identity", func(t *testing.T) {
 		ctx := context.Background()

@@ -88,6 +88,15 @@ Common base: `bfd95597ce594717afef1235a38fb7a5c5f5d8a8`
 - `sqlc` was unavailable in the local shell, so the generated Go files were updated manually and verified with focused handler tests.
 - Still unported: semantic draft creation from PageSpec, approve/reject/revise APIs, and frontend review actions.
 
+## Semantic Draft Store Slice
+
+- Restored the lower-level semantic draft save path from recovery without wiring it into task completion yet:
+  - `CreateSemanticDesignDraft`;
+  - `GetNextSemanticDesignDraftVersion`;
+  - `DesignGenerationAssetStore.SaveSemanticDesignDraft`;
+  - focused store test for semantic draft field persistence and issue-scoped version increment.
+- Still unported: `CreateDesignDraftAgentTask` PageSpec prompt/context, `createDesignDraftFromAgentTaskOutput` PageSpec compile path, approve/reject/revise handlers, routes, client methods, and review UI actions.
+
 ## Candidate Next Slice
 
 - Recovery semantic PageSpec review chain:

@@ -56,6 +56,15 @@ type LoadCompilationAssetsParams struct {
 	WorkspaceID, TargetProjectID, TemplateRevisionID, DesignSystemProfileID pgtype.UUID
 }
 
+type SaveSemanticDesignDraftParams struct {
+	WorkspaceID, CatalogTemplateID, TemplateRevisionID, FileID, RevisionID, IssueID pgtype.UUID
+	BlueprintID, RecipeSetID, ParentDraftID, CreatedBy                              pgtype.UUID
+	Title, Status                                                                   string
+	Version                                                                         int32
+	RequirementCore                                                                 []byte
+	PageSpec, CompiledNativeJSON, QualityReport, ValidationErrors                   []byte
+}
+
 func (s DesignGenerationAssetStore) SaveBlueprintAnalysis(ctx context.Context, params SaveBlueprintAnalysisParams) (db.DesignTemplateBlueprint, error) {
 	if err := s.requireTargetProject(ctx, params.WorkspaceID, params.TargetProjectID); err != nil {
 		return db.DesignTemplateBlueprint{}, err
@@ -312,6 +321,54 @@ func (s DesignGenerationAssetStore) LoadCompilationAssets(ctx context.Context, p
 		Blueprint: blueprint, RecipeSet: recipeSet, TemplateDoc: templateDoc, RecipeDoc: recipeDoc,
 		BlueprintRecordID: util.UUIDToString(blueprintRecord.ID), RecipeSetRecordID: util.UUIDToString(recipeSetRecord.ID),
 	}, nil
+}
+
+func (s DesignGenerationAssetStore) SaveSemanticDesignDraft(ctx context.Context, params SaveSemanticDesignDraftParams) (db.DesignDraft, error) {
+	if s.Queries == nil {
+		return db.DesignDraft{}, errors.New("queries is required")
+	}
+	if len(params.PageSpec) == 0 || !json.Valid(params.PageSpec) {
+		return db.DesignDraft{}, errors.New("page_spec must be valid JSON")
+	}
+	requirementCore := params.RequirementCore
+	if len(requirementCore) == 0 {
+		requirementCore = []byte(`{}`)
+	}
+	if !json.Valid(requirementCore) {
+		return db.DesignDraft{}, errors.New("requirement_core must be valid JSON")
+	}
+	if len(params.CompiledNativeJSON) == 0 || !json.Valid(params.CompiledNativeJSON) {
+		return db.DesignDraft{}, errors.New("compiled_native_json must be valid JSON")
+	}
+	if len(params.QualityReport) == 0 || !json.Valid(params.QualityReport) {
+		return db.DesignDraft{}, errors.New("quality_report must be valid JSON")
+	}
+	validationErrors := params.ValidationErrors
+	if len(validationErrors) == 0 {
+		validationErrors = []byte(`[]`)
+	}
+	if !json.Valid(validationErrors) {
+		return db.DesignDraft{}, errors.New("validation_errors must be valid JSON")
+	}
+	version := params.Version
+	if version <= 0 {
+		nextVersion, err := s.Queries.GetNextSemanticDesignDraftVersion(ctx, db.GetNextSemanticDesignDraftVersionParams{
+			WorkspaceID: params.WorkspaceID,
+			IssueID:     params.IssueID,
+		})
+		if err != nil {
+			return db.DesignDraft{}, fmt.Errorf("get next semantic draft version: %w", err)
+		}
+		version = nextVersion
+	}
+	return s.Queries.CreateSemanticDesignDraft(ctx, db.CreateSemanticDesignDraftParams{
+		WorkspaceID: params.WorkspaceID, CatalogTemplateID: params.CatalogTemplateID, TemplateRevisionID: params.TemplateRevisionID,
+		FileID: params.FileID, RevisionID: params.RevisionID, IssueID: params.IssueID, Title: params.Title,
+		RequirementCore: requirementCore,
+		PageSpec:        params.PageSpec, CompiledNativeJson: params.CompiledNativeJSON, QualityReport: params.QualityReport,
+		BlueprintID: params.BlueprintID, RecipeSetID: params.RecipeSetID, ParentDraftID: params.ParentDraftID, Version: version,
+		Status: params.Status, ValidationErrors: validationErrors, CreatedBy: params.CreatedBy,
+	})
 }
 
 func (s DesignGenerationAssetStore) requireTargetProject(ctx context.Context, workspaceID, targetProjectID pgtype.UUID) error {

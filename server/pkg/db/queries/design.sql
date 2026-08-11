@@ -252,6 +252,61 @@ INSERT INTO design_draft (
 )
 RETURNING *;
 
+-- name: CreateSemanticDesignDraft :one
+INSERT INTO design_draft (
+    workspace_id,
+    catalog_template_id,
+    template_revision_id,
+    file_id,
+    revision_id,
+    issue_id,
+    title,
+    requirement_core,
+    slot_values,
+    patch,
+    status,
+    validation_errors,
+    created_by,
+    generation_mode,
+    page_spec,
+    compiled_native_json,
+    quality_report,
+    blueprint_id,
+    recipe_set_id,
+    parent_draft_id,
+    version
+) VALUES (
+    sqlc.arg('workspace_id'),
+    sqlc.arg('catalog_template_id'),
+    sqlc.arg('template_revision_id'),
+    sqlc.arg('file_id'),
+    sqlc.arg('revision_id'),
+    sqlc.arg('issue_id'),
+    sqlc.arg('title'),
+    sqlc.arg('requirement_core'),
+    '{}'::jsonb,
+    '[]'::jsonb,
+    sqlc.arg('status'),
+    sqlc.arg('validation_errors'),
+    sqlc.arg('created_by'),
+    'semantic_pagespec',
+    sqlc.arg('page_spec'),
+    sqlc.arg('compiled_native_json'),
+    sqlc.arg('quality_report'),
+    sqlc.arg('blueprint_id'),
+    sqlc.arg('recipe_set_id'),
+    sqlc.narg('parent_draft_id'),
+    sqlc.arg('version')
+)
+RETURNING *;
+
+-- name: GetNextSemanticDesignDraftVersion :one
+SELECT (COALESCE(MAX(version), 0) + 1)::int
+FROM design_draft
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND issue_id = sqlc.arg('issue_id')
+  AND generation_mode = 'semantic_pagespec';
+
 -- name: UpdateDesignDraft :one
 UPDATE design_draft SET
     template_id = sqlc.narg('template_id'),

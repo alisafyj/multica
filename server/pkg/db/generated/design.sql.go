@@ -480,6 +480,131 @@ func (q *Queries) CreateDesignDraft(ctx context.Context, arg CreateDesignDraftPa
 	return i, err
 }
 
+const createSemanticDesignDraft = `-- name: CreateSemanticDesignDraft :one
+INSERT INTO design_draft (
+    workspace_id,
+    catalog_template_id,
+    template_revision_id,
+    file_id,
+    revision_id,
+    issue_id,
+    title,
+    requirement_core,
+    slot_values,
+    patch,
+    status,
+    validation_errors,
+    created_by,
+    generation_mode,
+    page_spec,
+    compiled_native_json,
+    quality_report,
+    blueprint_id,
+    recipe_set_id,
+    parent_draft_id,
+    version
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    '{}'::jsonb,
+    '[]'::jsonb,
+    $9,
+    $10,
+    $11,
+    'semantic_pagespec',
+    $12,
+    $13,
+    $14,
+    $15,
+    $16,
+    $17,
+    $18
+)
+RETURNING id, workspace_id, template_id, file_id, revision_id, issue_id, title, requirement_core, slot_values, patch, status, validation_errors, created_by, created_at, updated_at, catalog_template_id, template_revision_id, generated_file_id, generated_revision_id, materialized_at, generation_mode, page_spec, compiled_native_json, quality_report, blueprint_id, recipe_set_id, parent_draft_id, version
+`
+
+type CreateSemanticDesignDraftParams struct {
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	CatalogTemplateID  pgtype.UUID `json:"catalog_template_id"`
+	TemplateRevisionID pgtype.UUID `json:"template_revision_id"`
+	FileID             pgtype.UUID `json:"file_id"`
+	RevisionID         pgtype.UUID `json:"revision_id"`
+	IssueID            pgtype.UUID `json:"issue_id"`
+	Title              string      `json:"title"`
+	RequirementCore    []byte      `json:"requirement_core"`
+	Status             string      `json:"status"`
+	ValidationErrors   []byte      `json:"validation_errors"`
+	CreatedBy          pgtype.UUID `json:"created_by"`
+	PageSpec           []byte      `json:"page_spec"`
+	CompiledNativeJson []byte      `json:"compiled_native_json"`
+	QualityReport      []byte      `json:"quality_report"`
+	BlueprintID        pgtype.UUID `json:"blueprint_id"`
+	RecipeSetID        pgtype.UUID `json:"recipe_set_id"`
+	ParentDraftID      pgtype.UUID `json:"parent_draft_id"`
+	Version            int32       `json:"version"`
+}
+
+func (q *Queries) CreateSemanticDesignDraft(ctx context.Context, arg CreateSemanticDesignDraftParams) (DesignDraft, error) {
+	row := q.db.QueryRow(ctx, createSemanticDesignDraft,
+		arg.WorkspaceID,
+		arg.CatalogTemplateID,
+		arg.TemplateRevisionID,
+		arg.FileID,
+		arg.RevisionID,
+		arg.IssueID,
+		arg.Title,
+		arg.RequirementCore,
+		arg.Status,
+		arg.ValidationErrors,
+		arg.CreatedBy,
+		arg.PageSpec,
+		arg.CompiledNativeJson,
+		arg.QualityReport,
+		arg.BlueprintID,
+		arg.RecipeSetID,
+		arg.ParentDraftID,
+		arg.Version,
+	)
+	var i DesignDraft
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.TemplateID,
+		&i.FileID,
+		&i.RevisionID,
+		&i.IssueID,
+		&i.Title,
+		&i.RequirementCore,
+		&i.SlotValues,
+		&i.Patch,
+		&i.Status,
+		&i.ValidationErrors,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CatalogTemplateID,
+		&i.TemplateRevisionID,
+		&i.GeneratedFileID,
+		&i.GeneratedRevisionID,
+		&i.MaterializedAt,
+		&i.GenerationMode,
+		&i.PageSpec,
+		&i.CompiledNativeJson,
+		&i.QualityReport,
+		&i.BlueprintID,
+		&i.RecipeSetID,
+		&i.ParentDraftID,
+		&i.Version,
+	)
+	return i, err
+}
+
 const createDesignFile = `-- name: CreateDesignFile :one
 INSERT INTO design_file (workspace_id, project_id, folder_id, title, description, source_type, source_ref, created_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -2270,6 +2395,26 @@ func (q *Queries) GetNextDesignTemplateRevisionNumber(ctx context.Context, templ
 	var next_revision_number int32
 	err := row.Scan(&next_revision_number)
 	return next_revision_number, err
+}
+
+const getNextSemanticDesignDraftVersion = `-- name: GetNextSemanticDesignDraftVersion :one
+SELECT (COALESCE(MAX(version), 0) + 1)::int
+FROM design_draft
+WHERE workspace_id = $1
+  AND issue_id = $2
+  AND generation_mode = 'semantic_pagespec'
+`
+
+type GetNextSemanticDesignDraftVersionParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+}
+
+func (q *Queries) GetNextSemanticDesignDraftVersion(ctx context.Context, arg GetNextSemanticDesignDraftVersionParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getNextSemanticDesignDraftVersion, arg.WorkspaceID, arg.IssueID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const getProjectDesignSystemByProject = `-- name: GetProjectDesignSystemByProject :one
