@@ -93,6 +93,6 @@ This project is indexed by GitNexus as **multica** (33203 symbols, 98167 relatio
 
 ## 当前任务状态（会话交接 - 每次会话结束更新）
 
-- **做了什么**: 已从 `codex/feature-fengchen-dirty-recovery-20260810` 抽出设计模块差异清单 `.codex-handoff/RECOVERY-EXTRACTION-2026-08-11-DESIGN.md`，并移植语义设计草稿只读元数据合约与详情页编译稿展示；未合并 recovery 分支，未运行 Open Design Worker/Runtime
-- **做到哪**: Tab/项目设计体系创建工作区已在当前主线覆盖；本轮 focused 验证为 core typecheck、core api tests、designs-page/design-draft-page tests、`git diff --check` 通过；`@multica/views typecheck` 仍仅剩既有 editor suggestion `signal` 噪音
-- **下一步**: 按清单继续判断是否需要恢复 PageSpec 设计草稿审核链（approve/reject/revise）；若恢复，先确认这是设计草稿历史流程而非 native project design-system Phase 1，再做 GitNexus impact
+- **做了什么**: 继续从 `codex/feature-fengchen-dirty-recovery-20260810` 抽离历史内容，恢复 4 份 recovery-only 设计/语义草稿计划文档并加历史保护说明；补充 recovery 抽取台账，确认设计体系工作区核心 UI 已覆盖且旧 Open Design archive/Worker 合约不可移植
+- **做到哪**: 当前主线 `feature/fengchen-design` clean checkpoint 准备中；本轮仅文档/台账变更，`git diff --check` 通过，未运行 Open Design Worker/Runtime，未触碰 native V2 package-preview/package-upload/repository-analysis 实现
+- **下一步**: 继续逐块 diff recovery 的 PageSpec/语义设计草稿审核链（approve/reject/revise）与 Blueprint 分析链；任何代码移植前先跑对应 GitNexus impact，HIGH/CRITICAL 先报备

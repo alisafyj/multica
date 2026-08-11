@@ -59,6 +59,25 @@ Common base: `bfd95597ce594717afef1235a38fb7a5c5f5d8a8`
   - template preview loading is skipped for semantic drafts;
   - approve/reject/revise actions remain unported.
 
+## Restored As Historical Context
+
+- Restored recovery-only historical plans under `docs/superpowers/plans/` and added a recovery note to each file:
+  - `2026-07-23-semantic-generation-asset-analysis.md`;
+  - `2026-07-23-ui-agent-semantic-draft-workflow.md`;
+  - `2026-07-28-open-design-system-foundation.md`;
+  - `2026-07-29-project-design-system-workspace.md`.
+- These documents preserve the old semantic draft / design-system planning context, but they are not current execution authority. Current product authority remains `docs/product/design-center/README.md` and `docs/product/design-center/decision-register.md`.
+
+## Design-System Diff Audit
+
+- `project-design-system-create.tsx`, `project-design-system-workspace.tsx`, `project-design-system-page.tsx`, and `project-design-system-task-activity.tsx` are identical between current mainline and recovery.
+- Current mainline intentionally keeps native V2-only contract fields and UI behavior that recovery would remove:
+  - `ProjectDesignSystemPackagePreview`;
+  - `/api/project-design-systems/{id}/package-preview`;
+  - `package_schema`, `preview_targets`, `selection_enabled`;
+  - native archive upload, package validation, preview receipt, and repository-analysis completion handlers.
+- Recovery still points design-system generation/preview back toward direct Open Design archive/Worker-era contracts. Do not port those changes into `feature/fengchen-design`.
+
 ## Candidate Next Slice
 
 - Recovery semantic PageSpec review chain:
