@@ -193,6 +193,11 @@
     "creation_disabled_headline": "관리자에게 초대를 요청하세요.",
     "creation_disabled_lede": "이 Multica instance에서는 새 워크스페이스를 만들 수 없습니다. 관리자가 기존 워크스페이스로 초대하면 초대를 수락한 뒤 새로고침해 계속하세요.",
     "creation_disabled_logout": "로그아웃",
+    "pending_invitations_title": "대기 중인 초대",
+    "invitation_workspace_fallback": "워크스페이스",
+    "invitation_accept": "수락하고 입장",
+    "invitation_accepting": "참여 중...",
+    "invitation_accept_failed": "초대를 수락하지 못했습니다",
     "creation_disabled_eyebrow_resume": "내 워크스페이스",
     "creation_disabled_headline_resume": "{{name}}에서 계속하세요.",
     "creation_disabled_lede_resume": "이 instance에서는 워크스페이스 생성이 비활성화되어 있으므로 기존 워크스페이스로 계속 이동합니다."

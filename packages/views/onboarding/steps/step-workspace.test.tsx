@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enOnboarding from "../../locales/en/onboarding.json";
@@ -26,6 +26,11 @@ const mockUseConfigStore = vi.hoisted(() =>
     selector({ workspaceCreationDisabled: false, daemonAppUrl: "" }),
   ),
 );
+const mockAcceptInvitation = vi.hoisted(() => vi.fn());
+const mockFetchWorkspaceList = vi.hoisted(() => vi.fn());
+// Mutable box so individual tests can seed pending invitations; the
+// react-query mock reads it at render time.
+const mockInvitationsBox = vi.hoisted(() => ({ value: [] as unknown[] }));
 
 vi.mock("../../auth", () => ({
   useLogout: () => mockLogout,
@@ -41,15 +46,44 @@ vi.mock("@multica/core/workspace/mutations", () => ({
 }));
 
 vi.mock("@multica/core/api", () => ({
-  api: { getBaseUrl: () => "http://127.0.0.1:8080" },
+  api: {
+    getBaseUrl: () => "http://127.0.0.1:8080",
+    acceptInvitation: mockAcceptInvitation,
+  },
+}));
+
+// The disabled notice reads the user's pending invitations through
+// react-query; queryOptions must pass through because the real
+// workspace/queries module builds options with it at call time.
+vi.mock("@tanstack/react-query", () => ({
+  queryOptions: (options: unknown) => options,
+  useQuery: () => ({ data: mockInvitationsBox.value }),
+  useQueryClient: () => ({
+    invalidateQueries: vi.fn(),
+    fetchQuery: mockFetchWorkspaceList,
+  }),
 }));
 
 import { StepWorkspace } from "./step-workspace";
+import { NavigationProvider, type NavigationAdapter } from "../../navigation";
+
+function makeAdapter(): NavigationAdapter {
+  return {
+    push: vi.fn(),
+    replace: vi.fn(),
+    back: vi.fn(),
+    pathname: "/onboarding",
+    searchParams: new URLSearchParams(),
+    getShareableUrl: (p) => p,
+  };
+}
+
+let adapter = makeAdapter();
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
-      {children}
+      <NavigationProvider value={adapter}>{children}</NavigationProvider>
     </I18nProvider>
   );
 }
@@ -63,6 +97,7 @@ function renderStep({
   disabled: boolean;
   daemonAppUrl?: string;
 }) {
+  adapter = makeAdapter();
   mockUseConfigStore.mockImplementation(
     (selector: (state: MockConfigState) => unknown) =>
       selector({ workspaceCreationDisabled: disabled, daemonAppUrl }),
@@ -112,6 +147,41 @@ describe("StepWorkspace — DISABLE_WORKSPACE_CREATION gate", () => {
     expect(screen.queryByLabelText("Workspace name")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /log out/i })).toBeInTheDocument();
+  });
+
+  // The dead-end regression: SSO deployments deliver no invite email, and the
+  // sidebar accept UI needs a workspace to render inside — so an invited
+  // zero-workspace user must be able to accept right on this screen.
+  it("lists pending invitations on the disabled notice and enters on accept", async () => {
+    mockInvitationsBox.value = [
+      {
+        id: "inv-1",
+        workspace_id: "ws-9",
+        workspace_name: "Security",
+        status: "pending",
+      },
+      // Non-pending rows never render.
+      { id: "inv-2", workspace_id: "ws-8", workspace_name: "Old", status: "declined" },
+    ];
+    mockAcceptInvitation.mockResolvedValue({});
+    mockFetchWorkspaceList.mockResolvedValue([
+      { id: "ws-9", slug: "security", name: "Security" },
+    ]);
+    try {
+      renderStep({ existing: null, disabled: true });
+
+      expect(screen.getByText("Security")).toBeInTheDocument();
+      expect(screen.queryByText("Old")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /accept and enter/i }));
+
+      await waitFor(() => {
+        expect(mockAcceptInvitation).toHaveBeenCalledWith("inv-1");
+        expect(adapter.push).toHaveBeenCalledWith("/security/issues");
+      });
+    } finally {
+      mockInvitationsBox.value = [];
+    }
   });
 
   it("forces the existing-workspace-only state when the flag is on and the user already has a workspace", () => {

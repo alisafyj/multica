@@ -193,6 +193,11 @@
     "creation_disabled_headline": "管理者に招待を依頼してください。",
     "creation_disabled_lede": "この Multica インスタンスでは新しいワークスペースを作成できません。管理者からワークスペースに招待されたら、招待を承諾して更新し、続けてください。",
     "creation_disabled_logout": "ログアウト",
+    "pending_invitations_title": "保留中の招待",
+    "invitation_workspace_fallback": "ワークスペース",
+    "invitation_accept": "承諾して参加",
+    "invitation_accepting": "参加中...",
+    "invitation_accept_failed": "招待を承諾できませんでした",
     "creation_disabled_eyebrow_resume": "あなたのワークスペース",
     "creation_disabled_headline_resume": "{{name}} で続けましょう。",
     "creation_disabled_lede_resume": "このインスタンスではワークスペースの作成が無効になっているため、既存のワークスペースへ続けて移動します。"

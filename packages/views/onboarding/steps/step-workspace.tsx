@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useRef, useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dices, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
@@ -15,12 +16,20 @@ import {
 } from "@multica/ui/components/ui/field";
 import { cn } from "@multica/ui/lib/utils";
 import { useCreateWorkspace } from "@multica/core/workspace/mutations";
-import type { Workspace } from "@multica/core/types";
+import {
+  myInvitationListOptions,
+  workspaceKeys,
+  workspaceListOptions,
+} from "@multica/core/workspace/queries";
+import type { Invitation, Workspace } from "@multica/core/types";
 import { isImeComposing } from "@multica/core/utils";
 import { matchLocale } from "@multica/core/i18n";
 import { useConfigStore } from "@multica/core/config";
 import { workspaceUrlHost } from "@multica/core/workspace/workspace-url";
+import { api } from "@multica/core/api";
+import { paths } from "@multica/core/paths";
 import { useLogout } from "../../auth";
+import { useNavigation } from "../../navigation";
 import {
   StepFooter,
   StepHeading,
@@ -380,14 +389,85 @@ export function StepWorkspace({
 /**
  * Onboarding-step notice rendered when the operator has set
  * DISABLE_WORKSPACE_CREATION=true (#3433) AND the user has no existing
- * workspace yet. The headline / lede above this block already carry the
- * messaging; this component only provides the logout escape so a user who
- * landed here without an invitation is not trapped.
+ * workspace yet.
+ *
+ * An invitation is the only way forward here, so the user's own pending
+ * invitations render inline with an accept button. Before this, the accept
+ * affordances lived exclusively inside a workspace (sidebar) or behind the
+ * invite email link — an SSO deployment that delivers no mail left invited
+ * users staring at this screen with no way through. The list polls while
+ * the screen is up so an invitation sent after login appears on its own;
+ * accepting navigates straight into the joined workspace (MUL-820 shape).
  */
 function CreationDisabledNotice({ onLogout }: { onLogout: () => void }) {
   const { t } = useT("onboarding");
+  const navigation = useNavigation();
+  const queryClient = useQueryClient();
+  const { data: invitations = [] } = useQuery({
+    ...myInvitationListOptions(),
+    refetchInterval: 15_000,
+  });
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
+
+  async function accept(invitation: Invitation) {
+    setAcceptingId(invitation.id);
+    try {
+      await api.acceptInvitation(invitation.id);
+      queryClient.invalidateQueries({ queryKey: workspaceKeys.myInvitations() });
+      // staleTime: 0 forces a real fetch — the joined workspace must be in
+      // the list before its slug can be resolved for navigation.
+      const list = await queryClient.fetchQuery({
+        ...workspaceListOptions(),
+        staleTime: 0,
+      });
+      const joined =
+        list.find((ws) => ws.id === invitation.workspace_id) ?? list[0];
+      if (joined) {
+        navigation.push(paths.workspace(joined.slug).issues());
+        return;
+      }
+      setAcceptingId(null);
+    } catch {
+      toast.error(t(($) => $.step_workspace.invitation_accept_failed));
+      setAcceptingId(null);
+    }
+  }
+
+  const pending = invitations.filter((inv) => inv.status === "pending");
+
   return (
     <div className="flex flex-col gap-3">
+      {pending.length > 0 ? (
+        <div className="flex flex-col gap-2 rounded-lg border p-3">
+          <span className="text-caption font-medium text-muted-foreground">
+            {t(($) => $.step_workspace.pending_invitations_title)}
+          </span>
+          {pending.map((inv) => (
+            <div key={inv.id} className="flex items-center gap-2.5">
+              <WorkspaceAvatar
+                name={
+                  inv.workspace_name ??
+                  t(($) => $.step_workspace.invitation_workspace_fallback)
+                }
+                size="sm"
+              />
+              <span className="min-w-0 flex-1 truncate text-body">
+                {inv.workspace_name ??
+                  t(($) => $.step_workspace.invitation_workspace_fallback)}
+              </span>
+              <Button
+                size="sm"
+                disabled={acceptingId !== null}
+                onClick={() => void accept(inv)}
+              >
+                {acceptingId === inv.id
+                  ? t(($) => $.step_workspace.invitation_accepting)
+                  : t(($) => $.step_workspace.invitation_accept)}
+              </Button>
+            </div>
+          ))}
+        </div>
+      ) : null}
       <Button variant="outline" size="lg" onClick={onLogout}>
         {t(($) => $.step_workspace.creation_disabled_logout)}
       </Button>
