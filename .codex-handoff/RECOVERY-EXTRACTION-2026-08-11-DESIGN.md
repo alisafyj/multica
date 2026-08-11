@@ -111,12 +111,29 @@ Common base: `bfd95597ce594717afef1235a38fb7a5c5f5d8a8`
   - `git diff --check` passed.
 - GitNexus `detect-changes --scope staged` reported `critical` because the slice touches central task completion and design draft task creation flows (`CompleteTask`, `CreateDesignDraftAgentTask`, and helpers). Staged diff was checked for scope: no approve/reject/revise endpoints were ported in this slice.
 
+## Design System Profile Recipe Slice
+
+- Restored the design-system Profile analysis asset handoff from recovery:
+  - Profile analysis output policy now requires `recipe_classifications` and `primitive_fallbacks`;
+  - `parseDesignSystemProfileAnalyzeOutput` rejects outputs that cannot create component recipes;
+  - `CompleteTask` keeps the existing atomic profile completion path and, inside the same mutation, builds a `designcore.ComponentRecipeSet`;
+  - the recipe set is saved through `DesignGenerationAssetStore.SaveRecipeSetAnalysis` with the next per-profile `analysis_version`.
+- Verification:
+  - `go test -C server -buildvcs=false ./internal/handler -run '^TestCompleteDesignSystemProfileAnalyzeTaskUpdatesProfile$' -count=1` failed first because no `design_component_recipe_set` row existed, then passed after the fix;
+  - `go test -C server -buildvcs=false ./internal/handler -run 'Test(CreateDesignSystemProfileFromDesignFile|ClaimDesignSystemProfileAnalyzeTaskReturnsContext|CompleteDesignSystemProfileAnalyzeTask|ParseDesignSystemProfileAnalyzeOutputRequiresStrictContract|DesignGenerationAssetStore)' -count=1` passed with the local `DATABASE_URL`;
+  - `git diff --check` passed;
+  - GitNexus `detect-changes --scope staged` reported `medium`.
+- Scope note: this slice does not add template Blueprint analysis endpoints/tasks yet, does not port approve/reject/revise, and does not touch native V2 package preview/upload/repository-analysis.
+
 ## Candidate Next Slice
 
-- Recovery semantic PageSpec review chain:
-  - frontend `design-draft-page.tsx` review actions;
-  - `approveDesignDraft`, `rejectDesignDraft`, `reviseDesignDraft`;
-  - backend routes and handlers for `/approve`, `/reject`, `/revise`;
-  - SQL queries for semantic draft approval/revision/rejection.
+- Template Blueprint analysis chain:
+  - enqueue a template Blueprint analysis task after publishing a project-scoped catalog template;
+  - parse/validate Agent Blueprint classification output;
+  - save `design_template_blueprint` with a per-template revision analysis version;
+  - keep this separate from project design-system native V2 package preview/upload.
+- `server/internal/designcore` recovery diff triage:
+  - inspect whether the remaining compiler, blueprint, recipe, and quality changes are already covered by current mainline;
+  - port only behavior that current PageSpec/recipe/blueprint tests prove is still missing.
 
-This slice is not automatically portable: current product memory says PageSpec as a general design engine is paused. Only port it if the desired behavior is explicitly to restore the old semantic draft review flow, not as part of native project design-system Phase 1.
+Do not treat the semantic PageSpec approve/reject/revise review chain as an automatic next slice: current product docs say first phase does not introduce review states or review permissions.

@@ -343,6 +343,25 @@ func (q *Queries) CreateDesignComponentRecipeSet(ctx context.Context, arg Create
 	return i, err
 }
 
+const getNextDesignComponentRecipeSetAnalysisVersion = `-- name: GetNextDesignComponentRecipeSetAnalysisVersion :one
+SELECT (COALESCE(MAX(analysis_version), 0) + 1)::int
+FROM design_component_recipe_set
+WHERE workspace_id = $1
+  AND design_system_profile_id = $2
+`
+
+type GetNextDesignComponentRecipeSetAnalysisVersionParams struct {
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	DesignSystemProfileID pgtype.UUID `json:"design_system_profile_id"`
+}
+
+func (q *Queries) GetNextDesignComponentRecipeSetAnalysisVersion(ctx context.Context, arg GetNextDesignComponentRecipeSetAnalysisVersionParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getNextDesignComponentRecipeSetAnalysisVersion, arg.WorkspaceID, arg.DesignSystemProfileID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createDesignDelivery = `-- name: CreateDesignDelivery :one
 INSERT INTO design_delivery (
     id, workspace_id, project_id, source_issue_id, target_issue_id, file_id, revision_id,

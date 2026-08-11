@@ -884,6 +884,12 @@ AND EXISTS (
 )
 RETURNING *;
 
+-- name: GetNextDesignComponentRecipeSetAnalysisVersion :one
+SELECT (COALESCE(MAX(analysis_version), 0) + 1)::int
+FROM design_component_recipe_set
+WHERE workspace_id = $1
+  AND design_system_profile_id = $2;
+
 -- name: GetLatestValidDesignComponentRecipeSet :one
 SELECT * FROM design_component_recipe_set
 WHERE design_component_recipe_set.workspace_id = sqlc.arg('workspace_id')

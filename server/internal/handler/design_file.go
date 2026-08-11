@@ -819,7 +819,7 @@ func (h *Handler) enqueueDesignSystemProfileAnalyzeTask(ctx context.Context, que
 		CandidateLayers:           designSystemProfileCandidateLayers(params.Revision.NativeJson, 240),
 		Tokens:                    designSystemProfileTokenCandidates(params.Revision.NativeJson),
 		TextSamples:               designSystemProfileTextSamples(params.Revision.NativeJson, 120),
-		OutputPolicy:              json.RawMessage(`{"strict_json":true,"required_fields":["profile_json","analysis_errors","summary"],"profile_version":"agent-1.0"}`),
+		OutputPolicy:              json.RawMessage(`{"strict_json":true,"required_fields":["profile_json","analysis_errors","summary","recipe_classifications","primitive_fallbacks"],"profile_version":"agent-1.0","recipe_set_version":"1.0","required_recipe_kinds":["input","select","date-range","primary-button","secondary-button","text-button","table-header","table-row","status-tag","pagination"],"source_layer_policy":"candidate_layers_only"}`),
 	}
 	contextJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -5279,6 +5279,72 @@ func (h *Handler) updateDesignSystemProfileFromAgentTaskOutput(ctx context.Conte
 	if err != nil {
 		return nil, fmt.Errorf("invalid design system profile id: %w", err)
 	}
+	if strings.TrimSpace(profileCtx.ProjectID) != "" {
+		projectUUID, err := util.ParseUUID(profileCtx.ProjectID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid design system profile project: %w", err)
+		}
+		sourceRevisionUUID, err := util.ParseUUID(profileCtx.SourceRevisionID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid design system profile source revision: %w", err)
+		}
+		createdBy := pgtype.UUID{}
+		if strings.TrimSpace(profileCtx.RequesterID) != "" {
+			parsedCreatedBy, err := util.ParseUUID(profileCtx.RequesterID)
+			if err != nil {
+				return nil, fmt.Errorf("invalid design system profile requester: %w", err)
+			}
+			createdBy = parsedCreatedBy
+		}
+		profile, err := queries.GetDesignSystemProfileInWorkspace(ctx, db.GetDesignSystemProfileInWorkspaceParams{
+			ID: profileUUID, WorkspaceID: wsUUID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("load design system profile: %w", err)
+		}
+		if profile.SourceRevisionID != sourceRevisionUUID {
+			return nil, fmt.Errorf("design system profile source does not match analysis context")
+		}
+		sourceRevision, err := queries.GetDesignRevisionInWorkspace(ctx, db.GetDesignRevisionInWorkspaceParams{
+			ID: sourceRevisionUUID, WorkspaceID: wsUUID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("load design system profile source revision: %w", err)
+		}
+		if sourceRevision.FileID != profile.SourceFileID {
+			return nil, fmt.Errorf("design system profile source file does not match analysis context")
+		}
+		sourceDoc, err := designcore.ParseNativeJSON(sourceRevision.NativeJson)
+		if err != nil {
+			return nil, fmt.Errorf("parse design system profile source document: %w", err)
+		}
+		recipeSet, diagnostics := designcore.BuildComponentRecipeSet(
+			uuidToString(profileUUID),
+			uuidToString(sourceRevisionUUID),
+			designcore.ComponentRecipeSetVersion,
+			sourceDoc,
+			parsed.RecipeClassifications,
+			parsed.PrimitiveFallbacks,
+		)
+		if diagnostics.HasErrors() {
+			validationErr := &service.GenerationAssetValidationError{Diagnostics: diagnostics}
+			return nil, fmt.Errorf("%w: %+v", validationErr, diagnostics)
+		}
+		analysisVersion, err := queries.GetNextDesignComponentRecipeSetAnalysisVersion(ctx, db.GetNextDesignComponentRecipeSetAnalysisVersionParams{
+			WorkspaceID: wsUUID, DesignSystemProfileID: profileUUID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("get next component recipe set analysis version: %w", err)
+		}
+		store := service.DesignGenerationAssetStore{Queries: queries}
+		if _, err := store.SaveRecipeSetAnalysis(ctx, service.SaveRecipeSetAnalysisParams{
+			WorkspaceID: wsUUID, TargetProjectID: projectUUID, DesignSystemProfileID: profileUUID,
+			SourceRevisionID: sourceRevisionUUID, AnalysisVersion: analysisVersion, CreatedBy: createdBy,
+			RecipeSet: recipeSet,
+		}); err != nil {
+			return nil, fmt.Errorf("save component recipe set analysis: %w", err)
+		}
+	}
 	updated, err := queries.UpdateDesignSystemProfileAnalysis(ctx, db.UpdateDesignSystemProfileAnalysisParams{
 		ID:             profileUUID,
 		WorkspaceID:    wsUUID,
@@ -5321,9 +5387,11 @@ func (h *Handler) updateDesignSystemProfileFromAgentTaskOutput(ctx context.Conte
 }
 
 type designSystemProfileAnalyzeOutput struct {
-	ProfileJSON    json.RawMessage `json:"profile_json"`
-	AnalysisErrors json.RawMessage `json:"analysis_errors"`
-	Summary        string          `json:"summary"`
+	ProfileJSON           json.RawMessage                            `json:"profile_json"`
+	AnalysisErrors        json.RawMessage                            `json:"analysis_errors"`
+	Summary               string                                     `json:"summary"`
+	RecipeClassifications []designcore.ComponentRecipeClassification `json:"recipe_classifications"`
+	PrimitiveFallbacks    map[string]designcore.PrimitiveRecipe      `json:"primitive_fallbacks"`
 }
 
 func parseDesignSystemProfileAnalyzeOutput(output string) (designSystemProfileAnalyzeOutput, error) {
@@ -5363,6 +5431,12 @@ func parseDesignSystemProfileAnalyzeOutput(output string) (designSystemProfileAn
 	}
 	if strings.TrimSpace(parsed.Summary) == "" {
 		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("summary is required")
+	}
+	if len(parsed.RecipeClassifications) == 0 {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("recipe_classifications is required")
+	}
+	if parsed.PrimitiveFallbacks == nil {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("primitive_fallbacks is required")
 	}
 	return parsed, nil
 }

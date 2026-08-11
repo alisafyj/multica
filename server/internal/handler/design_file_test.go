@@ -1804,6 +1804,7 @@ func TestCompleteDesignSystemProfileAnalyzeTaskUpdatesProfile(t *testing.T) {
 	projectID := createProjectForDesignTest(t, "Complete Design System Analyze Project")
 	created := createDesignFileForTest(t, "Complete Design System Analyze Source")
 	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	updateGenerationAssetNativeJSON(t, parseUUID(created.CurrentRevision.ID), generationAssetRecipeDocument())
 	agentID := createLocalUIRestoreAgentForDesignTest(t)
 	var profileID string
 	if err := testPool.QueryRow(ctx, `
@@ -1840,25 +1841,12 @@ func TestCompleteDesignSystemProfileAnalyzeTaskUpdatesProfile(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_component_recipe_set WHERE design_system_profile_id = $1`, profileID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM design_system_profile WHERE id = $1`, profileID)
 	})
 
-	output := map[string]any{
-		"profile_json": map[string]any{
-			"version": "agent-1.0",
-			"components": map[string]any{
-				"button": map[string]any{
-					"label":    "按钮",
-					"variants": []map[string]any{{"name": "主按钮", "states": []string{"默认"}}},
-				},
-			},
-			"guidelines": []string{"Use primary button for main submission actions."},
-		},
-		"analysis_errors": []map[string]any{{"severity": "warning", "message": "部分图层缺少状态命名"}},
-		"summary":         "CRM UI specification analyzed.",
-	}
-	outputJSON, _ := json.Marshal(output)
-	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete", map[string]any{"output": string(outputJSON)}, testWorkspaceID, "design-system-analyze-complete")
+	outputJSON := designSystemProfileAnalyzeOutputForTest(t)
+	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete", map[string]any{"output": outputJSON}, testWorkspaceID, "design-system-analyze-complete")
 	completeReq = withURLParam(completeReq, "taskId", taskID)
 	completeW := httptest.NewRecorder()
 	testHandler.CompleteTask(completeW, completeReq)
@@ -1893,10 +1881,54 @@ func TestCompleteDesignSystemProfileAnalyzeTaskUpdatesProfile(t *testing.T) {
 	if len(warnings) != 1 {
 		t.Fatalf("analysis_errors length = %d, want 1", len(warnings))
 	}
+	var recipeStatus string
+	var recipeVersion int32
+	var recipeJSON []byte
+	if err := testPool.QueryRow(ctx, `
+		SELECT status, analysis_version, recipes_json
+		FROM design_component_recipe_set
+		WHERE design_system_profile_id = $1
+		ORDER BY analysis_version DESC
+		LIMIT 1
+	`, profileID).Scan(&recipeStatus, &recipeVersion, &recipeJSON); err != nil {
+		t.Fatalf("expected component recipe set saved with profile analysis: %v", err)
+	}
+	if recipeStatus != "valid" || recipeVersion != 1 {
+		t.Fatalf("recipe status/version = %s/%d, want valid/1", recipeStatus, recipeVersion)
+	}
+	var recipePayload map[string]any
+	if err := json.Unmarshal(recipeJSON, &recipePayload); err != nil {
+		t.Fatalf("decode recipes_json: %v", err)
+	}
+	if recipePayload["version"] != "1.0" {
+		t.Fatalf("recipe set version = %v, want 1.0", recipePayload["version"])
+	}
+}
+
+func designSystemProfileAnalyzeOutputForTest(t *testing.T) string {
+	t.Helper()
+	output := map[string]any{
+		"profile_json": map[string]any{
+			"version": "agent-1.0",
+			"components": map[string]any{
+				"button": map[string]any{
+					"label":    "按钮",
+					"variants": []map[string]any{{"name": "主按钮", "states": []string{"默认"}}},
+				},
+			},
+			"guidelines": []string{"Use primary button for main submission actions."},
+		},
+		"analysis_errors":        []map[string]any{{"severity": "warning", "message": "部分图层缺少状态命名"}},
+		"summary":                "CRM UI specification analyzed.",
+		"recipe_classifications": generationAssetRecipeClassifications(),
+		"primitive_fallbacks":    map[string]any{},
+	}
+	outputJSON, _ := json.Marshal(output)
+	return string(outputJSON)
 }
 
 func TestParseDesignSystemProfileAnalyzeOutputRequiresStrictContract(t *testing.T) {
-	valid := `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[],"summary":"Analyzed."}`
+	valid := designSystemProfileAnalyzeOutputForTest(t)
 	for _, tc := range []struct {
 		name   string
 		output string
@@ -1908,6 +1940,8 @@ func TestParseDesignSystemProfileAnalyzeOutputRequiresStrictContract(t *testing.
 		{name: "wrong profile version", output: `{"profile_json":{"version":"1.1"},"analysis_errors":[],"summary":"Analyzed."}`},
 		{name: "missing summary", output: `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[]}`},
 		{name: "empty summary", output: `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[],"summary":""}`},
+		{name: "missing recipe classifications", output: `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[],"summary":"Analyzed.","primitive_fallbacks":{}}`},
+		{name: "missing primitive fallbacks", output: `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[],"summary":"Analyzed.","recipe_classifications":[{"kind":"input","variant":"default","state":"default","rootLayerId":"input"}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := parseDesignSystemProfileAnalyzeOutput(tc.output); err == nil {
@@ -2248,6 +2282,7 @@ func TestCompleteDesignSystemProfileAnalyzeTaskDoesNotOverrideNewerDefault(t *te
 	projectID := createProjectForDesignTest(t, "Default Guard Design System Project")
 	created := createDesignFileForTest(t, "Default Guard Design System Source")
 	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	updateGenerationAssetNativeJSON(t, parseUUID(created.CurrentRevision.ID), generationAssetRecipeDocument())
 	agentID := handlerTestAgentID(t)
 	var originalDefaultID string
 	if err := testPool.QueryRow(ctx, `
@@ -2271,9 +2306,11 @@ func TestCompleteDesignSystemProfileAnalyzeTaskDoesNotOverrideNewerDefault(t *te
 	}
 	contextJSON, _ := json.Marshal(service.DesignSystemProfileAnalyzeContext{
 		Type:                      service.DesignSystemProfileAnalyzeContextType,
+		RequesterID:               testUserID,
 		WorkspaceID:               testWorkspaceID,
 		ProjectID:                 projectID,
 		DesignSystemProfileID:     pendingProfileID,
+		SourceRevisionID:          created.CurrentRevision.ID,
 		MakeDefault:               true,
 		DefaultProfileIDAtEnqueue: originalDefaultID,
 	})
@@ -2300,10 +2337,11 @@ func TestCompleteDesignSystemProfileAnalyzeTaskDoesNotOverrideNewerDefault(t *te
 	}
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_component_recipe_set WHERE design_system_profile_id = $1`, pendingProfileID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM design_system_profile WHERE id IN ($1, $2, $3)`, pendingProfileID, newerDefaultID, originalDefaultID)
 	})
 
-	output := `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[],"summary":"Analyzed."}`
+	output := designSystemProfileAnalyzeOutputForTest(t)
 	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete", map[string]any{"output": output}, testWorkspaceID, "design-system-default-guard")
 	req = withURLParam(req, "taskId", taskID)
 	w := httptest.NewRecorder()
