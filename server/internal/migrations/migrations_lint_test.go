@@ -80,6 +80,7 @@ var mergedDuplicateMigrationStems = map[string][]string{
 	"269": {"269_issue_dependency_issue_index", "269_issue_view_workspace_variant"},
 	"270": {"270_issue_dependency_depends_on_index", "270_pinned_item_view"},
 	"271": {"271_channel_chat_pending_fresh", "271_inbox_item_issue_index"},
+	"272": {"272_comment_parent_index", "272_rollup_task_usage_hourly_xact_lock"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)
