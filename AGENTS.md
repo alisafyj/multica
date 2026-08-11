@@ -93,6 +93,6 @@ This project is indexed by GitNexus as **multica** (33203 symbols, 98167 relatio
 
 ## 当前任务状态（会话交接 - 每次会话结束更新）
 
-- **做了什么**: 从 recovery 继续抽离历史设计内容：已提交恢复计划文档 `52f475271`、semantic draft 后端基础合同 `4cd0d1ff3`；当前切片补回 semantic draft store 保存能力（CreateSemanticDesignDraft/GetNextSemanticDesignDraftVersion/SaveSemanticDesignDraft + focused test），未启用 approve/reject/revise
-- **做到哪**: 当前主线 `feature/fengchen-design` 上 store focused 测试 `TestDesignGenerationAssetStore(SavesSemanticDesignDraft|LoadsLatestValidVersions)` 与 draft handler focused 测试均通过；`sqlc` 本机不可用，生成文件已手动同步；未运行 Open Design Worker/Runtime，未触碰 native V2 package-preview/package-upload/repository-analysis 实现
-- **下一步**: 提交 semantic draft store 切片后，继续逐块 diff recovery 的 PageSpec 创建链、approve/reject/revise 审核链与 Blueprint 分析链；任何代码移植前先跑对应 GitNexus impact，HIGH/CRITICAL 先报备
+- **做了什么**: 从 recovery 抽回 semantic draft PageSpec 创建链：Agent task 上下文改为 `design_plan` + `page_spec`，完成任务时在 `CompleteTaskWithMutation` 内编译并保存 semantic draft；未启用 approve/reject/revise，未恢复 Open Design Worker/Runtime/Daemon
+- **做到哪**: 当前主线 `feature/fengchen-design` staged 待提交；两组 handler focused Go 测试与 `git diff --check` 已通过；GitNexus `detect-changes` 报 `critical`，原因是触达 `CompleteTask`/`CreateDesignDraftAgentTask` 中心流程，已确认未混入审核端点
+- **下一步**: 提交本 PageSpec 创建链 checkpoint 后，再逐块 diff recovery 的 approve/reject/revise 审核链与 Blueprint 分析链；每块继续先跑 GitNexus impact，HIGH/CRITICAL 先报备

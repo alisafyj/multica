@@ -611,7 +611,7 @@ func generationAssetBlueprintClassification() designcore.BlueprintClassification
 	return designcore.BlueprintClassification{
 		FrameID: "frame-1", PageType: "list",
 		Regions: map[string]designcore.RegionClassification{
-			"shell": {RootLayerID: "shell"}, "content": {RootLayerID: "content"}, "navigation": {RootLayerID: "sidebar"},
+			"shell": {RootLayerID: "shell"}, "content": {RootLayerID: "content"}, "navigation": {RootLayerID: "sidebar", Bindings: map[string]string{"label": "navigation-label"}},
 			"breadcrumb": {RootLayerID: "breadcrumb", ReplaceChildren: true}, "pageTitle": {RootLayerID: "page-title", ReplaceChildren: true},
 			"filters": {RootLayerID: "filters", ReplaceChildren: true}, "pageActions": {RootLayerID: "page-actions", ReplaceChildren: true},
 			"table": {RootLayerID: "table", ReplaceChildren: true}, "pagination": {RootLayerID: "pagination", ReplaceChildren: true},
@@ -633,7 +633,8 @@ func generationAssetTemplateDocument() designcore.NativeJSON {
 	}
 	add("frame-root", "", "frame", []string{"shell"}, 0, 0, 1440, 900)
 	add("shell", "frame-root", "frame", []string{"sidebar", "topbar", "content"}, 0, 0, 1440, 900)
-	add("sidebar", "shell", "frame", nil, 0, 0, 240, 900)
+	add("sidebar", "shell", "frame", []string{"navigation-label"}, 0, 0, 240, 900)
+	add("navigation-label", "sidebar", "text", nil, 24, 24, 160, 24)
 	add("topbar", "shell", "frame", nil, 240, 0, 1200, 64)
 	add("content", "shell", "frame", []string{"breadcrumb", "page-title", "filters", "page-actions", "table", "pagination", "page-title-prototype", "breadcrumb-item", "table-header-cell", "table-row"}, 240, 64, 1200, 836)
 	add("breadcrumb", "content", "frame", nil, 24, 72, 500, 20)
@@ -648,21 +649,43 @@ func generationAssetTemplateDocument() designcore.NativeJSON {
 	add("breadcrumb-text", "breadcrumb-item", "text", nil, 24, 72, 120, 20)
 	add("table-header-cell", "content", "frame", nil, 24, 292, 180, 44)
 	add("table-row", "content", "frame", nil, 24, 336, 1120, 52)
-	return designcore.NativeJSON{Version: designcore.NativeJSONVersion, Frames: []designcore.Frame{{ID: "frame-1", Name: "Desktop", RootLayerID: "frame-root", Width: 1440, Height: 900}}, Layers: layers}
+	return designcore.NativeJSON{
+		Version: designcore.NativeJSONVersion,
+		File:    designcore.FileMeta{Title: "Generation asset template", SourceType: "template"},
+		Frames:  []designcore.Frame{{ID: "frame-1", Name: "Desktop", RootLayerID: "frame-root", Width: 1440, Height: 900}},
+		Layers:  layers,
+	}
 }
 
 func generationAssetRecipeDocument() designcore.NativeJSON {
 	layers := map[string]designcore.Layer{}
 	for index, kind := range generationAssetRecipeKinds() {
-		layers[kind] = designcore.Layer{ID: kind, FrameID: "recipes", Name: kind, Type: "frame", Visible: true, X: float64(index * 100), Width: 80, Height: 32}
+		labelID := kind + "-label"
+		valueID := kind + "-value"
+		layers[kind] = designcore.Layer{ID: kind, FrameID: "recipes", Name: kind, Type: "frame", Visible: true, X: float64(index * 100), Width: 80, Height: 32, Children: []string{labelID, valueID}}
+		layers[labelID] = designcore.Layer{ID: labelID, FrameID: "recipes", ParentID: kind, Name: labelID, Type: "text", Visible: true, X: float64(index * 100), Width: 80, Height: 16}
+		layers[valueID] = designcore.Layer{ID: valueID, FrameID: "recipes", ParentID: kind, Name: valueID, Type: "text", Visible: true, X: float64(index * 100), Y: 16, Width: 80, Height: 16}
 	}
-	return designcore.NativeJSON{Version: designcore.NativeJSONVersion, Frames: []designcore.Frame{{ID: "recipes", Name: "Recipes", RootLayerID: "input", Width: 1000, Height: 32}}, Layers: layers, Tokens: map[string]any{}}
+	return designcore.NativeJSON{
+		Version: designcore.NativeJSONVersion,
+		File:    designcore.FileMeta{Title: "Generation asset recipes", SourceType: "ui-spec"},
+		Frames:  []designcore.Frame{{ID: "recipes", Name: "Recipes", RootLayerID: "input", Width: 1000, Height: 32}},
+		Layers:  layers,
+		Tokens:  map[string]any{},
+	}
 }
 
 func generationAssetRecipeClassifications() []designcore.ComponentRecipeClassification {
 	classifications := make([]designcore.ComponentRecipeClassification, 0, len(generationAssetRecipeKinds()))
 	for _, kind := range generationAssetRecipeKinds() {
-		classifications = append(classifications, designcore.ComponentRecipeClassification{Kind: kind, Variant: "default", State: "default", RootLayerID: kind, Layout: designcore.RecipeLayout{WidthMode: "fixed", TextOverflow: "ellipsis", Height: 32}})
+		classifications = append(classifications, designcore.ComponentRecipeClassification{
+			Kind: kind, Variant: "default", State: "default", RootLayerID: kind,
+			Props: map[string]designcore.RecipeProp{
+				"label": {TargetLayerID: kind + "-label", Type: "text"},
+				"value": {TargetLayerID: kind + "-value", Type: "text"},
+			},
+			Layout: designcore.RecipeLayout{WidthMode: "fixed", TextOverflow: "ellipsis", Height: 32},
+		})
 	}
 	return classifications
 }

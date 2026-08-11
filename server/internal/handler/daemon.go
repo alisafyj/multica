@@ -1999,6 +1999,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	var completedProjectDesignSystem *db.ProjectDesignSystem
 	var preparedRepositoryAnalysis *preparedProjectDesignSystemRepositoryAnalysis
 	var preparedProjectDesignSystem *preparedProjectDesignSystemCompletion
+	hasUIDraftCreate := existingTask.Status == "running" && isUIDraftCreateTaskContext(existingTask.Context)
 	preparedAnalysis, isRepositoryAnalysis, analysisErr := prepareProjectDesignSystemRepositoryAnalysisCompletion(existingTask, req.Output)
 	if existingTask.Status == "running" && isRepositoryAnalysis {
 		if analysisErr != nil {
@@ -2027,9 +2028,8 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		}
 		preparedProjectDesignSystem = &prepared
 	}
-	if existingTask.Status == "running" && isUIDraftCreateTaskContext(existingTask.Context) {
-		draft, draftErr := h.createDesignDraftFromAgentTaskOutput(r.Context(), existingTask, req.Output)
-		if draftErr != nil {
+	if hasUIDraftCreate {
+		if _, draftErr := parseUIDraftAgentOutput(req.Output); draftErr != nil {
 			slog.Warn("ui agent draft completion: invalid draft output", "task_id", taskID, "error", draftErr)
 			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), draftErr.Error(), req.SessionID, req.WorkDir, "ui_draft_invalid_output")
 			if failErr != nil {
@@ -2042,7 +2042,6 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid ui draft output: "+draftErr.Error())
 			return
 		}
-		createdDraft = draft
 	}
 	if existingTask.Status == "running" && isDesignSystemProfileAnalyzeTaskContext(existingTask.Context) {
 		parsed, profileErr := parseDesignSystemProfileAnalyzeOutput(req.Output)
@@ -2089,11 +2088,29 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 			}
 			return saveErr
 		})
+	} else if hasUIDraftCreate {
+		task, err = h.TaskService.CompleteTaskWithMutation(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
+			draft, saveErr := h.createDesignDraftFromAgentTaskOutput(r.Context(), qtx, completedTask, req.Output)
+			if saveErr == nil {
+				createdDraft = draft
+			}
+			return saveErr
+		})
 	} else {
 		task, err = h.TaskService.CompleteTask(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir)
 	}
 	if err != nil {
 		slog.Warn("complete task failed", "task_id", taskID, "error", err)
+		if hasUIDraftCreate {
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), err.Error(), req.SessionID, req.WorkDir, "ui_draft_completion_failed")
+			if failErr != nil {
+				slog.Warn("ui agent draft completion: failed to mark task failed", "task_id", taskID, "error", failErr)
+			} else if failedTask != nil {
+				if tokenErr := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); tokenErr != nil {
+					slog.Warn("complete task: failed to revoke task tokens after ui draft completion failure", "task_id", uuidToString(failedTask.ID), "error", tokenErr)
+				}
+			}
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

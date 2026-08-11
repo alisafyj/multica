@@ -663,24 +663,31 @@ const (
 )
 
 type UIDraftCreateContext struct {
-	Type               string          `json:"type"`
-	Prompt             string          `json:"prompt"`
-	RequesterID        string          `json:"requester_id"`
-	WorkspaceID        string          `json:"workspace_id"`
-	ProjectID          string          `json:"project_id,omitempty"`
-	AgentID            string          `json:"agent_id"`
-	CatalogTemplateID  string          `json:"catalog_template_id"`
-	TemplateRevisionID string          `json:"template_revision_id"`
-	DesignRevisionID   string          `json:"design_revision_id"`
-	IssueID            string          `json:"issue_id,omitempty"`
-	Issue              json.RawMessage `json:"issue,omitempty"`
-	ParentIssue        json.RawMessage `json:"parent_issue,omitempty"`
-	TemplateCandidates json.RawMessage `json:"template_candidates,omitempty"`
-	SelectionPolicy    json.RawMessage `json:"selection_policy,omitempty"`
-	Title              string          `json:"title"`
-	RequirementCore    json.RawMessage `json:"requirement_core"`
-	SlotSchema         json.RawMessage `json:"slot_schema"`
-	OutputPolicy       json.RawMessage `json:"output_policy"`
+	Type                   string                 `json:"type"`
+	Prompt                 string                 `json:"prompt"`
+	RequesterID            string                 `json:"requester_id"`
+	WorkspaceID            string                 `json:"workspace_id"`
+	ProjectID              string                 `json:"project_id,omitempty"`
+	AgentID                string                 `json:"agent_id"`
+	CatalogTemplateID      string                 `json:"catalog_template_id"`
+	TemplateRevisionID     string                 `json:"template_revision_id"`
+	DesignRevisionID       string                 `json:"design_revision_id"`
+	DesignSystemProfileID  string                 `json:"design_system_profile_id,omitempty"`
+	IssueID                string                 `json:"issue_id,omitempty"`
+	Issue                  json.RawMessage        `json:"issue,omitempty"`
+	ParentIssue            json.RawMessage        `json:"parent_issue,omitempty"`
+	TemplateCandidates     json.RawMessage        `json:"template_candidates,omitempty"`
+	SelectionPolicy        json.RawMessage        `json:"selection_policy,omitempty"`
+	GenerationAssets       json.RawMessage        `json:"generation_assets,omitempty"`
+	DesignContext          *ResolvedDesignContext `json:"design_context,omitempty"`
+	RequiredRequirementIDs []string               `json:"required_requirement_ids,omitempty"`
+	BaseDraftID            string                 `json:"base_draft_id,omitempty"`
+	RevisionNote           string                 `json:"revision_note,omitempty"`
+	BasePageSpec           json.RawMessage        `json:"base_page_spec,omitempty"`
+	Title                  string                 `json:"title"`
+	RequirementCore        json.RawMessage        `json:"requirement_core"`
+	SlotSchema             json.RawMessage        `json:"slot_schema"`
+	OutputPolicy           json.RawMessage        `json:"output_policy"`
 }
 
 type DesignRestoreTaskContext struct {

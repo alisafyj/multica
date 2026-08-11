@@ -95,7 +95,21 @@ Common base: `bfd95597ce594717afef1235a38fb7a5c5f5d8a8`
   - `GetNextSemanticDesignDraftVersion`;
   - `DesignGenerationAssetStore.SaveSemanticDesignDraft`;
   - focused store test for semantic draft field persistence and issue-scoped version increment.
-- Still unported: `CreateDesignDraftAgentTask` PageSpec prompt/context, `createDesignDraftFromAgentTaskOutput` PageSpec compile path, approve/reject/revise handlers, routes, client methods, and review UI actions.
+- Still unported: approve/reject/revise handlers, routes, client methods, and review UI actions.
+
+## Semantic Draft PageSpec Creation Slice
+
+- Restored the UI draft Agent creation path from recovery without reintroducing legacy Open Design Worker/Runtime execution:
+  - `UIDraftCreateContext` now carries project/design-system context, generation asset, required requirement, revision, and parent draft fields needed by the semantic compiler path;
+  - `CreateDesignDraftAgentTask` resolves saved project design context for Agent prompt payload while keeping the legacy `design_system_profile_id` as an internal compiler asset lookup key;
+  - Agent output now requires `design_plan` and `page_spec`, rejecting legacy `slot_values`/`patch` output;
+  - `CompleteTask` saves semantic PageSpec drafts inside `CompleteTaskWithMutation` so task completion and draft persistence remain atomic;
+  - `createDesignDraftFromAgentTaskOutput` compiles PageSpec through the native compiler and saves via `DesignGenerationAssetStore.SaveSemanticDesignDraft`.
+- Verification:
+  - `go test -C server -buildvcs=false ./internal/handler -run 'Test(DesignGenerationAssetStore|CreateDesignDraftAgentTask|ClaimUIDraftCreateTask|CompleteUIDraftCreateTask|ParseUIDraftAgentOutput)' -count=1` passed with the local `DATABASE_URL`;
+  - `go test -C server -buildvcs=false ./internal/handler -run 'Test(CreateDesignDraftFromCatalogTemplate|GetDesignDraftReturnsSemanticMetadata|CreateDesignDraftAgentTask|ClaimUIDraftCreateTask|CompleteUIDraftCreateTask|ParseUIDraftAgentOutput|DesignGenerationAssetStore)' -count=1` passed with the local `DATABASE_URL`;
+  - `git diff --check` passed.
+- GitNexus `detect-changes --scope staged` reported `critical` because the slice touches central task completion and design draft task creation flows (`CompleteTask`, `CreateDesignDraftAgentTask`, and helpers). Staged diff was checked for scope: no approve/reject/revise endpoints were ported in this slice.
 
 ## Candidate Next Slice
 
