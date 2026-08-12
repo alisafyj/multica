@@ -335,8 +335,9 @@
 - 状态：`confirmed`
 - 日期：2026-08-12
 - 决策：取消独立、一次性的 Open Design V1 破坏性移除 Phase B。后续只沿 Native V2 产品能力推进，不再从全仓库旧实现反推一次性删除范围。
-- 完成定义：每个 Native V2 功能切片在证明完整替代关系后，必须删除该切片实际触达范围内已经失去活动用途的 V1/Worker 分支、fallback、旧配置和旧测试；不得为了 clean grep、目录清空或旧名称归零扩大到未触达模块。
-- 删除门禁：先限定当前切片的 API、daemon、handler/service、数据、Web/Desktop 和测试范围，先取得 V2 正向与失败隔离证据，并确认所有活动消费方已经迁移；旧入口必须形成局部拒绝或不可达合同，通用 Agent 生命周期不得受影响。
+- 完成定义：采用两级清理规则。每个 Native V2 功能切片在证明完整替代关系后，必须删除切片内部已经无调用的 V1/Worker 分支、fallback、旧配置和旧测试，并以此阻塞切片完成；跨切片、跨数据生命周期或仍有外部消费者的残留不得迫使当前切片扩大范围，必须进入唯一退役账本。
+- 删除门禁：计划批准前限定当前切片的 API、daemon、handler/service、数据、Web/Desktop、文件和符号范围，先取得 V2 正向与失败隔离证据，并确认切片内活动消费方已经迁移；旧入口必须形成局部拒绝或不可达合同，通用 Agent 生命周期不得受影响。实现中新发现的范围默认不自动纳入。
+- 退役账本：`native-v2-retirement-register.md` 是旧能力状态的唯一事实源，只在功能切片真实触达旧能力时增量更新，不预先盘点全仓库。状态只使用 `active`、`write-retired`、`unreferenced`、`retired` 和 `data-pending`。
 - 数据边界：普通功能切片只停止新的旧链路读写并删除死代码，不删除历史数据库行、对象、表或约束。`open_design_run`、non-V2 package rows、历史 archive/evidence/Preview 对象和 schema constraint 的不可逆退役只能在全部活动代码退出后单独提出、审批和验证。
 - 历史关系：DC-039 保持有效，其“现有数据和代码先隔离，原生链路稳定后再单独清理，不执行破坏性迁移”重新成为迁移边界；本决策补充局部替代后的强制清理门禁。
 - 取消路线：`2026-08-12-native-design-phase-1-closure-and-legacy-removal-design.md` 的独立 Phase B，以及 `2026-08-12-open-design-v1-destructive-removal.md` 的 Task 3–12，均改为 `superseded`。其中已有 Phase A 自动化证据继续有效。
