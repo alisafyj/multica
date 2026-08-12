@@ -101,9 +101,3 @@ This project is indexed by GitNexus as **multica** (50795 symbols, 152869 relati
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
-
-## 当前任务状态（会话交接 - 每次会话结束更新）
-
-- **做了什么**: 在 `feature/fengchen` 合并 `main@20207ab31`，解决全部冲突并保留设计中心能力；设计迁移重排到 `800-876`，补齐无 FK 删除清理，恢复空白设计首页，迁移 role typography tokens；修复 Project Design System 永久拒绝被错误升级为 500，以及历史 Open Design 测试 fixture 的固定主键冲突
-- **做到哪**: merge 内容全部 staged，0 unmerged/unstaged/untracked，`git diff --check` 通过；TypeScript typecheck、Core/Views 测试、设计聚焦测试、迁移和全量 Go 均通过。Playwright 在正确 SSO 隔离环境下为 29/48，通过后复用的旧 Next dev 进程断开并出现环境/既有 E2E 失败，未作为本次设计合并回归处理；merge commit 尚未创建
-- **下一步**: 提交 merge commit；GitNexus MCP 不可用，提交前需恢复后运行 `detect_changes(compare main)`，或明确记录沿用此前 daemon/task 公共入口 `critical` 结果与人工 scope 核对。随后认证 `gh` 后 push/建 PR；继续避开旧 archive-preview 回退、native V2 删除和 review 状态流
