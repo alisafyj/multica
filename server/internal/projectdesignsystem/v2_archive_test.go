@@ -213,6 +213,21 @@ func TestValidateV2ArchiveRecomputesEveryDigest(t *testing.T) {
 	})
 }
 
+func TestValidateV2ArchiveRejectsLegacySchema(t *testing.T) {
+	collected := collectValidV2(t, validV2Binding())
+	entries := readV2ZipEntries(t, collected.Archive)
+
+	var manifest ManifestV2
+	if err := json.Unmarshal(entries["manifest.json"], &manifest); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	manifest.SchemaVersion = "multica.project-design-system/v1"
+	entries["manifest.json"], _ = json.Marshal(manifest)
+
+	pkg, err := ValidateV2Archive(buildV2ZipFromMap(t, entries), validV2Binding())
+	assertV2DiagnosticCode(t, pkg.Audit, err, "manifest_schema_invalid")
+}
+
 func TestValidateV2ArchivePreflightsEOCDMetadata(t *testing.T) {
 	tests := []struct {
 		name    string

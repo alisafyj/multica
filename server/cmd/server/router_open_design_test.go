@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -14,8 +15,36 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 )
 
-func TestOpenDesignFeatureFlagUsesNativeV2Task(t *testing.T) {
-	t.Setenv("MULTICA_OPEN_DESIGN_ENABLED", "true")
+// unsetOpenDesignRouterEnvironmentForTest removes every MULTICA_OPEN_DESIGN_*
+// environment variable so the router integration test proves the create flow
+// enqueues a native V2 task with no Open Design environment present. It is a
+// real unset and restores prior values in cleanup; callers must not use
+// t.Parallel because this mutates the shared process environment.
+func unsetOpenDesignRouterEnvironmentForTest(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"MULTICA_OPEN_DESIGN_ENABLED",
+		"MULTICA_OPEN_DESIGN_WORKER_URL",
+		"MULTICA_OPEN_DESIGN_WORKER_TOKEN",
+		"MULTICA_OPEN_DESIGN_ARTIFACT_ROOT",
+		"MULTICA_OPEN_DESIGN_BROWSER_PATH",
+	} {
+		value, existed := os.LookupEnv(name)
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatalf("unset %s: %v", name, err)
+		}
+		t.Cleanup(func() {
+			if existed {
+				_ = os.Setenv(name, value)
+			} else {
+				_ = os.Unsetenv(name)
+			}
+		})
+	}
+}
+
+func TestNativeProjectDesignSystemCreateDoesNotRequireOpenDesignEnvironment(t *testing.T) {
+	unsetOpenDesignRouterEnvironmentForTest(t)
 	ctx := context.Background()
 
 	var projectID string

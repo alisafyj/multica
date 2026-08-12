@@ -3,15 +3,19 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	"github.com/multica-ai/multica/server/internal/service"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestNativePackagePreviewCSPTrustsOnlyTheBridge(t *testing.T) {
@@ -24,6 +28,94 @@ func TestNativePackagePreviewCSPTrustsOnlyTheBridge(t *testing.T) {
 			t.Fatalf("CSP includes forbidden directive %q: %q", forbidden, csp)
 		}
 	}
+}
+
+func TestNativePackagePreviewFileServesMediaTypeAndNoStore(t *testing.T) {
+	fixture := newNativeV2CompletionFixture(t, service.ProjectDesignSystemGenerate)
+	if response := fixture.completeTask(t, fixture.buildPackagePayload(t, nil)); response.Code != http.StatusOK {
+		t.Fatalf("complete native package: status = %d, body = %s", response.Code, response.Body.String())
+	}
+	for _, tt := range []struct {
+		path        string
+		contentType string
+	}{
+		{path: "ui-kit/index.html", contentType: "text/html; charset=utf-8"},
+		{path: "assets/crm-mark.svg", contentType: "image/svg+xml"},
+	} {
+		t.Run(tt.path, func(t *testing.T) {
+			response := performNativePackagePreviewFileRequest(t, fixture, tt.path)
+			if response.Code != http.StatusOK {
+				t.Fatalf("preview file status = %d, body = %s", response.Code, response.Body.String())
+			}
+			if got := response.Header().Get("Content-Type"); got != tt.contentType {
+				t.Fatalf("Content-Type = %q, want %q", got, tt.contentType)
+			}
+			if got := response.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q, want no-store", got)
+			}
+			if got := response.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+				t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+			}
+		})
+	}
+}
+
+func TestNativePackagePreviewCapabilityIsScopedAndExpires(t *testing.T) {
+	workspaceID := "11111111-1111-4111-8111-111111111111"
+	systemID := "22222222-2222-4222-8222-222222222222"
+	digest := "sha256:" + strings.Repeat("a", 64)
+
+	token, expiresAt := issueOpenDesignArchivePreviewAccessToken(workspaceID, systemID, digest)
+	if !validateOpenDesignArchivePreviewAccessToken(token, workspaceID, systemID, digest, expiresAt.Add(-time.Second)) {
+		t.Fatal("fresh capability was rejected")
+	}
+	for _, mismatch := range []struct{ workspaceID, systemID, digest string }{
+		{workspaceID: "33333333-3333-4333-8333-333333333333", systemID: systemID, digest: digest},
+		{workspaceID: workspaceID, systemID: "44444444-4444-4444-8444-444444444444", digest: digest},
+		{workspaceID: workspaceID, systemID: systemID, digest: "sha256:" + strings.Repeat("b", 64)},
+	} {
+		if validateOpenDesignArchivePreviewAccessToken(token, mismatch.workspaceID, mismatch.systemID, mismatch.digest, expiresAt.Add(-time.Second)) {
+			t.Fatalf("capability accepted mismatched scope: %+v", mismatch)
+		}
+	}
+	if validateOpenDesignArchivePreviewAccessToken(token, workspaceID, systemID, digest, expiresAt.Add(time.Second)) {
+		t.Fatal("expired capability was accepted")
+	}
+}
+
+func performNativePackagePreviewFileRequest(t *testing.T, fixture *nativeV2CompletionFixture, artifactPath string) *httptest.ResponseRecorder {
+	t.Helper()
+	systemID := uuidToString(fixture.Completion.System.ID)
+	manifestResponse := performProjectDesignSystemIDRequest(
+		t,
+		testHandler.GetProjectDesignSystemPackagePreview,
+		http.MethodGet,
+		"/api/project-design-systems/"+systemID+"/package-preview",
+		systemID,
+		nil,
+	)
+	if manifestResponse.Code != http.StatusOK {
+		t.Fatalf("package preview status = %d, body = %s", manifestResponse.Code, manifestResponse.Body.String())
+	}
+	var preview projectDesignSystemPackagePreviewResponse
+	if err := json.NewDecoder(manifestResponse.Body).Decode(&preview); err != nil {
+		t.Fatalf("decode package preview: %v", err)
+	}
+	if preview.ContentDigest != fixture.Collected.Manifest.ContentDigest || preview.ResourceAccessToken == "" {
+		t.Fatalf("package preview capability = %+v", preview)
+	}
+
+	response := httptest.NewRecorder()
+	request := newRequest(http.MethodGet, "/api/project-design-system-previews/native/file", nil)
+	route := chi.NewRouteContext()
+	route.URLParams.Add("workspaceId", testWorkspaceID)
+	route.URLParams.Add("systemId", systemID)
+	route.URLParams.Add("digest", strings.TrimPrefix(preview.ContentDigest, "sha256:"))
+	route.URLParams.Add("accessToken", preview.ResourceAccessToken)
+	route.URLParams.Add("*", artifactPath)
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, route))
+	testHandler.GetProjectDesignSystemPackagePreviewFile(response, request)
+	return response
 }
 
 func TestInjectNativePackagePreviewBridgeKeepsTrustedAssetsInDocument(t *testing.T) {
@@ -226,5 +318,49 @@ func TestAdjustProjectDesignSystemUsesImmutableV2BaseReference(t *testing.T) {
 	testHandler.DownloadProjectDesignSystemBasePackage(download, downloadRequest)
 	if download.Code != http.StatusConflict || download.Header().Get(nativePackageDigestHeader) != "" {
 		t.Fatalf("base endpoint exposed foreign package: status = %d, headers = %#v, body = %s", download.Code, download.Header(), download.Body.String())
+	}
+}
+
+// TestDiscardFirstNativeV2DraftReturnsUnestablished is the Native V2 contract
+// for discarding the first (and only) draft before anything has ever been
+// saved: the system falls back to "unestablished" and every persisted slot
+// (draft + saved) is gone.
+func TestDiscardFirstNativeV2DraftReturnsUnestablished(t *testing.T) {
+	fixture := newNativeV2CompletionFixture(t, service.ProjectDesignSystemGenerate)
+	if response := fixture.completeTask(t, fixture.buildPackagePayload(t, nil)); response.Code != http.StatusOK {
+		t.Fatalf("complete native package: status = %d, body = %s", response.Code, response.Body.String())
+	}
+	systemID := uuidToString(fixture.Completion.System.ID)
+	response := performProjectDesignSystemIDRequest(
+		t,
+		testHandler.DiscardProjectDesignSystemDraft,
+		http.MethodDelete,
+		"/api/project-design-systems/"+systemID+"/draft",
+		systemID,
+		nil,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("DiscardProjectDesignSystemDraft: status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var discarded ProjectDesignSystemResponse
+	if err := json.NewDecoder(response.Body).Decode(&discarded); err != nil {
+		t.Fatalf("decode discarded native draft response: %v", err)
+	}
+	if discarded.Status != "unestablished" || discarded.HasUnsavedChanges || discarded.ActiveTask != nil || discarded.SavedAt != nil {
+		t.Fatalf("discarded native response = %+v", discarded)
+	}
+	if len(discarded.Content.Sections) != 0 || len(discarded.Content.TokenGroups) != 0 || len(discarded.Content.PreviewTargets) != 0 {
+		t.Fatalf("discarded native response leaked content = %+v", discarded.Content)
+	}
+
+	queries := db.New(testPool)
+	for _, slot := range []string{"draft", "saved"} {
+		if _, err := queries.GetProjectDesignSystemPackageBySlot(context.Background(), db.GetProjectDesignSystemPackageBySlotParams{
+			DesignSystemID: fixture.Completion.System.ID,
+			Slot:           slot,
+			WorkspaceID:    fixture.Completion.System.WorkspaceID,
+		}); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("%s package lookup error = %v, want pgx.ErrNoRows", slot, err)
+		}
 	}
 }

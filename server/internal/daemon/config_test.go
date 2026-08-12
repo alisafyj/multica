@@ -1067,6 +1067,36 @@ func TestLoadConfig_DesignPreviewBrowserPath_DoesNotFallBackToOpenDesignPath(t *
 	}
 }
 
+// TestLoadConfigStartsNativePreviewConfigurationWithLegacyEnvironmentUnset
+// proves the daemon can load its configuration with no Open Design environment
+// present: the legacy MULTICA_OPEN_DESIGN_* env vars are empty, the V2-native
+// preview browser path comes from MULTICA_DESIGN_PREVIEW_BROWSER_PATH, and all
+// four legacy config fields stay empty. The test only proves config load is
+// ready to start; it starts no task and launches no browser.
+func TestLoadConfigStartsNativePreviewConfigurationWithLegacyEnvironmentUnset(t *testing.T) {
+	stageFakeAgent(t)
+	for _, name := range []string{
+		"MULTICA_OPEN_DESIGN_WORKER_URL",
+		"MULTICA_OPEN_DESIGN_WORKER_TOKEN",
+		"MULTICA_OPEN_DESIGN_ARTIFACT_ROOT",
+		"MULTICA_OPEN_DESIGN_BROWSER_PATH",
+	} {
+		t.Setenv(name, "")
+	}
+	native := filepath.Join(t.TempDir(), "native-chromium")
+	t.Setenv("MULTICA_DESIGN_PREVIEW_BROWSER_PATH", native)
+	cfg, err := LoadConfig(Overrides{ServerURL: "http://localhost:0", WorkspacesRoot: t.TempDir()})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.DesignPreviewBrowserPath != native {
+		t.Fatalf("DesignPreviewBrowserPath = %q, want %q", cfg.DesignPreviewBrowserPath, native)
+	}
+	if cfg.OpenDesignWorkerURL != "" || cfg.OpenDesignWorkerToken != "" || cfg.OpenDesignArtifactRoot != "" || cfg.OpenDesignBrowserPath != "" {
+		t.Fatalf("legacy config unexpectedly populated: %+v", cfg)
+	}
+}
+
 // =============================================================================
 // CLI config Backends.OpenClaw overrides (issue #3875)
 // =============================================================================

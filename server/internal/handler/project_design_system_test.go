@@ -719,6 +719,148 @@ func TestMarshalRepositoryAnalysisContextKeepsRepositoryContract(t *testing.T) {
 	}
 }
 
+// TestNativeProjectDesignSystemOperationsDoNotRequireOpenDesignEnvironment
+// proves the Phase A boundary: the create / adjust / regenerate handlers enqueue
+// a native V2 task with no Open Design environment present. Each subtest
+// unsets every MULTICA_OPEN_DESIGN_* variable, drives one real handler, and
+// asserts the enqueued task carries the V2 contract, its raw JSON has no
+// open_design_run envelope, and no open_design_run row exists for the system.
+// The V2 draft for adjust/regenerate is seeded through the completion fixture /
+// fake receipt; the tested behavior stops at handler enqueue + task context
+// and never starts a daemon finalizer or a user Agent CLI. These tests must
+// NOT call t.Parallel: they mutate the process environment.
+func TestNativeProjectDesignSystemOperationsDoNotRequireOpenDesignEnvironment(t *testing.T) {
+	t.Run("create", func(t *testing.T) {
+		unsetOpenDesignEnvironmentForTest(t)
+		projectID := createProjectForDesignTest(t, "Native environment isolation project")
+		agentID, _ := createProjectDesignSystemAgent(t, "online")
+		response := performProjectDesignSystemRequest(t, testHandler.CreateProjectDesignSystem, http.MethodPost, "/api/project-design-systems", map[string]any{
+			"project_id": projectID,
+			"agent_id":   agentID,
+			"platform":   "web",
+			"brief":      "Native environment isolation.",
+		})
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("CreateProjectDesignSystem: status = %d, body = %s", response.Code, response.Body.String())
+		}
+		var created ProjectDesignSystemResponse
+		if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
+			t.Fatalf("decode create response: %v", err)
+		}
+		if created.ID == "" || created.ActiveTask == nil || created.ActiveTask.ID == "" {
+			t.Fatalf("create response missing system/task identity: %+v", created)
+		}
+		taskContext := assertNativeV2TaskWithoutOpenDesignRun(t, created.ActiveTask.ID, created.ID)
+		if taskContext.Operation != service.ProjectDesignSystemGenerate {
+			t.Fatalf("create operation = %q, want %q", taskContext.Operation, service.ProjectDesignSystemGenerate)
+		}
+		if taskContext.InputSnapshotSHA256 == "" {
+			t.Fatalf("create input snapshot digest is empty")
+		}
+		if taskContext.BasePackageSHA256 != "" {
+			t.Fatalf("create base package digest = %q, want empty", taskContext.BasePackageSHA256)
+		}
+		t.Logf("create task=%s system=%s operation=%s package_schema=%s input_snapshot_sha256=%s",
+			created.ActiveTask.ID, created.ID, taskContext.Operation, taskContext.PackageSchema, taskContext.InputSnapshotSHA256)
+	})
+
+	t.Run("adjust", func(t *testing.T) {
+		unsetOpenDesignEnvironmentForTest(t)
+		fixture := newNativeV2CompletionFixture(t, service.ProjectDesignSystemGenerate)
+		if response := fixture.completeTask(t, fixture.buildPackagePayload(t, nil)); response.Code != http.StatusOK {
+			t.Fatalf("complete native package: status = %d, body = %s", response.Code, response.Body.String())
+		}
+		inputJSON, err := json.Marshal(map[string]any{
+			"agent_id":   fixture.Completion.AgentID,
+			"platform":   "web",
+			"brief":      "Native adjustment isolation.",
+			"references": []any{},
+		})
+		if err != nil {
+			t.Fatalf("marshal adjustment input snapshot: %v", err)
+		}
+		if _, err := testPool.Exec(context.Background(), `
+			UPDATE project_design_system
+			SET input_snapshot = $1::jsonb
+			WHERE id = $2
+		`, inputJSON, fixture.Completion.System.ID); err != nil {
+			t.Fatalf("seed adjustment input snapshot: %v", err)
+		}
+		systemID := uuidToString(fixture.Completion.System.ID)
+		response := performProjectDesignSystemIDRequest(t, testHandler.AdjustProjectDesignSystem, http.MethodPost, "/api/project-design-systems/"+systemID+"/adjust", systemID, map[string]any{
+			"agent_id":    fixture.Completion.AgentID,
+			"instruction": "Tighten the primary action.",
+			"scope":       map[string]any{"kind": "all"},
+		})
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("AdjustProjectDesignSystem: status = %d, body = %s", response.Code, response.Body.String())
+		}
+		var adjusted ProjectDesignSystemResponse
+		if err := json.NewDecoder(response.Body).Decode(&adjusted); err != nil {
+			t.Fatalf("decode adjustment response: %v", err)
+		}
+		if adjusted.ID == "" || adjusted.ActiveTask == nil || adjusted.ActiveTask.ID == "" {
+			t.Fatalf("adjustment response missing system/task identity: %+v", adjusted)
+		}
+		taskContext := assertNativeV2TaskWithoutOpenDesignRun(t, adjusted.ActiveTask.ID, adjusted.ID)
+		if taskContext.Operation != service.ProjectDesignSystemAdjust {
+			t.Fatalf("adjust operation = %q, want %q", taskContext.Operation, service.ProjectDesignSystemAdjust)
+		}
+		if taskContext.BasePackageSHA256 != fixture.Collected.Manifest.ContentDigest {
+			t.Fatalf("adjust base package digest = %q, want %q", taskContext.BasePackageSHA256, fixture.Collected.Manifest.ContentDigest)
+		}
+		t.Logf("adjust task=%s system=%s operation=%s package_schema=%s base_package_sha256=%s input_snapshot_sha256=%s",
+			adjusted.ActiveTask.ID, adjusted.ID, taskContext.Operation, taskContext.PackageSchema, taskContext.BasePackageSHA256, taskContext.InputSnapshotSHA256)
+	})
+
+	t.Run("regenerate", func(t *testing.T) {
+		unsetOpenDesignEnvironmentForTest(t)
+		fixture := newNativeV2CompletionFixture(t, service.ProjectDesignSystemGenerate)
+		if response := fixture.completeTask(t, fixture.buildPackagePayload(t, nil)); response.Code != http.StatusOK {
+			t.Fatalf("complete native package: status = %d, body = %s", response.Code, response.Body.String())
+		}
+		inputJSON, err := json.Marshal(map[string]any{
+			"agent_id":   fixture.Completion.AgentID,
+			"platform":   "web",
+			"brief":      "Native regeneration isolation.",
+			"references": []any{},
+		})
+		if err != nil {
+			t.Fatalf("marshal regeneration input snapshot: %v", err)
+		}
+		if _, err := testPool.Exec(context.Background(), `
+			UPDATE project_design_system
+			SET input_snapshot = $1::jsonb
+			WHERE id = $2
+		`, inputJSON, fixture.Completion.System.ID); err != nil {
+			t.Fatalf("seed regeneration input snapshot: %v", err)
+		}
+		systemID := uuidToString(fixture.Completion.System.ID)
+		response := performProjectDesignSystemIDRequest(t, testHandler.RegenerateProjectDesignSystem, http.MethodPost, "/api/project-design-systems/"+systemID+"/regenerate", systemID, map[string]any{
+			"agent_id": fixture.Completion.AgentID,
+		})
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("RegenerateProjectDesignSystem: status = %d, body = %s", response.Code, response.Body.String())
+		}
+		var regenerated ProjectDesignSystemResponse
+		if err := json.NewDecoder(response.Body).Decode(&regenerated); err != nil {
+			t.Fatalf("decode regenerate response: %v", err)
+		}
+		if regenerated.ID == "" || regenerated.ActiveTask == nil || regenerated.ActiveTask.ID == "" {
+			t.Fatalf("regenerate response missing system/task identity: %+v", regenerated)
+		}
+		taskContext := assertNativeV2TaskWithoutOpenDesignRun(t, regenerated.ActiveTask.ID, regenerated.ID)
+		if taskContext.Operation != service.ProjectDesignSystemRegenerate {
+			t.Fatalf("regenerate operation = %q, want %q", taskContext.Operation, service.ProjectDesignSystemRegenerate)
+		}
+		if taskContext.BasePackageSHA256 != fixture.Collected.Manifest.ContentDigest {
+			t.Fatalf("regenerate base package digest = %q, want %q", taskContext.BasePackageSHA256, fixture.Collected.Manifest.ContentDigest)
+		}
+		t.Logf("regenerate task=%s system=%s operation=%s package_schema=%s base_package_sha256=%s input_snapshot_sha256=%s",
+			regenerated.ActiveTask.ID, regenerated.ID, taskContext.Operation, taskContext.PackageSchema, taskContext.BasePackageSHA256, taskContext.InputSnapshotSHA256)
+	})
+}
+
 func createProjectDesignSystemAgent(t *testing.T, runtimeStatus string) (string, string) {
 	t.Helper()
 	suffix := time.Now().UnixNano()
@@ -942,4 +1084,63 @@ func assertProjectDesignSystemErrorCode(t *testing.T, response *httptest.Respons
 	if payload["code"] != code {
 		t.Fatalf("error code = %#v, want %q: %#v", payload["code"], code, payload)
 	}
+}
+
+// unsetOpenDesignEnvironmentForTest removes every MULTICA_OPEN_DESIGN_*
+// environment variable so the handler under test runs with no Open Design
+// environment present. It is a real unset (not an empty-string set) and
+// restores the prior value in cleanup. Callers must not use t.Parallel:
+// this mutates the shared process environment.
+func unsetOpenDesignEnvironmentForTest(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"MULTICA_OPEN_DESIGN_ENABLED",
+		"MULTICA_OPEN_DESIGN_WORKER_URL",
+		"MULTICA_OPEN_DESIGN_WORKER_TOKEN",
+		"MULTICA_OPEN_DESIGN_ARTIFACT_ROOT",
+		"MULTICA_OPEN_DESIGN_BROWSER_PATH",
+	} {
+		value, existed := os.LookupEnv(name)
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatalf("unset %s: %v", name, err)
+		}
+		t.Cleanup(func() {
+			if existed {
+				_ = os.Setenv(name, value)
+			} else {
+				_ = os.Unsetenv(name)
+			}
+		})
+	}
+}
+
+// assertNativeV2TaskWithoutOpenDesignRun proves the native V2 contract for an
+// enqueued project design system task: the raw stored context JSON has no
+// open_design_run key, it decodes to PackageSchemaV2, and the owning design
+// system has zero open_design_run rows.
+func assertNativeV2TaskWithoutOpenDesignRun(t *testing.T, taskID, systemID string) service.ProjectDesignSystemTaskContext {
+	t.Helper()
+	var raw []byte
+	if err := testPool.QueryRow(context.Background(), `SELECT context FROM agent_task_queue WHERE id = $1`, taskID).Scan(&raw); err != nil {
+		t.Fatalf("load task context: %v", err)
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		t.Fatalf("decode raw task context: %v", err)
+	}
+	if _, exists := object["open_design_run"]; exists {
+		t.Fatalf("task context contains open_design_run: %s", raw)
+	}
+	var taskContext service.ProjectDesignSystemTaskContext
+	if err := json.Unmarshal(raw, &taskContext); err != nil || taskContext.PackageSchema != projectdesignsystem.PackageSchemaV2 {
+		t.Fatalf("native task context = %+v, err = %v", taskContext, err)
+	}
+	var runCount int
+	if err := testPool.QueryRow(context.Background(), `SELECT COUNT(*) FROM open_design_run WHERE design_system_id = $1`, systemID).Scan(&runCount); err != nil {
+		t.Fatalf("count open_design_run: %v", err)
+	}
+	if runCount != 0 {
+		t.Fatalf("open_design_run count = %d, want 0", runCount)
+	}
+	return taskContext
 }

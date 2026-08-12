@@ -135,7 +135,7 @@ func (h *Handler) GetProjectDesignSystemPackagePreviewFile(w http.ResponseWriter
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(artifact)))
 	w.Header().Set("Content-Disposition", "inline")
-	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
