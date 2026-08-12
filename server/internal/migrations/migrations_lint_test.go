@@ -81,6 +81,17 @@ var mergedDuplicateMigrationStems = map[string][]string{
 	"270": {"270_issue_dependency_depends_on_index", "270_pinned_item_view"},
 	"271": {"271_channel_chat_pending_fresh", "271_inbox_item_issue_index"},
 	"272": {"272_comment_parent_index", "272_rollup_task_usage_hourly_xact_lock"},
+	"273": {"273_agent_task_queue_runtime_id_index", "273_agent_task_trigger_comment_index"},
+	"274": {"274_issue_subscriber_delegated", "274_task_token_workspace_id_index"},
+	"275": {"275_issue_subscriber_opt_out_scope", "275_task_token_agent_id_index"},
+	"276": {"276_agent_runtime_unbind", "276_chat_draft_restore_task_id_index"},
+	"277": {"277_agent_builder_draft", "277_autopilot_run_task_id_index"},
+	"278": {"278_agent_task_queue_agent_id_keyset_index", "278_runtime_profile_add_qwenpaw"},
+	"279": {"279_agent_task_queue_issue_id_keyset_index", "279_runtime_profile_add_reasonix"},
+	"281": {"281_agent_workspace_id_keyset_index", "281_test_case_workspace_number_index"},
+	"282": {"282_issue_workspace_id_keyset_index", "282_test_case_project_status_index"},
+	"283": {"283_agent_runtime_workspace_id_keyset_index", "283_test_case_generation_job_index"},
+	"284": {"284_task_owner_row_fence", "284_test_case_revision_case_index"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)
