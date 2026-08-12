@@ -1,6 +1,12 @@
 # Open Design V1 破坏性移除 TDD 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` task-by-task；行为变更使用 `superpowers:test-driven-development`，异常失败使用 `superpowers:systematic-debugging`，完成前使用 `superpowers:verification-before-completion`。
+> 状态：`superseded`
+>
+> 替代方案：[Native Design 产品切片演进与渐进清理方案](../specs/2026-08-12-native-design-slice-driven-evolution-design.md)
+>
+> 停止说明：本计划的独立 Phase B 和 Task 3–12 已取消，不得继续执行、恢复或作为新实现的任务清单。历史内容仅用于解释被取消路线、已发现风险和未来局部清理的参考证据。
+>
+> **For historical reference only:** 原执行要求为使用 `superpowers:subagent-driven-development` 或 `superpowers:executing-plans` task-by-task；该要求不再授权执行本计划。
 
 **Goal:** 先完成 Native V2 Phase A 低令牌自动化收口，再不可逆删除 Open Design Worker/V1 的 API、运行时、兼容读取、持久化和历史数据，使 `multica.project-design-system/v2` 成为唯一活动链路。
 

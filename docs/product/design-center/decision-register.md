@@ -330,6 +330,20 @@
 - 方案：[2026-08-05-multica-native-design-engine-design.md](../../superpowers/specs/2026-08-05-multica-native-design-engine-design.md)。
 - 依据：`OD-001` 至 `OD-013` 的产品与包语义证据，以及 `OD-021` 至 `OD-044` 的执行、失败和质量门禁实验。
 
+### DC-040 Native V2 产品切片内渐进清理旧残留
+
+- 状态：`confirmed`
+- 日期：2026-08-12
+- 决策：取消独立、一次性的 Open Design V1 破坏性移除 Phase B。后续只沿 Native V2 产品能力推进，不再从全仓库旧实现反推一次性删除范围。
+- 完成定义：每个 Native V2 功能切片在证明完整替代关系后，必须删除该切片实际触达范围内已经失去活动用途的 V1/Worker 分支、fallback、旧配置和旧测试；不得为了 clean grep、目录清空或旧名称归零扩大到未触达模块。
+- 删除门禁：先限定当前切片的 API、daemon、handler/service、数据、Web/Desktop 和测试范围，先取得 V2 正向与失败隔离证据，并确认所有活动消费方已经迁移；旧入口必须形成局部拒绝或不可达合同，通用 Agent 生命周期不得受影响。
+- 数据边界：普通功能切片只停止新的旧链路读写并删除死代码，不删除历史数据库行、对象、表或约束。`open_design_run`、non-V2 package rows、历史 archive/evidence/Preview 对象和 schema constraint 的不可逆退役只能在全部活动代码退出后单独提出、审批和验证。
+- 历史关系：DC-039 保持有效，其“现有数据和代码先隔离，原生链路稳定后再单独清理，不执行破坏性迁移”重新成为迁移边界；本决策补充局部替代后的强制清理门禁。
+- 取消路线：`2026-08-12-native-design-phase-1-closure-and-legacy-removal-design.md` 的独立 Phase B，以及 `2026-08-12-open-design-v1-destructive-removal.md` 的 Task 3–12，均改为 `superseded`。其中已有 Phase A 自动化证据继续有效。
+- 分支边界：`feature/fengchen-fixed-v2` 只保留为取消路线的隔离 checkpoint，不合入 `feature/fengchen`，不作为后续实现基线，也不计入产品进度。
+- 当前下一步：继续与用户确认和补充新的 Phase A；在目标、真实使用闭环、验收证据和功能切片顺序获批前，不编写实施计划，不推进旧代码或数据清理。
+- 方案：[2026-08-12-native-design-slice-driven-evolution-design.md](../../superpowers/specs/2026-08-12-native-design-slice-driven-evolution-design.md)。
+
 ## 当前提案
 
 ### DC-007 从现有设计中心发起设计任务

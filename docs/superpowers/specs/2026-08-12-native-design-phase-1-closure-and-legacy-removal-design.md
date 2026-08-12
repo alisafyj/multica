@@ -1,9 +1,16 @@
 # 原生设计 Phase 1 收口与旧链路移除方案
 
-> 日期：2026-08-12  
-> 状态：已确认  
-> 执行顺序：Phase A 完成并留证后，才可进入 Phase B  
-> 数据策略：允许永久删除历史 OpenDesign/V1 Run、归档、预览与三文件包，不迁移到 Native V2
+> 日期：2026-08-12
+>
+> 状态：`superseded`
+>
+> 替代方案：[Native Design 产品切片演进与渐进清理方案](./2026-08-12-native-design-slice-driven-evolution-design.md)
+>
+> 历史说明：本文件中的 Phase A 自动化证据要求继续有效；独立、一次性的 Phase B 破坏性移除路线已取消，不得继续按本文件第 5 节及其后续删除方案实施。
+>
+> 原执行顺序：Phase A 完成并留证后，才可进入 Phase B
+>
+> 原数据策略：允许永久删除历史 OpenDesign/V1 Run、归档、预览与三文件包，不迁移到 Native V2
 
 ## 1. 决策摘要
 
