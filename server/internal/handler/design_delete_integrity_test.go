@@ -32,11 +32,14 @@ func seedDesignDeleteFixture(t *testing.T, workspaceID, folderID string) designD
 		t.Fatalf("marshal native json: %v", err)
 	}
 	f := designDeleteFixture{workspaceID: workspaceID}
+	projectID := createProjectInWorkspaceForDesignTest(t, workspaceID, "delete-integrity-project-"+uuid.NewString())
+	sourceIssueID := createIssueInWorkspaceForDesignTest(t, workspaceID, projectID, "delete-integrity-source-"+uuid.NewString())
+	targetIssueID := createIssueInWorkspaceForDesignTest(t, workspaceID, projectID, "delete-integrity-target-"+uuid.NewString())
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO design_file (workspace_id, project_id, folder_id, title, source_type, source_ref, created_by)
 		VALUES ($1, $2, $3, $4, 'upload', '{}'::jsonb, $5)
 		RETURNING id
-	`, workspaceID, uuid.NewString(), nullableUUIDForDesignDeleteTest(folderID), "delete-integrity-"+uuid.NewString(), testUserID).Scan(&f.fileID); err != nil {
+	`, workspaceID, projectID, nullableUUIDForDesignDeleteTest(folderID), "delete-integrity-"+uuid.NewString(), testUserID).Scan(&f.fileID); err != nil {
 		t.Fatalf("insert design file: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
@@ -71,7 +74,7 @@ func seedDesignDeleteFixture(t *testing.T, workspaceID, folderID string) designD
 			scope, status, delivered_by
 		) VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, 'active', $7)
 		RETURNING id
-	`, workspaceID, uuid.NewString(), uuid.NewString(), uuid.NewString(), f.fileID, f.revisionID, testUserID).Scan(&f.deliveryID); err != nil {
+	`, workspaceID, projectID, sourceIssueID, targetIssueID, f.fileID, f.revisionID, testUserID).Scan(&f.deliveryID); err != nil {
 		t.Fatalf("insert design delivery: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
@@ -80,7 +83,7 @@ func seedDesignDeleteFixture(t *testing.T, workspaceID, folderID string) designD
 			profile_json, analysis_errors, created_by
 		) VALUES ($1, $2, $3, $4, $5, 'analyzed', '{}'::jsonb, '[]'::jsonb, $6)
 		RETURNING id
-	`, workspaceID, uuid.NewString(), f.fileID, f.revisionID, "delete-integrity-profile-"+uuid.NewString(), testUserID).Scan(&f.profileID); err != nil {
+	`, workspaceID, projectID, f.fileID, f.revisionID, "delete-integrity-profile-"+uuid.NewString(), testUserID).Scan(&f.profileID); err != nil {
 		t.Fatalf("insert design system profile: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
@@ -115,6 +118,76 @@ func nullableUUIDForDesignDeleteTest(value string) any {
 		return nil
 	}
 	return value
+}
+
+func createWorkspaceForDesignTest(t *testing.T, slugPrefix string) string {
+	t.Helper()
+	slug := slugPrefix + "-" + uuid.NewString()[:8]
+	var id string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO workspace (name, slug, description, issue_prefix)
+		VALUES ($1, $1, '', 'DDI')
+		RETURNING id::text
+	`, slug).Scan(&id); err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, id) })
+	return id
+}
+
+func createProjectInWorkspaceForDesignTest(t *testing.T, workspaceID, title string) string {
+	t.Helper()
+	var id string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO project (workspace_id, title, description, status, priority)
+		VALUES ($1, $2, '', 'planned', 'medium')
+		RETURNING id
+	`, workspaceID, title).Scan(&id); err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, id) })
+	return id
+}
+
+func createIssueInWorkspaceForDesignTest(t *testing.T, workspaceID, projectID, title string) string {
+	t.Helper()
+	var id string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, project_id, number)
+		VALUES ($1, $2, 'todo', 'medium', 'member', $3, $4,
+		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
+		RETURNING id
+	`, workspaceID, title, testUserID, projectID).Scan(&id); err != nil {
+		t.Fatalf("insert issue: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, id) })
+	return id
+}
+
+func createCatalogTemplateForDesignTest(t *testing.T, workspaceID string) string {
+	t.Helper()
+	key := "delete-integrity-" + uuid.NewString()
+	var libraryID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_template_library (workspace_id, key, name)
+		VALUES ($1, $2, 'Delete integrity library')
+		RETURNING id
+	`, workspaceID, key).Scan(&libraryID); err != nil {
+		t.Fatalf("insert design template library: %v", err)
+	}
+	var templateID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_catalog_template (workspace_id, library_id, key, name)
+		VALUES ($1, $2, $3, 'Delete integrity template')
+		RETURNING id
+	`, workspaceID, libraryID, key+"-tpl").Scan(&templateID); err != nil {
+		t.Fatalf("insert design catalog template: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_catalog_template WHERE id = $1`, templateID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_template_library WHERE id = $1`, libraryID)
+	})
+	return templateID
 }
 
 func cleanupDesignDeleteFixture(f designDeleteFixture) {
@@ -256,7 +329,7 @@ func deleteDesignFrameForIntegrityTest(t *testing.T, fileID, workspaceID string)
 func TestDeleteDesignFileCleansDependentsAndPreservesOtherTenant(t *testing.T) {
 	target := seedDesignDeleteFixture(t, testWorkspaceID, "")
 	additionalRevisionID := seedAdditionalDesignRevision(t, target, "frame-2", true)
-	foreign := seedDesignDeleteFixture(t, uuid.NewString(), "")
+	foreign := seedDesignDeleteFixture(t, createWorkspaceForDesignTest(t, "design-delete-foreign"), "")
 
 	w := deleteDesignFileForIntegrityTest(t, target.fileID, testWorkspaceID)
 	if w.Code != http.StatusNoContent {
@@ -275,11 +348,12 @@ func TestDeleteDesignRevisionRejectsProtectedReferencesWithoutPartialDeletion(t 
 			protectedID := uuid.NewString()
 			switch table {
 			case "design_template_revision":
+				templateID := createCatalogTemplateForDesignTest(t, testWorkspaceID)
 				_, err := testPool.Exec(context.Background(), `
 					INSERT INTO design_template_revision (
 						id, workspace_id, template_id, design_revision_id, revision_number, status, slot_schema, metadata, created_by
 					) VALUES ($1, $2, $3, $4, 1, 'published', '{}'::jsonb, '{}'::jsonb, $5)
-				`, protectedID, testWorkspaceID, uuid.NewString(), f.revisionID, testUserID)
+				`, protectedID, testWorkspaceID, templateID, f.revisionID, testUserID)
 				if err != nil {
 					t.Fatalf("insert protected template revision: %v", err)
 				}
@@ -378,9 +452,9 @@ func TestDeleteDesignFolderIntegrity(t *testing.T) {
 		target := seedDesignDeleteFixture(t, testWorkspaceID, folderID)
 		siblingFolderID := createDesignFolderForTest(t, projectID, "sibling-"+uuid.NewString())
 		sibling := seedDesignDeleteFixture(t, testWorkspaceID, siblingFolderID)
-		foreignWorkspaceID := uuid.NewString()
+		foreignWorkspaceID := createWorkspaceForDesignTest(t, "design-folder-foreign")
+		foreignProjectID := createProjectInWorkspaceForDesignTest(t, foreignWorkspaceID, "Foreign folder integrity project")
 		foreignFolderID := uuid.NewString()
-		foreignProjectID := uuid.NewString()
 		if _, err := testPool.Exec(context.Background(), `
 			INSERT INTO design_folder (id, workspace_id, project_id, name, created_by)
 			VALUES ($1, $2, $3, $4, $5)

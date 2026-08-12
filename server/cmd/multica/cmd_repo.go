@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -353,26 +354,59 @@ type checkoutResult struct {
 
 // doCheckoutRequest sends one checkout request to the daemon and returns the
 // path and branch name on success.
-func doCheckoutRequest(daemonPort string, reqBody map[string]string) (checkoutResult, error) {
+// doCheckoutRequest posts one checkout to the daemon and decodes the result.
+// A 503 tagged X-Multica-Retryable: repo-busy means another task holds the
+// same repository's lock; the daemon names the wait via Retry-After and this
+// loop honors it (bounded by the 5-minute context) instead of failing the
+// checkout — mirrors upstream's retry-aware single-checkout flow so the
+// fork's --all path gets the same behavior per repo.
+func doCheckoutRequest(parentCtx context.Context, daemonPort string, reqBody map[string]any) (checkoutResult, error) {
 	data, err := json.Marshal(reqBody)
 	if err != nil {
 		return checkoutResult{}, fmt.Errorf("encode request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := client.Post(
-		fmt.Sprintf("http://127.0.0.1:%s/repo/checkout", daemonPort),
-		"application/json",
-		bytes.NewReader(data),
-	)
-	if err != nil {
-		return checkoutResult{}, fmt.Errorf("connect to daemon: %w", err)
+	if parentCtx == nil {
+		parentCtx = context.Background()
 	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return checkoutResult{}, fmt.Errorf("checkout failed: %s", string(body))
+	ctx, cancel := context.WithTimeout(parentCtx, 5*time.Minute)
+	defer cancel()
+	client := &http.Client{}
+	checkoutURL := fmt.Sprintf("http://127.0.0.1:%s/repo/checkout", daemonPort)
+	var body []byte
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, checkoutURL, bytes.NewReader(data))
+		if err != nil {
+			return checkoutResult{}, fmt.Errorf("create daemon checkout request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return checkoutResult{}, fmt.Errorf("connect to daemon: %w", err)
+		}
+		body, err = io.ReadAll(resp.Body)
+		closeErr := resp.Body.Close()
+		if err != nil {
+			return checkoutResult{}, fmt.Errorf("read daemon checkout response: %w", err)
+		}
+		if closeErr != nil {
+			return checkoutResult{}, fmt.Errorf("close daemon checkout response: %w", closeErr)
+		}
+		if resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get("X-Multica-Retryable") == "repo-busy" {
+			delay := repoCheckoutRetryDelay(resp.Header.Get("Retry-After"), time.Now())
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return checkoutResult{}, fmt.Errorf("connect to daemon: %w", context.Cause(ctx))
+			case <-timer.C:
+				continue
+			}
+		}
+		if resp.StatusCode != http.StatusOK {
+			return checkoutResult{}, fmt.Errorf("checkout failed: %s", string(body))
+		}
+		break
 	}
 
 	var result checkoutResult
@@ -409,7 +443,7 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get working directory: %w", err)
 	}
 
-	reqBody := map[string]string{
+	reqBody := map[string]any{
 		"url":           repoURL,
 		"workspace_id":  workspaceID,
 		"workdir":       workDir,
@@ -417,9 +451,10 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 		"agent_name":    agentName,
 		"task_id":       taskID,
 		"checkout_mode": strings.TrimSpace(os.Getenv("MULTICA_REPO_CHECKOUT_MODE")),
+		"retry_busy":    true,
 	}
 
-	result, err := doCheckoutRequest(daemonPort, reqBody)
+	result, err := doCheckoutRequest(cmd.Context(), daemonPort, reqBody)
 	if err != nil {
 		return err
 	}
@@ -427,6 +462,21 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stdout, "%s\n", result.Path)
 	fmt.Fprintf(os.Stderr, "Checked out %s → %s (branch: %s)\n", repoURL, result.Path, result.BranchName)
 	return nil
+}
+
+func repoCheckoutRetryDelay(value string, now time.Time) time.Duration {
+	const (
+		defaultDelay = time.Second
+		maxDelay     = 30 * time.Second
+	)
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
+		return min(time.Duration(seconds)*time.Second, maxDelay)
+	}
+	if retryAt, err := http.ParseTime(value); err == nil {
+		return min(max(retryAt.Sub(now), time.Duration(0)), maxDelay)
+	}
+	return defaultDelay
 }
 
 // projectResourcesFileForCheckout is the minimal shape of
@@ -502,7 +552,7 @@ func runRepoCheckoutAll(workDir string) error {
 
 	var errs []error
 	for _, repo := range repos {
-		reqBody := map[string]string{
+		reqBody := map[string]any{
 			"url":           repo.url,
 			"workspace_id":  workspaceID,
 			"workdir":       workDir,
@@ -510,8 +560,9 @@ func runRepoCheckoutAll(workDir string) error {
 			"agent_name":    agentName,
 			"task_id":       taskID,
 			"checkout_mode": checkoutMode,
+			"retry_busy":    true,
 		}
-		result, checkErr := doCheckoutRequest(daemonPort, reqBody)
+		result, checkErr := doCheckoutRequest(context.Background(), daemonPort, reqBody)
 		if checkErr != nil {
 			fmt.Fprintf(os.Stderr, "FAIL  %s: %v\n", repo.url, checkErr)
 			errs = append(errs, fmt.Errorf("%s: %w", repo.url, checkErr))

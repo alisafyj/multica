@@ -1,1 +1,0 @@
-DROP INDEX CONCURRENTLY IF EXISTS idx_design_catalog_template_workspace;

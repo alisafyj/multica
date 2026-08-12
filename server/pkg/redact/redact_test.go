@@ -467,3 +467,115 @@ func TestRedactMultipleSecrets(t *testing.T) {
 		t.Fatal("GitHub token not redacted in multi-secret text")
 	}
 }
+
+// TestTextRedactsGenericTokenAssignmentsAndPaymentSecrets guards the
+// field-name-based assignment patterns: any token/secret/password-shaped
+// field is redacted regardless of its value's shape, and short payment
+// factors that token-shape heuristics cannot recognise are redacted too.
+func TestTextRedactsGenericTokenAssignmentsAndPaymentSecrets(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"custom session token assignment", "CUSTOM_SESSION_TOKEN=abc123"},
+		{"json token field", `"refresh_token":"abc"`},
+		{"camel session token", "sessionToken=abc"},
+		{"payment pin", "payment_pin=1234"},
+		{"card pin", "card_pin=9999"},
+		{"cvv", "cvv=123"},
+		{"otp", "otp=482910"},
+		{"chinese payment password", "支付密码=123456"},
+		{"chinese unlock password", "解锁密码=888888"},
+		{"database url assignment", "DATABASE_URL=postgres://user:pass@host/db"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Text(tc.input)
+			if !strings.Contains(got, "[REDACTED CREDENTIAL]") {
+				t.Fatalf("expected redaction for %q, got: %q", tc.input, got)
+			}
+		})
+	}
+
+	basic := Text("Authorization: Basic dXNlcjpwYXNz")
+	if strings.Contains(basic, "dXNlcjpwYXNz") {
+		t.Fatalf("basic auth payload not redacted: %q", basic)
+	}
+	if !strings.Contains(basic, "Basic [REDACTED]") {
+		t.Fatalf("expected Basic [REDACTED] placeholder, got: %q", basic)
+	}
+}
+
+// TestInputMapRedactsAnyTokenNamedField guards the map-key pass: a short
+// value under a token-named key is replaced wholesale, even when the value
+// has no recognisable token shape.
+func TestInputMapRedactsAnyTokenNamedField(t *testing.T) {
+	t.Parallel()
+	input := map[string]any{
+		"token":         "abc",
+		"refresh_token": "abc",
+		"sessionToken":  "abc",
+		"command":       "echo hello",
+	}
+	got := InputMap(input)
+	if got["token"] != credentialPlaceholder {
+		t.Fatalf("token field not redacted: %#v", got["token"])
+	}
+	if got["refresh_token"] != credentialPlaceholder {
+		t.Fatalf("refresh_token field not redacted: %#v", got["refresh_token"])
+	}
+	if got["sessionToken"] != credentialPlaceholder {
+		t.Fatalf("sessionToken field not redacted: %#v", got["sessionToken"])
+	}
+	if got["command"] != "echo hello" {
+		t.Fatalf("non-secret field was altered: %#v", got["command"])
+	}
+	// The original map must be untouched.
+	if input["token"] != "abc" {
+		t.Fatalf("input map was mutated: %#v", input)
+	}
+}
+
+func TestRedactPersonalDataFields(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"phonenumber=10086":        "10086",
+		"手机号=13800138000":          "13800138000",
+		"电话号码=010-12345678":        "010-12345678",
+		"工资=100":                   "100",
+		"薪资=25000":                 "25000",
+		"salary=25000":             "25000",
+		"PHONE_NUMBER=13800138000": "13800138000",
+	}
+	for input, leaked := range cases {
+		got := Text(input)
+		if strings.Contains(got, leaked) {
+			t.Fatalf("personal data not redacted in %q: %s", input, got)
+		}
+		if !strings.Contains(got, "[REDACTED CREDENTIAL]") {
+			t.Fatalf("expected placeholder in %q, got: %s", input, got)
+		}
+	}
+}
+
+func TestInputMapRedactsPersonalDataFields(t *testing.T) {
+	t.Parallel()
+	input := map[string]any{
+		"phonenumber": "10086",
+		"工资":          "100",
+		"salary":      "25000",
+		"phone":       "13800138000",
+		"备注":          "keep me",
+	}
+	got := InputMap(input)
+	for _, key := range []string{"phonenumber", "工资", "salary", "phone"} {
+		if got[key] != credentialPlaceholder {
+			t.Fatalf("%s field not redacted: %#v", key, got[key])
+		}
+	}
+	if got["备注"] != "keep me" {
+		t.Fatalf("non-secret field was altered: %#v", got["备注"])
+	}
+}

@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useRef, useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dices, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
@@ -11,16 +12,23 @@ import {
   FieldError,
   FieldGroup,
   FieldLabel,
-  FieldTitle,
 } from "@multica/ui/components/ui/field";
 import { cn } from "@multica/ui/lib/utils";
 import { useCreateWorkspace } from "@multica/core/workspace/mutations";
-import type { Workspace } from "@multica/core/types";
+import {
+  myInvitationListOptions,
+  workspaceKeys,
+  workspaceListOptions,
+} from "@multica/core/workspace/queries";
+import type { Invitation, Workspace } from "@multica/core/types";
 import { isImeComposing } from "@multica/core/utils";
 import { matchLocale } from "@multica/core/i18n";
 import { useConfigStore } from "@multica/core/config";
 import { workspaceUrlHost } from "@multica/core/workspace/workspace-url";
+import { api } from "@multica/core/api";
+import { paths } from "@multica/core/paths";
 import { useLogout } from "../../auth";
+import { useNavigation } from "../../navigation";
 import {
   StepFooter,
   StepHeading,
@@ -54,7 +62,10 @@ import { isReservedSlug } from "@multica/core/paths";
  * app URL so self-hosted instances show their own domain), and a live
  * `Issues will look
  * like ACME-123` line shows the user what their issue IDs will read
- * like before they've created anything.
+ * like before they've created anything. The issue prefix behind that line
+ * is an editable field pre-filled from the slug (MUL-6050) — it used to be
+ * read-only, which left every non-ASCII-named workspace stuck on the
+ * server's old `WS` fallback with no in-flow way out.
  *
  * Resume path ships two picker cards (existing + create-new) and the
  * user toggles between them. No-existing path just shows the create
@@ -62,11 +73,26 @@ import { isReservedSlug } from "@multica/core/paths";
  */
 
 function issuePrefix(slug: string): string {
-  // Mirrors the server's default prefix derivation — first 4 chars of
-  // the slug, uppercased. Falls back to "WS" when the slug is empty so
-  // the preview line never collapses to a single dangling "-".
-  const head = slug.trim().replace(/[^a-z0-9]/g, "").slice(0, 4);
-  return (head || "ws").toUpperCase();
+  // Mirrors the server's default prefix derivation
+  // (handler.defaultIssuePrefixFromSlug) — alphanumerics of the slug, first
+  // 4 chars, uppercased. Lowercase first because the server lowercases the
+  // slug before deriving, so a user who types "ACME" here sees the same
+  // "ACME" the server would produce rather than an empty strip. Returns ""
+  // for a slug with nothing to derive from; that slug can't be submitted, so
+  // only the preview has to cope with it.
+  return slug
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 4)
+    .toUpperCase();
+}
+
+// Letters + digits only, uppercase, capped at 10 — the same guardrail the
+// settings tab applies, and the same shape the server now validates
+// (`^[A-Z0-9]{1,10}$`).
+function normalizePrefix(raw: string): string {
+  return raw.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10);
 }
 
 export function StepWorkspace({
@@ -116,6 +142,12 @@ export function StepWorkspace({
   const [slug, setSlug] = useState("");
   const [slugServerError, setSlugServerError] = useState<string | null>(null);
   const slugTouched = useRef(false);
+  // Prefix follows the slug the same way the slug follows the name, and stops
+  // following the moment the user edits it (MUL-6050). Editable here because
+  // settings was the only place to change it, and a user who never noticed the
+  // default would never go looking.
+  const [prefix, setPrefix] = useState("");
+  const prefixTouched = useRef(false);
 
   const slugValidationError =
     slug.length > 0 && !WORKSPACE_SLUG_REGEX.test(slug)
@@ -129,26 +161,45 @@ export function StepWorkspace({
   const canCreate =
     name.trim().length > 0 && slug.trim().length > 0 && !slugError;
 
+  // What the workspace will actually be created with. Clearing the prefix
+  // input reverts to the slug-derived default rather than blocking the CTA —
+  // the placeholder shows that default, so an empty field is never a
+  // surprise. Empty only while the slug is (a CJK-only name derives none),
+  // which is also exactly when `canCreate` is false, so submit always carries
+  // a real prefix.
+  const derivedPrefix = issuePrefix(slug);
+  const effectivePrefix = prefix || derivedPrefix;
+
+  // Every slug write goes through here so the untouched prefix can't drift
+  // out of sync with the slug it is derived from.
+  const applySlug = (value: string) => {
+    setSlug(value);
+    setSlugServerError(null);
+    if (!prefixTouched.current) setPrefix(issuePrefix(value));
+  };
+
   const handleNameChange = (value: string) => {
     setName(value);
     if (!slugTouched.current) {
-      setSlug(nameToWorkspaceSlug(value));
-      setSlugServerError(null);
+      applySlug(nameToWorkspaceSlug(value));
     }
   };
 
   const handleSlugChange = (value: string) => {
     slugTouched.current = true;
-    setSlug(value);
-    setSlugServerError(null);
+    applySlug(value);
+  };
+
+  const handlePrefixChange = (value: string) => {
+    prefixTouched.current = true;
+    setPrefix(normalizePrefix(value));
   };
 
   const handleRandomName = () => {
     const identity = randomCelestialWorkspaceIdentity(locale);
     slugTouched.current = true;
     setName(identity.name);
-    setSlug(identity.slug);
-    setSlugServerError(null);
+    applySlug(identity.slug);
   };
 
   const createWorkspace = useCreateWorkspace();
@@ -156,7 +207,15 @@ export function StepWorkspace({
   const handleCreate = () => {
     if (!canCreate || createWorkspace.isPending) return;
     createWorkspace.mutate(
-      { name: name.trim(), slug: slug.trim() },
+      {
+        name: name.trim(),
+        slug: slug.trim(),
+        // Send what the user was shown. The server derives the same value
+        // from the slug when the field is omitted, so the preview and the
+        // created workspace agree either way — but submitting it explicitly
+        // is what makes an edited prefix stick.
+        issue_prefix: effectivePrefix,
+      },
       {
         onSuccess: onCreated,
         onError: (error) => {
@@ -289,16 +348,47 @@ export function StepWorkspace({
         </div>
         {slugError ? <FieldError>{slugError}</FieldError> : null}
       </Field>
-      {/* Derived, not entered — FieldTitle rather than FieldLabel, since
-          there is no control for a label to point at. */}
+      {/* Editable, pre-filled from the slug. Narrow input — the value is
+          capped at 10 chars, so a full-width field would read as a mistake.
+
+          Nothing is invented while the slug is empty: a CJK-only name derives
+          no slug (see nameToWorkspaceSlug), and the placeholder used to fill
+          that gap with "WS" — telling the user they were getting the exact
+          prefix this whole change exists to eliminate. Empty field plus a
+          hint is the honest state; the user is picking a URL next anyway,
+          and the prefix appears the moment they do. */}
       <Field>
-        <FieldTitle>{t(($) => $.step_workspace.issue_prefix_label)}</FieldTitle>
+        <FieldLabel htmlFor="ws-issue-prefix">
+          {t(($) => $.step_workspace.issue_prefix_label)}
+        </FieldLabel>
+        <Input
+          id="ws-issue-prefix"
+          type="text"
+          value={prefix}
+          onChange={(e) => handlePrefixChange(e.target.value)}
+          placeholder={derivedPrefix}
+          autoComplete="off"
+          autoCapitalize="characters"
+          spellCheck={false}
+          maxLength={10}
+          className="w-32 font-mono uppercase"
+          onKeyDown={(e) => {
+            if (isImeComposing(e)) return;
+            if (e.key === "Enter") handleCreate();
+          }}
+        />
         <FieldDescription>
-          {t(($) => $.step_workspace.issue_prefix_prefix)}
-          <span className="font-mono text-foreground">
-            {issuePrefix(slug)}-123
-          </span>
-          {t(($) => $.step_workspace.issue_prefix_suffix)}
+          {effectivePrefix ? (
+            <>
+              {t(($) => $.step_workspace.issue_prefix_prefix)}
+              <span className="font-mono text-foreground">
+                {effectivePrefix}-123
+              </span>
+              {t(($) => $.step_workspace.issue_prefix_suffix)}
+            </>
+          ) : (
+            t(($) => $.step_workspace.issue_prefix_pending)
+          )}
         </FieldDescription>
       </Field>
     </FieldGroup>
@@ -380,14 +470,85 @@ export function StepWorkspace({
 /**
  * Onboarding-step notice rendered when the operator has set
  * DISABLE_WORKSPACE_CREATION=true (#3433) AND the user has no existing
- * workspace yet. The headline / lede above this block already carry the
- * messaging; this component only provides the logout escape so a user who
- * landed here without an invitation is not trapped.
+ * workspace yet.
+ *
+ * An invitation is the only way forward here, so the user's own pending
+ * invitations render inline with an accept button. Before this, the accept
+ * affordances lived exclusively inside a workspace (sidebar) or behind the
+ * invite email link — an SSO deployment that delivers no mail left invited
+ * users staring at this screen with no way through. The list polls while
+ * the screen is up so an invitation sent after login appears on its own;
+ * accepting navigates straight into the joined workspace (MUL-820 shape).
  */
 function CreationDisabledNotice({ onLogout }: { onLogout: () => void }) {
   const { t } = useT("onboarding");
+  const navigation = useNavigation();
+  const queryClient = useQueryClient();
+  const { data: invitations = [] } = useQuery({
+    ...myInvitationListOptions(),
+    refetchInterval: 15_000,
+  });
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
+
+  async function accept(invitation: Invitation) {
+    setAcceptingId(invitation.id);
+    try {
+      await api.acceptInvitation(invitation.id);
+      queryClient.invalidateQueries({ queryKey: workspaceKeys.myInvitations() });
+      // staleTime: 0 forces a real fetch — the joined workspace must be in
+      // the list before its slug can be resolved for navigation.
+      const list = await queryClient.fetchQuery({
+        ...workspaceListOptions(),
+        staleTime: 0,
+      });
+      const joined =
+        list.find((ws) => ws.id === invitation.workspace_id) ?? list[0];
+      if (joined) {
+        navigation.push(paths.workspace(joined.slug).issues());
+        return;
+      }
+      setAcceptingId(null);
+    } catch {
+      toast.error(t(($) => $.step_workspace.invitation_accept_failed));
+      setAcceptingId(null);
+    }
+  }
+
+  const pending = invitations.filter((inv) => inv.status === "pending");
+
   return (
     <div className="flex flex-col gap-3">
+      {pending.length > 0 ? (
+        <div className="flex flex-col gap-2 rounded-lg border p-3">
+          <span className="text-caption font-medium text-muted-foreground">
+            {t(($) => $.step_workspace.pending_invitations_title)}
+          </span>
+          {pending.map((inv) => (
+            <div key={inv.id} className="flex items-center gap-2.5">
+              <WorkspaceAvatar
+                name={
+                  inv.workspace_name ??
+                  t(($) => $.step_workspace.invitation_workspace_fallback)
+                }
+                size="sm"
+              />
+              <span className="min-w-0 flex-1 truncate text-body">
+                {inv.workspace_name ??
+                  t(($) => $.step_workspace.invitation_workspace_fallback)}
+              </span>
+              <Button
+                size="sm"
+                disabled={acceptingId !== null}
+                onClick={() => void accept(inv)}
+              >
+                {acceptingId === inv.id
+                  ? t(($) => $.step_workspace.invitation_accepting)
+                  : t(($) => $.step_workspace.invitation_accept)}
+              </Button>
+            </div>
+          ))}
+        </div>
+      ) : null}
       <Button variant="outline" size="lg" onClick={onLogout}>
         {t(($) => $.step_workspace.creation_disabled_logout)}
       </Button>

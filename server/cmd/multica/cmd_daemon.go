@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -299,6 +300,28 @@ func expectedDaemonIdentity() (string, bool) {
 	return id, id != ""
 }
 
+// daemonStateForProfileGuarded probes the profile's port and refuses when a
+// daemon belonging to another profile answered (#6694) — stop/restart would
+// otherwise read the PID off another profile's daemon and kill it. A live
+// answer whose identity clears (matching profile, or an older daemon that
+// omits the field) is returned RAW: lifecycle commands act on whatever
+// actually answered, and the raw map keeps fields like launched_by that the
+// reconciliation below does not carry. Only a silent port falls through to
+// daemonStateForProfile, whose pid-file reconciliation cleans up stale
+// records for a daemon that is genuinely gone.
+func daemonStateForProfileGuarded(ctx context.Context, profile string, healthPort int) (map[string]any, error) {
+	raw := checkDaemonHealthOnPort(ctx, healthPort)
+	if daemonAlive(raw) {
+		if !inDaemonTaskIdentityContext() {
+			if err := daemonIdentityMismatch(raw, profile, healthPort); err != nil {
+				return nil, err
+			}
+		}
+		return raw, nil
+	}
+	return daemonStateForProfile(ctx, profile), nil
+}
+
 func daemonStateForProfile(ctx context.Context, profile string) map[string]any {
 	health := checkDaemonHealthOnPort(ctx, healthPortForProfile(profile))
 	healthPID, healthDaemonID, validHealth := daemonHealthIdentity(health)
@@ -427,6 +450,231 @@ func healthPortForProfile(profile string) int {
 	return daemon.DefaultHealthPort + 1 + (h % 1000)
 }
 
+// daemonProfileMismatchError reports that the daemon answering on a profile's
+// health port is not that profile's daemon.
+type daemonProfileMismatchError struct {
+	Want string // profile the caller asked to act on
+	Got  string // profile the daemon on that port reports; unset when Unreadable
+	Port int
+	// Unreadable marks a daemon that answered the profile field with something
+	// that is not a string. It claimed an identity we cannot read, so it must
+	// not be credited as ours — see daemonIdentityMismatch.
+	Unreadable bool
+}
+
+func (e *daemonProfileMismatchError) Error() string {
+	if e.Unreadable {
+		return fmt.Sprintf(
+			"port %d is serving a daemon that reported an unreadable profile identity\n"+
+				"Refusing to act on it as %s: an identity that cannot be read cannot be confirmed to be yours.",
+			e.Port, describeProfile(e.Want))
+	}
+	return fmt.Sprintf(
+		"port %d is serving profile %s, not %s\n"+
+			"Both profile names hash to the same health port, so this command would have acted on the wrong daemon.\n"+
+			"Run it against %s directly, or rename one of the profiles.",
+		e.Port, describeProfile(e.Got), describeProfile(e.Want), describeProfile(e.Got))
+}
+
+// statusNote is the one-line explanation `daemon status` prints under its
+// verdict, where the command has not failed and there is no error to render.
+func (e *daemonProfileMismatchError) statusNote() string {
+	if e.Unreadable {
+		return fmt.Sprintf("Note: port %d is serving a daemon whose profile identity could not be read.", e.Port)
+	}
+	return fmt.Sprintf("Note: port %d is serving %s, which hashes to the same port.",
+		e.Port, describeProfile(e.Got))
+}
+
+// statusJSON is the additive `port_conflict` object for --output json.
+func (e *daemonProfileMismatchError) statusJSON() map[string]any {
+	if e.Unreadable {
+		return map[string]any{"port": e.Port, "unreadable_identity": true}
+	}
+	return map[string]any{"port": e.Port, "profile": e.Got}
+}
+
+// describeProfile renders a profile name for humans, naming the default
+// profile rather than printing an empty string.
+func describeProfile(profile string) string {
+	if profile == "" {
+		return "the default profile"
+	}
+	return strconv.Quote(profile)
+}
+
+// daemonIdentityMismatch reports whether the daemon behind health belongs to a
+// profile other than the one being acted on.
+//
+// The health port is a hash of the profile name into a 1000-port range, so
+// distinct names collide — any rearrangement of the same characters lands on
+// the same port. Without this check `--profile a daemon stop` reads the PID off
+// whatever daemon answered and kills it, which for a collision is profile b's
+// daemon and every runtime it hosts (#6694).
+//
+// A daemon that predates the profile field omits it entirely. That is the only
+// case treated as "cannot prove identity, proceed anyway": refusing there would
+// break lifecycle commands against a daemon that is merely older. Once the
+// field is present it is enforced strictly — including the empty string, which
+// is the default profile identifying itself, not a missing answer.
+func daemonIdentityMismatch(health map[string]any, profile string, port int) error {
+	raw, ok := health["profile"]
+	if !ok {
+		return nil
+	}
+	got, isString := raw.(string)
+	if !isString {
+		// Present but malformed (null, a number) is NOT the same as absent.
+		// Dropping the type check would collapse such a value to "" and, for a
+		// caller targeting the default profile, read as a match — handing the
+		// lifecycle commands a daemon whose identity was never established.
+		// Absence is a daemon too old to answer; this is a daemon answering
+		// wrongly, so it fails closed.
+		return &daemonProfileMismatchError{Want: profile, Port: port, Unreadable: true}
+	}
+	if got == profile {
+		return nil
+	}
+	return &daemonProfileMismatchError{Want: profile, Got: got, Port: port}
+}
+
+// unknownProfileError reports an explicitly named --profile that has no
+// directory under ~/.multica/profiles. It carries the known profile names so
+// both the text and JSON renderings can list them without re-reading the disk.
+type unknownProfileError struct {
+	Profile string
+	Known   []string
+}
+
+func (e *unknownProfileError) Error() string {
+	if len(e.Known) == 0 {
+		// The command is left unquoted so the shell-quoted profile name below
+		// stays the only quoting in the line and the hint pastes cleanly.
+		return fmt.Sprintf("unknown profile %q: no named profiles exist yet.\nCreate one with: multica login --profile %s", e.Profile, shellQuoteArg(e.Profile))
+	}
+	return fmt.Sprintf("unknown profile %q\nKnown profiles: %s", e.Profile, strings.Join(e.Known, ", "))
+}
+
+// jsonPayload renders the error for `--output json`. Known stays a non-nil
+// slice so the field marshals as [] rather than null.
+func (e *unknownProfileError) jsonPayload() map[string]any {
+	known := e.Known
+	if known == nil {
+		known = []string{}
+	}
+	return map[string]any{
+		"status":         "unknown_profile",
+		"profile":        e.Profile,
+		"known_profiles": known,
+	}
+}
+
+// profileConfigFileName is the file whose presence marks a directory under the
+// profiles root as an actual profile rather than just a parent of one. Kept in
+// step with cli.CLIConfigPathForProfile.
+const profileConfigFileName = "config.json"
+
+// profileExists reports whether an explicitly named profile has state on disk.
+//
+// The name is resolved through the same path logic the config layer uses
+// rather than matched against a flat directory listing, because a profile name
+// may contain separators: `multica --profile team/dev config set ...` creates
+// ~/.multica/profiles/team/dev. Matching against top-level entries would
+// reject that profile while offering its parent "team" as a suggestion.
+func profileExists(profile string) (bool, error) {
+	dir, err := cli.ProfileDir(profile)
+	if err != nil {
+		return false, err
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return info.IsDir(), nil
+}
+
+// knownProfiles lists the profiles that exist on disk, sorted by name, for use
+// as suggestions after a name misses. A profile is a directory under the
+// profiles root holding a config.json, at any depth — requiring that file is
+// what keeps a bare parent directory such as "team" out of a list where every
+// entry is meant to be directly usable as --profile.
+//
+// A missing profiles root is not an error: it just means no named profile has
+// been created yet, the common case for a default-profile-only user.
+func knownProfiles() ([]string, error) {
+	root, err := profilesRootDir()
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0)
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			// An unreadable subtree costs us suggestions, not correctness:
+			// skip it so the rest of the list still reaches the user.
+			if d != nil && d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() || d.Name() != profileConfigFileName {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, filepath.Dir(path))
+		if relErr != nil || rel == "." {
+			return nil
+		}
+		names = append(names, filepath.ToSlash(rel))
+		return nil
+	})
+	if walkErr != nil {
+		if os.IsNotExist(walkErr) {
+			return nil, nil
+		}
+		return nil, walkErr
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// requireKnownProfile rejects an explicitly named profile that does not exist.
+//
+// healthPortForProfile hashes ANY string into a port, so without this check a
+// mistyped --profile probes a port nothing is bound to and the command reports
+// a flat "stopped" — indistinguishable from a daemon that is genuinely not
+// running, even while the correctly-named daemon serves happily on another
+// port (#6694). Failing loudly with the known names turns that dead end into a
+// one-glance fix.
+//
+// The default profile is never validated: it owns ~/.multica directly, has no
+// entry under profiles/, and is always legitimate.
+//
+// Callers must invoke this AFTER their daemon-managed-task guard
+// (requireHumanLocalCommand, or daemonStatusHealthPort for status). Listing the
+// profiles root inside a task would disclose the Owner's profile names, which
+// those guards exist to prevent.
+func requireKnownProfile(profile string) error {
+	if profile == "" {
+		return nil
+	}
+	exists, err := profileExists(profile)
+	if err != nil {
+		return fmt.Errorf("resolve profile %q: %w", profile, err)
+	}
+	if exists {
+		return nil
+	}
+	// Only now is the listing worth its disk walk, and only now can it be
+	// wrong in a way the user sees.
+	names, err := knownProfiles()
+	if err != nil {
+		return fmt.Errorf("list profiles: %w", err)
+	}
+	return &unknownProfileError{Profile: profile, Known: names}
+}
+
 // --- daemon start ---
 
 // daemonExecutable resolves the binary to spawn as the background daemon
@@ -469,11 +717,20 @@ func runDaemonStart(cmd *cobra.Command, _ []string) error {
 
 func runDaemonBackground(cmd *cobra.Command) error {
 	profile := resolveProfile(cmd)
+	// Only used to NAME the port in the identity-mismatch error below; the
+	// state probe itself derives the same port internally.
+	healthPort := healthPortForProfile(profile)
 
-	// Check if daemon is already running.
+	// Check if daemon is already running. A live daemon on our port that
+	// belongs to someone else is a collision, not an "already running" —
+	// starting would fail to bind and "already running" would send the user
+	// looking for a daemon of theirs that does not exist.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	health := daemonStateForProfile(ctx, profile)
+	health, err := daemonStateForProfileGuarded(ctx, profile, healthPort)
+	if err != nil {
+		return err
+	}
 	if daemonAlive(health) {
 		label := "daemon"
 		if profile != "" {
@@ -1097,11 +1354,20 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	profile := resolveProfile(cmd)
+	if err := requireKnownProfile(profile); err != nil {
+		return err
+	}
 	healthPort := healthPortForProfile(profile)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	health := daemonStateForProfile(ctx, profile)
+	// Identity before preflight, and well before the stop phase: restart
+	// kills whatever answered on this port, so a collision would take out
+	// another profile's daemon and then start ours in its place.
+	health, err := daemonStateForProfileGuarded(ctx, profile, healthPort)
+	if err != nil {
+		return err
+	}
 	if daemonAlive(health) {
 		// Validate the restart can succeed BEFORE the stop phase, not just
 		// inside the start phase: a missing/revoked token or an unreachable
@@ -1146,12 +1412,20 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	profile := resolveProfile(cmd)
+	if err := requireKnownProfile(profile); err != nil {
+		return err
+	}
 	healthPort := healthPortForProfile(profile)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	health := daemonStateForProfile(ctx, profile)
+	// The PID to kill comes from whatever answered on this port, so identity
+	// is verified before anything is signalled.
+	health, err := daemonStateForProfileGuarded(ctx, profile, healthPort)
+	if err != nil {
+		return err
+	}
 	if !daemonAlive(health) {
 		label := "Daemon"
 		if profile != "" {
@@ -1163,7 +1437,14 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 
 	pid, daemonID, ok := daemonHealthIdentity(health)
 	if !ok {
-		return fmt.Errorf("could not determine daemon PID from health endpoint")
+		// A daemon predating the daemon_id field still reports its pid.
+		// Refusing here would leave older daemons unstoppable — the same
+		// tolerance #6694 extends to the missing profile field.
+		rawPid, pidOK := health["pid"].(float64)
+		if !pidOK || rawPid == 0 {
+			return fmt.Errorf("could not determine daemon PID from health endpoint")
+		}
+		pid, daemonID = int(rawPid), ""
 	}
 
 	process, err := os.FindProcess(pid)
@@ -1232,27 +1513,73 @@ func runDaemonStatus(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	output, _ := cmd.Flags().GetString("output")
+
+	// Safe to list profiles here: daemonStatusHealthPort already rejected an
+	// explicit --profile inside a daemon-managed task.
+	if err := requireKnownProfile(profile); err != nil {
+		var unknown *unknownProfileError
+		if output == "json" && errors.As(err, &unknown) {
+			// Keep stdout a single valid JSON document. The non-zero exit
+			// carries the failure, so errSilent suppresses the stderr copy.
+			if printErr := cli.PrintJSON(os.Stdout, unknown.jsonPayload()); printErr != nil {
+				return printErr
+			}
+			return errSilent
+		}
+		return err
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	// Inside a daemon-managed task, probe the daemon-injected port directly:
 	// the host daemon's pid-file bookkeeping belongs to interactive contexts.
+	// There the port comes from the host daemon's own injection rather than a
+	// profile hash, so no collision is possible — and the task's profile is
+	// necessarily empty (--profile is rejected) while the host may run a
+	// named one, which would make every named-profile host look like a
+	// conflict and break the standing contract that `daemon status` in a task
+	// reports on the daemon hosting it.
 	var health map[string]any
+	var conflict *daemonProfileMismatchError
 	if inDaemonManagedExecutionContext() {
 		health = checkDaemonHealthOnPort(ctx, healthPort)
 	} else {
-		health = daemonStateForProfile(ctx, profile)
+		// A daemon belonging to another profile answering on our port is a
+		// collision, and detecting it needs the RAW answer — as does
+		// reporting fields like launched_by for a live matching daemon.
+		// Only a silent port falls through to daemonStateForProfile, whose
+		// pid-file reconciliation cleans up records for a daemon that is
+		// genuinely gone (#6694).
+		raw := checkDaemonHealthOnPort(ctx, healthPort)
+		if daemonAlive(raw) {
+			errors.As(daemonIdentityMismatch(raw, profile, healthPort), &conflict)
+			health = raw
+		} else {
+			health = daemonStateForProfile(ctx, profile)
+		}
 	}
 
-	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
+		if conflict != nil {
+			return cli.PrintJSON(os.Stdout, map[string]any{
+				"status":        "stopped",
+				"port_conflict": conflict.statusJSON(),
+			})
+		}
 		return cli.PrintJSON(os.Stdout, health)
 	}
 
 	label := "Daemon"
 	if profile != "" {
 		label = fmt.Sprintf("Daemon [%s]", profile)
+	}
+
+	if conflict != nil {
+		fmt.Fprintf(os.Stdout, "%s: stopped\n", label)
+		fmt.Fprintln(os.Stdout, conflict.statusNote())
+		return nil
 	}
 
 	switch health["status"] {
@@ -1267,15 +1594,16 @@ func runDaemonStatus(cmd *cobra.Command, _ []string) error {
 }
 
 // daemonStatusHealthPort resolves which daemon `status` should probe. Outside a
-// task that is the --profile-derived port. Inside a managed task it is the
-// daemon-injected MULTICA_DAEMON_PORT and nothing else: healthPortForProfile
-// hashes whatever profile name the caller passes, so deriving the port there
-// would let a task report on a daemon that is not the one hosting it — and for
-// a task hosted by a named-profile daemon it would silently probe the default
-// daemon instead. A missing port fails closed rather than guessing.
+// task that is the --profile-derived port, even when a stale
+// MULTICA_DAEMON_PORT remains in the host environment. Inside a managed task it
+// is the daemon-injected port and nothing else: healthPortForProfile hashes
+// whatever profile name the caller passes, so deriving the port there would let
+// a task report on a daemon that is not the one hosting it — and for a task
+// hosted by a named-profile daemon it would silently probe the default daemon
+// instead. A missing port fails closed rather than guessing.
 func daemonStatusHealthPort(cmd *cobra.Command) (int, error) {
 	profile := resolveProfile(cmd)
-	if !inDaemonManagedExecutionContext() {
+	if !inDaemonTaskIdentityContext() {
 		return healthPortForProfile(profile), nil
 	}
 	if profile != "" {
@@ -1292,6 +1620,16 @@ func daemonStatusHealthPort(cmd *cobra.Command) (int, error) {
 	return port, nil
 }
 
+// describeDaemonManager turns the daemon's launched_by tag into something a
+// user can act on. Unknown values are passed through rather than dropped: a
+// newer daemon naming a manager this CLI predates is still worth showing.
+func describeDaemonManager(launchedBy string) string {
+	if launchedBy == "desktop" {
+		return "Multica Desktop app (start and stop it from the app)"
+	}
+	return launchedBy
+}
+
 // printDaemonStatusReport renders a key/value summary of the daemon health
 // response. The value column is aligned to the widest label so the dynamic
 // "Daemon [profile]" row stays in step with the static rows below it.
@@ -1302,6 +1640,12 @@ func printDaemonStatusReport(w io.Writer, label string, health map[string]any) {
 	}
 	if version, ok := health["cli_version"].(string); ok && version != "" {
 		rows = append(rows, row{"Version", version})
+	}
+	// Answers "why is a daemon running that I never started?" — the reporter's
+	// ask in #6694. Only rendered when the daemon names a manager, so a
+	// standalone daemon and an older one that cannot say both stay unchanged.
+	if managed, ok := health["launched_by"].(string); ok && managed != "" {
+		rows = append(rows, row{"Managed by", describeDaemonManager(managed)})
 	}
 	// Only present while a confirmed on-disk version change is waiting for the
 	// daemon to go idle, so it reads as an explanation rather than a status line.
@@ -1337,6 +1681,9 @@ func runDaemonLogs(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	profile := resolveProfile(cmd)
+	if err := requireKnownProfile(profile); err != nil {
+		return err
+	}
 	logPath := daemonLogPathForProfile(profile)
 	if _, err := os.Stat(logPath); os.IsNotExist(err) {
 		return fmt.Errorf("no log file found at %s\nThe daemon may not have been started in background mode", logPath)

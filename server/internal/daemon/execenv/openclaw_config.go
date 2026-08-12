@@ -60,6 +60,9 @@ type OpenclawConfigPrep struct {
 	// OpenclawBin is the openclaw CLI binary to invoke for config introspection.
 	// Empty means resolve "openclaw" from PATH at exec time.
 	OpenclawBin string
+	// AgentID is the registered OpenClaw agent selected for this task. Empty
+	// keeps OpenClaw's default-agent behavior.
+	AgentID string
 	// Timeout sets the context deadline for each CLI invocation — not a
 	// guaranteed cap on how long the call takes; see openclawCLITimeout. Zero
 	// falls back to openclawCLITimeout.
@@ -235,6 +238,10 @@ func prepareOpenclawConfig(envRoot, workDir string, opts OpenclawConfigPrep) (Op
 			return OpenclawConfigResult{}, fmt.Errorf("read openclaw agents.list: %w", err)
 		}
 	}
+	extraSkillDirs, err := openclawAgentExtraSkillDirs(bin, timeout, resolvedList, opts.AgentID)
+	if err != nil {
+		return OpenclawConfigResult{}, fmt.Errorf("read openclaw skill directories: %w", err)
+	}
 
 	// Parse the agent's managed mcp_config (if any) before writing the wrapper
 	// so a malformed value fails the prepare step rather than crashing the
@@ -288,6 +295,11 @@ func prepareOpenclawConfig(envRoot, workDir string, opts OpenclawConfigPrep) (Op
 	}
 
 	cfg := buildPerTaskOpenclawConfig(activePath, exists, snapshotPath, resolvedList, agentsFromRegistry, workDir, managedMcp, hasManagedMcp, opts.Gateway)
+	if len(extraSkillDirs) > 0 {
+		cfg["skills"] = map[string]any{
+			"load": map[string]any{"extraDirs": extraSkillDirs},
+		}
+	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -467,6 +479,52 @@ func rewriteAgentsListWorkspaces(list []any, workDir string) []any {
 		return nil
 	}
 	return out
+}
+
+func openclawAgentExtraSkillDirs(bin string, timeout time.Duration, agents []any, agentID string) ([]string, error) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return nil, nil
+	}
+	workspace := ""
+	for _, item := range agents {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := entry["id"].(string)
+		if strings.TrimSpace(id) != agentID {
+			continue
+		}
+		workspace, _ = entry["workspace"].(string)
+		workspace = strings.TrimSpace(workspace)
+		break
+	}
+	if workspace == "" {
+		return nil, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	out, err := openclawExec(ctx, bin, "config", "get", "skills.load.extraDirs", "--json")
+	var dirs []string
+	if err != nil {
+		if !isOpenclawKeyMissing(err) {
+			return nil, err
+		}
+	} else if trimmed := strings.TrimSpace(out); trimmed != "" && trimmed != "null" {
+		if err := json.Unmarshal([]byte(trimmed), &dirs); err != nil {
+			return nil, fmt.Errorf("parse `openclaw config get skills.load.extraDirs --json` output: %w", err)
+		}
+	}
+
+	agentSkillsDir := filepath.Join(workspace, "skills")
+	for _, dir := range dirs {
+		if filepath.Clean(dir) == filepath.Clean(agentSkillsDir) {
+			return dirs, nil
+		}
+	}
+	return append(dirs, agentSkillsDir), nil
 }
 
 // stripUserMcpServers removes only `mcp.servers` from a resolved user

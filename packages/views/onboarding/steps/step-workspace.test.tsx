@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enOnboarding from "../../locales/en/onboarding.json";
@@ -26,6 +26,11 @@ const mockUseConfigStore = vi.hoisted(() =>
     selector({ workspaceCreationDisabled: false, daemonAppUrl: "" }),
   ),
 );
+const mockAcceptInvitation = vi.hoisted(() => vi.fn());
+const mockFetchWorkspaceList = vi.hoisted(() => vi.fn());
+// Mutable box so individual tests can seed pending invitations; the
+// react-query mock reads it at render time.
+const mockInvitationsBox = vi.hoisted(() => ({ value: [] as unknown[] }));
 
 vi.mock("../../auth", () => ({
   useLogout: () => mockLogout,
@@ -36,20 +41,51 @@ vi.mock("@multica/core/config", () => ({
     mockUseConfigStore(selector),
 }));
 
+const mockCreateMutate = vi.hoisted(() => vi.fn());
+
 vi.mock("@multica/core/workspace/mutations", () => ({
-  useCreateWorkspace: () => ({ mutate: vi.fn(), isPending: false }),
+  useCreateWorkspace: () => ({ mutate: mockCreateMutate, isPending: false }),
 }));
 
 vi.mock("@multica/core/api", () => ({
-  api: { getBaseUrl: () => "http://127.0.0.1:8080" },
+  api: {
+    getBaseUrl: () => "http://127.0.0.1:8080",
+    acceptInvitation: mockAcceptInvitation,
+  },
+}));
+
+// The disabled notice reads the user's pending invitations through
+// react-query; queryOptions must pass through because the real
+// workspace/queries module builds options with it at call time.
+vi.mock("@tanstack/react-query", () => ({
+  queryOptions: (options: unknown) => options,
+  useQuery: () => ({ data: mockInvitationsBox.value }),
+  useQueryClient: () => ({
+    invalidateQueries: vi.fn(),
+    fetchQuery: mockFetchWorkspaceList,
+  }),
 }));
 
 import { StepWorkspace } from "./step-workspace";
+import { NavigationProvider, type NavigationAdapter } from "../../navigation";
+
+function makeAdapter(): NavigationAdapter {
+  return {
+    push: vi.fn(),
+    replace: vi.fn(),
+    back: vi.fn(),
+    pathname: "/onboarding",
+    searchParams: new URLSearchParams(),
+    getShareableUrl: (p) => p,
+  };
+}
+
+let adapter = makeAdapter();
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
-      {children}
+      <NavigationProvider value={adapter}>{children}</NavigationProvider>
     </I18nProvider>
   );
 }
@@ -63,6 +99,7 @@ function renderStep({
   disabled: boolean;
   daemonAppUrl?: string;
 }) {
+  adapter = makeAdapter();
   mockUseConfigStore.mockImplementation(
     (selector: (state: MockConfigState) => unknown) =>
       selector({ workspaceCreationDisabled: disabled, daemonAppUrl }),
@@ -112,6 +149,41 @@ describe("StepWorkspace — DISABLE_WORKSPACE_CREATION gate", () => {
     expect(screen.queryByLabelText("Workspace name")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /log out/i })).toBeInTheDocument();
+  });
+
+  // The dead-end regression: SSO deployments deliver no invite email, and the
+  // sidebar accept UI needs a workspace to render inside — so an invited
+  // zero-workspace user must be able to accept right on this screen.
+  it("lists pending invitations on the disabled notice and enters on accept", async () => {
+    mockInvitationsBox.value = [
+      {
+        id: "inv-1",
+        workspace_id: "ws-9",
+        workspace_name: "Security",
+        status: "pending",
+      },
+      // Non-pending rows never render.
+      { id: "inv-2", workspace_id: "ws-8", workspace_name: "Old", status: "declined" },
+    ];
+    mockAcceptInvitation.mockResolvedValue({});
+    mockFetchWorkspaceList.mockResolvedValue([
+      { id: "ws-9", slug: "security", name: "Security" },
+    ]);
+    try {
+      renderStep({ existing: null, disabled: true });
+
+      expect(screen.getByText("Security")).toBeInTheDocument();
+      expect(screen.queryByText("Old")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /accept and enter/i }));
+
+      await waitFor(() => {
+        expect(mockAcceptInvitation).toHaveBeenCalledWith("inv-1");
+        expect(adapter.push).toHaveBeenCalledWith("/security/issues");
+      });
+    } finally {
+      mockInvitationsBox.value = [];
+    }
   });
 
   it("forces the existing-workspace-only state when the flag is on and the user already has a workspace", () => {
@@ -180,5 +252,135 @@ describe("StepWorkspace — random workspace identity", () => {
     expect(slug.value).toMatch(
       new RegExp(`^${expectedSlugPrefix}-[a-z0-9]{4}$`),
     );
+  });
+});
+
+// MUL-6050: the issue prefix used to be a read-only preview derived
+// server-side from the workspace NAME, so every workspace named in Chinese
+// (or Japanese, Korean, emoji…) was created as "WS" with no way to change it
+// in the create flow. It now derives from the slug — which the same form
+// already forces the user to pick in ASCII — and is editable here.
+describe("StepWorkspace — issue prefix", () => {
+  const prefixInput = () =>
+    screen.getByLabelText("Issue prefix") as HTMLInputElement;
+
+  it("derives the prefix from the slug, not the name", () => {
+    renderStep({ existing: null, disabled: false });
+
+    fireEvent.change(screen.getByLabelText("Workspace name"), {
+      target: { value: "Acme Inc" },
+    });
+
+    // Slug auto-filled to "acme-inc" → first 4 alphanumerics, uppercased.
+    expect(prefixInput().value).toBe("ACME");
+    expect(screen.getByText("ACME-123")).toBeInTheDocument();
+  });
+
+  // Reported against the first cut of this fix: typing a Chinese name and
+  // stopping there still showed "WS" — the placeholder invented one because a
+  // CJK-only name derives no slug. Nothing may advertise a prefix before there
+  // is one to derive from; "WS" in particular is the string this issue exists
+  // to remove.
+  it("shows no prefix at all while a CJK-only name leaves the slug empty", () => {
+    renderStep({ existing: null, disabled: false });
+
+    fireEvent.change(screen.getByLabelText("Workspace name"), {
+      target: { value: "蜘蛛侠" },
+    });
+
+    expect(screen.getByLabelText("URL")).toHaveValue("");
+    expect(prefixInput()).toHaveValue("");
+    expect(prefixInput().placeholder).toBe("");
+    expect(screen.queryByText(/WS/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/-123/)).not.toBeInTheDocument();
+    // The hint takes the example line's place so the field isn't a bare box.
+    expect(
+      screen.getByText("Set the URL above and issue numbers will follow it", {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+
+    // …and the moment a URL exists, the prefix follows it.
+    fireEvent.change(screen.getByLabelText("URL"), {
+      target: { value: "spider" },
+    });
+    expect(prefixInput()).toHaveValue("SPID");
+    expect(screen.getByText("SPID-123")).toBeInTheDocument();
+  });
+
+  it("gives a Chinese-named workspace a slug-derived prefix instead of WS", () => {
+    renderStep({ existing: null, disabled: false });
+
+    // A CJK-only name produces no slug, so the user types one — that ASCII
+    // choice is what the prefix now follows.
+    fireEvent.change(screen.getByLabelText("Workspace name"), {
+      target: { value: "前端团队" },
+    });
+    fireEvent.change(screen.getByLabelText("URL"), {
+      target: { value: "frontend" },
+    });
+
+    expect(prefixInput().value).toBe("FRON");
+    expect(prefixInput().value).not.toBe("WS");
+  });
+
+  it("stops following the slug once the user edits it, and normalizes input", () => {
+    renderStep({ existing: null, disabled: false });
+
+    fireEvent.change(screen.getByLabelText("Workspace name"), {
+      target: { value: "Acme Inc" },
+    });
+    fireEvent.change(prefixInput(), { target: { value: "fe-team!" } });
+
+    // Uppercased, non-alphanumerics dropped — matching the server's
+    // `^[A-Z0-9]{1,10}$` rule and the settings tab's guardrail.
+    expect(prefixInput().value).toBe("FETEAM");
+
+    // A later slug edit must not clobber the user's choice.
+    fireEvent.change(screen.getByLabelText("URL"), {
+      target: { value: "acme-corp" },
+    });
+    expect(prefixInput().value).toBe("FETEAM");
+    expect(screen.getByText("FETEAM-123")).toBeInTheDocument();
+  });
+
+  it("submits the prefix the user was shown", () => {
+    mockCreateMutate.mockClear();
+    renderStep({ existing: null, disabled: false });
+
+    fireEvent.change(screen.getByLabelText("Workspace name"), {
+      target: { value: "前端团队" },
+    });
+    fireEvent.change(screen.getByLabelText("URL"), {
+      target: { value: "frontend" },
+    });
+    fireEvent.change(prefixInput(), { target: { value: "fe" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Create 前端团队$/ }));
+
+    expect(mockCreateMutate).toHaveBeenCalledTimes(1);
+    expect(mockCreateMutate.mock.calls[0]![0]).toEqual({
+      name: "前端团队",
+      slug: "frontend",
+      issue_prefix: "FE",
+    });
+  });
+
+  it("falls back to the slug-derived default when the field is cleared", () => {
+    mockCreateMutate.mockClear();
+    renderStep({ existing: null, disabled: false });
+
+    fireEvent.change(screen.getByLabelText("Workspace name"), {
+      target: { value: "Acme Inc" },
+    });
+    fireEvent.change(prefixInput(), { target: { value: "" } });
+
+    // Empty input doesn't block the CTA: the placeholder already shows the
+    // default that will be used, so submitting an empty field can't surprise.
+    expect(prefixInput().placeholder).toBe("ACME");
+    fireEvent.click(screen.getByRole("button", { name: /^Create Acme Inc$/ }));
+
+    expect(mockCreateMutate.mock.calls[0]![0]).toMatchObject({
+      issue_prefix: "ACME",
+    });
   });
 });
