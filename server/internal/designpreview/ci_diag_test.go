@@ -10,11 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
-// Temporary CI-only diagnostic: reproduces the "second target hangs" pattern
-// and separates evaluate vs screenshot, plus candidate flag variants.
+// Temporary CI-only diagnostic: verifies candidate fixes for the
+// "second captureScreenshot hangs" bug (Chrome 150 headless waits on a frame
+// that never arrives).
 func TestDiagCIChromedpTwoTargets(t *testing.T) {
 	browserPath, err := ResolveBrowserPath("")
 	if err != nil {
@@ -29,20 +31,15 @@ func TestDiagCIChromedpTwoTargets(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// eachTarget: fresh target per iteration (matches production captureTarget).
-	eachTarget := func(t *testing.T, opts []chromedp.ExecAllocatorOption) {
-		t.Run("fresh-target", func(t *testing.T) {
+	eachTarget := func(t *testing.T, name string, opts []chromedp.ExecAllocatorOption, extraActions func() []chromedp.Action) {
+		t.Run(name, func(t *testing.T) {
 			allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
 			defer cancelAlloc()
 			browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
 			defer cancelBrowser()
-
-			start := time.Now()
 			if err := chromedp.Run(browserCtx); err != nil {
 				t.Fatalf("start browser: %v", err)
 			}
-			t.Logf("start browser ok after %v", time.Since(start))
-
 			for i := 1; i <= 2; i++ {
 				targetCtx, cancelTarget := chromedp.NewContext(browserCtx)
 				targetCtx, cancelTimeout := context.WithTimeout(targetCtx, 20*time.Second)
@@ -59,6 +56,9 @@ func TestDiagCIChromedpTwoTargets(t *testing.T) {
 				stage("evaluate", func() error {
 					return chromedp.Run(targetCtx, chromedp.Evaluate(`(() => { const m = document.querySelector('main'); return {text: m ? m.textContent : '', count: document.querySelectorAll('*').length}; })()`, &dom))
 				})
+				for _, act := range extraActions() {
+					stage("extra", func() error { return chromedp.Run(targetCtx, act) })
+				}
 				var shot []byte
 				stage("screenshot", func() error { return chromedp.Run(targetCtx, chromedp.CaptureScreenshot(&shot)) })
 				t.Logf("target%d evaluate=%v screenshot=%d bytes", i, dom, len(shot))
@@ -68,43 +68,29 @@ func TestDiagCIChromedpTwoTargets(t *testing.T) {
 		})
 	}
 
-	// reuseTarget: same target context navigated twice (no new tab).
-	reuseTarget := func(t *testing.T, opts []chromedp.ExecAllocatorOption) {
-		t.Run("reuse-target", func(t *testing.T) {
-			allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
-			defer cancelAlloc()
-			browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
-			defer cancelBrowser()
-			if err := chromedp.Run(browserCtx); err != nil {
-				t.Fatalf("start browser: %v", err)
-			}
-			targetCtx, cancelTarget := chromedp.NewContext(browserCtx)
-			defer cancelTarget()
-			targetCtx, cancelTimeout := context.WithTimeout(targetCtx, 20*time.Second)
-			defer cancelTimeout()
-			for i := 1; i <= 2; i++ {
-				stage := func(label string, fn func() error) {
-					s := time.Now()
-					if err := fn(); err != nil {
-						t.Fatalf("nav%d %s: %v (after %v)", i, label, err, time.Since(s))
-					}
-					t.Logf("nav%d %s ok after %v", i, label, time.Since(s))
-				}
-				stage("navigate", func() error { return chromedp.Run(targetCtx, chromedp.Navigate(server.URL)) })
-				stage("sleep", func() error { return chromedp.Run(targetCtx, chromedp.Sleep(750*time.Millisecond)) })
-				var dom map[string]any
-				stage("evaluate", func() error {
-					return chromedp.Run(targetCtx, chromedp.Evaluate(`(() => { const m = document.querySelector('main'); return {text: m ? m.textContent : '', count: document.querySelectorAll('*').length}; })()`, &dom))
-				})
-				var shot []byte
-				stage("screenshot", func() error { return chromedp.Run(targetCtx, chromedp.CaptureScreenshot(&shot)) })
-				t.Logf("nav%d evaluate=%v screenshot=%d bytes", i, dom, len(shot))
-			}
-		})
+	bringToFront := func() []chromedp.Action {
+		return []chromedp.Action{chromedp.ActionFunc(func(ctx context.Context) error {
+			return page.BringToFront().Do(ctx)
+		})}
+	}
+	forcePaint := func() []chromedp.Action {
+		// Force a new compositor frame before capture.
+		return []chromedp.Action{chromedp.Evaluate(`document.body.style.background='#fefefe'; document.body.offsetHeight; document.body.style.background='#ffffff';`, nil)}
 	}
 
 	defaultOpts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(browserPath))
-	eachTarget(t, defaultOpts)
-	reuseTarget(t, defaultOpts)
-	eachTarget(t, append(append([]chromedp.ExecAllocatorOption{}, defaultOpts...), chromedp.Flag("disable-gpu", true)))
+	eachTarget(t, "baseline", defaultOpts, func() []chromedp.Action { return nil })
+	eachTarget(t, "bring-to-front", defaultOpts, bringToFront)
+	eachTarget(t, "force-paint", defaultOpts, forcePaint)
+
+	// Minimal options without chromedp's disable-features override.
+	minimalOpts := []chromedp.ExecAllocatorOption{
+		chromedp.ExecPath(browserPath),
+		chromedp.Flag("headless", true),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("no-first-run", true),
+		chromedp.Flag("no-default-browser-check", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+	}
+	eachTarget(t, "no-disable-features", minimalOpts, bringToFront)
 }
