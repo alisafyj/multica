@@ -10,6 +10,7 @@
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
+import { toast } from "sonner";
 import { renderWithI18n } from "../test/i18n";
 import { NavigationProvider, type NavigationAdapter } from "../navigation";
 import type { PMOConfig } from "@multica/core/types";
@@ -49,6 +50,14 @@ const SCHEDULED_CONFIG: PMOConfig = {
 // ---------------------------------------------------------------------------
 
 const createConfigMutate = vi.fn();
+const { alertDialogState } = vi.hoisted(() => ({
+  alertDialogState: { onOpenChange: null as ((open: boolean) => void) | null },
+}));
+const deleteConfigMutate = vi.fn(
+  (_id: string, opts?: { onSuccess?: () => void; onError?: () => void }) => {
+    opts?.onSuccess?.();
+  },
+);
 const push = vi.fn();
 
 vi.mock("@multica/core/pmo/mutations", () => ({
@@ -57,7 +66,7 @@ vi.mock("@multica/core/pmo/mutations", () => ({
   useSetPMOAssigneeMapping: () => ({ mutate: vi.fn(), isPending: false }),
   useUpdatePMOConfig: () => ({ mutate: vi.fn(), isPending: false }),
   useCreatePMOConfig: () => ({ mutate: createConfigMutate, isPending: false }),
-  useDeletePMOConfig: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeletePMOConfig: () => ({ mutate: deleteConfigMutate, isPending: false }),
 }));
 
 vi.mock("@multica/core/pmo/queries", () => ({
@@ -137,6 +146,23 @@ vi.mock("@multica/ui/components/ui/dialog", () => ({
   DialogTitle: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
   DialogDescription: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
 }));
+vi.mock("@multica/ui/components/ui/alert-dialog", () => ({
+  AlertDialog: ({ open, onOpenChange, children }: { open?: boolean; onOpenChange?: (open: boolean) => void; children?: React.ReactNode }) => {
+    alertDialogState.onOpenChange = onOpenChange ?? null;
+    return open ? <>{children}</> : null;
+  },
+  AlertDialogContent: ({ children }: { children?: React.ReactNode }) => <div data-testid="alert-dialog-content">{children}</div>,
+  AlertDialogHeader: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  AlertDialogTitle: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  AlertDialogDescription: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  AlertDialogFooter: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  AlertDialogCancel: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { children?: React.ReactNode }) => (
+    <button type="button" onClick={() => alertDialogState.onOpenChange?.(false)} {...props}>{children}</button>
+  ),
+  AlertDialogAction: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { children?: React.ReactNode }) => (
+    <button type="button" {...props}>{children}</button>
+  ),
+}));
 vi.mock("@multica/ui/components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ render }: { render?: React.ReactElement }) => (render ?? null),
@@ -193,6 +219,11 @@ function errorConfigs() {
 beforeEach(() => {
   queryState.configs = { data: [], isPending: false, isError: false, isSuccess: false };
   createConfigMutate.mockClear();
+  deleteConfigMutate.mockClear();
+  deleteConfigMutate.mockImplementation(
+    (_id: string, opts?: { onSuccess?: () => void; onError?: () => void }) => opts?.onSuccess?.(),
+  );
+  alertDialogState.onOpenChange = null;
   push.mockClear();
 });
 
@@ -260,6 +291,42 @@ describe("PMOListPage config list", () => {
     fireEvent.click(screen.getByRole("button", { name: "New sync config" }));
     expect(screen.getByLabelText("Name")).toBeInTheDocument();
   });
+
+  it("deletes a config after confirming in the alert dialog", () => {
+    listConfigs([CONFIG]);
+    renderPage();
+    // Row delete button (aria-label) is the only "Delete" control before the dialog opens.
+    fireEvent.click(screen.getByRole("button", { name: "Delete: Platform requirements" }));
+    expect(screen.getByText("Delete this config")).toBeInTheDocument();
+    fireEvent.click(within(screen.getByTestId("alert-dialog-content")).getByRole("button", { name: "Delete" }));
+    expect(deleteConfigMutate).toHaveBeenCalledWith("cfg-1", expect.anything());
+    // Success path closes the dialog and toasts.
+    expect(screen.queryByTestId("alert-dialog-content")).not.toBeInTheDocument();
+    expect(toast.success).toHaveBeenCalledWith("Config deleted.");
+  });
+
+  it("shows an error toast when deleting fails and closes the dialog", () => {
+    deleteConfigMutate.mockImplementation(
+      (_id: string, opts?: { onSuccess?: () => void; onError?: () => void }) => opts?.onError?.(),
+    );
+    listConfigs([CONFIG]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Delete: Platform requirements" }));
+    fireEvent.click(within(screen.getByTestId("alert-dialog-content")).getByRole("button", { name: "Delete" }));
+    expect(toast.error).toHaveBeenCalledWith("Deleting the config failed.");
+    expect(screen.queryByTestId("alert-dialog-content")).not.toBeInTheDocument();
+  });
+
+  it("cancelling the delete dialog closes it and leaves the config untouched", () => {
+    listConfigs([CONFIG]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Delete: Platform requirements" }));
+    expect(screen.getByTestId("alert-dialog-content")).toBeInTheDocument();
+    fireEvent.click(within(screen.getByTestId("alert-dialog-content")).getByRole("button", { name: "Cancel" }));
+    expect(deleteConfigMutate).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("alert-dialog-content")).not.toBeInTheDocument();
+  });
+
 });
 
 describe("PMOListPage create-config dialog", () => {
