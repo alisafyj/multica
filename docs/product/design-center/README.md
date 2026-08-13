@@ -1,7 +1,7 @@
 # Multica 设计中心长期产品记忆
 
 > 状态：持续维护
-> 最后更新：2026-08-05
+> 最后更新：2026-08-12
 > 适用范围：设计中心、设计体系、UI 规范、设计任务、UI Agent、设计稿生成、设计还原、设计 MCP、Open Design 能力接入
 
 ## 1. 这份模块解决什么问题
@@ -135,6 +135,16 @@ Agent 负责语义理解、设计判断、布局和组件组织；Multica 负责
 
 完整方案见 [2026-08-05-multica-native-design-engine-design.md](../../superpowers/specs/2026-08-05-multica-native-design-engine-design.md) 和 DC-039。
 
+### P-011 Phase A 页面设计采用版本化 Design Document
+
+`confirmed`
+
+设计中心首页发起的页面设计 task 产出轻量、版本化的 `multica.design-document/v1`。一份 Design Document 可以包含主页面、相关子页面、状态、弹窗和关键流程；使用语义 `brief.json` 表达需求关系，以完全离线的可运行 prototype 表达布局和交互，以 `coverage.json` 表达需求覆盖，不恢复大型 PageSpec DSL。
+
+项目允许多份 Design Document。每份文档通过不可变 revisions 演进，并维护当前 `draft` 与 `saved` 指针；用户只看到当前草稿和已保存状态。首次生成和每次调整均创建独立 task，在文档持续隔离工作空间中执行，固定输入快照和 base revision。Package 必须通过 Audit 与员工本地守护进程的现有 `designpreview` 强制门禁后才能进入 draft；浏览器不可用时任务失败，不增加跳过或降级路径。只有用户明确保存后，saved 才移动，下游智能体、MCP 和交付链只读取 saved。
+
+页面 task 在执行中自动完成有界只读仓库 grounding；项目和智能体必选，任务（Issue）可选。保存设计稿只记录可追溯关联，不自动改变任务状态。完整方案见 [Native Design Phase A：页面 Design Document 产品与技术方案](../../superpowers/specs/2026-08-12-native-design-phase-a-design-document-design.md) 和 DC-042 至 DC-046。
+
 ### P-007 旧决策：先实现 Open Design 契约的云端映射
 
 `superseded`
@@ -208,30 +218,33 @@ Agent 每次直接生成一套内部一致的设计体系草稿，不先生成�
 
 ## 5. 当前讨论范围
 
-以下内容来自 2026-07-28 至 2026-07-31 的讨论：
+以下内容来自 2026-07-28 至 2026-08-12 的讨论：
 
 1. **项目设计体系**，`confirmed`：项目拥有可生成、预览、调整和保存的云端设计体系；在线 UI Kit 是它的派生视图，Figma UI 规范是可选输入。
 2. **设计体系规则基线**，`confirmed`：第一版参照采用 Open Design 的包结构、Token 分层和可选扩展，不再扩展一套平行模型；不照搬其修订审核工作流。
 3. **第一阶段产品闭环**，`confirmed`：用户在项目设计模块主动创建或生成设计体系，在线查看设计规则、Tokens、组件与 UI Kit，预览调整后保存为项目长期资产。
-4. **设计任务发起器**，`proposal`：以现有设计中心为入口，沿用设计中心的项目切换能力，形成项目范围内的设计工作空间。
-5. **设计任务模板**，`proposal`：在设计体系和任务发起器落地后再设计，届时继续研究 Open Design 的模板机制。
-6. **项目工作区 Tab**，`confirmed`：设计中心固定保留不可关闭的“首页” Tab；具体项目以可打开、可切换、可关闭的 Tab 呈现。关闭最后一个项目后回到首页，首页内容留待下一阶段设计。
-7. **项目内容 Tab**，`confirmed`：项目内的“设计稿 / 设计草稿 / 模版 / 设计体系”使用紧凑的二级内容 Tab，数量以小徽标呈现，不再使用说明型大卡片；内容面板不重复显示项目名和分类标题。
-8. **设计体系内容主视图**，`confirmed`：设计体系 Tab 直接展示动态章节、视觉 Tokens、组件状态和在线 UI Kit，不再经过摘要列表或二级详情入口；左侧使用当前体系的章节目录，智能体调整面板按需打开。
-9. **设计体系创建工作台**，`confirmed`：未建立体系时直接在设计体系 Tab 内展示自然语言为主的单屏创建工作台；目标平台和执行智能体必选，其他参考资料可选，提交后原地进入生成状态。
-10. **设计体系连续内容画布**，`confirmed`：草稿和已保存状态共用动态章节目录与连续内容主视图；智能体调整面板默认关闭，保存是草稿的唯一主操作。
-11. **设计体系成功与保存边界**，`confirmed`：task 完成后必须通过产物和 UI Kit 渲染验证才能形成草稿；草稿与已保存体系隔离，下游只读取已保存内容，保存采用原子替换。
-12. **统一设计上下文解析**，`confirmed`：下游固定按“云端已保存项目设计体系 > 本地 `DESIGN.md` > 仓库现实”解析设计约束；Server 只读取通过校验的 `saved` 内容，不读取草稿或旧 Profile，无云端内容时由本地 Agent 继续完成本地回退。
-13. **用户主动发起只读仓库分析**，`confirmed`：设计体系创建不增加隐式强制扫描；用户选择 Agent 和目标平台后可主动分析该 runtime 可访问的项目资源。分析期间内容区锁定且只保留停止操作，成功后回填结构化仓库事实与冲突，失败时保留原表单和上一次有效分析，Agent 不得修改仓库或生成本地 `DESIGN.md`。
-14. **仓库分析后的参考资料快照**，`confirmed`：分析成功后只展示已使用资料摘要并自动沿用到生成；用户重新选择参考资料后必须重新分析，旧分析不能继续驱动生成。
-15. **Open Design 核心参照边界**，`confirmed`：产品流程、能力语义、分层包、Agent 深化、Package Audit、Preview/UI Kit 和模板机制以 Open Design 为行为基线，但由 Multica 使用现有 Agent 与基础设施原生实现。
-16. **不采用专用 Worker/Runtime**，`confirmed`：不运行、分发或托管 Open Design Worker、Daemon 和 Runtime；固定版本实验只保留为源码证据、行为对照和质量门禁依据。
+4. **设计任务发起器**，`confirmed`：首页第一版是跨项目页面设计 task 发起器，用户输入自然语言页面需求并选择项目和智能体；任务创建成功后进入目标项目“设计草稿”，首页与项目 Tab 读取同一服务端 task/document 状态。项目和智能体必选，任务（Issue）可选，不自动创建或推进任务。
+5. **页面 Design Document**，`confirmed`：正式产物为 `multica.design-document/v1`，由语义 brief、离线可运行 prototype、assets 和 coverage 组成。一份文档可包含完整页面流程；项目允许多份文档，文档以不可变 revisions 演进并维护 draft/saved 指针。每次调整创建独立 task，在持续工作空间中基于固定 base revision 输出完整 package。
+6. **页面仓库 Grounding**，`confirmed`：页面设计 task 内由所选智能体自动执行有界只读仓库取证，固定 commit、相对来源、摘要、结构化事实和不确定性；不增加首页前置扫描步骤。该规则不改变设计体系创建中由用户主动发起仓库分析并冻结参考资料的 DC-018/DC-036。
+7. **页面 Audit/Preview 门禁**，`confirmed`：Design Document 直接复用员工本地守护进程现有 `designpreview` 强制门禁，并叠加页面/状态/流程和关键交互检查。浏览器不可用时 task 失败，不跳过 Preview、不形成或覆盖 draft；能够渲染不等于视觉质量通过。
+8. **设计任务模板**，`confirmed`：模板是页面设计 task 配方，不是设计体系；按官方模板、工作区成员发布、跨工作区社区模板分期推进，均不进入新 Phase A。
+9. **项目工作区 Tab**，`confirmed`：设计中心固定保留不可关闭的“首页” Tab；具体项目以可打开、可切换、可关闭的 Tab 呈现。关闭最后一个项目后回到首页，首页内容留待下一阶段设计。
+10. **项目内容 Tab**，`confirmed`：项目内的“设计稿 / 设计草稿 / 模版 / 设计体系”使用紧凑的二级内容 Tab，数量以小徽标呈现，不再使用说明型大卡片；内容面板不重复显示项目名和分类标题。
+11. **设计体系内容主视图**，`confirmed`：设计体系 Tab 直接展示动态章节、视觉 Tokens、组件状态和在线 UI Kit，不再经过摘要列表或二级详情入口；左侧使用当前体系的章节目录，智能体调整面板按需打开。
+12. **设计体系创建工作台**，`confirmed`：未建立体系时直接在设计体系 Tab 内展示自然语言为主的单屏创建工作台；目标平台和执行智能体必选，其他参考资料可选，提交后原地进入生成状态。
+13. **设计体系连续内容画布**，`confirmed`：草稿和已保存状态共用动态章节目录与连续内容主视图；智能体调整面板默认关闭，保存是草稿的唯一主操作。
+14. **设计体系成功与保存边界**，`confirmed`：task 完成后必须通过产物和 UI Kit 渲染验证才能形成草稿；草稿与已保存体系隔离，下游只读取已保存内容，保存采用原子替换。
+15. **统一设计上下文解析**，`confirmed`：下游固定按“云端已保存项目设计体系 > 本地 `DESIGN.md` > 仓库现实”解析设计约束；Server 只读取通过校验的 `saved` 内容，不读取草稿或旧 Profile，无云端内容时由本地 Agent 继续完成本地回退。
+16. **用户主动发起只读仓库分析**，`confirmed`：设计体系创建不增加隐式强制扫描；用户选择 Agent 和目标平台后可主动分析该 runtime 可访问的项目资源。分析期间内容区锁定且只保留停止操作，成功后回填结构化仓库事实与冲突，失败时保留原表单和上一次有效分析，Agent 不得修改仓库或生成本地 `DESIGN.md`。
+17. **仓库分析后的参考资料快照**，`confirmed`：分析成功后只展示已使用资料摘要并自动沿用到生成；用户重新选择参考资料后必须重新分析，旧分析不能继续驱动生成。
+18. **Open Design 核心参照边界**，`confirmed`：产品流程、能力语义、分层包、Agent 深化、Package Audit、Preview/UI Kit 和模板机制以 Open Design 为行为基线，但由 Multica 使用现有 Agent 与基础设施原生实现。
+19. **不采用专用 Worker/Runtime**，`confirmed`：不运行、分发或托管 Open Design Worker、Daemon 和 Runtime；固定版本实验只保留为源码证据、行为对照和质量门禁依据。
 
-当前尚未确认的细节只保留 Multica 落地问题：
+当前尚未确认的细节只保留后续落地与独立切片问题：
 
-- 第一阶段闭环所需的最小持久化模型；
-- 设计中心发起的设计任务如何与 Issue 建立强关联；
-- 在线设计的主产物格式和编辑模型；
+- A1 实施计划中如何在不破坏历史 `semantic_design_draft` 的前提下落地 Design Document、revision 和指针持久化；
+- 工作区共享设计体系 revision 的发布、剥离和权限模型；
+- 官方模板与后续社区模板的资源、revision 和应用快照模型；
 - 何时以及如何支持原生 Figma UI Kit 写回。
 
 ## 6. 历史资料的使用方式
@@ -262,9 +275,11 @@ Agent 每次直接生成一套内部一致的设计体系草稿，不先生成�
 
 ## 8. 当前下一议题
 
-2026-08-12 用户取消独立、一次性的 Open Design V1 破坏性移除 Phase B。后续只沿 Native V2 产品功能切片推进：每个切片必须清理其实际触达范围内已被完整替代的旧分支、fallback、配置和测试，但不得为了全仓库旧符号清零扩大范围。数据库行、对象、表和约束的不可逆退役最后单独提出、审批和验证。详细决策见 DC-040 和 [Native Design 产品切片演进与渐进清理方案](../../superpowers/specs/2026-08-12-native-design-slice-driven-evolution-design.md)。
+2026-08-12 用户取消独立、一次性的 Open Design V1 破坏性移除 Phase B。后续只沿 Native V2 产品功能切片推进：切片内部已经无调用、被完整替代的旧分支、fallback、配置和测试必须删除；跨切片、跨数据生命周期或仍有外部消费者的残留进入唯一退役账本，不得扩大当前切片。数据库行、对象、表和约束的不可逆退役最后单独提出、审批和验证。详细决策见 DC-040 和 [Native Design 产品切片演进与渐进清理方案](../../superpowers/specs/2026-08-12-native-design-slice-driven-evolution-design.md)。
 
-当前下一议题是继续与用户确认和补充新的 Phase A，包括目标与用户价值、真实使用闭环、验收证据、功能切片顺序和明确非目标。在这些内容获批前，不编写新实施计划，不推进旧代码或数据清理。`feature/fengchen-fixed-v2` 只保留为取消路线的隔离 checkpoint，不属于当前产品进度或后续实现基线。
+新 Phase A 的产品方案已经确认。首页使用自然语言发起项目页面设计 task，项目和智能体必选、任务（Issue）可选；task 内自动完成有界只读仓库 grounding，并产出版本化 `multica.design-document/v1`。每个项目允许多份 Design Document，每份文档以不可变 revisions、draft/saved 指针和持续工作空间支持 Preview、调整、保存与放弃。Package 必须通过 Audit 和员工本地守护进程现有 `designpreview` 强制门禁，浏览器不可用时不降级。完整方案见 [Native Design Phase A：页面 Design Document 产品与技术方案](../../superpowers/specs/2026-08-12-native-design-phase-a-design-document-design.md) 和 DC-042 至 DC-046。
+
+下一步是用户复核书面规格，随后只为 Phase A 的 A1 至 A6 内部子切片编写详细实施计划。Phase A 不从零开始：现有智能体 task/本地运行时、Native V2 package、对象存储、digest、Audit、`designpreview`、draft/saved、仓库事实契约和设计中心工作区可直接复用或翻新。按剩余领域模型、首页、文档工作空间、交互门禁和真实验收保守估算，当前产品设计确认度为 100%，Phase A 工程基线约为 40%–45%，暂记约 42%；详细 A1 至 A6 映射见 [正式规格第 17 节](../../superpowers/specs/2026-08-12-native-design-phase-a-design-document-design.md#17-已有工程基础与进度口径)。工作区共享设计体系、官方模板、工作区成员模板发布和跨工作区社区模板继续按 DC-041 作为 Slice B 至 E 独立推进，不计入 Phase A。`feature/fengchen-fixed-v2` 只保留为取消路线的隔离 checkpoint，不属于当前产品进度或后续实现基线。
 
 2026-08-05 已确认的原生方向继续有效：Open Design Worker/Runtime 的直接接入不进入产品主线，Phase 0 和 Phase 2 已完成结果保留为真实执行、失败隔离、Audit、Preview 和草稿门禁证据。
 

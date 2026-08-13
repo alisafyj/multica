@@ -1,6 +1,6 @@
 # Multica 设计中心决策台账
 
-> 最后更新：2026-07-31
+> 最后更新：2026-08-12
 > 规则：保留历史，通过状态变化表达推翻或替代，不删除旧决策
 
 ## 状态说明
@@ -326,7 +326,7 @@
 - 产物边界：项目设计体系采用 Multica 自有版本化资源包，保留 `manifest.json`、`DESIGN.md`、`tokens.css`、来源证据和可选组件/UI Kit 的分层语义；后续在线设计稿采用语义 brief 加可运行原型，不要求 Agent 直接生成巨大 Figma/Native JSON，也不恢复 PageSpec 通用 DSL。
 - 产品边界：继续使用项目设计体系强约束、模板弱参考、用户选择 Agent、草稿/保存、不引入审核、内容主视图和 Issue 协作等既有决策。
 - 迁移边界：保留 Worker Phase 0 的实验和质量证据；停止扩展 `open_design_run`、Runtime resolver、archive installer、adapter 和 Worker supervisor。现有数据和代码先隔离，原生链路稳定后再单独清理，不执行破坏性迁移。
-- 第一阶段：只替换项目设计体系的生成和调整内核，保持现有设计中心工作区，通过 CRM 真实仓库、真实 Agent、真实 UI Kit 和 Chrome 视觉结果完成验收；首页、设计稿、社区模板和还原按后续阶段推进。
+- 阶段更新：2026-08-05 原第一阶段只替换项目设计体系生成和调整内核；2026-08-12 的 DC-041 至 DC-046 已将首页与页面 Design Document 闭环纳入新的 Phase A。共享设计体系和模板仍按 Slice B 至 E 后续推进，设计还原继续作为独立边界。
 - 方案：[2026-08-05-multica-native-design-engine-design.md](../../superpowers/specs/2026-08-05-multica-native-design-engine-design.md)。
 - 依据：`OD-001` 至 `OD-013` 的产品与包语义证据，以及 `OD-021` 至 `OD-044` 的执行、失败和质量门禁实验。
 
@@ -342,24 +342,89 @@
 - 历史关系：DC-039 保持有效，其“现有数据和代码先隔离，原生链路稳定后再单独清理，不执行破坏性迁移”重新成为迁移边界；本决策补充局部替代后的强制清理门禁。
 - 取消路线：`2026-08-12-native-design-phase-1-closure-and-legacy-removal-design.md` 的独立 Phase B，以及 `2026-08-12-open-design-v1-destructive-removal.md` 的 Task 3–12，均改为 `superseded`。其中已有 Phase A 自动化证据继续有效。
 - 分支边界：`feature/fengchen-fixed-v2` 只保留为取消路线的隔离 checkpoint，不合入 `feature/fengchen`，不作为后续实现基线，也不计入产品进度。
-- 当前下一步：继续与用户确认和补充新的 Phase A；在目标、真实使用闭环、验收证据和功能切片顺序获批前，不编写实施计划，不推进旧代码或数据清理。
+- 当前下一步：新 Phase A 产品方案已由 DC-041 至 DC-046 确认；用户复核书面规格后，只为 A1 至 A6 编写实施计划。在计划获批前不修改产品代码，也不推进旧代码或数据清理。
 - 方案：[2026-08-12-native-design-slice-driven-evolution-design.md](../../superpowers/specs/2026-08-12-native-design-slice-driven-evolution-design.md)。
+
+### DC-041 设计中心首页、工作区共享设计体系与社区模板分期
+
+- 状态：`confirmed`
+- 日期：2026-08-12
+- 总体顺序：新 Phase A 建设首页页面设计任务入口；后续依次建设工作区共享设计体系、官方模板、工作区成员模板发布和跨工作区社区模板。五个切片共享任务上下文与不可变引用原则，但不得合并成一个实施阶段。
+- 首页边界：首页是跨项目页面设计任务发起器，不创建第二套 Project。第一版只生成项目内页面设计稿或可运行原型，项目和 Agent 必选；创建成功后打开目标项目的“设计草稿”，首页与项目 Tab 读取同一服务端 task/draft。设计体系创建继续留在项目“设计体系”Tab。
+- 约束优先级：用户明确需求与项目 saved 体系构成当前任务的主要约束；工作区共享设计体系和模板绑定体系只作为弱参考，不能覆盖项目 Tokens 或隐式建立项目体系。
+- 共享体系：第一阶段仅工作区成员可发现和使用。公开对象不是项目体系本身，而是从 saved Native V2 package 经重新校验和安全剥离生成的不可变 revision；项目后续调整不影响已发布版本，历史任务固定 revision 和 digest。
+- 模板边界：模板是页面设计任务配方，不是设计体系。每次应用模板都固定 template revision、manifest digest、用户需求、项目、Agent、设计体系引用和附件快照。模板升级或下架不改变历史任务。
+- 模板分期：先建设官方模板目录以验证任务效率和生成质量，再开放工作区成员发布，最后才建设跨工作区社区发现、许可、举报、审核与推荐。
+- 安全与历史：共享体系和模板发布都必须剥离项目、仓库、任务和附件私有信息并重新执行 Audit/Preview；下架只阻止新引用，历史任务继续读取固定 revision。来源项目删除不自动删除已发布资源。
+- 现有模型：现有 workspace-scoped template library/catalog/revision 只作为迁移输入与部分基础，不能直接等同于新的共享资源和社区治理模型；先定义资源、revision 和应用快照契约，再决定数据库实现。
+- Phase A 边界：只有首页页面设计入口和 DC-042 至 DC-046 确认的 Design Document 闭环进入新 Phase A；共享体系和模板 Slice B–E 不计入 Phase A 完成条件。Phase A 产品设计已确认，实施仍未开始；先前约 48% 仅是确认前的讨论基线，不再作为当前进度。
+- 方案：[2026-08-12-design-home-public-systems-community-templates-design.md](../../superpowers/specs/2026-08-12-design-home-public-systems-community-templates-design.md)。
+
+## 已确认的新增决策
+
+### DC-042 页面设计采用版本化 Design Document
+
+- 状态：`confirmed`
+- 日期：2026-08-12
+- 产物：页面设计 task 输出 `multica.design-document/v1`，由 `manifest.json`、语义 `brief.json`、完全离线的可运行 prototype、assets 和 `coverage.json` 组成。Audit/Preview receipt 与 package digest 绑定并独立持久化，避免回执进入自身摘要形成循环。
+- 资产粒度：一份 Design Document 可以包含主页面、相关子页面、状态、弹窗和关键流程；一个项目允许多份文档。文档使用不可变 revisions 演进并维护当前 draft/saved 指针，第一版用户只看到当前草稿和已保存状态。
+- 调整：支持文档、页面、状态、弹窗和命名区块的自然语言 scope；每次调整创建独立 task，固定 base revision，并输出完整新 package。第一版不支持任意 DOM 点选、分支合并和完整版本时间线。
+- 保存：只有用户明确保存后 saved 才移动；下游智能体、MCP 和交付链只读取 saved。首次失败不创建空文档，调整失败不移动 draft，保存失败不移动 saved。
+- 非目标：不恢复大型 PageSpec DSL、通用 Scene Graph、真实 API 联调、自动前端交付或 Figma/Native Design JSON。
+
+### DC-043 页面 Design Document 使用 task 内自动只读仓库 Grounding
+
+- 状态：`confirmed`
+- 日期：2026-08-12
+- 决策：首页不增加独立仓库分析前置步骤。所选智能体在页面设计 task 内，对其运行时可访问的项目仓库执行有界只读取证，固定 checkout/commit、相对来源、摘要、组件/路由/样式事实、冲突与不确定性。
+- 安全：不修改源仓库，不长期保存绝对路径、凭据、无关业务数据或未授权完整源码。普通调整沿用固定事实；用户主动同步最新仓库时才创建新的 grounding 和 input snapshot。
+- 不可访问：必须明确提示，并由用户选择仅按项目描述、关联任务、附件和 saved 体系继续，或停止并更换智能体/运行时；不得静默描述为已 grounding。
+- 历史关系：本决策只约束页面 Design Document task，不推翻 DC-018/DC-036。项目设计体系创建仍由用户主动发起独立仓库分析，并在成功后冻结参考资料。
+
+### DC-044 Design Document 复用现有本地浏览器强制门禁
+
+- 状态：`confirmed`
+- 日期：2026-08-12
+- 决策：页面 Design Document 直接复用员工本地守护进程现有 `server/internal/designpreview`，由本地运行时自动解析 Chrome/Chromium，在 Audit 通过后执行 Preview。Phase A 不引入中心化 Chromium 服务。
+- 强制边界：浏览器不可用时 task 失败，不跳过 Preview，不新增待验证候选、前端补验证或无浏览器保存例外。未通过 Audit/Preview 的 package 不得进入或覆盖 draft，旧 revision receipt 不得批准新 package。
+- 原型边界：允许 package 内离线 HTML/CSS/JavaScript 和本地状态交互，但禁止网络、真实 API、凭据、外部脚本、Service Worker 和宿主同源权限。页面/状态/流程和关键交互检查是现有门禁的叠加，不得放松安全与 digest 绑定。
+- 质量边界：浏览器通过只证明原型能够安全运行，不代表视觉质量通过；严格验收仍需用户 Chrome、Network、Console 和人工业务/视觉判断。
+
+### DC-045 页面 Design Document 与任务（Issue）采用可选关联
+
+- 状态：`confirmed`
+- 日期：2026-08-12
+- 决策：首页创建页面设计时项目和智能体必选，任务（Issue）与目标平台可选。无关联任务时仍可创建探索性 Design Document，系统不自动创建任务。
+- 快照：有关联时固定当时的 `issue_id` 和可读取需求；无关联时 coverage 映射用户自然语言需求。后续补充关联不改写历史 revision，只从后续 task/revision 生效。
+- 联动：Design Document 和 task 可以在任务时间线中显示可追溯事件或链接；保存设计稿不自动改变任务状态、负责人、优先级或完成状态。
+
+### DC-046 Phase A 按 A1 至 A6 内部子切片实施
+
+- 状态：`confirmed`
+- 日期：2026-08-12
+- 顺序：A1 Design Document 核心协议与持久化；A2 首页入口和项目 task 状态；A3 仓库 Grounding 与持续工作空间；A4 Audit、Preview 与首个 draft；A5 调整、保存与放弃；A6 真实 CRM 严格验收。
+- 命名边界：A1 至 A6 是 DC-041 Slice A 的内部子切片，与后续 Slice B 至 E 正交。A1 至 A5 自动化通过不能替代 A6。
+- 实施边界：每个子切片必须携带 DC-040 的局部清理门禁、退役账本变化、V2 正向、失败隔离、旧路径负向、范围外回归、持久化不变量、实际命令、GitNexus `detect_changes` 和独立回滚边界。
+- 基础与进度：Phase A 不从零开始，现有任务、本地运行时、Native V2 package、对象存储、digest、Audit、`designpreview`、draft/saved、仓库事实和设计中心工作区是 A1 至 A5 的复用基础。产品设计确认度为 100%；按当前剩余工程工作保守估算，Phase A 工程基线约 40%–45%，暂记约 42%。每个阶段报告必须按实际结果重算，不得按阶段数量机械累加。
+- 方案：[2026-08-12-native-design-phase-a-design-document-design.md](../../superpowers/specs/2026-08-12-native-design-phase-a-design-document-design.md)。
 
 ## 当前提案
 
-### DC-007 从现有设计中心发起设计任务
+### DC-007 旧提案：从现有设计中心发起设计任务
 
-- 状态：`proposal`
+- 状态：`superseded`
 - 日期：2026-07-28
 - 提案：现有设计中心作为设计任务入口，复用当前项目切换能力形成项目范围内的设计工作空间。
-- 待决定：从设计中心发起时如何关联 Issue；任务、会话、Run 和最终设计稿之间的数据关系。
+- 原待决定：从设计中心发起时如何关联 Issue；任务、会话、Run 和最终设计稿之间的数据关系。
+- 替代原因：DC-041 已确认首页第一版是跨项目页面设计 task 发起器，项目和智能体必选，task 成功创建后进入目标项目“设计草稿”；DC-042 至 DC-045 已进一步确认页面产物协议、任务内仓库 Grounding、浏览器强制门禁和任务（Issue）可选关联，不再由本旧提案承载。
 
-### DC-008 设计任务模板延后
+### DC-008 旧提案：设计任务模板延后
 
-- 状态：`proposal`
+- 状态：`superseded`
 - 日期：2026-07-28
 - 提案：先落地设计体系和设计任务发起器，再研究和接入 Open Design 式模板。
-- 待决定：前两阶段是否只预留模板引用协议，还是完全不建模。
+- 原待决定：前两阶段是否只预留模板引用协议，还是完全不建模。
+- 替代原因：DC-041 已确认模板分期为官方模板、工作区成员发布、跨工作区社区模板；模板不进入新 Phase A，只在后续独立切片中实现。
 
 ### DC-010 用 Design Run 表达一次设计执行
 
@@ -398,6 +463,6 @@
 - 保留价值：需求覆盖检查、模板残留检测、版本化草稿和真实视觉验证经验仍可复用。
 - 限制：在重新确认在线设计产物和 Agent 工作方式前，不得默认它仍是通用 UI 设计主引擎。
 
-## 下一项需要形成的决策
+## 下一步
 
-用户复核 DC-039 的完整方案后，只为原生项目设计体系闭环编写实施计划。实施前必须盘点现有 Worker 专属代码和可复用门禁，明确 feature flag、数据保留和回滚边界；不得直接继续 Runtime、Worker 或首页开发。
+新 Phase A 的首页入口、`multica.design-document/v1`、不可变 revisions、draft/saved、任务内仓库 Grounding、持续工作空间、现有本地浏览器强制门禁、任务（Issue）可选关联和 A1 至 A6 内部子切片均已确认。用户复核书面规格后，只为 A1 至 A6 编写详细实施计划；计划必须按 DC-040 限定每个子切片的产品、代码、API 和数据范围，并携带退役账本与真实验证门禁。不得恢复独立 Phase B、迁移 `feature/fengchen-fixed-v2`、继续 Open Design Worker/Runtime，或把 Slice B 至 E 混入 Phase A。
