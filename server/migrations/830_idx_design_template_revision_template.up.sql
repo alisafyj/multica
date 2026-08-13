@@ -1,1 +1,0 @@
-CREATE INDEX CONCURRENTLY idx_design_template_revision_template ON design_template_revision(template_id, revision_number DESC);

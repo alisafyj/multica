@@ -1,1 +1,0 @@
-DROP INDEX CONCURRENTLY IF EXISTS idx_design_restore_task_workspace;

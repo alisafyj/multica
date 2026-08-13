@@ -299,7 +299,7 @@ func TestProjectDesignSystemFailureAndCancellationPreserveExistingPackage(t *tes
 				if err != nil {
 					t.Fatalf("cancel task before shared broadcast: %v", err)
 				}
-				testHandler.TaskService.BroadcastCancelledTasks(context.Background(), []db.AgentTaskQueue{cancelled})
+				testHandler.TaskService.BroadcastCancelledTasks(context.Background(), testWorkspaceID, []db.AgentTaskQueue{cancelled})
 			},
 		},
 	}

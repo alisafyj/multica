@@ -38,7 +38,7 @@ tmp_env="$(mktemp)"
 tmp_dir="$(mktemp -d)"
 trap 'rm -f "$tmp_env"; rm -rf "$tmp_dir"' EXIT
 sed 's/^FRONTEND_PORT=.*/FRONTEND_PORT=3100/' .env.example >"$tmp_env"
-printf '\nBACKEND_PORT=9100\n' >>"$tmp_env"
+printf '\nBACKEND_PORT=9100\nSMTP_FROM_EMAIL=multica@example.com\n' >>"$tmp_env"
 
 config="$(
   docker compose \
@@ -65,6 +65,7 @@ require_config "$config" 'AUTH_TOKEN_TTL: ""'
 require_config "$config" 'RATE_LIMIT_AUTH: "5"'
 require_config "$config" 'RATE_LIMIT_AUTH_VERIFY: "20"'
 require_config "$config" 'RATE_LIMIT_TRUSTED_PROXIES: ""'
+require_config "$config" 'SMTP_FROM_EMAIL: multica@example.com'
 
 sso_config="$(
   USE_SY_SSO=true FRONTEND_PORT=3100 BACKEND_PORT=9100 "${compose[@]}" \

@@ -60,6 +60,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     due_date: null,
     lead_type: null,
     lead_id: null,
+    created_by: null,
     created_at: "2026-07-29T00:00:00Z",
     updated_at: "2026-07-29T00:00:00Z",
     issue_count: 0,

@@ -34,7 +34,7 @@ func TestDeleteProjectResourceCleansDesignRepoAnalysisInWorkspace(t *testing.T) 
 		t.Fatalf("insert foreign project: %v", err)
 	}
 
-	var targetResourceID, unrelatedResourceID string
+	var targetResourceID, unrelatedResourceID, foreignResourceID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, created_by)
 		VALUES ($1, $2, 'github_repo', $3::jsonb, $4)
@@ -48,6 +48,13 @@ func TestDeleteProjectResourceCleansDesignRepoAnalysisInWorkspace(t *testing.T) 
 		RETURNING id
 	`, projectID, testWorkspaceID, `{"url":"https://example.test/unrelated.git"}`, testUserID).Scan(&unrelatedResourceID); err != nil {
 		t.Fatalf("insert unrelated project resource: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, created_by)
+		VALUES ($1, $2, 'github_repo', $3::jsonb, $4)
+		RETURNING id
+	`, foreignProjectID, foreignWorkspaceID, `{"url":"https://example.test/foreign.git"}`, testUserID).Scan(&foreignResourceID); err != nil {
+		t.Fatalf("insert foreign project resource: %v", err)
 	}
 
 	var targetAnalysisID, unrelatedAnalysisID, foreignAnalysisID string
@@ -69,13 +76,13 @@ func TestDeleteProjectResourceCleansDesignRepoAnalysisInWorkspace(t *testing.T) 
 		INSERT INTO design_repo_analysis (workspace_id, project_id, project_resource_id)
 		VALUES ($1, $2, $3)
 		RETURNING id
-	`, foreignWorkspaceID, foreignProjectID, targetResourceID).Scan(&foreignAnalysisID); err != nil {
+	`, foreignWorkspaceID, foreignProjectID, foreignResourceID).Scan(&foreignAnalysisID); err != nil {
 		t.Fatalf("insert foreign analysis: %v", err)
 	}
 
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_repo_analysis WHERE id IN ($1, $2, $3)`, targetAnalysisID, unrelatedAnalysisID, foreignAnalysisID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM project_resource WHERE id IN ($1, $2)`, targetResourceID, unrelatedResourceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM project_resource WHERE id IN ($1, $2, $3)`, targetResourceID, unrelatedResourceID, foreignResourceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM project WHERE id IN ($1, $2)`, projectID, foreignProjectID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID)
 	})

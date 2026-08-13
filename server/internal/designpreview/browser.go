@@ -24,6 +24,7 @@ import (
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
@@ -352,6 +353,7 @@ func (v *ChromiumVerifier) captureTarget(parent context.Context, allowedOrigin s
 	var screenshot []byte
 	if err := chromedp.Run(targetCtx,
 		chromedp.Evaluate(domMetricsExpression, &dom),
+		page.BringToFront(),
 		chromedp.CaptureScreenshot(&screenshot),
 	); err != nil {
 		return Capture{}, fmt.Errorf("capture Design Preview evidence for %q: %w", target.Target.Path, err)

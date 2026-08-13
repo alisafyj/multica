@@ -1,1 +1,0 @@
-CREATE INDEX CONCURRENTLY idx_design_restore_mapping_task ON design_restore_mapping(restore_task_id, layer_id);

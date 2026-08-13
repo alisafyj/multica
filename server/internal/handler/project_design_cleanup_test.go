@@ -86,23 +86,48 @@ file_row AS (
     SELECT workspace_id, project_id, id, 'Project design cleanup file', 'upload' FROM folder_row
     RETURNING id, workspace_id, project_id
 ),
+revision_row AS (
+    INSERT INTO design_revision (file_id, workspace_id, revision_number, status, native_json, validation_errors)
+    SELECT file_row.id, file_row.workspace_id, 1, 'valid', '{}'::jsonb, '[]'::jsonb
+    FROM file_row
+    RETURNING id, workspace_id
+),
+source_issue_row AS (
+    INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, project_id, number)
+    SELECT ws.id, 'Project design cleanup source issue', 'todo', 'medium', 'member', $2, project_row.id, 1
+    FROM ws CROSS JOIN project_row
+    RETURNING id
+),
+target_issue_row AS (
+    INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, project_id, number)
+    SELECT ws.id, 'Project design cleanup target issue', 'todo', 'medium', 'member', $2, project_row.id, 2
+    FROM ws CROSS JOIN project_row
+    RETURNING id
+),
+resource_row AS (
+    INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, label, created_by)
+    SELECT project_row.id, project_row.workspace_id, 'local_directory', '{"localPath":"/tmp/project-design-cleanup"}'::jsonb, 'Repository root', $2
+    FROM project_row
+    RETURNING id
+),
 delivery_row AS (
     INSERT INTO design_delivery (
         workspace_id, project_id, source_issue_id, target_issue_id, file_id, revision_id
     )
-    SELECT workspace_id, project_id, gen_random_uuid(), gen_random_uuid(), id, gen_random_uuid()
-    FROM file_row
+    SELECT file_row.workspace_id, file_row.project_id, source_issue_row.id, target_issue_row.id, file_row.id, revision_row.id
+    FROM file_row CROSS JOIN revision_row CROSS JOIN source_issue_row CROSS JOIN target_issue_row
 ),
 profile_row AS (
     INSERT INTO design_system_profile (
         workspace_id, project_id, source_file_id, source_revision_id, name
     )
-    SELECT workspace_id, project_id, id, gen_random_uuid(), 'Project design cleanup profile'
-    FROM file_row
+    SELECT file_row.workspace_id, file_row.project_id, file_row.id, revision_row.id, 'Project design cleanup profile'
+    FROM file_row CROSS JOIN revision_row
 ),
 repo_analysis_row AS (
     INSERT INTO design_repo_analysis (workspace_id, project_id, project_resource_id)
-    SELECT workspace_id, id, gen_random_uuid() FROM project_row
+    SELECT project_row.workspace_id, project_row.id, resource_row.id
+    FROM project_row CROSS JOIN resource_row
 ),
 design_system_row AS (
     INSERT INTO project_design_system (workspace_id, project_id, name, platform)
@@ -133,7 +158,7 @@ open_run_row AS (
 )
 SELECT ws.id, project_row.id, design_system_row.id
 FROM ws CROSS JOIN project_row CROSS JOIN design_system_row
-`, slug).Scan(&fixture.workspaceID, &fixture.projectID, &fixture.designID); err != nil {
+`, slug, testUserID).Scan(&fixture.workspaceID, &fixture.projectID, &fixture.designID); err != nil {
 		t.Fatalf("seed project design cleanup fixture %q: %v", slug, err)
 	}
 

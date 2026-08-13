@@ -2396,11 +2396,35 @@ func (s *TaskService) CancelTasksForIssue(ctx context.Context, issueID pgtype.UU
 	}
 	for _, t := range cancelled {
 		s.captureTaskCancelled(ctx, t)
-		s.ReconcileAgentStatus(ctx, t.AgentID)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
+	}
+	// Reconcile once per distinct agent instead of once per cancelled row:
+	// cancelling an issue often stops several tasks owned by the same agent,
+	// and each reconcile is a DB write plus a status broadcast. Matches
+	// CancelTasksForAgent's single-reconcile shape (D#3319).
+	for _, agentID := range distinctAgentIDs(cancelled) {
+		s.ReconcileAgentStatus(ctx, agentID)
 	}
 	s.notifyTasksFinished(cancelled)
 	return nil
+}
+
+// distinctAgentIDs returns each agent id appearing in the cancelled rows once,
+// preserving first-seen order. Bulk cancellations frequently stop several tasks
+// owned by the same agent; reconciling per distinct agent (rather than per row)
+// collapses the redundant RefreshAgentStatusFromTasks writes and status
+// broadcasts down to one per agent without changing the final agent status.
+func distinctAgentIDs(cancelled []db.AgentTaskQueue) []pgtype.UUID {
+	seen := make(map[pgtype.UUID]struct{}, len(cancelled))
+	ids := make([]pgtype.UUID, 0, len(cancelled))
+	for _, t := range cancelled {
+		if _, dup := seen[t.AgentID]; dup {
+			continue
+		}
+		seen[t.AgentID] = struct{}{}
+		ids = append(ids, t.AgentID)
+	}
+	return ids
 }
 
 // CancelTasksForAgent cancels every active task belonging to an agent
@@ -2474,8 +2498,13 @@ func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID
 	}
 	for _, t := range cancelled {
 		s.captureTaskCancelled(ctx, t)
-		s.ReconcileAgentStatus(ctx, t.AgentID)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
+	}
+	// Reconcile once per distinct agent instead of once per cancelled row: an
+	// edited/deleted trigger comment can cancel several tasks owned by the same
+	// agent, and each reconcile is a DB write plus a status broadcast (D#3319).
+	for _, agentID := range distinctAgentIDs(cancelled) {
+		s.ReconcileAgentStatus(ctx, agentID)
 	}
 	s.notifyTasksFinished(cancelled)
 	return cancelled, nil
@@ -2485,7 +2514,19 @@ func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID
 // task:cancelled for every row. Callers must invoke this AFTER committing the
 // cancellation so subscribers don't observe a "cancelled" event for a row
 // that the tx might still roll back.
-func (s *TaskService) BroadcastCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue) {
+//
+// workspaceID comes from the caller instead of being resolved per task, because
+// the transaction these callers have just committed can delete the row the
+// resolution would read. A chat task's workspace is reached through its
+// chat_session, and both DeleteChatSession and the runtime teardown remove that
+// session — the teardown by deleting the system agent it hangs off. Afterwards
+// ResolveTaskWorkspaceID finds nothing and returns "", and publishTaskEvent
+// drops an event with no workspace before it reaches the bus: the rows are
+// cancelled, nobody is told, and every queue view and channel indicator keeps
+// showing a run that no longer exists. Each caller already knows the workspace
+// — it is the one whose session, member or runtime is being torn down — so the
+// lookup is not needed and cannot fail.
+func (s *TaskService) BroadcastCancelledTasks(ctx context.Context, workspaceID string, cancelled []db.AgentTaskQueue) {
 	for _, t := range cancelled {
 		s.markCancelledDesignSystemProfile(ctx, t)
 		if err := s.markProjectDesignSystemTaskFailed(ctx, s.Queries, t, "project_design_system_cancelled", "project design system task was cancelled"); err != nil {
@@ -2496,7 +2537,7 @@ func (s *TaskService) BroadcastCancelledTasks(ctx context.Context, cancelled []d
 		}
 		s.captureTaskCancelled(ctx, t)
 		s.ReconcileAgentStatus(ctx, t.AgentID)
-		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
+		s.publishTaskEvent(protocol.EventTaskCancelled, workspaceID, t)
 	}
 	s.notifyTasksFinished(cancelled)
 }
@@ -4765,7 +4806,11 @@ func ResumeUnsafeFailure(failureReason, errorText string) bool {
 	// reason-independent text guard is the load-bearing protection for both new
 	// and already persisted rows. Keep it in sync with the GetLastTaskSession /
 	// GetLastChatTaskSession resume queries.
-	if strings.Contains(lower, "could not resolve authentication method") {
+	//
+	// The phrase itself lives in taskfailure.AuthMethodUnresolved, shared with
+	// the daemon's in-turn fresh-session retry gate so the two layers cannot
+	// disagree about which errors mean "this session can never be resumed".
+	if taskfailure.AuthMethodUnresolved(errorText) {
 		return true
 	}
 	// Same defense-in-depth for the provider-agnostic empty-message shape:
@@ -5131,6 +5176,50 @@ func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agen
 // All callers that surface a task as failed — sweepers, FailTask,
 // recover-orphans — funnel through here so the same UI-consistency
 // guarantees apply on every code path.
+
+// markPMOSyncRunFailedForTask fails the PMO sync run owning a terminally
+// failed agent task. No-op for non-PMO contexts; FailPMOSyncRun's status
+// guard (queued/running only) makes repeat calls safe. Error text is bounded
+// via BoundPMORunError — agent payload never reaches the run row.
+//
+// The run update is not atomic with the task failure: a crash between the two
+// leaves the run "running" until a later failure path routes back here. There
+// is no sweeper for stale running runs today.
+// ponytail: non-atomic run/task failure — window is a single statement and
+// self-heals on the next failure path; add a stale-running-run sweeper (age +
+// no active task) only if manual resyncs start hitting ErrPMOActiveRun again.
+func (s *TaskService) markPMOSyncRunFailedForTask(ctx context.Context, task db.AgentTaskQueue) {
+	pmoCtx, ok := ParsePMOSyncContext(task.Context)
+	if !ok {
+		return
+	}
+	runID, err := util.ParseUUID(pmoCtx.RunID)
+	if err != nil {
+		return
+	}
+	workspaceID, err := util.ParseUUID(pmoCtx.WorkspaceID)
+	if err != nil {
+		return
+	}
+	code := "agent_failed"
+	if task.FailureReason.Valid && task.FailureReason.String != "" {
+		code = task.FailureReason.String
+	}
+	var errMsg pgtype.Text
+	if task.Error.Valid {
+		errMsg = pgtype.Text{String: BoundPMORunError(task.Error.String), Valid: true}
+	}
+	if _, err := s.Queries.FailPMOSyncRun(ctx, db.FailPMOSyncRunParams{
+		ID:           runID,
+		WorkspaceID:  workspaceID,
+		ErrorCode:    pgtype.Text{String: code, Valid: true},
+		ErrorMessage: errMsg,
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		slog.Warn("handle failed tasks: mark pmo run failed",
+			"task_id", util.UUIDToString(task.ID), "run_id", pmoCtx.RunID, "error", err)
+	}
+}
+
 func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTaskQueue) int {
 	if len(tasks) == 0 {
 		return 0
@@ -5174,6 +5263,16 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 			if t.IssueID.Valid {
 				retriedIssues[util.UUIDToString(t.IssueID)] = true
 			}
+		} else {
+			// PMO sync failure propagation: a PMO sync task that terminally
+			// failed (no auto-retry was created — PMO tasks carry no issue or
+			// chat link, so retryEligible is never true) must fail its owning
+			// run, or the run stays "running" forever and blocks the next
+			// manual sync (ErrPMOActiveRun). RecoverOrphanedTasks and the
+			// runtime sweeper both land here, which is why the /fail and
+			// /complete handlers also stay in sync: the FailPMOSyncRun status
+			// guard makes the repeated call a no-op.
+			s.markPMOSyncRunFailedForTask(ctx, t)
 		}
 
 		failureReason := "agent_error"

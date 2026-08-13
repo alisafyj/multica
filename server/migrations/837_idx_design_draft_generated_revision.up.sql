@@ -1,1 +1,0 @@
-CREATE INDEX CONCURRENTLY idx_design_draft_generated_revision ON design_draft(generated_revision_id) WHERE generated_revision_id IS NOT NULL;

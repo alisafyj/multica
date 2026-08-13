@@ -1,1 +1,0 @@
-CREATE INDEX CONCURRENTLY idx_design_catalog_template_current_revision ON design_catalog_template(current_revision_id) WHERE current_revision_id IS NOT NULL;
