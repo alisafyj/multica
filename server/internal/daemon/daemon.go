@@ -193,14 +193,16 @@ const (
 // reportTerminalTask gives the durable outbox one insertion point without
 // revisiting every task exit when it is added.
 type terminalTaskReport struct {
-	kind          terminalTaskReportKind
-	taskID        string
-	output        string
-	branchName    string
-	errorMessage  string
-	sessionID     string
-	workDir       string
-	failureReason string
+	kind                         terminalTaskReportKind
+	taskID                       string
+	output                       string
+	branchName                   string
+	errorMessage                 string
+	sessionID                    string
+	workDir                      string
+	failureReason                string
+	projectDesignSystemArtifacts *ProjectDesignSystemArtifacts
+	projectDesignSystemPackage   *ProjectDesignSystemPackageReceipt
 	// sessionRolloutMissing is true when the daemon withheld this task's Codex
 	// session because its rollout was not in the store (MUL-5305). The server
 	// clears the resume pointer and flags the continuity gap for the next claim.
@@ -573,8 +575,10 @@ type Daemon struct {
 	// deleted bare clone and an unrelated `not empty` cleanup failure.
 	bgSyncs sync.WaitGroup
 
-	runner             taskRunner    // executes agent tasks; set to d.runTask by New(), overridable in tests
-	cancelPollInterval time.Duration // how often handleTask polls for server-side cancellation; overridable in tests
+	runner                      taskRunner // executes agent tasks; set to d.runTask by New(), overridable in tests
+	openDesignSupervisorFactory openDesignSupervisorFactory
+	cancelPollInterval          time.Duration // how often handleTask polls for server-side cancellation; overridable in tests
+	designPreviewBrowserPath    string        // Chromium path used by finalizeProjectDesignSystemResult; defaults to cfg.DesignPreviewBrowserPath
 	// executionEnvironmentCommand resolves the killable helper used for
 	// Prepare/Reuse. New always sets it; nil keeps focused unit tests in-process.
 	executionEnvironmentCommand executionEnvironmentCommand
@@ -646,7 +650,9 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 	d.agentsAvailable.Store(&initialAgents)
 	d.executionEnvironmentCommand = defaultExecutionEnvironmentCommand
 	d.runner = taskRunnerFunc(d.runTask)
+	d.openDesignSupervisorFactory = d.newOpenDesignSupervisor
 	d.runUpdateFn = d.runUpdate
+	d.designPreviewBrowserPath = cfg.DesignPreviewBrowserPath
 	return d
 }
 
@@ -4974,6 +4980,10 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		}
 	}()
 
+	if d.handleOpenDesignTask(runCtx, task, provider, slot, taskLog) {
+		return
+	}
+
 	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
 	if errors.Is(context.Cause(ctx), errAuthenticationExpired) {
 		d.reportAuthenticationExpired(task.ID, result, taskLog)
@@ -5025,21 +5035,43 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 
 	if err != nil {
 		taskLog.Error("task failed", "error", err)
-		// runTask returned without a TaskResult, so we don't have a SessionID
-		// to forward — best we can do is record the failure.
+		// Preserve any partial TaskResult metadata the runner produced before
+		// returning the error; zero values keep ordinary preparation failures empty.
 		// MUL-2946: route the bare error string through the canonical
 		// classifier so the failure_reason column reflects the actual
 		// shape of the failure (provider 5xx, network, process crash,
 		// …) rather than the coarse legacy "agent_error" bucket.
 		if failErr := d.reportTerminalTask(ctx, terminalTaskReport{
-			kind:          terminalTaskReportFail,
-			taskID:        task.ID,
-			errorMessage:  err.Error(),
-			failureReason: taskRunFailureReason(err),
+			kind:                         terminalTaskReportFail,
+			taskID:                       task.ID,
+			errorMessage:                 err.Error(),
+			sessionID:                    result.SessionID,
+			workDir:                      result.WorkDir,
+			failureReason:                taskRunFailureReason(err),
+			projectDesignSystemArtifacts: result.ProjectDesignSystemArtifacts,
+			projectDesignSystemPackage:   result.ProjectDesignSystemPackage,
+			sessionRolloutMissing:        result.SessionRolloutMissing,
+			retiredSessionID:             result.RetiredSessionID,
 		}); failErr != nil {
 			taskLog.Error("fail task callback failed", "error", failErr)
 		}
 		return
+	}
+
+	// V2-native finalize runs after attachProjectDesignSystemArtifacts (which is
+	// a no-op for V2 tasks) and before the completion callback. The gate collects
+	// the agent's package, audits it, runs a real-browser preview, uploads the
+	// archive, and stamps the receipt onto the TaskResult. A failure at any
+	// stage turns the result into "blocked" with a stable failure reason — the
+	// server's complete callback is never called, the agent's work is not
+	// silently discarded.
+	result = attachProjectDesignSystemArtifacts(task, result)
+	if isV2ProjectDesignSystemTask(task) {
+		finalized, finalizeErr := d.finalizeProjectDesignSystemResultFromDaemon(ctx, task, result)
+		if finalizeErr != nil {
+			taskLog.Error("project design system finalize failed", "error", finalizeErr)
+		}
+		result = finalized
 	}
 
 	_ = d.client.ReportProgress(ctx, task.ID, "Finishing task", 2, 2)
@@ -5136,7 +5168,7 @@ func (d *Daemon) reportAuthenticationExpired(taskID string, result TaskResult, t
 			taskLog.Warn("report task usage after authentication expiry failed", "error", err)
 		}
 	}
-	if err := d.client.FailTask(reportCtx, taskID, errAuthenticationExpired.Error(), result.SessionID, result.WorkDir, result.BranchName, taskfailure.ReasonAuthenticationExpired.String(), false, ""); err != nil {
+	if err := d.client.FailTask(reportCtx, taskID, errAuthenticationExpired.Error(), result.SessionID, result.WorkDir, result.BranchName, taskfailure.ReasonAuthenticationExpired.String(), result.SessionRolloutMissing, result.RetiredSessionID); err != nil {
 		taskLog.Error("report authentication-expired task failed", "error", err)
 	}
 }
@@ -5334,14 +5366,16 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 	case "completed":
 		taskLog.Info("task completed", "status", result.Status)
 		err := d.reportTerminalTask(ctx, terminalTaskReport{
-			kind:                  terminalTaskReportComplete,
-			taskID:                taskID,
-			output:                result.Comment,
-			branchName:            result.BranchName,
-			sessionID:             result.SessionID,
-			workDir:               result.WorkDir,
-			sessionRolloutMissing: result.SessionRolloutMissing,
-			retiredSessionID:      result.RetiredSessionID,
+			kind:                         terminalTaskReportComplete,
+			taskID:                       taskID,
+			output:                       result.Comment,
+			branchName:                   result.BranchName,
+			sessionID:                    result.SessionID,
+			workDir:                      result.WorkDir,
+			projectDesignSystemArtifacts: result.ProjectDesignSystemArtifacts,
+			projectDesignSystemPackage:   result.ProjectDesignSystemPackage,
+			sessionRolloutMissing:        result.SessionRolloutMissing,
+			retiredSessionID:             result.RetiredSessionID,
 		})
 		if err == nil {
 			return
@@ -5378,12 +5412,14 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			// The agent succeeded here — only the server's complete callback was
 			// rejected. Its branch is real and already committed, so it must
 			// survive the downgrade to a failure report.
-			branchName:            result.BranchName,
-			sessionID:             result.SessionID,
-			workDir:               result.WorkDir,
-			failureReason:         taskfailure.Classify(fallbackErrMsg).String(),
-			sessionRolloutMissing: result.SessionRolloutMissing,
-			retiredSessionID:      result.RetiredSessionID,
+			branchName:                   result.BranchName,
+			sessionID:                    result.SessionID,
+			workDir:                      result.WorkDir,
+			failureReason:                taskfailure.Classify(fallbackErrMsg).String(),
+			projectDesignSystemArtifacts: result.ProjectDesignSystemArtifacts,
+			projectDesignSystemPackage:   result.ProjectDesignSystemPackage,
+			sessionRolloutMissing:        result.SessionRolloutMissing,
+			retiredSessionID:             result.RetiredSessionID,
 		}); failErr != nil {
 			taskLog.Error("fail task fallback also failed", "error", failErr)
 		}
@@ -5417,10 +5453,12 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			// worktree down, so a failed run routinely still has a branch. This
 			// is the case where the user most needs it: the task went wrong and
 			// they want to see how far it got.
-			branchName:            result.BranchName,
-			failureReason:         failureReason,
-			sessionRolloutMissing: result.SessionRolloutMissing,
-			retiredSessionID:      result.RetiredSessionID,
+			branchName:                   result.BranchName,
+			failureReason:                failureReason,
+			projectDesignSystemArtifacts: result.ProjectDesignSystemArtifacts,
+			projectDesignSystemPackage:   result.ProjectDesignSystemPackage,
+			sessionRolloutMissing:        result.SessionRolloutMissing,
+			retiredSessionID:             result.RetiredSessionID,
 		}); err != nil {
 			taskLog.Error("report failed task failed", "error", err)
 		}
@@ -5438,7 +5476,7 @@ func (d *Daemon) reportTerminalTask(parentCtx context.Context, report terminalTa
 
 	switch report.kind {
 	case terminalTaskReportComplete:
-		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID)
+		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.projectDesignSystemArtifacts, report.projectDesignSystemPackage, report.sessionRolloutMissing, report.retiredSessionID)
 	case terminalTaskReportFail:
 		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID)
 	default:
@@ -5473,10 +5511,13 @@ func gcMetaForTask(task Task) (execenv.GCMeta, bool) {
 		// state via the task gc-check endpoint.
 		meta.Kind = execenv.GCKindQuickCreate
 		meta.TaskID = task.ID
-	case task.PMOSyncContext != "":
+	case len(task.PMOSyncContext) > 0:
 		// PMO sync tasks never bind an issue: GC resolves terminal state
 		// through the task gc-check endpoint, same as quick-create.
 		meta.Kind = execenv.GCKindPMOSync
+		meta.TaskID = task.ID
+	case len(task.ProjectDesignSystemContext) > 0:
+		meta.Kind = execenv.GCKindQuickCreate
 		meta.TaskID = task.ID
 	default:
 		return execenv.GCMeta{}, false
@@ -6131,38 +6172,42 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// withheld (rollout missing) and PriorSessionID is an older fallback (or
 		// absent). Seed the brief's continuity disclosure from it; the local
 		// resume gates below only ever OR it to true, so the signal is monotonic.
-		PriorSessionResumeUnavailable:    task.PriorSessionResumeUnavailable,
-		AgentID:                          agentID,
-		AgentName:                        agentName,
-		AgentInstructions:                instructions,
-		AgentSkills:                      convertSkillsForEnv(skills),
-		DisabledRuntimeSkills:            convertDisabledRuntimeSkillsForEnv(task.Agent, task.RuntimeID, provider),
-		Repos:                            convertReposForEnv(task.Repos),
-		ProjectID:                        task.ProjectID,
-		ProjectTitle:                     task.ProjectTitle,
-		ProjectDescription:               task.ProjectDescription,
-		ProjectResources:                 convertProjectResourcesForEnv(task.ProjectResources),
-		ChatSessionID:                    task.ChatSessionID,
-		ChatChannelType:                  task.ChatChannelType,
-		ChatChannelDeliversFiles:         task.ChatChannelDeliversFiles,
-		AutopilotRunID:                   task.AutopilotRunID,
-		AutopilotID:                      task.AutopilotID,
-		AutopilotTitle:                   task.AutopilotTitle,
-		AutopilotDescription:             task.AutopilotDescription,
-		AutopilotSource:                  task.AutopilotSource,
-		AutopilotTriggerPayload:          strings.TrimSpace(string(task.AutopilotTriggerPayload)),
-		QuickCreatePrompt:                task.QuickCreatePrompt,
-		PMOSyncContext:                   task.PMOSyncContext,
-		HandoffNote:                      task.HandoffNote,
-		IsSquadLeader:                    taskIsSquadLeader(task),
-		RequestingUserName:               task.RequestingUserName,
-		RequestingUserProfileDescription: task.RequestingUserProfileDescription,
-		InitiatorType:                    task.InitiatorType,
-		InitiatorID:                      task.InitiatorID,
-		InitiatorName:                    task.InitiatorName,
-		InitiatorEmail:                   task.InitiatorEmail,
-		WorkspaceContext:                 task.WorkspaceContext,
-		ConnectedApps:                    task.ConnectedApps,
+		PriorSessionResumeUnavailable:     task.PriorSessionResumeUnavailable,
+		AgentID:                           agentID,
+		AgentName:                         agentName,
+		AgentInstructions:                 instructions,
+		AgentSkills:                       convertSkillsForEnv(skills),
+		DisabledRuntimeSkills:             convertDisabledRuntimeSkillsForEnv(task.Agent, task.RuntimeID, provider),
+		Repos:                             convertReposForEnv(task.Repos),
+		ProjectID:                         task.ProjectID,
+		ProjectTitle:                      task.ProjectTitle,
+		ProjectDescription:                task.ProjectDescription,
+		ProjectResources:                  convertProjectResourcesForEnv(task.ProjectResources),
+		ChatSessionID:                     task.ChatSessionID,
+		ChatChannelType:                   task.ChatChannelType,
+		ChatChannelDeliversFiles:          task.ChatChannelDeliversFiles,
+		AutopilotRunID:                    task.AutopilotRunID,
+		AutopilotID:                       task.AutopilotID,
+		AutopilotTitle:                    task.AutopilotTitle,
+		AutopilotDescription:              task.AutopilotDescription,
+		AutopilotSource:                   task.AutopilotSource,
+		AutopilotTriggerPayload:           strings.TrimSpace(string(task.AutopilotTriggerPayload)),
+		QuickCreatePrompt:                 task.QuickCreatePrompt,
+		UIDraftCreateContext:              strings.TrimSpace(string(task.UIDraftCreateContext)),
+		DesignRestoreContext:              strings.TrimSpace(string(task.DesignRestoreContext)),
+		DesignSystemProfileAnalyzeContext: strings.TrimSpace(string(task.DesignSystemProfileAnalyzeContext)),
+		ProjectDesignSystemContext:        strings.TrimSpace(string(task.ProjectDesignSystemContext)),
+		PMOSyncContext:                    string(task.PMOSyncContext),
+		HandoffNote:                       task.HandoffNote,
+		IsSquadLeader:                     taskIsSquadLeader(task),
+		RequestingUserName:                task.RequestingUserName,
+		RequestingUserProfileDescription:  task.RequestingUserProfileDescription,
+		InitiatorType:                     task.InitiatorType,
+		InitiatorID:                       task.InitiatorID,
+		InitiatorName:                     task.InitiatorName,
+		InitiatorEmail:                    task.InitiatorEmail,
+		WorkspaceContext:                  task.WorkspaceContext,
+		ConnectedApps:                     task.ConnectedApps,
 	}
 
 	// Mark candidate env roots as active before any env work so the GC loop
@@ -6571,7 +6616,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			// CLAUDE.md / AGENTS.md; CleanupSidecars handles
 			// every other file Prepare placed under WorkDir. Together
 			// they round-trip the workdir to its exact pre-task bytes.
-			if cerr := execenv.CleanupSidecars(env.RootDir); cerr != nil {
+			if cerr := execenv.CleanupLocalDirectorySidecars(env.RootDir, env.WorkDir); cerr != nil {
 				if cleanupErr == nil {
 					cleanupErr = cerr
 				}
@@ -6675,6 +6720,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				taskLog.Warn("quick-create attachment ids: marshal failed; skipping env injection", "error", err)
 			}
 		}
+	}
+	if len(task.ProjectDesignSystemContext) > 0 && env.OutputDir != "" {
+		agentEnv["MULTICA_OUTPUT_DIR"] = env.OutputDir
 	}
 	// Ensure the multica CLI is on PATH inside the agent's environment.
 	// Some runtimes (e.g. Codex) run in an isolated sandbox that may not

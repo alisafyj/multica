@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_open_design_run_design_system;

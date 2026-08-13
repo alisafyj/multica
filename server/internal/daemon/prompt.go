@@ -134,6 +134,21 @@ func buildPromptBody(task Task, provider string) string {
 	if len(task.DesignSystemProfileAnalyzeContext) > 0 {
 		return buildDesignSystemProfileAnalyzePrompt(task)
 	}
+	if len(task.TemplateBlueprintAnalyzeContext) > 0 {
+		return buildDesignTemplateBlueprintAnalyzePrompt(task)
+	}
+	if len(task.ProjectDesignSystemContext) > 0 {
+		var context struct {
+			Type      string `json:"type"`
+			Operation string `json:"operation"`
+		}
+		if json.Unmarshal(task.ProjectDesignSystemContext, &context) == nil &&
+			context.Type == "project_design_system_task" &&
+			context.Operation == "repository_analysis" {
+			return buildProjectDesignSystemRepositoryAnalysisPrompt()
+		}
+		return buildProjectDesignSystemPrompt()
+	}
 	if len(task.PMOSyncContext) > 0 {
 		return buildPMOSyncPrompt(task)
 	}
@@ -150,6 +165,125 @@ func buildPromptBody(task Task, provider string) string {
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Scan the threads first with `multica issue comment list %s --roots-only --summary --compact --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. For `--since` incremental polling, pagination, and folding, see `multica issue comment list --help`.\n", task.IssueID)
+	return b.String()
+}
+
+func buildProjectDesignSystemRepositoryAnalysisPrompt() string {
+	var b strings.Builder
+	b.WriteString("You are running as a read-only repository design analysis agent for a Multica workspace.\n\n")
+	b.WriteString("Inspect only the provided project repository and resources. Read the available source files and repository evidence to identify the product's existing visual, structural, and workflow context.\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- This task is read-only. Do not modify the repository or any provided resource.\n")
+	b.WriteString("- Do not create generated package files or any other output files.\n")
+	b.WriteString("- Do not delegate, spawn sub-agents, or leave follow-up work.\n")
+	b.WriteString("- Do not call external design services or Multica write commands.\n")
+	b.WriteString("- All source paths in facts, source files, workflows, assets, and conflicts must be repository-relative paths. They must not be absolute and must not contain `..` traversal.\n")
+	b.WriteString("- Every confidence value must be between 0 and 1 inclusive.\n\n")
+	b.WriteString("Use this canonical JSON template, preserving every top-level and nested field:\n")
+	b.WriteString(`{
+  "schema_version": "multica.repository-design-context/v1",
+  "summary": "Repository-backed product and design summary",
+  "suggested_brief": "Suggested design-system brief",
+  "facts": [
+    {
+      "kind": "layout",
+      "label": "Observed pattern",
+      "value": "Evidence-backed value",
+      "source_paths": ["path/to/source"],
+      "confidence": 0.0
+    }
+  ],
+  "source_files": [
+    {"path": "path/to/source", "kind": "page"}
+  ],
+  "representative_workflows": [
+    {
+      "name": "Workflow name",
+      "purpose": "Workflow purpose",
+      "source_paths": ["path/to/source"],
+      "confidence": 0.0,
+      "regions": [
+        {
+          "name": "Region name",
+          "purpose": "Region purpose",
+          "visible_text": ["Visible text"],
+          "controls": ["Control"],
+          "behaviors": ["Behavior"],
+          "conditions": ["Condition"],
+          "layout": ["Layout observation"],
+          "appearance": ["Appearance observation"],
+          "assets": [
+            {"role": "Asset role", "reference": "path/to/asset", "source_path": "path/to/source"}
+          ]
+        }
+      ],
+      "guardrails": ["Evidence-backed guardrail"]
+    }
+  ],
+  "commit_sha": "",
+  "confidence": 0.0,
+  "conflicts": [
+    {
+      "label": "Conflict label",
+      "repository_fact": "Observed repository fact",
+      "user_intent": "Conflicting user intent",
+      "source_paths": ["path/to/source"]
+    }
+  ]
+}
+
+`)
+	b.WriteString("- Your final response must contain no markdown fence or leading or trailing prose. Return the final marker `REPOSITORY_DESIGN_CONTEXT_JSON:` followed by exactly one complete JSON object using schema_version `multica.repository-design-context/v1`.\n")
+	return b.String()
+}
+
+func buildProjectDesignSystemPrompt() string {
+	var b strings.Builder
+	b.WriteString("You are running as a project design system designer for a Multica workspace, executing one end-to-end native Agent session.\n\n")
+	b.WriteString("Read `.agent_context/project_design_system/context/task.json` first. Use `.agent_context/project_design_system/reference/index.json` as the at-a-glance summary of the brief, references, and (when present) repository evidence. The task context is canonical — do not re-derive it from elsewhere.\n")
+	b.WriteString("For adjust or regenerate operations, also read every file in the immutable `base/` directory before designing.\n\n")
+	b.WriteString("Stages (one Agent session, no delegation):\n")
+	b.WriteString("1. Inventory the provided evidence — the brief, every reference, the optional repository analysis, and the immutable base (for adjust / regenerate) — and classify each item as a confirmed fact, a conflict that needs a decision, or a fallback you accept with a reason.\n")
+	b.WriteString("2. Establish a single coherent visual and structural direction. Do not produce multiple alternatives or a demo switcher. Do not invent unsupported project facts to fill gaps — flag the gap and fall back to a documented default instead.\n")
+	b.WriteString("3. Produce semantic Tokens as a single `tokens.css` layer: named custom properties that downstream HTML references via `var(...)`. No duplicate token families, no ad-hoc inline values where a token fits.\n")
+	b.WriteString("4. Design only the components and page patterns that the source- or brief-supported evidence justifies. Anything beyond that is invented template residue and must be omitted.\n")
+	b.WriteString("5. Build a static token-backed UI Kit / Preview as a single self-contained HTML fragment using local assets. No scripts, no event attributes, no imports, no forms, no external embeds, no network-dependent final HTML. The preview is delivered to the platform; it is not loaded by a browser running on the agent host.\n")
+	b.WriteString("6. Read back every final file and self-check that it is non-empty, internally consistent with the others, and uses the tokens you declared. Promise-only or delegated work is not completion.\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- Complete the design yourself in this process. Task delegation, sub-agents, and hidden follow-up work are forbidden. Do not use the `task` tool, spawn a subagent, delegate to another specialist, or exit while delegated work is pending. There is no follow-up task to clean up after you.\n")
+	b.WriteString("- For adjust / regenerate, treat the base/ directory as the immutable base directory — read-only input you must not modify, reorder, or rewrite in place. Your output must be a complete replacement of every required artifact, and the three output files must remain mutually consistent with each other even when the requested scope is local.\n")
+	b.WriteString("- `components.html` must be an HTML fragment, not a complete document. Do not include `<!doctype>`, `<html>`, `<head>`, `<body>`, `<meta>`, or `<link>`. Multica injects `tokens.css` into the preview automatically; do not add a stylesheet link.\n")
+	b.WriteString("- Every selectable component or block must have unique `data-design-node-id`, `data-design-node-kind`, and `data-design-node-label` attributes. `data-design-node-kind` must be exactly `component` or `block`; use `block` for sections, groups, canvases, and compositions.\n")
+	b.WriteString("- Embedded `<style>` rules may use `var(...)` values from `tokens.css`, but must not declare or redefine CSS custom properties. `tokens.css` is the only Token source.\n")
+	b.WriteString("- Never write scripts, event attributes, imports, forms, external embeds, or arbitrary remote resources. Never invent business copy, names, or components that the evidence does not support.\n")
+	b.WriteString("- Write exact files to `$MULTICA_OUTPUT_DIR/DESIGN.md`, `$MULTICA_OUTPUT_DIR/tokens.css`, and `$MULTICA_OUTPUT_DIR/components.html`.\n")
+	b.WriteString("- Do not paste file contents into the final response; report only a short completion summary. The package files are authoritative.\n")
+	b.WriteString("- Do not modify a repository, call any external design service, upload a design file, or call Multica write commands.\n")
+	b.WriteString("- Before exiting, read back all three output files and verify they are non-empty. Delegated or promised work is not completion. Do not report success unless every required artifact is on disk.\n")
+	return b.String()
+}
+
+func buildDesignTemplateBlueprintAnalyzePrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a template blueprint analysis agent for a Multica workspace.\n\n")
+	b.WriteString("Use ONLY the design_template_blueprint_analyze context JSON below as the source of truth. This is a semantic classification task for one published list-page template.\n\n")
+	b.WriteString("Return your final answer as exactly one JSON object matching this contract. Replace every placeholder with IDs and values from structure:\n")
+	b.WriteString("{\"classification\":{\"frameId\":\"<structure frame id>\",\"pageType\":\"list\",\"regions\":{\"shell\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":false},\"content\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":false},\"breadcrumb\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":true},\"pageTitle\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":true},\"filters\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":true},\"pageActions\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":true},\"table\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":true},\"pagination\":{\"rootLayerId\":\"<structure layer id>\",\"replaceChildren\":true}},\"prototypes\":{\"pageTitle\":{\"rootLayerId\":\"<structure layer id>\",\"bindings\":{\"label\":\"<visible text descendant id>\"}},\"breadcrumbItem\":{\"rootLayerId\":\"<structure layer id>\",\"bindings\":{\"label\":\"<visible text descendant id>\"}},\"tableHeaderCell\":{\"rootLayerId\":\"<structure layer id>\",\"bindings\":{\"label\":\"<visible text descendant id>\"}},\"tableRow\":{\"rootLayerId\":\"<structure layer id>\",\"bindings\":{}}},\"constraints\":{\"contentWidth\":number,\"filterRowHeight\":number,\"tableHeaderHeight\":number,\"tableRowHeight\":number,\"horizontalGap\":number,\"verticalGap\":number,\"filterColumns\":integer,\"pinFirstColumn\":boolean,\"pinActionColumn\":boolean},\"shellAllowlistLayerIds\":[]},\"summary\":\"<concise classification summary>\"}\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- Classify the template as one structured B-end list page. Do not infer detail, form, dashboard, mobile, or C-end page support.\n")
+	b.WriteString("- `classification` must follow the BlueprintClassification contract: `frameId`, `pageType`, `regions`, `prototypes`, `constraints`, and optional `shellAllowlistLayerIds`.\n")
+	b.WriteString("- Do not emit `layerIds`, `replaceable`, or any other fields outside this exact contract. Each region selects exactly one container through `rootLayerId`; it never returns a list of member layers.\n")
+	b.WriteString("- Every referenced frame or layer ID must come from structure; never invent IDs, use hidden IDs, or reference layers from another frame.\n")
+	b.WriteString("- Map the required regions `shell`, `content`, `breadcrumb`, `pageTitle`, `filters`, `pageActions`, `table`, and `pagination`. Business regions must be replaceable and must not overlap by nesting.\n")
+	b.WriteString("- `content.rootLayerId` must be an ancestor of every business region. When the business regions are flat siblings directly under the frame root, use that frame's `rootLayerId` for `content`; do not use a visual background rectangle as the content container.\n")
+	b.WriteString("- Map the required prototypes `pageTitle`, `breadcrumbItem`, `tableHeaderCell`, and `tableRow`; every binding target must be a visible text descendant of its prototype root.\n")
+	b.WriteString("- Choose the smallest reusable visible subtree for each prototype. Do not use the whole frame root when a text layer or compact component subtree represents the prototype.\n")
+	b.WriteString("- Derive positive layout constraints from structure bounds and layout facts. `filterColumns` must be between 1 and 6.\n")
+	b.WriteString("- Do not create files, edit repositories, upload designs, call Figma, or call Multica write commands. The server validates and stores the Blueprint.\n")
+	b.WriteString("- Do not output markdown fences, prose outside JSON, comments, or trailing text.\n\n")
+	b.WriteString("Template blueprint analysis context JSON:\n")
+	b.Write(task.TemplateBlueprintAnalyzeContext)
+	b.WriteString("\n")
 	return b.String()
 }
 
@@ -178,11 +312,11 @@ func buildPMOSyncPrompt(task Task) string {
 
 // pmoSyncPromptFromContext extracts the acquisition prompt from the raw
 // PMO sync context JSONB. Returns "" when the context is malformed.
-func pmoSyncPromptFromContext(raw string) string {
+func pmoSyncPromptFromContext(raw []byte) string {
 	var payload struct {
 		Prompt string `json:"prompt"`
 	}
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+	if err := json.Unmarshal(raw, &payload); err != nil {
 		return ""
 	}
 	return strings.TrimSpace(payload.Prompt)
@@ -205,7 +339,7 @@ func buildDesignSystemProfileAnalyzePrompt(task Task) string {
 	b.WriteString("- Do not create files, edit repositories, upload designs, call Figma, or call Multica write commands. The server will store your JSON output.\n")
 	b.WriteString("- Do not output markdown fences, prose outside JSON, comments, or trailing text.\n\n")
 	b.WriteString("Design system profile analysis context JSON:\n")
-	b.WriteString(task.DesignSystemProfileAnalyzeContext)
+	b.Write(task.DesignSystemProfileAnalyzeContext)
 	b.WriteString("\n")
 	return b.String()
 }
@@ -341,7 +475,7 @@ func buildDesignRestorePrompt(task Task) string {
 	b.WriteString("- Final response must summarize changed files, checks run, blockers, restore mapping, exact layer text/asset IDs used, Visual QA evidence, and explicitly state `usedFullFramePreview: false` unless blocked.\n")
 	b.WriteString("- End your final response with a machine-readable JSON block prefixed by exactly `RESTORE_RESULT_JSON:`. Shape: {\"status\":\"completed|blocked|failed\",\"summary\":string,\"files\":string[],\"checks\":string[],\"blockers\":string[],\"restoreMapping\":array,\"usedLayerIds\":string[],\"usedAssetIds\":string[],\"usedFullFramePreview\":boolean,\"policyViolation\":string,\"artifactDocPath\":string,\"visualFidelityScore\":number,\"visualReview\":{\"implementedRoute\":string,\"designScreenshot\":string,\"implementationScreenshot\":string,\"comparisonScreenshot\":string,\"remainingDiffs\":string[],\"notes\":string}}.\n\n")
 	b.WriteString("Design restore context JSON:\n")
-	b.WriteString(task.DesignRestoreContext)
+	b.Write(task.DesignRestoreContext)
 	b.WriteString("\n")
 	return b.String()
 }
@@ -371,7 +505,7 @@ func buildUIDraftCreatePrompt(task Task) string {
 	b.WriteString("- Match every required slot in slot_schema and respect primitive types.\n")
 	b.WriteString("- Do not output markdown fences, prose, comments, or extra text.\n\n")
 	b.WriteString("UI draft context JSON:\n")
-	b.WriteString(task.UIDraftCreateContext)
+	b.Write(task.UIDraftCreateContext)
 	b.WriteString("\n")
 	return b.String()
 }

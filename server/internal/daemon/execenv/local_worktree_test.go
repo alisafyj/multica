@@ -413,8 +413,8 @@ func TestWorktreeModeDeliversBranchWithoutSidecars(t *testing.T) {
 	if err := CleanupRuntimeConfig(env.WorkDir, "claude"); err != nil {
 		t.Fatalf("CleanupRuntimeConfig: %v", err)
 	}
-	if err := CleanupSidecars(env.RootDir); err != nil {
-		t.Fatalf("CleanupSidecars: %v", err)
+	if err := CleanupLocalDirectorySidecars(env.RootDir, env.WorkDir); err != nil {
+		t.Fatalf("CleanupLocalDirectorySidecars: %v", err)
 	}
 	outcome := finalizeOK(t, env.LocalWorktree)
 

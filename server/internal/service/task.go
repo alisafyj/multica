@@ -1481,6 +1481,19 @@ const UIDraftCreateContextType = "ui_agent_draft_create"
 // DesignSystemProfileAnalyzeContext marks a task as a design-system analysis job.
 const DesignSystemProfileAnalyzeContextType = "design_system_profile_analyze"
 
+const DesignTemplateBlueprintAnalyzeContextType = "design_template_blueprint_analyze"
+
+const ProjectDesignSystemTaskContextType = "project_design_system_task"
+
+type ProjectDesignSystemOperation string
+
+const (
+	ProjectDesignSystemGenerate           ProjectDesignSystemOperation = "generate"
+	ProjectDesignSystemAdjust             ProjectDesignSystemOperation = "adjust"
+	ProjectDesignSystemRegenerate         ProjectDesignSystemOperation = "regenerate"
+	ProjectDesignSystemRepositoryAnalysis ProjectDesignSystemOperation = "repository_analysis"
+)
+
 // DesignRestoreTaskContextType marks a task as a design restore job.
 const DesignRestoreTaskContextType = "design_restore"
 
@@ -1506,25 +1519,34 @@ type DesignSystemProfileAnalyzeContext struct {
 
 // UIDraftCreateContext is the payload stored on UI draft generation tasks.
 type UIDraftCreateContext struct {
-	Type               string          `json:"type"`
-	RequesterID        string          `json:"requester_id"`
-	WorkspaceID        string          `json:"workspace_id"`
-	ProjectID          string          `json:"project_id,omitempty"`
-	AgentID            string          `json:"agent_id"`
-	Title              string          `json:"title"`
-	Prompt             string          `json:"prompt"`
-	RequirementCore    json.RawMessage `json:"requirement_core,omitempty"`
-	CatalogTemplateID  string          `json:"catalog_template_id,omitempty"`
-	TemplateRevisionID string          `json:"template_revision_id,omitempty"`
-	DesignRevisionID   string          `json:"design_revision_id,omitempty"`
-	SlotSchema         json.RawMessage `json:"slot_schema,omitempty"`
-	EditableTextLayers json.RawMessage `json:"editable_text_layers,omitempty"`
-	PatchHints         json.RawMessage `json:"patch_hints,omitempty"`
-	TemplateCandidates json.RawMessage `json:"template_candidates,omitempty"`
-	SelectionPolicy    json.RawMessage `json:"selection_policy,omitempty"`
-	IssueID            string          `json:"issue_id,omitempty"`
-	ParentIssue        json.RawMessage `json:"parent_issue,omitempty"`
-	DesignSystem       json.RawMessage `json:"design_system,omitempty"`
+	Type                   string                 `json:"type"`
+	RequesterID            string                 `json:"requester_id"`
+	WorkspaceID            string                 `json:"workspace_id"`
+	ProjectID              string                 `json:"project_id,omitempty"`
+	AgentID                string                 `json:"agent_id"`
+	Title                  string                 `json:"title"`
+	Prompt                 string                 `json:"prompt"`
+	RequirementCore        json.RawMessage        `json:"requirement_core,omitempty"`
+	CatalogTemplateID      string                 `json:"catalog_template_id,omitempty"`
+	TemplateRevisionID     string                 `json:"template_revision_id,omitempty"`
+	DesignRevisionID       string                 `json:"design_revision_id,omitempty"`
+	DesignSystemProfileID  string                 `json:"design_system_profile_id,omitempty"`
+	SlotSchema             json.RawMessage        `json:"slot_schema,omitempty"`
+	EditableTextLayers     json.RawMessage        `json:"editable_text_layers,omitempty"`
+	PatchHints             json.RawMessage        `json:"patch_hints,omitempty"`
+	TemplateCandidates     json.RawMessage        `json:"template_candidates,omitempty"`
+	SelectionPolicy        json.RawMessage        `json:"selection_policy,omitempty"`
+	GenerationAssets       json.RawMessage        `json:"generation_assets,omitempty"`
+	DesignContext          *ResolvedDesignContext `json:"design_context,omitempty"`
+	RequiredRequirementIDs []string               `json:"required_requirement_ids,omitempty"`
+	BaseDraftID            string                 `json:"base_draft_id,omitempty"`
+	RevisionNote           string                 `json:"revision_note,omitempty"`
+	BasePageSpec           json.RawMessage        `json:"base_page_spec,omitempty"`
+	IssueID                string                 `json:"issue_id,omitempty"`
+	Issue                  json.RawMessage        `json:"issue,omitempty"`
+	ParentIssue            json.RawMessage        `json:"parent_issue,omitempty"`
+	DesignSystem           json.RawMessage        `json:"design_system,omitempty"`
+	OutputPolicy           json.RawMessage        `json:"output_policy,omitempty"`
 }
 
 // DesignRestoreTaskContext is the payload stored on design restore tasks.
@@ -1583,6 +1605,44 @@ type TestRunContext struct {
 	AgentID           string          `json:"agent_id"`
 	RunID             string          `json:"run_id"`
 	CapabilityBinding json.RawMessage `json:"capability_binding,omitempty"`
+}
+
+type DesignTemplateBlueprintAnalyzeContext struct {
+	Type               string          `json:"type"`
+	Prompt             string          `json:"prompt"`
+	RequesterID        string          `json:"requester_id"`
+	WorkspaceID        string          `json:"workspace_id"`
+	ProjectID          string          `json:"project_id"`
+	AgentID            string          `json:"agent_id"`
+	TemplateID         string          `json:"template_id"`
+	TemplateRevisionID string          `json:"template_revision_id"`
+	SourceRevisionID   string          `json:"source_revision_id"`
+	Structure          json.RawMessage `json:"structure"`
+	SourceRefs         json.RawMessage `json:"source_refs"`
+	OutputPolicy       json.RawMessage `json:"output_policy"`
+}
+
+type ProjectDesignSystemTaskContext struct {
+	Type                  string                       `json:"type"`
+	Operation             ProjectDesignSystemOperation `json:"operation"`
+	RequesterID           string                       `json:"requester_id"`
+	WorkspaceID           string                       `json:"workspace_id"`
+	ProjectID             string                       `json:"project_id"`
+	ProjectDesignSystemID string                       `json:"project_design_system_id"`
+	AgentID               string                       `json:"agent_id"`
+	Project               json.RawMessage              `json:"project"`
+	Platform              string                       `json:"platform"`
+	Brief                 string                       `json:"brief"`
+	References            json.RawMessage              `json:"references"`
+	BasePackage           json.RawMessage              `json:"base_package,omitempty"`
+	Instruction           string                       `json:"instruction,omitempty"`
+	Scope                 json.RawMessage              `json:"scope,omitempty"`
+	RepositoryAnalysis    json.RawMessage              `json:"repository_analysis,omitempty"`
+	OpenDesignRun         json.RawMessage              `json:"open_design_run,omitempty"`
+	OutputPolicy          json.RawMessage              `json:"output_policy"`
+	PackageSchema         string                       `json:"package_schema,omitempty"`
+	InputSnapshotSHA256   string                       `json:"input_snapshot_sha256,omitempty"`
+	BasePackageSHA256     string                       `json:"base_package_sha256,omitempty"`
 }
 
 // EnqueueQuickCreateTask creates a queued task that has no issue / chat /
@@ -2376,6 +2436,37 @@ func distinctAgentIDs(cancelled []db.AgentTaskQueue) []pgtype.UUID {
 //
 // Returns the cancelled rows so callers can report counts / log them.
 func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
+	cancelled, err := s.cancelTasksForAgent(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	for _, task := range cancelled {
+		s.captureTaskCancelled(ctx, task)
+		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, task)
+	}
+	// Reconcile once after the loop — agent transitions from
+	// working→available based on remaining task counts, no need to call
+	// per row (the rows we just cancelled all belong to the same agent).
+	s.ReconcileAgentStatus(ctx, agentID)
+	s.notifyTasksFinished(cancelled)
+	return cancelled, nil
+}
+
+// CancelTasksForAgentWithoutBroadcast is the archive path: task rows and any
+// linked design-system state transition atomically, while the caller's
+// agent:archived event remains the sole frontend invalidation signal.
+func (s *TaskService) CancelTasksForAgentWithoutBroadcast(ctx context.Context, agentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
+	cancelled, err := s.cancelTasksForAgent(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	for _, task := range cancelled {
+		s.captureTaskCancelled(ctx, task)
+	}
+	return cancelled, nil
+}
+
+func (s *TaskService) cancelTasksForAgent(ctx context.Context, agentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
 	var cancelled []db.AgentTaskQueue
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		rows, err := qtx.CancelAgentTasksByAgent(ctx, agentID)
@@ -2386,21 +2477,15 @@ func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 			if err := s.markDesignSystemProfileAnalysisFailed(ctx, qtx, task, "design system profile analysis was cancelled"); err != nil {
 				return err
 			}
+			if err := s.markProjectDesignSystemTaskFailed(ctx, qtx, task, "project_design_system_cancelled", "project design system task was cancelled"); err != nil {
+				return err
+			}
 		}
 		cancelled = rows
 		return nil
 	}); err != nil {
 		return nil, err
 	}
-	for _, t := range cancelled {
-		s.captureTaskCancelled(ctx, t)
-		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
-	}
-	// Reconcile once after the loop — agent transitions from
-	// working→available based on remaining task counts, no need to call
-	// per row (the rows we just cancelled all belong to the same agent).
-	s.ReconcileAgentStatus(ctx, agentID)
-	s.notifyTasksFinished(cancelled)
 	return cancelled, nil
 }
 
@@ -2446,6 +2531,12 @@ func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID
 func (s *TaskService) BroadcastCancelledTasks(ctx context.Context, workspaceID string, cancelled []db.AgentTaskQueue) {
 	for _, t := range cancelled {
 		s.markCancelledDesignSystemProfile(ctx, t)
+		if err := s.markProjectDesignSystemTaskFailed(ctx, s.Queries, t, "project_design_system_cancelled", "project design system task was cancelled"); err != nil {
+			slog.Warn("cancel task: failed to update project design system",
+				"task_id", util.UUIDToString(t.ID),
+				"error", err,
+			)
+		}
 		s.captureTaskCancelled(ctx, t)
 		s.ReconcileAgentStatus(ctx, t.AgentID)
 		s.publishTaskEvent(protocol.EventTaskCancelled, workspaceID, t)
@@ -2570,7 +2661,16 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 			}
 			taskTransitioned = true
 			cancelledChatMessage, err = s.settleQueuedChatInput(ctx, qtx, task, opts.QueueAction)
-			return err
+			if err != nil {
+				return err
+			}
+			if err := s.markDesignSystemProfileAnalysisFailed(ctx, qtx, task, "design system profile analysis was cancelled"); err != nil {
+				return fmt.Errorf("mark design system profile analysis cancelled: %w", err)
+			}
+			if err := s.markProjectDesignSystemTaskFailed(ctx, qtx, task, "project_design_system_cancelled", "project design system task was cancelled"); err != nil {
+				return fmt.Errorf("mark project design system task cancelled: %w", err)
+			}
+			return nil
 		})
 	} else {
 		// The status flip and the chat resume-pointer advance commit together. Split
@@ -2598,6 +2698,9 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 			taskTransitioned = true
 			if err := s.markDesignSystemProfileAnalysisFailed(ctx, qtx, cancelled, "design system profile analysis was cancelled"); err != nil {
 				return fmt.Errorf("mark design system profile analysis cancelled: %w", err)
+			}
+			if err := s.markProjectDesignSystemTaskFailed(ctx, qtx, cancelled, "project_design_system_cancelled", "project design system task was cancelled"); err != nil {
+				return fmt.Errorf("mark project design system task cancelled: %w", err)
 			}
 			if !cancelled.ChatSessionID.Valid {
 				return nil
@@ -4288,6 +4391,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		if err := s.markDesignSystemProfileAnalysisFailed(ctx, qtx, t, errMsg); err != nil {
 			return fmt.Errorf("mark design system profile analysis failed: %w", err)
 		}
+		if err := s.markProjectDesignSystemTaskFailed(ctx, qtx, t, failureReason, errMsg); err != nil {
+			return fmt.Errorf("mark project design system task failed: %w", err)
+		}
 
 		// Create the retry child atomically with the fail. CreateRetryTask reads
 		// the just-failed parent row (same tx), so it inherits chat_input_task_id
@@ -4430,13 +4536,23 @@ func (s *TaskService) FailTasksWithProfileSync(ctx context.Context, fail func(*d
 			return err
 		}
 		for _, task := range failed {
-			message := "design system profile analysis failed"
+			message := ""
 			if task.Error.Valid && strings.TrimSpace(task.Error.String) != "" {
 				message = task.Error.String
 			} else if task.FailureReason.Valid && strings.TrimSpace(task.FailureReason.String) != "" {
 				message = task.FailureReason.String
 			}
 			if err := s.markDesignSystemProfileAnalysisFailed(ctx, qtx, task, message); err != nil {
+				return err
+			}
+			failureCode := "project_design_system_task_failed"
+			if task.FailureReason.Valid && strings.TrimSpace(task.FailureReason.String) != "" {
+				failureCode = task.FailureReason.String
+			}
+			if err := s.markProjectDesignSystemTaskFailed(ctx, qtx, task, failureCode, message); err != nil {
+				return err
+			}
+			if err := s.markOpenDesignRunTaskFailed(ctx, qtx, task, failureCode, message); err != nil {
 				return err
 			}
 		}
@@ -4446,6 +4562,43 @@ func (s *TaskService) FailTasksWithProfileSync(ctx context.Context, fail func(*d
 		return nil, err
 	}
 	return tasks, nil
+}
+
+func (s *TaskService) markOpenDesignRunTaskFailed(
+	ctx context.Context,
+	queries *db.Queries,
+	task db.AgentTaskQueue,
+	code string,
+	message string,
+) error {
+	taskContext, ok := s.parseProjectDesignSystemTaskContext(task)
+	if !ok || len(taskContext.OpenDesignRun) == 0 {
+		return nil
+	}
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = "project_design_system_task_failed"
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "project design system task failed"
+	}
+	failure, err := json.Marshal(map[string]string{
+		"code":    code,
+		"message": message,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = queries.FinalizeOpenDesignRun(ctx, db.FinalizeOpenDesignRunParams{
+		Status:  "agent_failed",
+		Failure: failure,
+		TaskID:  task.ID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
 }
 
 func (s *TaskService) markDesignSystemProfileAnalysisFailed(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue, message string) error {
@@ -4489,6 +4642,81 @@ func (s *TaskService) markDesignSystemProfileAnalysisFailed(ctx context.Context,
 		ProfileJson:    profile.ProfileJson,
 		AnalysisErrors: errorsJSON,
 	})
+	return err
+}
+
+func (s *TaskService) markProjectDesignSystemTaskFailed(
+	ctx context.Context,
+	queries *db.Queries,
+	task db.AgentTaskQueue,
+	code string,
+	message string,
+) error {
+	taskContext, ok := s.parseProjectDesignSystemTaskContext(task)
+	if !ok {
+		return nil
+	}
+	workspaceID, err := util.ParseUUID(taskContext.WorkspaceID)
+	if err != nil {
+		return fmt.Errorf("parse project design system workspace id: %w", err)
+	}
+	projectID, err := util.ParseUUID(taskContext.ProjectID)
+	if err != nil {
+		return fmt.Errorf("parse project design system project id: %w", err)
+	}
+	systemID, err := util.ParseUUID(taskContext.ProjectDesignSystemID)
+	if err != nil {
+		return fmt.Errorf("parse project design system id: %w", err)
+	}
+	agentID, err := util.ParseUUID(taskContext.AgentID)
+	if err != nil {
+		return fmt.Errorf("parse project design system agent id: %w", err)
+	}
+	if util.UUIDToString(agentID) != util.UUIDToString(task.AgentID) {
+		return errors.New("project design system task agent mismatch")
+	}
+
+	system, err := queries.GetProjectDesignSystemInWorkspace(ctx, db.GetProjectDesignSystemInWorkspaceParams{
+		ID:          systemID,
+		WorkspaceID: workspaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if util.UUIDToString(system.ProjectID) != util.UUIDToString(projectID) ||
+		!system.CurrentAgentID.Valid || util.UUIDToString(system.CurrentAgentID) != util.UUIDToString(agentID) {
+		return errors.New("project design system task identity mismatch")
+	}
+
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = "project_design_system_task_failed"
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "project design system task failed"
+	}
+	lastError, err := json.Marshal(map[string]any{
+		"code":      code,
+		"message":   message,
+		"task_id":   util.UUIDToString(task.ID),
+		"operation": taskContext.Operation,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = queries.SetProjectDesignSystemFailure(ctx, db.SetProjectDesignSystemFailureParams{
+		LastError:    lastError,
+		ID:           system.ID,
+		WorkspaceID:  workspaceID,
+		ActiveTaskID: task.ID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
 	return err
 }
 
@@ -5034,7 +5262,7 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 	retried := 0
 
 	for _, t := range tasks {
-		failureMessage := "design system profile analysis failed"
+		failureMessage := ""
 		if t.Error.Valid && strings.TrimSpace(t.Error.String) != "" {
 			failureMessage = t.Error.String
 		} else if t.FailureReason.Valid && strings.TrimSpace(t.FailureReason.String) != "" {
@@ -5042,6 +5270,16 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 		}
 		if err := s.markDesignSystemProfileAnalysisFailed(ctx, s.Queries, t, failureMessage); err != nil {
 			slog.Warn("handle failed tasks: failed to update design system profile",
+				"task_id", util.UUIDToString(t.ID),
+				"error", err,
+			)
+		}
+		failureCode := "project_design_system_task_failed"
+		if t.FailureReason.Valid && strings.TrimSpace(t.FailureReason.String) != "" {
+			failureCode = t.FailureReason.String
+		}
+		if err := s.markProjectDesignSystemTaskFailed(ctx, s.Queries, t, failureCode, failureMessage); err != nil {
+			slog.Warn("handle failed tasks: failed to update project design system",
 				"task_id", util.UUIDToString(t.ID),
 				"error", err,
 			)
@@ -5645,6 +5883,12 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 	if pc, ok := s.parseDesignSystemProfileAnalyzeContext(task); ok {
 		return pc.WorkspaceID
 	}
+	if bc, ok := s.parseDesignTemplateBlueprintAnalyzeContext(task); ok {
+		return bc.WorkspaceID
+	}
+	if pc, ok := s.parseProjectDesignSystemTaskContext(task); ok {
+		return pc.WorkspaceID
+	}
 	if pmoCtx, ok := s.parsePMOSyncContext(task); ok {
 		return pmoCtx.WorkspaceID
 	}
@@ -5925,6 +6169,28 @@ func (s *TaskService) parseDesignSystemProfileAnalyzeContext(task db.AgentTaskQu
 	var pc DesignSystemProfileAnalyzeContext
 	if err := json.Unmarshal(task.Context, &pc); err != nil || pc.Type != DesignSystemProfileAnalyzeContextType {
 		return DesignSystemProfileAnalyzeContext{}, false
+	}
+	return pc, true
+}
+
+func (s *TaskService) parseDesignTemplateBlueprintAnalyzeContext(task db.AgentTaskQueue) (DesignTemplateBlueprintAnalyzeContext, bool) {
+	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || len(task.Context) == 0 {
+		return DesignTemplateBlueprintAnalyzeContext{}, false
+	}
+	var bc DesignTemplateBlueprintAnalyzeContext
+	if err := json.Unmarshal(task.Context, &bc); err != nil || bc.Type != DesignTemplateBlueprintAnalyzeContextType {
+		return DesignTemplateBlueprintAnalyzeContext{}, false
+	}
+	return bc, true
+}
+
+func (s *TaskService) parseProjectDesignSystemTaskContext(task db.AgentTaskQueue) (ProjectDesignSystemTaskContext, bool) {
+	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || len(task.Context) == 0 {
+		return ProjectDesignSystemTaskContext{}, false
+	}
+	var pc ProjectDesignSystemTaskContext
+	if err := json.Unmarshal(task.Context, &pc); err != nil || pc.Type != ProjectDesignSystemTaskContextType {
+		return ProjectDesignSystemTaskContext{}, false
 	}
 	return pc, true
 }

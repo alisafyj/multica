@@ -188,6 +188,7 @@ type TaskContextForEnv struct {
 	UIDraftCreateContext              string // non-empty for UI design draft generation tasks
 	DesignRestoreContext              string // non-empty for Gallery Native restore execution tasks
 	DesignSystemProfileAnalyzeContext string // non-empty for UI specification profile analysis tasks
+	ProjectDesignSystemContext        string // non-empty for project design-system generation tasks
 	PMOSyncContext                    string // non-empty for PMO requirement sync tasks (prompt-only, no issue checkout)
 	HandoffNote                       string // assignment handoff instruction; rendered into issue_context.md (MUL-3375)
 	IsSquadLeader                     bool   // true when THIS TASK runs the agent in the squad-leader role (may exit silently on no_action); derived from the claim's is_leader_task / squad_id, never sniffed from instructions text (MUL-5811)
@@ -279,6 +280,9 @@ type Environment struct {
 	// directory holding the wrapper file. Empty when no $include is
 	// emitted (fresh install).
 	OpenclawIncludeRoot string
+	// OutputDir is the dedicated artifact directory for tasks that produce
+	// file-based output. It is empty for ordinary coding and issue tasks.
+	OutputDir string
 	// CursorDataDir is the per-task Cursor data directory (set only for
 	// cursor provider when the agent has managed mcp_config). The daemon
 	// exports this as CURSOR_DATA_DIR so project-level MCP approvals are
@@ -367,6 +371,15 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// envRoot.
 	workDir := filepath.Join(envRoot, "workdir")
 	scratchDirs := []string{filepath.Join(envRoot, "output"), filepath.Join(envRoot, "logs")}
+	outputDir := ""
+	if params.Task.ProjectDesignSystemContext != "" {
+		var err error
+		outputDir, err = filepath.Abs(filepath.Join(envRoot, "output", "project-design-system"))
+		if err != nil {
+			return nil, fmt.Errorf("execenv: resolve project design system output directory: %w", err)
+		}
+		scratchDirs = append(scratchDirs, outputDir)
+	}
 	if params.LocalWorkDir == "" && params.LocalWorktree == nil {
 		scratchDirs = append(scratchDirs, workDir)
 	} else if params.LocalWorkDir != "" {
@@ -429,6 +442,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		LocalDirectory:    params.LocalWorkDir != "",
 		LocalWorktree:     localWorktree,
 		MulticaConfigRoot: multicaConfigRoot,
+		OutputDir:         outputDir,
 		logger:            logger,
 	}
 
@@ -664,6 +678,18 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		LocalDirectory: params.LocalDirectory,
 		logger:         logger,
 	}
+	if params.Task.ProjectDesignSystemContext != "" && rootDir != "" {
+		var err error
+		env.OutputDir, err = filepath.Abs(filepath.Join(rootDir, "output", "project-design-system"))
+		if err != nil {
+			logger.Warn("execenv: resolve project design system output dir on reuse failed", "error", err)
+			return nil
+		}
+		if err := os.MkdirAll(env.OutputDir, 0o755); err != nil {
+			logger.Warn("execenv: create project design system output dir on reuse failed", "error", err)
+			return nil
+		}
+	}
 	if env.RootDir != "" {
 		env.MulticaConfigRoot = filepath.Join(env.RootDir, "multica-config")
 		if err := os.MkdirAll(env.MulticaConfigRoot, 0o700); err != nil {
@@ -702,10 +728,10 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// No-op when RootDir is empty (legacy local_directory reuse, which the
 	// daemon skips anyway) or when no prior manifest exists (older build).
 	if env.RootDir != "" {
-		if err := removeReusedManagedSkillDirs(env.RootDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
+		if err := removeReusedManagedSkillDirs(env.RootDir, params.WorkDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
 			logger.Warn("execenv: reclaim managed skill dirs on reuse failed", "error", err)
 		}
-		if err := CleanupSidecars(env.RootDir); err != nil {
+		if err := CleanupSidecars(env.RootDir, params.WorkDir); err != nil {
 			logger.Warn("execenv: roll back prior sidecars on reuse failed", "error", err)
 		}
 	}
@@ -1052,6 +1078,19 @@ func (env *Environment) Cleanup(removeAll bool) error {
 			}
 		}
 		return nil
+	}
+
+	// The V2 native agent chain stamps the .agent_context/project_design_system/
+	// {context,reference,base} sidecar directories to 0o555 so the agent
+	// cannot mutate its inputs. os.RemoveAll cannot unlink children of
+	// a 0o555 directory (unlink needs write on the parent), so we have
+	// to restore writability here, before the actual removal. The chmod
+	// is best-effort: if it fails the next os.RemoveAll will surface a
+	// clearer EACCES error than a silent leak.
+	if env.WorkDir != "" {
+		if err := RestoreV2SidecarWritability(env.WorkDir); err != nil {
+			env.logger.Warn("execenv: restore V2 sidecar writability failed", "workdir", env.WorkDir, "error", err)
+		}
 	}
 
 	if removeAll {

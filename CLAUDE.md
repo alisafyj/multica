@@ -28,6 +28,15 @@ Multica is an AI-native task management platform for small teams, with agents as
 
 Shared packages export raw `.ts` / `.tsx` and are compiled by consuming apps. Dependency direction is `views -> core + ui`; `core` and `ui` must stay independent.
 
+## Design Center Product Memory
+
+Before discussing, planning, or implementing Design Center, design system,
+UI specification, UI Agent, design generation, design restore, design MCP, or
+Open Design integration work, read `docs/product/design-center/README.md`.
+After a context compaction, interruption, or resumed session, read it again
+before relying on the conversation summary. Its decision register distinguishes
+confirmed direction from proposals and historical implementation.
+
 ## State Rules
 
 Keep server state and client state separate.
@@ -104,7 +113,7 @@ These are hard requirements for every new or modified database design and produc
 
 - Do not add database foreign keys (`FOREIGN KEY` / `REFERENCES`), cascading deletes, or cascading updates. Resolve relationships, validation, and dependent cleanup explicitly in application code. Use an application transaction when cleanup and the parent operation must commit or roll back atomically.
 - Every index created by a migration must use `CREATE INDEX CONCURRENTLY` or `CREATE UNIQUE INDEX CONCURRENTLY`, including indexes on newly created tables. PostgreSQL rejects concurrent index creation inside a transaction or a multi-command string, so keep each concurrent index build in its own single-statement migration file. The repository migration runner executes migration files outside an explicit transaction to support this.
-- This repository is a fork that merges `multica-ai/multica` regularly, and both sides advancing the same migration counter is how the 255–262 and 263–271 prefix collisions happened. New fork-local migrations take prefixes from 800 upward (fork-reserved range); never take the next number after upstream's latest. Never renumber an already-applied migration — the runner keys `schema_migrations` on the full stem, so a rename makes it run again (a hard failure for `CREATE INDEX CONCURRENTLY`). Existing fork migrations below 800 (including 306–315) keep their numbers; if an upstream merge still lands a collision, record it in `mergedDuplicateMigrationStems` in `server/internal/migrations/migrations_lint_test.go` instead of renumbering.
+- This repository is a fork that merges `multica-ai/multica` regularly, and both sides advancing the same migration counter is how the 255–262 and 263–271 prefix collisions happened. New fork-local migrations take prefixes from 800 upward (fork-reserved range); never take the next number after upstream's latest. Never renumber an already-applied migration — the runner keys `schema_migrations` on the full stem, so a rename makes it run again (a hard failure for `CREATE INDEX CONCURRENTLY`). Existing fork migrations below 800 (including 306–317) keep their numbers; if an upstream merge still lands a collision, record it in `mergedDuplicateMigrationStems` in `server/internal/migrations/migrations_lint_test.go` instead of renumbering.
 
 ## Coding Rules
 
@@ -238,6 +247,12 @@ Do not claim verification passed unless you ran it. If you skip checks because t
 - Commits should be atomic and use conventional prefixes: `feat(scope)`, `fix(scope)`, `refactor(scope)`, `docs`, `test(scope)`, `chore(scope)`.
 - A production deployment requires a CLI release tag on `main`: create `v0.x.x`, push it, and let `release.yml` publish binaries and the Homebrew tap.
 - Bump patch by default unless the user specifies a version.
+
+## Pull Requests (fork)
+
+- This repository is a fork of `multica-ai/multica`. Cut feature branches from this repo's own `main` (`coder-zkl1988/multica`) and open PRs against this repo's `main`.
+- Do not open PRs against `multica-ai/multica` from fork branches: the two `main` histories have diverged, and GitHub will list every fork-local commit as part of the PR.
+- Sanity-check before opening a PR: `git rev-list --count origin/main..HEAD` should only count your own commits.
 
 ## Domain Reminders
 

@@ -1,0 +1,162 @@
+{
+  "version": "1.0",
+  "page": {
+    "type": "list",
+    "module": "crm-customers",
+    "title": "客户列表",
+    "breadcrumb": ["客户管理", "客户列表"],
+    "activeNavigation": "客户管理",
+    "density": "standard"
+  },
+  "filters": [
+    {
+      "key": "customerKeyword",
+      "label": "客户姓名",
+      "control": "input",
+      "placeholder": "请输入客户姓名",
+      "width": "medium"
+    },
+    {
+      "key": "phone",
+      "label": "手机号",
+      "control": "input",
+      "placeholder": "请输入手机号",
+      "width": "medium"
+    },
+    {
+      "key": "status",
+      "label": "客户状态",
+      "control": "select",
+      "placeholder": "请选择客户状态",
+      "width": "narrow"
+    },
+    {
+      "key": "createdAt",
+      "label": "创建时间",
+      "control": "date-range",
+      "placeholder": "请选择创建时间",
+      "width": "wide"
+    }
+  ],
+  "pageActions": [
+    {
+      "key": "create",
+      "label": "新建客户",
+      "variant": "primary"
+    }
+  ],
+  "table": {
+    "columns": [
+      {
+        "key": "customerNo",
+        "title": "客户编号",
+        "cell": "text",
+        "width": "medium",
+        "align": "left"
+      },
+      {
+        "key": "customerName",
+        "title": "客户姓名",
+        "cell": "text",
+        "width": "wide",
+        "align": "left"
+      },
+      {
+        "key": "phone",
+        "title": "手机号",
+        "cell": "text",
+        "width": "medium",
+        "align": "left"
+      },
+      {
+        "key": "status",
+        "title": "客户状态",
+        "cell": "status-tag",
+        "width": "narrow",
+        "align": "center",
+        "statusMap": {
+          "正常": "success",
+          "待跟进": "warning",
+          "已流失": "disabled"
+        }
+      },
+      {
+        "key": "owner",
+        "title": "负责人",
+        "cell": "text",
+        "width": "medium",
+        "align": "left"
+      },
+      {
+        "key": "createdAt",
+        "title": "创建时间",
+        "cell": "date",
+        "width": "wide",
+        "align": "left"
+      }
+    ],
+    "sampleRows": [
+      {
+        "customerNo": "C20260001",
+        "customerName": "上海星辰科技有限公司",
+        "phone": "13800000001",
+        "status": "正常",
+        "owner": "张敏",
+        "createdAt": "2026-07-20"
+      },
+      {
+        "customerNo": "C20260002",
+        "customerName": "北京远航商贸有限公司",
+        "phone": "13900000002",
+        "status": "待跟进",
+        "owner": "李晨",
+        "createdAt": "2026-07-21"
+      },
+      {
+        "customerNo": "C20260003",
+        "customerName": "深圳云舟信息服务有限公司",
+        "phone": "13700000003",
+        "status": "已流失",
+        "owner": "王雪",
+        "createdAt": "2026-07-22"
+      }
+    ],
+    "rowActions": [
+      {
+        "key": "view",
+        "label": "查看",
+        "variant": "text"
+      },
+      {
+        "key": "edit",
+        "label": "编辑",
+        "variant": "text"
+      }
+    ]
+  },
+  "pagination": {
+    "enabled": true,
+    "pageSize": 20,
+    "sampleTotal": 63
+  },
+  "requirementCoverage": [
+    {
+      "requirementId": "REQ-CRM-CUSTOMER-LIST",
+      "specPaths": [
+        "page.title",
+        "filters.customerKeyword",
+        "filters.phone",
+        "filters.status",
+        "filters.createdAt",
+        "table.columns.customerNo",
+        "table.columns.customerName",
+        "table.columns.phone",
+        "table.columns.status",
+        "table.columns.owner",
+        "table.columns.createdAt",
+        "table.rowActions.view",
+        "table.rowActions.edit"
+      ]
+    }
+  ]
+}

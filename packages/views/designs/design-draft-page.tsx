@@ -86,12 +86,15 @@ export function DesignDraftPage({ draftId }: { draftId: string }) {
   const navigation = useNavigation();
   const queryClient = useQueryClient();
   const { data: draft, isLoading, error, refetch } = useQuery(designDraftDetailOptions(wsId, draftId));
-  const previewFileId = draft?.generated_file_id ?? draft?.file_id ?? "";
+  const isSemanticDraft = draft?.generation_mode === "semantic_pagespec";
+  const previewFileId = isSemanticDraft ? "" : draft?.generated_file_id ?? draft?.file_id ?? "";
   const { data: previewDesign, isLoading: previewLoading } = useQuery({
     ...designFileDetailOptions(wsId, previewFileId),
-    enabled: !!previewFileId,
+    enabled: !!previewFileId && !isSemanticDraft,
   });
-  const previewNativeJson = synthesizeDraftPreview(previewDesign?.current_revision?.native_json, draft?.slot_values ?? {}, draft?.patch ?? []);
+  const previewNativeJson = isSemanticDraft
+    ? draft?.compiled_native_json ?? undefined
+    : synthesizeDraftPreview(previewDesign?.current_revision?.native_json, draft?.slot_values ?? {}, draft?.patch ?? []);
 
   const materialize = useMutation({
     mutationFn: () => api.materializeDesignDraft(draftId),
@@ -136,7 +139,7 @@ export function DesignDraftPage({ draftId }: { draftId: string }) {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-2 text-body font-medium"><FileJson className="h-4 w-4 text-muted-foreground" />{draft.title}</div>
-                    <p className="mt-1 text-caption text-muted-foreground">生成或打开生成的设计稿前，请检查槽位值和安全补丁。</p>
+                    <p className="mt-1 text-caption text-muted-foreground">{isSemanticDraft ? "服务端已将 PageSpec 编译为可预览的设计草稿。" : "生成或打开生成的设计稿前，请检查槽位值和安全补丁。"}</p>
                   </div>
                   <Badge variant="outline">{draft.status}</Badge>
                 </div>
@@ -145,25 +148,36 @@ export function DesignDraftPage({ draftId }: { draftId: string }) {
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
                     <div className="text-body font-medium">原生预览</div>
-                    <p className="mt-1 text-caption text-muted-foreground">{draft.generated_file_id ? "预览已生成设计稿。" : "预览来源模板，并临时套用文本 slot 与 safe patch。"}</p>
+                    <p className="mt-1 text-caption text-muted-foreground">{isSemanticDraft ? "预览来自编译后的 Native Design JSON。" : draft.generated_file_id ? "预览已生成设计稿。" : "预览来源模板，并临时套用文本 slot 与 safe patch。"}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     <Button size="sm" variant="outline" onClick={() => void copyPreviewJSON()} disabled={!previewNativeJson}><Copy className="h-3.5 w-3.5" />复制预览 JSON</Button>
-                    <Badge variant="secondary">{draft.generated_file_id ? "生成稿" : "来源模板"}</Badge>
+                    <Badge variant="secondary">{isSemanticDraft ? "编译稿" : draft.generated_file_id ? "生成稿" : "来源模板"}</Badge>
                   </div>
                 </div>
                 {previewLoading ? <Skeleton className="h-80 w-full" /> : <NativeDesignPreview nativeJson={previewNativeJson} />}
               </section>
-              <JsonBlock title="需求" value={draft.requirement_core} />
-              <JsonBlock title="槽位值" value={draft.slot_values} />
-              <JsonBlock title="安全补丁" value={draft.patch} />
+              {isSemanticDraft ? (
+                <>
+                  <JsonBlock title="PageSpec" value={draft.page_spec ?? {}} />
+                  <JsonBlock title="编译质量" value={draft.quality_report ?? {}} />
+                </>
+              ) : (
+                <>
+                  <JsonBlock title="需求" value={draft.requirement_core} />
+                  <JsonBlock title="槽位值" value={draft.slot_values} />
+                  <JsonBlock title="安全补丁" value={draft.patch} />
+                </>
+              )}
             </div>
             <aside className="space-y-3">
               <div className="rounded-lg border bg-background p-3">
-                <div className="text-body font-medium">审核操作</div>
+                <div className="text-body font-medium">草稿操作</div>
                 <div className="mt-3 space-y-2">
                   {draft.generated_file_id ? (
                     <Button className="w-full" onClick={() => navigation.push(paths.designDetail(draft.generated_file_id!))}><ExternalLink className="h-3.5 w-3.5" />打开生成的设计稿</Button>
+                  ) : isSemanticDraft ? (
+                    <div className="rounded-md border bg-muted/30 px-3 py-2 text-caption text-muted-foreground">当前草稿可预览</div>
                   ) : (
                     <Button className="w-full" onClick={() => materialize.mutate()} disabled={materialize.isPending}><Sparkles className="h-3.5 w-3.5" />{materialize.isPending ? "生成中…" : "生成设计稿"}</Button>
                   )}
@@ -173,6 +187,8 @@ export function DesignDraftPage({ draftId }: { draftId: string }) {
               <div className="rounded-lg border bg-background p-3 text-caption text-muted-foreground">
                 <div>草稿 ID：<span className="font-mono">{draft.id}</span></div>
                 {draft.catalog_template_id ? <div className="mt-1">模板：<span className="font-mono">{draft.catalog_template_id}</span></div> : null}
+                {isSemanticDraft && draft.version ? <div className="mt-1">版本：v{draft.version}</div> : null}
+                {isSemanticDraft && draft.blueprint_id ? <div className="mt-1">蓝图：<span className="font-mono">{draft.blueprint_id}</span></div> : null}
                 {draft.materialized_at ? <div className="mt-1">已生成：{draft.materialized_at}</div> : null}
               </div>
             </aside>

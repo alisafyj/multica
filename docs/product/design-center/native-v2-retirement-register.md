@@ -1,0 +1,72 @@
+# Native V2 旧能力退役账本
+
+> 状态：持续维护
+>
+> 适用范围：Native V2 产品切片真实触达的 Open Design V1、Worker 和兼容能力
+>
+> 更新原则：增量登记，不预先盘点全仓库
+
+## 1. 账本用途
+
+本文件是 Native V2 渐进清理过程中旧能力状态的唯一事实源。它不驱动全仓库旧符号清零，也不构成数据删除授权。
+
+只有新的 Native V2 功能切片真实触达某项旧能力时，才新增或更新对应条目。未触达的旧模块不因缺少条目而自动视为可删除。
+
+## 2. 状态模型
+
+| 状态 | 含义 | 允许的下一步 |
+| --- | --- | --- |
+| `active` | 仍有新的旧链路读写，或外部消费者状态未知 | 先迁移写入或确认消费者 |
+| `write-retired` | 已停止新增旧数据，但仍读取历史数据 | 迁移历史读取和活动消费者 |
+| `unreferenced` | 活动代码和已确认消费者均无调用 | 当前切片可删除纯代码和活动接口 |
+| `retired` | 纯代码和活动接口已经删除 | 若无历史数据则关闭条目；否则转 `data-pending` |
+| `data-pending` | 活动代码已退役，历史行或对象等待独立审批清理 | 另开数据退役规格，不在功能切片内删除 |
+
+不得仅凭代码 grep 将条目标记为 `unreferenced`。已安装旧 Desktop、CLI、MCP、运维工具或其他外部消费者必须有明确兼容决策；缺少遥测或证据时保持 `active` 或 `write-retired`。
+
+## 3. 条目字段
+
+每项旧能力按能力或符号组登记，不按单个零碎 symbol 建项。
+
+| 字段 | 要求 |
+| --- | --- |
+| Legacy capability | 旧能力、入口或符号组 |
+| Status | 第 2 节五种状态之一 |
+| Current consumers | Server、daemon、Web/Desktop、旧客户端、CLI、MCP 或运维工具 |
+| Read/write state | 是否仍新写、是否仍读取历史数据 |
+| V2 replacement | 完整替代它的 Native V2 能力 |
+| Owning slice | 当前或未来负责的产品切片 |
+| Deletion blocker | 跨模块依赖、兼容窗口、历史数据或证据缺口 |
+| Evidence | 测试、命令、API/DB 断言和实际结果 |
+| Last reviewed | 日期和 commit |
+| Next transition | 下一状态及其必要条件 |
+
+## 4. 当前条目
+
+当前没有经过新 Phase A 功能切片确认的退役条目。不得把取消路线分支中的局部删除推断为本账本状态。
+
+`feature/fengchen-fixed-v2` 只保留为取消的独立 Phase B 路线 checkpoint，不合入 `feature/fengchen`，不作为实现基线，也不计入产品或退役进度。
+
+后续条目使用以下模板追加：
+
+```markdown
+### <Legacy capability>
+
+- Status: `active`
+- Current consumers:
+- Read/write state:
+- V2 replacement:
+- Owning slice:
+- Deletion blocker:
+- Evidence:
+- Last reviewed:
+- Next transition:
+```
+
+## 5. 更新门禁
+
+- 切片内部已经无调用的死代码必须删除，并阻塞切片完成。
+- 跨切片、跨数据生命周期或仍有外部消费者的残留必须登记在此，不得扩大当前切片。
+- 普通功能切片最多把条目推进到 `retired` 或 `data-pending`。
+- 从 `data-pending` 删除历史行、对象、表或约束必须另开规格并取得独立审批。
+- 每次状态变化必须附可复核证据；未执行的验证写 `NOT RUN`，不得推断为通过。

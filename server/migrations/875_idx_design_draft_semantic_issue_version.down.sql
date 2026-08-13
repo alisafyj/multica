@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_design_draft_semantic_issue_version;

@@ -823,6 +823,136 @@ func createCatalogTemplateWithTextSlotForDraftTest(t *testing.T) DesignCatalogTe
 	return published
 }
 
+func TestPublishDesignRevisionAsTemplateEnqueuesBlueprintAnalysis(t *testing.T) {
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "Blueprint Publish Project")
+	design := createDesignFileForTest(t, "Blueprint Template Source")
+	if design.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	attachDesignFileToProjectForTest(t, design.File.ID, projectID)
+	updateGenerationAssetNativeJSON(t, parseUUID(design.CurrentRevision.ID), generationAssetTemplateDocument())
+	agentID := createLocalUIRestoreAgentForDesignTest(t)
+	libraryKey := fmt.Sprintf("blueprint-library-%d", time.Now().UnixNano())
+	templateKey := fmt.Sprintf("blueprint-template-%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_template_library WHERE workspace_id = $1 AND key = $2`, testWorkspaceID, libraryKey)
+	})
+
+	req := newRequest("POST", "/api/design-revisions/"+design.CurrentRevision.ID+"/publish-template?workspace_id="+testWorkspaceID, map[string]any{
+		"library_key":  libraryKey,
+		"template_key": templateKey,
+		"name":         "Blueprint List Template",
+		"category":     "list",
+	})
+	req = withDesignURLParams(req, "revisionId", design.CurrentRevision.ID)
+	w := httptest.NewRecorder()
+	testHandler.PublishDesignRevisionAsTemplate(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("PublishDesignRevisionAsTemplate: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var published DesignCatalogTemplateResponse
+	if err := json.NewDecoder(w.Body).Decode(&published); err != nil {
+		t.Fatalf("decode publish response: %v", err)
+	}
+
+	var taskID string
+	var taskContext []byte
+	if err := testPool.QueryRow(ctx, `
+		SELECT id, context
+		FROM agent_task_queue
+		WHERE agent_id = $1
+		  AND context->>'type' = 'design_template_blueprint_analyze'
+		  AND context->>'template_id' = $2
+		  AND context->>'template_revision_id' = $3
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, agentID, published.ID, *published.CurrentRevisionID).Scan(&taskID, &taskContext); err != nil {
+		t.Fatalf("expected template blueprint analyze task: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	var payload map[string]any
+	if err := json.Unmarshal(taskContext, &payload); err != nil {
+		t.Fatalf("decode blueprint analyze context: %v", err)
+	}
+	if payload["project_id"] != projectID || payload["source_revision_id"] != design.CurrentRevision.ID {
+		t.Fatalf("unexpected blueprint analyze context: %+v", payload)
+	}
+	if _, ok := payload["structure"].(map[string]any); !ok {
+		t.Fatalf("blueprint analyze context missing structure: %+v", payload)
+	}
+}
+
+func TestCompleteDesignTemplateBlueprintAnalyzeTaskSavesBlueprint(t *testing.T) {
+	ctx := context.Background()
+	fixture := createGenerationAssetFixture(t)
+	contextPayload := map[string]any{
+		"type":                 "design_template_blueprint_analyze",
+		"requester_id":         testUserID,
+		"workspace_id":         testWorkspaceID,
+		"project_id":           uuidToString(fixture.ProjectID),
+		"agent_id":             handlerTestAgentID(t),
+		"template_id":          uuidToString(fixture.TemplateID),
+		"template_revision_id": uuidToString(fixture.TemplateRevisionID),
+		"source_revision_id":   uuidToString(fixture.TemplateSourceRevisionID),
+		"structure":            fixture.Structure,
+		"source_refs": map[string]any{
+			"designFileId":       uuidToString(fixture.TemplateSourceFileID),
+			"designRevisionId":   uuidToString(fixture.TemplateSourceRevisionID),
+			"templateRevisionId": uuidToString(fixture.TemplateRevisionID),
+		},
+	}
+	contextJSON, _ := json.Marshal(contextPayload)
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, context)
+		VALUES ($1, $2, NULL, 'running', 0, now(), $3)
+		RETURNING id
+	`, handlerTestAgentID(t), testRuntimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("insert blueprint analyze task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_template_blueprint WHERE template_revision_id = $1`, fixture.TemplateRevisionID)
+	})
+
+	output := map[string]any{
+		"classification": generationAssetBlueprintClassification(),
+		"summary":        "Blueprint analyzed.",
+	}
+	outputJSON, _ := json.Marshal(output)
+	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete", map[string]any{"output": string(outputJSON)}, testWorkspaceID, "template-blueprint-complete")
+	req = withURLParam(req, "taskId", taskID)
+	w := httptest.NewRecorder()
+	testHandler.CompleteTask(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CompleteTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var status string
+	var version int32
+	var blueprintJSON []byte
+	if err := testPool.QueryRow(ctx, `
+		SELECT status, analysis_version, blueprint_json
+		FROM design_template_blueprint
+		WHERE template_revision_id = $1
+		ORDER BY analysis_version DESC
+		LIMIT 1
+	`, fixture.TemplateRevisionID).Scan(&status, &version, &blueprintJSON); err != nil {
+		t.Fatalf("expected template blueprint saved: %v", err)
+	}
+	if status != "valid" || version != 1 {
+		t.Fatalf("blueprint status/version = %s/%d, want valid/1", status, version)
+	}
+	var blueprint map[string]any
+	if err := json.Unmarshal(blueprintJSON, &blueprint); err != nil {
+		t.Fatalf("decode blueprint_json: %v", err)
+	}
+	if blueprint["version"] != "1.0" || blueprint["pageType"] != "list" {
+		t.Fatalf("unexpected blueprint payload: %+v", blueprint)
+	}
+}
+
 func handlerTestAgentID(t *testing.T) string {
 	t.Helper()
 	var id string
@@ -857,6 +987,27 @@ func attachDesignFileToProjectForTest(t *testing.T, fileID string, projectID str
 	if _, err := testPool.Exec(context.Background(), `UPDATE design_file SET project_id = $1 WHERE id = $2`, projectID, fileID); err != nil {
 		t.Fatalf("attach design file to project: %v", err)
 	}
+}
+
+func createAnalyzedDefaultDesignSystemForProjectTest(t *testing.T, projectID string) string {
+	t.Helper()
+	created := createDesignFileForTest(t, "Default Design System Source")
+	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	var profileID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_system_profile (
+			workspace_id, project_id, source_file_id, source_revision_id, name,
+			status, is_default, profile_json, analysis_errors, created_by
+		)
+		VALUES ($1, $2, $3, $4, 'Default Design System', 'analyzed', true, '{"version":"agent-1.0"}', '[]', $5)
+		RETURNING id
+	`, testWorkspaceID, projectID, created.File.ID, created.CurrentRevision.ID, testUserID).Scan(&profileID); err != nil {
+		t.Fatalf("insert default design system: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_system_profile WHERE id = $1`, profileID)
+	})
+	return profileID
 }
 
 func TestCreateDesignDraftFromCatalogTemplate(t *testing.T) {
@@ -901,6 +1052,48 @@ func TestCreateDesignDraftFromCatalogTemplate(t *testing.T) {
 	testHandler.GetDesignDraft(getW, getReq)
 	if getW.Code != http.StatusOK {
 		t.Fatalf("GetDesignDraft: expected 200, got %d: %s", getW.Code, getW.Body.String())
+	}
+}
+
+func TestGetDesignDraftReturnsSemanticMetadata(t *testing.T) {
+	template := createCatalogTemplateForDraftTest(t)
+	if template.CurrentRevisionID == nil || template.DesignFileID == nil || template.DesignRevisionID == nil {
+		t.Fatal("expected template revision and source design references")
+	}
+	var draftID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO design_draft (
+			workspace_id, catalog_template_id, template_revision_id, file_id, revision_id, title,
+			requirement_core, slot_values, patch, status, validation_errors, created_by,
+			generation_mode, page_spec, compiled_native_json, quality_report, version
+		) VALUES (
+			$1, $2, $3, $4, $5, 'Semantic Draft',
+			'{"summary":"semantic"}'::jsonb, '{}'::jsonb, '[]'::jsonb, 'generated_with_warnings', '[]'::jsonb, $6,
+			'semantic_pagespec', '{"version":"1.0","page":{"type":"list"}}'::jsonb,
+			'{"version":"1.0","artboards":[]}'::jsonb, '{"diagnostics":[]}'::jsonb, 3
+		)
+		RETURNING id
+	`, testWorkspaceID, template.ID, *template.CurrentRevisionID, *template.DesignFileID, *template.DesignRevisionID, testUserID).Scan(&draftID); err != nil {
+		t.Fatalf("insert semantic design draft: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM design_draft WHERE id = $1`, draftID) })
+
+	req := newRequest("GET", "/api/design-drafts/"+draftID+"?workspace_id="+testWorkspaceID, nil)
+	req = withDesignURLParams(req, "id", draftID)
+	w := httptest.NewRecorder()
+	testHandler.GetDesignDraft(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetDesignDraft: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var draft DesignDraftResponse
+	if err := json.NewDecoder(w.Body).Decode(&draft); err != nil {
+		t.Fatalf("decode draft response: %v", err)
+	}
+	if draft.GenerationMode != "semantic_pagespec" || draft.Version != 3 {
+		t.Fatalf("semantic metadata = mode %q version %d, want semantic_pagespec v3", draft.GenerationMode, draft.Version)
+	}
+	if string(draft.PageSpec) == "" || string(draft.CompiledNativeJSON) == "" || string(draft.QualityReport) == "" {
+		t.Fatalf("expected semantic page_spec, compiled_native_json, and quality_report in response: %+v", draft)
 	}
 }
 
@@ -1061,6 +1254,7 @@ func TestCreateDesignDraftAgentTaskEnqueuesTaskContext(t *testing.T) {
 func TestCreateDesignDraftAgentTaskFromIssueProvidesTemplateCandidates(t *testing.T) {
 	template := createFilterTableCatalogTemplateForDraftTest(t)
 	projectID := createProjectForDesignTest(t, "UI Agent Draft Project")
+	createAnalyzedDefaultDesignSystemForProjectTest(t, projectID)
 	issueID := createIssueForDesignTest(t, "服务记录开发 UI设计", projectID)
 	_, err := testPool.Exec(context.Background(), `
 		UPDATE issue
@@ -1112,24 +1306,29 @@ func TestCreateDesignDraftAgentTaskFromIssueProvidesTemplateCandidates(t *testin
 	if profile["page_type"] != "saas.filter-table-pagination" {
 		t.Fatalf("candidate profile = %+v", profile)
 	}
-	textLayers, ok := candidate["editable_text_layers"].([]any)
-	if !ok || len(textLayers) == 0 {
-		t.Fatalf("expected editable_text_layers in candidate, got %+v", candidate["editable_text_layers"])
+	if _, ok := candidate["editable_text_layers"]; ok {
+		t.Fatalf("template candidates must not expose editable_text_layers: %+v", candidate["editable_text_layers"])
 	}
-	firstTextLayer, _ := textLayers[0].(map[string]any)
-	patchPaths, _ := firstTextLayer["patch_paths"].([]any)
-	if firstTextLayer["id"] == "" || firstTextLayer["text"] == "" || len(patchPaths) == 0 {
-		t.Fatalf("unexpected editable text layer summary: %+v", firstTextLayer)
+	if _, ok := candidate["patch_hints"]; ok {
+		t.Fatalf("template candidates must not expose patch_hints: %+v", candidate["patch_hints"])
+	}
+	if candidate["template_revision_id"] == "" {
+		t.Fatalf("candidate missing template_revision_id: %+v", candidate)
 	}
 	policy, _ := payload["selection_policy"].(map[string]any)
 	if policy["agent_must_select_catalog_template_id"] != true {
 		t.Fatalf("selection_policy = %+v", policy)
+	}
+	outputPolicy, _ := payload["output_policy"].(map[string]any)
+	if outputPolicy["page_spec_required"] != true || outputPolicy["json_patch_allowed"] != false || outputPolicy["slot_values_allowed"] != false {
+		t.Fatalf("output_policy must require PageSpec and forbid legacy output: %+v", outputPolicy)
 	}
 }
 
 func TestCreateDesignDraftAgentTaskFromChildIssueIncludesParentIssueContext(t *testing.T) {
 	createFilterTableCatalogTemplateForDraftTest(t)
 	projectID := createProjectForDesignTest(t, "UI Agent Parent PRD Project")
+	createAnalyzedDefaultDesignSystemForProjectTest(t, projectID)
 	parentIssueID := createIssueForDesignTest(t, "CRM 客户管理开发", projectID)
 	childIssueID := createIssueForDesignTest(t, "UI设计", projectID)
 	_, err := testPool.Exec(context.Background(), `
@@ -1197,7 +1396,7 @@ func TestCreateDesignDraftAgentTaskFromChildIssueIncludesParentIssueContext(t *t
 	}
 }
 
-func TestCreateDesignDraftAgentTaskIncludesDefaultDesignSystem(t *testing.T) {
+func TestCreateDesignDraftAgentTaskIncludesSavedProjectDesignContextWithoutLegacyProfilePayload(t *testing.T) {
 	createFilterTableCatalogTemplateForDraftTest(t)
 	projectID := createProjectForDesignTest(t, "UI Agent Design System Project")
 	issueID := createIssueForDesignTest(t, "CRM 客户管理 UI设计", projectID)
@@ -1218,6 +1417,30 @@ func TestCreateDesignDraftAgentTaskIncludesDefaultDesignSystem(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_system_profile WHERE id = $1`, profileID)
 	})
+	queries := db.New(testPool)
+	system := createProjectDesignSystemForTest(
+		t,
+		queries,
+		parseUUID(testWorkspaceID),
+		parseUUID(projectID),
+		"CRM Cloud Design System",
+	)
+	savedPackage := validProjectDesignSystemPackageForTest(t)
+	upsertValidatedProjectDesignSystemPackageForTest(t, system.ID, "saved", savedPackage)
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE project_design_system_package
+		SET render_status = 'passed',
+		    rendered_at = now()
+		WHERE design_system_id = $1
+		  AND slot = 'saved'
+	`, system.ID); err != nil {
+		t.Fatalf("mark saved design system package rendered: %v", err)
+	}
+	if _, err := queries.MarkProjectDesignSystemSaved(context.Background(), db.MarkProjectDesignSystemSavedParams{
+		ID: system.ID, WorkspaceID: parseUUID(testWorkspaceID),
+	}); err != nil {
+		t.Fatalf("mark project design system saved: %v", err)
+	}
 
 	agentID := handlerTestAgentID(t)
 	req := newRequest("POST", "/api/design-drafts/agent-tasks?workspace_id="+testWorkspaceID, map[string]any{
@@ -1245,30 +1468,32 @@ func TestCreateDesignDraftAgentTaskIncludesDefaultDesignSystem(t *testing.T) {
 	if err := json.Unmarshal(contextRaw, &payload); err != nil {
 		t.Fatalf("decode task context: %v", err)
 	}
-	designSystem, ok := payload["design_system"].(map[string]any)
+	designContext, ok := payload["design_context"].(map[string]any)
 	if !ok {
-		t.Fatalf("context missing design_system: %+v", payload)
+		t.Fatalf("context missing design_context: %+v", payload)
 	}
-	if designSystem["id"] != profileID || designSystem["name"] != "Default Design System" {
-		t.Fatalf("unexpected design_system identity: %+v", designSystem)
+	if designContext["version"] != service.DesignContextVersion || designContext["source"] != string(service.DesignContextSourceCloudSaved) {
+		t.Fatalf("unexpected design_context identity: %+v", designContext)
 	}
-	profile, ok := designSystem["profile"].(map[string]any)
-	if !ok {
-		t.Fatalf("design_system profile missing: %+v", designSystem)
+	if designContext["digest"] != savedPackage.Manifest.Digest {
+		t.Fatalf("design_context digest = %v, want %s", designContext["digest"], savedPackage.Manifest.Digest)
 	}
-	tokens, ok := profile["tokens"].(map[string]any)
-	if !ok {
-		t.Fatalf("design_system profile tokens missing: %+v", profile)
+	resolvedPackage, ok := designContext["package"].(map[string]any)
+	if !ok || resolvedPackage["design_system_id"] != uuidToString(system.ID) || resolvedPackage["name"] != "CRM Cloud Design System" {
+		t.Fatalf("unexpected resolved package: %+v", designContext["package"])
 	}
-	colors, ok := tokens["colors"].([]any)
-	if !ok || len(colors) == 0 {
-		t.Fatalf("design_system profile colors missing: %+v", tokens)
+	if _, exists := payload["design_system"]; exists {
+		t.Fatalf("legacy design_system profile must not be exposed to the UI Agent: %+v", payload["design_system"])
+	}
+	if payload["design_system_profile_id"] != profileID {
+		t.Fatalf("internal compiler profile id = %v, want %s", payload["design_system_profile_id"], profileID)
 	}
 }
 
 func TestClaimUIDraftCreateTaskReturnsContext(t *testing.T) {
 	template := createCatalogTemplateForDraftTest(t)
 	projectID := createProjectForDesignTest(t, "Claim UI Draft Project")
+	createAnalyzedDefaultDesignSystemForProjectTest(t, projectID)
 	issueID := createIssueForDesignTest(t, "Claim UI Draft Issue", projectID)
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
 	var daemonID string
@@ -1605,13 +1830,39 @@ func TestClaimDesignRestoreTaskUsesDispatchProjectContext(t *testing.T) {
 	}
 }
 
-func TestCompleteUIDraftCreateTaskCreatesDraft(t *testing.T) {
-	template := createCatalogTemplateWithTextSlotForDraftTest(t)
+func TestCompleteUIDraftCreateTaskCompilesPageSpecDraft(t *testing.T) {
+	ctx := context.Background()
+	store := service.DesignGenerationAssetStore{Queries: db.New(testPool)}
+	fixture := createGenerationAssetFixture(t)
+	saveGenerationAssetsForTest(t, ctx, store, fixture)
+	if _, err := testPool.Exec(ctx, `UPDATE design_catalog_template SET current_revision_id = $2 WHERE id = $1`, fixture.TemplateID, fixture.TemplateRevisionID); err != nil {
+		t.Fatalf("mark template current revision: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE design_system_profile
+		SET project_id = $2,
+		    is_default = true,
+		    status = 'analyzed'
+		WHERE id = $1
+	`, fixture.DesignSystemProfileID, fixture.ProjectID); err != nil {
+		t.Fatalf("mark design system default: %v", err)
+	}
+	issueID := createIssueForDesignTest(t, "CRM 客户管理 UI设计", uuidToString(fixture.ProjectID))
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue
+		SET description = $2,
+		    acceptance_criteria = $3::jsonb
+		WHERE id = $1
+	`, issueID, "需要客户列表页，包含姓名、手机号、状态、创建时间筛选，表格展示客户信息。", `["筛选项覆盖客户信息","表格列覆盖客户信息"]`); err != nil {
+		t.Fatalf("update issue: %v", err)
+	}
+
 	agentID := handlerTestAgentID(t)
 	req := newRequest("POST", "/api/design-drafts/agent-tasks?workspace_id="+testWorkspaceID, map[string]any{
 		"agent_id":            agentID,
-		"catalog_template_id": template.ID,
-		"title":               "Task Draft Title",
+		"catalog_template_id": uuidToString(fixture.TemplateID),
+		"issue_id":            issueID,
+		"title":               "CRM 客户列表草稿",
 	})
 	w := httptest.NewRecorder()
 	testHandler.CreateDesignDraftAgentTask(w, req)
@@ -1625,17 +1876,12 @@ func TestCompleteUIDraftCreateTaskCreatesDraft(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, created.TaskID)
 	})
-	if _, err := testPool.Exec(context.Background(), `UPDATE agent_task_queue SET status = 'running', started_at = now() WHERE id = $1`, created.TaskID); err != nil {
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET status = 'running', started_at = now() WHERE id = $1`, created.TaskID); err != nil {
 		t.Fatalf("mark task running: %v", err)
 	}
-	output := map[string]any{
-		"title":            "Agent Generated Draft",
-		"requirement_core": map[string]any{"version": "1.0", "title": "Agent Generated Draft"},
-		"slot_values":      map[string]any{"title": "Pay now"},
-		"patch":            []any{},
-	}
-	outputJSON, _ := json.Marshal(output)
-	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+created.TaskID+"/complete", map[string]any{"output": string(outputJSON)}, testWorkspaceID, "ui-draft-complete")
+	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+created.TaskID+"/complete", map[string]any{
+		"output": uiDraftPageSpecOutputForTest(t, uuidToString(fixture.TemplateID), true),
+	}, testWorkspaceID, "ui-draft-pagespec-complete")
 	completeReq = withURLParam(completeReq, "taskId", created.TaskID)
 	completeW := httptest.NewRecorder()
 	testHandler.CompleteTask(completeW, completeReq)
@@ -1643,10 +1889,44 @@ func TestCompleteUIDraftCreateTaskCreatesDraft(t *testing.T) {
 		t.Fatalf("CompleteTask: expected 200, got %d: %s", completeW.Code, completeW.Body.String())
 	}
 	var draftID string
-	if err := testPool.QueryRow(context.Background(), `SELECT id FROM design_draft WHERE workspace_id = $1 AND title = 'Agent Generated Draft' ORDER BY created_at DESC LIMIT 1`, testWorkspaceID).Scan(&draftID); err != nil {
-		t.Fatalf("expected created design draft: %v", err)
+	var generationMode string
+	var status string
+	var pageSpec []byte
+	var compiledNativeJSON []byte
+	var qualityReport []byte
+	var blueprintID pgtype.UUID
+	var recipeSetID pgtype.UUID
+	var version int32
+	var requirementCore []byte
+	if err := testPool.QueryRow(ctx, `
+		SELECT id, generation_mode, status, page_spec, compiled_native_json, quality_report,
+		       blueprint_id, recipe_set_id, version, requirement_core
+		FROM design_draft
+		WHERE workspace_id = $1
+		  AND issue_id = $2
+		  AND title = 'CRM 客户列表草稿'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, fixture.WorkspaceID, parseUUID(issueID)).Scan(&draftID, &generationMode, &status, &pageSpec, &compiledNativeJSON, &qualityReport, &blueprintID, &recipeSetID, &version, &requirementCore); err != nil {
+		t.Fatalf("expected created semantic design draft: %v", err)
 	}
-	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM design_draft WHERE id = $1`, draftID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM design_draft WHERE id = $1`, draftID) })
+	if generationMode != "semantic_pagespec" || status != "generated" {
+		t.Fatalf("draft mode/status = %q/%q, want semantic_pagespec/generated; quality=%s", generationMode, status, qualityReport)
+	}
+	if !json.Valid(pageSpec) || !json.Valid(compiledNativeJSON) || !json.Valid(qualityReport) {
+		t.Fatalf("semantic draft evidence must be valid JSON: page=%s compiled=%s quality=%s", pageSpec, compiledNativeJSON, qualityReport)
+	}
+	if !blueprintID.Valid || !recipeSetID.Valid || version != 1 {
+		t.Fatalf("draft lineage/version = blueprint:%v recipe:%v version:%d", blueprintID.Valid, recipeSetID.Valid, version)
+	}
+	var requirementPayload map[string]any
+	if err := json.Unmarshal(requirementCore, &requirementPayload); err != nil {
+		t.Fatalf("decode requirement_core: %v", err)
+	}
+	if requirementPayload["agent_output_contract"] != "ui_design_plan_v1" {
+		t.Fatalf("requirement_core contract = %v, want ui_design_plan_v1", requirementPayload["agent_output_contract"])
+	}
 }
 
 func TestCompleteDesignSystemProfileAnalyzeTaskUpdatesProfile(t *testing.T) {
@@ -1654,6 +1934,7 @@ func TestCompleteDesignSystemProfileAnalyzeTaskUpdatesProfile(t *testing.T) {
 	projectID := createProjectForDesignTest(t, "Complete Design System Analyze Project")
 	created := createDesignFileForTest(t, "Complete Design System Analyze Source")
 	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	updateGenerationAssetNativeJSON(t, parseUUID(created.CurrentRevision.ID), generationAssetRecipeDocument())
 	agentID := createLocalUIRestoreAgentForDesignTest(t)
 	var profileID string
 	if err := testPool.QueryRow(ctx, `
@@ -1690,25 +1971,12 @@ func TestCompleteDesignSystemProfileAnalyzeTaskUpdatesProfile(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_component_recipe_set WHERE design_system_profile_id = $1`, profileID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM design_system_profile WHERE id = $1`, profileID)
 	})
 
-	output := map[string]any{
-		"profile_json": map[string]any{
-			"version": "agent-1.0",
-			"components": map[string]any{
-				"button": map[string]any{
-					"label":    "按钮",
-					"variants": []map[string]any{{"name": "主按钮", "states": []string{"默认"}}},
-				},
-			},
-			"guidelines": []string{"Use primary button for main submission actions."},
-		},
-		"analysis_errors": []map[string]any{{"severity": "warning", "message": "部分图层缺少状态命名"}},
-		"summary":         "CRM UI specification analyzed.",
-	}
-	outputJSON, _ := json.Marshal(output)
-	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete", map[string]any{"output": string(outputJSON)}, testWorkspaceID, "design-system-analyze-complete")
+	outputJSON := designSystemProfileAnalyzeOutputForTest(t)
+	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete", map[string]any{"output": outputJSON}, testWorkspaceID, "design-system-analyze-complete")
 	completeReq = withURLParam(completeReq, "taskId", taskID)
 	completeW := httptest.NewRecorder()
 	testHandler.CompleteTask(completeW, completeReq)
@@ -1743,10 +2011,54 @@ func TestCompleteDesignSystemProfileAnalyzeTaskUpdatesProfile(t *testing.T) {
 	if len(warnings) != 1 {
 		t.Fatalf("analysis_errors length = %d, want 1", len(warnings))
 	}
+	var recipeStatus string
+	var recipeVersion int32
+	var recipeJSON []byte
+	if err := testPool.QueryRow(ctx, `
+		SELECT status, analysis_version, recipes_json
+		FROM design_component_recipe_set
+		WHERE design_system_profile_id = $1
+		ORDER BY analysis_version DESC
+		LIMIT 1
+	`, profileID).Scan(&recipeStatus, &recipeVersion, &recipeJSON); err != nil {
+		t.Fatalf("expected component recipe set saved with profile analysis: %v", err)
+	}
+	if recipeStatus != "valid" || recipeVersion != 1 {
+		t.Fatalf("recipe status/version = %s/%d, want valid/1", recipeStatus, recipeVersion)
+	}
+	var recipePayload map[string]any
+	if err := json.Unmarshal(recipeJSON, &recipePayload); err != nil {
+		t.Fatalf("decode recipes_json: %v", err)
+	}
+	if recipePayload["version"] != "1.0" {
+		t.Fatalf("recipe set version = %v, want 1.0", recipePayload["version"])
+	}
+}
+
+func designSystemProfileAnalyzeOutputForTest(t *testing.T) string {
+	t.Helper()
+	output := map[string]any{
+		"profile_json": map[string]any{
+			"version": "agent-1.0",
+			"components": map[string]any{
+				"button": map[string]any{
+					"label":    "按钮",
+					"variants": []map[string]any{{"name": "主按钮", "states": []string{"默认"}}},
+				},
+			},
+			"guidelines": []string{"Use primary button for main submission actions."},
+		},
+		"analysis_errors":        []map[string]any{{"severity": "warning", "message": "部分图层缺少状态命名"}},
+		"summary":                "CRM UI specification analyzed.",
+		"recipe_classifications": generationAssetRecipeClassifications(),
+		"primitive_fallbacks":    map[string]any{},
+	}
+	outputJSON, _ := json.Marshal(output)
+	return string(outputJSON)
 }
 
 func TestParseDesignSystemProfileAnalyzeOutputRequiresStrictContract(t *testing.T) {
-	valid := `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[],"summary":"Analyzed."}`
+	valid := designSystemProfileAnalyzeOutputForTest(t)
 	for _, tc := range []struct {
 		name   string
 		output string
@@ -1758,6 +2070,8 @@ func TestParseDesignSystemProfileAnalyzeOutputRequiresStrictContract(t *testing.
 		{name: "wrong profile version", output: `{"profile_json":{"version":"1.1"},"analysis_errors":[],"summary":"Analyzed."}`},
 		{name: "missing summary", output: `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[]}`},
 		{name: "empty summary", output: `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[],"summary":""}`},
+		{name: "missing recipe classifications", output: `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[],"summary":"Analyzed.","primitive_fallbacks":{}}`},
+		{name: "missing primitive fallbacks", output: `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[],"summary":"Analyzed.","recipe_classifications":[{"kind":"input","variant":"default","state":"default","rootLayerId":"input"}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := parseDesignSystemProfileAnalyzeOutput(tc.output); err == nil {
@@ -2098,6 +2412,7 @@ func TestCompleteDesignSystemProfileAnalyzeTaskDoesNotOverrideNewerDefault(t *te
 	projectID := createProjectForDesignTest(t, "Default Guard Design System Project")
 	created := createDesignFileForTest(t, "Default Guard Design System Source")
 	attachDesignFileToProjectForTest(t, created.File.ID, projectID)
+	updateGenerationAssetNativeJSON(t, parseUUID(created.CurrentRevision.ID), generationAssetRecipeDocument())
 	agentID := handlerTestAgentID(t)
 	var originalDefaultID string
 	if err := testPool.QueryRow(ctx, `
@@ -2121,9 +2436,11 @@ func TestCompleteDesignSystemProfileAnalyzeTaskDoesNotOverrideNewerDefault(t *te
 	}
 	contextJSON, _ := json.Marshal(service.DesignSystemProfileAnalyzeContext{
 		Type:                      service.DesignSystemProfileAnalyzeContextType,
+		RequesterID:               testUserID,
 		WorkspaceID:               testWorkspaceID,
 		ProjectID:                 projectID,
 		DesignSystemProfileID:     pendingProfileID,
+		SourceRevisionID:          created.CurrentRevision.ID,
 		MakeDefault:               true,
 		DefaultProfileIDAtEnqueue: originalDefaultID,
 	})
@@ -2150,10 +2467,11 @@ func TestCompleteDesignSystemProfileAnalyzeTaskDoesNotOverrideNewerDefault(t *te
 	}
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM design_component_recipe_set WHERE design_system_profile_id = $1`, pendingProfileID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM design_system_profile WHERE id IN ($1, $2, $3)`, pendingProfileID, newerDefaultID, originalDefaultID)
 	})
 
-	output := `{"profile_json":{"version":"agent-1.0"},"analysis_errors":[],"summary":"Analyzed."}`
+	output := designSystemProfileAnalyzeOutputForTest(t)
 	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete", map[string]any{"output": output}, testWorkspaceID, "design-system-default-guard")
 	req = withURLParam(req, "taskId", taskID)
 	w := httptest.NewRecorder()
@@ -2234,13 +2552,13 @@ func TestCompleteTaskWithMutationDoesNotTreatMutationNoRowsAsFinalized(t *testin
 	}
 }
 
-func TestCompleteUIDraftCreateTaskRejectsEmptyDraftChanges(t *testing.T) {
+func TestCompleteUIDraftCreateTaskRejectsLegacySlotPatchOutput(t *testing.T) {
 	template := createFilterTableCatalogTemplateWithoutSlotsForDraftTest(t)
 	agentID := handlerTestAgentID(t)
 	req := newRequest("POST", "/api/design-drafts/agent-tasks?workspace_id="+testWorkspaceID, map[string]any{
 		"agent_id":            agentID,
 		"catalog_template_id": template.ID,
-		"title":               "Empty Agent Draft",
+		"title":               "Legacy Agent Draft",
 	})
 	w := httptest.NewRecorder()
 	testHandler.CreateDesignDraftAgentTask(w, req)
@@ -2253,38 +2571,38 @@ func TestCompleteUIDraftCreateTaskRejectsEmptyDraftChanges(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, created.TaskID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_draft WHERE workspace_id = $1 AND title = 'Empty Agent Draft'`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM design_draft WHERE workspace_id = $1 AND title = 'Legacy Agent Draft'`, testWorkspaceID)
 	})
 	if _, err := testPool.Exec(context.Background(), `UPDATE agent_task_queue SET status = 'running', started_at = now() WHERE id = $1`, created.TaskID); err != nil {
 		t.Fatalf("mark task running: %v", err)
 	}
 	output := map[string]any{
-		"title":            "Empty Agent Draft",
+		"title":            "Legacy Agent Draft",
 		"requirement_core": map[string]any{"selected_catalog_template_id": template.ID},
-		"slot_values":      map[string]any{},
+		"slot_values":      map[string]any{"title": "Pay now"},
 		"patch":            []any{},
 	}
 	outputJSON, _ := json.Marshal(output)
-	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+created.TaskID+"/complete", map[string]any{"output": string(outputJSON)}, testWorkspaceID, "ui-draft-empty-output")
+	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+created.TaskID+"/complete", map[string]any{"output": string(outputJSON)}, testWorkspaceID, "ui-draft-legacy-output")
 	completeReq = withURLParam(completeReq, "taskId", created.TaskID)
 	completeW := httptest.NewRecorder()
 	testHandler.CompleteTask(completeW, completeReq)
 	if completeW.Code != http.StatusBadRequest {
-		t.Fatalf("CompleteTask empty draft: expected 400, got %d: %s", completeW.Code, completeW.Body.String())
+		t.Fatalf("CompleteTask legacy draft: expected 400, got %d: %s", completeW.Code, completeW.Body.String())
 	}
-	if !strings.Contains(completeW.Body.String(), "non-empty patch") {
-		t.Fatalf("CompleteTask empty draft error = %s", completeW.Body.String())
+	if !strings.Contains(completeW.Body.String(), "unknown field") {
+		t.Fatalf("CompleteTask legacy draft error = %s", completeW.Body.String())
 	}
 	var status string
 	var taskError pgtype.Text
 	if err := testPool.QueryRow(context.Background(), `SELECT status, error FROM agent_task_queue WHERE id = $1`, created.TaskID).Scan(&status, &taskError); err != nil {
 		t.Fatalf("query task status: %v", err)
 	}
-	if status != "failed" || !strings.Contains(taskError.String, "non-empty patch") {
+	if status != "failed" || !strings.Contains(taskError.String, "unknown field") {
 		t.Fatalf("task status/error = %s / %q", status, taskError.String)
 	}
 	var draftCount int
-	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM design_draft WHERE workspace_id = $1 AND title = 'Empty Agent Draft'`, testWorkspaceID).Scan(&draftCount); err != nil {
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM design_draft WHERE workspace_id = $1 AND title = 'Legacy Agent Draft'`, testWorkspaceID).Scan(&draftCount); err != nil {
 		t.Fatalf("count design drafts: %v", err)
 	}
 	if draftCount != 0 {
@@ -2292,75 +2610,124 @@ func TestCompleteUIDraftCreateTaskRejectsEmptyDraftChanges(t *testing.T) {
 	}
 }
 
-func TestCompleteUIDraftCreateTaskCreatesIssueDraftFromSelectedTemplate(t *testing.T) {
-	template := createFilterTableCatalogTemplateForDraftTest(t)
-	projectID := createProjectForDesignTest(t, "UI Agent Selected Template Project")
-	issueID := createIssueForDesignTest(t, "服务记录列表 UI设计", projectID)
-	_, err := testPool.Exec(context.Background(), `
-		UPDATE issue
-		SET description = $2
-		WHERE id = $1
-	`, issueID, "服务记录列表页，需要筛选、表格和分页。")
+func TestParseUIDraftAgentOutputRequiresDesignPlanAndPageSpec(t *testing.T) {
+	valid := uiDraftPageSpecOutputForTest(t, "11111111-1111-1111-1111-111111111111", true)
+	parsed, err := parseUIDraftAgentOutput(valid)
 	if err != nil {
-		t.Fatalf("update issue description: %v", err)
+		t.Fatalf("parse valid PageSpec output: %v", err)
 	}
-	agentID := handlerTestAgentID(t)
-	req := newRequest("POST", "/api/design-drafts/agent-tasks?workspace_id="+testWorkspaceID, map[string]any{
-		"agent_id": agentID,
-		"issue_id": issueID,
-		"title":    "服务记录列表草稿",
-	})
-	w := httptest.NewRecorder()
-	testHandler.CreateDesignDraftAgentTask(w, req)
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("CreateDesignDraftAgentTask: expected 202, got %d: %s", w.Code, w.Body.String())
+	if parsed.Title != "CRM 客户列表草稿" || parsed.CatalogTemplateID == "" || len(parsed.DesignPlan) == 0 || len(parsed.PageSpec) == 0 {
+		t.Fatalf("unexpected parsed output: %+v", parsed)
 	}
-	var created CreateDesignDraftAgentTaskResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode task response: %v", err)
+
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "legacy slot patch", raw: `{"title":"客户列表","catalog_template_id":"template-1","requirement_core":{},"slot_values":{},"patch":[]}`},
+		{name: "missing design plan", raw: strings.Replace(valid, `"design_plan":{`, `"missing_design_plan":{`, 1)},
+		{name: "blank design goal", raw: strings.Replace(valid, `"businessGoal":"帮助运营快速查找和维护客户档案。"`, `"businessGoal":" "`, 1)},
+		{name: "unknown field", raw: strings.Replace(valid, `"page_spec":`, `"extra":true,"page_spec":`, 1)},
+		{name: "trailing json", raw: valid + ` {}`},
+		{name: "unknown page spec field", raw: strings.Replace(valid, `"page_spec":{`, `"page_spec":{"x":1,`, 1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := parseUIDraftAgentOutput(tc.raw); err == nil {
+				t.Fatalf("expected parse failure for %s", tc.name)
+			}
+		})
 	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, created.TaskID)
-	})
-	if _, err := testPool.Exec(context.Background(), `UPDATE agent_task_queue SET status = 'running', started_at = now() WHERE id = $1`, created.TaskID); err != nil {
-		t.Fatalf("mark task running: %v", err)
+}
+
+func uiDraftPageSpecOutputForTest(t *testing.T, catalogTemplateID string, coverRequiredRequirement bool) string {
+	t.Helper()
+	requirementCoverage := []map[string]any{}
+	if coverRequiredRequirement {
+		requirementCoverage = append(requirementCoverage, map[string]any{
+			"requirementId": "issue.description",
+			"specPaths":     []string{"filters.customerName", "table.columns.customerName"},
+		}, map[string]any{
+			"requirementId": "issue.acceptance_criteria.1",
+			"specPaths":     []string{"filters.phone", "table.columns.phone"},
+		}, map[string]any{
+			"requirementId": "issue.acceptance_criteria.2",
+			"specPaths":     []string{"filters.status", "table.columns.status"},
+		})
 	}
-	output := map[string]any{
-		"title": "服务记录列表生成稿",
-		"requirement_core": map[string]any{
-			"version":                      "1.0",
-			"title":                        "服务记录列表",
-			"pageType":                     "saas.filter-table-pagination",
-			"selected_catalog_template_id": template.ID,
+	raw, err := json.Marshal(map[string]any{
+		"title":               "CRM 客户列表草稿",
+		"catalog_template_id": catalogTemplateID,
+		"design_plan":         uiDraftDesignPlanForTest(catalogTemplateID),
+		"page_spec": map[string]any{
+			"version": "1.0",
+			"page": map[string]any{
+				"type":             "list",
+				"module":           "crm",
+				"title":            "客户管理",
+				"breadcrumb":       []string{"CRM", "客户管理"},
+				"activeNavigation": "客户管理",
+				"density":          "standard",
+			},
+			"filters": []map[string]any{
+				{"key": "customerName", "label": "客户姓名", "control": "input", "placeholder": "请输入客户姓名", "width": "medium"},
+				{"key": "phone", "label": "手机号", "control": "input", "placeholder": "请输入手机号", "width": "medium"},
+				{"key": "status", "label": "客户状态", "control": "select", "placeholder": "请选择客户状态", "width": "narrow"},
+				{"key": "createdAt", "label": "创建时间", "control": "date-range", "placeholder": "请选择创建时间", "width": "wide"},
+			},
+			"pageActions": []map[string]any{
+				{"key": "create", "label": "新建客户", "variant": "primary"},
+				{"key": "export", "label": "导出", "variant": "secondary"},
+			},
+			"table": map[string]any{
+				"columns": []map[string]any{
+					{"key": "customerName", "title": "客户姓名", "cell": "text", "width": "wide", "align": "left"},
+					{"key": "phone", "title": "手机号", "cell": "text", "width": "medium", "align": "left"},
+					{"key": "status", "title": "客户状态", "cell": "text", "width": "narrow", "align": "center"},
+					{"key": "createdAt", "title": "创建时间", "cell": "date", "width": "wide", "align": "left"},
+				},
+				"sampleRows": []map[string]string{
+					{"customerName": "张三", "phone": "13800000001", "status": "待跟进", "createdAt": "2026-07-22 10:00"},
+				},
+				"rowActions": []map[string]any{
+					{"key": "view", "label": "查看", "variant": "text"},
+					{"key": "edit", "label": "编辑", "variant": "text"},
+				},
+			},
+			"pagination":          map[string]any{"enabled": true, "pageSize": 20, "sampleTotal": 57},
+			"assumptions":         []string{},
+			"warnings":            []string{},
+			"requirementCoverage": requirementCoverage,
 		},
-		"slot_values": map[string]any{
-			"page_title":    "服务记录",
-			"filter_fields": []any{"门店", "治疗师", "日期"},
-			"table_columns": []any{"服务时间", "客户", "状态", "操作"},
+	})
+	if err != nil {
+		t.Fatalf("marshal PageSpec output: %v", err)
+	}
+	return string(raw)
+}
+
+func uiDraftDesignPlanForTest(catalogTemplateID string) map[string]any {
+	return map[string]any{
+		"version":        "1.0",
+		"businessGoal":   "帮助运营快速查找和维护客户档案。",
+		"layoutStrategy": "采用 B 端高密度列表布局，筛选区在上，表格承载主要信息。",
+		"pageMap": map[string]any{
+			"primaryPage":    "客户列表",
+			"states":         []string{"默认", "筛选结果"},
+			"overlays":       []string{},
+			"secondaryPages": []string{},
 		},
-		"patch": []any{},
-	}
-	outputJSON, _ := json.Marshal(output)
-	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+created.TaskID+"/complete", map[string]any{"output": string(outputJSON)}, testWorkspaceID, "ui-draft-selected-template")
-	completeReq = withURLParam(completeReq, "taskId", created.TaskID)
-	completeW := httptest.NewRecorder()
-	testHandler.CompleteTask(completeW, completeReq)
-	if completeW.Code != http.StatusOK {
-		t.Fatalf("CompleteTask: expected 200, got %d: %s", completeW.Code, completeW.Body.String())
-	}
-	var draftID, draftIssueID string
-	if err := testPool.QueryRow(context.Background(), `
-		SELECT id, issue_id
-		FROM design_draft
-		WHERE workspace_id = $1 AND title = '服务记录列表生成稿'
-		ORDER BY created_at DESC
-		LIMIT 1
-	`, testWorkspaceID).Scan(&draftID, &draftIssueID); err != nil {
-		t.Fatalf("expected created issue design draft: %v", err)
-	}
-	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM design_draft WHERE id = $1`, draftID) })
-	if draftIssueID != issueID {
-		t.Fatalf("draft issue_id = %s, want %s", draftIssueID, issueID)
+		"designSystemUsage": []string{"使用主按钮承载新建客户", "使用输入框和选择器承载筛选条件"},
+		"referenceUsage": map[string]any{
+			"catalogTemplateId": catalogTemplateID,
+			"usedFor":           []string{"筛选区密度", "表格分页结构"},
+			"divergedFor":       []string{"字段与操作语义"},
+		},
+		"componentPlan": []map[string]any{
+			{"kind": "input", "purpose": "客户关键词筛选"},
+			{"kind": "table", "purpose": "展示客户档案"},
+		},
+		"states":     []string{"默认态", "筛选态"},
+		"selfReview": []string{"没有输出 Tab 聚合多个页面", "未使用模板业务文案"},
 	}
 }
 

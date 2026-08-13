@@ -81,7 +81,93 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 }
 
 const deleteProject = `-- name: DeleteProject :exec
-DELETE FROM project WHERE id = $1 AND workspace_id = $2
+WITH cleared_design_files AS (
+    UPDATE design_file
+    SET folder_id = CASE
+            WHEN design_file.folder_id IN (
+                SELECT design_folder.id
+                FROM design_folder
+                WHERE design_folder.workspace_id = $2
+                  AND design_folder.project_id = $1
+            ) THEN NULL
+            ELSE design_file.folder_id
+        END,
+        project_id = CASE
+            WHEN design_file.project_id = $1 THEN NULL
+            ELSE design_file.project_id
+        END
+    WHERE design_file.workspace_id = $2
+      AND (
+          design_file.project_id = $1
+          OR design_file.folder_id IN (
+              SELECT design_folder.id
+              FROM design_folder
+              WHERE design_folder.workspace_id = $2
+                AND design_folder.project_id = $1
+          )
+      )
+    RETURNING design_file.id
+),
+cleared_design_deliveries AS (
+    UPDATE design_delivery
+    SET project_id = NULL
+    WHERE design_delivery.workspace_id = $2
+      AND design_delivery.project_id = $1
+    RETURNING design_delivery.id
+),
+cleared_design_system_profiles AS (
+    UPDATE design_system_profile
+    SET project_id = NULL
+    WHERE design_system_profile.workspace_id = $2
+      AND design_system_profile.project_id = $1
+    RETURNING design_system_profile.id
+),
+deleted_open_design_runs AS (
+    DELETE FROM open_design_run
+    WHERE open_design_run.workspace_id = $2
+      AND open_design_run.project_id = $1
+    RETURNING open_design_run.id
+),
+deleted_design_system_packages AS (
+    DELETE FROM project_design_system_package
+    WHERE project_design_system_package.design_system_id IN (
+        SELECT project_design_system.id
+        FROM project_design_system
+        WHERE project_design_system.workspace_id = $2
+          AND project_design_system.project_id = $1
+    )
+    RETURNING project_design_system_package.id
+),
+deleted_project_design_systems AS (
+    DELETE FROM project_design_system
+    WHERE project_design_system.workspace_id = $2
+      AND project_design_system.project_id = $1
+      AND (SELECT count(*) FROM deleted_open_design_runs) >= 0
+      AND (SELECT count(*) FROM deleted_design_system_packages) >= 0
+    RETURNING project_design_system.id
+),
+deleted_design_repo_analyses AS (
+    DELETE FROM design_repo_analysis
+    WHERE design_repo_analysis.workspace_id = $2
+      AND design_repo_analysis.project_id = $1
+      AND (SELECT count(*) FROM deleted_project_design_systems) >= 0
+    RETURNING design_repo_analysis.id
+),
+deleted_design_folders AS (
+    DELETE FROM design_folder
+    WHERE design_folder.workspace_id = $2
+      AND design_folder.project_id = $1
+      AND (SELECT count(*) FROM cleared_design_files) >= 0
+      AND (SELECT count(*) FROM deleted_design_repo_analyses) >= 0
+    RETURNING design_folder.id
+)
+DELETE FROM project
+WHERE project.id = $1
+  AND project.workspace_id = $2
+  AND (SELECT count(*) FROM cleared_design_files) >= 0
+  AND (SELECT count(*) FROM cleared_design_deliveries) >= 0
+  AND (SELECT count(*) FROM cleared_design_system_profiles) >= 0
+  AND (SELECT count(*) FROM deleted_design_folders) >= 0
 `
 
 type DeleteProjectParams struct {

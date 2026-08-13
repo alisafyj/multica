@@ -14,7 +14,6 @@ const MAX_RECENT_MENTION_ITEMS = 8;
 function mentionKey(item: Pick<MentionItem, "type" | "id">): string {
   return `${item.type}:${item.id}`;
 }
-
 function issueToMentionItem(issue: Pick<Issue, "id" | "identifier" | "title" | "status">, group: "current" | "recent"): MentionItem {
   return {
     id: issue.id,
@@ -114,4 +113,3 @@ export function useChatContextItems(wsId: string): MentionItem[] {
     return [...currentItems, ...recentItems];
   }, [currentIssue, currentProject, recentQueries, visibleRecentEntries]);
 }
-

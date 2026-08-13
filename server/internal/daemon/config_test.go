@@ -1025,6 +1025,90 @@ func pinNonCodexAgentsToMissingPaths(t *testing.T) {
 	}
 }
 
+// TestLoadConfig_DesignPreviewBrowserPath_PrefersNativeEnvVar locks down the
+// resolution order for the V2-native finalize gate's Chromium path. The
+// native env var wins when set; an unset native env var leaves the field
+// empty so finalize-time ResolveBrowserPath falls through to its platform /
+// PATH lookup.
+func TestLoadConfig_DesignPreviewBrowserPath_PrefersNativeEnvVar(t *testing.T) {
+	stageFakeAgent(t)
+	native := filepath.Join(t.TempDir(), "native-chromium")
+	legacy := filepath.Join(t.TempDir(), "open-design-chromium")
+	t.Setenv("MULTICA_DESIGN_PREVIEW_BROWSER_PATH", native)
+	t.Setenv("MULTICA_OPEN_DESIGN_BROWSER_PATH", legacy)
+
+	cfg, err := LoadConfig(Overrides{
+		ServerURL:      "http://localhost:0",
+		WorkspacesRoot: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.DesignPreviewBrowserPath != native {
+		t.Fatalf("DesignPreviewBrowserPath = %q, want native %q", cfg.DesignPreviewBrowserPath, native)
+	}
+	if cfg.OpenDesignBrowserPath != legacy {
+		t.Fatalf("OpenDesignBrowserPath = %q, want legacy %q", cfg.OpenDesignBrowserPath, legacy)
+	}
+}
+
+// TestLoadConfig_DesignPreviewBrowserPath_DoesNotFallBackToOpenDesignPath
+// locks down the brief's "never read MULTICA_OPEN_DESIGN_* for native tasks"
+// constraint at the config layer. An operator who pins MULTICA_OPEN_DESIGN_BROWSER_PATH
+// but not MULTICA_DESIGN_PREVIEW_BROWSER_PATH must see the V2 field empty —
+// native finalize must consult only its own env var (or platform/PATH) and
+// never reach across the chains.
+func TestLoadConfig_DesignPreviewBrowserPath_DoesNotFallBackToOpenDesignPath(t *testing.T) {
+	stageFakeAgent(t)
+	legacy := filepath.Join(t.TempDir(), "open-design-chromium")
+	t.Setenv("MULTICA_DESIGN_PREVIEW_BROWSER_PATH", "")
+	t.Setenv("MULTICA_OPEN_DESIGN_BROWSER_PATH", legacy)
+
+	cfg, err := LoadConfig(Overrides{
+		ServerURL:      "http://localhost:0",
+		WorkspacesRoot: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.DesignPreviewBrowserPath != "" {
+		t.Fatalf("DesignPreviewBrowserPath = %q, want empty (must not fall back to MULTICA_OPEN_DESIGN_BROWSER_PATH)", cfg.DesignPreviewBrowserPath)
+	}
+	if cfg.OpenDesignBrowserPath != legacy {
+		t.Fatalf("OpenDesignBrowserPath = %q, want legacy %q (Open Design chain should keep its value)", cfg.OpenDesignBrowserPath, legacy)
+	}
+}
+
+// TestLoadConfigStartsNativePreviewConfigurationWithLegacyEnvironmentUnset
+// proves the daemon can load its configuration with no Open Design environment
+// present: the legacy MULTICA_OPEN_DESIGN_* env vars are empty, the V2-native
+// preview browser path comes from MULTICA_DESIGN_PREVIEW_BROWSER_PATH, and all
+// four legacy config fields stay empty. The test only proves config load is
+// ready to start; it starts no task and launches no browser.
+func TestLoadConfigStartsNativePreviewConfigurationWithLegacyEnvironmentUnset(t *testing.T) {
+	stageFakeAgent(t)
+	for _, name := range []string{
+		"MULTICA_OPEN_DESIGN_WORKER_URL",
+		"MULTICA_OPEN_DESIGN_WORKER_TOKEN",
+		"MULTICA_OPEN_DESIGN_ARTIFACT_ROOT",
+		"MULTICA_OPEN_DESIGN_BROWSER_PATH",
+	} {
+		t.Setenv(name, "")
+	}
+	native := filepath.Join(t.TempDir(), "native-chromium")
+	t.Setenv("MULTICA_DESIGN_PREVIEW_BROWSER_PATH", native)
+	cfg, err := LoadConfig(Overrides{ServerURL: "http://localhost:0", WorkspacesRoot: t.TempDir()})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.DesignPreviewBrowserPath != native {
+		t.Fatalf("DesignPreviewBrowserPath = %q, want %q", cfg.DesignPreviewBrowserPath, native)
+	}
+	if cfg.OpenDesignWorkerURL != "" || cfg.OpenDesignWorkerToken != "" || cfg.OpenDesignArtifactRoot != "" || cfg.OpenDesignBrowserPath != "" {
+		t.Fatalf("legacy config unexpectedly populated: %+v", cfg)
+	}
+}
+
 // =============================================================================
 // CLI config Backends.OpenClaw overrides (issue #3875)
 // =============================================================================

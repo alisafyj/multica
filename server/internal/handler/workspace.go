@@ -1279,6 +1279,30 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.DeleteWorkspaceAgents(ctx, requester.WorkspaceID) },
 		},
 		{
+			name: "prepare design relationship graph",
+			run:  func() error { return qtx.PrepareWorkspaceDesignDeletionLinks(ctx, requester.WorkspaceID) },
+		},
+		{
+			name: "delete design dependents",
+			run:  func() error { return qtx.DeleteWorkspaceDesignDependents(ctx, requester.WorkspaceID) },
+		},
+		{
+			name: "delete design template data",
+			run:  func() error { return qtx.DeleteWorkspaceDesignTemplateData(ctx, requester.WorkspaceID) },
+		},
+		{
+			name: "delete design asset data",
+			run:  func() error { return qtx.DeleteWorkspaceDesignAssetData(ctx, requester.WorkspaceID) },
+		},
+		{
+			name: "delete design integration data",
+			run:  func() error { return qtx.DeleteWorkspaceDesignIntegrationData(ctx, requester.WorkspaceID) },
+		},
+		{
+			name: "delete design roots",
+			run:  func() error { return qtx.DeleteWorkspaceDesignRoots(ctx, requester.WorkspaceID) },
+		},
+		{
 			name: "delete runtimes and projects",
 			run:  func() error { return qtx.DeleteWorkspaceRuntimesAndProjects(ctx, requester.WorkspaceID) },
 		},

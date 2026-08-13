@@ -670,6 +670,124 @@ DELETE FROM plugin_identity WHERE id IN (SELECT id FROM private_identities);
 -- name: DeleteWorkspaceAgents :exec
 DELETE FROM agent WHERE agent.workspace_id = $1;
 
+-- name: PrepareWorkspaceDesignDeletionLinks :exec
+-- Break design self-links and pointers to rows deleted later. Every update is
+-- scoped directly to the target workspace; no neighboring graph is detached.
+WITH
+detached_files AS (
+    UPDATE design_file
+    SET current_revision_id = NULL
+    WHERE design_file.workspace_id = $1
+      AND design_file.current_revision_id IS NOT NULL
+),
+detached_catalog_templates AS (
+    UPDATE design_catalog_template
+    SET current_revision_id = NULL
+    WHERE design_catalog_template.workspace_id = $1
+      AND design_catalog_template.current_revision_id IS NOT NULL
+),
+detached_drafts AS (
+    UPDATE design_draft
+    SET parent_draft_id = NULL
+    WHERE design_draft.workspace_id = $1
+      AND design_draft.parent_draft_id IS NOT NULL
+),
+detached_folders AS (
+    UPDATE design_folder
+    SET parent_id = NULL
+    WHERE design_folder.workspace_id = $1
+      AND design_folder.parent_id IS NOT NULL
+)
+UPDATE project_design_system
+SET current_agent_id = NULL,
+    active_task_id = NULL,
+    active_operation = NULL
+WHERE project_design_system.workspace_id = $1
+  AND (current_agent_id IS NOT NULL OR active_task_id IS NOT NULL OR active_operation IS NOT NULL);
+
+-- name: DeleteWorkspaceDesignDependents :exec
+WITH
+deleted_restore_mappings AS (
+    DELETE FROM design_restore_mapping WHERE design_restore_mapping.workspace_id = $1
+),
+deleted_restore_plans AS (
+    DELETE FROM design_restore_plan WHERE design_restore_plan.workspace_id = $1
+),
+deleted_restore_tasks AS (
+    DELETE FROM design_restore_task WHERE design_restore_task.workspace_id = $1
+),
+deleted_drafts AS (
+    DELETE FROM design_draft WHERE design_draft.workspace_id = $1
+),
+deleted_open_design_runs AS (
+    DELETE FROM open_design_run WHERE open_design_run.workspace_id = $1
+)
+DELETE FROM project_design_system_package
+WHERE design_system_id IN (
+    SELECT id FROM project_design_system WHERE project_design_system.workspace_id = $1
+);
+
+-- name: DeleteWorkspaceDesignTemplateData :exec
+WITH
+deleted_blueprints AS (
+    DELETE FROM design_template_blueprint WHERE design_template_blueprint.workspace_id = $1
+),
+deleted_slots AS (
+    DELETE FROM design_template_slot
+    WHERE template_id IN (
+        SELECT id FROM design_template WHERE design_template.workspace_id = $1
+    )
+),
+deleted_template_revisions AS (
+    DELETE FROM design_template_revision WHERE design_template_revision.workspace_id = $1
+),
+deleted_catalog_templates AS (
+    DELETE FROM design_catalog_template WHERE design_catalog_template.workspace_id = $1
+),
+deleted_template_libraries AS (
+    DELETE FROM design_template_library WHERE design_template_library.workspace_id = $1
+)
+DELETE FROM design_template WHERE design_template.workspace_id = $1;
+
+-- name: DeleteWorkspaceDesignAssetData :exec
+WITH
+deleted_deliveries AS (
+    DELETE FROM design_delivery WHERE design_delivery.workspace_id = $1
+),
+deleted_recipe_sets AS (
+    DELETE FROM design_component_recipe_set WHERE design_component_recipe_set.workspace_id = $1
+),
+deleted_profiles AS (
+    DELETE FROM design_system_profile WHERE design_system_profile.workspace_id = $1
+),
+deleted_assets AS (
+    DELETE FROM design_asset WHERE design_asset.workspace_id = $1
+)
+DELETE FROM design_revision WHERE design_revision.workspace_id = $1;
+
+-- name: DeleteWorkspaceDesignIntegrationData :exec
+WITH
+deleted_repo_analyses AS (
+    DELETE FROM design_repo_analysis WHERE design_repo_analysis.workspace_id = $1
+),
+deleted_import_codes AS (
+    DELETE FROM design_import_code WHERE design_import_code.workspace_id = $1
+),
+deleted_auth_sessions AS (
+    DELETE FROM design_plugin_auth_session WHERE design_plugin_auth_session.workspace_id = $1
+)
+DELETE FROM design_plugin_token WHERE design_plugin_token.workspace_id = $1;
+
+-- name: DeleteWorkspaceDesignRoots :exec
+WITH
+deleted_project_design_systems AS (
+    DELETE FROM project_design_system WHERE project_design_system.workspace_id = $1
+),
+deleted_files AS (
+    DELETE FROM design_file WHERE design_file.workspace_id = $1
+)
+DELETE FROM design_folder WHERE design_folder.workspace_id = $1;
+
 -- name: DeleteWorkspaceRuntimesAndProjects :exec
 WITH
 deleted_runtimes AS (

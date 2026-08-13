@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "file": { "id": "crm-template-file", "title": "CRM customer list template", "sourceType": "template" },
+  "frames": [
+    { "id": "crm-template-frame", "name": "CRM Desktop", "rootLayerId": "frame-root", "width": 1200, "height": 1000 }
+  ],
+  "layers": {
+    "frame-root": { "id": "frame-root", "frameId": "crm-template-frame", "children": ["shell"], "name": "CRM Desktop", "type": "frame", "visible": true, "x": 0, "y": 0, "width": 1200, "height": 1000 },
+    "shell": { "id": "shell", "frameId": "crm-template-frame", "parentId": "frame-root", "children": ["navigation", "topbar", "content"], "name": "Shell", "type": "frame", "visible": true, "x": 0, "y": 0, "width": 1200, "height": 1000 },
+    "navigation": { "id": "navigation", "frameId": "crm-template-frame", "parentId": "shell", "children": ["navigation-label"], "name": "Navigation", "type": "frame", "visible": true, "x": 0, "y": 0, "width": 180, "height": 1000 },
+    "navigation-label": { "id": "navigation-label", "frameId": "crm-template-frame", "parentId": "navigation", "name": "Navigation label", "type": "text", "visible": true, "x": 20, "y": 80, "width": 120, "height": 24, "text": { "characters": "采购管理" } },
+    "topbar": { "id": "topbar", "frameId": "crm-template-frame", "parentId": "shell", "name": "Topbar", "type": "frame", "visible": true, "x": 180, "y": 0, "width": 1020, "height": 64 },
+    "content": { "id": "content", "frameId": "crm-template-frame", "parentId": "shell", "children": ["breadcrumb", "page-title", "filters", "page-actions", "table", "pagination", "page-title-prototype", "breadcrumb-item-prototype", "table-header-cell-prototype", "table-row-prototype"], "name": "Content", "type": "frame", "visible": true, "x": 180, "y": 64, "width": 1020, "height": 936 },
+    "breadcrumb": { "id": "breadcrumb", "frameId": "crm-template-frame", "parentId": "content", "children": ["stale-breadcrumb"], "name": "Breadcrumb", "type": "frame", "visible": true, "x": 200, "y": 88, "width": 960, "height": 20 },
+    "page-title": { "id": "page-title", "frameId": "crm-template-frame", "parentId": "content", "children": ["stale-page-title"], "name": "Page title", "type": "frame", "visible": true, "x": 200, "y": 120, "width": 960, "height": 40 },
+    "filters": { "id": "filters", "frameId": "crm-template-frame", "parentId": "content", "children": ["stale-filters"], "name": "Filters", "type": "frame", "visible": true, "x": 200, "y": 176, "width": 960, "height": 68 },
+    "page-actions": { "id": "page-actions", "frameId": "crm-template-frame", "parentId": "content", "children": ["stale-page-actions"], "name": "Page actions", "type": "frame", "visible": true, "x": 200, "y": 260, "width": 960, "height": 32 },
+    "table": { "id": "table", "frameId": "crm-template-frame", "parentId": "content", "children": ["stale-table"], "name": "Table", "type": "frame", "visible": true, "x": 200, "y": 308, "width": 960, "height": 500 },
+    "pagination": { "id": "pagination", "frameId": "crm-template-frame", "parentId": "content", "children": ["stale-pagination"], "name": "Pagination", "type": "frame", "visible": true, "x": 200, "y": 824, "width": 960, "height": 32 },
+    "stale-breadcrumb": { "id": "stale-breadcrumb", "frameId": "crm-template-frame", "parentId": "breadcrumb", "name": "Stale breadcrumb", "type": "text", "visible": true, "x": 200, "y": 88, "width": 200, "height": 20, "text": { "characters": "采购价格" } },
+    "stale-page-title": { "id": "stale-page-title", "frameId": "crm-template-frame", "parentId": "page-title", "name": "Stale page title", "type": "text", "visible": true, "x": 200, "y": 120, "width": 200, "height": 32, "text": { "characters": "新增价格" } },
+    "stale-filters": { "id": "stale-filters", "frameId": "crm-template-frame", "parentId": "filters", "name": "Stale filters", "type": "text", "visible": true, "x": 200, "y": 176, "width": 200, "height": 20, "text": { "characters": "产品名称" } },
+    "stale-page-actions": { "id": "stale-page-actions", "frameId": "crm-template-frame", "parentId": "page-actions", "name": "Stale page actions", "type": "text", "visible": true, "x": 200, "y": 260, "width": 200, "height": 20, "text": { "characters": "供应商" } },
+    "stale-table": { "id": "stale-table", "frameId": "crm-template-frame", "parentId": "table", "name": "Stale table", "type": "text", "visible": true, "x": 200, "y": 308, "width": 200, "height": 20, "text": { "characters": "采购价格" } },
+    "stale-pagination": { "id": "stale-pagination", "frameId": "crm-template-frame", "parentId": "pagination", "name": "Stale pagination", "type": "text", "visible": true, "x": 200, "y": 824, "width": 200, "height": 20, "text": { "characters": "产品名称" } },
+    "page-title-prototype": { "id": "page-title-prototype", "frameId": "crm-template-frame", "parentId": "content", "children": ["page-title-label"], "name": "Page title prototype", "type": "frame", "visible": true, "x": 200, "y": 120, "width": 320, "height": 40 },
+    "page-title-label": { "id": "page-title-label", "frameId": "crm-template-frame", "parentId": "page-title-prototype", "name": "Page title label", "type": "text", "visible": true, "x": 200, "y": 120, "width": 320, "height": 32, "text": { "characters": "模板标题" } },
+    "breadcrumb-item-prototype": { "id": "breadcrumb-item-prototype", "frameId": "crm-template-frame", "parentId": "content", "children": ["breadcrumb-label"], "name": "Breadcrumb item prototype", "type": "frame", "visible": true, "x": 200, "y": 88, "width": 120, "height": 20 },
+    "breadcrumb-label": { "id": "breadcrumb-label", "frameId": "crm-template-frame", "parentId": "breadcrumb-item-prototype", "name": "Breadcrumb label", "type": "text", "visible": true, "x": 200, "y": 88, "width": 120, "height": 20, "text": { "characters": "模板面包屑" } },
+    "table-header-cell-prototype": { "id": "table-header-cell-prototype", "frameId": "crm-template-frame", "parentId": "content", "children": ["header-sample"], "name": "Table header prototype", "type": "frame", "visible": true, "x": 200, "y": 308, "width": 180, "height": 44 },
+    "header-sample": { "id": "header-sample", "frameId": "crm-template-frame", "parentId": "table-header-cell-prototype", "name": "Header sample", "type": "text", "visible": true, "x": 200, "y": 308, "width": 160, "height": 20, "text": { "characters": "模板表头" } },
+    "table-row-prototype": { "id": "table-row-prototype", "frameId": "crm-template-frame", "parentId": "content", "children": ["row-sample"], "name": "Table row prototype", "type": "frame", "visible": true, "x": 200, "y": 352, "width": 960, "height": 52 },
+    "row-sample": { "id": "row-sample", "frameId": "crm-template-frame", "parentId": "table-row-prototype", "name": "Row sample", "type": "text", "visible": true, "x": 200, "y": 352, "width": 160, "height": 20, "text": { "characters": "模板行" } }
+  },
+  "assets": {},
+  "source": { "revisionId": "crm-template-revision-1" }
+}

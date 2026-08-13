@@ -1,0 +1,14 @@
+{
+  "schema_version": "multica.project-design-system-source-index/v1",
+  "input_snapshot_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "evidence": [
+    {
+      "id": "crm-orders-page",
+      "kind": "repository_fact",
+      "summary": "The CRM order workspace uses dense filters, a data table, and compact repeated actions.",
+      "references": ["apps/crm/orders/page.tsx"]
+    }
+  ],
+  "conflicts": [],
+  "fallbacks": []
+}

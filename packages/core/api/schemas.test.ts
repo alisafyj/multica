@@ -17,6 +17,9 @@ import {
   DashboardFailureDailyListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
+  EMPTY_PROJECT_DESIGN_SYSTEM,
+  DesignDraftSchema,
+  ListDesignDraftsResponseSchema,
   ChatDraftRestoresResponseSchema,
   ChatPendingTaskSchema,
   PrioritizeQueuedChatTaskResponseSchema,
@@ -59,6 +62,7 @@ import {
   InboxUnreadSummarySchema,
   IssueTriggerPreviewSchema,
   ListIssuesResponseSchema,
+  ProjectDesignSystemSchema,
   ListPropertiesResponseSchema,
   MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
   RuntimeModelListRequestSchema,
@@ -616,6 +620,66 @@ describe("CreateFeedbackResponseSchema", () => {
   });
 });
 
+describe("ProjectDesignSystemSchema package preview drift", () => {
+  it("defaults malformed native package preview fields without dropping content", () => {
+    const parsed = ProjectDesignSystemSchema.parse({
+      ...EMPTY_PROJECT_DESIGN_SYSTEM,
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      content: {
+        preview_targets: null,
+        package_schema: null,
+        selection_enabled: "true",
+      },
+    });
+
+    expect(parsed.content.package_schema).toBe("");
+    expect(parsed.content.preview_targets).toEqual([]);
+    expect(parsed.content.selection_enabled).toBe(false);
+  });
+});
+
+describe("DesignDraftSchema", () => {
+  it("preserves semantic draft metadata without requiring review endpoints", () => {
+    const parsed = DesignDraftSchema.parse({
+      id: "draft-1",
+      workspace_id: "ws-1",
+      template_id: null,
+      file_id: null,
+      revision_id: null,
+      issue_id: "issue-1",
+      title: "CRM 客户列表",
+      requirement_core: {},
+      slot_values: {},
+      patch: [],
+      status: "generated_with_warnings",
+      validation_errors: [],
+      created_by: null,
+      created_at: "2026-08-11T00:00:00Z",
+      updated_at: "2026-08-11T00:00:00Z",
+      generation_mode: "semantic_pagespec",
+      page_spec: { title: "客户列表" },
+      compiled_native_json: null,
+      quality_report: { diagnostics: [{ severity: "warning", code: "minor_spacing" }] },
+      blueprint_id: "blueprint-crm",
+      recipe_set_id: "recipe-crm",
+      parent_draft_id: null,
+      version: 2,
+    });
+
+    expect(parsed.generation_mode).toBe("semantic_pagespec");
+    expect(parsed.status).toBe("generated_with_warnings");
+    expect(parsed.page_spec).toEqual({ title: "客户列表" });
+    expect(parsed.quality_report).toMatchObject({ diagnostics: [{ severity: "warning" }] });
+    expect(parsed.version).toBe(2);
+  });
+
+  it("defaults missing draft list collections", () => {
+    expect(ListDesignDraftsResponseSchema.parse({}).drafts).toEqual([]);
+    expect(ListDesignDraftsResponseSchema.parse({}).total).toBe(0);
+  });
+});
+
 describe("batch issue response schemas", () => {
   it("defaults missing counts to zero", () => {
     expect(BatchUpdateIssuesResponseSchema.parse({}).updated).toBe(0);
@@ -731,6 +795,106 @@ describe("ListDesignDeliveriesResponseSchema", () => {
     expect(parsed.deliveries[0]?.cancelled_by).toBe("user-1");
     expect(parsed.deliveries[0]?.cancel_reason).toBe("设计稿需要重新确认");
     expect(parsed.deliveries[0]?.audit_metadata.cancel_reason).toBe("设计稿需要重新确认");
+  });
+});
+
+describe("ProjectDesignSystemSchema", () => {
+  it("downgrades unknown status and null collections without throwing", () => {
+    const parsed = ProjectDesignSystemSchema.parse({
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      status: "future_server_status",
+      content: null,
+      activity: null,
+    });
+
+    expect(parsed.status).toBe("unestablished");
+    expect(parsed.content).toEqual({
+      sections: [],
+      token_groups: [],
+      locators: [],
+      preview_html: "",
+      integrity_sha256: "",
+      package_schema: "",
+      preview_targets: [],
+      selection_enabled: false,
+    });
+    expect(parsed.activity).toEqual([]);
+  });
+
+  it("defaults missing content arrays and discards malformed locators", () => {
+    const parsed = ProjectDesignSystemSchema.parse({
+      id: "system-1",
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      status: "draft",
+      content: {
+        preview_html: "<main>CRM</main>",
+        integrity_sha256: "sha-1",
+        locators: [{ id: 42, kind: "component", label: "Button" }],
+      },
+    });
+
+    expect(parsed.content.sections).toEqual([]);
+    expect(parsed.content.token_groups).toEqual([]);
+    expect(parsed.content.locators).toEqual([]);
+    expect(parsed.content.preview_html).toBe("<main>CRM</main>");
+  });
+
+  it("preserves native validation and repository analysis context", () => {
+    const parsed = ProjectDesignSystemSchema.parse({
+      id: "system-1",
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      status: "validating",
+      preview_validation: {
+        status: "pending",
+        integrity_sha256: "abc123",
+        report: { source: "browser" },
+        verified_at: null,
+      },
+      input_snapshot: {
+        agent_id: "agent-1",
+        platform: "web",
+        brief: "CRM design system",
+        references: [{ kind: "brand_color", label: "Primary", value: "#2463EB" }],
+        repository_analysis: {
+          schema_version: "multica.repository-design-context/v1",
+          summary: "CRM workspace with dense tables.",
+          suggested_brief: "Use operational UI patterns.",
+          facts: [{
+            kind: "navigation",
+            label: "Primary nav",
+            value: "Sidebar navigation",
+            source_paths: ["packages/views/designs/designs-page.tsx"],
+            confidence: 0.9,
+          }],
+          source_files: [{ path: "packages/views/designs/designs-page.tsx", kind: "tsx" }],
+          representative_workflows: [],
+          commit_sha: "abcdef123456",
+          confidence: 0.8,
+          conflicts: [],
+        },
+      },
+    });
+
+    expect(parsed.status).toBe("validating");
+    expect(parsed.preview_validation.status).toBe("pending");
+    expect(parsed.preview_validation.report).toEqual({ source: "browser" });
+    expect(parsed.input_snapshot.repository_analysis?.facts[0]?.source_paths).toEqual([
+      "packages/views/designs/designs-page.tsx",
+    ]);
+  });
+
+  it("falls back to an empty unestablished response for malformed top-level data", () => {
+    const parsed = parseWithFallback(
+      null,
+      ProjectDesignSystemSchema,
+      EMPTY_PROJECT_DESIGN_SYSTEM,
+      { endpoint: "GET /api/project-design-systems/{id}" },
+    );
+
+    expect(parsed).toEqual(EMPTY_PROJECT_DESIGN_SYSTEM);
   });
 });
 

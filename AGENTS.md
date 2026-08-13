@@ -43,6 +43,7 @@ Go backend + monorepo frontend (pnpm workspaces + Turborepo) with shared package
 
 - Never add database foreign keys or cascading actions. Enforce relationships and perform dependent cleanup explicitly in the application layer, using transactions when the operation must be atomic.
 - Every index created by a migration, including unique indexes and indexes on new tables, must use `CREATE [UNIQUE] INDEX CONCURRENTLY`. Keep each concurrent index build in its own single-statement migration file.
+- **Migration numbering (fork discipline):** this repo is a fork that merges `multica-ai/multica` regularly. New fork-local migrations MUST use prefixes from 800 upward (fork-reserved range) — never take the next number after upstream's latest, and never renumber an already-applied migration (the runner keys `schema_migrations` on the full stem). Upstream-merge collisions are recorded in `mergedDuplicateMigrationStems` in `server/internal/migrations/migrations_lint_test.go`. Full rule: CLAUDE.md「Database and Migration Rules」.
 
 ### Commands
 
@@ -73,6 +74,11 @@ make check            # Full verification pipeline
    - 检查 `/readyz`、`/health`、前端 :3000、docs 容器内 :4000
    - 后端日志：migration / ERR / FTL / panic / daemon heartbeat
    - caddy 与 multica-iworker.service 状态；20s 后稳定性复检、磁盘、回滚产物清单
+
+### PR 提交流程（fork）
+
+- PR 建到本仓库（`coder-zkl1988/multica`）自己的 `main`，不要建到 `multica-ai/multica`。
+- 分支从本仓库 `main` 拉出；提 PR 前用 `git rev-list --count origin/main..HEAD` 确认只包含自己的提交。
 
 See CLAUDE.md for the authoritative rules and common commands.
 See CLAUDE.md for the complete command reference.

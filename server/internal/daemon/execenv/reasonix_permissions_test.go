@@ -74,7 +74,7 @@ func TestPrepareDeniesReasonixAskTool(t *testing.T) {
 
 	// The sidecar is daemon-owned state, so CleanupSidecars must take it back
 	// out — a local_directory run has to be byte-exactly reversible.
-	if err := CleanupSidecars(env.RootDir); err != nil {
+	if err := CleanupSidecars(env.RootDir, env.WorkDir); err != nil {
 		t.Fatalf("CleanupSidecars: %v", err)
 	}
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {

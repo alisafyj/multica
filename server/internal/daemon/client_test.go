@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -102,6 +104,128 @@ func TestClient_VersionOmittedWhenUnset(t *testing.T) {
 	c := NewClient(srv.URL)
 	if err := c.postJSON(context.Background(), "/api/daemon/test", nil, nil); err != nil {
 		t.Fatalf("postJSON: %v", err)
+	}
+}
+
+func TestClientCompleteTaskSerializesOptionalProjectDesignSystemArtifacts(t *testing.T) {
+	want := ProjectDesignSystemArtifacts{
+		DesignMD:       "# Design system",
+		TokensCSS:      ":root { --color-primary: #1677ff; }",
+		ComponentsHTML: "<main>Kit</main>",
+	}
+	var payload map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewClient(srv.URL)
+	if err := client.CompleteTask(
+		context.Background(),
+		"task-1",
+		"done",
+		"",
+		"session-1",
+		"/tmp/workdir",
+		&want,
+		nil,
+	); err != nil {
+		t.Fatalf("complete task: %v", err)
+	}
+	var got ProjectDesignSystemArtifacts
+	if err := json.Unmarshal(payload["project_design_system_artifacts"], &got); err != nil {
+		t.Fatalf("decode artifacts: %v", err)
+	}
+	if got != want {
+		t.Fatalf("artifacts = %#v, want %#v", got, want)
+	}
+}
+
+func TestClientCompleteTaskOmitsProjectDesignSystemArtifactsWhenNil(t *testing.T) {
+	var payload map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewClient(srv.URL)
+	if err := client.CompleteTask(context.Background(), "task-1", "done", "", "", "", nil, nil); err != nil {
+		t.Fatalf("complete task: %v", err)
+	}
+	if _, exists := payload["project_design_system_artifacts"]; exists {
+		t.Fatal("ordinary completion included project_design_system_artifacts")
+	}
+}
+
+func TestClientUploadProjectDesignSystemPackage(t *testing.T) {
+	defer noSleepRetry(t)()
+
+	archive := []byte("immutable native package bytes")
+	digest := "sha256:" + strings.Repeat("a", 64)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/daemon/tasks/task-1/project-design-system/package" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/zip" {
+			t.Errorf("Content-Type = %q", got)
+		}
+		if got := r.Header.Get("X-Multica-Design-Package-Digest"); got != digest {
+			t.Errorf("digest header = %q", got)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil || !bytes.Equal(body, archive) {
+			t.Errorf("archive body changed across retries: err=%v body=%q", err, body)
+		}
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"object_key":     "project-design-systems/ws/system/task-1/archive.zip",
+			"content_digest": digest,
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewClient(srv.URL)
+	result, err := client.UploadProjectDesignSystemPackage(context.Background(), "task-1", digest, archive)
+	if err != nil {
+		t.Fatalf("upload package: %v", err)
+	}
+	if result.ObjectKey != "project-design-systems/ws/system/task-1/archive.zip" || result.ContentDigest != digest {
+		t.Fatalf("result = %+v", result)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("attempts = %d, want 2", calls.Load())
+	}
+}
+
+func TestClientUploadProjectDesignSystemPackageRejectsDigestMismatch(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"object_key":     "project-design-systems/ws/system/task-1/archive.zip",
+			"content_digest": "sha256:" + strings.Repeat("b", 64),
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewClient(srv.URL)
+	if _, err := client.UploadProjectDesignSystemPackage(context.Background(), "task-1", digest, []byte("archive")); err == nil {
+		t.Fatal("expected response digest mismatch error")
 	}
 }
 
