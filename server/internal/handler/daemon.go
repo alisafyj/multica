@@ -1423,6 +1423,27 @@ func logClaimEndpointSlow(runtimeID, outcome string, start time.Time, authMs, cl
 	)
 }
 
+// runtimeHasCapability reports whether a stored runtime row advertised the
+// capability at registration. Absent metadata means an older daemon that never
+// sent the header, so this fails closed.
+func runtimeHasCapability(metadata []byte, capability string) bool {
+	if len(metadata) == 0 {
+		return false
+	}
+	var m struct {
+		Capabilities []string `json:"capabilities"`
+	}
+	if err := json.Unmarshal(metadata, &m); err != nil {
+		return false
+	}
+	for _, c := range m.Capabilities {
+		if c == capability {
+			return true
+		}
+	}
+	return false
+}
+
 // requestHasClientCapability reports whether the caller advertised a capability
 // in X-Client-Capabilities. Daemons and app clients share the header.
 func requestHasClientCapability(r *http.Request, capability string) bool {
@@ -2715,7 +2736,66 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		)
 	}
 
+	// Refuse to hand a worktree-mode directory task to a daemon that cannot
+	// implement the isolation contract. Falling back to in-place execution
+	// would edit the user's working copy.
+	if reason := worktreeClaimBlockReason(
+		resp.ProjectResources,
+		runtime,
+		requestHasClientCapability(r, protocol.DaemonCapabilityLocalWorktreeV1),
+	); reason != "" {
+		slog.Error("task claim: runtime lacks worktree capability; cancelling rather than running in place",
+			"task_id", uuidToString(task.ID),
+			"runtime_id", runtimeID,
+			"daemon_id", runtime.DaemonID.String,
+			"reason", reason,
+		)
+		if _, cerr := h.TaskService.CancelTaskWithReason(r.Context(), task.ID, reason, "local_directory_error"); cerr != nil {
+			slog.Error("task claim: cancel after worktree capability gate failed; requeueing",
+				"task_id", uuidToString(task.ID), "error", cerr)
+			if _, rerr := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); rerr != nil {
+				slog.Error("task claim: requeue after worktree gate failed", "task_id", uuidToString(task.ID), "error", rerr)
+			}
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, &claimBuildFailure{
+				outcome: "error_worktree_gate_cancel",
+				status:  http.StatusInternalServerError,
+				message: "failed to cancel a worktree task blocked by daemon capability; task requeued",
+			}
+		}
+		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, &claimBuildFailure{
+			outcome: "error_worktree_daemon_version",
+			status:  http.StatusUnprocessableEntity,
+			message: reason,
+		}
+	}
+
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
+}
+
+// worktreeClaimBlockReason returns a user-facing reason when this runtime must
+// not run the task, or "" when it may proceed.
+func worktreeClaimBlockReason(resources []ProjectResourceData, runtime db.AgentRuntime, hasWorktreeCapability bool) string {
+	if !runtime.DaemonID.Valid || runtime.DaemonID.String == "" || hasWorktreeCapability {
+		return ""
+	}
+	for _, res := range resources {
+		if res.ResourceType != "local_directory" {
+			continue
+		}
+		var ref localDirectoryRef
+		if err := json.Unmarshal(res.ResourceRef, &ref); err != nil {
+			continue
+		}
+		if ref.ExecutionMode != localDirectoryModeWorktree || ref.DaemonID != runtime.DaemonID.String {
+			continue
+		}
+		return fmt.Sprintf(
+			"This machine's Multica runtime does not support parallel (worktree) mode, which %q is set to use. "+
+				"Update the Multica app on that machine to the latest version, then re-run this task. "+
+				"Refusing to run rather than falling back to editing the directory directly, which is what this mode exists to prevent.",
+			ref.LocalPath)
+	}
+	return ""
 }
 
 func (h *Handler) populateContextTaskProject(ctx context.Context, resp *AgentTaskResponse, projectID, workspaceID string) {
@@ -3228,6 +3308,10 @@ type TaskCompleteRequest struct {
 	Output    string `json:"output"`
 	SessionID string `json:"session_id"` // Claude session ID for future resumption
 	WorkDir   string `json:"work_dir"`   // working directory used during execution
+	// BranchName is the branch this run delivered its work on. Worktree-mode
+	// local_directory tasks never touch the user's working copy, so this is the
+	// only pointer to where the changes went. Empty for every other task kind.
+	BranchName string `json:"branch_name,omitempty"`
 	// SessionRolloutMissing: the daemon withheld this task's Codex session
 	// because its rollout was missing (MUL-5305). Clear the resume pointer and
 	// flag the continuity gap for the next claim.
@@ -3290,7 +3374,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		draft, draftErr := h.createDesignDraftFromAgentTaskOutput(r.Context(), existingTask, req.Output)
 		if draftErr != nil {
 			slog.Warn("ui agent draft completion: invalid draft output", "task_id", taskID, "error", draftErr)
-			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), draftErr.Error(), req.SessionID, req.WorkDir, "ui_draft_invalid_output", req.SessionRolloutMissing, req.RetiredSessionID)
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), draftErr.Error(), req.SessionID, req.WorkDir, req.BranchName, "ui_draft_invalid_output", req.SessionRolloutMissing, req.RetiredSessionID)
 			if failErr != nil {
 				slog.Warn("ui agent draft completion: failed to mark task failed", "task_id", taskID, "error", failErr)
 			} else if failedTask != nil {
@@ -3308,7 +3392,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		parsed, profileErr := parseDesignSystemProfileAnalyzeOutput(req.Output)
 		if profileErr != nil {
 			slog.Warn("design system profile analysis completion: invalid output", "task_id", taskID, "error", profileErr)
-			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), profileErr.Error(), req.SessionID, req.WorkDir, "design_system_profile_invalid_output", req.SessionRolloutMissing, req.RetiredSessionID)
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), profileErr.Error(), req.SessionID, req.WorkDir, req.BranchName, "design_system_profile_invalid_output", req.SessionRolloutMissing, req.RetiredSessionID)
 			if failErr != nil {
 				slog.Warn("design system profile analysis completion: failed to mark task failed", "task_id", taskID, "error", failErr)
 			} else if failedTask != nil {
@@ -3336,7 +3420,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 				// it reaches the task row, the run row, or this response.
 				bounded := service.BoundPMORunError(pmoErr.Error())
 				slog.Warn("pmo sync completion: invalid snapshot output", "task_id", taskID, "error", bounded)
-				failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), bounded, req.SessionID, req.WorkDir, "pmo_invalid_output", req.SessionRolloutMissing, req.RetiredSessionID)
+				failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), bounded, req.SessionID, req.WorkDir, req.BranchName, "pmo_invalid_output", req.SessionRolloutMissing, req.RetiredSessionID)
 				if failErr != nil {
 					slog.Warn("pmo sync completion: failed to mark task failed", "task_id", taskID, "error", failErr)
 				} else if failedTask != nil {
@@ -3362,7 +3446,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	var task *db.AgentTaskQueue
 	var err error
 	if profileOutput != nil {
-		task, err = h.TaskService.CompleteTaskWithMutationAndSessionState(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.SessionRolloutMissing, req.RetiredSessionID, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
+		task, err = h.TaskService.CompleteTaskWithMutationAndSessionState(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.BranchName, req.SessionRolloutMissing, req.RetiredSessionID, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
 			profile, updateErr := h.updateDesignSystemProfileFromAgentTaskOutput(r.Context(), qtx, completedTask, *profileOutput)
 			if updateErr == nil {
 				analyzedProfile = profile
@@ -3370,7 +3454,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 			return updateErr
 		})
 	} else if pmoSnapshot != nil {
-		task, err = h.TaskService.CompleteTaskWithMutationAndSessionState(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.SessionRolloutMissing, req.RetiredSessionID, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
+		task, err = h.TaskService.CompleteTaskWithMutationAndSessionState(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.BranchName, req.SessionRolloutMissing, req.RetiredSessionID, func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
 			// Re-derive the context from the row under the terminal
 			// transaction so a context mutation between parse and commit
 			// cannot split the preview store from a foreign run.
@@ -3381,7 +3465,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 			return h.storePMOSyncRunPreview(r.Context(), qtx, pmoCtx, *pmoSnapshot)
 		})
 	} else {
-		task, err = h.TaskService.CompleteTask(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.SessionRolloutMissing, req.RetiredSessionID)
+		task, err = h.TaskService.CompleteTask(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.BranchName, req.SessionRolloutMissing, req.RetiredSessionID)
 	}
 	if err != nil {
 		// A CompleteTask error is an infrastructure failure (transaction /
@@ -4090,6 +4174,10 @@ type TaskFailRequest struct {
 	SessionID     string `json:"session_id,omitempty"`
 	WorkDir       string `json:"work_dir,omitempty"`
 	FailureReason string `json:"failure_reason,omitempty"`
+	// BranchName: a failed run can still have produced a branch — worktree mode
+	// commits whatever the agent left before tearing the worktree down. Report
+	// it so a partially-successful run is still findable.
+	BranchName string `json:"branch_name,omitempty"`
 	// SessionRolloutMissing: the daemon withheld this task's Codex session
 	// because its rollout was missing (MUL-5305). Clear the resume pointer and
 	// flag the continuity gap for the next claim.
@@ -4130,7 +4218,7 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 	// keep a stale mid-flight pin) and flagging the row in the same commit that
 	// creates and wakes the auto-retry, so the retry can never claim the withheld
 	// pointer or miss the continuity gap.
-	task, err := h.TaskService.FailTask(r.Context(), parseUUID(taskID), req.Error, req.SessionID, req.WorkDir, req.FailureReason, req.SessionRolloutMissing, req.RetiredSessionID)
+	task, err := h.TaskService.FailTask(r.Context(), parseUUID(taskID), req.Error, req.SessionID, req.WorkDir, req.BranchName, req.FailureReason, req.SessionRolloutMissing, req.RetiredSessionID)
 	if err != nil {
 		// A FailTask error is an infrastructure failure (the terminal
 		// transaction that also clears the withheld session, writes the
