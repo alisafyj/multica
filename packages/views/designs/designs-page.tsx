@@ -1,20 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ClipboardList, Copy, Eye, FileJson, Folder, Palette, Plus, Search, Trash2 } from "lucide-react";
+import { ClipboardList, Copy, Eye, FileJson, Folder, House, Palette, Plus, Search, Trash2, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
-import { designDraftListOptions, designFileListOptions, designFolderListOptions, designSystemListOptions, designTemplateListOptions } from "@multica/core/designs/queries";
+import { designDraftListOptions, designFileListOptions, designFolderListOptions, designSystemListOptions, designTemplateListOptions, projectDesignSystemByProjectOptions } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
-import type { DesignCatalogTemplate, DesignDraft, DesignFile, DesignFolder, DesignSystemProfile, GalleryJsonPatchOperation, Project } from "@multica/core/types";
+import type { DesignCatalogTemplate, DesignDraft, DesignFile, DesignFolder, GalleryJsonPatchOperation, Project } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@multica/ui/components/ui/dropdown-menu";
 import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
 import {
@@ -30,10 +32,13 @@ import {
 import { PageHeader } from "../layout/page-header";
 import { AppLink, useNavigation } from "../navigation";
 import { FigmaPluginDownload } from "./figma-plugin-download";
+import { ProjectDesignSystemWorkspace } from "./project-design-system-workspace";
 
 type ToolMenuState = { x: number; y: number; file: DesignFile } | null;
 type DraftDialogState = { template: DesignCatalogTemplate; title: string; requirement: string; slotValues: string; patch: string; agentId: string; prompt: string } | null;
-type DesignAssetTab = "designs" | "templates" | "systems";
+type DesignAssetTab = "designs" | "drafts" | "templates" | "systems";
+
+const DESIGN_HOME_TAB_ID = "__design_home__";
 
 function formatDate(value: string) {
   const date = new Date(value);
@@ -199,31 +204,20 @@ function TemplateCatalogCard({ template, sourceFile, onCreateDraft }: { template
   );
 }
 
-function DesignSystemCard({ profile, sourceFile }: { profile: DesignSystemProfile; sourceFile?: DesignFile }) {
-  const paths = useWorkspacePaths();
-  return (
-    <div className="group/card flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card transition-colors hover:border-primary/50">
-      <AssetPreview thumbnailUrl={profile.thumbnail_url ?? sourceFile?.thumbnail_url} badge={profile.is_default ? "默认" : profile.status} icon={<Palette className="h-6 w-6" />} />
-      <div className="flex min-w-0 flex-col gap-3 p-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="truncate text-body font-medium">{profile.name}</div>
-            <div className="mt-1 truncate text-caption text-muted-foreground">{profile.description ?? sourceFile?.title ?? "项目 UI 规范"}</div>
-          </div>
-          {profile.is_default ? <Badge variant="secondary" className="shrink-0">默认</Badge> : <Badge variant="outline" className="shrink-0">{profile.status}</Badge>}
-        </div>
-        <div className="flex items-center justify-between gap-2 text-caption text-muted-foreground">
-          <span className="truncate">{sourceFile?.title ?? profile.source_file_id.slice(0, 8)}</span>
-          <span className="shrink-0">{formatDate(profile.updated_at)}</span>
-        </div>
-        <AppLink href={paths.designDetail(profile.source_file_id)} className="text-caption text-muted-foreground hover:text-foreground">查看规范来源</AppLink>
-      </div>
-    </div>
-  );
+function isSemanticDraft(draft: DesignDraft) {
+  return draft.generation_mode === "semantic_pagespec";
+}
+
+function isPendingDesignDraft(draft: DesignDraft) {
+  const status = draft.status;
+  if (status === "compile_failed" || status === "approved" || status === "rejected" || status === "archived" || status === "failed") return false;
+  if (isSemanticDraft(draft)) return status === "generated" || status === "generated_with_warnings";
+  return !draft.generated_file_id;
 }
 
 function DraftReviewCard({ draft, previewFile, onMaterialize, materializing }: { draft: DesignDraft; previewFile?: DesignFile; onMaterialize: (draft: DesignDraft) => void; materializing: boolean }) {
   const paths = useWorkspacePaths();
+  const semantic = isSemanticDraft(draft);
   return (
     <div className="group/card flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card transition-colors hover:border-primary/50">
       <AssetPreview thumbnailUrl={previewFile?.thumbnail_url} badge={draft.status} icon={<ClipboardList className="h-6 w-6" />} />
@@ -233,57 +227,17 @@ function DraftReviewCard({ draft, previewFile, onMaterialize, materializing }: {
           <div className="mt-1 truncate text-caption text-muted-foreground">{draft.catalog_template_id ? `模版 ${draft.catalog_template_id.slice(0, 8)}` : "设计草稿"}</div>
         </div>
         <div className="flex items-center justify-between gap-2 text-caption text-muted-foreground">
-          <span>{draft.patch.length} 个 patch 操作</span>
+          <span>{semantic ? "PageSpec 语义稿" : `${draft.patch.length} 个 patch 操作`}</span>
           <span className="shrink-0">{formatDate(draft.materialized_at ?? draft.updated_at)}</span>
         </div>
         {draft.generated_file_id ? (
           <AppLink href={paths.designDetail(draft.generated_file_id)} className="flex h-7 w-full items-center justify-center rounded-md border px-3 text-caption font-medium hover:bg-accent">打开生成的设计稿</AppLink>
+        ) : semantic ? (
+          <AppLink href={paths.designDraftDetail(draft.id)} className="flex h-7 w-full items-center justify-center rounded-md border px-3 text-caption font-medium hover:bg-accent">打开草稿</AppLink>
         ) : (
           <Button type="button" size="sm" variant="outline" className="h-7 w-full" disabled={materializing} onClick={() => onMaterialize(draft)}>{materializing ? "生成中…" : "生成设计稿"}</Button>
         )}
       </div>
-    </div>
-  );
-}
-
-function WorkspaceAssetCard({ icon, title, count, description, meta, active, onClick }: { icon: React.ReactNode; title: string; count: number; description: string; meta: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`min-h-28 rounded-lg border bg-card p-4 text-left transition-colors hover:border-primary/50 ${active ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary/20" : ""}`}
-    >
-      <div className="flex h-full flex-col justify-between gap-4">
-        <div className="flex items-start justify-between gap-3">
-          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>{icon}</span>
-          <span className="font-mono text-body-lg font-semibold leading-none text-foreground">{count}</span>
-        </div>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <div className="truncate text-body font-medium">{title}</div>
-            {active ? <span className="h-1.5 w-1.5 rounded-full bg-primary" /> : null}
-          </div>
-          <p className="mt-1 text-caption text-muted-foreground">{description}</p>
-          <p className="mt-2 truncate text-caption text-muted-foreground">{meta}</p>
-        </div>
-      </div>
-    </button>
-  );
-}
-
-function SectionHeader({ icon, title, count, description, action }: { icon: React.ReactNode; title: string; count?: number; description?: string; action?: React.ReactNode }) {
-  return (
-    <div className="flex items-start justify-between gap-3 border-b pb-2">
-      <div className="min-w-0">
-        <div className="flex min-w-0 items-center gap-2 text-body font-medium">
-          <span className="text-muted-foreground">{icon}</span>
-          <span className="truncate">{title}</span>
-          {typeof count === "number" ? <span className="font-mono text-caption text-muted-foreground">{count}</span> : null}
-        </div>
-        {description ? <p className="mt-1 text-caption text-muted-foreground">{description}</p> : null}
-      </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
     </div>
   );
 }
@@ -334,9 +288,12 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   const [deleteFolderTarget, setDeleteFolderTarget] = useState<{ folder: DesignFolder; count: number } | null>(null);
   const [draftDialog, setDraftDialog] = useState<DraftDialogState>(null);
   const [materializingDraftId, setMaterializingDraftId] = useState<string | null>(null);
-  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [activeWorkspaceTabId, setActiveWorkspaceTabId] = useState(DESIGN_HOME_TAB_ID);
+  const [openProjectIds, setOpenProjectIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<DesignAssetTab>("designs");
+  const selectedProjectId = activeWorkspaceTabId === DESIGN_HOME_TAB_ID ? "" : activeWorkspaceTabId;
   const { data: designSystems = [], isLoading: designSystemsLoading } = useQuery(designSystemListOptions(wsId, selectedProjectId || undefined));
+  const { data: projectDesignSystem, isLoading: projectDesignSystemLoading } = useQuery(projectDesignSystemByProjectOptions(wsId, selectedProjectId));
   const figmaConnection = useMutation({
     mutationFn: () => api.createFigmaImportConnection(),
     onSuccess: (data) => setFigmaCode({ code: data.code, expiresAt: data.expires_at }),
@@ -346,9 +303,15 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   const folderById = useMemo(() => new Map(folders.map((folder) => [folder.id, folder])), [folders]);
   const fileById = useMemo(() => new Map(files.map((file) => [file.id, file])), [files]);
   useEffect(() => {
-    if (!selectedProjectId && projects[0]?.id) setSelectedProjectId(projects[0].id);
-    else if (selectedProjectId && projects.length && !projects.some((project) => project.id === selectedProjectId)) setSelectedProjectId(projects[0]?.id ?? "");
-  }, [projects, selectedProjectId]);
+    const validProjectIds = new Set(projects.map((project) => project.id));
+    if (activeWorkspaceTabId !== DESIGN_HOME_TAB_ID && !validProjectIds.has(activeWorkspaceTabId)) {
+      setActiveWorkspaceTabId(DESIGN_HOME_TAB_ID);
+    }
+    setOpenProjectIds((current) => {
+      const next = current.filter((projectId) => validProjectIds.has(projectId));
+      return next.length === current.length && next.every((projectId, index) => projectId === current[index]) ? current : next;
+    });
+  }, [activeWorkspaceTabId, projects]);
   const availableAgents = useMemo(() => agents.filter((agent) => !agent.archived_at && agent.runtime_id), [agents]);
   const defaultAgentId = availableAgents[0]?.id ?? "";
   const deleteDesign = useMutation({
@@ -482,8 +445,15 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
     if (generatedFile?.project_id === selectedProjectId) return true;
     return !draft.catalog_template_id && !draft.file_id && !draft.generated_file_id;
   }), [drafts, fileById, projectTemplateIds, selectedProjectId]);
+  const pendingDesignDrafts = useMemo(() => projectDrafts.filter(isPendingDesignDraft), [projectDrafts]);
   const searchQuery = search.trim().toLowerCase();
-  const searchPlaceholder = activeTab === "designs" ? "搜索设计稿…" : activeTab === "templates" ? "搜索模版…" : "搜索 UI 规范…";
+  const searchPlaceholder = activeTab === "designs"
+    ? "搜索设计稿…"
+    : activeTab === "drafts"
+      ? "搜索设计草稿…"
+      : activeTab === "templates"
+        ? "搜索模版…"
+        : "搜索设计体系…";
   const filtered = useMemo(() => {
     const query = searchQuery;
     if (!query) return projectFiles;
@@ -500,14 +470,14 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   }, [folderById, projectById, projectFiles, searchQuery]);
   const filteredDrafts = useMemo(() => {
     const query = searchQuery;
-    if (!query) return projectDrafts;
-    return projectDrafts.filter((draft) => [
+    if (!query) return pendingDesignDrafts;
+    return pendingDesignDrafts.filter((draft) => [
       draft.title,
       draft.status,
       draft.requirement_core?.title ?? "",
       draft.requirement_core?.summary ?? "",
     ].join(" ").toLowerCase().includes(query));
-  }, [projectDrafts, searchQuery]);
+  }, [pendingDesignDrafts, searchQuery]);
   const filteredTemplates = useMemo(() => {
     const query = searchQuery;
     if (!query) return projectTemplates;
@@ -518,20 +488,6 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
       template.design_file_title ?? "",
     ].join(" ").toLowerCase().includes(query));
   }, [projectTemplates, searchQuery]);
-  const filteredDesignSystems = useMemo(() => {
-    const query = searchQuery;
-    if (!query) return designSystems;
-    return designSystems.filter((profile) => {
-      const sourceFile = fileById.get(profile.source_file_id);
-      return [
-        profile.name,
-        profile.description ?? "",
-        profile.status,
-        sourceFile?.title ?? "",
-      ].join(" ").toLowerCase().includes(query);
-    });
-  }, [designSystems, fileById, searchQuery]);
-
   const grouped = useMemo(() => {
     const folderMap = new Map<string, { folderKey: string; folderName: string; items: DesignFile[] }>();
     folderMap.set("__ungrouped", { folderKey: "__ungrouped", folderName: "未分组", items: [] });
@@ -547,9 +503,23 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
     return Array.from(folderMap.values()).filter((folder) => folder.items.length > 0 || !searchQuery);
   }, [filtered, folderById, projectFolders, searchQuery]);
   const selectedProject = projectById.get(selectedProjectId);
-  const defaultDesignSystem = designSystems.find((profile) => profile.is_default);
-  const designSearchCount = filteredDrafts.length + filtered.length;
-  const designAssetCount = projectDrafts.length + projectFiles.length;
+  const openProjects = openProjectIds
+    .map((projectId) => projectById.get(projectId))
+    .filter((project): project is Project => Boolean(project));
+  const unopenedProjects = projects.filter((project) => !openProjectIds.includes(project.id));
+  const projectDesignSystemCount = projectDesignSystem?.id ? 1 : 0;
+  const openProjectTab = (projectId: string) => {
+    setOpenProjectIds((current) => current.includes(projectId) ? current : [...current, projectId]);
+    setActiveWorkspaceTabId(projectId);
+  };
+  const closeProjectTab = (projectId: string) => {
+    const closingIndex = openProjectIds.indexOf(projectId);
+    const next = openProjectIds.filter((id) => id !== projectId);
+    setOpenProjectIds(next);
+    if (activeWorkspaceTabId === projectId) {
+      setActiveWorkspaceTabId(next[Math.min(closingIndex, next.length - 1)] ?? DESIGN_HOME_TAB_ID);
+    }
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -590,23 +560,80 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
         {figmaConnection.error ? (
           <div className="border-b px-4 py-2 text-caption text-destructive">无法创建 Figma 连接代码。</div>
         ) : null}
-        <div className="flex shrink-0 flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="shrink-0 text-caption text-muted-foreground">项目</span>
-            <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)} className="h-8 max-w-72 rounded-md border bg-background px-3 text-body">
-              {projects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}
-            </select>
+        <div className="flex shrink-0 flex-col border-b bg-muted/20 sm:flex-row sm:items-end sm:justify-between">
+          <div role="tablist" aria-label="设计项目" className="flex min-w-0 items-end gap-1 overflow-x-auto overflow-y-hidden px-3 pt-2 sm:px-4">
+            <div className={`-mb-px flex h-9 w-28 shrink-0 items-center rounded-t-md border px-1 transition-colors ${activeWorkspaceTabId === DESIGN_HOME_TAB_ID ? "border-border border-b-background bg-background text-foreground shadow-sm" : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground"}`}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeWorkspaceTabId === DESIGN_HOME_TAB_ID}
+                className="flex min-w-0 flex-1 items-center gap-2 px-2 text-left text-body"
+                onClick={() => setActiveWorkspaceTabId(DESIGN_HOME_TAB_ID)}
+              >
+                <House className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">首页</span>
+              </button>
+            </div>
+            {openProjects.map((project) => {
+              const active = project.id === activeWorkspaceTabId;
+              return (
+                <div
+                  key={project.id}
+                  className={`group/project-tab -mb-px flex h-9 w-40 shrink-0 items-center rounded-t-md border px-1 transition-colors ${active ? "border-border border-b-background bg-background text-foreground shadow-sm" : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground"}`}
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    className="flex min-w-0 flex-1 items-center gap-2 px-2 text-left text-body"
+                    onClick={() => setActiveWorkspaceTabId(project.id)}
+                  >
+                    <Folder className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{project.title}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`关闭项目 ${project.title}`}
+                    title={`关闭项目 ${project.title}`}
+                    className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/project-tab:opacity-100"
+                    onClick={() => closeProjectTab(project.id)}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            })}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <button type="button" aria-label="打开项目" title="打开项目" className="mb-1 flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground">
+                    <Plus className="h-4 w-4" />
+                  </button>
+                }
+              />
+              <DropdownMenuContent align="start" className="w-56">
+                {unopenedProjects.length ? unopenedProjects.map((project) => (
+                  <DropdownMenuItem key={project.id} onClick={() => openProjectTab(project.id)}>
+                    <Folder className="h-4 w-4" />
+                    <span className="truncate">{project.title}</span>
+                  </DropdownMenuItem>
+                )) : <DropdownMenuItem disabled>所有项目均已打开</DropdownMenuItem>}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-          <div className="relative w-full sm:w-72">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={searchPlaceholder} className="h-8 pl-8 text-body" />
-          </div>
-          <span className="hidden font-mono text-caption text-muted-foreground sm:block">
-            {activeTab === "designs" ? `${designSearchCount} / ${designAssetCount}` : activeTab === "templates" ? `${filteredTemplates.length} / ${projectTemplates.length}` : `${filteredDesignSystems.length} / ${designSystems.length}`}
-          </span>
+          {selectedProjectId && activeTab !== "systems" ? (
+            <div className="shrink-0 px-3 py-2 sm:px-4">
+              <div className="relative w-full sm:w-72">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={searchPlaceholder} className="h-8 pl-8 text-body" />
+              </div>
+            </div>
+          ) : null}
         </div>
 
-        {isLoading ? (
+        {activeWorkspaceTabId === DESIGN_HOME_TAB_ID ? (
+          <div role="tabpanel" aria-label="首页" className="min-h-0 flex-1" />
+        ) : isLoading ? (
           <div className="space-y-2 p-4">
             {Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-14 w-full" />)}
           </div>
@@ -616,102 +643,115 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
             <p className="text-body text-muted-foreground">请检查后端路由后重试。</p>
             <Button size="sm" variant="outline" onClick={() => void refetch()}>重试</Button>
           </div>
-        ) : !selectedProjectId ? (
-          <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
-            <h2 className="text-title-sm font-semibold">请选择项目</h2>
-            <p className="mt-1 max-w-md text-body text-muted-foreground">设计稿、模版和 UI 规范都按项目归类展示。</p>
-          </div>
         ) : (
-          <div className="min-h-0 flex-1 overflow-auto p-4">
-            <div className="space-y-6">
-              <div className="grid gap-3 lg:grid-cols-3">
-                <WorkspaceAssetCard icon={<Folder className="h-4 w-4" />} title="设计稿" count={projectFiles.length} description="业务页面、状态和草稿审核入口。" meta={`${projectDrafts.length} 个待审核草稿 / ${projectFolders.length} 个分组`} active={activeTab === "designs"} onClick={() => setActiveTab("designs")} />
-                <WorkspaceAssetCard icon={<FileJson className="h-4 w-4" />} title="模版" count={projectTemplates.length} description="可复用的标准页面结构。" meta={projectTemplates.length ? "可创建 UI Agent 草稿" : "等待从 Figma 上传"} active={activeTab === "templates"} onClick={() => setActiveTab("templates")} />
-                <WorkspaceAssetCard icon={<Palette className="h-4 w-4" />} title="UI 规范" count={designSystems.length} description="主题色、组件样式和设计规则。" meta={defaultDesignSystem ? `默认：${defaultDesignSystem.name}` : "未设置默认规范"} active={activeTab === "systems"} onClick={() => setActiveTab("systems")} />
-              </div>
-
-              {activeTab === "designs" ? (
-                <>
-                  <section className="space-y-3">
-                    <SectionHeader icon={<ClipboardList className="h-4 w-4" />} title="待审核草稿" count={filteredDrafts.length} description="UI Agent 生成后先进入这里，审核通过后再生成设计稿。" />
-                    {draftsLoading ? (
-                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="aspect-[4/3] w-full" />)}</div>
-                    ) : filteredDrafts.length === 0 ? (
-                      <InlineEmpty>{searchQuery ? `没有匹配“${search}”的待审核草稿。` : "暂无待审核草稿。"}</InlineEmpty>
-                    ) : (
-                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {filteredDrafts.map((draft) => {
-                          const previewFile = draft.generated_file_id ? fileById.get(draft.generated_file_id) : draft.file_id ? fileById.get(draft.file_id) : undefined;
-                          return <DraftReviewCard key={draft.id} draft={draft} previewFile={previewFile} materializing={materializingDraftId === draft.id} onMaterialize={(item) => materializeDraft.mutate(item)} />;
-                        })}
-                      </div>
-                    )}
-                  </section>
-
-                  <section className="space-y-3">
-                    <SectionHeader
-                      icon={<Folder className="h-4 w-4" />}
-                      title={`${selectedProject?.title ?? "项目"} / 设计稿`}
-                      count={filtered.length}
-                      description="业务设计稿按分组展示，默认以缩略图方式浏览。"
-                      action={<Button size="sm" onClick={() => setCreateFolderOpen(true)} disabled={!selectedProjectId}><Plus className="h-3.5 w-3.5" />新增分组</Button>}
-                    />
-
-                    {filtered.length === 0 && searchQuery ? (
-                      <InlineEmpty>{`没有匹配“${search}”的设计稿。`}</InlineEmpty>
-                    ) : (
-                      <div className="space-y-6">
-                        {grouped.map((folder) => (
-                          <section key={folder.folderKey} className="space-y-3">
-                            <FolderSectionHeader
-                              folderName={folder.folderName}
-                              count={folder.items.length}
-                              canDelete={folder.folderKey !== "__ungrouped"}
-                              onDelete={() => {
-                                const targetFolder = folderById.get(folder.folderKey);
-                                if (targetFolder) setDeleteFolderTarget({ folder: targetFolder, count: folder.items.length });
-                              }}
-                            />
-                            {folder.items.length ? (
-                              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                                {folder.items.map((file) => <DesignFileCard key={file.id} file={file} projectName={selectedProject?.title ?? "项目"} folderName={folder.folderName} onContextMenu={openToolMenu} />)}
-                              </div>
-                            ) : <InlineEmpty>此分组暂无设计稿。</InlineEmpty>}
-                          </section>
-                        ))}
-                      </div>
-                    )}
-                  </section>
-                </>
-              ) : activeTab === "templates" ? (
-                <section className="space-y-3">
-                  <SectionHeader icon={<FileJson className="h-4 w-4" />} title="模版" count={filteredTemplates.length} description="从 Figma 上传的标准页面结构，可用于创建草稿或交给 UI Agent 生成。" />
-                  {templatesLoading ? (
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="aspect-[4/3] w-full" />)}</div>
-                  ) : filteredTemplates.length === 0 ? (
-                    <InlineEmpty>{searchQuery ? `没有匹配“${search}”的模版。` : "当前项目暂无模版资产。请从 Figma 插件选择“模板资产”上传。"}</InlineEmpty>
-                  ) : (
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                      {filteredTemplates.map((template) => <TemplateCatalogCard key={template.id} template={template} sourceFile={template.design_file_id ? fileById.get(template.design_file_id) : undefined} onCreateDraft={openDraftDialog} />)}
-                    </div>
-                  )}
-                </section>
-              ) : (
-                <section className="space-y-3">
-                  <SectionHeader icon={<Palette className="h-4 w-4" />} title="UI 规范" count={filteredDesignSystems.length} description="从 Figma 上传的主题、组件样式和设计规则，供 UI Agent 生成时参考。" />
-                  {designSystemsLoading ? (
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="aspect-[4/3] w-full" />)}</div>
-                  ) : filteredDesignSystems.length === 0 ? (
-                    <InlineEmpty>{searchQuery ? `没有匹配“${search}”的 UI 规范。` : "暂无项目 UI 规范。请从 Figma 插件选择“UI 规范”上传。"}</InlineEmpty>
-                  ) : (
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                      {filteredDesignSystems.map((profile) => <DesignSystemCard key={profile.id} profile={profile} sourceFile={fileById.get(profile.source_file_id)} />)}
-                    </div>
-                  )}
-                </section>
-              )}
+          <Tabs
+            value={activeTab}
+            onValueChange={(value) => {
+              if (value === "designs" || value === "drafts" || value === "templates" || value === "systems") setActiveTab(value);
+            }}
+            className="min-h-0 flex-1 gap-0 overflow-hidden"
+          >
+            <div className="shrink-0 overflow-x-auto overflow-y-hidden border-b px-4">
+              <TabsList variant="line" className="h-10 gap-5 p-0 group-data-horizontal/tabs:h-10">
+                <TabsTrigger value="designs" className="h-10 flex-none gap-2 px-1">
+                  <Folder className="h-3.5 w-3.5" />
+                  <span>设计稿</span>
+                  <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1 text-micro font-normal tabular-nums">{projectFiles.length}</Badge>
+                </TabsTrigger>
+                <TabsTrigger value="drafts" className="h-10 flex-none gap-2 px-1">
+                  <ClipboardList className="h-3.5 w-3.5" />
+                  <span>设计草稿</span>
+                  <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1 text-micro font-normal tabular-nums">{pendingDesignDrafts.length}</Badge>
+                </TabsTrigger>
+                <TabsTrigger value="templates" className="h-10 flex-none gap-2 px-1">
+                  <FileJson className="h-3.5 w-3.5" />
+                  <span>模版</span>
+                  <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1 text-micro font-normal tabular-nums">{projectTemplates.length}</Badge>
+                </TabsTrigger>
+                <TabsTrigger value="systems" className="h-10 flex-none gap-2 px-1">
+                  <Palette className="h-3.5 w-3.5" />
+                  <span>设计体系</span>
+                  <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1 text-micro font-normal tabular-nums">{projectDesignSystemCount}</Badge>
+                </TabsTrigger>
+              </TabsList>
             </div>
-          </div>
+
+            <TabsContent value="designs" className="min-h-0 overflow-auto p-4">
+              <section className="space-y-3">
+                <div className="flex justify-end">
+                  <Button size="sm" onClick={() => setCreateFolderOpen(true)} disabled={!selectedProjectId}><Plus className="h-3.5 w-3.5" />新增分组</Button>
+                </div>
+                {filtered.length === 0 && searchQuery ? (
+                  <InlineEmpty>{`没有匹配“${search}”的设计稿。`}</InlineEmpty>
+                ) : (
+                  <div className="space-y-6">
+                    {grouped.map((folder) => (
+                      <section key={folder.folderKey} className="space-y-3">
+                        <FolderSectionHeader
+                          folderName={folder.folderName}
+                          count={folder.items.length}
+                          canDelete={folder.folderKey !== "__ungrouped"}
+                          onDelete={() => {
+                            const targetFolder = folderById.get(folder.folderKey);
+                            if (targetFolder) setDeleteFolderTarget({ folder: targetFolder, count: folder.items.length });
+                          }}
+                        />
+                        {folder.items.length ? (
+                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                            {folder.items.map((file) => <DesignFileCard key={file.id} file={file} projectName={selectedProject?.title ?? "项目"} folderName={folder.folderName} onContextMenu={openToolMenu} />)}
+                          </div>
+                        ) : <InlineEmpty>此分组暂无设计稿。</InlineEmpty>}
+                      </section>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </TabsContent>
+
+            <TabsContent value="drafts" className="min-h-0 overflow-auto p-4">
+              <section className="space-y-3">
+                {draftsLoading ? (
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="aspect-[4/3] w-full" />)}</div>
+                ) : filteredDrafts.length === 0 ? (
+                  <InlineEmpty>{searchQuery ? `没有匹配“${search}”的设计草稿。` : "暂无设计草稿。"}</InlineEmpty>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {filteredDrafts.map((draft) => {
+                      const previewFile = draft.generated_file_id ? fileById.get(draft.generated_file_id) : draft.file_id ? fileById.get(draft.file_id) : undefined;
+                      return <DraftReviewCard key={draft.id} draft={draft} previewFile={previewFile} materializing={materializingDraftId === draft.id} onMaterialize={(item) => materializeDraft.mutate(item)} />;
+                    })}
+                  </div>
+                )}
+              </section>
+            </TabsContent>
+
+            <TabsContent value="templates" className="min-h-0 overflow-auto p-4">
+              <section className="space-y-3">
+                {templatesLoading ? (
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="aspect-[4/3] w-full" />)}</div>
+                ) : filteredTemplates.length === 0 ? (
+                  <InlineEmpty>{searchQuery ? `没有匹配“${search}”的模版。` : "当前项目暂无模版资产。请从 Figma 插件选择“模板资产”上传。"}</InlineEmpty>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {filteredTemplates.map((template) => <TemplateCatalogCard key={template.id} template={template} sourceFile={template.design_file_id ? fileById.get(template.design_file_id) : undefined} onCreateDraft={openDraftDialog} />)}
+                  </div>
+                )}
+              </section>
+            </TabsContent>
+
+            <TabsContent value="systems" className="min-h-0 overflow-hidden">
+              {selectedProject ? (
+                <ProjectDesignSystemWorkspace
+                  project={selectedProject}
+                  agents={agents}
+                  designFiles={projectFiles}
+                  legacyProfiles={designSystems}
+                  system={projectDesignSystem}
+                  isLoading={projectDesignSystemLoading || designSystemsLoading}
+                />
+              ) : null}
+            </TabsContent>
+          </Tabs>
         )}
       </div>
       <DesignToolMenu

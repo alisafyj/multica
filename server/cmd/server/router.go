@@ -229,6 +229,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
 		AllowedEmails:            splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
 		AllowedEmailDomains:      splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
+		OpenDesignEnabled:        os.Getenv("MULTICA_OPEN_DESIGN_ENABLED") == "true",
 		DisableWorkspaceCreation: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 		VCSIntegrationEnabled:    os.Getenv("MULTICA_VCS_INTEGRATION_ENABLED") == "true",
 		PublicURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
@@ -1051,6 +1052,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Post("/api/design-plugin/figma/folders", h.CreateFigmaPluginDesignFolder)
 	r.Post("/api/design-plugin/figma/assets", h.UploadFigmaDesignAssetWithPluginToken)
 	r.Post("/api/design-plugin/figma/imports", h.ImportFigmaDesignWithPluginToken)
+	// Sandboxed archive documents cannot send SameSite login cookies for their
+	// relative CSS/JS requests. This read-only route therefore uses the short-
+	// lived, workspace/system/digest-bound capability issued by the protected
+	// archive manifest endpoint.
+	r.Get(
+		"/api/project-design-system-previews/{workspaceId}/{systemId}/{digest}/{accessToken}/files/*",
+		h.GetProjectDesignSystemPackagePreviewFile,
+	)
 
 	// Composio OAuth callback (MUL-3843). NOT under the Auth group on purpose:
 	// Composio 302-redirects the user's browser here at the end of the OAuth
@@ -1094,6 +1103,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/start", h.StartTask)
 		r.Post("/tasks/{taskId}/wait-local-directory", h.MarkTaskWaitingLocalDirectory)
 		r.Post("/tasks/{taskId}/progress", h.ReportTaskProgress)
+		r.Post("/tasks/{taskId}/project-design-system/package", h.UploadProjectDesignSystemPackage)
+		r.Get("/tasks/{taskId}/project-design-system/base-package", h.DownloadProjectDesignSystemBasePackage)
+		r.Get("/tasks/{taskId}/open-design/base-archive", h.DownloadOpenDesignBaseArchive)
+		r.Post("/tasks/{taskId}/open-design/preflight", h.RecordOpenDesignRunPreflight)
+		r.Post("/tasks/{taskId}/open-design/start", h.StartOpenDesignRun)
+		r.Post("/tasks/{taskId}/open-design/events", h.RecordOpenDesignRunEvent)
+		r.Post("/tasks/{taskId}/open-design/archive", h.UploadOpenDesignRunArchive)
+		r.Post("/tasks/{taskId}/open-design/result", h.RecordOpenDesignRunResult)
+		r.Post("/tasks/{taskId}/open-design/audit", h.RecordOpenDesignRunAudit)
+		r.Post("/tasks/{taskId}/open-design/preview", h.RecordOpenDesignRunPreview)
+		r.Post("/tasks/{taskId}/open-design/terminal", h.FinalizeOpenDesignRun)
 		r.Post("/tasks/{taskId}/complete", h.CompleteTask)
 		r.Post("/tasks/{taskId}/fail", h.FailTask)
 		r.Post("/tasks/{taskId}/usage", h.ReportTaskUsage)
@@ -1600,6 +1620,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/api/design-systems", h.CreateDesignSystemProfile)
 			r.Get("/api/design-systems/{id}", h.GetDesignSystemProfile)
 			r.Post("/api/design-systems/{id}/set-default", h.SetDesignSystemProfileDefault)
+			r.Get("/api/project-design-systems", h.GetProjectDesignSystemByProject)
+			r.Post("/api/project-design-systems", h.CreateProjectDesignSystem)
+			r.Post("/api/project-design-systems/repository-analysis", h.AnalyzeProjectDesignSystemRepository)
+			r.Get("/api/project-design-systems/{id}", h.GetProjectDesignSystem)
+			r.Get("/api/project-design-systems/{id}/package-preview", h.GetProjectDesignSystemPackagePreview)
+			r.Get("/api/project-design-systems/{id}/open-design-preview", h.GetProjectDesignSystemPackagePreview)
+			r.Post("/api/project-design-systems/{id}/adjust", h.AdjustProjectDesignSystem)
+			r.Post("/api/project-design-systems/{id}/regenerate", h.RegenerateProjectDesignSystem)
+			r.Post("/api/project-design-systems/{id}/preview-verification", h.VerifyProjectDesignSystemPreview)
+			r.Post("/api/project-design-systems/{id}/save", h.SaveProjectDesignSystem)
+			r.Delete("/api/project-design-systems/{id}/draft", h.DiscardProjectDesignSystemDraft)
+			r.Get("/api/project-design-systems/{id}/open-design-runs/{runId}/evidence", h.DownloadOpenDesignRunEvidence)
 			r.Post("/api/design-repo-analysis", h.CreateDesignRepoAnalysis)
 			r.Get("/api/design-repo-analysis", h.ListDesignRepoAnalyses)
 			r.Get("/api/design-repo-analysis/{id}", h.GetDesignRepoAnalysis)

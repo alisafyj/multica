@@ -1,0 +1,17 @@
+:root {
+  --color-surface: #ffffff;
+  --color-text: #17212b;
+  --color-action: #2463eb;
+  --radius-control: 6px;
+}
+
+.showcase {
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.primary {
+  color: var(--color-surface);
+  background: var(--color-action);
+  border-radius: var(--radius-control);
+}

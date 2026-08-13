@@ -43,7 +43,6 @@ function setDndCursor(on: boolean) {
   if (on) document.documentElement.dataset.dndDragging = "true";
   else delete document.documentElement.dataset.dndDragging;
 }
-
 function SortableRow({
   item,
   hidden,
@@ -256,4 +255,3 @@ export function ManageViewsDialog({
     </>
   );
 }
-

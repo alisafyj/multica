@@ -28,6 +28,15 @@ Multica is an AI-native task management platform for small teams, with agents as
 
 Shared packages export raw `.ts` / `.tsx` and are compiled by consuming apps. Dependency direction is `views -> core + ui`; `core` and `ui` must stay independent.
 
+## Design Center Product Memory
+
+Before discussing, planning, or implementing Design Center, design system,
+UI specification, UI Agent, design generation, design restore, design MCP, or
+Open Design integration work, read `docs/product/design-center/README.md`.
+After a context compaction, interruption, or resumed session, read it again
+before relying on the conversation summary. Its decision register distinguishes
+confirmed direction from proposals and historical implementation.
+
 ## State Rules
 
 Keep server state and client state separate.

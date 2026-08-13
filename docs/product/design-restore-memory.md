@@ -2,6 +2,13 @@
 
 > Persistent working memory for Multica's design import, Native Design Viewer, and Agent restore product work. Keep this file current whenever goals, status, blockers, or next steps change.
 
+> **2026-07-28 design-system correction:** the canonical current direction now
+> lives in `docs/product/design-center/README.md`. The project design system is
+> the source of truth; online UI Kit is derived from it, and Figma UI
+> specifications are optional import evidence rather than a hard prerequisite.
+> Older Figma-first profile sections below are retained as implementation
+> history and must not guide new product work without re-confirmation.
+
 ## Purpose
 
 Multica should let a team attach a real Figma design to an issue, inspect it as native-ish layers, create scoped restore tasks, and let a local Agent implement the design into the bound target repository with traceable output.

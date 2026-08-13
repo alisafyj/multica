@@ -2,7 +2,17 @@ export type DesignSourceType = "upload" | "ai_generated" | "template" | "import"
 export type DesignRevisionStatus = "draft" | "valid" | "invalid";
 export type DesignAssetKind = "frame_preview" | "frame_thumbnail" | "image" | "slice" | "thumbnail" | "source" | "other";
 export type DesignTemplateSlotType = "text" | "number" | "boolean" | "image" | "color" | "enum" | "list" | "object";
-export type DesignDraftStatus = "draft" | "generated" | "validated" | "failed" | "archived";
+export type DesignDraftStatus =
+  | "draft"
+  | "generated"
+  | "generated_with_warnings"
+  | "compile_failed"
+  | "validated"
+  | "approved"
+  | "rejected"
+  | "failed"
+  | "archived";
+export type DesignDraftGenerationMode = "legacy_patch" | "semantic_pagespec";
 export type DesignSystemProfileStatus = "draft" | "analyzing" | "analyzed" | "failed" | "archived";
 export type DesignRestoreTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type DesignRestoreTargetKind = "component" | "file" | "symbol" | "route" | "unknown";
@@ -10,6 +20,13 @@ export type DesignRestoreTaskPurpose = "frontend_restore" | "ui_generation" | "t
 export type DesignRestoreTaskItemSource = "frame" | "selected_layers" | "selection_bounds" | "template" | "draft";
 export type DesignProjectRulesSource = "project_rules" | "gallery_specs_legacy" | "inline" | "none";
 export type GalleryNativeVersion = "1.0";
+export type ProjectDesignSystemStatus = "unestablished" | "generating" | "validating" | "draft" | "saved";
+export type ProjectDesignSystemPlatform = "web" | "mobile" | "cross_platform";
+export type ProjectDesignSystemReferenceKind = "attachment" | "brand_color" | "link" | "design_file" | "design_system_profile";
+export type ProjectDesignSystemScope =
+  | { kind: "all" }
+  | { kind: "section" | "token_group" | "component" | "block"; id: string };
+export type ProjectDesignSystemPreviewValidationStatus = "none" | "pending" | "passed" | "failed";
 
 export type GalleryLayerId = string;
 export type GalleryFrameId = string;
@@ -250,6 +267,225 @@ export interface CreateDesignSystemProfileRequest {
   is_default?: boolean;
 }
 
+export interface ProjectDesignSystemReferenceInput {
+  kind: ProjectDesignSystemReferenceKind;
+  attachment_id?: string;
+  design_file_id?: string;
+  design_system_profile_id?: string;
+  value?: string;
+  label?: string;
+}
+
+export interface ProjectDesignSystemReferenceSnapshot extends ProjectDesignSystemReferenceInput {
+  filename?: string;
+  content_type?: string;
+  url?: string;
+  title?: string;
+  thumbnail_url?: string;
+  current_revision_id?: string;
+  source_revision_id?: string;
+  frames?: Array<Record<string, unknown>>;
+  profile?: Record<string, unknown>;
+}
+
+export interface ProjectRepositoryDesignFact {
+  kind: string;
+  label: string;
+  value: string;
+  source_paths: string[];
+  confidence: number;
+}
+
+export interface ProjectRepositoryDesignSourceFile {
+  path: string;
+  kind: string;
+}
+
+export interface ProjectRepositoryDesignConflict {
+  label: string;
+  repository_fact: string;
+  user_intent: string;
+  source_paths: string[];
+}
+
+export interface ProjectRepositoryDesignAsset {
+  role: string;
+  reference: string;
+  source_path: string;
+}
+
+export interface ProjectRepositoryDesignRegion {
+  name: string;
+  purpose: string;
+  visible_text: string[];
+  controls: string[];
+  behaviors: string[];
+  conditions: string[];
+  layout: string[];
+  appearance: string[];
+  assets: ProjectRepositoryDesignAsset[];
+}
+
+export interface ProjectRepositoryDesignWorkflow {
+  name: string;
+  purpose: string;
+  source_paths: string[];
+  confidence: number;
+  regions: ProjectRepositoryDesignRegion[];
+  guardrails: string[];
+}
+
+export interface ProjectRepositoryDesignContext {
+  schema_version: string;
+  summary: string;
+  suggested_brief: string;
+  facts: ProjectRepositoryDesignFact[];
+  source_files: ProjectRepositoryDesignSourceFile[];
+  representative_workflows?: ProjectRepositoryDesignWorkflow[];
+  commit_sha?: string;
+  confidence: number;
+  conflicts: ProjectRepositoryDesignConflict[];
+}
+
+export interface ProjectDesignSystemInputSnapshot {
+  agent_id?: string;
+  platform?: ProjectDesignSystemPlatform | "";
+  brief?: string;
+  references?: ProjectDesignSystemReferenceSnapshot[];
+  repository_analysis?: ProjectRepositoryDesignContext;
+}
+
+export interface CreateProjectDesignSystemRequest {
+  project_id: string;
+  agent_id: string;
+  platform: ProjectDesignSystemPlatform;
+  brief: string;
+  references: ProjectDesignSystemReferenceInput[];
+}
+
+export interface AnalyzeProjectDesignSystemRepositoryRequest {
+  project_id: string;
+  agent_id: string;
+  platform: ProjectDesignSystemPlatform;
+  brief: string;
+  references: ProjectDesignSystemReferenceInput[];
+}
+
+export interface AdjustProjectDesignSystemRequest {
+  agent_id: string;
+  instruction: string;
+  scope: ProjectDesignSystemScope;
+}
+
+export interface RegenerateProjectDesignSystemRequest {
+  agent_id: string;
+  platform?: ProjectDesignSystemPlatform;
+  brief?: string;
+  references?: ProjectDesignSystemReferenceInput[];
+}
+
+export interface ProjectDesignSystemSection {
+  id: string;
+  title: string;
+  markdown: string;
+}
+
+export interface ProjectDesignSystemToken {
+  name: string;
+  value: string;
+}
+
+export interface ProjectDesignSystemTokenGroup {
+  id: string;
+  label: string;
+  tokens: ProjectDesignSystemToken[];
+}
+
+export interface ProjectDesignSystemLocator {
+  id: string;
+  kind: "component" | "block";
+  label: string;
+}
+
+export interface ProjectDesignSystemPreviewTarget {
+  id: string;
+  kind: string;
+  path: string;
+}
+
+export interface ProjectDesignSystemPackagePreview {
+  schema: string;
+  slot: string;
+  content_digest: string;
+  resource_access_token: string;
+  resource_access_expires_at: string;
+  targets: ProjectDesignSystemPreviewTarget[];
+}
+
+export interface ProjectDesignSystemPreviewValidation {
+  status: ProjectDesignSystemPreviewValidationStatus;
+  integrity_sha256: string;
+  report: Record<string, unknown>;
+  verified_at: string | null;
+}
+
+export interface ProjectDesignSystemPreviewVerificationReceipt {
+  status: "ready" | "failed";
+  digest: string;
+  reason: string;
+  locator_count: number;
+  visible_locator_count: number;
+  body_width: number;
+  body_height: number;
+  image_count: number;
+  failed_image_count: number;
+}
+
+export interface ProjectDesignSystemContent {
+  sections: ProjectDesignSystemSection[];
+  token_groups: ProjectDesignSystemTokenGroup[];
+  locators: ProjectDesignSystemLocator[];
+  preview_html: string;
+  integrity_sha256: string;
+  package_schema?: string;
+  preview_targets?: ProjectDesignSystemPreviewTarget[];
+  selection_enabled?: boolean;
+}
+
+export interface ProjectDesignSystemTask {
+  id: string;
+  agent_id: string;
+  status: string;
+  operation: string;
+  error: string | null;
+  failure_reason?: string | null;
+  wait_reason?: string | null;
+  created_at: string;
+  dispatched_at?: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface ProjectDesignSystem {
+  id: string;
+  workspace_id: string;
+  project_id: string;
+  name: string;
+  platform: ProjectDesignSystemPlatform | "";
+  current_agent_id: string | null;
+  status: ProjectDesignSystemStatus;
+  active_task: ProjectDesignSystemTask | null;
+  input_snapshot: ProjectDesignSystemInputSnapshot;
+  content: ProjectDesignSystemContent;
+  preview_validation: ProjectDesignSystemPreviewValidation;
+  has_unsaved_changes: boolean;
+  last_error: unknown;
+  activity: ProjectDesignSystemTask[];
+  created_at: string;
+  updated_at: string;
+  saved_at: string | null;
+}
+
 export interface PublishDesignTemplateRequest {
   revision_id?: string;
   library_key?: string;
@@ -326,6 +562,14 @@ export interface DesignDraft {
   created_at: string;
   updated_at: string;
   materialized_at?: string | null;
+  generation_mode?: DesignDraftGenerationMode;
+  page_spec?: Record<string, unknown> | null;
+  compiled_native_json?: GalleryNativeJson | null;
+  quality_report?: Record<string, unknown> | null;
+  blueprint_id?: string | null;
+  recipe_set_id?: string | null;
+  parent_draft_id?: string | null;
+  version?: number;
 }
 
 export interface CreateDesignDraftRequest {

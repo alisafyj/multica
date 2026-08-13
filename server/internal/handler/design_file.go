@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -786,6 +787,17 @@ type createDesignSystemProfileFromRevisionParams struct {
 	CreatedBy   pgtype.UUID
 }
 
+type enqueueDesignTemplateBlueprintAnalyzeTaskParams struct {
+	WorkspaceID        pgtype.UUID
+	ProjectID          pgtype.UUID
+	TemplateID         pgtype.UUID
+	TemplateRevisionID pgtype.UUID
+	SourceFileID       pgtype.UUID
+	SourceRevisionID   pgtype.UUID
+	SourceNativeJSON   json.RawMessage
+	CreatedBy          pgtype.UUID
+}
+
 type PublishDesignTemplateRequest struct {
 	RevisionID  *string         `json:"revision_id"`
 	LibraryKey  string          `json:"library_key"`
@@ -819,6 +831,14 @@ type DesignDraftResponse struct {
 	CreatedAt           string          `json:"created_at"`
 	UpdatedAt           string          `json:"updated_at"`
 	MaterializedAt      *string         `json:"materialized_at,omitempty"`
+	GenerationMode      string          `json:"generation_mode,omitempty"`
+	PageSpec            json.RawMessage `json:"page_spec,omitempty"`
+	CompiledNativeJSON  json.RawMessage `json:"compiled_native_json,omitempty"`
+	QualityReport       json.RawMessage `json:"quality_report,omitempty"`
+	BlueprintID         *string         `json:"blueprint_id,omitempty"`
+	RecipeSetID         *string         `json:"recipe_set_id,omitempty"`
+	ParentDraftID       *string         `json:"parent_draft_id,omitempty"`
+	Version             int32           `json:"version,omitempty"`
 }
 
 type CreateDesignDraftRequest struct {
@@ -849,9 +869,8 @@ type CreateDesignDraftAgentTaskResponse struct {
 type uiDraftAgentOutput struct {
 	Title             string          `json:"title"`
 	CatalogTemplateID string          `json:"catalog_template_id"`
-	RequirementCore   json.RawMessage `json:"requirement_core"`
-	SlotValues        json.RawMessage `json:"slot_values"`
-	Patch             json.RawMessage `json:"patch"`
+	DesignPlan        json.RawMessage `json:"design_plan"`
+	PageSpec          json.RawMessage `json:"page_spec"`
 }
 
 type DesignDraftMaterializeResponse struct {
@@ -1262,7 +1281,7 @@ func (h *Handler) enqueueDesignSystemProfileAnalyzeTask(ctx context.Context, que
 		CandidateLayers:           designSystemProfileCandidateLayers(params.Revision.NativeJson, 240),
 		Tokens:                    designSystemProfileTokenCandidates(params.Revision.NativeJson),
 		TextSamples:               designSystemProfileTextSamples(params.Revision.NativeJson, 120),
-		OutputPolicy:              json.RawMessage(`{"strict_json":true,"required_fields":["profile_json","analysis_errors","summary"],"profile_version":"agent-1.0"}`),
+		OutputPolicy:              json.RawMessage(`{"strict_json":true,"required_fields":["profile_json","analysis_errors","summary","recipe_classifications","primitive_fallbacks"],"profile_version":"agent-1.0","recipe_set_version":"1.0","required_recipe_kinds":["input","select","date-range","primary-button","secondary-button","text-button","table-header","table-row","status-tag","pagination"],"source_layer_policy":"candidate_layers_only"}`),
 	}
 	contextJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -1271,6 +1290,52 @@ func (h *Handler) enqueueDesignSystemProfileAnalyzeTask(ctx context.Context, que
 	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("create design system profile analysis task: %w", err)
+	}
+	return task, nil
+}
+
+func (h *Handler) enqueueDesignTemplateBlueprintAnalyzeTask(ctx context.Context, queries *db.Queries, agent db.Agent, params enqueueDesignTemplateBlueprintAnalyzeTaskParams) (db.AgentTaskQueue, error) {
+	sourceDoc, err := designcore.ParseNativeJSON(params.SourceNativeJSON)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("parse template blueprint source: %w", err)
+	}
+	structure := designcore.ExtractTemplateStructure(sourceDoc)
+	if len(structure.Frames) == 0 || len(structure.Layers) == 0 {
+		return db.AgentTaskQueue{}, fmt.Errorf("template blueprint source has no analyzable structure")
+	}
+	structureJSON, err := json.Marshal(structure)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("marshal template blueprint structure: %w", err)
+	}
+	sourceRefsJSON, err := json.Marshal(designcore.BlueprintSourceRefs{
+		DesignFileID:       uuidToString(params.SourceFileID),
+		DesignRevisionID:   uuidToString(params.SourceRevisionID),
+		TemplateRevisionID: uuidToString(params.TemplateRevisionID),
+	})
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("marshal template blueprint source refs: %w", err)
+	}
+	payload := service.DesignTemplateBlueprintAnalyzeContext{
+		Type:               service.DesignTemplateBlueprintAnalyzeContextType,
+		Prompt:             "Analyze the published list-page template structure and return one validated blueprint classification.",
+		RequesterID:        uuidToString(params.CreatedBy),
+		WorkspaceID:        uuidToString(params.WorkspaceID),
+		ProjectID:          uuidToString(params.ProjectID),
+		AgentID:            uuidToString(agent.ID),
+		TemplateID:         uuidToString(params.TemplateID),
+		TemplateRevisionID: uuidToString(params.TemplateRevisionID),
+		SourceRevisionID:   uuidToString(params.SourceRevisionID),
+		Structure:          structureJSON,
+		SourceRefs:         sourceRefsJSON,
+		OutputPolicy:       json.RawMessage(`{"strict_json":true,"required_fields":["classification","summary"],"blueprint_version":"1.0","supported_page_types":["list"],"source_layer_policy":"structure_only"}`),
+	}
+	contextJSON, err := json.Marshal(payload)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("marshal template blueprint analysis context: %w", err)
+	}
+	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("create template blueprint analysis task: %w", err)
 	}
 	return task, nil
 }
@@ -1859,6 +1924,81 @@ func (h *Handler) CreateDesignFolder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, designFolderToResponse(folder))
 }
 
+func designRevisionIDs(revisions []db.DesignRevision) []pgtype.UUID {
+	ids := make([]pgtype.UUID, len(revisions))
+	for i, revision := range revisions {
+		ids[i] = revision.ID
+	}
+	return ids
+}
+
+func designRevisionDeletionRestricted(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID, revisionIDs []pgtype.UUID) (bool, error) {
+	if len(revisionIDs) == 0 {
+		return false, nil
+	}
+	return queries.DesignRevisionsHaveProtectedReferences(ctx, db.DesignRevisionsHaveProtectedReferencesParams{
+		TargetWorkspaceID: workspaceID,
+		RevisionIds:       revisionIDs,
+	})
+}
+
+func cleanupDesignRevisionDeletion(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID, revisionIDs []pgtype.UUID) error {
+	if len(revisionIDs) == 0 {
+		return nil
+	}
+	if err := queries.DetachDesignAssetRevisionReferences(ctx, db.DetachDesignAssetRevisionReferencesParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs}); err != nil {
+		return err
+	}
+	if err := queries.DetachDesignDraftRevisionReferences(ctx, db.DetachDesignDraftRevisionReferencesParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignRestoreMappingsByRevisions(ctx, db.DeleteDesignRestoreMappingsByRevisionsParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignRestorePlansByRevisions(ctx, db.DeleteDesignRestorePlansByRevisionsParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignRestoreTasksByRevisions(ctx, db.DeleteDesignRestoreTasksByRevisionsParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignDeliveriesByRevisions(ctx, db.DeleteDesignDeliveriesByRevisionsParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignSystemProfilesByRevisions(ctx, db.DeleteDesignSystemProfilesByRevisionsParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs}); err != nil {
+		return err
+	}
+	return queries.DeleteDesignRevisionsByIDs(ctx, db.DeleteDesignRevisionsByIDsParams{TargetWorkspaceID: workspaceID, RevisionIds: revisionIDs})
+}
+
+func cleanupDesignFileDeletion(ctx context.Context, queries *db.Queries, workspaceID, fileID pgtype.UUID) error {
+	params := db.DetachDesignDraftFileReferencesParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}
+	if err := queries.DetachDesignDraftFileReferences(ctx, params); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignRestoreMappingsByFile(ctx, db.DeleteDesignRestoreMappingsByFileParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignRestorePlansByFile(ctx, db.DeleteDesignRestorePlansByFileParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignRestoreTasksByFile(ctx, db.DeleteDesignRestoreTasksByFileParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignDeliveriesByFile(ctx, db.DeleteDesignDeliveriesByFileParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignSystemProfilesByFile(ctx, db.DeleteDesignSystemProfilesByFileParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignAssetsByFile(ctx, db.DeleteDesignAssetsByFileParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}); err != nil {
+		return err
+	}
+	if err := queries.DeleteDesignRevisionsByFile(ctx, db.DeleteDesignRevisionsByFileParams{TargetWorkspaceID: workspaceID, TargetFileID: fileID}); err != nil {
+		return err
+	}
+	return queries.DeleteDesignFile(ctx, db.DeleteDesignFileParams{ID: fileID, WorkspaceID: workspaceID})
+}
+
 func (h *Handler) DeleteDesignFolder(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -1875,15 +2015,53 @@ func (h *Handler) DeleteDesignFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	if _, err := tx.Exec(r.Context(), `DELETE FROM design_file WHERE workspace_id = $1 AND folder_id = $2`, wsUUID, folderUUID); err != nil {
+	qtx := h.Queries.WithTx(tx)
+	if _, err := qtx.GetDesignFolderInWorkspaceForUpdate(r.Context(), db.GetDesignFolderInWorkspaceForUpdateParams{ID: folderUUID, WorkspaceID: wsUUID}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "design folder not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to delete design folder")
+		}
+		return
+	}
+	hasChildren, err := qtx.DesignFolderHasChildren(r.Context(), db.DesignFolderHasChildrenParams{WorkspaceID: wsUUID, ParentID: folderUUID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete design folder")
+		return
+	}
+	if hasChildren {
+		writeError(w, http.StatusConflict, "design folder has child folders")
+		return
+	}
+	files, err := qtx.ListDesignFilesInFolderForUpdate(r.Context(), db.ListDesignFilesInFolderForUpdateParams{WorkspaceID: wsUUID, FolderID: folderUUID})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete designs in folder")
 		return
 	}
-	if tag, err := tx.Exec(r.Context(), `DELETE FROM design_folder WHERE workspace_id = $1 AND id = $2`, wsUUID, folderUUID); err != nil {
+	for _, file := range files {
+		revisions, err := qtx.ListDesignRevisionsInFileForUpdate(r.Context(), db.ListDesignRevisionsInFileForUpdateParams{FileID: file.ID, WorkspaceID: wsUUID})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete designs in folder")
+			return
+		}
+		restricted, err := designRevisionDeletionRestricted(r.Context(), qtx, wsUUID, designRevisionIDs(revisions))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete designs in folder")
+			return
+		}
+		if restricted {
+			writeError(w, http.StatusConflict, "design revision is in use")
+			return
+		}
+	}
+	for _, file := range files {
+		if err := cleanupDesignFileDeletion(r.Context(), qtx, wsUUID, file.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete designs in folder")
+			return
+		}
+	}
+	if _, err := tx.Exec(r.Context(), `DELETE FROM design_folder WHERE workspace_id = $1 AND id = $2`, wsUUID, folderUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete design folder")
-		return
-	} else if tag.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "design folder not found")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -2592,11 +2770,40 @@ func (h *Handler) DeleteDesignFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := h.Queries.GetDesignFileInWorkspace(r.Context(), db.GetDesignFileInWorkspaceParams{ID: idUUID, WorkspaceID: wsUUID}); err != nil {
-		writeError(w, http.StatusNotFound, "design file not found")
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete design file")
 		return
 	}
-	if err := h.Queries.DeleteDesignFile(r.Context(), db.DeleteDesignFileParams{ID: idUUID, WorkspaceID: wsUUID}); err != nil {
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if _, err := qtx.GetDesignFileInWorkspaceForUpdate(r.Context(), db.GetDesignFileInWorkspaceForUpdateParams{ID: idUUID, WorkspaceID: wsUUID}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "design file not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to delete design file")
+		}
+		return
+	}
+	revisions, err := qtx.ListDesignRevisionsInFileForUpdate(r.Context(), db.ListDesignRevisionsInFileForUpdateParams{FileID: idUUID, WorkspaceID: wsUUID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete design file")
+		return
+	}
+	restricted, err := designRevisionDeletionRestricted(r.Context(), qtx, wsUUID, designRevisionIDs(revisions))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete design file")
+		return
+	}
+	if restricted {
+		writeError(w, http.StatusConflict, "design revision is in use")
+		return
+	}
+	if err := cleanupDesignFileDeletion(r.Context(), qtx, wsUUID, idUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete design file")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete design file")
 		return
 	}
@@ -4736,26 +4943,32 @@ func (h *Handler) DeleteDesignFrame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "frame id is required")
 		return
 	}
-	file, err := h.Queries.GetDesignFileInWorkspace(r.Context(), db.GetDesignFileInWorkspaceParams{ID: idUUID, WorkspaceID: wsUUID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "design file not found")
-		return
-	}
-	revisions, err := h.Queries.ListDesignRevisionsWithNativeJSON(r.Context(), file.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list design revisions")
-		return
-	}
-	targetSource := designFrameSourceNodeID(revisions, frameID)
-
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete design frame")
 		return
 	}
 	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	file, err := qtx.GetDesignFileInWorkspaceForUpdate(r.Context(), db.GetDesignFileInWorkspaceForUpdateParams{ID: idUUID, WorkspaceID: wsUUID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "design file not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to delete design frame")
+		}
+		return
+	}
+	revisions, err := qtx.ListDesignRevisionsInFileForUpdate(r.Context(), db.ListDesignRevisionsInFileForUpdateParams{FileID: file.ID, WorkspaceID: wsUUID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list design revisions")
+		return
+	}
+	targetSource := designFrameSourceNodeID(revisions, frameID)
 
 	remaining := make([]db.DesignRevision, 0, len(revisions))
+	updates := make([]db.DesignRevision, 0, len(revisions))
+	deletedRevisionIDs := make([]pgtype.UUID, 0, len(revisions))
 	deletedAny := false
 	for _, revision := range revisions {
 		next, changed, empty, err := removeFrameFromNativeJSON(revision.NativeJson, frameID, targetSource)
@@ -4769,29 +4982,42 @@ func (h *Handler) DeleteDesignFrame(w http.ResponseWriter, r *http.Request) {
 		}
 		deletedAny = true
 		if empty {
-			if _, err := tx.Exec(r.Context(), `DELETE FROM design_revision WHERE id = $1 AND workspace_id = $2`, revision.ID, wsUUID); err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to delete empty design revision")
-				return
-			}
+			deletedRevisionIDs = append(deletedRevisionIDs, revision.ID)
 			continue
 		}
-		if _, err := tx.Exec(r.Context(), `UPDATE design_revision SET native_json = $1 WHERE id = $2 AND workspace_id = $3`, next, revision.ID, wsUUID); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update design revision")
-			return
-		}
 		revision.NativeJson = next
+		updates = append(updates, revision)
 		remaining = append(remaining, revision)
 	}
 	if !deletedAny {
 		writeError(w, http.StatusNotFound, "design frame not found")
 		return
 	}
+	restricted, err := designRevisionDeletionRestricted(r.Context(), qtx, wsUUID, deletedRevisionIDs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete design frame")
+		return
+	}
+	if restricted {
+		writeError(w, http.StatusConflict, "design revision is in use")
+		return
+	}
 	if len(remaining) == 0 {
-		if _, err := tx.Exec(r.Context(), `DELETE FROM design_file WHERE id = $1 AND workspace_id = $2`, file.ID, wsUUID); err != nil {
+		if err := cleanupDesignFileDeletion(r.Context(), qtx, wsUUID, file.ID); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to delete design file")
 			return
 		}
 	} else {
+		if err := cleanupDesignRevisionDeletion(r.Context(), qtx, wsUUID, deletedRevisionIDs); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete empty design revision")
+			return
+		}
+		for _, revision := range updates {
+			if _, err := tx.Exec(r.Context(), `UPDATE design_revision SET native_json = $1 WHERE id = $2 AND workspace_id = $3`, revision.NativeJson, revision.ID, wsUUID); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to update design revision")
+				return
+			}
+		}
 		sort.Slice(remaining, func(i, j int) bool { return remaining[i].RevisionNumber > remaining[j].RevisionNumber })
 		if _, err := tx.Exec(r.Context(), `UPDATE design_file SET current_revision_id = $3, updated_at = now() WHERE id = $1 AND workspace_id = $2`, file.ID, wsUUID, remaining[0].ID); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to update design file")
@@ -4890,6 +5116,20 @@ func (h *Handler) PublishDesignRevisionAsTemplate(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "failed to get design file")
 		return
 	}
+	var analyzer db.Agent
+	enqueueBlueprintAnalysis := file.ProjectID.Valid
+	if enqueueBlueprintAnalysis {
+		var found bool
+		analyzer, found, err = h.selectDesignSystemProfileAnalyzerAgent(r.Context(), wsUUID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to select template blueprint analyzer")
+			return
+		}
+		if !found {
+			writeError(w, http.StatusInternalServerError, "no available Local UI Restore Agent for template blueprint analysis")
+			return
+		}
+	}
 	libraryKey := slugOrDefault(req.LibraryKey, "workspace")
 	libraryName := strings.TrimSpace(req.LibraryName)
 	if libraryName == "" {
@@ -4941,9 +5181,24 @@ func (h *Handler) PublishDesignRevisionAsTemplate(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "failed to update design template")
 		return
 	}
+	var analysisTask *db.AgentTaskQueue
+	if enqueueBlueprintAnalysis {
+		task, err := h.enqueueDesignTemplateBlueprintAnalyzeTask(r.Context(), qtx, analyzer, enqueueDesignTemplateBlueprintAnalyzeTaskParams{
+			WorkspaceID: wsUUID, ProjectID: file.ProjectID, TemplateID: template.ID, TemplateRevisionID: templateRevision.ID,
+			SourceFileID: file.ID, SourceRevisionID: revision.ID, SourceNativeJSON: revision.NativeJson, CreatedBy: userUUID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to enqueue template blueprint analysis")
+			return
+		}
+		analysisTask = &task
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit design template")
 		return
+	}
+	if h.TaskService != nil && analysisTask != nil {
+		h.TaskService.NotifyTaskEnqueued(r.Context(), *analysisTask)
 	}
 	row := db.GetDesignCatalogTemplateRow{ID: updated.ID, WorkspaceID: updated.WorkspaceID, LibraryID: updated.LibraryID, Key: updated.Key, Name: updated.Name, Description: updated.Description, Category: updated.Category, CurrentRevisionID: updated.CurrentRevisionID, Metadata: updated.Metadata, CreatedBy: updated.CreatedBy, CreatedAt: updated.CreatedAt, UpdatedAt: updated.UpdatedAt, DesignRevisionID: revision.ID, TemplateRevisionNumber: pgtype.Int4{Int32: templateRevision.RevisionNumber, Valid: true}, SlotSchema: templateRevision.SlotSchema, DesignFileID: revision.FileID, DesignFileTitle: strToText(file.Title)}
 	resp := designCatalogTemplateRowToResponse(row)
@@ -5349,6 +5604,8 @@ func (h *Handler) CreateDesignDraftAgentTask(w http.ResponseWriter, r *http.Requ
 	var issueContext map[string]any
 	var parentIssueContext map[string]any
 	var issueID pgtype.UUID
+	var projectDesignSystem *db.DesignSystemProfile
+	var projectDesignContext *service.ResolvedDesignContext
 	if strings.TrimSpace(req.IssueID) != "" {
 		loadedIssue, ok := h.loadIssueForUser(w, r, strings.TrimSpace(req.IssueID))
 		if !ok {
@@ -5365,6 +5622,40 @@ func (h *Handler) CreateDesignDraftAgentTask(w http.ResponseWriter, r *http.Requ
 				return
 			}
 			parentIssueContext = designDraftIssueContext(parentIssue, issuePrefix)
+		}
+		if loadedIssue.ProjectID.Valid {
+			resolved, err := (service.ProjectDesignContextResolver{
+				Store:        h.Queries,
+				AllowedHosts: h.projectDesignSystemAllowedHosts(),
+			}).Resolve(r.Context(), service.ResolveProjectDesignContextParams{
+				WorkspaceID: wsUUID,
+				ProjectID:   loadedIssue.ProjectID,
+			})
+			if err != nil {
+				slog.Error("ui draft task: failed to resolve project design context", "workspace_id", uuidToString(wsUUID), "project_id", uuidToString(loadedIssue.ProjectID), "error", err)
+				if errors.Is(err, service.ErrSavedDesignContextInvalid) {
+					writeError(w, http.StatusUnprocessableEntity, "saved project design system is invalid")
+					return
+				}
+				writeError(w, http.StatusInternalServerError, "failed to resolve project design context")
+				return
+			}
+			projectDesignContext = &resolved
+
+			profile, err := h.Queries.GetDefaultDesignSystemProfileForProject(r.Context(), db.GetDefaultDesignSystemProfileForProjectParams{
+				WorkspaceID: wsUUID,
+				ProjectID:   loadedIssue.ProjectID,
+			})
+			if err != nil {
+				if err == pgx.ErrNoRows {
+					writeError(w, http.StatusBadRequest, "project requires an analyzed default design system")
+					return
+				}
+				slog.Error("ui draft task: failed to load default design system", "workspace_id", uuidToString(wsUUID), "project_id", uuidToString(loadedIssue.ProjectID), "error", err)
+				writeError(w, http.StatusInternalServerError, "failed to load project design system")
+				return
+			}
+			projectDesignSystem = &profile
 		}
 	}
 	var catalogTemplateID pgtype.UUID
@@ -5416,41 +5707,39 @@ func (h *Handler) CreateDesignDraftAgentTask(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusBadRequest, "no design templates available")
 			return
 		}
-		h.enrichDesignDraftTemplateCandidates(r.Context(), wsUUID, templateCandidates)
 	}
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
 		if hasPresetTemplate {
-			prompt = "Read the embedded requirement, use the project design_system as the visual contract when present, then generate UI draft slot_values and a safe JSON patch. Return only data that can create a DesignDraft."
+			prompt = "Read the embedded requirement, follow the resolved design_context, then return design_plan evidence and a semantic PageSpec for the selected list-page template."
 		} else {
-			prompt = "Read the embedded issue, use the project design_system as the visual contract when present, choose the best template candidate as a structure reference, then generate UI draft slot_values and a safe JSON patch."
+			prompt = "Read the embedded issue, follow the resolved design_context, choose the best template candidate as a structure reference, then return design_plan evidence and a semantic PageSpec."
 		}
 	}
+	requiredRequirementIDs := designDraftRequiredRequirementIDs(issueContext, parentIssueContext, req.RequirementCore)
 	contextPayload := map[string]any{
-		"type":             "ui_agent_draft_create",
-		"requester_id":     userID,
-		"workspace_id":     uuidToString(wsUUID),
-		"agent_id":         req.AgentID,
-		"title":            strings.TrimSpace(req.Title),
-		"prompt":           prompt,
-		"requirement_core": json.RawMessage(validJSONOrDefault(req.RequirementCore, `{}`)),
+		"type":                     service.UIDraftCreateContextType,
+		"requester_id":             userID,
+		"workspace_id":             uuidToString(wsUUID),
+		"agent_id":                 req.AgentID,
+		"title":                    strings.TrimSpace(req.Title),
+		"prompt":                   prompt,
+		"requirement_core":         json.RawMessage(validJSONOrDefault(req.RequirementCore, `{}`)),
+		"required_requirement_ids": requiredRequirementIDs,
 		"output_policy": map[string]any{
-			"slot_values_first":        true,
-			"json_patch_allowed":       true,
-			"forbidden_patch_segments": []string{"x", "y", "width", "height", "children"},
+			"design_plan_required": true,
+			"page_spec_required":   true,
+			"page_spec_version":    designcore.PageSpecVersion,
+			"json_patch_allowed":   false,
+			"slot_values_allowed":  false,
+			"forbidden_fields":     []string{"requirement_core", "slot_values", "patch"},
+			"forbidden_source":     []string{"layer_ids", "coordinates", "layout_geometry", "raw_figma_json"},
 		},
 	}
 	if hasPresetTemplate {
 		contextPayload["catalog_template_id"] = req.CatalogTemplateID
 		contextPayload["template_revision_id"] = uuidToString(templateRevisionID)
 		contextPayload["design_revision_id"] = uuidToString(templateRevision.DesignRevisionID)
-		contextPayload["slot_schema"] = json.RawMessage(templateRevision.SlotSchema)
-		if designRevision, err := h.Queries.GetDesignRevisionInWorkspace(r.Context(), db.GetDesignRevisionInWorkspaceParams{ID: templateRevision.DesignRevisionID, WorkspaceID: wsUUID}); err == nil {
-			if textLayers := designDraftEditableTextLayers(designRevision.NativeJson, 120); len(textLayers) > 0 {
-				contextPayload["editable_text_layers"] = textLayers
-				contextPayload["patch_hints"] = designDraftTextPatchHints()
-			}
-		}
 	} else {
 		contextPayload["template_candidates"] = templateCandidates
 		contextPayload["selection_policy"] = map[string]any{
@@ -5468,20 +5757,26 @@ func (h *Handler) CreateDesignDraftAgentTask(w http.ResponseWriter, r *http.Requ
 	}
 	if issue.ProjectID.Valid {
 		contextPayload["project_id"] = uuidToString(issue.ProjectID)
-		if profile, err := h.Queries.GetDefaultDesignSystemProfileForProject(r.Context(), db.GetDefaultDesignSystemProfileForProjectParams{WorkspaceID: wsUUID, ProjectID: issue.ProjectID}); err == nil {
-			contextPayload["design_system"] = map[string]any{
-				"id":                 uuidToString(profile.ID),
-				"name":               profile.Name,
-				"status":             profile.Status,
-				"source_file_id":     uuidToString(profile.SourceFileID),
-				"source_revision_id": uuidToString(profile.SourceRevisionID),
-				"profile":            json.RawMessage(profile.ProfileJson),
+		if projectDesignContext != nil {
+			contextPayload["design_context"] = projectDesignContext
+		}
+		if projectDesignSystem != nil {
+			contextPayload["design_system_profile_id"] = uuidToString(projectDesignSystem.ID)
+		}
+	}
+	if projectDesignSystem != nil && issue.ProjectID.Valid {
+		var generationAssets map[string]any
+		if hasPresetTemplate {
+			blueprint, assets := h.designGenerationAssetSummaries(r.Context(), wsUUID, issue.ProjectID, templateRevisionID, projectDesignSystem.ID)
+			if blueprint != nil {
+				contextPayload["template_blueprint"] = blueprint
 			}
+			generationAssets = assets
 		} else {
-			if err != pgx.ErrNoRows {
-				slog.Warn("ui draft task: failed to load default design system", "workspace_id", uuidToString(wsUUID), "project_id", uuidToString(issue.ProjectID), "error", err)
-			}
-			contextPayload["design_system"] = map[string]any{"status": "missing"}
+			generationAssets = h.enrichDesignDraftTemplateCandidates(r.Context(), wsUUID, issue.ProjectID, projectDesignSystem.ID, templateCandidates)
+		}
+		if generationAssets != nil {
+			contextPayload["generation_assets"] = generationAssets
 		}
 	}
 	contextJSON, err := json.Marshal(contextPayload)
@@ -5500,7 +5795,10 @@ func (h *Handler) CreateDesignDraftAgentTask(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusAccepted, CreateDesignDraftAgentTaskResponse{TaskID: uuidToString(task.ID), Status: task.Status})
 }
 
-func (h *Handler) createDesignDraftFromAgentTaskOutput(ctx context.Context, task db.AgentTaskQueue, output string) (*db.DesignDraft, error) {
+func (h *Handler) createDesignDraftFromAgentTaskOutput(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue, output string) (*db.DesignDraft, error) {
+	if queries == nil {
+		queries = h.Queries
+	}
 	var draftCtx service.UIDraftCreateContext
 	if err := json.Unmarshal(task.Context, &draftCtx); err != nil || draftCtx.Type != service.UIDraftCreateContextType {
 		return nil, nil
@@ -5513,6 +5811,18 @@ func (h *Handler) createDesignDraftFromAgentTaskOutput(ctx context.Context, task
 	if err != nil {
 		return nil, fmt.Errorf("invalid draft task requester: %w", err)
 	}
+	projectUUID, err := util.ParseUUID(strings.TrimSpace(draftCtx.ProjectID))
+	if err != nil {
+		return nil, fmt.Errorf("invalid draft task project: %w", err)
+	}
+	issueUUID, err := util.ParseUUID(strings.TrimSpace(draftCtx.IssueID))
+	if err != nil {
+		return nil, fmt.Errorf("invalid draft task issue: %w", err)
+	}
+	profileUUID, err := util.ParseUUID(strings.TrimSpace(draftCtx.DesignSystemProfileID))
+	if err != nil {
+		return nil, fmt.Errorf("invalid draft task design system profile: %w", err)
+	}
 	parsed, err := parseUIDraftAgentOutput(output)
 	if err != nil {
 		return nil, err
@@ -5520,9 +5830,6 @@ func (h *Handler) createDesignDraftFromAgentTaskOutput(ctx context.Context, task
 	selectedTemplateID := strings.TrimSpace(draftCtx.CatalogTemplateID)
 	if selectedTemplateID == "" {
 		selectedTemplateID = strings.TrimSpace(parsed.CatalogTemplateID)
-	}
-	if selectedTemplateID == "" {
-		selectedTemplateID = selectedTemplateIDFromRequirementCore(parsed.RequirementCore)
 	}
 	if selectedTemplateID == "" {
 		return nil, fmt.Errorf("ui agent draft output must include catalog_template_id")
@@ -5534,7 +5841,7 @@ func (h *Handler) createDesignDraftFromAgentTaskOutput(ctx context.Context, task
 	if err != nil {
 		return nil, fmt.Errorf("invalid draft task template: %w", err)
 	}
-	template, err := h.Queries.GetDesignCatalogTemplate(ctx, db.GetDesignCatalogTemplateParams{ID: catalogTemplateID, WorkspaceID: wsUUID})
+	template, err := queries.GetDesignCatalogTemplate(ctx, db.GetDesignCatalogTemplateParams{ID: catalogTemplateID, WorkspaceID: wsUUID})
 	if err != nil {
 		return nil, fmt.Errorf("load design template: %w", err)
 	}
@@ -5549,20 +5856,40 @@ func (h *Handler) createDesignDraftFromAgentTaskOutput(ctx context.Context, task
 	if err != nil {
 		return nil, fmt.Errorf("invalid draft task template revision: %w", err)
 	}
-	templateRevision, err := h.Queries.GetDesignTemplateRevisionInWorkspace(ctx, db.GetDesignTemplateRevisionInWorkspaceParams{ID: templateRevisionID, WorkspaceID: wsUUID})
+	templateRevision, err := queries.GetDesignTemplateRevisionInWorkspace(ctx, db.GetDesignTemplateRevisionInWorkspaceParams{
+		ID: templateRevisionID, WorkspaceID: wsUUID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("load design template revision: %w", err)
 	}
-	slotValues := validJSONOrDefault(parsed.SlotValues, `{}`)
-	if err := validateTemplateSlotValues(templateRevision.SlotSchema, slotValues); err != nil {
-		return nil, err
+	if templateRevision.TemplateID != catalogTemplateID {
+		return nil, fmt.Errorf("selected template revision does not belong to catalog_template_id")
 	}
-	patch := validJSONOrDefault(parsed.Patch, `[]`)
-	if err := validateDesignDraftPatch(patch); err != nil {
-		return nil, err
+	templateSourceRevision, err := queries.GetDesignRevisionInWorkspace(ctx, db.GetDesignRevisionInWorkspaceParams{
+		ID: templateRevision.DesignRevisionID, WorkspaceID: wsUUID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load design template source revision: %w", err)
 	}
-	if err := validateUIDraftHasEffectiveChanges(templateRevision.SlotSchema, slotValues, patch); err != nil {
-		return nil, err
+	pageSpec, err := designcore.ParsePageSpec(parsed.PageSpec)
+	if err != nil {
+		return nil, fmt.Errorf("invalid page_spec: %w", err)
+	}
+	store := service.DesignGenerationAssetStore{Queries: queries}
+	assets, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
+		WorkspaceID: wsUUID, TargetProjectID: projectUUID, TemplateRevisionID: templateRevisionID,
+		DesignSystemProfileID: profileUUID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load semantic generation assets: %w", err)
+	}
+	blueprintID, err := util.ParseUUID(assets.BlueprintRecordID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid blueprint asset id: %w", err)
+	}
+	recipeSetID, err := util.ParseUUID(assets.RecipeSetRecordID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid recipe asset id: %w", err)
 	}
 	title := strings.TrimSpace(parsed.Title)
 	if title == "" {
@@ -5571,20 +5898,68 @@ func (h *Handler) createDesignDraftFromAgentTaskOutput(ctx context.Context, task
 	if title == "" {
 		title = template.Name + " Agent Draft"
 	}
-	requirementCore := validJSONOrDefault(parsed.RequirementCore, string(draftCtx.RequirementCore))
-	if len(requirementCore) == 0 {
-		requirementCore = []byte(`{}`)
-	}
-	var issueID pgtype.UUID
-	if strings.TrimSpace(draftCtx.IssueID) != "" {
-		issueID, err = util.ParseUUID(draftCtx.IssueID)
-		if err != nil {
-			return nil, fmt.Errorf("invalid draft task issue: %w", err)
-		}
-	}
-	draft, err := h.Queries.CreateDesignDraft(ctx, db.CreateDesignDraftParams{WorkspaceID: wsUUID, CatalogTemplateID: catalogTemplateID, TemplateRevisionID: templateRevisionID, FileID: template.DesignFileID, RevisionID: templateRevision.DesignRevisionID, IssueID: issueID, Title: title, RequirementCore: requirementCore, SlotValues: slotValues, Patch: patch, Status: "generated", ValidationErrors: []byte(`[]`), CreatedBy: requesterUUID})
+	compileOutput := designcore.CompileListPage(designcore.CompileInput{
+		PageSpec:               pageSpec,
+		RequiredRequirementIDs: draftCtx.RequiredRequirementIDs,
+		Blueprint:              assets.Blueprint,
+		RecipeSet:              assets.RecipeSet,
+		TemplateDoc:            assets.TemplateDoc,
+		RecipeDoc:              assets.RecipeDoc,
+		Provenance: designcore.CompileProvenance{
+			WorkspaceID:       draftCtx.WorkspaceID,
+			ProjectID:         draftCtx.ProjectID,
+			IssueID:           draftCtx.IssueID,
+			AgentTaskID:       uuidToString(task.ID),
+			PageSpecVersion:   pageSpec.Version,
+			BlueprintRecordID: assets.BlueprintRecordID,
+			RecipeSetRecordID: assets.RecipeSetRecordID,
+		},
+	})
+	pageSpecRaw, err := json.Marshal(pageSpec)
 	if err != nil {
-		return nil, fmt.Errorf("create agent design draft: %w", err)
+		return nil, fmt.Errorf("marshal page_spec: %w", err)
+	}
+	compiledRaw, err := json.Marshal(compileOutput.Document)
+	if err != nil {
+		return nil, fmt.Errorf("marshal compiled native json: %w", err)
+	}
+	qualityRaw, err := json.Marshal(compileOutput.Quality)
+	if err != nil {
+		return nil, fmt.Errorf("marshal quality report: %w", err)
+	}
+	validationRaw, err := json.Marshal(compileOutput.Diagnostics)
+	if err != nil {
+		return nil, fmt.Errorf("marshal validation diagnostics: %w", err)
+	}
+	requirementCoreRaw, err := uiDraftRequirementCoreFromDesignPlan(parsed.DesignPlan, draftCtx.RequiredRequirementIDs)
+	if err != nil {
+		return nil, err
+	}
+	parentDraftID := pgtype.UUID{}
+	version := int32(0)
+	if strings.TrimSpace(draftCtx.BaseDraftID) != "" {
+		parentDraftID, err = util.ParseUUID(strings.TrimSpace(draftCtx.BaseDraftID))
+		if err != nil {
+			return nil, fmt.Errorf("invalid base draft id: %w", err)
+		}
+		parentDraft, err := queries.GetDesignDraftInWorkspace(ctx, db.GetDesignDraftInWorkspaceParams{ID: parentDraftID, WorkspaceID: wsUUID})
+		if err != nil {
+			return nil, fmt.Errorf("load base semantic design draft: %w", err)
+		}
+		if parentDraft.GenerationMode != "semantic_pagespec" || parentDraft.IssueID != issueUUID {
+			return nil, fmt.Errorf("base semantic design draft does not match revision context")
+		}
+		version = parentDraft.Version + 1
+	}
+	draft, err := store.SaveSemanticDesignDraft(ctx, service.SaveSemanticDesignDraftParams{
+		WorkspaceID: wsUUID, CatalogTemplateID: catalogTemplateID, TemplateRevisionID: templateRevisionID,
+		FileID: templateSourceRevision.FileID, RevisionID: templateSourceRevision.ID, IssueID: issueUUID,
+		BlueprintID: blueprintID, RecipeSetID: recipeSetID, ParentDraftID: parentDraftID, CreatedBy: requesterUUID,
+		Title: title, Status: compileOutput.Status, PageSpec: pageSpecRaw, CompiledNativeJSON: compiledRaw,
+		QualityReport: qualityRaw, ValidationErrors: validationRaw, RequirementCore: requirementCoreRaw, Version: version,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("save semantic design draft: %w", err)
 	}
 	return &draft, nil
 }
@@ -5601,6 +5976,72 @@ func (h *Handler) updateDesignSystemProfileFromAgentTaskOutput(ctx context.Conte
 	profileUUID, err := util.ParseUUID(profileCtx.DesignSystemProfileID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid design system profile id: %w", err)
+	}
+	if strings.TrimSpace(profileCtx.ProjectID) != "" {
+		projectUUID, err := util.ParseUUID(profileCtx.ProjectID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid design system profile project: %w", err)
+		}
+		sourceRevisionUUID, err := util.ParseUUID(profileCtx.SourceRevisionID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid design system profile source revision: %w", err)
+		}
+		createdBy := pgtype.UUID{}
+		if strings.TrimSpace(profileCtx.RequesterID) != "" {
+			parsedCreatedBy, err := util.ParseUUID(profileCtx.RequesterID)
+			if err != nil {
+				return nil, fmt.Errorf("invalid design system profile requester: %w", err)
+			}
+			createdBy = parsedCreatedBy
+		}
+		profile, err := queries.GetDesignSystemProfileInWorkspace(ctx, db.GetDesignSystemProfileInWorkspaceParams{
+			ID: profileUUID, WorkspaceID: wsUUID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("load design system profile: %w", err)
+		}
+		if profile.SourceRevisionID != sourceRevisionUUID {
+			return nil, fmt.Errorf("design system profile source does not match analysis context")
+		}
+		sourceRevision, err := queries.GetDesignRevisionInWorkspace(ctx, db.GetDesignRevisionInWorkspaceParams{
+			ID: sourceRevisionUUID, WorkspaceID: wsUUID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("load design system profile source revision: %w", err)
+		}
+		if sourceRevision.FileID != profile.SourceFileID {
+			return nil, fmt.Errorf("design system profile source file does not match analysis context")
+		}
+		sourceDoc, err := designcore.ParseNativeJSON(sourceRevision.NativeJson)
+		if err != nil {
+			return nil, fmt.Errorf("parse design system profile source document: %w", err)
+		}
+		recipeSet, diagnostics := designcore.BuildComponentRecipeSet(
+			uuidToString(profileUUID),
+			uuidToString(sourceRevisionUUID),
+			designcore.ComponentRecipeSetVersion,
+			sourceDoc,
+			parsed.RecipeClassifications,
+			parsed.PrimitiveFallbacks,
+		)
+		if diagnostics.HasErrors() {
+			validationErr := &service.GenerationAssetValidationError{Diagnostics: diagnostics}
+			return nil, fmt.Errorf("%w: %+v", validationErr, diagnostics)
+		}
+		analysisVersion, err := queries.GetNextDesignComponentRecipeSetAnalysisVersion(ctx, db.GetNextDesignComponentRecipeSetAnalysisVersionParams{
+			WorkspaceID: wsUUID, DesignSystemProfileID: profileUUID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("get next component recipe set analysis version: %w", err)
+		}
+		store := service.DesignGenerationAssetStore{Queries: queries}
+		if _, err := store.SaveRecipeSetAnalysis(ctx, service.SaveRecipeSetAnalysisParams{
+			WorkspaceID: wsUUID, TargetProjectID: projectUUID, DesignSystemProfileID: profileUUID,
+			SourceRevisionID: sourceRevisionUUID, AnalysisVersion: analysisVersion, CreatedBy: createdBy,
+			RecipeSet: recipeSet,
+		}); err != nil {
+			return nil, fmt.Errorf("save component recipe set analysis: %w", err)
+		}
 	}
 	updated, err := queries.UpdateDesignSystemProfileAnalysis(ctx, db.UpdateDesignSystemProfileAnalysisParams{
 		ID:             profileUUID,
@@ -5643,10 +6084,125 @@ func (h *Handler) updateDesignSystemProfileFromAgentTaskOutput(ctx context.Conte
 	return &updated, nil
 }
 
+type designTemplateBlueprintAnalyzeOutput struct {
+	Classification designcore.BlueprintClassification `json:"classification"`
+	Summary        string                             `json:"summary"`
+}
+
+type preparedDesignTemplateBlueprintAnalysis struct {
+	WorkspaceID        pgtype.UUID
+	ProjectID          pgtype.UUID
+	TemplateID         pgtype.UUID
+	TemplateRevisionID pgtype.UUID
+	SourceRevisionID   pgtype.UUID
+	CreatedBy          pgtype.UUID
+	Structure          designcore.TemplateStructure
+	Blueprint          designcore.TemplateBlueprint
+}
+
+func prepareDesignTemplateBlueprintAnalysis(task db.AgentTaskQueue, parsed designTemplateBlueprintAnalyzeOutput) (preparedDesignTemplateBlueprintAnalysis, error) {
+	var blueprintCtx service.DesignTemplateBlueprintAnalyzeContext
+	if err := json.Unmarshal(task.Context, &blueprintCtx); err != nil || blueprintCtx.Type != service.DesignTemplateBlueprintAnalyzeContextType {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("invalid design template blueprint analysis context")
+	}
+	workspaceID, err := util.ParseUUID(blueprintCtx.WorkspaceID)
+	if err != nil {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("invalid template blueprint workspace: %w", err)
+	}
+	projectID, err := util.ParseUUID(blueprintCtx.ProjectID)
+	if err != nil {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("invalid template blueprint project: %w", err)
+	}
+	templateID, err := util.ParseUUID(blueprintCtx.TemplateID)
+	if err != nil {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("invalid template blueprint template: %w", err)
+	}
+	templateRevisionID, err := util.ParseUUID(blueprintCtx.TemplateRevisionID)
+	if err != nil {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("invalid template blueprint template revision: %w", err)
+	}
+	sourceRevisionID, err := util.ParseUUID(blueprintCtx.SourceRevisionID)
+	if err != nil {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("invalid template blueprint source revision: %w", err)
+	}
+	createdBy, err := util.ParseUUID(blueprintCtx.RequesterID)
+	if err != nil {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("invalid template blueprint requester: %w", err)
+	}
+	var structure designcore.TemplateStructure
+	if len(blueprintCtx.Structure) == 0 || json.Unmarshal(blueprintCtx.Structure, &structure) != nil || len(structure.Frames) == 0 || len(structure.Layers) == 0 {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("template blueprint structure is invalid")
+	}
+	var sourceRefs designcore.BlueprintSourceRefs
+	if len(blueprintCtx.SourceRefs) == 0 || json.Unmarshal(blueprintCtx.SourceRefs, &sourceRefs) != nil {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("template blueprint source refs are invalid")
+	}
+	if sourceRefs.DesignFileID == "" || sourceRefs.DesignRevisionID != blueprintCtx.SourceRevisionID || sourceRefs.TemplateRevisionID != blueprintCtx.TemplateRevisionID {
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("template blueprint source refs do not match analysis context")
+	}
+	blueprint, diagnostics := designcore.BuildTemplateBlueprint(structure, parsed.Classification, sourceRefs)
+	if diagnostics.HasErrors() {
+		validationErr := &service.GenerationAssetValidationError{Diagnostics: diagnostics}
+		return preparedDesignTemplateBlueprintAnalysis{}, fmt.Errorf("%w: %+v", validationErr, diagnostics)
+	}
+	return preparedDesignTemplateBlueprintAnalysis{
+		WorkspaceID: workspaceID, ProjectID: projectID, TemplateID: templateID,
+		TemplateRevisionID: templateRevisionID, SourceRevisionID: sourceRevisionID,
+		CreatedBy: createdBy, Structure: structure, Blueprint: blueprint,
+	}, nil
+}
+
+func saveDesignTemplateBlueprintAnalysis(ctx context.Context, queries *db.Queries, prepared preparedDesignTemplateBlueprintAnalysis) (*db.DesignTemplateBlueprint, error) {
+	if _, err := queries.LockProjectInWorkspaceForUpdate(ctx, db.LockProjectInWorkspaceForUpdateParams{
+		ID: prepared.ProjectID, WorkspaceID: prepared.WorkspaceID,
+	}); err != nil {
+		return nil, fmt.Errorf("lock template blueprint analysis project: %w", err)
+	}
+	analysisVersion, err := queries.GetNextDesignTemplateBlueprintAnalysisVersion(ctx, db.GetNextDesignTemplateBlueprintAnalysisVersionParams{
+		WorkspaceID: prepared.WorkspaceID, TemplateRevisionID: prepared.TemplateRevisionID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get next template blueprint analysis version: %w", err)
+	}
+	store := service.DesignGenerationAssetStore{Queries: queries}
+	record, err := store.SaveBlueprintAnalysis(ctx, service.SaveBlueprintAnalysisParams{
+		WorkspaceID: prepared.WorkspaceID, TargetProjectID: prepared.ProjectID,
+		TemplateID: prepared.TemplateID, TemplateRevisionID: prepared.TemplateRevisionID,
+		SourceRevisionID: prepared.SourceRevisionID, AnalysisVersion: analysisVersion,
+		CreatedBy: prepared.CreatedBy, Structure: prepared.Structure, Blueprint: prepared.Blueprint,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("save template blueprint analysis: %w", err)
+	}
+	return &record, nil
+}
+
+func parseDesignTemplateBlueprintAnalyzeOutput(output string) (designTemplateBlueprintAnalyzeOutput, error) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return designTemplateBlueprintAnalyzeOutput{}, fmt.Errorf("design template blueprint output is empty")
+	}
+	var parsed designTemplateBlueprintAnalyzeOutput
+	decoder := json.NewDecoder(strings.NewReader(output))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&parsed); err != nil {
+		return designTemplateBlueprintAnalyzeOutput{}, fmt.Errorf("design template blueprint output must be a complete JSON object: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return designTemplateBlueprintAnalyzeOutput{}, fmt.Errorf("design template blueprint output must contain exactly one JSON object")
+	}
+	if strings.TrimSpace(parsed.Summary) == "" {
+		return designTemplateBlueprintAnalyzeOutput{}, fmt.Errorf("summary is required")
+	}
+	return parsed, nil
+}
+
 type designSystemProfileAnalyzeOutput struct {
-	ProfileJSON    json.RawMessage `json:"profile_json"`
-	AnalysisErrors json.RawMessage `json:"analysis_errors"`
-	Summary        string          `json:"summary"`
+	ProfileJSON           json.RawMessage                            `json:"profile_json"`
+	AnalysisErrors        json.RawMessage                            `json:"analysis_errors"`
+	Summary               string                                     `json:"summary"`
+	RecipeClassifications []designcore.ComponentRecipeClassification `json:"recipe_classifications"`
+	PrimitiveFallbacks    map[string]designcore.PrimitiveRecipe      `json:"primitive_fallbacks"`
 }
 
 func parseDesignSystemProfileAnalyzeOutput(output string) (designSystemProfileAnalyzeOutput, error) {
@@ -5687,6 +6243,12 @@ func parseDesignSystemProfileAnalyzeOutput(output string) (designSystemProfileAn
 	if strings.TrimSpace(parsed.Summary) == "" {
 		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("summary is required")
 	}
+	if len(parsed.RecipeClassifications) == 0 {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("recipe_classifications is required")
+	}
+	if parsed.PrimitiveFallbacks == nil {
+		return designSystemProfileAnalyzeOutput{}, fmt.Errorf("primitive_fallbacks is required")
+	}
 	return parsed, nil
 }
 
@@ -5696,18 +6258,105 @@ func parseUIDraftAgentOutput(output string) (uiDraftAgentOutput, error) {
 		return uiDraftAgentOutput{}, fmt.Errorf("ui agent draft output is empty")
 	}
 	var parsed uiDraftAgentOutput
-	if err := json.Unmarshal([]byte(output), &parsed); err == nil {
-		return parsed, nil
-	}
-	start := strings.Index(output, "{")
-	end := strings.LastIndex(output, "}")
-	if start < 0 || end <= start {
-		return uiDraftAgentOutput{}, fmt.Errorf("ui agent draft output must include a JSON object")
-	}
-	if err := json.Unmarshal([]byte(output[start:end+1]), &parsed); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(output))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&parsed); err != nil {
 		return uiDraftAgentOutput{}, fmt.Errorf("invalid ui agent draft output: %w", err)
 	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return uiDraftAgentOutput{}, fmt.Errorf("ui agent draft output must contain exactly one JSON object")
+		}
+		return uiDraftAgentOutput{}, fmt.Errorf("invalid ui agent draft output trailing data: %w", err)
+	}
+	if len(parsed.PageSpec) == 0 {
+		return uiDraftAgentOutput{}, fmt.Errorf("page_spec is required")
+	}
+	if err := validateUIDraftDesignPlan(parsed.DesignPlan); err != nil {
+		return uiDraftAgentOutput{}, err
+	}
+	pageSpec, err := designcore.ParsePageSpec(parsed.PageSpec)
+	if err != nil {
+		return uiDraftAgentOutput{}, fmt.Errorf("invalid page_spec: %w", err)
+	}
+	if diagnostics := designcore.ValidatePageSpec(pageSpec, nil); diagnostics.HasErrors() {
+		return uiDraftAgentOutput{}, fmt.Errorf("invalid page_spec: %+v", diagnostics)
+	}
 	return parsed, nil
+}
+
+func validateUIDraftDesignPlan(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return fmt.Errorf("design_plan is required")
+	}
+	var plan struct {
+		Version           string            `json:"version"`
+		BusinessGoal      string            `json:"businessGoal"`
+		PageMap           map[string]any    `json:"pageMap"`
+		LayoutStrategy    string            `json:"layoutStrategy"`
+		DesignSystemUsage []string          `json:"designSystemUsage"`
+		ComponentPlan     []json.RawMessage `json:"componentPlan"`
+		SelfReview        []string          `json:"selfReview"`
+	}
+	if err := json.Unmarshal(raw, &plan); err != nil {
+		return fmt.Errorf("invalid design_plan: %w", err)
+	}
+	if strings.TrimSpace(plan.Version) != "1.0" {
+		return fmt.Errorf("design_plan.version must be 1.0")
+	}
+	if strings.TrimSpace(plan.BusinessGoal) == "" {
+		return fmt.Errorf("design_plan.businessGoal is required")
+	}
+	if strings.TrimSpace(stringField(plan.PageMap, "primaryPage")) == "" {
+		return fmt.Errorf("design_plan.pageMap.primaryPage is required")
+	}
+	if strings.TrimSpace(plan.LayoutStrategy) == "" {
+		return fmt.Errorf("design_plan.layoutStrategy is required")
+	}
+	if len(nonBlankStrings(plan.DesignSystemUsage)) == 0 {
+		return fmt.Errorf("design_plan.designSystemUsage is required")
+	}
+	if len(plan.ComponentPlan) == 0 {
+		return fmt.Errorf("design_plan.componentPlan is required")
+	}
+	if len(nonBlankStrings(plan.SelfReview)) == 0 {
+		return fmt.Errorf("design_plan.selfReview is required")
+	}
+	return nil
+}
+
+func uiDraftRequirementCoreFromDesignPlan(designPlan json.RawMessage, requiredRequirementIDs []string) ([]byte, error) {
+	payload := map[string]any{
+		"design_plan":              designPlan,
+		"agent_output_contract":    "ui_design_plan_v1",
+		"required_requirement_ids": requiredRequirementIDs,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal design_plan requirement core: %w", err)
+	}
+	return raw, nil
+}
+
+func semanticDraftRequiredRequirementIDs(raw json.RawMessage) []string {
+	var payload struct {
+		RequiredRequirementIDs []string `json:"required_requirement_ids"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &payload) != nil {
+		return nil
+	}
+	return payload.RequiredRequirementIDs
+}
+
+func nonBlankStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func selectedTemplateIDFromRequirementCore(raw json.RawMessage) string {
@@ -5735,8 +6384,15 @@ func isDesignSystemProfileAnalyzeTaskContext(raw []byte) bool {
 	return json.Unmarshal(raw, &payload) == nil && payload.Type == service.DesignSystemProfileAnalyzeContextType
 }
 
+func isDesignTemplateBlueprintAnalyzeTaskContext(raw []byte) bool {
+	var payload struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(raw, &payload) == nil && payload.Type == service.DesignTemplateBlueprintAnalyzeContextType
+}
+
 func designDraftToResponse(draft db.DesignDraft) DesignDraftResponse {
-	return DesignDraftResponse{ID: uuidToString(draft.ID), WorkspaceID: uuidToString(draft.WorkspaceID), TemplateID: uuidToPtr(draft.TemplateID), CatalogTemplateID: uuidToPtr(draft.CatalogTemplateID), TemplateRevisionID: uuidToPtr(draft.TemplateRevisionID), FileID: uuidToPtr(draft.FileID), RevisionID: uuidToPtr(draft.RevisionID), GeneratedFileID: uuidToPtr(draft.GeneratedFileID), GeneratedRevisionID: uuidToPtr(draft.GeneratedRevisionID), IssueID: uuidToPtr(draft.IssueID), Title: draft.Title, RequirementCore: json.RawMessage(draft.RequirementCore), SlotValues: json.RawMessage(draft.SlotValues), Patch: json.RawMessage(draft.Patch), Status: draft.Status, ValidationErrors: json.RawMessage(draft.ValidationErrors), CreatedBy: uuidToPtr(draft.CreatedBy), CreatedAt: timestampToString(draft.CreatedAt), UpdatedAt: timestampToString(draft.UpdatedAt), MaterializedAt: timestampToPtr(draft.MaterializedAt)}
+	return DesignDraftResponse{ID: uuidToString(draft.ID), WorkspaceID: uuidToString(draft.WorkspaceID), TemplateID: uuidToPtr(draft.TemplateID), CatalogTemplateID: uuidToPtr(draft.CatalogTemplateID), TemplateRevisionID: uuidToPtr(draft.TemplateRevisionID), FileID: uuidToPtr(draft.FileID), RevisionID: uuidToPtr(draft.RevisionID), GeneratedFileID: uuidToPtr(draft.GeneratedFileID), GeneratedRevisionID: uuidToPtr(draft.GeneratedRevisionID), IssueID: uuidToPtr(draft.IssueID), Title: draft.Title, RequirementCore: json.RawMessage(draft.RequirementCore), SlotValues: json.RawMessage(draft.SlotValues), Patch: json.RawMessage(draft.Patch), Status: draft.Status, ValidationErrors: json.RawMessage(draft.ValidationErrors), CreatedBy: uuidToPtr(draft.CreatedBy), CreatedAt: timestampToString(draft.CreatedAt), UpdatedAt: timestampToString(draft.UpdatedAt), MaterializedAt: timestampToPtr(draft.MaterializedAt), GenerationMode: draft.GenerationMode, PageSpec: json.RawMessage(draft.PageSpec), CompiledNativeJSON: json.RawMessage(draft.CompiledNativeJson), QualityReport: json.RawMessage(draft.QualityReport), BlueprintID: uuidToPtr(draft.BlueprintID), RecipeSetID: uuidToPtr(draft.RecipeSetID), ParentDraftID: uuidToPtr(draft.ParentDraftID), Version: draft.Version}
 }
 
 func validateDesignDraftPatch(raw json.RawMessage) error {
@@ -6152,6 +6808,75 @@ func designDraftIssueContext(issue db.Issue, issuePrefix string) map[string]any 
 	return issueContext
 }
 
+func designDraftRequiredRequirementIDs(issueContext, parentIssueContext map[string]any, requirementCore json.RawMessage) []string {
+	ids := make([]string, 0, 4)
+	if parentIssueContext != nil {
+		ids = appendIssueRequirementIDs(ids, "parent_issue", parentIssueContext)
+	}
+	if issueContext != nil {
+		ids = appendIssueRequirementIDs(ids, "issue", issueContext)
+	}
+	if isMeaningfulRequirementCore(requirementCore) {
+		ids = appendUniqueString(ids, "requirement_core")
+	}
+	if len(ids) == 0 {
+		ids = append(ids, "requirement")
+	}
+	return ids
+}
+
+func appendIssueRequirementIDs(ids []string, prefix string, issueContext map[string]any) []string {
+	added := len(ids)
+	if description, ok := issueContext["description"].(string); ok && strings.TrimSpace(description) != "" {
+		ids = appendUniqueString(ids, prefix+".description")
+	}
+	if criteria, ok := issueContext["acceptance_criteria"]; ok {
+		switch value := criteria.(type) {
+		case []any:
+			for i, item := range value {
+				if text, ok := item.(string); ok && strings.TrimSpace(text) == "" {
+					continue
+				}
+				ids = appendUniqueString(ids, fmt.Sprintf("%s.acceptance_criteria.%d", prefix, i+1))
+			}
+		case []string:
+			for i, item := range value {
+				if strings.TrimSpace(item) == "" {
+					continue
+				}
+				ids = appendUniqueString(ids, fmt.Sprintf("%s.acceptance_criteria.%d", prefix, i+1))
+			}
+		default:
+			ids = appendUniqueString(ids, prefix+".acceptance_criteria")
+		}
+	}
+	if len(ids) == added {
+		if title, ok := issueContext["title"].(string); ok && strings.TrimSpace(title) != "" {
+			ids = appendUniqueString(ids, prefix+".title")
+		}
+	}
+	return ids
+}
+
+func isMeaningfulRequirementCore(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" || trimmed == "{}" || !json.Valid(raw) {
+		return false
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		return len(typed) > 0
+	case []any:
+		return len(typed) > 0
+	default:
+		return true
+	}
+}
+
 func issueJSONContextValue(raw []byte) (any, bool) {
 	if len(raw) == 0 || !json.Valid(raw) {
 		return nil, false
@@ -6183,9 +6908,9 @@ func designDraftTemplateCandidates(rows []db.ListDesignCatalogTemplatesRow, issu
 			"name":                     row.Name,
 			"category":                 row.Category,
 			"current_revision_id":      uuidToString(row.CurrentRevisionID),
+			"template_revision_id":     uuidToString(row.CurrentRevisionID),
 			"design_revision_id":       uuidToString(row.DesignRevisionID),
 			"template_revision_number": int4ToPtr(row.TemplateRevisionNumber),
-			"slot_schema":              json.RawMessage(row.SlotSchema),
 			"template_profile":         profile,
 			"score":                    score,
 		}
@@ -6214,28 +6939,100 @@ func designDraftTemplateCandidates(rows []db.ListDesignCatalogTemplatesRow, issu
 	return out
 }
 
-func (h *Handler) enrichDesignDraftTemplateCandidates(ctx context.Context, workspaceID pgtype.UUID, candidates []map[string]any) {
+func (h *Handler) enrichDesignDraftTemplateCandidates(ctx context.Context, workspaceID, projectID, designSystemProfileID pgtype.UUID, candidates []map[string]any) map[string]any {
+	var generationAssets map[string]any
 	for _, candidate := range candidates {
-		revisionIDText := strings.TrimSpace(stringField(candidate, "design_revision_id"))
-		if revisionIDText == "" {
+		templateRevisionIDText := strings.TrimSpace(stringField(candidate, "template_revision_id"))
+		if templateRevisionIDText == "" {
+			candidate["blueprint"] = map[string]any{"available": false, "reason": "missing_template_revision_id"}
 			continue
 		}
-		revisionID, err := util.ParseUUID(revisionIDText)
+		templateRevisionID, err := util.ParseUUID(templateRevisionIDText)
 		if err != nil {
+			candidate["blueprint"] = map[string]any{"available": false, "reason": "invalid_template_revision_id"}
 			continue
 		}
-		revision, err := h.Queries.GetDesignRevisionInWorkspace(ctx, db.GetDesignRevisionInWorkspaceParams{ID: revisionID, WorkspaceID: workspaceID})
-		if err != nil {
-			slog.Warn("ui draft template candidate context: failed to load design revision", "design_revision_id", revisionIDText, "error", err)
-			continue
+		blueprint, assets := h.designGenerationAssetSummaries(ctx, workspaceID, projectID, templateRevisionID, designSystemProfileID)
+		if blueprint == nil {
+			candidate["blueprint"] = map[string]any{"available": false, "reason": "missing_or_invalid_blueprint"}
+		} else {
+			candidate["blueprint"] = blueprint
 		}
-		textLayers := designDraftEditableTextLayers(revision.NativeJson, 120)
-		if len(textLayers) == 0 {
-			continue
+		if generationAssets == nil && assets != nil {
+			generationAssets = assets
 		}
-		candidate["editable_text_layers"] = textLayers
-		candidate["patch_hints"] = designDraftTextPatchHints()
 	}
+	return generationAssets
+}
+
+func (h *Handler) designGenerationAssetSummaries(ctx context.Context, workspaceID, projectID, templateRevisionID, designSystemProfileID pgtype.UUID) (map[string]any, map[string]any) {
+	if !workspaceID.Valid || !projectID.Valid || !templateRevisionID.Valid || !designSystemProfileID.Valid {
+		return nil, nil
+	}
+	store := service.DesignGenerationAssetStore{Queries: h.Queries}
+	assets, err := store.LoadCompilationAssets(ctx, service.LoadCompilationAssetsParams{
+		WorkspaceID: workspaceID, TargetProjectID: projectID, TemplateRevisionID: templateRevisionID, DesignSystemProfileID: designSystemProfileID,
+	})
+	if err != nil {
+		if !errors.Is(err, service.ErrGenerationAssetsMissing) && !errors.Is(err, service.ErrGenerationAssetsStale) {
+			slog.Warn("ui draft context: failed to load semantic generation assets", "template_revision_id", uuidToString(templateRevisionID), "design_system_profile_id", uuidToString(designSystemProfileID), "error", err)
+		}
+		return nil, nil
+	}
+	regionKinds := sortedMapKeys(assets.Blueprint.Regions)
+	prototypeKinds := sortedMapKeys(assets.Blueprint.Prototypes)
+	recipeKinds := sortedRecipeKinds(assets.RecipeSet.Recipes)
+	fallbackKinds := sortedMapKeys(assets.RecipeSet.PrimitiveFallbacks)
+	blueprint := map[string]any{
+		"available":           true,
+		"version":             assets.Blueprint.Version,
+		"page_type":           assets.Blueprint.PageType,
+		"regions":             regionKinds,
+		"prototypes":          prototypeKinds,
+		"blueprint_record_id": assets.BlueprintRecordID,
+		"constraints": map[string]any{
+			"filter_columns":      assets.Blueprint.Constraints.FilterColumns,
+			"content_width":       assets.Blueprint.Constraints.ContentWidth,
+			"table_header_height": assets.Blueprint.Constraints.TableHeaderHeight,
+			"table_row_height":    assets.Blueprint.Constraints.TableRowHeight,
+			"horizontal_gap":      assets.Blueprint.Constraints.HorizontalGap,
+			"vertical_gap":        assets.Blueprint.Constraints.VerticalGap,
+		},
+	}
+	generationAssets := map[string]any{
+		"design_system_profile_id": uuidToString(designSystemProfileID),
+		"recipe_set_record_id":     assets.RecipeSetRecordID,
+		"recipe_kinds":             recipeKinds,
+		"primitive_fallback_kinds": fallbackKinds,
+	}
+	return blueprint, generationAssets
+}
+
+func sortedMapKeys[V any](values map[string]V) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedRecipeKinds(recipes map[string]designcore.ComponentRecipe) []string {
+	kinds := make([]string, 0, len(recipes))
+	seen := make(map[string]struct{}, len(recipes))
+	for key := range recipes {
+		kind := strings.TrimSpace(strings.SplitN(key, "/", 2)[0])
+		if kind == "" {
+			continue
+		}
+		if _, exists := seen[kind]; exists {
+			continue
+		}
+		seen[kind] = struct{}{}
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	return kinds
 }
 
 func designDraftTextPatchHints() map[string]any {

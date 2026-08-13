@@ -604,6 +604,242 @@ describe("ApiClient notification preferences", () => {
 });
 
 describe("ApiClient", () => {
+  describe("project design systems", () => {
+    it("uses the project design system HTTP contract", async () => {
+      const response = {
+        id: "system-1",
+        workspace_id: "ws-1",
+        project_id: "project /1",
+        name: "CRM",
+        platform: "web",
+        status: "draft",
+        content: {
+          sections: [],
+          token_groups: [],
+          locators: [],
+          preview_html: "<main>CRM</main>",
+          integrity_sha256: "sha-1",
+        },
+        activity: [],
+      };
+      const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+        new Response(JSON.stringify(response), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      await client.getProjectDesignSystemForProject("project /1");
+      await client.getProjectDesignSystem("system /1");
+      await client.createProjectDesignSystem({
+        project_id: "project /1",
+        agent_id: "agent-1",
+        platform: "web",
+        brief: "CRM customer management",
+        references: [],
+      });
+      await client.adjustProjectDesignSystem("system /1", {
+        agent_id: "agent-1",
+        instruction: "Increase the primary button contrast",
+        scope: { kind: "component", id: "button-primary" },
+      });
+      await client.regenerateProjectDesignSystem("system /1", {
+        agent_id: "agent-2",
+        brief: "Regenerate for CRM",
+      });
+      await client.saveProjectDesignSystem("system /1");
+      await client.verifyProjectDesignSystemPreview("system /1", {
+        status: "ready",
+        digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        reason: "",
+        locator_count: 3,
+        visible_locator_count: 3,
+        body_width: 1280,
+        body_height: 900,
+        image_count: 2,
+        failed_image_count: 0,
+      });
+      await client.discardProjectDesignSystemDraft("system /1");
+
+      const calls = fetchMock.mock.calls.map(([url, init]) => ({
+        url,
+        method: init?.method ?? "GET",
+        body: init?.body,
+      }));
+      expect(calls).toEqual([
+        {
+          url: "https://api.example.test/api/project-design-systems?project_id=project%20%2F1",
+          method: "GET",
+          body: undefined,
+        },
+        {
+          url: "https://api.example.test/api/project-design-systems/system%20%2F1",
+          method: "GET",
+          body: undefined,
+        },
+        {
+          url: "https://api.example.test/api/project-design-systems",
+          method: "POST",
+          body: JSON.stringify({
+            project_id: "project /1",
+            agent_id: "agent-1",
+            platform: "web",
+            brief: "CRM customer management",
+            references: [],
+          }),
+        },
+        {
+          url: "https://api.example.test/api/project-design-systems/system%20%2F1/adjust",
+          method: "POST",
+          body: JSON.stringify({
+            agent_id: "agent-1",
+            instruction: "Increase the primary button contrast",
+            scope: { kind: "component", id: "button-primary" },
+          }),
+        },
+        {
+          url: "https://api.example.test/api/project-design-systems/system%20%2F1/regenerate",
+          method: "POST",
+          body: JSON.stringify({ agent_id: "agent-2", brief: "Regenerate for CRM" }),
+        },
+        {
+          url: "https://api.example.test/api/project-design-systems/system%20%2F1/save",
+          method: "POST",
+          body: undefined,
+        },
+        {
+          url: "https://api.example.test/api/project-design-systems/system%20%2F1/preview-verification",
+          method: "POST",
+          body: JSON.stringify({
+            status: "ready",
+            digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            reason: "",
+            locator_count: 3,
+            visible_locator_count: 3,
+            body_width: 1280,
+            body_height: 900,
+            image_count: 2,
+            failed_image_count: 0,
+          }),
+        },
+        {
+          url: "https://api.example.test/api/project-design-systems/system%20%2F1/draft",
+          method: "DELETE",
+          body: undefined,
+        },
+      ]);
+    });
+
+    it("returns an unestablished fallback for null responses", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation(() => Promise.resolve(
+          new Response("null", {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )),
+      );
+
+      const client = new ApiClient("https://api.example.test");
+      const byProject = await client.getProjectDesignSystemForProject("project-1");
+      const detail = await client.getProjectDesignSystem("system-1");
+
+      expect(byProject).toMatchObject({ project_id: "project-1", status: "unestablished" });
+      expect(detail).toMatchObject({ id: "system-1", status: "unestablished" });
+      expect(byProject.content.sections).toEqual([]);
+      expect(detail.activity).toEqual([]);
+    });
+
+    it("posts repository analysis requests with a safe response fallback", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ project_id: 42 }), {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      const result = await client.analyzeProjectDesignSystemRepository({
+        project_id: "project /1",
+        agent_id: "agent-1",
+        platform: "web",
+        brief: "CRM customer management",
+        references: [],
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.example.test/api/project-design-systems/repository-analysis",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            project_id: "project /1",
+            agent_id: "agent-1",
+            platform: "web",
+            brief: "CRM customer management",
+            references: [],
+          }),
+        }),
+      );
+      expect(result).toMatchObject({
+        project_id: "project /1",
+        platform: "web",
+        current_agent_id: "agent-1",
+        status: "unestablished",
+      });
+    });
+  });
+
+  describe("design drafts", () => {
+    it("parses semantic draft list responses through the API schema", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({
+          drafts: [{
+            id: "draft-1",
+            workspace_id: "ws-1",
+            template_id: null,
+            file_id: null,
+            revision_id: null,
+            issue_id: "issue-1",
+            title: "CRM 客户列表",
+            requirement_core: {},
+            slot_values: {},
+            patch: [],
+            status: "generated_with_warnings",
+            validation_errors: [],
+            created_by: null,
+            created_at: "2026-08-11T00:00:00Z",
+            updated_at: "2026-08-11T00:00:00Z",
+            generation_mode: "semantic_pagespec",
+            quality_report: { diagnostics: [{ severity: "warning", code: "minor_spacing" }] },
+            version: 2,
+          }],
+          total: 1,
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      const response = await client.listDesignDrafts();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.example.test/api/design-drafts",
+        expect.objectContaining({ credentials: "include" }),
+      );
+      expect(response.total).toBe(1);
+      expect(response.drafts[0]?.generation_mode).toBe("semantic_pagespec");
+      expect(response.drafts[0]?.quality_report).toMatchObject({
+        diagnostics: [{ severity: "warning" }],
+      });
+    });
+  });
+
   it("keeps legacy login, CLI token, and PAT contracts", async () => {
     const user = { id: "u1", name: "Alice", email: "alice@example.com" };
     const token = { token: "mul_secret", user };

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Soyoung CRM UI Kit</title>
+  <style>
+    body { margin: 0; background: var(--color-surface); color: var(--color-text); font-family: Arial, sans-serif; }
+    .workspace { padding: var(--space-control); }
+    .toolbar { display: flex; gap: var(--space-control); border-bottom: 1px solid var(--color-border); }
+    .primary { background: var(--color-action); color: var(--color-surface); border-radius: var(--radius-control); }
+  </style>
+</head>
+<body>
+  <main class="workspace" data-design-node-id="crm-order-workspace" data-design-node-kind="block" data-design-node-label="CRM order workspace">
+    <header class="toolbar">
+      <img src="../assets/crm-mark.svg" alt="Soyoung CRM">
+      <strong>Order operations</strong>
+      <button class="primary" type="button" data-design-node-id="crm-create-order" data-design-node-kind="component" data-design-node-label="Create order">Create order</button>
+    </header>
+    <table>
+      <thead><tr><th>Order</th><th>Customer</th><th>Status</th></tr></thead>
+      <tbody><tr><td>CRM-2048</td><td>Lin</td><td>Pending review</td></tr></tbody>
+    </table>
+  </main>
+</body>
+</html>

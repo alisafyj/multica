@@ -225,11 +225,33 @@ LIMIT 1;
 -- when a caller passes a foreign issue_id with its own workspace_id (the issue
 -- itself is correctly untouched, but the links are already gone) — the exact
 -- cross-tenant leak the #1661 guard above exists to prevent.
+--
+-- Design relationships intentionally have no issue foreign keys. Deliveries
+-- cannot survive either side of their source/target pair disappearing, while
+-- draft and restore-task history remains useful after its issue is deleted.
 WITH target AS (
     SELECT issue.id FROM issue WHERE issue.id = $1 AND issue.workspace_id = $2
 ),
 cleared_vcs_pr_links AS (
     DELETE FROM issue_vcs_pull_request WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_design_deliveries AS (
+    DELETE FROM design_delivery
+    WHERE workspace_id = $2
+      AND (source_issue_id IN (SELECT target.id FROM target)
+           OR target_issue_id IN (SELECT target.id FROM target))
+),
+cleared_design_draft_issue AS (
+    UPDATE design_draft
+    SET issue_id = NULL
+    WHERE workspace_id = $2
+      AND issue_id IN (SELECT target.id FROM target)
+),
+cleared_design_restore_task_issue AS (
+    UPDATE design_restore_task
+    SET issue_id = NULL
+    WHERE workspace_id = $2
+      AND issue_id IN (SELECT target.id FROM target)
 )
 DELETE FROM issue WHERE issue.id IN (SELECT target.id FROM target);
 

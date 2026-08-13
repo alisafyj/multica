@@ -190,6 +190,10 @@ import type {
   CreateDesignFolderRequest,
   CreateDesignRestoreTaskRequest,
   CreateDesignSystemProfileRequest,
+  CreateProjectDesignSystemRequest,
+  AnalyzeProjectDesignSystemRepositoryRequest,
+  AdjustProjectDesignSystemRequest,
+  RegenerateProjectDesignSystemRequest,
   DesignCatalogTemplate,
   DesignContext,
   DesignDelivery,
@@ -201,6 +205,9 @@ import type {
   DesignLayerLightweightEditRequest,
   DesignRevision,
   DesignSystemProfile,
+  ProjectDesignSystem,
+  ProjectDesignSystemPackagePreview,
+  ProjectDesignSystemPreviewVerificationReceipt,
   CreateDesignRepoAnalysisRequest,
   DesignRepoAnalysis,
   DesignRestorePlan,
@@ -435,17 +442,29 @@ import {
   EMPTY_LIST_LABELS_RESPONSE,
   EMPTY_RESOURCE_LABELS_RESPONSE,
   DesignDeliverySchema,
+  DesignDraftMaterializeResponseSchema,
+  DesignDraftSchema,
   DesignSystemProfileSchema,
+  CreateDesignDraftAgentTaskResponseSchema,
+  ProjectDesignSystemSchema,
+  ProjectDesignSystemPackagePreviewSchema,
   DesignRestoreTaskSchema,
   DispatchDesignRestoreTaskResponseSchema,
   EMPTY_DESIGN_DELIVERY,
+  EMPTY_DESIGN_DRAFT,
+  EMPTY_DESIGN_DRAFT_MATERIALIZE_RESPONSE,
   EMPTY_DESIGN_SYSTEM_PROFILE,
+  EMPTY_CREATE_DESIGN_DRAFT_AGENT_TASK_RESPONSE,
+  EMPTY_PROJECT_DESIGN_SYSTEM,
+  EMPTY_PROJECT_DESIGN_SYSTEM_PACKAGE_PREVIEW,
   EMPTY_DESIGN_RESTORE_TASK,
   EMPTY_DISPATCH_DESIGN_RESTORE_TASK_RESPONSE,
   ListDesignDeliveriesResponseSchema,
+  ListDesignDraftsResponseSchema,
   ListDesignSystemProfilesResponseSchema,
   ListDesignRestoreTasksResponseSchema,
   EMPTY_LIST_DESIGN_DELIVERIES_RESPONSE,
+  EMPTY_LIST_DESIGN_DRAFTS_RESPONSE,
   EMPTY_LIST_DESIGN_SYSTEM_PROFILES_RESPONSE,
   EMPTY_LIST_DESIGN_RESTORE_TASKS_RESPONSE,
   GitHubConnectResponseSchema,
@@ -3300,30 +3319,213 @@ export class ApiClient {
     });
   }
 
+  async getProjectDesignSystemForProject(projectId: string): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>(
+      `/api/project-design-systems?project_id=${encodeURIComponent(projectId)}`,
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      { ...EMPTY_PROJECT_DESIGN_SYSTEM, project_id: projectId },
+      { endpoint: "GET /api/project-design-systems" },
+    );
+  }
+
+  async getProjectDesignSystem(id: string): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>(
+      `/api/project-design-systems/${encodeURIComponent(id)}`,
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      { ...EMPTY_PROJECT_DESIGN_SYSTEM, id },
+      { endpoint: "GET /api/project-design-systems/{id}" },
+    );
+  }
+
+  async getProjectDesignSystemPackagePreview(id: string): Promise<ProjectDesignSystemPackagePreview> {
+    const raw = await this.fetch<unknown>(
+      `/api/project-design-systems/${encodeURIComponent(id)}/package-preview`,
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemPackagePreviewSchema,
+      EMPTY_PROJECT_DESIGN_SYSTEM_PACKAGE_PREVIEW,
+      { endpoint: "GET /api/project-design-systems/{id}/package-preview" },
+    );
+  }
+
+  getProjectDesignSystemPackagePreviewFileURL(
+    _systemId: string,
+    workspaceId: string,
+    contentDigest: string,
+    accessToken: string,
+    artifactPath: string,
+  ): string {
+    const digest = contentDigest.startsWith("sha256:") ? contentDigest.slice("sha256:".length) : contentDigest;
+    const encodedPath = artifactPath.split("/").map(encodeURIComponent).join("/");
+    return `${this.baseUrl}/api/project-design-system-previews/${encodeURIComponent(workspaceId)}/${encodeURIComponent(_systemId)}/${encodeURIComponent(digest)}/${encodeURIComponent(accessToken)}/files/${encodedPath}`;
+  }
+
+  async createProjectDesignSystem(
+    data: CreateProjectDesignSystemRequest,
+  ): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>("/api/project-design-systems", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      {
+        ...EMPTY_PROJECT_DESIGN_SYSTEM,
+        project_id: data.project_id,
+        platform: data.platform,
+        current_agent_id: data.agent_id,
+      },
+      { endpoint: "POST /api/project-design-systems" },
+    );
+  }
+
+  async analyzeProjectDesignSystemRepository(
+    data: AnalyzeProjectDesignSystemRepositoryRequest,
+  ): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>(
+      "/api/project-design-systems/repository-analysis",
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      {
+        ...EMPTY_PROJECT_DESIGN_SYSTEM,
+        project_id: data.project_id,
+        platform: data.platform,
+        current_agent_id: data.agent_id,
+      },
+      { endpoint: "POST /api/project-design-systems/repository-analysis" },
+    );
+  }
+
+  async adjustProjectDesignSystem(
+    id: string,
+    data: AdjustProjectDesignSystemRequest,
+  ): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>(
+      `/api/project-design-systems/${encodeURIComponent(id)}/adjust`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      { ...EMPTY_PROJECT_DESIGN_SYSTEM, id, current_agent_id: data.agent_id },
+      { endpoint: "POST /api/project-design-systems/{id}/adjust" },
+    );
+  }
+
+  async regenerateProjectDesignSystem(
+    id: string,
+    data: RegenerateProjectDesignSystemRequest,
+  ): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>(
+      `/api/project-design-systems/${encodeURIComponent(id)}/regenerate`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      { ...EMPTY_PROJECT_DESIGN_SYSTEM, id, current_agent_id: data.agent_id },
+      { endpoint: "POST /api/project-design-systems/{id}/regenerate" },
+    );
+  }
+
+  async saveProjectDesignSystem(id: string): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>(
+      `/api/project-design-systems/${encodeURIComponent(id)}/save`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      { ...EMPTY_PROJECT_DESIGN_SYSTEM, id },
+      { endpoint: "POST /api/project-design-systems/{id}/save" },
+    );
+  }
+
+  async discardProjectDesignSystemDraft(id: string): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>(
+      `/api/project-design-systems/${encodeURIComponent(id)}/draft`,
+      { method: "DELETE" },
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      { ...EMPTY_PROJECT_DESIGN_SYSTEM, id },
+      { endpoint: "DELETE /api/project-design-systems/{id}/draft" },
+    );
+  }
+
+  async verifyProjectDesignSystemPreview(
+    id: string,
+    receipt: ProjectDesignSystemPreviewVerificationReceipt,
+  ): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>(
+      `/api/project-design-systems/${encodeURIComponent(id)}/preview-verification`,
+      { method: "POST", body: JSON.stringify(receipt) },
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      { ...EMPTY_PROJECT_DESIGN_SYSTEM, id },
+      { endpoint: "POST /api/project-design-systems/{id}/preview-verification" },
+    );
+  }
+
   async listDesignDrafts(): Promise<ListDesignDraftsResponse> {
-    return this.fetch("/api/design-drafts");
+    const raw = await this.fetch<unknown>("/api/design-drafts");
+    return parseWithFallback(raw, ListDesignDraftsResponseSchema, EMPTY_LIST_DESIGN_DRAFTS_RESPONSE, {
+      endpoint: "GET /api/design-drafts",
+    });
   }
 
   async createDesignDraft(data: CreateDesignDraftRequest): Promise<DesignDraft> {
-    return this.fetch("/api/design-drafts", {
+    const raw = await this.fetch<unknown>("/api/design-drafts", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignDraftSchema, EMPTY_DESIGN_DRAFT, {
+      endpoint: "POST /api/design-drafts",
     });
   }
 
   async createDesignDraftAgentTask(data: CreateDesignDraftAgentTaskRequest): Promise<CreateDesignDraftAgentTaskResponse> {
-    return this.fetch("/api/design-drafts/agent-tasks", {
+    const raw = await this.fetch<unknown>("/api/design-drafts/agent-tasks", {
       method: "POST",
       body: JSON.stringify(data),
     });
+    return parseWithFallback(
+      raw,
+      CreateDesignDraftAgentTaskResponseSchema,
+      EMPTY_CREATE_DESIGN_DRAFT_AGENT_TASK_RESPONSE,
+      { endpoint: "POST /api/design-drafts/agent-tasks" },
+    );
   }
 
   async getDesignDraft(id: string): Promise<DesignDraft> {
-    return this.fetch(`/api/design-drafts/${encodeURIComponent(id)}`);
+    const raw = await this.fetch<unknown>(`/api/design-drafts/${encodeURIComponent(id)}`);
+    return parseWithFallback(raw, DesignDraftSchema, { ...EMPTY_DESIGN_DRAFT, id }, {
+      endpoint: "GET /api/design-drafts/{id}",
+    });
   }
 
   async materializeDesignDraft(id: string): Promise<DesignDraftMaterializeResponse> {
-    return this.fetch(`/api/design-drafts/${encodeURIComponent(id)}/materialize`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/design-drafts/${encodeURIComponent(id)}/materialize`, { method: "POST" });
+    return parseWithFallback(
+      raw,
+      DesignDraftMaterializeResponseSchema,
+      { ...EMPTY_DESIGN_DRAFT_MATERIALIZE_RESPONSE, draft: { ...EMPTY_DESIGN_DRAFT, id } },
+      { endpoint: "POST /api/design-drafts/{id}/materialize" },
+    );
   }
 
   async listDesignDeliveries(issueId: string): Promise<ListDesignDeliveriesResponse> {

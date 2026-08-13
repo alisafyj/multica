@@ -15,6 +15,23 @@ ORDER BY project_id, parent_id NULLS FIRST, position ASC, name ASC;
 SELECT * FROM design_folder
 WHERE id = $1 AND workspace_id = $2 AND project_id = $3;
 
+-- name: GetDesignFolderInWorkspaceForUpdate :one
+SELECT * FROM design_folder
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;
+
+-- name: DesignFolderHasChildren :one
+SELECT EXISTS (
+    SELECT 1 FROM design_folder
+    WHERE workspace_id = $1 AND parent_id = $2
+);
+
+-- name: ListDesignFilesInFolderForUpdate :many
+SELECT * FROM design_file
+WHERE workspace_id = $1 AND folder_id = $2
+ORDER BY id
+FOR UPDATE;
+
 -- name: CreateDesignFolder :one
 INSERT INTO design_folder (workspace_id, project_id, parent_id, name, position, created_by)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -33,8 +50,12 @@ WHERE df.workspace_id = $1
   AND NOT EXISTS (
     SELECT 1
     FROM design_template_revision dtr
-    JOIN design_revision dr ON dr.id = dtr.design_revision_id
-    WHERE dr.file_id = df.id
+    WHERE EXISTS (
+      SELECT 1
+      FROM design_revision dr
+      WHERE dr.id = dtr.design_revision_id
+        AND dr.file_id = df.id
+    )
   )
 ORDER BY updated_at DESC, created_at DESC;
 
@@ -53,8 +74,12 @@ WHERE df.workspace_id = $1
   AND NOT EXISTS (
     SELECT 1
     FROM design_template_revision dtr
-    JOIN design_revision dr ON dr.id = dtr.design_revision_id
-    WHERE dr.file_id = df.id
+    WHERE EXISTS (
+      SELECT 1
+      FROM design_revision dr
+      WHERE dr.id = dtr.design_revision_id
+        AND dr.file_id = df.id
+    )
   )
 ORDER BY updated_at DESC, created_at DESC;
 
@@ -65,6 +90,11 @@ WHERE id = $1;
 -- name: GetDesignFileInWorkspace :one
 SELECT * FROM design_file
 WHERE id = $1 AND workspace_id = $2;
+
+-- name: GetDesignFileInWorkspaceForUpdate :one
+SELECT * FROM design_file
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;
 
 -- name: GetDesignFileBySourceKeyForUpdate :one
 SELECT * FROM design_file
@@ -95,6 +125,69 @@ RETURNING *;
 -- name: DeleteDesignFile :exec
 DELETE FROM design_file WHERE id = $1 AND workspace_id = $2;
 
+-- name: DetachDesignDraftFileReferences :exec
+UPDATE design_draft AS dd
+SET file_id = CASE WHEN dd.file_id = sqlc.arg('target_file_id') THEN NULL ELSE dd.file_id END,
+    generated_file_id = CASE WHEN dd.generated_file_id = sqlc.arg('target_file_id') THEN NULL ELSE dd.generated_file_id END,
+    revision_id = CASE WHEN dd.revision_id IN (
+        SELECT dr.id FROM design_revision AS dr
+        WHERE dr.file_id = sqlc.arg('target_file_id') AND dr.workspace_id = sqlc.arg('target_workspace_id')
+    ) THEN NULL ELSE dd.revision_id END,
+    generated_revision_id = CASE WHEN dd.generated_revision_id IN (
+        SELECT dr.id FROM design_revision AS dr
+        WHERE dr.file_id = sqlc.arg('target_file_id') AND dr.workspace_id = sqlc.arg('target_workspace_id')
+    ) THEN NULL ELSE dd.generated_revision_id END,
+    updated_at = now()
+WHERE dd.workspace_id = sqlc.arg('target_workspace_id')
+  AND (
+      dd.file_id = sqlc.arg('target_file_id')
+      OR dd.generated_file_id = sqlc.arg('target_file_id')
+      OR dd.revision_id IN (
+          SELECT dr.id FROM design_revision AS dr
+          WHERE dr.file_id = sqlc.arg('target_file_id') AND dr.workspace_id = sqlc.arg('target_workspace_id')
+      )
+      OR dd.generated_revision_id IN (
+          SELECT dr.id FROM design_revision AS dr
+          WHERE dr.file_id = sqlc.arg('target_file_id') AND dr.workspace_id = sqlc.arg('target_workspace_id')
+      )
+  );
+
+-- name: DeleteDesignRestoreMappingsByFile :exec
+DELETE FROM design_restore_mapping AS drm
+WHERE drm.workspace_id = sqlc.arg('target_workspace_id')
+  AND drm.restore_task_id IN (
+      SELECT id FROM design_restore_task
+      WHERE workspace_id = sqlc.arg('target_workspace_id') AND file_id = sqlc.arg('target_file_id')
+  );
+
+-- name: DeleteDesignRestorePlansByFile :exec
+DELETE FROM design_restore_plan AS drp
+WHERE drp.workspace_id = sqlc.arg('target_workspace_id')
+  AND drp.restore_task_id IN (
+      SELECT id FROM design_restore_task
+      WHERE workspace_id = sqlc.arg('target_workspace_id') AND file_id = sqlc.arg('target_file_id')
+  );
+
+-- name: DeleteDesignRestoreTasksByFile :exec
+DELETE FROM design_restore_task
+WHERE workspace_id = sqlc.arg('target_workspace_id') AND file_id = sqlc.arg('target_file_id');
+
+-- name: DeleteDesignDeliveriesByFile :exec
+DELETE FROM design_delivery
+WHERE workspace_id = sqlc.arg('target_workspace_id') AND file_id = sqlc.arg('target_file_id');
+
+-- name: DeleteDesignSystemProfilesByFile :exec
+DELETE FROM design_system_profile
+WHERE workspace_id = sqlc.arg('target_workspace_id') AND source_file_id = sqlc.arg('target_file_id');
+
+-- name: DeleteDesignAssetsByFile :exec
+DELETE FROM design_asset
+WHERE workspace_id = sqlc.arg('target_workspace_id') AND file_id = sqlc.arg('target_file_id');
+
+-- name: DeleteDesignRevisionsByFile :exec
+DELETE FROM design_revision
+WHERE workspace_id = sqlc.arg('target_workspace_id') AND file_id = sqlc.arg('target_file_id');
+
 -- name: ListDesignRevisions :many
 SELECT id, file_id, workspace_id, revision_number, status, validation_errors, created_by, created_at FROM design_revision
 WHERE file_id = $1
@@ -104,6 +197,82 @@ ORDER BY revision_number DESC;
 SELECT * FROM design_revision
 WHERE file_id = $1
 ORDER BY revision_number DESC;
+
+-- name: ListDesignRevisionsInFileForUpdate :many
+SELECT * FROM design_revision
+WHERE file_id = $1 AND workspace_id = $2
+ORDER BY revision_number DESC
+FOR UPDATE;
+
+-- name: DesignRevisionsHaveProtectedReferences :one
+SELECT EXISTS (
+    SELECT 1 FROM design_template_revision AS dtr
+    WHERE dtr.workspace_id = sqlc.arg('target_workspace_id')
+      AND dtr.design_revision_id = ANY(sqlc.arg('revision_ids')::uuid[])
+    UNION ALL
+    SELECT 1 FROM design_template_blueprint AS dtb
+    WHERE dtb.workspace_id = sqlc.arg('target_workspace_id')
+      AND dtb.source_revision_id = ANY(sqlc.arg('revision_ids')::uuid[])
+    UNION ALL
+    SELECT 1 FROM design_component_recipe_set AS dcrs
+    WHERE dcrs.workspace_id = sqlc.arg('target_workspace_id')
+      AND dcrs.source_revision_id = ANY(sqlc.arg('revision_ids')::uuid[])
+);
+
+-- name: DetachDesignAssetRevisionReferences :exec
+UPDATE design_asset
+SET revision_id = NULL
+WHERE workspace_id = sqlc.arg('target_workspace_id')
+  AND revision_id = ANY(sqlc.arg('revision_ids')::uuid[]);
+
+-- name: DetachDesignDraftRevisionReferences :exec
+UPDATE design_draft
+SET revision_id = CASE WHEN revision_id = ANY(sqlc.arg('revision_ids')::uuid[]) THEN NULL ELSE revision_id END,
+    generated_revision_id = CASE WHEN generated_revision_id = ANY(sqlc.arg('revision_ids')::uuid[]) THEN NULL ELSE generated_revision_id END,
+    updated_at = now()
+WHERE workspace_id = sqlc.arg('target_workspace_id')
+  AND (
+      revision_id = ANY(sqlc.arg('revision_ids')::uuid[])
+      OR generated_revision_id = ANY(sqlc.arg('revision_ids')::uuid[])
+  );
+
+-- name: DeleteDesignRestoreMappingsByRevisions :exec
+DELETE FROM design_restore_mapping AS drm
+WHERE drm.workspace_id = sqlc.arg('target_workspace_id')
+  AND drm.restore_task_id IN (
+      SELECT id FROM design_restore_task
+      WHERE workspace_id = sqlc.arg('target_workspace_id')
+        AND revision_id = ANY(sqlc.arg('revision_ids')::uuid[])
+  );
+
+-- name: DeleteDesignRestorePlansByRevisions :exec
+DELETE FROM design_restore_plan AS drp
+WHERE drp.workspace_id = sqlc.arg('target_workspace_id')
+  AND drp.restore_task_id IN (
+      SELECT id FROM design_restore_task
+      WHERE workspace_id = sqlc.arg('target_workspace_id')
+        AND revision_id = ANY(sqlc.arg('revision_ids')::uuid[])
+  );
+
+-- name: DeleteDesignRestoreTasksByRevisions :exec
+DELETE FROM design_restore_task
+WHERE workspace_id = sqlc.arg('target_workspace_id')
+  AND revision_id = ANY(sqlc.arg('revision_ids')::uuid[]);
+
+-- name: DeleteDesignDeliveriesByRevisions :exec
+DELETE FROM design_delivery
+WHERE workspace_id = sqlc.arg('target_workspace_id')
+  AND revision_id = ANY(sqlc.arg('revision_ids')::uuid[]);
+
+-- name: DeleteDesignSystemProfilesByRevisions :exec
+DELETE FROM design_system_profile
+WHERE workspace_id = sqlc.arg('target_workspace_id')
+  AND source_revision_id = ANY(sqlc.arg('revision_ids')::uuid[]);
+
+-- name: DeleteDesignRevisionsByIDs :exec
+DELETE FROM design_revision
+WHERE workspace_id = sqlc.arg('target_workspace_id')
+  AND id = ANY(sqlc.arg('revision_ids')::uuid[]);
 
 -- name: GetDesignRevision :one
 SELECT * FROM design_revision
@@ -243,6 +412,61 @@ INSERT INTO design_draft (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 )
 RETURNING *;
+
+-- name: CreateSemanticDesignDraft :one
+INSERT INTO design_draft (
+    workspace_id,
+    catalog_template_id,
+    template_revision_id,
+    file_id,
+    revision_id,
+    issue_id,
+    title,
+    requirement_core,
+    slot_values,
+    patch,
+    status,
+    validation_errors,
+    created_by,
+    generation_mode,
+    page_spec,
+    compiled_native_json,
+    quality_report,
+    blueprint_id,
+    recipe_set_id,
+    parent_draft_id,
+    version
+) VALUES (
+    sqlc.arg('workspace_id'),
+    sqlc.arg('catalog_template_id'),
+    sqlc.arg('template_revision_id'),
+    sqlc.arg('file_id'),
+    sqlc.arg('revision_id'),
+    sqlc.arg('issue_id'),
+    sqlc.arg('title'),
+    sqlc.arg('requirement_core'),
+    '{}'::jsonb,
+    '[]'::jsonb,
+    sqlc.arg('status'),
+    sqlc.arg('validation_errors'),
+    sqlc.arg('created_by'),
+    'semantic_pagespec',
+    sqlc.arg('page_spec'),
+    sqlc.arg('compiled_native_json'),
+    sqlc.arg('quality_report'),
+    sqlc.arg('blueprint_id'),
+    sqlc.arg('recipe_set_id'),
+    sqlc.narg('parent_draft_id'),
+    sqlc.arg('version')
+)
+RETURNING *;
+
+-- name: GetNextSemanticDesignDraftVersion :one
+SELECT (COALESCE(MAX(version), 0) + 1)::int
+FROM design_draft
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND issue_id = sqlc.arg('issue_id')
+  AND generation_mode = 'semantic_pagespec';
 
 -- name: UpdateDesignDraft :one
 UPDATE design_draft SET
@@ -605,15 +829,58 @@ SELECT
     t.created_by,
     t.created_at,
     t.updated_at,
-    tr.design_revision_id,
-    tr.revision_number AS template_revision_number,
-    tr.slot_schema AS slot_schema,
-    dr.file_id AS design_file_id,
-    df.title AS design_file_title
+    (
+      SELECT tr.design_revision_id
+      FROM design_template_revision tr
+      WHERE tr.id = t.current_revision_id
+    ) AS design_revision_id,
+    (
+      SELECT candidate.revision_number
+      FROM (
+        SELECT NULL::integer AS revision_number, 1 AS priority
+        UNION ALL
+        SELECT tr.revision_number, 0 AS priority
+        FROM design_template_revision tr
+        WHERE tr.id = t.current_revision_id
+      ) candidate
+      ORDER BY candidate.priority
+      LIMIT 1
+    ) AS template_revision_number,
+    (
+      SELECT tr.slot_schema
+      FROM design_template_revision tr
+      WHERE tr.id = t.current_revision_id
+    ) AS slot_schema,
+    (
+      SELECT dr.file_id
+      FROM design_revision dr
+      WHERE dr.id = (
+        SELECT tr.design_revision_id
+        FROM design_template_revision tr
+        WHERE tr.id = t.current_revision_id
+      )
+    ) AS design_file_id,
+    (
+      SELECT candidate.title
+      FROM (
+        SELECT NULL::text AS title, 1 AS priority
+        UNION ALL
+        SELECT df.title, 0 AS priority
+        FROM design_file df
+        WHERE df.id = (
+          SELECT dr.file_id
+          FROM design_revision dr
+          WHERE dr.id = (
+            SELECT tr.design_revision_id
+            FROM design_template_revision tr
+            WHERE tr.id = t.current_revision_id
+          )
+        )
+      ) candidate
+      ORDER BY candidate.priority
+      LIMIT 1
+    ) AS design_file_title
 FROM design_catalog_template t
-LEFT JOIN design_template_revision tr ON tr.id = t.current_revision_id
-LEFT JOIN design_revision dr ON dr.id = tr.design_revision_id
-LEFT JOIN design_file df ON df.id = dr.file_id
 WHERE t.workspace_id = $1
   AND ($2::uuid IS NULL OR t.library_id = $2)
   AND ($3::text = '' OR t.category = $3)
@@ -633,13 +900,483 @@ SELECT
     t.created_by,
     t.created_at,
     t.updated_at,
-    tr.design_revision_id,
-    tr.revision_number AS template_revision_number,
-    tr.slot_schema AS slot_schema,
-    dr.file_id AS design_file_id,
-    df.title AS design_file_title
+    (
+      SELECT tr.design_revision_id
+      FROM design_template_revision tr
+      WHERE tr.id = t.current_revision_id
+    ) AS design_revision_id,
+    (
+      SELECT candidate.revision_number
+      FROM (
+        SELECT NULL::integer AS revision_number, 1 AS priority
+        UNION ALL
+        SELECT tr.revision_number, 0 AS priority
+        FROM design_template_revision tr
+        WHERE tr.id = t.current_revision_id
+      ) candidate
+      ORDER BY candidate.priority
+      LIMIT 1
+    ) AS template_revision_number,
+    (
+      SELECT tr.slot_schema
+      FROM design_template_revision tr
+      WHERE tr.id = t.current_revision_id
+    ) AS slot_schema,
+    (
+      SELECT dr.file_id
+      FROM design_revision dr
+      WHERE dr.id = (
+        SELECT tr.design_revision_id
+        FROM design_template_revision tr
+        WHERE tr.id = t.current_revision_id
+      )
+    ) AS design_file_id,
+    (
+      SELECT candidate.title
+      FROM (
+        SELECT NULL::text AS title, 1 AS priority
+        UNION ALL
+        SELECT df.title, 0 AS priority
+        FROM design_file df
+        WHERE df.id = (
+          SELECT dr.file_id
+          FROM design_revision dr
+          WHERE dr.id = (
+            SELECT tr.design_revision_id
+            FROM design_template_revision tr
+            WHERE tr.id = t.current_revision_id
+          )
+        )
+      ) candidate
+      ORDER BY candidate.priority
+      LIMIT 1
+    ) AS design_file_title
 FROM design_catalog_template t
-LEFT JOIN design_template_revision tr ON tr.id = t.current_revision_id
-LEFT JOIN design_revision dr ON dr.id = tr.design_revision_id
-LEFT JOIN design_file df ON df.id = dr.file_id
 WHERE t.id = $1 AND t.workspace_id = $2;
+
+-- Semantic design generation assets
+
+-- name: CreateDesignTemplateBlueprint :one
+INSERT INTO design_template_blueprint (
+    workspace_id, template_id, template_revision_id, source_revision_id,
+    analysis_version, schema_version, status, structure_json, blueprint_json,
+	validation_errors, created_by
+)
+SELECT
+	sqlc.arg('workspace_id'), sqlc.arg('template_id'), sqlc.arg('template_revision_id'), sqlc.arg('source_revision_id'),
+	sqlc.arg('analysis_version'), sqlc.arg('schema_version'), sqlc.arg('status'), sqlc.arg('structure_json'), sqlc.arg('blueprint_json'),
+	sqlc.arg('validation_errors'), sqlc.narg('created_by')
+WHERE EXISTS (
+	SELECT 1 FROM project p
+	WHERE p.id = sqlc.arg('target_project_id')
+	  AND p.workspace_id = sqlc.arg('workspace_id')
+)
+AND EXISTS (
+	SELECT 1 FROM design_template_revision dtr
+	WHERE dtr.id = sqlc.arg('template_revision_id')
+	  AND dtr.workspace_id = sqlc.arg('workspace_id')
+	  AND dtr.template_id = sqlc.arg('template_id')
+	  AND dtr.design_revision_id = sqlc.arg('source_revision_id')
+)
+AND EXISTS (
+	SELECT 1 FROM design_catalog_template dct
+	WHERE dct.id = sqlc.arg('template_id')
+	  AND dct.workspace_id = sqlc.arg('workspace_id')
+)
+AND EXISTS (
+	SELECT 1 FROM design_revision dr
+	WHERE dr.id = sqlc.arg('source_revision_id')
+	  AND dr.workspace_id = sqlc.arg('workspace_id')
+	  AND EXISTS (
+		SELECT 1 FROM design_file df
+		WHERE df.id = dr.file_id
+		  AND df.workspace_id = sqlc.arg('workspace_id')
+		  AND df.project_id = sqlc.arg('target_project_id')
+	  )
+)
+RETURNING *;
+
+-- name: GetNextDesignTemplateBlueprintAnalysisVersion :one
+SELECT (COALESCE(MAX(analysis_version), 0) + 1)::int
+FROM design_template_blueprint
+WHERE workspace_id = $1
+  AND template_revision_id = $2;
+
+-- name: GetLatestValidDesignTemplateBlueprint :one
+SELECT * FROM design_template_blueprint
+WHERE design_template_blueprint.workspace_id = sqlc.arg('workspace_id')
+  AND design_template_blueprint.template_revision_id = sqlc.arg('template_revision_id')
+  AND design_template_blueprint.status = 'valid'
+  AND EXISTS (
+	SELECT 1 FROM design_revision dr
+	WHERE dr.id = design_template_blueprint.source_revision_id
+	  AND dr.workspace_id = sqlc.arg('workspace_id')
+	  AND EXISTS (
+		SELECT 1 FROM design_file df
+		WHERE df.id = dr.file_id
+		  AND df.workspace_id = sqlc.arg('workspace_id')
+		  AND df.project_id = sqlc.arg('target_project_id')
+	  )
+  )
+ORDER BY analysis_version DESC
+LIMIT 1;
+
+-- name: CreateDesignComponentRecipeSet :one
+INSERT INTO design_component_recipe_set (
+    workspace_id, design_system_profile_id, source_revision_id,
+    analysis_version, schema_version, status, recipes_json,
+	validation_errors, created_by
+)
+SELECT
+	sqlc.arg('workspace_id'), sqlc.arg('design_system_profile_id'), sqlc.arg('source_revision_id'),
+	sqlc.arg('analysis_version'), sqlc.arg('schema_version'), sqlc.arg('status'), sqlc.arg('recipes_json'),
+	sqlc.arg('validation_errors'), sqlc.narg('created_by')
+WHERE EXISTS (
+	SELECT 1 FROM project p
+	WHERE p.id = sqlc.arg('target_project_id')
+	  AND p.workspace_id = sqlc.arg('workspace_id')
+)
+AND EXISTS (
+	SELECT 1 FROM design_system_profile dsp
+	WHERE dsp.id = sqlc.arg('design_system_profile_id')
+	  AND dsp.workspace_id = sqlc.arg('workspace_id')
+	  AND dsp.source_revision_id = sqlc.arg('source_revision_id')
+	  AND (dsp.project_id IS NULL OR dsp.project_id = sqlc.arg('target_project_id'))
+	  AND EXISTS (
+		SELECT 1 FROM design_revision dr
+		WHERE dr.id = sqlc.arg('source_revision_id')
+		  AND dr.workspace_id = sqlc.arg('workspace_id')
+		  AND dr.file_id = dsp.source_file_id
+	  )
+)
+RETURNING *;
+
+-- name: GetNextDesignComponentRecipeSetAnalysisVersion :one
+SELECT (COALESCE(MAX(analysis_version), 0) + 1)::int
+FROM design_component_recipe_set
+WHERE workspace_id = $1
+  AND design_system_profile_id = $2;
+
+-- name: GetLatestValidDesignComponentRecipeSet :one
+SELECT * FROM design_component_recipe_set
+WHERE design_component_recipe_set.workspace_id = sqlc.arg('workspace_id')
+  AND design_component_recipe_set.design_system_profile_id = sqlc.arg('design_system_profile_id')
+  AND design_component_recipe_set.status = 'valid'
+  AND EXISTS (
+	SELECT 1 FROM design_system_profile dsp
+	WHERE dsp.id = design_component_recipe_set.design_system_profile_id
+	  AND dsp.workspace_id = sqlc.arg('workspace_id')
+	  AND (dsp.project_id IS NULL OR dsp.project_id = sqlc.arg('target_project_id'))
+  )
+ORDER BY analysis_version DESC
+LIMIT 1;
+-- Project design systems
+
+-- name: GetProjectDesignSystemByProject :one
+SELECT * FROM project_design_system
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND project_id = sqlc.arg('project_id');
+
+-- name: GetProjectDesignSystemInWorkspace :one
+SELECT * FROM project_design_system
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id');
+
+-- name: GetProjectDesignSystemInWorkspaceForUpdate :one
+SELECT * FROM project_design_system
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+FOR UPDATE;
+
+-- name: CreateProjectDesignSystem :one
+INSERT INTO project_design_system (
+    workspace_id,
+    project_id,
+    name,
+    platform,
+    current_agent_id,
+    active_task_id,
+    active_operation,
+    input_snapshot,
+    last_error,
+    created_by
+)
+SELECT
+    sqlc.arg('workspace_id'),
+    sqlc.arg('project_id'),
+    sqlc.arg('name'),
+    sqlc.arg('platform'),
+    sqlc.narg('current_agent_id'),
+    sqlc.narg('active_task_id'),
+    sqlc.narg('active_operation'),
+    sqlc.arg('input_snapshot'),
+    sqlc.narg('last_error'),
+    sqlc.narg('created_by')
+FROM project
+WHERE project.id = sqlc.arg('project_id')
+  AND project.workspace_id = sqlc.arg('workspace_id')
+RETURNING *;
+
+-- name: UpdateProjectDesignSystemInputAndTask :one
+UPDATE project_design_system SET
+    platform = sqlc.arg('platform'),
+    current_agent_id = sqlc.arg('current_agent_id'),
+    active_task_id = sqlc.arg('active_task_id'),
+    active_operation = sqlc.arg('active_operation'),
+    input_snapshot = sqlc.arg('input_snapshot'),
+    last_error = NULL,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+RETURNING *;
+
+-- name: ClearProjectDesignSystemActiveTask :one
+UPDATE project_design_system SET
+    active_task_id = NULL,
+    active_operation = NULL,
+    last_error = NULL,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND active_task_id = sqlc.arg('active_task_id')
+RETURNING *;
+
+-- name: CompleteProjectDesignSystemRepositoryAnalysis :one
+UPDATE project_design_system SET
+    active_task_id = NULL,
+    active_operation = NULL,
+    input_snapshot = sqlc.arg('input_snapshot'),
+    last_error = NULL,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND active_task_id = sqlc.arg('active_task_id')
+  AND active_operation = 'repository_analysis'
+RETURNING *;
+
+-- name: SetProjectDesignSystemFailure :one
+UPDATE project_design_system SET
+    active_task_id = NULL,
+    active_operation = NULL,
+    last_error = sqlc.arg('last_error'),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND active_task_id = sqlc.arg('active_task_id')
+RETURNING *;
+
+-- name: MarkProjectDesignSystemSaved :one
+UPDATE project_design_system SET
+    saved_at = now(),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+RETURNING *;
+
+-- name: ClearProjectDesignSystemDraftState :one
+UPDATE project_design_system SET
+    last_error = NULL,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+RETURNING *;
+
+-- name: GetProjectDesignSystemPackageBySlot :one
+SELECT * FROM project_design_system_package
+WHERE design_system_id = sqlc.arg('design_system_id')
+  AND slot = sqlc.arg('slot')
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = project_design_system_package.design_system_id
+        AND project_design_system.workspace_id = sqlc.arg('workspace_id')
+  );
+
+-- name: UpdateProjectDesignSystemPackageRenderValidation :one
+UPDATE project_design_system_package SET
+    render_status = sqlc.arg('render_status'),
+    render_report = sqlc.arg('render_report'),
+    rendered_at = now(),
+    updated_at = now()
+WHERE design_system_id = sqlc.arg('design_system_id')
+  AND slot = 'draft'
+  AND integrity_sha256 = sqlc.arg('integrity_sha256')
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = project_design_system_package.design_system_id
+        AND project_design_system.workspace_id = sqlc.arg('workspace_id')
+  )
+RETURNING *;
+
+-- name: UpsertProjectDesignSystemPackage :one
+INSERT INTO project_design_system_package (
+    design_system_id,
+    slot,
+    design_md,
+    tokens_css,
+    components_html,
+    manifest,
+    validation,
+    integrity_sha256,
+    source_task_id,
+    agent_id,
+    instruction,
+    scope,
+    render_status,
+    render_report,
+    rendered_at,
+    package_schema,
+    archive_object_key,
+    artifact_index,
+    input_snapshot_sha256,
+    base_package_sha256
+)
+SELECT
+    sqlc.arg('design_system_id'),
+    sqlc.arg('slot'),
+    sqlc.arg('design_md'),
+    sqlc.arg('tokens_css'),
+    sqlc.arg('components_html'),
+    sqlc.arg('manifest'),
+    sqlc.arg('validation'),
+    sqlc.arg('integrity_sha256'),
+    sqlc.narg('source_task_id'),
+    sqlc.narg('agent_id'),
+    sqlc.narg('instruction'),
+    sqlc.narg('scope'),
+    'pending',
+    '{}'::jsonb,
+    NULL::timestamptz,
+    COALESCE(NULLIF(sqlc.arg('package_schema')::text, ''), 'legacy'),
+    sqlc.narg('archive_object_key')::text,
+    COALESCE(sqlc.arg('artifact_index')::jsonb, '[]'::jsonb),
+    sqlc.narg('input_snapshot_sha256')::text,
+    sqlc.narg('base_package_sha256')::text
+WHERE EXISTS (
+    SELECT 1
+    FROM project_design_system
+    WHERE project_design_system.id = sqlc.arg('design_system_id')
+      AND project_design_system.workspace_id = sqlc.arg('workspace_id')
+)
+ON CONFLICT (design_system_id, slot) DO UPDATE SET
+    design_md = EXCLUDED.design_md,
+    tokens_css = EXCLUDED.tokens_css,
+    components_html = EXCLUDED.components_html,
+    manifest = EXCLUDED.manifest,
+    validation = EXCLUDED.validation,
+    integrity_sha256 = EXCLUDED.integrity_sha256,
+    source_task_id = EXCLUDED.source_task_id,
+    agent_id = EXCLUDED.agent_id,
+    instruction = EXCLUDED.instruction,
+    scope = EXCLUDED.scope,
+    render_status = EXCLUDED.render_status,
+    render_report = EXCLUDED.render_report,
+    rendered_at = EXCLUDED.rendered_at,
+    package_schema = EXCLUDED.package_schema,
+    archive_object_key = EXCLUDED.archive_object_key,
+    artifact_index = EXCLUDED.artifact_index,
+    input_snapshot_sha256 = EXCLUDED.input_snapshot_sha256,
+    base_package_sha256 = EXCLUDED.base_package_sha256,
+    updated_at = now()
+RETURNING *;
+
+-- name: SaveProjectDesignSystemDraft :one
+INSERT INTO project_design_system_package (
+    design_system_id,
+    slot,
+    design_md,
+    tokens_css,
+    components_html,
+    manifest,
+    validation,
+    integrity_sha256,
+    source_task_id,
+    agent_id,
+    instruction,
+    scope,
+    render_status,
+    render_report,
+    rendered_at,
+    package_schema,
+    archive_object_key,
+    artifact_index,
+    input_snapshot_sha256,
+    base_package_sha256
+)
+SELECT
+    project_design_system_package.design_system_id,
+    'saved',
+    project_design_system_package.design_md,
+    project_design_system_package.tokens_css,
+    project_design_system_package.components_html,
+    project_design_system_package.manifest,
+    project_design_system_package.validation,
+    project_design_system_package.integrity_sha256,
+    project_design_system_package.source_task_id,
+    project_design_system_package.agent_id,
+    project_design_system_package.instruction,
+    project_design_system_package.scope,
+    project_design_system_package.render_status,
+    project_design_system_package.render_report,
+    project_design_system_package.rendered_at,
+    project_design_system_package.package_schema,
+    project_design_system_package.archive_object_key,
+    project_design_system_package.artifact_index,
+    project_design_system_package.input_snapshot_sha256,
+    project_design_system_package.base_package_sha256
+FROM project_design_system_package
+WHERE project_design_system_package.design_system_id = sqlc.arg('design_system_id')
+  AND project_design_system_package.slot = 'draft'
+  AND project_design_system_package.render_status <> 'failed'
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = project_design_system_package.design_system_id
+        AND project_design_system.workspace_id = sqlc.arg('workspace_id')
+  )
+ON CONFLICT (design_system_id, slot) DO UPDATE SET
+    design_md = EXCLUDED.design_md,
+    tokens_css = EXCLUDED.tokens_css,
+    components_html = EXCLUDED.components_html,
+    manifest = EXCLUDED.manifest,
+    validation = EXCLUDED.validation,
+    integrity_sha256 = EXCLUDED.integrity_sha256,
+    source_task_id = EXCLUDED.source_task_id,
+    agent_id = EXCLUDED.agent_id,
+    instruction = EXCLUDED.instruction,
+    scope = EXCLUDED.scope,
+    render_status = EXCLUDED.render_status,
+    render_report = EXCLUDED.render_report,
+    rendered_at = EXCLUDED.rendered_at,
+    package_schema = EXCLUDED.package_schema,
+    archive_object_key = EXCLUDED.archive_object_key,
+    artifact_index = EXCLUDED.artifact_index,
+    input_snapshot_sha256 = EXCLUDED.input_snapshot_sha256,
+    base_package_sha256 = EXCLUDED.base_package_sha256,
+    updated_at = now()
+RETURNING *;
+
+-- name: DeleteProjectDesignSystemPackageSlot :exec
+DELETE FROM project_design_system_package
+WHERE design_system_id = sqlc.arg('design_system_id')
+  AND slot = sqlc.arg('slot')
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = project_design_system_package.design_system_id
+        AND project_design_system.workspace_id = sqlc.arg('workspace_id')
+  );
+
+-- name: ListProjectDesignSystemTasks :many
+SELECT * FROM agent_task_queue
+WHERE context->>'project_design_system_id' = sqlc.arg('project_design_system_id')::uuid::text
+  AND context->>'workspace_id' = sqlc.arg('workspace_id')::uuid::text
+  AND EXISTS (
+      SELECT 1
+      FROM project_design_system
+      WHERE project_design_system.id = sqlc.arg('project_design_system_id')
+        AND project_design_system.workspace_id = sqlc.arg('workspace_id')
+  )
+ORDER BY created_at DESC
+LIMIT sqlc.arg('limit_count');

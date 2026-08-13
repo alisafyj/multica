@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_design_component_recipe_set_latest;

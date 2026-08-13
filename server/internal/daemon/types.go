@@ -3,6 +3,8 @@ package daemon
 import (
 	"encoding/json"
 
+	"github.com/multica-ai/multica/server/internal/designpreview"
+	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 )
 
@@ -108,11 +110,13 @@ type Task struct {
 	QuickCreatePriority               string                 `json:"quick_create_priority,omitempty"`            // explicit priority selected in quick-create
 	QuickCreateDueDate                string                 `json:"quick_create_due_date,omitempty"`            // explicit calendar due date selected in quick-create
 	QuickCreateAttachmentIDs          []string               `json:"quick_create_attachment_ids,omitempty"`      // attachments uploaded in the quick-create prompt and bound by issue create
-	UIDraftCreateContext              string                 `json:"uidraft_create_context,omitempty"`
-	DesignRestoreContext              string                 `json:"design_restore_context,omitempty"`
+	UIDraftCreateContext              json.RawMessage        `json:"ui_draft_create_context,omitempty"`
+	DesignRestoreContext              json.RawMessage        `json:"design_restore_context,omitempty"`
 	TestGenerationContext             string                 `json:"test_generation_context,omitempty"`
 	TestRunContext                    string                 `json:"test_run_context,omitempty"`
-	DesignSystemProfileAnalyzeContext string                 `json:"design_system_profile_analyze_context,omitempty"`
+	DesignSystemProfileAnalyzeContext json.RawMessage        `json:"design_system_profile_analyze_context,omitempty"`
+	TemplateBlueprintAnalyzeContext   json.RawMessage        `json:"design_template_blueprint_analyze_context,omitempty"`
+	ProjectDesignSystemContext        json.RawMessage        `json:"project_design_system_context,omitempty"`
 	PMOSyncContext                    json.RawMessage        `json:"pmo_sync_context,omitempty"` // raw PMO sync context JSONB (workspace + run id + strict acquisition prompt)
 	HandoffNote                       string                 `json:"handoff_note,omitempty"`     // assignment handoff instruction; rendered into the opening prompt + issue_context.md
 
@@ -269,15 +273,39 @@ type TaskResult struct {
 	WorkDir       string `json:"work_dir,omitempty"`   // working directory used during execution
 	EnvRoot       string `json:"-"`                    // env root dir for writing GC metadata (not sent to server)
 	FailureReason string `json:"-"`                    // classifier forwarded to FailTask on the blocked path; empty falls back to 'agent_error'
-	// SessionRolloutMissing is set when the daemon withheld this task's Codex
-	// session because its rollout was not in the store (MUL-5305). Forwarded to
-	// the terminal report so the server clears the resume pointer and flags the
-	// continuity gap for the next claim. Not part of the wire result itself.
+	// SessionRolloutMissing is forwarded to terminal reports when a Codex
+	// session rollout was unavailable and the server must clear its resume pointer.
 	SessionRolloutMissing bool `json:"-"`
-	// RetiredSessionID names a session this run was told to resume and then
-	// abandoned as unresumable (GH #6066). Forwarded on every terminal path,
-	// including the completed one: a fresh-session retry that SUCCEEDS is
-	// precisely when the abandoned id would otherwise stay selectable.
-	RetiredSessionID string           `json:"-"`
-	Usage            []TaskUsageEntry `json:"usage,omitempty"` // per-model token usage
+	// RetiredSessionID identifies an unresumable session that must no longer
+	// be selected after any terminal outcome, including successful completion.
+	RetiredSessionID             string                             `json:"-"`
+	Usage                        []TaskUsageEntry                   `json:"usage,omitempty"` // per-model token usage
+	ProjectDesignSystemArtifacts *ProjectDesignSystemArtifacts      `json:"-"`               // legacy three-file inline payload; collected for non-V2 tasks only
+	ProjectDesignSystemPackage   *ProjectDesignSystemPackageReceipt `json:"-"`               // V2-native package receipt (archive + audit + preview); populated only on the V2 path
+}
+
+// ProjectDesignSystemArtifacts is the legacy inline three-file payload the
+// Open Design supervisor used to ship on task completion. It is kept here so
+// legacy server-side decode still works for tasks that flow through the
+// Open Design chain; the V2 native path replaces it with the package receipt
+// below. Removal of this struct is Task 7.
+type ProjectDesignSystemArtifacts struct {
+	DesignMD       string `json:"design_md"`
+	TokensCSS      string `json:"tokens_css"`
+	ComponentsHTML string `json:"components_html"`
+}
+
+// ProjectDesignSystemPackageReceipt is the daemon-side carrier for the
+// V2-native project-design-system result. It carries the bare minimum the
+// server needs to publish a completed design system: the uploaded archive's
+// object key, the package's content digest, the artifact index for server-side
+// cross-checks, the static audit report, and the designpreview.Receipt that
+// proves a real browser rendered every Preview target without CSP violations.
+type ProjectDesignSystemPackageReceipt struct {
+	SchemaVersion string                                   `json:"schema_version"`
+	ObjectKey     string                                   `json:"object_key"`
+	ContentDigest string                                   `json:"content_digest"`
+	ArtifactIndex []projectdesignsystem.ArtifactIndexEntry `json:"artifact_index"`
+	Audit         projectdesignsystem.AuditReport          `json:"audit"`
+	Preview       designpreview.Receipt                    `json:"preview"`
 }

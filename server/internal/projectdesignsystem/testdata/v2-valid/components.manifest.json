@@ -1,0 +1,9 @@
+{
+  "schema_version": "crm-components/v1",
+  "components": [
+    {
+      "id": "crm-order-workspace",
+      "states": ["default", "filtered", "empty"]
+    }
+  ]
+}
