@@ -155,6 +155,154 @@ var mergedDuplicateMigrationStems = map[string][]string{
 	"284": {"284_task_owner_row_fence", "284_test_case_revision_case_index"},
 }
 
+// legacyFKMigrations records already-applied migrations that create database
+// foreign keys / cascading deletes, grandfathered before the no-FK rule. New
+// migrations must never be added here — database relationships must be
+// resolved in application code (CLAUDE.md「Database and Migration Rules」).
+var legacyFKMigrations = map[string]bool{
+	"001_init":                                true,
+	"004_agent_runtime_loop":                  true,
+	"005_daemon_pairing":                      true,
+	"008_structured_skills":                   true,
+	"011_personal_access_tokens":              true,
+	"013_runtime_usage":                       true,
+	"015_issue_subscriber":                    true,
+	"017_comment_parent_id":                   true,
+	"018_comment_parent_cascade":              true,
+	"025_comment_workspace_id":                true,
+	"026_comment_reactions":                   true,
+	"026_task_messages":                       true,
+	"027_issue_reactions":                     true,
+	"028_task_trigger_comment":                true,
+	"029_attachment":                          true,
+	"029_daemon_token":                        true,
+	"031_agent_archive":                       true,
+	"032_runtime_owner":                       true,
+	"032_task_usage":                          true,
+	"033_chat":                                true,
+	"034_projects":                            true,
+	"038_pinned_items":                        true,
+	"041_workspace_invitation":                true,
+	"042_autopilot":                           true,
+	"055_task_lease_and_retry":                true,
+	"057_feedback":                            true,
+	"060_chat_session_runtime_id":             true,
+	"064_notification_preference":             true,
+	"065_project_resources":                   true,
+	"079_github_integration":                  true,
+	"083_attachment_chat_columns":             true,
+	"084_squad":                               true,
+	"091_pr_ci_conflict":                      true,
+	"093_webhook_deliveries":                  true,
+	"096_autopilot_squad_assignee":            true,
+	"097_autopilot_project_id":                true,
+	"108_task_token":                          true,
+	"109_lark_integration":                    true,
+	"113_lark_inbound_dedup_per_installation": true,
+	"234_gallery_native_designs":              true,
+	"235_figma_import_codes":                  true,
+	"236_design_plugin_auth":                  true,
+	"237_design_project_folders":              true,
+	"238_design_template_catalog":             true,
+	"239_design_draft_template_catalog":       true,
+	"240_design_draft_materialized_refs":      true,
+	"241_design_restore_plan":                 true,
+	"242_design_repo_analysis":                true,
+	"243_design_delivery":                     true,
+	"244_design_restore_task_delivery":        true,
+	"247_design_system_profile":               true,
+	"317_product_map":                         true,
+}
+
+// legacyNonConcurrentIndexMigrations records already-applied migrations that
+// build indexes with plain CREATE INDEX (not CONCURRENTLY) and/or pack
+// multiple statements into one file, grandfathered before the rule. New
+// migrations must never be added here.
+var legacyNonConcurrentIndexMigrations = map[string]bool{
+	"001_init":                                         true,
+	"003_task_context":                                 true,
+	"004_agent_runtime_loop":                           true,
+	"005_daemon_pairing":                               true,
+	"008_structured_skills":                            true,
+	"009_verification_code":                            true,
+	"011_personal_access_tokens":                       true,
+	"013_runtime_usage":                                true,
+	"015_issue_subscriber":                             true,
+	"020_issue_number":                                 true,
+	"022_task_lifecycle_guards":                        true,
+	"026_comment_reactions":                            true,
+	"026_task_messages":                                true,
+	"027_issue_reactions":                              true,
+	"029_attachment":                                   true,
+	"029_daemon_token":                                 true,
+	"032_issue_search_index":                           true,
+	"032_task_usage":                                   true,
+	"033_chat":                                         true,
+	"033_comment_search_index":                         true,
+	"034_projects":                                     true,
+	"036_search_index_lower":                           true,
+	"037_fix_pending_task_unique_index":                true,
+	"038_pinned_items":                                 true,
+	"039_project_search_index":                         true,
+	"040_chat_unread_since":                            true,
+	"041_workspace_invitation":                         true,
+	"042_autopilot":                                    true,
+	"043_fix_orphaned_autopilot_runs":                  true,
+	"050_issue_first_executed_at":                      true,
+	"055_task_lease_and_retry":                         true,
+	"057_feedback":                                     true,
+	"059_label_timestamps":                             true,
+	"065_project_resources":                            true,
+	"068_timeline_keyset_index":                        true,
+	"069_comment_resolved_at":                          true,
+	"073_task_usage_daily_rollup":                      true,
+	"077_task_usage_daily_invalidation":                true,
+	"079_github_integration":                           true,
+	"083_attachment_chat_columns":                      true,
+	"084_squad":                                        true,
+	"084_task_usage_dashboard_rollup":                  true,
+	"089_squad_no_action_activity_index":               true,
+	"091_autopilot_webhook_triggers":                   true,
+	"091_pr_ci_conflict":                               true,
+	"093_webhook_deliveries":                           true,
+	"096_autopilot_squad_assignee":                     true,
+	"096_pending_check_suite":                          true,
+	"097_autopilot_project_id":                         true,
+	"098_contact_sales_inquiries":                      true,
+	"101_task_usage_hourly_schema":                     true,
+	"105_issue_metadata":                               true,
+	"108_task_token":                                   true,
+	"109_lark_integration":                             true,
+	"113_lark_inbound_dedup_per_installation":          true,
+	"113_sys_cron_executions":                          true,
+	"120_autopilot_subscriber":                         true,
+	"120_runtime_profile":                              true,
+	"121_agent_runtime_provider_partial_unique":        true,
+	"124_autopilot_run_planned_at":                     true,
+	"124_channel_generalization":                       true,
+	"127_task_squad_id":                                true,
+	"127_user_composio_connection":                     true,
+	"128_autopilot_collaborator":                       true,
+	"128_comment_routing_escalation":                   true,
+	"129_agent_composio_allowlist_and_task_originator": true,
+	"130_agent_invocation_permission":                  true,
+	"133_github_installation_multi_workspace":          true,
+	"234_gallery_native_designs":                       true,
+	"235_figma_import_codes":                           true,
+	"236_design_plugin_auth":                           true,
+	"237_design_project_folders":                       true,
+	"238_design_template_catalog":                      true,
+	"239_design_draft_template_catalog":                true,
+	"240_design_draft_materialized_refs":               true,
+	"241_design_restore_plan":                          true,
+	"242_design_repo_analysis":                         true,
+	"243_design_delivery":                              true,
+	"244_design_restore_task_delivery":                 true,
+	"246_design_delivery_single_active_source":         true,
+	"247_design_system_profile":                        true,
+	"317_product_map":                                  true,
+}
+
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)
 
 func TestMigrationFilesHaveMatchingDirections(t *testing.T) {
@@ -260,6 +408,73 @@ func TestNewMigrationPrefixesStartAfterLegacyRange(t *testing.T) {
 	}
 }
 
+var fkKeywordPattern = regexp.MustCompile(`\bREFERENCES\b|\bFOREIGN\s+KEY\b`)
+
+func TestNoForeignKeysOutsideLegacySet(t *testing.T) {
+	files := migrationFilesForLint(t, "*.up.sql")
+	for _, file := range files {
+		stem := strings.TrimSuffix(filepath.Base(file), ".up.sql")
+		if legacyFKMigrations[stem] {
+			continue
+		}
+		upper := strings.ToUpper(stripSQLComments(readMigrationForLint(t, filepath.Base(file))))
+		if fkKeywordPattern.MatchString(upper) {
+			t.Errorf("%s must not create foreign keys (REFERENCES/FOREIGN KEY); resolve relationships in application code. If this is an already-applied legacy migration, record it in legacyFKMigrations", stem)
+		}
+	}
+}
+
+func TestIndexesUseConcurrentlyOutsideLegacySet(t *testing.T) {
+	files := migrationFilesForLint(t, "*.up.sql")
+	for _, file := range files {
+		stem := strings.TrimSuffix(filepath.Base(file), ".up.sql")
+		if legacyNonConcurrentIndexMigrations[stem] {
+			continue
+		}
+		sql := strings.TrimSpace(stripSQLComments(readMigrationForLint(t, filepath.Base(file))))
+		upper := strings.ToUpper(sql)
+		if !strings.Contains(upper, "CREATE INDEX") && !strings.Contains(upper, "CREATE UNIQUE INDEX") {
+			continue // not an index migration
+		}
+		if !strings.Contains(upper, "CREATE UNIQUE INDEX CONCURRENTLY") &&
+			!strings.Contains(upper, "CREATE INDEX CONCURRENTLY") {
+			t.Errorf("%s must create its index concurrently (CREATE [UNIQUE] INDEX CONCURRENTLY); see CLAUDE.md", stem)
+		}
+		if strings.Count(sql, ";") != 1 {
+			t.Errorf("%s must contain one statement; each concurrent index build needs its own single-statement migration file", stem)
+		}
+	}
+}
+
+// stripSQLComments removes SQL line (--) and block (/* */) comments so lint
+// rules only see executable statements, not prose that happens to mention
+// keywords like "references", "preferences" or "index". Heuristic only; a
+// literal containing -- or /* would be misread, which no migration here does.
+func stripSQLComments(sql string) string {
+	var b strings.Builder
+	b.Grow(len(sql))
+	i := 0
+	for i < len(sql) {
+		if i+1 < len(sql) && sql[i] == '-' && sql[i+1] == '-' {
+			for i < len(sql) && sql[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		if i+1 < len(sql) && sql[i] == '/' && sql[i+1] == '*' {
+			i += 2
+			for i+1 < len(sql) && !(sql[i] == '*' && sql[i+1] == '/') {
+				i++
+			}
+			i += 2
+			continue
+		}
+		b.WriteByte(sql[i])
+		i++
+	}
+	return b.String()
+}
+
 func readMigrationForLint(t *testing.T, name string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(realMigrationsDir(t), name))
@@ -267,35 +482,6 @@ func readMigrationForLint(t *testing.T, name string) string {
 		t.Fatal(err)
 	}
 	return string(raw)
-}
-
-func TestPMOSyncMigrationsStayTenantScopedAndConcurrent(t *testing.T) {
-	tables := strings.ToUpper(readMigrationForLint(t, "306_pmo_sync_tables.up.sql"))
-	if strings.Contains(tables, "REFERENCES") || strings.Contains(tables, "FOREIGN KEY") {
-		t.Fatal("PMO sync tables must not create foreign keys")
-	}
-
-	indexes := []string{
-		"307_pmo_sync_config_id_index.up.sql",
-		"308_pmo_sync_run_id_index.up.sql",
-		"309_pmo_sync_link_id_index.up.sql",
-		"311_pmo_sync_config_root_index.up.sql",
-		"312_pmo_sync_run_history_index.up.sql",
-		"313_pmo_sync_run_active_index.up.sql",
-		"314_pmo_sync_run_agent_task_index.up.sql",
-		"315_pmo_sync_link_identity_index.up.sql",
-	}
-	for _, name := range indexes {
-		sql := strings.TrimSpace(readMigrationForLint(t, name))
-		upper := strings.ToUpper(sql)
-		if !strings.Contains(upper, "CREATE UNIQUE INDEX CONCURRENTLY") &&
-			!strings.Contains(upper, "CREATE INDEX CONCURRENTLY") {
-			t.Errorf("%s must create its index concurrently", name)
-		}
-		if strings.Count(sql, ";") != 1 {
-			t.Errorf("%s must contain one statement", name)
-		}
-	}
 }
 
 func migrationStemsByPrefix(t *testing.T) map[string][]string {
