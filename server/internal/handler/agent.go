@@ -383,6 +383,7 @@ type AgentTaskResponse struct {
 	DesignSystemProfileAnalyzeContext json.RawMessage        `json:"design_system_profile_analyze_context,omitempty"`     // typed context for UI specification profile analysis tasks
 	TemplateBlueprintAnalyzeContext   json.RawMessage        `json:"design_template_blueprint_analyze_context,omitempty"` // typed context for template Blueprint analysis tasks
 	ProjectDesignSystemContext        json.RawMessage        `json:"project_design_system_context,omitempty"`             // typed context for project design-system generation tasks
+	DesignDocumentContext             json.RawMessage        `json:"design_document_context,omitempty"`                   // typed context for Design Document grounding/generation tasks
 	PMOSyncContext                    json.RawMessage        `json:"pmo_sync_context,omitempty"`                          // typed context for PMO requirement sync tasks (workspace + run id + acquisition prompt)
 	HandoffNote                       string                 `json:"handoff_note,omitempty"`                              // assignment handoff instruction; rendered into the run's opening prompt + issue_context.md (omitempty so old daemons ignore it)
 	SquadID                           string                 `json:"squad_id,omitempty"`                                  // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
@@ -1149,6 +1150,16 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, thinkingLevelRejection(runtime.Provider, req.ThinkingLevel))
 		return
 	}
+	if req.ThinkingLevel != "" {
+		switch h.acpThinkingDecision(r.Context(), runtime.Provider, runtime.ID) {
+		case acpEffortAbsent:
+			writeError(w, http.StatusBadRequest, thinkingCapabilityRejection(runtime.Provider))
+			return
+		case acpEffortUnknown:
+			writeError(w, http.StatusBadRequest, thinkingCapabilityUnknownRejection(runtime.Provider))
+			return
+		}
+	}
 	if !agent.IsKnownServiceTier(runtime.Provider, req.ServiceTier) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("service_tier %q is not a recognised value for runtime %q", req.ServiceTier, runtime.Provider))
 		return
@@ -1739,6 +1750,14 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, thinkingLevelRejection(provider, value))
 				return
 			}
+			switch h.acpThinkingDecision(r.Context(), provider, targetRuntimeID) {
+			case acpEffortAbsent:
+				writeError(w, http.StatusBadRequest, thinkingCapabilityRejection(provider))
+				return
+			case acpEffortUnknown:
+				writeError(w, http.StatusBadRequest, thinkingCapabilityUnknownRejection(provider))
+				return
+			}
 			params.ThinkingLevel = pgtype.Text{String: value, Valid: true}
 		}
 	} else if req.RuntimeID != nil && existing.ThinkingLevel.Valid && existing.ThinkingLevel.String != "" {
@@ -1760,6 +1779,14 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		if !agent.IsKnownThinkingValue(provider, existing.ThinkingLevel.String) {
 			writeError(w, http.StatusBadRequest, existingThinkingLevelRejection(provider, existing.ThinkingLevel.String))
+			return
+		}
+		switch h.acpThinkingDecision(r.Context(), provider, targetRuntimeID) {
+		case acpEffortAbsent:
+			writeError(w, http.StatusBadRequest, existingThinkingCapabilityRejection(provider, existing.ThinkingLevel.String))
+			return
+		case acpEffortUnknown:
+			writeError(w, http.StatusBadRequest, existingThinkingCapabilityUnknownRejection(provider, existing.ThinkingLevel.String))
 			return
 		}
 	}

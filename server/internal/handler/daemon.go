@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/designdocument"
 	"github.com/multica-ai/multica/server/internal/designpreview"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -458,9 +459,10 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			status = "offline"
 		}
 		metadata, _ := json.Marshal(map[string]any{
-			"version":     runtime.Version,
-			"cli_version": req.CLIVersion,
-			"launched_by": req.LaunchedBy,
+			"version":      runtime.Version,
+			"cli_version":  req.CLIVersion,
+			"launched_by":  req.LaunchedBy,
+			"capabilities": requestClientCapabilities(r),
 		})
 
 		var registered db.AgentRuntime
@@ -1444,6 +1446,21 @@ func runtimeHasCapability(metadata []byte, capability string) bool {
 		}
 	}
 	return false
+}
+
+// requestClientCapabilities returns the non-empty advertised capabilities.
+func requestClientCapabilities(r *http.Request) []string {
+	raw := strings.Split(r.Header.Get("X-Client-Capabilities"), ",")
+	out := make([]string, 0, len(raw))
+	for _, part := range raw {
+		if capability := strings.TrimSpace(part); capability != "" {
+			out = append(out, capability)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // requestHasClientCapability reports whether the caller advertised a capability
@@ -2507,6 +2524,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	hasDesignSystemProfileAnalyze := false
 	hasDesignTemplateBlueprintAnalyze := false
 	hasProjectDesignSystem := false
+	hasDesignDocument := false
 	hasPMOSync := false
 	if task.Context != nil && !task.IssueID.Valid && !task.ChatSessionID.Valid && !task.AutopilotRunID.Valid {
 		var qc service.QuickCreateContext
@@ -2748,6 +2766,50 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 	}
 
+	// Design Document tasks may optionally carry an issue_id, so this typed
+	// override must run after both the issue and context-only claim branches.
+	// The Design Document protocol owns the prompt and project resources; it is
+	// never an issue-reply/ownership turn even when its input snapshots an Issue.
+	var designDocumentCtx struct {
+		Type           string `json:"type"`
+		WorkspaceID    string `json:"workspace_id"`
+		ProjectID      string `json:"project_id"`
+		AgentID        string `json:"agent_id"`
+		ExecutionReady bool   `json:"execution_ready"`
+	}
+	if json.Unmarshal(task.Context, &designDocumentCtx) == nil && designDocumentCtx.Type == designDocumentTaskContextType {
+		hasDesignDocument = true
+		if !designDocumentCtx.ExecutionReady || designDocumentCtx.AgentID != uuidToString(task.AgentID) {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, &claimBuildFailure{
+				outcome: "error_design_document_context", status: http.StatusConflict, message: "design document task is not execution ready",
+			}
+		}
+		resp.WorkspaceID = designDocumentCtx.WorkspaceID
+		resp.DesignDocumentContext = json.RawMessage(task.Context)
+		resp.TriggerCommentID = nil
+		resp.TriggerCommentContent = ""
+		resp.TriggerThreadID = ""
+		resp.CoalescedCommentIDs = nil
+		resp.CoalescedComments = nil
+		h.populateContextTaskProject(r.Context(), &resp, designDocumentCtx.ProjectID, designDocumentCtx.WorkspaceID)
+		if runtime.DaemonID.Valid {
+			filtered := resp.ProjectResources[:0]
+			for _, resource := range resp.ProjectResources {
+				if resource.ResourceType == "github_repo" {
+					filtered = append(filtered, resource)
+					continue
+				}
+				if resource.ResourceType == "local_directory" {
+					var ref localDirectoryRef
+					if json.Unmarshal(resource.ResourceRef, &ref) == nil && strings.TrimSpace(ref.DaemonID) == runtime.DaemonID.String {
+						filtered = append(filtered, resource)
+					}
+				}
+			}
+			resp.ProjectResources = filtered
+		}
+	}
+
 	// Workspace isolation check: the daemon uses this response's workspace_id
 	// as the only authority for MULTICA_WORKSPACE_ID in the agent env. An
 	// empty value would make the CLI silently fall back to the user-global
@@ -2771,6 +2833,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			"has_design_system_profile_analyze", hasDesignSystemProfileAnalyze,
 			"has_design_template_blueprint_analyze", hasDesignTemplateBlueprintAnalyze,
 			"has_project_design_system", hasProjectDesignSystem,
+			"has_design_document", hasDesignDocument,
 			"has_pmo_sync", hasPMOSync,
 		)
 		if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
@@ -3383,7 +3446,9 @@ type TaskCompleteRequest struct {
 	// back from its server-collected, browser-verified native Agent chain
 	// (Task 5). The handler independently re-validates every field
 	// before persisting it as the new draft.
-	ProjectDesignSystemPackage *ProjectDesignSystemPackageReceipt `json:"project_design_system_package,omitempty"`
+	ProjectDesignSystemPackage *ProjectDesignSystemPackageReceipt  `json:"project_design_system_package,omitempty"`
+	DesignDocumentGrounding    *designdocument.RepositoryGrounding `json:"design_document_grounding,omitempty"`
+	DesignDocumentPackage      *DesignDocumentPackageReceipt       `json:"design_document_package,omitempty"`
 	// SessionRolloutMissing: the daemon withheld this task's Codex session
 	// because its rollout was missing (MUL-5305). Clear the resume pointer and
 	// flag the continuity gap for the next claim.
@@ -3408,6 +3473,19 @@ type ProjectDesignSystemPackageReceipt struct {
 	ArtifactIndex []projectdesignsystem.ArtifactIndexEntry `json:"artifact_index"`
 	Audit         projectdesignsystem.AuditReport          `json:"audit"`
 	Preview       designpreview.Receipt                    `json:"preview"`
+}
+
+type DesignDocumentPackageReceipt struct {
+	SchemaVersion       string                             `json:"schema_version"`
+	DocumentID          string                             `json:"document_id"`
+	RevisionID          string                             `json:"revision_id"`
+	ObjectKey           string                             `json:"object_key"`
+	ContentDigest       string                             `json:"content_digest"`
+	InputSnapshotSHA256 string                             `json:"input_snapshot_sha256"`
+	ArtifactIndex       []designdocument.FileEntry         `json:"artifact_index"`
+	Grounding           designdocument.RepositoryGrounding `json:"grounding"`
+	Audit               designdocument.AuditReport         `json:"audit"`
+	Preview             designpreview.Receipt              `json:"preview"`
 }
 
 const taskCompleteRequestMaxBytes int64 = 2 << 20
@@ -3579,6 +3657,22 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 			testGenerationCtx = &generationCtx
 		}
 	}
+	var preparedDesignDocument *preparedDesignDocumentPackage
+	if existingTask.Status == "running" && isDesignDocumentTaskContext(existingTask.Context) {
+		prepared, packageErr := prepareDesignDocumentPackageCompletion(r.Context(), existingTask, req.DesignDocumentPackage, h.Storage)
+		if packageErr != nil {
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), existingTask.ID, packageErr.Error(), req.SessionID, req.WorkDir, req.BranchName, "design_document_package_invalid", req.SessionRolloutMissing, req.RetiredSessionID)
+			if failErr != nil {
+				slog.Warn("Design Document grounding completion: failed to mark task failed", "task_id", taskID, "error", failErr)
+			} else if failedTask != nil {
+				h.TaskService.NotifyTaskFinished(*failedTask)
+				_ = h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID)
+			}
+			writeError(w, http.StatusBadRequest, "invalid Design Document package receipt: "+packageErr.Error())
+			return
+		}
+		preparedDesignDocument = &prepared
+	}
 
 	// PMO sync completion: parse the agent's final output against the strict
 	// snapshot contract BEFORE the terminal transaction. Invalid output fails
@@ -3621,7 +3715,11 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	completeWithMutation := func(mutate func(*db.Queries, db.AgentTaskQueue) error) {
 		task, err = h.TaskService.CompleteTaskWithMutationAndSessionState(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.BranchName, req.SessionRolloutMissing, req.RetiredSessionID, mutate)
 	}
-	if preparedRepositoryAnalysis != nil {
+	if preparedDesignDocument != nil {
+		completeWithMutation(func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
+			return persistDesignDocumentPackageCompletion(r.Context(), qtx, completedTask, *preparedDesignDocument)
+		})
+	} else if preparedRepositoryAnalysis != nil {
 		completeWithMutation(func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
 			system, saveErr := persistProjectDesignSystemRepositoryAnalysisCompletion(r.Context(), qtx, completedTask, *preparedRepositoryAnalysis)
 			if saveErr == nil {
@@ -4647,11 +4745,50 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 // task cancellation and finished flushing the transcript. Settles the chat
 // finalization that CancelTaskWithResult deferred for a started-but-empty
 // transcript (#5219); idempotent when nothing was deferred.
+type TaskCancelAckRequest struct {
+	BranchName    string `json:"branch_name,omitempty"`
+	ErrorMessage  string `json:"error_message,omitempty"`
+	FailureReason string `json:"failure_reason,omitempty"`
+}
+
 func (h *Handler) AckTaskCancelled(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 	task, ok := h.requireDaemonTaskAccess(w, r, taskID)
 	if !ok {
 		return
+	}
+
+	// Older daemons send an empty body, so decoding remains best-effort.
+	var req TaskCancelAckRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	delivered := false
+	if branch := strings.TrimSpace(req.BranchName); branch != "" {
+		if err := h.Queries.SetAgentTaskBranchName(r.Context(), db.SetAgentTaskBranchNameParams{
+			ID:         task.ID,
+			BranchName: pgtype.Text{String: branch, Valid: true},
+		}); err != nil {
+			slog.Error("cancel ack: record branch name failed", "task_id", taskID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to record branch name")
+			return
+		}
+		delivered = true
+	}
+	if message := strings.TrimSpace(req.ErrorMessage); message != "" {
+		reason := strings.TrimSpace(req.FailureReason)
+		if err := h.Queries.SetAgentTaskErrorIfEmpty(r.Context(), db.SetAgentTaskErrorIfEmptyParams{
+			ID:            task.ID,
+			Error:         pgtype.Text{String: message, Valid: true},
+			FailureReason: pgtype.Text{String: reason, Valid: reason != ""},
+		}); err != nil {
+			slog.Error("cancel ack: record task error failed", "task_id", taskID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to record task error")
+			return
+		}
+		delivered = true
+	}
+	if delivered {
+		h.TaskService.RebroadcastCancelledTask(r.Context(), task.ID)
 	}
 	h.TaskService.FinalizeDeferredCancelledChat(r.Context(), task.ID)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

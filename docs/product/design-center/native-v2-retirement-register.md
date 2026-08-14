@@ -45,6 +45,46 @@
 
 当前没有经过新 Phase A 功能切片确认的退役条目。不得把取消路线分支中的局部删除推断为本账本状态。
 
+### 2026-08-13 Phase A A1 复核
+
+- 状态变化：无。
+- 触达范围：A1 新增 Design Document 内部协议、持久化和对象存储 primitive，并把 Project Design System V2 的格式无关 ZIP/digest 安全逻辑抽到共享 helper。
+- 保留原因：A1 尚未替代首页页面 task、`design_draft` / `semantic_pagespec` 消费者、Open Design 历史读取或项目设计体系 package 流程。
+- 证据：`native-design-phase-a1-validation.md`；V2 golden、daemon/handler 回归、GitNexus `detect_changes` 均已执行。
+- 下一次复核：后续产品切片真实迁移活动消费者并满足 DC-040 时，再新增具体 capability 条目；不能从名称 grep 推导状态。
+
+### 2026-08-13 Phase A A2 复核
+
+- 状态变化：无。
+- 触达范围：设计中心首页和项目“设计草稿”新增 Design Document task create/list；历史 PageSpec 草稿网格仍保留在 task 区之后。
+- 保留原因：A2 只替代新任务发起入口，尚未形成首个 Design Document、文档列表或 A3-A5 执行闭环；旧 `design_draft` / `semantic_pagespec` 仍有历史读取和其他入口消费者。
+- 证据：`native-design-phase-a2-validation.md`；新 client/handler/UI 测试断言专用 API，旧 `/api/design-drafts/agent-tasks` 未被新 surface 调用。
+- 下一次复核：A4/A5 形成完整 Document 资产和用户工作区后，按消费者逐条复核；本阶段不停止旧写入、不删历史数据。
+
+### 2026-08-13 Phase A A3 复核
+
+- 状态变化：无。
+- 触达范围：Design Document task 已进入本地 daemon，通过 task-owned workspace 完成有界只读仓库 Grounding，并原子形成唯一 input snapshot；显式无仓库重试创建新 task，不复活旧 task。
+- 保留原因：A3 只完成输入与执行环境，不生成 `manifest.json`、archive、Audit/Preview 回执、document/revision 或 draft/saved 指针；旧页面草稿链仍是现有资产消费者。
+- 证据：`native-design-phase-a3-validation.md`；Design Document handler live PostgreSQL、daemon/execenv/prompt、Core/Views、race/vet/build 和源 checkout 零修改回归。
+- 下一次复核：A4 形成首个通过 Audit/Preview 的不可变 Design Document revision 后，再按真实消费者评估旧页面生成入口；本阶段无删除授权。
+
+### 2026-08-14 Phase A A4 复核
+
+- 状态变化：无。
+- 触达范围：Design Document 已经通过静态 Audit、本地 Chrome Preview、immutable archive 和 Server 独立重验形成首个 draft revision，并在项目“设计草稿”中提供 digest-bound sandbox Preview。
+- 保留原因：A4 尚未提供 A5 调整/保存/放弃或 A6 真实质量验收；旧 `design_draft` / `semantic_pagespec` 仍有历史读取、其他入口和未确认外部消费者，不能据此停止写入或删除。
+- 证据：`native-design-phase-a4-validation.md`；Chrome、daemon、live PostgreSQL、Core/Views、race/vet/sqlc 和 GitNexus 验证已执行。
+- 下一次复核：A5 把活动保存/调整消费者迁移到 immutable Design Document revision 后，逐项判断旧页面草稿入口是否可转 `write-retired`；本阶段仍无历史数据或对象删除授权。
+
+### 2026-08-14 Phase A A5 复核
+
+- 状态变化：无。
+- 触达范围：Design Document 已提供固定 base revision 的语义范围调整、单文档单写者、完整 package 重验、新 immutable revision/draft、保存与放弃；项目当前草稿工作区不再依赖旧 PageSpec adjustment/save API。
+- 保留原因：旧 `design_draft` / `semantic_pagespec` 仍有历史读取、其他入口和未确认外部消费者；A5 没有迁移全部活动消费者，也没有 A6 真实质量验收证据，不能标记 `write-retired` 或删除。
+- 证据：`native-design-phase-a5-validation.md`；live PostgreSQL、daemon/execenv、Core/Views 全量、race/vet/build/sqlc 验证已执行。
+- 下一次复核：A6 完成真实 Agent/仓库/业务产物验收，并逐项确认旧入口和外部消费者后，才允许新增具体 capability 条目或推进状态；历史数据与对象删除仍需独立审批。
+
 `feature/fengchen-fixed-v2` 只保留为取消的独立 Phase B 路线 checkpoint，不合入 `feature/fengchen`，不作为实现基线，也不计入产品或退役进度。
 
 后续条目使用以下模板追加：

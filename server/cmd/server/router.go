@@ -1060,6 +1060,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		"/api/project-design-system-previews/{workspaceId}/{systemId}/{digest}/{accessToken}/files/*",
 		h.GetProjectDesignSystemPackagePreviewFile,
 	)
+	r.Get(
+		"/api/design-document-previews/{workspaceId}/{projectId}/{documentId}/{revisionId}/{digest}/{accessToken}/files/*",
+		h.GetDesignDocumentPreviewFile,
+	)
 
 	// Composio OAuth callback (MUL-3843). NOT under the Auth group on purpose:
 	// Composio 302-redirects the user's browser here at the end of the OAuth
@@ -1104,6 +1108,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/wait-local-directory", h.MarkTaskWaitingLocalDirectory)
 		r.Post("/tasks/{taskId}/progress", h.ReportTaskProgress)
 		r.Post("/tasks/{taskId}/project-design-system/package", h.UploadProjectDesignSystemPackage)
+		r.Post("/tasks/{taskId}/design-document/package", h.UploadDesignDocumentPackage)
+		r.Get("/tasks/{taskId}/design-document/base", h.DownloadDesignDocumentBase)
+		r.Get("/tasks/{taskId}/design-document/attachments/{attachmentId}", h.DownloadDesignDocumentTaskAttachment)
+		r.Get("/tasks/{taskId}/design-document/design-system", h.DownloadDesignDocumentDesignSystem)
 		r.Get("/tasks/{taskId}/project-design-system/base-package", h.DownloadProjectDesignSystemBasePackage)
 		r.Get("/tasks/{taskId}/open-design/base-archive", h.DownloadOpenDesignBaseArchive)
 		r.Post("/tasks/{taskId}/open-design/preflight", h.RecordOpenDesignRunPreflight)
@@ -1671,6 +1679,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/design-drafts", h.ListDesignDrafts)
 			r.Post("/api/design-drafts", h.CreateDesignDraft)
 			r.Post("/api/design-drafts/agent-tasks", h.CreateDesignDraftAgentTask)
+			r.Get("/api/design-documents/agent-tasks", h.ListDesignDocumentAgentTasks)
+			r.Post("/api/design-documents/agent-tasks", h.CreateDesignDocumentAgentTask)
+			r.Get("/api/design-documents", h.ListDesignDocuments)
+			r.Get("/api/design-documents/{documentId}/preview", h.GetDesignDocumentPreview)
+			r.Post("/api/design-documents/{documentId}/adjust", h.CreateDesignDocumentAdjustment)
+			r.Post("/api/design-documents/{documentId}/save", h.SaveDesignDocumentDraft)
+			r.Delete("/api/design-documents/{documentId}/draft", h.DiscardDesignDocumentDraft)
 			r.Get("/api/design-drafts/{id}", h.GetDesignDraft)
 			r.Post("/api/design-drafts/{id}/materialize", h.MaterializeDesignDraft)
 			r.Get("/api/design-deliveries", h.ListDesignDeliveries)

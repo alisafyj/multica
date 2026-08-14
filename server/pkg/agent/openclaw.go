@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -125,7 +124,7 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	}
 	cmd.Stderr = newLogWriter(b.cfg.Logger, "[openclaw:stderr] ")
 
-	if err := cmd.Start(); err != nil {
+	if err := startOwnedProcessTree(cmd, b.cfg.Logger); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start openclaw: %w", err)
 	}
@@ -163,10 +162,11 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 
 		// Wait for process exit.
 		exitErr := cmd.Wait()
-		if runtime.GOOS != "windows" && !waitProcessGroupGone(cmd, 0) {
+		if !waitProcessGroupGone(cmd, 0) {
 			b.cfg.Logger.Warn("openclaw process group still alive after command exit; killing descendants", "pid", cmd.Process.Pid)
 			signalProcessGroup(cmd, syscall.SIGKILL)
 		}
+		releaseProcessGroup(cmd)
 		duration := time.Since(startTime)
 
 		switch {

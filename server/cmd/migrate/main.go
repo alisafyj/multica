@@ -104,6 +104,16 @@ var concurrentIndexCleanups = map[string]string{
 	"306_dingtalk_group_route_workspace_index":                  "idx_dingtalk_group_route_workspace",
 	"307_dingtalk_group_route_id_unique":                        "idx_dingtalk_group_route_id_unique",
 	"311_plugin_identity_scoped_key_index":                      "idx_plugin_identity_scoped_key",
+	"879_idx_design_document_project":                           "idx_design_document_project",
+	"880_idx_design_document_issue":                             "idx_design_document_issue",
+	"881_idx_design_document_revision_document":                 "idx_design_document_revision_document",
+	"882_idx_design_document_snapshot_project":                  "idx_design_document_snapshot_project",
+	"883_idx_design_document_id":                                "idx_design_document_id",
+	"884_idx_design_document_input_snapshot_id":                 "idx_design_document_input_snapshot_id",
+	"885_idx_design_document_revision_id":                       "idx_design_document_revision_id",
+	"886_idx_design_document_input_snapshot_task_id":            "idx_design_document_input_snapshot_task_id",
+	"887_idx_design_document_revision_source_task_id":           "idx_design_document_revision_source_task_id",
+	"888_idx_design_document_revision_input_snapshot_id":        "idx_design_document_revision_input_snapshot_id",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction
