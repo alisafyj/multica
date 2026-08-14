@@ -88,7 +88,7 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	hideAgentWindow(cmd)
 	configureProcessGroup(cmd)
 	cmd.Cancel = func() error {
-		signalProcessGroup(cmd.Process, syscall.SIGKILL)
+		signalProcessGroup(cmd, syscall.SIGKILL)
 		return nil
 	}
 	b.cfg.Logger.Info("agent command", "exec", execPath, "args", args)
@@ -163,9 +163,9 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 
 		// Wait for process exit.
 		exitErr := cmd.Wait()
-		if runtime.GOOS != "windows" && !waitProcessGroupGone(cmd.Process, 0) {
+		if runtime.GOOS != "windows" && !waitProcessGroupGone(cmd, 0) {
 			b.cfg.Logger.Warn("openclaw process group still alive after command exit; killing descendants", "pid", cmd.Process.Pid)
-			signalProcessGroup(cmd.Process, syscall.SIGKILL)
+			signalProcessGroup(cmd, syscall.SIGKILL)
 		}
 		duration := time.Since(startTime)
 
