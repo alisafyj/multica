@@ -6197,6 +6197,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		DesignRestoreContext:              strings.TrimSpace(string(task.DesignRestoreContext)),
 		DesignSystemProfileAnalyzeContext: strings.TrimSpace(string(task.DesignSystemProfileAnalyzeContext)),
 		ProjectDesignSystemContext:        strings.TrimSpace(string(task.ProjectDesignSystemContext)),
+		DesignDocumentContext:             strings.TrimSpace(string(task.DesignDocumentContext)),
 		PMOSyncContext:                    string(task.PMOSyncContext),
 		HandoffNote:                       task.HandoffNote,
 		IsSquadLeader:                     taskIsSquadLeader(task),

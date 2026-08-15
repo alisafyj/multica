@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -174,6 +176,10 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 
 	if err := writeProjectDesignSystemContext(workDir, ctx, manifest); err != nil {
 		return fmt.Errorf("write project design system context: %w", err)
+	}
+
+	if err := writeDesignDocumentContext(workDir, ctx, manifest); err != nil {
+		return fmt.Errorf("write design document context: %w", err)
 	}
 
 	if len(ctx.AgentSkills) > 0 {
@@ -453,6 +459,10 @@ func stampV2ReadOnly(dirs ...string) error {
 // and writeV2BaseDirectory.
 var v2SidecarDirNames = []string{"context", "reference", "base"}
 
+// v2SidecarRootNames are the read-only sidecar roots a native task can
+// materialize under .agent_context. A task has exactly one of them.
+var v2SidecarRootNames = []string{"project_design_system", "design_document"}
+
 // RestoreV2SidecarWritability chmods the V2 native agent sidecar
 // directories back to 0o755 so production cleanup (os.RemoveAll on
 // envRoot / workdir) can unlink their contents after the run. The
@@ -495,23 +505,26 @@ func RestoreV2SidecarWritability(workdir string) error {
 	// nothing legitimate to chmod below a planted symlink, and
 	// the caller can surface the leftover tree via os.RemoveAll's
 	// own error.
-	ancestors := []string{
-		filepath.Join(workdir, ".agent_context"),
-		filepath.Join(workdir, ".agent_context", "project_design_system"),
+	agentContext := filepath.Join(workdir, ".agent_context")
+	if !isRealDirectory(agentContext) {
+		return nil
 	}
-	for _, path := range ancestors {
-		if !isRealDirectory(path) {
-			return nil
-		}
-	}
-	root := ancestors[1]
-	for _, name := range v2SidecarDirNames {
-		dir := filepath.Join(root, name)
-		if !isRealDirectory(dir) {
+	// Both native sidecar kinds stamp themselves read-only, so both have to
+	// be restored or their task directory can never be reclaimed. A task
+	// only ever has one of them; the other is simply absent.
+	for _, sidecar := range v2SidecarRootNames {
+		root := filepath.Join(agentContext, sidecar)
+		if !isRealDirectory(root) {
 			continue
 		}
-		if err := os.Chmod(dir, 0o755); err != nil {
-			return fmt.Errorf("restore V2 sidecar writability on %s: %w", dir, err)
+		for _, name := range v2SidecarDirNames {
+			dir := filepath.Join(root, name)
+			if !isRealDirectory(dir) {
+				continue
+			}
+			if err := os.Chmod(dir, 0o755); err != nil {
+				return fmt.Errorf("restore V2 sidecar writability on %s: %w", dir, err)
+			}
 		}
 	}
 	return nil
@@ -1608,4 +1621,132 @@ func renderAutopilotContext(ctx TaskContextForEnv) string {
 	}
 
 	return b.String()
+}
+
+// writeDesignDocumentContext materializes the read-only workspace a
+// page-design task runs against, under
+// {workdir}/.agent_context/design_document/ (P-011 / DC-042):
+//
+//	context/task.json          the canonical, immutable task envelope
+//	context/design-system.json the pinned saved design system, when one exists
+//	context/repository.json    repository grounding, when a repo was attached
+//	base/                      the base revision, for adjust / regenerate
+//
+// Everything is stamped read-only. The agent's writable area is
+// $MULTICA_OUTPUT_DIR, and keeping the inputs immutable is what makes a
+// revision's input_snapshot_sha256 mean anything: an agent that could edit
+// its own brief could make any package look like it matched the request.
+func writeDesignDocumentContext(workDir string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
+	if strings.TrimSpace(ctx.DesignDocumentContext) == "" {
+		return nil
+	}
+
+	var task map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(ctx.DesignDocumentContext), &task); err != nil {
+		return fmt.Errorf("decode design document task context: %w", err)
+	}
+	var discriminator string
+	if err := json.Unmarshal(task["type"], &discriminator); err != nil || discriminator != "design_document_task" {
+		return fmt.Errorf("invalid design document task context type")
+	}
+	var operation string
+	if err := json.Unmarshal(task["operation"], &operation); err != nil {
+		return fmt.Errorf("decode design document operation: %w", err)
+	}
+	if operation != "generate" && operation != "adjust" && operation != "regenerate" {
+		return fmt.Errorf("unsupported design document operation %q", operation)
+	}
+
+	root := filepath.Join(workDir, ".agent_context", "design_document")
+	if err := recordMkdirAll(root, 0o755, manifest); err != nil {
+		return err
+	}
+	contextDir := filepath.Join(root, "context")
+	if err := recordMkdirAll(contextDir, 0o755, manifest); err != nil {
+		return err
+	}
+
+	taskJSON, err := json.MarshalIndent(task, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode design document task context: %w", err)
+	}
+	if err := recordWriteFile(filepath.Join(contextDir, "task.json"), taskJSON, 0o444, manifest); err != nil {
+		return err
+	}
+
+	// Split the two large optional blocks into their own files so the agent
+	// can read the design constraint and the repository evidence without
+	// paging through the whole envelope.
+	readOnlyDirs := []string{contextDir}
+	for _, block := range []struct {
+		key      string
+		filename string
+	}{
+		{key: "design_context", filename: "design-system.json"},
+		{key: "repository_grounding", filename: "repository.json"},
+	} {
+		raw, present := task[block.key]
+		if !present || len(raw) == 0 || string(raw) == "null" {
+			continue
+		}
+		var probe any
+		if err := json.Unmarshal(raw, &probe); err != nil || probe == nil {
+			continue
+		}
+		if err := recordWriteFile(filepath.Join(contextDir, block.filename), raw, 0o444, manifest); err != nil {
+			return err
+		}
+	}
+
+	// base/ is the immutable revision an adjustment starts from. It is
+	// absent on first generation because there is nothing to adjust.
+	if operation == "adjust" || operation == "regenerate" {
+		baseDir := filepath.Join(root, "base")
+		if err := recordMkdirAll(baseDir, 0o755, manifest); err != nil {
+			return err
+		}
+		if raw, present := task["base_package"]; present && len(raw) > 0 && string(raw) != "null" {
+			var base map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &base); err != nil {
+				return fmt.Errorf("decode design document base package: %w", err)
+			}
+			for name, contents := range base {
+				if !safeDesignDocumentBaseName(name) {
+					return fmt.Errorf("unsafe design document base entry %q", name)
+				}
+				var body string
+				if err := json.Unmarshal(contents, &body); err != nil {
+					return fmt.Errorf("decode design document base entry %q: %w", name, err)
+				}
+				target := filepath.Join(baseDir, filepath.FromSlash(name))
+				if err := recordMkdirAll(filepath.Dir(target), 0o755, manifest); err != nil {
+					return err
+				}
+				if err := recordWriteFile(target, []byte(body), 0o444, manifest); err != nil {
+					return err
+				}
+			}
+		}
+		readOnlyDirs = append(readOnlyDirs, baseDir)
+	}
+
+	return stampV2ReadOnly(readOnlyDirs...)
+}
+
+// safeDesignDocumentBaseName rejects any base entry that could escape the
+// base directory. The names come from a package the platform built, but this
+// writes to the agent's filesystem, so it validates rather than trusts.
+func safeDesignDocumentBaseName(name string) bool {
+	if name == "" || strings.HasPrefix(name, "/") || strings.Contains(name, "\\") {
+		return false
+	}
+	if !fs.ValidPath(name) || path.Clean(name) != name {
+		return false
+	}
+	for _, segment := range strings.Split(name, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
 }

@@ -189,6 +189,7 @@ type TaskContextForEnv struct {
 	DesignRestoreContext              string // non-empty for Gallery Native restore execution tasks
 	DesignSystemProfileAnalyzeContext string // non-empty for UI specification profile analysis tasks
 	ProjectDesignSystemContext        string // non-empty for project design-system generation tasks
+	DesignDocumentContext             string // non-empty for page-design tasks producing a design document
 	PMOSyncContext                    string // non-empty for PMO requirement sync tasks (prompt-only, no issue checkout)
 	HandoffNote                       string // assignment handoff instruction; rendered into issue_context.md (MUL-3375)
 	IsSquadLeader                     bool   // true when THIS TASK runs the agent in the squad-leader role (may exit silently on no_action); derived from the claim's is_leader_task / squad_id, never sniffed from instructions text (MUL-5811)
@@ -377,6 +378,14 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		outputDir, err = filepath.Abs(filepath.Join(envRoot, "output", "project-design-system"))
 		if err != nil {
 			return nil, fmt.Errorf("execenv: resolve project design system output directory: %w", err)
+		}
+		scratchDirs = append(scratchDirs, outputDir)
+	}
+	if params.Task.DesignDocumentContext != "" {
+		var err error
+		outputDir, err = filepath.Abs(filepath.Join(envRoot, "output", "design-document"))
+		if err != nil {
+			return nil, fmt.Errorf("execenv: resolve design document output directory: %w", err)
 		}
 		scratchDirs = append(scratchDirs, outputDir)
 	}
@@ -687,6 +696,18 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		}
 		if err := os.MkdirAll(env.OutputDir, 0o755); err != nil {
 			logger.Warn("execenv: create project design system output dir on reuse failed", "error", err)
+			return nil
+		}
+	}
+	if params.Task.DesignDocumentContext != "" && rootDir != "" {
+		var err error
+		env.OutputDir, err = filepath.Abs(filepath.Join(rootDir, "output", "design-document"))
+		if err != nil {
+			logger.Warn("execenv: resolve design document output dir on reuse failed", "error", err)
+			return nil
+		}
+		if err := os.MkdirAll(env.OutputDir, 0o755); err != nil {
+			logger.Warn("execenv: create design document output dir on reuse failed", "error", err)
 			return nil
 		}
 	}
