@@ -1,6 +1,6 @@
 # Multica 设计中心决策台账
 
-> 最后更新：2026-08-12
+> 最后更新：2026-08-16
 > 规则：保留历史，通过状态变化表达推翻或替代，不删除旧决策
 
 ## 状态说明
@@ -177,10 +177,14 @@
 - 失败边界：调整失败时保留调整前的草稿，不产生半更新文件。
 - 排除项：第一阶段不提供 Token 表单、代码编辑器、拖拽画布或 pending revision 工作流。
 
-### DC-025 第一阶段一个项目只维护一套设计体系
+### DC-025 旧决策：第一阶段一个项目只维护一套设计体系
 
-- 状态：`confirmed`
+- 状态：`superseded`
 - 日期：2026-07-28
+- 替代日期：2026-08-16
+- 替代原因：一个项目可能同时包含 C 端 H5、App 和后台管理系统等多个仓库，它们的设计语言不能被迫共用一套体系。
+- 替代决策：DC-052。
+- 保留说明：以下原文保留为历史。草稿/已保存语义、保存即成为当前有效体系、彻底重做需提示替换等规则继续有效，只有“每个项目一套”这一条被替代。
 - 决策：每个项目只维护一套当前设计体系，状态仅为未建立、草稿和已保存。
 - 保存语义：Agent 生成和调整的内容自动保留为草稿；用户点击“保存为项目设计体系”后成为该项目当前体系，后续继续调整同一套体系。
 - 替换边界：彻底重做时必须明确提示用户将替换当前体系。
@@ -408,6 +412,94 @@
 - 基础与进度：Phase A 不从零开始，现有任务、本地运行时、Native V2 package、对象存储、digest、Audit、`designpreview`、draft/saved、仓库事实和设计中心工作区是 A1 至 A5 的复用基础。产品设计确认度为 100%；按当前剩余工程工作保守估算，Phase A 工程基线约 40%–45%，暂记约 42%。每个阶段报告必须按实际结果重算，不得按阶段数量机械累加。
 - 方案：[2026-08-12-native-design-phase-a-design-document-design.md](../../superpowers/specs/2026-08-12-native-design-phase-a-design-document-design.md)。
 
+### DC-047 Open Design 证据基线改为 v0.19.2
+
+- 状态：`confirmed`
+- 日期：2026-08-16
+- 决策：接入参照基线从 `open-design-v0.16.1`（commit `276b4d8e`）改为 `open-design-v0.19.2`。此后凡引用 Open Design 行为作为依据的判断，均以 0.19.2 为准。
+- 历史处理：`OD-021` 至 `OD-044` 记录的是固定 worker 路径在 0.16.1 上的行为。该路径已由 DC-039 否决，这批证据降级为失败隔离与门禁设计的经验来源，不再是行为基线。
+- 影响：`open-design-evidence.md` 与 `open-design-engine-integration.md` 中绑定旧版本的结论需标注为历史证据。
+
+### DC-048 迁移范围收窄为首页、社区、设计体系三个 tab
+
+- 状态：`confirmed`
+- 日期：2026-08-16
+- 依据：用户实际使用 0.19.2 桌面端后确认，Multica 只需要这三个 tab 内部的能力。
+- 范围内：首页设计任务发起器、社区模板画廊、设计体系目录与创建流程。
+- 范围外：Studio 外壳、自动化、集成、看板、成员、插件市场管理面、功能 skill 目录、本地 daemon 与 CLI 适配器、Electron 外壳、BYOK 代理、clipper 扩展、HTML/PDF/PPTX/MP4 导出，以及 deck / image / video / audio 产物形态。
+- Studio 的替代物：Multica 项目内的 Design Document 工作区，不再另建。
+- 相关事实：0.19.2 已在 v0.13.0（commit `29b138f7a`，#4691）把 Brands（中文标签“设计系统”）并入设计体系，品牌提取降级为创建向导的一个来源。`BrandsTab.tsx`、`/brands` 路由和 `entry.navBrands` 已无导航入口。Multica 照搬合并后的模型，不建独立品牌套件实体。
+
+### DC-049 首页采用场景 chip 并复刻 Open Design 首页信息架构
+
+- 状态：`confirmed`
+- 日期：2026-08-16
+- 决策：设计中心首页复刻 Open Design 首页的视觉与信息架构（输入卡、场景 chip 轨、场景插画、选择器区），品牌替换为 Multica Design。
+- 复刻边界：只复刻视觉与信息架构，不搬运代码。Open Design 使用 Next.js 16 + React 18 + CSS Modules，Multica 必须按仓库 UI 规范用 shadcn/Base UI、语义 token 和 role-named `--text-*` 字号重写。`HomeHero.tsx` 与 `HomeView.tsx` 中的 AMR 余额、DeepSeek Harness 设置、Vela 计费、宠物、campaign 和 onboarding 均不迁。
+- chip 范围：第一版只放有真实产物支撑的五个——UI Mockup、网站复刻、线框图、移动应用、来自 Figma；“来自模板”和“创建品牌套件”灰态留位；其余八个按 DC-048 不放。
+- 契约预留：发起 API 从第一版就带 `recipe` 字段，第一版只接受上述五个值，模板切片建成后扩展为模板 id，不改 API 契约。
+- 依据：Open Design 12 个创建 chip 中有 7 个的 `projectKind` 同为 `prototype`，chip 的真实维度是场景配方而非产物类型。
+
+### DC-050 tweaks 与 critique 进入产品
+
+- 状态：`confirmed`
+- 日期：2026-08-16
+- 决策：Open Design 的 tweaks 面板与 critique 评审进入 Multica 产品。两者在 Open Design 属于 Studio 而不属于 DC-048 的三个 tab，在 Multica 落在项目内的 Design Document 工作区。
+- tweaks 的形态：它是一个 skill，不是平台 UI——由智能体把产物重构为读取 CSS 自定义属性（`--accent`、`--scale`、`--density`、`--mode`、`--motion`），并附带包内 vanilla-JS 侧栏，改动持久化到 `localStorage`。
+- tweaks 的边界：只允许进入 Design Document 的 `prototype/`（Phase A 第 7.4 节允许包内 JS 与本地状态）。不得进入设计体系包——V2 Audit 与设计体系 prompt 均禁止 script、事件属性、表单和外部引用。
+- critique 的形态：`apps/daemon/src/critique/` 共 18 个文件、3458 行，包含 designer/critic/brand/a11y/copy 五个带权重的评审角色、`maxRounds` 阈值循环、超时、run registry、scoreboard、transcript 和 SSE 流式回放。`ratchet.ts` 是灰度推进建议，属运维工具，不迁。
+- critique 的边界：critique 是产物成型前的迭代改进循环，Audit/Preview 是产物成型后的系统门禁。DC-034 不松动——**critique 分数达标不构成 draft 形成条件**，draft 仍只能在 Audit 与 Preview 通过后原子形成。
+- 配置取舍：`fallbackPolicy: fail` 与 Multica 的 fail-closed 语义一致，采用；`ship_best` 与 `ship_last` 与“不允许把失败或不完整内容自动推进为已保存状态”冲突，不采用。
+
+### DC-051 不把设计体系素材授权作为约束项
+
+- 状态：`confirmed`
+- 日期：2026-08-16
+- 背景：Open Design 附带 154 个设计体系包，其中含 Apple、Airbnb、Stripe、BMW 等真实品牌的设计语言。评估迁移时曾提出其在商业产品内再分发与开源仓库自身分发不是同一问题。
+- 决策：用户判断 Open Design 作为开源项目公开展示即表明无法律风险，本条不作为迁移约束，从待决策列表关闭。
+- 记录用途：保留决策依据本身，便于日后需要时复核，而不是重新讨论。
+
+### DC-052 设计体系按仓库划分
+
+- 状态：`confirmed`
+- 日期：2026-08-16
+- 替代：DC-025。
+- 决策：同一项目下的不同仓库各自维护一套设计体系。一个项目可能同时包含 C 端 H5、App 和后台管理系统，它们的设计语言不能被迫共用一套。
+- 模型：`project_design_system` 增加可空的 `project_resource_id`。`NULL` 表示项目级体系（跨仓库通用，也是不选仓库时使用的那套），非 `NULL` 表示该仓库专属体系。现有行天然是项目级，零数据迁移。
+- 解析链：选了仓库先取该仓库体系，没有则回落项目级；没选仓库直接取项目级；仍然没有则按 DC-035 继续回落到本地 `DESIGN.md` 和仓库现实。
+- 唯一性：必须拆成两个 partial unique index。PostgreSQL 将 `NULL` 视为互不相等，单一复合唯一键会放行多条项目级体系。
+- 连带修正：`project_design_system.platform` 原为项目级且 `NOT NULL`，一个项目只能声明一个平台，与多形态项目对不上。按仓库划分后其语义变为“该仓库是什么形态”。
+- 不引入工作区默认体系：目录只做“挑选 → 复制成项目体系”。要统一视觉时使用“从现有体系复制”，项目内明确留下自己的一份，保持可追溯。这与 P-005“空项目必须保持未建立状态”一致。
+- 界面影响：DC-031 需澄清而非推翻。设计体系 Tab 内新增仓库切换器属于 scope 切换，内容主视图仍然直接渲染；不得据此退回摘要列表加二级入口的形态。
+
+### DC-053 仓库可选，选中才做仓库取证
+
+- 状态：`confirmed`
+- 日期：2026-08-16
+- 决策：设计任务发起时，项目与智能体必选，仓库与任务（Issue）可选。
+- 选中仓库：带出该仓库的设计体系，并在 task 内对该仓库执行有界只读取证。这同时把 DC-043 原本含糊的“有界”定义为“对这一个仓库取证”。
+- 未选仓库：跳过整个 grounding 阶段直接生成，使用项目级设计体系，并在文档中显式标注本次未做仓库取证，不得让用户误以为智能体读过代码。
+- 依据：与 P-008“不增加隐式或强制的前置仓库扫描”一致。
+
+### DC-054 共享设计体系与社区模板采用先窄后宽
+
+- 状态：`confirmed`
+- 日期：2026-08-16
+- 修订：DC-041 的分期口径。
+- 决策：工作区级设计体系目录与社区模板画廊排在 Phase A 之后，不与 A1 至 A6 交错实施。
+- 首页处理：A2 只为设计体系选择器与模板选择器留出灰态位置，等对应切片建成后点亮。
+- 依据：原生 V2 链路的生产端与包契约此前从未接通（见 DC-055），先证明一条端到端链路能跑通，优于同时铺开三条。
+
+### DC-055 原生 V2 生产端与包契约必须先对齐
+
+- 状态：`confirmed`
+- 日期：2026-08-16
+- 问题：`handler/project_design_system.go` 为所有 generate / adjust / regenerate 任务标记 `PackageSchema = multica.project-design-system/v2`，但智能体收到的产物指令仍是 V1 三文件契约（`DESIGN.md`、`tokens.css`、`components.html`）。`components.html` 不在 `classifyV2Artifact` 的接受列表内，任务在 Audit 之前即以 `archive_path_undeclared` 失败。
+- 第二处缺陷：预览服务注入的 `<link rel="stylesheet" href="tokens.css">` 是相对路径，而所有预览目标都位于下一级目录（`ui-kit/index.html`、`preview/*.html`），解析后 404。Audit 的 Token 检查是静态文本检查、Preview 只检查可见性，两者都会通过，于是系统对一个从未应用设计 Token 的页面出具了通过回执和截图。
+- 根因：prompt 与包契约由两侧独立规定，没有任何测试跨越这条边界。
+- 决策：在任何新切片之前先对齐两侧，并补跨边界测试——按 prompt 声明的文件集构造 package，必须通过真实的 `CollectV2Directory` 与 `auditV2Package`。
+- 进度口径影响：DC-046 记录的 Phase A 工程基线约 42%，其中 A4 的 60% 建立在这条从未被原生链路走通的管道上。对齐并取得真实证据后必须重算。
+
 ## 当前提案
 
 ### DC-007 旧提案：从现有设计中心发起设计任务
@@ -466,3 +558,5 @@
 ## 下一步
 
 新 Phase A 的首页入口、`multica.design-document/v1`、不可变 revisions、draft/saved、任务内仓库 Grounding、持续工作空间、现有本地浏览器强制门禁、任务（Issue）可选关联和 A1 至 A6 内部子切片均已确认。用户复核书面规格后，只为 A1 至 A6 编写详细实施计划；计划必须按 DC-040 限定每个子切片的产品、代码、API 和数据范围，并携带退役账本与真实验证门禁。不得恢复独立 Phase B、迁移 `feature/fengchen-fixed-v2`、继续 Open Design Worker/Runtime，或把 Slice B 至 E 混入 Phase A。
+
+2026-08-16 补充：迁移范围已按 DC-048 收窄为 Open Design 的首页、社区和设计体系三个 tab；DC-055 的生产端契约对齐先于所有新切片；DC-052 的设计体系仓库化排在 A1 之前，因为 A2 的仓库选择和 A3 的取证边界都依赖它。当前实施顺序为 DC-055 对齐 → 设计体系仓库化 → A1 至 A6 → 工作区级体系目录 → 社区模板画廊。
