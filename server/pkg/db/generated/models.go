@@ -575,6 +575,52 @@ type DesignDelivery struct {
 	AuditMetadata []byte             `json:"audit_metadata"`
 }
 
+type DesignDocument struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
+	IssueID           pgtype.UUID        `json:"issue_id"`
+	Title             string             `json:"title"`
+	Platform          string             `json:"platform"`
+	Recipe            string             `json:"recipe"`
+	DraftRevisionID   pgtype.UUID        `json:"draft_revision_id"`
+	SavedRevisionID   pgtype.UUID        `json:"saved_revision_id"`
+	CurrentAgentID    pgtype.UUID        `json:"current_agent_id"`
+	ActiveTaskID      pgtype.UUID        `json:"active_task_id"`
+	ActiveOperation   pgtype.Text        `json:"active_operation"`
+	InputSnapshot     []byte             `json:"input_snapshot"`
+	LastError         []byte             `json:"last_error"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	SavedAt           pgtype.Timestamptz `json:"saved_at"`
+}
+
+type DesignDocumentRevision struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	DesignDocumentID    pgtype.UUID        `json:"design_document_id"`
+	RevisionNumber      int32              `json:"revision_number"`
+	PackageSchema       string             `json:"package_schema"`
+	ContentDigest       string             `json:"content_digest"`
+	ArchiveObjectKey    string             `json:"archive_object_key"`
+	ArtifactIndex       []byte             `json:"artifact_index"`
+	Manifest            []byte             `json:"manifest"`
+	Brief               []byte             `json:"brief"`
+	Coverage            []byte             `json:"coverage"`
+	Audit               []byte             `json:"audit"`
+	Preview             []byte             `json:"preview"`
+	InputSnapshotSha256 string             `json:"input_snapshot_sha256"`
+	BaseRevisionID      pgtype.UUID        `json:"base_revision_id"`
+	DesignSystemDigest  pgtype.Text        `json:"design_system_digest"`
+	SourceTaskID        pgtype.UUID        `json:"source_task_id"`
+	AgentID             pgtype.UUID        `json:"agent_id"`
+	Instruction         pgtype.Text        `json:"instruction"`
+	Scope               []byte             `json:"scope"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+}
+
 type DesignDraft struct {
 	ID                  pgtype.UUID        `json:"id"`
 	WorkspaceID         pgtype.UUID        `json:"workspace_id"`

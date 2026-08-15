@@ -697,6 +697,16 @@ detached_folders AS (
     SET parent_id = NULL
     WHERE design_folder.workspace_id = $1
       AND design_folder.parent_id IS NOT NULL
+),
+detached_design_documents AS (
+    UPDATE design_document
+    SET current_agent_id = NULL,
+        active_task_id = NULL,
+        active_operation = NULL
+    WHERE design_document.workspace_id = $1
+      AND (design_document.current_agent_id IS NOT NULL
+           OR design_document.active_task_id IS NOT NULL
+           OR design_document.active_operation IS NOT NULL)
 )
 UPDATE project_design_system
 SET current_agent_id = NULL,
@@ -721,6 +731,12 @@ deleted_drafts AS (
 ),
 deleted_open_design_runs AS (
     DELETE FROM open_design_run WHERE open_design_run.workspace_id = $1
+),
+deleted_design_document_revisions AS (
+    DELETE FROM design_document_revision WHERE design_document_revision.workspace_id = $1
+),
+deleted_design_documents AS (
+    DELETE FROM design_document WHERE design_document.workspace_id = $1
 )
 DELETE FROM project_design_system_package
 WHERE design_system_id IN (

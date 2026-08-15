@@ -56,6 +56,8 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"design_catalog_template":         workspaceDelete,
 	"design_component_recipe_set":     workspaceDelete,
 	"design_delivery":                 workspaceDelete,
+	"design_document":                 workspaceDelete,
+	"design_document_revision":        workspaceDelete,
 	"design_draft":                    workspaceDelete,
 	"design_file":                     workspaceDelete,
 	"design_folder":                   workspaceDelete,

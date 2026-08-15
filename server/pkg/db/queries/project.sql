@@ -104,6 +104,24 @@ deleted_open_design_runs AS (
       AND open_design_run.project_id = $1
     RETURNING open_design_run.id
 ),
+deleted_design_document_revisions AS (
+    DELETE FROM design_document_revision
+    WHERE design_document_revision.workspace_id = $2
+      AND design_document_revision.design_document_id IN (
+        SELECT design_document.id
+        FROM design_document
+        WHERE design_document.workspace_id = $2
+          AND design_document.project_id = $1
+    )
+    RETURNING design_document_revision.id
+),
+deleted_design_documents AS (
+    DELETE FROM design_document
+    WHERE design_document.workspace_id = $2
+      AND design_document.project_id = $1
+      AND (SELECT count(*) FROM deleted_design_document_revisions) >= 0
+    RETURNING design_document.id
+),
 deleted_design_system_packages AS (
     DELETE FROM project_design_system_package
     WHERE project_design_system_package.design_system_id IN (

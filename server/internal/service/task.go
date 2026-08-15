@@ -6516,3 +6516,58 @@ func agentToMap(a db.Agent) map[string]any {
 		"archived_by":          util.UUIDToPtr(a.ArchivedBy),
 	}
 }
+
+// DesignDocumentTaskContextType marks a task as a page-design job producing a
+// multica.design-document/v1 package (P-011 / DC-042). Distinct from
+// ProjectDesignSystemTaskContextType: a design system describes a visual
+// contract, a design document describes pages built under one.
+const DesignDocumentTaskContextType = "design_document_task"
+
+type DesignDocumentOperation string
+
+const (
+	DesignDocumentGenerate   DesignDocumentOperation = "generate"
+	DesignDocumentAdjust     DesignDocumentOperation = "adjust"
+	DesignDocumentRegenerate DesignDocumentOperation = "regenerate"
+)
+
+// DesignDocumentTaskContext is the canonical input a page-design task runs
+// against. Everything the agent needs is fixed here at enqueue time so a
+// retry, a resume, or a later audit sees the same inputs — the package's
+// input_snapshot_sha256 is computed over this envelope's request fields.
+type DesignDocumentTaskContext struct {
+	Type        string                  `json:"type"`
+	Operation   DesignDocumentOperation `json:"operation"`
+	RequesterID string                  `json:"requester_id"`
+	WorkspaceID string                  `json:"workspace_id"`
+	ProjectID   string                  `json:"project_id"`
+	// Optional repository the design targets. Empty means the task did no
+	// repository grounding and the agent must not imply it read any code
+	// (DC-053).
+	ProjectResourceID string `json:"project_resource_id,omitempty"`
+	// Optional traceable link. Saving never changes issue state (DC-045).
+	IssueID          string          `json:"issue_id,omitempty"`
+	DesignDocumentID string          `json:"design_document_id"`
+	AgentID          string          `json:"agent_id"`
+	Project          json.RawMessage `json:"project"`
+	Platform         string          `json:"platform"`
+	// The home composer's scenario recipe (DC-049).
+	Recipe      string          `json:"recipe"`
+	Brief       string          `json:"brief"`
+	Attachments json.RawMessage `json:"attachments,omitempty"`
+	// The project's saved design system, resolved through the repository ->
+	// project fallback, plus the digest it was pinned at.
+	DesignContext       json.RawMessage `json:"design_context,omitempty"`
+	DesignSystemDigest  string          `json:"design_system_digest,omitempty"`
+	RepositoryGrounding json.RawMessage `json:"repository_grounding,omitempty"`
+	// Set for adjust / regenerate. BaseRevisionID pins the immutable revision
+	// this run starts from, so a draft that moved underneath the user is a
+	// detectable conflict rather than a silent overwrite.
+	BaseRevisionID      string          `json:"base_revision_id,omitempty"`
+	BaseContentDigest   string          `json:"base_content_digest,omitempty"`
+	Instruction         string          `json:"instruction,omitempty"`
+	Scope               json.RawMessage `json:"scope,omitempty"`
+	OutputPolicy        json.RawMessage `json:"output_policy"`
+	PackageSchema       string          `json:"package_schema"`
+	InputSnapshotSHA256 string          `json:"input_snapshot_sha256"`
+}
