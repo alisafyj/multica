@@ -118,6 +118,7 @@ type Task struct {
 	DesignSystemProfileAnalyzeContext json.RawMessage        `json:"design_system_profile_analyze_context,omitempty"`
 	TemplateBlueprintAnalyzeContext   json.RawMessage        `json:"design_template_blueprint_analyze_context,omitempty"`
 	ProjectDesignSystemContext        json.RawMessage        `json:"project_design_system_context,omitempty"`
+	DesignDocumentContext             json.RawMessage        `json:"design_document_context,omitempty"`
 	PMOSyncContext                    json.RawMessage        `json:"pmo_sync_context,omitempty"` // raw PMO sync context JSONB (workspace + run id + strict acquisition prompt)
 	HandoffNote                       string                 `json:"handoff_note,omitempty"`     // assignment handoff instruction; rendered into the opening prompt + issue_context.md
 

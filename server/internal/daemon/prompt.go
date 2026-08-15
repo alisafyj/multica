@@ -150,6 +150,9 @@ func buildPromptBody(task Task, provider string) string {
 		}
 		return buildProjectDesignSystemPrompt()
 	}
+	if len(task.DesignDocumentContext) > 0 {
+		return buildDesignDocumentPrompt(task)
+	}
 	if len(task.PMOSyncContext) > 0 {
 		return buildPMOSyncPrompt(task)
 	}
@@ -1079,4 +1082,82 @@ func taskIsSquadLeader(task Task) bool {
 		return task.Agent != nil && strings.Contains(task.Agent.Instructions, squadBriefingMarker)
 	}
 	return task.IsLeaderTask || task.SquadID != ""
+}
+
+// buildDesignDocumentPrompt drives a page-design task producing a
+// multica.design-document/v1 package (P-011 / DC-042).
+//
+// It is deliberately NOT the design-system prompt with different filenames.
+// A design system is a static visual contract, so its package forbids all
+// script. A design document has to prove a flow works, so its prototype runs
+// package-local JavaScript — while staying completely offline. That single
+// difference drives most of the rules below.
+//
+// The accepted file set mirrors designdocument's collector. Keep the two in
+// sync; the crossing test builds a package from this text and pushes it
+// through the real collector and audit.
+func buildDesignDocumentPrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a product page designer for a Multica workspace, executing one end-to-end native Agent session.\n\n")
+	b.WriteString("Read `.agent_context/design_document/context/task.json` first. It is canonical — the requirement, the target platform, the design scenario, the pinned project design system, and (when the task has one) the repository evidence all come from there. Do not re-derive them from elsewhere.\n")
+	b.WriteString("For adjust or regenerate operations, also read every file under the immutable `base/` directory before designing. That is the revision you are changing.\n\n")
+
+	b.WriteString("Stages (one Agent session, no delegation):\n")
+	b.WriteString("1. Inventory the evidence — the requirement, the pinned design system, the optional task (Issue), the optional repository grounding, and the immutable base for adjust / regenerate. Classify each item as a confirmed fact, a conflict needing a decision, or a documented fallback.\n")
+	b.WriteString("2. Decide the page set. A document may hold a main page, its sub-pages, page states, overlays and the key flows that connect them. Design only what the requirement supports — pages nobody asked for are template residue.\n")
+	b.WriteString("3. Write `brief.json` first. It is the semantic layer the rest of the package is checked against: pages, states, overlays, flows, mock data scenarios, the mapping from requirement to page, stable semantic IDs, accessibility and key-interaction requirements, and explicit non-goals.\n")
+	b.WriteString("4. Build the prototype so those pages, states, overlays and flows actually work. Use the pinned design system's Tokens; do not invent a parallel visual language.\n")
+	b.WriteString("5. Write `coverage.json` mapping what you delivered back to the requirement, and state honestly what you did not cover and why.\n")
+	b.WriteString("6. Read back every file, open the prototype's own logic in your head end to end, and verify each declared flow is reachable. Promise-only or delegated work is not completion.\n\n")
+
+	b.WriteString(designDocumentPackageContract())
+
+	b.WriteString("Rules:\n")
+	b.WriteString("- Complete the design yourself in this process. Task delegation, sub-agents, and hidden follow-up work are forbidden. Do not use the `task` tool, spawn a subagent, delegate to another specialist, or exit while delegated work is pending.\n")
+	b.WriteString("- The prototype must run with the network switched off. This is the single hardest rule: no `fetch`, no `XMLHttpRequest`, no `WebSocket`, no `EventSource`, no `navigator.sendBeacon`, no Service Worker, no CDN script or stylesheet, no remote font, no external image. Every `src` and `href` must resolve to a file inside this package.\n")
+	b.WriteString("- Use mock data defined inside the package. Never call a real project API, and never embed a credential, token, cookie or key of any kind.\n")
+	b.WriteString("- Never modify the user's repository. Repository evidence is read-only input.\n")
+	b.WriteString("- Every page, state and named block that `brief.json` declares must exist in the prototype under that same stable ID, and every ID must be unique across the document.\n")
+	b.WriteString("- `coverage.json` is your own report. It does not decide whether this task succeeded — the platform verifies the package independently and will reject a package whose claims do not hold.\n")
+	b.WriteString("- For adjust / regenerate, `base/` is read-only. Your output must be a complete package, not a patch, and it must stay internally consistent even when the requested change is local.\n")
+	b.WriteString("- Do not paste file contents into the final response; report only a short completion summary. The package files are authoritative.\n")
+
+	if designDocumentTaskIsUngrounded(task) {
+		b.WriteString("- This task has NO repository grounding: no repository was attached. Design from the requirement and the design system alone, and do not describe the result as matching existing code — you have not seen any.\n")
+	}
+	b.WriteString("- Before exiting, verify every required artifact is on disk and non-empty. Do not report success otherwise.\n")
+	return b.String()
+}
+
+// designDocumentTaskIsUngrounded reports whether the task ran without a
+// repository. The agent must not imply it read code it never saw (DC-053).
+func designDocumentTaskIsUngrounded(task Task) bool {
+	if len(task.DesignDocumentContext) == 0 {
+		return true
+	}
+	var envelope struct {
+		ProjectResourceID string `json:"project_resource_id"`
+	}
+	if err := jsonUnmarshal(task.DesignDocumentContext, &envelope); err != nil {
+		return true
+	}
+	return strings.TrimSpace(envelope.ProjectResourceID) == ""
+}
+
+// designDocumentPackageContract states the exact file set the platform
+// collector accepts, mirroring designdocument's classifier. Any other path is
+// rejected before the audit runs.
+func designDocumentPackageContract() string {
+	var b strings.Builder
+	b.WriteString("Package contract — write these files under `$MULTICA_OUTPUT_DIR`. Any other path is rejected before the audit runs:\n\n")
+	b.WriteString("Required:\n")
+	b.WriteString("- `brief.json` — the semantic layer described above.\n")
+	b.WriteString("- `prototype/index.html` — the prototype entry point, a complete HTML document.\n")
+	b.WriteString("- `coverage.json` — requirement coverage and honest gaps.\n\n")
+	b.WriteString("Optional:\n")
+	b.WriteString("- `prototype/<path>.html`, `prototype/<path>.css`, `prototype/<path>.js` — split the prototype as its real complexity requires.\n")
+	b.WriteString("- `assets/<file>` — images and fonts the prototype references.\n\n")
+	b.WriteString("Do NOT write `manifest.json`. The platform generates it from what you produced; a manifest of your own is an undeclared path and fails the collector.\n\n")
+	b.WriteString("Inside `prototype/`, package-local HTML, CSS and JavaScript are allowed and expected. Use them for page switching, tabs, filtering and sorting, modals and drawers and menus, form input with local validation, loading / empty / error / success states, and mock data transitions. `localStorage` is allowed for local state such as remembering the current page.\n\n")
+	return b.String()
 }

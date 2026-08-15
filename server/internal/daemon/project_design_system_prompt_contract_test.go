@@ -233,3 +233,103 @@ func stylesheetHref(t *testing.T, body string) string {
 	}
 	return rest[:end]
 }
+
+// designDocumentPromptTask builds a page-design task envelope.
+func designDocumentPromptTask(t *testing.T, projectResourceID string) Task {
+	t.Helper()
+	envelope := map[string]any{
+		"type":                  "design_document_task",
+		"operation":             "generate",
+		"workspace_id":          "33333333-3333-3333-3333-333333333333",
+		"project_id":            "22222222-2222-2222-2222-222222222222",
+		"design_document_id":    "11111111-1111-1111-1111-111111111111",
+		"agent_id":              "44444444-4444-4444-4444-444444444444",
+		"platform":              "web",
+		"recipe":                "ui-mockup",
+		"brief":                 "An order review page for clinic staff.",
+		"package_schema":        "multica.design-document/v1",
+		"input_snapshot_sha256": "sha256:" + strings.Repeat("a", 64),
+	}
+	if projectResourceID != "" {
+		envelope["project_resource_id"] = projectResourceID
+	}
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("marshal design document context: %v", err)
+	}
+	return Task{DesignDocumentContext: raw}
+}
+
+// The design document prototype is the one place package-local JavaScript is
+// allowed, and the one place it must never reach the network. Both halves
+// have to be stated or the agent will get exactly one of them right.
+func TestDesignDocumentPromptAllowsLocalScriptAndForbidsNetwork(t *testing.T) {
+	prompt := BuildPrompt(designDocumentPromptTask(t, "cc2f9a10-64f1-4a1d-9b4e-0f4a4a2f9c31"), "opencode")
+
+	for _, allowed := range []string{
+		"package-local HTML, CSS and JavaScript are allowed and expected",
+		"`localStorage` is allowed",
+		"loading / empty / error / success states",
+	} {
+		if !strings.Contains(prompt, allowed) {
+			t.Fatalf("prompt does not permit interactive prototypes: missing %q", allowed)
+		}
+	}
+	for _, forbidden := range []string{
+		"`fetch`", "`XMLHttpRequest`", "`WebSocket`", "`EventSource`",
+		"`navigator.sendBeacon`", "Service Worker", "remote font",
+		"run with the network switched off",
+	} {
+		if !strings.Contains(prompt, forbidden) {
+			t.Fatalf("prompt does not forbid network access: missing %q", forbidden)
+		}
+	}
+}
+
+// The prompt's declared file set must match what the collector accepts, and
+// must keep the agent away from the platform-generated manifest.
+func TestDesignDocumentPromptDeclaresTheAcceptedFileSet(t *testing.T) {
+	prompt := BuildPrompt(designDocumentPromptTask(t, ""), "opencode")
+	for _, required := range []string{
+		"`brief.json`", "`prototype/index.html`", "`coverage.json`",
+		"`assets/<file>`", "Any other path is rejected before the audit runs",
+		"Do NOT write `manifest.json`",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("prompt does not declare %q", required)
+		}
+	}
+	// A design document is not a design system: its own artifacts must not
+	// leak in.
+	for _, foreign := range []string{"tokens.css", "ui-kit/index.html", "source/index.json", "components.html"} {
+		if strings.Contains(prompt, foreign) {
+			t.Fatalf("design document prompt names design-system artifact %q", foreign)
+		}
+	}
+}
+
+// Without a repository the agent has seen no code, and must not describe the
+// result as matching any (DC-053).
+func TestDesignDocumentPromptFlagsMissingRepositoryGrounding(t *testing.T) {
+	ungrounded := BuildPrompt(designDocumentPromptTask(t, ""), "opencode")
+	if !strings.Contains(ungrounded, "NO repository grounding") {
+		t.Fatalf("ungrounded prompt does not say the task saw no repository:\n%s", ungrounded)
+	}
+	if !strings.Contains(ungrounded, "do not describe the result as matching existing code") {
+		t.Fatalf("ungrounded prompt does not forbid claiming code fidelity:\n%s", ungrounded)
+	}
+
+	grounded := BuildPrompt(designDocumentPromptTask(t, "cc2f9a10-64f1-4a1d-9b4e-0f4a4a2f9c31"), "opencode")
+	if strings.Contains(grounded, "NO repository grounding") {
+		t.Fatalf("grounded prompt wrongly claims the task saw no repository:\n%s", grounded)
+	}
+}
+
+// coverage.json is the agent's own report; it must not read as the pass
+// criterion (spec §7.5 / DC-034).
+func TestDesignDocumentPromptDeniesSelfAssessmentAsPassCriterion(t *testing.T) {
+	prompt := BuildPrompt(designDocumentPromptTask(t, ""), "opencode")
+	if !strings.Contains(prompt, "It does not decide whether this task succeeded") {
+		t.Fatalf("prompt lets the agent's own coverage claim stand as the verdict:\n%s", prompt)
+	}
+}
