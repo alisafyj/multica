@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
+	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 )
 
 // sessionContinuityNoticeFor picks the notice matching what this surface
@@ -247,19 +248,55 @@ func buildProjectDesignSystemPrompt() string {
 	b.WriteString("2. Establish a single coherent visual and structural direction. Do not produce multiple alternatives or a demo switcher. Do not invent unsupported project facts to fill gaps — flag the gap and fall back to a documented default instead.\n")
 	b.WriteString("3. Produce semantic Tokens as a single `tokens.css` layer: named custom properties that downstream HTML references via `var(...)`. No duplicate token families, no ad-hoc inline values where a token fits.\n")
 	b.WriteString("4. Design only the components and page patterns that the source- or brief-supported evidence justifies. Anything beyond that is invented template residue and must be omitted.\n")
-	b.WriteString("5. Build a static token-backed UI Kit / Preview as a single self-contained HTML fragment using local assets. No scripts, no event attributes, no imports, no forms, no external embeds, no network-dependent final HTML. The preview is delivered to the platform; it is not loaded by a browser running on the agent host.\n")
+	b.WriteString("5. Build a static token-backed UI Kit as a complete HTML document using package-local assets. No scripts, no event attributes, no imports, no forms, no external embeds, no network-dependent final HTML.\n")
 	b.WriteString("6. Read back every final file and self-check that it is non-empty, internally consistent with the others, and uses the tokens you declared. Promise-only or delegated work is not completion.\n\n")
+	b.WriteString(projectDesignSystemPackageContract())
 	b.WriteString("Rules:\n")
 	b.WriteString("- Complete the design yourself in this process. Task delegation, sub-agents, and hidden follow-up work are forbidden. Do not use the `task` tool, spawn a subagent, delegate to another specialist, or exit while delegated work is pending. There is no follow-up task to clean up after you.\n")
-	b.WriteString("- For adjust / regenerate, treat the base/ directory as the immutable base directory — read-only input you must not modify, reorder, or rewrite in place. Your output must be a complete replacement of every required artifact, and the three output files must remain mutually consistent with each other even when the requested scope is local.\n")
-	b.WriteString("- `components.html` must be an HTML fragment, not a complete document. Do not include `<!doctype>`, `<html>`, `<head>`, `<body>`, `<meta>`, or `<link>`. Multica injects `tokens.css` into the preview automatically; do not add a stylesheet link.\n")
+	b.WriteString("- For adjust / regenerate, treat the base/ directory as the immutable base directory — read-only input you must not modify, reorder, or rewrite in place. Your output must be a complete replacement of every required artifact, and the output files must remain mutually consistent with each other even when the requested scope is local.\n")
 	b.WriteString("- Every selectable component or block must have unique `data-design-node-id`, `data-design-node-kind`, and `data-design-node-label` attributes. `data-design-node-kind` must be exactly `component` or `block`; use `block` for sections, groups, canvases, and compositions.\n")
 	b.WriteString("- Embedded `<style>` rules may use `var(...)` values from `tokens.css`, but must not declare or redefine CSS custom properties. `tokens.css` is the only Token source.\n")
 	b.WriteString("- Never write scripts, event attributes, imports, forms, external embeds, or arbitrary remote resources. Never invent business copy, names, or components that the evidence does not support.\n")
-	b.WriteString("- Write exact files to `$MULTICA_OUTPUT_DIR/DESIGN.md`, `$MULTICA_OUTPUT_DIR/tokens.css`, and `$MULTICA_OUTPUT_DIR/components.html`.\n")
 	b.WriteString("- Do not paste file contents into the final response; report only a short completion summary. The package files are authoritative.\n")
 	b.WriteString("- Do not modify a repository, call any external design service, upload a design file, or call Multica write commands.\n")
-	b.WriteString("- Before exiting, read back all three output files and verify they are non-empty. Delegated or promised work is not completion. Do not report success unless every required artifact is on disk.\n")
+	b.WriteString("- Before exiting, read back every output file and verify it is non-empty. Delegated or promised work is not completion. Do not report success unless every required artifact is on disk.\n")
+	return b.String()
+}
+
+// projectDesignSystemPackageContract states the exact file set the platform
+// collector accepts. It is the prompt-side mirror of
+// projectdesignsystem.classifyV2Artifact + auditV2Package: any path outside
+// this list is rejected with `archive_path_undeclared` before the audit even
+// runs, and a package with no UI Kit / preview target is rejected outright.
+// Keep the two in sync — TestProjectDesignSystemPromptContractPassesRealAudit
+// runs a package built from this text through the real collector and audit.
+func projectDesignSystemPackageContract() string {
+	var b strings.Builder
+	b.WriteString("Package contract — write these files under `$MULTICA_OUTPUT_DIR`. Any other path is rejected before the audit runs:\n\n")
+	b.WriteString("Required:\n")
+	b.WriteString("- `DESIGN.md` — the readable design system. Use `##` headings; each section becomes a navigable chapter.\n")
+	b.WriteString("- `tokens.css` — every design Token as CSS custom properties under `:root`. This is the only Token source.\n")
+	b.WriteString("- `source/index.json` — the source ledger described below.\n")
+	b.WriteString("- At least one preview target: `ui-kit/index.html` (preferred) and/or `preview/<name>.html`.\n\n")
+	b.WriteString("Optional: `USAGE.md`, `design-tokens.json`, `components.manifest.json`, `assets/<file>`, `fonts/<file>`.\n\n")
+	b.WriteString("Preview targets (`ui-kit/index.html`, `preview/<name>.html`) are complete HTML documents — include `<!doctype html>`, `<html>`, `<head>`, and `<body>`. Reference package assets with relative paths such as `../assets/logo.svg`. Multica injects `tokens.css` automatically; do not add a stylesheet link yourself. Every preview target must render visible content and must use at least one Token declared in `tokens.css`.\n\n")
+	b.WriteString("`source/index.json` must be exactly this shape, with no extra fields:\n")
+	b.WriteString("```json\n")
+	b.WriteString("{\n")
+	b.WriteString("  \"schema_version\": \"" + projectdesignsystem.SourceIndexSchemaV1 + "\",\n")
+	b.WriteString("  \"input_snapshot_sha256\": \"<copy input_snapshot_sha256 from context/task.json verbatim>\",\n")
+	b.WriteString("  \"evidence\": [{ \"id\": \"stable-id\", \"kind\": \"repository_fact\", \"summary\": \"...\", \"references\": [\"apps/crm/orders/page.tsx\"] }],\n")
+	b.WriteString("  \"conflicts\": [{ \"id\": \"stable-id\", \"summary\": \"...\", \"references\": [\"...\"] }],\n")
+	b.WriteString("  \"fallbacks\": [{ \"id\": \"stable-id\", \"summary\": \"...\" }]\n")
+	b.WriteString("}\n")
+	b.WriteString("```\n\n")
+	b.WriteString("Source ledger rules:\n")
+	b.WriteString("- All three arrays must be present. Use `[]` when a category is empty.\n")
+	b.WriteString("- `id` must be unique across all three arrays and may only contain letters, digits, `.`, `_`, `:` and `-`.\n")
+	b.WriteString("- `evidence` entries require a non-empty `kind`; `conflicts` and `fallbacks` do not carry a `kind`.\n")
+	b.WriteString("- `evidence` and `conflicts` require at least one reference. `fallbacks` may omit references.\n")
+	b.WriteString("- A reference is a reference ID from the provided material, a repository-relative path (no leading `/`, no `..`, no `:`), or a credential-free `https://` URL with no query string.\n")
+	b.WriteString("- `input_snapshot_sha256` must match `context/task.json` exactly. A mismatch fails the audit.\n\n")
 	return b.String()
 }
 

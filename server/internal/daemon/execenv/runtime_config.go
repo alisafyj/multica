@@ -660,7 +660,7 @@ func buildMetaSkillContentFull(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("Hard guardrails:\n")
 		b.WriteString("- Do NOT call `multica issue get`, `multica issue status`, or `multica issue comment add` for this task.\n")
 		b.WriteString("- Do NOT modify repositories, call Figma, or upload design files.\n")
-		b.WriteString("- Write `DESIGN.md`, `tokens.css`, and `components.html` to `MULTICA_OUTPUT_DIR`.\n\n")
+		b.WriteString("- Write the design system package to `MULTICA_OUTPUT_DIR`, following the package contract in the user message exactly. Any file outside that contract is rejected before the audit runs.\n\n")
 	} else if ctx.AutopilotRunID != "" {
 		// Autopilot run_only task: no issue exists, so the agent must not
 		// follow the assignment/comment workflow.
@@ -830,7 +830,7 @@ func buildMetaSkillContentFull(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- Output exactly one JSON object, no markdown or prose.\n")
 		b.WriteString("- Include `profile_json`, `analysis_errors`, and `summary`.\n")
 	case ctx.ProjectDesignSystemContext != "":
-		b.WriteString("This is a project design system task. The platform reads the three files from `MULTICA_OUTPUT_DIR`; final stdout is only a short completion summary.\n")
+		b.WriteString("This is a project design system task. The platform reads the package files from `MULTICA_OUTPUT_DIR`; final stdout is only a short completion summary.\n")
 	default:
 		if ctx.IsSquadLeader {
 			b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`** — unless your outcome is `no_action`. When you evaluate a trigger and decide no action is needed, calling `multica squad activity <issue-id> no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment that announces no_action, acknowledges another agent, or says you are exiting silently — such comments are noise. For all other outcomes (`action`, `failed`), a comment is still mandatory.\n\n")

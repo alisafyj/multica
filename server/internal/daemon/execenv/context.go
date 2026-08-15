@@ -1505,7 +1505,7 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 }
 
 func renderProjectDesignSystemContext() string {
-	return "# Project Design System\n\nRead `.agent_context/project_design_system/task.json` before designing. Write the completed package to `$MULTICA_OUTPUT_DIR`.\n"
+	return "# Project Design System\n\nRead `.agent_context/project_design_system/task.json` before designing. Write the completed package to `$MULTICA_OUTPUT_DIR`, following the package contract in the user message exactly.\n"
 }
 
 // renderQuickCreateContext renders issue_context.md for quick-create tasks.

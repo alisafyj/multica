@@ -690,7 +690,7 @@ func TestLoopbackPreviewServerAppliesCSPAndInjectionToValidatedHTMLTargets(t *te
 			if !strings.Contains(csp, "'sha256-"+wantHash+"'") {
 				t.Fatalf("CSP script-src hash mismatch: want sha256-%s, got %q", wantHash, csp)
 			}
-			if !strings.Contains(body, `<link rel="stylesheet" href="tokens.css">`) {
+			if !strings.Contains(body, `<link rel="stylesheet" href="/`+prefix+`/tokens.css">`) {
 				t.Fatalf("body missing tokens.css link: %q", body)
 			}
 			if !strings.Contains(body, selectionBridgeScript) {
@@ -725,7 +725,7 @@ func TestLoopbackPreviewServerAppliesCSPAndInjectionToValidatedHTMLTargets(t *te
 			if csp != "" {
 				t.Fatalf("non-HTML response carries CSP header: %q", csp)
 			}
-			if target.wantNoLink && strings.Contains(body, `<link rel="stylesheet" href="tokens.css">`) {
+			if target.wantNoLink && strings.Contains(body, `<link rel="stylesheet" href="/`+prefix+`/tokens.css">`) {
 				t.Fatalf("non-HTML response carries tokens.css link injection: %q", body)
 			}
 			if target.wantNoBrdg && strings.Contains(body, selectionBridgeScript) {
@@ -744,10 +744,10 @@ func TestLoopbackPreviewServerAppliesCSPAndInjectionToValidatedHTMLTargets(t *te
 // the bridge's postMessage contract.
 func TestLoopbackPreviewServerBridgeInjectionRespectsDocumentStructure(t *testing.T) {
 	html := `<!doctype html><html><head><title>Sample</title></head><body><main>Body</main></body></html>`
-	injected := injectBridgeAndTokens([]byte(html))
+	injected := injectBridgeAndTokens([]byte(html), "testprefix")
 
 	got := string(injected)
-	linkIdx := strings.Index(got, `<link rel="stylesheet" href="tokens.css">`)
+	linkIdx := strings.Index(got, `<link rel="stylesheet" href="/testprefix/tokens.css">`)
 	bodyOpenIdx := strings.Index(got, "<body>")
 	bodyCloseIdx := strings.Index(got, "</body>")
 	bridgeIdx := strings.Index(got, selectionBridgeScript)
@@ -782,16 +782,16 @@ func TestLoopbackPreviewServerBridgeInjectionRespectsDocumentStructure(t *testin
 // strategy must still attach the link and the script on fragments.
 func TestLoopbackPreviewServerBridgeInjectionWorksOnFragmentHTML(t *testing.T) {
 	fragment := `<main data-design-node-id="overview" data-design-node-kind="block">Body</main>`
-	injected := injectBridgeAndTokens([]byte(fragment))
+	injected := injectBridgeAndTokens([]byte(fragment), "testprefix")
 
 	got := string(injected)
-	if !strings.Contains(got, `<link rel="stylesheet" href="tokens.css">`) {
+	if !strings.Contains(got, `<link rel="stylesheet" href="/testprefix/tokens.css">`) {
 		t.Fatalf("fragment missing tokens.css link: %q", got)
 	}
 	if !strings.Contains(got, selectionBridgeScript) {
 		t.Fatalf("fragment missing bridge: %q", got)
 	}
-	if !strings.HasPrefix(got, `<link rel="stylesheet" href="tokens.css">`) {
+	if !strings.HasPrefix(got, `<link rel="stylesheet" href="/testprefix/tokens.css">`) {
 		t.Fatalf("fragment link not prepended: %q", got)
 	}
 	if !strings.HasSuffix(got, "</script>") {

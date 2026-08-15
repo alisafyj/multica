@@ -1560,7 +1560,7 @@ func TestBuildPromptProjectDesignSystemGenerate(t *testing.T) {
 		"single coherent",
 		"static token-backed UI Kit",
 		"data-design-node-id",
-		"$MULTICA_OUTPUT_DIR/DESIGN.md",
+		"write these files under `$MULTICA_OUTPUT_DIR`",
 		"Do not paste file contents into the final response",
 		"Do not modify a repository",
 	} {
@@ -1641,7 +1641,7 @@ func TestBuildPromptProjectDesignSystemRepositoryAnalysisRequiresMatchingType(t 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			prompt := BuildPrompt(Task{ProjectDesignSystemContext: tt.context}, "opencode")
-			if !strings.Contains(prompt, "$MULTICA_OUTPUT_DIR/DESIGN.md") {
+			if !strings.Contains(prompt, "write these files under `$MULTICA_OUTPUT_DIR`") {
 				t.Fatalf("non-matching context type must use package prompt\n--- prompt ---\n%s", prompt)
 			}
 			if strings.Contains(prompt, "REPOSITORY_DESIGN_CONTEXT_JSON:") {
@@ -1728,10 +1728,16 @@ func TestTurnModeMarkerAlwaysPresent(t *testing.T) {
 func TestBuildPromptProjectDesignSystemDefinesArtifactContract(t *testing.T) {
 	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "generate"), "opencode")
 	for _, want := range []string{
-		"`components.html` must be an HTML fragment",
-		"Do not include `<!doctype>`, `<html>`, `<head>`, `<body>`, `<meta>`, or `<link>`",
-		"Multica injects `tokens.css` into the preview automatically",
-		"do not add a stylesheet link",
+		// The accepted file set, stated exactly as classifyV2Artifact
+		// enforces it. See project_design_system_prompt_contract_test.go
+		// for the test that runs this contract through the real collector.
+		"Any other path is rejected before the audit runs",
+		"`source/index.json`",
+		"`ui-kit/index.html` (preferred) and/or `preview/<name>.html`",
+		"complete HTML documents",
+		"Multica injects `tokens.css` automatically; do not add a stylesheet link yourself",
+		"copy input_snapshot_sha256 from context/task.json verbatim",
+		"must be unique across all three arrays",
 		"`data-design-node-kind` must be exactly `component` or `block`",
 		"must not declare or redefine CSS custom properties",
 	} {
@@ -1747,7 +1753,7 @@ func TestBuildPromptProjectDesignSystemForbidsDelegationBeforeArtifacts(t *testi
 		"Complete the design yourself in this process",
 		"Do not use the `task` tool",
 		"delegate to another specialist",
-		"read back all three output files",
+		"read back every output file",
 		"Delegated or promised work is not completion",
 	} {
 		if !strings.Contains(prompt, want) {
