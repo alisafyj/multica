@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Order workspace</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="workspace" data-page="page.orders">
+    <header class="toolbar" data-block="block.orders.toolbar">
+      <img class="brand" src="../assets/crm-mark.svg" alt="Soyoung CRM">
+      <strong>Order operations</strong>
+      <button id="open-filters" type="button">Saved filters</button>
+      <a href="orders.html">Open order detail</a>
+    </header>
+
+    <form id="order-filter" novalidate>
+      <label for="keyword">Keyword</label>
+      <input id="keyword" name="keyword" type="text" maxlength="40" autocomplete="off">
+      <p id="keyword-error" class="error" hidden>Enter at least two characters.</p>
+      <button type="submit">Apply filter</button>
+    </form>
+
+    <p id="orders-loading" data-state="state.orders.loading">Loading orders</p>
+    <p id="orders-empty" data-state="state.orders.empty" hidden>No order matches this filter.</p>
+
+    <table id="orders-table" data-block="block.orders.table" data-state="state.orders.default" hidden>
+      <thead>
+        <tr>
+          <th><button id="sort-order" type="button">Order</button></th>
+          <th>Customer</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="orders-body"></tbody>
+    </table>
+
+    <aside id="filter-drawer" data-overlay="overlay.orders.filters" hidden>
+      <h2>Saved filters</h2>
+      <p>The last applied keyword is remembered on this device.</p>
+      <button id="close-filters" type="button">Close</button>
+    </aside>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

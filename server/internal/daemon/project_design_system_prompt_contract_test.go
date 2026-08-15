@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"encoding/json"
+	"io/fs"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -331,5 +333,69 @@ func TestDesignDocumentPromptDeniesSelfAssessmentAsPassCriterion(t *testing.T) {
 	prompt := BuildPrompt(designDocumentPromptTask(t, ""), "opencode")
 	if !strings.Contains(prompt, "It does not decide whether this task succeeded") {
 		t.Fatalf("prompt lets the agent's own coverage claim stand as the verdict:\n%s", prompt)
+	}
+}
+
+// TestDesignDocumentPromptContractMatchesCollector is the crossing test for
+// the page-design chain, the same guard the design-system chain needed. The
+// prompt and the collector are specified in different packages; nothing else
+// checks that what the prompt tells the agent to write is what the platform
+// actually accepts, and that gap is what let the V1 three-file contract
+// survive under the V2 schema.
+//
+// It runs against designdocument's own known-good fixture so the two cannot
+// drift apart silently.
+func TestDesignDocumentPromptContractMatchesCollector(t *testing.T) {
+	fixture := filepath.Join("..", "designdocument", "testdata", "valid")
+	if _, err := os.Stat(fixture); err != nil {
+		t.Fatalf("design document fixture missing: %v", err)
+	}
+
+	var files []string
+	err := filepath.WalkDir(fixture, func(current string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relative, relErr := filepath.Rel(fixture, current)
+		if relErr != nil {
+			return relErr
+		}
+		files = append(files, filepath.ToSlash(relative))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk fixture: %v", err)
+	}
+
+	prompt := BuildPrompt(designDocumentPromptTask(t, ""), "opencode")
+	for _, file := range files {
+		// Either the prompt names the file outright, or it names the
+		// directory the file lives under.
+		directory := path.Dir(file) + "/"
+		if strings.Contains(prompt, file) || strings.Contains(prompt, directory) {
+			continue
+		}
+		t.Fatalf("a valid package contains %q but the prompt never tells the agent it may write there", file)
+	}
+
+	// Every file the collector requires must be stated as required, not
+	// merely mentioned somewhere.
+	requiredBlock, _, found := strings.Cut(prompt, "Optional:")
+	if !found {
+		t.Fatal("prompt has no Required/Optional split")
+	}
+	for _, required := range []string{"brief.json", "prototype/index.html", "coverage.json"} {
+		if !strings.Contains(requiredBlock, required) {
+			t.Fatalf("collector requires %q but the prompt does not list it as required", required)
+		}
+	}
+
+	// And the platform-generated manifest must never be presented as the
+	// agent's job — writing one is an undeclared path.
+	if strings.Contains(requiredBlock, "manifest.json") {
+		t.Fatal("prompt lists manifest.json as an agent artifact; the platform generates it")
 	}
 }

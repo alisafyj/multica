@@ -1159,5 +1159,9 @@ func designDocumentPackageContract() string {
 	b.WriteString("- `assets/<file>` — images and fonts the prototype references.\n\n")
 	b.WriteString("Do NOT write `manifest.json`. The platform generates it from what you produced; a manifest of your own is an undeclared path and fails the collector.\n\n")
 	b.WriteString("Inside `prototype/`, package-local HTML, CSS and JavaScript are allowed and expected. Use them for page switching, tabs, filtering and sorting, modals and drawers and menus, form input with local validation, loading / empty / error / success states, and mock data transitions. `localStorage` is allowed for local state such as remembering the current page.\n\n")
+	b.WriteString("Three prototype rules the audit enforces that are easy to trip by habit:\n")
+	b.WriteString("- Put behaviour in a `<script>` block or a `.js` file and bind it with `addEventListener`. Inline `on*` attributes such as `onclick` are rejected, because code the audit cannot see is code it cannot check.\n")
+	b.WriteString("- Do not write absolute remote URLs anywhere in prototype JavaScript or CSS — not `http:`, `https:`, `ws:`, `wss:`, `file:`, `javascript:`, `blob:` or `//host` — even inside a comment, a string you never call, or mock data. A real API address in the package reads as a live integration, and the audit cannot tell an unused one from a used one.\n")
+	b.WriteString("- Links and forms stay inside the package: an `<a href>` must be a fragment or another prototype page, and a `<form>` may have no `action` at all or `action=\"#\"`.\n\n")
 	return b.String()
 }
