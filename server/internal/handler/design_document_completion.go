@@ -220,25 +220,20 @@ func designDocumentObjectKey(binding designdocument.PackageBinding, contentDiges
 	)
 }
 
-// applyDesignDocumentCompletion writes the revision and moves the draft
-// pointer in one transaction. Splitting them would let a crash leave either a
-// revision nothing points at, or — worse — a pointer to a row that was never
-// finished.
+// persistDesignDocumentCompletion writes the revision and moves the draft
+// pointer inside the caller's terminal transaction, so the task reaching a
+// completed state and the draft appearing are the same commit. Split, a crash
+// could leave a revision nothing points at, a pointer aimed at a row that was
+// never finished, or a task marked done with no draft to show for it.
 //
 // saved is untouched here. A new draft never changes what downstream reads;
 // only an explicit user save moves that pointer (DC-034).
-func (h *Handler) applyDesignDocumentCompletion(
+func persistDesignDocumentCompletion(
 	ctx context.Context,
+	queries *db.Queries,
+	completedTask db.AgentTaskQueue,
 	prepared preparedDesignDocumentCompletion,
-	taskID pgtype.UUID,
 ) (db.DesignDocument, error) {
-	tx, err := h.TxStarter.Begin(ctx)
-	if err != nil {
-		return db.DesignDocument{}, fmt.Errorf("start design document completion transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-	queries := h.Queries.WithTx(tx)
-
 	// Lock the document so two tasks reporting at once cannot claim the same
 	// revision number or interleave their pointer moves.
 	if _, err := queries.GetDesignDocumentInWorkspaceForUpdate(ctx, db.GetDesignDocumentInWorkspaceForUpdateParams{
@@ -294,7 +289,7 @@ func (h *Handler) applyDesignDocumentCompletion(
 		InputSnapshotSha256: prepared.TaskContext.InputSnapshotSHA256,
 		BaseRevisionID:      baseRevisionID,
 		DesignSystemDigest:  pgtype.Text{String: prepared.TaskContext.DesignSystemDigest, Valid: prepared.TaskContext.DesignSystemDigest != ""},
-		SourceTaskID:        taskID,
+		SourceTaskID:        completedTask.ID,
 		AgentID:             prepared.AgentID,
 		Instruction:         pgtype.Text{String: prepared.TaskContext.Instruction, Valid: prepared.TaskContext.Instruction != ""},
 		Scope:               prepared.TaskContext.Scope,
@@ -315,9 +310,6 @@ func (h *Handler) applyDesignDocumentCompletion(
 	}
 	if err != nil {
 		return db.DesignDocument{}, fmt.Errorf("move design document draft pointer: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return db.DesignDocument{}, fmt.Errorf("commit design document completion: %w", err)
 	}
 	return document, nil
 }

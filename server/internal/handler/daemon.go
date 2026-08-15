@@ -3384,6 +3384,10 @@ type TaskCompleteRequest struct {
 	// (Task 5). The handler independently re-validates every field
 	// before persisting it as the new draft.
 	ProjectDesignSystemPackage *ProjectDesignSystemPackageReceipt `json:"project_design_system_package,omitempty"`
+	// DesignDocumentPackage is the page-design receipt from the same
+	// collect -> audit -> preview -> upload gate. The handler re-reads the
+	// archive and re-derives every field before it becomes a draft.
+	DesignDocumentPackage *DesignDocumentPackageReceipt `json:"design_document_package,omitempty"`
 	// SessionRolloutMissing: the daemon withheld this task's Codex session
 	// because its rollout was missing (MUL-5305). Clear the resume pointer and
 	// flag the continuity gap for the next claim.
@@ -3468,6 +3472,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	var completedProjectDesignSystem *db.ProjectDesignSystem
 	var preparedRepositoryAnalysis *preparedProjectDesignSystemRepositoryAnalysis
 	var preparedProjectDesignSystem *preparedProjectDesignSystemCompletion
+	var preparedDesignDocument *preparedDesignDocumentCompletion
 	var preparedBlueprint *preparedDesignTemplateBlueprintAnalysis
 	var pmoSyncCtx service.PMOSyncContext
 	var pmoSnapshot *service.PMOSnapshot
@@ -3510,6 +3515,22 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		preparedProjectDesignSystem = &prepared
+	} else if existingTask.Status == "running" && isDesignDocumentTaskContext(existingTask) {
+		prepared, prepareErr := h.prepareDesignDocumentCompletion(r.Context(), existingTask, workspaceID, req.DesignDocumentPackage)
+		if prepareErr != nil {
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), existingTask.ID, prepareErr.Error(), req.SessionID, req.WorkDir, req.BranchName, "design_document_invalid_package", req.SessionRolloutMissing, req.RetiredSessionID)
+			if failErr != nil {
+				slog.Warn("design document completion: failed to mark invalid output failed", "task_id", taskID, "error", failErr)
+			} else if failedTask != nil {
+				h.TaskService.NotifyTaskFinished(*failedTask)
+				if tokenErr := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); tokenErr != nil {
+					slog.Warn("complete task: failed to revoke task tokens after design document failure", "task_id", uuidToString(failedTask.ID), "error", tokenErr)
+				}
+			}
+			writeError(w, http.StatusBadRequest, prepareErr.Error())
+			return
+		}
+		preparedDesignDocument = &prepared
 	}
 	if hasUIDraftCreate {
 		if _, draftErr := parseUIDraftAgentOutput(req.Output); draftErr != nil {
@@ -3651,6 +3672,11 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 			if saveErr == nil {
 				completedProjectDesignSystem = &system
 			}
+			return saveErr
+		})
+	} else if preparedDesignDocument != nil {
+		completeWithMutation(func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
+			_, saveErr := persistDesignDocumentCompletion(r.Context(), qtx, completedTask, *preparedDesignDocument)
 			return saveErr
 		})
 	} else if hasUIDraftCreate {
