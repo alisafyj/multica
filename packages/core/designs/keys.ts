@@ -1,3 +1,11 @@
+/**
+ * Key segment for the project-level design system: the one shared across
+ * repositories and used when no repository is picked (DC-052). Repository
+ * scopes use their `project_resource_id`, which is a UUID and can never
+ * collide with this sentinel.
+ */
+export const PROJECT_LEVEL_DESIGN_SCOPE = "project-level";
+
 export const designKeys = {
   all: (wsId: string) => ["designs", wsId] as const,
   folders: (wsId: string) => ["designs", wsId, "folders"] as const,
@@ -13,7 +21,8 @@ export const designKeys = {
   designSystems: (wsId: string, projectId?: string) => ["designs", wsId, "design-systems", projectId ?? "all"] as const,
   designSystem: (wsId: string, id: string) => ["designs", wsId, "design-systems", id] as const,
   projectDesignSystems: (wsId: string) => ["designs", wsId, "project-design-systems"] as const,
-  projectDesignSystemByProject: (wsId: string, projectId: string) => ["designs", wsId, "project-design-systems", "project", projectId] as const,
+  projectDesignSystemProjectScopes: (wsId: string, projectId: string) => ["designs", wsId, "project-design-systems", "project", projectId] as const,
+  projectDesignSystemByProject: (wsId: string, projectId: string, projectResourceId?: string | null) => ["designs", wsId, "project-design-systems", "project", projectId, projectResourceId ? projectResourceId : PROJECT_LEVEL_DESIGN_SCOPE] as const,
   projectDesignSystem: (wsId: string, id: string) => ["designs", wsId, "project-design-systems", "system", id] as const,
   projectDesignSystemPackagePreview: (wsId: string, id: string) => ["designs", wsId, "project-design-systems", "system", id, "package-preview"] as const,
   drafts: (wsId: string) => ["designs", wsId, "drafts"] as const,

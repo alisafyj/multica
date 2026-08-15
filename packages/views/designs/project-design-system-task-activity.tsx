@@ -106,8 +106,9 @@ export function ProjectDesignSystemTaskActivity({
     onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({
-          queryKey: designKeys.projectDesignSystemByProject(wsId, system.project_id),
-          exact: true,
+          // Every repository scope of this project, because a repository
+          // without its own system reads the project-level one (DC-052).
+          queryKey: designKeys.projectDesignSystemProjectScopes(wsId, system.project_id),
         }),
         queryClient.invalidateQueries({
           queryKey: designKeys.projectDesignSystem(wsId, system.id),

@@ -9,6 +9,7 @@ import { designKeys } from "@multica/core/designs/keys";
 import { designDraftListOptions, designFileListOptions, designFolderListOptions, designSystemListOptions, designTemplateListOptions, projectDesignSystemByProjectOptions } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { projectResourcesOptions } from "@multica/core/projects";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import type { DesignCatalogTemplate, DesignDraft, DesignFile, DesignFolder, GalleryJsonPatchOperation, Project } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -290,9 +291,26 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   const [activeWorkspaceTabId, setActiveWorkspaceTabId] = useState(DESIGN_HOME_TAB_ID);
   const [openProjectIds, setOpenProjectIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<DesignAssetTab>("designs");
+  // Design system scope per project (DC-052): empty is the project-level
+  // system, otherwise the id of one of the project's github_repo resources.
+  const [designScopeByProject, setDesignScopeByProject] = useState<Record<string, string>>({});
   const selectedProjectId = activeWorkspaceTabId === DESIGN_HOME_TAB_ID ? "" : activeWorkspaceTabId;
   const { data: designSystems = [], isLoading: designSystemsLoading } = useQuery(designSystemListOptions(wsId, selectedProjectId || undefined));
-  const { data: projectDesignSystem, isLoading: projectDesignSystemLoading } = useQuery(projectDesignSystemByProjectOptions(wsId, selectedProjectId));
+  const { data: projectResources = [] } = useQuery({
+    ...projectResourcesOptions(wsId, selectedProjectId),
+    enabled: Boolean(selectedProjectId),
+  });
+  const designRepositories = useMemo(
+    () => projectResources.filter((resource) => resource.resource_type === "github_repo"),
+    [projectResources],
+  );
+  // A stored scope can point at a repository that has since been detached.
+  const selectedDesignRepositoryId = designRepositories.some(
+    (repository) => repository.id === designScopeByProject[selectedProjectId],
+  )
+    ? designScopeByProject[selectedProjectId] ?? ""
+    : "";
+  const { data: projectDesignSystem, isLoading: projectDesignSystemLoading } = useQuery(projectDesignSystemByProjectOptions(wsId, selectedProjectId, selectedDesignRepositoryId));
 
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const folderById = useMemo(() => new Map(folders.map((folder) => [folder.id, folder])), [folders]);
@@ -718,6 +736,12 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                   legacyProfiles={designSystems}
                   system={projectDesignSystem}
                   isLoading={projectDesignSystemLoading || designSystemsLoading}
+                  repositories={designRepositories}
+                  selectedRepositoryId={selectedDesignRepositoryId}
+                  onSelectRepository={(projectResourceId) => setDesignScopeByProject((current) => ({
+                    ...current,
+                    [selectedProject.id]: projectResourceId,
+                  }))}
                 />
               ) : null}
             </TabsContent>

@@ -96,6 +96,7 @@ function makeSystem(overrides: Partial<ProjectDesignSystem> = {}): ProjectDesign
     id: "system-1",
     workspace_id: "ws-1",
     project_id: "project-1",
+    project_resource_id: "",
     name: "CRM Design System",
     platform: "web",
     current_agent_id: "agent-1",

@@ -1117,8 +1117,10 @@ export function useRealtimeSync(
       const wsId = getCurrentWsId();
       if (!wsId) return;
       if (payload?.project_id) {
+        // The event carries the project, not the repository scope the client
+        // is viewing, so invalidate every scope of that project (DC-052).
         qc.invalidateQueries({
-          queryKey: designKeys.projectDesignSystemByProject(wsId, payload.project_id),
+          queryKey: designKeys.projectDesignSystemProjectScopes(wsId, payload.project_id),
         });
       }
       if (payload?.project_design_system_id) {
@@ -1391,24 +1393,20 @@ export function useRealtimeSync(
         queryKey: designKeys.projectDesignSystems(id),
       });
       const invalidated = new Set<string>();
-      for (const [, system] of matches) {
-        if (
-          system?.active_task?.id !== taskId
-          || !system.id
-          || !system.project_id
-          || invalidated.has(system.id)
-        ) {
-          continue;
-        }
-        invalidated.add(system.id);
-        qc.invalidateQueries({
-          queryKey: designKeys.projectDesignSystemByProject(id, system.project_id),
-          exact: true,
-        });
-        qc.invalidateQueries({
-          queryKey: designKeys.projectDesignSystem(id, system.id),
-          exact: true,
-        });
+      const invalidateExact = (queryKey: readonly unknown[]) => {
+        const marker = JSON.stringify(queryKey);
+        if (invalidated.has(marker)) return;
+        invalidated.add(marker);
+        qc.invalidateQueries({ queryKey, exact: true });
+      };
+      for (const [queryKey, system] of matches) {
+        if (system?.active_task?.id !== taskId || !system.id) continue;
+        // Invalidate the matched key itself rather than rebuilding it: a
+        // repository scope can hold the project-level system through the
+        // DC-052 fallback, so the cached scope is not recoverable from
+        // `system.project_resource_id`.
+        invalidateExact(queryKey);
+        invalidateExact(designKeys.projectDesignSystem(id, system.id));
       }
     };
 

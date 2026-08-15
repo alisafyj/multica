@@ -140,6 +140,7 @@ function makeSystem(overrides: Partial<ProjectDesignSystem> = {}): ProjectDesign
     id: "",
     workspace_id: "ws-1",
     project_id: "project-1",
+    project_resource_id: "",
     name: "",
     platform: "",
     current_agent_id: null,
@@ -176,6 +177,8 @@ const defaultProps = {
   legacyProfiles: [makeProfile()],
   system: makeSystem(),
   isLoading: false,
+  // Empty is the project-level system shared across repositories (DC-052).
+  projectResourceId: "",
 };
 
 function renderComponent(props: Partial<typeof defaultProps> = {}) {
@@ -279,6 +282,27 @@ describe("ProjectDesignSystemCreate", () => {
     await waitFor(() => {
       expect(analyzeProjectDesignSystemRepository).toHaveBeenCalledWith({
         project_id: "project-1",
+        project_resource_id: "",
+        agent_id: "agent-1",
+        platform: "web",
+        brief: "建立清晰、克制的客户管理体验。",
+        references: [],
+      });
+    });
+  });
+
+  it("creates the system for the picked repository instead of the project-level one", async () => {
+    const user = userEvent.setup();
+    renderComponent({ projectResourceId: "resource-h5" });
+
+    await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
+    await user.click(screen.getByRole("radio", { name: "Web" }));
+    await user.click(screen.getByRole("button", { name: "生成设计体系" }));
+
+    await waitFor(() => {
+      expect(createProjectDesignSystem).toHaveBeenCalledWith({
+        project_id: "project-1",
+        project_resource_id: "resource-h5",
         agent_id: "agent-1",
         platform: "web",
         brief: "建立清晰、克制的客户管理体验。",
@@ -412,6 +436,7 @@ describe("ProjectDesignSystemCreate", () => {
     await waitFor(() => {
       expect(analyzeProjectDesignSystemRepository).toHaveBeenCalledWith({
         project_id: "project-1",
+        project_resource_id: "",
         agent_id: "agent-1",
         platform: "web",
         brief: "沿用当前 CRM 设计语言",
@@ -475,6 +500,7 @@ describe("ProjectDesignSystemCreate", () => {
     await waitFor(() => {
       expect(createProjectDesignSystem).toHaveBeenCalledWith({
         project_id: "project-1",
+        project_resource_id: "",
         agent_id: "agent-1",
         platform: "cross_platform",
         brief: "统一 Web 与移动端的客户管理体验",

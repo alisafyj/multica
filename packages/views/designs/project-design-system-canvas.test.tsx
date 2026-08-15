@@ -83,6 +83,7 @@ function makeDraftSystem(): ProjectDesignSystem {
     id: "system-1",
     workspace_id: "ws-1",
     project_id: "project-1",
+    project_resource_id: "",
     name: "CRM Design System",
     platform: "web",
     current_agent_id: "agent-1",
@@ -115,10 +116,25 @@ function makeDraftSystem(): ProjectDesignSystem {
   };
 }
 
-function renderCanvas(system = makeDraftSystem()) {
+// Scope key for the project-level design system (DC-052); a repository scope
+// uses its `project_resource_id` in that last segment instead.
+const PROJECT_SCOPE_KEY = [
+  "designs",
+  "ws-1",
+  "project-design-systems",
+  "project",
+  "project-1",
+  "project-level",
+];
+
+function renderCanvas(system = makeDraftSystem(), extraScopes: Array<[readonly unknown[], unknown]> = []) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  // The by-project cache entry is owned by the scoped query the tab renders,
+  // so seed it the way that query would.
+  queryClient.setQueryData(PROJECT_SCOPE_KEY, system);
+  for (const [key, value] of extraScopes) queryClient.setQueryData(key, value);
   return {
     queryClient,
     ...render(
@@ -440,7 +456,7 @@ describe("ProjectDesignSystemCanvas", () => {
 
     await waitFor(() => expect(apiMocks.discardProjectDesignSystemDraft).toHaveBeenCalledWith("system-1"));
     expect(queryClient.getQueryData(["designs", "ws-1", "project-design-systems", "system", "system-1"])).toEqual(updated);
-    expect(queryClient.getQueryData(["designs", "ws-1", "project-design-systems", "project", "project-1"])).toEqual(updated);
+    expect(queryClient.getQueryData(PROJECT_SCOPE_KEY)).toEqual(updated);
   });
 
   it("uses adjustment save copy and explains that discard restores the saved package", async () => {
@@ -480,7 +496,35 @@ describe("ProjectDesignSystemCanvas", () => {
     const receipt = dispatchPreviewReceipt(screen.getByTitle("项目设计体系 UI Kit") as HTMLIFrameElement);
     await waitFor(() => expect(apiMocks.verifyProjectDesignSystemPreview).toHaveBeenCalledWith("system-1", receipt));
     expect(queryClient.getQueryData(["designs", "ws-1", "project-design-systems", "system", "system-1"])).toEqual(updated);
-    expect(queryClient.getQueryData(["designs", "ws-1", "project-design-systems", "project", "project-1"])).toEqual(updated);
+    expect(queryClient.getQueryData(PROJECT_SCOPE_KEY)).toEqual(updated);
+  });
+
+  it("refreshes every repository scope showing this system and leaves the others alone", async () => {
+    const system = makeDraftSystem();
+    system.status = "validating";
+    system.preview_validation = {
+      status: "pending",
+      integrity_sha256: system.content.integrity_sha256,
+      report: {},
+      verified_at: null,
+    };
+    // A repository without its own system reads the project-level one, so this
+    // scope holds the same system id (DC-052).
+    const fallbackScopeKey = ["designs", "ws-1", "project-design-systems", "project", "project-1", "resource-h5"];
+    const ownScopeKey = ["designs", "ws-1", "project-design-systems", "project", "project-1", "resource-admin"];
+    const otherSystem = { ...makeDraftSystem(), id: "system-2", project_resource_id: "resource-admin" };
+    const updated = makeDraftSystem();
+    apiMocks.verifyProjectDesignSystemPreview.mockResolvedValue(updated);
+    const { queryClient } = renderCanvas(system, [
+      [fallbackScopeKey, system],
+      [ownScopeKey, otherSystem],
+    ]);
+
+    const receipt = dispatchPreviewReceipt(screen.getByTitle("项目设计体系 UI Kit") as HTMLIFrameElement);
+    await waitFor(() => expect(apiMocks.verifyProjectDesignSystemPreview).toHaveBeenCalledWith("system-1", receipt));
+
+    expect(queryClient.getQueryData(fallbackScopeKey)).toEqual(updated);
+    expect(queryClient.getQueryData(ownScopeKey)).toEqual(otherSystem);
   });
 
   it("offers an explicit retry after preview verification fails", async () => {

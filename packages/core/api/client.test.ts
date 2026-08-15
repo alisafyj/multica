@@ -751,6 +751,42 @@ describe("ApiClient", () => {
       expect(detail).toMatchObject({ id: "system-1", status: "unestablished" });
       expect(byProject.content.sections).toEqual([]);
       expect(detail.activity).toEqual([]);
+      // Malformed responses still resolve to the project-level scope rather
+      // than leaking a repository id the server never confirmed (DC-052).
+      expect(byProject.project_resource_id).toBe("");
+    });
+
+    it("asks for one repository's design system and survives a malformed scope", async () => {
+      const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: "system-1",
+            workspace_id: "ws-1",
+            project_id: "project-1",
+            project_resource_id: 42,
+            status: "saved",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      const scoped = await client.getProjectDesignSystemForProject("project /1", {
+        project_resource_id: "resource /1",
+      });
+
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        "https://api.example.test/api/project-design-systems?project_id=project%20%2F1&project_resource_id=resource%20%2F1",
+      );
+      expect(scoped.project_resource_id).toBe("");
+      expect(scoped.status).toBe("saved");
+
+      // An empty scope means the project-level system, so it is not sent.
+      await client.getProjectDesignSystemForProject("project-1", { project_resource_id: "" });
+      expect(fetchMock.mock.calls[1]?.[0]).toBe(
+        "https://api.example.test/api/project-design-systems?project_id=project-1",
+      );
     });
 
     it("posts repository analysis requests with a safe response fallback", async () => {

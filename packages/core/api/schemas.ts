@@ -1691,6 +1691,10 @@ export const ProjectDesignSystemSchema = z.object({
   id: z.string().catch("").default(""),
   workspace_id: z.string(),
   project_id: z.string(),
+  // Repository scope (DC-052). The server omits it for the project-level
+  // system, and older backends never send it, so an absent field defaults to
+  // the project-level scope rather than failing the parse.
+  project_resource_id: z.string().catch("").default(""),
   name: z.string().catch("").default(""),
   platform: ProjectDesignSystemPlatformSchema,
   current_agent_id: z.string().nullable().catch(null).default(null),
@@ -1717,6 +1721,7 @@ export const EMPTY_PROJECT_DESIGN_SYSTEM: ProjectDesignSystem = {
   id: "",
   workspace_id: "",
   project_id: "",
+  project_resource_id: "",
   name: "",
   platform: "",
   current_agent_id: null,

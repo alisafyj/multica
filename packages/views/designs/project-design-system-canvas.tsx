@@ -299,9 +299,13 @@ function updateSystemCache(
   system: ProjectDesignSystem,
 ) {
   queryClient.setQueryData(designKeys.projectDesignSystem(wsId, system.id), system);
-  queryClient.setQueryData(
-    designKeys.projectDesignSystemByProject(wsId, system.project_id),
-    system,
+  // Refresh every repository scope currently showing this system instead of
+  // one rebuilt key: a repository without its own system reads the
+  // project-level one, so the cached scope is not derivable from the
+  // system's `project_resource_id` (DC-052).
+  queryClient.setQueriesData<ProjectDesignSystem>(
+    { queryKey: designKeys.projectDesignSystemProjectScopes(wsId, system.project_id) },
+    (previous) => (previous?.id === system.id ? system : previous),
   );
 }
 

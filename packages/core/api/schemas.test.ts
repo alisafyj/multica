@@ -895,6 +895,36 @@ describe("ProjectDesignSystemSchema", () => {
     );
 
     expect(parsed).toEqual(EMPTY_PROJECT_DESIGN_SYSTEM);
+    expect(parsed.project_resource_id).toBe("");
+  });
+
+  it("keeps the repository scope and treats absent or malformed scopes as project-level", () => {
+    const scoped = ProjectDesignSystemSchema.parse({
+      id: "system-1",
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      project_resource_id: "resource-h5",
+      status: "saved",
+    });
+    // The server omits the field for the project-level system, and backends
+    // older than DC-052 never send it at all.
+    const projectLevel = ProjectDesignSystemSchema.parse({
+      id: "system-2",
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      status: "saved",
+    });
+    const malformed = ProjectDesignSystemSchema.parse({
+      id: "system-3",
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      project_resource_id: { id: "resource-h5" },
+      status: "saved",
+    });
+
+    expect(scoped.project_resource_id).toBe("resource-h5");
+    expect(projectLevel.project_resource_id).toBe("");
+    expect(malformed.project_resource_id).toBe("");
   });
 });
 

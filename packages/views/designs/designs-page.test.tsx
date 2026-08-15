@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ const {
   listDesignFolders,
   listDesignSystemProfiles,
   listDesignTemplates,
+  listProjectResources,
   listProjects,
   navigate,
 } = vi.hoisted(() => ({
@@ -22,6 +23,7 @@ const {
   listDesignFolders: vi.fn(),
   listDesignSystemProfiles: vi.fn(),
   listDesignTemplates: vi.fn(),
+  listProjectResources: vi.fn(),
   listProjects: vi.fn(),
   navigate: vi.fn(),
 }));
@@ -38,6 +40,7 @@ vi.mock("@multica/core/api", () => ({
     listDesignFolders,
     listDesignSystemProfiles,
     listDesignTemplates,
+    listProjectResources,
     listProjects,
     uploadFile: vi.fn(),
   },
@@ -120,6 +123,7 @@ describe("DesignsPage", () => {
     listDesignFolders.mockReset();
     listDesignSystemProfiles.mockReset();
     listDesignTemplates.mockReset();
+    listProjectResources.mockReset();
     listProjects.mockReset();
     navigate.mockReset();
     listAgents.mockResolvedValue([]);
@@ -128,11 +132,13 @@ describe("DesignsPage", () => {
     listDesignFolders.mockResolvedValue({ folders: [], total: 0 });
     listDesignSystemProfiles.mockResolvedValue({ design_systems: [] });
     listDesignTemplates.mockResolvedValue({ templates: [], total: 0 });
+    listProjectResources.mockResolvedValue({ resources: [], total: 0 });
     listProjects.mockResolvedValue({ projects: [{ id: "project-1", title: "CRM", description: "CRM 项目设计目标" }], total: 1 });
     getProjectDesignSystemForProject.mockResolvedValue({
       id: "",
       workspace_id: "ws-1",
       project_id: "project-1",
+      project_resource_id: "",
       name: "",
       platform: "",
       current_agent_id: null,
@@ -312,5 +318,56 @@ describe("DesignsPage", () => {
     expect(await screen.findByRole("heading", { name: "品牌原则" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "打开设计体系" })).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText("搜索设计体系…")).not.toBeInTheDocument();
+  });
+
+  it("asks the API for the picked repository's design system", async () => {
+    const user = userEvent.setup();
+    listProjectResources.mockResolvedValue({
+      resources: [
+        {
+          id: "resource-h5",
+          project_id: "project-1",
+          workspace_id: "ws-1",
+          resource_type: "github_repo",
+          resource_ref: { url: "https://github.com/acme/crm-h5" },
+          label: null,
+          position: 0,
+          created_at: "2026-08-16T00:00:00Z",
+          created_by: null,
+        },
+        // Only repositories carry their own design system (DC-052).
+        {
+          id: "resource-doc",
+          project_id: "project-1",
+          workspace_id: "ws-1",
+          resource_type: "document",
+          resource_ref: { url: "https://example.test/spec", title: "业务规则" },
+          label: "业务规则",
+          position: 1,
+          created_at: "2026-08-16T00:00:00Z",
+          created_by: null,
+        },
+      ],
+      total: 2,
+    });
+
+    renderWithClient(<DesignsPage />);
+    await user.click(await screen.findByRole("button", { name: "打开项目" }));
+    await user.click(screen.getByRole("menuitem", { name: "CRM" }));
+    await user.click(await screen.findByRole("tab", { name: /设计体系.*0/ }));
+
+    expect(await screen.findByRole("button", { name: "crm-h5" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "业务规则" })).not.toBeInTheDocument();
+    expect(getProjectDesignSystemForProject).toHaveBeenLastCalledWith("project-1", {
+      project_resource_id: "",
+    });
+
+    await user.click(screen.getByRole("button", { name: "crm-h5" }));
+
+    await waitFor(() => expect(getProjectDesignSystemForProject).toHaveBeenLastCalledWith("project-1", {
+      project_resource_id: "resource-h5",
+    }));
+    expect(screen.getByRole("button", { name: "crm-h5" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "项目通用" })).toHaveAttribute("aria-pressed", "false");
   });
 });

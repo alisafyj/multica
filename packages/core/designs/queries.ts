@@ -150,10 +150,13 @@ export function designSystemDetailOptions(wsId: string, id: string) {
   });
 }
 
-export function projectDesignSystemByProjectOptions(wsId: string, projectId: string) {
+// `projectResourceId` is the repository scope (DC-052). It is part of the key
+// so switching repositories cannot serve another repository's cached system;
+// omitting it asks for the project-level system.
+export function projectDesignSystemByProjectOptions(wsId: string, projectId: string, projectResourceId?: string) {
   return queryOptions({
-    queryKey: designKeys.projectDesignSystemByProject(wsId, projectId),
-    queryFn: () => api.getProjectDesignSystemForProject(projectId),
+    queryKey: designKeys.projectDesignSystemByProject(wsId, projectId, projectResourceId),
+    queryFn: () => api.getProjectDesignSystemForProject(projectId, { project_resource_id: projectResourceId }),
     enabled: !!projectId,
   });
 }

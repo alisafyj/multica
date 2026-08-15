@@ -203,6 +203,7 @@ export function ProjectDesignSystemCreate({
   designFiles,
   legacyProfiles,
   system,
+  projectResourceId = "",
 }: {
   project: Project;
   agents: Agent[];
@@ -210,6 +211,8 @@ export function ProjectDesignSystemCreate({
   legacyProfiles: DesignSystemProfile[];
   system: ProjectDesignSystem | undefined;
   isLoading?: boolean;
+  /** Repository this system is created for; empty is the project-level one (DC-052). */
+  projectResourceId?: string;
 }) {
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
@@ -282,7 +285,9 @@ export function ProjectDesignSystemCreate({
     },
     onSuccess: (created) => {
       queryClient.setQueryData(
-        designKeys.projectDesignSystemByProject(wsId, created.project_id),
+        // A freshly created system belongs to the scope it was created for, so
+        // its own `project_resource_id` is the cache scope (DC-052).
+        designKeys.projectDesignSystemByProject(wsId, created.project_id, created.project_resource_id),
         created,
       );
       if (created.id) {
@@ -308,7 +313,7 @@ export function ProjectDesignSystemCreate({
     onSuccess: (analyzed) => {
       setReferenceEditing((current) => ({ ...current, [analyzed.project_id]: false }));
       queryClient.setQueryData(
-        designKeys.projectDesignSystemByProject(wsId, analyzed.project_id),
+        designKeys.projectDesignSystemByProject(wsId, analyzed.project_id, analyzed.project_resource_id),
         analyzed,
       );
       if (analyzed.id) {
@@ -443,6 +448,7 @@ export function ProjectDesignSystemCreate({
                 if (!form.platform || !canAnalyze) return;
                 analyzeRepository.mutate({
                   project_id: project.id,
+                  project_resource_id: projectResourceId,
                   agent_id: form.agentId,
                   platform: form.platform,
                   brief: form.brief.trim(),
@@ -686,6 +692,7 @@ export function ProjectDesignSystemCreate({
             if (!form.platform || !canSubmit) return;
             createSystem.mutate({
               project_id: project.id,
+              project_resource_id: projectResourceId,
               agent_id: form.agentId,
               platform: form.platform,
               brief: form.brief.trim(),

@@ -3429,10 +3429,18 @@ export class ApiClient {
     });
   }
 
-  async getProjectDesignSystemForProject(projectId: string): Promise<ProjectDesignSystem> {
-    const raw = await this.fetch<unknown>(
-      `/api/project-design-systems?project_id=${encodeURIComponent(projectId)}`,
-    );
+  // `project_resource_id` selects one repository's own design system (DC-052).
+  // Omitting it asks for the project-level system, which is also what the
+  // server falls back to when the repository has no system of its own.
+  async getProjectDesignSystemForProject(
+    projectId: string,
+    params: { project_resource_id?: string } = {},
+  ): Promise<ProjectDesignSystem> {
+    const scope = params.project_resource_id?.trim() ?? "";
+    const query = `project_id=${encodeURIComponent(projectId)}${
+      scope ? `&project_resource_id=${encodeURIComponent(scope)}` : ""
+    }`;
+    const raw = await this.fetch<unknown>(`/api/project-design-systems?${query}`);
     return parseWithFallback(
       raw,
       ProjectDesignSystemSchema,

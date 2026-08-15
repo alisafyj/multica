@@ -499,6 +499,45 @@ describe("useRealtimeSync — workspace:deleted self-initiated suppression", () 
     expect(invalidateSpy).not.toHaveBeenCalled();
   });
 
+  it("invalidates the repository scope that holds the task's design system", () => {
+    const { ws, handlers } = createEventfulMockWs();
+    const system = {
+      id: "system-1",
+      project_id: "project-1",
+      project_resource_id: "resource-h5",
+      active_task: { id: "task-1" },
+    };
+    // A repository without its own system caches the project-level one, so the
+    // cached scope is not derivable from the system itself (DC-052).
+    qc.setQueryData(
+      ["designs", "ws-1", "project-design-systems", "project", "project-1", "resource-h5"],
+      system,
+    );
+    qc.setQueryData(
+      ["designs", "ws-1", "project-design-systems", "project", "project-1", "project-level"],
+      { id: "system-2", project_id: "project-1", project_resource_id: "", active_task: { id: "task-2" } },
+    );
+    renderHook(() => useRealtimeSync(ws, stores), { wrapper: createWrapper(qc) });
+
+    invalidateSpy.mockClear();
+    handlers.get("task:running")?.({
+      task_id: "task-1",
+      agent_id: "agent-1",
+      issue_id: "",
+      status: "running",
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["designs", "ws-1", "project-design-systems", "project", "project-1", "resource-h5"],
+      exact: true,
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["designs", "ws-1", "project-design-systems", "system", "system-1"],
+      exact: true,
+    });
+    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("ignores malformed websocket messages without an event type", () => {
     const { ws, anyHandlers } = createAnyEventMockWs();
     renderHook(() => useRealtimeSync(ws, stores), {

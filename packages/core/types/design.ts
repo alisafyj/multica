@@ -357,6 +357,8 @@ export interface ProjectDesignSystemInputSnapshot {
 
 export interface CreateProjectDesignSystemRequest {
   project_id: string;
+  /** Empty creates the project-level system; a repository id creates that repository's own (DC-052). */
+  project_resource_id?: string;
   agent_id: string;
   platform: ProjectDesignSystemPlatform;
   brief: string;
@@ -365,6 +367,8 @@ export interface CreateProjectDesignSystemRequest {
 
 export interface AnalyzeProjectDesignSystemRepositoryRequest {
   project_id: string;
+  /** Empty analyzes for the project-level system; a repository id scopes it to that repository (DC-052). */
+  project_resource_id?: string;
   agent_id: string;
   platform: ProjectDesignSystemPlatform;
   brief: string;
@@ -470,6 +474,14 @@ export interface ProjectDesignSystem {
   id: string;
   workspace_id: string;
   project_id: string;
+  /**
+   * Repository this system belongs to (DC-052). Empty is the project-level
+   * system: the one shared across repositories and used when no repository is
+   * picked. A repository scope that has no system of its own falls back to the
+   * project-level one, so an empty value here does not mean "no repository was
+   * requested" — it means the resolved system is the project-level one.
+   */
+  project_resource_id: string;
   name: string;
   platform: ProjectDesignSystemPlatform | "";
   current_agent_id: string | null;
