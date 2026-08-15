@@ -36,19 +36,25 @@ type ProjectDesignSystemReferenceInput struct {
 }
 
 type CreateProjectDesignSystemRequest struct {
-	ProjectID  string                              `json:"project_id"`
-	AgentID    string                              `json:"agent_id"`
-	Platform   string                              `json:"platform"`
-	Brief      string                              `json:"brief"`
-	References []ProjectDesignSystemReferenceInput `json:"references"`
+	ProjectID string `json:"project_id"`
+	// Optional. Empty creates the project-level system used across
+	// repositories; a repository id creates that repository's own (DC-052).
+	ProjectResourceID string                              `json:"project_resource_id"`
+	AgentID           string                              `json:"agent_id"`
+	Platform          string                              `json:"platform"`
+	Brief             string                              `json:"brief"`
+	References        []ProjectDesignSystemReferenceInput `json:"references"`
 }
 
 type AnalyzeProjectDesignSystemRepositoryRequest struct {
-	ProjectID  string                              `json:"project_id"`
-	AgentID    string                              `json:"agent_id"`
-	Platform   string                              `json:"platform"`
-	Brief      string                              `json:"brief"`
-	References []ProjectDesignSystemReferenceInput `json:"references"`
+	ProjectID string `json:"project_id"`
+	// Optional. Empty creates the project-level system used across
+	// repositories; a repository id creates that repository's own (DC-052).
+	ProjectResourceID string                              `json:"project_resource_id"`
+	AgentID           string                              `json:"agent_id"`
+	Platform          string                              `json:"platform"`
+	Brief             string                              `json:"brief"`
+	References        []ProjectDesignSystemReferenceInput `json:"references"`
 }
 
 type ProjectDesignSystemScope struct {
@@ -102,9 +108,12 @@ type ProjectDesignSystemTaskResponse struct {
 }
 
 type ProjectDesignSystemResponse struct {
-	ID                string                                       `json:"id,omitempty"`
-	WorkspaceID       string                                       `json:"workspace_id"`
-	ProjectID         string                                       `json:"project_id"`
+	ID          string `json:"id,omitempty"`
+	WorkspaceID string `json:"workspace_id"`
+	ProjectID   string `json:"project_id"`
+	// Empty means the project-level system: the one used across repositories
+	// and when a design task runs without a repository (DC-052 / DC-053).
+	ProjectResourceID string                                       `json:"project_resource_id,omitempty"`
 	Name              string                                       `json:"name,omitempty"`
 	Platform          string                                       `json:"platform,omitempty"`
 	CurrentAgentID    *string                                      `json:"current_agent_id,omitempty"`
@@ -216,7 +225,12 @@ func (h *Handler) CreateProjectDesignSystem(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	system, task, err := h.createProjectDesignSystemTask(r.Context(), workspaceUUID, requesterUUID, projectUUID, agentUUID, input, inputJSON)
+	scope, ok := h.projectDesignSystemScopeFromBody(r.Context(), w, workspaceUUID, projectUUID, req.ProjectResourceID)
+	if !ok {
+		return
+	}
+
+	system, task, err := h.createProjectDesignSystemTask(r.Context(), workspaceUUID, requesterUUID, projectUUID, scope, agentUUID, input, inputJSON)
 	if err != nil {
 		writeProjectDesignSystemRequestError(w, err)
 		return
@@ -277,8 +291,13 @@ func (h *Handler) AnalyzeProjectDesignSystemRepository(w http.ResponseWriter, r 
 		Brief:      req.Brief,
 		References: references,
 	}
+	scope, ok := h.projectDesignSystemScopeFromBody(r.Context(), w, workspaceID, projectID, req.ProjectResourceID)
+	if !ok {
+		return
+	}
+
 	system, task, err := h.createProjectDesignSystemRepositoryAnalysisTask(
-		r.Context(), workspaceID, requesterID, projectID, agentID, input,
+		r.Context(), workspaceID, requesterID, projectID, scope, agentID, input,
 	)
 	if err != nil {
 		writeProjectDesignSystemRequestError(w, err)
@@ -306,12 +325,15 @@ func (h *Handler) GetProjectDesignSystemByProject(w http.ResponseWriter, r *http
 		writeProjectDesignSystemError(w, http.StatusNotFound, "project_not_found", "project not found")
 		return
 	}
-	system, err := h.Queries.GetProjectDesignSystemByProject(r.Context(), db.GetProjectDesignSystemByProjectParams{
-		WorkspaceID: workspaceID,
-		ProjectID:   projectID,
-	})
+	// Optional repository scope. Absent means the project-level system, which
+	// is what the tab shows before the user switches to a repository.
+	scope, ok := h.resolveProjectDesignSystemScope(w, r, workspaceID, projectID)
+	if !ok {
+		return
+	}
+	system, err := scope.lookup(r.Context(), h.Queries, workspaceID, projectID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeJSON(w, http.StatusOK, emptyProjectDesignSystemResponse(workspaceID, projectID))
+		writeJSON(w, http.StatusOK, emptyProjectDesignSystemResponse(workspaceID, projectID, scope))
 		return
 	}
 	if err != nil {
@@ -653,6 +675,7 @@ func (h *Handler) createProjectDesignSystemTask(
 	workspaceID pgtype.UUID,
 	requesterID pgtype.UUID,
 	projectID pgtype.UUID,
+	scope projectDesignSystemScope,
 	agentID pgtype.UUID,
 	input projectDesignSystemInputSnapshot,
 	inputJSON []byte,
@@ -674,7 +697,7 @@ func (h *Handler) createProjectDesignSystemTask(
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_not_found", message: "project not found"}
 	}
-	system, lookupErr := queries.GetProjectDesignSystemByProject(ctx, db.GetProjectDesignSystemByProjectParams{WorkspaceID: workspaceID, ProjectID: projectID})
+	system, lookupErr := scope.lookup(ctx, queries, workspaceID, projectID)
 	if lookupErr == nil {
 		if system.ActiveTaskID.Valid {
 			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "project_design_system_exists", message: "project already has a design system"}
@@ -704,13 +727,14 @@ func (h *Handler) createProjectDesignSystemTask(
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("lookup_failed", "failed to check project design system")
 	} else {
 		system, err = queries.CreateProjectDesignSystem(ctx, db.CreateProjectDesignSystemParams{
-			WorkspaceID:    workspaceID,
-			ProjectID:      projectID,
-			Name:           project.Title,
-			Platform:       input.Platform,
-			CurrentAgentID: agentID,
-			InputSnapshot:  inputJSON,
-			CreatedBy:      requesterID,
+			WorkspaceID:       workspaceID,
+			ProjectID:         projectID,
+			ProjectResourceID: scope.ProjectResourceID,
+			Name:              project.Title,
+			Platform:          input.Platform,
+			CurrentAgentID:    agentID,
+			InputSnapshot:     inputJSON,
+			CreatedBy:         requesterID,
 		})
 		if err != nil {
 			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("create_failed", "failed to create project design system")
@@ -765,6 +789,7 @@ func (h *Handler) createProjectDesignSystemRepositoryAnalysisTask(
 	workspaceID pgtype.UUID,
 	requesterID pgtype.UUID,
 	projectID pgtype.UUID,
+	scope projectDesignSystemScope,
 	agentID pgtype.UUID,
 	input projectDesignSystemInputSnapshot,
 ) (db.ProjectDesignSystem, db.AgentTaskQueue, error) {
@@ -782,7 +807,7 @@ func (h *Handler) createProjectDesignSystemRepositoryAnalysisTask(
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_not_found", message: "project not found"}
 	}
-	system, lookupErr := queries.GetProjectDesignSystemByProject(ctx, db.GetProjectDesignSystemByProjectParams{WorkspaceID: workspaceID, ProjectID: projectID})
+	system, lookupErr := scope.lookup(ctx, queries, workspaceID, projectID)
 	if lookupErr == nil {
 		if system.ActiveTaskID.Valid {
 			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "operation_in_progress", message: "another design system operation is in progress"}
@@ -833,7 +858,8 @@ func (h *Handler) createProjectDesignSystemRepositoryAnalysisTask(
 	}
 	if errors.Is(lookupErr, pgx.ErrNoRows) {
 		system, err = queries.CreateProjectDesignSystem(ctx, db.CreateProjectDesignSystemParams{
-			WorkspaceID: workspaceID, ProjectID: projectID, Name: project.Title, Platform: input.Platform,
+			WorkspaceID: workspaceID, ProjectID: projectID, ProjectResourceID: scope.ProjectResourceID,
+			Name: project.Title, Platform: input.Platform,
 			CurrentAgentID: agent.ID, InputSnapshot: inputJSON, CreatedBy: requesterID,
 		})
 		if err != nil {
@@ -1206,6 +1232,7 @@ func marshalProjectDesignSystemTaskContext(
 		RequesterID:           uuidToString(requesterID),
 		WorkspaceID:           uuidToString(system.WorkspaceID),
 		ProjectID:             uuidToString(system.ProjectID),
+		ProjectResourceID:     uuidToString(system.ProjectResourceID),
 		ProjectDesignSystemID: uuidToString(system.ID),
 		AgentID:               uuidToString(agentID),
 		Project:               projectJSON,
@@ -1307,12 +1334,13 @@ func (h *Handler) loadProjectDesignSystemForRequest(
 	return system, true
 }
 
-func emptyProjectDesignSystemResponse(workspaceID pgtype.UUID, projectID pgtype.UUID) ProjectDesignSystemResponse {
+func emptyProjectDesignSystemResponse(workspaceID pgtype.UUID, projectID pgtype.UUID, scope projectDesignSystemScope) ProjectDesignSystemResponse {
 	return ProjectDesignSystemResponse{
-		WorkspaceID:   uuidToString(workspaceID),
-		ProjectID:     uuidToString(projectID),
-		Status:        "unestablished",
-		InputSnapshot: json.RawMessage(`{}`),
+		WorkspaceID:       uuidToString(workspaceID),
+		ProjectID:         uuidToString(projectID),
+		ProjectResourceID: uuidToString(scope.ProjectResourceID),
+		Status:            "unestablished",
+		InputSnapshot:     json.RawMessage(`{}`),
 		Content: ProjectDesignSystemContentResponse{
 			Sections:       []projectdesignsystem.Section{},
 			TokenGroups:    []projectdesignsystem.TokenGroup{},
@@ -1495,14 +1523,15 @@ func validProjectDesignSystemPlatform(value string) bool {
 
 func (h *Handler) projectDesignSystemResponse(ctx context.Context, system db.ProjectDesignSystem) (ProjectDesignSystemResponse, error) {
 	response := ProjectDesignSystemResponse{
-		ID:             uuidToString(system.ID),
-		WorkspaceID:    uuidToString(system.WorkspaceID),
-		ProjectID:      uuidToString(system.ProjectID),
-		Name:           system.Name,
-		Platform:       system.Platform,
-		CurrentAgentID: uuidToPtr(system.CurrentAgentID),
-		Status:         "unestablished",
-		InputSnapshot:  validJSONOr(system.InputSnapshot, json.RawMessage(`{}`)),
+		ID:                uuidToString(system.ID),
+		WorkspaceID:       uuidToString(system.WorkspaceID),
+		ProjectID:         uuidToString(system.ProjectID),
+		ProjectResourceID: uuidToString(system.ProjectResourceID),
+		Name:              system.Name,
+		Platform:          system.Platform,
+		CurrentAgentID:    uuidToPtr(system.CurrentAgentID),
+		Status:            "unestablished",
+		InputSnapshot:     validJSONOr(system.InputSnapshot, json.RawMessage(`{}`)),
 		Content: ProjectDesignSystemContentResponse{
 			Sections:    []projectdesignsystem.Section{},
 			TokenGroups: []projectdesignsystem.TokenGroup{},

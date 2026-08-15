@@ -1509,20 +1509,21 @@ type Project struct {
 }
 
 type ProjectDesignSystem struct {
-	ID              pgtype.UUID        `json:"id"`
-	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	Name            string             `json:"name"`
-	Platform        string             `json:"platform"`
-	CurrentAgentID  pgtype.UUID        `json:"current_agent_id"`
-	ActiveTaskID    pgtype.UUID        `json:"active_task_id"`
-	ActiveOperation pgtype.Text        `json:"active_operation"`
-	InputSnapshot   []byte             `json:"input_snapshot"`
-	LastError       []byte             `json:"last_error"`
-	CreatedBy       pgtype.UUID        `json:"created_by"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	SavedAt         pgtype.Timestamptz `json:"saved_at"`
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	Name              string             `json:"name"`
+	Platform          string             `json:"platform"`
+	CurrentAgentID    pgtype.UUID        `json:"current_agent_id"`
+	ActiveTaskID      pgtype.UUID        `json:"active_task_id"`
+	ActiveOperation   pgtype.Text        `json:"active_operation"`
+	InputSnapshot     []byte             `json:"input_snapshot"`
+	LastError         []byte             `json:"last_error"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	SavedAt           pgtype.Timestamptz `json:"saved_at"`
+	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
 }
 
 type ProjectDesignSystemPackage struct {

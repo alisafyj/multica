@@ -1072,10 +1072,49 @@ ORDER BY analysis_version DESC
 LIMIT 1;
 -- Project design systems
 
+-- Project-level system: the one used across repositories and whenever a
+-- design task runs without a repository (DC-052 / DC-053).
 -- name: GetProjectDesignSystemByProject :one
 SELECT * FROM project_design_system
 WHERE workspace_id = sqlc.arg('workspace_id')
-  AND project_id = sqlc.arg('project_id');
+  AND project_id = sqlc.arg('project_id')
+  AND project_resource_id IS NULL;
+
+-- The system owned by one repository. Callers fall back to
+-- GetProjectDesignSystemByProject when this returns no rows.
+-- name: GetProjectDesignSystemByResource :one
+SELECT * FROM project_design_system
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND project_id = sqlc.arg('project_id')
+  AND project_resource_id = sqlc.arg('project_resource_id');
+
+-- Every system under a project, project-level row first so the scope
+-- switcher can render it as the default entry.
+-- name: ListProjectDesignSystemsByProject :many
+SELECT * FROM project_design_system
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND project_id = sqlc.arg('project_id')
+ORDER BY (project_resource_id IS NOT NULL), created_at;
+
+-- Repository deletion clears the system it owns, packages first. The column
+-- carries no foreign key per repository policy, so the caller runs this in
+-- the same transaction as the project_resource delete. Mirrors the CTE shape
+-- the project-delete path already uses.
+-- name: DeleteProjectDesignSystemsByResource :exec
+WITH deleted_packages AS (
+    DELETE FROM project_design_system_package
+    WHERE project_design_system_package.design_system_id IN (
+        SELECT project_design_system.id
+        FROM project_design_system
+        WHERE project_design_system.workspace_id = sqlc.arg('workspace_id')
+          AND project_design_system.project_resource_id = sqlc.arg('project_resource_id')
+    )
+    RETURNING project_design_system_package.id
+)
+DELETE FROM project_design_system
+WHERE project_design_system.workspace_id = sqlc.arg('workspace_id')
+  AND project_design_system.project_resource_id = sqlc.arg('project_resource_id')
+  AND (SELECT count(*) FROM deleted_packages) >= 0;
 
 -- name: GetProjectDesignSystemInWorkspace :one
 SELECT * FROM project_design_system
@@ -1092,6 +1131,7 @@ FOR UPDATE;
 INSERT INTO project_design_system (
     workspace_id,
     project_id,
+    project_resource_id,
     name,
     platform,
     current_agent_id,
@@ -1104,6 +1144,7 @@ INSERT INTO project_design_system (
 SELECT
     sqlc.arg('workspace_id'),
     sqlc.arg('project_id'),
+    sqlc.narg('project_resource_id'),
     sqlc.arg('name'),
     sqlc.arg('platform'),
     sqlc.narg('current_agent_id'),

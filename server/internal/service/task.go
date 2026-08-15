@@ -1623,26 +1623,30 @@ type DesignTemplateBlueprintAnalyzeContext struct {
 }
 
 type ProjectDesignSystemTaskContext struct {
-	Type                  string                       `json:"type"`
-	Operation             ProjectDesignSystemOperation `json:"operation"`
-	RequesterID           string                       `json:"requester_id"`
-	WorkspaceID           string                       `json:"workspace_id"`
-	ProjectID             string                       `json:"project_id"`
-	ProjectDesignSystemID string                       `json:"project_design_system_id"`
-	AgentID               string                       `json:"agent_id"`
-	Project               json.RawMessage              `json:"project"`
-	Platform              string                       `json:"platform"`
-	Brief                 string                       `json:"brief"`
-	References            json.RawMessage              `json:"references"`
-	BasePackage           json.RawMessage              `json:"base_package,omitempty"`
-	Instruction           string                       `json:"instruction,omitempty"`
-	Scope                 json.RawMessage              `json:"scope,omitempty"`
-	RepositoryAnalysis    json.RawMessage              `json:"repository_analysis,omitempty"`
-	OpenDesignRun         json.RawMessage              `json:"open_design_run,omitempty"`
-	OutputPolicy          json.RawMessage              `json:"output_policy"`
-	PackageSchema         string                       `json:"package_schema,omitempty"`
-	InputSnapshotSHA256   string                       `json:"input_snapshot_sha256,omitempty"`
-	BasePackageSHA256     string                       `json:"base_package_sha256,omitempty"`
+	Type        string                       `json:"type"`
+	Operation   ProjectDesignSystemOperation `json:"operation"`
+	RequesterID string                       `json:"requester_id"`
+	WorkspaceID string                       `json:"workspace_id"`
+	ProjectID   string                       `json:"project_id"`
+	// Empty means the project-level system. When set, the agent is designing
+	// for one repository and should read the system as specific to that
+	// surface rather than the project's shared language (DC-052).
+	ProjectResourceID     string          `json:"project_resource_id,omitempty"`
+	ProjectDesignSystemID string          `json:"project_design_system_id"`
+	AgentID               string          `json:"agent_id"`
+	Project               json.RawMessage `json:"project"`
+	Platform              string          `json:"platform"`
+	Brief                 string          `json:"brief"`
+	References            json.RawMessage `json:"references"`
+	BasePackage           json.RawMessage `json:"base_package,omitempty"`
+	Instruction           string          `json:"instruction,omitempty"`
+	Scope                 json.RawMessage `json:"scope,omitempty"`
+	RepositoryAnalysis    json.RawMessage `json:"repository_analysis,omitempty"`
+	OpenDesignRun         json.RawMessage `json:"open_design_run,omitempty"`
+	OutputPolicy          json.RawMessage `json:"output_policy"`
+	PackageSchema         string          `json:"package_schema,omitempty"`
+	InputSnapshotSHA256   string          `json:"input_snapshot_sha256,omitempty"`
+	BasePackageSHA256     string          `json:"base_package_sha256,omitempty"`
 }
 
 // EnqueueQuickCreateTask creates a queued task that has no issue / chat /

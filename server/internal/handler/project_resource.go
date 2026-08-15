@@ -68,12 +68,17 @@ type UpdateProjectResourceRequest struct {
 // New types are added here without schema migration; unknown types are rejected
 // at the API boundary so a typo can't slip through and produce a resource the
 // daemon/UI doesn't understand.
+// projectResourceTypeGitHubRepo is the resource type a design system can be
+// scoped to (DC-052). Named here so the design-system scope checks and this
+// validator cannot drift apart.
+const projectResourceTypeGitHubRepo = "github_repo"
+
 func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (json.RawMessage, error) {
 	if len(ref) == 0 {
 		return nil, errors.New("resource_ref is required")
 	}
 	switch resourceType {
-	case "github_repo":
+	case projectResourceTypeGitHubRepo:
 		return validateGithubRepoRef(ref)
 	case "local_directory":
 		return validateLocalDirectoryRef(ref)
@@ -721,10 +726,33 @@ func (h *Handler) DeleteProjectResource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "project resource not found")
 		return
 	}
-	if err := h.Queries.DeleteProjectResource(r.Context(), db.DeleteProjectResourceParams{
+	// A repository can own a design system (DC-052), and that column carries
+	// no foreign key, so the system and its packages are cleaned up here.
+	// Both deletes share one transaction: a resource that disappears while
+	// its design system survives would leave a system nothing can reach.
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete project resource")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	queries := h.Queries.WithTx(tx)
+
+	if err := queries.DeleteProjectDesignSystemsByResource(r.Context(), db.DeleteProjectDesignSystemsByResourceParams{
 		WorkspaceID:       project.WorkspaceID,
 		ProjectResourceID: resource.ID,
 	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete project resource")
+		return
+	}
+	if err := queries.DeleteProjectResource(r.Context(), db.DeleteProjectResourceParams{
+		WorkspaceID:       project.WorkspaceID,
+		ProjectResourceID: resource.ID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete project resource")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete project resource")
 		return
 	}
