@@ -203,6 +203,7 @@ type terminalTaskReport struct {
 	failureReason                string
 	projectDesignSystemArtifacts *ProjectDesignSystemArtifacts
 	projectDesignSystemPackage   *ProjectDesignSystemPackageReceipt
+	designDocumentPackage        *DesignDocumentPackageReceipt
 	// sessionRolloutMissing is true when the daemon withheld this task's Codex
 	// session because its rollout was not in the store (MUL-5305). The server
 	// clears the resume pointer and flags the continuity gap for the next claim.
@@ -5050,6 +5051,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 			failureReason:                taskRunFailureReason(err),
 			projectDesignSystemArtifacts: result.ProjectDesignSystemArtifacts,
 			projectDesignSystemPackage:   result.ProjectDesignSystemPackage,
+			designDocumentPackage:        result.DesignDocumentPackage,
 			sessionRolloutMissing:        result.SessionRolloutMissing,
 			retiredSessionID:             result.RetiredSessionID,
 		}); failErr != nil {
@@ -5070,6 +5072,13 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		finalized, finalizeErr := d.finalizeProjectDesignSystemResultFromDaemon(ctx, task, result)
 		if finalizeErr != nil {
 			taskLog.Error("project design system finalize failed", "error", finalizeErr)
+		}
+		result = finalized
+	}
+	if isDesignDocumentTask(task) {
+		finalized, finalizeErr := d.finalizeDesignDocumentResultFromDaemon(ctx, task, result)
+		if finalizeErr != nil {
+			taskLog.Error("design document finalize failed", "error", finalizeErr)
 		}
 		result = finalized
 	}
@@ -5374,6 +5383,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			workDir:                      result.WorkDir,
 			projectDesignSystemArtifacts: result.ProjectDesignSystemArtifacts,
 			projectDesignSystemPackage:   result.ProjectDesignSystemPackage,
+			designDocumentPackage:        result.DesignDocumentPackage,
 			sessionRolloutMissing:        result.SessionRolloutMissing,
 			retiredSessionID:             result.RetiredSessionID,
 		})
@@ -5418,6 +5428,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			failureReason:                taskfailure.Classify(fallbackErrMsg).String(),
 			projectDesignSystemArtifacts: result.ProjectDesignSystemArtifacts,
 			projectDesignSystemPackage:   result.ProjectDesignSystemPackage,
+			designDocumentPackage:        result.DesignDocumentPackage,
 			sessionRolloutMissing:        result.SessionRolloutMissing,
 			retiredSessionID:             result.RetiredSessionID,
 		}); failErr != nil {
@@ -5457,6 +5468,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			failureReason:                failureReason,
 			projectDesignSystemArtifacts: result.ProjectDesignSystemArtifacts,
 			projectDesignSystemPackage:   result.ProjectDesignSystemPackage,
+			designDocumentPackage:        result.DesignDocumentPackage,
 			sessionRolloutMissing:        result.SessionRolloutMissing,
 			retiredSessionID:             result.RetiredSessionID,
 		}); err != nil {
@@ -5476,7 +5488,7 @@ func (d *Daemon) reportTerminalTask(parentCtx context.Context, report terminalTa
 
 	switch report.kind {
 	case terminalTaskReportComplete:
-		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.projectDesignSystemArtifacts, report.projectDesignSystemPackage, report.sessionRolloutMissing, report.retiredSessionID)
+		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.projectDesignSystemArtifacts, report.projectDesignSystemPackage, report.designDocumentPackage, report.sessionRolloutMissing, report.retiredSessionID)
 	case terminalTaskReportFail:
 		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID)
 	default:
@@ -5517,6 +5529,13 @@ func gcMetaForTask(task Task) (execenv.GCMeta, bool) {
 		meta.Kind = execenv.GCKindPMOSync
 		meta.TaskID = task.ID
 	case len(task.ProjectDesignSystemContext) > 0:
+		meta.Kind = execenv.GCKindQuickCreate
+		meta.TaskID = task.ID
+	case len(task.DesignDocumentContext) > 0:
+		// Page-design tasks bind no issue either, so GC resolves terminal
+		// state through the task gc-check endpoint. Without this case the
+		// task directory has no GC metadata and is never reclaimed — and a
+		// design document workspace holds a full prototype package.
 		meta.Kind = execenv.GCKindQuickCreate
 		meta.TaskID = task.ID
 	default:
@@ -6722,7 +6741,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			}
 		}
 	}
-	if len(task.ProjectDesignSystemContext) > 0 && env.OutputDir != "" {
+	// Both native design kinds write their package to $MULTICA_OUTPUT_DIR.
+	// execenv already pointed OutputDir at the right per-kind directory.
+	if (len(task.ProjectDesignSystemContext) > 0 || len(task.DesignDocumentContext) > 0) && env.OutputDir != "" {
 		agentEnv["MULTICA_OUTPUT_DIR"] = env.OutputDir
 	}
 	// Ensure the multica CLI is on PATH inside the agent's environment.

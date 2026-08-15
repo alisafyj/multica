@@ -153,10 +153,14 @@ func (h *Handler) prepareDesignDocumentCompletion(
 	// rendered from different bytes, cannot become a draft (spec §12.3).
 	// ValidateReceipt also binds the browser policy and the exact target set,
 	// so a receipt that skipped a page cannot pass for a complete one.
+	expectedTargets, err := designDocumentPreviewTargets(validated.Manifest.PreviewTargets)
+	if err != nil {
+		return preparedDesignDocumentCompletion{}, err
+	}
 	if err := designpreview.ValidateReceipt(
 		receipt.Preview,
 		validated.Manifest.ContentDigest,
-		designDocumentPreviewTargets(validated.Manifest.PreviewTargets),
+		expectedTargets,
 	); err != nil {
 		return preparedDesignDocumentCompletion{}, fmt.Errorf("design document preview receipt invalid: %w", err)
 	}
@@ -185,12 +189,20 @@ func (h *Handler) prepareDesignDocumentCompletion(
 	}, nil
 }
 
-func designDocumentPreviewTargets(targets []designdocument.PreviewTarget) []designpreview.Target {
+// designDocumentPreviewTargets re-derives the target set the receipt is
+// validated against. It MUST apply the same kind mapping the daemon used when
+// building the receipt — passing the raw prototype_entry / prototype_page
+// kinds through would make ValidateTargetSet reject every valid receipt.
+func designDocumentPreviewTargets(targets []designdocument.PreviewTarget) ([]designpreview.Target, error) {
 	out := make([]designpreview.Target, 0, len(targets))
 	for _, target := range targets {
-		out = append(out, designpreview.Target{Kind: target.Kind, ID: target.ID, Path: target.Path})
+		kind, ok := designdocument.PreviewTargetKind(target.Kind)
+		if !ok {
+			return nil, fmt.Errorf("design document preview target %q has unsupported kind %q", target.ID, target.Kind)
+		}
+		out = append(out, designpreview.Target{Kind: kind, ID: target.ID, Path: target.Path})
 	}
-	return out
+	return out, nil
 }
 
 func designDocumentBindingFromContext(taskContext service.DesignDocumentTaskContext, task db.AgentTaskQueue) designdocument.PackageBinding {

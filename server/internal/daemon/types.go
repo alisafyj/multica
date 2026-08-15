@@ -298,6 +298,7 @@ type TaskResult struct {
 	Usage                        []TaskUsageEntry                   `json:"usage,omitempty"` // per-model token usage
 	ProjectDesignSystemArtifacts *ProjectDesignSystemArtifacts      `json:"-"`               // legacy three-file inline payload; collected for non-V2 tasks only
 	ProjectDesignSystemPackage   *ProjectDesignSystemPackageReceipt `json:"-"`               // V2-native package receipt (archive + audit + preview); populated only on the V2 path
+	DesignDocumentPackage        *DesignDocumentPackageReceipt      `json:"-"`               // page-design package receipt (archive + audit + preview); populated only by the design document finalize gate
 }
 
 // ProjectDesignSystemArtifacts is the legacy inline three-file payload the

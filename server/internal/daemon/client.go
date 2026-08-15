@@ -583,6 +583,10 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 			if value != nil {
 				body["project_design_system_package"] = value
 			}
+		case *DesignDocumentPackageReceipt:
+			if value != nil {
+				body["design_document_package"] = value
+			}
 		case bool:
 			if value {
 				body["session_rollout_missing"] = true
@@ -1354,4 +1358,37 @@ func (c *Client) getJSON(ctx context.Context, path string, respBody any) error {
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(respBody)
+}
+
+// UploadDesignDocumentPackage uploads a collected page-design package to
+// object storage. Same transport and retry shape as the design-system upload
+// — the difference is only which endpoint owns the object key namespace, so
+// one kind's package can never land under the other's prefix.
+func (c *Client) UploadDesignDocumentPackage(
+	ctx context.Context,
+	taskID string,
+	contentDigest string,
+	archive []byte,
+) (DesignDocumentPackageUpload, error) {
+	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(taskID) != taskID {
+		return DesignDocumentPackageUpload{}, errors.New("design document package task ID is required")
+	}
+	if !validProjectDesignSystemPackageDigest(contentDigest) {
+		return DesignDocumentPackageUpload{}, errors.New("design document package digest is invalid")
+	}
+	if len(archive) == 0 || len(archive) > 64<<20 {
+		return DesignDocumentPackageUpload{}, errors.New("design document package archive has an invalid size")
+	}
+	requestPath := fmt.Sprintf("/api/daemon/tasks/%s/design-document/package", taskID)
+	upload, err := c.uploadProjectDesignSystemPackage(ctx, requestPath, contentDigest, archive)
+	if err != nil {
+		return DesignDocumentPackageUpload{}, err
+	}
+	if upload.ObjectKey == "" {
+		return DesignDocumentPackageUpload{}, errors.New("design document package response has no object key")
+	}
+	if upload.ContentDigest != contentDigest {
+		return DesignDocumentPackageUpload{}, errors.New("design document package response digest does not match request")
+	}
+	return DesignDocumentPackageUpload{ObjectKey: upload.ObjectKey, ContentDigest: upload.ContentDigest}, nil
 }

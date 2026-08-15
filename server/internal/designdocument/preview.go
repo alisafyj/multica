@@ -64,3 +64,24 @@ func previewTargetID(name string) (string, bool) {
 	}
 	return id, true
 }
+
+// PreviewTargetKind maps a design document Preview target kind onto the kind
+// vocabulary designpreview validates receipts against: ui_kit for a design
+// system's UI Kit, preview for a rendered page. A prototype entry and a
+// prototype sub page are both rendered pages, so both map to preview; the
+// entry stays identifiable through its target ID and the manifest's
+// prototype_entry field.
+//
+// It lives here because it is a property of this package's target vocabulary,
+// and because BOTH the daemon (which builds the receipt) and the server (which
+// re-derives the expected target set to validate it) must apply it. Two copies
+// that drift make designpreview.ValidateTargetSet reject perfectly good
+// receipts.
+func PreviewTargetKind(kind string) (string, bool) {
+	switch kind {
+	case "prototype_entry", "prototype_page":
+		return "preview", true
+	default:
+		return "", false
+	}
+}
