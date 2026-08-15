@@ -190,9 +190,11 @@ import type {
   BillingCheckoutSessionStatus,
   CreateBillingPortalSessionResponse,
   CancelDesignDeliveryRequest,
+  CreateDesignDocumentRequest,
   CreateDesignDraftAgentTaskRequest,
   CreateDesignDraftAgentTaskResponse,
   CreateDesignDraftRequest,
+  DesignDocument,
   CreateDesignDeliveryRequest,
   CreateDesignFileRequest,
   CreateDesignFolderRequest,
@@ -229,6 +231,7 @@ import type {
   FigmaPluginAuthSession,
   FigmaPluginAuthStatus,
   ListDesignFoldersResponse,
+  ListDesignDocumentsResponse,
   ListDesignDraftsResponse,
   ListDesignDeliveriesResponse,
   ListDesignFilesResponse,
@@ -454,6 +457,7 @@ import {
   EMPTY_LIST_LABELS_RESPONSE,
   EMPTY_RESOURCE_LABELS_RESPONSE,
   DesignDeliverySchema,
+  DesignDocumentSchema,
   DesignDraftMaterializeResponseSchema,
   DesignDraftSchema,
   DesignSystemProfileSchema,
@@ -463,6 +467,7 @@ import {
   DesignRestoreTaskSchema,
   DispatchDesignRestoreTaskResponseSchema,
   EMPTY_DESIGN_DELIVERY,
+  EMPTY_DESIGN_DOCUMENT,
   EMPTY_DESIGN_DRAFT,
   EMPTY_DESIGN_DRAFT_MATERIALIZE_RESPONSE,
   EMPTY_DESIGN_SYSTEM_PROFILE,
@@ -472,10 +477,12 @@ import {
   EMPTY_DESIGN_RESTORE_TASK,
   EMPTY_DISPATCH_DESIGN_RESTORE_TASK_RESPONSE,
   ListDesignDeliveriesResponseSchema,
+  ListDesignDocumentsResponseSchema,
   ListDesignDraftsResponseSchema,
   ListDesignSystemProfilesResponseSchema,
   ListDesignRestoreTasksResponseSchema,
   EMPTY_LIST_DESIGN_DELIVERIES_RESPONSE,
+  EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE,
   EMPTY_LIST_DESIGN_DRAFTS_RESPONSE,
   EMPTY_LIST_DESIGN_SYSTEM_PROFILES_RESPONSE,
   EMPTY_LIST_DESIGN_RESTORE_TASKS_RESPONSE,
@@ -3596,6 +3603,38 @@ export class ApiClient {
       ProjectDesignSystemSchema,
       { ...EMPTY_PROJECT_DESIGN_SYSTEM, id },
       { endpoint: "POST /api/project-design-systems/{id}/preview-verification" },
+    );
+  }
+
+  // Design documents are the page-design artifact the design centre home
+  // composer produces (DC-042). Creating one also enqueues its first
+  // generation task server-side.
+  async listDesignDocuments(projectId: string): Promise<ListDesignDocumentsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/design-documents?project_id=${encodeURIComponent(projectId)}`,
+    );
+    return parseWithFallback(raw, ListDesignDocumentsResponseSchema, EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE, {
+      endpoint: "GET /api/design-documents",
+    });
+  }
+
+  async createDesignDocument(data: CreateDesignDocumentRequest): Promise<DesignDocument> {
+    const raw = await this.fetch<unknown>("/api/design-documents", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(
+      raw,
+      DesignDocumentSchema,
+      {
+        ...EMPTY_DESIGN_DOCUMENT,
+        project_id: data.project_id,
+        project_resource_id: data.project_resource_id ?? "",
+        issue_id: data.issue_id ?? "",
+        platform: data.platform,
+        recipe: data.recipe ?? "default",
+      },
+      { endpoint: "POST /api/design-documents" },
     );
   }
 

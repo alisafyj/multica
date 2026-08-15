@@ -498,6 +498,76 @@ export interface ProjectDesignSystem {
   saved_at: string | null;
 }
 
+/**
+ * Scenario recipe the design agent follows (DC-049). Every recipe produces a
+ * prototype; they differ in the method, not the artifact kind. The template
+ * slice widens this to template ids without changing the API shape, so treat
+ * an unknown value as an ordinary string rather than a parse failure.
+ */
+export type DesignDocumentRecipe =
+  | "default"
+  | "ui-mockup"
+  | "web-clone"
+  | "wireframe"
+  | "mobile-app"
+  | "figma-migration";
+
+export type DesignDocumentStatus =
+  | "empty"
+  | "running"
+  | "draft"
+  | "draft_ahead_of_saved"
+  | "saved"
+  | "failed";
+
+export interface CreateDesignDocumentRequest {
+  project_id: string;
+  agent_id: string;
+  /**
+   * Optional repository scope (DC-053). Naming a repository grounds the task
+   * against it; omitting it skips grounding entirely and is a legitimate way
+   * to work, not a degraded one.
+   */
+  project_resource_id?: string;
+  /** Optional traceable link only — it never moves the issue (DC-045). */
+  issue_id?: string;
+  title?: string;
+  platform: ProjectDesignSystemPlatform;
+  recipe?: DesignDocumentRecipe;
+  brief: string;
+  attachments?: unknown;
+}
+
+export interface DesignDocument {
+  id: string;
+  workspace_id: string;
+  project_id: string;
+  /** Empty when no repository was attached to this run. */
+  project_resource_id: string;
+  issue_id: string;
+  title: string;
+  platform: ProjectDesignSystemPlatform | "";
+  recipe: string;
+  status: DesignDocumentStatus;
+  draft_revision_id: string;
+  saved_revision_id: string;
+  active_task: ProjectDesignSystemTask | null;
+  input_snapshot: unknown;
+  last_error: unknown;
+  /**
+   * Whether this run actually had repository evidence. The UI must never let
+   * a user assume the agent read code when it did not (DC-053).
+   */
+  repository_grounded: boolean;
+  created_at: string;
+  updated_at: string;
+  saved_at: string;
+}
+
+export interface ListDesignDocumentsResponse {
+  documents: DesignDocument[];
+}
+
 export interface PublishDesignTemplateRequest {
   revision_id?: string;
   library_key?: string;

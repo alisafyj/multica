@@ -169,6 +169,20 @@ export function projectDesignSystemDetailOptions(wsId: string, id: string) {
   });
 }
 
+/**
+ * Design documents of one project (DC-042). The list endpoint requires a
+ * project, so an empty `projectId` keeps the query idle instead of asking the
+ * server for a workspace-wide list it does not serve.
+ */
+export function designDocumentListOptions(wsId: string, projectId: string) {
+  return queryOptions({
+    queryKey: designKeys.documents(wsId, projectId),
+    queryFn: () => api.listDesignDocuments(projectId),
+    select: (data) => data.documents,
+    enabled: !!projectId,
+  });
+}
+
 export function designDraftListOptions(wsId: string) {
   return queryOptions({
     queryKey: designKeys.drafts(wsId),

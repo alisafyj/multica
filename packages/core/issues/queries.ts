@@ -115,6 +115,13 @@ export const issueKeys = {
       projectId,
       assigneeTypes ?? null,
     ] as const,
+  /**
+   * Every open issue of one project, unbucketed and unpaginated. Backs
+   * "link this to a task" pickers, where a partial first page would silently
+   * hide the task the user is looking for.
+   */
+  projectOpen: (wsId: string, projectId: string) =>
+    [...issueKeys.all(wsId), "project-open", projectId] as const,
   detail: (wsId: string, id: string) =>
     [...issueKeys.all(wsId), "detail", id] as const,
   /** Resolve a bare issue identifier (e.g. "MUL-123") to an issue. */
@@ -400,6 +407,23 @@ export function projectGanttIssuesOptions(
   return queryOptions({
     queryKey: issueKeys.projectGantt(wsId, projectId, assigneeTypes),
     queryFn: () => fetchProjectGanttIssues(projectId, assigneeTypes),
+  });
+}
+
+/**
+ * Every open (non-done, non-cancelled) issue in a project.
+ *
+ * Backed by `GET /api/issues?open_only=true&project_id=…`, which the server
+ * answers without a page limit. Pickers that let a user attach work to an
+ * issue need the whole set: a truncated list looks identical to "that task
+ * does not exist" once the client filters it.
+ */
+export function projectOpenIssuesOptions(wsId: string, projectId: string) {
+  return queryOptions({
+    queryKey: issueKeys.projectOpen(wsId, projectId),
+    queryFn: () => api.listIssues({ project_id: projectId, open_only: true }),
+    select: (data) => data.issues,
+    enabled: !!projectId,
   });
 }
 

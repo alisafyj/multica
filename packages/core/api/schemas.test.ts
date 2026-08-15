@@ -18,6 +18,10 @@ import {
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
   EMPTY_PROJECT_DESIGN_SYSTEM,
+  DesignDocumentSchema,
+  ListDesignDocumentsResponseSchema,
+  EMPTY_DESIGN_DOCUMENT,
+  EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE,
   DesignDraftSchema,
   ListDesignDraftsResponseSchema,
   ChatDraftRestoresResponseSchema,
@@ -636,6 +640,103 @@ describe("ProjectDesignSystemSchema package preview drift", () => {
     expect(parsed.content.package_schema).toBe("");
     expect(parsed.content.preview_targets).toEqual([]);
     expect(parsed.content.selection_enabled).toBe(false);
+  });
+});
+
+describe("DesignDocumentSchema", () => {
+  const CREATE_ENDPOINT = { endpoint: "POST /api/design-documents" };
+
+  it("keeps a document whose recipe the client does not know yet", () => {
+    // The template slice widens recipes to template ids without changing the
+    // API shape (DC-049), so an unrecognised recipe must not fail the parse.
+    const parsed = DesignDocumentSchema.parse({
+      id: "document-1",
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      title: "CRM 客户列表",
+      platform: "web",
+      recipe: "template:acme-console",
+      status: "running",
+      repository_grounded: true,
+      created_at: "2026-08-16T00:00:00Z",
+      updated_at: "2026-08-16T00:00:00Z",
+    });
+
+    expect(parsed.recipe).toBe("template:acme-console");
+    expect(parsed.status).toBe("running");
+    expect(parsed.repository_grounded).toBe(true);
+    // Omitted optional ids read as "not set", never as undefined.
+    expect(parsed.project_resource_id).toBe("");
+    expect(parsed.issue_id).toBe("");
+    expect(parsed.saved_revision_id).toBe("");
+  });
+
+  it("degrades an unknown status to empty instead of trusting it", () => {
+    const parsed = DesignDocumentSchema.parse({
+      ...EMPTY_DESIGN_DOCUMENT,
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      status: "materialising",
+    });
+
+    expect(parsed.status).toBe("empty");
+  });
+
+  it("never reports repository grounding it cannot prove", () => {
+    // DC-053: the UI must not let a user believe the agent read code. A
+    // missing or wrong-typed flag has to read as "no evidence", and a
+    // repository id alone is not evidence that grounding ran.
+    const missing = DesignDocumentSchema.parse({
+      ...EMPTY_DESIGN_DOCUMENT,
+      project_resource_id: "resource-1",
+      repository_grounded: undefined,
+    });
+    expect(missing.repository_grounded).toBe(false);
+
+    const wrongType = DesignDocumentSchema.parse({
+      ...EMPTY_DESIGN_DOCUMENT,
+      repository_grounded: "yes",
+    });
+    expect(wrongType.repository_grounded).toBe(false);
+  });
+
+  it("drops a malformed active task without losing the document", () => {
+    const parsed = DesignDocumentSchema.parse({
+      ...EMPTY_DESIGN_DOCUMENT,
+      id: "document-1",
+      active_task: { id: 42 },
+    });
+
+    expect(parsed.id).toBe("document-1");
+    expect(parsed.active_task).toBeNull();
+  });
+
+  it("falls back to the empty document when the create response is malformed", () => {
+    expect(
+      parseWithFallback("not json", DesignDocumentSchema, EMPTY_DESIGN_DOCUMENT, CREATE_ENDPOINT),
+    ).toEqual(EMPTY_DESIGN_DOCUMENT);
+    expect(
+      parseWithFallback(null, DesignDocumentSchema, EMPTY_DESIGN_DOCUMENT, CREATE_ENDPOINT),
+    ).toEqual(EMPTY_DESIGN_DOCUMENT);
+    // A fallback carrying the requested repository must still deny grounding.
+    const fallback = parseWithFallback(
+      [],
+      DesignDocumentSchema,
+      { ...EMPTY_DESIGN_DOCUMENT, project_resource_id: "resource-1" },
+      CREATE_ENDPOINT,
+    );
+    expect(fallback.repository_grounded).toBe(false);
+  });
+
+  it("degrades a malformed document list to an empty list", () => {
+    expect(
+      parseWithFallback("not json", ListDesignDocumentsResponseSchema, EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE, {
+        endpoint: "GET /api/design-documents",
+      }),
+    ).toEqual(EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE);
+
+    const parsed = ListDesignDocumentsResponseSchema.parse({ documents: "gone" });
+    expect(parsed.documents).toEqual([]);
   });
 });
 

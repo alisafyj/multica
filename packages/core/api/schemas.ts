@@ -77,9 +77,12 @@ import type {
   DesignDelivery,
   DesignDraft,
   DesignDraftMaterializeResponse,
+  DesignDocument,
+  DesignDocumentStatus,
   DesignFileDetailResponse,
   DesignSystemProfile,
   DesignRestoreTask,
+  ListDesignDocumentsResponse,
   DispatchDesignRestoreTaskResponse,
   BatchUpdateIssuesResponse,
   ListDesignDeliveriesResponse,
@@ -1750,6 +1753,87 @@ export const EMPTY_PROJECT_DESIGN_SYSTEM: ProjectDesignSystem = {
   created_at: "",
   updated_at: "",
   saved_at: null,
+};
+
+function normalizeDesignDocumentStatus(value: unknown): DesignDocumentStatus {
+  switch (value) {
+    case "running":
+    case "draft":
+    case "draft_ahead_of_saved":
+    case "saved":
+    case "failed":
+      return value;
+    default:
+      return "empty";
+  }
+}
+
+/**
+ * Design document created by the design centre home composer (DC-042).
+ *
+ * `repository_grounded` decides whether the UI may say the agent read code
+ * (DC-053), so it is deliberately not inferred from `project_resource_id`
+ * alone: a backend that attaches a repository but skips grounding must be
+ * able to say so. Missing or malformed values degrade to `false`, the safe
+ * direction — claiming no evidence when there was some is a smaller error
+ * than claiming evidence that never existed.
+ */
+export const DesignDocumentSchema = z.object({
+  id: z.string().catch("").default(""),
+  workspace_id: z.string().catch("").default(""),
+  project_id: z.string().catch("").default(""),
+  project_resource_id: z.string().catch("").default(""),
+  issue_id: z.string().catch("").default(""),
+  title: z.string().catch("").default(""),
+  platform: ProjectDesignSystemPlatformSchema,
+  // The template slice widens recipes to template ids, so an unknown recipe
+  // must survive the parse rather than fail it.
+  recipe: z.string().catch("").default(""),
+  status: z.unknown().transform(normalizeDesignDocumentStatus),
+  draft_revision_id: z.string().catch("").default(""),
+  saved_revision_id: z.string().catch("").default(""),
+  active_task: z.preprocess(
+    (value) => value == null ? null : value,
+    ProjectDesignSystemTaskSchema.nullable().catch(null),
+  ),
+  input_snapshot: z.unknown().transform((value) => value ?? null),
+  last_error: z.unknown().transform((value) => value ?? null),
+  repository_grounded: z.boolean().catch(false).default(false),
+  created_at: z.string().catch("").default(""),
+  updated_at: z.string().catch("").default(""),
+  saved_at: z.string().catch("").default(""),
+}).loose();
+
+export const EMPTY_DESIGN_DOCUMENT: DesignDocument = {
+  id: "",
+  workspace_id: "",
+  project_id: "",
+  project_resource_id: "",
+  issue_id: "",
+  title: "",
+  platform: "",
+  recipe: "",
+  status: "empty",
+  draft_revision_id: "",
+  saved_revision_id: "",
+  active_task: null,
+  input_snapshot: null,
+  last_error: null,
+  repository_grounded: false,
+  created_at: "",
+  updated_at: "",
+  saved_at: "",
+};
+
+export const ListDesignDocumentsResponseSchema = z.object({
+  documents: z.preprocess(
+    (value) => Array.isArray(value) ? value : [],
+    z.array(DesignDocumentSchema).catch([]),
+  ),
+}).loose();
+
+export const EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE: ListDesignDocumentsResponse = {
+  documents: [],
 };
 
 export const DesignRestoreTaskExecutionStatusSchema = z.object({

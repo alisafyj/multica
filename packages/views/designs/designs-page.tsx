@@ -32,6 +32,7 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { PageHeader } from "../layout/page-header";
 import { AppLink, useNavigation } from "../navigation";
+import { DesignTaskComposer } from "./design-task-composer";
 import { FigmaPluginDownload } from "./figma-plugin-download";
 import { ProjectDesignSystemWorkspace } from "./project-design-system-workspace";
 
@@ -620,7 +621,11 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
         </div>
 
         {activeWorkspaceTabId === DESIGN_HOME_TAB_ID ? (
-          <div role="tabpanel" aria-label="首页" className="min-h-0 flex-1" />
+          <div role="tabpanel" aria-label="首页" className="flex min-h-0 flex-1 flex-col">
+            {/* Creating a document lands the user in that project's tab, where
+                the task and its output live. */}
+            <DesignTaskComposer onCreated={(document) => openProjectTab(document.project_id)} />
+          </div>
         ) : isLoading ? (
           <div className="space-y-2 p-4">
             {Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-14 w-full" />)}

@@ -83,6 +83,9 @@ vi.mock("@multica/ui/components/ui/dropdown-menu", () => ({
   ),
 }));
 
+import { I18nProvider } from "@multica/core/i18n/react";
+import zhIssues from "../locales/zh-Hans/issues.json";
+import zhProjects from "../locales/zh-Hans/projects.json";
 import { DesignsPage } from "./designs-page";
 
 const baseDraft = {
@@ -111,7 +114,13 @@ function renderWithClient(ui: ReactNode) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+  // The home composer reuses the shared property pickers, which read their
+  // filter placeholders from i18n — same provider the apps mount.
+  return render(
+    <I18nProvider locale="zh-Hans" resources={{ "zh-Hans": { issues: zhIssues, projects: zhProjects } }}>
+      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+    </I18nProvider>,
+  );
 }
 
 describe("DesignsPage", () => {
@@ -168,7 +177,9 @@ describe("DesignsPage", () => {
 
     const homeTab = await screen.findByRole("tab", { name: "首页" });
     expect(homeTab).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel", { name: "首页" })).toBeEmptyDOMElement();
+    // Home carries the cross-project design task composer, not the
+    // project-scoped asset views.
+    expect(within(screen.getByRole("tabpanel", { name: "首页" })).getByLabelText("页面需求描述")).toBeInTheDocument();
     expect(screen.queryByText("工作区设计资产")).not.toBeInTheDocument();
     expect(screen.queryByText("UI 规范")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /关闭.*首页/ })).not.toBeInTheDocument();

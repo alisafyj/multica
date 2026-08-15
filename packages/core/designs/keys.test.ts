@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { designKeys } from "./keys";
 import {
+  designDocumentListOptions,
   projectDesignSystemByProjectOptions,
   projectDesignSystemDetailOptions,
 } from "./queries";
@@ -40,6 +41,24 @@ describe("designKeys", () => {
       "system-1",
       "package-preview",
     ]);
+  });
+
+  it("scopes design document lists by workspace and project", () => {
+    expect(designKeys.documents("ws-1", "project-1")).toEqual([
+      "designs",
+      "ws-1",
+      "documents",
+      "project-1",
+    ]);
+    // Two workspaces (or two projects) must never share a document cache.
+    expect(designKeys.documents("ws-2", "project-1")).not.toEqual(
+      designKeys.documents("ws-1", "project-1"),
+    );
+    expect(designDocumentListOptions("ws-1", "project-1").queryKey).toEqual(
+      designKeys.documents("ws-1", "project-1"),
+    );
+    // The list endpoint requires a project, so an unset one stays idle.
+    expect(designDocumentListOptions("ws-1", "").enabled).toBe(false);
   });
 
   it("keeps project design system query options workspace-scoped", () => {
