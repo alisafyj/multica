@@ -336,6 +336,37 @@ func TestDesignDocumentPromptDeniesSelfAssessmentAsPassCriterion(t *testing.T) {
 	}
 }
 
+// An adjust run must not read like a first generation. It has to know that the
+// base is read-only, that its output is a whole package rather than a patch,
+// and that a local change still has to leave the package internally
+// consistent — the three rules that separate an adjustment from a redesign.
+func TestDesignDocumentPromptDrivesAnAdjustmentRatherThanARedesign(t *testing.T) {
+	task := designDocumentPromptTask(t, "")
+	adjust := designDocumentAdjustTask(t, "sha256:"+strings.Repeat("f", 64), nil)
+
+	generatePrompt := BuildPrompt(task, "opencode")
+	adjustPrompt := BuildPrompt(adjust, "opencode")
+
+	for _, required := range []string{
+		"This run is an adjustment of an existing document, not a new design.",
+		"Make the primary action clearer.",
+		`"page_id":"orders"`,
+		"is the exact revision you are changing and it is read-only",
+		"Write a complete package to `$MULTICA_OUTPUT_DIR`, not a patch",
+		"must be carried forward",
+		"Stay internally consistent even when the requested change is local",
+	} {
+		if !strings.Contains(adjustPrompt, required) {
+			t.Fatalf("adjust prompt is missing %q:\n%s", required, adjustPrompt)
+		}
+	}
+	// A first generation has no base and no instruction; telling it about an
+	// adjustment would send it looking for a revision that does not exist.
+	if strings.Contains(generatePrompt, "This run is an adjustment") {
+		t.Fatalf("a first generation was told it is an adjustment:\n%s", generatePrompt)
+	}
+}
+
 // TestDesignDocumentPromptContractMatchesCollector is the crossing test for
 // the page-design chain, the same guard the design-system chain needed. The
 // prompt and the collector are specified in different packages; nothing else

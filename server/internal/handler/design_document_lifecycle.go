@@ -124,24 +124,32 @@ func (h *Handler) GetDesignDocument(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) loadDesignDocumentForRequest(w http.ResponseWriter, r *http.Request) (db.DesignDocument, pgtype.UUID, bool) {
-	workspaceUUID, _, ok := h.projectDesignSystemRequestScope(w, r)
+	document, workspaceUUID, _, ok := h.loadDesignDocumentForRequester(w, r)
+	return document, workspaceUUID, ok
+}
+
+// loadDesignDocumentForRequester additionally reports who is asking. Only flows
+// that enqueue work need it — a pointer move is attributed by the pointer, but
+// an agent run has to name the member who asked for it.
+func (h *Handler) loadDesignDocumentForRequester(w http.ResponseWriter, r *http.Request) (db.DesignDocument, pgtype.UUID, pgtype.UUID, bool) {
+	workspaceUUID, requesterUUID, ok := h.projectDesignSystemRequestScope(w, r)
 	if !ok {
-		return db.DesignDocument{}, pgtype.UUID{}, false
+		return db.DesignDocument{}, pgtype.UUID{}, pgtype.UUID{}, false
 	}
 	documentUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "id")
 	if !ok {
-		return db.DesignDocument{}, pgtype.UUID{}, false
+		return db.DesignDocument{}, pgtype.UUID{}, pgtype.UUID{}, false
 	}
 	document, err := h.Queries.GetDesignDocumentInWorkspace(r.Context(), db.GetDesignDocumentInWorkspaceParams{
 		ID: documentUUID, WorkspaceID: workspaceUUID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeProjectDesignSystemError(w, http.StatusNotFound, "design_document_not_found", "design document not found")
-		return db.DesignDocument{}, pgtype.UUID{}, false
+		return db.DesignDocument{}, pgtype.UUID{}, pgtype.UUID{}, false
 	}
 	if err != nil {
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "lookup_failed", "failed to load the design document")
-		return db.DesignDocument{}, pgtype.UUID{}, false
+		return db.DesignDocument{}, pgtype.UUID{}, pgtype.UUID{}, false
 	}
-	return document, workspaceUUID, true
+	return document, workspaceUUID, requesterUUID, true
 }

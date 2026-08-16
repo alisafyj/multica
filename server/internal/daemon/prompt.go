@@ -1102,6 +1102,8 @@ func buildDesignDocumentPrompt(task Task) string {
 	b.WriteString("Read `.agent_context/design_document/context/task.json` first. It is canonical — the requirement, the target platform, the design scenario, the pinned project design system, and (when the task has one) the repository evidence all come from there. Do not re-derive them from elsewhere.\n")
 	b.WriteString("For adjust or regenerate operations, also read every file under the immutable `base/` directory before designing. That is the revision you are changing.\n\n")
 
+	b.WriteString(designDocumentAdjustment(task))
+
 	b.WriteString("Stages (one Agent session, no delegation):\n")
 	b.WriteString("1. Inventory the evidence — the requirement, the pinned design system, the optional task (Issue), the optional repository grounding, and the immutable base for adjust / regenerate. Classify each item as a confirmed fact, a conflict needing a decision, or a documented fallback.\n")
 	b.WriteString("2. Decide the page set. A document may hold a main page, its sub-pages, page states, overlays and the key flows that connect them. Design only what the requirement supports — pages nobody asked for are template residue.\n")
@@ -1126,6 +1128,43 @@ func buildDesignDocumentPrompt(task Task) string {
 		b.WriteString("- This task has NO repository grounding: no repository was attached. Design from the requirement and the design system alone, and do not describe the result as matching existing code — you have not seen any.\n")
 	}
 	b.WriteString("- Before exiting, verify every required artifact is on disk and non-empty. Do not report success otherwise.\n")
+	return b.String()
+}
+
+// designDocumentAdjustment renders the section an adjust run gets and a first
+// generation does not. Without it the two runs read identically, and an
+// adjustment produces a fresh design instead of the change the user asked for.
+//
+// Returns the empty string for anything else, so the caller can append it
+// unconditionally.
+func designDocumentAdjustment(task Task) string {
+	if len(task.DesignDocumentContext) == 0 {
+		return ""
+	}
+	var envelope struct {
+		Operation   string          `json:"operation"`
+		Instruction string          `json:"instruction"`
+		Scope       json.RawMessage `json:"scope"`
+	}
+	if err := jsonUnmarshal(task.DesignDocumentContext, &envelope); err != nil {
+		return ""
+	}
+	if envelope.Operation != "adjust" {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("This run is an adjustment of an existing document, not a new design.\n\n")
+	if instruction := strings.TrimSpace(envelope.Instruction); instruction != "" {
+		fmt.Fprintf(&b, "Requested change:\n%s\n\n", instruction)
+	}
+	if scope := strings.TrimSpace(string(envelope.Scope)); scope != "" && scope != "null" {
+		fmt.Fprintf(&b, "The user made the request from a selection in the document. Apply the change there:\n```json\n%s\n```\n\n", scope)
+	}
+	b.WriteString("What an adjustment means for your output:\n")
+	b.WriteString("- `.agent_context/design_document/base/` is the exact revision you are changing and it is read-only. Read it; do not write to it, and do not treat editing it as delivering the adjustment.\n")
+	b.WriteString("- Write a complete package to `$MULTICA_OUTPUT_DIR`, not a patch. Everything the base carried that the request does not change must be carried forward: the platform replaces the package wholesale, so a file you leave out is content the next revision loses.\n")
+	b.WriteString("- Stay internally consistent even when the requested change is local. `brief.json`, `coverage.json` and the prototype are verified against each other, so a local edit that leaves behind a stale ID, a broken flow or an unrevised coverage claim fails the whole package.\n\n")
 	return b.String()
 }
 

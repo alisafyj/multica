@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/designdocument"
 	"github.com/multica-ai/multica/server/internal/opendesign"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -438,6 +439,35 @@ func (c *Client) DownloadOpenDesignBaseArchive(ctx context.Context, taskID strin
 	var lastErr error
 	for attempt := 0; ; attempt++ {
 		archive, err := c.downloadOpenDesignBaseArchive(ctx, requestPath, reference)
+		if err == nil {
+			return archive, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil || !isTransientError(err) || attempt >= len(openDesignArchiveRetrySchedule) {
+			return nil, lastErr
+		}
+		if sleepErr := retrySleep(ctx, openDesignArchiveRetrySchedule[attempt]); sleepErr != nil {
+			return nil, lastErr
+		}
+	}
+}
+
+// DownloadDesignDocumentBaseArchive fetches the prototype package a page-design
+// adjustment starts from. It is the design-document sibling of
+// DownloadOpenDesignBaseArchive and shares its retry window: the base is
+// required before the agent can start, so a transient blip must not fail the
+// whole task.
+func (c *Client) DownloadDesignDocumentBaseArchive(ctx context.Context, taskID string, reference designdocument.BasePackageReference) ([]byte, error) {
+	if strings.TrimSpace(taskID) == "" {
+		return nil, errors.New("design document base archive task ID is required")
+	}
+	if err := designdocument.ValidateBasePackageReference(reference); err != nil {
+		return nil, err
+	}
+	requestPath := fmt.Sprintf("/api/daemon/tasks/%s/design-document/base-archive", taskID)
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		archive, err := c.downloadDesignDocumentBaseArchive(ctx, requestPath, reference)
 		if err == nil {
 			return archive, nil
 		}
@@ -1328,6 +1358,52 @@ func (c *Client) downloadOpenDesignBaseArchive(ctx context.Context, path string,
 	}
 	if len(archive) == 0 || int64(len(archive)) > opendesign.RunArchiveMaxBytes {
 		return nil, errors.New("Open Design base archive has an invalid size")
+	}
+	return archive, nil
+}
+
+func (c *Client) downloadDesignDocumentBaseArchive(ctx context.Context, path string, reference designdocument.BasePackageReference) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	c.setIdentityHeaders(req)
+
+	archiveClient := *c.client
+	if archiveClient.Timeout == 0 || archiveClient.Timeout < openDesignArchiveDownloadTimeout {
+		archiveClient.Timeout = openDesignArchiveDownloadTimeout
+	}
+	resp, err := archiveClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+	}
+	// The headers are checked before the body is read so a server that answers
+	// with a different revision costs nothing to reject. They are a
+	// cheap cross-check, not the guarantee: ReadBaseArchive re-derives the
+	// digest from the bytes themselves.
+	if contentType := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]); contentType != designdocument.BaseArchiveContentType {
+		return nil, fmt.Errorf("design document base archive has unexpected content type %q", contentType)
+	}
+	if digest := resp.Header.Get(designdocument.BaseArchiveContentDigestHeader); digest != reference.ContentDigest {
+		return nil, errors.New("design document base archive digest header does not match the pinned reference")
+	}
+	if revisionID := resp.Header.Get(designdocument.BaseArchiveRevisionIDHeader); revisionID != reference.RevisionID {
+		return nil, errors.New("design document base archive revision header does not match the pinned reference")
+	}
+	archive, err := io.ReadAll(io.LimitReader(resp.Body, designdocument.BaseArchiveMaxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read design document base archive: %w", err)
+	}
+	if len(archive) == 0 || int64(len(archive)) > designdocument.BaseArchiveMaxBytes {
+		return nil, errors.New("design document base archive has an invalid size")
 	}
 	return archive, nil
 }

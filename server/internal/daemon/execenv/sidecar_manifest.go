@@ -405,21 +405,27 @@ func restoreOwnedV2SidecarWritability(workDir string, m *sidecarManifest) error 
 	for _, dir := range m.Dirs {
 		ownedDirs[filepath.Clean(dir)] = struct{}{}
 	}
-	root := filepath.Join(workDir, ".agent_context", "project_design_system")
-	for _, name := range v2SidecarDirNames {
-		dir := filepath.Join(root, name)
-		if _, owned := ownedDirs[filepath.Clean(dir)]; !owned {
-			continue
-		}
-		component, info, exists, err := lstatPathNoFollow(workDir, dir)
-		if err != nil {
-			return fmt.Errorf("inspect owned V2 sidecar %s: %w", dir, err)
-		}
-		if !exists || component != filepath.Clean(dir) || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			continue
-		}
-		if err := os.Chmod(dir, 0o755); err != nil {
-			return fmt.Errorf("restore owned V2 sidecar writability on %s: %w", dir, err)
+	// Both native sidecar roots, for the same reason RestoreV2SidecarWritability
+	// walks both: each stamps itself read-only, and a root this function does
+	// not know about is a task directory that can never be reclaimed. A task
+	// only ever materializes one of them; the other is simply absent.
+	for _, sidecar := range v2SidecarRootNames {
+		root := filepath.Join(workDir, ".agent_context", sidecar)
+		for _, name := range v2SidecarDirNames {
+			dir := filepath.Join(root, name)
+			if _, owned := ownedDirs[filepath.Clean(dir)]; !owned {
+				continue
+			}
+			component, info, exists, err := lstatPathNoFollow(workDir, dir)
+			if err != nil {
+				return fmt.Errorf("inspect owned V2 sidecar %s: %w", dir, err)
+			}
+			if !exists || component != filepath.Clean(dir) || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				continue
+			}
+			if err := os.Chmod(dir, 0o755); err != nil {
+				return fmt.Errorf("restore owned V2 sidecar writability on %s: %w", dir, err)
+			}
 		}
 	}
 	return nil

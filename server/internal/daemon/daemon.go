@@ -6657,6 +6657,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			}
 		}()
 	}
+	// A page-design adjustment runs against a base revision whose package is an
+	// archive, so execenv only reserved the directory — the bytes have to come
+	// over the wire. Done here, while the run is still in its prepare phase, so
+	// a base that cannot be restored fails the task before the agent starts
+	// rather than letting it design against an empty base/.
+	if err := d.restoreDesignDocumentBaseArchive(prepareCtx, task, env.WorkDir); err != nil {
+		return TaskResult{}, fmt.Errorf("prepare design document base archive: %w", err)
+	}
 	taskTempDir, err := ensureTaskTempDir(env.RootDir, task.WorkspaceID, task.ID)
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("prepare task temp dir: %w", err)

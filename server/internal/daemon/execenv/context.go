@@ -1681,7 +1681,6 @@ func writeDesignDocumentContext(workDir string, ctx TaskContextForEnv, manifest 
 	// Split the two large optional blocks into their own files so the agent
 	// can read the design constraint and the repository evidence without
 	// paging through the whole envelope.
-	readOnlyDirs := []string{contextDir}
 	for _, block := range []struct {
 		key      string
 		filename string
@@ -1704,37 +1703,50 @@ func writeDesignDocumentContext(workDir string, ctx TaskContextForEnv, manifest 
 
 	// base/ is the immutable revision an adjustment starts from. It is
 	// absent on first generation because there is nothing to adjust.
+	//
+	// Unlike every other input here, the base does NOT arrive in the envelope:
+	// a design document package is an archive of prototype source and assets,
+	// so the task context carries only base_revision_id + base_content_digest
+	// and the daemon downloads and extracts the archive into this directory.
+	// The directory is therefore reserved WRITABLE — ExtractDesignDocumentBase
+	// stamps it read-only once the verified package is on disk. Stamping it
+	// here would make the daemon fail writing the workspace it just built.
 	if operation == "adjust" || operation == "regenerate" {
-		baseDir := filepath.Join(root, "base")
-		if err := recordMkdirAll(baseDir, 0o755, manifest); err != nil {
+		if _, inline := task["base_package"]; inline {
+			// Inline base contents mean the producer and this consumer
+			// disagree about how a base travels. Silently ignoring them would
+			// hand the agent an empty base/ and let it "adjust" from nothing.
+			return errors.New("design document base package must be a reference, not inline contents")
+		}
+		if !designDocumentDeclaresBase(task) {
+			return fmt.Errorf("design document %s task has no base revision to adjust", operation)
+		}
+		if err := recordMkdirAll(designDocumentBaseDir(workDir), 0o755, manifest); err != nil {
 			return err
 		}
-		if raw, present := task["base_package"]; present && len(raw) > 0 && string(raw) != "null" {
-			var base map[string]json.RawMessage
-			if err := json.Unmarshal(raw, &base); err != nil {
-				return fmt.Errorf("decode design document base package: %w", err)
-			}
-			for name, contents := range base {
-				if !safeDesignDocumentBaseName(name) {
-					return fmt.Errorf("unsafe design document base entry %q", name)
-				}
-				var body string
-				if err := json.Unmarshal(contents, &body); err != nil {
-					return fmt.Errorf("decode design document base entry %q: %w", name, err)
-				}
-				target := filepath.Join(baseDir, filepath.FromSlash(name))
-				if err := recordMkdirAll(filepath.Dir(target), 0o755, manifest); err != nil {
-					return err
-				}
-				if err := recordWriteFile(target, []byte(body), 0o444, manifest); err != nil {
-					return err
-				}
-			}
-		}
-		readOnlyDirs = append(readOnlyDirs, baseDir)
 	}
 
-	return stampV2ReadOnly(readOnlyDirs...)
+	// base/ is deliberately absent here: it is stamped by
+	// ExtractDesignDocumentBase, once the daemon has the verified package.
+	return stampV2ReadOnly(contextDir)
+}
+
+// designDocumentDeclaresBase reports whether the task pins the revision an
+// adjustment starts from. Both halves are required: the id decides which
+// archive the daemon asks for, the digest decides whether the bytes it gets
+// back are the ones this task was pinned to.
+func designDocumentDeclaresBase(task map[string]json.RawMessage) bool {
+	for _, key := range []string{"base_revision_id", "base_content_digest"} {
+		raw, present := task[key]
+		if !present {
+			return false
+		}
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil || strings.TrimSpace(value) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // safeDesignDocumentBaseName rejects any base entry that could escape the
