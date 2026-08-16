@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,6 +14,68 @@ import {
   resolveBuildMatrix,
   stripLeadingSeparator,
 } from "./package.mjs";
+import desktopConfig, { workspaceExternalGuard } from "../electron.vite.config.ts";
+
+describe("workspaceExternalGuard", () => {
+  it("rejects workspace packages left as static external imports", () => {
+    const guard = workspaceExternalGuard();
+
+    expect(() =>
+      guard.generateBundle({}, {
+        "index.js": {
+          type: "chunk",
+          imports: ["@multica/core/runtimes"],
+          dynamicImports: [],
+        },
+      }),
+    ).toThrow("@multica/core/runtimes");
+  });
+
+  it("allows third-party external imports", () => {
+    const guard = workspaceExternalGuard();
+
+    expect(() =>
+      guard.generateBundle({}, {
+        "index.js": {
+          type: "chunk",
+          imports: ["electron", "node:path"],
+          dynamicImports: [],
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("bundles source-only workspace dependencies in the Electron main build", () => {
+    const externalizePlugin = desktopConfig.main?.plugins?.find(
+      (plugin) => plugin && "name" in plugin && plugin.name === "vite:externalize-deps",
+    );
+    const config = {};
+
+    externalizePlugin.config(config);
+
+    for (const specifier of [
+      "@multica/core/runtimes",
+      "@multica/ui",
+      "@multica/views",
+    ]) {
+      expect(
+        config.build.rollupOptions.external.some((external) =>
+          typeof external === "string"
+            ? external === specifier
+            : external.test(specifier),
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("is installed in the Electron main build pipeline", () => {
+    expect(
+      desktopConfig.main?.plugins?.some(
+        (plugin) => plugin && "name" in plugin && plugin.name === "multica:workspace-external-guard",
+      ),
+    ).toBe(true);
+  });
+});
 
 describe("normalizeGitVersion", () => {
   it("returns null for empty / nullish input", () => {
