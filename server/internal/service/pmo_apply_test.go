@@ -398,6 +398,54 @@ func TestApplyPMORunIdempotentRerun(t *testing.T) {
 	}
 }
 
+func TestPreparePMOSyncRunPreviewAfterApplyDoesNotProposeCreates(t *testing.T) {
+	f := newPMOApplyFixture(t)
+	ctx := context.Background()
+
+	tasks := make([]map[string]any, 13)
+	for i := range tasks {
+		tasks[i] = pmoTask(
+			fmt.Sprintf("EXT-T-%03d", i+1),
+			fmt.Sprintf("EXT-S-%03d", i+1),
+			fmt.Sprintf("Task %d", i+1),
+			"todo",
+		)
+	}
+	snapshotJSON := buildPMOSnapshotJSON(t,
+		pmoRequirement("EXT-P-001", "P-001", "Idempotent Project", "planned", "planned", 1),
+		nil,
+		tasks)
+	firstRun := seedPMOPreview(t, f, snapshotJSON)
+	if _, err := f.svc.ApplyRun(ctx, f.workspaceID, firstRun.ID, nil); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	_, _, linksBefore := countPMOEntities(t, f.pool, f.workspaceID)
+	if linksBefore != 14 {
+		t.Fatalf("links after first apply = %d, want 14", linksBefore)
+	}
+
+	snapshot, err := ParsePMOSnapshot(snapshotJSON)
+	if err != nil {
+		t.Fatalf("parse snapshot: %v", err)
+	}
+	secondRun := seedPMOPreview(t, f, snapshotJSON)
+	_, _, summaryJSON, err := f.svc.PreparePMOSyncRunPreview(ctx, f.svc.Queries, f.workspaceID, secondRun.ID, snapshot, nil)
+	if err != nil {
+		t.Fatalf("prepare second preview: %v", err)
+	}
+	var summary PMODiffSummary
+	if err := json.Unmarshal(summaryJSON, &summary); err != nil {
+		t.Fatalf("unmarshal summary: %v", err)
+	}
+	if summary.Creates != 0 {
+		t.Fatalf("second preview creates = %d, want 0", summary.Creates)
+	}
+	_, _, linksAfter := countPMOEntities(t, f.pool, f.workspaceID)
+	if linksAfter != linksBefore {
+		t.Fatalf("second preview changed link count: %d -> %d", linksBefore, linksAfter)
+	}
+}
+
 func TestApplyPMORunIncomingFieldUpdate(t *testing.T) {
 	f := newPMOApplyFixture(t)
 	ctx := context.Background()
