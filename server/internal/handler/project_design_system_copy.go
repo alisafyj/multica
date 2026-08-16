@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -269,7 +268,7 @@ func (h *Handler) createProjectDesignSystemCopyTask(
 	}
 
 	// The source's saved package is the immutable base the agent adapts.
-	basePackage, _, _, err := h.loadProjectDesignSystemBasePackageForSlot(ctx, queries, source, "saved")
+	basePackage, err := h.loadCopyBasePackage(ctx, queries, source, "saved")
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, err
 	}
@@ -342,27 +341,52 @@ func copyInstruction(instruction string) string {
 	return preamble + "\n\nThe user also asked for:\n" + instruction
 }
 
-// loadProjectDesignSystemBasePackageForSlot loads one specific slot as a base
-// package. The existing loader prefers draft over saved, which is right when
-// adjusting your own system and wrong when another system is copying from you.
-func (h *Handler) loadProjectDesignSystemBasePackageForSlot(
+// loadCopyBasePackage builds the base payload a copy task carries. It reads a
+// specific slot — the existing loader prefers draft over saved, which is right
+// when adjusting your own system and wrong when another system copies from you.
+//
+// It deliberately does NOT reuse decodeProjectDesignSystemBasePackage. That
+// function returns a reference for V2 packages (schema, slot, digest), and the
+// sidecar writer materializes base/ from inline artifact text, so a reference
+// produces a task that dies writing its own workspace. The stored artifact
+// columns are populated for V2 packages too — completion extracts them from
+// the archive — so the inline shape is available and is what actually works.
+func (h *Handler) loadCopyBasePackage(
 	ctx context.Context,
 	queries *db.Queries,
-	system db.ProjectDesignSystem,
+	source db.ProjectDesignSystem,
 	slot string,
-) (json.RawMessage, projectdesignsystem.ValidatedPackage, bool, error) {
+) (json.RawMessage, error) {
 	selected, err := queries.GetProjectDesignSystemPackageBySlot(ctx, db.GetProjectDesignSystemPackageBySlotParams{
-		DesignSystemID: system.ID,
+		DesignSystemID: source.ID,
 		Slot:           slot,
-		WorkspaceID:    system.WorkspaceID,
+		WorkspaceID:    source.WorkspaceID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, projectdesignsystem.ValidatedPackage{}, false, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, projectdesignsystem.ValidatedPackage{}, false, projectDesignSystemInternalError("package_lookup_failed", "failed to load the source design system package")
+		return nil, projectDesignSystemInternalError("package_lookup_failed", "failed to load the source design system package")
 	}
-	return h.decodeProjectDesignSystemBasePackage(ctx, queries, system, selected, h.projectDesignSystemAllowedHosts())
+	if strings.TrimSpace(selected.DesignMd) == "" || strings.TrimSpace(selected.TokensCss) == "" {
+		return nil, &projectDesignSystemRequestError{
+			status:  http.StatusUnprocessableEntity,
+			code:    "source_design_system_unreadable",
+			message: "the source design system has no readable content to copy from",
+		}
+	}
+	payload, err := json.Marshal(map[string]any{
+		"design_md":        selected.DesignMd,
+		"tokens_css":       selected.TokensCss,
+		"components_html":  selected.ComponentsHtml,
+		"manifest":         validJSONOr(selected.Manifest, json.RawMessage(`{}`)),
+		"validation":       validJSONOr(selected.Validation, json.RawMessage(`{}`)),
+		"integrity_sha256": selected.IntegritySha256,
+	})
+	if err != nil {
+		return nil, projectDesignSystemInternalError("package_context_failed", "failed to snapshot the source design system package")
+	}
+	return payload, nil
 }
 
 type designSystemCatalogueEntry struct {
