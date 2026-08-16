@@ -69,18 +69,31 @@ func ParsePMOSyncContext(contextJSON []byte) (PMOSyncContext, bool) {
 	return pmoCtx, true
 }
 
-// PreparePMOSyncRunPreview serializes a validated snapshot into the columns
-// StorePMOSyncRunPreview persists: the normalized source snapshot plus a
-// three-way diff and its summary. The preview runs against empty local state
-// (every snapshot entity reads as a create proposal and no projects or issues
-// are changed), but already carries resolved assignee mappings so the stored
-// diff and unresolved warnings reflect workspace email matches.
-func PreparePMOSyncRunPreview(snapshot PMOSnapshot, assigneeMappings map[string]string) (sourceSnapshot, diffJSON, summaryJSON []byte, err error) {
+// PreparePMOSyncRunPreview serializes a validated snapshot and computes its
+// three-way diff against the config's existing links and current local rows.
+func (s *PMOService) PreparePMOSyncRunPreview(ctx context.Context, qtx *db.Queries, workspaceID, runID pgtype.UUID, snapshot PMOSnapshot, assigneeMappings map[string]string) (sourceSnapshot, diffJSON, summaryJSON []byte, err error) {
+	run, err := qtx.GetPMOSyncRun(ctx, db.GetPMOSyncRunParams{ID: runID, WorkspaceID: workspaceID})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("load pmo run for preview: %w", err)
+	}
+	config, err := qtx.GetPMOSyncConfig(ctx, db.GetPMOSyncConfigParams{ID: run.ConfigID, WorkspaceID: workspaceID})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("load pmo config for preview: %w", err)
+	}
+	links, err := qtx.ListPMOSyncLinks(ctx, db.ListPMOSyncLinksParams{WorkspaceID: workspaceID, ConfigID: run.ConfigID})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("load pmo links for preview: %w", err)
+	}
+	linkStates, err := s.buildLinkStates(ctx, qtx, workspaceID, links, config.WorkloadPropertyID)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("load pmo local state for preview: %w", err)
+	}
+
 	sourceSnapshot, err = json.Marshal(snapshot)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("marshal pmo source snapshot: %w", err)
 	}
-	diff := DiffPMOSnapshot(PMODiffInput{Snapshot: snapshot, AssigneeMappings: assigneeMappings})
+	diff := DiffPMOSnapshot(PMODiffInput{Snapshot: snapshot, Links: linkStates, AssigneeMappings: assigneeMappings})
 	diffJSON, err = json.Marshal(diff)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("marshal pmo diff: %w", err)
