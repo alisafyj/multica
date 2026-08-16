@@ -30,6 +30,9 @@ export const designKeys = {
   projectDesignSystemCatalogue: (wsId: string) => ["designs", wsId, "project-design-systems", "catalogue"] as const,
   // Design documents are listed per project, never workspace-wide (DC-042).
   documents: (wsId: string, projectId: string) => ["designs", wsId, "documents", projectId] as const,
+  // The community catalogue mixes built-in recipes with the workspace's own,
+  // so it is workspace-scoped even though most rows are global (DC-041).
+  scenarioRecipes: (wsId: string) => ["designs", wsId, "scenario-recipes"] as const,
   drafts: (wsId: string) => ["designs", wsId, "drafts"] as const,
   draft: (wsId: string, id: string) => ["designs", wsId, "drafts", id] as const,
   repoAnalyses: (wsId: string, projectId: string) => ["designs", wsId, "repo-analyses", projectId] as const,

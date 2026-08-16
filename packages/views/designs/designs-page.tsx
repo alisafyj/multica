@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ClipboardList, Copy, Eye, FileJson, Folder, House, Palette, Plus, Search, Trash2, X } from "lucide-react";
+import { ClipboardList, Copy, Eye, FileJson, Folder, House, Palette, Plus, Search, Trash2, Users, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
@@ -32,7 +32,8 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { PageHeader } from "../layout/page-header";
 import { AppLink, useNavigation } from "../navigation";
-import { DesignTaskComposer } from "./design-task-composer";
+import { DesignRecipeGallery } from "./design-recipe-gallery";
+import { DesignTaskComposer, type DesignRecipeSelection } from "./design-task-composer";
 import { FigmaPluginDownload } from "./figma-plugin-download";
 import { ProjectDesignSystemWorkspace } from "./project-design-system-workspace";
 
@@ -40,7 +41,15 @@ type ToolMenuState = { x: number; y: number; file: DesignFile } | null;
 type DraftDialogState = { template: DesignCatalogTemplate; title: string; requirement: string; slotValues: string; patch: string; agentId: string; prompt: string } | null;
 type DesignAssetTab = "designs" | "drafts" | "templates" | "systems";
 
+// The two workspace tabs that always exist (DC-048). Neither is closeable and
+// neither is a project, so both are sentinels rather than project ids.
 const DESIGN_HOME_TAB_ID = "__design_home__";
+const DESIGN_COMMUNITY_TAB_ID = "__design_community__";
+
+const FIXED_WORKSPACE_TAB_IDS: ReadonlySet<string> = new Set([
+  DESIGN_HOME_TAB_ID,
+  DESIGN_COMMUNITY_TAB_ID,
+]);
 
 function formatDate(value: string) {
   const date = new Date(value);
@@ -292,10 +301,13 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   const [activeWorkspaceTabId, setActiveWorkspaceTabId] = useState(DESIGN_HOME_TAB_ID);
   const [openProjectIds, setOpenProjectIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<DesignAssetTab>("designs");
+  // A recipe the community tab handed to the home composer (DC-041). The token
+  // makes re-picking the same recipe a real event rather than a no-op.
+  const [recipeSelection, setRecipeSelection] = useState<DesignRecipeSelection | null>(null);
   // Design system scope per project (DC-052): empty is the project-level
   // system, otherwise the id of one of the project's github_repo resources.
   const [designScopeByProject, setDesignScopeByProject] = useState<Record<string, string>>({});
-  const selectedProjectId = activeWorkspaceTabId === DESIGN_HOME_TAB_ID ? "" : activeWorkspaceTabId;
+  const selectedProjectId = FIXED_WORKSPACE_TAB_IDS.has(activeWorkspaceTabId) ? "" : activeWorkspaceTabId;
   const { data: designSystems = [], isLoading: designSystemsLoading } = useQuery(designSystemListOptions(wsId, selectedProjectId || undefined));
   const { data: projectResources = [] } = useQuery({
     ...projectResourcesOptions(wsId, selectedProjectId),
@@ -318,7 +330,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   const fileById = useMemo(() => new Map(files.map((file) => [file.id, file])), [files]);
   useEffect(() => {
     const validProjectIds = new Set(projects.map((project) => project.id));
-    if (activeWorkspaceTabId !== DESIGN_HOME_TAB_ID && !validProjectIds.has(activeWorkspaceTabId)) {
+    if (!FIXED_WORKSPACE_TAB_IDS.has(activeWorkspaceTabId) && !validProjectIds.has(activeWorkspaceTabId)) {
       setActiveWorkspaceTabId(DESIGN_HOME_TAB_ID);
     }
     setOpenProjectIds((current) => {
@@ -551,18 +563,29 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex shrink-0 flex-col border-b bg-muted/20 sm:flex-row sm:items-end sm:justify-between">
           <div role="tablist" aria-label="设计项目" className="flex min-w-0 items-end gap-1 overflow-x-auto overflow-y-hidden px-3 pt-2 sm:px-4">
-            <div className={`-mb-px flex h-9 w-28 shrink-0 items-center rounded-t-md border px-1 transition-colors ${activeWorkspaceTabId === DESIGN_HOME_TAB_ID ? "border-border border-b-background bg-background text-foreground shadow-sm" : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground"}`}>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeWorkspaceTabId === DESIGN_HOME_TAB_ID}
-                className="flex min-w-0 flex-1 items-center gap-2 px-2 text-left text-body"
-                onClick={() => setActiveWorkspaceTabId(DESIGN_HOME_TAB_ID)}
-              >
-                <House className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">首页</span>
-              </button>
-            </div>
+            {/* Home and community are fixed (DC-048): they carry no project,
+                so there is nothing to close. */}
+            {([
+              { id: DESIGN_HOME_TAB_ID, label: "首页", icon: House },
+              { id: DESIGN_COMMUNITY_TAB_ID, label: "社区", icon: Users },
+            ] as const).map((tab) => {
+              const active = activeWorkspaceTabId === tab.id;
+              const TabIcon = tab.icon;
+              return (
+                <div key={tab.id} className={`-mb-px flex h-9 w-28 shrink-0 items-center rounded-t-md border px-1 transition-colors ${active ? "border-border border-b-background bg-background text-foreground shadow-sm" : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground"}`}>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    className="flex min-w-0 flex-1 items-center gap-2 px-2 text-left text-body"
+                    onClick={() => setActiveWorkspaceTabId(tab.id)}
+                  >
+                    <TabIcon className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{tab.label}</span>
+                  </button>
+                </div>
+              );
+            })}
             {openProjects.map((project) => {
               const active = project.id === activeWorkspaceTabId;
               return (
@@ -624,7 +647,21 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
           <div role="tabpanel" aria-label="首页" className="flex min-h-0 flex-1 flex-col">
             {/* Creating a document lands the user in that project's tab, where
                 the task and its output live. */}
-            <DesignTaskComposer onCreated={(document) => openProjectTab(document.project_id)} />
+            <DesignTaskComposer
+              onCreated={(document) => openProjectTab(document.project_id)}
+              onBrowseRecipes={() => setActiveWorkspaceTabId(DESIGN_COMMUNITY_TAB_ID)}
+              recipeSelection={recipeSelection}
+            />
+          </div>
+        ) : activeWorkspaceTabId === DESIGN_COMMUNITY_TAB_ID ? (
+          <div role="tabpanel" aria-label="社区" className="flex min-h-0 flex-1 flex-col">
+            <DesignRecipeGallery
+              onUseInComposer={(recipe) => {
+                setRecipeSelection((current) => ({ token: (current?.token ?? 0) + 1, recipe }));
+                setActiveWorkspaceTabId(DESIGN_HOME_TAB_ID);
+              }}
+              onStarted={(document) => openProjectTab(document.project_id)}
+            />
           </div>
         ) : isLoading ? (
           <div className="space-y-2 p-4">

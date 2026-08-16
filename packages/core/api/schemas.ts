@@ -89,6 +89,7 @@ import type {
   ListDesignDraftsResponse,
   ListDesignSystemProfilesResponse,
   ListDesignRestoreTasksResponse,
+  ListDesignScenarioRecipesResponse,
   ListProjectDesignSystemCatalogueResponse,
   ProjectDesignSystem,
   ProjectDesignSystemPackagePreview,
@@ -1862,6 +1863,50 @@ export const ListDesignDocumentsResponseSchema = z.object({
 
 export const EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE: ListDesignDocumentsResponse = {
   documents: [],
+};
+
+/**
+ * Community catalogue entry (DC-041 / DC-048).
+ *
+ * The server omits empty optional fields, so every one of them degrades to ""
+ * rather than undefined — the gallery renders facets and previews straight
+ * from these values. `mode` and `origin` stay unconstrained strings: they are
+ * database enums the backend may widen, and a card whose mode this client does
+ * not recognise must still render (with its start actions closed) instead of
+ * dropping out of the catalogue.
+ *
+ * `slug` is the one field a card cannot work without — it is what the create
+ * call sends — so a row missing it is dropped rather than rendered as a card
+ * that would be rejected on submit.
+ */
+export const DesignScenarioRecipeSchema = z.object({
+  slug: z.string().min(1),
+  title: z.string().catch("").default(""),
+  summary: z.string().catch("").default(""),
+  category: z.string().catch("").default(""),
+  subcategory: z.string().catch("").default(""),
+  mode: z.string().catch("").default(""),
+  platform: ProjectDesignSystemPlatformSchema,
+  prompt: z.string().catch("").default(""),
+  preview_path: z.string().catch("").default(""),
+  origin: z.string().catch("").default(""),
+  published_at: z.string().catch("").default(""),
+}).loose();
+
+export const ListDesignScenarioRecipesResponseSchema = z.object({
+  recipes: z.preprocess(
+    (value) => Array.isArray(value) ? value : [],
+    // One unusable row must not empty the gallery, so rows are parsed
+    // individually and the broken ones are skipped.
+    z.array(z.unknown()).transform((rows) => rows.flatMap((row) => {
+      const parsed = DesignScenarioRecipeSchema.safeParse(row);
+      return parsed.success ? [parsed.data] : [];
+    })).catch([]),
+  ),
+}).loose();
+
+export const EMPTY_LIST_DESIGN_SCENARIO_RECIPES_RESPONSE: ListDesignScenarioRecipesResponse = {
+  recipes: [],
 };
 
 export const DesignRestoreTaskExecutionStatusSchema = z.object({

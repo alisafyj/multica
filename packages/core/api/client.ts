@@ -241,6 +241,7 @@ import type {
   ListDesignRepoAnalysesResponse,
   ListDesignRestoreMappingsResponse,
   ListDesignRestoreTasksResponse,
+  ListDesignScenarioRecipesResponse,
   ListDesignSystemProfilesResponse,
   ListDesignTemplatesResponse,
   PublishDesignTemplateRequest,
@@ -483,8 +484,10 @@ import {
   ListDesignDeliveriesResponseSchema,
   ListDesignDocumentsResponseSchema,
   ListDesignDraftsResponseSchema,
+  ListDesignScenarioRecipesResponseSchema,
   ListDesignSystemProfilesResponseSchema,
   ListDesignRestoreTasksResponseSchema,
+  EMPTY_LIST_DESIGN_SCENARIO_RECIPES_RESPONSE,
   EMPTY_LIST_DESIGN_DELIVERIES_RESPONSE,
   EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE,
   EMPTY_LIST_DESIGN_DRAFTS_RESPONSE,
@@ -3676,6 +3679,19 @@ export class ApiClient {
         recipe: data.recipe ?? "default",
       },
       { endpoint: "POST /api/design-documents" },
+    );
+  }
+
+  // Community catalogue behind the design centre's 社区 tab (DC-041 / DC-048).
+  // Published recipes visible to this workspace: everything built in, plus the
+  // workspace's own, which already shadow same-slug built-ins server-side.
+  async listDesignScenarioRecipes(): Promise<ListDesignScenarioRecipesResponse> {
+    const raw = await this.fetch<unknown>("/api/design-recipes");
+    return parseWithFallback(
+      raw,
+      ListDesignScenarioRecipesResponseSchema,
+      EMPTY_LIST_DESIGN_SCENARIO_RECIPES_RESPONSE,
+      { endpoint: "GET /api/design-recipes" },
     );
   }
 

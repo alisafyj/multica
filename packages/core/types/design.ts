@@ -548,6 +548,40 @@ export type DesignDocumentRecipe =
   | "mobile-app"
   | "figma-migration";
 
+/**
+ * A published entry of the community catalogue (DC-041 / DC-048). A recipe is
+ * a page-design task configuration, not a design asset: applying one seeds the
+ * composer's brief and records its slug on the document.
+ *
+ * Server-driven strings stay strings on purpose. `mode` and `origin` are
+ * database enums the backend can widen without a client release, and `slug`
+ * becomes an ever-growing set once workspaces publish their own — narrowing
+ * them here would turn a routine backend addition into a parse failure.
+ */
+export interface DesignScenarioRecipe {
+  slug: string;
+  title: string;
+  summary: string;
+  category: string;
+  /** Empty when the recipe sits directly under its category. */
+  subcategory: string;
+  /** Artifact this recipe produces. Only `prototype` can be started today. */
+  mode: string;
+  /** Suggested target platform; empty means the recipe suits any. */
+  platform: ProjectDesignSystemPlatform | "";
+  /** Brief the composer is pre-filled with. Sent with the listing. */
+  prompt: string;
+  /** Relative media path for the card image; empty when there is none. */
+  preview_path: string;
+  /** `builtin`, `workspace` or `community`. */
+  origin: string;
+  published_at: string;
+}
+
+export interface ListDesignScenarioRecipesResponse {
+  recipes: DesignScenarioRecipe[];
+}
+
 export type DesignDocumentStatus =
   | "empty"
   | "running"
@@ -569,7 +603,12 @@ export interface CreateDesignDocumentRequest {
   issue_id?: string;
   title?: string;
   platform: ProjectDesignSystemPlatform;
-  recipe?: DesignDocumentRecipe;
+  /**
+   * One of the built-in scenario chips (`DesignDocumentRecipe`) or the slug of
+   * a published scenario recipe. Kept as a plain string because the community
+   * catalogue is data, not a client-side union (DC-049).
+   */
+  recipe?: string;
   brief: string;
   attachments?: unknown;
 }

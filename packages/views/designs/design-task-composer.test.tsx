@@ -90,14 +90,31 @@ function createdDocument(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function renderComposer(onCreated = vi.fn()) {
+const RECIPE = {
+  slug: "crm-console",
+  title: "CRM 控制台",
+  summary: "带筛选与批量操作的客户列表",
+  category: "业务系统",
+  subcategory: "后台",
+  mode: "prototype",
+  platform: "web" as const,
+  prompt: "做一个 CRM 客户列表页，支持筛选和批量操作。",
+  preview_path: "",
+  origin: "builtin",
+  published_at: "2026-08-16T00:00:00Z",
+};
+
+function renderComposer(
+  onCreated = vi.fn(),
+  props: Partial<React.ComponentProps<typeof DesignTaskComposer>> = {},
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const ui: ReactNode = (
     <I18nProvider locale="zh-Hans" resources={{ "zh-Hans": { issues: zhIssues, projects: zhProjects } }}>
       <QueryClientProvider client={queryClient}>
-        <DesignTaskComposer onCreated={onCreated} />
+        <DesignTaskComposer onCreated={onCreated} {...props} />
       </QueryClientProvider>
     </I18nProvider>
   );
@@ -194,21 +211,92 @@ describe("DesignTaskComposer", () => {
     expect(wireframe).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("offers the not-yet-built scenarios as inert placeholders", async () => {
+  it("offers the not-yet-built scenario as an inert placeholder", async () => {
     const user = userEvent.setup();
     renderComposer();
 
-    const template = await screen.findByRole("button", { name: /来自模板/ });
-    const brandKit = screen.getByRole("button", { name: /创建品牌套件/ });
+    // The design system catalogue slice has not landed, so this chip keeps its
+    // spot without pretending to do anything.
+    const brandKit = await screen.findByRole("button", { name: /创建品牌套件/ });
+    expect(brandKit).toBeDisabled();
+    expect(brandKit).not.toHaveAttribute("aria-pressed");
+    expect(brandKit).toHaveTextContent("即将支持");
 
-    for (const chip of [template, brandKit]) {
-      expect(chip).toBeDisabled();
-      expect(chip).not.toHaveAttribute("aria-pressed");
-      expect(chip).toHaveTextContent("即将支持");
-    }
+    await user.click(brandKit);
+    expect(screen.getByRole("button", { name: /UI Mockup/ })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("sends the template chip to the community gallery instead of toggling a recipe", async () => {
+    const user = userEvent.setup();
+    const onBrowseRecipes = vi.fn();
+    renderComposer(vi.fn(), { onBrowseRecipes });
+
+    const template = await screen.findByRole("button", { name: /来自模板/ });
+    expect(template).toBeEnabled();
+    expect(template).not.toHaveTextContent("即将支持");
+    // It navigates rather than arming a recipe, so it never claims a pressed
+    // state it cannot enter.
+    expect(template).not.toHaveAttribute("aria-pressed");
 
     await user.click(template);
-    expect(screen.getByRole("button", { name: /UI Mockup/ })).toHaveAttribute("aria-pressed", "false");
+    expect(onBrowseRecipes).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays inert when the template chip has nowhere to go", async () => {
+    renderComposer();
+
+    const template = await screen.findByRole("button", { name: /来自模板/ });
+    expect(template).toBeDisabled();
+    expect(template).toHaveTextContent("即将支持");
+  });
+
+  it("keeps the gallery's recipe after the user rewrites the brief", async () => {
+    const user = userEvent.setup();
+    renderComposer(vi.fn(), { recipeSelection: { token: 1, recipe: RECIPE } });
+
+    const brief = await screen.findByLabelText("页面需求描述");
+    expect(brief).toHaveValue(RECIPE.prompt);
+    // A gallery recipe is not one of the five chips, so the composer says which
+    // one is armed instead of leaving the rail blank.
+    expect(screen.getByText("CRM 控制台")).toBeInTheDocument();
+
+    await user.clear(brief);
+    await user.type(brief, "改成客户详情页");
+    await pickProject(user);
+    await pickAgent(user);
+    await user.click(screen.getByRole("button", { name: "生成页面设计" }));
+
+    await waitFor(() => expect(createDesignDocument).toHaveBeenCalledTimes(1));
+    expect(createDesignDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ recipe: "crm-console", brief: "改成客户详情页" }),
+    );
+  });
+
+  it("lets a scenario chip and the clear affordance both drop the gallery recipe", async () => {
+    const user = userEvent.setup();
+    renderComposer(vi.fn(), { recipeSelection: { token: 1, recipe: RECIPE } });
+
+    await user.click(await screen.findByRole("button", { name: /线框图/ }));
+    expect(screen.queryByText("CRM 控制台")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /线框图/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("drops the gallery recipe when its clear affordance is used", async () => {
+    const user = userEvent.setup();
+    renderComposer(vi.fn(), { recipeSelection: { token: 1, recipe: RECIPE } });
+
+    await user.click(await screen.findByRole("button", { name: "不使用该社区配方" }));
+    expect(screen.queryByText("CRM 控制台")).not.toBeInTheDocument();
+
+    await pickProject(user);
+    await pickAgent(user);
+    await user.type(screen.getByLabelText("页面需求描述"), "自由发挥");
+    await user.click(screen.getByRole("button", { name: "生成页面设计" }));
+
+    await waitFor(() => expect(createDesignDocument).toHaveBeenCalledTimes(1));
+    expect(createDesignDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ recipe: "default" }),
+    );
   });
 
   it("states plainly that no repository was read, without framing it as an error", async () => {

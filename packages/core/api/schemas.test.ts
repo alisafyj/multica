@@ -22,6 +22,9 @@ import {
   ListDesignDocumentsResponseSchema,
   EMPTY_DESIGN_DOCUMENT,
   EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE,
+  DesignScenarioRecipeSchema,
+  ListDesignScenarioRecipesResponseSchema,
+  EMPTY_LIST_DESIGN_SCENARIO_RECIPES_RESPONSE,
   DesignDraftSchema,
   ListDesignDraftsResponseSchema,
   ChatDraftRestoresResponseSchema,
@@ -739,6 +742,78 @@ describe("DesignDocumentSchema", () => {
 
     const parsed = ListDesignDocumentsResponseSchema.parse({ documents: "gone" });
     expect(parsed.documents).toEqual([]);
+  });
+});
+
+describe("DesignScenarioRecipeSchema", () => {
+  const LIST_ENDPOINT = { endpoint: "GET /api/design-recipes" };
+
+  it("fills the fields the server omits when they are empty", () => {
+    // Go's `omitempty` drops subcategory, platform, preview_path and
+    // published_at, so the card must read them as "not set" rather than
+    // undefined.
+    const parsed = DesignScenarioRecipeSchema.parse({
+      slug: "crm-console",
+      title: "CRM 控制台",
+      summary: "带筛选与批量操作的客户列表",
+      category: "业务系统",
+      mode: "prototype",
+      prompt: "做一个 CRM 客户列表页",
+      origin: "builtin",
+    });
+
+    expect(parsed.subcategory).toBe("");
+    expect(parsed.platform).toBe("");
+    expect(parsed.preview_path).toBe("");
+    expect(parsed.published_at).toBe("");
+  });
+
+  it("keeps a recipe whose mode and origin this client does not know", () => {
+    // Both are database enums the backend can widen without a client release.
+    // Dropping such a recipe would hide catalogue entries; the gallery closes
+    // its start actions instead.
+    const parsed = DesignScenarioRecipeSchema.parse({
+      slug: "pitch-deck",
+      title: "路演材料",
+      summary: "一套融资演示",
+      category: "演示",
+      mode: "deck",
+      platform: "hologram",
+      prompt: "做一份路演 deck",
+      origin: "community",
+    });
+
+    expect(parsed.mode).toBe("deck");
+    expect(parsed.origin).toBe("community");
+    // An unknown platform is not a platform we can send back to the server.
+    expect(parsed.platform).toBe("");
+  });
+
+  it("drops only the rows it cannot use instead of emptying the gallery", () => {
+    const parsed = ListDesignScenarioRecipesResponseSchema.parse({
+      recipes: [
+        { slug: "keeps-me", title: "可用配方", summary: "", category: "业务系统", mode: "prototype", prompt: "p", origin: "builtin" },
+        // No slug: the create call would have nothing to send.
+        { title: "无 slug", summary: "", category: "业务系统", mode: "prototype", prompt: "p", origin: "builtin" },
+        "not an object",
+      ],
+    });
+
+    expect(parsed.recipes).toHaveLength(1);
+    expect(parsed.recipes[0]?.slug).toBe("keeps-me");
+  });
+
+  it("degrades a malformed catalogue to an empty catalogue", () => {
+    for (const malformed of [null, "not json", { recipes: "gone" }, []]) {
+      expect(
+        parseWithFallback(
+          malformed,
+          ListDesignScenarioRecipesResponseSchema,
+          EMPTY_LIST_DESIGN_SCENARIO_RECIPES_RESPONSE,
+          LIST_ENDPOINT,
+        ).recipes,
+      ).toEqual([]);
+    }
   });
 });
 

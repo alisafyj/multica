@@ -196,6 +196,19 @@ export function designDocumentListOptions(wsId: string, projectId: string) {
   });
 }
 
+/**
+ * Community catalogue of scenario recipes (DC-041 / DC-048). Always enabled:
+ * an empty catalogue is a legitimate answer the gallery renders as an empty
+ * state, not a reason to keep the query idle.
+ */
+export function designScenarioRecipeListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: designKeys.scenarioRecipes(wsId),
+    queryFn: () => api.listDesignScenarioRecipes(),
+    select: (data) => data.recipes,
+  });
+}
+
 export function designDraftListOptions(wsId: string) {
   return queryOptions({
     queryKey: designKeys.drafts(wsId),

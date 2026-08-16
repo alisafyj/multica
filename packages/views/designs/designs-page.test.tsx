@@ -10,6 +10,7 @@ const {
   listDesignDrafts,
   listDesignFiles,
   listDesignFolders,
+  listDesignScenarioRecipes,
   listDesignSystemProfiles,
   listDesignTemplates,
   listProjectResources,
@@ -21,6 +22,7 @@ const {
   listDesignDrafts: vi.fn(),
   listDesignFiles: vi.fn(),
   listDesignFolders: vi.fn(),
+  listDesignScenarioRecipes: vi.fn(),
   listDesignSystemProfiles: vi.fn(),
   listDesignTemplates: vi.fn(),
   listProjectResources: vi.fn(),
@@ -31,6 +33,7 @@ const {
 vi.mock("@multica/core/api", () => ({
   api: {
     analyzeProjectDesignSystemRepository: vi.fn(),
+    createDesignDocument: vi.fn(),
     createFigmaImportConnection: vi.fn(),
     createProjectDesignSystem: vi.fn(),
     getProjectDesignSystemForProject,
@@ -38,8 +41,10 @@ vi.mock("@multica/core/api", () => ({
     listDesignDrafts,
     listDesignFiles,
     listDesignFolders,
+    listDesignScenarioRecipes,
     listDesignSystemProfiles,
     listDesignTemplates,
+    listIssues: vi.fn(),
     listProjectResources,
     listProjects,
     uploadFile: vi.fn(),
@@ -130,6 +135,7 @@ describe("DesignsPage", () => {
     listDesignDrafts.mockReset();
     listDesignFiles.mockReset();
     listDesignFolders.mockReset();
+    listDesignScenarioRecipes.mockReset();
     listDesignSystemProfiles.mockReset();
     listDesignTemplates.mockReset();
     listProjectResources.mockReset();
@@ -139,6 +145,7 @@ describe("DesignsPage", () => {
     listDesignDrafts.mockResolvedValue({ drafts: [], total: 0 });
     listDesignFiles.mockResolvedValue({ design_files: [], total: 0 });
     listDesignFolders.mockResolvedValue({ folders: [], total: 0 });
+    listDesignScenarioRecipes.mockResolvedValue({ recipes: [] });
     listDesignSystemProfiles.mockResolvedValue({ design_systems: [] });
     listDesignTemplates.mockResolvedValue({ templates: [], total: 0 });
     listProjectResources.mockResolvedValue({ resources: [], total: 0 });
@@ -206,6 +213,64 @@ describe("DesignsPage", () => {
     const staffTab = screen.getByRole("tab", { name: "staffrnapp" });
     expect(staffTab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "关闭项目 staffrnapp" })).toBeInTheDocument();
+  });
+
+  it("keeps 社区 fixed beside 首页 and never lets either be closed", async () => {
+    const user = userEvent.setup();
+    renderWithClient(<DesignsPage />);
+
+    const communityTab = await screen.findByRole("tab", { name: "社区" });
+    expect(screen.getByRole("tab", { name: "首页" })).toHaveAttribute("aria-selected", "true");
+    expect(communityTab).toHaveAttribute("aria-selected", "false");
+    expect(screen.queryByRole("button", { name: /关闭.*社区/ })).not.toBeInTheDocument();
+
+    await user.click(communityTab);
+    expect(communityTab).toHaveAttribute("aria-selected", "true");
+    // An empty catalogue still says something rather than spinning forever.
+    expect(await screen.findByText("社区还没有可用的配方")).toBeInTheDocument();
+    // The community tab carries no project, so the project-scoped search never
+    // appears there.
+    expect(screen.queryByPlaceholderText("搜索设计稿…")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "首页" }));
+    expect(
+      within(screen.getByRole("tabpanel", { name: "首页" })).getByLabelText("页面需求描述"),
+    ).toBeInTheDocument();
+  });
+
+  it("carries a community recipe back to the home composer", async () => {
+    const user = userEvent.setup();
+    listDesignScenarioRecipes.mockResolvedValue({
+      recipes: [{
+        slug: "crm-console",
+        title: "CRM 控制台",
+        summary: "带筛选与批量操作的客户列表",
+        category: "业务系统",
+        subcategory: "后台",
+        mode: "prototype",
+        platform: "web",
+        prompt: "做一个 CRM 客户列表页，支持筛选和批量操作。",
+        preview_path: "",
+        origin: "builtin",
+        published_at: "2026-08-16T00:00:00Z",
+      }],
+    });
+    renderWithClient(<DesignsPage />);
+
+    // The composer's template chip is the way in, not a dead placeholder.
+    const templateChip = await screen.findByRole("button", { name: /来自模板/ });
+    expect(templateChip).toBeEnabled();
+    await user.click(templateChip);
+
+    expect(screen.getByRole("tab", { name: "社区" })).toHaveAttribute("aria-selected", "true");
+    await user.click(await screen.findByRole("button", { name: "填入首页" }));
+
+    expect(screen.getByRole("tab", { name: "首页" })).toHaveAttribute("aria-selected", "true");
+    const homePanel = screen.getByRole("tabpanel", { name: "首页" });
+    expect(within(homePanel).getByLabelText("页面需求描述")).toHaveValue(
+      "做一个 CRM 客户列表页，支持筛选和批量操作。",
+    );
+    expect(within(homePanel).getByText("CRM 控制台")).toBeInTheDocument();
   });
 
   it("keeps active design drafts in their own tab without review wording", async () => {

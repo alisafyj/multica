@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AppWindow,
@@ -16,6 +16,7 @@ import {
   PanelsTopLeft,
   Smartphone,
   SwatchBook,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
@@ -30,6 +31,7 @@ import type {
   Agent,
   DesignDocument,
   DesignDocumentRecipe,
+  DesignScenarioRecipe,
   Issue,
   ProjectDesignSystemPlatform,
   ProjectResource,
@@ -67,20 +69,19 @@ const SCENARIO_CHIPS: ReadonlyArray<{
   { recipe: "figma-migration", label: "来自 Figma", description: "把 Figma 稿转成页面设计", icon: Frame },
 ];
 
-// Placeholders for later slices (DC-049 / DC-054). They keep their spot in the
-// rail so the shape of the finished feature is visible, but they are inert:
-// the template gallery and the design system catalogue do not exist yet.
+// Still a placeholder (DC-049 / DC-054): the design system catalogue slice has
+// not landed, so this one keeps its spot in the rail while staying inert.
+// "来自模板" is no longer here — it now opens the community gallery.
 const UPCOMING_CHIPS: ReadonlyArray<{
   id: string;
   label: string;
   description: string;
   icon: typeof AppWindow;
 }> = [
-  { id: "from-template", label: "来自模板", description: "套用已发布的设计模板", icon: FileCode },
   { id: "brand-kit", label: "创建品牌套件", description: "提炼一套品牌设计语言", icon: SwatchBook },
 ];
 
-const PLATFORM_OPTIONS: ReadonlyArray<{
+export const PLATFORM_OPTIONS: ReadonlyArray<{
   value: ProjectDesignSystemPlatform;
   label: string;
 }> = [
@@ -92,7 +93,17 @@ const PLATFORM_OPTIONS: ReadonlyArray<{
 // Mirrors `designDocumentMaxBriefBytes` on the server. Counted in characters
 // here, so a Chinese brief hits this well before the byte limit — the point is
 // to warn early, not to reproduce the server's arithmetic.
-const BRIEF_MAX_LENGTH = 4000;
+export const BRIEF_MAX_LENGTH = 4000;
+
+/**
+ * A recipe the community gallery handed to the composer (DC-041). Carries its
+ * own token so picking the same card twice re-seeds the brief: without it the
+ * second click would be a no-op, since the recipe itself has not changed.
+ */
+export interface DesignRecipeSelection {
+  token: number;
+  recipe: DesignScenarioRecipe;
+}
 
 function repositoryUrl(resource: ProjectResource): string {
   const ref = resource.resource_ref as { url?: unknown } | undefined;
@@ -108,7 +119,7 @@ function repositoryLabel(resource: ProjectResource): string {
   return normalized.split("/").pop() || normalized;
 }
 
-function matchesQuery(haystack: string, query: string): boolean {
+export function matchesQuery(haystack: string, query: string): boolean {
   return !query || haystack.toLowerCase().includes(query);
 }
 
@@ -117,7 +128,7 @@ function matchesQuery(haystack: string, query: string): boolean {
  * foreground text; an unset one stays muted, so required-but-empty fields are
  * visible without painting them as errors before the user has done anything.
  */
-function SettingTrigger({
+export function SettingTrigger({
   filled,
   className,
   children,
@@ -161,7 +172,9 @@ function ScenarioChip({
   return (
     <button
       type="button"
-      aria-pressed={disabled ? undefined : selected === true}
+      // Omitted for chips that navigate rather than toggle a recipe — a
+      // pressed state they can never enter would only mislead.
+      aria-pressed={disabled || selected === undefined ? undefined : selected}
       disabled={disabled}
       onClick={onClick}
       className={cn(
@@ -211,7 +224,7 @@ function ScenarioChip({
   );
 }
 
-function AgentSetting({
+export function AgentSetting({
   agents,
   agentId,
   onChange,
@@ -452,7 +465,7 @@ function IssueSetting({
   );
 }
 
-function PlatformSetting({
+export function PlatformSetting({
   platform,
   onChange,
 }: {
@@ -499,19 +512,41 @@ function PlatformSetting({
  */
 export function DesignTaskComposer({
   onCreated,
+  onBrowseRecipes,
+  recipeSelection,
 }: {
   /** Called after the server has created the document, never before. */
   onCreated: (document: DesignDocument) => void;
+  /** Opens the community gallery. Absent leaves the template chip inert. */
+  onBrowseRecipes?: () => void;
+  /** A recipe picked in the community gallery, waiting to be applied. */
+  recipeSelection?: DesignRecipeSelection | null;
 }) {
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
   const [brief, setBrief] = useState("");
-  const [recipe, setRecipe] = useState<DesignDocumentRecipe>("default");
+  // Widened past the built-in chips on purpose: a community recipe contributes
+  // its slug here, and the server validates it against the catalogue.
+  const [recipe, setRecipe] = useState<DesignDocumentRecipe | string>("default");
+  const [appliedRecipe, setAppliedRecipe] = useState<DesignScenarioRecipe | null>(null);
   const [projectId, setProjectId] = useState("");
   const [agentId, setAgentId] = useState("");
   const [repositoryId, setRepositoryId] = useState("");
   const [issueId, setIssueId] = useState("");
   const [platform, setPlatform] = useState<ProjectDesignSystemPlatform>("web");
+
+  // Applying a gallery recipe is an event, not derived state: it seeds the
+  // brief once and then gets out of the way, so later edits to the words keep
+  // the recipe the user chose.
+  const appliedToken = useRef<number | null>(null);
+  useEffect(() => {
+    if (!recipeSelection || appliedToken.current === recipeSelection.token) return;
+    appliedToken.current = recipeSelection.token;
+    setRecipe(recipeSelection.recipe.slug);
+    setAppliedRecipe(recipeSelection.recipe);
+    setBrief(recipeSelection.recipe.prompt);
+    if (recipeSelection.recipe.platform) setPlatform(recipeSelection.recipe.platform);
+  }, [recipeSelection]);
 
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
@@ -632,11 +667,24 @@ export function DesignTaskComposer({
               description={chip.description}
               icon={chip.icon}
               selected={recipe === chip.recipe}
-              onClick={() =>
-                setRecipe((current) => (current === chip.recipe ? "default" : chip.recipe))
-              }
+              onClick={() => {
+                // A built-in chip and a gallery recipe are the same field, so
+                // picking one has to drop the other.
+                setAppliedRecipe(null);
+                setRecipe((current) => (current === chip.recipe ? "default" : chip.recipe));
+              }}
             />
           ))}
+          {/* Not a recipe of its own — it hands the choice to the community
+              gallery, which comes back through `recipeSelection`. */}
+          <ScenarioChip
+            label="来自模板"
+            description="从社区配方开始"
+            icon={FileCode}
+            disabled={!onBrowseRecipes}
+            badge={onBrowseRecipes ? undefined : "即将支持"}
+            onClick={onBrowseRecipes}
+          />
           {UPCOMING_CHIPS.map((chip) => (
             <ScenarioChip
               key={chip.id}
@@ -648,6 +696,32 @@ export function DesignTaskComposer({
             />
           ))}
         </div>
+
+        {/* A gallery recipe is not one of the five chips, so without this row
+            the user would have no sign of which scenario is armed. */}
+        {appliedRecipe ? (
+          <div className="mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2">
+            <FileCode className="size-3.5 shrink-0 text-primary" />
+            <p className="min-w-0 flex-1 truncate text-caption">
+              <span className="text-muted-foreground">已套用社区配方：</span>
+              <span className="font-medium text-foreground">
+                {appliedRecipe.title || appliedRecipe.slug}
+              </span>
+            </p>
+            <button
+              type="button"
+              aria-label="不使用该社区配方"
+              title="不使用该社区配方"
+              className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              onClick={() => {
+                setAppliedRecipe(null);
+                setRecipe("default");
+              }}
+            >
+              <X className="size-3" />
+            </button>
+          </div>
+        ) : null}
 
         <div className="mt-6 flex flex-wrap items-center gap-2">
           <ProjectPicker
