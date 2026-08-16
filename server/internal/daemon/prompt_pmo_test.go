@@ -64,10 +64,11 @@ func TestBuildPromptPMOSyncStrictAndClean(t *testing.T) {
 // instruction required for OpenClaw to load the installed PMO acquisition skill.
 func TestBuildPromptPMOSyncOpenClawInvokesDataQuerySkill(t *testing.T) {
 	ctx := service.PMOSyncContext{
-		Type:        service.PMOSyncContextType,
-		WorkspaceID: "0f2b6f6e-0000-4000-8000-000000000001",
-		RunID:       "0f2b6f6e-0000-4000-8000-000000000002",
-		Prompt:      service.BuildPMOSyncPrompt("SY-P-20260452"),
+		Type:            service.PMOSyncContextType,
+		WorkspaceID:     "0f2b6f6e-0000-4000-8000-000000000001",
+		RunID:           "0f2b6f6e-0000-4000-8000-000000000002",
+		RootExternalKey: "SY-P-20260452",
+		Prompt:          service.BuildPMOSyncPrompt("SY-P-20260452"),
 	}
 	raw, err := json.Marshal(ctx)
 	if err != nil {
@@ -75,13 +76,58 @@ func TestBuildPromptPMOSyncOpenClawInvokesDataQuerySkill(t *testing.T) {
 	}
 
 	out := BuildPrompt(Task{PMOSyncContext: json.RawMessage(raw)}, "openclaw")
-	for _, want := range []string{"$sy-pmo-data-query", "snapshot mode", "SY-P-20260452"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("OpenClaw PMO prompt missing %q:\n%s", want, out)
-		}
+	want := `/skill:sy-pmo-data-query snapshot "SY-P-20260452"`
+	if strings.TrimSpace(out) != want {
+		t.Fatalf("OpenClaw PMO prompt = %q, want %q", out, want)
 	}
-	if strings.Contains(out, "exact SY-P requirement") {
-		t.Fatalf("OpenClaw PMO prompt must not hard-code the external key prefix:\n%s", out)
+	if strings.Contains(out, "$sy-pmo-data-query") {
+		t.Fatalf("OpenClaw PMO prompt used Codex skill syntax instead of an OpenClaw slash skill:\n%s", out)
+	}
+}
+
+func TestBuildPromptPMOSyncOpenClawEscapesRootKey(t *testing.T) {
+	ctx := service.PMOSyncContext{
+		Type:            service.PMOSyncContextType,
+		RootExternalKey: "EXT-\\\"-LINE\n2",
+		Prompt:          service.BuildPMOSyncPrompt("EXT-unsafe"),
+	}
+	raw, err := json.Marshal(ctx)
+	if err != nil {
+		t.Fatalf("marshal pmo context: %v", err)
+	}
+
+	out := BuildPrompt(Task{PMOSyncContext: json.RawMessage(raw)}, "openclaw")
+	wantArg, err := json.Marshal(ctx.RootExternalKey)
+	if err != nil {
+		t.Fatalf("marshal root key: %v", err)
+	}
+	want := "/skill:sy-pmo-data-query snapshot " + string(wantArg)
+	if strings.TrimSpace(out) != want {
+		t.Fatalf("OpenClaw PMO prompt = %q, want %q", out, want)
+	}
+	if strings.Count(out, "\n") != 1 {
+		t.Fatalf("OpenClaw PMO prompt contains an injected newline: %q", out)
+	}
+}
+
+func TestBuildPromptPMOSyncOpenClawLegacyContextFallsBack(t *testing.T) {
+	ctx := service.PMOSyncContext{
+		Type:        service.PMOSyncContextType,
+		WorkspaceID: "0f2b6f6e-0000-4000-8000-000000000001",
+		RunID:       "0f2b6f6e-0000-4000-8000-000000000002",
+		Prompt:      service.BuildPMOSyncPrompt("EXT-P-001"),
+	}
+	raw, err := json.Marshal(ctx)
+	if err != nil {
+		t.Fatalf("marshal pmo context: %v", err)
+	}
+
+	out := BuildPrompt(Task{PMOSyncContext: json.RawMessage(raw)}, "openclaw")
+	if strings.Contains(out, "/skill:sy-pmo-data-query") {
+		t.Fatalf("legacy PMO context without root_external_key must not synthesize a skill argument: %s", out)
+	}
+	if !strings.Contains(out, "Return JSON only") || !strings.Contains(out, "EXT-P-001") {
+		t.Fatalf("legacy PMO context lost its strict fallback prompt: %s", out)
 	}
 }
 
@@ -99,7 +145,7 @@ func TestBuildPromptPMOSyncOpenClawProviderIsolation(t *testing.T) {
 
 	for _, provider := range []string{"claude", "opencode"} {
 		out := BuildPrompt(Task{PMOSyncContext: json.RawMessage(raw)}, provider)
-		if strings.Contains(out, "$sy-pmo-data-query") {
+		if strings.Contains(out, "/skill:sy-pmo-data-query") {
 			t.Fatalf("%s PMO prompt leaked OpenClaw skill instruction:\n%s", provider, out)
 		}
 	}
@@ -121,7 +167,7 @@ func TestBuildPromptPMOSyncFallback(t *testing.T) {
 	}
 
 	openClawOut := buildPromptBody(Task{PMOSyncContext: json.RawMessage("not-json")}, "openclaw")
-	if strings.Contains(openClawOut, "$sy-pmo-data-query") {
+	if strings.Contains(openClawOut, "/skill:sy-pmo-data-query") {
 		t.Fatalf("malformed OpenClaw PMO context must not invoke the data skill:\n%s", openClawOut)
 	}
 }
