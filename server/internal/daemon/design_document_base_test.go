@@ -57,7 +57,7 @@ func TestDesignDocumentAdjustmentMaterializesTheBaseFromTheServersOwnContext(t *
 	task := designDocumentAdjustTask(t, base.Manifest.ContentDigest, nil)
 	env := prepareDesignDocumentAdjustEnv(t, d, task)
 
-	if err := d.restoreDesignDocumentBaseArchive(context.Background(), task, env.WorkDir); err != nil {
+	if err := d.restoreDesignDocumentBaseArchive(context.Background(), task, env.RootDir, env.WorkDir); err != nil {
 		t.Fatalf("restore design document base archive: %v", err)
 	}
 	if got := <-requested; got != "GET /api/daemon/tasks/"+designDocumentAdjustTaskID+"/design-document/base-archive" {
@@ -118,7 +118,7 @@ func TestDesignDocumentAdjustmentRefusesATamperedBaseArchive(t *testing.T) {
 	task := designDocumentAdjustTask(t, base.Manifest.ContentDigest, nil)
 	env := prepareDesignDocumentAdjustEnv(t, d, task)
 
-	err := d.restoreDesignDocumentBaseArchive(context.Background(), task, env.WorkDir)
+	err := d.restoreDesignDocumentBaseArchive(context.Background(), task, env.RootDir, env.WorkDir)
 	if err == nil {
 		t.Fatal("a tampered base archive was extracted")
 	}
@@ -156,7 +156,7 @@ func TestDesignDocumentAdjustmentRefusesASubstitutedBaseArchive(t *testing.T) {
 	task := designDocumentAdjustTask(t, base.Manifest.ContentDigest, nil)
 	env := prepareDesignDocumentAdjustEnv(t, d, task)
 
-	err := d.restoreDesignDocumentBaseArchive(context.Background(), task, env.WorkDir)
+	err := d.restoreDesignDocumentBaseArchive(context.Background(), task, env.RootDir, env.WorkDir)
 	if err == nil {
 		t.Fatal("a substituted base archive was extracted")
 	}
@@ -173,10 +173,10 @@ func TestDesignDocumentRestoreIsANoOpForGeneration(t *testing.T) {
 
 	d := newDesignDocumentAdjustDaemon(t, "http://127.0.0.1:1")
 	task := designDocumentTask(designDocumentAdjustTaskID, stageDesignDocumentTaskContext(t))
-	if err := d.restoreDesignDocumentBaseArchive(context.Background(), task, t.TempDir()); err != nil {
+	if err := d.restoreDesignDocumentBaseArchive(context.Background(), task, t.TempDir(), t.TempDir()); err != nil {
 		t.Fatalf("generation must not download a base archive: %v", err)
 	}
-	if err := d.restoreDesignDocumentBaseArchive(context.Background(), Task{ID: designDocumentAdjustTaskID}, t.TempDir()); err != nil {
+	if err := d.restoreDesignDocumentBaseArchive(context.Background(), Task{ID: designDocumentAdjustTaskID}, t.TempDir(), t.TempDir()); err != nil {
 		t.Fatalf("a task with no design document context must be left alone: %v", err)
 	}
 }
@@ -197,7 +197,7 @@ func TestDesignDocumentRestoreRejectsAnUnusableReference(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			task := designDocumentAdjustTask(t, "sha256:"+strings.Repeat("c", 64), mutate)
-			err := d.restoreDesignDocumentBaseArchive(context.Background(), task, t.TempDir())
+			err := d.restoreDesignDocumentBaseArchive(context.Background(), task, t.TempDir(), t.TempDir())
 			if err == nil {
 				t.Fatal("an unusable base reference was accepted")
 			}

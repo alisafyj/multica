@@ -29,7 +29,14 @@ func designDocumentBaseDir(workDir string) string {
 // Read-only is stamped last and only on success. A half-written base that the
 // agent could still edit is worse than no base at all: the run would silently
 // adjust something other than the revision it claims to.
-func ExtractDesignDocumentBase(workDir string, files map[string][]byte) error {
+//
+// envRoot is the daemon scratch directory holding the sidecar manifest. Every
+// path created here is appended to it, because this step runs after
+// execenv.Prepare persisted its own list and an unrecorded base is
+// indistinguishable from user content at cleanup time — see
+// appendSidecarManifest. An empty envRoot disables the bookkeeping, matching
+// CleanupSidecars, which no-ops on the same condition.
+func ExtractDesignDocumentBase(envRoot, workDir string, files map[string][]byte) error {
 	baseDir := designDocumentBaseDir(workDir)
 	if _, err := os.Stat(baseDir); err != nil {
 		return fmt.Errorf("design document base directory is not reserved: %w", err)
@@ -49,14 +56,22 @@ func ExtractDesignDocumentBase(workDir string, files map[string][]byte) error {
 	}
 	sort.Strings(names)
 
+	// Recorded before the stamp, so a failure between the two still leaves the
+	// bytes reversible. baseDir itself is already in Prepare's manifest;
+	// recordMkdirAll stops at the first existing ancestor, so only the
+	// sub-directories this package introduces are added.
+	extracted := &sidecarManifest{}
 	for _, name := range names {
 		target := filepath.Join(baseDir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := recordMkdirAll(filepath.Dir(target), 0o755, extracted); err != nil {
 			return fmt.Errorf("create design document base directory for %q: %w", name, err)
 		}
-		if err := os.WriteFile(target, files[name], 0o444); err != nil {
+		if err := recordWriteFile(target, files[name], 0o444, extracted); err != nil {
 			return fmt.Errorf("write design document base entry %q: %w", name, err)
 		}
+	}
+	if err := appendSidecarManifest(envRoot, extracted); err != nil {
+		return fmt.Errorf("record design document base in the sidecar manifest: %w", err)
 	}
 	return stampV2ReadOnly(baseDir)
 }

@@ -199,7 +199,7 @@ func TestExtractDesignDocumentBaseRejectsEscapingEntries(t *testing.T) {
 			}, &sidecarManifest{}); err != nil {
 				t.Fatalf("writeDesignDocumentContext: %v", err)
 			}
-			err := ExtractDesignDocumentBase(workDir, map[string][]byte{
+			err := ExtractDesignDocumentBase(t.TempDir(), workDir, map[string][]byte{
 				"brief.json": []byte(`{"pages":[]}`),
 				name:         []byte("x"),
 			})
@@ -238,7 +238,7 @@ func TestExtractDesignDocumentBaseStampsTheRestoredPackageReadOnly(t *testing.T)
 		"coverage.json":        []byte(`{"requirements":[]}`),
 		"prototype/index.html": []byte("<!doctype html><html></html>"),
 	}
-	if err := ExtractDesignDocumentBase(workDir, files); err != nil {
+	if err := ExtractDesignDocumentBase(t.TempDir(), workDir, files); err != nil {
 		t.Fatalf("ExtractDesignDocumentBase: %v", err)
 	}
 
@@ -275,12 +275,98 @@ func TestExtractDesignDocumentBaseStampsTheRestoredPackageReadOnly(t *testing.T)
 func TestExtractDesignDocumentBaseRequiresTheReservedDirectory(t *testing.T) {
 	workDir := t.TempDir()
 	t.Cleanup(func() { _ = RestoreV2SidecarWritability(workDir) })
-	err := ExtractDesignDocumentBase(workDir, map[string][]byte{"brief.json": []byte("{}")})
+	err := ExtractDesignDocumentBase(t.TempDir(), workDir, map[string][]byte{"brief.json": []byte("{}")})
 	if err == nil {
 		t.Fatal("extraction into an unreserved workspace was accepted")
 	}
 	if !strings.Contains(err.Error(), "not reserved") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// A page-design task materializes its sidecar under a root of its own, and
+// stamps it read-only. Cleanup therefore has to know that root by name: a
+// 0o555 context/ holding a 0o444 task.json cannot be unlinked until the
+// directory is writable again, and the unlink fails with EACCES instead.
+//
+// The consequence is not a cosmetic leftover. In place, Multica's own files
+// stay in the user's repository; in worktree mode the cleanup error makes the
+// daemon abort the worktree, so the branch that was the whole deliverable is
+// never committed.
+func TestCleanupLocalDirectorySidecarsRemovesTheDesignDocumentSidecar(t *testing.T) {
+	envRoot := t.TempDir()
+	workDir := t.TempDir()
+	t.Cleanup(func() { _ = RestoreV2SidecarWritability(workDir) })
+
+	manifest := &sidecarManifest{}
+	if err := writeDesignDocumentContext(workDir, TaskContextForEnv{
+		DesignDocumentContext: designDocumentTaskContext(t, map[string]any{
+			"design_context":       map[string]any{"source": "cloud_saved_project_design_system"},
+			"repository_grounding": map[string]any{"repository_id": "66666666-6666-6666-6666-666666666666"},
+		}),
+	}, manifest); err != nil {
+		t.Fatalf("writeDesignDocumentContext: %v", err)
+	}
+	if err := writeSidecarManifest(envRoot, manifest); err != nil {
+		t.Fatalf("writeSidecarManifest: %v", err)
+	}
+	// Guard the guard: if the inputs were not actually stamped read-only the
+	// cleanup below would pass without ever exercising the restore step.
+	contextDir := filepath.Join(workDir, ".agent_context", "design_document", "context")
+	info, err := os.Stat(contextDir)
+	if err != nil {
+		t.Fatalf("stat context/: %v", err)
+	}
+	if info.Mode().Perm()&0o222 != 0 {
+		t.Fatalf("context/ mode = %o, want no write bits; the test cannot prove cleanup restores writability", info.Mode().Perm())
+	}
+
+	if err := CleanupLocalDirectorySidecars(envRoot, workDir); err != nil {
+		t.Fatalf("CleanupLocalDirectorySidecars: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, ".agent_context")); !os.IsNotExist(err) {
+		t.Fatalf("design document sidecar remains in the workdir after cleanup: %v", err)
+	}
+}
+
+// The base package lands after execenv.Prepare has already persisted its
+// manifest, so the extraction has to append itself to it. Unrecorded, base/ is
+// indistinguishable from a directory the user filled — the case cleanup
+// deliberately preserves — and a whole prototype package survives in the
+// user's own repository even once the permissions are right.
+func TestCleanupLocalDirectorySidecarsRemovesTheRestoredDesignDocumentBase(t *testing.T) {
+	envRoot := t.TempDir()
+	workDir := t.TempDir()
+	t.Cleanup(func() { _ = RestoreV2SidecarWritability(workDir) })
+
+	manifest := &sidecarManifest{}
+	if err := writeDesignDocumentContext(workDir, TaskContextForEnv{
+		DesignDocumentContext: designDocumentAdjustTaskContext(t, nil),
+	}, manifest); err != nil {
+		t.Fatalf("writeDesignDocumentContext: %v", err)
+	}
+	if err := writeSidecarManifest(envRoot, manifest); err != nil {
+		t.Fatalf("writeSidecarManifest: %v", err)
+	}
+	// Nested entries, because a real prototype package carries directories and
+	// those are created by the extraction rather than reserved by Prepare.
+	if err := ExtractDesignDocumentBase(envRoot, workDir, map[string][]byte{
+		"brief.json":               []byte(`{"pages":[]}`),
+		"prototype/index.html":     []byte("<!doctype html><html></html>"),
+		"prototype/assets/app.css": []byte("body{margin:0}"),
+	}); err != nil {
+		t.Fatalf("ExtractDesignDocumentBase: %v", err)
+	}
+	baseDir := filepath.Join(workDir, ".agent_context", "design_document", "base")
+	if _, err := os.Stat(filepath.Join(baseDir, "prototype", "assets", "app.css")); err != nil {
+		t.Fatalf("base package did not materialize: %v", err)
+	}
+
+	if err := CleanupLocalDirectorySidecars(envRoot, workDir); err != nil {
+		t.Fatalf("CleanupLocalDirectorySidecars: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, ".agent_context")); !os.IsNotExist(err) {
+		t.Fatalf("restored base package remains in the workdir after cleanup: %v", err)
 	}
 }
 

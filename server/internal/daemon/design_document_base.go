@@ -21,7 +21,12 @@ import (
 //
 // A no-op for anything that is not an adjustment or regeneration — those are
 // the only operations execenv reserves a base directory for.
-func (d *Daemon) restoreDesignDocumentBaseArchive(ctx context.Context, task Task, workDir string) error {
+//
+// envRoot is the environment's scratch root, carried through so the extracted
+// package joins the sidecar manifest: this restore runs after execenv.Prepare
+// persisted its list, and a base that is not on it survives cleanup in the
+// user's own directory.
+func (d *Daemon) restoreDesignDocumentBaseArchive(ctx context.Context, task Task, envRoot, workDir string) error {
 	if len(task.DesignDocumentContext) == 0 {
 		return nil
 	}
@@ -62,7 +67,7 @@ func (d *Daemon) restoreDesignDocumentBaseArchive(ctx context.Context, task Task
 	if err != nil {
 		return fmt.Errorf("validate design document base archive: %w", err)
 	}
-	if err := execenv.ExtractDesignDocumentBase(workDir, files); err != nil {
+	if err := execenv.ExtractDesignDocumentBase(envRoot, workDir, files); err != nil {
 		return fmt.Errorf("extract design document base archive: %w", err)
 	}
 	return nil

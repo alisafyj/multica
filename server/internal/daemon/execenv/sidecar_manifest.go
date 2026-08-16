@@ -228,6 +228,48 @@ func writeSidecarManifest(envRoot string, m *sidecarManifest) error {
 	return os.WriteFile(filepath.Join(envRoot, sidecarManifestFile), data, 0o644)
 }
 
+// appendSidecarManifest merges extra into the manifest already persisted at
+// envRoot and writes the combined list back.
+//
+// Prepare persists the manifest once, at the end of its own run, which covers
+// every write Prepare itself makes. A few sidecar inputs cannot be written
+// then: a design document base is an archive the daemon has to download and
+// verify, so ExtractDesignDocumentBase fills the directory Prepare reserved
+// only after Prepare has returned. Those writes still belong to the platform
+// and still have to be reversible, so the writer appends them here instead of
+// leaving them untracked.
+//
+// Untracked is not merely incomplete — it is wrong in a specific way.
+// cleanupSidecarManifest deliberately preserves a recorded directory that has
+// become non-empty, because on the local_directory path that content is the
+// user's. An unrecorded base package therefore reads exactly like user content
+// and is left behind in the user's own repository (and, in worktree mode,
+// committed as the task's diff).
+//
+// Order matters: Files are removed before Dirs, and Dirs are removed in
+// reverse, so appending leaf paths after the roots Prepare recorded keeps the
+// deepest-first invariant intact.
+//
+// A missing manifest is treated as an empty one rather than an error. Prepare
+// only warns when its own persist fails, so absence means bookkeeping was lost,
+// and recording the paths we are about to create can only ever delete paths we
+// created.
+func appendSidecarManifest(envRoot string, extra *sidecarManifest) error {
+	if envRoot == "" || extra == nil || (len(extra.Files) == 0 && len(extra.Dirs) == 0) {
+		return nil
+	}
+	_, m, err := readSidecarManifest(envRoot)
+	if err != nil {
+		return err
+	}
+	if m == nil {
+		m = &sidecarManifest{}
+	}
+	m.Files = append(m.Files, extra.Files...)
+	m.Dirs = append(m.Dirs, extra.Dirs...)
+	return writeSidecarManifest(envRoot, m)
+}
+
 // CleanupSidecars rolls the user's workdir back to its pre-Prepare
 // state by removing every file the manifest at envRoot records and
 // then rmdir-ing every directory it records, deepest first.
