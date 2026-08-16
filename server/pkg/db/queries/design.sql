@@ -1096,6 +1096,17 @@ WHERE workspace_id = sqlc.arg('workspace_id')
   AND project_id = sqlc.arg('project_id')
 ORDER BY (project_resource_id IS NOT NULL), created_at;
 
+-- The workspace-level catalogue (DC-054 / B1). Only systems that have
+-- actually been saved are listed: a draft is not something another project
+-- should be copying from, since nobody has accepted it yet (DC-034).
+-- name: ListSavedProjectDesignSystemsInWorkspace :many
+SELECT project_design_system.*, project.title AS project_title
+FROM project_design_system
+JOIN project ON project.id = project_design_system.project_id
+WHERE project_design_system.workspace_id = sqlc.arg('workspace_id')
+  AND project_design_system.saved_at IS NOT NULL
+ORDER BY project_design_system.saved_at DESC;
+
 -- Repository deletion clears the system it owns, packages first. The column
 -- carries no foreign key per repository policy, so the caller runs this in
 -- the same transaction as the project_resource delete. Mirrors the CTE shape

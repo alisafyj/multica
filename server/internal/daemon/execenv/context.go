@@ -388,7 +388,11 @@ func writeV2ProjectDesignSystemContext(root string, task map[string]json.RawMess
 		return err
 	}
 
-	if operation == "adjust" || operation == "regenerate" {
+	// base/ is materialized whenever the task carries one, not only for
+	// adjust and regenerate. A generate task seeded from another system —
+	// copying the consumer site's system across to the admin console, say —
+	// needs the same immutable reference tree to read from.
+	if base, present := task["base_package"]; present && len(base) > 0 && string(base) != "null" {
 		if err := writeV2BaseDirectory(root, task, manifest); err != nil {
 			return err
 		}

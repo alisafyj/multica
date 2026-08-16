@@ -4284,6 +4284,74 @@ func (q *Queries) ListProjectDesignSystemsByProject(ctx context.Context, arg Lis
 	return items, nil
 }
 
+const listSavedProjectDesignSystemsInWorkspace = `-- name: ListSavedProjectDesignSystemsInWorkspace :many
+SELECT project_design_system.id, project_design_system.workspace_id, project_design_system.project_id, project_design_system.name, project_design_system.platform, project_design_system.current_agent_id, project_design_system.active_task_id, project_design_system.active_operation, project_design_system.input_snapshot, project_design_system.last_error, project_design_system.created_by, project_design_system.created_at, project_design_system.updated_at, project_design_system.saved_at, project_design_system.project_resource_id, project.title AS project_title
+FROM project_design_system
+JOIN project ON project.id = project_design_system.project_id
+WHERE project_design_system.workspace_id = $1
+  AND project_design_system.saved_at IS NOT NULL
+ORDER BY project_design_system.saved_at DESC
+`
+
+type ListSavedProjectDesignSystemsInWorkspaceRow struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	Name              string             `json:"name"`
+	Platform          string             `json:"platform"`
+	CurrentAgentID    pgtype.UUID        `json:"current_agent_id"`
+	ActiveTaskID      pgtype.UUID        `json:"active_task_id"`
+	ActiveOperation   pgtype.Text        `json:"active_operation"`
+	InputSnapshot     []byte             `json:"input_snapshot"`
+	LastError         []byte             `json:"last_error"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	SavedAt           pgtype.Timestamptz `json:"saved_at"`
+	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
+	ProjectTitle      string             `json:"project_title"`
+}
+
+// The workspace-level catalogue (DC-054 / B1). Only systems that have
+// actually been saved are listed: a draft is not something another project
+// should be copying from, since nobody has accepted it yet (DC-034).
+func (q *Queries) ListSavedProjectDesignSystemsInWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]ListSavedProjectDesignSystemsInWorkspaceRow, error) {
+	rows, err := q.db.Query(ctx, listSavedProjectDesignSystemsInWorkspace, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSavedProjectDesignSystemsInWorkspaceRow{}
+	for rows.Next() {
+		var i ListSavedProjectDesignSystemsInWorkspaceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.Name,
+			&i.Platform,
+			&i.CurrentAgentID,
+			&i.ActiveTaskID,
+			&i.ActiveOperation,
+			&i.InputSnapshot,
+			&i.LastError,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SavedAt,
+			&i.ProjectResourceID,
+			&i.ProjectTitle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markDesignImportCodeFailed = `-- name: MarkDesignImportCodeFailed :exec
 UPDATE design_import_code
 SET failed_attempts = failed_attempts + 1,

@@ -1031,6 +1031,21 @@ func (h *Handler) loadProjectDesignSystemBasePackage(
 	if !found {
 		return nil, projectdesignsystem.ValidatedPackage{}, false, nil
 	}
+	return h.decodeProjectDesignSystemBasePackage(ctx, queries, system, selected, allowedHosts)
+}
+
+// decodeProjectDesignSystemBasePackage turns one stored package row into the
+// base-package payload a task context carries. Split out from the slot
+// selection above so a caller that needs a specific slot — a copy reading
+// another system's saved package — reuses the same decoding instead of
+// growing a second copy of it.
+func (h *Handler) decodeProjectDesignSystemBasePackage(
+	ctx context.Context,
+	queries *db.Queries,
+	system db.ProjectDesignSystem,
+	selected db.ProjectDesignSystemPackage,
+	allowedHosts []string,
+) (json.RawMessage, projectdesignsystem.ValidatedPackage, bool, error) {
 	if selected.PackageSchema == projectdesignsystem.PackageSchemaV2 {
 		manifest, err := h.loadNativeProjectDesignSystemPackageManifest(ctx, system, selected)
 		if err != nil {

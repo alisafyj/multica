@@ -1655,6 +1655,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/api/design-systems/{id}/set-default", h.SetDesignSystemProfileDefault)
 			r.Get("/api/project-design-systems", h.GetProjectDesignSystemByProject)
 			r.Post("/api/project-design-systems", h.CreateProjectDesignSystem)
+			r.Post("/api/project-design-systems/copy", h.CopyProjectDesignSystem)
+			r.Get("/api/project-design-systems/catalogue", h.ListWorkspaceDesignSystemCatalogue)
 			r.Get("/api/design-documents", h.ListDesignDocuments)
 			r.Post("/api/design-documents", h.CreateDesignDocument)
 			r.Post("/api/project-design-systems/repository-analysis", h.AnalyzeProjectDesignSystemRepository)
