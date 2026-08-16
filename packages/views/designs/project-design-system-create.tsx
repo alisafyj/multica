@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   CircleAlert,
@@ -9,6 +9,7 @@ import {
   GitBranch,
   Link as LinkIcon,
   LoaderCircle,
+  Package,
   Palette,
   PencilLine,
   Sparkles,
@@ -16,32 +17,43 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@multica/core/api";
+import { api, errorCode } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
+import { projectDesignSystemCatalogueOptions } from "@multica/core/designs/queries";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { useWorkspaceId } from "@multica/core/hooks";
 import type {
   Agent,
   AnalyzeProjectDesignSystemRepositoryRequest,
+  CopyProjectDesignSystemRequest,
   CreateProjectDesignSystemRequest,
   DesignFile,
   DesignSystemProfile,
   Project,
   ProjectDesignSystem,
+  ProjectDesignSystemCatalogueEntry,
   ProjectDesignSystemPlatform,
   ProjectDesignSystemReferenceInput,
   ProjectRepositoryDesignContext,
+  ProjectResource,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
+import { RadioGroup, RadioGroupItem } from "@multica/ui/components/ui/radio-group";
 import { Textarea } from "@multica/ui/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@multica/ui/components/ui/toggle-group";
+import { repositoryLabel } from "./project-repository";
 
 type UploadedReference = {
   attachmentId: string;
   label: string;
 };
 
+/** Where the new system starts from: nothing, or a saved system elsewhere (B1). */
+type ProjectDesignSystemCreateSource = "scratch" | "copy";
+
 type ProjectDesignSystemForm = {
+  source: ProjectDesignSystemCreateSource;
   agentId: string;
   platform: ProjectDesignSystemPlatform | "";
   brief: string;
@@ -50,6 +62,14 @@ type ProjectDesignSystemForm = {
   link: string;
   designFileIds: string[];
   profileIds: string[];
+  copySourceId: string;
+  copyInstruction: string;
+};
+
+type CopySourceGroup = {
+  projectId: string;
+  projectTitle: string;
+  entries: ProjectDesignSystemCatalogueEntry[];
 };
 
 const PLATFORM_OPTIONS: Array<{ value: ProjectDesignSystemPlatform; label: string }> = [
@@ -61,6 +81,35 @@ const PLATFORM_OPTIONS: Array<{ value: ProjectDesignSystemPlatform; label: strin
 const ANALYZED_REFERENCES_LABEL = "已用于本次仓库分析";
 const RESELECT_REFERENCES_LABEL = "重新选择参考资料";
 const REFERENCES_NEED_ANALYSIS_LABEL = "参考资料需要重新分析";
+
+const SCRATCH_SOURCE_LABEL = "全新创建";
+const COPY_SOURCE_LABEL = "从现有设计体系复制";
+const PROJECT_LEVEL_SOURCE_LABEL = "项目通用体系";
+/** A repository-scoped source outside the current project has no name here. */
+const UNNAMED_REPOSITORY_SOURCE_LABEL = "仓库专属体系";
+const COPY_INSTRUCTION_LABEL = "适配说明";
+// The server caps the instruction at 4 KB; Chinese runs 3 bytes per character,
+// so this keeps a full-length instruction well inside the limit.
+const COPY_INSTRUCTION_MAX_LENGTH = 1000;
+
+/**
+ * Copy refuses more cases than creation does, and every one of them is a
+ * server-side code the user cannot act on as-is. `project_design_system_exists`
+ * is the one users hit by accident: analysing the repository first creates the
+ * scope's row, and copy only fills an empty scope.
+ */
+const COPY_ERROR_MESSAGES: Record<string, string> = {
+  source_design_system_not_found: "来源设计体系已不存在，请重新选择来源。",
+  source_design_system_not_saved: "来源设计体系还没有保存版本。只有已保存的体系可以作为复制来源。",
+  copy_source_is_target: "不能以当前范围自己的设计体系为来源，请选择其他项目或仓库的体系。",
+  project_design_system_exists: "当前范围已经有一套设计体系，无法再复制一份。请先放弃现有内容，或直接在其基础上调整。",
+  agent_not_found: "所选智能体已不存在，请重新选择智能体。",
+  agent_unavailable: "所选智能体当前不可用，请检查运行状态或更换智能体。",
+  project_not_found: "项目已不存在，请刷新后重试。",
+  project_resource_not_found: "所选仓库已不存在，请刷新后重新选择范围。",
+  project_resource_not_repository: "所选资源不是代码仓库，无法作为设计体系的范围。",
+};
+
 
 function objectValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -76,6 +125,93 @@ function platformValue(value: unknown): ProjectDesignSystemPlatform | "" {
   return value === "web" || value === "mobile" || value === "cross_platform" ? value : "";
 }
 
+/** Unknown platforms reach the UI whenever the server adds one, so name the gap. */
+function platformLabel(platform: ProjectDesignSystemPlatform | ""): string {
+  return PLATFORM_OPTIONS.find((option) => option.value === platform)?.label ?? "平台待确认";
+}
+
+function formatSavedAt(value: string): string {
+  const parsed = new Date(value).getTime();
+  if (!value || Number.isNaN(parsed)) return "";
+  return `${new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(parsed)} 保存`;
+}
+
+/**
+ * What a copy source is, inside its project. Repository names only resolve for
+ * the project being viewed — the catalogue carries repository ids, not names,
+ * so a repository in another project stays deliberately unnamed rather than
+ * being labelled with an id the user has never seen.
+ */
+function copySourceLabel(
+  entry: ProjectDesignSystemCatalogueEntry,
+  repositoryNames: Map<string, string>,
+): string {
+  if (!entry.project_resource_id) return PROJECT_LEVEL_SOURCE_LABEL;
+  return repositoryNames.get(entry.project_resource_id) ?? UNNAMED_REPOSITORY_SOURCE_LABEL;
+}
+
+function copySourceMeta(entry: ProjectDesignSystemCatalogueEntry): string {
+  return [
+    platformLabel(entry.platform),
+    formatSavedAt(entry.saved_at),
+    // The system name is the project title at creation time, so it only earns
+    // a line of its own once the two have drifted apart.
+    entry.name && entry.name !== entry.project_title ? entry.name : "",
+  ].filter(Boolean).join(" · ");
+}
+
+/**
+ * Groups copy sources by project so `crm` and `crm-admin` stay apart, with the
+ * project being viewed first: adapting a sibling repository's system is the
+ * common case that made copy the primary path (DC-052).
+ */
+function groupCopySources(
+  entries: ProjectDesignSystemCatalogueEntry[],
+  currentProjectId: string,
+): CopySourceGroup[] {
+  const groups = new Map<string, CopySourceGroup>();
+  for (const entry of entries) {
+    const group = groups.get(entry.project_id);
+    if (group) {
+      group.entries.push(entry);
+      continue;
+    }
+    groups.set(entry.project_id, {
+      projectId: entry.project_id,
+      projectTitle: entry.project_title || "未命名项目",
+      entries: [entry],
+    });
+  }
+  for (const group of groups.values()) {
+    group.entries.sort((left, right) => {
+      // The project-level system is the broadest base, so it leads its group.
+      if (!left.project_resource_id !== !right.project_resource_id) {
+        return left.project_resource_id ? 1 : -1;
+      }
+      return right.saved_at.localeCompare(left.saved_at);
+    });
+  }
+  return [...groups.values()].sort((left, right) => {
+    if (left.projectId === currentProjectId) return -1;
+    if (right.projectId === currentProjectId) return 1;
+    const leftSaved = left.entries[0]?.saved_at ?? "";
+    const rightSaved = right.entries[0]?.saved_at ?? "";
+    return rightSaved.localeCompare(leftSaved) || left.projectTitle.localeCompare(right.projectTitle);
+  });
+}
+
+function copyErrorMessage(error: unknown): string {
+  const code = errorCode(error);
+  const mapped = code ? COPY_ERROR_MESSAGES[code] : undefined;
+  if (mapped) return mapped;
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return "无法从现有设计体系复制，请稍后重试。";
+}
+
 function initialForm(project: Project, system: ProjectDesignSystem | undefined): ProjectDesignSystemForm {
   const snapshot = objectValue(system?.input_snapshot);
   const references = Array.isArray(snapshot?.references)
@@ -83,6 +219,11 @@ function initialForm(project: Project, system: ProjectDesignSystem | undefined):
     : [];
 
   return {
+    // A previous attempt's snapshot never records a copy source, so a restored
+    // form always resumes as a from-scratch draft.
+    source: "scratch",
+    copySourceId: "",
+    copyInstruction: "",
     agentId: stringValue(snapshot?.agent_id),
     platform: platformValue(snapshot?.platform),
     brief: stringValue(snapshot?.brief) || project.description?.trim() || "",
@@ -203,6 +344,7 @@ export function ProjectDesignSystemCreate({
   designFiles,
   legacyProfiles,
   system,
+  repositories = [],
   projectResourceId = "",
 }: {
   project: Project;
@@ -211,6 +353,8 @@ export function ProjectDesignSystemCreate({
   legacyProfiles: DesignSystemProfile[];
   system: ProjectDesignSystem | undefined;
   isLoading?: boolean;
+  /** Repositories of this project, used to name its own copy sources (DC-052). */
+  repositories?: ProjectResource[];
   /** Repository this system is created for; empty is the project-level one (DC-052). */
   projectResourceId?: string;
 }) {
@@ -222,6 +366,8 @@ export function ProjectDesignSystemCreate({
   const [referenceEditing, setReferenceEditing] = useState<Record<string, boolean>>({});
   const { upload, uploading } = useFileUpload(api, (error) => toast.error(error.message));
 
+  const catalogueQuery = useQuery(projectDesignSystemCatalogueOptions(wsId));
+
   const form = forms[project.id] ?? initialForm(project, system);
   const currentAgent = agents.find((agent) => agent.id === form.agentId);
   const agentAvailable = isAgentAvailable(currentAgent);
@@ -230,6 +376,26 @@ export function ProjectDesignSystemCreate({
   const repositoryAnalysis = system?.input_snapshot.repository_analysis;
   const repositorySources = repositoryAnalysis ? repositorySourcePaths(repositoryAnalysis) : [];
   const referencesNeedAnalysis = Boolean(repositoryAnalysis && referenceEditing[project.id]);
+
+  // The scope being created for is never a copy source: the server rejects it
+  // as `copy_source_is_target`, so it should not be there to click.
+  const copySources = useMemo(() => (catalogueQuery.data ?? []).filter((entry) => !(
+    entry.project_id === project.id && entry.project_resource_id === projectResourceId
+  )), [catalogueQuery.data, project.id, projectResourceId]);
+  const copySourceGroups = useMemo(
+    () => groupCopySources(copySources, project.id),
+    [copySources, project.id],
+  );
+  const repositoryNames = useMemo(
+    () => new Map(repositories.map((repository) => [repository.id, repositoryLabel(repository)])),
+    [repositories],
+  );
+  // With nothing to copy from there is no choice to offer, so the whole
+  // creation-source switch stays out of the page.
+  const copyOffered = copySources.length > 0;
+  const isCopy = copyOffered && form.source === "copy";
+  const selectedCopySource = copySources.find((entry) => entry.id === form.copySourceId);
+
   const canAnalyze = Boolean(
     form.agentId
       && agentAvailable
@@ -238,16 +404,18 @@ export function ProjectDesignSystemCreate({
       && validColor
       && !uploading,
   );
-  const canSubmit = Boolean(
-    form.agentId
-      && agentAvailable
-      && form.platform
-      && form.brief.trim()
-      && validLink
-      && validColor
-      && !uploading
-      && !referencesNeedAnalysis,
-  );
+  const canSubmit = isCopy
+    ? Boolean(form.agentId && agentAvailable && form.platform && selectedCopySource)
+    : Boolean(
+      form.agentId
+        && agentAvailable
+        && form.platform
+        && form.brief.trim()
+        && validLink
+        && validColor
+        && !uploading
+        && !referencesNeedAnalysis,
+    );
   const lastError = submitErrors[project.id] ?? errorMessage(system?.last_error);
 
   const agentOptions = useMemo(() => {
@@ -302,6 +470,32 @@ export function ProjectDesignSystemCreate({
   });
   const isSubmittingCurrentProject = createSystem.isPending
     && createSystem.variables?.project_id === project.id;
+
+  // Copying enqueues a generation task, so success lands in exactly the same
+  // cache slot as creating from scratch and the surface switches to the same
+  // generating view.
+  const copySystem = useMutation({
+    mutationFn: (request: CopyProjectDesignSystemRequest) => api.copyProjectDesignSystem(request),
+    onMutate: (request) => {
+      setSubmitErrors((current) => ({ ...current, [request.project_id]: null }));
+    },
+    onSuccess: (created) => {
+      queryClient.setQueryData(
+        designKeys.projectDesignSystemByProject(wsId, created.project_id, created.project_resource_id),
+        created,
+      );
+      if (created.id) {
+        queryClient.setQueryData(designKeys.projectDesignSystem(wsId, created.id), created);
+      }
+    },
+    onError: (error, request) => {
+      const message = copyErrorMessage(error);
+      setSubmitErrors((current) => ({ ...current, [request.project_id]: message }));
+      toast.error(message);
+    },
+  });
+  const isCopyingCurrentProject = copySystem.isPending
+    && copySystem.variables?.project_id === project.id;
 
   const analyzeRepository = useMutation({
     mutationFn: (request: AnalyzeProjectDesignSystemRepositoryRequest) => (
@@ -396,6 +590,51 @@ export function ProjectDesignSystemCreate({
         </div>
       ) : null}
 
+      {copyOffered ? (
+        <section className="grid gap-4 border-b py-5 md:grid-cols-[11rem_minmax(0,1fr)]">
+          <div>
+            <h3 className="text-body font-medium">创建方式</h3>
+            <p className="mt-1 text-caption text-muted-foreground">从零开始，或以现有体系为基础</p>
+          </div>
+          <div className="space-y-3">
+            <ToggleGroup
+              aria-label="创建方式"
+              value={[form.source]}
+              // A single-select toggle group still reports an array and clears
+              // on re-click; creation always has a source, so keep the current
+              // one in that case.
+              onValueChange={(next) => {
+                const picked = next[0] ?? form.source;
+                updateForm((current) => ({ ...current, source: picked === "copy" ? "copy" : "scratch" }));
+              }}
+              spacing={1}
+              className="max-w-full flex-nowrap overflow-x-auto rounded-lg bg-muted p-[3px]"
+            >
+              {([
+                { value: "scratch", label: SCRATCH_SOURCE_LABEL },
+                { value: "copy", label: COPY_SOURCE_LABEL },
+              ] as const).map((option) => (
+                <ToggleGroupItem
+                  key={option.value}
+                  value={option.value}
+                  // The chosen mode keeps a surface, weight and shadow that
+                  // hover never touches, so hovering it cannot read as a
+                  // downgrade to plain hover.
+                  className="max-w-[16rem] rounded-md px-3 font-normal text-muted-foreground hover:bg-background/60 hover:text-foreground aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-sm aria-pressed:hover:bg-background data-[state=on]:bg-background data-[state=on]:font-medium data-[state=on]:text-foreground data-[state=on]:shadow-sm data-[state=on]:hover:bg-background"
+                >
+                  <span className="truncate">{option.label}</span>
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+            {isCopy ? (
+              <p className="text-caption leading-5 text-muted-foreground">
+                复制不是直接拷贝：智能体会以所选体系为基础，按当前范围的形态重新生成，需要与全新创建相同的执行时间。
+              </p>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       <section className="grid gap-4 border-b py-5 md:grid-cols-[11rem_minmax(0,1fr)]">
         <div>
           <h3 className="text-body font-medium">生成设置</h3>
@@ -438,34 +677,124 @@ export function ProjectDesignSystemCreate({
             </div>
           </div>
 
-          <div className="flex justify-end border-t pt-4">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={!canAnalyze || isAnalyzingCurrentProject}
-              onClick={() => {
-                if (!form.platform || !canAnalyze) return;
-                analyzeRepository.mutate({
-                  project_id: project.id,
-                  project_resource_id: projectResourceId,
-                  agent_id: form.agentId,
-                  platform: form.platform,
-                  brief: form.brief.trim(),
-                  references: references(),
-                });
-              }}
-            >
-              {isAnalyzingCurrentProject
-                ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                : <GitBranch className="h-3.5 w-3.5" />}
-              {isAnalyzingCurrentProject ? "正在发起分析" : "分析项目仓库"}
-            </Button>
-          </div>
+          {/* Repository analysis writes this scope's system row, which is
+              exactly what copy needs to stay empty, so it is a from-scratch
+              action only. */}
+          {isCopy ? null : (
+            <div className="flex justify-end border-t pt-4">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!canAnalyze || isAnalyzingCurrentProject}
+                onClick={() => {
+                  if (!form.platform || !canAnalyze) return;
+                  analyzeRepository.mutate({
+                    project_id: project.id,
+                    project_resource_id: projectResourceId,
+                    agent_id: form.agentId,
+                    platform: form.platform,
+                    brief: form.brief.trim(),
+                    references: references(),
+                  });
+                }}
+              >
+                {isAnalyzingCurrentProject
+                  ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                  : <GitBranch className="h-3.5 w-3.5" />}
+                {isAnalyzingCurrentProject ? "正在发起分析" : "分析项目仓库"}
+              </Button>
+            </div>
+          )}
         </div>
       </section>
 
-      {repositoryAnalysis ? (
+      {isCopy ? (
+        <>
+          <section className="grid gap-4 border-b py-5 md:grid-cols-[11rem_minmax(0,1fr)]">
+            <div>
+              <h3 className="text-body font-medium">复制来源</h3>
+              <p className="mt-1 text-caption text-muted-foreground">工作区内已保存的设计体系</p>
+            </div>
+            <RadioGroup
+              aria-label="复制来源"
+              value={form.copySourceId}
+              onValueChange={(value) => updateForm((current) => ({
+                ...current,
+                copySourceId: typeof value === "string" ? value : "",
+              }))}
+              // A workspace can hold many saved systems, so the list scrolls
+              // inside its own box instead of pushing the action off screen.
+              className="max-h-96 gap-0 overflow-y-auto"
+            >
+              {copySourceGroups.map((group) => (
+                <div key={group.projectId} className="pt-4 first:pt-0">
+                  <p className="truncate text-caption font-medium text-muted-foreground" title={group.projectTitle}>
+                    {group.projectTitle}
+                  </p>
+                  <div className="mt-1">
+                    {group.entries.map((entry) => {
+                      const label = copySourceLabel(entry, repositoryNames);
+                      const meta = copySourceMeta(entry);
+                      return (
+                        <label
+                          key={entry.id}
+                          className="flex min-w-0 cursor-pointer items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-muted/60 has-[[data-checked]]:bg-muted has-[[data-checked]]:hover:bg-muted"
+                        >
+                          <RadioGroupItem
+                            value={entry.id}
+                            // Two projects can hold identically labelled
+                            // scopes, so the accessible name carries the
+                            // project; the visible copy of it stays out of the
+                            // name computation below.
+                            aria-label={[group.projectTitle, label, meta].filter(Boolean).join(" · ")}
+                            className="shrink-0"
+                          />
+                          {/* Selection reads on the radio dot and on weight,
+                              two dimensions hover never touches. */}
+                          <span aria-hidden="true" className="min-w-0 flex-1 peer-data-checked:font-medium">
+                            <span className="flex min-w-0 items-center gap-1.5 text-body">
+                              {entry.project_resource_id
+                                ? <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                : <Package className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                              <span className="truncate" title={label}>{label}</span>
+                            </span>
+                            <span className="block truncate text-caption font-normal text-muted-foreground">
+                              {meta}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </RadioGroup>
+          </section>
+
+          <section className="grid gap-4 border-b py-5 md:grid-cols-[11rem_minmax(0,1fr)]">
+            <div>
+              <h3 className="text-body font-medium">{COPY_INSTRUCTION_LABEL}</h3>
+              <p className="mt-1 text-caption text-muted-foreground">可选</p>
+            </div>
+            <div className="space-y-1.5">
+              <Textarea
+                aria-label={COPY_INSTRUCTION_LABEL}
+                value={form.copyInstruction}
+                maxLength={COPY_INSTRUCTION_MAX_LENGTH}
+                placeholder="例如：沿用同一套品牌色与字体，后台管理界面信息密度更高、组件更紧凑。"
+                onChange={(event) => updateForm((current) => ({ ...current, copyInstruction: event.target.value }))}
+                className="min-h-24 resize-y"
+              />
+              <p className="text-caption leading-5 text-muted-foreground">
+                说明当前范围与来源体系的差异，智能体据此调整信息密度、组件分量与交互模式；品牌识别默认保留。
+              </p>
+            </div>
+          </section>
+        </>
+      ) : null}
+
+      {!isCopy && repositoryAnalysis ? (
         <section aria-label="仓库背景" className="grid gap-4 border-b py-5 md:grid-cols-[11rem_minmax(0,1fr)]">
           <div>
             <h3 className="text-body font-medium">仓库背景</h3>
@@ -537,6 +866,9 @@ export function ProjectDesignSystemCreate({
         </section>
       ) : null}
 
+      {/* A copy inherits the source system's own brief and evidence, so the
+          from-scratch inputs would only be dead weight on that path. */}
+      {isCopy ? null : (
       <section className="grid gap-4 border-b py-5 md:grid-cols-[11rem_minmax(0,1fr)]">
         <div>
           <h3 className="text-body font-medium">设计目标</h3>
@@ -549,7 +881,9 @@ export function ProjectDesignSystemCreate({
           className="min-h-28 resize-y"
         />
       </section>
+      )}
 
+      {isCopy ? null : (
       <section className="grid gap-4 border-b py-5 md:grid-cols-[11rem_minmax(0,1fr)]">
         <div>
           <h3 className="text-body font-medium">参考资料</h3>
@@ -683,26 +1017,48 @@ export function ProjectDesignSystemCreate({
           </div>
         </div>}
       </section>
+      )}
 
       <div className="flex justify-end pt-5">
-        <Button
-          type="button"
-          disabled={!canSubmit || isSubmittingCurrentProject}
-          onClick={() => {
-            if (!form.platform || !canSubmit) return;
-            createSystem.mutate({
-              project_id: project.id,
-              project_resource_id: projectResourceId,
-              agent_id: form.agentId,
-              platform: form.platform,
-              brief: form.brief.trim(),
-              references: references(),
-            });
-          }}
-        >
-          {isSubmittingCurrentProject ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-          {isSubmittingCurrentProject ? "提交中…" : "生成设计体系"}
-        </Button>
+        {isCopy ? (
+          <Button
+            type="button"
+            disabled={!canSubmit || isCopyingCurrentProject}
+            onClick={() => {
+              if (!form.platform || !canSubmit || !selectedCopySource) return;
+              copySystem.mutate({
+                source_design_system_id: selectedCopySource.id,
+                project_id: project.id,
+                project_resource_id: projectResourceId,
+                agent_id: form.agentId,
+                platform: form.platform,
+                instruction: form.copyInstruction.trim(),
+              });
+            }}
+          >
+            {isCopyingCurrentProject ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            {isCopyingCurrentProject ? "提交中…" : "复制并生成设计体系"}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            disabled={!canSubmit || isSubmittingCurrentProject}
+            onClick={() => {
+              if (!form.platform || !canSubmit) return;
+              createSystem.mutate({
+                project_id: project.id,
+                project_resource_id: projectResourceId,
+                agent_id: form.agentId,
+                platform: form.platform,
+                brief: form.brief.trim(),
+                references: references(),
+              });
+            }}
+          >
+            {isSubmittingCurrentProject ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            {isSubmittingCurrentProject ? "提交中…" : "生成设计体系"}
+          </Button>
+        )}
       </div>
     </div>
   );

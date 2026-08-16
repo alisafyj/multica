@@ -233,13 +233,22 @@ func (h *Handler) createProjectDesignSystemCopyTask(
 		}
 	}
 
-	// The target scope must be empty. Copying onto an existing system would
-	// silently discard whatever is already there.
-	if _, err := scope.lookup(ctx, queries, workspaceID, projectID); err == nil {
-		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{
-			status: http.StatusConflict, code: "project_design_system_exists", message: "this scope already has a design system",
+	// The target scope must hold no design content. "No row" and "a row with
+	// nothing in it" are both fine — a repository analysis or a failed first
+	// generation leaves an empty row behind, and refusing those would block
+	// exactly the sequence this feature exists for: analyse the repo, then
+	// adapt the system the sibling repository already has. Reuse matches what
+	// creating from scratch does with the same row.
+	existing, lookupErr := scope.lookup(ctx, queries, workspaceID, projectID)
+	reuseExisting := false
+	switch {
+	case lookupErr == nil:
+		if err := requireEmptyProjectDesignSystem(ctx, queries, existing, workspaceID); err != nil {
+			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, err
 		}
-	} else if !errors.Is(err, pgx.ErrNoRows) {
+		reuseExisting = true
+	case errors.Is(lookupErr, pgx.ErrNoRows):
+	default:
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("lookup_failed", "failed to check the target design system")
 	}
 
@@ -270,18 +279,21 @@ func (h *Handler) createProjectDesignSystemCopyTask(
 		}
 	}
 
-	system, err := queries.CreateProjectDesignSystem(ctx, db.CreateProjectDesignSystemParams{
-		WorkspaceID:       workspaceID,
-		ProjectID:         projectID,
-		ProjectResourceID: scope.ProjectResourceID,
-		Name:              project.Title,
-		Platform:          input.Platform,
-		CurrentAgentID:    agentID,
-		InputSnapshot:     inputJSON,
-		CreatedBy:         requesterID,
-	})
-	if err != nil {
-		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("create_failed", "failed to create the design system")
+	system := existing
+	if !reuseExisting {
+		system, err = queries.CreateProjectDesignSystem(ctx, db.CreateProjectDesignSystemParams{
+			WorkspaceID:       workspaceID,
+			ProjectID:         projectID,
+			ProjectResourceID: scope.ProjectResourceID,
+			Name:              project.Title,
+			Platform:          input.Platform,
+			CurrentAgentID:    agentID,
+			InputSnapshot:     inputJSON,
+			CreatedBy:         requesterID,
+		})
+		if err != nil {
+			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("create_failed", "failed to create the design system")
+		}
 	}
 
 	contextJSON, err := marshalProjectDesignSystemTaskContext(
@@ -397,4 +409,37 @@ func (h *Handler) ListWorkspaceDesignSystemCatalogue(w http.ResponseWriter, r *h
 		entries = append(entries, entry)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"design_systems": entries})
+}
+
+// requireEmptyProjectDesignSystem reports whether a scope's existing row can
+// be taken over. It carries no design content when nothing is running and
+// neither slot holds a package — the same test creating from scratch applies
+// before reusing a row.
+func requireEmptyProjectDesignSystem(
+	ctx context.Context,
+	queries *db.Queries,
+	system db.ProjectDesignSystem,
+	workspaceID pgtype.UUID,
+) error {
+	if system.ActiveTaskID.Valid {
+		return &projectDesignSystemRequestError{
+			status: http.StatusConflict, code: "operation_in_progress", message: "another design system operation is in progress",
+		}
+	}
+	for _, slot := range []string{"draft", "saved"} {
+		_, err := queries.GetProjectDesignSystemPackageBySlot(ctx, db.GetProjectDesignSystemPackageBySlotParams{
+			DesignSystemID: system.ID,
+			Slot:           slot,
+			WorkspaceID:    workspaceID,
+		})
+		if err == nil {
+			return &projectDesignSystemRequestError{
+				status: http.StatusConflict, code: "project_design_system_exists", message: "this scope already has a design system",
+			}
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return projectDesignSystemInternalError("package_lookup_failed", "failed to check the target design system package")
+		}
+	}
+	return nil
 }

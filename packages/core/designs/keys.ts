@@ -25,6 +25,9 @@ export const designKeys = {
   projectDesignSystemByProject: (wsId: string, projectId: string, projectResourceId?: string | null) => ["designs", wsId, "project-design-systems", "project", projectId, projectResourceId ? projectResourceId : PROJECT_LEVEL_DESIGN_SCOPE] as const,
   projectDesignSystem: (wsId: string, id: string) => ["designs", wsId, "project-design-systems", "system", id] as const,
   projectDesignSystemPackagePreview: (wsId: string, id: string) => ["designs", wsId, "project-design-systems", "system", id, "package-preview"] as const,
+  // Copy sources are workspace-wide, not per project: a system in one project
+  // can seed a scope in another (B1).
+  projectDesignSystemCatalogue: (wsId: string) => ["designs", wsId, "project-design-systems", "catalogue"] as const,
   // Design documents are listed per project, never workspace-wide (DC-042).
   documents: (wsId: string, projectId: string) => ["designs", wsId, "documents", projectId] as const,
   drafts: (wsId: string) => ["designs", wsId, "drafts"] as const,

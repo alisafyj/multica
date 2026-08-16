@@ -201,6 +201,8 @@ import type {
   CreateDesignRestoreTaskRequest,
   CreateDesignSystemProfileRequest,
   CreateProjectDesignSystemRequest,
+  CopyProjectDesignSystemRequest,
+  ListProjectDesignSystemCatalogueResponse,
   AnalyzeProjectDesignSystemRepositoryRequest,
   AdjustProjectDesignSystemRequest,
   RegenerateProjectDesignSystemRequest,
@@ -464,6 +466,8 @@ import {
   CreateDesignDraftAgentTaskResponseSchema,
   ProjectDesignSystemSchema,
   ProjectDesignSystemPackagePreviewSchema,
+  ListProjectDesignSystemCatalogueResponseSchema,
+  EMPTY_LIST_PROJECT_DESIGN_SYSTEM_CATALOGUE_RESPONSE,
   DesignRestoreTaskSchema,
   DispatchDesignRestoreTaskResponseSchema,
   EMPTY_DESIGN_DELIVERY,
@@ -3509,6 +3513,43 @@ export class ApiClient {
         current_agent_id: data.agent_id,
       },
       { endpoint: "POST /api/project-design-systems" },
+    );
+  }
+
+  // Every saved design system in the workspace, offered as a copy source (B1).
+  // Drafts are excluded server-side: an unaccepted system is not a basis for
+  // another surface.
+  async listProjectDesignSystemCatalogue(): Promise<ListProjectDesignSystemCatalogueResponse> {
+    const raw = await this.fetch<unknown>("/api/project-design-systems/catalogue");
+    return parseWithFallback(
+      raw,
+      ListProjectDesignSystemCatalogueResponseSchema,
+      EMPTY_LIST_PROJECT_DESIGN_SYSTEM_CATALOGUE_RESPONSE,
+      { endpoint: "GET /api/project-design-systems/catalogue" },
+    );
+  }
+
+  // Adapting an existing system into an empty scope enqueues a generation task
+  // rather than duplicating bytes, so the response is a generating system just
+  // like `createProjectDesignSystem`.
+  async copyProjectDesignSystem(
+    data: CopyProjectDesignSystemRequest,
+  ): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>("/api/project-design-systems/copy", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      {
+        ...EMPTY_PROJECT_DESIGN_SYSTEM,
+        project_id: data.project_id,
+        project_resource_id: data.project_resource_id ?? "",
+        platform: data.platform,
+        current_agent_id: data.agent_id,
+      },
+      { endpoint: "POST /api/project-design-systems/copy" },
     );
   }
 

@@ -89,6 +89,7 @@ import type {
   ListDesignDraftsResponse,
   ListDesignSystemProfilesResponse,
   ListDesignRestoreTasksResponse,
+  ListProjectDesignSystemCatalogueResponse,
   ProjectDesignSystem,
   ProjectDesignSystemPackagePreview,
   ProjectDesignSystemStatus,
@@ -1753,6 +1754,33 @@ export const EMPTY_PROJECT_DESIGN_SYSTEM: ProjectDesignSystem = {
   created_at: "",
   updated_at: "",
   saved_at: null,
+};
+
+/**
+ * Copy-source catalogue entry (B1). Every field degrades to a rendered-but-
+ * useless value rather than dropping the row, except `id`: a row whose id did
+ * not survive cannot be copied from, so the array filter below discards it.
+ */
+export const ProjectDesignSystemCatalogueEntrySchema = z.object({
+  id: z.string().catch("").default(""),
+  project_id: z.string().catch("").default(""),
+  project_title: z.string().catch("").default(""),
+  // The server omits the field for a project-level system (DC-052).
+  project_resource_id: z.string().catch("").default(""),
+  name: z.string().catch("").default(""),
+  platform: ProjectDesignSystemPlatformSchema,
+  saved_at: z.string().catch("").default(""),
+}).loose();
+
+export const ListProjectDesignSystemCatalogueResponseSchema = z.object({
+  design_systems: z.preprocess(
+    (value) => Array.isArray(value) ? value : [],
+    z.array(ProjectDesignSystemCatalogueEntrySchema).catch([]),
+  ).transform((entries) => entries.filter((entry) => entry.id !== "")),
+}).loose();
+
+export const EMPTY_LIST_PROJECT_DESIGN_SYSTEM_CATALOGUE_RESPONSE: ListProjectDesignSystemCatalogueResponse = {
+  design_systems: [],
 };
 
 function normalizeDesignDocumentStatus(value: unknown): DesignDocumentStatus {

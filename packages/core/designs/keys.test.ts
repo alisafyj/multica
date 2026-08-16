@@ -3,6 +3,7 @@ import { designKeys } from "./keys";
 import {
   designDocumentListOptions,
   projectDesignSystemByProjectOptions,
+  projectDesignSystemCatalogueOptions,
   projectDesignSystemDetailOptions,
 } from "./queries";
 
@@ -70,6 +71,21 @@ describe("designKeys", () => {
     );
     expect(projectDesignSystemByProjectOptions("ws-1", "").enabled).toBe(false);
     expect(projectDesignSystemDetailOptions("ws-1", "").enabled).toBe(false);
+  });
+
+  it("keeps the copy-source catalogue workspace-scoped", () => {
+    expect(designKeys.projectDesignSystemCatalogue("ws-1")).toEqual([
+      "designs",
+      "ws-1",
+      "project-design-systems",
+      "catalogue",
+    ]);
+    expect(designKeys.projectDesignSystemCatalogue("ws-2")).not.toEqual(
+      designKeys.projectDesignSystemCatalogue("ws-1"),
+    );
+    expect(projectDesignSystemCatalogueOptions("ws-1").queryKey).toEqual(
+      designKeys.projectDesignSystemCatalogue("ws-1"),
+    );
   });
 
   it("separates repository scopes so a repository switch cannot serve another one's system", () => {

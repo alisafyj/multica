@@ -14,24 +14,11 @@ import { ToggleGroup, ToggleGroupItem } from "@multica/ui/components/ui/toggle-g
 import { ProjectDesignSystemCanvas } from "./project-design-system-canvas";
 import { ProjectDesignSystemCreate } from "./project-design-system-create";
 import { ProjectDesignSystemTaskActivity } from "./project-design-system-task-activity";
+import { repositoryLabel, repositoryUrl } from "./project-repository";
 
 // Base UI toggle values must be non-empty strings, while the project-level
 // scope is an empty `project_resource_id` on the wire (DC-052).
 const PROJECT_SCOPE_VALUE = "__project__";
-
-function repositoryUrl(resource: ProjectResource): string {
-  const ref = resource.resource_ref as { url?: unknown } | undefined;
-  return typeof ref?.url === "string" ? ref.url.trim() : "";
-}
-
-function repositoryLabel(resource: ProjectResource): string {
-  const label = resource.label?.trim();
-  if (label) return label;
-  const url = repositoryUrl(resource);
-  if (!url) return "未命名仓库";
-  const normalized = url.replace(/\.git$/, "").replace(/\/+$/, "");
-  return normalized.split("/").pop() || normalized;
-}
 
 /**
  * Repository scope switcher (DC-052). A project can hold several repositories
@@ -154,6 +141,7 @@ function ProjectDesignSystemContent({
   legacyProfiles,
   system,
   isLoading,
+  repositories,
   selectedRepositoryId,
 }: {
   project: Project;
@@ -162,6 +150,7 @@ function ProjectDesignSystemContent({
   legacyProfiles: DesignSystemProfile[];
   system: ProjectDesignSystem | undefined;
   isLoading: boolean;
+  repositories: ProjectResource[];
   selectedRepositoryId: string;
 }) {
   if (isLoading || !system) return <ProjectDesignSystemSkeleton />;
@@ -187,6 +176,7 @@ function ProjectDesignSystemContent({
         designFiles={designFiles}
         legacyProfiles={legacyProfiles}
         system={system}
+        repositories={repositories}
         projectResourceId={selectedRepositoryId}
       />
     </div>
@@ -238,6 +228,7 @@ export function ProjectDesignSystemWorkspace({
           legacyProfiles={legacyProfiles}
           system={system}
           isLoading={isLoading}
+          repositories={repositories}
           selectedRepositoryId={selectedRepositoryId}
         />
       </div>

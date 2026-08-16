@@ -9,20 +9,36 @@ import type {
   DesignSystemProfile,
   Project,
   ProjectDesignSystem,
+  ProjectDesignSystemCatalogueEntry,
+  ProjectResource,
 } from "@multica/core/types";
 
-const { analyzeProjectDesignSystemRepository, createProjectDesignSystem, uploadFile } = vi.hoisted(() => ({
+const {
+  analyzeProjectDesignSystemRepository,
+  copyProjectDesignSystem,
+  createProjectDesignSystem,
+  listProjectDesignSystemCatalogue,
+  uploadFile,
+} = vi.hoisted(() => ({
   analyzeProjectDesignSystemRepository: vi.fn(),
+  copyProjectDesignSystem: vi.fn(),
   createProjectDesignSystem: vi.fn(),
+  listProjectDesignSystemCatalogue: vi.fn(),
   uploadFile: vi.fn(),
 }));
 
 vi.mock("@multica/core/api", () => ({
   api: {
     analyzeProjectDesignSystemRepository,
+    copyProjectDesignSystem,
     createProjectDesignSystem,
+    listProjectDesignSystemCatalogue,
     uploadFile,
   },
+  // The real one digs the code out of an ApiError body; the fake reads it off
+  // whatever the test threw, so a test can drive one branch of the mapping.
+  errorCode: (error: unknown) =>
+    error && typeof error === "object" ? (error as { code?: string }).code : undefined,
 }));
 
 vi.mock("@multica/core/hooks", () => ({
@@ -170,6 +186,36 @@ function makeSystem(overrides: Partial<ProjectDesignSystem> = {}): ProjectDesign
   };
 }
 
+function makeCatalogueEntry(
+  overrides: Partial<ProjectDesignSystemCatalogueEntry> = {},
+): ProjectDesignSystemCatalogueEntry {
+  return {
+    id: "system-h5",
+    project_id: "project-1",
+    project_title: "CRM",
+    project_resource_id: "resource-h5",
+    name: "CRM",
+    platform: "web",
+    saved_at: "2026-08-14T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function makeRepository(overrides: Partial<ProjectResource> = {}): ProjectResource {
+  return {
+    id: "resource-h5",
+    project_id: "project-1",
+    workspace_id: "ws-1",
+    resource_type: "repository",
+    resource_ref: { url: "https://github.com/acme/crm-h5.git" },
+    label: null,
+    position: 0,
+    created_at: "2026-07-29T00:00:00Z",
+    created_by: null,
+    ...overrides,
+  } as ProjectResource;
+}
+
 const defaultProps = {
   project: makeProject(),
   agents: [makeAgent()],
@@ -177,6 +223,7 @@ const defaultProps = {
   legacyProfiles: [makeProfile()],
   system: makeSystem(),
   isLoading: false,
+  repositories: [] as ProjectResource[],
   // Empty is the project-level system shared across repositories (DC-052).
   projectResourceId: "",
 };
@@ -197,8 +244,19 @@ function renderComponent(props: Partial<typeof defaultProps> = {}) {
 describe("ProjectDesignSystemCreate", () => {
   beforeEach(() => {
     analyzeProjectDesignSystemRepository.mockReset();
+    copyProjectDesignSystem.mockReset();
     createProjectDesignSystem.mockReset();
+    listProjectDesignSystemCatalogue.mockReset();
     uploadFile.mockReset();
+    // No saved system anywhere is the default: copy has nothing to offer.
+    listProjectDesignSystemCatalogue.mockResolvedValue({ design_systems: [] });
+    copyProjectDesignSystem.mockResolvedValue(makeSystem({
+      id: "system-copy-1",
+      name: "CRM 设计体系",
+      platform: "web",
+      current_agent_id: "agent-1",
+      status: "generating",
+    }));
     createProjectDesignSystem.mockResolvedValue(makeSystem({
       id: "system-1",
       name: "CRM 设计体系",
@@ -644,4 +702,279 @@ describe("ProjectDesignSystemCreate", () => {
     expect(screen.getByLabelText("客户列表参考稿")).toBeChecked();
   });
 
+  describe("copying from an existing design system", () => {
+    // A source row is named "<project> · <scope> · <platform> · <saved>"; the
+    // tests pin the identifying half and leave the locale-formatted date out.
+    function sourceNamePattern(name: string) {
+      return new RegExp(`^${name} · `);
+    }
+
+    function copySourceRadio(name: string) {
+      return screen.getByRole("radio", { name: sourceNamePattern(name) });
+    }
+
+    function queryCopySourceRadio(name: string) {
+      return screen.queryByRole("radio", { name: sourceNamePattern(name) });
+    }
+
+    async function renderWithCopySources(
+      entries: ProjectDesignSystemCatalogueEntry[],
+      props: Partial<typeof defaultProps> = {},
+    ) {
+      listProjectDesignSystemCatalogue.mockResolvedValue({ design_systems: entries });
+      const rendered = renderComponent(props);
+      await screen.findByRole("button", { name: "从现有设计体系复制" });
+      return rendered;
+    }
+
+    it("does not offer a copy source when the workspace has no saved system", async () => {
+      renderComponent();
+
+      await waitFor(() => expect(listProjectDesignSystemCatalogue).toHaveBeenCalled());
+      expect(screen.queryByRole("button", { name: "从现有设计体系复制" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("radiogroup", { name: "复制来源" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "生成设计体系" })).toBeInTheDocument();
+    });
+
+    it("does not offer a copy source when the only saved system is the current scope", async () => {
+      listProjectDesignSystemCatalogue.mockResolvedValue({
+        design_systems: [makeCatalogueEntry({ id: "system-project", project_resource_id: "" })],
+      });
+      renderComponent({ projectResourceId: "" });
+
+      await waitFor(() => expect(listProjectDesignSystemCatalogue).toHaveBeenCalled());
+      expect(screen.queryByRole("button", { name: "从现有设计体系复制" })).not.toBeInTheDocument();
+    });
+
+    it("leaves the current scope out of the picker and names this project's repositories", async () => {
+      const user = userEvent.setup();
+      await renderWithCopySources([
+        makeCatalogueEntry({ id: "system-h5", project_resource_id: "resource-h5", platform: "web" }),
+        makeCatalogueEntry({
+          id: "system-admin",
+          project_resource_id: "resource-admin",
+          platform: "web",
+          saved_at: "2026-08-15T00:00:00Z",
+        }),
+        makeCatalogueEntry({ id: "system-project", project_resource_id: "", platform: "cross_platform" }),
+        makeCatalogueEntry({
+          id: "system-other",
+          project_id: "project-2",
+          project_title: "工单中心",
+          project_resource_id: "",
+          name: "工单中心",
+          platform: "mobile",
+          saved_at: "2026-08-10T00:00:00Z",
+        }),
+      ], {
+        projectResourceId: "resource-admin",
+        repositories: [
+          makeRepository({ id: "resource-h5" }),
+          makeRepository({ id: "resource-admin", label: "后台管理" }),
+        ],
+      });
+
+      await user.click(screen.getByRole("button", { name: "从现有设计体系复制" }));
+
+      expect(screen.getByRole("radiogroup", { name: "复制来源" })).toBeInTheDocument();
+      expect(copySourceRadio("CRM · crm-h5")).toBeInTheDocument();
+      expect(copySourceRadio("CRM · 项目通用体系")).toBeInTheDocument();
+      expect(copySourceRadio("工单中心 · 项目通用体系")).toBeInTheDocument();
+      // The scope being created for is rejected by the server as
+      // `copy_source_is_target`, so it is never offered.
+      expect(queryCopySourceRadio("CRM · 后台管理")).not.toBeInTheDocument();
+      // Platform is part of telling two saved systems apart, and it is on the
+      // row rather than only inside the accessible name.
+      expect(screen.getByText(/^移动端 · /)).toBeInTheDocument();
+      expect(screen.getByText(/^跨端 · /)).toBeInTheDocument();
+    });
+
+    it("keeps the picked source identifiable and drops the from-scratch inputs", async () => {
+      const user = userEvent.setup();
+      await renderWithCopySources([
+        makeCatalogueEntry({ id: "system-h5" }),
+        makeCatalogueEntry({ id: "system-project", project_resource_id: "" }),
+      ], { projectResourceId: "resource-admin" });
+
+      await user.click(screen.getByRole("button", { name: "从现有设计体系复制" }));
+      await user.click(copySourceRadio("CRM · 项目通用体系"));
+
+      expect(copySourceRadio("CRM · 项目通用体系")).toHaveAttribute("data-checked");
+      expect(copySourceRadio("CRM · 仓库专属体系")).not.toHaveAttribute("data-checked");
+      // A copy inherits the source's brief and evidence, and repository
+      // analysis would fill the scope copy needs to be empty.
+      expect(screen.queryByLabelText("设计目标")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "分析项目仓库" })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("客户列表参考稿")).not.toBeInTheDocument();
+      // The copy must not read as an instant duplicate.
+      expect(screen.getByText(/复制不是直接拷贝/)).toBeInTheDocument();
+    });
+
+    it("requires an available agent, a platform and a source before submitting", async () => {
+      const user = userEvent.setup();
+      await renderWithCopySources([makeCatalogueEntry({ id: "system-h5" })], {
+        projectResourceId: "resource-admin",
+      });
+      await user.click(screen.getByRole("button", { name: "从现有设计体系复制" }));
+
+      const submit = screen.getByRole("button", { name: "复制并生成设计体系" });
+      expect(submit).toBeDisabled();
+
+      await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
+      await user.click(screen.getByRole("radio", { name: "Web" }));
+      expect(submit).toBeDisabled();
+
+      await user.click(copySourceRadio("CRM · 仓库专属体系"));
+      expect(submit).toBeEnabled();
+    });
+
+    it("submits the source, the target scope and the adaptation instruction", async () => {
+      const user = userEvent.setup();
+      await renderWithCopySources([makeCatalogueEntry({ id: "system-h5" })], {
+        projectResourceId: "resource-admin",
+        repositories: [makeRepository({ id: "resource-h5" })],
+      });
+
+      await user.click(screen.getByRole("button", { name: "从现有设计体系复制" }));
+      await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
+      await user.click(screen.getByRole("radio", { name: "跨端" }));
+      await user.click(copySourceRadio("CRM · crm-h5"));
+      await user.type(screen.getByLabelText("适配说明"), "同一品牌，后台管理界面更紧凑");
+      await user.click(screen.getByRole("button", { name: "复制并生成设计体系" }));
+
+      await waitFor(() => {
+        expect(copyProjectDesignSystem).toHaveBeenCalledWith({
+          source_design_system_id: "system-h5",
+          project_id: "project-1",
+          project_resource_id: "resource-admin",
+          agent_id: "agent-1",
+          platform: "cross_platform",
+          instruction: "同一品牌，后台管理界面更紧凑",
+        });
+      });
+      expect(createProjectDesignSystem).not.toHaveBeenCalled();
+    });
+
+    it("submits without an instruction because it is optional", async () => {
+      const user = userEvent.setup();
+      await renderWithCopySources([makeCatalogueEntry({ id: "system-h5" })], {
+        projectResourceId: "",
+      });
+
+      await user.click(screen.getByRole("button", { name: "从现有设计体系复制" }));
+      await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
+      await user.click(screen.getByRole("radio", { name: "Web" }));
+      await user.click(copySourceRadio("CRM · 仓库专属体系"));
+      await user.click(screen.getByRole("button", { name: "复制并生成设计体系" }));
+
+      await waitFor(() => {
+        expect(copyProjectDesignSystem).toHaveBeenCalledWith(expect.objectContaining({
+          source_design_system_id: "system-h5",
+          project_resource_id: "",
+          instruction: "",
+        }));
+      });
+    });
+
+    it("hands the generating system to the shared cache slot the scratch flow uses", async () => {
+      const user = userEvent.setup();
+      const { queryClient } = await renderWithCopySources([makeCatalogueEntry({ id: "system-h5" })], {
+        projectResourceId: "resource-admin",
+      });
+      copyProjectDesignSystem.mockResolvedValue(makeSystem({
+        id: "system-copy-1",
+        project_resource_id: "resource-admin",
+        platform: "web",
+        current_agent_id: "agent-1",
+        status: "generating",
+        active_task: {
+          id: "task-copy-1",
+          agent_id: "agent-1",
+          status: "queued",
+          operation: "generate",
+          error: null,
+          failure_reason: null,
+          wait_reason: null,
+          created_at: "2026-08-16T00:00:00Z",
+          dispatched_at: null,
+          started_at: null,
+          completed_at: null,
+        },
+      }));
+
+      await user.click(screen.getByRole("button", { name: "从现有设计体系复制" }));
+      await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
+      await user.click(screen.getByRole("radio", { name: "Web" }));
+      await user.click(copySourceRadio("CRM · 仓库专属体系"));
+      await user.click(screen.getByRole("button", { name: "复制并生成设计体系" }));
+
+      await waitFor(() => {
+        expect(queryClient.getQueryData([
+          "designs", "ws-1", "project-design-systems", "project", "project-1", "resource-admin",
+        ])).toMatchObject({ id: "system-copy-1", status: "generating" });
+      });
+      expect(queryClient.getQueryData([
+        "designs", "ws-1", "project-design-systems", "system", "system-copy-1",
+      ])).toMatchObject({ id: "system-copy-1" });
+    });
+
+    it.each([
+      ["source_design_system_not_found", "来源设计体系已不存在，请重新选择来源。"],
+      ["source_design_system_not_saved", "来源设计体系还没有保存版本。只有已保存的体系可以作为复制来源。"],
+      ["copy_source_is_target", "不能以当前范围自己的设计体系为来源，请选择其他项目或仓库的体系。"],
+      ["project_design_system_exists", "当前范围已经有一套设计体系，无法再复制一份。请先放弃现有内容，或直接在其基础上调整。"],
+      ["agent_unavailable", "所选智能体当前不可用，请检查运行状态或更换智能体。"],
+      ["project_resource_not_repository", "所选资源不是代码仓库，无法作为设计体系的范围。"],
+    ])("explains the %s refusal instead of showing the raw code", async (code, expectedMessage) => {
+      const user = userEvent.setup();
+      copyProjectDesignSystem.mockRejectedValue(
+        Object.assign(new Error("copy refused"), { code }),
+      );
+      await renderWithCopySources([makeCatalogueEntry({ id: "system-h5" })], {
+        projectResourceId: "resource-admin",
+      });
+
+      await user.click(screen.getByRole("button", { name: "从现有设计体系复制" }));
+      await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
+      await user.click(screen.getByRole("radio", { name: "Web" }));
+      await user.click(copySourceRadio("CRM · 仓库专属体系"));
+      await user.click(screen.getByRole("button", { name: "复制并生成设计体系" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(expectedMessage);
+      expect(alert).not.toHaveTextContent(code);
+      // The picked source and settings survive a refusal.
+      expect(copySourceRadio("CRM · 仓库专属体系")).toHaveAttribute("data-checked");
+      expect(screen.getByLabelText("智能体")).toHaveValue("agent-1");
+    });
+
+    it("keeps the chosen creation source when the toggle is clicked again", async () => {
+      const user = userEvent.setup();
+      await renderWithCopySources([makeCatalogueEntry({ id: "system-h5" })], {
+        projectResourceId: "resource-admin",
+      });
+
+      const copyToggle = screen.getByRole("button", { name: "从现有设计体系复制" });
+      await user.click(copyToggle);
+      await user.click(copyToggle);
+
+      expect(copyToggle).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("radiogroup", { name: "复制来源" })).toBeInTheDocument();
+    });
+
+    it("keeps the scratch flow reachable from the same surface", async () => {
+      const user = userEvent.setup();
+      await renderWithCopySources([makeCatalogueEntry({ id: "system-h5" })], {
+        projectResourceId: "resource-admin",
+      });
+
+      await user.click(screen.getByRole("button", { name: "从现有设计体系复制" }));
+      expect(screen.queryByLabelText("设计目标")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "全新创建" }));
+      expect(screen.getByLabelText("设计目标")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "生成设计体系" })).toBeInTheDocument();
+      expect(screen.queryByRole("radiogroup", { name: "复制来源" })).not.toBeInTheDocument();
+    });
+  });
 });

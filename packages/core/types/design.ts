@@ -375,6 +375,42 @@ export interface AnalyzeProjectDesignSystemRepositoryRequest {
   references: ProjectDesignSystemReferenceInput[];
 }
 
+/**
+ * One saved design system offered as a copy source (B1). The catalogue is a
+ * picker source, not a management surface: it carries only what a user needs
+ * to tell two systems apart, never package contents.
+ */
+export interface ProjectDesignSystemCatalogueEntry {
+  id: string;
+  project_id: string;
+  project_title: string;
+  /** Empty is the project-level system; a repository id is that repository's own (DC-052). */
+  project_resource_id: string;
+  name: string;
+  platform: ProjectDesignSystemPlatform | "";
+  saved_at: string;
+}
+
+export interface ListProjectDesignSystemCatalogueResponse {
+  design_systems: ProjectDesignSystemCatalogueEntry[];
+}
+
+/**
+ * Adapt an existing saved system into an empty scope (B1). This is not a byte
+ * copy: the server enqueues a generation task whose base is the source's saved
+ * package, so the result arrives through the normal generating -> draft flow.
+ */
+export interface CopyProjectDesignSystemRequest {
+  source_design_system_id: string;
+  project_id: string;
+  /** Empty targets the project-level system; a repository id targets that repository (DC-052). */
+  project_resource_id?: string;
+  agent_id: string;
+  platform: ProjectDesignSystemPlatform;
+  /** What makes the target different from the source. Optional. */
+  instruction?: string;
+}
+
 export interface AdjustProjectDesignSystemRequest {
   agent_id: string;
   instruction: string;

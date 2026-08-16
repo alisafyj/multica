@@ -827,6 +827,84 @@ describe("ApiClient", () => {
         status: "unestablished",
       });
     });
+
+    it("parses the copy-source catalogue and degrades a malformed one to empty", async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          design_systems: [{
+            id: "system-1",
+            project_id: "project-1",
+            project_title: "CRM",
+            project_resource_id: "resource-h5",
+            name: "CRM",
+            platform: "web",
+            saved_at: "2026-08-16T00:00:00Z",
+          }],
+        }), { status: 200, headers: { "Content-Type": "application/json" } }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ design_systems: { id: "system-1" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      const catalogue = await client.listProjectDesignSystemCatalogue();
+      const malformed = await client.listProjectDesignSystemCatalogue();
+
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        "https://api.example.test/api/project-design-systems/catalogue",
+      );
+      expect(catalogue.design_systems).toHaveLength(1);
+      expect(catalogue.design_systems[0]).toMatchObject({
+        id: "system-1",
+        project_title: "CRM",
+        project_resource_id: "resource-h5",
+        platform: "web",
+      });
+      expect(malformed.design_systems).toEqual([]);
+    });
+
+    it("posts copy requests and keeps the target scope in the fallback", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ project_id: 42 }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      const result = await client.copyProjectDesignSystem({
+        source_design_system_id: "system-1",
+        project_id: "project-2",
+        project_resource_id: "resource-admin",
+        agent_id: "agent-1",
+        platform: "web",
+        instruction: "同一品牌，后台管理更紧凑",
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.example.test/api/project-design-systems/copy",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            source_design_system_id: "system-1",
+            project_id: "project-2",
+            project_resource_id: "resource-admin",
+            agent_id: "agent-1",
+            platform: "web",
+            instruction: "同一品牌，后台管理更紧凑",
+          }),
+        }),
+      );
+      expect(result).toMatchObject({
+        project_id: "project-2",
+        project_resource_id: "resource-admin",
+        platform: "web",
+        current_agent_id: "agent-1",
+        status: "unestablished",
+      });
+    });
   });
 
   describe("design drafts", () => {

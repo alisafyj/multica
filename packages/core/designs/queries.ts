@@ -161,6 +161,19 @@ export function projectDesignSystemByProjectOptions(wsId: string, projectId: str
   });
 }
 
+/**
+ * Saved systems that a new scope can be copied from (B1). Workspace-wide by
+ * design — the picker filters out the scope it is offered in, because the
+ * server rejects copying a system onto itself.
+ */
+export function projectDesignSystemCatalogueOptions(wsId: string) {
+  return queryOptions({
+    queryKey: designKeys.projectDesignSystemCatalogue(wsId),
+    queryFn: () => api.listProjectDesignSystemCatalogue(),
+    select: (data) => data.design_systems,
+  });
+}
+
 export function projectDesignSystemDetailOptions(wsId: string, id: string) {
   return queryOptions({
     queryKey: designKeys.projectDesignSystem(wsId, id),

@@ -67,6 +67,8 @@ import {
   IssueTriggerPreviewSchema,
   ListIssuesResponseSchema,
   ProjectDesignSystemSchema,
+  ListProjectDesignSystemCatalogueResponseSchema,
+  EMPTY_LIST_PROJECT_DESIGN_SYSTEM_CATALOGUE_RESPONSE,
   ListPropertiesResponseSchema,
   MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
   RuntimeModelListRequestSchema,
@@ -1026,6 +1028,70 @@ describe("ProjectDesignSystemSchema", () => {
     expect(scoped.project_resource_id).toBe("resource-h5");
     expect(projectLevel.project_resource_id).toBe("");
     expect(malformed.project_resource_id).toBe("");
+  });
+});
+
+describe("ListProjectDesignSystemCatalogueResponseSchema", () => {
+  it("keeps the repository scope and treats an absent one as project-level", () => {
+    const parsed = ListProjectDesignSystemCatalogueResponseSchema.parse({
+      design_systems: [
+        {
+          id: "system-1",
+          project_id: "project-1",
+          project_title: "CRM",
+          project_resource_id: "resource-h5",
+          name: "CRM",
+          platform: "web",
+          saved_at: "2026-08-16T00:00:00Z",
+        },
+        {
+          id: "system-2",
+          project_id: "project-1",
+          project_title: "CRM",
+          name: "CRM",
+          platform: "cross_platform",
+          saved_at: "2026-08-15T00:00:00Z",
+        },
+      ],
+    });
+
+    expect(parsed.design_systems[0]?.project_resource_id).toBe("resource-h5");
+    expect(parsed.design_systems[1]?.project_resource_id).toBe("");
+  });
+
+  it("downgrades unknown platforms and drops entries that cannot be copied from", () => {
+    const parsed = ListProjectDesignSystemCatalogueResponseSchema.parse({
+      design_systems: [
+        {
+          id: "system-1",
+          project_id: "project-1",
+          project_title: "CRM",
+          platform: "future_platform",
+          project_resource_id: { id: "resource-h5" },
+          saved_at: null,
+        },
+        // No id means no copy source, so the row is worthless to a picker.
+        { project_id: "project-2", project_title: "工单中心", platform: "web" },
+      ],
+    });
+
+    expect(parsed.design_systems).toHaveLength(1);
+    expect(parsed.design_systems[0]?.platform).toBe("");
+    expect(parsed.design_systems[0]?.project_resource_id).toBe("");
+    expect(parsed.design_systems[0]?.saved_at).toBe("");
+    expect(parsed.design_systems[0]?.name).toBe("");
+  });
+
+  it("falls back to an empty catalogue for malformed responses", () => {
+    for (const malformed of [null, "design_systems", { design_systems: "not-an-array" }]) {
+      const parsed = parseWithFallback(
+        malformed,
+        ListProjectDesignSystemCatalogueResponseSchema,
+        EMPTY_LIST_PROJECT_DESIGN_SYSTEM_CATALOGUE_RESPONSE,
+        { endpoint: "GET /api/project-design-systems/catalogue" },
+      );
+      expect(parsed.design_systems).toEqual([]);
+    }
   });
 });
 
