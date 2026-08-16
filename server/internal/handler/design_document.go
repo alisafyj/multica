@@ -139,18 +139,18 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 		writeProjectDesignSystemError(w, http.StatusBadRequest, "platform_invalid", "platform must be web, mobile, or cross_platform")
 		return
 	}
-	if req.Recipe == "" {
-		req.Recipe = designDocumentDefaultRecipe
-	}
-	if _, known := designDocumentRecipes[req.Recipe]; !known {
-		writeProjectDesignSystemError(w, http.StatusBadRequest, "recipe_invalid", "recipe is not a known design scenario")
-		return
-	}
-
 	workspaceUUID, requesterUUID, ok := h.projectDesignSystemRequestScope(w, r)
 	if !ok {
 		return
 	}
+	// A recipe is either one of the composer's built-in chips or a published
+	// catalogue entry this workspace can see. Resolving it here means a
+	// document can never record a recipe that does not exist.
+	resolvedRecipe, ok := h.resolveDesignDocumentRecipe(r, w, workspaceUUID, req.Recipe)
+	if !ok {
+		return
+	}
+	req.Recipe = resolvedRecipe
 	projectUUID, ok := parseUUIDOrBadRequest(w, req.ProjectID, "project_id")
 	if !ok {
 		return

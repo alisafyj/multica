@@ -237,6 +237,11 @@ deleted_design_document_revisions AS (
 ),
 deleted_design_documents AS (
     DELETE FROM design_document WHERE design_document.workspace_id = $1
+),
+deleted_design_scenario_recipes AS (
+    -- Only this workspace's own recipes. Built-in rows carry a NULL
+    -- workspace_id and are shared, so they must survive.
+    DELETE FROM design_scenario_recipe WHERE design_scenario_recipe.workspace_id = $1
 )
 DELETE FROM project_design_system_package
 WHERE design_system_id IN (

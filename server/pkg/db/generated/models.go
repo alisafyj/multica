@@ -801,6 +801,26 @@ type DesignRevision struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
+type DesignScenarioRecipe struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	Slug             string             `json:"slug"`
+	Title            string             `json:"title"`
+	Summary          string             `json:"summary"`
+	Category         string             `json:"category"`
+	Subcategory      pgtype.Text        `json:"subcategory"`
+	Mode             string             `json:"mode"`
+	Platform         pgtype.Text        `json:"platform"`
+	Prompt           string             `json:"prompt"`
+	PreviewObjectKey pgtype.Text        `json:"preview_object_key"`
+	Origin           string             `json:"origin"`
+	PublishedAt      pgtype.Timestamptz `json:"published_at"`
+	Position         int32              `json:"position"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type DesignSystemProfile struct {
 	ID               pgtype.UUID        `json:"id"`
 	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
