@@ -45,11 +45,12 @@ var (
 )
 
 type PMOSyncContext struct {
-	Type        string `json:"type"`
-	WorkspaceID string `json:"workspace_id"`
-	RequesterID string `json:"requester_id,omitempty"`
-	RunID       string `json:"run_id"`
-	Prompt      string `json:"prompt"`
+	Type            string `json:"type"`
+	WorkspaceID     string `json:"workspace_id"`
+	RequesterID     string `json:"requester_id,omitempty"`
+	RunID           string `json:"run_id"`
+	RootExternalKey string `json:"root_external_key"`
+	Prompt          string `json:"prompt"`
 }
 
 // ParsePMOSyncContext returns the PMO sync payload when the given task
@@ -240,11 +241,12 @@ func (s *PMOService) StartRun(ctx context.Context, workspaceID, configID, reques
 	}
 
 	payload := PMOSyncContext{
-		Type:        PMOSyncContextType,
-		WorkspaceID: util.UUIDToString(workspaceID),
-		RequesterID: util.UUIDToString(requestedBy),
-		RunID:       util.UUIDToString(run.ID),
-		Prompt:      BuildPMOSyncPrompt(config.RootExternalKey),
+		Type:            PMOSyncContextType,
+		WorkspaceID:     util.UUIDToString(workspaceID),
+		RequesterID:     util.UUIDToString(requestedBy),
+		RunID:           util.UUIDToString(run.ID),
+		RootExternalKey: config.RootExternalKey,
+		Prompt:          BuildPMOSyncPrompt(config.RootExternalKey),
 	}
 	contextJSON, err := json.Marshal(payload)
 	if err != nil {
