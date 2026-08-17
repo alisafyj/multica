@@ -15,8 +15,8 @@ func TestDeleteProjectResourceCleansDesignRepoAnalysisInWorkspace(t *testing.T) 
 	foreignProjectID := uuid.NewString()
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, $2)
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, testWorkspaceID, "project-resource-cleanup-"+uuid.NewString()).Scan(&projectID); err != nil {
 		t.Fatalf("insert project: %v", err)
@@ -28,8 +28,8 @@ func TestDeleteProjectResourceCleansDesignRepoAnalysisInWorkspace(t *testing.T) 
 		t.Fatalf("insert foreign workspace: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `
-		INSERT INTO project (id, workspace_id, title)
-		VALUES ($1, $2, $3)
+		INSERT INTO project (id, workspace_id, title, created_by)
+		VALUES ($1, $2, $3, (SELECT id FROM "user" LIMIT 1))
 	`, foreignProjectID, foreignWorkspaceID, "Foreign resource cleanup project"); err != nil {
 		t.Fatalf("insert foreign project: %v", err)
 	}

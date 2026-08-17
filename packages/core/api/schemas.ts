@@ -1009,6 +1009,7 @@ const ProjectSchema = z.object({
   priority: z.string(),
   lead_type: z.string().nullable(),
   lead_id: z.string().nullable(),
+  created_by: z.string().nullable().default(null),
   // .default(null) so a project from an older backend (frontend deploys before
   // backend) that omits these keys parses to null instead of failing the whole
   // object — which would degrade a search/list batch to the empty fallback.

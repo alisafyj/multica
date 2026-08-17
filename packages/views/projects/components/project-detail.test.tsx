@@ -9,6 +9,7 @@ import { ProjectDetail } from "./project-detail";
 
 const mocks = vi.hoisted(() => ({
   role: "admin",
+  project: null as Project | null,
   deleteProject: vi.fn(),
   push: vi.fn(),
   recordVisit: vi.fn(),
@@ -19,7 +20,7 @@ vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     switch (options.queryKey?.[0]) {
       case "project-detail":
-        return { data: PROJECT, isLoading: false };
+        return { data: mocks.project ?? PROJECT, isLoading: false };
       case "members":
         return {
           data: [{ user_id: "user-1", name: "User One", role: mocks.role }],
@@ -292,6 +293,7 @@ function renderProjectDetail() {
 
 beforeEach(() => {
   mocks.role = "admin";
+  mocks.project = null;
   mocks.deleteProject.mockReset();
   mocks.push.mockReset();
   mocks.recordVisit.mockReset();
@@ -343,6 +345,16 @@ describe("ProjectDetail created-by row", () => {
     const row = screen.getByText("Created by").closest("div");
     expect(row).not.toBeNull();
     expect(row).toHaveTextContent("User One");
+  });
+
+  it("shows Unknown for a historical project without a creator", () => {
+    mocks.project = { ...PROJECT, created_by: null };
+
+    renderProjectDetail();
+
+    const row = screen.getByText("Created by").closest("div");
+    expect(row).not.toBeNull();
+    expect(row).toHaveTextContent("Unknown");
   });
 });
 

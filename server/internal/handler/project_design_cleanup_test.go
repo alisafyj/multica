@@ -72,8 +72,8 @@ ws AS (
     RETURNING id
 ),
 project_row AS (
-    INSERT INTO project (workspace_id, title)
-    SELECT id, 'Project design cleanup project' FROM ws
+    INSERT INTO project (workspace_id, title, created_by)
+    SELECT id, 'Project design cleanup project', (SELECT id FROM "user" LIMIT 1) FROM ws
     RETURNING id, workspace_id
 ),
 folder_row AS (

@@ -15,8 +15,8 @@ func createChatProjectTestProject(t *testing.T, workspaceID, title, description 
 
 	var projectID string
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO project (workspace_id, title, description)
-		VALUES ($1, $2, NULLIF($3, ''))
+		INSERT INTO project (workspace_id, title, description, created_by)
+		VALUES ($1, $2, NULLIF($3, ''), (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, workspaceID, title, description).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)

@@ -49,8 +49,8 @@ func TestNativeProjectDesignSystemCreateDoesNotRequireOpenDesignEnvironment(t *t
 
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, 'Open Design router flag')
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, 'Open Design router flag', (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, testWorkspaceID).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
