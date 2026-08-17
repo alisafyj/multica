@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, BookOpen, CircleHelp, Download, History, MessageCircle, RefreshCw } from "lucide-react";
+import { ArrowUpRight, BookOpen, CircleHelp, Download, History, MessageCircle, RefreshCw, UsersRound } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,12 +13,13 @@ import {
 import { useModalStore } from "@multica/core/modals";
 import { useConfigStore } from "@multica/core/config";
 import { toast } from "sonner";
-import { DISCORD_URL, DiscordIcon } from "./discord";
 import { useDownloadPageUrl } from "./use-download-page-url";
 import { useT } from "../i18n";
 
 const DOCS_URL = "https://github.com/coder-zkl1988/multica";
 const CHANGELOG_URL = "https://github.com/coder-zkl1988/multica/releases";
+const FEISHU_GROUP_URL =
+  "https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=4feu594d-13f4-43dd-8141-4bbe3a529f1e";
 
 // Mirror of apps/desktop/src/shared/updater-types.ts ManualUpdateCheckResult.
 // Kept local so @multica/views stays free of app-layer imports.
@@ -101,11 +102,11 @@ export function HelpLauncher() {
         </DropdownMenuItem>
         <DropdownMenuItem
           render={
-            <a href={DISCORD_URL} target="_blank" rel="noopener noreferrer" />
+            <a href={FEISHU_GROUP_URL} target="_blank" rel="noopener noreferrer" />
           }
         >
-          <DiscordIcon className="h-3.5 w-3.5" />
-          {t(($) => $.help.discord)}
+          <UsersRound className="h-3.5 w-3.5" />
+          {t(($) => $.help.feishu_group)}
           <ArrowUpRight className="size-3 translate-y-px text-faint-foreground" />
         </DropdownMenuItem>
         <DropdownMenuItem
