@@ -117,6 +117,15 @@ describe("HelpLauncher", () => {
     );
   });
 
+  it("links the Feishu group invite instead of Discord", () => {
+    render(<HelpLauncher />);
+    expect(screen.getByText("Feishu group").closest("a")).toHaveAttribute(
+      "href",
+      "https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=4feu594d-13f4-43dd-8141-4bbe3a529f1e",
+    );
+    expect(screen.queryByText("Discord")).not.toBeInTheDocument();
+  });
+
   it("does not show a version row when the server omits it", () => {
     render(<HelpLauncher />);
     expect(screen.queryByText(/Server version/)).not.toBeInTheDocument();
