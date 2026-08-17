@@ -32,6 +32,7 @@ import {
 import { PageHeader } from "../layout/page-header";
 import { AppLink, useNavigation } from "../navigation";
 import { FigmaPluginDownload } from "./figma-plugin-download";
+import { FigmaMCPGuide } from "./figma-mcp-guide";
 import { ProjectDesignSystemWorkspace } from "./project-design-system-workspace";
 import { DesignDocumentTaskPanel } from "./design-document-task-panel";
 
@@ -528,6 +529,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <FigmaPluginDownload downloadUrl={figmaPluginDownloadUrl} />
+          <FigmaMCPGuide />
         </div>
       </PageHeader>
 
