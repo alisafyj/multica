@@ -26,7 +26,10 @@
     "progress": "Progress",
     "lead": "Lead",
     "created": "Created",
-    "issues": "Issues"
+    "issues": "Issues",
+    "pm_imported": "PM system import",
+    "pm_import_yes": "Yes",
+    "pm_import_no": "No"
   },
   "status": {
     "planned": "Planned",
