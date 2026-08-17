@@ -17,6 +17,43 @@ func TestParsePMOSnapshotPreservesRequirementAndTaskIDs(t *testing.T) {
 	}
 }
 
+func TestParsePMOSnapshotPreservesDisplayMetadata(t *testing.T) {
+	got := mustParsePMOSnapshot(t, validPMOSnapshotJSON())
+	if got.Parent.Priority != "P2-3" {
+		t.Fatalf("priority = %q", got.Parent.Priority)
+	}
+	if got.Parent.PRDURL == nil || *got.Parent.PRDURL != "https://soyoung.feishu.cn/wiki/example" {
+		t.Fatalf("prd_url = %#v", got.Parent.PRDURL)
+	}
+	if got.Children[0].Tasks[0].SchemeName != "M4-开发-前端" {
+		t.Fatalf("scheme_name = %q", got.Children[0].Tasks[0].SchemeName)
+	}
+}
+
+func TestParsePMOSnapshotAllowsOldDisplayMetadataShape(t *testing.T) {
+	raw := mutatePMOSnapshotJSON(t, func(snapshot map[string]any) {
+		parent := snapshot["parent_requirement"].(map[string]any)
+		delete(parent, "priority")
+		delete(parent, "prd_url")
+		child := snapshot["child_requirements"].([]any)[0].(map[string]any)
+		delete(child["tasks"].([]any)[0].(map[string]any), "scheme_name")
+	})
+	if _, err := ParsePMOSnapshot(raw); err != nil {
+		t.Fatalf("old snapshot must remain valid: %v", err)
+	}
+}
+
+func TestParsePMOSnapshotRejectsUnsafePRDURL(t *testing.T) {
+	raw := mutatePMOSnapshotJSON(t, func(snapshot map[string]any) {
+		parent := snapshot["parent_requirement"].(map[string]any)
+		parent["prd_url"] = "javascript:alert(1)"
+	})
+	_, err := ParsePMOSnapshot(raw)
+	if err == nil || !strings.Contains(err.Error(), "prd_url must be an absolute http or https URL") {
+		t.Fatalf("expected prd_url validation error, got %v", err)
+	}
+}
+
 func TestParsePMOSnapshotRejectsIncompleteSnapshot(t *testing.T) {
 	raw := mutatePMOSnapshotJSON(t, func(snapshot map[string]any) {
 		snapshot["snapshot_complete"] = false
@@ -194,10 +231,12 @@ func validPMOSnapshotJSON() string {
     "display_number": "REQ-001",
     "numeric_id": 1001,
     "title": "  Example parent requirement  ",
-    "description": "Example description",
-    "source_status": "active",
-    "status": "in_progress",
-    "owner": {"external_id": "user-001", "display_name": "Example User"},
+	    "description": "Example description",
+	    "source_status": "active",
+	    "status": "in_progress",
+	    "priority": "P2-3",
+	    "prd_url": "https://soyoung.feishu.cn/wiki/example",
+	    "owner": {"external_id": "user-001", "display_name": "Example User"},
     "start_date": "2026-08-01",
     "due_date": "2026-08-31",
     "workload": null
@@ -215,8 +254,9 @@ func validPMOSnapshotJSON() string {
     "due_date": null,
     "workload": null,
     "tasks": [{
-      "task_id": "TASK-001",
-      "scheme_id": "SCHEME-001",
+	      "task_id": "TASK-001",
+	      "scheme_id": "SCHEME-001",
+	      "scheme_name": "M4-开发-前端",
       "title": "Example scheduling task",
       "description": "Example task description",
       "source_status": "active",

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -16,6 +17,7 @@ const (
 	maxPMOTitleBytes        = 500
 	maxPMODescriptionBytes  = 64 << 10
 	maxPMOStatusBytes       = 128
+	maxPMOURLBytes          = 4096
 	maxPMOChildren          = 2000
 	maxPMOTasksPerContainer = 5000
 	maxPMOTasksTotal        = 10000
@@ -50,6 +52,8 @@ type PMORequirement struct {
 	Description   string            `json:"description"`
 	SourceStatus  string            `json:"source_status"`
 	Status        string            `json:"status"`
+	Priority      string            `json:"priority,omitempty"`
+	PRDURL        *string           `json:"prd_url,omitempty"`
 	Owner         *PMOExternalOwner `json:"owner"`
 	StartDate     *string           `json:"start_date"`
 	DueDate       *string           `json:"due_date"`
@@ -63,6 +67,7 @@ type PMORequirement struct {
 type PMOTask struct {
 	TaskID       string            `json:"task_id"`
 	SchemeID     string            `json:"scheme_id"`
+	SchemeName   string            `json:"scheme_name,omitempty"`
 	Title        string            `json:"title"`
 	Description  string            `json:"description"`
 	SourceStatus string            `json:"source_status"`
@@ -237,6 +242,12 @@ func validatePMORequirement(requirement PMORequirement, path string, statuses ma
 	if _, ok := statuses[strings.TrimSpace(requirement.Status)]; !ok {
 		return fmt.Errorf("%s.status is invalid: %q", path, requirement.Status)
 	}
+	if err := validatePMOText(requirement.Priority, path+".priority", maxPMOStatusBytes, false); err != nil {
+		return err
+	}
+	if err := validatePMOURL(requirement.PRDURL, path+".prd_url"); err != nil {
+		return err
+	}
 	if err := validatePMOOwner(requirement.Owner, path+".owner"); err != nil {
 		return err
 	}
@@ -264,6 +275,9 @@ func validatePMOTask(task PMOTask, path string) error {
 		return err
 	}
 	if err := validatePMOIdentity(task.SchemeID, path+".scheme_id"); err != nil {
+		return err
+	}
+	if err := validatePMOText(task.SchemeName, path+".scheme_name", maxPMOTitleBytes, false); err != nil {
 		return err
 	}
 	if err := validatePMOText(task.Title, path+".title", maxPMOTitleBytes, true); err != nil {
@@ -307,6 +321,21 @@ func validatePMOText(value, path string, maxBytes int, required bool) error {
 	}
 	if len(trimmed) > maxBytes {
 		return fmt.Errorf("%s exceeds %d bytes", path, maxBytes)
+	}
+	return nil
+}
+
+func validatePMOURL(value *string, path string) error {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if err := validatePMOText(trimmed, path, maxPMOURLBytes, false); err != nil {
+		return err
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("%s must be an absolute http or https URL", path)
 	}
 	return nil
 }
@@ -395,6 +424,8 @@ func (r PMORequirement) normalize() PMORequirement {
 	r.Description = strings.TrimSpace(r.Description)
 	r.SourceStatus = strings.TrimSpace(r.SourceStatus)
 	r.Status = strings.TrimSpace(r.Status)
+	r.Priority = strings.TrimSpace(r.Priority)
+	r.PRDURL = normalizePMOString(r.PRDURL)
 	r.Owner = normalizePMOOwner(r.Owner)
 	r.StartDate = normalizePMOString(r.StartDate)
 	r.DueDate = normalizePMOString(r.DueDate)
@@ -407,6 +438,7 @@ func (r PMORequirement) normalize() PMORequirement {
 func (t PMOTask) normalize() PMOTask {
 	t.TaskID = strings.TrimSpace(t.TaskID)
 	t.SchemeID = strings.TrimSpace(t.SchemeID)
+	t.SchemeName = strings.TrimSpace(t.SchemeName)
 	t.Title = strings.TrimSpace(t.Title)
 	t.Description = strings.TrimSpace(t.Description)
 	t.SourceStatus = strings.TrimSpace(t.SourceStatus)
