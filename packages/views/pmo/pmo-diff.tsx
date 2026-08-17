@@ -43,8 +43,21 @@ export interface DiffFieldRow {
 export interface DiffWarning {
   externalId: string;
   displayName: string;
+  externalType: string;
   externalKey: string;
   field: string;
+}
+
+export interface DiffEntityReference {
+  externalType: string;
+  externalKey: string;
+}
+
+export interface DiffAssigneeOwner {
+  externalId: string;
+  displayName: string;
+  references: DiffEntityReference[];
+  resolvedAgentId: string;
 }
 
 export interface DiffView {
@@ -125,6 +138,7 @@ export function parseDiffView(raw: unknown): DiffView | null {
       warnings.push({
         externalId: asString(w.external_id),
         displayName: asString(w.display_name),
+        externalType: asString(w.external_type),
         externalKey: asString(w.external_key),
         field: asString(w.field),
       });
@@ -134,6 +148,87 @@ export function parseDiffView(raw: unknown): DiffView | null {
     ? (source.summary as Record<string, number>)
     : null;
   return { rows, conflicts, warnings, summary };
+}
+
+export function parseAssigneeOwners(
+  snapshot: unknown,
+  rows: DiffFieldRow[],
+  warnings: DiffWarning[],
+): DiffAssigneeOwner[] {
+  const owners = new Map<string, DiffAssigneeOwner>();
+  const unresolvedOwnerIds = new Set(warnings.map((warning) => warning.externalId));
+
+  const addOwner = (owner: unknown, externalType: string, externalKey: string) => {
+    if (!owner || typeof owner !== "object") return;
+    const value = owner as Record<string, unknown>;
+    const externalId = asString(value.external_id);
+    if (!externalId) return;
+    const existing = owners.get(externalId);
+    const reference = { externalType, externalKey };
+    if (existing) {
+      if (externalKey && !existing.references.some((item) => item.externalType === externalType && item.externalKey === externalKey)) {
+        existing.references.push(reference);
+      }
+      if (!existing.displayName) existing.displayName = asString(value.display_name);
+      return;
+    }
+    owners.set(externalId, {
+      externalId,
+      displayName: asString(value.display_name),
+      references: externalKey ? [reference] : [],
+      resolvedAgentId: "",
+    });
+  };
+
+  const visitEntity = (value: unknown, externalType: string) => {
+    if (!value || typeof value !== "object") return;
+    const entity = value as Record<string, unknown>;
+    const externalKey = asString(entity.key) || asString(entity.task_id);
+    addOwner(entity.owner, externalType, externalKey);
+    if (Array.isArray(entity.tasks)) entity.tasks.forEach((child) => visitEntity(child, "task"));
+  };
+
+  if (snapshot && typeof snapshot === "object") {
+    const source = snapshot as Record<string, unknown>;
+    visitEntity(source.parent_requirement, "requirement");
+    if (Array.isArray(source.child_requirements)) {
+      source.child_requirements.forEach((child) => visitEntity(child, "requirement"));
+    }
+    if (Array.isArray(source.tasks)) source.tasks.forEach((task) => visitEntity(task, "task"));
+  }
+
+  for (const warning of warnings) {
+    const owner = owners.get(warning.externalId);
+    if (owner) {
+      if (warning.externalKey && !owner.references.some((item) => item.externalType === warning.externalType && item.externalKey === warning.externalKey)) {
+        owner.references.push({ externalType: warning.externalType, externalKey: warning.externalKey });
+      }
+      if (!owner.displayName) owner.displayName = warning.displayName;
+    } else {
+      owners.set(warning.externalId, {
+        externalId: warning.externalId,
+        displayName: warning.displayName,
+        references: warning.externalKey
+          ? [{ externalType: warning.externalType, externalKey: warning.externalKey }]
+          : [],
+        resolvedAgentId: "",
+      });
+    }
+  }
+
+  for (const row of rows) {
+    if (row.field !== "assignee_id" && row.field !== "lead_id") continue;
+    const resolvedUserId = asString(row.external);
+    if (!resolvedUserId) continue;
+    for (const owner of owners.values()) {
+      if (unresolvedOwnerIds.has(owner.externalId)) continue;
+      if (owner.references.some((reference) => reference.externalType === row.externalType && reference.externalKey === row.entityKey)) {
+        owner.resolvedAgentId = resolvedUserId;
+      }
+    }
+  }
+
+  return [...owners.values()];
 }
 
 export function conflictId(row: DiffFieldRow): string {
