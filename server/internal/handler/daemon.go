@@ -2865,6 +2865,36 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		)
 	}
 
+	// Older daemons silently discard project_design_system_context, turning a
+	// typed design task into an ordinary assignment with no output protocol.
+	// Fail closed so the user gets an upgrade instruction instead of a late,
+	// misleading invalid-output failure.
+	if reason := projectDesignSystemClaimBlockReason(
+		hasProjectDesignSystem,
+		requestHasClientCapability(r, protocol.DaemonCapabilityProjectDesignSystemV1),
+	); reason != "" {
+		slog.Error("task claim: runtime lacks project design system capability; cancelling",
+			"task_id", uuidToString(task.ID),
+			"runtime_id", runtimeID,
+			"reason", reason,
+		)
+		if _, cerr := h.TaskService.CancelTaskWithReason(r.Context(), task.ID, reason, "project_design_system_context_unsupported"); cerr != nil {
+			if _, rerr := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); rerr != nil {
+				slog.Error("task claim: requeue after project design system capability gate failed", "task_id", uuidToString(task.ID), "error", rerr)
+			}
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, &claimBuildFailure{
+				outcome: "error_project_design_system_gate_cancel",
+				status:  http.StatusInternalServerError,
+				message: "failed to cancel a project design system task blocked by daemon capability; task requeued",
+			}
+		}
+		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, &claimBuildFailure{
+			outcome: "error_project_design_system_daemon_version",
+			status:  http.StatusUnprocessableEntity,
+			message: reason,
+		}
+	}
+
 	// Refuse to hand a worktree-mode directory task to a daemon that cannot
 	// implement the isolation contract. Falling back to in-place execution
 	// would edit the user's working copy.
@@ -2899,6 +2929,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	}
 
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
+}
+
+func projectDesignSystemClaimBlockReason(hasProjectDesignSystem, hasCapability bool) string {
+	if !hasProjectDesignSystem || hasCapability {
+		return ""
+	}
+	return "This machine's Multica runtime does not support project design system tasks. Update the Multica app on that machine to the latest version, then re-run this task."
 }
 
 // worktreeClaimBlockReason returns a user-facing reason when this runtime must

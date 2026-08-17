@@ -47,6 +47,19 @@ func TestLogClaimEndpointSlowIncludesPayloadFields(t *testing.T) {
 	}
 }
 
+func TestProjectDesignSystemClaimBlockReason(t *testing.T) {
+	if reason := projectDesignSystemClaimBlockReason(false, false); reason != "" {
+		t.Fatalf("ordinary task was blocked: %q", reason)
+	}
+	if reason := projectDesignSystemClaimBlockReason(true, true); reason != "" {
+		t.Fatalf("capable runtime was blocked: %q", reason)
+	}
+	reason := projectDesignSystemClaimBlockReason(true, false)
+	if !strings.Contains(reason, "Update the Multica app") {
+		t.Fatalf("outdated runtime reason = %q, want upgrade guidance", reason)
+	}
+}
+
 // slowProbeLocalSkillListStore wraps a LocalSkillListStore but blocks inside
 // HasPending until the provided context is cancelled. PopPending delegates
 // to the underlying store. Used to verify that a stalled probe cannot wedge
@@ -5213,10 +5226,37 @@ func TestClaimProjectDesignSystemTaskReturnsExactContext(t *testing.T) {
 	`, agentID, runtimeID, contextJSON).Scan(&taskID); err != nil {
 		t.Fatalf("create project design system task: %v", err)
 	}
-	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	blockedTaskID := taskID
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, blockedTaskID) })
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "project-design-system-claim")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("outdated ClaimTaskByRuntime: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var blockedStatus, blockedReason string
+	if err := testPool.QueryRow(ctx, `SELECT status, failure_reason FROM agent_task_queue WHERE id = $1`, blockedTaskID).Scan(&blockedStatus, &blockedReason); err != nil {
+		t.Fatalf("read blocked task: %v", err)
+	}
+	if blockedStatus != "cancelled" || blockedReason != "project_design_system_context_unsupported" {
+		t.Fatalf("blocked task = %q/%q, want cancelled/project_design_system_context_unsupported", blockedStatus, blockedReason)
+	}
+
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
+		VALUES ($1, $2, NULL, 'queued', 0, $3::jsonb)
+		RETURNING id
+	`, agentID, runtimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("create capable project design system task: %v", err)
+	}
+	capableTaskID := taskID
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, capableTaskID) })
+
+	w = httptest.NewRecorder()
+	req = newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "project-design-system-claim")
+	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityProjectDesignSystemV1)
 	req = withURLParam(req, "runtimeId", runtimeID)
 	testHandler.ClaimTaskByRuntime(w, req)
 	if w.Code != http.StatusOK {
@@ -5331,6 +5371,7 @@ func TestClaimProjectDesignSystemRepositoryAnalysisReturnsProjectResources(t *te
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "project-design-system-repository-analysis-claim")
+	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityProjectDesignSystemV1)
 	req = withURLParam(req, "runtimeId", runtimeID)
 	testHandler.ClaimTaskByRuntime(w, req)
 	if w.Code != http.StatusOK {
