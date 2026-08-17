@@ -2516,14 +2516,14 @@ describe("ApiClient PMO endpoints", () => {
     });
   });
 
-  it("maps an assignee by member id on the encoded external key path", async () => {
+  it("maps an assignee by agent id on the encoded external key path", async () => {
     const fetchMock = stubOK({ id: "link-1" });
     const client = new ApiClient("https://api.example.test");
-    await client.setPMOAssigneeMapping("ws-1", "cfg-1", "EXT-U/001", "member-1");
+    await client.setPMOAssigneeMapping("ws-1", "cfg-1", "EXT-U/001", "agent-1");
     expect(requestOf(fetchMock)).toMatchObject({
       url: "https://api.example.test/api/pmo/configs/cfg-1/assignees/EXT-U%2F001",
       method: "PUT",
-      body: { member_id: "member-1" },
+      body: { agent_id: "agent-1" },
     });
   });
 

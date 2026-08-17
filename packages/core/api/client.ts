@@ -4735,13 +4735,13 @@ export class ApiClient {
     _wsId: string,
     configId: string,
     externalKey: string,
-    memberId: string,
+    agentId: string,
   ): Promise<PMOSyncLink> {
     const raw = await this.fetch<unknown>(
       `/api/pmo/configs/${configId}/assignees/${encodeURIComponent(externalKey)}`,
       {
         method: "PUT",
-        body: JSON.stringify({ member_id: memberId }),
+        body: JSON.stringify({ agent_id: agentId }),
       },
     );
     return parseWithFallback(raw, PMOSyncLinkSchema, EMPTY_PMO_SYNC_LINK, {

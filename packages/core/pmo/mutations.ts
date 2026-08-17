@@ -95,12 +95,12 @@ export function useSetPMOAssigneeMapping() {
     mutationFn: ({
       configId,
       externalKey,
-      memberId,
+      agentId,
     }: {
       configId: string;
       externalKey: string;
-      memberId: string;
-    }) => api.setPMOAssigneeMapping(wsId, configId, externalKey, memberId),
+      agentId: string;
+    }) => api.setPMOAssigneeMapping(wsId, configId, externalKey, agentId),
     onSettled: (_data, _err, vars) => {
       // The mapping changes which assignees the next apply can resolve;
       // refresh the run views so the review surface re-renders.
