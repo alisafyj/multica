@@ -148,21 +148,22 @@ const COLUMN_WIDTHS: Record<ProjectColumnKey, number> = {
   lead: 132,
   issues: 80,
   created: 104,
+  pmImported: 116,
 };
 
 // Fixed tracks: edges 12+12, checkbox 16, name min 200, status 116,
-// kebab 28 = 384, plus the 10 gap-x-3 gaps between the wide template's
-// 11 tracks.
-const FIXED_TRACKS_WIDTH = 384 + 10 * 12;
+// kebab 28 = 384, plus the 11 gap-x-3 gaps between the wide template's
+// 12 tracks.
+const FIXED_TRACKS_WIDTH = 384 + 11 * 12;
 
 // Render/track order: checkbox, name, status (core, fixed 116px), priority,
-// progress, lead, issues, created, kebab. MUST be a literal string —
+// progress, lead, issues, created, PM import, kebab. MUST be a literal string —
 // Tailwind can't see interpolated `grid-cols-[...]` arbitrary values, so an
 // interpolated width silently drops the whole template and the grid
 // collapses to one column.
 const GRID_COLS =
   "grid-cols-[0.75rem_1rem_minmax(120px,1fr)_116px_1.75rem_0.75rem] " +
-  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_116px_var(--pjc-priority)_var(--pjc-progress)_var(--pjc-lead)_var(--pjc-issues)_var(--pjc-created)_1.75rem_0.75rem]";
+  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_116px_var(--pjc-priority)_var(--pjc-progress)_var(--pjc-lead)_var(--pjc-issues)_var(--pjc-created)_var(--pjc-pmo-imported)_1.75rem_0.75rem]";
 
 const stopRowNavigation = (e: MouseEvent) => e.stopPropagation();
 
@@ -183,6 +184,7 @@ function columnTrackVars(
     "--pjc-lead": width("lead"),
     "--pjc-issues": width("issues"),
     "--pjc-created": width("created"),
+    "--pjc-pmo-imported": width("pmImported"),
     "--pjc-minw": `${minWidth}px`,
   } as React.CSSProperties;
 }
@@ -380,6 +382,7 @@ function ProjectTableRow({
   rowLink: ReturnType<typeof useRowLink>;
 }) {
   const formatRelativeDate = useFormatRelativeDate();
+  const { t } = useT("projects");
   const updateProject = useUpdateProject();
   const handleUpdate = useCallback(
     (data: UpdateProjectRequest) => updateProject.mutate({ id: project.id, ...data }),
@@ -458,6 +461,16 @@ function ProjectTableRow({
       {isColVisible("created") ? (
         <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
           {formatRelativeDate(project.created_at)}
+        </ListGridCell>
+      ) : (
+        <ListGridCell className="hidden px-0 @2xl:flex" />
+      )}
+
+      {isColVisible("pmImported") ? (
+        <ListGridCell className="hidden text-caption text-muted-foreground @2xl:flex">
+          {project.created_by === null
+            ? t(($) => $.table.pm_import_yes)
+            : t(($) => $.table.pm_import_no)}
         </ListGridCell>
       ) : (
         <ListGridCell className="hidden px-0 @2xl:flex" />
@@ -561,6 +574,13 @@ function ProjectTableHeader({
           onSort={() => onSort("created")}
         >
           {t(($) => $.table.created)}
+        </ListGridHeaderCell>
+      ) : (
+        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
+      )}
+      {isColVisible("pmImported") ? (
+        <ListGridHeaderCell className="hidden @2xl:flex">
+          {t(($) => $.table.pm_imported)}
         </ListGridHeaderCell>
       ) : (
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
@@ -681,7 +701,14 @@ const STATUS_VALUES: ProjectStatus[] = [
   "cancelled",
 ];
 const PRIORITY_VALUES: ProjectPriority[] = ["urgent", "high", "medium", "low", "none"];
-const COLUMN_KEYS: ProjectColumnKey[] = ["priority", "progress", "lead", "issues", "created"];
+const COLUMN_KEYS: ProjectColumnKey[] = [
+  "priority",
+  "progress",
+  "lead",
+  "issues",
+  "created",
+  "pmImported",
+];
 const SORT_FIELDS: ProjectSortField[] = ["name", "priority", "status", "progress", "created"];
 
 function countActiveFilters(f: ProjectListFilters): number {
@@ -927,7 +954,9 @@ export function ProjectsPage() {
           ? t(($) => $.table.lead)
           : k === "issues"
             ? t(($) => $.table.issues)
-            : t(($) => $.table.created);
+            : k === "created"
+              ? t(($) => $.table.created)
+              : t(($) => $.table.pm_imported);
 
   const showEmpty = !isLoading && projects.length === 0;
   const countBadge = (n: number) => (
