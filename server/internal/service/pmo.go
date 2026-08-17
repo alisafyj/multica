@@ -71,7 +71,7 @@ func ParsePMOSyncContext(contextJSON []byte) (PMOSyncContext, bool) {
 
 // PreparePMOSyncRunPreview serializes a validated snapshot and computes its
 // three-way diff against the config's existing links and current local rows.
-func (s *PMOService) PreparePMOSyncRunPreview(ctx context.Context, qtx *db.Queries, workspaceID, runID pgtype.UUID, snapshot PMOSnapshot, assigneeMappings map[string]string) (sourceSnapshot, diffJSON, summaryJSON []byte, err error) {
+func (s *PMOService) PreparePMOSyncRunPreview(ctx context.Context, qtx *db.Queries, workspaceID, runID pgtype.UUID, snapshot PMOSnapshot) (sourceSnapshot, diffJSON, summaryJSON []byte, err error) {
 	run, err := qtx.GetPMOSyncRun(ctx, db.GetPMOSyncRunParams{ID: runID, WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("load pmo run for preview: %w", err)
@@ -83,6 +83,10 @@ func (s *PMOService) PreparePMOSyncRunPreview(ctx context.Context, qtx *db.Queri
 	links, err := qtx.ListPMOSyncLinks(ctx, db.ListPMOSyncLinksParams{WorkspaceID: workspaceID, ConfigID: run.ConfigID})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("load pmo links for preview: %w", err)
+	}
+	assigneeMappings, err := resolvePMOAssigneeMappingsFromLinks(ctx, qtx, workspaceID, snapshot, links)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	linkStates, err := s.buildLinkStates(ctx, qtx, workspaceID, links, config.WorkloadPropertyID)
 	if err != nil {

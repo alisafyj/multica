@@ -118,11 +118,7 @@ func (h *Handler) storePMOSyncRunPreview(ctx context.Context, qtx *db.Queries, p
 	if err != nil {
 		return err
 	}
-	assigneeMappings, err := service.ResolvePMOAssigneeMappings(ctx, qtx, workspaceID, snapshot, nil)
-	if err != nil {
-		return err
-	}
-	sourceSnapshot, diffJSON, summaryJSON, err := h.PMOService.PreparePMOSyncRunPreview(ctx, qtx, workspaceID, runID, snapshot, assigneeMappings)
+	sourceSnapshot, diffJSON, summaryJSON, err := h.PMOService.PreparePMOSyncRunPreview(ctx, qtx, workspaceID, runID, snapshot)
 	if err != nil {
 		return err
 	}

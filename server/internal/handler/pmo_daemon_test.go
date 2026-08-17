@@ -117,6 +117,33 @@ func createPMOEmailMemberForTest(t *testing.T, account string) string {
 	return userID
 }
 
+func createPMOEmailAgentForTest(t *testing.T, account string) (string, string) {
+	t.Helper()
+	ctx := context.Background()
+	userID := createPMOEmailMemberForTest(t, account)
+	var runtimeID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (workspace_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, last_seen_at)
+		VALUES ($1, 'PMO Email Runtime', 'cloud', 'pmo_email_test', 'online', 'pmo email test runtime', '{}'::jsonb, $2, now())
+		RETURNING id
+	`, testWorkspaceID, userID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create pmo email runtime: %v", err)
+	}
+	var agentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent (workspace_id, name, description, runtime_mode, runtime_config, runtime_id, visibility, permission_mode, max_concurrent_tasks, owner_id)
+		VALUES ($1, 'PMO Email Agent', '', 'cloud', '{}'::jsonb, $2, 'private', 'private', 1, $3)
+		RETURNING id
+	`, testWorkspaceID, runtimeID, userID).Scan(&agentID); err != nil {
+		t.Fatalf("create pmo email agent: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+	})
+	return userID, agentID
+}
+
 func validPMOSnapshotForTestWithOwner(t *testing.T, account string) string {
 	t.Helper()
 	snapshot := map[string]any{
@@ -292,7 +319,7 @@ func TestCompletePMOSyncTaskStoresPreviewAutoMappedAssignee(t *testing.T) {
 		t.Skip("database not available")
 	}
 	account := fmt.Sprintf("pmo-auto-%d", time.Now().UnixNano())
-	userID := createPMOEmailMemberForTest(t, account)
+	_, agentID := createPMOEmailAgentForTest(t, account)
 	config := createPMOConfigForTest(t)
 	run := startPMORunForTest(t, config.ID)
 	taskID := *run.AgentTaskID
@@ -321,11 +348,53 @@ func TestCompletePMOSyncTaskStoresPreviewAutoMappedAssignee(t *testing.T) {
 		t.Fatalf("preview unresolved assignees = %d, warnings = %+v", summary.UnresolvedAssignees, diff.Warnings)
 	}
 	for _, entity := range diff.Entities {
-		if field, ok := entity.Fields["lead_id"]; ok && field.External != userID {
-			t.Fatalf("project lead external = %#v, want %s", field.External, userID)
+		if field, ok := entity.Fields["lead_id"]; ok && field.External != agentID {
+			t.Fatalf("project lead external = %#v, want %s", field.External, agentID)
 		}
-		if field, ok := entity.Fields["assignee_id"]; ok && field.External != userID {
-			t.Fatalf("issue assignee external = %#v, want %s", field.External, userID)
+		if field, ok := entity.Fields["assignee_id"]; ok && field.External != agentID {
+			t.Fatalf("issue assignee external = %#v, want %s", field.External, agentID)
+		}
+	}
+}
+
+func TestCompletePMOSyncTaskStoresPreviewWithPersistedAgentMapping(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	const externalOwner = "manual-owner"
+	config := createPMOConfigForTest(t)
+	if _, err := testHandler.PMOService.SetAssigneeMapping(
+		context.Background(), parseUUID(testWorkspaceID), parseUUID(config.ID), externalOwner, parseUUID(config.AgentID),
+	); err != nil {
+		t.Fatalf("set assignee mapping: %v", err)
+	}
+	run := startPMORunForTest(t, config.ID)
+	markAgentTaskRunningForTest(t, *run.AgentTaskID)
+
+	w := pmoCompleteTaskForTest(t, *run.AgentTaskID, validPMOSnapshotForTestWithOwner(t, externalOwner))
+	if w.Code != http.StatusOK {
+		t.Fatalf("complete: %d %s", w.Code, w.Body.String())
+	}
+
+	var diffRaw []byte
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT diff FROM pmo_sync_run WHERE id = $1`, run.ID,
+	).Scan(&diffRaw); err != nil {
+		t.Fatalf("read pmo run diff: %v", err)
+	}
+	var diff service.PMODiff
+	if err := json.Unmarshal(diffRaw, &diff); err != nil {
+		t.Fatalf("decode pmo diff: %v", err)
+	}
+	if len(diff.Warnings) != 0 {
+		t.Fatalf("persisted mapping must resolve preview: %+v", diff.Warnings)
+	}
+	for _, entity := range diff.Entities {
+		if field, ok := entity.Fields["lead_id"]; ok && field.External != config.AgentID {
+			t.Fatalf("project lead external = %#v, want %s", field.External, config.AgentID)
+		}
+		if field, ok := entity.Fields["assignee_id"]; ok && field.External != config.AgentID {
+			t.Fatalf("issue assignee external = %#v, want %s", field.External, config.AgentID)
 		}
 	}
 }

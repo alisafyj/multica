@@ -150,7 +150,7 @@ func TestCompleteScheduledPMOSyncTaskAutoMapsAssigneeByEmail(t *testing.T) {
 		t.Skip("database not available")
 	}
 	account := "pmo-scheduled-auto-map"
-	userID := createPMOEmailMemberForTest(t, account)
+	_, agentID := createPMOEmailAgentForTest(t, account)
 	config := createPMOConfigForTest(t)
 	run := startPMORunForTest(t, config.ID)
 	makeRunScheduledForTest(t, run.ID)
@@ -189,7 +189,7 @@ func TestCompleteScheduledPMOSyncTaskAutoMapsAssigneeByEmail(t *testing.T) {
 	`, config.ID, account).Scan(&localType, &localID); err != nil {
 		t.Fatalf("read assignee link: %v", err)
 	}
-	if localType != "member" || localID != userID {
-		t.Fatalf("scheduled assignee link = %q/%s, want member/%s", localType, localID, userID)
+	if localType != "agent" || localID != agentID {
+		t.Fatalf("scheduled assignee link = %q/%s, want agent/%s", localType, localID, agentID)
 	}
 }
