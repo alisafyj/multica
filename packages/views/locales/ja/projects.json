@@ -25,7 +25,10 @@
     "progress": "進捗",
     "lead": "リード",
     "created": "作成日",
-    "issues": "タスク数"
+    "issues": "タスク数",
+    "pm_imported": "PMシステム取込",
+    "pm_import_yes": "はい",
+    "pm_import_no": "いいえ"
   },
   "status": {
     "planned": "計画中",
@@ -71,6 +74,7 @@
     "section_progress": "進捗",
     "section_description": "説明",
     "prop_created_by": "作成者",
+    "unknown_creator": "不明",
     "prop_start_date": "開始日",
     "prop_due_date": "期限",
     "no_start_date": "開始日なし",

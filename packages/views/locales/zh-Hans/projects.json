@@ -25,7 +25,10 @@
     "progress": "进度",
     "lead": "负责人",
     "created": "创建时间",
-    "issues": "任务数"
+    "issues": "任务数",
+    "pm_imported": "PM系统导入",
+    "pm_import_yes": "是",
+    "pm_import_no": "否"
   },
   "status": {
     "planned": "计划中",
@@ -71,6 +74,7 @@
     "section_progress": "进度",
     "section_description": "描述",
     "prop_created_by": "创建者",
+    "unknown_creator": "未知",
     "prop_start_date": "开始日期",
     "prop_due_date": "截止日期",
     "no_start_date": "无开始日期",

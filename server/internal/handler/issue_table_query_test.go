@@ -505,8 +505,8 @@ func TestIssueTableRowsCommitsBeforeBestEffortEnrichment(t *testing.T) {
 	suffix := time.Now().UnixNano()
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, $2)
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, testWorkspaceID, fmt.Sprintf("Table enrichment %d", suffix)).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
@@ -590,8 +590,8 @@ func TestIssueTableStatusGroupingOverOneThousandRows(t *testing.T) {
 	suffix := time.Now().UnixNano()
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, $2)
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, testWorkspaceID, fmt.Sprintf("Server table grouping %d", suffix)).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
@@ -971,8 +971,8 @@ func TestIssueTableAssigneeNamesResolveAfterGrouping(t *testing.T) {
 	ctx := context.Background()
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, 'Server table assignee grouping')
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, 'Server table assignee grouping', (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, testWorkspaceID).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
@@ -1051,8 +1051,8 @@ func TestIssueTableCompoundParentGroupsReturnExactStatusCells(t *testing.T) {
 	suffix := time.Now().UnixNano()
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, $2)
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, testWorkspaceID, fmt.Sprintf("Compound parent grouping %d", suffix)).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
@@ -1267,8 +1267,8 @@ func TestIssueTableHierarchyDoesNotCrossGroups(t *testing.T) {
 	ctx := context.Background()
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, 'Server table cross-group hierarchy')
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, 'Server table cross-group hierarchy', (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, testWorkspaceID).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
@@ -1368,8 +1368,8 @@ func TestIssueTableHierarchyRootKeysetPagination(t *testing.T) {
 	ctx := context.Background()
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, 'Server table hierarchy pagination')
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, 'Server table hierarchy pagination', (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, testWorkspaceID).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)

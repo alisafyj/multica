@@ -351,7 +351,7 @@ func TestApplyPMORunFirstImportCreatesHierarchy(t *testing.T) {
 	if err := f.pool.QueryRow(ctx, `SELECT title, status FROM project WHERE id = $1`, projectLink.LocalID).Scan(&projectTitle, &projectStatus); err != nil {
 		t.Fatalf("read project: %v", err)
 	}
-	if projectTitle != "Imported Project" || projectStatus != "planned" {
+	if projectTitle != "P-001 Imported Project" || projectStatus != "planned" {
 		t.Fatalf("project title/status = %q/%q", projectTitle, projectStatus)
 	}
 
@@ -521,8 +521,8 @@ func TestApplyPMORunIncomingFieldUpdate(t *testing.T) {
 	}
 
 	issue := issueByID(t, f.pool, childLink.LocalID)
-	if issue.Title != "Updated Title" {
-		t.Fatalf("issue title = %q, want Updated Title", issue.Title)
+	if issue.Title != "I-001 Updated Title" {
+		t.Fatalf("issue title = %q, want I-001 Updated Title", issue.Title)
 	}
 	// Baseline advanced to the new acknowledged external value.
 	link := pmoLinkByExternal(t, f, "requirement", "EXT-I-001")
@@ -530,8 +530,8 @@ func TestApplyPMORunIncomingFieldUpdate(t *testing.T) {
 	if err := json.Unmarshal(link.BaselineExternal, &baselineExt); err != nil {
 		t.Fatalf("unmarshal baseline: %v", err)
 	}
-	if baselineExt["title"] != "Updated Title" {
-		t.Fatalf("baseline_external.title = %v, want Updated Title", baselineExt["title"])
+	if baselineExt["title"] != "I-001 Updated Title" {
+		t.Fatalf("baseline_external.title = %v, want I-001 Updated Title", baselineExt["title"])
 	}
 }
 
@@ -594,7 +594,7 @@ func TestApplyPMORunConflictResolutions(t *testing.T) {
 		t.Fatalf("apply external choice: %v", err)
 	}
 	issue := issueByID(t, f.pool, childLink.LocalID)
-	if issue.Title != "External Side" {
+	if issue.Title != "I-001 External Side" {
 		t.Fatalf("external choice not applied: %q", issue.Title)
 	}
 
@@ -626,7 +626,7 @@ func TestApplyPMORunConflictResolutions(t *testing.T) {
 	if err := json.Unmarshal(link.BaselineLocal, &baseLocal); err != nil {
 		t.Fatalf("unmarshal baseline_local: %v", err)
 	}
-	if baseExt["title"] != "External Side Two" || baseLocal["title"] != "Local Side Two" {
+	if baseExt["title"] != "I-001 External Side Two" || baseLocal["title"] != "Local Side Two" {
 		t.Fatalf("baselines not advanced: ext=%v local=%v", baseExt["title"], baseLocal["title"])
 	}
 }

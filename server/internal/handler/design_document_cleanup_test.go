@@ -226,7 +226,7 @@ func seedDesignDocumentCleanupProject(t *testing.T, workspaceID, label string) d
 	agentID := uuid.NewString()
 	if _, err := testPool.Exec(context.Background(), `
 		WITH project_row AS (
-			INSERT INTO project (id, workspace_id, title) VALUES ($1, $2, $3)
+			INSERT INTO project (id, workspace_id, title, created_by) VALUES ($1, $2, $3, (SELECT id FROM "user" LIMIT 1))
 			RETURNING id, workspace_id
 		), issue_row AS (
 			INSERT INTO issue (id, workspace_id, title, creator_type, creator_id, number, project_id)

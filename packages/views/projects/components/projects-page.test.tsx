@@ -270,6 +270,16 @@ describe("ProjectsPage PMO import filter", () => {
 });
 
 describe("ProjectsPage compact row navigation", () => {
+  it("shows whether a project was imported from the PM system", () => {
+    renderProjects();
+
+    const row = projectRow();
+    expect(within(row).getByText("Yes")).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "PM system import" }),
+    ).toBeInTheDocument();
+  });
+
   it("renders the project name as text, not a title link", () => {
     renderProjects();
 
