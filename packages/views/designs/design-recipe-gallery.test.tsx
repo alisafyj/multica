@@ -167,6 +167,50 @@ describe("DesignRecipeGallery", () => {
     );
   });
 
+  it("narrows by artifact scope and by who published the recipe", async () => {
+    const user = userEvent.setup();
+    listDesignScenarioRecipes.mockResolvedValue({
+      recipes: [
+        recipe({ slug: "crm-console", title: "CRM 控制台", origin: "builtin" }),
+        recipe({ slug: "team-okr", title: "团队 OKR", origin: "workspace" }),
+      ],
+    });
+    renderGallery();
+
+    const scopes = await screen.findByRole("group", { name: "配方形态" });
+    const owners = screen.getByRole("group", { name: "配方归属" });
+    expect(screen.getByText("CRM 控制台")).toBeInTheDocument();
+    expect(screen.getByText("团队 OKR")).toBeInTheDocument();
+
+    await user.click(within(owners).getByRole("button", { name: /官方/ }));
+    expect(screen.getByText("CRM 控制台")).toBeInTheDocument();
+    expect(screen.queryByText("团队 OKR")).not.toBeInTheDocument();
+
+    await user.click(within(owners).getByRole("button", { name: /团队/ }));
+    expect(screen.getByText("团队 OKR")).toBeInTheDocument();
+    expect(screen.queryByText("CRM 控制台")).not.toBeInTheDocument();
+
+    // Nothing produces a live artifact yet, and the scope says so rather than
+    // quietly matching the prototypes.
+    await user.click(within(owners).getByRole("button", { name: /全部/ }));
+    await user.click(within(scopes).getByRole("button", { name: /实况组件/ }));
+    expect(screen.getByText("没有匹配的配方")).toBeInTheDocument();
+
+    await user.click(within(scopes).getByRole("button", { name: /原型/ }));
+    expect(screen.getByText("CRM 控制台")).toBeInTheDocument();
+  });
+
+  it("says why an ownership scope with no publisher behind it is empty", async () => {
+    const user = userEvent.setup();
+    renderGallery();
+
+    const owners = await screen.findByRole("group", { name: "配方归属" });
+    await user.click(within(owners).getByRole("button", { name: /我的/ }));
+
+    expect(screen.getByText("没有匹配的配方")).toBeInTheDocument();
+    expect(screen.getByText(/还没有按个人归属/)).toBeInTheDocument();
+  });
+
   it("offers a way back when a search matches nothing", async () => {
     const user = userEvent.setup();
     renderGallery();

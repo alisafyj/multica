@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   createDesignDocument,
   listAgents,
+  listDesignDocuments,
+  listDesignScenarioRecipes,
   listIssues,
   listProjectResources,
   listProjects,
@@ -15,6 +17,8 @@ const {
 } = vi.hoisted(() => ({
   createDesignDocument: vi.fn(),
   listAgents: vi.fn(),
+  listDesignDocuments: vi.fn(),
+  listDesignScenarioRecipes: vi.fn(),
   listIssues: vi.fn(),
   listProjectResources: vi.fn(),
   listProjects: vi.fn(),
@@ -23,7 +27,15 @@ const {
 }));
 
 vi.mock("@multica/core/api", () => ({
-  api: { createDesignDocument, listAgents, listIssues, listProjectResources, listProjects },
+  api: {
+    createDesignDocument,
+    listAgents,
+    listDesignDocuments,
+    listDesignScenarioRecipes,
+    listIssues,
+    listProjectResources,
+    listProjects,
+  },
 }));
 
 vi.mock("@multica/core/hooks", () => ({
@@ -41,6 +53,7 @@ vi.mock("../common/actor-avatar", () => ({
 }));
 
 import { I18nProvider } from "@multica/core/i18n/react";
+import zhCommon from "../locales/zh-Hans/common.json";
 import zhIssues from "../locales/zh-Hans/issues.json";
 import zhProjects from "../locales/zh-Hans/projects.json";
 import { DesignTaskComposer } from "./design-task-composer";
@@ -112,7 +125,10 @@ function renderComposer(
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const ui: ReactNode = (
-    <I18nProvider locale="zh-Hans" resources={{ "zh-Hans": { issues: zhIssues, projects: zhProjects } }}>
+    <I18nProvider
+      locale="zh-Hans"
+      resources={{ "zh-Hans": { common: zhCommon, issues: zhIssues, projects: zhProjects } }}
+    >
       <QueryClientProvider client={queryClient}>
         <DesignTaskComposer onCreated={onCreated} {...props} />
       </QueryClientProvider>
@@ -136,12 +152,16 @@ describe("DesignTaskComposer", () => {
   beforeEach(() => {
     createDesignDocument.mockReset();
     listAgents.mockReset();
+    listDesignDocuments.mockReset();
+    listDesignScenarioRecipes.mockReset();
     listIssues.mockReset();
     listProjectResources.mockReset();
     listProjects.mockReset();
     toastError.mockReset();
     toastSuccess.mockReset();
     listAgents.mockResolvedValue([AGENT]);
+    listDesignDocuments.mockResolvedValue({ documents: [] });
+    listDesignScenarioRecipes.mockResolvedValue({ recipes: [] });
     listIssues.mockResolvedValue({ issues: [], total: 0 });
     listProjectResources.mockResolvedValue({ resources: [REPOSITORY], total: 1 });
     listProjects.mockResolvedValue({
@@ -211,43 +231,70 @@ describe("DesignTaskComposer", () => {
     expect(wireframe).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("offers the not-yet-built scenario as an inert placeholder", async () => {
+  it("keeps every unbuilt creation scenario in the rail without letting it run", async () => {
     const user = userEvent.setup();
     renderComposer();
 
-    // The design system catalogue slice has not landed, so this chip keeps its
-    // spot without pretending to do anything.
-    const brandKit = await screen.findByRole("button", { name: /创建品牌套件/ });
-    expect(brandKit).toBeDisabled();
-    expect(brandKit).not.toHaveAttribute("aria-pressed");
-    expect(brandKit).toHaveTextContent("即将支持");
+    // The rail lays out the whole surface, so a position with no producer
+    // still holds its place — while saying in its name that it cannot run.
+    const slides = await screen.findByRole("button", { name: "幻灯片（即将支持）" });
+    expect(slides).toBeDisabled();
+    expect(slides).not.toHaveAttribute("aria-pressed");
+    // A design system belongs to a project's own scope (DC-052), so this
+    // position is never live from the composer.
+    expect(screen.getByRole("button", { name: "创建设计体系（即将支持）" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "实时看板（即将支持）" })).toBeDisabled();
 
-    await user.click(brandKit);
-    expect(screen.getByRole("button", { name: /UI Mockup/ })).toHaveAttribute("aria-pressed", "false");
+    await user.click(slides);
+    expect(screen.getByRole("button", { name: "UI Mockup" })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("sends the template chip to the community gallery instead of toggling a recipe", async () => {
+  it("sends the community entry to the gallery instead of arming a recipe", async () => {
     const user = userEvent.setup();
     const onBrowseRecipes = vi.fn();
+    listDesignScenarioRecipes.mockResolvedValue({ recipes: [RECIPE] });
     renderComposer(vi.fn(), { onBrowseRecipes });
 
-    const template = await screen.findByRole("button", { name: /来自模板/ });
-    expect(template).toBeEnabled();
-    expect(template).not.toHaveTextContent("即将支持");
+    const entry = await screen.findByRole("button", { name: "从社区模板开始" });
     // It navigates rather than arming a recipe, so it never claims a pressed
     // state it cannot enter.
-    expect(template).not.toHaveAttribute("aria-pressed");
+    expect(entry).not.toHaveAttribute("aria-pressed");
 
-    await user.click(template);
+    await user.click(entry);
     expect(onBrowseRecipes).toHaveBeenCalledTimes(1);
   });
 
-  it("stays inert when the template chip has nowhere to go", async () => {
+  it("hides the community entry when it has nowhere to go", async () => {
+    listDesignScenarioRecipes.mockResolvedValue({ recipes: [RECIPE] });
     renderComposer();
 
-    const template = await screen.findByRole("button", { name: /来自模板/ });
-    expect(template).toBeDisabled();
-    expect(template).toHaveTextContent("即将支持");
+    expect(await screen.findByText("示例提示词")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "从社区模板开始" })).not.toBeInTheDocument();
+  });
+
+  it("seeds the brief from an example prompt and sends that recipe", async () => {
+    const user = userEvent.setup();
+    listDesignScenarioRecipes.mockResolvedValue({ recipes: [RECIPE] });
+    renderComposer();
+
+    await user.click(await screen.findByRole("button", { name: /CRM 控制台/ }));
+    expect(screen.getByLabelText("页面需求描述")).toHaveValue(RECIPE.prompt);
+
+    await pickProject(user);
+    await pickAgent(user);
+    await user.click(screen.getByRole("button", { name: "生成页面设计" }));
+
+    await waitFor(() => expect(createDesignDocument).toHaveBeenCalledTimes(1));
+    expect(createDesignDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ recipe: "crm-console", brief: RECIPE.prompt }),
+    );
+  });
+
+  it("says the recent list is empty instead of inventing a run", async () => {
+    renderComposer();
+
+    expect(await screen.findByText("最近生成")).toBeInTheDocument();
+    expect(screen.getByText(/还没有生成过页面设计/)).toBeInTheDocument();
   });
 
   it("keeps the gallery's recipe after the user rewrites the brief", async () => {

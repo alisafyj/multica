@@ -45,6 +45,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
+import { DesignFilterPill } from "./design-filter-pill";
 import { ProjectPicker } from "../projects/components/project-picker";
 import {
   AgentSetting,
@@ -57,6 +58,73 @@ import {
 // Sentinel for "no facet picked". Recipe categories are free-form server
 // strings, so the gallery cannot reserve a real value for it.
 const ALL_FACET = "__all__";
+
+/**
+ * Community sub-scopes. A recipe is a task configuration, so "模板" is the
+ * whole catalogue; the other three narrow it by what the recipe can actually
+ * do. Nothing produces a live artifact in this phase, so that scope is real
+ * but empty rather than hidden.
+ */
+type RecipeScope = "template" | "prompt" | "prototype" | "live";
+
+const RECIPE_SCOPES: ReadonlyArray<{ value: RecipeScope; label: string }> = [
+  { value: "template", label: "模板" },
+  { value: "prompt", label: "提示词" },
+  { value: "prototype", label: "原型" },
+  { value: "live", label: "实况组件" },
+];
+
+/**
+ * Ownership. `origin` is the only attribution the catalogue carries, and it
+ * names a publisher rather than a person — so "我的" has nothing to select on
+ * and says why instead of borrowing someone else's recipes.
+ */
+type RecipeOwner = "all" | "mine" | "team" | "official";
+
+const RECIPE_OWNERS: ReadonlyArray<{ value: RecipeOwner; label: string }> = [
+  { value: "all", label: "全部" },
+  { value: "mine", label: "我的" },
+  { value: "team", label: "团队" },
+  { value: "official", label: "官方" },
+];
+
+const OWNER_EMPTY_COPY: Record<RecipeOwner, string> = {
+  all: "换一个关键词，或者清除筛选看看全部配方。",
+  mine: "配方目前按发布来源归类，还没有按个人归属。你在工作区发布的配方会出现在「团队」中。",
+  team: "工作区还没有自己发布的配方。发布之后会出现在这里。",
+  official: "还没有官方配方。官方配方上线后会出现在这里。",
+};
+
+function matchesScope(recipe: DesignScenarioRecipe, scope: RecipeScope): boolean {
+  switch (scope) {
+    case "template":
+      return true;
+    case "prototype":
+      return recipe.mode === "prototype";
+    case "live":
+      return recipe.mode === "live";
+    case "prompt":
+      // Its artifact has no producer yet, so the prompt is all it can give.
+      return !canStartRecipe(recipe);
+    default:
+      return true;
+  }
+}
+
+function matchesOwner(recipe: DesignScenarioRecipe, owner: RecipeOwner): boolean {
+  switch (owner) {
+    case "all":
+      return true;
+    case "official":
+      return recipe.origin === "builtin";
+    case "team":
+      return recipe.origin !== "builtin";
+    case "mine":
+      return false;
+    default:
+      return true;
+  }
+}
 
 /**
  * Artifact this recipe produces. Only `prototype` has a producer in this
@@ -104,42 +172,6 @@ function canStartRecipe(recipe: DesignScenarioRecipe): boolean {
 
 function uniqueInOrder(values: string[]): string[] {
   return Array.from(new Set(values.filter((value) => value.trim().length > 0)));
-}
-
-/**
- * Facet button. Selection is carried by text colour and weight — dimensions
- * hover never touches — and the hover compound is spelled out, so hovering the
- * active facet cannot visually downgrade it to a plain hover.
- */
-function FacetButton({
-  label,
-  count,
-  selected,
-  onClick,
-}: {
-  label: string;
-  count: number;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onClick}
-      className={cn(
-        "flex max-w-56 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-caption transition-colors",
-        selected
-          ? "border-primary bg-primary/10 font-medium text-primary hover:border-primary hover:bg-primary/10 hover:text-primary"
-          : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-      )}
-    >
-      <span className="truncate">{label}</span>
-      <span className={cn("shrink-0 tabular-nums", selected ? "text-primary/70" : "text-muted-foreground")}>
-        {count}
-      </span>
-    </button>
-  );
 }
 
 /**
@@ -395,22 +427,28 @@ export function DesignRecipeGallery({
     designScenarioRecipeListOptions(wsId),
   );
   const [search, setSearch] = useState("");
+  const [scope, setScope] = useState<RecipeScope>("template");
+  const [owner, setOwner] = useState<RecipeOwner>("all");
   const [category, setCategory] = useState(ALL_FACET);
   const [subcategory, setSubcategory] = useState(ALL_FACET);
   const [startTarget, setStartTarget] = useState<DesignScenarioRecipe | null>(null);
 
+  const scopeMatches = useMemo(
+    () => recipes.filter((recipe) => matchesScope(recipe, scope) && matchesOwner(recipe, owner)),
+    [owner, recipes, scope],
+  );
   const categories = useMemo(
-    () => uniqueInOrder(recipes.map((recipe) => recipe.category)),
-    [recipes],
+    () => uniqueInOrder(scopeMatches.map((recipe) => recipe.category)),
+    [scopeMatches],
   );
   // A facet the catalogue no longer offers falls back to "all" by derivation,
   // so a refreshed catalogue can never strand the grid on an empty filter.
   const activeCategory = categories.includes(category) ? category : ALL_FACET;
   const categoryMatches = useMemo(
     () => activeCategory === ALL_FACET
-      ? recipes
-      : recipes.filter((recipe) => recipe.category === activeCategory),
-    [activeCategory, recipes],
+      ? scopeMatches
+      : scopeMatches.filter((recipe) => recipe.category === activeCategory),
+    [activeCategory, scopeMatches],
   );
   const subcategories = useMemo(
     () => uniqueInOrder(categoryMatches.map((recipe) => recipe.subcategory)),
@@ -433,9 +471,15 @@ export function DesignRecipeGallery({
     ].join(" ").toLowerCase().includes(query));
   }, [activeSubcategory, categoryMatches, query]);
 
-  const filtersApplied = activeCategory !== ALL_FACET || activeSubcategory !== ALL_FACET || !!query;
+  const filtersApplied = activeCategory !== ALL_FACET
+    || activeSubcategory !== ALL_FACET
+    || scope !== "template"
+    || owner !== "all"
+    || !!query;
   const clearFilters = () => {
     setSearch("");
+    setScope("template");
+    setOwner("all");
     setCategory(ALL_FACET);
     setSubcategory(ALL_FACET);
   };
@@ -482,20 +526,54 @@ export function DesignRecipeGallery({
         ) : (
           <>
             <div className="mt-5 flex flex-col gap-3">
-              <div className="relative w-full sm:max-w-80">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  aria-label="搜索社区配方"
-                  placeholder="搜索配方…"
-                  className="h-8 pl-8 text-body"
-                />
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                <div role="group" aria-label="配方形态" className="flex flex-wrap items-center gap-1.5">
+                  {RECIPE_SCOPES.map((option) => (
+                    <DesignFilterPill
+                      key={option.value}
+                      label={option.label}
+                      count={recipes.filter((recipe) => matchesScope(recipe, option.value)
+                        && matchesOwner(recipe, owner)).length}
+                      selected={scope === option.value}
+                      onClick={() => {
+                        setScope(option.value);
+                        setCategory(ALL_FACET);
+                        setSubcategory(ALL_FACET);
+                      }}
+                    />
+                  ))}
+                </div>
+                <div className="relative w-full sm:w-64">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    aria-label="搜索社区配方"
+                    placeholder="搜索配方…"
+                    className="h-8 pl-8 text-body"
+                  />
+                </div>
+              </div>
+              <div role="group" aria-label="配方归属" className="flex flex-wrap items-center gap-1.5">
+                {RECIPE_OWNERS.map((option) => (
+                  <DesignFilterPill
+                    key={option.value}
+                    label={option.label}
+                    count={recipes.filter((recipe) => matchesScope(recipe, scope)
+                      && matchesOwner(recipe, option.value)).length}
+                    selected={owner === option.value}
+                    onClick={() => {
+                      setOwner(option.value);
+                      setCategory(ALL_FACET);
+                      setSubcategory(ALL_FACET);
+                    }}
+                  />
+                ))}
               </div>
               <div role="group" aria-label="配方分类" className="flex flex-wrap items-center gap-1.5">
-                <FacetButton
+                <DesignFilterPill
                   label="全部分类"
-                  count={recipes.length}
+                  count={scopeMatches.length}
                   selected={activeCategory === ALL_FACET}
                   onClick={() => {
                     setCategory(ALL_FACET);
@@ -503,10 +581,10 @@ export function DesignRecipeGallery({
                   }}
                 />
                 {categories.map((item) => (
-                  <FacetButton
+                  <DesignFilterPill
                     key={item}
                     label={item}
-                    count={recipes.filter((recipe) => recipe.category === item).length}
+                    count={scopeMatches.filter((recipe) => recipe.category === item).length}
                     selected={activeCategory === item}
                     onClick={() => {
                       setCategory(item);
@@ -523,14 +601,14 @@ export function DesignRecipeGallery({
                   aria-label={`${activeCategory} 子分类`}
                   className="flex flex-wrap items-center gap-1.5"
                 >
-                  <FacetButton
+                  <DesignFilterPill
                     label="全部"
                     count={categoryMatches.length}
                     selected={activeSubcategory === ALL_FACET}
                     onClick={() => setSubcategory(ALL_FACET)}
                   />
                   {subcategories.map((item) => (
-                    <FacetButton
+                    <DesignFilterPill
                       key={item}
                       label={item}
                       count={categoryMatches.filter((recipe) => recipe.subcategory === item).length}
@@ -549,7 +627,11 @@ export function DesignRecipeGallery({
                     <Search />
                   </EmptyMedia>
                   <EmptyTitle>没有匹配的配方</EmptyTitle>
-                  <EmptyDescription>换一个关键词，或者清除筛选看看全部配方。</EmptyDescription>
+                  {/* An ownership scope with nothing behind it says why rather
+                      than sending the user back to the search box. */}
+                  <EmptyDescription>
+                    {owner !== "all" && !query ? OWNER_EMPTY_COPY[owner] : OWNER_EMPTY_COPY.all}
+                  </EmptyDescription>
                 </EmptyHeader>
                 {filtersApplied ? (
                   <EmptyContent>

@@ -1,21 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AppWindow,
+  AudioLines,
   Bot,
+  ChartColumn,
   ChevronDown,
   CircleDashed,
   FileCode,
+  FileText,
   Frame,
   GitBranch,
   Globe,
+  Image as ImageIcon,
   ListTodo,
   Monitor,
   PanelsTopLeft,
+  Presentation,
   Smartphone,
+  Sparkles,
   SwatchBook,
+  Video,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -36,7 +43,6 @@ import type {
   ProjectDesignSystemPlatform,
   ProjectResource,
 } from "@multica/core/types";
-import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
@@ -48,14 +54,13 @@ import {
 } from "../issues/components/pickers/property-picker";
 import { ProjectPicker } from "../projects/components/project-picker";
 import { StatusIcon } from "../issues/components/status-icon";
+import { DesignExamplePrompts } from "./design-example-prompts";
+import { DesignRecentDocuments } from "./design-recent-documents";
 
 // Scenario chips (DC-049). Every one of them produces a page design; they
 // differ in the recipe the agent follows, not in the artifact kind — which is
 // why they carry a `recipe` rather than an artifact type. Picking none leaves
 // the recipe at `default`, the free-form path.
-//
-// Deliberately absent: deck / image / video / audio / live-artifact. Those
-// artifact kinds are out of scope (DC-048), so they get no placeholder either.
 const SCENARIO_CHIPS: ReadonlyArray<{
   recipe: Exclude<DesignDocumentRecipe, "default">;
   label: string;
@@ -69,16 +74,25 @@ const SCENARIO_CHIPS: ReadonlyArray<{
   { recipe: "figma-migration", label: "来自 Figma", description: "把 Figma 稿转成页面设计", icon: Frame },
 ];
 
-// Still a placeholder (DC-049 / DC-054): the design system catalogue slice has
-// not landed, so this one keeps its spot in the rail while staying inert.
-// "来自模板" is no longer here — it now opens the community gallery.
+// The rest of the creation rail. These positions are laid out so the rail
+// reads as the whole product surface, but nothing in this phase produces a
+// deck, image, video, audio, WebGL or live artifact, and a design system is
+// created inside a project's own scope rather than from here (DC-052 /
+// DC-054). They stay inert rather than pretending to start something.
 const UPCOMING_CHIPS: ReadonlyArray<{
   id: string;
   label: string;
   description: string;
   icon: typeof AppWindow;
 }> = [
-  { id: "brand-kit", label: "创建品牌套件", description: "提炼一套品牌设计语言", icon: SwatchBook },
+  { id: "deck", label: "幻灯片", description: "成套的演示页面", icon: Presentation },
+  { id: "document", label: "文档", description: "长文与报告版式", icon: FileText },
+  { id: "image", label: "图片", description: "单张视觉素材", icon: ImageIcon },
+  { id: "video", label: "视频", description: "分镜与动态素材", icon: Video },
+  { id: "audio", label: "音频", description: "语音与音效素材", icon: AudioLines },
+  { id: "webgl", label: "WebGL 体验", description: "三维与实时渲染", icon: Sparkles },
+  { id: "live-board", label: "实时看板", description: "接入实时数据的看板", icon: ChartColumn },
+  { id: "design-system", label: "创建设计体系", description: "在项目的设计体系里创建", icon: SwatchBook },
 ];
 
 export const PLATFORM_OPTIONS: ReadonlyArray<{
@@ -152,13 +166,18 @@ export function SettingTrigger({
   );
 }
 
-function ScenarioChip({
+/**
+ * One position in the creation rail. Compact by design: the rail has to read
+ * as a complete surface at a glance, so the scenario's longer wording lives in
+ * the tooltip. A position with nothing behind it is disabled and says so in
+ * its accessible name — never a live-looking control that does nothing.
+ */
+function CreateChip({
   label,
   description,
   icon: Icon,
   selected,
   disabled,
-  badge,
   onClick,
 }: {
   label: string;
@@ -166,7 +185,6 @@ function ScenarioChip({
   icon: typeof AppWindow;
   selected?: boolean;
   disabled?: boolean;
-  badge?: string;
   onClick?: () => void;
 }) {
   return (
@@ -175,51 +193,26 @@ function ScenarioChip({
       // Omitted for chips that navigate rather than toggle a recipe — a
       // pressed state they can never enter would only mislead.
       aria-pressed={disabled || selected === undefined ? undefined : selected}
+      aria-label={disabled ? `${label}（即将支持）` : undefined}
       disabled={disabled}
+      title={disabled ? `${description}（即将支持）` : description}
       onClick={onClick}
       className={cn(
-        "flex min-w-0 items-start gap-2.5 rounded-xl border p-3 text-left transition-colors",
+        "flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-caption transition-colors",
         disabled
           ? "cursor-not-allowed border-dashed bg-muted/30 text-muted-foreground"
-          : "cursor-pointer hover:border-primary/40 hover:bg-accent/40",
-        // Selection has to survive hover, so it lives on colour and weight —
-        // dimensions hover never touches — and the hover compound is spelled
-        // out so a selected chip cannot visually downgrade to a plain hover.
+          : "cursor-pointer text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+        // Selection has to survive hover, so it lives on border, surface,
+        // weight and colour — dimensions hover never touches — and the hover
+        // compound is spelled out so a selected chip cannot visually downgrade
+        // to a plain hover.
         !disabled && selected
-          ? "border-primary bg-primary/5 hover:border-primary hover:bg-primary/5"
+          ? "border-primary bg-primary/10 font-medium text-primary hover:border-primary hover:bg-primary/10 hover:text-primary"
           : undefined,
       )}
     >
-      <span
-        className={cn(
-          "flex size-7 shrink-0 items-center justify-center rounded-lg",
-          disabled
-            ? "bg-muted text-muted-foreground"
-            : selected
-              ? "bg-primary/10 text-primary"
-              : "bg-muted text-muted-foreground",
-        )}
-      >
-        <Icon className="size-4" />
-      </span>
-      <span className="flex min-w-0 flex-col gap-0.5">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span
-            className={cn(
-              "truncate text-body",
-              !disabled && selected ? "font-medium text-foreground" : undefined,
-            )}
-          >
-            {label}
-          </span>
-          {badge ? (
-            <Badge variant="secondary" className="shrink-0 px-1.5 text-micro font-normal">
-              {badge}
-            </Badge>
-          ) : null}
-        </span>
-        <span className="line-clamp-2 text-caption text-muted-foreground">{description}</span>
-      </span>
+      <Icon className="size-3.5 shrink-0" />
+      <span className="truncate">{label}</span>
     </button>
   );
 }
@@ -513,12 +506,15 @@ export function PlatformSetting({
 export function DesignTaskComposer({
   onCreated,
   onBrowseRecipes,
+  onOpenProject,
   recipeSelection,
 }: {
   /** Called after the server has created the document, never before. */
   onCreated: (document: DesignDocument) => void;
-  /** Opens the community gallery. Absent leaves the template chip inert. */
+  /** Opens the community gallery. Absent hides the community entry. */
   onBrowseRecipes?: () => void;
+  /** Opens a project tab, where that project's design files live. */
+  onOpenProject?: (projectId: string) => void;
   /** A recipe picked in the community gallery, waiting to be applied. */
   recipeSelection?: DesignRecipeSelection | null;
 }) {
@@ -535,18 +531,22 @@ export function DesignTaskComposer({
   const [issueId, setIssueId] = useState("");
   const [platform, setPlatform] = useState<ProjectDesignSystemPlatform>("web");
 
-  // Applying a gallery recipe is an event, not derived state: it seeds the
+  // Applying a catalogue recipe is an event, not derived state: it seeds the
   // brief once and then gets out of the way, so later edits to the words keep
-  // the recipe the user chose.
+  // the recipe the user chose. The gallery and the example rail hand over the
+  // same shape, so they share this path.
+  const applyRecipe = useCallback((picked: DesignScenarioRecipe) => {
+    setRecipe(picked.slug);
+    setAppliedRecipe(picked);
+    setBrief(picked.prompt);
+    if (picked.platform) setPlatform(picked.platform);
+  }, []);
   const appliedToken = useRef<number | null>(null);
   useEffect(() => {
     if (!recipeSelection || appliedToken.current === recipeSelection.token) return;
     appliedToken.current = recipeSelection.token;
-    setRecipe(recipeSelection.recipe.slug);
-    setAppliedRecipe(recipeSelection.recipe);
-    setBrief(recipeSelection.recipe.prompt);
-    if (recipeSelection.recipe.platform) setPlatform(recipeSelection.recipe.platform);
-  }, [recipeSelection]);
+    applyRecipe(recipeSelection.recipe);
+  }, [applyRecipe, recipeSelection]);
 
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
@@ -613,7 +613,7 @@ export function DesignTaskComposer({
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-3xl flex-col px-4 py-10 sm:px-6 sm:py-14">
+      <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-8 sm:px-6 sm:py-10">
         <header className="text-center">
           <h2 className="text-title-lg font-semibold">Multica Design</h2>
           <p className="mx-auto mt-2 max-w-xl text-balance text-body text-muted-foreground">
@@ -621,83 +621,105 @@ export function DesignTaskComposer({
           </p>
         </header>
 
-        <div className="mt-8 rounded-2xl border bg-card shadow-sm transition-colors focus-within:border-primary/60">
-          <Textarea
-            value={brief}
-            onChange={(event) => setBrief(event.target.value)}
-            aria-label="页面需求描述"
-            placeholder="例如：做一个 CRM 客户列表页，支持筛选、批量操作和客户详情抽屉。"
-            className="min-h-36 resize-none border-0 bg-transparent px-4 py-3.5 text-body shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
-          />
-          <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2 px-4 pb-3.5">
-            <p
-              className={cn(
-                "mr-auto text-caption",
-                briefTooLong ? "text-destructive" : "text-muted-foreground",
-              )}
-            >
-              {brief.length} / {BRIEF_MAX_LENGTH}
-            </p>
-            {/* Says which field is still missing instead of leaving a dead
-                button — the pickers sit further down the page, so "disabled"
-                on its own does not point anywhere. */}
-            <p role="status" className="text-caption text-muted-foreground">
-              {createDocument.isPending ? "" : missingRequirement}
-            </p>
-            <Button
-              type="button"
-              size="sm"
-              disabled={!canSubmit}
-              onClick={() => createDocument.mutate()}
-            >
-              {createDocument.isPending ? "创建中…" : "生成页面设计"}
-            </Button>
-          </div>
-        </div>
-
-        <div
-          role="group"
-          aria-label="设计场景"
-          className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-3"
-        >
+        {/* The whole creation surface, laid out at once. Only the scenarios
+            with a real producer are live; the rest keep their position so the
+            rail reads as complete without promising anything. */}
+        <div role="group" aria-label="设计场景" className="mt-7 flex flex-wrap items-center gap-1.5">
           {SCENARIO_CHIPS.map((chip) => (
-            <ScenarioChip
+            <CreateChip
               key={chip.recipe}
               label={chip.label}
               description={chip.description}
               icon={chip.icon}
               selected={recipe === chip.recipe}
               onClick={() => {
-                // A built-in chip and a gallery recipe are the same field, so
+                // A built-in chip and a catalogue recipe are the same field, so
                 // picking one has to drop the other.
                 setAppliedRecipe(null);
                 setRecipe((current) => (current === chip.recipe ? "default" : chip.recipe));
               }}
             />
           ))}
-          {/* Not a recipe of its own — it hands the choice to the community
-              gallery, which comes back through `recipeSelection`. */}
-          <ScenarioChip
-            label="来自模板"
-            description="从社区配方开始"
-            icon={FileCode}
-            disabled={!onBrowseRecipes}
-            badge={onBrowseRecipes ? undefined : "即将支持"}
-            onClick={onBrowseRecipes}
-          />
+        </div>
+        <div
+          role="group"
+          aria-label="即将支持的设计场景"
+          className="mt-2 flex flex-wrap items-center gap-1.5"
+        >
+          <span className="shrink-0 pr-0.5 text-caption text-muted-foreground">即将支持</span>
           {UPCOMING_CHIPS.map((chip) => (
-            <ScenarioChip
+            <CreateChip
               key={chip.id}
               label={chip.label}
               description={chip.description}
               icon={chip.icon}
               disabled
-              badge="即将支持"
             />
           ))}
         </div>
 
-        {/* A gallery recipe is not one of the five chips, so without this row
+        <div className="mt-3 rounded-2xl border bg-card shadow-sm transition-colors focus-within:border-primary/60">
+          <Textarea
+            value={brief}
+            onChange={(event) => setBrief(event.target.value)}
+            aria-label="页面需求描述"
+            placeholder="例如：做一个 CRM 客户列表页，支持筛选、批量操作和客户详情抽屉。"
+            className="min-h-32 resize-none border-0 bg-transparent px-4 py-3.5 text-body shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
+          />
+          {/* Settings live in the card so choosing a project never means
+              leaving the sentence being written. */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-3 pb-3">
+            <ProjectPicker
+              projectId={projectId || null}
+              onUpdate={(updates) => setProjectId(updates.project_id ?? "")}
+              align="start"
+              triggerRender={<SettingTrigger filled={!!selectedProject} aria-label="项目" />}
+            />
+            <RepositorySetting
+              repositories={repositories}
+              repositoryId={activeRepositoryId}
+              disabled={!projectId}
+              onChange={setRepositoryId}
+            />
+            <IssueSetting
+              issues={issues}
+              issueId={activeIssueId}
+              disabled={!projectId}
+              onChange={setIssueId}
+            />
+            <PlatformSetting platform={platform} onChange={setPlatform} />
+            <div className="ml-auto flex min-w-0 items-center gap-2">
+              <AgentSetting agents={agents} agentId={agentId} onChange={setAgentId} />
+              <Button
+                type="button"
+                size="sm"
+                className="shrink-0"
+                disabled={!canSubmit}
+                onClick={() => createDocument.mutate()}
+              >
+                {createDocument.isPending ? "创建中…" : "生成页面设计"}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          {/* Says which field is still missing instead of leaving a dead
+              button — "disabled" on its own does not point anywhere. */}
+          <p role="status" className="text-caption text-muted-foreground">
+            {createDocument.isPending ? "" : missingRequirement}
+          </p>
+          <p
+            className={cn(
+              "ml-auto text-caption",
+              briefTooLong ? "text-destructive" : "text-muted-foreground",
+            )}
+          >
+            {brief.length} / {BRIEF_MAX_LENGTH}
+          </p>
+        </div>
+
+        {/* A catalogue recipe is not one of the five chips, so without this row
             the user would have no sign of which scenario is armed. */}
         {appliedRecipe ? (
           <div className="mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2">
@@ -723,29 +745,6 @@ export function DesignTaskComposer({
           </div>
         ) : null}
 
-        <div className="mt-6 flex flex-wrap items-center gap-2">
-          <ProjectPicker
-            projectId={projectId || null}
-            onUpdate={(updates) => setProjectId(updates.project_id ?? "")}
-            align="start"
-            triggerRender={<SettingTrigger filled={!!selectedProject} aria-label="项目" />}
-          />
-          <AgentSetting agents={agents} agentId={agentId} onChange={setAgentId} />
-          <RepositorySetting
-            repositories={repositories}
-            repositoryId={activeRepositoryId}
-            disabled={!projectId}
-            onChange={setRepositoryId}
-          />
-          <IssueSetting
-            issues={issues}
-            issueId={activeIssueId}
-            disabled={!projectId}
-            onChange={setIssueId}
-          />
-          <PlatformSetting platform={platform} onChange={setPlatform} />
-        </div>
-
         {/* DC-053: no repository is a legitimate way to work, so this reads as
             a statement of what will happen, never as a warning. What it must
             never do is leave the user believing the agent read code. */}
@@ -754,6 +753,9 @@ export function DesignTaskComposer({
             ? "已选择仓库：智能体会在任务内对该仓库做一次有界只读取证，并使用该仓库的设计体系。"
             : "未选择仓库：本次不读取任何代码仓库，智能体只依据你的描述、关联任务和项目级设计体系生成。"}
         </p>
+
+        <DesignExamplePrompts onUse={applyRecipe} onBrowseRecipes={onBrowseRecipes} />
+        <DesignRecentDocuments onOpenProject={onOpenProject} />
       </div>
     </div>
   );

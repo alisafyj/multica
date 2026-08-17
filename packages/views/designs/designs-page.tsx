@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ClipboardList, Copy, Eye, FileJson, Folder, House, Palette, Plus, Search, Trash2, Users, X } from "lucide-react";
+import { ClipboardList, Copy, Eye, FileJson, Folder, House, Palette, Plus, Search, Sparkles, Trash2, Users, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
-import { designDraftListOptions, designFileListOptions, designFolderListOptions, designSystemListOptions, designTemplateListOptions, projectDesignSystemByProjectOptions } from "@multica/core/designs/queries";
+import { designDocumentListOptions, designDraftListOptions, designFileListOptions, designFolderListOptions, designScenarioRecipeListOptions, designSystemListOptions, designTemplateListOptions, projectDesignSystemByProjectOptions, projectDesignSystemCatalogueOptions } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { projectResourcesOptions } from "@multica/core/projects";
@@ -32,7 +32,10 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { PageHeader } from "../layout/page-header";
 import { AppLink, useNavigation } from "../navigation";
+import { DesignDocumentCard } from "./design-document-card";
+import { DesignFilterPill } from "./design-filter-pill";
 import { DesignRecipeGallery } from "./design-recipe-gallery";
+import { DesignSystemLibrary } from "./design-system-library";
 import { DesignTaskComposer, type DesignRecipeSelection } from "./design-task-composer";
 import { FigmaPluginDownload } from "./figma-plugin-download";
 import { ProjectDesignSystemWorkspace } from "./project-design-system-workspace";
@@ -40,16 +43,21 @@ import { ProjectDesignSystemWorkspace } from "./project-design-system-workspace"
 type ToolMenuState = { x: number; y: number; file: DesignFile } | null;
 type DraftDialogState = { template: DesignCatalogTemplate; title: string; requirement: string; slotValues: string; patch: string; agentId: string; prompt: string } | null;
 type DesignAssetTab = "designs" | "drafts" | "templates" | "systems";
+/** The three surfaces the design centre migrates from Open Design (DC-047). */
+type DesignHomePanel = "create" | "community" | "systems";
+/**
+ * Artifact row on a project's 设计稿 tab. Only prototypes have a producer in
+ * this phase, so 幻灯片 is a real position with nothing behind it rather than
+ * a filter that silently matches everything.
+ */
+type DesignArtifactFilter = "all" | "prototype" | "slides";
 
-// The two workspace tabs that always exist (DC-048). Neither is closeable and
-// neither is a project, so both are sentinels rather than project ids.
+// The one workspace tab that always exists (DC-048). It is not closeable and
+// carries no project, so it is a sentinel rather than a project id. 创作,
+// 社区 and 设计体系 are sub-tabs inside it.
 const DESIGN_HOME_TAB_ID = "__design_home__";
-const DESIGN_COMMUNITY_TAB_ID = "__design_community__";
 
-const FIXED_WORKSPACE_TAB_IDS: ReadonlySet<string> = new Set([
-  DESIGN_HOME_TAB_ID,
-  DESIGN_COMMUNITY_TAB_ID,
-]);
+const FIXED_WORKSPACE_TAB_IDS: ReadonlySet<string> = new Set([DESIGN_HOME_TAB_ID]);
 
 function formatDate(value: string) {
   const date = new Date(value);
@@ -301,6 +309,8 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   const [activeWorkspaceTabId, setActiveWorkspaceTabId] = useState(DESIGN_HOME_TAB_ID);
   const [openProjectIds, setOpenProjectIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<DesignAssetTab>("designs");
+  const [homePanel, setHomePanel] = useState<DesignHomePanel>("create");
+  const [artifactFilter, setArtifactFilter] = useState<DesignArtifactFilter>("all");
   // A recipe the community tab handed to the home composer (DC-041). The token
   // makes re-picking the same recipe a real event rather than a no-op.
   const [recipeSelection, setRecipeSelection] = useState<DesignRecipeSelection | null>(null);
@@ -324,6 +334,15 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
     ? designScopeByProject[selectedProjectId] ?? ""
     : "";
   const { data: projectDesignSystem, isLoading: projectDesignSystemLoading } = useQuery(projectDesignSystemByProjectOptions(wsId, selectedProjectId, selectedDesignRepositoryId));
+  // Page-design documents of the open project (DC-042). Idle without one, so
+  // the home tab never asks for a list the endpoint does not serve.
+  const { data: projectDocuments = [], isLoading: projectDocumentsLoading } = useQuery(
+    designDocumentListOptions(wsId, selectedProjectId),
+  );
+  // Counts on the home sub-tabs come from the same caches their panels read,
+  // so a badge can never claim a number its panel does not show.
+  const { data: scenarioRecipes = [] } = useQuery(designScenarioRecipeListOptions(wsId));
+  const { data: designSystemCatalogue = [] } = useQuery(projectDesignSystemCatalogueOptions(wsId));
 
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const folderById = useMemo(() => new Map(folders.map((folder) => [folder.id, folder])), [folders]);
@@ -534,9 +553,18 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
     .filter((project): project is Project => Boolean(project));
   const unopenedProjects = projects.filter((project) => !openProjectIds.includes(project.id));
   const projectDesignSystemCount = projectDesignSystem?.id ? 1 : 0;
+  // Every recipe in this phase produces a prototype, so the artifact row can
+  // filter honestly without inventing a kind the documents do not carry.
+  const visibleDocuments = artifactFilter === "slides" ? [] : projectDocuments;
   const openProjectTab = (projectId: string) => {
     setOpenProjectIds((current) => current.includes(projectId) ? current : [...current, projectId]);
     setActiveWorkspaceTabId(projectId);
+  };
+  // "新建设计稿" starts where every design task starts — the home composer —
+  // rather than opening a second creation path beside it.
+  const openComposer = () => {
+    setHomePanel("create");
+    setActiveWorkspaceTabId(DESIGN_HOME_TAB_ID);
   };
   const closeProjectTab = (projectId: string) => {
     const closingIndex = openProjectIds.indexOf(projectId);
@@ -563,29 +591,25 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex shrink-0 flex-col border-b bg-muted/20 sm:flex-row sm:items-end sm:justify-between">
           <div role="tablist" aria-label="设计项目" className="flex min-w-0 items-end gap-1 overflow-x-auto overflow-y-hidden px-3 pt-2 sm:px-4">
-            {/* Home and community are fixed (DC-048): they carry no project,
-                so there is nothing to close. */}
-            {([
-              { id: DESIGN_HOME_TAB_ID, label: "首页", icon: House },
-              { id: DESIGN_COMMUNITY_TAB_ID, label: "社区", icon: Users },
-            ] as const).map((tab) => {
-              const active = activeWorkspaceTabId === tab.id;
-              const TabIcon = tab.icon;
+            {/* Home is fixed (DC-048): it carries no project, so there is
+                nothing to close. 创作 / 社区 / 设计体系 are its sub-tabs. */}
+            {(() => {
+              const active = activeWorkspaceTabId === DESIGN_HOME_TAB_ID;
               return (
-                <div key={tab.id} className={`-mb-px flex h-9 w-28 shrink-0 items-center rounded-t-md border px-1 transition-colors ${active ? "border-border border-b-background bg-background text-foreground shadow-sm" : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground"}`}>
+                <div className={`-mb-px flex h-9 w-28 shrink-0 items-center rounded-t-md border px-1 transition-colors ${active ? "border-border border-b-background bg-background text-foreground shadow-sm" : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground"}`}>
                   <button
                     type="button"
                     role="tab"
                     aria-selected={active}
                     className="flex min-w-0 flex-1 items-center gap-2 px-2 text-left text-body"
-                    onClick={() => setActiveWorkspaceTabId(tab.id)}
+                    onClick={() => setActiveWorkspaceTabId(DESIGN_HOME_TAB_ID)}
                   >
-                    <TabIcon className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">{tab.label}</span>
+                    <House className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">首页</span>
                   </button>
                 </div>
               );
-            })}
+            })()}
             {openProjects.map((project) => {
               const active = project.id === activeWorkspaceTabId;
               return (
@@ -645,23 +669,60 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
 
         {activeWorkspaceTabId === DESIGN_HOME_TAB_ID ? (
           <div role="tabpanel" aria-label="首页" className="flex min-h-0 flex-1 flex-col">
-            {/* Creating a document lands the user in that project's tab, where
-                the task and its output live. */}
-            <DesignTaskComposer
-              onCreated={(document) => openProjectTab(document.project_id)}
-              onBrowseRecipes={() => setActiveWorkspaceTabId(DESIGN_COMMUNITY_TAB_ID)}
-              recipeSelection={recipeSelection}
-            />
-          </div>
-        ) : activeWorkspaceTabId === DESIGN_COMMUNITY_TAB_ID ? (
-          <div role="tabpanel" aria-label="社区" className="flex min-h-0 flex-1 flex-col">
-            <DesignRecipeGallery
-              onUseInComposer={(recipe) => {
-                setRecipeSelection((current) => ({ token: (current?.token ?? 0) + 1, recipe }));
-                setActiveWorkspaceTabId(DESIGN_HOME_TAB_ID);
+            <Tabs
+              value={homePanel}
+              onValueChange={(value) => {
+                if (value === "create" || value === "community" || value === "systems") setHomePanel(value);
               }}
-              onStarted={(document) => openProjectTab(document.project_id)}
-            />
+              className="min-h-0 flex-1 gap-0 overflow-hidden"
+            >
+              <div className="shrink-0 overflow-x-auto overflow-y-hidden border-b px-4">
+                <TabsList variant="line" className="h-10 gap-5 p-0 group-data-horizontal/tabs:h-10">
+                  <TabsTrigger value="create" className="h-10 flex-none gap-2 px-1">
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>创作</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="community" className="h-10 flex-none gap-2 px-1">
+                    <Users className="h-3.5 w-3.5" />
+                    <span>社区</span>
+                    <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1 text-micro font-normal tabular-nums">{scenarioRecipes.length}</Badge>
+                  </TabsTrigger>
+                  <TabsTrigger value="systems" className="h-10 flex-none gap-2 px-1">
+                    <Palette className="h-3.5 w-3.5" />
+                    <span>设计体系</span>
+                    <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1 text-micro font-normal tabular-nums">{designSystemCatalogue.length}</Badge>
+                  </TabsTrigger>
+                </TabsList>
+              </div>
+
+              <TabsContent value="create" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {/* Creating a document lands the user in that project's tab,
+                    where the task and its output live. */}
+                <DesignTaskComposer
+                  onCreated={(document) => openProjectTab(document.project_id)}
+                  onBrowseRecipes={() => setHomePanel("community")}
+                  onOpenProject={openProjectTab}
+                  recipeSelection={recipeSelection}
+                />
+              </TabsContent>
+
+              <TabsContent value="community" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <DesignRecipeGallery
+                  onUseInComposer={(recipe) => {
+                    setRecipeSelection((current) => ({ token: (current?.token ?? 0) + 1, recipe }));
+                    setHomePanel("create");
+                  }}
+                  onStarted={(document) => openProjectTab(document.project_id)}
+                />
+              </TabsContent>
+
+              <TabsContent value="systems" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {/* A reading surface only: systems stay scoped to their
+                    project and repository, and this library never introduces a
+                    workspace default projects would inherit (DC-052). */}
+                <DesignSystemLibrary onOpenProject={openProjectTab} />
+              </TabsContent>
+            </Tabs>
           </div>
         ) : isLoading ? (
           <div className="space-y-2 p-4">
@@ -686,7 +747,9 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                 <TabsTrigger value="designs" className="h-10 flex-none gap-2 px-1">
                   <Folder className="h-3.5 w-3.5" />
                   <span>设计稿</span>
-                  <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1 text-micro font-normal tabular-nums">{projectFiles.length}</Badge>
+                  {/* Both halves of the tab: generated page designs and the
+                      files imported into it. */}
+                  <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1 text-micro font-normal tabular-nums">{projectFiles.length + projectDocuments.length}</Badge>
                 </TabsTrigger>
                 <TabsTrigger value="drafts" className="h-10 flex-none gap-2 px-1">
                   <ClipboardList className="h-3.5 w-3.5" />
@@ -708,9 +771,60 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
 
             <TabsContent value="designs" className="min-h-0 overflow-auto p-4">
               <section className="space-y-3">
-                <div className="flex justify-end">
-                  <Button size="sm" onClick={() => setCreateFolderOpen(true)} disabled={!selectedProjectId}><Plus className="h-3.5 w-3.5" />新增分组</Button>
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                  <div role="group" aria-label="设计稿形态" className="flex flex-wrap items-center gap-1.5">
+                    <DesignFilterPill
+                      label="全部"
+                      count={projectDocuments.length}
+                      selected={artifactFilter === "all"}
+                      onClick={() => setArtifactFilter("all")}
+                    />
+                    <DesignFilterPill
+                      label="原型"
+                      count={projectDocuments.length}
+                      selected={artifactFilter === "prototype"}
+                      onClick={() => setArtifactFilter("prototype")}
+                    />
+                    <DesignFilterPill
+                      label="幻灯片"
+                      count={0}
+                      selected={artifactFilter === "slides"}
+                      disabled
+                      title="幻灯片产物暂未支持"
+                      onClick={() => setArtifactFilter("slides")}
+                    />
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setCreateFolderOpen(true)} disabled={!selectedProjectId}><Plus className="h-3.5 w-3.5" />新增分组</Button>
+                    <Button size="sm" onClick={openComposer}><Plus className="h-3.5 w-3.5" />新建设计稿</Button>
+                  </div>
                 </div>
+
+                {/* Page designs the composer produced (DC-042). They live
+                    beside the imported files rather than replacing them: both
+                    are this project's design work. */}
+                {projectDocumentsLoading ? (
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="aspect-[4/3] w-full" />)}
+                  </div>
+                ) : visibleDocuments.length > 0 ? (
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {visibleDocuments.map((document) => (
+                      <DesignDocumentCard
+                        key={document.id}
+                        document={document}
+                        projectTitle={selectedProject?.title ?? ""}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <InlineEmpty>
+                    {artifactFilter === "slides"
+                      ? "幻灯片产物暂未支持，这里还不会有内容。"
+                      : "还没有生成过页面设计。用「新建设计稿」在首页发起一次。"}
+                  </InlineEmpty>
+                )}
+
                 {filtered.length === 0 && searchQuery ? (
                   <InlineEmpty>{`没有匹配“${search}”的设计稿。`}</InlineEmpty>
                 ) : (

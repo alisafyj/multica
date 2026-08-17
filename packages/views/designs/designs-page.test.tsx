@@ -5,26 +5,32 @@ import { StrictMode, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
+  getProjectDesignSystem,
   getProjectDesignSystemForProject,
   listAgents,
+  listDesignDocuments,
   listDesignDrafts,
   listDesignFiles,
   listDesignFolders,
   listDesignScenarioRecipes,
   listDesignSystemProfiles,
   listDesignTemplates,
+  listProjectDesignSystemCatalogue,
   listProjectResources,
   listProjects,
   navigate,
 } = vi.hoisted(() => ({
+  getProjectDesignSystem: vi.fn(),
   getProjectDesignSystemForProject: vi.fn(),
   listAgents: vi.fn(),
+  listDesignDocuments: vi.fn(),
   listDesignDrafts: vi.fn(),
   listDesignFiles: vi.fn(),
   listDesignFolders: vi.fn(),
   listDesignScenarioRecipes: vi.fn(),
   listDesignSystemProfiles: vi.fn(),
   listDesignTemplates: vi.fn(),
+  listProjectDesignSystemCatalogue: vi.fn(),
   listProjectResources: vi.fn(),
   listProjects: vi.fn(),
   navigate: vi.fn(),
@@ -36,8 +42,10 @@ vi.mock("@multica/core/api", () => ({
     createDesignDocument: vi.fn(),
     createFigmaImportConnection: vi.fn(),
     createProjectDesignSystem: vi.fn(),
+    getProjectDesignSystem,
     getProjectDesignSystemForProject,
     listAgents,
+    listDesignDocuments,
     listDesignDrafts,
     listDesignFiles,
     listDesignFolders,
@@ -45,6 +53,7 @@ vi.mock("@multica/core/api", () => ({
     listDesignSystemProfiles,
     listDesignTemplates,
     listIssues: vi.fn(),
+    listProjectDesignSystemCatalogue,
     listProjectResources,
     listProjects,
     uploadFile: vi.fn(),
@@ -89,6 +98,7 @@ vi.mock("@multica/ui/components/ui/dropdown-menu", () => ({
 }));
 
 import { I18nProvider } from "@multica/core/i18n/react";
+import zhCommon from "../locales/zh-Hans/common.json";
 import zhIssues from "../locales/zh-Hans/issues.json";
 import zhProjects from "../locales/zh-Hans/projects.json";
 import { DesignsPage } from "./designs-page";
@@ -122,7 +132,10 @@ function renderWithClient(ui: ReactNode) {
   // The home composer reuses the shared property pickers, which read their
   // filter placeholders from i18n — same provider the apps mount.
   return render(
-    <I18nProvider locale="zh-Hans" resources={{ "zh-Hans": { issues: zhIssues, projects: zhProjects } }}>
+    <I18nProvider
+      locale="zh-Hans"
+      resources={{ "zh-Hans": { common: zhCommon, issues: zhIssues, projects: zhProjects } }}
+    >
       <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
     </I18nProvider>,
   );
@@ -130,24 +143,29 @@ function renderWithClient(ui: ReactNode) {
 
 describe("DesignsPage", () => {
   beforeEach(() => {
+    getProjectDesignSystem.mockReset();
     getProjectDesignSystemForProject.mockReset();
     listAgents.mockReset();
+    listDesignDocuments.mockReset();
     listDesignDrafts.mockReset();
     listDesignFiles.mockReset();
     listDesignFolders.mockReset();
     listDesignScenarioRecipes.mockReset();
     listDesignSystemProfiles.mockReset();
     listDesignTemplates.mockReset();
+    listProjectDesignSystemCatalogue.mockReset();
     listProjectResources.mockReset();
     listProjects.mockReset();
     navigate.mockReset();
     listAgents.mockResolvedValue([]);
+    listDesignDocuments.mockResolvedValue({ documents: [] });
     listDesignDrafts.mockResolvedValue({ drafts: [], total: 0 });
     listDesignFiles.mockResolvedValue({ design_files: [], total: 0 });
     listDesignFolders.mockResolvedValue({ folders: [], total: 0 });
     listDesignScenarioRecipes.mockResolvedValue({ recipes: [] });
     listDesignSystemProfiles.mockResolvedValue({ design_systems: [] });
     listDesignTemplates.mockResolvedValue({ templates: [], total: 0 });
+    listProjectDesignSystemCatalogue.mockResolvedValue({ design_systems: [] });
     listProjectResources.mockResolvedValue({ resources: [], total: 0 });
     listProjects.mockResolvedValue({ projects: [{ id: "project-1", title: "CRM", description: "CRM 项目设计目标" }], total: 1 });
     getProjectDesignSystemForProject.mockResolvedValue({
@@ -215,24 +233,39 @@ describe("DesignsPage", () => {
     expect(screen.getByRole("button", { name: "关闭项目 staffrnapp" })).toBeInTheDocument();
   });
 
-  it("keeps 社区 fixed beside 首页 and never lets either be closed", async () => {
+  it("nests 创作 / 社区 / 设计体系 under the one fixed 首页 tab", async () => {
     const user = userEvent.setup();
     renderWithClient(<DesignsPage />);
 
-    const communityTab = await screen.findByRole("tab", { name: "社区" });
-    expect(screen.getByRole("tab", { name: "首页" })).toHaveAttribute("aria-selected", "true");
+    const homeTab = await screen.findByRole("tab", { name: "首页" });
+    expect(homeTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("button", { name: /关闭.*首页/ })).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("tabpanel", { name: "首页" })).getByLabelText("页面需求描述"),
+    ).toBeInTheDocument();
+
+    // 社区 is a sub-tab of 首页 now rather than a second workspace tab, so it
+    // never gets a close affordance and never leaves the home tab.
+    const communityTab = screen.getByRole("tab", { name: /社区/ });
     expect(communityTab).toHaveAttribute("aria-selected", "false");
     expect(screen.queryByRole("button", { name: /关闭.*社区/ })).not.toBeInTheDocument();
 
     await user.click(communityTab);
     expect(communityTab).toHaveAttribute("aria-selected", "true");
+    expect(homeTab).toHaveAttribute("aria-selected", "true");
     // An empty catalogue still says something rather than spinning forever.
     expect(await screen.findByText("社区还没有可用的配方")).toBeInTheDocument();
-    // The community tab carries no project, so the project-scoped search never
+    // The home tab carries no project, so the project-scoped search never
     // appears there.
     expect(screen.queryByPlaceholderText("搜索设计稿…")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "首页" }));
+    await user.click(screen.getByRole("tab", { name: /设计体系/ }));
+    expect(await screen.findByRole("group", { name: "设计体系归属" })).toBeInTheDocument();
+    // The library is repository-scoped: no workspace default is ever offered.
+    expect(screen.queryByText("设为默认")).not.toBeInTheDocument();
+    expect(screen.queryByText("默认")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /创作/ }));
     expect(
       within(screen.getByRole("tabpanel", { name: "首页" })).getByLabelText("页面需求描述"),
     ).toBeInTheDocument();
@@ -257,20 +290,38 @@ describe("DesignsPage", () => {
     });
     renderWithClient(<DesignsPage />);
 
-    // The composer's template chip is the way in, not a dead placeholder.
-    const templateChip = await screen.findByRole("button", { name: /来自模板/ });
-    expect(templateChip).toBeEnabled();
-    await user.click(templateChip);
+    // The create panel's community entry is the way in, not a dead placeholder.
+    const entry = await screen.findByRole("button", { name: "从社区模板开始" });
+    await user.click(entry);
 
-    expect(screen.getByRole("tab", { name: "社区" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /社区/ })).toHaveAttribute("aria-selected", "true");
     await user.click(await screen.findByRole("button", { name: "填入首页" }));
 
-    expect(screen.getByRole("tab", { name: "首页" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /创作/ })).toHaveAttribute("aria-selected", "true");
     const homePanel = screen.getByRole("tabpanel", { name: "首页" });
     expect(within(homePanel).getByLabelText("页面需求描述")).toHaveValue(
       "做一个 CRM 客户列表页，支持筛选和批量操作。",
     );
-    expect(within(homePanel).getByText("CRM 控制台")).toBeInTheDocument();
+    expect(within(homePanel).getByRole("button", { name: "不使用该社区配方" })).toBeInTheDocument();
+  });
+
+  it("opens the composer from a project's 新建设计稿 and filters its artifacts", async () => {
+    const user = userEvent.setup();
+    renderWithClient(<DesignsPage />);
+    await user.click(await screen.findByRole("button", { name: "打开项目" }));
+    await user.click(screen.getByRole("menuitem", { name: "CRM" }));
+
+    // Nothing produces a deck yet, so the position is laid out but closed
+    // rather than a filter that quietly matches everything.
+    const slides = await screen.findByRole("button", { name: /幻灯片/ });
+    expect(slides).toBeDisabled();
+    expect(await screen.findByText(/还没有生成过页面设计/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "新建设计稿" }));
+    expect(screen.getByRole("tab", { name: "首页" })).toHaveAttribute("aria-selected", "true");
+    expect(
+      within(screen.getByRole("tabpanel", { name: "首页" })).getByLabelText("页面需求描述"),
+    ).toBeInTheDocument();
   });
 
   it("keeps active design drafts in their own tab without review wording", async () => {
