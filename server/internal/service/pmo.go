@@ -71,7 +71,7 @@ func ParsePMOSyncContext(contextJSON []byte) (PMOSyncContext, bool) {
 
 // PreparePMOSyncRunPreview serializes a validated snapshot and computes its
 // three-way diff against the config's existing links and current local rows.
-func (s *PMOService) PreparePMOSyncRunPreview(ctx context.Context, qtx *db.Queries, workspaceID, runID pgtype.UUID, snapshot PMOSnapshot, assigneeMappings map[string]string) (sourceSnapshot, diffJSON, summaryJSON []byte, err error) {
+func (s *PMOService) PreparePMOSyncRunPreview(ctx context.Context, qtx *db.Queries, workspaceID, runID pgtype.UUID, snapshot PMOSnapshot) (sourceSnapshot, diffJSON, summaryJSON []byte, err error) {
 	run, err := qtx.GetPMOSyncRun(ctx, db.GetPMOSyncRunParams{ID: runID, WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("load pmo run for preview: %w", err)
@@ -83,6 +83,10 @@ func (s *PMOService) PreparePMOSyncRunPreview(ctx context.Context, qtx *db.Queri
 	links, err := qtx.ListPMOSyncLinks(ctx, db.ListPMOSyncLinksParams{WorkspaceID: workspaceID, ConfigID: run.ConfigID})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("load pmo links for preview: %w", err)
+	}
+	assigneeMappings, err := resolvePMOAssigneeMappingsFromLinks(ctx, qtx, workspaceID, snapshot, links)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	linkStates, err := s.buildLinkStates(ctx, qtx, workspaceID, links, config.WorkloadPropertyID)
 	if err != nil {
@@ -323,12 +327,13 @@ func BuildPMOSyncPrompt(rootExternalKey string) string {
 	return fmt.Sprintf(`Fetch the complete external requirement snapshot rooted at %s using the tools already configured for this Agent.
 Return JSON only: one object, with no Markdown fence or prose.
 Use exactly this structure:
-{"schema_version":"1","snapshot_complete":true,"parent_requirement":{"key":"","display_number":"","numeric_id":1,"title":"","description":"","source_status":"","status":"planned","owner":null,"start_date":null,"due_date":null,"workload":null},"child_requirements":[{"key":"","display_number":"","numeric_id":2,"title":"","description":"","source_status":"","status":"todo","owner":null,"start_date":null,"due_date":null,"workload":null,"tasks":[]}],"tasks":[]}
+{"schema_version":"1","snapshot_complete":true,"parent_requirement":{"key":"","display_number":"","numeric_id":1,"title":"","description":"","source_status":"","status":"planned","priority":"","prd_url":null,"owner":null,"start_date":null,"due_date":null,"workload":null},"child_requirements":[{"key":"","display_number":"","numeric_id":2,"title":"","description":"","source_status":"","status":"todo","priority":"","prd_url":null,"owner":null,"start_date":null,"due_date":null,"workload":null,"tasks":[]}],"tasks":[]}
 Each owner is null or {"external_id":"","display_name":""}.
 Set owner.external_id to the owner's corporate email whenever it is available.
 If the source exposes only a bare corporate account such as yanmeichen, return yanmeichen@soyoung.com.
 Do not concatenate the account with the display name, and do not infer an email from a person's displayed name.
-Each task contains task_id, scheme_id, title, description, source_status, status, owner, start_date, due_date, workload, and updated_at.
+Each requirement also contains optional priority and prd_url. Use the explicit source PRD-link field for prd_url; do not invent or fetch a URL.
+Each task contains task_id, scheme_id, scheme_name, title, description, source_status, status, owner, start_date, due_date, workload, and updated_at. Use the source Milestone display label for scheme_name.
 Project status must be one of planned, in_progress, paused, completed, cancelled. Issue and task status must be one of backlog, todo, in_progress, in_review, done, blocked, cancelled. Dates use YYYY-MM-DD and updated_at uses RFC3339. Set snapshot_complete to true only when the snapshot is complete.
 Use only the configured external requirement-source tools. Do not inspect repositories or documents as substitutes for the source hierarchy.
 If the complete parent, child-requirement, and task hierarchy cannot be fetched, return the same JSON structure immediately with "snapshot_complete":false.

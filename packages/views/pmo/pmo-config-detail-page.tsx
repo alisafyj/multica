@@ -66,7 +66,9 @@ import {
   RUN_STATUS_ACTIVE,
   type DiffFieldRow,
   type DiffFilter,
+  parseAssigneeOwners,
 } from "./pmo-diff";
+import { PMOSourcePreview, parsePMOSourceView } from "./pmo-source-preview";
 
 export function PMOConfigDetailPage() {
   const { t } = useT("pmo");
@@ -88,6 +90,14 @@ export function PMOConfigDetailPage() {
 
   const run = latestRun(runs);
   const diffView = useMemo(() => parseDiffView(run?.diff ?? null), [run?.diff]);
+  const sourcePreviewAvailable = useMemo(
+    () => Boolean(parsePMOSourceView(run?.source_snapshot)),
+    [run?.source_snapshot],
+  );
+  const assigneeOwners = useMemo(
+    () => parseAssigneeOwners(run?.source_snapshot, diffView?.rows ?? [], diffView?.warnings ?? []),
+    [run?.source_snapshot, diffView],
+  );
   const runActive = run !== null && RUN_STATUS_ACTIVE.has(run.status);
   const hasConflicts = (diffView?.conflicts.length ?? 0) > 0;
 
@@ -195,6 +205,14 @@ export function PMOConfigDetailPage() {
   };
 
   const activeAgents = useMemo(() => agents.filter((a) => !a.archived_at), [agents]);
+  const eligibleAgents = useMemo(
+    () => agents.filter((agent) => !agent.archived_at && isAgentRuntimeBound(agent)),
+    [agents],
+  );
+  const memberNameByUserId = useMemo(
+    () => new Map((members as MemberWithUser[]).map((member) => [member.user_id, member.name])),
+    [members],
+  );
   const agentName = agents.find((agent) => agent.id === config?.agent_id)?.name ?? config?.agent_id ?? "";
 
   const filteredRows = useMemo(() => {
@@ -213,13 +231,32 @@ export function PMOConfigDetailPage() {
       case "external_removed":
         return rows.filter((r) => r.action === "external_removed");
       case "unresolved": {
-        const ids = new Set((diffView?.warnings ?? []).map((w) => w.externalKey));
-        return rows.filter((r) => ids.has(r.entityKey));
+        const unresolvedOwnerIds = new Set((diffView?.warnings ?? []).map((w) => w.externalId));
+        const references = new Set(
+          assigneeOwners
+            .filter((owner) => unresolvedOwnerIds.has(owner.externalId))
+            .flatMap((owner) => owner.references.map((reference) => `${reference.externalType}:${reference.externalKey}`)),
+        );
+        return rows.filter((r) => references.has(`${r.externalType}:${r.entityKey}`));
       }
       default:
         return rows;
     }
-  }, [diffView, filter]);
+  }, [assigneeOwners, diffView, filter]);
+
+  const groupedRows = useMemo(() => {
+    const groups = new Map<string, { firstIndex: number; rowSpan: number }>();
+    filteredRows.forEach((row, index) => {
+      const key = `${row.externalType}:${row.entityKey}`;
+      const group = groups.get(key);
+      if (group) {
+        group.rowSpan += 1;
+      } else {
+        groups.set(key, { firstIndex: index, rowSpan: 1 });
+      }
+    });
+    return filteredRows.map((row) => groups.get(`${row.externalType}:${row.entityKey}`)!);
+  }, [filteredRows]);
 
   // ------------------------------------------------------------------ states
 
@@ -292,6 +329,17 @@ export function PMOConfigDetailPage() {
       </div>
       <p className="text-caption text-muted-foreground">{t(($) => $.preview.retry_hint)}</p>
     </div>
+  ) : filter !== "all" && filteredRows.length === 0 ? (
+    <p className="px-4 py-10 text-center text-caption text-muted-foreground">{t(($) => $.preview.filter_empty)}</p>
+  ) : sourcePreviewAvailable ? (
+    <PMOSourcePreview
+      snapshot={run.source_snapshot}
+      diff={diffView}
+      filter={filter}
+      rows={filteredRows}
+      selections={selections}
+      onSelectionChange={handleChoice}
+    />
   ) : (diffView?.rows.length ?? 0) === 0 ? (
     <p className="px-4 py-10 text-center text-caption text-muted-foreground">{t(($) => $.preview.no_changes)}</p>
   ) : filteredRows.length === 0 ? (
@@ -310,24 +358,28 @@ export function PMOConfigDetailPage() {
           </tr>
         </thead>
         <tbody>
-          {filteredRows.map((row) => {
+          {filteredRows.map((row, index) => {
             const rowConflicted = row.decision === "conflict";
             const selected = selections[conflictId(row)];
+            const group = groupedRows[index];
+            if (!group) return null;
             return (
               <tr
                 key={`${row.externalType}:${row.entityKey}:${row.field}`}
                 className={cn("border-b last:border-b-0", rowConflicted && "bg-warning/5")}
               >
-                <td className="px-3 py-1.5 align-top">
-                  <div data-testid="pmo-entity-name">
-                    <TruncatedValue value={row.entityName} />
-                  </div>
-                  <span className="block text-micro text-muted-foreground">
-                    {row.externalType === "requirement" ? t(($) => $.entities.requirement) : row.externalType === "task" ? t(($) => $.entities.task) : row.externalType}
-                    {" · "}
-                    <span data-testid="pmo-entity-key" className="font-mono">{row.entityKey}</span>
-                  </span>
-                </td>
+                {group.firstIndex === index && (
+                  <td rowSpan={group.rowSpan} className="px-3 py-1.5 align-top">
+                    <div data-testid="pmo-entity-name">
+                      <TruncatedValue value={row.entityName} />
+                    </div>
+                    <span className="block text-micro text-muted-foreground">
+                      {row.externalType === "requirement" ? t(($) => $.entities.requirement) : row.externalType === "task" ? t(($) => $.entities.task) : row.externalType}
+                      {" · "}
+                      <span data-testid="pmo-entity-key" className="font-mono">{row.entityKey}</span>
+                    </span>
+                  </td>
+                )}
                 <td className="max-w-36 px-3 py-1.5 align-top">
                   <TruncatedValue value={row.field} />
                 </td>
@@ -401,7 +453,8 @@ export function PMOConfigDetailPage() {
         }
       />
 
-      <div className="mx-auto w-full max-w-6xl px-4 pb-8 sm:px-6">
+      <div data-testid="pmo-detail-content" className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-6xl px-4 pb-8 sm:px-6">
         {/* Config context */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b py-3">
           <NativeSelect
@@ -483,8 +536,8 @@ export function PMOConfigDetailPage() {
             </TabsTrigger>
             <TabsTrigger value="assignees" className="text-caption">
               {t(($) => $.tabs.assignees)}
-              {(diffView?.warnings.length ?? 0) > 0 ? (
-                <span className="ml-1">{diffView?.warnings.length}</span>
+              {assigneeOwners.length > 0 ? (
+                <span className="ml-1">{assigneeOwners.length}</span>
               ) : null}
             </TabsTrigger>
             <TabsTrigger value="history" className="text-caption">
@@ -556,47 +609,49 @@ export function PMOConfigDetailPage() {
           <TabsContent value="assignees">
             <div className="space-y-1 py-3">
               <p className="text-caption text-muted-foreground">{t(($) => $.assignees.description)}</p>
-              {(diffView?.warnings.length ?? 0) === 0 ? (
+              {assigneeOwners.length === 0 ? (
                 <p className="py-8 text-center text-caption text-muted-foreground">{t(($) => $.assignees.empty)}</p>
               ) : (
                 <div className="divide-y">
-                  {(diffView?.warnings ?? []).map((warning) => {
+                  {assigneeOwners.map((owner) => {
                     const references = (diffView?.rows ?? [])
-                      .filter((row) => row.entityKey === warning.externalKey)
-                      .map((row) => row.field);
+                      .filter((row) => owner.references.some((reference) => reference.externalType === row.externalType && reference.externalKey === row.entityKey))
+                      .map((row) => row.field)
+                      .filter((field, index, fields) => fields.indexOf(field) === index);
                     return (
-                      <div key={warning.externalId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                      <div key={owner.externalId} className="flex flex-wrap items-center justify-between gap-2 py-2">
                         <div className="min-w-0">
                           <p className="truncate text-body">
-                            {warning.displayName || "—"}
-                            <span className="ml-2 font-mono text-caption text-muted-foreground">{warning.externalId}</span>
+                            {owner.displayName || "—"}
+                            <span className="ml-2 font-mono text-caption text-muted-foreground">{owner.externalId}</span>
                           </p>
                           {references.length > 0 && (
                             <p className="truncate text-caption text-muted-foreground">
-                              {warning.externalKey} · {references.join(", ")}
+                              {[...new Set(owner.references.map((reference) => reference.externalKey))].join(", ")} · {references.join(", ")}
                             </p>
                           )}
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="hidden text-caption text-muted-foreground sm:block">{t(($) => $.assignees.member)}</span>
+                          <span className="hidden text-caption text-muted-foreground sm:block">{t(($) => $.config.agent_label)}</span>
                           <NativeSelect
+                            key={`${owner.externalId}:${owner.resolvedAgentId}`}
                             className="w-44"
-                            defaultValue=""
+                            defaultValue={owner.resolvedAgentId}
                             onChange={(event) => {
                               if (!event.target.value) return;
                               setMapping.mutate(
-                                { configId: config.id, externalKey: warning.externalId, memberId: event.target.value },
+                                { configId: config.id, externalKey: owner.externalId, agentId: event.target.value },
                                 { onError: () => toast.error(t(($) => $.assignees.save_failed)) },
                               );
                             }}
-                            aria-label={`${t(($) => $.assignees.member)} ${warning.externalId}`}
+                            aria-label={`${t(($) => $.config.agent_label)} ${owner.externalId}`}
                           >
                             <NativeSelectOption value="" disabled>
-                              {t(($) => $.assignees.member_placeholder)}
+                              {t(($) => $.config.agent_placeholder)}
                             </NativeSelectOption>
-                            {(members as MemberWithUser[]).map((member) => (
-                              <NativeSelectOption key={member.id} value={member.id}>
-                                {member.name}
+                            {eligibleAgents.map((agent) => (
+                              <NativeSelectOption key={agent.id} value={agent.id}>
+                                {agent.name} · {memberNameByUserId.get(agent.owner_id ?? "") ?? "Unknown owner"}
                               </NativeSelectOption>
                             ))}
                           </NativeSelect>
@@ -738,6 +793,7 @@ export function PMOConfigDetailPage() {
             )}
           </TabsContent>
         </Tabs>
+        </div>
       </div>
 
       {/* Apply confirmation */}

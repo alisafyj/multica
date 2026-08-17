@@ -24,6 +24,7 @@ type pmoApplyFixture struct {
 	svc         *PMOService
 	workspaceID pgtype.UUID
 	ownerID     pgtype.UUID
+	agentID     pgtype.UUID
 	configID    pgtype.UUID
 	bus         *events.Bus
 }
@@ -79,7 +80,8 @@ func newPMOApplyFixture(t *testing.T) pmoApplyFixture {
 
 	bus := events.New()
 	svc := NewPMOService(queries, pool, nil)
-	svc.IssueSvc = NewIssueService(queries, pool, bus, nil, nil)
+	taskService := NewTaskService(queries, pool, nil, bus)
+	svc.IssueSvc = NewIssueService(queries, pool, bus, nil, taskService)
 
 	t.Cleanup(func() {
 		cleanup := context.Background()
@@ -102,6 +104,7 @@ func newPMOApplyFixture(t *testing.T) pmoApplyFixture {
 		svc:         svc,
 		workspaceID: parsePGUUID(t, workspaceID),
 		ownerID:     parsePGUUID(t, ownerID),
+		agentID:     parsePGUUID(t, agentID),
 		configID:    config.ID,
 		bus:         bus,
 	}
@@ -141,6 +144,53 @@ func addPMOApplyMember(t *testing.T, f pmoApplyFixture, account string) pgtype.U
 		_, _ = f.pool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
 	})
 	return id
+}
+
+func addPMOApplyAgent(t *testing.T, f pmoApplyFixture, ownerID pgtype.UUID) pgtype.UUID {
+	t.Helper()
+	ctx := context.Background()
+	suffix := time.Now().UnixNano()
+	var runtimeID string
+	if err := f.pool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (workspace_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, last_seen_at)
+		VALUES ($1, $2, 'cloud', 'pmo_apply_email_runtime', 'online', 'pmo apply email runtime', '{}'::jsonb, $3, now())
+		RETURNING id
+	`, f.workspaceID, fmt.Sprintf("PMO Apply Email Runtime %d", suffix), ownerID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create pmo apply email runtime: %v", err)
+	}
+	var agentID string
+	if err := f.pool.QueryRow(ctx, `
+		INSERT INTO agent (workspace_id, name, description, runtime_mode, runtime_config, runtime_id, visibility, permission_mode, max_concurrent_tasks, owner_id)
+		VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'private', 'private', 1, $4)
+		RETURNING id
+	`, f.workspaceID, fmt.Sprintf("PMO Apply Email Agent %d", suffix), runtimeID, ownerID).Scan(&agentID); err != nil {
+		t.Fatalf("create pmo apply email agent: %v", err)
+	}
+	id := parsePGUUID(t, agentID)
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE runtime_id = $1`, runtimeID)
+		_, _ = f.pool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, id)
+		_, _ = f.pool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+	})
+	return id
+}
+
+func seedLegacyPMOAssigneeLink(t *testing.T, f pmoApplyFixture, externalKey string, memberID pgtype.UUID) {
+	t.Helper()
+	_, err := f.svc.Queries.UpsertPMOSyncLink(context.Background(), db.UpsertPMOSyncLinkParams{
+		WorkspaceID:      f.workspaceID,
+		ConfigID:         f.configID,
+		ExternalType:     "assignee",
+		ExternalKey:      externalKey,
+		BaselineExternal: []byte(`{"external_id":"` + externalKey + `"}`),
+		BaselineLocal:    []byte(`{"member_id":"legacy"}`),
+		ExternalMetadata: []byte(`{}`),
+		LocalType:        pgtype.Text{String: "member", Valid: true},
+		LocalID:          memberID,
+	})
+	if err != nil {
+		t.Fatalf("seed legacy assignee link: %v", err)
+	}
 }
 
 // pmoApplyTask builds one external requirement/task map for snapshot fixtures.
@@ -429,7 +479,7 @@ func TestPreparePMOSyncRunPreviewAfterApplyDoesNotProposeCreates(t *testing.T) {
 		t.Fatalf("parse snapshot: %v", err)
 	}
 	secondRun := seedPMOPreview(t, f, snapshotJSON)
-	_, _, summaryJSON, err := f.svc.PreparePMOSyncRunPreview(ctx, f.svc.Queries, f.workspaceID, secondRun.ID, snapshot, nil)
+	_, _, summaryJSON, err := f.svc.PreparePMOSyncRunPreview(ctx, f.svc.Queries, f.workspaceID, secondRun.ID, snapshot)
 	if err != nil {
 		t.Fatalf("prepare second preview: %v", err)
 	}
@@ -692,8 +742,8 @@ func TestApplyPMORunUnresolvedAndMappedAssignees(t *testing.T) {
 		t.Fatalf("assignee link resolved without mapping: %+v", assigneeLink)
 	}
 
-	// Map the external identity to the workspace member (by ID, never name).
-	if _, err := f.svc.SetAssigneeMapping(ctx, f.workspaceID, f.configID, "EXT-U-001", f.ownerID); err != nil {
+	// Map the external identity to the workspace Agent (by ID, never name).
+	if _, err := f.svc.SetAssigneeMapping(ctx, f.workspaceID, f.configID, "EXT-U-001", f.agentID); err != nil {
 		t.Fatalf("SetAssigneeMapping: %v", err)
 	}
 	run2 := seedPMOPreview(t, f, snapshot)
@@ -701,12 +751,78 @@ func TestApplyPMORunUnresolvedAndMappedAssignees(t *testing.T) {
 		t.Fatalf("re-apply: %v", err)
 	}
 	issue = issueByID(t, f.pool, childLink.LocalID)
-	if issue.AssigneeID != f.ownerID || issue.AssigneeType.String != "member" {
-		t.Fatalf("issue assignee = %v/%q, want member %v", issue.AssigneeID, issue.AssigneeType.String, f.ownerID)
+	if issue.AssigneeID != f.agentID || issue.AssigneeType.String != "agent" {
+		t.Fatalf("issue assignee = %v/%q, want agent %v", issue.AssigneeID, issue.AssigneeType.String, f.agentID)
 	}
 	mapped := pmoLinkByExternal(t, f, "assignee", "EXT-U-001")
-	if mapped.LocalType.String != "member" || mapped.LocalID != f.ownerID {
-		t.Fatalf("assignee mapping link = %+v", mapped)
+	if mapped.LocalType.String != "agent" || mapped.LocalID != f.agentID {
+		t.Fatalf("assignee mapping link = %+v, want agent %v", mapped, f.agentID)
+	}
+}
+
+func TestApplyPMORunUpgradesUniqueLegacyMemberAssignee(t *testing.T) {
+	f := newPMOApplyFixture(t)
+	ctx := context.Background()
+	memberID := addPMOApplyMember(t, f, "yanmeichen")
+	agentID := addPMOApplyAgent(t, f, memberID)
+
+	owner := map[string]any{"external_id": "YanMeiChen", "display_name": "Yan Mei Chen"}
+	parent := pmoRequirement("EXT-P-001", "P-001", "Legacy Project", "planned", "planned", 1)
+	parent["owner"] = owner
+	child := pmoChildWithTasks(t, "EXT-I-001", "I-001", "Legacy Child", "todo", 2)
+	child["owner"] = owner
+	run := seedPMOPreview(t, f, buildPMOSnapshotJSON(t, parent, []map[string]any{child}, nil))
+	seedLegacyPMOAssigneeLink(t, f, "YanMeiChen", memberID)
+
+	if _, err := f.svc.ApplyRun(ctx, f.workspaceID, run.ID, nil); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	childLink := pmoLinkByExternal(t, f, "requirement", "EXT-I-001")
+	issue := issueByID(t, f.pool, childLink.LocalID)
+	if issue.AssigneeType.String != "agent" || issue.AssigneeID != agentID {
+		t.Fatalf("legacy assignee = %q/%v, want agent/%v", issue.AssigneeType.String, issue.AssigneeID, agentID)
+	}
+	link := pmoLinkByExternal(t, f, "assignee", "YanMeiChen")
+	if link.LocalType.String != "agent" || link.LocalID != agentID {
+		t.Fatalf("legacy link = %+v, want agent/%v", link, agentID)
+	}
+}
+
+func TestApplyPMORunLeavesAmbiguousLegacyMemberAssigneeUnresolved(t *testing.T) {
+	f := newPMOApplyFixture(t)
+	ctx := context.Background()
+	memberID := addPMOApplyMember(t, f, "yanmeichen")
+	_ = addPMOApplyAgent(t, f, memberID)
+	_ = addPMOApplyAgent(t, f, memberID)
+
+	owner := map[string]any{"external_id": "YanMeiChen", "display_name": "Yan Mei Chen"}
+	parent := pmoRequirement("EXT-P-001", "P-001", "Ambiguous Legacy Project", "planned", "planned", 1)
+	parent["owner"] = owner
+	child := pmoChildWithTasks(t, "EXT-I-001", "I-001", "Ambiguous Legacy Child", "todo", 2)
+	child["owner"] = owner
+	run := seedPMOPreview(t, f, buildPMOSnapshotJSON(t, parent, []map[string]any{child}, nil))
+	seedLegacyPMOAssigneeLink(t, f, "YanMeiChen", memberID)
+
+	applied, err := f.svc.ApplyRun(ctx, f.workspaceID, run.ID, nil)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if applied.Status != "applied_with_review" {
+		t.Fatalf("status = %q, want applied_with_review", applied.Status)
+	}
+	childLink := pmoLinkByExternal(t, f, "requirement", "EXT-I-001")
+	issue := issueByID(t, f.pool, childLink.LocalID)
+	if issue.AssigneeID.Valid || issue.AssigneeType.Valid {
+		t.Fatalf("ambiguous legacy assignee must remain unresolved: %q/%v", issue.AssigneeType.String, issue.AssigneeID)
+	}
+	link := pmoLinkByExternal(t, f, "assignee", "YanMeiChen")
+	if link.LocalID.Valid || link.LocalType.Valid {
+		t.Fatalf("ambiguous legacy link must remain unresolved: %+v", link)
+	}
+	if _, err := f.svc.Queries.GetPMOSyncLink(ctx, db.GetPMOSyncLinkParams{
+		WorkspaceID: f.workspaceID, ConfigID: f.configID, ExternalType: "requirement", ExternalKey: "EXT-P-001",
+	}); err != nil {
+		t.Fatalf("unrelated project apply was blocked: %v", err)
 	}
 }
 
@@ -714,6 +830,7 @@ func TestApplyPMORunAutoMapsBareOwnerIDByWorkspaceEmail(t *testing.T) {
 	f := newPMOApplyFixture(t)
 	ctx := context.Background()
 	memberID := addPMOApplyMember(t, f, "yanmeichen")
+	agentID := addPMOApplyAgent(t, f, memberID)
 
 	owner := map[string]any{"external_id": "YanMeiChen", "display_name": "Yan Mei Chen"}
 	parent := pmoRequirement("EXT-P-001", "P-001", "Auto Map Project", "planned", "planned", 1)
@@ -733,12 +850,12 @@ func TestApplyPMORunAutoMapsBareOwnerIDByWorkspaceEmail(t *testing.T) {
 
 	childLink := pmoLinkByExternal(t, f, "requirement", "EXT-I-001")
 	issue := issueByID(t, f.pool, childLink.LocalID)
-	if issue.AssigneeID != memberID || issue.AssigneeType.String != "member" {
-		t.Fatalf("issue assignee = %v/%q, want member %v", issue.AssigneeID, issue.AssigneeType.String, memberID)
+	if issue.AssigneeID != agentID || issue.AssigneeType.String != "agent" {
+		t.Fatalf("issue assignee = %v/%q, want agent %v", issue.AssigneeID, issue.AssigneeType.String, agentID)
 	}
 	assigneeLink := pmoLinkByExternal(t, f, "assignee", "YanMeiChen")
-	if assigneeLink.LocalType.String != "member" || assigneeLink.LocalID != memberID {
-		t.Fatalf("assignee link = %+v, want member %v", assigneeLink, memberID)
+	if assigneeLink.LocalType.String != "agent" || assigneeLink.LocalID != agentID {
+		t.Fatalf("assignee link = %+v, want agent %v", assigneeLink, agentID)
 	}
 }
 
@@ -754,7 +871,7 @@ func TestApplyPMORunKeepsExplicitAssigneeMappingOverEmailMatch(t *testing.T) {
 	child["owner"] = owner
 
 	snapshot := buildPMOSnapshotJSON(t, parent, []map[string]any{child}, nil)
-	if _, err := f.svc.SetAssigneeMapping(ctx, f.workspaceID, f.configID, "yanmeichen", f.ownerID); err != nil {
+	if _, err := f.svc.SetAssigneeMapping(ctx, f.workspaceID, f.configID, "yanmeichen", f.agentID); err != nil {
 		t.Fatalf("SetAssigneeMapping: %v", err)
 	}
 	run := seedPMOPreview(t, f, snapshot)
@@ -764,12 +881,19 @@ func TestApplyPMORunKeepsExplicitAssigneeMappingOverEmailMatch(t *testing.T) {
 
 	childLink := pmoLinkByExternal(t, f, "requirement", "EXT-I-001")
 	issue := issueByID(t, f.pool, childLink.LocalID)
-	if issue.AssigneeID != f.ownerID || issue.AssigneeType.String != "member" {
-		t.Fatalf("issue assignee = %v/%q, want explicit member %v", issue.AssigneeID, issue.AssigneeType.String, f.ownerID)
+	if issue.AssigneeID != f.agentID || issue.AssigneeType.String != "agent" {
+		t.Fatalf("issue assignee = %v/%q, want explicit agent %v", issue.AssigneeID, issue.AssigneeType.String, f.agentID)
 	}
 	assigneeLink := pmoLinkByExternal(t, f, "assignee", "yanmeichen")
-	if assigneeLink.LocalType.String != "member" || assigneeLink.LocalID != f.ownerID {
-		t.Fatalf("assignee link = %+v, want explicit member %v", assigneeLink, f.ownerID)
+	if assigneeLink.LocalType.String != "agent" || assigneeLink.LocalID != f.agentID {
+		t.Fatalf("assignee link = %+v, want explicit agent %v", assigneeLink, f.agentID)
+	}
+	var baselineLocal map[string]any
+	if err := json.Unmarshal(assigneeLink.BaselineLocal, &baselineLocal); err != nil {
+		t.Fatalf("decode assignee baseline_local: %v", err)
+	}
+	if baselineLocal["agent_id"] != util.UUIDToString(f.agentID) {
+		t.Fatalf("assignee baseline_local = %#v, want agent_id %s", baselineLocal, util.UUIDToString(f.agentID))
 	}
 }
 

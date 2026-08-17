@@ -120,18 +120,18 @@ func TestSetPMOAssigneeMappingEndpoint(t *testing.T) {
 	config, _ := seedPreviewReadyPMORunForTest(t)
 
 	req := newRequest(http.MethodPut, "/api/pmo/configs/"+config.ID+"/assignees/EXT-U-001", map[string]any{
-		"member_id": testUserID,
+		"agent_id": config.AgentID,
 	})
 	req = withURLParams(req, "id", config.ID, "externalKey", "EXT-U-001")
 	w := httptest.NewRecorder()
 	testHandler.SetPMOAssigneeMapping(w, req)
 	if w.Code != http.StatusOK {
-		t.Fatalf("map member: expected 200, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("map agent: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Unknown member → 404.
+	// Unknown Agent → 404.
 	req = newRequest(http.MethodPut, "/api/pmo/configs/"+config.ID+"/assignees/EXT-U-001", map[string]any{
-		"member_id": "0f2b6f6e-0000-4000-8000-000000000003",
+		"agent_id": "0f2b6f6e-0000-4000-8000-000000000003",
 	})
 	req = withURLParams(req, "id", config.ID, "externalKey", "EXT-U-001")
 	w = httptest.NewRecorder()
@@ -142,7 +142,7 @@ func TestSetPMOAssigneeMappingEndpoint(t *testing.T) {
 
 	// Unknown config → 404.
 	req = newRequest(http.MethodPut, "/api/pmo/configs/0f2b6f6e-0000-4000-8000-000000000001/assignees/EXT-U-001", map[string]any{
-		"member_id": testUserID,
+		"agent_id": config.AgentID,
 	})
 	req = withURLParams(req, "id", "0f2b6f6e-0000-4000-8000-000000000001", "externalKey", "EXT-U-001")
 	w = httptest.NewRecorder()
@@ -178,9 +178,9 @@ func TestApplyPMORunUsesMappedAssigneeViaEndpoint(t *testing.T) {
 		t.Fatalf("complete: %d %s", w.Code, w.Body.String())
 	}
 
-	// Map the external owner by member ID (never display name).
+	// Map the external owner by Agent ID (never display name).
 	mapReq := newRequest(http.MethodPut, "/api/pmo/configs/"+config.ID+"/assignees/EXT-U-001", map[string]any{
-		"member_id": testUserID,
+		"agent_id": config.AgentID,
 	})
 	mapReq = withURLParams(mapReq, "id", config.ID, "externalKey", "EXT-U-001")
 	mapW := httptest.NewRecorder()
@@ -194,7 +194,7 @@ func TestApplyPMORunUsesMappedAssigneeViaEndpoint(t *testing.T) {
 		t.Fatalf("apply: %d %s", applyW.Code, applyW.Body.String())
 	}
 
-	// The project lead is the mapped member — verified via project.lead_id.
+	// The project lead is the mapped Agent — verified via project lead columns.
 	var projectID string
 	if err := testPool.QueryRow(context.Background(), `
 		SELECT l.local_id FROM pmo_sync_link l
@@ -202,12 +202,13 @@ func TestApplyPMORunUsesMappedAssigneeViaEndpoint(t *testing.T) {
 	`, config.ID).Scan(&projectID); err != nil {
 		t.Fatalf("read project link: %v", err)
 	}
+	var leadType string
 	var leadID *string
-	if err := testPool.QueryRow(context.Background(), `SELECT lead_id::text FROM project WHERE id = $1`, projectID).Scan(&leadID); err != nil {
-		t.Fatalf("read project: %v", err)
+	if err := testPool.QueryRow(context.Background(), `SELECT lead_type, lead_id::text FROM project WHERE id = $1`, projectID).Scan(&leadType, &leadID); err != nil {
+		t.Fatalf("read project lead: %v", err)
 	}
-	if leadID == nil || *leadID != testUserID {
-		t.Fatalf("project lead = %v, want mapped member %s", leadID, testUserID)
+	if leadType != "agent" || leadID == nil || *leadID != config.AgentID {
+		t.Fatalf("project lead = %s/%v, want agent/%s", leadType, leadID, config.AgentID)
 	}
 }
 

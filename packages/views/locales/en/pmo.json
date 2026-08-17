@@ -68,6 +68,7 @@
     "start_date": "Start date",
     "due_date": "Due date",
     "workload": "Workload",
+    "milestone": "Milestone",
     "project_id": "Project",
     "parent_issue_id": "Parent issue",
     "unknown": "{{field}}"
@@ -113,7 +114,7 @@
     "loading": "Loading the latest preview..."
   },
   "assignees": {
-    "description": "Map external owners to workspace members so applies can set assignees. Mapping never guesses from display names.",
+    "description": "Map external owners to workspace agents so applies can set assignees. Mapping never guesses from display names.",
     "empty": "No unresolved external owners.",
     "external_owner": "External owner",
     "display_name": "Display name",
