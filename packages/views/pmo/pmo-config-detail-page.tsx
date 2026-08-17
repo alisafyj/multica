@@ -68,7 +68,7 @@ import {
   type DiffFilter,
   parseAssigneeOwners,
 } from "./pmo-diff";
-import { PMOSourcePreview, parsePMOSourceView } from "./pmo-source-preview";
+import { PMOSourcePreview, parsePMOSourceView, resolvePMOOwnerDisplay } from "./pmo-source-preview";
 
 export function PMOConfigDetailPage() {
   const { t } = useT("pmo");
@@ -337,6 +337,7 @@ export function PMOConfigDetailPage() {
       diff={diffView}
       filter={filter}
       rows={filteredRows}
+      members={members as MemberWithUser[]}
       selections={selections}
       onSelectionChange={handleChoice}
     />
@@ -619,11 +620,10 @@ export function PMOConfigDetailPage() {
                       .map((row) => row.field)
                       .filter((field, index, fields) => fields.indexOf(field) === index);
                     return (
-                      <div key={owner.externalId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                      <div key={owner.externalId} data-testid="pmo-assignee-row" className="grid grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] items-center gap-2 py-2 sm:grid-cols-[minmax(0,1fr)_14rem]">
                         <div className="min-w-0">
                           <p className="truncate text-body">
-                            {owner.displayName || "—"}
-                            <span className="ml-2 font-mono text-caption text-muted-foreground">{owner.externalId}</span>
+                            {resolvePMOOwnerDisplay(owner.externalId, members as MemberWithUser[])}
                           </p>
                           {references.length > 0 && (
                             <p className="truncate text-caption text-muted-foreground">
@@ -631,11 +631,11 @@ export function PMOConfigDetailPage() {
                             </p>
                           )}
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
                           <span className="hidden text-caption text-muted-foreground sm:block">{t(($) => $.config.agent_label)}</span>
                           <NativeSelect
                             key={`${owner.externalId}:${owner.resolvedAgentId}`}
-                            className="w-44"
+                            className="w-full"
                             defaultValue={owner.resolvedAgentId}
                             onChange={(event) => {
                               if (!event.target.value) return;

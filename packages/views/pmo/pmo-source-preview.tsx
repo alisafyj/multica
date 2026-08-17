@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { conflictId, TruncatedValue, type DiffFieldRow, type DiffFilter, type DiffView } from "./pmo-diff";
-import type { PMOApplyChoice } from "@multica/core/types";
+import type { MemberWithUser, PMOApplyChoice } from "@multica/core/types";
 import { useT } from "../i18n";
 
 interface SourceOwner {
@@ -48,8 +48,24 @@ export interface PMOSourcePreviewProps {
   diff: DiffView | null;
   filter: DiffFilter;
   rows: DiffFieldRow[];
+  members: MemberWithUser[];
   selections: Record<string, PMOApplyChoice>;
   onSelectionChange: (row: DiffFieldRow, choice: PMOApplyChoice) => void;
+}
+
+export function resolvePMOOwnerDisplay(externalId: string, members: MemberWithUser[]): string {
+  const originalId = externalId.trim();
+  if (!originalId) return "—";
+  const normalizedId = originalId.toLowerCase();
+  const member = members.find((candidate) => {
+    const email = (candidate.email ?? "").trim().toLowerCase();
+    return normalizedId.includes("@")
+      ? normalizedId === email
+      : normalizedId === email.split("@")[0];
+  });
+  const memberName = member?.name.trim();
+  if (memberName) return memberName;
+  return normalizedId.includes("@") ? normalizedId.split("@")[0] || normalizedId : originalId;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -215,11 +231,13 @@ function decisionCell(
 
 function RequirementSummary({
   requirement,
+  members,
   rows,
   selections,
   onSelectionChange,
 }: {
   requirement: SourceRequirement;
+  members: MemberWithUser[];
   rows: DiffFieldRow[];
   selections: Record<string, PMOApplyChoice>;
   onSelectionChange: (row: DiffFieldRow, choice: PMOApplyChoice) => void;
@@ -236,48 +254,116 @@ function RequirementSummary({
     converged: t(($) => $.preview.decision_converged),
     local: t(($) => $.preview.local),
   };
+  const rowByField = new Map(requirementRows.map((row) => [row.field, row]));
+  const hiddenRows = requirementRows.filter(
+    (row) => ![
+      "title",
+      "assignee_id",
+      "lead_id",
+      "start_date",
+      "due_date",
+      "workload",
+      "status",
+      "priority",
+      "description",
+      "prd_url",
+    ].includes(row.field) && row.decision !== "unchanged",
+  );
   return (
     <section className="space-y-2 py-4">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="text-title font-medium">{requirement.title}</h2>
-        <span className="font-mono text-caption text-muted-foreground">{requirement.displayNumber || requirement.key}</span>
+      <h2 className="sr-only">{requirement.title}</h2>
+      <div data-testid="pmo-requirement-table" className="overflow-x-auto">
+        <table className="min-w-[1080px] w-full table-fixed border-collapse text-left text-caption">
+          <thead>
+            <tr className="border-b text-muted-foreground">
+              <th className="w-36 px-3 py-2 font-medium">{t(($) => $.entities.requirement)} ID</th>
+              <th className="w-80 px-3 py-2 font-medium">{t(($) => $.fields.title)}</th>
+              <th className="w-40 px-3 py-2 font-medium">{t(($) => $.assignees.external_owner)}</th>
+              <th className="w-28 px-3 py-2 font-medium">{t(($) => $.fields.start_date)}</th>
+              <th className="w-28 px-3 py-2 font-medium">{t(($) => $.fields.due_date)}</th>
+              <th className="w-24 px-3 py-2 font-medium">{t(($) => $.fields.workload)}</th>
+              <th className="w-28 px-3 py-2 font-medium">{t(($) => $.fields.status)}</th>
+              <th className="w-20 px-3 py-2 font-medium">PRD</th>
+              {hiddenRows.length > 0 ? (
+                <th className="w-48 px-3 py-2 font-medium">{t(($) => $.preview.change)}</th>
+              ) : null}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td className="px-3 py-2 align-top font-mono">
+                <TruncatedValue value={requirement.displayNumber || requirement.key} className="font-mono text-caption" />
+                {requirement.priority ? <span className="mt-1 block text-micro text-muted-foreground">{requirement.priority}</span> : null}
+                {decisionCell(rowByField.get("priority"), selections, onSelectionChange, labels)}
+              </td>
+              <td className="px-3 py-2 align-top">
+                <TruncatedValue value={requirement.title} />
+                <div className="mt-1">{decisionCell(rowByField.get("title"), selections, onSelectionChange, labels)}</div>
+              </td>
+              <td className="px-3 py-2 align-top">
+                <TruncatedValue value={requirement.owner ? resolvePMOOwnerDisplay(requirement.owner.externalId, members) : "—"} />
+                <div className="mt-1 space-y-1">
+                  {decisionCell(rowByField.get("lead_id"), selections, onSelectionChange, labels)}
+                  {decisionCell(rowByField.get("assignee_id"), selections, onSelectionChange, labels)}
+                </div>
+              </td>
+              <td className="px-3 py-2 align-top">
+                <span>{requirement.startDate || "—"}</span>
+                <div className="mt-1">{decisionCell(rowByField.get("start_date"), selections, onSelectionChange, labels)}</div>
+              </td>
+              <td className="px-3 py-2 align-top">
+                <span>{requirement.dueDate || "—"}</span>
+                <div className="mt-1">{decisionCell(rowByField.get("due_date"), selections, onSelectionChange, labels)}</div>
+              </td>
+              <td className="px-3 py-2 align-top">
+                <span>{requirement.workload ?? "—"}</span>
+                <div className="mt-1">{decisionCell(rowByField.get("workload"), selections, onSelectionChange, labels)}</div>
+              </td>
+              <td className="px-3 py-2 align-top">
+                <span>{requirement.sourceStatus || requirement.status || "—"}</span>
+                <div className="mt-1">{decisionCell(rowByField.get("status"), selections, onSelectionChange, labels)}</div>
+              </td>
+              <td className="px-3 py-2 align-top">
+                {requirement.prdUrl ? (
+                  <a className="text-primary underline underline-offset-2" href={requirement.prdUrl} target="_blank" rel="noreferrer">
+                    PRD
+                  </a>
+                ) : "—"}
+                <div className="mt-1 space-y-1">
+                  {decisionCell(rowByField.get("description"), selections, onSelectionChange, labels)}
+                  {decisionCell(rowByField.get("prd_url"), selections, onSelectionChange, labels)}
+                </div>
+              </td>
+              {hiddenRows.length > 0 ? (
+                <td className="px-3 py-2 align-top">
+                  <div className="space-y-1">
+                    {hiddenRows.map((row) => (
+                      <div key={conflictId(row)} className="flex items-center gap-1.5">
+                        <TruncatedValue value={row.field} />
+                        {decisionCell(row, selections, onSelectionChange, labels)}
+                      </div>
+                    ))}
+                  </div>
+                </td>
+              ) : null}
+            </tr>
+          </tbody>
+        </table>
       </div>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-caption text-muted-foreground">
-        {requirement.priority ? <span>{requirement.priority}</span> : null}
-        {requirement.sourceStatus ? <span>{requirement.sourceStatus}</span> : null}
-        {requirement.status && requirement.status !== requirement.sourceStatus ? <span>{requirement.status}</span> : null}
-        {requirement.owner ? <span>{requirement.owner.displayName || requirement.owner.externalId}</span> : null}
-        {requirement.startDate ? <span>{requirement.startDate}</span> : null}
-        {requirement.dueDate ? <span>{requirement.dueDate}</span> : null}
-        {requirement.workload !== null ? <span>{requirement.workload}</span> : null}
-        {requirement.prdUrl ? (
-          <a className="text-primary underline underline-offset-2" href={requirement.prdUrl} target="_blank" rel="noreferrer">
-            PRD
-          </a>
-        ) : null}
-      </div>
-      {requirementRows.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption">
-          {requirementRows.map((row) => (
-            <div key={conflictId(row)} className="flex items-center gap-1.5">
-              <TruncatedValue value={row.field} />
-              {decisionCell(row, selections, onSelectionChange, labels)}
-            </div>
-          ))}
-        </div>
-      ) : null}
     </section>
   );
 }
 
 function ScheduleTable({
   requirement,
+  members,
   rows,
   selections,
   onSelectionChange,
   filter,
 }: {
   requirement: SourceRequirement;
+  members: MemberWithUser[];
   rows: DiffFieldRow[];
   selections: Record<string, PMOApplyChoice>;
   onSelectionChange: (row: DiffFieldRow, choice: PMOApplyChoice) => void;
@@ -293,103 +379,90 @@ function ScheduleTable({
     local: t(($) => $.preview.local),
   };
   const visibleTasks = requirement.tasks.filter((task) => filter === "all" || taskRows(task, rows).length > 0);
-  const groups = useMemo(() => {
-    const result = new Map<string, SourceTask[]>();
-    for (const task of visibleTasks) {
-      const key = `${task.schemeId}\0${task.schemeName}`;
-      result.set(key, [...(result.get(key) ?? []), task]);
-    }
-    return result;
-  }, [visibleTasks]);
   if (visibleTasks.length === 0) return null;
   return (
     <section className="space-y-3">
-      {[...groups.entries()].map(([key, tasks]) => {
-        const [schemeId, schemeName] = key.split("\0");
-        return (
-          <section key={key} className="space-y-2">
-            <h3 className="text-body font-medium">{schemeName || schemeId || t(($) => $.fields.milestone)}</h3>
-            <div data-testid="pmo-schedule-scroll" className="overflow-x-auto">
-              <table className="min-w-[860px] w-full border-collapse text-left">
-                <thead>
-                  <tr className="border-b text-caption text-muted-foreground">
-                    <th className="px-3 py-2 font-medium">{t(($) => $.entities.task)}</th>
-                    <th className="px-3 py-2 font-medium">{t(($) => $.assignees.external_owner)}</th>
-                    <th className="px-3 py-2 font-medium">{t(($) => $.fields.start_date)}</th>
-                    <th className="px-3 py-2 font-medium">{t(($) => $.fields.due_date)}</th>
-                    <th className="px-3 py-2 font-medium">{t(($) => $.fields.workload)}</th>
-                    <th className="px-3 py-2 font-medium">{t(($) => $.fields.milestone)}</th>
-                    <th className="px-3 py-2 font-medium">{t(($) => $.fields.status)}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tasks.map((task) => {
-                    const relatedRows = taskRows(task, rows);
-                    const rowByField = new Map(relatedRows.map((row) => [row.field, row]));
-                    const hiddenRows = relatedRows.filter(
-                      (row) => !["title", "assignee_id", "start_date", "due_date", "workload", "status"].includes(row.field)
-                        && row.decision !== "unchanged",
-                    );
-                    return (
-                      <tr key={task.taskId} className="border-b last:border-b-0">
-                        <td className="px-3 py-2 align-top">
-                          <TruncatedValue value={task.title} />
-                          <span className="block font-mono text-micro text-muted-foreground">{task.taskId}</span>
-                          <div className="mt-1 space-y-1">
-                            {decisionCell(rowByField.get("title"), selections, onSelectionChange, labels)}
-                            {hiddenRows.map((row) => (
-                              <div key={conflictId(row)} className="flex items-center gap-1.5 text-micro text-muted-foreground">
-                                <span>{row.field}</span>
-                                {decisionCell(row, selections, onSelectionChange, labels)}
-                              </div>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 align-top">
-                          <div className="flex flex-col items-start gap-1.5">
-                            <span>{task.owner?.displayName || task.owner?.externalId || "—"}</span>
-                            {decisionCell(rowByField.get("assignee_id"), selections, onSelectionChange, labels)}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 align-top">
-                          <div className="flex flex-col items-start gap-1.5">
-                            <span>{task.startDate || "—"}</span>
-                            {decisionCell(rowByField.get("start_date"), selections, onSelectionChange, labels)}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 align-top">
-                          <div className="flex flex-col items-start gap-1.5">
-                            <span>{task.dueDate || "—"}</span>
-                            {decisionCell(rowByField.get("due_date"), selections, onSelectionChange, labels)}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 align-top">
-                          <div className="flex flex-col items-start gap-1.5">
-                            <span>{task.workload ?? "—"}</span>
-                            {decisionCell(rowByField.get("workload"), selections, onSelectionChange, labels)}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 align-top">{task.schemeName || task.schemeId || "—"}</td>
-                        <td className="px-3 py-2 align-top">
-                          <div className="flex flex-col items-start gap-1.5">
-                            <span>{task.sourceStatus || task.status || "—"}</span>
-                            {decisionCell(rowByField.get("status"), selections, onSelectionChange, labels)}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        );
-      })}
+      <div data-testid="pmo-schedule-scroll" className="overflow-x-auto">
+        <table className="min-w-[1120px] w-full table-fixed border-collapse text-left">
+          <thead>
+            <tr className="border-b text-caption text-muted-foreground">
+              <th className="w-40 px-3 py-2 font-medium">{t(($) => $.entities.task)} ID</th>
+              <th className="w-72 px-3 py-2 font-medium">{t(($) => $.entities.task)}</th>
+              <th className="w-40 px-3 py-2 font-medium">{t(($) => $.assignees.external_owner)}</th>
+              <th className="w-28 px-3 py-2 font-medium">{t(($) => $.fields.start_date)}</th>
+              <th className="w-28 px-3 py-2 font-medium">{t(($) => $.fields.due_date)}</th>
+              <th className="w-24 px-3 py-2 font-medium">{t(($) => $.fields.workload)}</th>
+              <th className="w-40 px-3 py-2 font-medium">{t(($) => $.fields.milestone)}</th>
+              <th className="w-28 px-3 py-2 font-medium">{t(($) => $.fields.status)}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleTasks.map((task) => {
+              const relatedRows = taskRows(task, rows);
+              const rowByField = new Map(relatedRows.map((row) => [row.field, row]));
+              const hiddenRows = relatedRows.filter(
+                (row) => !["title", "assignee_id", "start_date", "due_date", "workload", "status"].includes(row.field)
+                  && row.decision !== "unchanged",
+              );
+              return (
+                <tr key={task.taskId} className="border-b last:border-b-0">
+                  <td className="px-3 py-2 align-top">
+                    <TruncatedValue value={task.taskId} className="font-mono text-caption" />
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <TruncatedValue value={task.title} />
+                    <div className="mt-1 space-y-1">
+                      {decisionCell(rowByField.get("title"), selections, onSelectionChange, labels)}
+                      {hiddenRows.map((row) => (
+                        <div key={conflictId(row)} className="flex items-center gap-1.5 text-micro text-muted-foreground">
+                          <span>{row.field}</span>
+                          {decisionCell(row, selections, onSelectionChange, labels)}
+                        </div>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <div className="flex flex-col items-start gap-1.5">
+                      <TruncatedValue value={task.owner ? resolvePMOOwnerDisplay(task.owner.externalId, members) : "—"} />
+                      {decisionCell(rowByField.get("assignee_id"), selections, onSelectionChange, labels)}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <div className="flex flex-col items-start gap-1.5">
+                      <span>{task.startDate || "—"}</span>
+                      {decisionCell(rowByField.get("start_date"), selections, onSelectionChange, labels)}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <div className="flex flex-col items-start gap-1.5">
+                      <span>{task.dueDate || "—"}</span>
+                      {decisionCell(rowByField.get("due_date"), selections, onSelectionChange, labels)}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <div className="flex flex-col items-start gap-1.5">
+                      <span>{task.workload ?? "—"}</span>
+                      {decisionCell(rowByField.get("workload"), selections, onSelectionChange, labels)}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 align-top">{task.schemeName || task.schemeId || "—"}</td>
+                  <td className="px-3 py-2 align-top">
+                    <div className="flex flex-col items-start gap-1.5">
+                      <span>{task.sourceStatus || task.status || "—"}</span>
+                      {decisionCell(rowByField.get("status"), selections, onSelectionChange, labels)}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
 
-export function PMOSourcePreview({ snapshot, diff: _diff, filter, rows, selections, onSelectionChange }: PMOSourcePreviewProps) {
+export function PMOSourcePreview({ snapshot, diff: _diff, filter, rows, members, selections, onSelectionChange }: PMOSourcePreviewProps) {
   const { t } = useT("pmo");
   const source = useMemo(() => parsePMOSourceView(snapshot), [snapshot]);
   if (!source) return null;
@@ -406,14 +479,14 @@ export function PMOSourcePreview({ snapshot, diff: _diff, filter, rows, selectio
     <div className="space-y-6 py-4">
       {parentVisible ? (
         <>
-          <RequirementSummary requirement={source.parent} rows={rows} selections={selections} onSelectionChange={onSelectionChange} />
-          <ScheduleTable requirement={source.parent} rows={rows} filter={filter} selections={selections} onSelectionChange={onSelectionChange} />
+          <RequirementSummary requirement={source.parent} members={members} rows={rows} selections={selections} onSelectionChange={onSelectionChange} />
+          <ScheduleTable requirement={source.parent} members={members} rows={rows} filter={filter} selections={selections} onSelectionChange={onSelectionChange} />
         </>
       ) : null}
       {visibleChildren.map((child) => (
         <section key={child.key} className="space-y-3">
-          <RequirementSummary requirement={child} rows={rows} selections={selections} onSelectionChange={onSelectionChange} />
-          <ScheduleTable requirement={child} rows={rows} filter={filter} selections={selections} onSelectionChange={onSelectionChange} />
+          <RequirementSummary requirement={child} members={members} rows={rows} selections={selections} onSelectionChange={onSelectionChange} />
+          <ScheduleTable requirement={child} members={members} rows={rows} filter={filter} selections={selections} onSelectionChange={onSelectionChange} />
         </section>
       ))}
     </div>

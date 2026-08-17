@@ -173,9 +173,9 @@ vi.mock("@tanstack/react-query", () => ({
     if (key === "pmo" && second === "configs") return queryState.configs;
     if (key === "pmo" && second === "runs") return { ...queryState.runs, data: options.queryKey?.[2] ? queryState.runs.data : undefined };
     if (key === "members") return { data: [
-      { id: "member-1", name: "Example Member", user_id: "user-1" },
-      { id: "member-2", name: "Feng Member", user_id: "user-feng-uuid" },
-      { id: "member-3", name: "Other Member", user_id: "user-other-uuid" },
+      { id: "member-1", name: "Example Member", email: "example@example.test", user_id: "user-1" },
+      { id: "member-2", name: "Feng Member", email: "fengyujie@example.test", user_id: "user-feng-uuid" },
+      { id: "member-3", name: "Other Member", email: "other@example.test", user_id: "user-other-uuid" },
     ] };
     if (key === "agents") return { data: [
       { id: "agent-1", name: "Example Agent", owner_id: "user-1", archived_at: null, runtime_bound: true },
@@ -468,27 +468,41 @@ describe("PMOConfigDetailPage preview tab", () => {
           status: "completed",
           priority: "P2-3",
           prd_url: "https://soyoung.feishu.cn/wiki/Ifl9wASw2iWHL4kEbN1cpF3Ynje",
-          owner: { external_id: "zhudi@soyoung.com", display_name: "药丸（朱迪）" },
+          owner: { external_id: "fengyujie@example.test", display_name: "Feng External" },
           start_date: "2026-07-21",
           due_date: "2026-08-11",
           workload: 15,
           tasks: [],
         },
         child_requirements: [],
-        tasks: [{
-          task_id: "TASK-FE-1",
-          scheme_id: "scheme-fe",
-          scheme_name: "M4-开发-前端",
-          title: "院务系统-开单处理",
-          description: "",
-          source_status: "未开始",
-          status: "todo",
-          owner: { external_id: "fengyujie", display_name: "风尘（冯钰杰）" },
-          start_date: "2026-07-24",
-          due_date: "2026-07-24",
-          workload: 1,
-          updated_at: null,
-        }],
+        tasks: [
+          {
+            task_id: "TASK-FE-1",
+            scheme_id: "scheme-fe",
+            scheme_name: "M4-开发-前端",
+            title: "院务系统-开单处理",
+            description: "",
+            source_status: "未开始",
+            status: "todo",
+            owner: { external_id: "fengyujie", display_name: "风尘（冯钰杰）" },
+            start_date: "2026-07-24",
+            due_date: "2026-07-24",
+            workload: 1,
+            updated_at: null,
+          },
+          {
+            task_id: "TASK-QA-1",
+            scheme_id: "scheme-qa",
+            scheme_name: "M5-测试",
+            title: "订单券码校验测试",
+            source_status: "进行中",
+            status: "in_progress",
+            owner: { external_id: "unmatched@example.test", display_name: "Unmatched User" },
+            start_date: "2026-07-25",
+            due_date: "2026-07-26",
+            workload: 2,
+          },
+        ],
       },
       diff: {
         entities: [{
@@ -513,15 +527,32 @@ describe("PMOConfigDetailPage preview tab", () => {
 
     expect(screen.getByRole("heading", { name: "院务系统-开单-增加美团订单券码校验-1.0" })).toBeInTheDocument();
     expect(screen.getByText("PM-21503")).toBeInTheDocument();
-    expect(screen.getByText("completed")).toBeInTheDocument();
+    expect(screen.getByText("已上线")).toBeInTheDocument();
     expect(screen.getByText("P2-3")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /PRD/ })).toHaveAttribute(
       "href",
       "https://soyoung.feishu.cn/wiki/Ifl9wASw2iWHL4kEbN1cpF3Ynje",
     );
-    expect(screen.getAllByText("M4-开发-前端")).toHaveLength(2);
+    const requirementTable = screen.getByTestId("pmo-requirement-table");
+    expect(within(requirementTable).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
+      "requirement ID",
+      "Title",
+      "External owner",
+      "Start date",
+      "Due date",
+      "Workload",
+      "Status",
+      "PRD",
+    ]);
+    const requirementRow = within(requirementTable).getByRole("row", { name: /院务系统-开单-增加美团订单券码校验-1.0/ });
+    expect(within(requirementRow).getByText("Feng Member")).toBeInTheDocument();
+    expect(within(requirementRow).getByRole("button", { name: "Use external SY-P-20260452 title" })).toBeInTheDocument();
+    const schedule = screen.getByTestId("pmo-schedule-scroll");
+    expect(screen.getAllByTestId("pmo-schedule-scroll")).toHaveLength(1);
+    expect(within(schedule).getAllByRole("row")).toHaveLength(3);
     const taskRow = screen.getByRole("row", { name: /院务系统-开单处理/ });
-    expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
+    expect(within(schedule).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
+      "task ID",
       "task",
       "External owner",
       "Start date",
@@ -531,15 +562,17 @@ describe("PMOConfigDetailPage preview tab", () => {
       "Status",
     ]);
     const taskCells = within(taskRow).getAllByRole("cell");
-    expect(taskCells).toHaveLength(7);
-    expect(taskCells[0]).toHaveTextContent("院务系统-开单处理TASK-FE-1");
-    expect(taskCells[1]).toHaveTextContent("风尘（冯钰杰）");
-    expect(taskCells[2]).toHaveTextContent("2026-07-24");
+    expect(taskCells).toHaveLength(8);
+    expect(taskCells[0]).toHaveTextContent("TASK-FE-1");
+    expect(taskCells[1]).toHaveTextContent("院务系统-开单处理");
+    expect(taskCells[2]).toHaveTextContent("Feng Member");
     expect(taskCells[3]).toHaveTextContent("2026-07-24");
-    expect(taskCells[4]).toHaveTextContent("1");
-    expect(taskCells[5]).toHaveTextContent("M4-开发-前端");
-    expect(taskCells[6]).toHaveTextContent("未开始");
-    expect(screen.getByTestId("pmo-schedule-scroll")).toHaveClass("overflow-x-auto");
+    expect(taskCells[4]).toHaveTextContent("2026-07-24");
+    expect(taskCells[5]).toHaveTextContent("1");
+    expect(taskCells[6]).toHaveTextContent("M4-开发-前端");
+    expect(taskCells[7]).toHaveTextContent("未开始");
+    expect(screen.getByRole("row", { name: /订单券码校验测试/ })).toHaveTextContent("unmatched");
+    expect(schedule).toHaveClass("overflow-x-auto");
     expect(screen.getByRole("button", { name: "Use external SY-P-20260452 title" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Use external TASK-FE-1 title" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Use external TASK-FE-1 status" })).toBeInTheDocument();
@@ -565,7 +598,7 @@ describe("PMOConfigDetailPage preview tab", () => {
     })]);
     renderPage();
 
-    expect(screen.getAllByText("legacy-scheme")).toHaveLength(3);
+    expect(screen.getAllByText("legacy-scheme")).toHaveLength(2);
     expect(screen.getAllByRole("row", { name: /Legacy task/ })).toHaveLength(2);
     expect(screen.getByRole("link", { name: /PRD/ })).toHaveAttribute("href", "https://example.test/prd");
   });
@@ -783,8 +816,7 @@ describe("PMOConfigDetailPage assignee tab", () => {
     setRuns([makeRun()]);
     renderPage();
     fireEvent.click(screen.getByRole("tab", { name: /Assignee mappings/ }));
-    expect(screen.getByText("Example User")).toBeInTheDocument();
-    expect(screen.getByText(/EXT-U-001/)).toBeInTheDocument();
+    expect(screen.getByText("EXT-U-001")).toBeInTheDocument();
     const agentSelect = screen.getByLabelText(/Agent EXT-U-001/) as HTMLSelectElement;
     expect(agentSelect).toBeInTheDocument();
     fireEvent.change(agentSelect, { target: { value: "agent-1" } });
@@ -844,10 +876,11 @@ describe("PMOConfigDetailPage assignee tab", () => {
     renderPage();
     fireEvent.click(screen.getByRole("tab", { name: /Assignee mappings/ }));
 
-    expect(screen.getAllByText("Feng Yu Jie")).toHaveLength(1);
+    expect(screen.getByText("Feng Member")).toBeInTheDocument();
     const recognizedSelect = screen.getByLabelText(/Agent fengyujie/) as HTMLSelectElement;
+    expect(recognizedSelect.closest("[data-testid='pmo-assignee-row']")).toHaveClass("grid");
     expect(recognizedSelect).toHaveValue("agent-feng");
-    expect(screen.getByText("Example User")).toBeInTheDocument();
+    expect(screen.getByText("EXT-U-001")).toBeInTheDocument();
     expect(screen.getByLabelText(/Agent EXT-U-001/)).toHaveValue("");
     expect(screen.getAllByRole("option", { name: "Frontend Agent · Feng Member" })).toHaveLength(2);
     expect(screen.getAllByLabelText(/Agent (fengyujie|EXT-U-001)/).every((select) =>
