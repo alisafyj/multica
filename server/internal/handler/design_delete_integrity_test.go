@@ -139,8 +139,8 @@ func createProjectInWorkspaceForDesignTest(t *testing.T, workspaceID, title stri
 	t.Helper()
 	var id string
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO project (workspace_id, title, description, status, priority)
-		VALUES ($1, $2, '', 'planned', 'medium')
+		INSERT INTO project (workspace_id, title, description, status, priority, created_by)
+		VALUES ($1, $2, '', 'planned', 'medium', (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, workspaceID, title).Scan(&id); err != nil {
 		t.Fatalf("insert project: %v", err)

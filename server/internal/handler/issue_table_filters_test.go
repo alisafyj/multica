@@ -23,7 +23,7 @@ func TestListIssues_TableFacetsAreServerSide(t *testing.T) {
 	createProject := func(title string) string {
 		var id string
 		if err := testPool.QueryRow(ctx, `
-			INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+			INSERT INTO project (workspace_id, title, created_by) VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1)) RETURNING id
 		`, testWorkspaceID, title).Scan(&id); err != nil {
 			t.Fatalf("create project: %v", err)
 		}

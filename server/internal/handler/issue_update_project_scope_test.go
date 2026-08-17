@@ -44,8 +44,8 @@ func TestUpdateIssueProjectStaysInWorkspace(t *testing.T) {
 
 	var localProjectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, $2)
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, testWorkspaceID, "Local update project "+suffix).Scan(&localProjectID); err != nil {
 		t.Fatalf("insert local project: %v", err)
@@ -68,8 +68,8 @@ func TestUpdateIssueProjectStaysInWorkspace(t *testing.T) {
 
 	var foreignProjectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, $2)
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, foreignWorkspaceID, "Foreign update project "+suffix).Scan(&foreignProjectID); err != nil {
 		t.Fatalf("insert foreign project: %v", err)
@@ -135,8 +135,8 @@ func TestBatchUpdateIssuesProjectStaysInWorkspace(t *testing.T) {
 
 	var localProjectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, $2)
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, testWorkspaceID, "Local batch project "+suffix).Scan(&localProjectID); err != nil {
 		t.Fatalf("insert local project: %v", err)
@@ -159,8 +159,8 @@ func TestBatchUpdateIssuesProjectStaysInWorkspace(t *testing.T) {
 
 	var foreignProjectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, $2)
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, foreignWorkspaceID, "Foreign batch project "+suffix).Scan(&foreignProjectID); err != nil {
 		t.Fatalf("insert foreign project: %v", err)
