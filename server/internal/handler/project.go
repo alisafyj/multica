@@ -30,6 +30,7 @@ type ProjectResponse struct {
 	Priority    string  `json:"priority"`
 	LeadType    *string `json:"lead_type"`
 	LeadID      *string `json:"lead_id"`
+	PMOImported bool    `json:"pmo_imported"`
 	CreatedBy   *string `json:"created_by"`
 	// StartDate / DueDate are calendar days ("YYYY-MM-DD"), no time-of-day or
 	// timezone — same contract as issue.start_date / issue.due_date.
@@ -79,6 +80,20 @@ func (h *Handler) loadProjectResourceCount(ctx context.Context, projectID pgtype
 		return 0
 	}
 	return rows[0].ResourceCount
+}
+
+func (h *Handler) loadPMOImportedProjectIDs(ctx context.Context, workspaceID pgtype.UUID) map[string]struct{} {
+	rows, err := h.Queries.ListPMOImportedProjectIDs(ctx, workspaceID)
+	if err != nil {
+		return nil
+	}
+	ids := make(map[string]struct{}, len(rows))
+	for _, id := range rows {
+		if id.Valid {
+			ids[uuidToString(id)] = struct{}{}
+		}
+	}
+	return ids
 }
 
 type CreateProjectRequest struct {
@@ -143,6 +158,7 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	// Batch-fetch issue stats and resource counts for all projects
 	statsMap := make(map[string]db.GetProjectIssueStatsRow)
 	resourceCountMap := make(map[string]int64)
+	pmoImportedIDs := h.loadPMOImportedProjectIDs(r.Context(), wsUUID)
 	if len(projects) > 0 {
 		projectIDs := make([]pgtype.UUID, len(projects))
 		for i, p := range projects {
@@ -169,6 +185,7 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 			resp[i].IssueCount = s.TotalCount
 			resp[i].DoneCount = s.DoneCount
 		}
+		_, resp[i].PMOImported = pmoImportedIDs[resp[i].ID]
 		resp[i].ResourceCount = resourceCountMap[resp[i].ID]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"projects": resp, "total": len(resp)})
@@ -193,6 +210,7 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := projectToResponse(project)
+	_, resp.PMOImported = h.loadPMOImportedProjectIDs(r.Context(), wsUUID)[resp.ID]
 	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), project.ID)
 	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
 	writeJSON(w, http.StatusOK, resp)

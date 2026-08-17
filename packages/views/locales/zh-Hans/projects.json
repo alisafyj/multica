@@ -176,11 +176,16 @@
     "section_status": "状态",
     "section_priority": "优先级",
     "section_lead": "负责人",
+    "section_pmo_imported": "PM系统导入",
     "display": "显示",
     "sort_by": "排序",
     "direction_asc": "升序",
     "direction_desc": "降序",
     "section_columns": "列",
     "view": "视图"
+  },
+  "pmo_imported": {
+    "true": "是",
+    "false": "否"
   }
 }

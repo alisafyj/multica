@@ -178,11 +178,16 @@
     "section_status": "Status",
     "section_priority": "Priority",
     "section_lead": "Lead",
+    "section_pmo_imported": "PM system import",
     "display": "Display",
     "sort_by": "Sort by",
     "direction_asc": "Ascending",
     "direction_desc": "Descending",
     "section_columns": "Columns",
     "view": "View"
+  },
+  "pmo_imported": {
+    "true": "Yes",
+    "false": "No"
   }
 }

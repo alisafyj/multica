@@ -126,6 +126,8 @@ const STATUS_ORDER: Record<ProjectStatus, number> = {
   cancelled: 4,
 };
 
+const PMO_IMPORTED_VALUES = ["true", "false"] as const;
+
 const progressOf = (p: Project) =>
   p.issue_count > 0 ? p.done_count / p.issue_count : -1;
 
@@ -689,6 +691,7 @@ function countActiveFilters(f: ProjectListFilters): number {
   if (f.statuses.length) c++;
   if (f.priorities.length) c++;
   if (f.leads.length) c++;
+  if (f.pmoImported.length) c++;
   return c;
 }
 
@@ -875,6 +878,12 @@ export function ProjectsPage() {
       if (filters.leads.length) {
         const v = leadFilterValue(p);
         if (!v || !filters.leads.includes(v)) return false;
+      }
+      if (
+        filters.pmoImported.length &&
+        !filters.pmoImported.includes(String(p.pmo_imported === true))
+      ) {
+        return false;
       }
       return true;
     });
@@ -1091,6 +1100,27 @@ export function ProjectsPage() {
                           <ActorAvatar actorType={type} actorId={id} size="sm" />
                           <span className="min-w-0 truncate">{getActorName(type, id)}</span>
                           {countBadge(count)}
+                        </DropdownMenuCheckboxItem>
+                      ))}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>
+                      <span className="flex-1">{t(($) => $.toolbar.section_pmo_imported)}</span>
+                      {filters.pmoImported.length > 0 && (
+                        <span className="text-caption font-medium text-primary">{filters.pmoImported.length}</span>
+                      )}
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="w-auto min-w-44">
+                      {PMO_IMPORTED_VALUES.map((value) => (
+                        <DropdownMenuCheckboxItem
+                          key={value}
+                          checked={filters.pmoImported.includes(value)}
+                          onCheckedChange={() => toggleFilter("pmoImported", value)}
+                          className={FILTER_ITEM_CLASS}
+                        >
+                          <HoverCheck checked={filters.pmoImported.includes(value)} />
+                          {t(($) => $.pmo_imported[value])}
                         </DropdownMenuCheckboxItem>
                       ))}
                     </DropdownMenuSubContent>

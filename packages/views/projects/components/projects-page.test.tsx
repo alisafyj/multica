@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => ({
     sortField: "name",
     sortDirection: "asc",
     hiddenColumns: [] as string[],
-    filters: { statuses: [], priorities: [], leads: [] },
+    filters: { statuses: [], priorities: [], leads: [], pmoImported: [] as string[] },
     setViewMode: vi.fn(),
     toggleSort: vi.fn(),
     setSortField: vi.fn(),
@@ -247,7 +247,26 @@ beforeEach(() => {
   mocks.projectViewState.sortField = "name";
   mocks.projectViewState.sortDirection = "asc";
   mocks.projectViewState.hiddenColumns = [];
-  mocks.projectViewState.filters = { statuses: [], priorities: [], leads: [] };
+  mocks.projectViewState.filters = { statuses: [], priorities: [], leads: [], pmoImported: [] };
+});
+
+describe("ProjectsPage PMO import filter", () => {
+  it("keeps only projects matching the selected PMO import state", () => {
+    const imported = { ...PROJECT, id: "project-imported", title: "Imported Plan", pmo_imported: true };
+    const manual = { ...PROJECT, id: "project-manual", title: "Manual Plan", pmo_imported: false };
+    mocks.projects = [imported, manual];
+    mocks.projectViewState.filters = {
+      statuses: [],
+      priorities: [],
+      leads: [],
+      pmoImported: ["true"],
+    };
+
+    renderProjects();
+
+    expect(screen.getByText(imported.title)).toBeInTheDocument();
+    expect(screen.queryByText(manual.title)).not.toBeInTheDocument();
+  });
 });
 
 describe("ProjectsPage compact row navigation", () => {
