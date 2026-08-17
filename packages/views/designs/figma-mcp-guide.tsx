@@ -70,14 +70,14 @@ export function FigmaMCPGuide() {
           {STEPS.map((step, index) => (
             <li key={step.title} className="rounded-lg border bg-muted/20 p-4">
               <div className="flex items-start gap-3">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-caption font-medium text-primary-foreground">
                   {index + 1}
                 </span>
                 <div className="min-w-0 flex-1">
                   <h3 className="text-body font-medium">{step.title}</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">{step.body}</p>
+                  <p className="mt-1 text-body text-muted-foreground">{step.body}</p>
                   {step.code ? (
-                    <pre className="mt-3 overflow-x-auto rounded-md bg-background p-3 font-mono text-xs leading-relaxed">
+                    <pre className="mt-3 overflow-x-auto rounded-md bg-background p-3 font-mono text-caption leading-relaxed">
                       <code>{step.code}</code>
                     </pre>
                   ) : null}
