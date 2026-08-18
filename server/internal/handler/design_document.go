@@ -273,17 +273,58 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 	}
 	responses := make([]DesignDocumentResponse, 0, len(documents))
 	for _, document := range documents {
-		responses = append(responses, designDocumentResponse(document, nil))
+		// The active task decides whether "running" is still true, so the list
+		// has to load it too. Without this a document whose task died holding
+		// the pointer lists as 生成中 indefinitely — the detail view would
+		// disagree with the list it was opened from.
+		var activeTask *db.AgentTaskQueue
+		if document.ActiveTaskID.Valid {
+			task, err := h.Queries.GetAgentTask(r.Context(), document.ActiveTaskID)
+			if err == nil {
+				activeTask = &task
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				writeProjectDesignSystemError(w, http.StatusInternalServerError, "lookup_failed", "failed to load design documents")
+				return
+			}
+		}
+		responses = append(responses, designDocumentResponse(document, activeTask))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"documents": responses})
 }
 
 // designDocumentStatus derives the user-visible state from the pointers, so
 // there is no status column that can disagree with them.
-func designDocumentStatus(document db.DesignDocument) string {
+// isTerminalTaskStatus reports whether an agent task has finished for good.
+// Anything else — queued, dispatched, running, waiting, deferred — is still
+// on its way to one of these.
+func isTerminalTaskStatus(status string) bool {
+	switch status {
+	case "completed", "failed", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+// designDocumentStatus derives the status from the document's own pointers.
+//
+// `task` is the row `active_task_id` points at, when the caller loaded it. It
+// is consulted only to disprove "running": a task that already reached a
+// terminal state cannot still be generating, and treating the pointer alone as
+// proof of work is what leaves a document reading "生成中" forever after a task
+// dies without releasing it. Callers that pass nil get the pointer-only
+// reading, which is correct for list endpoints that never claim a live task.
+func designDocumentStatus(document db.DesignDocument, task *db.AgentTaskQueue) string {
+	activeTaskRunning := document.ActiveTaskID.Valid &&
+		(task == nil || !isTerminalTaskStatus(task.Status))
 	switch {
-	case document.ActiveTaskID.Valid:
+	case activeTaskRunning:
 		return "running"
+	// The pointer outlived its task. Surface what the document actually has —
+	// the failure, or the draft the failed run never replaced — instead of a
+	// generation that is not happening.
+	case document.ActiveTaskID.Valid && len(document.LastError) > 0 && string(document.LastError) != "null":
+		return "failed"
 	case document.SavedRevisionID.Valid && document.DraftRevisionID.Valid &&
 		document.DraftRevisionID != document.SavedRevisionID:
 		return "draft_ahead_of_saved"
@@ -308,7 +349,7 @@ func designDocumentResponse(document db.DesignDocument, task *db.AgentTaskQueue)
 		Title:              document.Title,
 		Platform:           document.Platform,
 		Recipe:             document.Recipe,
-		Status:             designDocumentStatus(document),
+		Status:             designDocumentStatus(document, task),
 		DraftRevisionID:    uuidToString(document.DraftRevisionID),
 		SavedRevisionID:    uuidToString(document.SavedRevisionID),
 		InputSnapshot:      jsonOrDefault(document.InputSnapshot, `{}`),

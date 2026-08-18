@@ -4760,6 +4760,79 @@ func (s *TaskService) markProjectDesignSystemTaskFailed(
 	return err
 }
 
+// markDesignDocumentTaskFailed releases the document a failed page-design task
+// was holding.
+//
+// Without this the document keeps its `active_task_id` forever and
+// designDocumentStatus() — which reads that pointer, not the task's own status
+// — reports "generating" for a task the queue already gave up on. The pointer
+// is what the UI, the single-writer guard and the next adjustment all consult,
+// so a task that dies without clearing it wedges the document permanently.
+//
+// The failed task is matched through the document's own active pointer rather
+// than an id inside the envelope: the pointer is the authority on which
+// document this task currently owns, so a stale or malformed context cannot
+// release a document that has already moved on to another task.
+//
+// Draft and saved pointers are deliberately untouched — a failure never
+// degrades what the user already has (DC-034).
+func (s *TaskService) markDesignDocumentTaskFailed(
+	ctx context.Context,
+	queries *db.Queries,
+	task db.AgentTaskQueue,
+	code string,
+	message string,
+) error {
+	taskContext, ok := s.parseDesignDocumentTaskWorkspaceContext(task)
+	if !ok {
+		return nil
+	}
+	workspaceID, err := util.ParseUUID(taskContext.WorkspaceID)
+	if err != nil {
+		return fmt.Errorf("parse design document workspace id: %w", err)
+	}
+
+	document, err := queries.GetDesignDocumentByActiveTask(ctx, db.GetDesignDocumentByActiveTaskParams{
+		WorkspaceID:  workspaceID,
+		ActiveTaskID: task.ID,
+	})
+	// No document points at this task: it already settled, or the task never
+	// reached one. Either way there is nothing to release.
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = "design_document_task_failed"
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "design document task failed"
+	}
+	lastError, err := json.Marshal(map[string]any{
+		"code":      code,
+		"message":   message,
+		"task_id":   util.UUIDToString(task.ID),
+		"operation": document.ActiveOperation.String,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = queries.SetDesignDocumentFailure(ctx, db.SetDesignDocumentFailureParams{
+		LastError:   lastError,
+		ID:          document.ID,
+		WorkspaceID: workspaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
 // retryableReasons enumerates failure reasons that the auto-retry path is
 // allowed to act on. Agent-side errors (compile failures, model rejections,
 // etc.) are intentionally excluded — those are real problems that the user
@@ -5320,6 +5393,16 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 		}
 		if err := s.markProjectDesignSystemTaskFailed(ctx, s.Queries, t, failureCode, failureMessage); err != nil {
 			slog.Warn("handle failed tasks: failed to update project design system",
+				"task_id", util.UUIDToString(t.ID),
+				"error", err,
+			)
+		}
+		designDocumentCode := "design_document_task_failed"
+		if t.FailureReason.Valid && strings.TrimSpace(t.FailureReason.String) != "" {
+			designDocumentCode = t.FailureReason.String
+		}
+		if err := s.markDesignDocumentTaskFailed(ctx, s.Queries, t, designDocumentCode, failureMessage); err != nil {
+			slog.Warn("handle failed tasks: failed to update design document",
 				"task_id", util.UUIDToString(t.ID),
 				"error", err,
 			)

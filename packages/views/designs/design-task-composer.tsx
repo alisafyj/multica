@@ -44,6 +44,12 @@ import type {
   ProjectResource,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@multica/ui/components/ui/dropdown-menu";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
 import { ActorAvatar } from "../common/actor-avatar";
@@ -58,41 +64,37 @@ import { DesignDotGrid } from "./design-dot-grid";
 import { DesignExamplePrompts } from "./design-example-prompts";
 import { DesignRecentDocuments } from "./design-recent-documents";
 
-// Scenario chips (DC-049). Every one of them produces a page design; they
-// differ in the recipe the agent follows, not in the artifact kind — which is
-// why they carry a `recipe` rather than an artifact type. Picking none leaves
-// the recipe at `default`, the free-form path.
-const SCENARIO_CHIPS: ReadonlyArray<{
-  recipe: Exclude<DesignDocumentRecipe, "default">;
-  label: string;
-  description: string;
-  icon: typeof AppWindow;
-}> = [
-  { recipe: "ui-mockup", label: "UI Mockup", description: "可交互的应用界面稿", icon: AppWindow },
-  { recipe: "web-clone", label: "网站复刻", description: "按现有网站还原页面", icon: Globe },
-  { recipe: "wireframe", label: "线框图", description: "低保真的页面与流程", icon: PanelsTopLeft },
-  { recipe: "mobile-app", label: "移动应用", description: "iOS 与 Android 界面", icon: Smartphone },
-  { recipe: "figma-migration", label: "来自 Figma", description: "把 Figma 稿转成页面设计", icon: Frame },
-];
-
-// The rest of the creation rail. These positions are laid out so the rail
-// reads as the whole product surface, but nothing in this phase produces a
-// deck, image, video, audio, WebGL or live artifact, and a design system is
-// created inside a project's own scope rather than from here (DC-052 /
-// DC-054). They stay inert rather than pretending to start something.
-const UPCOMING_CHIPS: ReadonlyArray<{
+/**
+ * The creation rail (DC-049). One ordered list of every artifact type the
+ * design centre presents, live and not-yet-live together, so the rail reads as
+ * the whole product surface rather than two stacked tiers.
+ *
+ * A chip carrying a `recipe` starts a real page-design task; the recipe is the
+ * configuration the agent follows, not a different artifact kind. Picking none
+ * leaves the recipe at `default`, the free-form path. Chips without one keep
+ * their position but stay inert — nothing in this phase produces a deck,
+ * image, video, audio, WebGL or live artifact, and a design system is created
+ * inside a project's own scope rather than from here (DC-052 / DC-054).
+ */
+const CREATE_TYPES: ReadonlyArray<{
   id: string;
+  recipe?: Exclude<DesignDocumentRecipe, "default">;
   label: string;
   description: string;
   icon: typeof AppWindow;
 }> = [
+  { id: "ui-mockup", recipe: "ui-mockup", label: "UI Mockup", description: "可交互的应用界面稿", icon: AppWindow },
   { id: "deck", label: "幻灯片", description: "成套的演示页面", icon: Presentation },
+  { id: "wireframe", recipe: "wireframe", label: "线框图", description: "低保真的页面与流程", icon: PanelsTopLeft },
+  { id: "mobile-app", recipe: "mobile-app", label: "移动应用", description: "iOS 与 Android 界面", icon: Smartphone },
   { id: "document", label: "文档", description: "长文与报告版式", icon: FileText },
+  { id: "figma-migration", recipe: "figma-migration", label: "来自 Figma", description: "把 Figma 稿转成页面设计", icon: Frame },
   { id: "image", label: "图片", description: "单张视觉素材", icon: ImageIcon },
-  { id: "video", label: "视频", description: "分镜与动态素材", icon: Video },
-  { id: "audio", label: "音频", description: "语音与音效素材", icon: AudioLines },
   { id: "webgl", label: "WebGL 体验", description: "三维与实时渲染", icon: Sparkles },
   { id: "live-board", label: "实时看板", description: "接入实时数据的看板", icon: ChartColumn },
+  { id: "video", label: "视频", description: "分镜与动态素材", icon: Video },
+  { id: "audio", label: "音频", description: "语音与音效素材", icon: AudioLines },
+  { id: "web-clone", recipe: "web-clone", label: "网站复刻", description: "按现有网站还原页面", icon: Globe },
   { id: "design-system", label: "创建设计体系", description: "在项目的设计体系里创建", icon: SwatchBook },
 ];
 
@@ -215,6 +217,146 @@ function CreateChip({
       <Icon className="size-3.5 shrink-0" />
       <span className="truncate">{label}</span>
     </button>
+  );
+}
+
+/**
+ * The creation rail: one row that shows as many types as fit and folds the
+ * rest behind 全部.
+ *
+ * Measurement, not a scroll container: a rail that scrolls hides the types it
+ * cut off behind a gesture, while folding them into a menu keeps every type
+ * one click away at any width. Which chips fit is a layout fact, so it is read
+ * from the DOM after paint rather than guessed from a character count — chip
+ * widths depend on the rendered font.
+ *
+ * The selected chip is always shown, even when it would measure out: a rail
+ * that hides the active选择 reads as if nothing is selected at all.
+ */
+function CreateTypeRail({
+  recipe,
+  onPick,
+}: {
+  // Widened the same way the composer's own state is: a catalogue recipe is a
+  // slug, and it has to leave every built-in chip unselected rather than fail
+  // to type-check against the union.
+  recipe: DesignDocumentRecipe | string;
+  onPick: (recipe: Exclude<DesignDocumentRecipe, "default">) => void;
+}) {
+  const railRef = useRef<HTMLDivElement | null>(null);
+  const chipRefs = useRef(new Map<string, HTMLElement>());
+  const [hiddenIds, setHiddenIds] = useState<ReadonlySet<string>>(() => new Set());
+
+  const selectedId = recipe === "default" ? null : recipe;
+
+  useEffect(() => {
+    const rail = railRef.current;
+    if (!rail) return;
+
+    const measure = () => {
+      // No layout to read yet (first paint, a hidden ancestor, or a test
+      // environment without layout). Folding on a zero width would hide every
+      // chip; showing them all is the honest answer until a real width exists.
+      if (rail.clientWidth === 0) {
+        setHiddenIds((current) => (current.size === 0 ? current : new Set()));
+        return;
+      }
+      // Room the 全部 trigger needs once anything folds. Reserved
+      // unconditionally: measuring against the full width would let the last
+      // chip fit, then be pushed out by the trigger it caused to appear.
+      const reserved = 84;
+      const limit = rail.clientWidth - reserved;
+      const next = new Set<string>();
+      // The selected chip is never folded, so its width is committed before
+      // anything competes for the row. Charging it in document order instead
+      // would let earlier chips spend the budget and leave the selected one to
+      // be clipped by the rail's own overflow.
+      const selectedNode = selectedId ? chipRefs.current.get(selectedId) : undefined;
+      let used = selectedNode ? selectedNode.offsetWidth + 6 : 0;
+      for (const type of CREATE_TYPES) {
+        if (type.id === selectedId) continue;
+        const node = chipRefs.current.get(type.id);
+        if (!node) continue;
+        const width = node.offsetWidth + 6; // gap-1.5
+        if (used + width > limit) {
+          next.add(type.id);
+          continue;
+        }
+        used += width;
+      }
+      setHiddenIds((current) => {
+        if (current.size === next.size && [...next].every((id) => current.has(id))) return current;
+        return next;
+      });
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(rail);
+    return () => observer.disconnect();
+  }, [selectedId]);
+
+  const hiddenTypes = CREATE_TYPES.filter((type) => hiddenIds.has(type.id));
+
+  return (
+    <div role="group" aria-label="设计场景" className="relative flex items-center gap-1.5">
+      <div ref={railRef} className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+        {CREATE_TYPES.map((type) => (
+          <div
+            key={type.id}
+            ref={(node) => {
+              if (node) chipRefs.current.set(type.id, node);
+              else chipRefs.current.delete(type.id);
+            }}
+            // Folded chips stay mounted so their width remains measurable —
+            // remeasuring an unmounted chip is what makes a rail oscillate
+            // between two widths.
+            className={cn("shrink-0", hiddenIds.has(type.id) && "pointer-events-none absolute -z-10 opacity-0")}
+            aria-hidden={hiddenIds.has(type.id) || undefined}
+          >
+            <CreateChip
+              label={type.label}
+              description={type.description}
+              icon={type.icon}
+              selected={type.recipe ? recipe === type.recipe : undefined}
+              disabled={!type.recipe}
+              onClick={type.recipe ? () => onPick(type.recipe!) : undefined}
+            />
+          </div>
+        ))}
+      </div>
+      {hiddenTypes.length > 0 ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <button
+                type="button"
+                aria-label={`全部设计场景，另有 ${hiddenTypes.length} 项`}
+                className="flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-full border px-2.5 text-caption text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+              >
+                <span>全部</span>
+                <ChevronDown className="size-3.5 shrink-0" />
+              </button>
+            }
+          />
+          <DropdownMenuContent align="end" className="w-56">
+            {hiddenTypes.map((type) => (
+              <DropdownMenuItem
+                key={type.id}
+                disabled={!type.recipe}
+                onClick={type.recipe ? () => onPick(type.recipe!) : undefined}
+              >
+                <type.icon className="size-4 shrink-0" />
+                <span className="flex-1 truncate">{type.label}</span>
+                {!type.recipe ? (
+                  <span className="shrink-0 text-caption text-muted-foreground">即将支持</span>
+                ) : null}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
+    </div>
   );
 }
 
@@ -616,42 +758,18 @@ export function DesignTaskComposer({
     <div className="relative min-h-0 flex-1 overflow-y-auto">
       <DesignDotGrid />
       <div className="relative z-10 mx-auto flex w-full max-w-4xl flex-col px-4 py-8 sm:px-6 sm:py-10">
-        {/* The whole creation surface, laid out at once. Only the scenarios
-            with a real producer are live; the rest keep their position so the
-            rail reads as complete without promising anything. */}
-        <div role="group" aria-label="设计场景" className="flex flex-wrap items-center gap-1.5">
-          {SCENARIO_CHIPS.map((chip) => (
-            <CreateChip
-              key={chip.recipe}
-              label={chip.label}
-              description={chip.description}
-              icon={chip.icon}
-              selected={recipe === chip.recipe}
-              onClick={() => {
-                // A built-in chip and a catalogue recipe are the same field, so
-                // picking one has to drop the other.
-                setAppliedRecipe(null);
-                setRecipe((current) => (current === chip.recipe ? "default" : chip.recipe));
-              }}
-            />
-          ))}
-        </div>
-        <div
-          role="group"
-          aria-label="即将支持的设计场景"
-          className="mt-2 flex flex-wrap items-center gap-1.5"
-        >
-          <span className="shrink-0 pr-0.5 text-caption text-muted-foreground">即将支持</span>
-          {UPCOMING_CHIPS.map((chip) => (
-            <CreateChip
-              key={chip.id}
-              label={chip.label}
-              description={chip.description}
-              icon={chip.icon}
-              disabled
-            />
-          ))}
-        </div>
+        {/* The whole creation surface on one line. Only the scenarios with a
+            real producer are live; the rest keep their position so the rail
+            reads as complete without promising anything. */}
+        <CreateTypeRail
+          recipe={recipe}
+          onPick={(picked) => {
+            // A built-in chip and a catalogue recipe are the same field, so
+            // picking one has to drop the other.
+            setAppliedRecipe(null);
+            setRecipe((current) => (current === picked ? "default" : picked));
+          }}
+        />
 
         <div className="mt-3 rounded-2xl border bg-card shadow-sm transition-colors focus-within:border-primary/60">
           <Textarea
