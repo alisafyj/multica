@@ -48,6 +48,19 @@ func TestLogClaimEndpointSlowIncludesPayloadFields(t *testing.T) {
 	}
 }
 
+func TestProjectDesignSystemClaimBlockReason(t *testing.T) {
+	if reason := projectDesignSystemClaimBlockReason(false, false); reason != "" {
+		t.Fatalf("ordinary task was blocked: %q", reason)
+	}
+	if reason := projectDesignSystemClaimBlockReason(true, true); reason != "" {
+		t.Fatalf("capable runtime was blocked: %q", reason)
+	}
+	reason := projectDesignSystemClaimBlockReason(true, false)
+	if !strings.Contains(reason, "Update the Multica app") {
+		t.Fatalf("outdated runtime reason = %q, want upgrade guidance", reason)
+	}
+}
+
 // slowProbeLocalSkillListStore wraps a LocalSkillListStore but blocks inside
 // HasPending until the provided context is cancelled. PopPending delegates
 // to the underlying store. Used to verify that a stalled probe cannot wedge
@@ -2796,7 +2809,7 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	// workspace's repos list.
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+		INSERT INTO project (workspace_id, title, created_by) VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1)) RETURNING id
 	`, testWorkspaceID, "Claim project repo override").Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -2898,7 +2911,7 @@ func TestClaimTask_ProjectDescriptionInjected(t *testing.T) {
 	const projectDescription = "Always write copy in British English. Ship behind a feature flag."
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title, description) VALUES ($1, $2, $3) RETURNING id
+		INSERT INTO project (workspace_id, title, description, created_by) VALUES ($1, $2, $3, (SELECT id FROM "user" LIMIT 1)) RETURNING id
 	`, testWorkspaceID, "Claim project description", projectDescription).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -2976,7 +2989,7 @@ func TestClaimTask_QuickCreateInjectsProjectDescription(t *testing.T) {
 	const projectDescription = "Use the design system tokens; never hardcode colors."
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title, description) VALUES ($1, $2, $3) RETURNING id
+		INSERT INTO project (workspace_id, title, description, created_by) VALUES ($1, $2, $3, (SELECT id FROM "user" LIMIT 1)) RETURNING id
 	`, testWorkspaceID, "Quick-create project description", projectDescription).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -3020,7 +3033,7 @@ func TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos(t *testing.T) {
 
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+		INSERT INTO project (workspace_id, title, created_by) VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1)) RETURNING id
 	`, testWorkspaceID, "Claim project without repos").Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -5240,10 +5253,37 @@ func TestClaimProjectDesignSystemTaskReturnsExactContext(t *testing.T) {
 	`, agentID, runtimeID, contextJSON).Scan(&taskID); err != nil {
 		t.Fatalf("create project design system task: %v", err)
 	}
-	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	blockedTaskID := taskID
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, blockedTaskID) })
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "project-design-system-claim")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("outdated ClaimTaskByRuntime: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var blockedStatus, blockedReason string
+	if err := testPool.QueryRow(ctx, `SELECT status, failure_reason FROM agent_task_queue WHERE id = $1`, blockedTaskID).Scan(&blockedStatus, &blockedReason); err != nil {
+		t.Fatalf("read blocked task: %v", err)
+	}
+	if blockedStatus != "cancelled" || blockedReason != "project_design_system_context_unsupported" {
+		t.Fatalf("blocked task = %q/%q, want cancelled/project_design_system_context_unsupported", blockedStatus, blockedReason)
+	}
+
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
+		VALUES ($1, $2, NULL, 'queued', 0, $3::jsonb)
+		RETURNING id
+	`, agentID, runtimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("create capable project design system task: %v", err)
+	}
+	capableTaskID := taskID
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, capableTaskID) })
+
+	w = httptest.NewRecorder()
+	req = newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "project-design-system-claim")
+	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityProjectDesignSystemV1)
 	req = withURLParam(req, "runtimeId", runtimeID)
 	testHandler.ClaimTaskByRuntime(w, req)
 	if w.Code != http.StatusOK {
@@ -5358,6 +5398,7 @@ func TestClaimProjectDesignSystemRepositoryAnalysisReturnsProjectResources(t *te
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "project-design-system-repository-analysis-claim")
+	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityProjectDesignSystemV1)
 	req = withURLParam(req, "runtimeId", runtimeID)
 	testHandler.ClaimTaskByRuntime(w, req)
 	if w.Code != http.StatusOK {
@@ -5412,6 +5453,75 @@ func TestClaimProjectDesignSystemRepositoryAnalysisReturnsProjectResources(t *te
 	}
 	if fmt.Sprintf("%#v", claimedContext) != fmt.Sprintf("%#v", wantContext) {
 		t.Fatalf("project design system context changed across claim: got=%s want=%s", response.Task.ProjectDesignSystemContext, contextJSON)
+	}
+}
+
+func TestClaimDesignDocumentTaskUsesTypedContextAndProjectResources(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	projectID := createProjectForDesignTest(t, "A3 claim project")
+	issueID := createIssueForDesignTest(t, "A3 claim issue", projectID)
+	agentID, runtimeID := createProjectDesignSystemAgent(t, "online")
+	const repositoryURL = "https://github.com/example/design-document-source"
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, position)
+		VALUES ($1, $2, 'github_repo', $3::jsonb, 0)
+	`, projectID, testWorkspaceID, `{"url":"`+repositoryURL+`","ref":"release"}`); err != nil {
+		t.Fatalf("create project resource: %v", err)
+	}
+	contextJSON, err := json.Marshal(map[string]any{
+		"type": designDocumentTaskContextType, "task_protocol": designDocumentTaskSchema,
+		"operation": "first_generation", "execution_ready": true,
+		"workspace_id": testWorkspaceID, "project_id": projectID, "agent_id": agentID, "issue_id": issueID,
+		"input": map[string]any{"schema_version": designDocumentInputSchema, "repository_grounding": "pending", "requirement": "Design the customer page."},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
+		VALUES ($1, $2, $3, 'queued', 0, $4::jsonb) RETURNING id
+	`, agentID, runtimeID, issueID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("create design document task: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "design-document-claim")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("claim status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Task *struct {
+			ID                    string                `json:"id"`
+			WorkspaceID           string                `json:"workspace_id"`
+			ProjectID             string                `json:"project_id"`
+			Repos                 []RepoData            `json:"repos"`
+			ProjectResources      []ProjectResourceData `json:"project_resources"`
+			DesignDocumentContext json.RawMessage       `json:"design_document_context"`
+			TriggerCommentID      *string               `json:"trigger_comment_id"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Task == nil || response.Task.ID != taskID || response.Task.WorkspaceID != testWorkspaceID || response.Task.ProjectID != projectID {
+		t.Fatalf("claim identity = %+v", response.Task)
+	}
+	if response.Task.TriggerCommentID != nil || string(response.Task.DesignDocumentContext) == "" {
+		t.Fatalf("claim trigger/context = %#v/%s", response.Task.TriggerCommentID, response.Task.DesignDocumentContext)
+	}
+	if len(response.Task.Repos) != 1 || response.Task.Repos[0].URL != repositoryURL || response.Task.Repos[0].Ref != "release" || len(response.Task.ProjectResources) != 1 {
+		t.Fatalf("claim repositories = %+v resources=%+v", response.Task.Repos, response.Task.ProjectResources)
+	}
+	var got map[string]any
+	if json.Unmarshal(response.Task.DesignDocumentContext, &got) != nil || got["type"] != designDocumentTaskContextType {
+		t.Fatalf("typed context = %s", response.Task.DesignDocumentContext)
 	}
 }
 

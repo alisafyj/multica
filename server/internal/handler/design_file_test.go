@@ -25,8 +25,8 @@ func createProjectForDesignTest(t *testing.T, title string) string {
 	t.Helper()
 	var id string
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO project (workspace_id, title, description, status, priority)
-		VALUES ($1, $2, '', 'planned', 'medium')
+		INSERT INTO project (workspace_id, title, description, status, priority, created_by)
+		VALUES ($1, $2, '', 'planned', 'medium', (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, testWorkspaceID, title).Scan(&id); err != nil {
 		t.Fatalf("insert project: %v", err)
@@ -1770,8 +1770,8 @@ func TestClaimDesignRestoreTaskUsesDispatchProjectContext(t *testing.T) {
 	}
 	var foreignProjectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title, description, status, priority)
-		VALUES ($1, 'Foreign restore project', '', 'planned', 'medium')
+		INSERT INTO project (workspace_id, title, description, status, priority, created_by)
+		VALUES ($1, 'Foreign restore project', '', 'planned', 'medium', (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, foreignWorkspaceID).Scan(&foreignProjectID); err != nil {
 		t.Fatalf("insert foreign restore project: %v", err)

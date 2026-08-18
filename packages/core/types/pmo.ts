@@ -118,7 +118,7 @@ export interface ApplyPMORunRequest {
 
 /** Request body for PUT /api/pmo/configs/:id/assignees/:externalKey. */
 export interface SetPMOAssigneeMappingRequest {
-  member_id: string;
+  agent_id: string;
 }
 
 /** List envelope for GET /api/pmo/configs. */

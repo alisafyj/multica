@@ -191,7 +191,7 @@ func buildPromptBody(task Task, provider string) string {
 		return buildDesignDocumentPrompt(task)
 	}
 	if len(task.PMOSyncContext) > 0 {
-		return buildPMOSyncPrompt(task)
+		return buildPMOSyncPrompt(task, provider)
 	}
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
@@ -367,11 +367,24 @@ func buildDesignTemplateBlueprintAnalyzePrompt(task Task) string {
 // buildPMOSyncPrompt renders the opening prompt for a PMO requirement sync
 // task. The strict acquisition prompt generated at enqueue time
 // (service.BuildPMOSyncPrompt) is authoritative — the daemon re-parses the
-// sync context JSONB and renders it directly, without naming any company,
-// domain, or external capability (BuildPMOSyncPrompt already guarantees
-// none appear). The daemon carries no repo/issue context for this kind: the
-// prompt-only path is the whole task.
-func buildPMOSyncPrompt(task Task) string {
+// sync context JSONB and renders it directly. OpenClaw skill commands only
+// expand when the user message starts with /skill:, so that provider receives
+// the installed PMO data skill command instead of the generic prompt. The
+// daemon carries no repo/issue context for this kind: the prompt-only path is
+// the whole task.
+func buildPMOSyncPrompt(task Task, provider string) string {
+	if provider == "openclaw" {
+		var payload struct {
+			RootExternalKey string `json:"root_external_key"`
+		}
+		if json.Unmarshal(task.PMOSyncContext, &payload) == nil {
+			if rootExternalKey := strings.TrimSpace(payload.RootExternalKey); rootExternalKey != "" {
+				rootArg, _ := json.Marshal(rootExternalKey)
+				return "/skill:sy-pmo-data-query snapshot " + string(rootArg) + "\n"
+			}
+		}
+	}
+
 	var b strings.Builder
 	b.WriteString("You are running as a PMO requirement sync agent for a Multica workspace.\n\n")
 	prompt := pmoSyncPromptFromContext(task.PMOSyncContext)

@@ -5,6 +5,40 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("ApiClient design documents", () => {
+  it("lists Design Documents for a project", async () => {
+    const document = { id: "document-1", project_id: "project-1", title: "Checkout", draft_revision_id: "revision-1", created_at: "2026-08-14T00:00:00Z", updated_at: "2026-08-14T00:00:00Z" };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ documents: [document] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.listDesignDocuments("project-1")).resolves.toEqual({ documents: [expect.objectContaining(document)] });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.example.test/api/design-documents?project_id=project-1",
+    ]);
+  });
+
+  it("adjusts and saves a Design Document through its base-bound lifecycle routes", async () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    const document = { id: "document-1", project_id: "project-1", title: "Checkout", draft_revision_id: "revision-1", saved_revision_id: "revision-1", created_at: "2026-08-14T00:00:00Z", updated_at: "2026-08-14T00:00:00Z" };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(document), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(document), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.adjustDesignDocument("document-1", {
+      project_id: "project-1", agent_id: "agent-1", instruction: "Tighten header",
+      scope: { kind: "page", id: "page-checkout" }, base_revision_id: "revision-1", base_content_digest: digest,
+    })).resolves.toMatchObject({ id: "document-1" });
+    await expect(client.saveDesignDocument("document-1", { project_id: "project-1", expected_draft_revision_id: "revision-1", expected_draft_content_digest: digest })).resolves.toMatchObject(document);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.example.test/api/design-documents/document-1/adjust",
+      "https://api.example.test/api/design-documents/document-1/save",
+    ]);
+    expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "POST"]);
+  });
+});
+
 describe("ApiClient pull-request response schema", () => {
   const validPR = {
     id: "pr-1",
@@ -2573,14 +2607,14 @@ describe("ApiClient PMO endpoints", () => {
     });
   });
 
-  it("maps an assignee by member id on the encoded external key path", async () => {
+  it("maps an assignee by agent id on the encoded external key path", async () => {
     const fetchMock = stubOK({ id: "link-1" });
     const client = new ApiClient("https://api.example.test");
-    await client.setPMOAssigneeMapping("ws-1", "cfg-1", "EXT-U/001", "member-1");
+    await client.setPMOAssigneeMapping("ws-1", "cfg-1", "EXT-U/001", "agent-1");
     expect(requestOf(fetchMock)).toMatchObject({
       url: "https://api.example.test/api/pmo/configs/cfg-1/assignees/EXT-U%2F001",
       method: "PUT",
-      body: { member_id: "member-1" },
+      body: { agent_id: "agent-1" },
     });
   });
 

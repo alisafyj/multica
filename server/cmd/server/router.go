@@ -1206,7 +1206,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		"/api/project-design-system-previews/{workspaceId}/{systemId}/{digest}/{accessToken}/files/*",
 		h.GetProjectDesignSystemPackagePreviewFile,
 	)
-
 	// Composio OAuth callback (MUL-3843). NOT under the Auth group on purpose:
 	// Composio 302-redirects the user's browser here at the end of the OAuth
 	// flow, and the cookie session is frequently absent (expired session,

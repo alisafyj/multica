@@ -10,11 +10,12 @@ import (
 
 func TestParsePMOSyncContextRoundTrip(t *testing.T) {
 	stored := PMOSyncContext{
-		Type:        PMOSyncContextType,
-		WorkspaceID: "workspace-1",
-		RequesterID: "requester-1",
-		RunID:       "run-1",
-		Prompt:      BuildPMOSyncPrompt("EXT-P-001"),
+		Type:            PMOSyncContextType,
+		WorkspaceID:     "workspace-1",
+		RequesterID:     "requester-1",
+		RunID:           "run-1",
+		RootExternalKey: "EXT-P-001",
+		Prompt:          BuildPMOSyncPrompt("EXT-P-001"),
 	}
 	contextJSON, err := json.Marshal(stored)
 	if err != nil {

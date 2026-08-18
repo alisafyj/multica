@@ -17,8 +17,8 @@ func newTestCaseProject(t *testing.T) string {
 	ctx := context.Background()
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, $2)
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, testWorkspaceID, "Test case fixture project").Scan(&projectID); err != nil {
 		t.Fatalf("create fixture project: %v", err)

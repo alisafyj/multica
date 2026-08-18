@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -202,6 +203,7 @@ func daemonClientCapabilities() string {
 		protocol.DaemonCapabilityExecutionManifestV1,
 		protocol.DaemonCapabilityAgentSkillV1,
 		protocol.DaemonCapabilityRemoteMCPV1,
+		protocol.DaemonCapabilityProjectDesignSystemV1,
 		protocol.DaemonCapabilityLocalWorktreeV1,
 		protocol.DaemonCapabilityRPCV1,
 	}, ",")
@@ -500,6 +502,47 @@ func (c *Client) DownloadDesignDocumentBaseArchive(ctx context.Context, taskID s
 	}
 }
 
+// DownloadDesignDocumentInput fetches an A3 grounding input (the base
+// archive, a reference attachment, or the bound design system) that the
+// server prepared for this task. Used by the daemon's repository-grounding
+// pass before the agent starts.
+func (c *Client) DownloadDesignDocumentInput(ctx context.Context, taskID, inputPath, expectedDigest string, maxBytes int64) ([]byte, http.Header, error) {
+	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(inputPath) == "" || maxBytes < 0 || maxBytes > 100<<20 {
+		return nil, nil, errors.New("Design Document input request is invalid")
+	}
+	path := fmt.Sprintf("/api/daemon/tasks/%s/design-document/%s", taskID, inputPath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	c.setIdentityHeaders(req)
+	inputClient := *c.client
+	inputClient.Timeout = openDesignArchiveDownloadTimeout
+	resp, err := inputClient.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, nil, &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+	}
+	content, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil || int64(len(content)) > maxBytes {
+		return nil, nil, errors.New("Design Document input exceeds its bounded size")
+	}
+	if expectedDigest != "" {
+		digest := sha256.Sum256(content)
+		if "sha256:"+hex.EncodeToString(digest[:]) != expectedDigest || resp.Header.Get("X-Multica-Content-SHA256") != expectedDigest {
+			return nil, nil, errors.New("Design Document input digest does not match its pinned reference")
+		}
+	}
+	return content, resp.Header.Clone(), nil
+}
+
 func (c *Client) ReportOpenDesignRunResult(ctx context.Context, taskID, openDesignRunID string, result opendesign.CollectedRunResult) error {
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/open-design/result", taskID), opendesign.RunResultRequest{
 		OpenDesignRunID:  openDesignRunID,
@@ -631,6 +674,10 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 		case *ProjectDesignSystemPackageReceipt:
 			if value != nil {
 				body["project_design_system_package"] = value
+			}
+		case *designdocument.RepositoryGrounding:
+			if value != nil {
+				body["design_document_grounding"] = value
 			}
 		case *DesignDocumentPackageReceipt:
 			if value != nil {

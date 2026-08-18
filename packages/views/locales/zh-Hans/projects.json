@@ -25,7 +25,10 @@
     "progress": "进度",
     "lead": "负责人",
     "created": "创建时间",
-    "issues": "任务数"
+    "issues": "任务数",
+    "pm_imported": "PM系统导入",
+    "pm_import_yes": "是",
+    "pm_import_no": "否"
   },
   "status": {
     "planned": "计划中",
@@ -64,10 +67,14 @@
     "sidebar_tooltip": "切换侧边栏",
     "copy_link": "复制链接",
     "delete_action": "删除项目",
+    "content_tabs": "项目内容",
+    "content_issues": "事项",
+    "content_design_drafts": "设计草稿",
     "section_properties": "属性",
     "section_progress": "进度",
     "section_description": "描述",
     "prop_created_by": "创建者",
+    "unknown_creator": "未知",
     "prop_start_date": "开始日期",
     "prop_due_date": "截止日期",
     "no_start_date": "无开始日期",
@@ -173,11 +180,16 @@
     "section_status": "状态",
     "section_priority": "优先级",
     "section_lead": "负责人",
+    "section_pmo_imported": "PM系统导入",
     "display": "显示",
     "sort_by": "排序",
     "direction_asc": "升序",
     "direction_desc": "降序",
     "section_columns": "列",
     "view": "视图"
+  },
+  "pmo_imported": {
+    "true": "是",
+    "false": "否"
   }
 }

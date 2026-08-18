@@ -178,7 +178,6 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 	if err := writeProjectDesignSystemContext(workDir, ctx, manifest); err != nil {
 		return fmt.Errorf("write project design system context: %w", err)
 	}
-
 	if err := writeDesignDocumentContext(workDir, ctx, manifest); err != nil {
 		return fmt.Errorf("write design document context: %w", err)
 	}
@@ -212,6 +211,31 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 	}
 
 	return nil
+}
+
+// WriteDesignDocumentRepositoryFacts atomically replaces the daemon-owned
+// checkout receipt and reseals its directory before the Agent starts.
+func WriteDesignDocumentRepositoryFacts(workDir string, data []byte) error {
+	dir := filepath.Join(workDir, ".agent_context", "design_document", "context", "repository-facts")
+	if !isRealDirectory(dir) {
+		return errors.New("Design Document repository facts directory is missing or unsafe")
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		return err
+	}
+	defer func() { _ = os.Chmod(dir, 0o555) }()
+	path := filepath.Join(dir, "checkout.json")
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return errors.New("Design Document checkout receipt is missing or unsafe")
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, data, 0o444); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o444)
 }
 
 func writeProjectDesignSystemContext(workDir string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
@@ -529,6 +553,23 @@ func RestoreV2SidecarWritability(workdir string) error {
 			}
 			if err := os.Chmod(dir, 0o755); err != nil {
 				return fmt.Errorf("restore V2 sidecar writability on %s: %w", dir, err)
+			}
+		}
+	}
+	// design_document additionally seals a few directories nested under
+	// context/ (see writeDesignDocumentContext's stampV2ReadOnly call) that
+	// the shallow v2SidecarDirNames pass above never reaches — chmod on a
+	// directory does not recurse, so each of these needs its own call or it
+	// stays 0o555 and os.RemoveAll fails to unlink beneath it.
+	designRoot := filepath.Join(agentContext, "design_document")
+	if isRealDirectory(designRoot) {
+		for _, relative := range []string{"context/input-snapshots", "context/repository-facts", "context/design-system", "reference/attachments"} {
+			dir := filepath.Join(designRoot, filepath.FromSlash(relative))
+			if !isRealDirectory(dir) {
+				continue
+			}
+			if err := os.Chmod(dir, 0o755); err != nil {
+				return fmt.Errorf("restore Design Document sidecar writability on %s: %w", dir, err)
 			}
 		}
 	}
@@ -1496,6 +1537,9 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 	if ctx.ProjectDesignSystemContext != "" {
 		return renderProjectDesignSystemContext()
 	}
+	if ctx.DesignDocumentContext != "" {
+		return renderDesignDocumentContext()
+	}
 	if ctx.PMOSyncContext != "" {
 		return renderPMOSyncContext(ctx)
 	}
@@ -1528,6 +1572,10 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 
 func renderProjectDesignSystemContext() string {
 	return "# Project Design System\n\nRead `.agent_context/project_design_system/task.json` before designing. Write the completed package to `$MULTICA_OUTPUT_DIR`, following the package contract in the user message exactly.\n"
+}
+
+func renderDesignDocumentContext() string {
+	return "# Design Document\n\nRead `.agent_context/design_document/context/task.json` and the immutable context/reference trees before designing. Write the complete staged package to `$MULTICA_OUTPUT_DIR`.\n"
 }
 
 // renderQuickCreateContext renders issue_context.md for quick-create tasks.
@@ -1674,6 +1722,32 @@ func writeDesignDocumentContext(workDir string, ctx TaskContextForEnv, manifest 
 	if err := recordMkdirAll(contextDir, 0o755, manifest); err != nil {
 		return err
 	}
+	// reference/, context/design-system/ and context/repository-facts/ are
+	// reserved but left for the daemon to fill in after this prepare step:
+	// materializeDesignDocumentInputs downloads attachment and design-system
+	// package bytes into the first two, and the grounding pass writes the
+	// checkout receipt into the third. None of the three arrive inline in the
+	// envelope the way design-system.json and repository.json below do.
+	referenceDir := filepath.Join(root, "reference")
+	designSystemDir := filepath.Join(contextDir, "design-system")
+	factsDir := filepath.Join(contextDir, "repository-facts")
+	for _, dir := range []string{referenceDir, designSystemDir, factsDir} {
+		if err := recordMkdirAll(dir, 0o755, manifest); err != nil {
+			return err
+		}
+	}
+	// work/ stays writable: the agent and the daemon's own grounding finalize
+	// pass (finalizeDesignDocumentGrounding) both use it as scratch space, the
+	// latter reading back repository-grounding.json once the agent exits.
+	if err := recordMkdirAll(filepath.Join(root, "work"), 0o755, manifest); err != nil {
+		return err
+	}
+	// WriteDesignDocumentRepositoryFacts only ever replaces an existing
+	// checkout receipt, so the grounding pass has something to overwrite even
+	// when it finishes with nothing gathered (e.g. repository access denied).
+	if err := recordWriteFile(filepath.Join(factsDir, "checkout.json"), []byte(`{"schema_version":"multica.design-document-checkout/v1","repositories":[]}`), 0o444, manifest); err != nil {
+		return err
+	}
 
 	taskJSON, err := json.MarshalIndent(task, "", "  ")
 	if err != nil {
@@ -1733,7 +1807,7 @@ func writeDesignDocumentContext(workDir string, ctx TaskContextForEnv, manifest 
 
 	// base/ is deliberately absent here: it is stamped by
 	// ExtractDesignDocumentBase, once the daemon has the verified package.
-	return stampV2ReadOnly(contextDir)
+	return stampV2ReadOnly(contextDir, referenceDir, designSystemDir, factsDir)
 }
 
 // designDocumentDeclaresBase reports whether the task pins the revision an

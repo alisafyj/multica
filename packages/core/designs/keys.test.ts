@@ -42,6 +42,7 @@ describe("designKeys", () => {
       "system-1",
       "package-preview",
     ]);
+    expect(designKeys.documents("ws-1", "project-1")).toEqual(["designs", "ws-1", "documents", "project-1"]);
   });
 
   it("scopes design document lists by workspace and project", () => {

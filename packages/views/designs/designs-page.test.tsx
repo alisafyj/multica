@@ -52,7 +52,6 @@ vi.mock("@multica/core/api", () => ({
     listDesignScenarioRecipes,
     listDesignSystemProfiles,
     listDesignTemplates,
-    listIssues: vi.fn(),
     listProjectDesignSystemCatalogue,
     listProjectResources,
     listProjects,

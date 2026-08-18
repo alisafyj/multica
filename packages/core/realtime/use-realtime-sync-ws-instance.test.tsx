@@ -340,6 +340,9 @@ describe("useRealtimeSync — Table server membership invalidation", () => {
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: workspaceWorkingAgentsKeys.all("ws-1"),
     });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["designs", "ws-1", "documents"],
+    });
   });
 
   it("invalidates Table queries after a property definition changes", () => {

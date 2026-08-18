@@ -242,7 +242,7 @@ func pmoSnapshotEntities(snapshot PMOSnapshot) []pmoSourceEntity {
 func pmoRequirementEntity(requirement PMORequirement, localType PMOLocalType, projectExternalKey, parentExternalKey string) pmoSourceEntity {
 	ownerField := "assignee_id"
 	fields := map[string]any{
-		"title":       requirement.Title,
+		"title":       requirement.DisplayNumber + " " + requirement.Title,
 		"description": requirement.Description,
 		"status":      requirement.Status,
 		"start_date":  pmoStringValue(requirement.StartDate),

@@ -34,6 +34,7 @@ const (
 	pmoLocalTypeProject       = "project"
 	pmoLocalTypeIssue         = "issue"
 	pmoLocalTypeMember        = "member"
+	pmoLocalTypeAgent         = "agent"
 	pmoPriorityDefault        = "medium"
 )
 
@@ -42,7 +43,7 @@ const (
 var (
 	ErrPMORunNotPreviewReady = errors.New("pmo run is not ready to apply")
 	ErrPMORunNotFound        = errors.New("pmo run not found")
-	ErrPMOMemberNotFound     = errors.New("member not found in this workspace")
+	ErrPMOAgentNotFound      = errors.New("agent not found or unavailable")
 )
 
 func validatePMOResolutions(resolutions []PMOConflictResolution) error {
@@ -201,16 +202,12 @@ func (s *PMOService) applySnapshotInTx(
 	if err != nil {
 		return result, fmt.Errorf("pmo apply: load links: %w", err)
 	}
-	explicitAssigneeMappings := map[string]string{}
 	byIdentity := map[string]db.PmoSyncLink{}
 	for _, link := range linkRows {
 		byIdentity[link.ExternalType+"\x00"+link.ExternalKey] = link
-		if link.ExternalType == pmoExternalTypeAssignee && link.LocalID.Valid {
-			explicitAssigneeMappings[link.ExternalKey] = util.UUIDToString(link.LocalID)
-		}
 	}
 
-	assigneeMappings, err := ResolvePMOAssigneeMappings(ctx, qtx, workspaceID, snapshot, explicitAssigneeMappings)
+	assigneeMappings, err := resolvePMOAssigneeMappingsFromLinks(ctx, qtx, workspaceID, snapshot, linkRows)
 	if err != nil {
 		return result, err
 	}
@@ -543,7 +540,7 @@ func (s *PMOService) createEntityInTx(
 				ID:          project.ID,
 				Description: project.Description,
 				Icon:        project.Icon,
-				LeadType:    pgtype.Text{String: pmoLocalTypeMember, Valid: true},
+				LeadType:    pgtype.Text{String: pmoLocalTypeAgent, Valid: true},
 				LeadID:      leadID,
 				StartDate:   project.StartDate,
 				DueDate:     project.DueDate,
@@ -588,7 +585,7 @@ func (s *PMOService) createEntityInTx(
 		params.ParentIssueID = parentIssueID
 	}
 	if assigneeID.Valid {
-		params.AssigneeType = pgtype.Text{String: pmoLocalTypeMember, Valid: true}
+		params.AssigneeType = pgtype.Text{String: pmoLocalTypeAgent, Valid: true}
 		params.AssigneeID = assigneeID
 	}
 	res, err := s.IssueSvc.createInTx(ctx, tx, qtx, params)
@@ -700,7 +697,7 @@ func (s *PMOService) applyProjectFields(ctx context.Context, qtx *db.Queries, pr
 		leadID, valid := pmoAnyToUUID(v)
 		params.LeadID = leadID
 		if valid {
-			params.LeadType = pgtype.Text{String: pmoLocalTypeMember, Valid: true}
+			params.LeadType = pgtype.Text{String: pmoLocalTypeAgent, Valid: true}
 		} else {
 			params.LeadType = pgtype.Text{}
 		}
@@ -750,7 +747,7 @@ func (s *PMOService) applyIssueFields(ctx context.Context, qtx *db.Queries, work
 		assigneeID, valid := pmoAnyToUUID(v)
 		params.AssigneeID = assigneeID
 		if valid {
-			params.AssigneeType = pgtype.Text{String: pmoLocalTypeMember, Valid: true}
+			params.AssigneeType = pgtype.Text{String: pmoLocalTypeAgent, Valid: true}
 		} else {
 			params.AssigneeType = pgtype.Text{}
 		}
@@ -880,7 +877,7 @@ func requirementIdentity(entity PMOEntityDiff, requirements map[string]PMORequir
 }
 
 // upsertAssigneeLinks ensures one assignee link row per external owner in
-// the snapshot, preserving any existing explicit member mapping.
+// the snapshot, preserving any existing explicit Agent mapping.
 func (s *PMOService) upsertAssigneeLinks(ctx context.Context, qtx *db.Queries, workspaceID, configID pgtype.UUID, snapshot PMOSnapshot, byIdentity map[string]db.PmoSyncLink, assigneeMappings map[string]string) error {
 	owners := pmoSnapshotOwners(snapshot)
 
@@ -898,18 +895,19 @@ func (s *PMOService) upsertAssigneeLinks(ctx context.Context, qtx *db.Queries, w
 			BaselineLocal:    localJSON,
 			ExternalMetadata: []byte(`{}`),
 		}
-		// Explicit mappings (and any already-persisted local mapping) win;
-		// automatic email matches only fill links that have no local_id yet.
-		if existing.ID.Valid && existing.LocalID.Valid {
+		// Explicit Agent mappings win. Legacy member links are upgraded only
+		// when assigneeMappings contains a unique eligible Agent.
+		if existing.ID.Valid && existing.LocalID.Valid && existing.LocalType.String == pmoLocalTypeAgent {
 			params.LocalType = existing.LocalType
 			params.LocalID = existing.LocalID
-		} else if userID := assigneeMappings[externalID]; userID != "" {
-			localID, err := util.ParseUUID(userID)
+			params.BaselineLocal = existing.BaselineLocal
+		} else if agentID := assigneeMappings[externalID]; agentID != "" {
+			localID, err := util.ParseUUID(agentID)
 			if err != nil {
 				return fmt.Errorf("pmo assignee mapping for %q is not a UUID: %w", externalID, err)
 			}
-			localJSON, _ = json.Marshal(map[string]any{"member_id": userID})
-			params.LocalType = pgtype.Text{String: pmoLocalTypeMember, Valid: true}
+			localJSON, _ = json.Marshal(map[string]any{"agent_id": agentID})
+			params.LocalType = pgtype.Text{String: pmoLocalTypeAgent, Valid: true}
 			params.LocalID = localID
 		}
 		if _, err := qtx.UpsertPMOSyncLink(ctx, params); err != nil {
@@ -919,20 +917,20 @@ func (s *PMOService) upsertAssigneeLinks(ctx context.Context, qtx *db.Queries, w
 	return nil
 }
 
-// SetAssigneeMapping maps an external owner identity to a workspace member
-// BY MEMBER ID (external display names are never matched). Stored as an
+// SetAssigneeMapping maps an external owner identity to a workspace Agent
+// BY AGENT ID (external display names are never matched). Stored as an
 // assignee-type pmo_sync_link row; takes effect on the next apply.
-func (s *PMOService) SetAssigneeMapping(ctx context.Context, workspaceID, configID pgtype.UUID, externalKey string, memberUserID pgtype.UUID) (db.PmoSyncLink, error) {
+func (s *PMOService) SetAssigneeMapping(ctx context.Context, workspaceID, configID pgtype.UUID, externalKey string, agentID pgtype.UUID) (db.PmoSyncLink, error) {
 	config, err := s.Queries.GetPMOSyncConfig(ctx, db.GetPMOSyncConfigParams{ID: configID, WorkspaceID: workspaceID})
 	if err != nil || !config.ID.Valid {
 		return db.PmoSyncLink{}, ErrPMORunNotFound
 	}
-	member, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: memberUserID, WorkspaceID: workspaceID})
-	if err != nil || !member.ID.Valid {
-		return db.PmoSyncLink{}, ErrPMOMemberNotFound
+	agent, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: workspaceID})
+	if err != nil || !agent.ID.Valid || agent.ArchivedAt.Valid || !agent.RuntimeID.Valid || agent.Kind != "user" {
+		return db.PmoSyncLink{}, ErrPMOAgentNotFound
 	}
 	externalJSON, _ := json.Marshal(map[string]any{"external_id": externalKey})
-	localJSON, _ := json.Marshal(map[string]any{"member_id": util.UUIDToString(member.UserID)})
+	localJSON, _ := json.Marshal(map[string]any{"agent_id": util.UUIDToString(agent.ID)})
 	return s.Queries.UpsertPMOSyncLink(ctx, db.UpsertPMOSyncLinkParams{
 		WorkspaceID:      workspaceID,
 		ConfigID:         configID,
@@ -941,8 +939,8 @@ func (s *PMOService) SetAssigneeMapping(ctx context.Context, workspaceID, config
 		BaselineExternal: externalJSON,
 		BaselineLocal:    localJSON,
 		ExternalMetadata: []byte(`{}`),
-		LocalType:        pgtype.Text{String: pmoLocalTypeMember, Valid: true},
-		LocalID:          member.UserID,
+		LocalType:        pgtype.Text{String: pmoLocalTypeAgent, Valid: true},
+		LocalID:          agent.ID,
 	})
 }
 

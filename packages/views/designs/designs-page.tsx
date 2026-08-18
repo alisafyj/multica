@@ -37,6 +37,7 @@ import { DesignRecipeGallery } from "./design-recipe-gallery";
 import { DesignSystemLibrary } from "./design-system-library";
 import { DesignTaskComposer, type DesignRecipeSelection } from "./design-task-composer";
 import { FigmaPluginDownload } from "./figma-plugin-download";
+import { FigmaMCPGuide } from "./figma-mcp-guide";
 import { ProjectDesignSystemWorkspace } from "./project-design-system-workspace";
 import "./design-wash.css";
 
@@ -655,6 +656,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
               </div>
             ) : null}
             <FigmaPluginDownload downloadUrl={figmaPluginDownloadUrl} />
+            <FigmaMCPGuide />
           </div>
         </div>
 

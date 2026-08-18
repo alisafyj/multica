@@ -708,8 +708,8 @@ func TestCreateIssueRejectsCrossWorkspaceProject(t *testing.T) {
 
 	var foreignProjectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title, status, priority)
-		VALUES ($1, $2, 'planned', 'none')
+		INSERT INTO project (workspace_id, title, status, priority, created_by)
+		VALUES ($1, $2, 'planned', 'none', (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, otherWorkspaceID, "Foreign project").Scan(&foreignProjectID); err != nil {
 		t.Fatalf("insert foreign project: %v", err)
@@ -906,8 +906,8 @@ func TestCreateIssueRejectsActiveDuplicate(t *testing.T) {
 	}()
 
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, $2)
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, testWorkspaceID, "Duplicate guard project "+suffix).Scan(&projectID); err != nil {
 		t.Fatalf("create project fixture: %v", err)
@@ -1371,8 +1371,8 @@ func TestAutopilotCreateIssueAssociatesConfiguredProject(t *testing.T) {
 	}()
 
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, $2)
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1))
 		RETURNING id::text
 	`, testWorkspaceID, "Autopilot project target").Scan(&projectID); err != nil {
 		t.Fatalf("create project fixture: %v", err)
@@ -1451,15 +1451,15 @@ func TestAutopilotDispatchUsesCurrentProjectBinding(t *testing.T) {
 	}()
 
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, $2)
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1))
 		RETURNING id::text
 	`, testWorkspaceID, "Autopilot stale project A").Scan(&projectAID); err != nil {
 		t.Fatalf("create project A fixture: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, $2)
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1))
 		RETURNING id::text
 	`, testWorkspaceID, "Autopilot stale project B").Scan(&projectBID); err != nil {
 		t.Fatalf("create project B fixture: %v", err)
@@ -1539,8 +1539,8 @@ func TestUpdateAutopilotCanSetAndClearProject(t *testing.T) {
 	}()
 
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, $2)
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1))
 		RETURNING id::text
 	`, testWorkspaceID, "Autopilot update project target").Scan(&projectID); err != nil {
 		t.Fatalf("create project fixture: %v", err)

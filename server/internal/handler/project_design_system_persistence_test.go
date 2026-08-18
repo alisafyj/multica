@@ -205,8 +205,8 @@ func createProjectDesignSystemProject(t *testing.T, workspaceID, title string) p
 	t.Helper()
 	var id pgtype.UUID
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO project (workspace_id, title, status)
-		VALUES ($1, $2, 'planned')
+		INSERT INTO project (workspace_id, title, status, created_by)
+		VALUES ($1, $2, 'planned', (SELECT id FROM "user" LIMIT 1))
 		RETURNING id
 	`, workspaceID, fmt.Sprintf("%s-%d", title, time.Now().UnixNano())).Scan(&id); err != nil {
 		t.Fatalf("create project: %v", err)

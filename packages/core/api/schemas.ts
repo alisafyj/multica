@@ -86,15 +86,16 @@ import type {
   User,
   WebhookDelivery,
   CreateDesignDraftAgentTaskResponse,
+  DesignDocument,
+  DesignDocumentPreview,
+  ListDesignDocumentsResponse,
   DesignDelivery,
   DesignDraft,
   DesignDraftMaterializeResponse,
-  DesignDocument,
   DesignDocumentStatus,
   DesignFileDetailResponse,
   DesignSystemProfile,
   DesignRestoreTask,
-  ListDesignDocumentsResponse,
   DispatchDesignRestoreTaskResponse,
   BatchUpdateIssuesResponse,
   ListDesignDeliveriesResponse,
@@ -1126,6 +1127,8 @@ const ProjectSchema = z.object({
   priority: z.string(),
   lead_type: z.string().nullable(),
   lead_id: z.string().nullable(),
+  pmo_imported: z.boolean().default(false),
+  created_by: z.string().nullable().default(null),
   // .default(null) so a project from an older backend (frontend deploys before
   // backend) that omits these keys parses to null instead of failing the whole
   // object — which would degrade a search/list batch to the empty fallback.
@@ -1491,6 +1494,37 @@ export const CreateDesignDraftAgentTaskResponseSchema = z.object({
 export const EMPTY_CREATE_DESIGN_DRAFT_AGENT_TASK_RESPONSE: CreateDesignDraftAgentTaskResponse = {
   task_id: "",
   status: "failed",
+};
+
+export const DesignDocumentPreviewSchema = z.object({
+  schema: z.literal("multica.design-document-preview/v1"),
+  document_id: z.string(),
+  revision_id: z.string(),
+  content_digest: z.string(),
+  resource_base_url: z.string(),
+  resource_access_token: z.string(),
+  resource_access_expires_at: z.string(),
+  targets: z.array(z.object({ id: z.string(), kind: z.literal("page"), path: z.string() })),
+  adjustment_scopes: z.array(z.object({
+    kind: z.enum(["document", "page", "state", "overlay", "block"]),
+    id: z.string().optional(),
+    label: z.string(),
+  })).default([]),
+  preview: z.object({
+    schema_version: z.literal("multica.design-preview-receipt/v1"),
+    content_digest: z.string(),
+    verification: z.object({
+      passed: z.boolean(),
+      browser: z.object({ name: z.string(), version: z.string() }).loose(),
+    }).loose(),
+  }).loose(),
+}).loose();
+
+export const EMPTY_DESIGN_DOCUMENT_PREVIEW: DesignDocumentPreview = {
+  schema: "multica.design-document-preview/v1", document_id: "", revision_id: "", content_digest: "",
+  resource_base_url: "", resource_access_token: "", resource_access_expires_at: "", targets: [],
+  adjustment_scopes: [],
+  preview: { schema_version: "multica.design-preview-receipt/v1", content_digest: "", verification: { passed: false, browser: { name: "", version: "" } } },
 };
 
 export const DesignDraftMaterializeResponseSchema = z.object({

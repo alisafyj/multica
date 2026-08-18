@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 
+	"github.com/multica-ai/multica/server/internal/designdocument"
 	"github.com/multica-ai/multica/server/internal/designpreview"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
@@ -314,11 +315,12 @@ type TaskResult struct {
 	SessionRolloutMissing bool `json:"-"`
 	// RetiredSessionID identifies an unresumable session that must no longer
 	// be selected after any terminal outcome, including successful completion.
-	RetiredSessionID             string                             `json:"-"`
-	Usage                        []TaskUsageEntry                   `json:"usage,omitempty"` // per-model token usage
-	ProjectDesignSystemArtifacts *ProjectDesignSystemArtifacts      `json:"-"`               // legacy three-file inline payload; collected for non-V2 tasks only
-	ProjectDesignSystemPackage   *ProjectDesignSystemPackageReceipt `json:"-"`               // V2-native package receipt (archive + audit + preview); populated only on the V2 path
-	DesignDocumentPackage        *DesignDocumentPackageReceipt      `json:"-"`               // page-design package receipt (archive + audit + preview); populated only by the design document finalize gate
+	RetiredSessionID             string                              `json:"-"`
+	Usage                        []TaskUsageEntry                    `json:"usage,omitempty"` // per-model token usage
+	ProjectDesignSystemArtifacts *ProjectDesignSystemArtifacts       `json:"-"`               // legacy three-file inline payload; collected for non-V2 tasks only
+	ProjectDesignSystemPackage   *ProjectDesignSystemPackageReceipt  `json:"-"`               // V2-native package receipt (archive + audit + preview); populated only on the V2 path
+	DesignDocumentGrounding      *designdocument.RepositoryGrounding `json:"-"`               // validated A3 grounding receipt; no local paths or source contents
+	DesignDocumentPackage        *DesignDocumentPackageReceipt       `json:"-"`               // page-design package receipt (archive + audit + preview); populated only by the design document finalize gate
 }
 
 // ProjectDesignSystemArtifacts is the legacy inline three-file payload the

@@ -373,9 +373,13 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	workDir := filepath.Join(envRoot, "workdir")
 	scratchDirs := []string{filepath.Join(envRoot, "output"), filepath.Join(envRoot, "logs")}
 	outputDir := ""
-	if params.Task.ProjectDesignSystemContext != "" {
+	if params.Task.ProjectDesignSystemContext != "" || params.Task.DesignDocumentContext != "" {
 		var err error
-		outputDir, err = filepath.Abs(filepath.Join(envRoot, "output", "project-design-system"))
+		outputName := "project-design-system"
+		if params.Task.DesignDocumentContext != "" {
+			outputName = "design-document"
+		}
+		outputDir, err = filepath.Abs(filepath.Join(envRoot, "output", outputName))
 		if err != nil {
 			return nil, fmt.Errorf("execenv: resolve project design system output directory: %w", err)
 		}
@@ -728,9 +732,13 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		LocalDirectory: params.LocalDirectory,
 		logger:         logger,
 	}
-	if params.Task.ProjectDesignSystemContext != "" && rootDir != "" {
+	if (params.Task.ProjectDesignSystemContext != "" || params.Task.DesignDocumentContext != "") && rootDir != "" {
 		var err error
-		env.OutputDir, err = filepath.Abs(filepath.Join(rootDir, "output", "project-design-system"))
+		outputName := "project-design-system"
+		if params.Task.DesignDocumentContext != "" {
+			outputName = "design-document"
+		}
+		env.OutputDir, err = filepath.Abs(filepath.Join(rootDir, "output", outputName))
 		if err != nil {
 			logger.Warn("execenv: resolve project design system output dir on reuse failed", "error", err)
 			return nil

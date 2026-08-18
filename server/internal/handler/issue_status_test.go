@@ -458,7 +458,7 @@ func TestCustomTerminalStatusCountsAsTerminalInSQL(t *testing.T) {
 	t.Run("project completion counts it as done", func(t *testing.T) {
 		var projectID pgtype.UUID
 		if err := testPool.QueryRow(ctx,
-			`INSERT INTO project (workspace_id, title) VALUES ($1, 'Status SQL Probe') RETURNING id`,
+			`INSERT INTO project (workspace_id, title, created_by) VALUES ($1, 'Status SQL Probe', (SELECT id FROM "user" LIMIT 1)) RETURNING id`,
 			parseUUID(testWorkspaceID)).Scan(&projectID); err != nil {
 			t.Fatalf("create project fixture: %v", err)
 		}

@@ -749,6 +749,7 @@ deleted_design_document_revisions AS (
 ),
 deleted_design_documents AS (
     DELETE FROM design_document WHERE design_document.workspace_id = $1
+    RETURNING design_document.id
 ),
 deleted_design_scenario_recipes AS (
     -- Only this workspace's own recipes. Built-in rows carry a NULL
@@ -758,7 +759,8 @@ deleted_design_scenario_recipes AS (
 DELETE FROM project_design_system_package
 WHERE design_system_id IN (
     SELECT id FROM project_design_system WHERE project_design_system.workspace_id = $1
-);
+)
+  AND (SELECT count(*) FROM deleted_design_documents) >= 0;
 
 -- name: DeleteWorkspaceDesignTemplateData :exec
 WITH

@@ -68,6 +68,7 @@
     "start_date": "开始日期",
     "due_date": "截止日期",
     "workload": "工作量",
+    "milestone": "里程碑",
     "project_id": "项目",
     "parent_issue_id": "父 issue",
     "unknown": "{{field}}"
@@ -113,7 +114,7 @@
     "loading": "正在加载最新预览..."
   },
   "assignees": {
-    "description": "把外部负责人映射到工作区成员，应用时才能自动设置负责人。映射不会根据显示名称猜测。",
+    "description": "把外部负责人映射到工作区智能体，应用时才能自动设置负责人。映射不会根据显示名称猜测。",
     "empty": "没有未映射的外部负责人。",
     "external_owner": "外部负责人",
     "display_name": "显示名称",

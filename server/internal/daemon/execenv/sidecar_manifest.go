@@ -480,6 +480,26 @@ func restoreOwnedV2SidecarWritability(workDir string, m *sidecarManifest) error 
 			}
 		}
 	}
+	// design_document additionally seals a few directories nested under
+	// context/ and reference/ that v2SidecarDirNames' shallow pass above
+	// never reaches — see RestoreV2SidecarWritability for the same list.
+	designRoot := filepath.Join(workDir, ".agent_context", "design_document")
+	for _, relative := range []string{"context/input-snapshots", "context/repository-facts", "context/design-system", "reference/attachments"} {
+		dir := filepath.Join(designRoot, filepath.FromSlash(relative))
+		if _, owned := ownedDirs[filepath.Clean(dir)]; !owned {
+			continue
+		}
+		component, info, exists, err := lstatPathNoFollow(workDir, dir)
+		if err != nil {
+			return fmt.Errorf("inspect owned V2 sidecar %s: %w", dir, err)
+		}
+		if !exists || component != filepath.Clean(dir) || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		if err := os.Chmod(dir, 0o755); err != nil {
+			return fmt.Errorf("restore owned V2 sidecar writability on %s: %w", dir, err)
+		}
+	}
 	return nil
 }
 

@@ -1622,6 +1622,39 @@ func TestBuildPromptProjectDesignSystemGenerate(t *testing.T) {
 	}
 }
 
+func TestBuildPromptDesignDocumentFirstGeneration(t *testing.T) {
+	task := Task{IssueID: "issue-1", DesignDocumentContext: json.RawMessage(`{"type":"design_document_task","operation":"generate","execution_ready":true,"input":{}}`)}
+	prompt := BuildPrompt(task, "opencode")
+	for _, want := range []string{
+		"product page designer",
+		".agent_context/design_document/context/task.json",
+		"brief.json",
+		"coverage.json",
+		"prototype/index.html",
+		"$MULTICA_OUTPUT_DIR",
+		"Do NOT write `manifest.json`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("Design Document prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{"multica issue get", "multica issue status", "multica issue comment add"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("Design Document prompt contains issue workflow %q\n--- prompt ---\n%s", forbidden, prompt)
+		}
+	}
+}
+
+func TestBuildPromptDesignDocumentAdjustmentUsesPinnedBase(t *testing.T) {
+	task := Task{DesignDocumentContext: json.RawMessage(`{"type":"design_document_task","operation":"adjust","execution_ready":true,"instruction":"Make the header sticky.","input":{}}`)}
+	prompt := BuildPrompt(task, "opencode")
+	for _, want := range []string{".agent_context/design_document/base/", "adjustment of an existing document", "Requested change", "Make the header sticky.", "Write a complete package"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("adjustment prompt missing %q\n%s", want, prompt)
+		}
+	}
+}
+
 func TestBuildPromptProjectDesignSystemRepositoryAnalysisUsesMarkerContract(t *testing.T) {
 	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "repository_analysis"), "opencode")
 	for _, want := range []string{

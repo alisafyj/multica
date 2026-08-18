@@ -51,6 +51,71 @@ func SnapshotDigest(raw json.RawMessage) (string, error) {
 	return sha256String(canonical), nil
 }
 
+// ValidateStagingDirectory checks that an agent output directory carries the
+// required page-design artifacts, without a binding, a manifest or an
+// archive — callers that need the full audited package use CollectDirectory
+// instead. It exists for gates that only need to know the agent produced
+// something before a binding is available to check it against.
+func ValidateStagingDirectory(root string) ([]ArtifactIndexEntry, error) {
+	rootInfo, err := os.Lstat(root)
+	if err != nil {
+		return nil, fmt.Errorf("inspect design document staging directory: %w", err)
+	}
+	if rootInfo.Mode()&fs.ModeSymlink != 0 || !rootInfo.IsDir() {
+		return nil, errors.New("design document staging root must be a real directory")
+	}
+	index := make([]ArtifactIndexEntry, 0)
+	err = filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if filePath == root || entry.IsDir() {
+			return nil
+		}
+		relative, err := filepath.Rel(root, filePath)
+		if err != nil {
+			return err
+		}
+		name := filepath.ToSlash(relative)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		role, mediaType, limit, err := classifyArtifact(name)
+		if err != nil {
+			return err
+		}
+		if info.Size() > limit {
+			return newArchiveError("archive_file_too_large", name, "file exceeds its size limit")
+		}
+		contents, err := readBoundedFile(filePath, limit)
+		if err != nil {
+			return err
+		}
+		index = append(index, ArtifactIndexEntry{
+			Path:      name,
+			Role:      role,
+			MediaType: mediaType,
+			SizeBytes: int64(len(contents)),
+			SHA256:    sha256Hex(contents),
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	present := make(map[string]bool, len(index))
+	for _, entry := range index {
+		present[entry.Path] = true
+	}
+	for _, required := range []string{briefPath, coveragePath, prototypeEntryPath} {
+		if !present[required] {
+			return nil, newArchiveError("staging_file_missing", required, "required design document file "+required+" is missing")
+		}
+	}
+	return index, nil
+}
+
 // CollectDirectory reads an agent output directory, audits it, and builds the
 // deterministic package archive. manifest.json is generated here; an agent
 // written manifest.json is rejected as an undeclared path like any other file

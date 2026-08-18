@@ -36,7 +36,7 @@
     "docs": "ドキュメント",
     "changelog": "変更ログ",
     "download_clients": "アプリをダウンロード",
-    "discord": "Discord",
+    "feishu_group": "Feishu グループ",
     "feedback": "フィードバック",
     "check_for_updates": "更新を確認",
     "update_ready": "バージョン {{version}} のダウンロード準備ができました",

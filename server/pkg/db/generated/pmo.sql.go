@@ -603,6 +603,36 @@ func (q *Queries) GetPMOSyncRunForUpdate(ctx context.Context, arg GetPMOSyncRunF
 	return i, err
 }
 
+const listPMOImportedProjectIDs = `-- name: ListPMOImportedProjectIDs :many
+SELECT DISTINCT local_id
+FROM pmo_sync_link
+WHERE workspace_id = $1
+  AND external_type = 'requirement'
+  AND local_type = 'project'
+  AND local_id IS NOT NULL
+  AND externally_removed_at IS NULL
+`
+
+func (q *Queries) ListPMOImportedProjectIDs(ctx context.Context, workspaceID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listPMOImportedProjectIDs, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var local_id pgtype.UUID
+		if err := rows.Scan(&local_id); err != nil {
+			return nil, err
+		}
+		items = append(items, local_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPMOSyncConfigs = `-- name: ListPMOSyncConfigs :many
 SELECT id, workspace_id, name, agent_id, root_external_key, workload_property_id, schedule_enabled, next_run_at, last_run_at, last_applied_at, created_by, created_at, updated_at FROM pmo_sync_config
 WHERE workspace_id = $1

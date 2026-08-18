@@ -223,3 +223,4 @@ export function designDraftDetailOptions(wsId: string, id: string) {
     queryFn: () => api.getDesignDraft(id),
   });
 }
+

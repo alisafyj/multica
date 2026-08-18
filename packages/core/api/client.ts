@@ -204,8 +204,11 @@ import type {
   CreateDesignDocumentRequest,
   CreateDesignDraftAgentTaskRequest,
   CreateDesignDraftAgentTaskResponse,
-  CreateDesignDraftRequest,
+  AdjustDesignDocumentRequest,
+  DesignDocumentPointerRequest,
   DesignDocument,
+  ListDesignDocumentsResponse,
+  CreateDesignDraftRequest,
   CreateDesignDeliveryRequest,
   CreateDesignFileRequest,
   CreateDesignFolderRequest,
@@ -244,7 +247,6 @@ import type {
   FigmaPluginAuthSession,
   FigmaPluginAuthStatus,
   ListDesignFoldersResponse,
-  ListDesignDocumentsResponse,
   ListDesignDraftsResponse,
   ListDesignDeliveriesResponse,
   ListDesignFilesResponse,
@@ -4084,6 +4086,36 @@ export class ApiClient {
     );
   }
 
+  async adjustDesignDocument(documentId: string, data: AdjustDesignDocumentRequest): Promise<DesignDocument> {
+    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/adjust`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
+      endpoint: "POST /api/design-documents/{id}/adjust",
+    });
+  }
+
+  async saveDesignDocument(documentId: string, data: DesignDocumentPointerRequest): Promise<DesignDocument> {
+    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/save`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
+      endpoint: "POST /api/design-documents/{id}/save",
+    });
+  }
+
+  async discardDesignDocumentDraft(documentId: string, data: DesignDocumentPointerRequest): Promise<DesignDocument> {
+    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/draft`, {
+      method: "DELETE",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
+      endpoint: "DELETE /api/design-documents/{id}/draft",
+    });
+  }
+
   async getDesignDraft(id: string): Promise<DesignDraft> {
     const raw = await this.fetch<unknown>(`/api/design-drafts/${encodeURIComponent(id)}`);
     return parseWithFallback(raw, DesignDraftSchema, { ...EMPTY_DESIGN_DRAFT, id }, {
@@ -5153,13 +5185,13 @@ export class ApiClient {
     _wsId: string,
     configId: string,
     externalKey: string,
-    memberId: string,
+    agentId: string,
   ): Promise<PMOSyncLink> {
     const raw = await this.fetch<unknown>(
       `/api/pmo/configs/${configId}/assignees/${encodeURIComponent(externalKey)}`,
       {
         method: "PUT",
-        body: JSON.stringify({ member_id: memberId }),
+        body: JSON.stringify({ agent_id: agentId }),
       },
     );
     return parseWithFallback(raw, PMOSyncLinkSchema, EMPTY_PMO_SYNC_LINK, {

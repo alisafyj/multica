@@ -407,7 +407,6 @@ function main() {
   if (viteResult.status !== 0) {
     process.exit(viteResult.status ?? 1);
   }
-
   // Step 2: derive the version that should be written into the app. CI
   // releases pin it explicitly via MULTICA_DESKTOP_VERSION so the dispatch
   // version wins even when an older `v*` tag sits at the same commit (git

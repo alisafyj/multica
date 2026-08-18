@@ -754,6 +754,57 @@ export interface CreateDesignDraftAgentTaskResponse {
   status: string;
 }
 
+export interface DesignDocumentPreviewTarget {
+  id: string;
+  kind: "page";
+  path: string;
+}
+
+export type DesignDocumentAdjustmentScopeKind = "document" | "page" | "state" | "overlay" | "block";
+
+export interface DesignDocumentAdjustmentScope {
+  kind: DesignDocumentAdjustmentScopeKind;
+  id?: string;
+  label: string;
+}
+
+export interface AdjustDesignDocumentRequest {
+  project_id: string;
+  agent_id: string;
+  instruction: string;
+  scope: Pick<DesignDocumentAdjustmentScope, "kind" | "id">;
+  base_revision_id: string;
+  base_content_digest: string;
+}
+
+export interface DesignDocumentPointerRequest {
+  project_id: string;
+  expected_draft_revision_id: string;
+  expected_draft_content_digest: string;
+}
+
+export interface DesignDocumentPreviewReceipt {
+  schema_version: "multica.design-preview-receipt/v1";
+  content_digest: string;
+  verification: {
+    passed: boolean;
+    browser: { name: string; version: string };
+  };
+}
+
+export interface DesignDocumentPreview {
+  schema: "multica.design-document-preview/v1";
+  document_id: string;
+  revision_id: string;
+  content_digest: string;
+  resource_base_url: string;
+  resource_access_token: string;
+  resource_access_expires_at: string;
+  targets: DesignDocumentPreviewTarget[];
+  adjustment_scopes: DesignDocumentAdjustmentScope[];
+  preview: DesignDocumentPreviewReceipt;
+}
+
 export interface DesignRestoreTask {
   id: string;
   workspace_id: string;

@@ -32,6 +32,12 @@ import (
 
 const designDocumentObjectKeyRoot = "design-documents"
 
+const (
+	designDocumentTaskContextType = service.DesignDocumentTaskContextType
+	designDocumentTaskSchema      = designdocument.PackageSchemaV1
+	designDocumentInputSchema     = "multica.design-document-input/v1"
+)
+
 type DesignDocumentPackageReceipt struct {
 	SchemaVersion string                              `json:"schema_version"`
 	ObjectKey     string                              `json:"object_key"`

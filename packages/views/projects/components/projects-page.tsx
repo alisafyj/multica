@@ -128,6 +128,8 @@ const STATUS_ORDER: Record<ProjectStatus, number> = {
   cancelled: 4,
 };
 
+const PMO_IMPORTED_VALUES = ["true", "false"] as const;
+
 const progressOf = (p: Project) =>
   p.issue_count > 0 ? p.done_count / p.issue_count : -1;
 
@@ -150,21 +152,22 @@ const COLUMN_WIDTHS: Record<ProjectColumnKey, number> = {
   lead: 132,
   issues: 80,
   created: 104,
+  pmImported: 116,
 };
 
 // Fixed tracks: edges 12+12, checkbox 16, name min 200, status 116,
-// kebab 28 = 384, plus the 10 gap-x-3 gaps between the wide template's
-// 11 tracks.
-const FIXED_TRACKS_WIDTH = 384 + 10 * 12;
+// kebab 28 = 384, plus the 11 gap-x-3 gaps between the wide template's
+// 12 tracks.
+const FIXED_TRACKS_WIDTH = 384 + 11 * 12;
 
 // Render/track order: checkbox, name, status (core, fixed 116px), priority,
-// progress, lead, issues, created, kebab. MUST be a literal string —
+// progress, lead, issues, created, PM import, kebab. MUST be a literal string —
 // Tailwind can't see interpolated `grid-cols-[...]` arbitrary values, so an
 // interpolated width silently drops the whole template and the grid
 // collapses to one column.
 const GRID_COLS =
   "grid-cols-[0.75rem_1rem_minmax(120px,1fr)_116px_1.75rem_0.75rem] " +
-  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_116px_var(--pjc-priority)_var(--pjc-progress)_var(--pjc-lead)_var(--pjc-issues)_var(--pjc-created)_1.75rem_0.75rem]";
+  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_116px_var(--pjc-priority)_var(--pjc-progress)_var(--pjc-lead)_var(--pjc-issues)_var(--pjc-created)_var(--pjc-pmo-imported)_1.75rem_0.75rem]";
 
 const stopRowNavigation = (e: MouseEvent) => e.stopPropagation();
 
@@ -185,6 +188,7 @@ function columnTrackVars(
     "--pjc-lead": width("lead"),
     "--pjc-issues": width("issues"),
     "--pjc-created": width("created"),
+    "--pjc-pmo-imported": width("pmImported"),
     "--pjc-minw": `${minWidth}px`,
   } as React.CSSProperties;
 }
@@ -382,6 +386,7 @@ function ProjectTableRow({
   rowLink: ReturnType<typeof useRowLink>;
 }) {
   const formatRelativeDate = useFormatRelativeDate();
+  const { t } = useT("projects");
   const updateProject = useUpdateProject();
   const handleUpdate = useCallback(
     (data: UpdateProjectRequest) => updateProject.mutate({ id: project.id, ...data }),
@@ -460,6 +465,16 @@ function ProjectTableRow({
       {isColVisible("created") ? (
         <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
           {formatRelativeDate(project.created_at)}
+        </ListGridCell>
+      ) : (
+        <ListGridCell className="hidden px-0 @2xl:flex" />
+      )}
+
+      {isColVisible("pmImported") ? (
+        <ListGridCell className="hidden text-caption text-muted-foreground @2xl:flex">
+          {project.pmo_imported === true
+            ? t(($) => $.table.pm_import_yes)
+            : t(($) => $.table.pm_import_no)}
         </ListGridCell>
       ) : (
         <ListGridCell className="hidden px-0 @2xl:flex" />
@@ -563,6 +578,13 @@ function ProjectTableHeader({
           onSort={() => onSort("created")}
         >
           {t(($) => $.table.created)}
+        </ListGridHeaderCell>
+      ) : (
+        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
+      )}
+      {isColVisible("pmImported") ? (
+        <ListGridHeaderCell className="hidden @2xl:flex">
+          {t(($) => $.table.pm_imported)}
         </ListGridHeaderCell>
       ) : (
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
@@ -683,7 +705,14 @@ const STATUS_VALUES: ProjectStatus[] = [
   "cancelled",
 ];
 const PRIORITY_VALUES: ProjectPriority[] = ["urgent", "high", "medium", "low", "none"];
-const COLUMN_KEYS: ProjectColumnKey[] = ["priority", "progress", "lead", "issues", "created"];
+const COLUMN_KEYS: ProjectColumnKey[] = [
+  "priority",
+  "progress",
+  "lead",
+  "issues",
+  "created",
+  "pmImported",
+];
 const SORT_FIELDS: ProjectSortField[] = ["name", "priority", "status", "progress", "created"];
 
 function countActiveFilters(f: ProjectListFilters): number {
@@ -691,6 +720,7 @@ function countActiveFilters(f: ProjectListFilters): number {
   if (f.statuses.length) c++;
   if (f.priorities.length) c++;
   if (f.leads.length) c++;
+  if (f.pmoImported.length) c++;
   return c;
 }
 
@@ -878,6 +908,12 @@ export function ProjectsPage() {
         const v = leadFilterValue(p);
         if (!v || !filters.leads.includes(v)) return false;
       }
+      if (
+        filters.pmoImported.length &&
+        !filters.pmoImported.includes(String(p.pmo_imported === true))
+      ) {
+        return false;
+      }
       return true;
     });
     const dir = sortDirection === "asc" ? 1 : -1;
@@ -929,7 +965,9 @@ export function ProjectsPage() {
           ? t(($) => $.table.lead)
           : k === "issues"
             ? t(($) => $.table.issues)
-            : t(($) => $.table.created);
+            : k === "created"
+              ? t(($) => $.table.created)
+              : t(($) => $.table.pm_imported);
 
   const showEmpty = !isLoading && projects.length === 0;
   const countBadge = (n: number) => (
@@ -1093,6 +1131,27 @@ export function ProjectsPage() {
                           <ActorAvatar actorType={type} actorId={id} size="sm" />
                           <span className="min-w-0 truncate">{getActorName(type, id)}</span>
                           {countBadge(count)}
+                        </DropdownMenuCheckboxItem>
+                      ))}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>
+                      <span className="flex-1">{t(($) => $.toolbar.section_pmo_imported)}</span>
+                      {filters.pmoImported.length > 0 && (
+                        <span className="text-caption font-medium text-primary">{filters.pmoImported.length}</span>
+                      )}
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="w-auto min-w-44">
+                      {PMO_IMPORTED_VALUES.map((value) => (
+                        <DropdownMenuCheckboxItem
+                          key={value}
+                          checked={filters.pmoImported.includes(value)}
+                          onCheckedChange={() => toggleFilter("pmoImported", value)}
+                          className={FILTER_ITEM_CLASS}
+                        >
+                          <HoverCheck checked={filters.pmoImported.includes(value)} />
+                          {t(($) => $.pmo_imported[value])}
                         </DropdownMenuCheckboxItem>
                       ))}
                     </DropdownMenuSubContent>

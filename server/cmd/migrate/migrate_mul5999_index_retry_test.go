@@ -151,6 +151,36 @@ func assertConcurrentIndexCleanupsMatchTheirMigrations(
 			t.Errorf("%s: no pre-migration hook registered", version)
 		}
 	}
+	// The A1 Design Document batch specifically: every one of these builds an
+	// index that must retain its invalid-index cleanup hook.
+	for version, indexName := range map[string]string{
+		"881_idx_design_document_revision_number":       "idx_design_document_revision_number",
+		"882_idx_design_document_project":               "idx_design_document_project",
+		"883_idx_design_document_issue":                 "idx_design_document_issue",
+		"884_idx_design_document_active_task":           "idx_design_document_active_task",
+		"886_idx_design_scenario_recipe_builtin_slug":   "idx_design_scenario_recipe_builtin_slug",
+		"887_idx_design_scenario_recipe_workspace_slug": "idx_design_scenario_recipe_workspace_slug",
+		"888_idx_design_scenario_recipe_gallery":        "idx_design_scenario_recipe_gallery",
+	} {
+		if got := concurrentIndexCleanups[version]; got != indexName {
+			t.Errorf("%s: cleanup index = %q, want %q", version, got, indexName)
+		}
+		if preMigrationHooks[version] == nil {
+			t.Errorf("%s: no pre-migration hook registered", version)
+		}
+	}
+
+	for _, version := range []string{
+		"273_agent_task_queue_runtime_id_index",
+		"274_task_token_workspace_id_index",
+		"275_task_token_agent_id_index",
+		"276_chat_draft_restore_task_id_index",
+		"277_autopilot_run_task_id_index",
+	} {
+		if _, ok := concurrentIndexCleanups[version]; !ok {
+			t.Errorf("%s: missing from concurrentIndexCleanups", version)
+		}
+	}
 }
 
 // TestRunMigrationsRepairsInvalidRuntimeIDIndex is the MUL-5999 counterpart of
