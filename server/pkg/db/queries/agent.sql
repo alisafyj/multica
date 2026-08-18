@@ -318,7 +318,12 @@ SELECT
     sqlc.narg(rerun_of_task_id),
     sqlc.narg(trigger_evidence_kind),
     sqlc.narg(trigger_evidence_ref_id)
-WHERE lock_task_owner_rows($1, $3, $2)
+WHERE lock_task_owner_rows(
+    $1,
+    $3,
+    $2,
+    COALESCE(sqlc.narg('require_issue_runnable')::boolean, FALSE)
+)
 RETURNING *;
 
 -- name: CreateDeferredChannelIssueTask :one

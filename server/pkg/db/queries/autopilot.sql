@@ -369,10 +369,22 @@ SET status = 'completed', completed_at = now(), result = sqlc.narg('result')
 WHERE id = $1
 RETURNING *;
 
+-- name: CompleteAutopilotRunIfActive :one
+UPDATE autopilot_run
+SET status = 'completed', completed_at = now(), result = sqlc.narg('result')
+WHERE id = $1 AND status NOT IN ('completed', 'failed', 'skipped')
+RETURNING *;
+
 -- name: UpdateAutopilotRunFailed :one
 UPDATE autopilot_run
 SET status = 'failed', completed_at = now(), failure_reason = $2
 WHERE id = $1
+RETURNING *;
+
+-- name: FailAutopilotRunIfActive :one
+UPDATE autopilot_run
+SET status = 'failed', completed_at = now(), failure_reason = $2
+WHERE id = $1 AND status NOT IN ('completed', 'failed', 'skipped')
 RETURNING *;
 
 -- name: UpdateAutopilotRunSkipped :one
