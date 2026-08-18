@@ -54,6 +54,7 @@ import {
 } from "../issues/components/pickers/property-picker";
 import { ProjectPicker } from "../projects/components/project-picker";
 import { StatusIcon } from "../issues/components/status-icon";
+import { DesignDotGrid } from "./design-dot-grid";
 import { DesignExamplePrompts } from "./design-example-prompts";
 import { DesignRecentDocuments } from "./design-recent-documents";
 
@@ -612,19 +613,13 @@ export function DesignTaskComposer({
   const canSubmit = !missingRequirement && !createDocument.isPending;
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-8 sm:px-6 sm:py-10">
-        <header className="text-center">
-          <h2 className="text-title-lg font-semibold">Multica Design</h2>
-          <p className="mx-auto mt-2 max-w-xl text-balance text-body text-muted-foreground">
-            描述你想要的页面，选好项目和智能体，交给设计智能体生成可以直接打开的页面设计。
-          </p>
-        </header>
-
+    <div className="relative min-h-0 flex-1 overflow-y-auto">
+      <DesignDotGrid />
+      <div className="relative z-10 mx-auto flex w-full max-w-4xl flex-col px-4 py-8 sm:px-6 sm:py-10">
         {/* The whole creation surface, laid out at once. Only the scenarios
             with a real producer are live; the rest keep their position so the
             rail reads as complete without promising anything. */}
-        <div role="group" aria-label="设计场景" className="mt-7 flex flex-wrap items-center gap-1.5">
+        <div role="group" aria-label="设计场景" className="flex flex-wrap items-center gap-1.5">
           {SCENARIO_CHIPS.map((chip) => (
             <CreateChip
               key={chip.recipe}

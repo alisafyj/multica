@@ -1,0 +1,25 @@
+/* Decorative background wash for the design centre, ported from
+   open-design's AppWash. Colour-only accents layered over --page-canvas
+   (values match exactly, so no separate base token is needed here). */
+:root {
+  --wash-blue: rgba(168, 196, 236, 0.55);
+  --wash-pink: rgba(240, 197, 216, 0.45);
+  --wash-peach: rgba(247, 224, 196, 0.5);
+  --wash-mist: rgba(213, 229, 248, 0.38);
+}
+
+.dark {
+  --wash-blue: rgba(96, 126, 178, 0.14);
+  --wash-pink: rgba(168, 110, 142, 0.1);
+  --wash-peach: rgba(178, 142, 100, 0.09);
+  --wash-mist: rgba(100, 130, 172, 0.09);
+}
+
+.design-wash-bg {
+  background:
+    radial-gradient(52% 44% at 12% -4%, var(--wash-blue) 0%, transparent 68%),
+    radial-gradient(44% 38% at 90% 6%, var(--wash-pink) 0%, transparent 66%),
+    radial-gradient(48% 42% at 82% 94%, var(--wash-peach) 0%, transparent 64%),
+    radial-gradient(56% 48% at 14% 102%, var(--wash-mist) 0%, transparent 70%),
+    var(--page-canvas);
+}

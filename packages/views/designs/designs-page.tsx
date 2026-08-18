@@ -30,7 +30,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
-import { PageHeader } from "../layout/page-header";
 import { AppLink, useNavigation } from "../navigation";
 import { DesignDocumentCard } from "./design-document-card";
 import { DesignFilterPill } from "./design-filter-pill";
@@ -39,6 +38,7 @@ import { DesignSystemLibrary } from "./design-system-library";
 import { DesignTaskComposer, type DesignRecipeSelection } from "./design-task-composer";
 import { FigmaPluginDownload } from "./figma-plugin-download";
 import { ProjectDesignSystemWorkspace } from "./project-design-system-workspace";
+import "./design-wash.css";
 
 type ToolMenuState = { x: number; y: number; file: DesignFile } | null;
 type DraftDialogState = { template: DesignCatalogTemplate; title: string; requirement: string; slotValues: string; patch: string; agentId: string; prompt: string } | null;
@@ -576,19 +576,9 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <PageHeader className="justify-between gap-2 px-3 sm:px-5">
-        <div className="flex min-w-0 items-center gap-2">
-          <Palette className="h-4 w-4 text-muted-foreground" />
-          <h1 className="truncate text-body font-medium">设计库</h1>
-          {!isLoading && projectFiles.length > 0 ? <span className="hidden font-mono text-caption text-muted-foreground sm:inline">{projectFiles.length}</span> : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <FigmaPluginDownload downloadUrl={figmaPluginDownloadUrl} />
-        </div>
-      </PageHeader>
-
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div aria-hidden="true" className="design-wash-bg pointer-events-none absolute inset-0 z-0" />
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex shrink-0 flex-col border-b bg-muted/20 sm:flex-row sm:items-end sm:justify-between">
           <div role="tablist" aria-label="设计项目" className="flex min-w-0 items-end gap-1 overflow-x-auto overflow-y-hidden px-3 pt-2 sm:px-4">
             {/* Home is fixed (DC-048): it carries no project, so there is
@@ -657,14 +647,15 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          {selectedProjectId && activeTab !== "systems" ? (
-            <div className="shrink-0 px-3 py-2 sm:px-4">
+          <div className="flex shrink-0 items-center gap-2 px-3 py-2 sm:px-4">
+            {selectedProjectId && activeTab !== "systems" ? (
               <div className="relative w-full sm:w-72">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={searchPlaceholder} className="h-8 pl-8 text-body" />
               </div>
-            </div>
-          ) : null}
+            ) : null}
+            <FigmaPluginDownload downloadUrl={figmaPluginDownloadUrl} />
+          </div>
         </div>
 
         {activeWorkspaceTabId === DESIGN_HOME_TAB_ID ? (
