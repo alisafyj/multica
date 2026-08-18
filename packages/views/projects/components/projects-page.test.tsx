@@ -271,6 +271,7 @@ describe("ProjectsPage PMO import filter", () => {
 
 describe("ProjectsPage compact row navigation", () => {
   it("shows whether a project was imported from the PM system", () => {
+    mocks.projects = [{ ...PROJECT, created_by: "user-1", pmo_imported: true }];
     renderProjects();
 
     const row = projectRow();
