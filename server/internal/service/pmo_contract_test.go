@@ -109,6 +109,73 @@ func TestParsePMOSnapshotAcceptsTrailingProse(t *testing.T) {
 	}
 }
 
+func TestParsePMOSyncResultAcceptsSourceFailureEnvelopes(t *testing.T) {
+	tests := map[string]string{
+		"snapshot generation failure": `{"error":"snapshot_generation_failed","root_requirement_key":"SY-P-20260525","message":"task title is required"}`,
+		"task failure":                `{"error":"task title is required","requirement_key":"SY-P-20260525","snapshot_complete":false}`,
+	}
+	for name, raw := range tests {
+		t.Run(name, func(t *testing.T) {
+			result, err := ParsePMOSyncResult(raw)
+			if err != nil {
+				t.Fatalf("expected source failure, got %v", err)
+			}
+			if result.Snapshot != nil || result.SourceFailure == nil {
+				t.Fatalf("result = %#v, want source failure", result)
+			}
+			if result.SourceFailure.Reason() != "task title is required" {
+				t.Fatalf("reason = %q, want task title is required", result.SourceFailure.Reason())
+			}
+		})
+	}
+}
+
+func TestParsePMOSyncResultSourceFailureValidation(t *testing.T) {
+	tests := map[string]string{
+		"message falls back to error": `{"error":"task_title_required"}`,
+		"unknown field":               `{"error":"task_title_required","unexpected":true}`,
+		"complete snapshot":           `{"error":"task_title_required","snapshot_complete":true}`,
+		"long message":                `{"error":"task_title_required","message":"` + strings.Repeat("x", MaxPMORunErrorBytes+1) + `"}`,
+		"invalid requirement key":     `{"error":"task_title_required","requirement_key":"REQ-1"}`,
+		"nested envelope":             `{"result":{"error":"task_title_required"}}`,
+	}
+	for name, raw := range tests {
+		t.Run(name, func(t *testing.T) {
+			result, err := ParsePMOSyncResult(raw)
+			if name == "message falls back to error" {
+				if err != nil || result.SourceFailure == nil || result.SourceFailure.Reason() != "task_title_required" {
+					t.Fatalf("fallback result = %#v, err = %v", result, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected invalid source failure, got %#v", result)
+			}
+		})
+	}
+}
+
+func TestParsePMOSyncResultPreservesSnapshotCompatibility(t *testing.T) {
+	tests := map[string]string{
+		"normal snapshot":        validPMOSnapshotJSON(),
+		"prose wrapped snapshot": "Done:\n```json\n" + validPMOSnapshotJSON() + "\n```",
+	}
+	for name, raw := range tests {
+		t.Run(name, func(t *testing.T) {
+			result, err := ParsePMOSyncResult(raw)
+			if err != nil || result.Snapshot == nil || result.SourceFailure != nil {
+				t.Fatalf("result = %#v, err = %v", result, err)
+			}
+		})
+	}
+}
+
+func TestParsePMOSyncResultRejectsInvalidJSON(t *testing.T) {
+	if _, err := ParsePMOSyncResult(`{"error":"task_title_required"`); err == nil {
+		t.Fatal("expected malformed JSON rejection")
+	}
+}
+
 func TestParsePMOSnapshotRejectsTrailingJSON(t *testing.T) {
 	// A valid snapshot followed by another JSON blob stays rejected: the
 	// parser must never silently drop a second object.

@@ -448,6 +448,49 @@ func TestCompletePMOSyncTaskRejectsInvalidOutput(t *testing.T) {
 	}
 }
 
+func TestCompletePMOSyncTaskPropagatesSourceFailure(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	config := createPMOConfigForTest(t)
+	run := startPMORunForTest(t, config.ID)
+	taskID := *run.AgentTaskID
+	markAgentTaskRunningForTest(t, taskID)
+
+	w := pmoCompleteTaskForTest(t, taskID, `{"error":"snapshot_generation_failed","root_requirement_key":"SY-P-20260525","message":"task title is required"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("complete: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "task title is required") {
+		t.Fatalf("response = %s, want source failure reason", w.Body.String())
+	}
+
+	var taskStatus string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&taskStatus); err != nil {
+		t.Fatalf("read task status: %v", err)
+	}
+	if taskStatus != "failed" {
+		t.Fatalf("task status = %q, want failed", taskStatus)
+	}
+
+	status, errorCode, errorMessage, sourceSnapshot := pmoRunRowForTest(t, run.ID)
+	if status != "failed" || errorCode != "pmo_source_failed" || errorMessage != "task title is required" {
+		t.Fatalf("run = %q/%q/%q, want failed/pmo_source_failed/task title is required", status, errorCode, errorMessage)
+	}
+	if string(sourceSnapshot) != "{}" {
+		t.Fatalf("source_snapshot = %s, want untouched default {}", sourceSnapshot)
+	}
+	var linkCount int
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT count(*) FROM pmo_sync_link WHERE workspace_id = $1 AND config_id = $2`, testWorkspaceID, config.ID).Scan(&linkCount); err != nil {
+		t.Fatalf("count pmo links: %v", err)
+	}
+	if linkCount != 0 {
+		t.Fatalf("pmo link count = %d, want 0", linkCount)
+	}
+}
+
 // TestFailPMOSyncTaskMarksRunFailed asserts /fail propagates the failure to
 // the run with a bounded error message.
 func TestFailPMOSyncTaskMarksRunFailed(t *testing.T) {
