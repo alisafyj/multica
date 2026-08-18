@@ -31,7 +31,7 @@ func TestListIssues_LimitValidation(t *testing.T) {
 	// not polluted by other tests' fixtures in the workspace.
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+		INSERT INTO project (workspace_id, title, created_by) VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1)) RETURNING id
 	`, testWorkspaceID, fmt.Sprintf("Limit Validation %d", suffix)).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestListIssues_LimitClamp(t *testing.T) {
 
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+		INSERT INTO project (workspace_id, title, created_by) VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1)) RETURNING id
 	`, testWorkspaceID, fmt.Sprintf("Limit Clamp %d", suffix)).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}

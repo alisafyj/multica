@@ -8,6 +8,10 @@ const (
 	DaemonCapabilityExecutionManifestV1 = "execution-manifest-v1"
 	DaemonCapabilityAgentSkillV1        = "agent-skill-v1"
 	DaemonCapabilityRemoteMCPV1         = "remote-mcp-v1"
+	// DaemonCapabilityProjectDesignSystemV1 advertises that the daemon
+	// preserves typed project-design-system context through prompt execution.
+	// Older daemons silently ignore the context field and run a generic task.
+	DaemonCapabilityProjectDesignSystemV1 = "project-design-system-v1"
 	// DaemonCapabilityLocalWorktreeV1 advertises that the daemon implements
 	// worktree mode for local_directory resources (execution_mode=worktree).
 	//

@@ -12,6 +12,8 @@ export interface Project {
   priority: ProjectPriority;
   lead_type: "member" | "agent" | null;
   lead_id: string | null;
+  /** True when the project has an active PMO sync link. */
+  pmo_imported?: boolean;
   // Member who created the project (SSO account). Null for rows predating this
   // field (e.g. seeded/PMS-created projects).
   created_by: string | null;

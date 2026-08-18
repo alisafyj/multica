@@ -19,7 +19,7 @@ func seedProductMapFixture(t *testing.T, editorUserID string) (yuanwuID, multica
 	t.Helper()
 	ctx := context.Background()
 
-	if _, err := testPool.Exec(ctx, `INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id`,
+	if _, err := testPool.Exec(ctx, `INSERT INTO project (workspace_id, title, created_by) VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1)) RETURNING id`,
 		testWorkspaceID, "multica-fixture-project"); err != nil {
 		t.Fatalf("seed fixture project: %v", err)
 	}

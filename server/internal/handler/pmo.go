@@ -394,11 +394,11 @@ func isBadRequestInput(err error) bool {
 }
 
 type setPMOAssigneeMappingRequest struct {
-	MemberID string `json:"member_id"`
+	AgentID string `json:"agent_id"`
 }
 
 // SetPMOAssigneeMapping maps an external assignee identity to a workspace
-// member BY MEMBER ID. Never matched by display name. Owner/admin only.
+// Agent BY AGENT ID. Never matched by display name. Owner/admin only.
 func (h *Handler) SetPMOAssigneeMapping(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
@@ -418,16 +418,16 @@ func (h *Handler) SetPMOAssigneeMapping(w http.ResponseWriter, r *http.Request) 
 	if !decodePMORequest(w, r, &request) {
 		return
 	}
-	memberUserID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(request.MemberID), "member_id")
+	agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(request.AgentID), "agent_id")
 	if !ok {
 		return
 	}
 
-	link, err := h.PMOService.SetAssigneeMapping(r.Context(), workspaceUUID, configID, externalKey, memberUserID)
+	link, err := h.PMOService.SetAssigneeMapping(r.Context(), workspaceUUID, configID, externalKey, agentID)
 	if err != nil {
 		switch {
-		case err == service.ErrPMOMemberNotFound:
-			writeError(w, http.StatusNotFound, "member not found in this workspace")
+		case err == service.ErrPMOAgentNotFound:
+			writeError(w, http.StatusNotFound, "agent not found or unavailable")
 		case err == service.ErrPMORunNotFound:
 			writeError(w, http.StatusNotFound, "PMO configuration not found")
 		default:

@@ -36,6 +36,15 @@ func TestDiffPMOSnapshotCreatesProjectBeforeIssuesAndRetainsHierarchy(t *testing
 	assertPMOEntity(t, diff.Entities[0], PMOLocalProject, "requirement", "EXT-P-001", "", PMOCreate)
 	assertPMOEntity(t, diff.Entities[1], PMOLocalIssue, "requirement", "EXT-C-001", "EXT-P-001", PMOCreate)
 	assertPMOEntity(t, diff.Entities[2], PMOLocalIssue, "task", "TASK-001", "EXT-C-001", PMOCreate)
+	if got := diff.Entities[0].Fields["title"].External; got != "REQ-001 Example parent requirement" {
+		t.Fatalf("parent title = %q, want requirement number prefix", got)
+	}
+	if got := diff.Entities[1].Fields["title"].External; got != "REQ-001-1 Example child requirement" {
+		t.Fatalf("child title = %q, want requirement number prefix", got)
+	}
+	if got := diff.Entities[2].Fields["title"].External; got != "Example scheduling task" {
+		t.Fatalf("task title = %q, want unchanged task title", got)
+	}
 	if _, exists := diff.Entities[1].Fields["workload"]; !exists {
 		t.Fatal("child requirement workload is missing from synced fields")
 	}

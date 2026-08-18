@@ -9,6 +9,7 @@ import { ProjectDetail } from "./project-detail";
 
 const mocks = vi.hoisted(() => ({
   role: "admin",
+  project: null as Project | null,
   deleteProject: vi.fn(),
   push: vi.fn(),
   recordVisit: vi.fn(),
@@ -19,7 +20,7 @@ vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     switch (options.queryKey?.[0]) {
       case "project-detail":
-        return { data: PROJECT, isLoading: false };
+        return { data: mocks.project ?? PROJECT, isLoading: false };
       case "members":
         return {
           data: [{ user_id: "user-1", name: "User One", role: mocks.role }],
@@ -32,6 +33,10 @@ vi.mock("@tanstack/react-query", () => ({
         return { data: undefined, isLoading: false };
     }
   },
+}));
+
+vi.mock("../../designs/design-document-task-panel", () => ({
+  DesignDocumentTaskPanel: () => <div>Project design task panel</div>,
 }));
 
 vi.mock("@multica/core/projects/queries", () => ({
@@ -225,7 +230,7 @@ vi.mock("./project-due-date-picker", () => ({
 }));
 
 vi.mock("../../issues/surface/issue-surface", () => ({
-  IssueSurface: () => null,
+  IssueSurface: () => <div>Project issues surface</div>,
 }));
 
 vi.mock("../../layout/breadcrumb-header", () => ({
@@ -288,6 +293,7 @@ function renderProjectDetail() {
 
 beforeEach(() => {
   mocks.role = "admin";
+  mocks.project = null;
   mocks.deleteProject.mockReset();
   mocks.push.mockReset();
   mocks.recordVisit.mockReset();
@@ -339,5 +345,28 @@ describe("ProjectDetail created-by row", () => {
     const row = screen.getByText("Created by").closest("div");
     expect(row).not.toBeNull();
     expect(row).toHaveTextContent("User One");
+  });
+
+  it("shows Unknown for a historical project without a creator", () => {
+    mocks.project = { ...PROJECT, created_by: null };
+
+    renderProjectDetail();
+
+    const row = screen.getByText("Created by").closest("div");
+    expect(row).not.toBeNull();
+    expect(row).toHaveTextContent("Unknown");
+  });
+});
+
+describe("ProjectDetail design drafts", () => {
+  it("opens the project-scoped design task area", async () => {
+    const user = userEvent.setup();
+    renderProjectDetail();
+
+    expect(screen.getByText("Project issues surface")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Design drafts" }));
+
+    expect(screen.getByText("Project design task panel")).toBeInTheDocument();
+    expect(screen.queryByText("Project issues surface")).not.toBeInTheDocument();
   });
 });

@@ -84,6 +84,36 @@ WITH cleared_design_files AS (
       )
     RETURNING design_file.id
 ),
+cancelled_design_document_tasks AS (
+    UPDATE agent_task_queue AS task
+    SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
+    WHERE task.context ->> 'type' = 'design_document_task'
+      AND task.context ->> 'workspace_id' = $2::text
+      AND task.context ->> 'project_id' = $1::text
+      AND task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+    RETURNING task.id
+),
+deleted_design_document_revisions AS (
+    DELETE FROM design_document_revision
+    WHERE design_document_revision.workspace_id = $2
+      AND design_document_revision.project_id = $1
+    RETURNING design_document_revision.id
+),
+deleted_design_document_snapshots AS (
+    DELETE FROM design_document_input_snapshot
+    WHERE design_document_input_snapshot.workspace_id = $2
+      AND design_document_input_snapshot.project_id = $1
+      AND (SELECT count(*) FROM deleted_design_document_revisions) >= 0
+      AND (SELECT count(*) FROM cancelled_design_document_tasks) >= 0
+    RETURNING design_document_input_snapshot.id
+),
+deleted_design_documents AS (
+    DELETE FROM design_document
+    WHERE design_document.workspace_id = $2
+      AND design_document.project_id = $1
+      AND (SELECT count(*) FROM deleted_design_document_snapshots) >= 0
+    RETURNING design_document.id
+),
 cleared_design_deliveries AS (
     UPDATE design_delivery
     SET project_id = NULL
@@ -141,6 +171,7 @@ DELETE FROM project
 WHERE project.id = $1
   AND project.workspace_id = $2
   AND (SELECT count(*) FROM cleared_design_files) >= 0
+  AND (SELECT count(*) FROM deleted_design_documents) >= 0
   AND (SELECT count(*) FROM cleared_design_deliveries) >= 0
   AND (SELECT count(*) FROM cleared_design_system_profiles) >= 0
   AND (SELECT count(*) FROM deleted_design_folders) >= 0;

@@ -12,6 +12,12 @@ import (
 
 const pmoCorporateEmailDomain = "@soyoung.com"
 
+type pmoAgentCandidate struct {
+	ID           string
+	OwnerID      string
+	RuntimeBound bool
+}
+
 // normalizePMOOwnerEmail converts a PM snapshot owner external_id into the
 // workspace email key used for exact matching. Bare corporate accounts get the
 // canonical @soyoung.com domain; anything that is not a single, safe account or
@@ -59,34 +65,42 @@ func pmoSnapshotOwners(snapshot PMOSnapshot) map[string]*PMOExternalOwner {
 	return owners
 }
 
-// matchPMOAssigneeMappings merges explicit mappings with automatic workspace
-// email matches. Explicit mappings always win; automatic matching is exact
-// (case-insensitive) against the provided member email -> user id map and never
-// guesses from display names or malformed old values.
-func matchPMOAssigneeMappings(owners map[string]*PMOExternalOwner, memberEmailToUserID map[string]string, existing map[string]string) map[string]string {
+// matchPMOAgentMappings merges explicit Agent mappings with automatic exact
+// email matches. A member is only an intermediate lookup: the owner must have
+// exactly one runtime-bound Agent to resolve automatically.
+func matchPMOAgentMappings(owners map[string]*PMOExternalOwner, memberEmailToUserID map[string]string, agents []pmoAgentCandidate, existing map[string]string) map[string]string {
 	result := make(map[string]string, len(existing)+len(owners))
-	for externalID, userID := range existing {
-		if externalID != "" && userID != "" {
-			result[externalID] = userID
+	eligibleAgentIDs := make(map[string]struct{}, len(agents))
+	owned := map[string][]string{}
+	for _, agent := range agents {
+		if agent.RuntimeBound && agent.OwnerID != "" && agent.ID != "" {
+			eligibleAgentIDs[agent.ID] = struct{}{}
+			owned[agent.OwnerID] = append(owned[agent.OwnerID], agent.ID)
+		}
+	}
+	for externalID, agentID := range existing {
+		if _, eligible := eligibleAgentIDs[agentID]; externalID != "" && eligible {
+			result[externalID] = agentID
 		}
 	}
 	for externalID := range owners {
-		if _, ok := result[externalID]; ok {
+		if _, explicitlyMapped := existing[externalID]; explicitlyMapped {
 			continue
 		}
 		email := normalizePMOOwnerEmail(externalID)
 		if email == "" {
 			continue
 		}
-		if userID, ok := memberEmailToUserID[strings.ToLower(email)]; ok {
-			result[externalID] = userID
+		userID := memberEmailToUserID[strings.ToLower(email)]
+		if candidates := owned[userID]; len(candidates) == 1 {
+			result[externalID] = candidates[0]
 		}
 	}
 	return result
 }
 
-// ResolvePMOAssigneeMappings combines the existing explicit mappings with exact
-// workspace-member email matches, reusing ListMembersWithUser (no new SQL).
+// ResolvePMOAssigneeMappings combines explicit Agent mappings with exact
+// workspace-member email matches followed by unique eligible Agent selection.
 func ResolvePMOAssigneeMappings(
 	ctx context.Context,
 	qtx *db.Queries,
@@ -98,9 +112,86 @@ func ResolvePMOAssigneeMappings(
 	if err != nil {
 		return nil, fmt.Errorf("resolve pmo assignees: list workspace members: %w", err)
 	}
+	agents, err := listPMOAgentCandidates(ctx, qtx, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve pmo assignees: %w", err)
+	}
 	memberEmailToUserID := make(map[string]string, len(members))
 	for _, member := range members {
 		memberEmailToUserID[strings.ToLower(strings.TrimSpace(member.UserEmail))] = util.UUIDToString(member.UserID)
 	}
-	return matchPMOAssigneeMappings(pmoSnapshotOwners(snapshot), memberEmailToUserID, existing), nil
+	return matchPMOAgentMappings(pmoSnapshotOwners(snapshot), memberEmailToUserID, agents, existing), nil
+}
+
+func resolvePMOAssigneeMappingsFromLinks(
+	ctx context.Context,
+	qtx *db.Queries,
+	workspaceID pgtype.UUID,
+	snapshot PMOSnapshot,
+	links []db.PmoSyncLink,
+) (map[string]string, error) {
+	explicit := map[string]string{}
+	legacy := map[string]string{}
+	for _, link := range links {
+		if link.ExternalType != pmoExternalTypeAssignee || !link.LocalID.Valid {
+			continue
+		}
+		switch link.LocalType.String {
+		case pmoLocalTypeAgent:
+			explicit[link.ExternalKey] = util.UUIDToString(link.LocalID)
+		case pmoLocalTypeMember:
+			legacy[link.ExternalKey] = util.UUIDToString(link.LocalID)
+		}
+	}
+
+	mappings, err := ResolvePMOAssigneeMappings(ctx, qtx, workspaceID, snapshot, explicit)
+	if err != nil {
+		return nil, err
+	}
+	agents, err := listPMOAgentCandidates(ctx, qtx, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve pmo assignees: %w", err)
+	}
+	legacyAgents := resolvePMOLegacyMemberMappings(legacy, agents)
+	for externalID, agentID := range legacyAgents {
+		mappings[externalID] = agentID
+	}
+	for externalID := range legacy {
+		if legacyAgents[externalID] == "" {
+			delete(mappings, externalID)
+		}
+	}
+	return mappings, nil
+}
+
+func listPMOAgentCandidates(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID) ([]pmoAgentCandidate, error) {
+	agentRows, err := qtx.ListAgents(ctx, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list workspace agents: %w", err)
+	}
+	agents := make([]pmoAgentCandidate, 0, len(agentRows))
+	for _, agent := range agentRows {
+		agents = append(agents, pmoAgentCandidate{
+			ID:           util.UUIDToString(agent.ID),
+			OwnerID:      util.UUIDToString(agent.OwnerID),
+			RuntimeBound: agent.RuntimeID.Valid,
+		})
+	}
+	return agents, nil
+}
+
+func resolvePMOLegacyMemberMappings(legacy map[string]string, agents []pmoAgentCandidate) map[string]string {
+	owned := map[string][]string{}
+	for _, agent := range agents {
+		if agent.RuntimeBound && agent.OwnerID != "" && agent.ID != "" {
+			owned[agent.OwnerID] = append(owned[agent.OwnerID], agent.ID)
+		}
+	}
+	result := make(map[string]string, len(legacy))
+	for externalID, memberID := range legacy {
+		if candidates := owned[memberID]; len(candidates) == 1 {
+			result[externalID] = candidates[0]
+		}
+	}
+	return result
 }

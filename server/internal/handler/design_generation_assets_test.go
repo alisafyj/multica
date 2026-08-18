@@ -560,7 +560,7 @@ func createGenerationAssetProject(t *testing.T, workspaceID pgtype.UUID) pgtype.
 	t.Helper()
 	var projectID pgtype.UUID
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+		INSERT INTO project (workspace_id, title, created_by) VALUES ($1, $2, (SELECT id FROM "user" LIMIT 1)) RETURNING id
 	`, workspaceID, fmt.Sprintf("Generation Assets %d", time.Now().UnixNano())).Scan(&projectID); err != nil {
 		t.Fatalf("create generation asset project: %v", err)
 	}

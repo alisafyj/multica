@@ -25,7 +25,10 @@
     "progress": "진행률",
     "lead": "리드",
     "created": "생성일",
-    "issues": "태스크 수"
+    "issues": "태스크 수",
+    "pm_imported": "PM 시스템 가져오기",
+    "pm_import_yes": "예",
+    "pm_import_no": "아니요"
   },
   "status": {
     "planned": "계획됨",
@@ -64,10 +67,14 @@
     "sidebar_tooltip": "사이드바 열기/닫기",
     "copy_link": "링크 복사",
     "delete_action": "프로젝트 삭제",
+    "content_tabs": "프로젝트 콘텐츠",
+    "content_issues": "이슈",
+    "content_design_drafts": "디자인 초안",
     "section_properties": "속성",
     "section_progress": "진행률",
     "section_description": "설명",
     "prop_created_by": "생성자",
+    "unknown_creator": "알 수 없음",
     "prop_start_date": "시작일",
     "prop_due_date": "마감일",
     "no_start_date": "시작일 없음",
@@ -173,11 +180,16 @@
     "section_status": "상태",
     "section_priority": "우선순위",
     "section_lead": "리드",
+    "section_pmo_imported": "PM 시스템 가져오기",
     "display": "표시",
     "sort_by": "정렬",
     "direction_asc": "오름차순",
     "direction_desc": "내림차순",
     "section_columns": "열",
     "view": "보기"
+  },
+  "pmo_imported": {
+    "true": "예",
+    "false": "아니요"
   }
 }

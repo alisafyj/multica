@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/designdocument"
 	"github.com/multica-ai/multica/server/internal/designpreview"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
@@ -2714,6 +2715,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	hasDesignSystemProfileAnalyze := false
 	hasDesignTemplateBlueprintAnalyze := false
 	hasProjectDesignSystem := false
+	hasDesignDocument := false
 	hasPMOSync := false
 	if task.Context != nil && !task.IssueID.Valid && !task.ChatSessionID.Valid && !task.AutopilotRunID.Valid {
 		var qc service.QuickCreateContext
@@ -2955,6 +2957,50 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 	}
 
+	// Design Document tasks may optionally carry an issue_id, so this typed
+	// override must run after both the issue and context-only claim branches.
+	// The Design Document protocol owns the prompt and project resources; it is
+	// never an issue-reply/ownership turn even when its input snapshots an Issue.
+	var designDocumentCtx struct {
+		Type           string `json:"type"`
+		WorkspaceID    string `json:"workspace_id"`
+		ProjectID      string `json:"project_id"`
+		AgentID        string `json:"agent_id"`
+		ExecutionReady bool   `json:"execution_ready"`
+	}
+	if json.Unmarshal(task.Context, &designDocumentCtx) == nil && designDocumentCtx.Type == designDocumentTaskContextType {
+		hasDesignDocument = true
+		if !designDocumentCtx.ExecutionReady || designDocumentCtx.AgentID != uuidToString(task.AgentID) {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, &claimBuildFailure{
+				outcome: "error_design_document_context", status: http.StatusConflict, message: "design document task is not execution ready",
+			}
+		}
+		resp.WorkspaceID = designDocumentCtx.WorkspaceID
+		resp.DesignDocumentContext = json.RawMessage(task.Context)
+		resp.TriggerCommentID = nil
+		resp.TriggerCommentContent = ""
+		resp.TriggerThreadID = ""
+		resp.CoalescedCommentIDs = nil
+		resp.CoalescedComments = nil
+		h.populateContextTaskProject(r.Context(), &resp, designDocumentCtx.ProjectID, designDocumentCtx.WorkspaceID)
+		if runtime.DaemonID.Valid {
+			filtered := resp.ProjectResources[:0]
+			for _, resource := range resp.ProjectResources {
+				if resource.ResourceType == "github_repo" {
+					filtered = append(filtered, resource)
+					continue
+				}
+				if resource.ResourceType == "local_directory" {
+					var ref localDirectoryRef
+					if json.Unmarshal(resource.ResourceRef, &ref) == nil && strings.TrimSpace(ref.DaemonID) == runtime.DaemonID.String {
+						filtered = append(filtered, resource)
+					}
+				}
+			}
+			resp.ProjectResources = filtered
+		}
+	}
+
 	// Workspace isolation check: the daemon uses this response's workspace_id
 	// as the only authority for MULTICA_WORKSPACE_ID in the agent env. An
 	// empty value would make the CLI silently fall back to the user-global
@@ -2978,6 +3024,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			"has_design_system_profile_analyze", hasDesignSystemProfileAnalyze,
 			"has_design_template_blueprint_analyze", hasDesignTemplateBlueprintAnalyze,
 			"has_project_design_system", hasProjectDesignSystem,
+			"has_design_document", hasDesignDocument,
 			"has_pmo_sync", hasPMOSync,
 		)
 		if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
@@ -3040,6 +3087,36 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		)
 	}
 
+	// Older daemons silently discard project_design_system_context, turning a
+	// typed design task into an ordinary assignment with no output protocol.
+	// Fail closed so the user gets an upgrade instruction instead of a late,
+	// misleading invalid-output failure.
+	if reason := projectDesignSystemClaimBlockReason(
+		hasProjectDesignSystem,
+		requestHasClientCapability(r, protocol.DaemonCapabilityProjectDesignSystemV1),
+	); reason != "" {
+		slog.Error("task claim: runtime lacks project design system capability; cancelling",
+			"task_id", uuidToString(task.ID),
+			"runtime_id", runtimeID,
+			"reason", reason,
+		)
+		if _, cerr := h.TaskService.CancelTaskWithReason(r.Context(), task.ID, reason, "project_design_system_context_unsupported"); cerr != nil {
+			if _, rerr := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); rerr != nil {
+				slog.Error("task claim: requeue after project design system capability gate failed", "task_id", uuidToString(task.ID), "error", rerr)
+			}
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, &claimBuildFailure{
+				outcome: "error_project_design_system_gate_cancel",
+				status:  http.StatusInternalServerError,
+				message: "failed to cancel a project design system task blocked by daemon capability; task requeued",
+			}
+		}
+		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, &claimBuildFailure{
+			outcome: "error_project_design_system_daemon_version",
+			status:  http.StatusUnprocessableEntity,
+			message: reason,
+		}
+	}
+
 	// Refuse to hand a worktree-mode directory task to a daemon that cannot
 	// implement the isolation contract. Falling back to in-place execution
 	// would edit the user's working copy.
@@ -3074,6 +3151,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	}
 
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
+}
+
+func projectDesignSystemClaimBlockReason(hasProjectDesignSystem, hasCapability bool) string {
+	if !hasProjectDesignSystem || hasCapability {
+		return ""
+	}
+	return "This machine's Multica runtime does not support project design system tasks. Update the Multica app on that machine to the latest version, then re-run this task."
 }
 
 // worktreeClaimBlockReason returns a user-facing reason when this runtime must
@@ -3631,7 +3715,9 @@ type TaskCompleteRequest struct {
 	// back from its server-collected, browser-verified native Agent chain
 	// (Task 5). The handler independently re-validates every field
 	// before persisting it as the new draft.
-	ProjectDesignSystemPackage *ProjectDesignSystemPackageReceipt `json:"project_design_system_package,omitempty"`
+	ProjectDesignSystemPackage *ProjectDesignSystemPackageReceipt  `json:"project_design_system_package,omitempty"`
+	DesignDocumentGrounding    *designdocument.RepositoryGrounding `json:"design_document_grounding,omitempty"`
+	DesignDocumentPackage      *DesignDocumentPackageReceipt       `json:"design_document_package,omitempty"`
 	// SessionRolloutMissing: the daemon withheld this task's Codex session
 	// because its rollout was missing (MUL-5305). Clear the resume pointer and
 	// flag the continuity gap for the next claim.
@@ -3656,6 +3742,19 @@ type ProjectDesignSystemPackageReceipt struct {
 	ArtifactIndex []projectdesignsystem.ArtifactIndexEntry `json:"artifact_index"`
 	Audit         projectdesignsystem.AuditReport          `json:"audit"`
 	Preview       designpreview.Receipt                    `json:"preview"`
+}
+
+type DesignDocumentPackageReceipt struct {
+	SchemaVersion       string                             `json:"schema_version"`
+	DocumentID          string                             `json:"document_id"`
+	RevisionID          string                             `json:"revision_id"`
+	ObjectKey           string                             `json:"object_key"`
+	ContentDigest       string                             `json:"content_digest"`
+	InputSnapshotSHA256 string                             `json:"input_snapshot_sha256"`
+	ArtifactIndex       []designdocument.FileEntry         `json:"artifact_index"`
+	Grounding           designdocument.RepositoryGrounding `json:"grounding"`
+	Audit               designdocument.AuditReport         `json:"audit"`
+	Preview             designpreview.Receipt              `json:"preview"`
 }
 
 const taskCompleteRequestMaxBytes int64 = 2 << 20
@@ -3827,15 +3926,31 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 			testGenerationCtx = &generationCtx
 		}
 	}
+	var preparedDesignDocument *preparedDesignDocumentPackage
+	if existingTask.Status == "running" && isDesignDocumentTaskContext(existingTask.Context) {
+		prepared, packageErr := prepareDesignDocumentPackageCompletion(r.Context(), existingTask, req.DesignDocumentPackage, h.Storage)
+		if packageErr != nil {
+			failedTask, failErr := h.TaskService.FailTask(r.Context(), existingTask.ID, packageErr.Error(), req.SessionID, req.WorkDir, req.BranchName, "design_document_package_invalid", req.SessionRolloutMissing, req.RetiredSessionID)
+			if failErr != nil {
+				slog.Warn("Design Document grounding completion: failed to mark task failed", "task_id", taskID, "error", failErr)
+			} else if failedTask != nil {
+				h.TaskService.NotifyTaskFinished(*failedTask)
+				_ = h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID)
+			}
+			writeError(w, http.StatusBadRequest, "invalid Design Document package receipt: "+packageErr.Error())
+			return
+		}
+		preparedDesignDocument = &prepared
+	}
 
 	// PMO sync completion: parse the agent's final output against the strict
-	// snapshot contract BEFORE the terminal transaction. Invalid output fails
-	// both the task and the run (redacted error, payload never persisted);
-	// valid output flows into the terminal mutation below so task completion
-	// and preview persistence commit together.
+	// snapshot/source-failure contracts BEFORE the terminal transaction. Invalid
+	// output fails both the task and the run (redacted error, payload never
+	// persisted); valid snapshots flow into the terminal mutation below so task
+	// completion and preview persistence commit together.
 	if existingTask.Status == "running" {
 		if pmoCtx, ok := service.ParsePMOSyncContext(existingTask.Context); ok {
-			snapshot, pmoErr := service.ParsePMOSnapshot(req.Output)
+			result, pmoErr := service.ParsePMOSyncResult(req.Output)
 			if pmoErr != nil {
 				// Validation text only — never the raw output. Bounded before
 				// it reaches the task row, the run row, or this response.
@@ -3854,6 +3969,23 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "invalid pmo snapshot output: "+bounded)
 				return
 			}
+			if result.SourceFailure != nil {
+				bounded := service.BoundPMORunError(result.SourceFailure.Reason())
+				slog.Warn("pmo sync completion: source acquisition failed", "task_id", taskID, "error", bounded)
+				failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), bounded, req.SessionID, req.WorkDir, req.BranchName, "pmo_source_failed", req.SessionRolloutMissing, req.RetiredSessionID)
+				if failErr != nil {
+					slog.Warn("pmo sync completion: failed to mark source failure task failed", "task_id", taskID, "error", failErr)
+				} else if failedTask != nil {
+					h.TaskService.NotifyTaskFinished(*failedTask)
+					if err := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); err != nil {
+						slog.Warn("complete task: failed to revoke task tokens after pmo source failure", "task_id", uuidToString(failedTask.ID), "error", err)
+					}
+				}
+				h.failPMOSyncRunForTask(r.Context(), pmoCtx, "pmo_source_failed", bounded)
+				writeError(w, http.StatusBadRequest, "pmo source failed: "+bounded)
+				return
+			}
+			snapshot := *result.Snapshot
 			pmoSyncCtx = pmoCtx
 			pmoSnapshot = &snapshot
 		}
@@ -3869,7 +4001,11 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	completeWithMutation := func(mutate func(*db.Queries, db.AgentTaskQueue) error) {
 		task, err = h.TaskService.CompleteTaskWithMutationAndSessionState(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.BranchName, req.SessionRolloutMissing, req.RetiredSessionID, mutate)
 	}
-	if preparedRepositoryAnalysis != nil {
+	if preparedDesignDocument != nil {
+		completeWithMutation(func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
+			return persistDesignDocumentPackageCompletion(r.Context(), qtx, completedTask, *preparedDesignDocument)
+		})
+	} else if preparedRepositoryAnalysis != nil {
 		completeWithMutation(func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
 			system, saveErr := persistProjectDesignSystemRepositoryAnalysisCompletion(r.Context(), qtx, completedTask, *preparedRepositoryAnalysis)
 			if saveErr == nil {

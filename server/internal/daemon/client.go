@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/designdocument"
 	"github.com/multica-ai/multica/server/internal/opendesign"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -201,6 +203,7 @@ func daemonClientCapabilities() string {
 		protocol.DaemonCapabilityExecutionManifestV1,
 		protocol.DaemonCapabilityAgentSkillV1,
 		protocol.DaemonCapabilityRemoteMCPV1,
+		protocol.DaemonCapabilityProjectDesignSystemV1,
 		protocol.DaemonCapabilityLocalWorktreeV1,
 		protocol.DaemonCapabilityRPCV1,
 	}, ",")
@@ -446,6 +449,56 @@ func (c *Client) UploadProjectDesignSystemPackage(
 	}
 }
 
+func (c *Client) UploadDesignDocumentPackage(ctx context.Context, taskID string, binding designdocument.Binding, contentDigest string, archive []byte) (DesignDocumentPackageUpload, error) {
+	if taskID == "" || binding.TaskID != taskID || binding.DocumentID == "" || binding.RevisionID == "" || !validProjectDesignSystemPackageDigest(binding.InputSnapshotSHA256) {
+		return DesignDocumentPackageUpload{}, errors.New("design document package binding is invalid")
+	}
+	if !validProjectDesignSystemPackageDigest(contentDigest) || len(archive) == 0 || len(archive) > 32<<20 {
+		return DesignDocumentPackageUpload{}, errors.New("design document package archive is invalid")
+	}
+	requestPath := fmt.Sprintf("/api/daemon/tasks/%s/design-document/package", taskID)
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+requestPath, bytes.NewReader(archive))
+		if err != nil {
+			return DesignDocumentPackageUpload{}, err
+		}
+		req.Header.Set("Content-Type", "application/zip")
+		req.Header.Set("X-Multica-Design-Package-Digest", contentDigest)
+		req.Header.Set("X-Multica-Design-Document-ID", binding.DocumentID)
+		req.Header.Set("X-Multica-Design-Revision-ID", binding.RevisionID)
+		req.Header.Set("X-Multica-Design-Input-Snapshot-Digest", binding.InputSnapshotSHA256)
+		if c.token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.token)
+		}
+		c.setIdentityHeaders(req)
+		resp, err := c.client.Do(req)
+		if err == nil {
+			var result DesignDocumentPackageUpload
+			if resp.StatusCode >= 400 {
+				data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+				err = &requestError{Method: http.MethodPost, Path: requestPath, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+			} else {
+				err = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&result)
+				if err == nil && (strings.TrimSpace(result.ObjectKey) == "" || result.ContentDigest != contentDigest) {
+					err = errors.New("design document package response is invalid")
+				}
+			}
+			_ = resp.Body.Close()
+			if err == nil {
+				return result, nil
+			}
+		}
+		lastErr = err
+		if ctx.Err() != nil || !isTransientError(err) || attempt >= len(defaultTerminalRetrySchedule) {
+			return DesignDocumentPackageUpload{}, lastErr
+		}
+		if sleepErr := retrySleep(ctx, defaultTerminalRetrySchedule[attempt]); sleepErr != nil {
+			return DesignDocumentPackageUpload{}, lastErr
+		}
+	}
+}
+
 func (c *Client) DownloadOpenDesignBaseArchive(ctx context.Context, taskID string, reference opendesign.BasePackageReference) ([]byte, error) {
 	if strings.TrimSpace(taskID) == "" {
 		return nil, errors.New("Open Design base archive task ID is required")
@@ -468,6 +521,43 @@ func (c *Client) DownloadOpenDesignBaseArchive(ctx context.Context, taskID strin
 			return nil, lastErr
 		}
 	}
+}
+
+func (c *Client) DownloadDesignDocumentInput(ctx context.Context, taskID, inputPath, expectedDigest string, maxBytes int64) ([]byte, http.Header, error) {
+	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(inputPath) == "" || maxBytes < 0 || maxBytes > 100<<20 {
+		return nil, nil, errors.New("Design Document input request is invalid")
+	}
+	path := fmt.Sprintf("/api/daemon/tasks/%s/design-document/%s", taskID, inputPath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	c.setIdentityHeaders(req)
+	inputClient := *c.client
+	inputClient.Timeout = openDesignArchiveDownloadTimeout
+	resp, err := inputClient.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, nil, &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+	}
+	content, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil || int64(len(content)) > maxBytes {
+		return nil, nil, errors.New("Design Document input exceeds its bounded size")
+	}
+	if expectedDigest != "" {
+		digest := sha256.Sum256(content)
+		if "sha256:"+hex.EncodeToString(digest[:]) != expectedDigest || resp.Header.Get("X-Multica-Content-SHA256") != expectedDigest {
+			return nil, nil, errors.New("Design Document input digest does not match its pinned reference")
+		}
+	}
+	return content, resp.Header.Clone(), nil
 }
 
 func (c *Client) ReportOpenDesignRunResult(ctx context.Context, taskID, openDesignRunID string, result opendesign.CollectedRunResult) error {
@@ -601,6 +691,14 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 		case *ProjectDesignSystemPackageReceipt:
 			if value != nil {
 				body["project_design_system_package"] = value
+			}
+		case *designdocument.RepositoryGrounding:
+			if value != nil {
+				body["design_document_grounding"] = value
+			}
+		case *DesignDocumentPackageReceipt:
+			if value != nil {
+				body["design_document_package"] = value
 			}
 		case bool:
 			if value {

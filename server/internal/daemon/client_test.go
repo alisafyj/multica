@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/designdocument"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -38,6 +39,7 @@ func TestClient_IdentityHeaders_PostJSON(t *testing.T) {
 		for _, want := range []string{
 			protocol.DaemonCapabilitySkillBundlesV1,
 			protocol.DaemonCapabilityCoalescedCommentsV1,
+			protocol.DaemonCapabilityProjectDesignSystemV1,
 			// The worktree gate is decided entirely from this header: if the
 			// daemon stops advertising it, every worktree task on this machine
 			// is cancelled with an upgrade prompt (MUL-5707). Pin it here so
@@ -191,6 +193,77 @@ func TestClientCompleteTaskOmitsProjectDesignSystemArtifactsWhenNil(t *testing.T
 	}
 	if _, exists := payload["project_design_system_artifacts"]; exists {
 		t.Fatal("ordinary completion included project_design_system_artifacts")
+	}
+}
+
+func TestClientCompleteTaskSerializesDesignDocumentGrounding(t *testing.T) {
+	grounding := designdocument.RepositoryGrounding{
+		SchemaVersion: designdocument.GroundingSchemaVersion, Status: designdocument.GroundingUnavailable,
+		Repositories: []designdocument.GroundedRepository{}, Facts: []designdocument.GroundingFact{},
+		Conflicts: []designdocument.GroundingObservation{}, Missing: []designdocument.GroundingObservation{}, Warnings: []string{"Repository unavailable."},
+	}
+	var payload map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	if err := NewClient(srv.URL).CompleteTask(context.Background(), "task-1", "done", "", "", "", nil, nil, &grounding); err != nil {
+		t.Fatal(err)
+	}
+	var got designdocument.RepositoryGrounding
+	if err := json.Unmarshal(payload["design_document_grounding"], &got); err != nil || got.Status != designdocument.GroundingUnavailable {
+		t.Fatalf("grounding = %+v, err=%v", got, err)
+	}
+}
+
+func TestClientCompleteTaskSerializesDesignDocumentPackage(t *testing.T) {
+	receipt := &DesignDocumentPackageReceipt{SchemaVersion: designdocument.SchemaVersion, DocumentID: "doc-1", RevisionID: "rev-1", ContentDigest: "sha256:" + strings.Repeat("a", 64)}
+	var payload map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	if err := NewClient(srv.URL).CompleteTask(context.Background(), "task-1", "done", "", "", "", receipt); err != nil {
+		t.Fatal(err)
+	}
+	var got DesignDocumentPackageReceipt
+	if err := json.Unmarshal(payload["design_document_package"], &got); err != nil || got.DocumentID != receipt.DocumentID {
+		t.Fatalf("package = %+v, err=%v", got, err)
+	}
+}
+
+func TestClientUploadDesignDocumentPackage(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	binding := designdocument.Binding{DocumentID: "doc-1", RevisionID: "rev-1", TaskID: "task-1", InputSnapshotSHA256: "sha256:" + strings.Repeat("b", 64)}
+	archive := []byte("archive")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/daemon/tasks/task-1/design-document/package" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		for header, want := range map[string]string{
+			"X-Multica-Design-Package-Digest":        digest,
+			"X-Multica-Design-Document-ID":           binding.DocumentID,
+			"X-Multica-Design-Revision-ID":           binding.RevisionID,
+			"X-Multica-Design-Input-Snapshot-Digest": binding.InputSnapshotSHA256,
+		} {
+			if got := r.Header.Get(header); got != want {
+				t.Errorf("%s = %q, want %q", header, got, want)
+			}
+		}
+		body, _ := io.ReadAll(r.Body)
+		if !bytes.Equal(body, archive) {
+			t.Errorf("body = %q", body)
+		}
+		_ = json.NewEncoder(w).Encode(DesignDocumentPackageUpload{ObjectKey: "design-documents/object.zip", ContentDigest: digest})
+	}))
+	t.Cleanup(srv.Close)
+	result, err := NewClient(srv.URL).UploadDesignDocumentPackage(context.Background(), "task-1", binding, digest, archive)
+	if err != nil || result.ObjectKey == "" || result.ContentDigest != digest {
+		t.Fatalf("result = %+v, err=%v", result, err)
 	}
 }
 

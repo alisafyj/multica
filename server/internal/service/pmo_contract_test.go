@@ -17,6 +17,43 @@ func TestParsePMOSnapshotPreservesRequirementAndTaskIDs(t *testing.T) {
 	}
 }
 
+func TestParsePMOSnapshotPreservesDisplayMetadata(t *testing.T) {
+	got := mustParsePMOSnapshot(t, validPMOSnapshotJSON())
+	if got.Parent.Priority != "P2-3" {
+		t.Fatalf("priority = %q", got.Parent.Priority)
+	}
+	if got.Parent.PRDURL == nil || *got.Parent.PRDURL != "https://soyoung.feishu.cn/wiki/example" {
+		t.Fatalf("prd_url = %#v", got.Parent.PRDURL)
+	}
+	if got.Children[0].Tasks[0].SchemeName != "M4-开发-前端" {
+		t.Fatalf("scheme_name = %q", got.Children[0].Tasks[0].SchemeName)
+	}
+}
+
+func TestParsePMOSnapshotAllowsOldDisplayMetadataShape(t *testing.T) {
+	raw := mutatePMOSnapshotJSON(t, func(snapshot map[string]any) {
+		parent := snapshot["parent_requirement"].(map[string]any)
+		delete(parent, "priority")
+		delete(parent, "prd_url")
+		child := snapshot["child_requirements"].([]any)[0].(map[string]any)
+		delete(child["tasks"].([]any)[0].(map[string]any), "scheme_name")
+	})
+	if _, err := ParsePMOSnapshot(raw); err != nil {
+		t.Fatalf("old snapshot must remain valid: %v", err)
+	}
+}
+
+func TestParsePMOSnapshotRejectsUnsafePRDURL(t *testing.T) {
+	raw := mutatePMOSnapshotJSON(t, func(snapshot map[string]any) {
+		parent := snapshot["parent_requirement"].(map[string]any)
+		parent["prd_url"] = "javascript:alert(1)"
+	})
+	_, err := ParsePMOSnapshot(raw)
+	if err == nil || !strings.Contains(err.Error(), "prd_url must be an absolute http or https URL") {
+		t.Fatalf("expected prd_url validation error, got %v", err)
+	}
+}
+
 func TestParsePMOSnapshotRejectsIncompleteSnapshot(t *testing.T) {
 	raw := mutatePMOSnapshotJSON(t, func(snapshot map[string]any) {
 		snapshot["snapshot_complete"] = false
@@ -69,6 +106,73 @@ func TestParsePMOSnapshotAcceptsTrailingProse(t *testing.T) {
 				t.Fatalf("trailing-prose snapshot was not parsed: %#v", got)
 			}
 		})
+	}
+}
+
+func TestParsePMOSyncResultAcceptsSourceFailureEnvelopes(t *testing.T) {
+	tests := map[string]string{
+		"snapshot generation failure": `{"error":"snapshot_generation_failed","root_requirement_key":"SY-P-20260525","message":"task title is required"}`,
+		"task failure":                `{"error":"task title is required","requirement_key":"SY-P-20260525","snapshot_complete":false}`,
+	}
+	for name, raw := range tests {
+		t.Run(name, func(t *testing.T) {
+			result, err := ParsePMOSyncResult(raw)
+			if err != nil {
+				t.Fatalf("expected source failure, got %v", err)
+			}
+			if result.Snapshot != nil || result.SourceFailure == nil {
+				t.Fatalf("result = %#v, want source failure", result)
+			}
+			if result.SourceFailure.Reason() != "task title is required" {
+				t.Fatalf("reason = %q, want task title is required", result.SourceFailure.Reason())
+			}
+		})
+	}
+}
+
+func TestParsePMOSyncResultSourceFailureValidation(t *testing.T) {
+	tests := map[string]string{
+		"message falls back to error": `{"error":"task_title_required"}`,
+		"unknown field":               `{"error":"task_title_required","unexpected":true}`,
+		"complete snapshot":           `{"error":"task_title_required","snapshot_complete":true}`,
+		"long message":                `{"error":"task_title_required","message":"` + strings.Repeat("x", MaxPMORunErrorBytes+1) + `"}`,
+		"invalid requirement key":     `{"error":"task_title_required","requirement_key":"REQ-1"}`,
+		"nested envelope":             `{"result":{"error":"task_title_required"}}`,
+	}
+	for name, raw := range tests {
+		t.Run(name, func(t *testing.T) {
+			result, err := ParsePMOSyncResult(raw)
+			if name == "message falls back to error" {
+				if err != nil || result.SourceFailure == nil || result.SourceFailure.Reason() != "task_title_required" {
+					t.Fatalf("fallback result = %#v, err = %v", result, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected invalid source failure, got %#v", result)
+			}
+		})
+	}
+}
+
+func TestParsePMOSyncResultPreservesSnapshotCompatibility(t *testing.T) {
+	tests := map[string]string{
+		"normal snapshot":        validPMOSnapshotJSON(),
+		"prose wrapped snapshot": "Done:\n```json\n" + validPMOSnapshotJSON() + "\n```",
+	}
+	for name, raw := range tests {
+		t.Run(name, func(t *testing.T) {
+			result, err := ParsePMOSyncResult(raw)
+			if err != nil || result.Snapshot == nil || result.SourceFailure != nil {
+				t.Fatalf("result = %#v, err = %v", result, err)
+			}
+		})
+	}
+}
+
+func TestParsePMOSyncResultRejectsInvalidJSON(t *testing.T) {
+	if _, err := ParsePMOSyncResult(`{"error":"task_title_required"`); err == nil {
+		t.Fatal("expected malformed JSON rejection")
 	}
 }
 
@@ -194,10 +298,12 @@ func validPMOSnapshotJSON() string {
     "display_number": "REQ-001",
     "numeric_id": 1001,
     "title": "  Example parent requirement  ",
-    "description": "Example description",
-    "source_status": "active",
-    "status": "in_progress",
-    "owner": {"external_id": "user-001", "display_name": "Example User"},
+	    "description": "Example description",
+	    "source_status": "active",
+	    "status": "in_progress",
+	    "priority": "P2-3",
+	    "prd_url": "https://soyoung.feishu.cn/wiki/example",
+	    "owner": {"external_id": "user-001", "display_name": "Example User"},
     "start_date": "2026-08-01",
     "due_date": "2026-08-31",
     "workload": null
@@ -215,8 +321,9 @@ func validPMOSnapshotJSON() string {
     "due_date": null,
     "workload": null,
     "tasks": [{
-      "task_id": "TASK-001",
-      "scheme_id": "SCHEME-001",
+	      "task_id": "TASK-001",
+	      "scheme_id": "SCHEME-001",
+	      "scheme_name": "M4-开发-前端",
       "title": "Example scheduling task",
       "description": "Example task description",
       "source_status": "active",

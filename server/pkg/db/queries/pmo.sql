@@ -215,6 +215,15 @@ SELECT * FROM pmo_sync_link
 WHERE workspace_id = $1 AND config_id = $2
 ORDER BY external_type, external_key;
 
+-- name: ListPMOImportedProjectIDs :many
+SELECT DISTINCT local_id
+FROM pmo_sync_link
+WHERE workspace_id = $1
+  AND external_type = 'requirement'
+  AND local_type = 'project'
+  AND local_id IS NOT NULL
+  AND externally_removed_at IS NULL;
+
 -- name: GetPMOSyncLink :one
 SELECT * FROM pmo_sync_link
 WHERE workspace_id = $1

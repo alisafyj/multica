@@ -5,6 +5,84 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("ApiClient design document tasks", () => {
+  it("creates and lists tasks through the dedicated API", async () => {
+    const task = {
+      id: "task-1",
+      project_id: "project-1",
+      status: "deferred",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(task), { status: 202, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ tasks: [task] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createDesignDocumentAgentTask({
+      project_id: "project-1",
+      agent_id: "agent-1",
+      requirement: "Customer detail page",
+    })).resolves.toMatchObject(task);
+    await expect(client.listDesignDocumentAgentTasks({ project_id: "project-1" })).resolves.toEqual({ tasks: [expect.objectContaining(task)] });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.example.test/api/design-documents/agent-tasks",
+      "https://api.example.test/api/design-documents/agent-tasks?project_id=project-1",
+    ]);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "POST", body: expect.stringContaining("Customer detail page") });
+  });
+
+  it("falls back safely for malformed task responses", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 1 }), { status: 202, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ tasks: "invalid" }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createDesignDocumentAgentTask({ project_id: "project-1", agent_id: "agent-1", requirement: "Page" })).resolves.toMatchObject({ id: "", status: "failed" });
+    await expect(client.listDesignDocumentAgentTasks()).resolves.toEqual({ tasks: [] });
+  });
+
+  it("lists Design Documents and loads a digest-bound preview", async () => {
+    const document = { id: "document-1", project_id: "project-1", title: "Checkout", draft_revision_id: "revision-1", created_at: "2026-08-14T00:00:00Z", updated_at: "2026-08-14T00:00:00Z" };
+    const preview = { schema: "multica.design-document-preview/v1", document_id: "document-1", revision_id: "revision-1", content_digest: `sha256:${"a".repeat(64)}`, resource_base_url: "/api/design-document-previews/files/", resource_access_token: "token", resource_access_expires_at: "2026-08-14T01:00:00Z", targets: [{ id: "main", kind: "page", path: "prototype/index.html" }], preview: { schema_version: "multica.design-preview-receipt/v1", content_digest: `sha256:${"a".repeat(64)}`, verification: { passed: true, browser: { name: "Chromium", version: "1" } } } };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ documents: [document] }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(preview), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.listDesignDocuments("project-1")).resolves.toEqual({ documents: [expect.objectContaining(document)] });
+    await expect(client.getDesignDocumentPreview("document-1", "project-1")).resolves.toMatchObject(preview);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.example.test/api/design-documents?project_id=project-1",
+      "https://api.example.test/api/design-documents/document-1/preview?project_id=project-1",
+    ]);
+  });
+
+  it("adjusts, saves, and discards a Design Document through base-bound lifecycle routes", async () => {
+	const digest = `sha256:${"a".repeat(64)}`;
+	const task = { id: "task-2", operation: "adjust", document_id: "document-1", base_revision_id: "revision-1", base_content_digest: digest, project_id: "project-1", status: "queued" };
+	const document = { id: "document-1", project_id: "project-1", title: "Checkout", draft_revision_id: "revision-1", saved_revision_id: "revision-1", created_at: "2026-08-14T00:00:00Z", updated_at: "2026-08-14T00:00:00Z" };
+	const fetchMock = vi.fn()
+	  .mockResolvedValueOnce(new Response(JSON.stringify(task), { status: 202, headers: { "Content-Type": "application/json" } }))
+	  .mockResolvedValueOnce(new Response(JSON.stringify(document), { status: 200, headers: { "Content-Type": "application/json" } }))
+	  .mockResolvedValueOnce(new Response(JSON.stringify({ ...document, draft_revision_id: undefined }), { status: 200, headers: { "Content-Type": "application/json" } }));
+	vi.stubGlobal("fetch", fetchMock);
+	const client = new ApiClient("https://api.example.test");
+	await expect(client.adjustDesignDocument("document-1", {
+	  project_id: "project-1", agent_id: "agent-1", instruction: "Tighten header",
+	  scope: { kind: "page", id: "page-checkout" }, base_revision_id: "revision-1", base_content_digest: digest,
+	})).resolves.toMatchObject(task);
+	await expect(client.saveDesignDocument("document-1", { project_id: "project-1", expected_draft_revision_id: "revision-1", expected_draft_content_digest: digest })).resolves.toMatchObject(document);
+	await expect(client.discardDesignDocumentDraft("document-1", { project_id: "project-1", expected_draft_revision_id: "revision-1", expected_draft_content_digest: digest })).resolves.toMatchObject({ id: "document-1" });
+	expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+	  "https://api.example.test/api/design-documents/document-1/adjust",
+	  "https://api.example.test/api/design-documents/document-1/save",
+	  "https://api.example.test/api/design-documents/document-1/draft",
+	]);
+	expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "POST", "DELETE"]);
+  });
+});
+
 describe("ApiClient pull-request response schema", () => {
   const validPR = {
     id: "pr-1",
@@ -2459,14 +2537,14 @@ describe("ApiClient PMO endpoints", () => {
     });
   });
 
-  it("maps an assignee by member id on the encoded external key path", async () => {
+  it("maps an assignee by agent id on the encoded external key path", async () => {
     const fetchMock = stubOK({ id: "link-1" });
     const client = new ApiClient("https://api.example.test");
-    await client.setPMOAssigneeMapping("ws-1", "cfg-1", "EXT-U/001", "member-1");
+    await client.setPMOAssigneeMapping("ws-1", "cfg-1", "EXT-U/001", "agent-1");
     expect(requestOf(fetchMock)).toMatchObject({
       url: "https://api.example.test/api/pmo/configs/cfg-1/assignees/EXT-U%2F001",
       method: "PUT",
-      body: { member_id: "member-1" },
+      body: { agent_id: "agent-1" },
     });
   });
 

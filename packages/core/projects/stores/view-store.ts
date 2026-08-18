@@ -35,17 +35,26 @@ export interface ProjectListFilters {
   priorities: string[];
   /** Composite "type:id" lead refs (member or agent). */
   leads: string[];
+  /** PMO source values: "true" or "false". */
+  pmoImported: string[];
 }
 
 export const EMPTY_PROJECT_FILTERS: ProjectListFilters = {
   statuses: [],
   priorities: [],
   leads: [],
+  pmoImported: [],
 };
 
 // Hideable table columns. Name + status are the always-visible core (status
 // is the project's defining lifecycle field), so they're not in this set.
-export type ProjectColumnKey = "priority" | "progress" | "lead" | "issues" | "created";
+export type ProjectColumnKey =
+  | "priority"
+  | "progress"
+  | "lead"
+  | "issues"
+  | "created"
+  | "pmImported";
 
 /** Issues count is opt-in; the rest show by default (matching the prior
  *  compact table). */

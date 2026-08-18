@@ -10,7 +10,7 @@
  */
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderWithI18n } from "../test/i18n";
 import { NavigationProvider, type NavigationAdapter } from "../navigation";
 import type { PMOConfig, PMORun } from "@multica/core/types";
@@ -77,7 +77,7 @@ const PREVIEW_DIFF = {
       code: "unresolved_assignee",
       external_id: "EXT-U-001",
       display_name: "Example User",
-      external_type: "assignee",
+      external_type: "requirement",
       external_key: "EXT-P-001",
       field: "assignee_id",
     },
@@ -172,8 +172,17 @@ vi.mock("@tanstack/react-query", () => ({
     const second = options.queryKey?.[1];
     if (key === "pmo" && second === "configs") return queryState.configs;
     if (key === "pmo" && second === "runs") return { ...queryState.runs, data: options.queryKey?.[2] ? queryState.runs.data : undefined };
-    if (key === "members") return { data: [{ id: "member-1", name: "Example Member", user_id: "user-1" }] };
-    if (key === "agents") return { data: [{ id: "agent-1", name: "Example Agent", archived_at: null, runtime_bound: true }] };
+    if (key === "members") return { data: [
+      { id: "member-1", name: "Example Member", email: "example@example.test", user_id: "user-1" },
+      { id: "member-2", name: "Feng Member", email: "fengyujie@example.test", user_id: "user-feng-uuid" },
+      { id: "member-3", name: "Other Member", email: "other@example.test", user_id: "user-other-uuid" },
+    ] };
+    if (key === "agents") return { data: [
+      { id: "agent-1", name: "Example Agent", owner_id: "user-1", archived_at: null, runtime_bound: true },
+      { id: "agent-feng", name: "Frontend Agent", owner_id: "user-feng-uuid", archived_at: null, runtime_bound: true },
+      { id: "agent-other", name: "Other Agent", owner_id: "user-other-uuid", archived_at: null, runtime_bound: true },
+      { id: "agent-unbound", name: "Unbound Agent", owner_id: "user-feng-uuid", archived_at: null, runtime_bound: false },
+    ] };
     return { data: [] };
   },
 }));
@@ -314,7 +323,7 @@ vi.mock("../layout/collection-page", () => ({
   ),
 }));
 
-function renderPage() {
+function pageElement() {
   const adapter: NavigationAdapter = {
     pathname: "/ws-1/pmo/cfg-1",
     push,
@@ -323,11 +332,15 @@ function renderPage() {
     searchParams: new URLSearchParams(),
     getShareableUrl: (path) => path,
   };
-  return renderWithI18n(
+  return (
     <NavigationProvider value={adapter}>
       <PMOConfigDetailPage />
-    </NavigationProvider>,
+    </NavigationProvider>
   );
+}
+
+function renderPage() {
+  return renderWithI18n(pageElement());
 }
 
 function previewConfig(overrides: Partial<PMOConfig> = {}) {
@@ -410,6 +423,233 @@ describe("PMOConfigDetailPage preview tab", () => {
       expect.arrayContaining(["EXT-P-001", "TASK-001"]),
     );
     expect(screen.getByText("New local title")).toBeInTheDocument();
+  });
+
+  it("renders each entity identity once while keeping every field row", () => {
+    previewConfig();
+    setRuns([makeRun()]);
+    renderPage();
+
+    expect(screen.getAllByTestId("pmo-entity-name").map((node) => node.textContent)).toEqual([
+      "New external title",
+      "New task title",
+    ]);
+    expect(screen.getAllByTestId("pmo-entity-key").map((node) => node.textContent)).toEqual([
+      "EXT-P-001",
+      "TASK-001",
+    ]);
+    expect(screen.getByText("status")).toBeInTheDocument();
+  });
+
+  it("keeps the long detail content in a vertical scroll container", () => {
+    previewConfig();
+    setRuns([makeRun()]);
+    renderPage();
+
+    const content = screen.getByTestId("pmo-detail-content");
+    expect(content.className).toContain("min-h-0");
+    expect(content.className).toContain("flex-1");
+    expect(content.className).toContain("overflow-y-auto");
+  });
+
+  it("renders the source requirement summary and milestone schedule", () => {
+    previewConfig();
+    setRuns([makeRun({
+      source_snapshot: {
+        schema_version: "1",
+        snapshot_complete: true,
+        parent_requirement: {
+          key: "SY-P-20260452",
+          display_number: "PM-21503",
+          numeric_id: 136076,
+          title: "院务系统-开单-增加美团订单券码校验-1.0",
+          description: "https://soyoung.feishu.cn/wiki/Ifl9wASw2iWHL4kEbN1cpF3Ynje",
+          source_status: "已上线",
+          status: "completed",
+          priority: "P2-3",
+          prd_url: "https://soyoung.feishu.cn/wiki/Ifl9wASw2iWHL4kEbN1cpF3Ynje",
+          owner: { external_id: "fengyujie@example.test", display_name: "Feng External" },
+          start_date: "2026-07-21",
+          due_date: "2026-08-11",
+          workload: 15,
+          tasks: [],
+        },
+        child_requirements: [],
+        tasks: [
+          {
+            task_id: "TASK-FE-1",
+            scheme_id: "scheme-fe",
+            scheme_name: "M4-开发-前端",
+            title: "院务系统-开单处理",
+            description: "",
+            source_status: "未开始",
+            status: "todo",
+            owner: { external_id: "fengyujie", display_name: "风尘（冯钰杰）" },
+            start_date: "2026-07-24",
+            due_date: "2026-07-24",
+            workload: 1,
+            updated_at: null,
+          },
+          {
+            task_id: "TASK-QA-1",
+            scheme_id: "scheme-qa",
+            scheme_name: "M5-测试",
+            title: "订单券码校验测试",
+            source_status: "进行中",
+            status: "in_progress",
+            owner: { external_id: "unmatched@example.test", display_name: "Unmatched User" },
+            start_date: "2026-07-25",
+            due_date: "2026-07-26",
+            workload: 2,
+          },
+        ],
+      },
+      diff: {
+        entities: [{
+          external_type: "requirement",
+          external_key: "SY-P-20260452",
+          action: "update",
+          fields: {
+            title: { external: "Incoming title", local: "Local title", decision: "conflict" },
+          },
+        }, {
+          external_type: "task",
+          external_key: "TASK-FE-1",
+          action: "update",
+          fields: {
+            title: { external: "院务系统-开单处理", local: "本地标题", decision: "conflict" },
+            status: { external: "todo", local: "in_progress", decision: "conflict" },
+          },
+        }],
+      },
+    })]);
+    renderPage();
+
+    expect(screen.getByRole("heading", { name: "院务系统-开单-增加美团订单券码校验-1.0" })).toBeInTheDocument();
+    expect(screen.getByText("PM-21503")).toBeInTheDocument();
+    expect(screen.getByText("已上线")).toBeInTheDocument();
+    expect(screen.getByText("P2-3")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /PRD/ })).toHaveAttribute(
+      "href",
+      "https://soyoung.feishu.cn/wiki/Ifl9wASw2iWHL4kEbN1cpF3Ynje",
+    );
+    const requirementTable = screen.getByTestId("pmo-requirement-table");
+    expect(within(requirementTable).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
+      "requirement ID",
+      "Title",
+      "External owner",
+      "Start date",
+      "Due date",
+      "Workload",
+      "Status",
+      "PRD",
+    ]);
+    const requirementRow = within(requirementTable).getByRole("row", { name: /院务系统-开单-增加美团订单券码校验-1.0/ });
+    expect(within(requirementRow).getByText("Feng Member")).toBeInTheDocument();
+    expect(within(requirementRow).getByRole("button", { name: "Use external SY-P-20260452 title" })).toBeInTheDocument();
+    const schedule = screen.getByTestId("pmo-schedule-scroll");
+    expect(screen.getAllByTestId("pmo-schedule-scroll")).toHaveLength(1);
+    expect(within(schedule).getAllByRole("row")).toHaveLength(3);
+    const taskRow = screen.getByRole("row", { name: /院务系统-开单处理/ });
+    expect(within(schedule).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
+      "task ID",
+      "task",
+      "External owner",
+      "Start date",
+      "Due date",
+      "Workload",
+      "Milestone",
+      "Status",
+    ]);
+    const taskCells = within(taskRow).getAllByRole("cell");
+    expect(taskCells).toHaveLength(8);
+    expect(taskCells[0]).toHaveTextContent("TASK-FE-1");
+    expect(taskCells[1]).toHaveTextContent("院务系统-开单处理");
+    expect(taskCells[2]).toHaveTextContent("Feng Member");
+    expect(taskCells[3]).toHaveTextContent("2026-07-24");
+    expect(taskCells[4]).toHaveTextContent("2026-07-24");
+    expect(taskCells[5]).toHaveTextContent("1");
+    expect(taskCells[6]).toHaveTextContent("M4-开发-前端");
+    expect(taskCells[7]).toHaveTextContent("未开始");
+    expect(screen.getByRole("row", { name: /订单券码校验测试/ })).toHaveTextContent("unmatched");
+    expect(schedule).toHaveClass("overflow-x-auto");
+    expect(screen.getByRole("button", { name: "Use external SY-P-20260452 title" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use external TASK-FE-1 title" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use external TASK-FE-1 status" })).toBeInTheDocument();
+    expect(within(taskRow).getByText("Local: 本地标题")).toBeInTheDocument();
+  });
+
+  it("renders each task once and falls back to scheme id and a safe description URL", () => {
+    previewConfig();
+    setRuns([makeRun({
+      source_snapshot: {
+        parent_requirement: {
+          key: "LEGACY-1",
+          title: "Legacy requirement",
+          description: "https://example.test/prd",
+          tasks: [],
+        },
+        child_requirements: [],
+        tasks: [
+          { task_id: "LEGACY-T1", scheme_id: "legacy-scheme", title: "Legacy task 1", source_status: "todo", status: "todo", owner: null, start_date: null, due_date: null, workload: null },
+          { task_id: "LEGACY-T2", scheme_id: "legacy-scheme", title: "Legacy task 2", source_status: "done", status: "done", owner: null, start_date: null, due_date: null, workload: null },
+        ],
+      },
+    })]);
+    renderPage();
+
+    expect(screen.getAllByText("legacy-scheme")).toHaveLength(2);
+    expect(screen.getAllByRole("row", { name: /Legacy task/ })).toHaveLength(2);
+    expect(screen.getByRole("link", { name: /PRD/ })).toHaveAttribute("href", "https://example.test/prd");
+  });
+
+  it("shows only source requirements referenced by the active filter", () => {
+    previewConfig();
+    setRuns([makeRun({
+      source_snapshot: {
+        parent_requirement: { key: "ROOT", title: "Unrelated root", tasks: [] },
+        child_requirements: [
+          {
+            key: "CHILD-MATCH",
+            title: "Matching child",
+            tasks: [{ task_id: "TASK-MATCH", scheme_id: "M1", title: "Matching task", status: "todo" }],
+          },
+          { key: "CHILD-OTHER", title: "Unrelated child", tasks: [] },
+        ],
+        tasks: [],
+      },
+      diff: {
+        entities: [{
+          external_type: "task",
+          external_key: "TASK-MATCH",
+          action: "update",
+          fields: { title: { external: "Matching task", local: "Old task", decision: "conflict" } },
+        }],
+      },
+    })]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Conflicts" }));
+
+    expect(screen.getByRole("heading", { name: "Matching child" })).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /Matching task/ })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Unrelated root" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Unrelated child" })).toBeNull();
+  });
+
+  it("shows the filter empty state for a source preview with no matching rows", () => {
+    previewConfig();
+    setRuns([makeRun({
+      source_snapshot: {
+        parent_requirement: { key: "ROOT", title: "Root requirement", tasks: [] },
+        child_requirements: [],
+        tasks: [],
+      },
+    })]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Conflicts" }));
+
+    expect(screen.getByText("Nothing matches this filter.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Root requirement" })).toBeNull();
   });
 
   it("falls back to the stable external key when no title is present", () => {
@@ -525,23 +765,202 @@ describe("PMOConfigDetailPage preview tab", () => {
     expect(screen.queryByText("Incoming")).toBeNull();
     expect(screen.queryByText("New task title")).toBeNull();
   });
+
+  it("includes every entity referenced by an unresolved owner", () => {
+    previewConfig();
+    setRuns([makeRun({
+      source_snapshot: {
+        parent_requirement: {
+          key: "EXT-P-001",
+          owner: { external_id: "EXT-U-001", display_name: "Example User" },
+        },
+        child_requirements: [],
+        tasks: [
+          {
+            task_id: "TASK-001",
+            owner: { external_id: "EXT-U-001", display_name: "Example User" },
+          },
+        ],
+      },
+      diff: {
+        ...PREVIEW_DIFF,
+        entities: [
+          {
+            external_type: "requirement",
+            external_key: "EXT-P-001",
+            action: "update",
+            fields: { title: { external: "Requirement title", decision: "incoming" } },
+          },
+          {
+            external_type: "task",
+            external_key: "TASK-001",
+            action: "update",
+            fields: { title: { external: "Task title", decision: "incoming" } },
+          },
+        ],
+      },
+    })]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Unresolved owners" }));
+
+    expect(screen.getAllByTestId("pmo-entity-name").map((node) => node.textContent)).toEqual([
+      "Requirement title",
+      "Task title",
+    ]);
+  });
 });
 
 describe("PMOConfigDetailPage assignee tab", () => {
-  it("lists unresolved external owners with member selection", () => {
+  it("lists unresolved external owners with Agent selection", () => {
     previewConfig();
     setRuns([makeRun()]);
     renderPage();
     fireEvent.click(screen.getByRole("tab", { name: /Assignee mappings/ }));
-    expect(screen.getByText("Example User")).toBeInTheDocument();
-    expect(screen.getByText(/EXT-U-001/)).toBeInTheDocument();
-    const memberSelect = screen.getByLabelText(/Workspace member EXT-U-001/) as HTMLSelectElement;
-    expect(memberSelect).toBeInTheDocument();
-    fireEvent.change(memberSelect, { target: { value: "member-1" } });
+    expect(screen.getByText("EXT-U-001")).toBeInTheDocument();
+    const agentSelect = screen.getByLabelText(/Agent EXT-U-001/) as HTMLSelectElement;
+    expect(agentSelect).toBeInTheDocument();
+    fireEvent.change(agentSelect, { target: { value: "agent-1" } });
     expect(setMappingMutate).toHaveBeenCalledWith(
-      { configId: CONFIG.id, externalKey: "EXT-U-001", memberId: "member-1" },
+      { configId: CONFIG.id, externalKey: "EXT-U-001", agentId: "agent-1" },
       expect.anything(),
     );
+  });
+
+  it("lists recognized snapshot owners and selects the matching member by user id", () => {
+    previewConfig();
+    setRuns([makeRun({
+      source_snapshot: {
+        parent_requirement: {
+          key: "EXT-P-001",
+          owner: { external_id: "fengyujie", display_name: "Feng Yu Jie" },
+        },
+        child_requirements: [
+          {
+            key: "EXT-C-001",
+            owner: { external_id: "fengyujie", display_name: "Feng Yu Jie" },
+            tasks: [],
+          },
+        ],
+        tasks: [],
+      },
+      diff: {
+        ...PREVIEW_DIFF,
+        entities: [
+          {
+            external_type: "requirement",
+            external_key: "EXT-P-001",
+            action: "update",
+            fields: {
+              assignee_id: {
+                external: "agent-feng",
+                local: null,
+                decision: "incoming",
+              },
+            },
+          },
+          {
+            external_type: "requirement",
+            external_key: "EXT-C-001",
+            action: "update",
+            fields: {
+              assignee_id: {
+                external: "agent-feng",
+                local: null,
+                decision: "incoming",
+              },
+            },
+          },
+        ],
+      },
+    })]);
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /Assignee mappings/ }));
+
+    expect(screen.getByText("Feng Member")).toBeInTheDocument();
+    const recognizedSelect = screen.getByLabelText(/Agent fengyujie/) as HTMLSelectElement;
+    expect(recognizedSelect.closest("[data-testid='pmo-assignee-row']")).toHaveClass("grid");
+    expect(recognizedSelect).toHaveValue("agent-feng");
+    expect(screen.getByText("EXT-U-001")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Agent EXT-U-001/)).toHaveValue("");
+    expect(screen.getAllByRole("option", { name: "Frontend Agent · Feng Member" })).toHaveLength(2);
+    expect(screen.getAllByLabelText(/Agent (fengyujie|EXT-U-001)/).every((select) =>
+      !select.querySelector('option[value="agent-unbound"]'))).toBe(true);
+    expect(screen.getByText("EXT-P-001, EXT-C-001 · assignee_id")).toBeInTheDocument();
+  });
+
+  it("matches owners by external type and key", () => {
+    previewConfig();
+    setRuns([makeRun({
+      source_snapshot: {
+        parent_requirement: {
+          key: "SHARED-001",
+          owner: { external_id: "fengyujie", display_name: "Feng Yu Jie" },
+        },
+        child_requirements: [],
+        tasks: [
+          {
+            task_id: "SHARED-001",
+            owner: { external_id: "other-owner", display_name: "Other Owner" },
+          },
+        ],
+      },
+      diff: {
+        ...PREVIEW_DIFF,
+        warnings: [],
+        entities: [
+          {
+            external_type: "requirement",
+            external_key: "SHARED-001",
+            action: "update",
+            fields: { assignee_id: { external: "agent-feng", decision: "incoming" } },
+          },
+          {
+            external_type: "task",
+            external_key: "SHARED-001",
+            action: "update",
+            fields: { assignee_id: { external: "agent-other", decision: "incoming" } },
+          },
+        ],
+      },
+    })]);
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /Assignee mappings/ }));
+
+    expect(screen.getByLabelText(/Agent fengyujie/)).toHaveValue("agent-feng");
+    expect(screen.getByLabelText(/Agent other-owner/)).toHaveValue("agent-other");
+  });
+
+  it("refreshes a resolved select when the latest run changes", () => {
+    previewConfig();
+    const snapshot = {
+      parent_requirement: {
+        key: "EXT-P-001",
+        owner: { external_id: "fengyujie", display_name: "Feng Yu Jie" },
+      },
+      child_requirements: [],
+      tasks: [],
+    };
+    const makeResolvedRun = (agentId: string) => makeRun({
+      source_snapshot: snapshot,
+      diff: {
+        ...PREVIEW_DIFF,
+        warnings: [],
+        entities: [{
+          external_type: "requirement",
+          external_key: "EXT-P-001",
+          action: "update",
+          fields: { assignee_id: { external: agentId, decision: "incoming" } },
+        }],
+      },
+    });
+    setRuns([makeResolvedRun("agent-feng")]);
+    const rendered = renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /Assignee mappings/ }));
+    expect(screen.getByLabelText(/Agent fengyujie/)).toHaveValue("agent-feng");
+
+    setRuns([makeResolvedRun("agent-other")]);
+    rendered.rerender(pageElement());
+    expect(screen.getByLabelText(/Agent fengyujie/)).toHaveValue("agent-other");
   });
 });
 
