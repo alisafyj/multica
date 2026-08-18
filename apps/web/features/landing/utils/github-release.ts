@@ -1,17 +1,28 @@
 import {
+  hasCompleteAssetSet,
   parseReleaseAssets,
   type DownloadAssets,
 } from "./parse-release-assets";
 
 /**
- * Server-side fetcher for the latest Multica release, designed to
- * run inside a Next.js server component. Response is cached by the
- * Next.js fetch cache for 5 minutes (Vercel ISR) so hitting /download
- * costs at most one GitHub API call per region per 5 minutes.
+ * Server-side fetcher for the latest downloadable Multica release,
+ * designed to run inside a Next.js server component. Response is cached
+ * by the Next.js fetch cache for 5 minutes (Vercel ISR) so hitting
+ * /download costs at most one GitHub API call per region per 5 minutes.
  *
  * This SSO distribution intentionally reads the fork's signed desktop
- * releases so an upstream release cannot silently replace it. CLI-only tags,
- * drafts, and other releases are ignored.
+ * releases so an upstream release cannot silently replace it. CLI-only
+ * tags, drafts, and other non-desktop releases are ignored.
+ *
+ * Desktop assets don't all land at the same time: CI uploads Linux and
+ * Windows within a minute of each other, but macOS is packaged manually
+ * (notarization credentials aren't wired into CI yet) and lands tens of
+ * minutes later. A packaging job can also fail outright and leave a
+ * release permanently short of some platforms. Either way the newest
+ * desktop-v release is not always the newest *downloadable* one, so we
+ * pull a window of recent releases and show the newest whose desktop
+ * asset set is complete — every button on the page then resolves to a
+ * real file.
  *
  * On any failure (network, rate limit, malformed payload) returns a
  * `null`-shaped result and logs — the page degrades to a "version
@@ -25,7 +36,11 @@ export interface LatestRelease {
   assets: DownloadAssets;
 }
 
-const GITHUB_RELEASE_URL =
+// Twenty candidates covers CLI-only tags and other non-desktop releases
+// interleaved with desktop-v tags, while still tolerating several
+// consecutive incomplete desktop releases before the page has to fall
+// back to showing the newest one as-is.
+const GITHUB_RELEASES_URL =
   "https://api.github.com/repos/coder-zkl1988/multica/releases?per_page=20";
 
 const REVALIDATE_SECONDS = 300;
@@ -56,7 +71,7 @@ export async function fetchLatestRelease(): Promise<LatestRelease> {
   }
 
   try {
-    const res = await fetch(GITHUB_RELEASE_URL, {
+    const res = await fetch(GITHUB_RELEASES_URL, {
       next: { revalidate: REVALIDATE_SECONDS },
       headers,
     });
@@ -64,22 +79,63 @@ export async function fetchLatestRelease(): Promise<LatestRelease> {
       throw new Error(`GitHub API responded ${res.status}`);
     }
     const releases = (await res.json()) as GitHubReleasePayload[];
-    const chosen = releases.find(
+
+    // Only the fork's signed desktop-v tags are eligible — CLI-only
+    // tags, drafts, and other releases are ignored so an upstream
+    // release can't silently replace the SSO-configured build.
+    const candidates = releases.filter(
       (release) =>
         !release.draft && release.tag_name?.startsWith("desktop-v"),
     );
-    if (!chosen) return emptyRelease();
+    const chosen = pickRelease(candidates);
+    if (!chosen) {
+      return emptyRelease();
+    }
 
     return {
-      version: chosen.tag_name ?? null,
-      publishedAt: chosen.published_at ?? null,
-      htmlUrl: chosen.html_url ?? null,
-      assets: parseReleaseAssets(chosen.assets ?? []),
+      version: chosen.release.tag_name ?? null,
+      publishedAt: chosen.release.published_at ?? null,
+      htmlUrl: chosen.release.html_url ?? null,
+      assets: chosen.assets,
     };
   } catch (err) {
     console.warn("[download] fetchLatestRelease failed:", err);
     return emptyRelease();
   }
+}
+
+interface PickedRelease {
+  release: GitHubReleasePayload;
+  assets: DownloadAssets;
+}
+
+/**
+ * Newest release whose desktop assets are all present. Falls back to the
+ * newest release overall when no candidate is complete — the page then
+ * shows what does exist plus its "all releases" escape hatch, which
+ * still beats reporting no version at all.
+ */
+function pickRelease(
+  candidates: GitHubReleasePayload[],
+): PickedRelease | undefined {
+  const parsed = candidates.map((release) => ({
+    release,
+    assets: parseReleaseAssets(release.assets ?? []),
+  }));
+
+  const complete = parsed.find((c) => hasCompleteAssetSet(c.assets));
+  if (complete) {
+    if (complete !== parsed[0]) {
+      // Worth a line in the logs: a release that never completes its
+      // asset set is invisible on /download until someone notices.
+      console.warn(
+        `[download] skipping ${parsed[0]?.release.tag_name ?? "latest release"}` +
+          ` — incomplete desktop assets; showing ${complete.release.tag_name}`,
+      );
+    }
+    return complete;
+  }
+  return parsed[0];
 }
 
 function emptyRelease(): LatestRelease {

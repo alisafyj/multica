@@ -16,6 +16,20 @@ import (
 
 func uuidToString(u pgtype.UUID) string { return util.UUIDToString(u) }
 
+func rejectTemporarilyDisabledUser(w http.ResponseWriter, r *http.Request, userID, email, authPath string) bool {
+	if !auth.IsTemporarilyDisabledUser(userID, email) {
+		return false
+	}
+	slog.Warn(
+		"auth: temporarily disabled user rejected",
+		"path", r.URL.Path,
+		"user_id", userID,
+		"auth_path", authPath,
+	)
+	writeError(w, http.StatusForbidden, auth.TemporarilyDisabledUserError)
+	return true
+}
+
 // Auth middleware validates internal, service-account, task, and cloud tokens.
 // Token sources (in priority order):
 //  1. Authorization: Bearer <token> header
@@ -97,7 +111,11 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 					http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 					return
 				}
-				r.Header.Set("X-User-ID", uuidToString(tt.UserID))
+				userID := uuidToString(tt.UserID)
+				if rejectTemporarilyDisabledUser(w, r, userID, "", "task_token") {
+					return
+				}
+				r.Header.Set("X-User-ID", userID)
 				r.Header.Set("X-Agent-ID", uuidToString(tt.AgentID))
 				r.Header.Set("X-Task-ID", uuidToString(tt.TaskID))
 				r.Header.Set("X-Workspace-ID", uuidToString(tt.WorkspaceID))
@@ -149,6 +167,9 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 					http.Error(w, `{"error":"cloud pat verifier unavailable"}`, http.StatusServiceUnavailable)
 					return
 				}
+				if rejectTemporarilyDisabledUser(w, r, identity.OwnerID, "", "cloud_pat") {
+					return
+				}
 				r.Header.Set("X-User-ID", identity.OwnerID)
 				// Tag the auth path so account-level guards (e.g.
 				// handler.RequireHumanActor on /api/cloud-billing/*)
@@ -169,6 +190,9 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 			if !useSySSO && strings.HasPrefix(tokenString, "mul_") {
 				hash := auth.HashToken(tokenString)
 				if userID, ok := patCache.Get(r.Context(), hash); ok {
+					if rejectTemporarilyDisabledUser(w, r, userID, "", "pat_cache") {
+						return
+					}
 					r.Header.Set("X-User-ID", userID)
 					next.ServeHTTP(w, r)
 					return
@@ -184,6 +208,9 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 					return
 				}
 				userID := uuidToString(pat.UserID)
+				if rejectTemporarilyDisabledUser(w, r, userID, "", "pat") {
+					return
+				}
 				r.Header.Set("X-User-ID", userID)
 				var expiresAt time.Time
 				if pat.ExpiresAt.Valid {
@@ -205,6 +232,9 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 			if err != nil {
 				slog.Warn("auth: invalid token", "path", r.URL.Path, "error", err)
 				http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+				return
+			}
+			if rejectTemporarilyDisabledUser(w, r, identity.UserID, identity.Email, "jwt") {
 				return
 			}
 			r.Header.Set("X-User-ID", identity.UserID)

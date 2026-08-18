@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/integrations/testcapability"
+	"github.com/multica-ai/multica/server/internal/issuestatus"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
@@ -3035,6 +3036,26 @@ func (s *TaskService) finalizeCancelledChatMessage(ctx context.Context, task db.
 	return cancelled
 }
 
+// RebroadcastCancelledTask re-announces a cancelled task's terminal event
+// after the daemon's cancel-ack records the branch name and/or error the
+// original cancellation broadcast could not have carried — it fired before
+// the daemon reported them. Guarded on the row still being 'cancelled':
+// a complete/fail callback that raced the ack already announced its own
+// terminal event with the row's final fields, so there is nothing stale to
+// refresh.
+func (s *TaskService) RebroadcastCancelledTask(ctx context.Context, taskID pgtype.UUID) {
+	task, err := s.Queries.GetAgentTask(ctx, taskID)
+	if err != nil {
+		slog.Warn("rebroadcast cancelled task: load failed",
+			"task_id", util.UUIDToString(taskID), "error", err)
+		return
+	}
+	if task.Status != "cancelled" {
+		return
+	}
+	s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, task)
+}
+
 // FinalizeDeferredCancelledChat settles the empty/non-empty judgment that
 // finalizeCancelledChatMessage deferred for a started-but-empty cancelled
 // chat task (#5219). Called from the daemon's cancel-ack (transcript flush
@@ -3421,10 +3442,11 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 	return claimed, nil
 }
 
-// FinalizeTaskClaim atomically persists the task-scoped token and, for a
+// FinalizeTaskClaim atomically persists the task-scoped agent token, an
+// optional short-lived daemon token used by the Remote MCP broker, and, for a
 // comment-backed task, the exact comment ids embedded in the response. The
 // handler must call this only after the full payload has been built and before
-// writing any response bytes. A failure rolls both writes back so the claim can
+// writing any response bytes. A failure rolls every write back so the claim can
 // be safely returned to the queue.
 func (s *TaskService) FinalizeTaskClaim(
 	ctx context.Context,
@@ -3432,11 +3454,25 @@ func (s *TaskService) FinalizeTaskClaim(
 	token db.CreateTaskTokenParams,
 	deliveredCommentIDs []pgtype.UUID,
 	recordCommentReceipt bool,
+	daemonTokens ...db.CreateDaemonTokenParams,
 ) ([]pgtype.UUID, error) {
+	if len(daemonTokens) > 1 {
+		return nil, fmt.Errorf("finalize task claim: expected at most one daemon token, got %d", len(daemonTokens))
+	}
 	receipt := task.DeliveredCommentIds
 	err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		if _, err := qtx.CreateTaskToken(ctx, token); err != nil {
 			return fmt.Errorf("create task token: %w", err)
+		}
+		if len(daemonTokens) == 1 {
+			// Opportunistic bounded cleanup keeps short-lived per-task daemon
+			// credentials from accumulating without adding another sweeper.
+			if err := qtx.DeleteExpiredDaemonTokens(ctx); err != nil {
+				return fmt.Errorf("delete expired daemon tokens: %w", err)
+			}
+			if _, err := qtx.CreateDaemonToken(ctx, daemonTokens[0]); err != nil {
+				return fmt.Errorf("create remote MCP daemon token: %w", err)
+			}
 		}
 		if !recordCommentReceipt {
 			return nil
@@ -5323,7 +5359,13 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 				// Reset stuck in_progress issues only when no other active
 				// task exists for the issue and no retry was just enqueued.
 				issueKey := util.UUIDToString(t.IssueID)
-				if issue.Status == "in_progress" && !processedIssues[issueKey] && !retriedIssues[issueKey] {
+				// Only "an agent is actively working" resets. in_review and
+				// blocked are excluded — a human or an external dependency owns
+				// the issue then — and a custom status resolves to the canonical
+				// status it inherits, so a custom review gate is excluded for
+				// the same reason In Review is. (MUL-6243)
+				effectiveStatus := issuestatus.Effective(ctx, s.Queries, issue.WorkspaceID, issue.Status)
+				if effectiveStatus == "in_progress" && !processedIssues[issueKey] && !retriedIssues[issueKey] {
 					processedIssues[issueKey] = true
 					hasActive, checkErr := s.Queries.HasActiveTaskForIssue(ctx, t.IssueID)
 					if checkErr != nil {
@@ -5348,7 +5390,7 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 							// it here too. Without it the board / status-filter
 							// caches keep showing the issue as in_progress until
 							// the next write touches it (#4648 / MUL-3782).
-							s.broadcastIssueUpdated(updatedIssue, issue.Status)
+							s.broadcastIssueUpdated(ctx, updatedIssue, issue.Status)
 						}
 					}
 				}
@@ -5478,6 +5520,7 @@ type PluginExecutionManifestData struct {
 	ComposerVersion      string                        `json:"composer_version"`
 	SchemaVersion        int32                         `json:"schema_version"`
 	OrderedContributions []pluginruntime.CompiledEntry `json:"ordered_contributions"`
+	Diagnostics          []string                      `json:"diagnostics,omitempty"`
 }
 
 // LoadTaskPluginSkillBundles resolves only the immutable artifact files named
@@ -5508,35 +5551,62 @@ func (s *TaskService) LoadTaskPluginSkillBundles(ctx context.Context, taskID pgt
 	if len(entries) == 0 {
 		return nil, nil, data, nil
 	}
+	artifactFileIDs := make([]pgtype.UUID, 0)
+	seenArtifactFileIDs := make(map[string]struct{})
+	for _, entry := range entries {
+		if entry.ContributionType != plugincontract.ContributionAgentSkillV1 {
+			continue
+		}
+		ids := make([]string, 0, len(entry.SkillFiles)+1)
+		ids = append(ids, entry.ArtifactFileID)
+		for _, file := range entry.SkillFiles {
+			ids = append(ids, file.ArtifactFileID)
+		}
+		for _, id := range ids {
+			if _, exists := seenArtifactFileIDs[id]; exists {
+				continue
+			}
+			parsed, parseErr := util.ParseUUID(id)
+			if parseErr != nil {
+				return nil, nil, nil, fmt.Errorf("execution manifest contains invalid artifact file id")
+			}
+			seenArtifactFileIDs[id] = struct{}{}
+			artifactFileIDs = append(artifactFileIDs, parsed)
+		}
+	}
+	artifactFilesByID := make(map[string]db.PluginArtifactFile, len(artifactFileIDs))
+	if len(artifactFileIDs) > 0 {
+		artifactFiles, listErr := s.Queries.ListPluginArtifactFilesByIDs(ctx, artifactFileIDs)
+		if listErr != nil {
+			return nil, nil, nil, fmt.Errorf("load pinned plugin Skill artifacts: %w", listErr)
+		}
+		for _, file := range artifactFiles {
+			artifactFilesByID[util.UUIDToString(file.ID)] = file
+		}
+	}
 
 	skills := make([]AgentSkillData, 0, len(entries))
+	skillEntries := make([]pluginruntime.CompiledEntry, 0, len(entries))
 	for _, entry := range entries {
+		if entry.ContributionType == plugincontract.ContributionRemoteMCPV1 {
+			if entry.ConfigID == "" || entry.ConfigRevision <= 0 || entry.Endpoint == "" || len(entry.ApprovedTools) == 0 || entry.ToolSchemaDigest == "" {
+				return nil, nil, nil, fmt.Errorf("execution manifest contains invalid remote MCP contribution")
+			}
+			continue
+		}
 		if entry.ContributionType != plugincontract.ContributionAgentSkillV1 || entry.ArtifactFileID == "" {
 			return nil, nil, nil, fmt.Errorf("execution manifest contains unsupported plugin contribution")
 		}
-		artifactFileID, parseErr := util.ParseUUID(entry.ArtifactFileID)
-		if parseErr != nil {
-			return nil, nil, nil, fmt.Errorf("execution manifest contains invalid artifact file id")
+		skill, materializeErr := materializePinnedPluginSkill(entry, artifactFilesByID)
+		if materializeErr != nil {
+			return nil, nil, nil, materializeErr
 		}
-		artifact, getErr := s.Queries.GetPluginArtifactFile(ctx, artifactFileID)
-		if getErr != nil {
-			return nil, nil, nil, fmt.Errorf("load pinned plugin artifact: %w", getErr)
-		}
-		releaseID, parseErr := util.ParseUUID(entry.ReleaseID)
-		if parseErr != nil || artifact.ReleaseID != releaseID || artifact.Path != entry.EntryPath || artifact.Digest != entry.EntryDigest || plugincontract.DigestBytes([]byte(artifact.Content)) != entry.EntryDigest {
-			return nil, nil, nil, fmt.Errorf("pinned plugin artifact failed digest validation")
-		}
-		skills = append(skills, AgentSkillData{
-			ID:          "plugin:" + entry.ContributionID,
-			Source:      skillbundle.SourcePlugin,
-			Name:        entry.ContributionKey,
-			Description: entry.Description,
-			Content:     artifact.Content,
-		})
+		skills = append(skills, skill)
+		skillEntries = append(skillEntries, entry)
 	}
 	bundles, refs := BuildAgentSkillBundles(skills)
 	for i := range refs {
-		if refs[i].Hash != entries[i].SkillBundleHash || refs[i].SizeBytes != entries[i].SkillSizeBytes || refs[i].FileCount != entries[i].SkillFileCount {
+		if refs[i].Hash != skillEntries[i].SkillBundleHash || refs[i].SizeBytes != skillEntries[i].SkillSizeBytes || refs[i].FileCount != skillEntries[i].SkillFileCount {
 			return nil, nil, nil, fmt.Errorf("pinned plugin skill bundle failed manifest validation")
 		}
 	}
@@ -5947,7 +6017,7 @@ func (s *TaskService) broadcastChatDone(ctx context.Context, task db.AgentTaskQu
 // emit status-change activity / notifications. That is intentional for the
 // realtime-staleness fix (#4648 / MUL-3782); folding those side effects in
 // would mean unifying the payload type and is left as a follow-up.
-func (s *TaskService) broadcastIssueUpdated(issue db.Issue, prevStatus string) {
+func (s *TaskService) broadcastIssueUpdated(ctx context.Context, issue db.Issue, prevStatus string) {
 	prefix := s.getIssuePrefix(issue.WorkspaceID)
 	s.Bus.Publish(events.Event{
 		Type:        protocol.EventIssueUpdated,
@@ -5955,7 +6025,7 @@ func (s *TaskService) broadcastIssueUpdated(issue db.Issue, prevStatus string) {
 		ActorType:   "system",
 		ActorID:     "",
 		Payload: map[string]any{
-			"issue":          IssueToMap(issue, prefix),
+			"issue":          IssueToMapWithCategory(ctx, s.Queries, issue, prefix),
 			"status_changed": prevStatus != issue.Status,
 			"prev_status":    prevStatus,
 		},
@@ -6083,15 +6153,38 @@ func (s *TaskService) AutoUnresolveThreadOnReply(ctx context.Context, parent *db
 // field missing here is a field that reads back undefined until the next
 // refetch — see TestIssueToMap_KeysMatchIssueResponse, which fails if the two
 // renderings drift apart.
+// builtInStatusCategory returns a status's category when it can be known
+// without a catalog read — i.e. for the 7 built-ins, where key == category.
+func builtInStatusCategory(status string) string {
+	if issuestatus.IsBuiltIn(status) {
+		return status
+	}
+	return ""
+}
+
+// IssueToMapWithCategory is IssueToMap with an AUTHORITATIVE status_category,
+// resolved through the catalog so a custom status is not emitted with a blank
+// one. Background events go through here; clients treat this payload as a
+// complete issue and bucket it by category. (MUL-6243)
+func IssueToMapWithCategory(ctx context.Context, q issuestatus.Querier, issue db.Issue, issuePrefix string) map[string]any {
+	m := IssueToMap(issue, issuePrefix)
+	m["status_category"] = issuestatus.Effective(ctx, q, issue.WorkspaceID, issue.Status)
+	return m
+}
+
 func IssueToMap(issue db.Issue, issuePrefix string) map[string]any {
 	return map[string]any{
-		"id":              util.UUIDToString(issue.ID),
-		"workspace_id":    util.UUIDToString(issue.WorkspaceID),
-		"number":          issue.Number,
-		"identifier":      IssueIdentifier(issuePrefix, issue.Number),
-		"title":           issue.Title,
-		"description":     util.TextToPtr(issue.Description),
-		"status":          issue.Status,
+		"id":           util.UUIDToString(issue.ID),
+		"workspace_id": util.UUIDToString(issue.WorkspaceID),
+		"number":       issue.Number,
+		"identifier":   IssueIdentifier(issuePrefix, issue.Number),
+		"title":        issue.Title,
+		"description":  util.TextToPtr(issue.Description),
+		"status":       issue.Status,
+		// Mirrors handler.IssueResponse.StatusCategory: a built-in status IS
+		// its own category, so this resolves with no catalog lookup. Empty for
+		// a custom status, which consumers resolve via the catalog. (MUL-6243)
+		"status_category": builtInStatusCategory(issue.Status),
 		"priority":        issue.Priority,
 		"assignee_type":   util.TextToPtr(issue.AssigneeType),
 		"assignee_id":     util.UUIDToPtr(issue.AssigneeID),

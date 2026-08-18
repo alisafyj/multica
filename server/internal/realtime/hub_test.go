@@ -48,11 +48,25 @@ func makeTestTokenUntil(t *testing.T, expiresAt time.Time) string {
 }
 
 func makeLegacyTestToken(t *testing.T) string {
+	return makeTestTokenForUser(t, testUserID, "")
+}
+
+// makeTestTokenForUser builds a legacy (non-SSO) JWT for the given user and
+// optional email so tests can exercise per-claim behavior such as the
+// temporarily-disabled-user checks.
+func makeTestTokenForUser(t *testing.T, userID, email string) string {
 	t.Helper()
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	claims := jwt.MapClaims{
 		"sub": testUserID,
 		"exp": time.Now().Add(time.Hour).Unix(),
-	})
+	}
+	if userID != "" {
+		claims["sub"] = userID
+	}
+	if email != "" {
+		claims["email"] = email
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := token.SignedString(auth.JWTSecret())
 	if err != nil {
 		t.Fatal(err)
@@ -67,6 +81,37 @@ type mockPATResolver struct {
 func (r *mockPATResolver) ResolveToken(context.Context, string) (string, bool) {
 	r.calls++
 	return testUserID, true
+}
+
+type staticPATResolver map[string]string
+
+func (s staticPATResolver) ResolveToken(_ context.Context, token string) (string, bool) {
+	userID, ok := s[token]
+	return userID, ok
+}
+
+func TestAuthenticateTokenRejectsTemporarilyDisabledJWTUser(t *testing.T) {
+	token := makeTestTokenForUser(t, "514492f7-b30f-4147-bd33-c0e8ce5d6d4f", "")
+
+	uid, _, errMsg := authenticateToken(token, nil, context.Background(), false)
+	if uid != "" {
+		t.Fatalf("expected no user ID, got %q", uid)
+	}
+	if !strings.Contains(errMsg, "account disabled") {
+		t.Fatalf("expected account disabled error, got %q", errMsg)
+	}
+}
+
+func TestAuthenticateTokenRejectsTemporarilyDisabledPATUser(t *testing.T) {
+	uid, _, errMsg := authenticateToken("mul_disabled", staticPATResolver{
+		"mul_disabled": "1d542296-17c6-484a-9914-dcee589be116",
+	}, context.Background(), false)
+	if uid != "" {
+		t.Fatalf("expected no user ID, got %q", uid)
+	}
+	if !strings.Contains(errMsg, "account disabled") {
+		t.Fatalf("expected account disabled error, got %q", errMsg)
+	}
 }
 
 func newTestHub(t *testing.T) (*Hub, *httptest.Server) {

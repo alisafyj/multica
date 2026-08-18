@@ -17,8 +17,8 @@ const maxLegacyMigrationPrefix = 148
 
 // Fork migration numbering discipline (full rule in CLAUDE.md「Database and
 // Migration Rules」): this repo is a fork that merges multica-ai/multica
-// regularly, and both sides advancing the same counter is how the 255–279 and
-// 281–284 prefix collisions happened (280 is a fork gap-fill, not a collision). New fork-local migrations take prefixes from
+// regularly, and both sides advancing the same counter is how the 255–279,
+// 281–284, and 313–317 prefix collisions happened (280 is a fork gap-fill, not a collision). New fork-local migrations take prefixes from
 // forkMigrationPrefixStart (800) upward; never take the next number after
 // upstream's latest.
 const forkMigrationPrefixStart = 800
@@ -33,7 +33,7 @@ const forkMigrationPrefixStart = 800
 // numbering gap would pass this check; the uniqueness test still catches it
 // once upstream owns that number. The realistic violation (anything between
 // lastUpstreamMigrationPrefix and 800) is rejected below.
-const lastUpstreamMigrationPrefix = 284
+const lastUpstreamMigrationPrefix = 341
 
 // existingForkMigrationPrefixes are fork-local migrations that were applied to
 // production before the 800+ rule; they keep their numbers forever because the
@@ -181,6 +181,11 @@ var mergedDuplicateMigrationStems = map[string][]string{
 	"310": {"310_pmo_sync_primary_keys", "310_workspace_private_plugin_identity"},
 	"311": {"311_plugin_identity_scoped_key_index", "311_pmo_sync_config_root_index"},
 	"312": {"312_drop_global_plugin_identity_key_index", "312_pmo_sync_run_history_index"},
+	"313": {"313_pmo_sync_run_active_index", "313_runtime_profile_add_dsh"},
+	"314": {"314_pmo_sync_run_agent_task_index", "314_workspace_mcp_config"},
+	"315": {"315_pmo_sync_link_identity_index", "315_workspace_mcp_server"},
+	"316": {"316_project_created_by", "316_workspace_mcp_server_name_unique"},
+	"317": {"317_agent_mcp_server_server_index", "317_product_map"},
 }
 
 // legacyFKMigrations records already-applied migrations that create database

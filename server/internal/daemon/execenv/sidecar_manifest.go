@@ -210,10 +210,14 @@ func skillSlugCandidate(baseSlug string, attempt int) string {
 // writeSidecarManifest persists m to {envRoot}/{sidecarManifestFile}.
 // Empty manifests are still written so a later Cleanup that finds the
 // file knows tracking was attempted (vs. an old build that predates this
-// mechanism, where the file is absent and Cleanup must no-op). Failures
-// are returned to the caller; the caller treats them as non-fatal because
-// a missed manifest only degrades local_directory cleanup, not task
-// execution.
+// mechanism, where the file is absent and Cleanup must no-op).
+//
+// Failures are returned to the caller, and how much they matter depends on
+// where the sidecars landed. For a cloud envRoot the manifest is a convenience
+// the GC can do without, so Prepare logs and continues. For an in-place
+// local_directory run it is the only record of what was written into the user's
+// own repository, so Prepare treats the failure as fatal and rolls back while
+// it still holds the in-memory manifest (MUL-6132).
 func writeSidecarManifest(envRoot string, m *sidecarManifest) error {
 	if envRoot == "" {
 		return nil
@@ -340,6 +344,12 @@ func readSidecarManifest(envRoot string) (string, *sidecarManifest, error) {
 	return manifestPath, &m, nil
 }
 
+// cleanupSidecarManifest removes everything m records, then removes
+// manifestPath itself unless a real error already occurred or the caller
+// asked to preserve it. It is the shared body of CleanupSidecars and
+// CleanupLocalDirectorySidecars — both read m back from disk after the task
+// ran and share the exact deletion semantics: ENOENT and non-empty
+// directories tolerated, real I/O errors surfaced.
 func cleanupSidecarManifest(manifestPath string, m *sidecarManifest, workDir string, preserveManifest bool) error {
 	managedDirs := make(map[string]struct{}, len(m.Dirs))
 	for _, dir := range m.Dirs {
@@ -415,7 +425,7 @@ func cleanupSidecarManifest(manifestPath string, m *sidecarManifest, workDir str
 		}
 	}
 
-	if firstErr == nil && !preserveManifest {
+	if manifestPath != "" && firstErr == nil && !preserveManifest {
 		if err := os.Remove(manifestPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			captureErr(fmt.Errorf("remove manifest %s: %w", manifestPath, err))
 		}
@@ -530,6 +540,62 @@ func lstatPathNoFollow(root, target string) (string, fs.FileInfo, bool, error) {
 		}
 	}
 	return cleanTarget, info, true, nil
+}
+
+// rollBackPreparedSidecars undoes the sidecar writes of a Prepare that failed
+// before it could persist the manifest, using the in-memory manifest Prepare
+// was still filling in.
+//
+// This is the only rollback available on that path. Prepare writes the daemon
+// task marker and the rest of the sidecar tree into the workdir early, but only
+// persists the manifest at the very end; every error return in between leaves
+// that tree on disk with no on-disk record of it, and the caller never receives
+// an Environment, so no teardown defer downstream knows there is anything to
+// clean (MUL-6132). For a local_directory task the workdir is the user's own
+// repository, so "left on disk" means a marker that disables every multica
+// command in that directory tree until someone deletes it by hand.
+//
+// Unlike cleanupSidecarManifest, this path has no persisted manifest file to
+// delete and no workdir available at its only call site (execenv.go's Prepare
+// defer, armed before Environment exists), so it removes recorded paths with
+// plain os.Remove rather than the no-follow, symlink-safe walk that path uses.
+// That is an acceptable gap here: the only writes being unwound are the ones
+// Prepare itself made moments earlier in this same call, before any agent
+// process has run against the workdir.
+func rollBackPreparedSidecars(m sidecarManifest) error {
+	var firstErr error
+	captureErr := func(err error) {
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	for _, f := range m.Files {
+		if err := os.Remove(f); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			captureErr(fmt.Errorf("remove %s: %w", f, err))
+		}
+	}
+
+	// Reverse iterate so the deepest directory is tried first; see
+	// cleanupSidecarManifest for why a failed rmdir is re-checked against
+	// dirHasEntries before being surfaced.
+	for i := len(m.Dirs) - 1; i >= 0; i-- {
+		d := m.Dirs[i]
+		err := os.Remove(d)
+		if err == nil || errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		hasEntries, ok := dirHasEntries(d)
+		switch {
+		case !ok:
+			captureErr(fmt.Errorf("rmdir %s: %w", d, err))
+		case hasEntries:
+		default:
+			captureErr(fmt.Errorf("rmdir %s: %w", d, err))
+		}
+	}
+
+	return firstErr
 }
 
 // removeReusedManagedSkillDirs force-removes the skill directories the prior

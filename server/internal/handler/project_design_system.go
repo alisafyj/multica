@@ -745,12 +745,12 @@ func (h *Handler) createProjectDesignSystemTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	ready, reason, err := service.AgentReadiness(ctx, queries, agent)
+	verdict, err := service.AgentReadiness(ctx, queries, agent)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
 	}
-	if !ready {
-		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: reason}
+	if !verdict.Ready() {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: verdict.Detail}
 	}
 
 	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agentID, input, service.ProjectDesignSystemGenerate, nil, "", nil, nil)
@@ -833,12 +833,12 @@ func (h *Handler) createProjectDesignSystemRepositoryAnalysisTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	ready, reason, err := service.AgentReadiness(ctx, queries, agent)
+	verdict, err := service.AgentReadiness(ctx, queries, agent)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
 	}
-	if !ready {
-		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: reason}
+	if !verdict.Ready() {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: verdict.Detail}
 	}
 	runtime, err := queries.GetAgentRuntime(ctx, agent.RuntimeID)
 	if err != nil {
@@ -971,12 +971,12 @@ func (h *Handler) enqueueExistingProjectDesignSystemTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	ready, reason, err := service.AgentReadiness(ctx, queries, agent)
+	verdict, err := service.AgentReadiness(ctx, queries, agent)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
 	}
-	if !ready {
-		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: reason}
+	if !verdict.Ready() {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: verdict.Detail}
 	}
 
 	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agent.ID, input, operation, basePackage, instruction, scopeJSON, nil)

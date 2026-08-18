@@ -6,6 +6,7 @@ const authMode = vi.hoisted(() => ({ value: null as boolean | null }));
 vi.mock("@multica/core/config", () => ({
   useConfigStore: (selector: (state: { useSySso: boolean | null }) => unknown) =>
     selector({ useSySso: authMode.value }),
+  useFeatureEnabled: (_key: string, defaultValue = false) => defaultValue,
 }));
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({ name: "Acme" }),
@@ -64,6 +65,7 @@ vi.mock("./notifications-tab", () => ({ NotificationsTab: () => null }));
 vi.mock("./labels-tab", () => ({ LabelsTab: () => null }));
 vi.mock("./properties-tab", () => ({ PropertiesTab: () => null }));
 vi.mock("./quick-actions-tab", () => ({ QuickActionsTab: () => null }));
+vi.mock("./mcp-tab", () => ({ McpTab: () => null }));
 
 import { SettingsPage } from "./settings-page";
 

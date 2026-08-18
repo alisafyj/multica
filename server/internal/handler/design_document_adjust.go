@@ -170,12 +170,12 @@ func (h *Handler) createDesignDocumentAdjustTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	ready, reason, err := service.AgentReadiness(ctx, queries, agent)
+	verdict, err := service.AgentReadiness(ctx, queries, agent)
 	if err != nil {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
 	}
-	if !ready {
-		return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: reason}
+	if !verdict.Ready() {
+		return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: verdict.Detail}
 	}
 
 	contextJSON, err := h.designDocumentAdjustTaskContext(ctx, queries, requesterID, document, baseRevision, agent.ID, instruction, scope)

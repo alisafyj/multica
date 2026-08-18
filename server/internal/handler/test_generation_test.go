@@ -481,10 +481,10 @@ func TestGenerationJobHealsWhenAgentTaskDies(t *testing.T) {
 	ctx := context.Background()
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, status, context, completed_at)
-		VALUES ($1, 'cancelled', '{}', now())
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, context, completed_at)
+		VALUES ($1, $2, 'cancelled', '{}', now())
 		RETURNING id
-	`, agentID).Scan(&taskID); err != nil {
+	`, agentID, handlerTestRuntimeID(t)).Scan(&taskID); err != nil {
 		t.Fatalf("create cancelled fixture task: %v", err)
 	}
 	t.Cleanup(func() {
