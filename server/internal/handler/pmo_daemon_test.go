@@ -478,8 +478,8 @@ func TestCompletePMOSyncTaskPropagatesSourceFailure(t *testing.T) {
 	if status != "failed" || errorCode != "pmo_source_failed" || errorMessage != "task title is required" {
 		t.Fatalf("run = %q/%q/%q, want failed/pmo_source_failed/task title is required", status, errorCode, errorMessage)
 	}
-	if len(sourceSnapshot) != 0 {
-		t.Fatalf("source_snapshot = %s, want empty", sourceSnapshot)
+	if string(sourceSnapshot) != "{}" {
+		t.Fatalf("source_snapshot = %s, want untouched default {}", sourceSnapshot)
 	}
 	var linkCount int
 	if err := testPool.QueryRow(context.Background(),
