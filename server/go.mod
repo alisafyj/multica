@@ -1,6 +1,6 @@
 module github.com/multica-ai/multica/server
 
-go 1.26.1
+go 1.26.6
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.5
@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.5
 	github.com/chromedp/cdproto v0.0.0-20260714215040-dc233986426f
 	github.com/chromedp/chromedp v0.16.0
-	github.com/go-chi/chi/v5 v5.2.5
+	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-chi/cors v1.2.2
 	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/go-resty/resty/v2 v2.17.2
@@ -84,6 +84,12 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
+	golang.org/x/mod v0.38.0 // indirect
+	golang.org/x/telemetry v0.0.0-20260708182218-49f421fb7959 // indirect
 	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/tools v0.48.0 // indirect
+	golang.org/x/vuln v1.6.0 // indirect
 	modernc.org/fileutil v1.0.0 // indirect
 )
+
+tool golang.org/x/vuln/cmd/govulncheck

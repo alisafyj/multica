@@ -683,6 +683,9 @@ func authenticateToken(tokenStr string, resolver PATResolver, ctx context.Contex
 		if !ok {
 			return "", time.Time{}, `{"error":"invalid token"}`
 		}
+		if auth.IsTemporarilyDisabledUserID(userID) {
+			return "", time.Time{}, `{"error":"account disabled"}`
+		}
 		return userID, time.Time{}, ""
 	}
 	if useSySSO {
@@ -690,11 +693,17 @@ func authenticateToken(tokenStr string, resolver PATResolver, ctx context.Contex
 		if err != nil {
 			return "", time.Time{}, `{"error":"invalid token"}`
 		}
+		if auth.IsTemporarilyDisabledUser(identity.UserID, identity.Email) {
+			return "", time.Time{}, `{"error":"account disabled"}`
+		}
 		return identity.UserID, identity.ExpiresAt, ""
 	}
 	identity, err := auth.ParseLegacyJWT(tokenStr)
 	if err != nil {
 		return "", time.Time{}, `{"error":"invalid token"}`
+	}
+	if auth.IsTemporarilyDisabledUser(identity.UserID, identity.Email) {
+		return "", time.Time{}, `{"error":"account disabled"}`
 	}
 	return identity.UserID, time.Time{}, ""
 }
@@ -776,7 +785,11 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, resolver PATResolver, resol
 	if cookie, err := r.Cookie(auth.AuthCookieName); err == nil && cookie.Value != "" {
 		uid, expiresAt, errMsg := authenticateToken(cookie.Value, resolver, r.Context(), useSySSO)
 		if errMsg != "" {
-			http.Error(w, errMsg, http.StatusUnauthorized)
+			status := http.StatusUnauthorized
+			if errMsg == `{"error":"account disabled"}` {
+				status = http.StatusForbidden
+			}
+			http.Error(w, errMsg, status)
 			return
 		}
 		if !mc.IsMember(r.Context(), uid, workspaceID) {

@@ -1,5 +1,6 @@
 "use client";
 
+import { statusCategoryOfKey } from "@multica/core/issues";
 import { useState } from "react";
 import type { IssueStatus, UpdateIssueRequest } from "@multica/core/types";
 import { ALL_STATUSES, STATUS_CONFIG } from "@multica/core/issues/config";
@@ -51,7 +52,7 @@ export function StatusPicker({
         (status != null ? (
           <>
             <StatusIcon status={status} className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{t(($) => $.status[status])}</span>
+            <span className="truncate">{t(($) => $.status[statusCategoryOfKey(status)])}</span>
           </>
         ) : null)
       }
@@ -72,7 +73,7 @@ export function StatusPicker({
             }}
           >
             <StatusIcon status={s} className="h-3.5 w-3.5" />
-            <span>{t(($) => $.status[s])}</span>
+            <span>{t(($) => $.status[statusCategoryOfKey(s)])}</span>
           </PickerItem>
         );
       })}

@@ -6,3 +6,5 @@ export * from "./ws-updaters";
 export * from "./design-role";
 export * from "./config";
 export * from "./stores";
+
+export { issueStatusCategory, statusCategoryOfKey, normalizeStatusPatch } from "./status-category";
