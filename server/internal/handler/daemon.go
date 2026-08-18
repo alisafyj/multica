@@ -3712,13 +3712,13 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// PMO sync completion: parse the agent's final output against the strict
-	// snapshot contract BEFORE the terminal transaction. Invalid output fails
-	// both the task and the run (redacted error, payload never persisted);
-	// valid output flows into the terminal mutation below so task completion
-	// and preview persistence commit together.
+	// snapshot/source-failure contracts BEFORE the terminal transaction. Invalid
+	// output fails both the task and the run (redacted error, payload never
+	// persisted); valid snapshots flow into the terminal mutation below so task
+	// completion and preview persistence commit together.
 	if existingTask.Status == "running" {
 		if pmoCtx, ok := service.ParsePMOSyncContext(existingTask.Context); ok {
-			snapshot, pmoErr := service.ParsePMOSnapshot(req.Output)
+			result, pmoErr := service.ParsePMOSyncResult(req.Output)
 			if pmoErr != nil {
 				// Validation text only — never the raw output. Bounded before
 				// it reaches the task row, the run row, or this response.
@@ -3737,6 +3737,23 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "invalid pmo snapshot output: "+bounded)
 				return
 			}
+			if result.SourceFailure != nil {
+				bounded := service.BoundPMORunError(result.SourceFailure.Reason())
+				slog.Warn("pmo sync completion: source acquisition failed", "task_id", taskID, "error", bounded)
+				failedTask, failErr := h.TaskService.FailTask(r.Context(), parseUUID(taskID), bounded, req.SessionID, req.WorkDir, req.BranchName, "pmo_source_failed", req.SessionRolloutMissing, req.RetiredSessionID)
+				if failErr != nil {
+					slog.Warn("pmo sync completion: failed to mark source failure task failed", "task_id", taskID, "error", failErr)
+				} else if failedTask != nil {
+					h.TaskService.NotifyTaskFinished(*failedTask)
+					if err := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); err != nil {
+						slog.Warn("complete task: failed to revoke task tokens after pmo source failure", "task_id", uuidToString(failedTask.ID), "error", err)
+					}
+				}
+				h.failPMOSyncRunForTask(r.Context(), pmoCtx, "pmo_source_failed", bounded)
+				writeError(w, http.StatusBadRequest, "pmo source failed: "+bounded)
+				return
+			}
+			snapshot := *result.Snapshot
 			pmoSyncCtx = pmoCtx
 			pmoSnapshot = &snapshot
 		}

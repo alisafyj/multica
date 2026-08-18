@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -82,6 +83,142 @@ type PMOTask struct {
 type PMOExternalOwner struct {
 	ExternalID  string `json:"external_id"`
 	DisplayName string `json:"display_name"`
+}
+
+type PMOSyncResult struct {
+	Snapshot      *PMOSnapshot
+	SourceFailure *PMOSourceFailure
+}
+
+type PMOSourceFailure struct {
+	Error              string
+	Message            string
+	RootRequirementKey string
+	RequirementKey     string
+}
+
+var validPMOSourceRequirementKey = regexp.MustCompile(`^SY-[A-Z]+-[0-9]+(?:-[0-9]+)*$`)
+
+func (f PMOSourceFailure) Reason() string {
+	if message := strings.TrimSpace(f.Message); message != "" {
+		return message
+	}
+	return strings.TrimSpace(f.Error)
+}
+
+func ParsePMOSyncResult(output string) (PMOSyncResult, error) {
+	if len(output) > maxPMOSnapshotBytes {
+		return PMOSyncResult{}, ErrPMOSnapshotTooLarge
+	}
+	if !utf8.ValidString(output) {
+		return PMOSyncResult{}, errors.New("pmo output is not valid UTF-8")
+	}
+
+	raw, err := extractPMOSnapshotJSONObject(output)
+	if err != nil {
+		return PMOSyncResult{}, err
+	}
+	if sourceFailure, ok, err := parsePMOSourceFailure(raw); ok || err != nil {
+		if err != nil {
+			return PMOSyncResult{}, err
+		}
+		return PMOSyncResult{SourceFailure: sourceFailure}, nil
+	}
+
+	snapshot, err := ParsePMOSnapshot(output)
+	if err != nil {
+		return PMOSyncResult{}, err
+	}
+	return PMOSyncResult{Snapshot: &snapshot}, nil
+}
+
+func parsePMOSourceFailure(raw string) (*PMOSourceFailure, bool, error) {
+	var candidate struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(raw), &candidate); err != nil {
+		return nil, false, err
+	}
+	if len(candidate.Error) == 0 {
+		return nil, false, nil
+	}
+
+	var envelope struct {
+		Error              json.RawMessage `json:"error"`
+		Message            json.RawMessage `json:"message"`
+		RootRequirementKey json.RawMessage `json:"root_requirement_key"`
+		RequirementKey     json.RawMessage `json:"requirement_key"`
+		SnapshotComplete   json.RawMessage `json:"snapshot_complete"`
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&envelope); err != nil {
+		return nil, true, fmt.Errorf("decode pmo source failure: %w", err)
+	}
+
+	errorText, err := parsePMOSourceFailureText(envelope.Error, "error", true)
+	if err != nil {
+		return nil, true, err
+	}
+	message, err := parsePMOSourceFailureText(envelope.Message, "message", false)
+	if err != nil {
+		return nil, true, err
+	}
+	rootRequirementKey, err := parsePMOSourceRequirementKey(envelope.RootRequirementKey, "root_requirement_key")
+	if err != nil {
+		return nil, true, err
+	}
+	requirementKey, err := parsePMOSourceRequirementKey(envelope.RequirementKey, "requirement_key")
+	if err != nil {
+		return nil, true, err
+	}
+	if len(envelope.SnapshotComplete) > 0 {
+		var complete bool
+		if strings.TrimSpace(string(envelope.SnapshotComplete)) == "null" || json.Unmarshal(envelope.SnapshotComplete, &complete) != nil {
+			return nil, true, errors.New("snapshot_complete must be false when present")
+		}
+		if complete {
+			return nil, true, errors.New("snapshot_complete must be false when present")
+		}
+	}
+
+	return &PMOSourceFailure{
+		Error:              errorText,
+		Message:            message,
+		RootRequirementKey: rootRequirementKey,
+		RequirementKey:     requirementKey,
+	}, true, nil
+}
+
+func parsePMOSourceFailureText(raw json.RawMessage, path string, required bool) (string, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		if required {
+			return "", fmt.Errorf("%s must be a non-empty string", path)
+		}
+		return "", nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", fmt.Errorf("%s must be a string", path)
+	}
+	if err := validatePMOText(value, path, MaxPMORunErrorBytes, required); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(value), nil
+}
+
+func parsePMOSourceRequirementKey(raw json.RawMessage, path string) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	value, err := parsePMOSourceFailureText(raw, path, true)
+	if err != nil {
+		return "", err
+	}
+	if !validPMOSourceRequirementKey.MatchString(value) {
+		return "", fmt.Errorf("%s has invalid SY requirement format", path)
+	}
+	return value, nil
 }
 
 func ParsePMOSnapshot(output string) (PMOSnapshot, error) {
