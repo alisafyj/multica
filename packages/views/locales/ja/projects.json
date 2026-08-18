@@ -180,11 +180,16 @@
     "section_status": "ステータス",
     "section_priority": "優先度",
     "section_lead": "リード",
+    "section_pmo_imported": "PMシステム取込",
     "display": "表示",
     "sort_by": "並び替え",
     "direction_asc": "昇順",
     "direction_desc": "降順",
     "section_columns": "列",
     "view": "ビュー"
+  },
+  "pmo_imported": {
+    "true": "はい",
+    "false": "いいえ"
   }
 }

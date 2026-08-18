@@ -180,11 +180,16 @@
     "section_status": "상태",
     "section_priority": "우선순위",
     "section_lead": "리드",
+    "section_pmo_imported": "PM 시스템 가져오기",
     "display": "표시",
     "sort_by": "정렬",
     "direction_asc": "오름차순",
     "direction_desc": "내림차순",
     "section_columns": "열",
     "view": "보기"
+  },
+  "pmo_imported": {
+    "true": "예",
+    "false": "아니요"
   }
 }
