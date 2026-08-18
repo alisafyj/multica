@@ -470,7 +470,7 @@ function ProjectTableRow({
 
       {isColVisible("pmImported") ? (
         <ListGridCell className="hidden text-caption text-muted-foreground @2xl:flex">
-          {project.created_by === null
+          {project.pmo_imported === true
             ? t(($) => $.table.pm_import_yes)
             : t(($) => $.table.pm_import_no)}
         </ListGridCell>
