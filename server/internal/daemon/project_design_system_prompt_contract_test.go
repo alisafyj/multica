@@ -480,3 +480,19 @@ func TestDesignDocumentPromptRunsTheCritiqueLoopAsAReport(t *testing.T) {
 		t.Fatal("critique.json is not listed as an optional package file")
 	}
 }
+
+// A catalogue system named as a style reference (DC-056) must be presented to
+// the agent as direction to adopt, not an identity to copy.
+func TestProjectDesignSystemPromptExplainsBuiltinReferences(t *testing.T) {
+	prompt := buildProjectDesignSystemPrompt()
+	for _, want := range []string{
+		"`builtin_design_system`",
+		"`design_markdown` and `tokens_css`",
+		"produce this project's own system",
+		"Do not copy the reference's brand name, logo, product copy or literal identity",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt lacks %q", want)
+		}
+	}
+}

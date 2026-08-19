@@ -22,7 +22,7 @@ export type DesignProjectRulesSource = "project_rules" | "gallery_specs_legacy" 
 export type GalleryNativeVersion = "1.0";
 export type ProjectDesignSystemStatus = "unestablished" | "generating" | "validating" | "draft" | "saved";
 export type ProjectDesignSystemPlatform = "web" | "mobile" | "cross_platform";
-export type ProjectDesignSystemReferenceKind = "attachment" | "brand_color" | "link" | "design_file" | "design_system_profile";
+export type ProjectDesignSystemReferenceKind = "attachment" | "brand_color" | "link" | "design_file" | "design_system_profile" | "builtin_design_system";
 export type ProjectDesignSystemScope =
   | { kind: "all" }
   | { kind: "section" | "token_group" | "component" | "block"; id: string };
@@ -286,6 +286,10 @@ export interface ProjectDesignSystemReferenceSnapshot extends ProjectDesignSyste
   source_revision_id?: string;
   frames?: Array<Record<string, unknown>>;
   profile?: Record<string, unknown>;
+  /** Built-in design system references inline the package so the input stays frozen. */
+  category?: string;
+  design_markdown?: string;
+  tokens_css?: string;
 }
 
 export interface ProjectRepositoryDesignFact {

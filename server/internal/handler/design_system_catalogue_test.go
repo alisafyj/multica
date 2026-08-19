@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -156,5 +158,45 @@ func TestBuiltinDesignSystemShowcaseIsServedByDigest(t *testing.T) {
 		if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
 			t.Fatalf("%s: Cache-Control = %q, want no-store", tt.name, got)
 		}
+	}
+}
+
+// A built-in system can be named as a style reference when a project creates
+// its own system (DC-056): the snapshot inlines the package's design language
+// and tokens so the agent's input stays frozen, unknown slugs are refused, and
+// the count is capped because the content rides in the snapshot.
+func TestResolveProjectDesignSystemReferencesInlinesBuiltinSystems(t *testing.T) {
+	entries, err := designsystemcatalogue.List()
+	if err != nil || len(entries) < 4 {
+		t.Fatalf("catalogue precondition: %v (%d)", err, len(entries))
+	}
+	ctx := context.Background()
+	workspaceID := parseUUID(testWorkspaceID)
+	projectID := createProjectDesignSystemProject(t, testWorkspaceID, "Builtin references")
+
+	resolved, err := testHandler.resolveProjectDesignSystemReferences(ctx, workspaceID, projectID, []ProjectDesignSystemReferenceInput{
+		{Kind: "builtin_design_system", Value: entries[0].Slug, Label: "参考风格"},
+	})
+	if err != nil {
+		t.Fatalf("resolve builtin reference: %v", err)
+	}
+	if len(resolved) != 1 || resolved[0].Value != entries[0].Slug || resolved[0].Title != entries[0].Name ||
+		strings.TrimSpace(resolved[0].DesignMarkdown) == "" || strings.TrimSpace(resolved[0].TokensCSS) == "" {
+		t.Fatalf("resolved = %+v", resolved)
+	}
+
+	var requestErr *projectDesignSystemRequestError
+	if _, err := testHandler.resolveProjectDesignSystemReferences(ctx, workspaceID, projectID, []ProjectDesignSystemReferenceInput{
+		{Kind: "builtin_design_system", Value: "no-such-system"},
+	}); !errors.As(err, &requestErr) || requestErr.code != "reference_not_found" {
+		t.Fatalf("unknown slug error = %v, want reference_not_found", err)
+	}
+
+	tooMany := make([]ProjectDesignSystemReferenceInput, 0, 4)
+	for _, entry := range entries[:4] {
+		tooMany = append(tooMany, ProjectDesignSystemReferenceInput{Kind: "builtin_design_system", Value: entry.Slug})
+	}
+	if _, err := testHandler.resolveProjectDesignSystemReferences(ctx, workspaceID, projectID, tooMany); !errors.As(err, &requestErr) || requestErr.code != "too_many_references" {
+		t.Fatalf("four builtin references error = %v, want too_many_references", err)
 	}
 }

@@ -13,18 +13,20 @@ import {
   Palette,
   PencilLine,
   Sparkles,
+  SwatchBook,
   Upload,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, errorCode } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
-import { projectDesignSystemCatalogueOptions } from "@multica/core/designs/queries";
+import { builtinDesignSystemListOptions, projectDesignSystemCatalogueOptions } from "@multica/core/designs/queries";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { useWorkspaceId } from "@multica/core/hooks";
 import type {
   Agent,
   AnalyzeProjectDesignSystemRepositoryRequest,
+  BuiltinDesignSystem,
   CopyProjectDesignSystemRequest,
   CreateProjectDesignSystemRequest,
   DesignFile,
@@ -42,6 +44,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@multica/ui/components/ui/radio-group";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@multica/ui/components/ui/toggle-group";
+import { cn } from "@multica/ui/lib/utils";
 import { repositoryLabel } from "./project-repository";
 
 type UploadedReference = {
@@ -62,9 +65,13 @@ type ProjectDesignSystemForm = {
   link: string;
   designFileIds: string[];
   profileIds: string[];
+  /** Catalogue systems chosen as style references (DC-056), at most three. */
+  builtinSlugs: string[];
   copySourceId: string;
   copyInstruction: string;
 };
+
+const MAX_BUILTIN_REFERENCES = 3;
 
 type CopySourceGroup = {
   projectId: string;
@@ -248,6 +255,10 @@ function initialForm(project: Project, system: ProjectDesignSystem | undefined):
       .filter((reference) => reference.kind === "design_system_profile")
       .map((reference) => stringValue(reference.design_system_profile_id))
       .filter(Boolean),
+    builtinSlugs: references
+      .filter((reference) => reference.kind === "builtin_design_system")
+      .map((reference) => stringValue(reference.value))
+      .filter(Boolean),
   };
 }
 
@@ -293,6 +304,20 @@ function errorMessage(value: unknown): string | null {
   return null;
 }
 
+/**
+ * The catalogue rows worth showing: everything that matches the query, or a
+ * short head of the list when there is none, always including what is already
+ * picked so a selection never scrolls out of sight.
+ */
+export function visibleBuiltinSystems(systems: BuiltinDesignSystem[], search: string, picked: string[]): BuiltinDesignSystem[] {
+  const query = search.trim().toLowerCase();
+  const matches = query
+    ? systems.filter((system) => `${system.name} ${system.category} ${system.description} ${system.slug}`.toLowerCase().includes(query))
+    : systems.slice(0, 24);
+  const pickedSystems = systems.filter((system) => picked.includes(system.slug) && !matches.includes(system));
+  return [...pickedSystems, ...matches];
+}
+
 function toggleId(values: string[], id: string): string[] {
   return values.includes(id) ? values.filter((value) => value !== id) : [...values, id];
 }
@@ -312,6 +337,7 @@ function referenceSummary(form: ProjectDesignSystemForm): string {
     form.link.trim() ? "参考链接" : "",
     form.designFileIds.length ? `项目设计稿 ${form.designFileIds.length}` : "",
     form.profileIds.length ? `UI 规范 ${form.profileIds.length}` : "",
+    form.builtinSlugs.length ? `官方体系 ${form.builtinSlugs.length}` : "",
   ].filter(Boolean);
   return items.length ? items.join(" · ") : "未使用额外参考资料";
 }
@@ -367,6 +393,8 @@ export function ProjectDesignSystemCreate({
   const { upload, uploading } = useFileUpload(api, (error) => toast.error(error.message));
 
   const catalogueQuery = useQuery(projectDesignSystemCatalogueOptions(wsId));
+  const { data: builtinSystems = [] } = useQuery(builtinDesignSystemListOptions(wsId));
+  const [builtinSearch, setBuiltinSearch] = useState("");
 
   const form = forms[project.id] ?? initialForm(project, system);
   const currentAgent = agents.find((agent) => agent.id === form.agentId);
@@ -568,6 +596,10 @@ export function ProjectDesignSystemCreate({
     ...form.profileIds.flatMap((id) => {
       const profile = legacyProfiles.find((item) => item.id === id);
       return profile ? [{ kind: "design_system_profile" as const, design_system_profile_id: id, label: profile.name }] : [];
+    }),
+    ...form.builtinSlugs.flatMap((slug) => {
+      const builtin = builtinSystems.find((item) => item.slug === slug);
+      return builtin ? [{ kind: "builtin_design_system" as const, value: slug, label: builtin.name }] : [];
     }),
   ];
 
@@ -1012,6 +1044,51 @@ export function ProjectDesignSystemCreate({
                     onChange={() => updateForm((current) => ({ ...current, profileIds: toggleId(current.profileIds, profile.id) }))}
                   />
                 )) : <p className="py-3 text-caption text-muted-foreground">暂无可用 UI 规范</p>}
+              </div>
+            </fieldset>
+            <fieldset className="lg:col-span-2">
+              <legend className="flex items-center gap-2 text-body font-medium"><SwatchBook className="h-4 w-4 text-muted-foreground" />官方设计体系 · 参考风格</legend>
+              <p className="mt-1 text-caption text-muted-foreground">
+                选最多 {MAX_BUILTIN_REFERENCES} 个 Open Design 官方体系作为风格参考。智能体会参考它们的设计语言和 Token 结构来生成本项目自己的体系，不会照搬品牌身份。
+              </p>
+              <Input
+                value={builtinSearch}
+                onChange={(event) => setBuiltinSearch(event.target.value)}
+                placeholder="搜索官方设计体系…"
+                aria-label="搜索官方设计体系"
+                className="mt-2 h-8 text-body"
+              />
+              <div className="mt-2 max-h-64 overflow-y-auto border-y">
+                {visibleBuiltinSystems(builtinSystems, builtinSearch, form.builtinSlugs).map((builtin) => {
+                  const checked = form.builtinSlugs.includes(builtin.slug);
+                  const full = !checked && form.builtinSlugs.length >= MAX_BUILTIN_REFERENCES;
+                  return (
+                    <label key={builtin.slug} className={cn("flex min-w-0 cursor-pointer items-center gap-3 border-b py-2.5 last:border-b-0", full && "cursor-not-allowed opacity-60")}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={full}
+                        onChange={() => updateForm((current) => ({ ...current, builtinSlugs: toggleId(current.builtinSlugs, builtin.slug) }))}
+                        aria-label={builtin.name}
+                        className="h-4 w-4 shrink-0 accent-primary"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="truncate text-body">{builtin.name}</span>
+                          {builtin.swatches.length > 0 ? (
+                            <span className="flex shrink-0 items-center gap-0.5" aria-hidden="true">
+                              {builtin.swatches.slice(0, 5).map((value, index) => (
+                                <span key={`${value}-${index}`} className="size-2.5 rounded-full border border-border/60" style={{ background: value }} />
+                              ))}
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="block truncate text-caption text-muted-foreground">{builtin.category || "未分类"}{builtin.description ? ` · ${builtin.description}` : ""}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+                {builtinSystems.length === 0 ? <p className="py-3 text-caption text-muted-foreground">暂无官方设计体系</p> : null}
               </div>
             </fieldset>
           </div>

@@ -17,12 +17,14 @@ const {
   analyzeProjectDesignSystemRepository,
   copyProjectDesignSystem,
   createProjectDesignSystem,
+  listBuiltinDesignSystems,
   listProjectDesignSystemCatalogue,
   uploadFile,
 } = vi.hoisted(() => ({
   analyzeProjectDesignSystemRepository: vi.fn(),
   copyProjectDesignSystem: vi.fn(),
   createProjectDesignSystem: vi.fn(),
+  listBuiltinDesignSystems: vi.fn(),
   listProjectDesignSystemCatalogue: vi.fn(),
   uploadFile: vi.fn(),
 }));
@@ -32,6 +34,7 @@ vi.mock("@multica/core/api", () => ({
     analyzeProjectDesignSystemRepository,
     copyProjectDesignSystem,
     createProjectDesignSystem,
+    listBuiltinDesignSystems,
     listProjectDesignSystemCatalogue,
     uploadFile,
   },
@@ -248,6 +251,11 @@ describe("ProjectDesignSystemCreate", () => {
     createProjectDesignSystem.mockReset();
     listProjectDesignSystemCatalogue.mockReset();
     uploadFile.mockReset();
+    listBuiltinDesignSystems.mockReset();
+    listBuiltinDesignSystems.mockResolvedValue({ design_systems: [
+      { slug: "apple", name: "Apple", category: "媒体与消费", description: "克制的编辑式版式。", showcase_url: "", swatches: ["#0071e3"] },
+      { slug: "stripe", name: "Stripe", category: "金融科技", description: "", showcase_url: "", swatches: [] },
+    ] });
     // No saved system anywhere is the default: copy has nothing to offer.
     listProjectDesignSystemCatalogue.mockResolvedValue({ design_systems: [] });
     copyProjectDesignSystem.mockResolvedValue(makeSystem({
@@ -553,6 +561,10 @@ describe("ProjectDesignSystemCreate", () => {
     expect(await screen.findByText("brand-reference.pdf")).toBeInTheDocument();
     await user.click(screen.getByLabelText("客户列表参考稿"));
     await user.click(screen.getByLabelText("CRM Figma UI 规范"));
+    // A catalogue system as a style reference (DC-056): found by search,
+    // sent by slug, never as a copy.
+    await user.type(screen.getByLabelText("搜索官方设计体系"), "stri");
+    await user.click(await screen.findByLabelText("Stripe"));
     await user.click(screen.getByRole("button", { name: "生成设计体系" }));
 
     await waitFor(() => {
@@ -568,6 +580,7 @@ describe("ProjectDesignSystemCreate", () => {
           { kind: "link", value: "https://example.com/design-reference", label: "参考链接" },
           { kind: "design_file", design_file_id: "file-1", label: "客户列表参考稿" },
           { kind: "design_system_profile", design_system_profile_id: "profile-1", label: "CRM Figma UI 规范" },
+          { kind: "builtin_design_system", value: "stripe", label: "Stripe" },
         ],
       });
     });

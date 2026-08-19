@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/designsystemcatalogue"
 	"github.com/multica-ai/multica/server/internal/opendesign"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -23,6 +24,10 @@ import (
 const (
 	maxProjectDesignSystemReferences    = 20
 	maxProjectDesignSystemSnapshotBytes = 512 << 10
+	// A built-in design system reference inlines the package's DESIGN.md and
+	// tokens.css into the frozen input, so the count is capped to keep the
+	// snapshot well inside its byte limit (DC-056: references, not copies).
+	maxBuiltinDesignSystemReferences    = 3
 	defaultProjectDesignSystemAssetHost = "static.soyoung.com"
 )
 
@@ -154,6 +159,11 @@ type projectDesignSystemReferenceSnapshot struct {
 	SourceRevisionID  string           `json:"source_revision_id,omitempty"`
 	Frames            []map[string]any `json:"frames,omitempty"`
 	Profile           json.RawMessage  `json:"profile,omitempty"`
+	// Built-in design system references carry the package content inline so
+	// the agent's input stays frozen even when the bundled catalogue changes.
+	Category       string `json:"category,omitempty"`
+	DesignMarkdown string `json:"design_markdown,omitempty"`
+	TokensCSS      string `json:"tokens_css,omitempty"`
 }
 
 type projectDesignSystemRequestError struct {
@@ -1381,10 +1391,35 @@ func (h *Handler) resolveProjectDesignSystemReferences(
 		return nil, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "too_many_references", message: "no more than 20 references are allowed"}
 	}
 	result := make([]projectDesignSystemReferenceSnapshot, 0, len(inputs))
+	builtinCount := 0
 	for _, input := range inputs {
 		input.Kind = strings.TrimSpace(input.Kind)
 		input.Label = strings.TrimSpace(input.Label)
 		switch input.Kind {
+		case "builtin_design_system":
+			// An Open Design catalogue system chosen as a style reference
+			// (DC-056): the project still gets its own system, generated with
+			// this one's design language and tokens in front of the agent.
+			builtinCount++
+			if builtinCount > maxBuiltinDesignSystemReferences {
+				return nil, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "too_many_references", message: "no more than 3 built-in design systems can be referenced"}
+			}
+			detail, ok, err := designsystemcatalogue.Get(strings.TrimSpace(input.Value))
+			if err != nil {
+				return nil, projectDesignSystemInternalError("reference_lookup_failed", "failed to load the built-in design system")
+			}
+			if !ok {
+				return nil, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "reference_not_found", message: "built-in design system not found"}
+			}
+			result = append(result, projectDesignSystemReferenceSnapshot{
+				Kind:           input.Kind,
+				Value:          detail.Slug,
+				Label:          input.Label,
+				Title:          detail.Name,
+				Category:       detail.Category,
+				DesignMarkdown: detail.DesignMarkdown,
+				TokensCSS:      detail.TokensCSS,
+			})
 		case "attachment":
 			attachmentID, err := util.ParseUUID(strings.TrimSpace(input.AttachmentID))
 			if err != nil {
