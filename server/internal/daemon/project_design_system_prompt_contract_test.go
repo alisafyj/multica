@@ -430,3 +430,23 @@ func TestDesignDocumentPromptContractMatchesCollector(t *testing.T) {
 		t.Fatal("prompt lists manifest.json as an agent artifact; the platform generates it")
 	}
 }
+
+// The tweaks panel (DC-050) is a convention inside the prototype, requested
+// per document rather than imposed on every design. The prompt must state the
+// variables and files every agent uses for it, and must keep it inside the
+// audit's rules — in particular no reach for the embedding page.
+func TestDesignDocumentPromptStatesTheTweaksConventionOnRequest(t *testing.T) {
+	prompt := BuildPrompt(designDocumentPromptTask(t, ""), "opencode")
+	for _, want := range []string{
+		"Tweaks panel",
+		"only when the requirement or the requested change asks for one",
+		"`--accent`", "`--scale`", "`--density`", "`--mode`", "`--motion`",
+		"`prototype/tweaks.css`", "`prototype/tweaks.js`",
+		"`localStorage`", "try / catch",
+		"no `parent`, `top` or `opener`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt lacks the tweaks convention %q", want)
+		}
+	}
+}

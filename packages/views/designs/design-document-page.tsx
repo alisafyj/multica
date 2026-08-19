@@ -69,6 +69,21 @@ import { DesignTaskActivity, taskOperationLabel } from "./project-design-system-
 
 const INSTRUCTION_MAX_LENGTH = 8000;
 
+/**
+ * Ready-made adjustments the workspace offers as chips (DC-050). Each is a
+ * plain instruction to the agent — the prompt states the convention the agent
+ * follows for it — so a preset never bypasses the normal adjust → Audit →
+ * Preview path.
+ */
+export const ADJUSTMENT_PRESETS: ReadonlyArray<{ id: string; label: string; instruction: string }> = [
+  {
+    id: "tweaks",
+    label: "添加调整面板",
+    instruction:
+      "为原型添加一个调整面板（tweaks）：把强调色、字号比例、密度、明暗模式和动效通过 CSS 自定义属性 --accent / --scale / --density / --mode / --motion 驱动，附带一个默认收起、可从浮动标签打开的包内侧栏控件（色板与取色、缩放与密度滑杆、明暗切换、动效开关、重置），选择保存在 localStorage 并在加载时恢复。整个包继续离线可运行，其余设计保持不变。",
+  },
+];
+
 type PreviewViewport = "fit" | "desktop" | "mobile";
 
 const VIEWPORTS: ReadonlyArray<{ id: PreviewViewport; label: string; width: number | null; icon: typeof Monitor }> = [
@@ -575,6 +590,19 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
               <div className="ml-auto">
                 <AgentSetting agents={agents} agentId={agentId} onChange={setAgentOverride} />
               </div>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {ADJUSTMENT_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className="inline-flex h-6 items-center rounded-full border bg-card px-2 text-caption text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                  disabled={!canAdjust || busy}
+                  onClick={() => setInstruction(preset.instruction)}
+                >
+                  {preset.label}
+                </button>
+              ))}
             </div>
             <Textarea
               value={instruction}

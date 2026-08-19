@@ -266,6 +266,16 @@ describe("DesignDocumentPage", () => {
     expect(screen.getByLabelText("智能体任务活动")).toBeInTheDocument();
   });
 
+  it("offers the tweaks panel as a ready-made adjustment (DC-050)", async () => {
+    renderPage();
+    await screen.findByTitle("订单总览 · 首页");
+    await userEvent.click(screen.getByRole("button", { name: "添加调整面板" }));
+    const textarea = screen.getByPlaceholderText(/描述你想怎么改/) as HTMLTextAreaElement;
+    expect(textarea.value).toContain("--accent / --scale / --density / --mode / --motion");
+    expect(textarea.value).toContain("localStorage");
+    expect(screen.getByRole("button", { name: "发起调整" })).toBeEnabled();
+  });
+
   it("saves the draft the user is looking at and offers to discard it", async () => {
     renderPage();
     await screen.findByTitle("订单总览 · 首页");

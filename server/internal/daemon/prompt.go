@@ -1252,5 +1252,23 @@ func designDocumentPackageContract() string {
 	b.WriteString("- Put behaviour in a `<script>` block or a `.js` file and bind it with `addEventListener`. Inline `on*` attributes such as `onclick` are rejected, because code the audit cannot see is code it cannot check.\n")
 	b.WriteString("- Do not write absolute remote URLs anywhere in prototype JavaScript or CSS — not `http:`, `https:`, `ws:`, `wss:`, `file:`, `javascript:`, `blob:` or `//host` — even inside a comment, a string you never call, or mock data. A real API address in the package reads as a live integration, and the audit cannot tell an unused one from a used one.\n")
 	b.WriteString("- Links and forms stay inside the package: an `<a href>` must be a fragment or another prototype page, and a `<form>` may have no `action` at all or `action=\"#\"`.\n\n")
+	b.WriteString(designDocumentTweaksContract())
+	return b.String()
+}
+
+// designDocumentTweaksContract states how a prototype exposes a tweaks panel
+// when the requirement or an adjustment asks for one (DC-050). It is a
+// convention inside the prototype, not platform UI: the agent routes the
+// design's key decisions through CSS custom properties and ships a package
+// local control panel bound to them. Stated here so every agent builds the
+// same panel the same way, and so the audit rules it must respect (no
+// `parent`, no network, storage guarded) are in front of it.
+func designDocumentTweaksContract() string {
+	var b strings.Builder
+	b.WriteString("Tweaks panel — only when the requirement or the requested change asks for one (\"tweaks\", \"调整面板\", trying variants without re-prompting):\n")
+	b.WriteString("- Route the design's key decisions through CSS custom properties declared on `:root` and read everywhere: `--accent` (the action / brand colour), `--scale` (type scale multiplier, 1 = as designed), `--density` (spacing multiplier, 1 = as designed), `--mode` (`light` or `dark`, switching the surface and text tokens) and `--motion` (0 disables transitions, 1 = as designed).\n")
+	b.WriteString("- Ship the panel inside the package as `prototype/tweaks.css` and `prototype/tweaks.js`, included by every prototype page: a collapsible side panel, hidden by default behind a small floating \"调整\" tab, with an accent colour row (swatches plus a colour input), scale and density sliders, a light / dark switch, a motion toggle and a reset. Every control writes its variable with `document.documentElement.style.setProperty`.\n")
+	b.WriteString("- Persist the chosen values in `localStorage` under one key such as `multica.tweaks` and restore them on load, with every storage access inside try / catch — the preview frame may deny storage, and the panel must still work without it.\n")
+	b.WriteString("- The panel is tooling around the prototype, not design content: do not list it in `brief.json` or `coverage.json`, and it must never cover the design when collapsed. It obeys the same rules as the rest of the prototype — no `parent`, `top` or `opener`, no messages to the embedding page, no network.\n\n")
 	return b.String()
 }
