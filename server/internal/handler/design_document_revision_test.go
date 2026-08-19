@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -441,5 +442,56 @@ func TestGetDesignDocumentRevisionSurfacesTheCritiqueReport(t *testing.T) {
 	}
 	if string(body.Critique) != "null" {
 		t.Fatalf("critique without a report = %s, want null", body.Critique)
+	}
+}
+
+// The archive download hands back exactly the bytes the daemon uploaded, as a
+// named ZIP, after re-validating them; a revision of another document is not
+// found and a swapped object is refused.
+func TestDownloadDesignDocumentRevisionArchiveServesTheValidatedPackage(t *testing.T) {
+	fixture := createDesignDocumentRevisionFixture(t)
+	documentID := uuidToString(fixture.Document.ID)
+	download := func(docID, revisionID string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		request := withURLParams(newRequest(http.MethodGet, "/api/design-documents/"+docID+"/revisions/"+revisionID+"/archive", nil),
+			"id", docID, "revisionId", revisionID)
+		testHandler.DownloadDesignDocumentRevisionArchive(recorder, request)
+		return recorder
+	}
+	recorder := download(documentID, uuidToString(fixture.Revision.ID))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/zip" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	if got := recorder.Header().Get("Content-Disposition"); !strings.Contains(got, `filename="Orders overview-v1.zip"`) {
+		t.Fatalf("Content-Disposition = %q", got)
+	}
+	if !bytes.Equal(recorder.Body.Bytes(), fixture.Package.Archive) {
+		t.Fatal("downloaded bytes differ from the uploaded archive")
+	}
+
+	// A swapped object in storage is refused rather than served. (Checked
+	// before the second fixture below, which installs its own mock storage.)
+	fixture.Storage.mu.Lock()
+	fixture.Storage.files[fixture.Revision.ArchiveObjectKey] = []byte("not the archive")
+	fixture.Storage.mu.Unlock()
+	if recorder := download(documentID, uuidToString(fixture.Revision.ID)); recorder.Code != http.StatusConflict {
+		t.Fatalf("swapped archive: status = %d, want 409; body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	other := createDesignDocumentRevisionFixture(t)
+	if recorder := download(documentID, uuidToString(other.Revision.ID)); recorder.Code != http.StatusNotFound {
+		t.Fatalf("another document's revision: status = %d, want 404", recorder.Code)
+	}
+}
+
+func TestDesignDocumentArchiveFilenameStripsUnsafeCharacters(t *testing.T) {
+	if got := designDocumentArchiveFilename(`订单/总览: "v2"?`, 3); got != "订单总览 v2-v3.zip" {
+		t.Fatalf("filename = %q", got)
+	}
+	if got := designDocumentArchiveFilename("   ", 1); got != "design-document-v1.zip" {
+		t.Fatalf("empty title filename = %q", got)
 	}
 }

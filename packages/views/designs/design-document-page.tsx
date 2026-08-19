@@ -347,6 +347,25 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
     onError: (error) => toast.error(error instanceof Error ? error.message : "放弃草稿失败"),
   });
 
+  const title = document?.title.trim() || "设计稿";
+
+  const downloadArchive = useMutation({
+    mutationFn: async () => {
+      if (!revision) throw new Error("没有可下载的版本");
+      const blob = await api.downloadDesignDocumentRevisionArchive(documentId, revision.id);
+      const href = URL.createObjectURL(blob);
+      const anchor = window.document.createElement("a");
+      anchor.href = href;
+      anchor.download = `${title}-v${revision.revision_number}.zip`;
+      anchor.rel = "noopener";
+      window.document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(href), 10_000);
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "下载失败"),
+  });
+
   const restore = useMutation({
     mutationFn: (revisionId: string) => api.restoreDesignDocumentRevision(documentId, revisionId),
     onSuccess: async (next) => {
@@ -369,7 +388,6 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
           ? "说明太长了"
           : null;
 
-  const title = document?.title.trim() || "设计稿";
   const statusLabel = document ? designDocumentStatusLabel(document.status) : null;
 
   if (documentQuery.isLoading) {
@@ -492,6 +510,9 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={() => void refresh()}>刷新</DropdownMenuItem>
                 <DropdownMenuItem disabled={!previewUrl} onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}>在新标签页中打开原型</DropdownMenuItem>
+                <DropdownMenuItem disabled={!revision || downloadArchive.isPending} onClick={() => downloadArchive.mutate()}>
+                  {revision ? `下载 v${revision.revision_number} 原型包 (.zip)` : "下载原型包 (.zip)"}
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => navigation.push(paths.designs())}>返回设计库</DropdownMenuItem>
                 {canDiscard ? (
                   <>

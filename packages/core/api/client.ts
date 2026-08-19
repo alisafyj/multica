@@ -4153,6 +4153,18 @@ export class ApiClient {
     return `${this.baseUrl}${resourceBasePath.replace(/\/+$/, "")}/${encodedPath}`;
   }
 
+  /**
+   * The revision's package as the ZIP the daemon uploaded. Routed through
+   * `fetchRaw` so it carries auth like every other call; the caller saves the
+   * blob (an <a download> cannot send the Bearer header).
+   */
+  async downloadDesignDocumentRevisionArchive(documentId: string, revisionId: string): Promise<Blob> {
+    const res = await this.fetchRaw(
+      `/api/design-documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/archive`,
+    );
+    return res.blob();
+  }
+
   async restoreDesignDocumentRevision(documentId: string, revisionId: string): Promise<DesignDocument> {
     const raw = await this.fetch<unknown>(
       `/api/design-documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/restore`,

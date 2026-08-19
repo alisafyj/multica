@@ -7,8 +7,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -428,4 +430,78 @@ func (h *Handler) RestoreDesignDocumentRevision(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeJSON(w, http.StatusOK, designDocumentResponse(restored, nil))
+}
+
+// DownloadDesignDocumentRevisionArchive hands the user a revision's package as
+// the ZIP the daemon uploaded — Open Design's "download as .zip". The archive
+// is re-validated against the binding its own manifest records before a byte
+// goes out, so a swapped object in storage is refused rather than served.
+func (h *Handler) DownloadDesignDocumentRevisionArchive(w http.ResponseWriter, r *http.Request) {
+	document, workspaceUUID, ok := h.loadDesignDocumentForRequest(w, r)
+	if !ok {
+		return
+	}
+	revisionUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "revisionId"), "revision_id")
+	if !ok {
+		return
+	}
+	revision, err := h.Queries.GetDesignDocumentRevisionInWorkspace(r.Context(), db.GetDesignDocumentRevisionInWorkspaceParams{
+		ID: revisionUUID, WorkspaceID: workspaceUUID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && revision.DesignDocumentID != document.ID) {
+		writeProjectDesignSystemError(w, http.StatusNotFound, "revision_not_found", "design document revision not found")
+		return
+	}
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "revision_lookup_failed", "failed to load the design document revision")
+		return
+	}
+	if h.Storage == nil {
+		writeProjectDesignSystemError(w, http.StatusServiceUnavailable, "design_document_archive_storage_unavailable", "design document package storage is unavailable")
+		return
+	}
+	archive, err := readNativeArchiveFromStorage(r.Context(), h.Storage, revision.ArchiveObjectKey)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "design_document_archive_read_failed", "failed to read the design document package")
+		return
+	}
+	var manifest designdocument.Manifest
+	if json.Unmarshal(revision.Manifest, &manifest) != nil {
+		writeProjectDesignSystemError(w, http.StatusConflict, "revision_manifest_invalid", "design document revision manifest is invalid")
+		return
+	}
+	validated, err := designdocument.ValidateArchive(archive, manifest.Binding)
+	if err != nil || validated.Manifest.ContentDigest != revision.ContentDigest {
+		writeProjectDesignSystemError(w, http.StatusConflict, "design_document_archive_invalid", "design document package archive failed revalidation")
+		return
+	}
+	filename := designDocumentArchiveFilename(document.Title, revision.RevisionNumber)
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Length", strconv.Itoa(len(archive)))
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"; filename*=UTF-8''`+url.PathEscape(filename))
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Multica-Design-Document-Digest", revision.ContentDigest)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(archive)
+}
+
+// designDocumentArchiveFilename names the download after the document and the
+// revision, with everything a filename should not carry stripped out.
+func designDocumentArchiveFilename(title string, revisionNumber int32) string {
+	cleaned := strings.Map(func(r rune) rune {
+		switch {
+		case r < 0x20, r == '/', r == '\\', r == ':', r == '*', r == '?', r == '"', r == '<', r == '>', r == '|':
+			return -1
+		default:
+			return r
+		}
+	}, strings.TrimSpace(title))
+	if cleaned == "" {
+		cleaned = "design-document"
+	}
+	if len(cleaned) > 80 {
+		cleaned = cleaned[:80]
+	}
+	return fmt.Sprintf("%s-v%d.zip", cleaned, revisionNumber)
 }

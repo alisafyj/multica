@@ -21,6 +21,7 @@ func TestDesignDocumentRevisionRoutesAreRegistered(t *testing.T) {
 		http.MethodGet: {
 			"/api/design-documents/{id}/revisions":                                                    false,
 			"/api/design-documents/{id}/revisions/{revisionId}":                                       false,
+			"/api/design-documents/{id}/revisions/{revisionId}/archive":                               false,
 			"/api/design-document-previews/{workspaceId}/{revisionId}/{digest}/{accessToken}/files/*": false,
 			"/api/design-systems/builtin/{slug}/showcase/{digest}/{variant}":                          false,
 		},

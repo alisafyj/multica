@@ -1876,6 +1876,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/design-documents/{id}/revisions", h.ListDesignDocumentRevisions)
 			r.Get("/api/design-documents/{id}/revisions/{revisionId}", h.GetDesignDocumentRevision)
 			r.Post("/api/design-documents/{id}/revisions/{revisionId}/restore", h.RestoreDesignDocumentRevision)
+			r.Get("/api/design-documents/{id}/revisions/{revisionId}/archive", h.DownloadDesignDocumentRevisionArchive)
 			r.Post("/api/design-documents/{id}/adjust", h.AdjustDesignDocument)
 			r.Post("/api/design-documents/{id}/save", h.SaveDesignDocument)
 			r.Post("/api/design-documents/{id}/discard", h.DiscardDesignDocument)
