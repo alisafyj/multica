@@ -208,7 +208,7 @@ function RevisionRow({
           </div>
         </div>
         {revision.instruction ? (
-          <p className="mt-1.5 line-clamp-3 text-caption leading-5 text-foreground/90">{revision.instruction}</p>
+          <p className="mt-1.5 line-clamp-3 text-caption leading-5 text-foreground">{revision.instruction}</p>
         ) : null}
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-caption text-muted-foreground">
           {isAdjustment ? <span>{scopeLabelOf(revision.scope, entries)}</span> : null}
