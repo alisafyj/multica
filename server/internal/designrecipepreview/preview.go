@@ -15,8 +15,11 @@
 package designrecipepreview
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"errors"
+	"io"
 	"io/fs"
 	"path"
 	"strings"
@@ -53,6 +56,12 @@ var (
 type entry struct {
 	html   bool
 	poster string // file name, "" when absent
+	// digest identifies this slug's bundle — every file under it, by path
+	// and content — so the cover URL can carry it and change whenever the
+	// cover does. That lets the browser cache a cover indefinitely without
+	// ever holding a stale one, headers included: a header-only change would
+	// otherwise sit invisible behind a fresh cache entry until it expired.
+	digest string
 }
 
 func load() {
@@ -76,10 +85,41 @@ func load() {
 			}
 		}
 		if e.html || e.poster != "" {
+			e.digest = bundleDigest(path.Join("data", dir.Name()))
 			index[dir.Name()] = e
 		}
 	}
 	loaded = true
+}
+
+// bundleDigest hashes every file under dir in path order. Twelve hex chars
+// is plenty for a cache key that only has to differ between builds.
+func bundleDigest(dir string) string {
+	h := sha256.New()
+	_ = fs.WalkDir(files, dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		body, err := files.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+		_, _ = io.WriteString(h, p)
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write(body)
+		_, _ = h.Write([]byte{0})
+		return nil
+	})
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}
+
+// Digest returns the bundle digest for a slug, "" when it has no cover. The
+// cover URL carries it and the handler refuses any other value, so a client
+// holding an older listing gets a miss rather than a silently mismatched
+// document.
+func Digest(slug string) string {
+	once.Do(load)
+	return index[strings.TrimSpace(slug)].digest
 }
 
 // KindFor reports which cover a slug has. Cheap: it reads an in-memory index,

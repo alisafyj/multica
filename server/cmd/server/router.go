@@ -1208,10 +1208,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	)
 	// Built-in recipe covers: bundled, workspace-agnostic, framed by the app.
 	// Unauthenticated for the same reason as the route above — a frame cannot
-	// carry the Bearer header — and fenced by its own CSP instead. The
-	// wildcard form serves the files an example references beside itself.
-	r.Get("/api/design-recipes/{slug}/preview", h.GetDesignRecipePreview)
-	r.Get("/api/design-recipes/{slug}/preview/*", h.GetDesignRecipePreview)
+	// carry the Bearer header — and fenced by its own CSP instead. The URL
+	// carries the bundle digest, like the package preview above, so covers
+	// cache immutably; the wildcard form serves the files an example
+	// references beside itself.
+	r.Get("/api/design-recipes/{slug}/preview/{digest}", h.GetDesignRecipePreview)
+	r.Get("/api/design-recipes/{slug}/preview/{digest}/*", h.GetDesignRecipePreview)
 	// Composio OAuth callback (MUL-3843). NOT under the Auth group on purpose:
 	// Composio 302-redirects the user's browser here at the end of the OAuth
 	// flow, and the cookie session is frequently absent (expired session,

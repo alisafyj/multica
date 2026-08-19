@@ -834,9 +834,43 @@ describe("DesignScenarioRecipeSchema", () => {
     expect(parsed.recipes).toHaveLength(1);
     expect(parsed.recipes[0]?.slug).toBe("keeps-me");
   });
+    expect(parsed.preview_kind).toBe("");
+    expect(parsed.preview_url).toBe("");
 
   it("degrades a malformed catalogue to an empty catalogue", () => {
     for (const malformed of [null, "not json", { recipes: "gone" }, []]) {
+  it("keeps the cover kind and the server-composed cover path together", () => {
+    // Older backends send neither; a newer one sends both. The card frames
+    // only what the server composed (the digest lives in the path), so a
+    // non-string path must read as absent rather than break the row.
+    const parsed = DesignScenarioRecipeSchema.parse({
+      slug: "blog-post",
+      title: "博客文章",
+      summary: "",
+      category: "内容",
+      mode: "prototype",
+      prompt: "p",
+      origin: "builtin",
+      preview_kind: "html",
+      preview_url: "/api/design-recipes/blog-post/preview/0123abcd4567/",
+    });
+    expect(parsed.preview_kind).toBe("html");
+    expect(parsed.preview_url).toBe("/api/design-recipes/blog-post/preview/0123abcd4567/");
+
+    const malformed = DesignScenarioRecipeSchema.parse({
+      slug: "blog-post",
+      title: "博客文章",
+      summary: "",
+      category: "内容",
+      mode: "prototype",
+      prompt: "p",
+      origin: "builtin",
+      preview_kind: "html",
+      preview_url: 42,
+    });
+    expect(malformed.preview_url).toBe("");
+  });
+
       expect(
         parseWithFallback(
           malformed,

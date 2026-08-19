@@ -63,6 +63,8 @@ function recipe(overrides: Record<string, unknown> = {}) {
     platform: "web",
     prompt: "做一个 CRM 客户列表页，支持筛选和批量操作。",
     preview_path: "",
+    preview_kind: "",
+    preview_url: "",
     origin: "builtin",
     published_at: "2026-08-16T00:00:00Z",
     ...overrides,
@@ -275,11 +277,23 @@ describe("DesignRecipeGallery", () => {
     expect(screen.getAllByText("业务系统 · 后台").length).toBeGreaterThan(0);
   });
 
-  it("frames a built-in HTML cover from the preview directory URL without a client-side sandbox", async () => {
+  it("frames a built-in HTML cover at the server-composed, digest-versioned URL without a client-side sandbox", async () => {
     listDesignScenarioRecipes.mockResolvedValue({
       recipes: [
-        recipe({ slug: "deck one", title: "季度路演", mode: "deck", preview_kind: "html" }),
-        recipe({ slug: "poster-1", title: "海报", mode: "image", preview_kind: "poster" }),
+        recipe({
+          slug: "deck-one",
+          title: "季度路演",
+          mode: "deck",
+          preview_kind: "html",
+          preview_url: "/api/design-recipes/deck-one/preview/0123abcd4567/",
+        }),
+        recipe({
+          slug: "poster-1",
+          title: "海报",
+          mode: "image",
+          preview_kind: "poster",
+          preview_url: "/api/design-recipes/poster-1/preview/89efcdab0123/",
+        }),
       ],
     });
     renderGallery();
@@ -287,9 +301,10 @@ describe("DesignRecipeGallery", () => {
     expect(await screen.findByText("季度路演")).toBeInTheDocument();
     const frame = document.body.querySelector("iframe");
     expect(frame).not.toBeNull();
-    // Trailing slash: `assets/deck-stage.js` inside the example must resolve
-    // under the same route, and the slug is URL-encoded, not pasted.
-    expect(frame).toHaveAttribute("src", "http://api.test/api/design-recipes/deck%20one/preview/");
+    // The path is the server's, digest and trailing slash included: the
+    // client only prefixes the API origin, so a new build is a new URL and no
+    // cached cover — headers included — can outlive it.
+    expect(frame).toHaveAttribute("src", "http://api.test/api/design-recipes/deck-one/preview/0123abcd4567/");
     // The sandbox comes from the response CSP, not the element: a frame
     // sandboxed client-side into an opaque origin is refused outright by some
     // embedders, and then no cover loads at all.
@@ -302,8 +317,20 @@ describe("DesignRecipeGallery", () => {
     expect(document.body.querySelector("iframe")).toBeNull();
     expect(document.body.querySelector("img")).toHaveAttribute(
       "src",
-      "http://api.test/api/design-recipes/poster-1/preview/",
+      "http://api.test/api/design-recipes/poster-1/preview/89efcdab0123/",
     );
+  });
+
+  it("does not guess a cover URL when the listing sends a kind without a path", async () => {
+    listDesignScenarioRecipes.mockResolvedValue({
+      recipes: [recipe({ slug: "half", title: "半截", mode: "deck", preview_kind: "html", preview_url: "" })],
+    });
+    renderGallery();
+
+    expect(await screen.findByText("半截")).toBeInTheDocument();
+    expect(document.body.querySelector("iframe")).toBeNull();
+    // Falls back to the composed tile that states what the recipe is.
+    expect(screen.getByText("业务系统 · 后台")).toBeInTheDocument();
   });
 
   it("keeps the brief in the dialog when the server rejects the task", async () => {

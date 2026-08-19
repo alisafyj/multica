@@ -186,16 +186,17 @@ function uniqueInOrder(values: string[]): string[] {
  * while a document sandboxed by its own headers loads everywhere.
  * `pointer-events-none` keeps the frame from swallowing the card's click.
  *
- * The URL ends in a slash on purpose: the example may reference files beside
- * itself (`assets/deck-stage.js`), and only a directory URL resolves them
- * under the same route.
+ * The URL comes from the listing, not from here: the server composes it with
+ * the bundle's content digest in the path, so the browser may cache a cover
+ * indefinitely and still never show a stale one — a new build is a new URL.
+ * It ends in a slash because the example may reference files beside itself
+ * (`assets/deck-stage.js`), and only a directory URL resolves them under the
+ * same route.
  */
 function RecipePreview({ recipe }: { recipe: DesignScenarioRecipe }) {
   const { icon: ModeIcon, label: modeLabel } = modeVisual(recipe.mode);
   const facets = [recipe.category, recipe.subcategory].filter(Boolean).join(" · ");
-  const previewUrl = recipe.preview_kind
-    ? `${api.getBaseUrl()}/api/design-recipes/${encodeURIComponent(recipe.slug)}/preview/`
-    : "";
+  const previewUrl = recipe.preview_kind && recipe.preview_url ? `${api.getBaseUrl()}${recipe.preview_url}` : "";
   return (
     <div className="relative aspect-[16/10] shrink-0 overflow-hidden border-b bg-muted/40">
       {recipe.preview_kind === "html" && previewUrl ? (

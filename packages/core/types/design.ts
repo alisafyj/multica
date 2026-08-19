@@ -611,6 +611,8 @@ export interface DesignScenarioRecipe {
   preview_path: string;
   /** "html" renders the template's own example in a sandboxed frame; "poster" is a still; "" means no cover. */
   preview_kind: string;
+  /** API path of that cover, digest-versioned so it caches immutably; "" with preview_kind. Prefix with the API base URL. */
+  preview_url: string;
   /** `builtin`, `workspace` or `community`. */
   origin: string;
   published_at: string;

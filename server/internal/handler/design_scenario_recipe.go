@@ -37,6 +37,9 @@ type DesignScenarioRecipeResponse struct {
 	// example output in a sandboxed frame, "poster" is a still. Empty when it
 	// has neither — the card then falls back to its mode icon.
 	PreviewKind string `json:"preview_kind,omitempty"`
+	// API path of that cover, digest included, so the client frames the URL
+	// the server composed rather than one it guessed; empty with PreviewKind.
+	PreviewURL  string `json:"preview_url,omitempty"`
 	Origin      string `json:"origin"`
 	PublishedAt string `json:"published_at,omitempty"`
 }
@@ -99,6 +102,7 @@ func designScenarioRecipeResponse(row db.DesignScenarioRecipe) DesignScenarioRec
 	// only what it uploaded to PreviewObjectKey.
 	if row.Origin == "builtin" {
 		response.PreviewKind = string(designrecipepreview.KindFor(row.Slug))
+		response.PreviewURL = designRecipePreviewPath(row.Slug)
 	}
 	if row.PublishedAt.Valid {
 		response.PublishedAt = row.PublishedAt.Time.UTC().Format(time.RFC3339Nano)

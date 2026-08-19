@@ -114,6 +114,7 @@ const RECIPE = {
   prompt: "做一个 CRM 客户列表页，支持筛选和批量操作。",
   preview_path: "",
   preview_kind: "",
+  preview_url: "",
   origin: "builtin",
   published_at: "2026-08-16T00:00:00Z",
 };

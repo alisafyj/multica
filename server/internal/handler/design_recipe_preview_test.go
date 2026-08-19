@@ -9,6 +9,13 @@ import (
 	"github.com/multica-ai/multica/server/internal/designrecipepreview"
 )
 
+// coverRequest builds the request the router would hand the handler for a
+// slug's cover, digest included; rel is the wildcard tail ("" for the document).
+func coverRequest(slug, digest, rel string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, "/api/design-recipes/"+slug+"/preview/"+digest+"/"+rel, nil)
+	return withURLParams(req, "slug", slug, "digest", digest, "*", rel)
+}
+
 func firstPreviewSlug(t *testing.T, kind designrecipepreview.Kind) string {
 	t.Helper()
 	// Any seeded slug of the wanted kind; the bundled set is fixed, so probing
@@ -28,8 +35,7 @@ func firstPreviewSlug(t *testing.T, kind designrecipepreview.Kind) string {
 func TestGetDesignRecipePreviewServesHTMLWithANetworklessCSP(t *testing.T) {
 	slug := firstPreviewSlug(t, designrecipepreview.KindHTML)
 	w := httptest.NewRecorder()
-	testHandler.GetDesignRecipePreview(w,
-		withURLParam(httptest.NewRequest(http.MethodGet, "/api/design-recipes/"+slug+"/preview", nil), "slug", slug))
+	testHandler.GetDesignRecipePreview(w, coverRequest(slug, designrecipepreview.Digest(slug), ""))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
@@ -52,6 +58,10 @@ func TestGetDesignRecipePreviewServesHTMLWithANetworklessCSP(t *testing.T) {
 	if w.Header().Get("X-Content-Type-Options") != "nosniff" {
 		t.Fatal("missing nosniff")
 	}
+	// The URL carries the bundle digest, so the response may cache forever.
+	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Fatalf("Cache-Control = %q, want immutable", cc)
+	}
 	if !strings.Contains(strings.ToLower(w.Body.String()), "<html") {
 		t.Fatal("body is not an HTML document")
 	}
@@ -60,10 +70,26 @@ func TestGetDesignRecipePreviewServesHTMLWithANetworklessCSP(t *testing.T) {
 func TestGetDesignRecipePreviewRejectsUnknownAndTraversal(t *testing.T) {
 	for _, slug := range []string{"nope", "../../go.mod", "blog-post/../blog-post"} {
 		w := httptest.NewRecorder()
-		testHandler.GetDesignRecipePreview(w,
-			withURLParam(httptest.NewRequest(http.MethodGet, "/api/design-recipes/x/preview", nil), "slug", slug))
+		testHandler.GetDesignRecipePreview(w, coverRequest(slug, designrecipepreview.Digest("blog-post"), ""))
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("slug %q → %d, want 404", slug, w.Code)
+		}
+	}
+}
+
+// A digest from another build is a miss, not a near-enough hit: the URL is
+// the cache key, and answering a stale one would let a stale listing pin an
+// old cover under a fresh-looking URL. The miss must not be cached either.
+func TestGetDesignRecipePreviewRefusesForeignDigest(t *testing.T) {
+	slug := firstPreviewSlug(t, designrecipepreview.KindHTML)
+	for _, digest := range []string{"", "000000000000", designrecipepreview.Digest(slug) + "x"} {
+		w := httptest.NewRecorder()
+		testHandler.GetDesignRecipePreview(w, coverRequest(slug, digest, ""))
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("digest %q → %d, want 404", digest, w.Code)
+		}
+		if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+			t.Fatalf("digest %q Cache-Control = %q, want no-store", digest, cc)
 		}
 	}
 }
@@ -79,8 +105,7 @@ func TestGetDesignRecipePreviewServesBundledSiblingFiles(t *testing.T) {
 	}
 	get := func(rel string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/design-recipes/"+slug+"/preview/"+rel, nil)
-		testHandler.GetDesignRecipePreview(w, withURLParams(req, "slug", slug, "*", rel))
+		testHandler.GetDesignRecipePreview(w, coverRequest(slug, designrecipepreview.Digest(slug), rel))
 		return w
 	}
 	for rel, wantType := range map[string]string{
@@ -126,8 +151,7 @@ func TestGetDesignRecipePreviewServesBundledSiblingFiles(t *testing.T) {
 func TestGetDesignRecipePreviewCSPAdmitsOnlyBundledAndInlineSources(t *testing.T) {
 	slug := firstPreviewSlug(t, designrecipepreview.KindHTML)
 	w := httptest.NewRecorder()
-	testHandler.GetDesignRecipePreview(w,
-		withURLParam(httptest.NewRequest(http.MethodGet, "/api/design-recipes/"+slug+"/preview", nil), "slug", slug))
+	testHandler.GetDesignRecipePreview(w, coverRequest(slug, designrecipepreview.Digest(slug), ""))
 	csp := w.Header().Get("Content-Security-Policy")
 	for _, must := range []string{
 		"script-src 'self' 'unsafe-inline';",
@@ -160,5 +184,12 @@ func TestListDesignScenarioRecipesStampsPreviewKind(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, `"preview_kind":"html"`) {
 		t.Fatal("no built-in recipe reported an html cover")
+	}
+	// The listing hands out the digest-bearing URL the card frames, so the
+	// client never composes (or caches) a cover URL of its own.
+	slug := firstPreviewSlug(t, designrecipepreview.KindHTML)
+	want := `"preview_url":"/api/design-recipes/` + slug + `/preview/` + designrecipepreview.Digest(slug) + `/"`
+	if !strings.Contains(body, want) {
+		t.Fatalf("listing lacks %s", want)
 	}
 }

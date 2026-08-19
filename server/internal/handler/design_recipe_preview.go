@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -32,12 +33,26 @@ import (
 // is then sandboxed by its own headers loads everywhere. The protection is
 // the same either way; only the enforcer differs, and the server is ours.
 //
-// The route is mounted twice: at `/preview` and at `/preview/*`. The gallery
-// frames the trailing-slash form so a relative `assets/deck-stage.js` in the
-// example resolves under `/preview/`, where the wildcard serves it from the
-// same bundle; an empty wildcard is the document itself.
+// The URL carries the bundle's content digest, `/preview/{digest}/`, and the
+// listing hands the client that URL ready-made (see designRecipePreviewPath).
+// A cover then caches for as long as the browser likes: when the bundle
+// changes — content or the headers this handler sets — the digest changes,
+// the URL changes, and no stale entry is ever consulted. Any other digest is
+// a miss: a client holding an older listing gets a 404 rather than a
+// silently mismatched document, and refetches the listing on its next load.
+//
+// The route is mounted twice: at `/preview/{digest}` and `/preview/{digest}/*`.
+// The gallery frames the trailing-slash form so a relative
+// `assets/deck-stage.js` in the example resolves under the same directory,
+// where the wildcard serves it from the same bundle; an empty wildcard is the
+// document itself.
 func (h *Handler) GetDesignRecipePreview(w http.ResponseWriter, r *http.Request) {
 	slug := strings.TrimSpace(chi.URLParam(r, "slug"))
+	if digest := chi.URLParam(r, "digest"); digest == "" || digest != designrecipepreview.Digest(slug) {
+		w.Header().Set("Cache-Control", "no-store")
+		writeProjectDesignSystemError(w, http.StatusNotFound, "preview_not_found", "recipe preview digest does not match this build")
+		return
+	}
 	if rel := chi.URLParam(r, "*"); rel != "" {
 		h.serveDesignRecipePreviewAsset(w, slug, rel)
 		return
@@ -74,9 +89,21 @@ func (h *Handler) serveDesignRecipePreviewAsset(w http.ResponseWriter, slug, rel
 	_, _ = w.Write(asset.Body)
 }
 
+// designRecipePreviewPath is the path the listing hands the client for a
+// built-in cover, digest included; "" when the slug has no cover. Composed
+// here, next to the route, so the two cannot drift.
+func designRecipePreviewPath(slug string) string {
+	digest := designrecipepreview.Digest(slug)
+	if digest == "" {
+		return ""
+	}
+	return "/api/design-recipes/" + url.PathEscape(slug) + "/preview/" + digest + "/"
+}
+
 func writeDesignRecipePreviewHeaders(w http.ResponseWriter, contentType string, document bool) {
-	// Bundled with the binary, so it changes only with a deploy.
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	// The URL carries the bundle digest, so this exact response can never go
+	// stale at this URL: cache it for as long as the browser will.
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if document {
 		// Overrides the app-wide CSP for this document only. Inline styles

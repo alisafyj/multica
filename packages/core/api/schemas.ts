@@ -2158,6 +2158,7 @@ export const EMPTY_DESIGN_RESTORE_TASK: DesignRestoreTask = {
   file_id: "",
   revision_id: "",
   issue_id: null,
+  preview_url: z.string().catch("").default(""),
   delivery_id: null,
   agent_task_id: null,
   status: "queued",
