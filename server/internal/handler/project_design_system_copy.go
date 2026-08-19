@@ -296,7 +296,7 @@ func (h *Handler) createProjectDesignSystemCopyTask(
 	}
 
 	contextJSON, err := marshalProjectDesignSystemTaskContext(
-		system, project, requesterID, agent.ID, input,
+		system, &project, requesterID, agent.ID, input,
 		service.ProjectDesignSystemGenerate, basePackage, copyInstruction(instruction), nil, nil,
 	)
 	if err != nil {
@@ -392,7 +392,9 @@ func (h *Handler) loadCopyBasePackage(
 type designSystemCatalogueEntry struct {
 	ID                string `json:"id"`
 	ProjectID         string `json:"project_id"`
-	ProjectTitle      string `json:"project_title"`
+	// Empty for a standalone system: it belongs to the workspace itself
+	// and no project stands behind it.
+	ProjectTitle      string `json:"project_title,omitempty"`
 	ProjectResourceID string `json:"project_resource_id,omitempty"`
 	Name              string `json:"name"`
 	Platform          string `json:"platform"`
@@ -422,7 +424,7 @@ func (h *Handler) ListWorkspaceDesignSystemCatalogue(w http.ResponseWriter, r *h
 		entry := designSystemCatalogueEntry{
 			ID:                uuidToString(row.ID),
 			ProjectID:         uuidToString(row.ProjectID),
-			ProjectTitle:      row.ProjectTitle,
+			ProjectTitle:      textToString(row.ProjectTitle),
 			ProjectResourceID: uuidToString(row.ProjectResourceID),
 			Name:              row.Name,
 			Platform:          row.Platform,

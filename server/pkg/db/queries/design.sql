@@ -1100,9 +1100,12 @@ ORDER BY (project_resource_id IS NOT NULL), created_at;
 -- actually been saved are listed: a draft is not something another project
 -- should be copying from, since nobody has accepted it yet (DC-034).
 -- name: ListSavedProjectDesignSystemsInWorkspace :many
+-- LEFT JOIN: a standalone system (project_id NULL) belongs to the workspace
+-- itself and has no project title; it must still be listed, with the title
+-- reading as absent rather than the row dropping out.
 SELECT project_design_system.*, project.title AS project_title
 FROM project_design_system
-JOIN project ON project.id = project_design_system.project_id
+LEFT JOIN project ON project.id = project_design_system.project_id
 WHERE project_design_system.workspace_id = sqlc.arg('workspace_id')
   AND project_design_system.saved_at IS NOT NULL
 ORDER BY project_design_system.saved_at DESC;
@@ -1167,6 +1170,37 @@ SELECT
 FROM project
 WHERE project.id = sqlc.arg('project_id')
   AND project.workspace_id = sqlc.arg('workspace_id')
+RETURNING *;
+
+-- The standalone twin of CreateProjectDesignSystem: the row belongs to the
+-- workspace itself (project_id NULL), so there is no project row to gate the
+-- insert on and the name comes from the requester.
+-- name: CreateStandaloneDesignSystem :one
+INSERT INTO project_design_system (
+    workspace_id,
+    project_id,
+    project_resource_id,
+    name,
+    platform,
+    current_agent_id,
+    active_task_id,
+    active_operation,
+    input_snapshot,
+    last_error,
+    created_by
+)
+SELECT
+    sqlc.arg('workspace_id'),
+    NULL,
+    NULL,
+    sqlc.arg('name'),
+    sqlc.arg('platform'),
+    sqlc.narg('current_agent_id'),
+    sqlc.narg('active_task_id'),
+    sqlc.narg('active_operation'),
+    sqlc.arg('input_snapshot'),
+    sqlc.narg('last_error'),
+    sqlc.narg('created_by')
 RETURNING *;
 
 -- name: UpdateProjectDesignSystemInputAndTask :one

@@ -71,9 +71,7 @@ func (h *Handler) VerifyProjectDesignSystemPreview(w http.ResponseWriter, r *htt
 	}
 	defer tx.Rollback(r.Context())
 	queries := h.Queries.WithTx(tx)
-	if _, err := queries.LockProjectInWorkspaceForUpdate(r.Context(), db.LockProjectInWorkspaceForUpdateParams{
-		ID: initialSystem.ProjectID, WorkspaceID: workspaceID,
-	}); err != nil {
+	if err := lockDesignSystemProject(r.Context(), queries, workspaceID, initialSystem.ProjectID); err != nil {
 		writeProjectDesignSystemError(w, http.StatusNotFound, "project_design_system_not_found", "project design system not found")
 		return
 	}

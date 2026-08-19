@@ -181,6 +181,84 @@ func TestCreateProjectDesignSystemAlwaysEnqueuesNativeV2WhenOpenDesignFlagIsTrue
 	}
 }
 
+// A standalone system (empty project_id) belongs to the workspace itself:
+// it needs a name, any number may coexist, and the task context it enqueues
+// carries no project — the binding digest is computed over the same empty
+// project_id everywhere, so integrity holds.
+func TestCreateProjectDesignSystemStandalone(t *testing.T) {
+	agentID, _ := createProjectDesignSystemAgent(t, "online")
+
+	var existing int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM project_design_system WHERE project_id IS NULL`).Scan(&existing); err != nil {
+		t.Fatalf("count standalone systems: %v", err)
+	}
+
+	noName := performProjectDesignSystemRequest(t, testHandler.CreateProjectDesignSystem, http.MethodPost, "/api/project-design-systems", map[string]any{
+		"agent_id": agentID, "platform": "web", "brief": "A brand kit for the studio.",
+	})
+	assertProjectDesignSystemErrorCode(t, noName, http.StatusBadRequest, "name_required")
+
+	// A project row must not be required, and a second standalone system must
+	// not conflict with the first.
+	for i, name := range []string{"品牌 A", "品牌 B"} {
+		response := performProjectDesignSystemRequest(t, testHandler.CreateProjectDesignSystem, http.MethodPost, "/api/project-design-systems", map[string]any{
+			"name": name, "agent_id": agentID, "platform": "web",
+			"brief":      "A brand kit for the studio.",
+			"references": []map[string]any{{"kind": "link", "value": "https://example.com", "label": "官网"}},
+		})
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("standalone #%d status = %d body = %s", i, response.Code, response.Body.String())
+		}
+		var created struct {
+			ID        string `json:"id"`
+			Name      string `json:"name"`
+			ProjectID string `json:"project_id"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil {
+			t.Fatalf("decode standalone response: %v", err)
+		}
+		if created.ProjectID != "" || created.Name != name {
+			t.Fatalf("standalone response = %+v, want no project and name %q", created, name)
+		}
+	}
+
+	// Earlier runs of this suite leave their rows in the shared test
+	// database, so the assertion is on what this run added.
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM project_design_system WHERE project_id IS NULL`).Scan(&count); err != nil {
+		t.Fatalf("count standalone systems: %v", err)
+	}
+	if count != existing+2 {
+		t.Fatalf("standalone systems = %d, want %d (this run adds two)", count, existing+2)
+	}
+
+	var contextRaw []byte
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT q.context FROM agent_task_queue q
+		JOIN project_design_system s ON s.active_task_id = q.id
+		WHERE s.project_id IS NULL ORDER BY s.created_at LIMIT 1
+	`).Scan(&contextRaw); err != nil {
+		t.Fatalf("load standalone task context: %v", err)
+	}
+	var taskContext struct {
+		ProjectID string          `json:"project_id"`
+		Project   json.RawMessage `json:"project"`
+	}
+	if err := json.Unmarshal(contextRaw, &taskContext); err != nil {
+		t.Fatalf("decode task context: %v", err)
+	}
+	if taskContext.ProjectID != "" {
+		t.Fatalf("task context project_id = %q, want empty", taskContext.ProjectID)
+	}
+	var project map[string]any
+	if err := json.Unmarshal(taskContext.Project, &project); err != nil {
+		t.Fatalf("decode embedded project: %v", err)
+	}
+	if project["name"] != "品牌 A" {
+		t.Fatalf("embedded project name = %v, want the system name", project["name"])
+	}
+}
+
 func TestCreateProjectDesignSystemRejectsSecondSystem(t *testing.T) {
 	projectID := createProjectForDesignTest(t, "Single system project")
 	agentID, _ := createProjectDesignSystemAgent(t, "online")
@@ -592,7 +670,7 @@ func TestMarshalProjectDesignSystemTaskContextPinsV2SchemaAndDigests(t *testing.
 	legacyOpenDesignRun := json.RawMessage(`{"schema":"open-design/v1","run":{"id":"run-legacy","status":"pending"}}`)
 
 	generateJSON, err := marshalProjectDesignSystemTaskContext(
-		system, project, requesterID, agentID, input,
+		system, &project, requesterID, agentID, input,
 		service.ProjectDesignSystemGenerate, nil, "", nil, nil,
 	)
 	if err != nil {
@@ -616,7 +694,7 @@ func TestMarshalProjectDesignSystemTaskContextPinsV2SchemaAndDigests(t *testing.
 	}
 
 	adjustJSON, err := marshalProjectDesignSystemTaskContext(
-		system, project, requesterID, agentID, input,
+		system, &project, requesterID, agentID, input,
 		service.ProjectDesignSystemAdjust, basePackage, "tighten the spacing", json.RawMessage(`{"kind":"all"}`), nil,
 	)
 	if err != nil {
@@ -643,7 +721,7 @@ func TestMarshalProjectDesignSystemTaskContextPinsV2SchemaAndDigests(t *testing.
 	// remains in the struct, but the V2 markers are not stamped onto the
 	// Open Design path so the V2 contract is opt-in.
 	legacyJSON, err := marshalProjectDesignSystemTaskContext(
-		system, project, requesterID, agentID, input,
+		system, &project, requesterID, agentID, input,
 		service.ProjectDesignSystemAdjust, basePackage, "tighten the spacing", json.RawMessage(`{"kind":"all"}`), legacyOpenDesignRun,
 	)
 	if err != nil {
@@ -679,7 +757,7 @@ func TestMarshalRepositoryAnalysisContextKeepsRepositoryContract(t *testing.T) {
 	}
 
 	contextJSON, err := marshalProjectDesignSystemTaskContext(
-		system, project, requesterID, agentID, input,
+		system, &project, requesterID, agentID, input,
 		service.ProjectDesignSystemRepositoryAnalysis, nil, "", nil, nil,
 	)
 	if err != nil {

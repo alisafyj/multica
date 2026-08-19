@@ -1344,6 +1344,83 @@ func (q *Queries) CreateSemanticDesignDraft(ctx context.Context, arg CreateSeman
 	return i, err
 }
 
+const createStandaloneDesignSystem = `-- name: CreateStandaloneDesignSystem :one
+INSERT INTO project_design_system (
+    workspace_id,
+    project_id,
+    project_resource_id,
+    name,
+    platform,
+    current_agent_id,
+    active_task_id,
+    active_operation,
+    input_snapshot,
+    last_error,
+    created_by
+)
+SELECT
+    $1,
+    NULL,
+    NULL,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
+`
+
+type CreateStandaloneDesignSystemParams struct {
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	Name            string      `json:"name"`
+	Platform        string      `json:"platform"`
+	CurrentAgentID  pgtype.UUID `json:"current_agent_id"`
+	ActiveTaskID    pgtype.UUID `json:"active_task_id"`
+	ActiveOperation pgtype.Text `json:"active_operation"`
+	InputSnapshot   []byte      `json:"input_snapshot"`
+	LastError       []byte      `json:"last_error"`
+	CreatedBy       pgtype.UUID `json:"created_by"`
+}
+
+// The standalone twin of CreateProjectDesignSystem: the row belongs to the
+// workspace itself (project_id NULL), so there is no project row to gate the
+// insert on and the name comes from the requester.
+func (q *Queries) CreateStandaloneDesignSystem(ctx context.Context, arg CreateStandaloneDesignSystemParams) (ProjectDesignSystem, error) {
+	row := q.db.QueryRow(ctx, createStandaloneDesignSystem,
+		arg.WorkspaceID,
+		arg.Name,
+		arg.Platform,
+		arg.CurrentAgentID,
+		arg.ActiveTaskID,
+		arg.ActiveOperation,
+		arg.InputSnapshot,
+		arg.LastError,
+		arg.CreatedBy,
+	)
+	var i ProjectDesignSystem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Platform,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+		&i.ProjectResourceID,
+	)
+	return i, err
+}
+
 const deleteDesignAssetsByFile = `-- name: DeleteDesignAssetsByFile :exec
 DELETE FROM design_asset
 WHERE workspace_id = $1 AND file_id = $2
@@ -4287,7 +4364,7 @@ func (q *Queries) ListProjectDesignSystemsByProject(ctx context.Context, arg Lis
 const listSavedProjectDesignSystemsInWorkspace = `-- name: ListSavedProjectDesignSystemsInWorkspace :many
 SELECT project_design_system.id, project_design_system.workspace_id, project_design_system.project_id, project_design_system.name, project_design_system.platform, project_design_system.current_agent_id, project_design_system.active_task_id, project_design_system.active_operation, project_design_system.input_snapshot, project_design_system.last_error, project_design_system.created_by, project_design_system.created_at, project_design_system.updated_at, project_design_system.saved_at, project_design_system.project_resource_id, project.title AS project_title
 FROM project_design_system
-JOIN project ON project.id = project_design_system.project_id
+LEFT JOIN project ON project.id = project_design_system.project_id
 WHERE project_design_system.workspace_id = $1
   AND project_design_system.saved_at IS NOT NULL
 ORDER BY project_design_system.saved_at DESC
@@ -4309,12 +4386,15 @@ type ListSavedProjectDesignSystemsInWorkspaceRow struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 	SavedAt           pgtype.Timestamptz `json:"saved_at"`
 	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
-	ProjectTitle      string             `json:"project_title"`
+	ProjectTitle      pgtype.Text        `json:"project_title"`
 }
 
 // The workspace-level catalogue (DC-054 / B1). Only systems that have
 // actually been saved are listed: a draft is not something another project
 // should be copying from, since nobody has accepted it yet (DC-034).
+// LEFT JOIN: a standalone system (project_id NULL) belongs to the workspace
+// itself and has no project title; it must still be listed, with the title
+// reading as absent rather than the row dropping out.
 func (q *Queries) ListSavedProjectDesignSystemsInWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]ListSavedProjectDesignSystemsInWorkspaceRow, error) {
 	rows, err := q.db.Query(ctx, listSavedProjectDesignSystemsInWorkspace, workspaceID)
 	if err != nil {

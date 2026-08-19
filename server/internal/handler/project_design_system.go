@@ -41,14 +41,21 @@ type ProjectDesignSystemReferenceInput struct {
 }
 
 type CreateProjectDesignSystemRequest struct {
+	// Empty creates a standalone system owned by the workspace itself (an
+	// OD-style independent system); a project id creates that project's
+	// system. Standalone systems require Name and may be any number; a
+	// project holds at most one per scope.
 	ProjectID string `json:"project_id"`
 	// Optional. Empty creates the project-level system used across
 	// repositories; a repository id creates that repository's own (DC-052).
 	ProjectResourceID string                              `json:"project_resource_id"`
-	AgentID           string                              `json:"agent_id"`
-	Platform          string                              `json:"platform"`
-	Brief             string                              `json:"brief"`
-	References        []ProjectDesignSystemReferenceInput `json:"references"`
+	// Name of a standalone system. Ignored for project systems, which take
+	// the project's title.
+	Name       string                              `json:"name"`
+	AgentID    string                              `json:"agent_id"`
+	Platform   string                              `json:"platform"`
+	Brief      string                              `json:"brief"`
+	References []ProjectDesignSystemReferenceInput `json:"references"`
 }
 
 type AnalyzeProjectDesignSystemRepositoryRequest struct {
@@ -184,8 +191,15 @@ func (h *Handler) CreateProjectDesignSystem(w http.ResponseWriter, r *http.Reque
 	req.AgentID = strings.TrimSpace(req.AgentID)
 	req.Platform = strings.TrimSpace(req.Platform)
 	req.Brief = strings.TrimSpace(req.Brief)
-	if req.ProjectID == "" {
-		writeProjectDesignSystemError(w, http.StatusBadRequest, "project_id_required", "project_id is required")
+	standalone := req.ProjectID == ""
+	if standalone && strings.TrimSpace(req.Name) == "" {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "name_required", "a standalone design system needs a name")
+		return
+	}
+	if !standalone && strings.TrimSpace(req.Name) != "" {
+		// A project system is named after its project; a name in the request
+		// means the client thinks it is creating something else.
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "name_not_expected", "a project design system takes its name from the project")
 		return
 	}
 	if req.AgentID == "" {
@@ -209,9 +223,12 @@ func (h *Handler) CreateProjectDesignSystem(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	projectUUID, ok := parseUUIDOrBadRequest(w, req.ProjectID, "project_id")
-	if !ok {
-		return
+	var projectUUID pgtype.UUID
+	if !standalone {
+		projectUUID, ok = parseUUIDOrBadRequest(w, req.ProjectID, "project_id")
+		if !ok {
+			return
+		}
 	}
 	agentUUID, ok := parseUUIDOrBadRequest(w, req.AgentID, "agent_id")
 	if !ok {
@@ -235,14 +252,21 @@ func (h *Handler) CreateProjectDesignSystem(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	scope, ok := h.projectDesignSystemScopeFromBody(r.Context(), w, workspaceUUID, projectUUID, req.ProjectResourceID)
-	if !ok {
-		return
+	var system db.ProjectDesignSystem
+	var task db.AgentTaskQueue
+	var err2 error
+	if standalone {
+		system, task, err2 = h.createStandaloneDesignSystemTask(r.Context(), workspaceUUID, requesterUUID, strings.TrimSpace(req.Name), agentUUID, input, inputJSON)
+	} else {
+		var scope projectDesignSystemScope
+		scope, ok = h.projectDesignSystemScopeFromBody(r.Context(), w, workspaceUUID, projectUUID, req.ProjectResourceID)
+		if !ok {
+			return
+		}
+		system, task, err2 = h.createProjectDesignSystemTask(r.Context(), workspaceUUID, requesterUUID, projectUUID, scope, agentUUID, input, inputJSON)
 	}
-
-	system, task, err := h.createProjectDesignSystemTask(r.Context(), workspaceUUID, requesterUUID, projectUUID, scope, agentUUID, input, inputJSON)
-	if err != nil {
-		writeProjectDesignSystemRequestError(w, err)
+	if err2 != nil {
+		writeProjectDesignSystemRequestError(w, err2)
 		return
 	}
 	h.TaskService.NotifyTaskEnqueued(r.Context(), task)
@@ -524,7 +548,7 @@ func (h *Handler) SaveProjectDesignSystem(w http.ResponseWriter, r *http.Request
 	}
 	defer tx.Rollback(r.Context())
 	queries := h.Queries.WithTx(tx)
-	if _, err := queries.LockProjectInWorkspaceForUpdate(r.Context(), db.LockProjectInWorkspaceForUpdateParams{ID: system.ProjectID, WorkspaceID: workspaceID}); err != nil {
+	if err := lockDesignSystemProject(r.Context(), queries, workspaceID, system.ProjectID); err != nil {
 		writeProjectDesignSystemError(w, http.StatusNotFound, "project_design_system_not_found", "project design system not found")
 		return
 	}
@@ -623,9 +647,7 @@ func (h *Handler) DiscardProjectDesignSystemDraft(w http.ResponseWriter, r *http
 	}
 	defer tx.Rollback(r.Context())
 	queries := h.Queries.WithTx(tx)
-	if _, err := queries.LockProjectInWorkspaceForUpdate(r.Context(), db.LockProjectInWorkspaceForUpdateParams{
-		ID: initialSystem.ProjectID, WorkspaceID: workspaceID,
-	}); err != nil {
+	if err := lockDesignSystemProject(r.Context(), queries, workspaceID, initialSystem.ProjectID); err != nil {
 		writeProjectDesignSystemError(w, http.StatusNotFound, "project_design_system_not_found", "project design system not found")
 		return
 	}
@@ -763,7 +785,100 @@ func (h *Handler) createProjectDesignSystemTask(
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: verdict.Detail}
 	}
 
-	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agentID, input, service.ProjectDesignSystemGenerate, nil, "", nil, nil)
+	contextJSON, err := marshalProjectDesignSystemTaskContext(system, &project, requesterID, agentID, input, service.ProjectDesignSystemGenerate, nil, "", nil, nil)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
+	}
+	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{
+		AgentID:   agent.ID,
+		RuntimeID: agent.RuntimeID,
+		Priority:  0,
+		Context:   contextJSON,
+	})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("enqueue_failed", "failed to enqueue design system generation")
+	}
+	system, err = queries.UpdateProjectDesignSystemInputAndTask(ctx, db.UpdateProjectDesignSystemInputAndTaskParams{
+		Platform:        input.Platform,
+		CurrentAgentID:  agent.ID,
+		ActiveTaskID:    task.ID,
+		ActiveOperation: pgtype.Text{String: string(service.ProjectDesignSystemGenerate), Valid: true},
+		InputSnapshot:   inputJSON,
+		ID:              system.ID,
+		WorkspaceID:     workspaceID,
+	})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("state_failed", "failed to record design system generation")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("commit_failed", "failed to commit design system generation")
+	}
+	return system, task, nil
+}
+
+// createStandaloneDesignSystemTask is the workspace-owned twin of
+// createProjectDesignSystemTask: no project stands behind the system, so
+// there is no project row to lock or read, the name comes from the request,
+// and — because "one system per project" is a project rule — any number of
+// standalone systems may exist, so every creation inserts a fresh row.
+// Everything after the insert (agent readiness, task context, enqueue) is
+// the same contract.
+// lockDesignSystemProject serialises operations that touch a project's
+// design system by locking the project row first. A standalone system
+// (project_id NULL) has no project row; its own row lock — which every
+// caller takes immediately after — is the only contention point, so there is
+// nothing to do here and the caller proceeds.
+func lockDesignSystemProject(ctx context.Context, queries *db.Queries, workspaceID, projectID pgtype.UUID) error {
+	if !projectID.Valid {
+		return nil
+	}
+	_, err := queries.LockProjectInWorkspaceForUpdate(ctx, db.LockProjectInWorkspaceForUpdateParams{
+		ID: projectID, WorkspaceID: workspaceID,
+	})
+	return err
+}
+
+func (h *Handler) createStandaloneDesignSystemTask(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	requesterID pgtype.UUID,
+	name string,
+	agentID pgtype.UUID,
+	input projectDesignSystemInputSnapshot,
+	inputJSON []byte,
+) (db.ProjectDesignSystem, db.AgentTaskQueue, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("transaction_failed", "failed to start design system generation")
+	}
+	defer tx.Rollback(ctx)
+	queries := h.Queries.WithTx(tx)
+
+	system, err := queries.CreateStandaloneDesignSystem(ctx, db.CreateStandaloneDesignSystemParams{
+		WorkspaceID:    workspaceID,
+		Name:           name,
+		Platform:       input.Platform,
+		CurrentAgentID: agentID,
+		InputSnapshot:  inputJSON,
+		CreatedBy:      requesterID,
+	})
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("create_failed", "failed to create the design system")
+	}
+
+	agent, err := queries.GetAgent(ctx, agentID)
+	if err != nil || agent.WorkspaceID != workspaceID {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
+	}
+	verdict, err := service.AgentReadiness(ctx, queries, agent)
+	if err != nil {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
+	}
+	if !verdict.Ready() {
+		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: verdict.Detail}
+	}
+
+	contextJSON, err := marshalProjectDesignSystemTaskContext(system, nil, requesterID, agentID, input, service.ProjectDesignSystemGenerate, nil, "", nil, nil)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
 	}
@@ -877,7 +992,7 @@ func (h *Handler) createProjectDesignSystemRepositoryAnalysisTask(
 		}
 	}
 
-	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agent.ID, input, service.ProjectDesignSystemRepositoryAnalysis, nil, "", nil, nil)
+	contextJSON, err := marshalProjectDesignSystemTaskContext(system, &project, requesterID, agent.ID, input, service.ProjectDesignSystemRepositoryAnalysis, nil, "", nil, nil)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build repository analysis task context")
 	}
@@ -939,7 +1054,7 @@ func (h *Handler) enqueueExistingProjectDesignSystemTask(
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_design_system_not_found", message: "project design system not found"}
 	}
-	if _, err := queries.LockProjectInWorkspaceForUpdate(ctx, db.LockProjectInWorkspaceForUpdateParams{ID: system.ProjectID, WorkspaceID: workspaceID}); err != nil {
+	if err := lockDesignSystemProject(ctx, queries, workspaceID, system.ProjectID); err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_design_system_not_found", message: "project design system not found"}
 	}
 	system, err = queries.GetProjectDesignSystemInWorkspace(ctx, db.GetProjectDesignSystemInWorkspaceParams{ID: designSystemID, WorkspaceID: workspaceID})
@@ -989,7 +1104,7 @@ func (h *Handler) enqueueExistingProjectDesignSystemTask(
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: verdict.Detail}
 	}
 
-	contextJSON, err := marshalProjectDesignSystemTaskContext(system, project, requesterID, agent.ID, input, operation, basePackage, instruction, scopeJSON, nil)
+	contextJSON, err := marshalProjectDesignSystemTaskContext(system, &project, requesterID, agent.ID, input, operation, basePackage, instruction, scopeJSON, nil)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
 	}
@@ -1187,7 +1302,10 @@ func isOpenDesignProjectDesignSystemPackage(pkg db.ProjectDesignSystemPackage) b
 
 func marshalProjectDesignSystemTaskContext(
 	system db.ProjectDesignSystem,
-	project db.Project,
+	// nil for a standalone system: no project stands behind it, and the
+	// system itself supplies the name the prompt would otherwise take from
+	// the project title.
+	project *db.Project,
 	requesterID pgtype.UUID,
 	agentID pgtype.UUID,
 	input projectDesignSystemInputSnapshot,
@@ -1197,11 +1315,15 @@ func marshalProjectDesignSystemTaskContext(
 	scope json.RawMessage,
 	openDesignRun json.RawMessage,
 ) ([]byte, error) {
-	projectJSON, err := json.Marshal(map[string]any{
-		"id":          uuidToString(project.ID),
-		"name":        project.Title,
-		"description": textToString(project.Description),
-	})
+	projectValue := map[string]any{"id": "", "name": system.Name, "description": ""}
+	if project != nil {
+		projectValue = map[string]any{
+			"id":          uuidToString(project.ID),
+			"name":        project.Title,
+			"description": textToString(project.Description),
+		}
+	}
+	projectJSON, err := json.Marshal(projectValue)
 	if err != nil {
 		return nil, err
 	}
