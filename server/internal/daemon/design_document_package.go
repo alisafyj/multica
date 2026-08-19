@@ -149,7 +149,7 @@ func finalizeDesignDocumentResult(
 	// Stage 1: the task binding. It is decoded before anything touches the
 	// filesystem, because a package collected against the wrong binding could
 	// never become a revision anyway.
-	binding, decodeErr := decodeDesignDocumentTaskBinding(task)
+	binding, decodeErr := DecodeDesignDocumentTaskBinding(task)
 	if decodeErr != nil {
 		return blockDesignDocumentResult(result,
 			"design document package binding invalid: "+decodeErr.Error(),
@@ -333,7 +333,7 @@ func isDesignDocumentTask(task Task) bool {
 	return envelope.Type == "design_document_task" && envelope.PackageSchema == designdocument.PackageSchemaV1
 }
 
-// decodeDesignDocumentTaskBinding extracts the PackageBinding fields the gate
+// DecodeDesignDocumentTaskBinding extracts the PackageBinding fields the gate
 // needs from service.DesignDocumentTaskContext. The binding shape is exactly
 // what CollectDirectory validates, so the field names are reused and the
 // package is left to reject malformed bindings.
@@ -347,7 +347,12 @@ func isDesignDocumentTask(task Task) bool {
 //     pin one at enqueue time yet, and a task produces exactly one revision, so
 //     the task identity is the deterministic revision identity. An explicit
 //     revision_id in the context wins as soon as the server starts sending one.
-func decodeDesignDocumentTaskBinding(task Task) (designdocument.PackageBinding, error) {
+//
+// Exported because it is one side of a two-sided contract: the server handler
+// package derives the same binding from the task context it wrote, and the two
+// once disagreed on RevisionID, which rejected every package at upload. The
+// handler's cross-boundary test asserts both sides stay identical (DC-055).
+func DecodeDesignDocumentTaskBinding(task Task) (designdocument.PackageBinding, error) {
 	var envelope struct {
 		WorkspaceID         string `json:"workspace_id"`
 		ProjectID           string `json:"project_id"`

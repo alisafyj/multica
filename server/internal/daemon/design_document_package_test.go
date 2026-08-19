@@ -1300,7 +1300,7 @@ func TestIsDesignDocumentTask(t *testing.T) {
 // falls back to the task while honouring an explicit revision_id.
 func TestDecodeDesignDocumentTaskBindingBindsToTheRunningTask(t *testing.T) {
 	task := designDocumentTask("task-10", stageDesignDocumentTaskContext(t))
-	binding, err := decodeDesignDocumentTaskBinding(task)
+	binding, err := DecodeDesignDocumentTaskBinding(task)
 	if err != nil {
 		t.Fatalf("decode binding: %v", err)
 	}
@@ -1318,7 +1318,7 @@ func TestDecodeDesignDocumentTaskBindingBindsToTheRunningTask(t *testing.T) {
 		envelope["revision_id"] = "revision-42"
 		envelope["base_content_digest"] = "sha256:" + strings.Repeat("d", 64)
 	})
-	binding, err = decodeDesignDocumentTaskBinding(designDocumentTask("task-10", pinned))
+	binding, err = DecodeDesignDocumentTaskBinding(designDocumentTask("task-10", pinned))
 	if err != nil {
 		t.Fatalf("decode pinned binding: %v", err)
 	}
@@ -1328,7 +1328,7 @@ func TestDecodeDesignDocumentTaskBindingBindsToTheRunningTask(t *testing.T) {
 	if binding.BaseRevisionSHA256 != "sha256:"+strings.Repeat("d", 64) {
 		t.Fatalf("base revision digest = %q", binding.BaseRevisionSHA256)
 	}
-	if _, err := decodeDesignDocumentTaskBinding(Task{DesignDocumentContext: stageDesignDocumentTaskContext(t)}); err == nil {
+	if _, err := DecodeDesignDocumentTaskBinding(Task{DesignDocumentContext: stageDesignDocumentTaskContext(t)}); err == nil {
 		t.Fatal("a task with no ID produced a binding")
 	}
 }
@@ -1337,7 +1337,7 @@ func TestDecodeDesignDocumentTaskBindingBindsToTheRunningTask(t *testing.T) {
 // gate itself derives, so the tests and the production path agree on identity.
 func collectDesignDocumentForTest(t *testing.T, envRoot string) designdocument.CollectedPackage {
 	t.Helper()
-	binding, err := decodeDesignDocumentTaskBinding(designDocumentTask("task-preview", stageDesignDocumentTaskContext(t)))
+	binding, err := DecodeDesignDocumentTaskBinding(designDocumentTask("task-preview", stageDesignDocumentTaskContext(t)))
 	if err != nil {
 		t.Fatalf("decode binding: %v", err)
 	}

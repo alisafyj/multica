@@ -309,7 +309,7 @@ func buildDesignDocumentBaseArchiveVariant(t *testing.T, styleSuffix string) des
 	}
 
 	sourceTask := designDocumentTask("00000000-0000-4000-8000-000000000001", stageDesignDocumentTaskContext(t))
-	binding, err := decodeDesignDocumentTaskBinding(sourceTask)
+	binding, err := DecodeDesignDocumentTaskBinding(sourceTask)
 	if err != nil {
 		t.Fatalf("decode base package binding: %v", err)
 	}

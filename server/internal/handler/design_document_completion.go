@@ -211,14 +211,25 @@ func designDocumentPreviewTargets(targets []designdocument.PreviewTarget) ([]des
 	return out, nil
 }
 
+// designDocumentBindingFromContext is the server side of the package binding
+// contract; daemon.DecodeDesignDocumentTaskBinding is the other. Both must
+// produce the identical value for the same task, and TestDesignDocumentBinding-
+// MatchesTheDaemonBinding holds them together.
+//
+// RevisionID is the task id: the server does not pre-allocate revision ids and a
+// task produces exactly one revision, so the task identity is the deterministic
+// revision identity — the same rule the daemon applies when the context carries
+// no explicit revision_id.
 func designDocumentBindingFromContext(taskContext service.DesignDocumentTaskContext, task db.AgentTaskQueue) designdocument.PackageBinding {
+	taskID := uuidToString(task.ID)
 	return designdocument.PackageBinding{
 		WorkspaceID:         taskContext.WorkspaceID,
 		ProjectID:           taskContext.ProjectID,
 		ProjectResourceID:   taskContext.ProjectResourceID,
 		IssueID:             taskContext.IssueID,
 		DesignDocumentID:    taskContext.DesignDocumentID,
-		TaskID:              uuidToString(task.ID),
+		RevisionID:          taskID,
+		TaskID:              taskID,
 		AgentID:             taskContext.AgentID,
 		Platform:            taskContext.Platform,
 		InputSnapshotSHA256: taskContext.InputSnapshotSHA256,

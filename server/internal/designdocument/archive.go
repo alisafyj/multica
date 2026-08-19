@@ -609,8 +609,11 @@ func isPrototypeDocumentPath(name string) bool {
 	return strings.HasPrefix(name, prototypeRoot+"/") && strings.ToLower(path.Ext(name)) == ".html"
 }
 
+// bindingPlatforms mirrors the platforms a design document can be created for
+// (handler validProjectDesignSystemPlatform): web, mobile and cross_platform.
+// desktop stays accepted for packages that already declared it.
 var bindingPlatforms = map[string]struct{}{
-	"web": {}, "desktop": {}, "mobile": {},
+	"web": {}, "desktop": {}, "mobile": {}, "cross_platform": {},
 }
 
 func validateBinding(binding PackageBinding) error {
