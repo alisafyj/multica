@@ -6,7 +6,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/designrecipepreview"
-	"github.com/multica-ai/multica/server/internal/realtime"
 )
 
 // GetDesignRecipePreview serves the cover for a built-in recipe card, and the
@@ -19,13 +18,19 @@ import (
 // would protect. What the route does protect is the app: see below.
 //
 // The HTML variant is a template's own example output, authored upstream and
-// rendered inside a sandboxed iframe on the gallery card. It is served as a
-// document on purpose — that is what an iframe needs — so two things keep it
-// from becoming a foothold: the frame is created with `sandbox` and no
-// `allow-same-origin` (so the document runs as an opaque origin and cannot
-// read this app's cookies or storage), and the response carries a CSP that
-// forbids scripts from reaching out. A cover that cannot phone home is still a
-// cover; one that can is an exfiltration path.
+// rendered inside an iframe on the gallery card. It is served as a document
+// on purpose — that is what an iframe needs — so the response itself fences
+// it: a CSP `sandbox allow-scripts` gives the document an opaque origin (it
+// cannot read this app's cookies or storage, submit forms, or navigate the
+// top window), and the rest of the policy denies it the network. A cover that
+// cannot phone home is still a cover; one that can is an exfiltration path.
+//
+// The sandbox is applied by the response rather than by a `sandbox`
+// attribute on the frame for a practical reason: some embedding environments
+// refuse to fetch a frame that is sandboxed client-side into an opaque origin
+// (the request never leaves the browser), while a document that arrives and
+// is then sandboxed by its own headers loads everywhere. The protection is
+// the same either way; only the enforcer differs, and the server is ours.
 //
 // The route is mounted twice: at `/preview` and at `/preview/*`. The gallery
 // frames the trailing-slash form so a relative `assets/deck-stage.js` in the
@@ -79,22 +84,18 @@ func writeDesignRecipePreviewHeaders(w http.ResponseWriter, contentType string, 
 		// files bundled beside them, and the network is what they must not
 		// have: no connect-src, no third-party host anywhere. A blob: worker
 		// is the one script source beyond inline that an example spawns.
-		// frame-ancestors names the app origins: the cover is served from the
-		// API origin and framed by the web app, so 'self' alone would refuse
-		// the one embedder that is supposed to work.
-		ancestors := "'self'"
-		for _, origin := range realtime.AllowedOrigins() {
-			// CORS accepts the literal "null" for opaque origins (the Figma
-			// plugin panel); frame-ancestors has no such source, so only real
-			// scheme://host entries are copied across.
-			if strings.Contains(origin, "://") {
-				ancestors += " " + origin
-			}
-		}
+		//
+		// frame-ancestors is open. The cover is served from the API origin
+		// and framed by the web app, the desktop app (a per-worktree dev
+		// port, file: when installed) and the Figma plugin panel — embedders
+		// this server cannot enumerate — and it holds nothing that framing
+		// could take: no user data, no session, no action to hijack. The
+		// route being unauthenticated already concedes the content is
+		// public; naming ancestors here would only break the app.
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "+
+			"sandbox allow-scripts; default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "+
 				"worker-src blob:; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; "+
-				"connect-src 'none'; frame-ancestors "+ancestors+"; base-uri 'none'; form-action 'none'")
+				"connect-src 'none'; frame-ancestors *; base-uri 'none'; form-action 'none'")
 	}
 	w.Header().Set("Content-Type", contentType)
 }

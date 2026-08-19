@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/designrecipepreview"
-	"github.com/multica-ai/multica/server/internal/realtime"
 )
 
 func firstPreviewSlug(t *testing.T, kind designrecipepreview.Kind) string {
@@ -23,12 +22,10 @@ func firstPreviewSlug(t *testing.T, kind designrecipepreview.Kind) string {
 	return ""
 }
 
-// The HTML cover is served as a document into a sandboxed frame, so it must
-// leave with a CSP that denies it the network — that header is the difference
-// between a cover and an exfiltration path.
+// The HTML cover is served as a document into a frame, so it must leave with
+// a CSP that sandboxes it into an opaque origin and denies it the network —
+// that header is the difference between a cover and an exfiltration path.
 func TestGetDesignRecipePreviewServesHTMLWithANetworklessCSP(t *testing.T) {
-	realtime.SetAllowedOrigins([]string{"https://app.example.test"})
-	t.Cleanup(func() { realtime.SetAllowedOrigins(nil) })
 	slug := firstPreviewSlug(t, designrecipepreview.KindHTML)
 	w := httptest.NewRecorder()
 	testHandler.GetDesignRecipePreview(w,
@@ -40,12 +37,17 @@ func TestGetDesignRecipePreviewServesHTMLWithANetworklessCSP(t *testing.T) {
 		t.Fatalf("content-type = %q", ct)
 	}
 	csp := w.Header().Get("Content-Security-Policy")
-	// The cover is framed by the web app on another origin, so 'self' alone
-	// would refuse the only embedder that matters.
-	for _, must := range []string{"default-src 'none'", "connect-src 'none'", "frame-ancestors 'self' https://app.example.test"} {
+	// Sandboxed by the response, not by a frame attribute (some embedders
+	// refuse to fetch client-sandboxed frames); framed by web, desktop and
+	// the Figma panel, none of which the server can enumerate, and holding
+	// nothing framing could take — so ancestors are open.
+	for _, must := range []string{"sandbox allow-scripts;", "default-src 'none'", "connect-src 'none'", "frame-ancestors *;"} {
 		if !strings.Contains(csp, must) {
 			t.Fatalf("CSP %q lacks %q", csp, must)
 		}
+	}
+	if strings.Contains(csp, "allow-same-origin") || strings.Contains(csp, "allow-top-navigation") || strings.Contains(csp, "allow-forms") {
+		t.Fatalf("CSP %q loosens the sandbox", csp)
 	}
 	if w.Header().Get("X-Content-Type-Options") != "nosniff" {
 		t.Fatal("missing nosniff")

@@ -275,7 +275,7 @@ describe("DesignRecipeGallery", () => {
     expect(screen.getAllByText("业务系统 · 后台").length).toBeGreaterThan(0);
   });
 
-  it("frames a built-in HTML cover from the preview directory URL, scripts on, origin off", async () => {
+  it("frames a built-in HTML cover from the preview directory URL without a client-side sandbox", async () => {
     listDesignScenarioRecipes.mockResolvedValue({
       recipes: [
         recipe({ slug: "deck one", title: "季度路演", mode: "deck", preview_kind: "html" }),
@@ -290,10 +290,10 @@ describe("DesignRecipeGallery", () => {
     // Trailing slash: `assets/deck-stage.js` inside the example must resolve
     // under the same route, and the slug is URL-encoded, not pasted.
     expect(frame).toHaveAttribute("src", "http://api.test/api/design-recipes/deck%20one/preview/");
-    // Scripts run (decks and WebGL covers need them); the origin stays opaque
-    // so the example cannot read this app's storage.
-    expect(frame).toHaveAttribute("sandbox", "allow-scripts");
-    expect(frame?.getAttribute("sandbox")).not.toContain("allow-same-origin");
+    // The sandbox comes from the response CSP, not the element: a frame
+    // sandboxed client-side into an opaque origin is refused outright by some
+    // embedders, and then no cover loads at all.
+    expect(frame).not.toHaveAttribute("sandbox");
     expect(frame).toHaveAttribute("referrerpolicy", "no-referrer");
     // The poster kind is a plain image from the same directory URL.
     const modes = screen.getByRole("group", { name: "产物形态" });

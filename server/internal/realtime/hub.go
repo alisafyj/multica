@@ -107,17 +107,6 @@ func SetAllowedOrigins(origins []string) {
 	allowedWSOrigins.Store(origins)
 }
 
-// AllowedOrigins returns the configured app origins. Shared with handlers that
-// serve documents meant to be framed by the app, so their frame-ancestors
-// names the same origins CORS and the WebSocket check already trust rather
-// than a second, drifting list.
-func AllowedOrigins() []string {
-	origins, _ := allowedWSOrigins.Load().([]string)
-	out := make([]string, len(origins))
-	copy(out, origins)
-	return out
-}
-
 // SetTrustedProxies overrides the trusted proxy CIDR list. The server wires the
 // shared MULTICA_TRUSTED_PROXIES value in here at startup.
 func SetTrustedProxies(proxies []netip.Prefix) {

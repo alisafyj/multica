@@ -175,13 +175,16 @@ function uniqueInOrder(values: string[]): string[] {
  * poster. A recipe with neither gets a composed tile that states what it is,
  * never an empty frame that reads as a failed load.
  *
- * The frame is `sandbox="allow-scripts"` with no `allow-same-origin`, as Open
- * Design frames it: scripts must run — a deck is invisible until its
- * `<deck-stage>` runtime defines the element, and the WebGL and HyperFrames
- * examples paint with one — but the example runs as an opaque origin, so it
- * cannot read this app's cookies or storage, and the server pairs it with a
- * CSP that denies it the network. `pointer-events-none` keeps the frame from
- * swallowing the card's own click.
+ * The frame carries no `sandbox` attribute on purpose. The server sandboxes
+ * the document itself (CSP `sandbox allow-scripts`): scripts run — a deck is
+ * invisible until its `<deck-stage>` runtime defines the element, and the
+ * WebGL and HyperFrames examples paint with one — but the example gets an
+ * opaque origin, so it cannot read this app's cookies or storage, and the
+ * rest of the policy denies it the network. Doing it server-side matters:
+ * some embedding environments refuse to fetch a frame that is sandboxed
+ * client-side into an opaque origin, and the cover then never loads at all,
+ * while a document sandboxed by its own headers loads everywhere.
+ * `pointer-events-none` keeps the frame from swallowing the card's click.
  *
  * The URL ends in a slash on purpose: the example may reference files beside
  * itself (`assets/deck-stage.js`), and only a directory URL resolves them
@@ -206,7 +209,6 @@ function RecipePreview({ recipe }: { recipe: DesignScenarioRecipe }) {
             aria-hidden="true"
             tabIndex={-1}
             loading="lazy"
-            sandbox="allow-scripts"
             referrerPolicy="no-referrer"
             className="h-full w-full border-0 bg-background"
           />
