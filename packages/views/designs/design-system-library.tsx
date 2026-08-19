@@ -11,7 +11,6 @@ import {
   projectDesignSystemDetailOptions,
 } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { projectListOptions } from "@multica/core/projects/queries";
 import type {
   BuiltinDesignSystem,
   ProjectDesignSystem,
@@ -31,9 +30,6 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { ReadonlyContent } from "../editor";
-import { matchesPinyin } from "../editor/extensions/pinyin-match";
-import { PickerItem, PropertyPicker } from "../issues/components/pickers/property-picker";
-import { ProjectIcon } from "../projects/components/project-icon";
 import { DesignFilterPill } from "./design-filter-pill";
 import { DesignFilterSelect } from "./design-filter-select";
 import { PLATFORM_OPTIONS } from "./design-task-composer";
@@ -248,19 +244,23 @@ function SystemDetail({
             </Badge>
           </div>
           <p className="mt-1 min-w-0 break-words text-body text-muted-foreground">
-            项目绑定 · {entry.project_title || "未知项目"} · {platformLabel(entry.platform)}
+            {entry.project_id
+              ? `项目绑定 · ${entry.project_title || "未知项目"} · ${platformLabel(entry.platform)}`
+              : `独立设计体系 · ${platformLabel(entry.platform)}`}
           </p>
         </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-7 shrink-0"
-          onClick={() => onOpenProject(entry.project_id)}
-        >
-          <FolderOpen className="size-3.5" />
-          打开项目
-        </Button>
+        {entry.project_id ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 shrink-0"
+            onClick={() => onOpenProject(entry.project_id)}
+          >
+            <FolderOpen className="size-3.5" />
+            打开项目
+          </Button>
+        ) : null}
       </header>
 
       {isLoading ? (
@@ -328,8 +328,9 @@ function SystemListItem({
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-body">{entry.name.trim() || "未命名设计体系"}</span>
         <span className="mt-0.5 truncate text-caption font-normal text-muted-foreground">
-          {entry.project_title || "未知项目"}
-          {entry.project_resource_id ? " · 仓库专属" : " · 项目通用"}
+          {entry.project_id
+            ? `${entry.project_title || "未知项目"}${entry.project_resource_id ? " · 仓库专属" : " · 项目通用"}`
+            : "独立设计体系"}
         </span>
       </span>
     </button>
@@ -712,67 +713,16 @@ function BuiltinListItem({
 
 /**
  * "新建设计体系", at the library's top right as Open Design places its create
- * action on the design-systems page. Open Design hands off to a dedicated
- * creation flow; here a design system belongs to a project (DC-052), so the
- * button first asks which project and then opens that project's 设计体系
- * workbench — the one place systems are created — rather than a second
- * creation path beside it. The picker is the project picker the composer
- * uses, minus its "no project" row: there is nothing to create without one.
+ * action on the design-systems page. Both open a dedicated creation flow; here
+ * that is the standalone creation page, where the system belongs to the
+ * workspace itself and is not bound to a project.
  */
-function CreateDesignSystemButton({ onPick }: { onPick: (projectId: string) => void }) {
-  const wsId = useWorkspaceId();
-  const { data: projects = [] } = useQuery(projectListOptions(wsId));
-  const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState("");
-  const query = filter.trim().toLowerCase();
-  const filtered = projects.filter(
-    (project) => project.title.toLowerCase().includes(query) || matchesPinyin(project.title, query),
-  );
+function CreateDesignSystemButton({ onCreate }: { onCreate: () => void }) {
   return (
-    <PropertyPicker
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) setFilter("");
-      }}
-      width="w-60"
-      align="end"
-      searchable
-      searchPlaceholder="搜索项目…"
-      onSearchChange={setFilter}
-      header={
-        <p className="px-2 pb-1 pt-1.5 text-caption text-muted-foreground">
-          设计体系属于项目。选一个项目，在它的「设计体系」里创建。
-        </p>
-      }
-      trigger={
-        <>
-          <Plus className="size-3.5" />
-          新建设计体系
-        </>
-      }
-      triggerRender={<Button size="sm" />}
-    >
-      {filtered.length === 0 ? (
-        <p className="px-2 py-3 text-caption text-muted-foreground">
-          {projects.length === 0 ? "还没有项目，先创建一个项目。" : "没有匹配的项目。"}
-        </p>
-      ) : (
-        filtered.map((project) => (
-          <PickerItem
-            key={project.id}
-            selected={false}
-            onClick={() => {
-              setOpen(false);
-              onPick(project.id);
-            }}
-          >
-            <ProjectIcon project={project} size="sm" />
-            <span className="truncate">{project.title}</span>
-          </PickerItem>
-        ))
-      )}
-    </PropertyPicker>
+    <Button size="sm" onClick={onCreate}>
+      <Plus className="size-3.5" />
+      新建设计体系
+    </Button>
   );
 }
 
@@ -784,12 +734,12 @@ function CreateDesignSystemButton({ onPick }: { onPick: (projectId: string) => v
  */
 export function DesignSystemLibrary({
   onOpenProject,
-  onCreateInProject,
+  onCreate,
 }: {
   /** Opens the project that owns a system, where it can be edited. */
   onOpenProject: (projectId: string) => void;
-  /** "新建设计体系" picked a project: open its 设计体系 workbench. */
-  onCreateInProject: (projectId: string) => void;
+  /** Opens the standalone creation page. */
+  onCreate: () => void;
 }) {
   const wsId = useWorkspaceId();
   const { data: entries = [], isLoading, error, refetch } = useQuery(
@@ -862,7 +812,7 @@ export function DesignSystemLibrary({
               className="h-8 pl-8 text-body"
             />
           </div>
-          <CreateDesignSystemButton onPick={onCreateInProject} />
+          <CreateDesignSystemButton onCreate={onCreate} />
         </div>
       </div>
 

@@ -123,13 +123,13 @@ function systemDetail(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function renderLibrary(onOpenProject = vi.fn(), onCreateInProject = vi.fn()) {
+function renderLibrary(onOpenProject = vi.fn(), onCreate = vi.fn()) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const ui: ReactNode = (
     <QueryClientProvider client={queryClient}>
-      <DesignSystemLibrary onOpenProject={onOpenProject} onCreateInProject={onCreateInProject} />
+      <DesignSystemLibrary onOpenProject={onOpenProject} onCreate={onCreate} />
     </QueryClientProvider>
   );
   render(ui);
@@ -204,17 +204,15 @@ describe("DesignSystemLibrary", () => {
     expect(screen.queryByTitle("Stripe 展示")).not.toBeInTheDocument();
   });
 
-  it("creates a design system by picking the project that will own it", async () => {
-    const onCreateInProject = vi.fn();
-    renderLibrary(vi.fn(), onCreateInProject);
+  it("opens the standalone creation page from the create button", async () => {
+    const onCreate = vi.fn();
+    renderLibrary(vi.fn(), onCreate);
     expect(await screen.findByRole("heading", { name: "Multica Web" })).toBeInTheDocument();
 
-    // Open Design puts a create action on the page; here a system belongs to a
-    // project (DC-052), so the button asks which project and hands over to
-    // its 设计体系 workbench instead of opening a second creation flow.
+    // Open Design puts a create action on the page; here it opens the
+    // standalone creation flow, where a system belongs to no project.
     await userEvent.click(screen.getByRole("button", { name: "新建设计体系" }));
-    await userEvent.click(await screen.findByRole("button", { name: /官网改版/ }));
-    expect(onCreateInProject).toHaveBeenCalledWith("project-1");
+    expect(onCreate).toHaveBeenCalledTimes(1);
   });
 
   it("filters the official catalogue by category from a dropdown", async () => {

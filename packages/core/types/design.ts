@@ -360,9 +360,12 @@ export interface ProjectDesignSystemInputSnapshot {
 }
 
 export interface CreateProjectDesignSystemRequest {
+  /** Empty creates a standalone system owned by the workspace itself; a project id creates that project's system. */
   project_id: string;
   /** Empty creates the project-level system; a repository id creates that repository's own (DC-052). */
   project_resource_id?: string;
+  /** Name of a standalone system; ignored (and rejected) for a project system, which takes the project's title. */
+  name?: string;
   agent_id: string;
   platform: ProjectDesignSystemPlatform;
   brief: string;

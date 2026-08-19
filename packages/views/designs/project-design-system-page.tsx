@@ -27,17 +27,19 @@ function ProjectDesignSystemPageSkeleton() {
 export function ProjectDesignSystemPage({ designSystemId }: { designSystemId: string }) {
   const wsId = useWorkspaceId();
   const systemQuery = useQuery(projectDesignSystemDetailOptions(wsId, designSystemId));
+  // A standalone system (empty project_id) owns itself: no project to load.
+  const standalone = systemQuery.data?.project_id === "";
   const projectQuery = useQuery({
     ...projectDetailOptions(wsId, systemQuery.data?.project_id ?? ""),
     enabled: Boolean(systemQuery.data?.project_id),
   });
   const agentsQuery = useQuery(agentListOptions(wsId));
 
-  if (systemQuery.isLoading || projectQuery.isLoading || agentsQuery.isLoading) {
+  if (systemQuery.isLoading || (!standalone && projectQuery.isLoading) || agentsQuery.isLoading) {
     return <ProjectDesignSystemPageSkeleton />;
   }
 
-  if (systemQuery.error || projectQuery.error || !systemQuery.data?.id || !projectQuery.data) {
+  if (systemQuery.error || (!standalone && projectQuery.error) || !systemQuery.data?.id || (!standalone && !projectQuery.data)) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
         <div className="space-y-3">
@@ -61,7 +63,7 @@ export function ProjectDesignSystemPage({ designSystemId }: { designSystemId: st
   return (
     <ProjectDesignSystemCanvas
       system={systemQuery.data}
-      project={projectQuery.data}
+      project={standalone ? undefined : projectQuery.data}
       agents={agentsQuery.data ?? []}
     />
   );

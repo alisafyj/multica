@@ -5,4 +5,5 @@ export { DesignDraftPage } from "./design-draft-page";
 export { DesignDocumentPage } from "./design-document-page";
 export { DesignRestoreTaskPage } from "./design-restore-task-page";
 export { ProjectDesignSystemCanvas } from "./project-design-system-canvas";
+export { WorkspaceDesignSystemCreate } from "./workspace-design-system-create";
 export { ProjectDesignSystemPage } from "./project-design-system-page";

@@ -79,7 +79,7 @@ type CopySourceGroup = {
   entries: ProjectDesignSystemCatalogueEntry[];
 };
 
-const PLATFORM_OPTIONS: Array<{ value: ProjectDesignSystemPlatform; label: string }> = [
+export const PLATFORM_OPTIONS: Array<{ value: ProjectDesignSystemPlatform; label: string }> = [
   { value: "web", label: "Web" },
   { value: "mobile", label: "移动端" },
   { value: "cross_platform", label: "跨端" },
@@ -262,7 +262,7 @@ function initialForm(project: Project, system: ProjectDesignSystem | undefined):
   };
 }
 
-function isAgentAvailable(agent: Agent | undefined): boolean {
+export function isAgentAvailable(agent: Agent | undefined): boolean {
   return Boolean(agent && !agent.archived_at && agent.runtime_id);
 }
 

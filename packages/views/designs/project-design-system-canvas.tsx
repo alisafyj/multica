@@ -480,7 +480,8 @@ export function ProjectDesignSystemCanvas({
   agents,
 }: {
   system: ProjectDesignSystem;
-  project: Project;
+  /** Absent for a standalone system: it belongs to no project. */
+  project?: Project;
   agents: Agent[];
 }) {
   const wsId = useWorkspaceId();
@@ -624,7 +625,7 @@ export function ProjectDesignSystemCanvas({
   );
   const saveActionLabel = system.saved_at ? "保存调整" : "保存为项目设计体系";
   const showSaveAction = !system.saved_at || system.has_unsaved_changes;
-  const showSystemTitle = Boolean(system.name.trim() && system.name.trim() !== project.title.trim());
+  const showSystemTitle = Boolean(project ? system.name.trim() && system.name.trim() !== project.title.trim() : system.name.trim());
   const isDiscardingAdjustment = Boolean(system.saved_at);
   const discardDisabled = Boolean(
     isBusy

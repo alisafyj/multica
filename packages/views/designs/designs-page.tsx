@@ -565,9 +565,8 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
     setOpenProjectIds((current) => current.includes(projectId) ? current : [...current, projectId]);
     setActiveWorkspaceTabId(projectId);
   };
-  // The library hands a project over for its design system — to edit one it
-  // owns or to create one — so the tab opens on 设计体系, not on whichever
-  // asset tab was last active.
+  // The library hands a project over for its design system, so the tab opens
+  // on 设计体系, not on whichever asset tab was last active.
   const openProjectSystems = (projectId: string) => {
     openProjectTab(projectId);
     setActiveTab("systems");
@@ -726,7 +725,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                     workspace default projects would inherit (DC-052). */}
                 <DesignSystemLibrary
                   onOpenProject={openProjectSystems}
-                  onCreateInProject={openProjectSystems}
+                  onCreate={() => navigation.push(paths.projectDesignSystemNew())}
                 />
               </TabsContent>
             </Tabs>
