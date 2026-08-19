@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +30,12 @@ type designDocumentRevisionFixture struct {
 }
 
 func createDesignDocumentRevisionFixture(t *testing.T) designDocumentRevisionFixture {
+	return createDesignDocumentRevisionFixtureWith(t, nil)
+}
+
+// createDesignDocumentRevisionFixtureWith lets a test add files to the package
+// before it is collected, e.g. the optional critique.json.
+func createDesignDocumentRevisionFixtureWith(t *testing.T, extraFiles map[string]string) designDocumentRevisionFixture {
 	t.Helper()
 	ctx := context.Background()
 	queries := db.New(testPool)
@@ -64,7 +72,13 @@ func createDesignDocumentRevisionFixture(t *testing.T) designDocumentRevisionFix
 		InputSnapshotSHA256: "sha256:" + strings.Repeat("a", 64),
 		DesignSystemSHA256:  "sha256:" + strings.Repeat("e", 64),
 	}
-	collected, err := designdocument.CollectDirectory(copyDesignDocumentFixture(t), binding)
+	root := copyDesignDocumentFixture(t)
+	for name, contents := range extraFiles {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	collected, err := designdocument.CollectDirectory(root, binding)
 	if err != nil {
 		t.Fatalf("collect design document package: %v", err)
 	}
@@ -397,5 +411,35 @@ func TestAdjustDesignDocumentRefusesAStaleBaseRevision(t *testing.T) {
 	// task creation) is not this test's concern, but it must not be the guard.
 	if recorder := adjust(uuidToString(fixture.Revision.ID)); strings.Contains(recorder.Body.String(), "base_revision_changed") {
 		t.Fatalf("matching base was refused: %s", recorder.Body.String())
+	}
+}
+
+// A revision whose package carries critique.json surfaces it on the detail,
+// read back from the archive; one without it reports null rather than an
+// empty object, so the workspace can tell "no critique" from "a critique".
+func TestGetDesignDocumentRevisionSurfacesTheCritiqueReport(t *testing.T) {
+	critique := `{"schema_version":"multica.design-document-critique/v1","threshold":8,"max_rounds":3,"outcome":"passed",` +
+		`"rounds":[{"index":1,"scores":{"designer":8,"critic":8,"brand":9,"a11y":8,"copy":8},"findings":[]}]}`
+	with := createDesignDocumentRevisionFixtureWith(t, map[string]string{"critique.json": critique})
+	recorder := performDesignDocumentRevisionRequest(t, with, uuidToString(with.Revision.ID))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body DesignDocumentRevisionResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	var parsed designdocument.Critique
+	if err := json.Unmarshal(body.Critique, &parsed); err != nil || parsed.Outcome != "passed" || len(parsed.Rounds) != 1 {
+		t.Fatalf("critique = %s (%v)", body.Critique, err)
+	}
+
+	without := createDesignDocumentRevisionFixture(t)
+	recorder = performDesignDocumentRevisionRequest(t, without, uuidToString(without.Revision.ID))
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if string(body.Critique) != "null" {
+		t.Fatalf("critique without a report = %s, want null", body.Critique)
 	}
 }

@@ -885,6 +885,8 @@ export interface DesignDocumentRevision extends DesignDocumentRevisionSummary {
   coverage: unknown;
   audit: unknown;
   preview_receipt: unknown;
+  /** The agent's review-loop report (DC-050) when the package carries one; null otherwise. */
+  critique: unknown;
   prototype_entry: string;
   pages: DesignDocumentPage[];
   flows: DesignDocumentFlow[];

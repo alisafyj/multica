@@ -544,6 +544,8 @@ func classifyArtifact(name string) (string, string, int64, error) {
 		return "brief", "application/json", maxDocumentBytes, nil
 	case coveragePath:
 		return "coverage", "application/json", maxDocumentBytes, nil
+	case critiquePath:
+		return "critique", "application/json", maxDocumentBytes, nil
 	case prototypeEntryPath:
 		return "prototype_entry", "text/html; charset=utf-8", maxSourceBytes, nil
 	}

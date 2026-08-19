@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -63,6 +64,10 @@ type DesignDocumentRevisionResponse struct {
 	Coverage       json.RawMessage `json:"coverage"`
 	Audit          json.RawMessage `json:"audit"`
 	PreviewReceipt json.RawMessage `json:"preview_receipt"`
+	// Critique is the agent's review loop report (DC-050) when the package
+	// carries one, else null. Read from the archive: it is the agent's own
+	// document, stored nowhere else, and never a gate.
+	Critique       json.RawMessage `json:"critique"`
 	PrototypeEntry string          `json:"prototype_entry"`
 	// Manifest projections. Never nil so a client can index into them.
 	Pages          []designdocument.PageIndexEntry `json:"pages"`
@@ -139,6 +144,7 @@ func (h *Handler) GetDesignDocumentRevision(w http.ResponseWriter, r *http.Reque
 		Coverage:                              jsonOrDefault(revision.Coverage, `{}`),
 		Audit:                                 jsonOrDefault(revision.Audit, `{}`),
 		PreviewReceipt:                        jsonOrDefault(revision.Preview, `{}`),
+		Critique:                              h.loadDesignDocumentRevisionCritique(r.Context(), revision),
 		PrototypeEntry:                        manifest.PrototypeEntry,
 		Pages:                                 manifest.Pages,
 		Flows:                                 manifest.Flows,
@@ -233,6 +239,31 @@ func (h *Handler) GetDesignDocumentPreviewFile(w http.ResponseWriter, r *http.Re
 	w.Header().Set("X-Multica-Design-Document-Digest", revision.ContentDigest)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(artifact)
+}
+
+// loadDesignDocumentRevisionCritique returns the package's critique.json when
+// the revision's index lists one, re-validating the archive on the way out
+// like every other read. Anything missing or unreadable is null: the detail
+// must not fail because an optional report could not be loaded.
+func (h *Handler) loadDesignDocumentRevisionCritique(ctx context.Context, revision db.DesignDocumentRevision) json.RawMessage {
+	const critiquePath = "critique.json"
+	entry, ok := designDocumentIndexEntry(revision.ArtifactIndex, critiquePath)
+	if !ok || h.Storage == nil {
+		return json.RawMessage(`null`)
+	}
+	var index []designdocument.ArtifactIndexEntry
+	if err := json.Unmarshal(revision.ArtifactIndex, &index); err != nil {
+		return json.RawMessage(`null`)
+	}
+	archive, err := readNativeArchiveFromStorage(ctx, h.Storage, revision.ArchiveObjectKey)
+	if err != nil {
+		return json.RawMessage(`null`)
+	}
+	raw, err := designdocument.ReadArtifact(archive, index, entry.Path)
+	if err != nil || !json.Valid(raw) {
+		return json.RawMessage(`null`)
+	}
+	return json.RawMessage(raw)
 }
 
 func designDocumentRevisionSummary(document db.DesignDocument, revision db.DesignDocumentRevision) DesignDocumentRevisionSummaryResponse {

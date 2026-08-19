@@ -450,3 +450,33 @@ func TestDesignDocumentPromptStatesTheTweaksConventionOnRequest(t *testing.T) {
 		}
 	}
 }
+
+// The critique loop (DC-050) runs inside the agent session before coverage,
+// is recorded in an optional critique.json with the exact shape the package
+// audits, and is stated as a report rather than a pass criterion.
+func TestDesignDocumentPromptRunsTheCritiqueLoopAsAReport(t *testing.T) {
+	prompt := BuildPrompt(designDocumentPromptTask(t, ""), "opencode")
+	for _, want := range []string{
+		"Critique the prototype before you report on it",
+		"designer", "critic", "brand", "a11y", "copy",
+		"must_fix / should_fix / note",
+		"Stop when every lens scores at least 8, or after 3 rounds",
+		"`critique.json`",
+		"multica.design-document-critique/v1",
+		"\"stopped_at_max_rounds\"",
+		"it never decides whether the package passes",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt lacks the critique convention %q", want)
+		}
+	}
+	// The critique stage comes before coverage and the final read-back, so the
+	// fixes it asks for land in the package that is reported on.
+	if strings.Index(prompt, "Critique the prototype") > strings.Index(prompt, "Write `coverage.json`") {
+		t.Fatal("critique stage is ordered after coverage")
+	}
+	_, optional, found := strings.Cut(prompt, "Optional:")
+	if !found || !strings.Contains(optional, "`critique.json`") {
+		t.Fatal("critique.json is not listed as an optional package file")
+	}
+}

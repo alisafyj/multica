@@ -64,6 +64,7 @@ import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
 import { useTimeAgo } from "../i18n/use-time-ago";
 import { designDocumentStatusLabel } from "./design-document-card";
+import { DesignDocumentCritique, parseCritique } from "./design-document-critique";
 import { AgentSetting } from "./design-task-composer";
 import { DesignTaskActivity, taskOperationLabel } from "./project-design-system-task-activity";
 
@@ -256,6 +257,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   const revisionQuery = useQuery(designDocumentRevisionOptions(wsId, documentId, selectedRevisionId));
   const revision = revisionQuery.data;
   const entries = useMemo(() => previewEntries(revision), [revision]);
+  const critique = useMemo(() => parseCritique(revision?.critique), [revision]);
 
   const [activeEntry, setActiveEntry] = useState("");
   const shownEntry = entries.some((entry) => entry.entry === activeEntry) ? activeEntry : entries[0]?.entry ?? "";
@@ -535,6 +537,8 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                 </div>
               </div>
             ) : null}
+
+            {critique ? <div className="mt-3"><DesignDocumentCritique critique={critique} /></div> : null}
 
             <section className="mt-3" aria-label="版本">
               <div className="mb-2 flex items-center justify-between px-0.5">

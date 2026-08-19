@@ -45,6 +45,11 @@ func auditPackage(
 	brief, briefIdentity, briefDiagnostics := auditBrief(files[briefPath])
 	diagnostics = append(diagnostics, briefDiagnostics...)
 	diagnostics = append(diagnostics, auditCoverage(files[coveragePath], briefIdentity, binding)...)
+	// Optional. When present it must be a well-formed critique report; its
+	// contents never reach the verdict (DC-050).
+	if raw, present := files[critiquePath]; present {
+		diagnostics = append(diagnostics, auditCritique(raw)...)
+	}
 	if briefIdentity != nil {
 		diagnostics = append(diagnostics, auditPrototypeIdentity(briefIdentity, previewTargets)...)
 	}

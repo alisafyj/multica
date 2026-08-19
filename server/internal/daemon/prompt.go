@@ -1159,8 +1159,9 @@ func buildDesignDocumentPrompt(task Task) string {
 	b.WriteString("2. Decide the page set. A document may hold a main page, its sub-pages, page states, overlays and the key flows that connect them. Design only what the requirement supports — pages nobody asked for are template residue.\n")
 	b.WriteString("3. Write `brief.json` first. It is the semantic layer the rest of the package is checked against: pages, states, overlays, flows, mock data scenarios, the mapping from requirement to page, stable semantic IDs, accessibility and key-interaction requirements, and explicit non-goals.\n")
 	b.WriteString("4. Build the prototype so those pages, states, overlays and flows actually work. Use the pinned design system's Tokens; do not invent a parallel visual language.\n")
-	b.WriteString("5. Write `coverage.json` mapping what you delivered back to the requirement, and state honestly what you did not cover and why.\n")
-	b.WriteString("6. Read back every file, open the prototype's own logic in your head end to end, and verify each declared flow is reachable. Promise-only or delegated work is not completion.\n\n")
+	b.WriteString("5. Critique the prototype before you report on it — a review loop through five lenses, each scored 0–10 against the requirement and the pinned design system: designer (hierarchy, layout, spacing, consistency), critic (does it answer the requirement; template residue; states that exist but say nothing), brand (are the design system's tokens and voice used faithfully), a11y (contrast, focus order and visible focus, labels, keyboard reach, touch targets) and copy (labels and microcopy clear, consistent, final — no placeholder text). List the findings as must_fix / should_fix / note, fix the must-fix ones, and score again. Stop when every lens scores at least 8, or after 3 rounds. Record the loop in `critique.json`.\n")
+	b.WriteString("6. Write `coverage.json` mapping what you delivered back to the requirement, and state honestly what you did not cover and why.\n")
+	b.WriteString("7. Read back every file, open the prototype's own logic in your head end to end, and verify each declared flow is reachable. Promise-only or delegated work is not completion.\n\n")
 
 	b.WriteString(designDocumentPackageContract())
 
@@ -1245,7 +1246,8 @@ func designDocumentPackageContract() string {
 	b.WriteString("- `coverage.json` — requirement coverage and honest gaps.\n\n")
 	b.WriteString("Optional:\n")
 	b.WriteString("- `prototype/<path>.html`, `prototype/<path>.css`, `prototype/<path>.js` — split the prototype as its real complexity requires.\n")
-	b.WriteString("- `assets/<file>` — images and fonts the prototype references.\n\n")
+	b.WriteString("- `assets/<file>` — images and fonts the prototype references.\n")
+	b.WriteString("- `critique.json` — the review loop from stage 5, schema `multica.design-document-critique/v1`: `{\"schema_version\", \"threshold\": 8, \"max_rounds\": 3, \"outcome\": \"passed\" | \"stopped_at_max_rounds\" | \"not_run\", \"rounds\": [{\"index\": 1, \"scores\": {\"designer\": 0-10, \"critic\": 0-10, \"brand\": 0-10, \"a11y\": 0-10, \"copy\": 0-10}, \"findings\": [{\"lens\", \"severity\": \"must_fix\" | \"should_fix\" | \"note\", \"summary\", \"resolved\": true | false}]}]}`. Exactly those fields, every round scoring all five lenses. It is your own report, like coverage: it never decides whether the package passes, so record the real scores — a low score is information, not a reason to leave the file out.\n\n")
 	b.WriteString("Do NOT write `manifest.json`. The platform generates it from what you produced; a manifest of your own is an undeclared path and fails the collector.\n\n")
 	b.WriteString("Inside `prototype/`, package-local HTML, CSS and JavaScript are allowed and expected. Use them for page switching, tabs, filtering and sorting, modals and drawers and menus, form input with local validation, loading / empty / error / success states, and mock data transitions. `localStorage` is allowed for local state such as remembering the current page.\n\n")
 	b.WriteString("Three prototype rules the audit enforces that are easy to trip by habit:\n")
