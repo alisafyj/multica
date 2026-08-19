@@ -663,7 +663,12 @@ export interface CreateDesignDocumentRequest {
    */
   recipe?: string;
   brief: string;
-  attachments?: unknown;
+  /**
+   * Reference files staged with the prompt, by attachment id (uploaded through
+   * the ordinary upload route). The server pins each one's bytes into the
+   * frozen input and the daemon materializes them for the agent.
+   */
+  attachments?: Array<{ attachment_id: string }>;
 }
 
 export interface DesignDocument {

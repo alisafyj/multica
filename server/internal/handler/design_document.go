@@ -186,6 +186,21 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 		title = project.Title
 	}
 
+	// Reference attachments are resolved and pinned here, once: the frozen
+	// input records what they are and the exact bytes they were, so the run
+	// (and any later adjustment carrying them forward) cannot see a different
+	// file under the same id.
+	attachments, attachmentErr := h.resolveDesignDocumentAttachments(r.Context(), workspaceUUID, req.Attachments)
+	if attachmentErr != nil {
+		writeProjectDesignSystemRequestError(w, attachmentErr)
+		return
+	}
+	attachmentsJSON, err := json.Marshal(attachments)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "context_failed", "failed to encode attachments")
+		return
+	}
+
 	input := designDocumentInputSnapshot{
 		AgentID:           req.AgentID,
 		ProjectResourceID: uuidToString(scope.ProjectResourceID),
@@ -193,7 +208,7 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 		Platform:          req.Platform,
 		Recipe:            req.Recipe,
 		Brief:             req.Brief,
-		Attachments:       req.Attachments,
+		Attachments:       attachmentsJSON,
 	}
 	inputJSON, err := json.Marshal(input)
 	if err != nil || len(inputJSON) > designDocumentMaxSnapshotBytes {
@@ -202,7 +217,7 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	document, task, err := h.createDesignDocumentTask(
-		r.Context(), workspaceUUID, requesterUUID, projectUUID, scope, issueUUID, agentUUID, title, input, inputJSON,
+		r.Context(), workspaceUUID, requesterUUID, projectUUID, scope, issueUUID, agentUUID, title, input, inputJSON, attachments,
 	)
 	if err != nil {
 		writeProjectDesignSystemRequestError(w, err)
@@ -404,6 +419,7 @@ func (h *Handler) createDesignDocumentTask(
 	title string,
 	input designDocumentInputSnapshot,
 	inputJSON []byte,
+	attachments []designDocumentAttachmentSnapshot,
 ) (db.DesignDocument, db.AgentTaskQueue, error) {
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
@@ -500,7 +516,7 @@ func (h *Handler) createDesignDocumentTask(
 		PackageSchema:       designDocumentPackageSchema,
 		InputSnapshotSHA256: inputDigest,
 		ExecutionReady:      true,
-		Input:               designDocumentGenerateInput(scope.ProjectResourceID.Valid),
+		Input:               designDocumentGenerateInput(scope.ProjectResourceID.Valid, attachments),
 	})
 	if err != nil {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
@@ -537,12 +553,16 @@ func (h *Handler) createDesignDocumentTask(
 // (DC-053): a repository was attached, so the daemon checks it out and grounds
 // the run against it; or none was, so the daemon records explicitly that no
 // code was read and the agent designs from the requirement alone.
-func designDocumentGenerateInput(repositoryAttached bool) service.DesignDocumentTaskInput {
+func designDocumentGenerateInput(repositoryAttached bool, attachments []designDocumentAttachmentSnapshot) service.DesignDocumentTaskInput {
 	mode := service.DesignDocumentGroundingUnavailable
 	if repositoryAttached {
 		mode = service.DesignDocumentGroundingPending
 	}
-	return service.DesignDocumentTaskInput{SchemaVersion: service.DesignDocumentInputSchema, RepositoryGrounding: mode}
+	return service.DesignDocumentTaskInput{
+		SchemaVersion:       service.DesignDocumentInputSchema,
+		RepositoryGrounding: mode,
+		Attachments:         designDocumentTaskAttachments(attachments),
+	}
 }
 
 // designDocumentPinnedInput is the grounding envelope of an adjustment. The

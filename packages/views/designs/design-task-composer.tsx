@@ -16,8 +16,10 @@ import {
   Globe,
   Image as ImageIcon,
   ListTodo,
+  LoaderCircle,
   Monitor,
   PanelsTopLeft,
+  Paperclip,
   Presentation,
   Smartphone,
   Sparkles,
@@ -30,6 +32,7 @@ import { api } from "@multica/core/api";
 import { isAgentRuntimeBound } from "@multica/core/agents";
 import { designKeys } from "@multica/core/designs/keys";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { projectOpenIssuesOptions } from "@multica/core/issues/queries";
 import { projectResourcesOptions } from "@multica/core/projects";
 import { projectListOptions } from "@multica/core/projects/queries";
@@ -111,6 +114,8 @@ export const PLATFORM_OPTIONS: ReadonlyArray<{
 // here, so a Chinese brief hits this well before the byte limit — the point is
 // to warn early, not to reproduce the server's arithmetic.
 export const BRIEF_MAX_LENGTH = 4000;
+/** Mirrors the server's design document attachment cap. */
+const MAX_ATTACHMENTS = 8;
 
 /**
  * A recipe the community gallery handed to the composer (DC-041). Carries its
@@ -678,6 +683,26 @@ export function DesignTaskComposer({
   const [repositoryId, setRepositoryId] = useState("");
   const [issueId, setIssueId] = useState("");
   const [platform, setPlatform] = useState<ProjectDesignSystemPlatform>("web");
+  // Reference files staged with the prompt, as Open Design's composer does.
+  // Uploaded through the ordinary route; only the ids travel with the request.
+  const [attachments, setAttachments] = useState<Array<{ id: string; name: string }>>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { upload, uploading } = useFileUpload(api, (error, file) => toast.error(`${file.name}：${error.message}`));
+  const stageFiles = async (files: FileList | File[]) => {
+    for (const file of Array.from(files).slice(0, MAX_ATTACHMENTS)) {
+      try {
+        const result = await upload(file);
+        if (!result) continue;
+        setAttachments((current) => (
+          current.some((item) => item.id === result.id) || current.length >= MAX_ATTACHMENTS
+            ? current
+            : [...current, { id: result.id, name: result.filename || file.name }]
+        ));
+      } catch {
+        // Reported through the hook's onError; nothing else to do here.
+      }
+    }
+  };
 
   // Applying a catalogue recipe is an event, not derived state: it seeds the
   // brief once and then gets out of the way, so later edits to the words keep
@@ -729,6 +754,7 @@ export function DesignTaskComposer({
         platform,
         recipe,
         brief: trimmedBrief,
+        ...(attachments.length ? { attachments: attachments.map((item) => ({ attachment_id: item.id })) } : {}),
       }),
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({
@@ -742,6 +768,7 @@ export function DesignTaskComposer({
           : "已创建页面设计任务，本次未做仓库取证",
       );
       setBrief("");
+      setAttachments([]);
       onCreated(created);
     },
     onError: (error) =>
@@ -756,7 +783,9 @@ export function DesignTaskComposer({
         ? "请描述你想要的页面"
         : briefTooLong
           ? `需求描述超出 ${BRIEF_MAX_LENGTH} 字上限`
-          : "";
+          : uploading
+            ? "参考文件上传中"
+            : "";
   const canSubmit = !missingRequirement && !createDocument.isPending;
 
   return (
@@ -784,9 +813,54 @@ export function DesignTaskComposer({
             placeholder="例如：做一个 CRM 客户列表页，支持筛选、批量操作和客户详情抽屉。"
             className="min-h-32 resize-none border-0 bg-transparent px-4 py-3.5 text-body shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
           />
+          {attachments.length > 0 ? (
+            <ul className="flex flex-wrap items-center gap-1.5 px-3 pb-2" aria-label="参考文件">
+              {attachments.map((item) => (
+                <li key={item.id} className="inline-flex h-6 max-w-56 items-center gap-1 rounded-full border bg-background px-2 text-caption">
+                  <Paperclip className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{item.name}</span>
+                  <button
+                    type="button"
+                    aria-label={`移除 ${item.name}`}
+                    className="ml-0.5 rounded-full p-0.5 text-muted-foreground hover:text-foreground"
+                    onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {/* Settings live in the card so choosing a project never means
               leaving the sentence being written. */}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-3 pb-3">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.pdf,.txt,.md,.json"
+              className="hidden"
+              aria-label="上传参考文件"
+              onChange={(event) => {
+                if (event.target.files) void stageFiles(event.target.files);
+                event.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              aria-label="添加参考文件"
+              title={attachments.length >= MAX_ATTACHMENTS ? `最多 ${MAX_ATTACHMENTS} 个参考文件` : "添加参考文件（截图、PDF、文本）"}
+              disabled={uploading || attachments.length >= MAX_ATTACHMENTS}
+              onClick={() => fileInputRef.current?.click()}
+              className={cn(
+                "flex min-w-0 cursor-pointer items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-caption transition-colors hover:bg-accent",
+                "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-card",
+                attachments.length > 0 ? "text-foreground" : "text-muted-foreground",
+              )}
+            >
+              {uploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Paperclip className="size-3.5" />}
+              <span className="truncate">{attachments.length > 0 ? `参考文件 ${attachments.length}` : "参考文件"}</span>
+            </button>
             <ProjectPicker
               projectId={projectId || null}
               onUpdate={(updates) => setProjectId(updates.project_id ?? "")}

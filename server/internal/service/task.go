@@ -6743,6 +6743,17 @@ type DesignDocumentTaskInput struct {
 	// Repository is the validated repository grounding an adjustment is
 	// pinned to. Only set in pinned mode.
 	Repository json.RawMessage `json:"repository,omitempty"`
+	// Attachments are the reference files the daemon downloads into the
+	// agent's reference/attachments directory before the session starts,
+	// each pinned by size and digest so a swapped object cannot be served.
+	Attachments []DesignDocumentTaskAttachment `json:"attachments,omitempty"`
+}
+
+// DesignDocumentTaskAttachment pins one reference attachment for the daemon.
+type DesignDocumentTaskAttachment struct {
+	ID        string `json:"id"`
+	SizeBytes int64  `json:"size_bytes"`
+	SHA256    string `json:"sha256"`
 }
 
 type DesignDocumentOperation string

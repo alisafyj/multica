@@ -117,11 +117,11 @@ func TestDesignDocumentBindingNamesTheTaskAsTheRevision(t *testing.T) {
 // the run. Both handlers must therefore stamp the context the daemon expects —
 // the other half of the contract tested in TestDesignDocumentBindingMatches…
 func TestDesignDocumentContextsAreExecutionReadyWithAGroundingEnvelope(t *testing.T) {
-	grounded := designDocumentGenerateInput(true)
+	grounded := designDocumentGenerateInput(true, nil)
 	if grounded.SchemaVersion != service.DesignDocumentInputSchema || grounded.RepositoryGrounding != service.DesignDocumentGroundingPending {
 		t.Fatalf("grounded generate input = %+v", grounded)
 	}
-	ungrounded := designDocumentGenerateInput(false)
+	ungrounded := designDocumentGenerateInput(false, nil)
 	if ungrounded.RepositoryGrounding != service.DesignDocumentGroundingUnavailable || len(ungrounded.Repository) != 0 {
 		t.Fatalf("ungrounded generate input = %+v", ungrounded)
 	}

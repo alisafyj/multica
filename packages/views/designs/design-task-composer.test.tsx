@@ -14,6 +14,7 @@ const {
   listProjects,
   toastError,
   toastSuccess,
+  uploadFile,
 } = vi.hoisted(() => ({
   createDesignDocument: vi.fn(),
   listAgents: vi.fn(),
@@ -24,6 +25,7 @@ const {
   listProjects: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
+  uploadFile: vi.fn(),
 }));
 
 vi.mock("@multica/core/api", () => ({
@@ -35,6 +37,7 @@ vi.mock("@multica/core/api", () => ({
     listIssues,
     listProjectResources,
     listProjects,
+    uploadFile,
   },
 }));
 
@@ -217,6 +220,32 @@ describe("DesignTaskComposer", () => {
     expect(payload).not.toHaveProperty("project_resource_id");
     expect(payload).not.toHaveProperty("issue_id");
     expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ project_id: "project-1" }));
+  });
+
+  it("stages reference files by attachment id and sends them with the request", async () => {
+    const user = userEvent.setup();
+    uploadFile.mockResolvedValue({ id: "attachment-1", filename: "home.png", url: "https://cdn.test/home.png", content_type: "image/png", size_bytes: 3 });
+    renderComposer();
+
+    await pickProject(user);
+    await pickAgent(user);
+    await user.type(screen.getByLabelText("页面需求描述"), "客户列表页");
+    await user.upload(screen.getByLabelText("上传参考文件"), new File(["png"], "home.png", { type: "image/png" }));
+    expect(await screen.findByText("home.png")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加参考文件" })).toHaveTextContent("参考文件 1");
+
+    await user.click(screen.getByRole("button", { name: "生成页面设计" }));
+    await waitFor(() => expect(createDesignDocument).toHaveBeenCalledTimes(1));
+    expect(createDesignDocument.mock.calls[0]?.[0]).toMatchObject({
+      attachments: [{ attachment_id: "attachment-1" }],
+    });
+
+    // Removing a chip drops it from the next request.
+    uploadFile.mockResolvedValue({ id: "attachment-2", filename: "flow.pdf", url: "https://cdn.test/flow.pdf", content_type: "application/pdf", size_bytes: 3 });
+    await user.upload(screen.getByLabelText("上传参考文件"), new File(["pdf"], "flow.pdf", { type: "application/pdf" }));
+    expect(await screen.findByText("flow.pdf")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "移除 flow.pdf" }));
+    expect(screen.queryByText("flow.pdf")).not.toBeInTheDocument();
   });
 
   it("clears the picked scenario when its chip is clicked again", async () => {

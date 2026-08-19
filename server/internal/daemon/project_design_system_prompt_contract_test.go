@@ -553,3 +553,18 @@ func TestDesignDocumentPromptExplainsRepositoryGroundingByMode(t *testing.T) {
 		t.Fatal("unavailable prompt does not carry the ungrounded disclaimer alone")
 	}
 }
+
+// Staged reference files are materialized by the daemon under
+// reference/attachments/<id>; the prompt has to say so, and say how an image
+// that is reused becomes part of the package.
+func TestDesignDocumentPromptPointsAtReferenceAttachments(t *testing.T) {
+	prompt := BuildPrompt(designDocumentPromptTask(t, ""), "opencode")
+	for _, want := range []string{
+		"reference/attachments/<attachment_id>",
+		"copied into `assets/`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt lacks %q", want)
+		}
+	}
+}
