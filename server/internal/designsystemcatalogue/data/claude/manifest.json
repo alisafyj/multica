@@ -1,0 +1,6 @@
+{
+  "id": "claude",
+  "name": "Claude (Anthropic)",
+  "category": "AI & LLM",
+  "description": "Bundled Open Design package for Claude (Anthropic), derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

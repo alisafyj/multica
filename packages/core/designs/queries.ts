@@ -224,3 +224,25 @@ export function designDraftDetailOptions(wsId: string, id: string) {
   });
 }
 
+
+/**
+ * The bundled built-in design systems (the library's 官方 scope). Not
+ * workspace data — the catalogue ships with the server and is identical
+ * everywhere — but the key stays workspace-scoped so it is evicted with the
+ * rest of a workspace's cache rather than outliving it.
+ */
+export function builtinDesignSystemListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: designKeys.builtinDesignSystems(wsId),
+    queryFn: () => api.listBuiltinDesignSystems(),
+    select: (data) => data.design_systems,
+  });
+}
+
+export function builtinDesignSystemDetailOptions(wsId: string, slug: string) {
+  return queryOptions({
+    queryKey: designKeys.builtinDesignSystem(wsId, slug),
+    queryFn: () => api.getBuiltinDesignSystem(slug),
+    enabled: !!slug,
+  });
+}

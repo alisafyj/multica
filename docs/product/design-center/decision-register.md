@@ -555,6 +555,17 @@
 - 保留价值：需求覆盖检查、模板残留检测、版本化草稿和真实视觉验证经验仍可复用。
 - 限制：在重新确认在线设计产物和 Agent 工作方式前，不得默认它仍是通用 UI 设计主引擎。
 
+### DC-056 Open Design 预置资源落地方式
+
+`confirmed`
+
+Open Design 的两类预置资源按各自性质分别落地，不共用一套存储：
+
+- **社区模板**（291 条官方插件）进入 `design_scenario_recipe`，随迁移 892 作为 `origin='builtin'` 种子数据。其中 281 条可映射：6 条模式为 `utility`/`template`/`design-system`，不是内容模板；4 条与迁移 889 手写的中文配方 slug 冲突，手写版本优先。非 `prototype` 模式一并种入并可浏览，但创建接口按既有规则拒绝，画廊卡片已有对应说明；这样目录如实反映 Open Design 提供什么、本阶段能产出什么，而不是把差异藏起来。
+- **官方设计体系**（152 个品牌包）不入库，由 `server/internal/designsystemcatalogue` 以 `go:embed` 随二进制分发，经 `GET /api/design-systems/builtin[/{slug}]` 只读提供。理由：它们对每个工作区完全相同、没有归属、无人编辑，与 `project_design_system`（项目自己生成并保存的体系，DC-052）不是同一类东西。分开存放使内置体系不可能被误认成已保存体系，新增一个内置体系是带 diff 的代码变更而非数据迁移。
+
+设计体系库的「官方」范围因此不再为空，但仍是只读参考：要在项目中使用，仍须在项目的「设计体系」内创建并以其为参考风格，不引入工作区默认体系（DC-052 未被替代）。
+
 ## 下一步
 
 新 Phase A 的首页入口、`multica.design-document/v1`、不可变 revisions、draft/saved、任务内仓库 Grounding、持续工作空间、现有本地浏览器强制门禁、任务（Issue）可选关联和 A1 至 A6 内部子切片均已确认。用户复核书面规格后，只为 A1 至 A6 编写详细实施计划；计划必须按 DC-040 限定每个子切片的产品、代码、API 和数据范围，并携带退役账本与真实验证门禁。不得恢复独立 Phase B、迁移 `feature/fengchen-fixed-v2`、继续 Open Design Worker/Runtime，或把 Slice B 至 E 混入 Phase A。

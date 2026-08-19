@@ -1,0 +1,6 @@
+{
+  "id": "vercel",
+  "name": "Vercel",
+  "category": "Developer Tools",
+  "description": "Bundled Open Design package for Vercel, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

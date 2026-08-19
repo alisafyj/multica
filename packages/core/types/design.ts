@@ -558,6 +558,32 @@ export type DesignDocumentRecipe =
  * becomes an ever-growing set once workspaces publish their own — narrowing
  * them here would turn a routine backend addition into a parse failure.
  */
+/**
+ * A built-in design system from the bundled Open Design catalogue (the 官方
+ * scope of the design centre library).
+ *
+ * Identified by `slug`, not the UUID a saved ProjectDesignSystem carries:
+ * these ship with the product, belong to no workspace and no project, and are
+ * read-only. Keeping the two identities distinct is what stops a built-in from
+ * being mistaken for a system a project actually saved.
+ */
+export interface BuiltinDesignSystem {
+  slug: string;
+  name: string;
+  category: string;
+  description: string;
+}
+
+export interface ListBuiltinDesignSystemsResponse {
+  design_systems: BuiltinDesignSystem[];
+}
+
+/** One built-in with the content its detail view renders. */
+export interface BuiltinDesignSystemDetail extends BuiltinDesignSystem {
+  tokens_css: string;
+  design_markdown: string;
+}
+
 export interface DesignScenarioRecipe {
   slug: string;
   title: string;

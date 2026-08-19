@@ -102,6 +102,8 @@ import type {
   ListDesignDraftsResponse,
   ListDesignSystemProfilesResponse,
   ListDesignRestoreTasksResponse,
+  BuiltinDesignSystemDetail,
+  ListBuiltinDesignSystemsResponse,
   ListDesignScenarioRecipesResponse,
   ListProjectDesignSystemCatalogueResponse,
   ProjectDesignSystem,
@@ -2030,6 +2032,44 @@ export const EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE: ListDesignDocumentsResponse =
  * call sends — so a row missing it is dropped rather than rendered as a card
  * that would be rejected on submit.
  */
+/**
+ * Built-in design systems. `slug` is the addressable identity and the detail
+ * route's only input, so a row without one is dropped rather than rendered as
+ * a card that cannot be opened. Every other field degrades to "" — a bundled
+ * package missing a category still belongs in the list.
+ */
+export const BuiltinDesignSystemSchema = z.object({
+  slug: z.string().min(1),
+  name: z.string().catch("").default(""),
+  category: z.string().catch("").default(""),
+  description: z.string().catch("").default(""),
+}).loose();
+
+export const ListBuiltinDesignSystemsResponseSchema = z.object({
+  design_systems: z.preprocess(
+    (value) => Array.isArray(value) ? value : [],
+    // Per row, so one slugless entry costs that card rather than the whole
+    // catalogue — the same rule the recipe gallery follows.
+    z.array(z.unknown()).transform((rows) => rows.flatMap((row) => {
+      const parsed = BuiltinDesignSystemSchema.safeParse(row);
+      return parsed.success ? [parsed.data] : [];
+    })).catch([]),
+  ),
+}).loose();
+
+export const EMPTY_LIST_BUILTIN_DESIGN_SYSTEMS_RESPONSE: ListBuiltinDesignSystemsResponse = {
+  design_systems: [],
+};
+
+export const BuiltinDesignSystemDetailSchema = BuiltinDesignSystemSchema.extend({
+  tokens_css: z.string().catch("").default(""),
+  design_markdown: z.string().catch("").default(""),
+}).loose();
+
+export const EMPTY_BUILTIN_DESIGN_SYSTEM_DETAIL: BuiltinDesignSystemDetail = {
+  slug: "", name: "", category: "", description: "", tokens_css: "", design_markdown: "",
+};
+
 export const DesignScenarioRecipeSchema = z.object({
   slug: z.string().min(1),
   title: z.string().catch("").default(""),

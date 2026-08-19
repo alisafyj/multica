@@ -4,11 +4,14 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Boxes, FolderOpen, GitBranch, Package, Search, SwatchBook } from "lucide-react";
 import {
+  builtinDesignSystemDetailOptions,
+  builtinDesignSystemListOptions,
   projectDesignSystemCatalogueOptions,
   projectDesignSystemDetailOptions,
 } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import type {
+  BuiltinDesignSystem,
   ProjectDesignSystem,
   ProjectDesignSystemCatalogueEntry,
   ProjectDesignSystemTokenGroup,
@@ -45,7 +48,7 @@ const SCOPE_LABELS: ReadonlyArray<{ value: LibraryScope; label: string }> = [
 const SCOPE_EMPTY_COPY: Record<LibraryScope, string> = {
   mine: "设计体系归属项目，目前没有按个人归属的体系。你在项目里创建的体系会出现在「团队」中。",
   team: "工作区还没有已保存的设计体系。在项目的「设计体系」里生成一套，保存后就会出现在这里。",
-  official: "还没有官方设计体系。官方体系上线后会出现在这里。",
+  official: "没有匹配的官方设计体系。",
 };
 
 // Sentinel for "no platform picked". Platform is a closed enum, but an entry
@@ -326,6 +329,246 @@ function SystemListItem({
   );
 }
 
+const ALL_CATEGORIES = "__all__";
+
+/**
+ * Colour tokens pulled straight out of a package's `tokens.css`.
+ *
+ * A design system is judged by its palette long before its prose, so the
+ * detail view leads with real swatches rather than a file listing. Parsed with
+ * a scan for custom properties instead of a CSS parser: the sheets are
+ * generated, and a value this misses is one missing swatch, not a broken page.
+ */
+function colorTokensFromCSS(css: string): Array<{ name: string; value: string }> {
+  const found: Array<{ name: string; value: string }> = [];
+  const seen = new Set<string>();
+  const pattern = /(--[a-z0-9-]+)\s*:\s*([^;{}]+);/gi;
+  let match = pattern.exec(css);
+  while (match !== null && found.length < 24) {
+    const name = match[1] ?? "";
+    const value = (match[2] ?? "").trim();
+    // A var() alias resolves to another token that is already listed, so it
+    // would render as a duplicate swatch with no colour of its own.
+    if (looksLikeColor(value) && !seen.has(name) && !value.includes("var(")) {
+      seen.add(name);
+      found.push({ name, value });
+    }
+    match = pattern.exec(css);
+  }
+  return found;
+}
+
+function BuiltinSystemDetail({ slug }: { slug: string }) {
+  const wsId = useWorkspaceId();
+  const { data, isLoading } = useQuery(builtinDesignSystemDetailOptions(wsId, slug));
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-3">
+        <Skeleton className="h-6 w-48" />
+        <Skeleton className="h-24 w-full rounded-lg" />
+        <Skeleton className="h-40 w-full rounded-lg" />
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  const swatches = colorTokensFromCSS(data.tokens_css ?? "");
+  // The heading is already the system's name, so the excerpt starts after the
+  // document's own title line rather than repeating it.
+  const excerpt = (data.design_markdown ?? "")
+    .split("\n")
+    .filter((line) => !line.startsWith("#"))
+    .join("\n")
+    .trim()
+    .slice(0, 700);
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-title font-medium">{data.name || slug}</h2>
+          {data.category ? <Badge variant="secondary">{data.category}</Badge> : null}
+          <Badge variant="outline">官方</Badge>
+        </div>
+        {data.description ? (
+          <p className="text-body text-muted-foreground">{data.description}</p>
+        ) : null}
+      </div>
+
+      {swatches.length > 0 ? (
+        <section className="flex flex-col gap-2">
+          <h3 className="text-body font-medium">色彩</h3>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+            {swatches.map((token) => (
+              <div key={token.name} className="flex items-center gap-2 rounded-lg border p-2">
+                <span
+                  aria-hidden="true"
+                  className="size-7 shrink-0 rounded-md border"
+                  style={{ background: token.value }}
+                />
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate font-mono text-caption">{token.name}</span>
+                  <span className="truncate font-mono text-micro text-muted-foreground">
+                    {token.value}
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {excerpt ? (
+        <section className="flex flex-col gap-2">
+          <h3 className="text-body font-medium">设计语言</h3>
+          <p className="whitespace-pre-wrap text-body text-muted-foreground">{excerpt}</p>
+        </section>
+      ) : null}
+
+      <p className="text-caption text-muted-foreground">
+        官方体系是只读参考。要在项目里使用，请在项目的「设计体系」中创建，并以它作为参考风格。
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The 官方 scope. Built-ins carry a slug, a category and no owner, where a
+ * saved system carries a UUID, a platform and a project — different enough
+ * that sharing one list would mean inventing the fields each is missing.
+ */
+function BuiltinSystemsPanel({ search }: { search: string }) {
+  const wsId = useWorkspaceId();
+  const { data: systems = [], isLoading, error, refetch } = useQuery(
+    builtinDesignSystemListOptions(wsId),
+  );
+  const [category, setCategory] = useState<string>(ALL_CATEGORIES);
+  const [selectedSlug, setSelectedSlug] = useState("");
+
+  const categories = useMemo(
+    () => Array.from(new Set(systems.map((system) => system.category).filter(Boolean))).sort(),
+    [systems],
+  );
+  const activeCategory = categories.includes(category) ? category : ALL_CATEGORIES;
+  const query = search.trim().toLowerCase();
+  const visible = useMemo(
+    () =>
+      systems
+        .filter((system) => activeCategory === ALL_CATEGORIES || system.category === activeCategory)
+        .filter((system) =>
+          !query || `${system.name} ${system.category} ${system.description}`.toLowerCase().includes(query),
+        ),
+    [activeCategory, query, systems],
+  );
+  const selected = visible.find((system) => system.slug === selectedSlug) ?? visible[0];
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-2 px-4 py-2">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Skeleton key={index} className="h-12 w-full rounded-lg" />
+        ))}
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
+        <p className="text-body font-medium">无法加载官方设计体系</p>
+        <Button size="sm" variant="outline" onClick={() => void refetch()}>
+          重试
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+      <aside className="flex shrink-0 flex-col overflow-hidden border-b lg:w-72 lg:border-b-0 lg:border-r">
+        {categories.length > 1 ? (
+          <div
+            role="group"
+            aria-label="官方设计体系分类"
+            className="flex shrink-0 flex-wrap items-center gap-1.5 px-3 py-2.5"
+          >
+            <DesignFilterPill
+              label="全部分类"
+              count={systems.length}
+              selected={activeCategory === ALL_CATEGORIES}
+              onClick={() => setCategory(ALL_CATEGORIES)}
+            />
+            {categories.map((item) => (
+              <DesignFilterPill
+                key={item}
+                label={item}
+                count={systems.filter((system) => system.category === item).length}
+                selected={activeCategory === item}
+                onClick={() => setCategory(item)}
+              />
+            ))}
+          </div>
+        ) : null}
+        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+          {visible.map((system) => (
+            <BuiltinListItem
+              key={system.slug}
+              system={system}
+              selected={system.slug === selected?.slug}
+              onSelect={() => setSelectedSlug(system.slug)}
+            />
+          ))}
+        </div>
+      </aside>
+
+      <section className="min-w-0 flex-1 overflow-y-auto p-4 lg:p-5">
+        {selected ? (
+          <BuiltinSystemDetail slug={selected.slug} />
+        ) : (
+          <Empty className="border py-12">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><Boxes /></EmptyMedia>
+              <EmptyTitle>没有匹配的官方设计体系</EmptyTitle>
+              <EmptyDescription>换一个关键词，或者清除分类筛选。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function BuiltinListItem({
+  system,
+  selected,
+  onSelect,
+}: {
+  system: BuiltinDesignSystem;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      // Selection is carried by weight and text colour, which hover does not
+      // touch, so hovering the selected row cannot visually demote it.
+      className={cn(
+        "flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left transition-colors",
+        selected
+          ? "bg-accent font-medium text-foreground hover:bg-accent"
+          : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+      )}
+    >
+      <span className="w-full truncate text-body">{system.name || system.slug}</span>
+      <span className="w-full truncate text-caption text-muted-foreground">
+        {system.category || "未分类"}
+      </span>
+    </button>
+  );
+}
+
 /**
  * Design system library (DC-054): the workspace-wide view of saved project
  * design systems. It is a reading and pick-up surface only — systems are
@@ -347,11 +590,14 @@ export function DesignSystemLibrary({
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState("");
 
+  // The official scope is served by the bundled catalogue, so its count comes
+  // from there rather than from the workspace's saved systems.
+  const { data: builtinSystems = [] } = useQuery(builtinDesignSystemListOptions(wsId));
   const scopeCounts = useMemo(() => {
-    const counts: Record<LibraryScope, number> = { mine: 0, team: 0, official: 0 };
+    const counts: Record<LibraryScope, number> = { mine: 0, team: 0, official: builtinSystems.length };
     for (const entry of entries) counts[scopeOf(entry)] += 1;
     return counts;
-  }, [entries]);
+  }, [builtinSystems.length, entries]);
 
   const scoped = useMemo(
     () => entries.filter((entry) => scopeOf(entry) === scope),
@@ -407,7 +653,9 @@ export function DesignSystemLibrary({
         </div>
       </div>
 
-      {isLoading ? (
+      {scope === "official" ? (
+        <BuiltinSystemsPanel search={search} />
+      ) : isLoading ? (
         <div className="flex flex-col gap-2 px-4 py-2">
           {Array.from({ length: 4 }).map((_, index) => (
             <Skeleton key={index} className="h-12 w-full rounded-lg" />

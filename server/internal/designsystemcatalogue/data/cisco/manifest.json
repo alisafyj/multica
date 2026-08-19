@@ -1,0 +1,6 @@
+{
+  "id": "cisco",
+  "name": "Cisco",
+  "category": "Backend & Data",
+  "description": "Bundled Open Design package for Cisco, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

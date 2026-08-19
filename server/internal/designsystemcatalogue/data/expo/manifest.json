@@ -1,0 +1,6 @@
+{
+  "id": "expo",
+  "name": "Expo",
+  "category": "Developer Tools",
+  "description": "Bundled Open Design package for Expo, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

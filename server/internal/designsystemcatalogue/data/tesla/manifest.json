@@ -1,0 +1,6 @@
+{
+  "id": "tesla",
+  "name": "Tesla",
+  "category": "Automotive",
+  "description": "Bundled Open Design package for Tesla, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

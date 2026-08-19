@@ -1,0 +1,6 @@
+{
+  "id": "ollama",
+  "name": "Ollama",
+  "category": "AI & LLM",
+  "description": "Bundled Open Design package for Ollama, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

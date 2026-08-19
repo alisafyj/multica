@@ -1,0 +1,6 @@
+{
+  "id": "clickhouse",
+  "name": "ClickHouse",
+  "category": "Backend & Data",
+  "description": "Bundled Open Design package for ClickHouse, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

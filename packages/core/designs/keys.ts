@@ -33,6 +33,10 @@ export const designKeys = {
   // The community catalogue mixes built-in recipes with the workspace's own,
   // so it is workspace-scoped even though most rows are global (DC-041).
   scenarioRecipes: (wsId: string) => ["designs", wsId, "scenario-recipes"] as const,
+  // Bundled built-in systems, kept apart from projectDesignSystem* keys so a
+  // read-only catalogue entry never shares a cache slot with a saved system.
+  builtinDesignSystems: (wsId: string) => ["designs", wsId, "builtin-design-systems"] as const,
+  builtinDesignSystem: (wsId: string, slug: string) => ["designs", wsId, "builtin-design-systems", slug] as const,
   drafts: (wsId: string) => ["designs", wsId, "drafts"] as const,
   draft: (wsId: string, id: string) => ["designs", wsId, "drafts", id] as const,
   repoAnalyses: (wsId: string, projectId: string) => ["designs", wsId, "repo-analyses", projectId] as const,

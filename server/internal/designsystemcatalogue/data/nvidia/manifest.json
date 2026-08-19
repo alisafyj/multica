@@ -1,0 +1,6 @@
+{
+  "id": "nvidia",
+  "name": "NVIDIA",
+  "category": "Media & Consumer",
+  "description": "Bundled Open Design package for NVIDIA, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

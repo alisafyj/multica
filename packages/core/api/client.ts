@@ -254,6 +254,8 @@ import type {
   ListDesignRepoAnalysesResponse,
   ListDesignRestoreMappingsResponse,
   ListDesignRestoreTasksResponse,
+  BuiltinDesignSystemDetail,
+  ListBuiltinDesignSystemsResponse,
   ListDesignScenarioRecipesResponse,
   ListDesignSystemProfilesResponse,
   ListDesignTemplatesResponse,
@@ -515,6 +517,10 @@ import {
   ListDesignDeliveriesResponseSchema,
   ListDesignDocumentsResponseSchema,
   ListDesignDraftsResponseSchema,
+  BuiltinDesignSystemDetailSchema,
+  ListBuiltinDesignSystemsResponseSchema,
+  EMPTY_BUILTIN_DESIGN_SYSTEM_DETAIL,
+  EMPTY_LIST_BUILTIN_DESIGN_SYSTEMS_RESPONSE,
   ListDesignScenarioRecipesResponseSchema,
   ListDesignSystemProfilesResponseSchema,
   ListDesignRestoreTasksResponseSchema,
@@ -4046,6 +4052,28 @@ export class ApiClient {
   // Community catalogue behind the design centre's 社区 tab (DC-041 / DC-048).
   // Published recipes visible to this workspace: everything built in, plus the
   // workspace's own, which already shadow same-slug built-ins server-side.
+  // Built-in design systems (the library's 官方 scope). Bundled with the
+  // server and identical for every workspace, so neither call is scoped.
+  async listBuiltinDesignSystems(): Promise<ListBuiltinDesignSystemsResponse> {
+    const raw = await this.fetch<unknown>("/api/design-systems/builtin");
+    return parseWithFallback(
+      raw,
+      ListBuiltinDesignSystemsResponseSchema,
+      EMPTY_LIST_BUILTIN_DESIGN_SYSTEMS_RESPONSE,
+      { endpoint: "GET /api/design-systems/builtin" },
+    );
+  }
+
+  async getBuiltinDesignSystem(slug: string): Promise<BuiltinDesignSystemDetail> {
+    const raw = await this.fetch<unknown>(`/api/design-systems/builtin/${encodeURIComponent(slug)}`);
+    return parseWithFallback(
+      raw,
+      BuiltinDesignSystemDetailSchema,
+      { ...EMPTY_BUILTIN_DESIGN_SYSTEM_DETAIL, slug },
+      { endpoint: "GET /api/design-systems/builtin/{slug}" },
+    );
+  }
+
   async listDesignScenarioRecipes(): Promise<ListDesignScenarioRecipesResponse> {
     const raw = await this.fetch<unknown>("/api/design-recipes");
     return parseWithFallback(

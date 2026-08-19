@@ -1,0 +1,6 @@
+{
+  "id": "github",
+  "name": "GitHub",
+  "category": "Developer Tools",
+  "description": "Bundled Open Design package for GitHub, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

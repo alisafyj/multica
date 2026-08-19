@@ -1,0 +1,6 @@
+{
+  "id": "huggingface",
+  "name": "Hugging Face",
+  "category": "AI & LLM",
+  "description": "Bundled Open Design package for Hugging Face, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

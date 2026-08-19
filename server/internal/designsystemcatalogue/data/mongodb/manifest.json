@@ -1,0 +1,6 @@
+{
+  "id": "mongodb",
+  "name": "MongoDB",
+  "category": "Backend & Data",
+  "description": "Bundled Open Design package for MongoDB, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

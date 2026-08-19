@@ -1,0 +1,6 @@
+{
+  "id": "bmw",
+  "name": "BMW",
+  "category": "Automotive",
+  "description": "Bundled Open Design package for BMW, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

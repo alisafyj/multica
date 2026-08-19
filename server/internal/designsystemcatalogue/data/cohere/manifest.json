@@ -1,0 +1,6 @@
+{
+  "id": "cohere",
+  "name": "Cohere",
+  "category": "AI & LLM",
+  "description": "Bundled Open Design package for Cohere, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

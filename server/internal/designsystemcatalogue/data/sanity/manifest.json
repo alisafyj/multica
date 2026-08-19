@@ -1,0 +1,6 @@
+{
+  "id": "sanity",
+  "name": "Sanity",
+  "category": "Backend & Data",
+  "description": "Bundled Open Design package for Sanity, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

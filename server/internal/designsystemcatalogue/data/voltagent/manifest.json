@@ -1,0 +1,6 @@
+{
+  "id": "voltagent",
+  "name": "VoltAgent",
+  "category": "AI & LLM",
+  "description": "Bundled Open Design package for VoltAgent, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

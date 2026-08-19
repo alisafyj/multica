@@ -1,0 +1,6 @@
+{
+  "id": "hashicorp",
+  "name": "HashiCorp",
+  "category": "Backend & Data",
+  "description": "Bundled Open Design package for HashiCorp, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

@@ -1,0 +1,6 @@
+{
+  "id": "supabase",
+  "name": "Supabase",
+  "category": "Backend & Data",
+  "description": "Bundled Open Design package for Supabase, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

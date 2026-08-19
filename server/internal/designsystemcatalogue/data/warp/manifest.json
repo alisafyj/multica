@@ -1,0 +1,6 @@
+{
+  "id": "warp",
+  "name": "Warp",
+  "category": "Developer Tools",
+  "description": "Bundled Open Design package for Warp, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

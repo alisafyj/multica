@@ -1,0 +1,6 @@
+{
+  "id": "openai",
+  "name": "OpenAI",
+  "category": "AI & LLM",
+  "description": "Bundled Open Design package for OpenAI, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

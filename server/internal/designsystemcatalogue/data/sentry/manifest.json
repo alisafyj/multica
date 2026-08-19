@@ -1,0 +1,6 @@
+{
+  "id": "sentry",
+  "name": "Sentry",
+  "category": "Backend & Data",
+  "description": "Bundled Open Design package for Sentry, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}

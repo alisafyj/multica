@@ -2898,3 +2898,55 @@ describe("ApiClient workspace MCP servers", () => {
     expect(init.method).toBe("DELETE");
   });
 });
+
+describe("ApiClient built-in design systems", () => {
+  it("lists the bundled catalogue", async () => {
+    const entry = { slug: "apple", name: "Apple", category: "Media & Consumer", description: "Bundled package." };
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ design_systems: [entry] }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new ApiClient("https://api.example.test").listBuiltinDesignSystems())
+      .resolves.toEqual({ design_systems: [expect.objectContaining(entry)] });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.example.test/api/design-systems/builtin");
+  });
+
+  // A card without a slug cannot be opened, so it is dropped rather than
+  // rendered; everything else degrades to a string.
+  it("drops slugless rows and degrades the rest", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        design_systems: [
+          { name: "No slug" },
+          { slug: "ok", name: 42, category: null },
+        ],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    ));
+    const result = await new ApiClient("https://api.example.test").listBuiltinDesignSystems();
+    expect(result.design_systems).toEqual([
+      expect.objectContaining({ slug: "ok", name: "", category: "" }),
+    ]);
+  });
+
+  it("falls back to an empty catalogue when the payload is not a list", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ design_systems: "nope" }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }),
+    ));
+    await expect(new ApiClient("https://api.example.test").listBuiltinDesignSystems())
+      .resolves.toEqual({ design_systems: [] });
+  });
+
+  it("keeps the requested slug when a detail response is malformed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ tokens_css: 7 }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }),
+    ));
+    await expect(new ApiClient("https://api.example.test").getBuiltinDesignSystem("apple"))
+      .resolves.toMatchObject({ slug: "apple", tokens_css: "", design_markdown: "" });
+  });
+});

@@ -1,0 +1,6 @@
+{
+  "id": "posthog",
+  "name": "PostHog",
+  "category": "Backend & Data",
+  "description": "Bundled Open Design package for PostHog, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+}
