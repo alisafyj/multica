@@ -31,6 +31,7 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { ReadonlyContent } from "../editor";
 import { DesignFilterPill } from "./design-filter-pill";
+import { DesignFilterSelect } from "./design-filter-select";
 import { PLATFORM_OPTIONS } from "./design-task-composer";
 
 /**
@@ -620,26 +621,20 @@ function BuiltinSystemsPanel({ search }: { search: string }) {
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
       <aside className="flex shrink-0 flex-col overflow-hidden border-b lg:w-72 lg:border-b-0 lg:border-r">
         {categories.length > 1 ? (
-          <div
-            role="group"
-            aria-label="官方设计体系分类"
-            className="flex shrink-0 flex-wrap items-center gap-1.5 px-3 py-2.5"
-          >
-            <DesignFilterPill
-              label="全部分类"
-              count={systems.length}
-              selected={activeCategory === ALL_CATEGORIES}
-              onClick={() => setCategory(ALL_CATEGORIES)}
+          <div className="shrink-0 px-3 py-2.5">
+            <DesignFilterSelect
+              label="官方设计体系分类"
+              value={activeCategory}
+              allValue={ALL_CATEGORIES}
+              allLabel="全部分类"
+              allCount={systems.length}
+              options={categories.map((item) => ({
+                value: item,
+                label: item,
+                count: systems.filter((system) => system.category === item).length,
+              }))}
+              onChange={setCategory}
             />
-            {categories.map((item) => (
-              <DesignFilterPill
-                key={item}
-                label={item}
-                count={systems.filter((system) => system.category === item).length}
-                selected={activeCategory === item}
-                onClick={() => setCategory(item)}
-              />
-            ))}
           </div>
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">
@@ -814,26 +809,20 @@ export function DesignSystemLibrary({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
           <aside className="flex shrink-0 flex-col overflow-hidden border-b lg:w-72 lg:border-b-0 lg:border-r">
             {platforms.length > 1 ? (
-              <div
-                role="group"
-                aria-label="设计体系分类"
-                className="flex shrink-0 flex-wrap items-center gap-1.5 px-3 py-2.5"
-              >
-                <DesignFilterPill
-                  label="全部分类"
-                  count={scoped.length}
-                  selected={activePlatform === ALL_PLATFORMS}
-                  onClick={() => setPlatform(ALL_PLATFORMS)}
+              <div className="shrink-0 px-3 py-2.5">
+                <DesignFilterSelect
+                  label="设计体系分类"
+                  value={activePlatform}
+                  allValue={ALL_PLATFORMS}
+                  allLabel="全部分类"
+                  allCount={scoped.length}
+                  options={platforms.map((item) => ({
+                    value: item,
+                    label: platformLabel(item),
+                    count: scoped.filter((entry) => entry.platform === item).length,
+                  }))}
+                  onChange={setPlatform}
                 />
-                {platforms.map((item) => (
-                  <DesignFilterPill
-                    key={item || "unlabelled"}
-                    label={platformLabel(item)}
-                    count={scoped.filter((entry) => entry.platform === item).length}
-                    selected={activePlatform === item}
-                    onClick={() => setPlatform(item)}
-                  />
-                ))}
               </div>
             ) : null}
             <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">

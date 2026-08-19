@@ -200,6 +200,24 @@ describe("DesignSystemLibrary", () => {
     expect(screen.queryByTitle("Stripe 展示")).not.toBeInTheDocument();
   });
 
+  it("filters the official catalogue by category from a dropdown", async () => {
+    renderLibrary();
+    await userEvent.click(await screen.findByRole("button", { name: /官方/ }));
+    expect(await screen.findByRole("heading", { name: "Apple" })).toBeInTheDocument();
+
+    // Twenty-odd categories as pills buried the list; a select keeps the
+    // list in view. The trigger carries the active label and its count.
+    const select = screen.getByRole("combobox", { name: "官方设计体系分类" });
+    expect(select.textContent).toContain("全部分类");
+    expect(select.textContent).toContain("2");
+    await userEvent.click(select);
+    await userEvent.click(await screen.findByRole("option", { name: /金融科技/ }));
+
+    expect(screen.getByRole("combobox", { name: "官方设计体系分类" }).textContent).toContain("金融科技");
+    expect(screen.queryByRole("button", { name: /Apple/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Stripe/ })).toBeInTheDocument();
+  });
+
   it("opens the first saved system and shows its own token sections", async () => {
     renderLibrary();
 
