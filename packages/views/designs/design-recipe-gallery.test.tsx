@@ -21,7 +21,7 @@ const {
 }));
 
 vi.mock("@multica/core/api", () => ({
-  api: { createDesignDocument, listAgents, listDesignScenarioRecipes, listProjects },
+  api: { createDesignDocument, listAgents, listDesignScenarioRecipes, listProjects, getBaseUrl: () => "http://api.test" },
 }));
 
 vi.mock("@multica/core/hooks", () => ({
@@ -273,6 +273,37 @@ describe("DesignRecipeGallery", () => {
     expect(images[0]).toHaveAttribute("src", "/media/recipes/a.png");
     // The card without a preview still states what it is.
     expect(screen.getAllByText("业务系统 · 后台").length).toBeGreaterThan(0);
+  });
+
+  it("frames a built-in HTML cover from the preview directory URL, scripts on, origin off", async () => {
+    listDesignScenarioRecipes.mockResolvedValue({
+      recipes: [
+        recipe({ slug: "deck one", title: "季度路演", mode: "deck", preview_kind: "html" }),
+        recipe({ slug: "poster-1", title: "海报", mode: "image", preview_kind: "poster" }),
+      ],
+    });
+    renderGallery();
+
+    expect(await screen.findByText("季度路演")).toBeInTheDocument();
+    const frame = document.body.querySelector("iframe");
+    expect(frame).not.toBeNull();
+    // Trailing slash: `assets/deck-stage.js` inside the example must resolve
+    // under the same route, and the slug is URL-encoded, not pasted.
+    expect(frame).toHaveAttribute("src", "http://api.test/api/design-recipes/deck%20one/preview/");
+    // Scripts run (decks and WebGL covers need them); the origin stays opaque
+    // so the example cannot read this app's storage.
+    expect(frame).toHaveAttribute("sandbox", "allow-scripts");
+    expect(frame?.getAttribute("sandbox")).not.toContain("allow-same-origin");
+    expect(frame).toHaveAttribute("referrerpolicy", "no-referrer");
+    // The poster kind is a plain image from the same directory URL.
+    const modes = screen.getByRole("group", { name: "产物形态" });
+    await userEvent.setup().click(within(modes).getByRole("button", { name: /图片/ }));
+    expect(await screen.findByText("海报")).toBeInTheDocument();
+    expect(document.body.querySelector("iframe")).toBeNull();
+    expect(document.body.querySelector("img")).toHaveAttribute(
+      "src",
+      "http://api.test/api/design-recipes/poster-1/preview/",
+    );
   });
 
   it("keeps the brief in the dialog when the server rejects the task", async () => {

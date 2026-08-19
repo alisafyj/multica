@@ -7,10 +7,16 @@
 // design-system catalogue carries its packages — embedded, read-only, keyed by
 // the recipe slug — so a cover is a code change with a diff rather than an
 // upload into object storage that could drift from the seed row it belongs to.
+//
+// An example may lean on files beside it — a deck runtime in `assets/`, a
+// stylesheet — referenced by relative path. Those travel with it under the
+// same relative paths, so the document is served from a directory URL and the
+// browser resolves them the way the author expected.
 package designrecipepreview
 
 import (
 	"embed"
+	"errors"
 	"io/fs"
 	"path"
 	"strings"
@@ -113,12 +119,92 @@ func Get(slug string) (Preview, bool, error) {
 	if err != nil {
 		return Preview{}, false, err
 	}
-	ct := "image/png"
-	switch path.Ext(e.poster) {
-	case ".jpg", ".jpeg":
-		ct = "image/jpeg"
-	case ".webp":
-		ct = "image/webp"
+	return Preview{Kind: KindPoster, ContentType: contentTypeFor(e.poster), Body: body}, true, nil
+}
+
+// Asset is a file an example references beside itself.
+type Asset struct {
+	ContentType string
+	Body        []byte
+}
+
+// GetAsset returns the file at rel inside a slug's bundle. ok=false when the
+// slug has no cover or the file is absent — the caller answers 404. rel is a
+// slash path as the browser resolved it against the document URL; anything
+// that is not a plain descending path (empty, absolute, `..`, or a bare
+// example.html — that is the document, served by Get) is refused rather than
+// cleaned, so a crafted URL cannot reach a neighbouring slug's files.
+func GetAsset(slug, rel string) (Asset, bool, error) {
+	once.Do(load)
+	if _, ok := index[strings.TrimSpace(slug)]; !ok {
+		return Asset{}, false, nil
 	}
-	return Preview{Kind: KindPoster, ContentType: ct, Body: body}, true, nil
+	if rel == "" || rel == "example.html" || !fs.ValidPath(rel) || rel != path.Clean(rel) {
+		return Asset{}, false, nil
+	}
+	for _, segment := range strings.Split(rel, "/") {
+		if segment == ".." || segment == "." || segment == "" {
+			return Asset{}, false, nil
+		}
+	}
+	body, err := files.ReadFile(path.Join("data", slug, rel))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return Asset{}, false, nil
+		}
+		// embed.FS reports a directory read as an error too; a directory is
+		// not an asset.
+		return Asset{}, false, nil
+	}
+	return Asset{ContentType: contentTypeFor(rel), Body: body}, true, nil
+}
+
+// contentTypeFor picks the media type from the extension. Bundled files are
+// authored, not uploaded, so the extension is trusted; unknown ones are served
+// as bytes and the nosniff header keeps the browser from guessing.
+func contentTypeFor(name string) string {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".html", ".htm":
+		return "text/html; charset=utf-8"
+	case ".js", ".mjs":
+		return "text/javascript; charset=utf-8"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".json":
+		return "application/json; charset=utf-8"
+	case ".svg":
+		return "image/svg+xml"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	case ".avif":
+		return "image/avif"
+	case ".ico":
+		return "image/x-icon"
+	case ".woff":
+		return "font/woff"
+	case ".woff2":
+		return "font/woff2"
+	case ".ttf":
+		return "font/ttf"
+	case ".otf":
+		return "font/otf"
+	case ".mp4":
+		return "video/mp4"
+	case ".webm":
+		return "video/webm"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".wav":
+		return "audio/wav"
+	case ".ogg":
+		return "audio/ogg"
+	default:
+		return "application/octet-stream"
+	}
 }

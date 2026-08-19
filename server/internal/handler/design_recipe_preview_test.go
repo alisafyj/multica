@@ -66,6 +66,83 @@ func TestGetDesignRecipePreviewRejectsUnknownAndTraversal(t *testing.T) {
 	}
 }
 
+// A deck example loads its runtime from `assets/deck-stage.js` beside it. The
+// gallery frames the document at `/preview/`, so that relative path lands on
+// the wildcard route, which must hand back the bundled file with the type
+// the browser needs to run it — and nothing outside the slug's own bundle.
+func TestGetDesignRecipePreviewServesBundledSiblingFiles(t *testing.T) {
+	const slug = "html-ppt-zhangzara-pin-and-paper"
+	if designrecipepreview.KindFor(slug) != designrecipepreview.KindHTML {
+		t.Skip("deck example not bundled")
+	}
+	get := func(rel string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/design-recipes/"+slug+"/preview/"+rel, nil)
+		testHandler.GetDesignRecipePreview(w, withURLParams(req, "slug", slug, "*", rel))
+		return w
+	}
+	for rel, wantType := range map[string]string{
+		"assets/deck-stage.js": "text/javascript; charset=utf-8",
+		"assets/styles.css":    "text/css; charset=utf-8",
+	} {
+		w := get(rel)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s → %d", rel, w.Code)
+		}
+		if got := w.Header().Get("Content-Type"); got != wantType {
+			t.Fatalf("%s content-type = %q, want %q", rel, got, wantType)
+		}
+		if w.Header().Get("X-Content-Type-Options") != "nosniff" {
+			t.Fatalf("%s missing nosniff", rel)
+		}
+		if w.Body.Len() == 0 {
+			t.Fatalf("%s is empty", rel)
+		}
+	}
+	// An empty wildcard is the document itself — the trailing-slash URL the
+	// gallery frames.
+	if w := get(""); w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("empty wildcard → %d %q, want the HTML document", w.Code, w.Header().Get("Content-Type"))
+	}
+	for _, rel := range []string{
+		"assets/missing.js",
+		"../blog-post/example.html",
+		"assets/../../blog-post/example.html",
+		"/assets/deck-stage.js",
+		"assets//deck-stage.js",
+		"example.html", // the document has its own URL; not addressable as an asset
+	} {
+		if w := get(rel); w.Code != http.StatusNotFound {
+			t.Fatalf("%q → %d, want 404", rel, w.Code)
+		}
+	}
+}
+
+// The document's CSP must admit the bundled siblings ('self') and still deny
+// every network source: that is what lets a deck runtime load without giving
+// an example a way out.
+func TestGetDesignRecipePreviewCSPAdmitsOnlyBundledAndInlineSources(t *testing.T) {
+	slug := firstPreviewSlug(t, designrecipepreview.KindHTML)
+	w := httptest.NewRecorder()
+	testHandler.GetDesignRecipePreview(w,
+		withURLParam(httptest.NewRequest(http.MethodGet, "/api/design-recipes/"+slug+"/preview", nil), "slug", slug))
+	csp := w.Header().Get("Content-Security-Policy")
+	for _, must := range []string{
+		"script-src 'self' 'unsafe-inline';",
+		"style-src 'self' 'unsafe-inline';",
+		"img-src 'self' data: blob:;",
+		"worker-src blob:;",
+		"connect-src 'none';",
+	} {
+		if !strings.Contains(csp, must) {
+			t.Fatalf("CSP %q lacks %q", csp, must)
+		}
+	}
+	if strings.Contains(csp, "https:") || strings.Contains(csp, "http:") {
+		t.Fatalf("CSP %q admits a network scheme", csp)
+	}
+}
+
 // The list stamps each built-in with the cover kind it actually has, so the
 // gallery decides frame-vs-image from a fact rather than a fetch.
 func TestListDesignScenarioRecipesStampsPreviewKind(t *testing.T) {

@@ -175,16 +175,23 @@ function uniqueInOrder(values: string[]): string[] {
  * poster. A recipe with neither gets a composed tile that states what it is,
  * never an empty frame that reads as a failed load.
  *
- * The frame is `sandbox` with no `allow-same-origin`, so the example runs as
- * an opaque origin: it cannot read this app's cookies or storage, and the
- * server pairs it with a CSP that denies it the network. `pointer-events-none`
- * keeps the frame from swallowing the card's own click.
+ * The frame is `sandbox="allow-scripts"` with no `allow-same-origin`, as Open
+ * Design frames it: scripts must run — a deck is invisible until its
+ * `<deck-stage>` runtime defines the element, and the WebGL and HyperFrames
+ * examples paint with one — but the example runs as an opaque origin, so it
+ * cannot read this app's cookies or storage, and the server pairs it with a
+ * CSP that denies it the network. `pointer-events-none` keeps the frame from
+ * swallowing the card's own click.
+ *
+ * The URL ends in a slash on purpose: the example may reference files beside
+ * itself (`assets/deck-stage.js`), and only a directory URL resolves them
+ * under the same route.
  */
 function RecipePreview({ recipe }: { recipe: DesignScenarioRecipe }) {
   const { icon: ModeIcon, label: modeLabel } = modeVisual(recipe.mode);
   const facets = [recipe.category, recipe.subcategory].filter(Boolean).join(" · ");
   const previewUrl = recipe.preview_kind
-    ? `${api.getBaseUrl()}/api/design-recipes/${encodeURIComponent(recipe.slug)}/preview`
+    ? `${api.getBaseUrl()}/api/design-recipes/${encodeURIComponent(recipe.slug)}/preview/`
     : "";
   return (
     <div className="relative aspect-[16/10] shrink-0 overflow-hidden border-b bg-muted/40">
@@ -199,7 +206,7 @@ function RecipePreview({ recipe }: { recipe: DesignScenarioRecipe }) {
             aria-hidden="true"
             tabIndex={-1}
             loading="lazy"
-            sandbox=""
+            sandbox="allow-scripts"
             referrerPolicy="no-referrer"
             className="h-full w-full border-0 bg-background"
           />
