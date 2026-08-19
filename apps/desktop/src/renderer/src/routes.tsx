@@ -26,7 +26,7 @@ import { DashboardPage } from "@multica/views/dashboard";
 import { AutopilotsPage } from "@multica/views/autopilots/components";
 import { MyIssuesPage } from "@multica/views/my-issues";
 import { SkillsPage } from "@multica/views/skills";
-import { DesignDraftPage, DesignFilePage, DesignFramePage, DesignRestoreTaskPage, DesignsPage, ProjectDesignSystemPage } from "@multica/views/designs";
+import { DesignDocumentPage, DesignDraftPage, DesignFilePage, DesignFramePage, DesignRestoreTaskPage, DesignsPage, ProjectDesignSystemPage } from "@multica/views/designs";
 import {
   TestCaseDetail,
   TestCasesPage,
@@ -113,6 +113,11 @@ function DesktopDesignFrameRoute() {
 function DesktopDesignDraftRoute() {
   const { draftId = "" } = useParams();
   return <DesignDraftPage draftId={draftId} />;
+}
+
+function DesktopDesignDocumentRoute() {
+  const { documentId = "" } = useParams();
+  return <DesignDocumentPage documentId={documentId} />;
 }
 
 function DesktopDesignRestoreTaskRoute() {
@@ -254,6 +259,11 @@ export const appRoutes: RouteObject[] = [
             path: "designs/drafts/:draftId",
             element: <DesktopDesignDraftRoute />,
             handle: { title: "Design Draft" },
+          },
+          {
+            path: "designs/documents/:documentId",
+            element: <DesktopDesignDocumentRoute />,
+            handle: { title: "Design Document" },
           },
           {
             path: "designs/restore-tasks/:taskId",

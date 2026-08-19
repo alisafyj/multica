@@ -81,9 +81,8 @@ function DocumentPreview({ running }: { running: boolean }) {
 }
 
 /**
- * One design document as a card. There is no document detail route yet, so a
- * card either opens the project that owns it or stays inert — it never links
- * somewhere that does not exist.
+ * One design document as a card. `onOpen` takes the user to the document's own
+ * workspace; without it the card is plain content rather than a control.
  */
 export function DesignDocumentCard({
   document,
@@ -133,7 +132,7 @@ export function DesignDocumentCard({
     <button
       type="button"
       onClick={onOpen}
-      title={`在项目「${projectTitle}」的设计稿中查看`}
+      title={projectTitle ? `打开「${projectTitle}」的这份设计稿` : "打开这份设计稿"}
       className={cn(shell, "cursor-pointer transition-colors hover:border-primary/50")}
     >
       {body}

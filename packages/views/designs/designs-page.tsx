@@ -11,7 +11,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { projectResourcesOptions } from "@multica/core/projects";
 import { agentListOptions } from "@multica/core/workspace/queries";
-import type { DesignCatalogTemplate, DesignDraft, DesignFile, DesignFolder, GalleryJsonPatchOperation, Project } from "@multica/core/types";
+import type { DesignCatalogTemplate, DesignDocument, DesignDraft, DesignFile, DesignFolder, GalleryJsonPatchOperation, Project } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@multica/ui/components/ui/dropdown-menu";
@@ -557,6 +557,10 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   // Every recipe in this phase produces a prototype, so the artifact row can
   // filter honestly without inventing a kind the documents do not carry.
   const visibleDocuments = artifactFilter === "slides" ? [] : projectDocuments;
+  const openDocument = (document: DesignDocument) => {
+    navigation.push(paths.designDocumentDetail(document.id));
+  };
+
   const openProjectTab = (projectId: string) => {
     setOpenProjectIds((current) => current.includes(projectId) ? current : [...current, projectId]);
     setActiveWorkspaceTabId(projectId);
@@ -689,12 +693,12 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
               </div>
 
               <TabsContent value="create" className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                {/* Creating a document lands the user in that project's tab,
-                    where the task and its output live. */}
+                {/* Creating a document opens its own workspace, where the run
+                    is watched and its output previewed, adjusted and saved. */}
                 <DesignTaskComposer
-                  onCreated={(document) => openProjectTab(document.project_id)}
+                  onCreated={openDocument}
                   onBrowseRecipes={() => setHomePanel("community")}
-                  onOpenProject={openProjectTab}
+                  onOpenDocument={openDocument}
                   recipeSelection={recipeSelection}
                 />
               </TabsContent>
@@ -705,7 +709,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                     setRecipeSelection((current) => ({ token: (current?.token ?? 0) + 1, recipe }));
                     setHomePanel("create");
                   }}
-                  onStarted={(document) => openProjectTab(document.project_id)}
+                  onStarted={openDocument}
                 />
               </TabsContent>
 
@@ -807,6 +811,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                         key={document.id}
                         document={document}
                         projectTitle={selectedProject?.title ?? ""}
+                        onOpen={() => openDocument(document)}
                       />
                     ))}
                   </div>

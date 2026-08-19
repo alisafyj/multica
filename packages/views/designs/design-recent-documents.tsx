@@ -28,10 +28,10 @@ function updatedAtOf(document: DesignDocument): number {
  * or usage numbers for a run the server has not reported.
  */
 export function DesignRecentDocuments({
-  onOpenProject,
+  onOpenDocument,
 }: {
-  /** Opens the project that owns a document, where its design files live. */
-  onOpenProject?: (projectId: string) => void;
+  /** Opens a document's own workspace. */
+  onOpenDocument?: (document: DesignDocument) => void;
 }) {
   const wsId = useWorkspaceId();
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
@@ -95,7 +95,7 @@ export function DesignRecentDocuments({
               document={item.document}
               projectTitle={item.projectTitle}
               onOpen={
-                onOpenProject ? () => onOpenProject(item.document.project_id) : undefined
+                onOpenDocument ? () => onOpenDocument(item.document) : undefined
               }
             />
           ))}

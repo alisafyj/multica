@@ -654,7 +654,7 @@ export function PlatformSetting({
 export function DesignTaskComposer({
   onCreated,
   onBrowseRecipes,
-  onOpenProject,
+  onOpenDocument,
   recipeSelection,
 }: {
   /** Called after the server has created the document, never before. */
@@ -662,7 +662,7 @@ export function DesignTaskComposer({
   /** Opens the community gallery. Absent hides the community entry. */
   onBrowseRecipes?: () => void;
   /** Opens a project tab, where that project's design files live. */
-  onOpenProject?: (projectId: string) => void;
+  onOpenDocument?: (document: DesignDocument) => void;
   /** A recipe picked in the community gallery, waiting to be applied. */
   recipeSelection?: DesignRecipeSelection | null;
 }) {
@@ -873,7 +873,7 @@ export function DesignTaskComposer({
         </p>
 
         <DesignExamplePrompts onUse={applyRecipe} onBrowseRecipes={onBrowseRecipes} />
-        <DesignRecentDocuments onOpenProject={onOpenProject} />
+        <DesignRecentDocuments onOpenDocument={onOpenDocument} />
       </div>
     </div>
   );

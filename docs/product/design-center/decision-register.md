@@ -566,6 +566,17 @@ Open Design 的两类预置资源按各自性质分别落地，不共用一套�
 
 设计体系库的「官方」范围因此不再为空，但仍是只读参考：要在项目中使用，仍须在项目的「设计体系」内创建并以其为参考风格，不引入工作区默认体系（DC-052 未被替代）。
 
+### DC-057 Design Document 工作区页面与修订读取契约
+
+- 状态：`confirmed`
+- 日期：2026-08-19
+- 依据：用户 2026-08-18 明确目标——“在 multica 里面使用 OD 完整的首页、社区、设计体系功能，包括 OD 生成设计稿之后的一系列的页面（预览、编辑等）”。此前 A1–A5 只有服务端与卡片，一份 Design Document 在前端没有任何详情、预览、调整、保存入口，卡片注释写着“There is no document detail route yet”。
+- 决策：新增文档工作区路由 `/{slug}/designs/documents/{id}`（web 与 desktop 同时接入），对应 Open Design Studio 生成后的预览与迭代：左栏为需求描述、任务活动、版本时间线与自然语言调整发起器（整份文档或仅当前页面、执行智能体），右栏为原型 iframe（页面切换、适应 / 桌面 / 移动视口、重新加载、新标签页打开、全屏），顶栏承载保存与放弃草稿。首页发起、社区「直接创建」和所有文档卡片都进入该页面。
+- 契约：`GET /api/design-documents/{id}/revisions`、`GET …/revisions/{revisionId}`（返回 brief / coverage / audit / preview 回执、manifest 的页面 / 流程 / 预览目标，以及 30 分钟有效的预览能力令牌与 `resource_base_path`）、`POST …/revisions/{revisionId}/restore`（草稿指针回退到历史修订，saved 不动，运行中拒绝）。未鉴权文件路由 `/api/design-document-previews/{workspaceId}/{revisionId}/{digest}/{accessToken}/files/*` 沿用设计体系预览的能力令牌模式；HTML 响应的 CSP 与守护进程 Preview 门禁一致（`script-src 'self' 'unsafe-inline'`、`connect-src 'none'`、`sandbox allow-scripts`），`frame-ancestors *` 与社区封面同一理由。`POST …/adjust` 新增可选 `base_revision_id` 守卫，基线已变时返回 409 `base_revision_changed`。
+- 修正：服务端 `designDocumentBindingFromContext` 从未设置 `RevisionID`，而守护进程以任务 id 作为修订身份，两侧绑定不一致导致每一个真实包在 `POST /tasks/{taskId}/design-document/package` 上传时即以 `binding_invalid` 被拒，走不到 Audit 与 Preview——这正是 DC-055 描述的“两侧独立规定、无测试跨越边界”。现服务端与守护进程一致以任务 id 作为修订身份，`TestDesignDocumentBindingMatchesTheDaemonBinding` 跨包断言两侧相等；包契约平台白名单补 `cross_platform`（此前跨端文档在收集阶段即失败）。
+- 边界：回退只移动草稿指针，不重新形成 draft（DC-034 不松动）；tweaks 与 critique（DC-050）尚未接入工作区；文档删除、重命名与归档导出仍未提供。
+- 证据：`server/internal/handler/design_document_revision_test.go`、`design_document_binding_test.go`、`cmd/server/router_design_document_test.go`、`packages/views/designs/design-document-page.test.tsx`、`packages/core/api/client.test.ts`、`packages/core/api/schemas.test.ts`、`pnpm typecheck` 通过；真实智能体端到端仍待 A6 人工验收。
+
 ## 下一步
 
 新 Phase A 的首页入口、`multica.design-document/v1`、不可变 revisions、draft/saved、任务内仓库 Grounding、持续工作空间、现有本地浏览器强制门禁、任务（Issue）可选关联和 A1 至 A6 内部子切片均已确认。用户复核书面规格后，只为 A1 至 A6 编写详细实施计划；计划必须按 DC-040 限定每个子切片的产品、代码、API 和数据范围，并携带退役账本与真实验证门禁。不得恢复独立 Phase B、迁移 `feature/fengchen-fixed-v2`、继续 Open Design Worker/Runtime，或把 Slice B 至 E 混入 Phase A。

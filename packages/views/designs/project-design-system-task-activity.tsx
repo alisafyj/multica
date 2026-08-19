@@ -7,7 +7,7 @@ import { api } from "@multica/core/api";
 import { taskMessagesOptions } from "@multica/core/chat/queries";
 import { designKeys } from "@multica/core/designs/keys";
 import { useWorkspaceId } from "@multica/core/hooks";
-import type { Agent, ProjectDesignSystem, TaskMessagePayload } from "@multica/core/types";
+import type { Agent, ProjectDesignSystem, ProjectDesignSystemTask, TaskMessagePayload } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 
@@ -74,18 +74,26 @@ function newestActivityAt(
   ));
 }
 
-export function ProjectDesignSystemTaskActivity({
-  system,
+/**
+ * Live evidence of one design task: status, agent, start time, elapsed time,
+ * last activity and a stop control. Shared by the project design system and
+ * the design document workspaces — both run the same kind of task and both
+ * must show only what real execution events prove (no invented progress).
+ *
+ * `onStopped` runs after a stop request settles so the owner can refresh the
+ * entity the task belongs to.
+ */
+export function DesignTaskActivity({
+  task,
   agents,
   compact = false,
+  onStopped,
 }: {
-  system: ProjectDesignSystem;
+  task: ProjectDesignSystemTask | null | undefined;
   agents: Agent[];
   compact?: boolean;
+  onStopped?: () => Promise<unknown> | void;
 }) {
-  const task = system.active_task;
-  const wsId = useWorkspaceId();
-  const queryClient = useQueryClient();
   const [now, setNow] = useState(() => Date.now());
   const [cancelError, setCancelError] = useState<string | null>(null);
   const { data: messages = [] } = useQuery(taskMessagesOptions(task?.id ?? ""));
@@ -104,17 +112,7 @@ export function ProjectDesignSystemTaskActivity({
       setCancelError(error instanceof Error ? error.message : "停止任务失败，请稍后重试。");
     },
     onSettled: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({
-          // Every repository scope of this project, because a repository
-          // without its own system reads the project-level one (DC-052).
-          queryKey: designKeys.projectDesignSystemProjectScopes(wsId, system.project_id),
-        }),
-        queryClient.invalidateQueries({
-          queryKey: designKeys.projectDesignSystem(wsId, system.id),
-          exact: true,
-        }),
-      ]);
+      await onStopped?.();
     },
   });
 
@@ -203,5 +201,37 @@ export function ProjectDesignSystemTaskActivity({
         </Button>
       ) : null}
     </section>
+  );
+}
+
+/** The project design system's task, refreshing every scope of its project on stop (DC-052). */
+export function ProjectDesignSystemTaskActivity({
+  system,
+  agents,
+  compact = false,
+}: {
+  system: ProjectDesignSystem;
+  agents: Agent[];
+  compact?: boolean;
+}) {
+  const wsId = useWorkspaceId();
+  const queryClient = useQueryClient();
+  return (
+    <DesignTaskActivity
+      task={system.active_task}
+      agents={agents}
+      compact={compact}
+      onStopped={() => Promise.all([
+        queryClient.invalidateQueries({
+          // Every repository scope of this project, because a repository
+          // without its own system reads the project-level one (DC-052).
+          queryKey: designKeys.projectDesignSystemProjectScopes(wsId, system.project_id),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: designKeys.projectDesignSystem(wsId, system.id),
+          exact: true,
+        }),
+      ])}
+    />
   );
 }
