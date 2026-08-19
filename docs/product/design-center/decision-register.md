@@ -577,6 +577,19 @@ Open Design 的两类预置资源按各自性质分别落地，不共用一套�
 - 边界：回退只移动草稿指针，不重新形成 draft（DC-034 不松动）；tweaks 与 critique（DC-050）尚未接入工作区；文档删除、重命名与归档导出仍未提供。
 - 证据：`server/internal/handler/design_document_revision_test.go`、`design_document_binding_test.go`、`cmd/server/router_design_document_test.go`、`packages/views/designs/design-document-page.test.tsx`、`packages/core/api/client.test.ts`、`packages/core/api/schemas.test.ts`、`pnpm typecheck` 通过；真实智能体端到端仍待 A6 人工验收。
 
+### DC-058 三 tab 对齐 Open Design 的补齐项与 tweaks / critique 落地方式
+
+- 状态：`confirmed`
+- 日期：2026-08-19
+- 依据：用户目标“在 multica 里面使用 OD 完整的首页、社区、设计体系功能”，以及 DC-050（tweaks 与 critique 进入产品）。
+- 设计体系 tab：官方体系详情以 Open Design 自带的 `system/kit.html`（含深色变体）为封面展示，随二进制嵌入并以 bundle 摘要版本化的未鉴权路由 `/api/design-systems/builtin/{slug}/showcase/{digest}/{light|dark}` 提供（CSP 不允许脚本与网络，`frame-ancestors *` 与社区封面同理）；详情按 DESIGN.md 的 `##` 章节逐模块完整展示而非 700 字摘录；字体 Token 类型为 `fontFamily`，字体排版段落恢复渲染；列表行带色板条。
+- 官方体系作为参考风格：项目设计体系创建工作台的参考资料新增「官方设计体系 · 参考风格」，最多 3 个，服务端以 `builtin_design_system` 引用把包内 DESIGN.md 与 tokens.css 内联进冻结的输入快照，prompt 要求智能体采纳其方向、产出项目自己的体系而不复制品牌身份。这是 DC-056“挑选 → 以其为参考风格”的落地，不是复制。
+- 社区 tab：点击卡片封面或标题打开详情弹层——示例全尺寸实时渲染（可交互、可全屏、可新标签页打开）、提示词（可复制）、分面，以及「直接创建 / 填入首页」，对应 Open Design 社区的 PluginDetailsModal。
+- tweaks：按 DC-050 作为约定而非平台 UI——设计文档 prompt 给出 `--accent/--scale/--density/--mode/--motion` 与 `prototype/tweaks.{css,js}` 的包内侧栏约定（只在需求或调整要求时执行，storage 访问必须 try/catch，不得触达 `parent/top`），工作区调整发起器提供「添加调整面板」预设指令，走正常的调整 → Audit → Preview 路径。
+- critique：按 DC-050 作为产物成型前的迭代改进循环——prompt 在写 coverage 之前运行 designer / critic / brand / a11y / copy 五个视角的评审循环（阈值 8，至多 3 轮），记录到可选的 `critique.json`（`multica.design-document-critique/v1`）；包契约接受并严格校验该文件但分数不影响 Audit 结论；修订详情读取该报告，工作区以“设计评审”面板展示末轮分数、结果与未关闭的发现，并标注“这是智能体自己的评审记录，不决定草稿是否成立”。
+- 边界：tweaks 与 critique 的真实产出仍待 A6 真实智能体验收；社区缺少 Open Design 未提供的搜索/排序不在本条范围。
+- 证据：`designsystemcatalogue` 与 `handler/design_system_catalogue_test.go`、`design_recipe_gallery.test.tsx`、`design-system-library.test.tsx`、`designdocument/critique_test.go`、`project_design_system_prompt_contract_test.go`、`design-document-critique.test.tsx`、`project-design-system-create.test.tsx`。
+
 ## 下一步
 
 新 Phase A 的首页入口、`multica.design-document/v1`、不可变 revisions、draft/saved、任务内仓库 Grounding、持续工作空间、现有本地浏览器强制门禁、任务（Issue）可选关联和 A1 至 A6 内部子切片均已确认。用户复核书面规格后，只为 A1 至 A6 编写详细实施计划；计划必须按 DC-040 限定每个子切片的产品、代码、API 和数据范围，并携带退役账本与真实验证门禁。不得恢复独立 Phase B、迁移 `feature/fengchen-fixed-v2`、继续 Open Design Worker/Runtime，或把 Slice B 至 E 混入 Phase A。
