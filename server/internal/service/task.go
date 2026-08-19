@@ -6718,6 +6718,33 @@ func agentToMap(a db.Agent) map[string]any {
 // contract, a design document describes pages built under one.
 const DesignDocumentTaskContextType = "design_document_task"
 
+// DesignDocumentInputSchema identifies the grounding envelope inside a design
+// document task context. The daemon's prepare pass reads it to decide whether
+// to check repositories out for the agent, and the claim refuses a context
+// that is not marked execution-ready.
+const DesignDocumentInputSchema = "multica.design-document-input/v1"
+
+// Repository grounding modes for DesignDocumentTaskInput (DC-053). The daemon
+// checks repositories out and expects the agent's grounding file in pending
+// mode, writes an explicit "not grounded" receipt in unavailable mode, and
+// reuses the pinned receipt an adjustment carries.
+const (
+	DesignDocumentGroundingPending     = "pending"
+	DesignDocumentGroundingUnavailable = "unavailable"
+	DesignDocumentGroundingPinned      = "pinned"
+)
+
+// DesignDocumentTaskInput is the grounding envelope the daemon reads. It is
+// deliberately small: the large blocks (design context, repository receipts)
+// travel in the flat fields of the context and land in their own files.
+type DesignDocumentTaskInput struct {
+	SchemaVersion       string `json:"schema_version"`
+	RepositoryGrounding string `json:"repository_grounding"`
+	// Repository is the validated repository grounding an adjustment is
+	// pinned to. Only set in pinned mode.
+	Repository json.RawMessage `json:"repository,omitempty"`
+}
+
 type DesignDocumentOperation string
 
 const (
@@ -6765,4 +6792,10 @@ type DesignDocumentTaskContext struct {
 	OutputPolicy        json.RawMessage `json:"output_policy"`
 	PackageSchema       string          `json:"package_schema"`
 	InputSnapshotSHA256 string          `json:"input_snapshot_sha256"`
+	// ExecutionReady marks the context complete and claimable. The claim
+	// endpoint refuses a design document task without it, so every context
+	// the handlers enqueue sets it.
+	ExecutionReady bool `json:"execution_ready"`
+	// Input is the grounding envelope the daemon's prepare pass reads.
+	Input DesignDocumentTaskInput `json:"input"`
 }

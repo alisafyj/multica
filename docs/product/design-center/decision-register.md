@@ -590,6 +590,15 @@ Open Design 的两类预置资源按各自性质分别落地，不共用一套�
 - 边界：tweaks 与 critique 的真实产出仍待 A6 真实智能体验收；社区缺少 Open Design 未提供的搜索/排序不在本条范围。
 - 证据：`designsystemcatalogue` 与 `handler/design_system_catalogue_test.go`、`design_recipe_gallery.test.tsx`、`design-system-library.test.tsx`、`designdocument/critique_test.go`、`project_design_system_prompt_contract_test.go`、`design-document-critique.test.tsx`、`project-design-system-create.test.tsx`。
 
+### DC-059 设计文档任务上下文必须可被守护进程领取并声明取证模式
+
+- 状态：`confirmed`
+- 日期：2026-08-19
+- 问题：合并 kyle 的仓库取证引擎后，守护进程与 claim 端点按 `execution_ready: true` 与 `input.repository_grounding`（`pending` / `unavailable` / `pinned`）读取设计文档任务上下文，而服务端 `service.DesignDocumentTaskContext` 从未写这两个字段：claim 对每个设计文档任务返回 409 `error_design_document_context`，任务永远领不走；即便领走，`prepareDesignDocumentGrounding` 也会以 `invalid Design Document grounding context` 阻塞。这与 DC-055 的“两侧独立规定、无测试跨越边界”同源，也是 2026-08-18 那个“生成中一下午”的文档的真实成因之一。
+- 决策：服务端上下文新增 `execution_ready` 与 `input{schema_version, repository_grounding, repository?}`：首次生成选了仓库为 `pending`、未选为 `unavailable`；调整为 `pinned` 并携带一份合法的取证回执（当前为显式 `unavailable` 回执，说明调整不重读仓库、以不可变基线为据）。claim 按 DC-053 只把文档绑定的那一个仓库交给守护进程（未选仓库则不交任何仓库，避免无关仓库不可达导致阻塞）。prompt 按模式说明：`pending` 时告知 checkout 位置并要求写回 `work/repository-grounding.json`（守护进程按 checkout 逐文件校验 SHA-256）；`pinned` 与 `unavailable` 分别给出不得声称读过代码的声明。
+- 边界：取证回执仍只在守护进程本地形成并随 `design_document_grounding` 上报，服务端尚未按修订持久化（需要新的迁移与产品决策）；A6 真实智能体验收仍待完成。
+- 证据：`handler/design_document_binding_test.go`（`TestDesignDocumentContextsAreExecutionReadyWithAGroundingEnvelope`）、`handler/daemon_test.go`（claim 仓库范围）、`daemon/project_design_system_prompt_contract_test.go`（按模式的 prompt）。
+
 ## 下一步
 
 新 Phase A 的首页入口、`multica.design-document/v1`、不可变 revisions、draft/saved、任务内仓库 Grounding、持续工作空间、现有本地浏览器强制门禁、任务（Issue）可选关联和 A1 至 A6 内部子切片均已确认。用户复核书面规格后，只为 A1 至 A6 编写详细实施计划；计划必须按 DC-040 限定每个子切片的产品、代码、API 和数据范围，并携带退役账本与真实验证门禁。不得恢复独立 Phase B、迁移 `feature/fengchen-fixed-v2`、继续 Open Design Worker/Runtime，或把 Slice B 至 E 混入 Phase A。

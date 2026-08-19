@@ -287,6 +287,10 @@ func (h *Handler) designDocumentAdjustTaskContext(
 		}
 	}
 
+	pinnedInput, err := designDocumentPinnedInput()
+	if err != nil {
+		return nil, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
+	}
 	contextJSON, err := json.Marshal(service.DesignDocumentTaskContext{
 		Type:              service.DesignDocumentTaskContextType,
 		Operation:         service.DesignDocumentAdjust,
@@ -317,6 +321,8 @@ func (h *Handler) designDocumentAdjustTaskContext(
 		// one (DC-043); re-deriving it from the stored JSONB would also risk a
 		// different digest for identical inputs.
 		InputSnapshotSHA256: baseRevision.InputSnapshotSha256,
+		ExecutionReady:      true,
+		Input:               pinnedInput,
 	})
 	if err != nil {
 		return nil, projectDesignSystemInternalError("context_failed", "failed to build agent task context")

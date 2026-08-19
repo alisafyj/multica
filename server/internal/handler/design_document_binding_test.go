@@ -111,3 +111,46 @@ func TestDesignDocumentBindingNamesTheTaskAsTheRevision(t *testing.T) {
 		t.Fatalf("test precondition: uuidToString(zero) = %q", uuidToString(zero))
 	}
 }
+
+// The claim refuses a design document context that is not execution-ready, and
+// the daemon's prepare pass reads the input envelope to decide how to ground
+// the run. Both handlers must therefore stamp the context the daemon expects —
+// the other half of the contract tested in TestDesignDocumentBindingMatches…
+func TestDesignDocumentContextsAreExecutionReadyWithAGroundingEnvelope(t *testing.T) {
+	grounded := designDocumentGenerateInput(true)
+	if grounded.SchemaVersion != service.DesignDocumentInputSchema || grounded.RepositoryGrounding != service.DesignDocumentGroundingPending {
+		t.Fatalf("grounded generate input = %+v", grounded)
+	}
+	ungrounded := designDocumentGenerateInput(false)
+	if ungrounded.RepositoryGrounding != service.DesignDocumentGroundingUnavailable || len(ungrounded.Repository) != 0 {
+		t.Fatalf("ungrounded generate input = %+v", ungrounded)
+	}
+	pinned, err := designDocumentPinnedInput()
+	if err != nil || pinned.RepositoryGrounding != service.DesignDocumentGroundingPinned {
+		t.Fatalf("pinned input = %+v (%v)", pinned, err)
+	}
+	// The pinned receipt must be a valid repository grounding, or the daemon
+	// refuses the adjustment before the agent starts.
+	if _, err := designdocument.ValidateRepositoryGrounding(pinned.Repository); err != nil {
+		t.Fatalf("pinned receipt is invalid: %v", err)
+	}
+
+	// And the envelope survives the round trip through the context JSON the
+	// daemon decodes, alongside execution_ready.
+	raw, err := json.Marshal(service.DesignDocumentTaskContext{
+		Type: service.DesignDocumentTaskContextType, Operation: service.DesignDocumentGenerate,
+		ExecutionReady: true, Input: grounded,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		ExecutionReady bool `json:"execution_ready"`
+		Input          struct {
+			RepositoryGrounding string `json:"repository_grounding"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil || !decoded.ExecutionReady || decoded.Input.RepositoryGrounding != "pending" {
+		t.Fatalf("context JSON = %s", raw)
+	}
+}

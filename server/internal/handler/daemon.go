@@ -2961,11 +2961,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// The Design Document protocol owns the prompt and project resources; it is
 	// never an issue-reply/ownership turn even when its input snapshots an Issue.
 	var designDocumentCtx struct {
-		Type           string `json:"type"`
-		WorkspaceID    string `json:"workspace_id"`
-		ProjectID      string `json:"project_id"`
-		AgentID        string `json:"agent_id"`
-		ExecutionReady bool   `json:"execution_ready"`
+		Type              string `json:"type"`
+		WorkspaceID       string `json:"workspace_id"`
+		ProjectID         string `json:"project_id"`
+		ProjectResourceID string `json:"project_resource_id"`
+		AgentID           string `json:"agent_id"`
+		ExecutionReady    bool   `json:"execution_ready"`
 	}
 	if json.Unmarshal(task.Context, &designDocumentCtx) == nil && designDocumentCtx.Type == designDocumentTaskContextType {
 		hasDesignDocument = true
@@ -2982,6 +2983,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		resp.CoalescedCommentIDs = nil
 		resp.CoalescedComments = nil
 		h.populateContextTaskProject(r.Context(), &resp, designDocumentCtx.ProjectID, designDocumentCtx.WorkspaceID)
+		scopeDesignDocumentRepositories(&resp, designDocumentCtx.ProjectResourceID)
 		if runtime.DaemonID.Valid {
 			filtered := resp.ProjectResources[:0]
 			for _, resource := range resp.ProjectResources {
@@ -3240,6 +3242,48 @@ func (h *Handler) populateContextTaskProject(ctx context.Context, resp *AgentTas
 	if len(repos) > 0 {
 		resp.Repos = repos
 	}
+}
+
+// scopeDesignDocumentRepositories narrows a design document claim to the
+// repository the document was created for (DC-053). Grounding is "this one
+// repository": the daemon must neither clone the project's other repositories
+// nor, for a document with no repository attached, prepare any at all — a
+// repository it cannot reach would otherwise block a run that never asked to
+// read code.
+func scopeDesignDocumentRepositories(resp *AgentTaskResponse, projectResourceID string) {
+	projectResourceID = strings.TrimSpace(projectResourceID)
+	if projectResourceID == "" {
+		resp.Repos = nil
+		return
+	}
+	var selectedURL string
+	resources := resp.ProjectResources[:0]
+	for _, resource := range resp.ProjectResources {
+		if resource.ID != projectResourceID {
+			continue
+		}
+		resources = append(resources, resource)
+		if resource.ResourceType == "github_repo" {
+			var payload struct {
+				URL string `json:"url"`
+			}
+			if json.Unmarshal(resource.ResourceRef, &payload) == nil {
+				selectedURL = payload.URL
+			}
+		}
+	}
+	resp.ProjectResources = resources
+	repos := resp.Repos[:0]
+	for _, repo := range resp.Repos {
+		if selectedURL != "" && repo.URL == selectedURL {
+			repos = append(repos, repo)
+		}
+	}
+	if len(repos) == 0 {
+		resp.Repos = nil
+		return
+	}
+	resp.Repos = repos
 }
 
 // ClaimTaskByRuntime atomically claims the next queued task for a runtime.

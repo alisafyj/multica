@@ -262,6 +262,24 @@ func designDocumentPromptTask(t *testing.T, projectResourceID string) Task {
 	return Task{DesignDocumentContext: raw}
 }
 
+// designDocumentPromptTaskWithInput stamps the grounding envelope the server
+// writes (input.repository_grounding), the way the handlers do.
+func designDocumentPromptTaskWithInput(t *testing.T, grounding string) Task {
+	t.Helper()
+	task := designDocumentPromptTask(t, "55555555-5555-5555-5555-555555555555")
+	var envelope map[string]any
+	if err := json.Unmarshal(task.DesignDocumentContext, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	envelope["execution_ready"] = true
+	envelope["input"] = map[string]any{"schema_version": "multica.design-document-input/v1", "repository_grounding": grounding}
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Task{DesignDocumentContext: raw}
+}
+
 // The design document prototype is the one place package-local JavaScript is
 // allowed, and the one place it must never reach the network. Both halves
 // have to be stated or the agent will get exactly one of them right.
@@ -321,7 +339,14 @@ func TestDesignDocumentPromptFlagsMissingRepositoryGrounding(t *testing.T) {
 		t.Fatalf("ungrounded prompt does not forbid claiming code fidelity:\n%s", ungrounded)
 	}
 
-	grounded := BuildPrompt(designDocumentPromptTask(t, "cc2f9a10-64f1-4a1d-9b4e-0f4a4a2f9c31"), "opencode")
+	// A repository id alone is not grounding: only the daemon's checkout is,
+	// and the server marks that in the input envelope. Without it the prompt
+	// must keep the disclaimer even when a repository was named.
+	named := BuildPrompt(designDocumentPromptTask(t, "cc2f9a10-64f1-4a1d-9b4e-0f4a4a2f9c31"), "opencode")
+	if !strings.Contains(named, "NO repository grounding") {
+		t.Fatalf("a named-but-unchecked-out repository was presented as grounding:\n%s", named)
+	}
+	grounded := BuildPrompt(designDocumentPromptTaskWithInput(t, "pending"), "opencode")
 	if strings.Contains(grounded, "NO repository grounding") {
 		t.Fatalf("grounded prompt wrongly claims the task saw no repository:\n%s", grounded)
 	}
@@ -494,5 +519,37 @@ func TestProjectDesignSystemPromptExplainsBuiltinReferences(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt lacks %q", want)
 		}
+	}
+}
+
+// A grounded run (a repository was attached, DC-053) is told where the daemon
+// left the checkout and exactly what grounding file it must write back, since
+// the daemon verifies that file against the checkout and fails the run without
+// it. The ungrounded and pinned runs get the matching disclaimers instead.
+func TestDesignDocumentPromptExplainsRepositoryGroundingByMode(t *testing.T) {
+	pending := BuildPrompt(designDocumentPromptTaskWithInput(t, "pending"), "opencode")
+	for _, want := range []string{
+		"context/repository-facts/checkout.json",
+		"work/repository-grounding.json",
+		"multica.design-document-grounding/v1",
+		"\"sha256:<hex of the file bytes>\"",
+		"fails the run if it is missing or does not match",
+	} {
+		if !strings.Contains(pending, want) {
+			t.Fatalf("pending prompt lacks %q", want)
+		}
+	}
+	if strings.Contains(pending, "This task has NO repository grounding") {
+		t.Fatal("pending prompt also carries the ungrounded disclaimer")
+	}
+
+	pinned := BuildPrompt(designDocumentPromptTaskWithInput(t, "pinned"), "opencode")
+	if !strings.Contains(pinned, "Repository evidence is pinned") || strings.Contains(pinned, "work/repository-grounding.json") {
+		t.Fatal("pinned prompt does not carry the pinned disclaimer alone")
+	}
+
+	unavailable := BuildPrompt(designDocumentPromptTaskWithInput(t, "unavailable"), "opencode")
+	if !strings.Contains(unavailable, "This task has NO repository grounding") || strings.Contains(unavailable, "work/repository-grounding.json") {
+		t.Fatal("unavailable prompt does not carry the ungrounded disclaimer alone")
 	}
 }

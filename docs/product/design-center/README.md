@@ -258,6 +258,7 @@ Agent 每次直接生成一套内部一致的设计体系草稿，不先生成�
 
 28. **Design Document 工作区页面**，`confirmed`：生成后的预览、版本、调整、保存与放弃在 `/{slug}/designs/documents/{id}` 完成，对应 Open Design Studio 的生成后页面；修订通过独立读取契约与能力令牌预览路由提供，服务端与守护进程的包绑定已对齐并有跨边界测试。
 29. **三 tab 补齐与 tweaks / critique 落地**，`confirmed`（详见 DC-058）：官方设计体系详情以 Open Design 自带 showcase 为封面并逐章节展示 DESIGN.md，官方体系可作为项目体系创建的参考风格；社区卡片可打开实时示例与提示词的详情弹层；tweaks 以 prompt 约定加工作区预设指令落地，critique 以任务内五视角循环加 `critique.json` 报告与工作区“设计评审”面板落地，两者都不影响 draft 的形成条件。
+30. **设计文档任务上下文可领取并声明取证模式**，`confirmed`（详见 DC-059）：服务端上下文写 `execution_ready` 与 `input.repository_grounding`，claim 只交付文档绑定的那一个仓库，prompt 按取证模式说明 checkout 与 `work/repository-grounding.json` 的写回义务；在此之前每个设计文档任务都在 claim 被拒，真实生成从未跑通。
 
 当前尚未确认的细节只保留后续落地与独立切片问题：
 

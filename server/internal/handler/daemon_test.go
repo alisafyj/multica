@@ -5465,16 +5465,25 @@ func TestClaimDesignDocumentTaskUsesTypedContextAndProjectResources(t *testing.T
 	issueID := createIssueForDesignTest(t, "A3 claim issue", projectID)
 	agentID, runtimeID := createProjectDesignSystemAgent(t, "online")
 	const repositoryURL = "https://github.com/example/design-document-source"
+	var resourceID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, position)
+		VALUES ($1, $2, 'github_repo', $3::jsonb, 0) RETURNING id
+	`, projectID, testWorkspaceID, `{"url":"`+repositoryURL+`","ref":"release"}`).Scan(&resourceID); err != nil {
+		t.Fatalf("create project resource: %v", err)
+	}
+	// A second repository the document was NOT created for: the claim must
+	// keep it away from the daemon (DC-053 grounds exactly one repository).
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, position)
-		VALUES ($1, $2, 'github_repo', $3::jsonb, 0)
-	`, projectID, testWorkspaceID, `{"url":"`+repositoryURL+`","ref":"release"}`); err != nil {
-		t.Fatalf("create project resource: %v", err)
+		VALUES ($1, $2, 'github_repo', $3::jsonb, 1)
+	`, projectID, testWorkspaceID, `{"url":"https://github.com/example/other-repository"}`); err != nil {
+		t.Fatalf("create second project resource: %v", err)
 	}
 	contextJSON, err := json.Marshal(map[string]any{
 		"type": designDocumentTaskContextType, "task_protocol": designDocumentTaskSchema,
-		"operation": "first_generation", "execution_ready": true,
-		"workspace_id": testWorkspaceID, "project_id": projectID, "agent_id": agentID, "issue_id": issueID,
+		"operation": "generate", "execution_ready": true,
+		"workspace_id": testWorkspaceID, "project_id": projectID, "project_resource_id": resourceID, "agent_id": agentID, "issue_id": issueID,
 		"input": map[string]any{"schema_version": designDocumentInputSchema, "repository_grounding": "pending", "requirement": "Design the customer page."},
 	})
 	if err != nil {
@@ -5522,6 +5531,42 @@ func TestClaimDesignDocumentTaskUsesTypedContextAndProjectResources(t *testing.T
 	var got map[string]any
 	if json.Unmarshal(response.Task.DesignDocumentContext, &got) != nil || got["type"] != designDocumentTaskContextType {
 		t.Fatalf("typed context = %s", response.Task.DesignDocumentContext)
+	}
+}
+
+// A document created without a repository grounds nothing, so its claim carries
+// no repositories for the daemon to prepare — a project repository the daemon
+// cannot reach must not block a run that never asked to read code (DC-053).
+func TestScopeDesignDocumentRepositories(t *testing.T) {
+	selected := ProjectResourceData{ID: "res-1", ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"https://github.com/example/one"}`)}
+	other := ProjectResourceData{ID: "res-2", ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"https://github.com/example/two"}`)}
+	local := ProjectResourceData{ID: "res-3", ResourceType: "local_directory", ResourceRef: json.RawMessage(`{"daemon_id":"d"}`)}
+	fresh := func() AgentTaskResponse {
+		return AgentTaskResponse{
+			ProjectResources: []ProjectResourceData{selected, other, local},
+			Repos:            []RepoData{{URL: "https://github.com/example/one"}, {URL: "https://github.com/example/two"}},
+		}
+	}
+
+	resp := fresh()
+	scopeDesignDocumentRepositories(&resp, "")
+	if resp.Repos != nil {
+		t.Fatalf("ungrounded document still carries repos: %+v", resp.Repos)
+	}
+
+	resp = fresh()
+	scopeDesignDocumentRepositories(&resp, "res-1")
+	if len(resp.Repos) != 1 || resp.Repos[0].URL != "https://github.com/example/one" {
+		t.Fatalf("grounded document repos = %+v, want only the selected repository", resp.Repos)
+	}
+	if len(resp.ProjectResources) != 1 || resp.ProjectResources[0].ID != "res-1" {
+		t.Fatalf("grounded document resources = %+v, want only the selected resource", resp.ProjectResources)
+	}
+
+	resp = fresh()
+	scopeDesignDocumentRepositories(&resp, "res-3")
+	if resp.Repos != nil || len(resp.ProjectResources) != 1 || resp.ProjectResources[0].ID != "res-3" {
+		t.Fatalf("local directory scope = repos %+v resources %+v", resp.Repos, resp.ProjectResources)
 	}
 }
 

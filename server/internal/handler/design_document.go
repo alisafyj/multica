@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/designdocument"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -498,6 +499,8 @@ func (h *Handler) createDesignDocumentTask(
 		DesignSystemDigest:  designContext.Digest,
 		PackageSchema:       designDocumentPackageSchema,
 		InputSnapshotSHA256: inputDigest,
+		ExecutionReady:      true,
+		Input:               designDocumentGenerateInput(scope.ProjectResourceID.Valid),
 	})
 	if err != nil {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
@@ -528,6 +531,44 @@ func (h *Handler) createDesignDocumentTask(
 		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("transaction_failed", "failed to commit design generation")
 	}
 	return document, task, nil
+}
+
+// designDocumentGenerateInput is the grounding envelope of a first generation
+// (DC-053): a repository was attached, so the daemon checks it out and grounds
+// the run against it; or none was, so the daemon records explicitly that no
+// code was read and the agent designs from the requirement alone.
+func designDocumentGenerateInput(repositoryAttached bool) service.DesignDocumentTaskInput {
+	mode := service.DesignDocumentGroundingUnavailable
+	if repositoryAttached {
+		mode = service.DesignDocumentGroundingPending
+	}
+	return service.DesignDocumentTaskInput{SchemaVersion: service.DesignDocumentInputSchema, RepositoryGrounding: mode}
+}
+
+// designDocumentPinnedInput is the grounding envelope of an adjustment. The
+// daemon does not re-read code for an adjustment: it reuses a pinned receipt.
+// Grounding receipts are not yet persisted per revision, so the pinned receipt
+// states honestly that this run carries no repository evidence of its own —
+// the immutable base package it starts from is where the first generation's
+// grounding already landed.
+func designDocumentPinnedInput() (service.DesignDocumentTaskInput, error) {
+	receipt, err := json.Marshal(designdocument.RepositoryGrounding{
+		SchemaVersion: designdocument.GroundingSchemaVersion,
+		Status:        designdocument.GroundingUnavailable,
+		Repositories:  []designdocument.GroundedRepository{},
+		Facts:         []designdocument.GroundingFact{},
+		Conflicts:     []designdocument.GroundingObservation{},
+		Missing:       []designdocument.GroundingObservation{},
+		Warnings:      []string{"This adjustment re-reads no repository; it builds on the immutable base revision, which already carries the first generation's repository evidence."},
+	})
+	if err != nil {
+		return service.DesignDocumentTaskInput{}, err
+	}
+	return service.DesignDocumentTaskInput{
+		SchemaVersion:       service.DesignDocumentInputSchema,
+		RepositoryGrounding: service.DesignDocumentGroundingPinned,
+		Repository:          receipt,
+	}, nil
 }
 
 // jsonOrDefault keeps a nil or empty JSONB column from serialising as null

@@ -1176,10 +1176,52 @@ func buildDesignDocumentPrompt(task Task) string {
 	b.WriteString("- For adjust / regenerate, `base/` is read-only. Your output must be a complete package, not a patch, and it must stay internally consistent even when the requested change is local.\n")
 	b.WriteString("- Do not paste file contents into the final response; report only a short completion summary. The package files are authoritative.\n")
 
-	if designDocumentTaskIsUngrounded(task) {
+	switch designDocumentGroundingMode(task) {
+	case "pending":
+		b.WriteString(designDocumentGroundingContract())
+	case "pinned":
+		b.WriteString("- Repository evidence is pinned from the revision you are adjusting: this run checks nothing out and must not claim to have read code. Build on the immutable base, which already carries that evidence.\n")
+	default:
 		b.WriteString("- This task has NO repository grounding: no repository was attached. Design from the requirement and the design system alone, and do not describe the result as matching existing code — you have not seen any.\n")
 	}
 	b.WriteString("- Before exiting, verify every required artifact is on disk and non-empty. Do not report success otherwise.\n")
+	return b.String()
+}
+
+// designDocumentGroundingMode reads the grounding envelope the server stamped
+// on the task: "pending" when a repository was attached and checked out,
+// "pinned" for an adjustment, "unavailable" otherwise (DC-053).
+func designDocumentGroundingMode(task Task) string {
+	if len(task.DesignDocumentContext) == 0 {
+		return "unavailable"
+	}
+	var envelope struct {
+		Input struct {
+			RepositoryGrounding string `json:"repository_grounding"`
+		} `json:"input"`
+	}
+	if err := jsonUnmarshal(task.DesignDocumentContext, &envelope); err != nil {
+		return "unavailable"
+	}
+	switch envelope.Input.RepositoryGrounding {
+	case "pending", "pinned":
+		return envelope.Input.RepositoryGrounding
+	default:
+		return "unavailable"
+	}
+}
+
+// designDocumentGroundingContract tells a grounded run what the daemon
+// prepared and what it expects back. The daemon checked the document's
+// repository out before the session started and will verify the grounding
+// file against that checkout when the session ends: a file digest that does
+// not match the checkout, or no file at all, fails the run after the fact.
+func designDocumentGroundingContract() string {
+	var b strings.Builder
+	b.WriteString("- Repository grounding: the repository this document is scoped to has been checked out for you, read-only. `.agent_context/design_document/context/repository-facts/checkout.json` lists each checkout — its `id`, `checkout_path` (relative to your working directory), `commit_sha`, `ref`, `status_sha256` and `tree_sha256`. Study the checkout before you design: existing pages and routes, components and their states, design tokens and styling conventions, navigation, copy and data shapes. Cite what you rely on; do not modify anything in it.\n")
+	b.WriteString("- Before you finish, write `.agent_context/design_document/work/repository-grounding.json` (schema `multica.design-document-grounding/v1`) — the platform verifies it against the checkout and fails the run if it is missing or does not match:\n")
+	b.WriteString("  `{\"schema_version\": \"multica.design-document-grounding/v1\", \"status\": \"available\", \"repositories\": [{\"id\", \"checkout_path\", \"commit_sha\", \"ref\", \"status_sha256\", \"tree_sha256\" — copied exactly from checkout.json — , \"files\": [{\"id\": \"stable-id\", \"path\": \"relative/to/the/checkout.tsx\", \"sha256\": \"sha256:<hex of the file bytes>\", \"kind\": \"component\" | \"page\" | \"style\" | \"token\" | \"route\" | \"copy\" | \"other\"}]}], \"facts\": [{\"id\", \"kind\", \"statement\", \"source_file_ids\": [\"file-id\"], \"inference\": false}], \"conflicts\": [{\"id\", \"statement\", \"source_file_ids\": []}], \"missing\": [{\"id\", \"statement\", \"source_file_ids\": []}], \"warnings\": []}`.\n")
+	b.WriteString("  Every array must be present (empty is fine). List only files you actually read, at most a few dozen, each with the SHA-256 of its exact bytes (`shasum -a 256 <file>`). A fact that is not an inference must cite at least one listed file. Ids are short stable identifiers without `/`, `\\` or `:`.\n")
 	return b.String()
 }
 
