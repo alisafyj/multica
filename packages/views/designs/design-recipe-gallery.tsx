@@ -681,22 +681,19 @@ export function DesignRecipeGallery({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-6xl flex-col px-4 py-6 sm:px-6 sm:py-8">
-        <header className="flex flex-col gap-1">
-          <h2 className="text-title font-semibold">社区配方</h2>
-          <p className="max-w-2xl text-balance text-body text-muted-foreground">
-            配方是一份页面设计任务的配置，不是设计资产。挑一个填进首页继续改，或者直接用它发起任务。
-          </p>
-        </header>
-
+      {/* Full width, no heading: the tab label already names the page, and the
+          grid fills whatever width it gets with as many cards as fit — the
+          same auto-fill ramp Open Design's community grid uses (240 → 260 →
+          280px minimum per card as the viewport grows). */}
+      <div className="flex w-full flex-col px-4 py-4 sm:px-6 sm:py-5">
         {isLoading ? (
-          <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(240px,1fr))] min-[1100px]:grid-cols-[repeat(auto-fill,minmax(260px,1fr))] min-[1400px]:grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
             {Array.from({ length: 6 }).map((_, index) => (
               <Skeleton key={index} className="h-64 w-full rounded-xl" />
             ))}
           </div>
         ) : error ? (
-          <div className="mt-6 flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-12 text-center">
+          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-12 text-center">
             <p className="text-body font-medium">无法加载社区配方</p>
             <p className="text-body text-muted-foreground">请稍后重试。</p>
             <Button size="sm" variant="outline" onClick={() => void refetch()}>
@@ -707,7 +704,7 @@ export function DesignRecipeGallery({
           // An empty catalogue is a legitimate answer, not a failure: no
           // official recipe has been published and this workspace has none of
           // its own. Saying so beats an empty panel.
-          <Empty className="mt-6 border py-14">
+          <Empty className="border py-14">
             <EmptyHeader>
               <EmptyMedia variant="icon">
                 <FileCode />
@@ -720,7 +717,7 @@ export function DesignRecipeGallery({
           </Empty>
         ) : (
           <>
-            <div className="mt-5 flex flex-col gap-3">
+            <div className="flex flex-col gap-3">
               <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                 {/* Row one, as in Open Design: what the recipe produces. */}
                 <div role="group" aria-label="产物形态" className="flex flex-wrap items-center gap-1.5">
@@ -792,7 +789,7 @@ export function DesignRecipeGallery({
                 ) : null}
               </Empty>
             ) : (
-              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="mt-5 grid gap-3 grid-cols-[repeat(auto-fill,minmax(240px,1fr))] min-[1100px]:grid-cols-[repeat(auto-fill,minmax(260px,1fr))] min-[1400px]:grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
                 {filtered.map((recipe) => (
                   <RecipeCard
                     key={recipe.slug}
