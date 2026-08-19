@@ -133,82 +133,61 @@ describe("DesignRecipeGallery", () => {
     expect(screen.queryByRole("group", { name: "配方分类" })).not.toBeInTheDocument();
   });
 
-  it("narrows by category and then by subcategory inside it", async () => {
+  it("filters by mode first and by category inside it, as Open Design does", async () => {
     const user = userEvent.setup();
     listDesignScenarioRecipes.mockResolvedValue({
       recipes: [
-        recipe({ slug: "crm-console", title: "CRM 控制台", category: "业务系统", subcategory: "后台" }),
-        recipe({ slug: "crm-portal", title: "客户门户", category: "业务系统", subcategory: "门户" }),
-        recipe({ slug: "landing", title: "产品官网", category: "营销", subcategory: "" }),
+        recipe({ slug: "crm-console", title: "CRM 控制台", mode: "prototype", category: "业务系统" }),
+        recipe({ slug: "landing", title: "产品官网", mode: "prototype", category: "营销" }),
+        recipe({ slug: "pitch", title: "路演材料", mode: "deck", category: "融资路演" }),
       ],
     });
     renderGallery();
 
-    expect(await screen.findByText("CRM 控制台")).toBeInTheDocument();
+    // Opens on the first mode that has recipes: decks come first in the row.
+    expect(await screen.findByText("路演材料")).toBeInTheDocument();
+    expect(screen.queryByText("CRM 控制台")).not.toBeInTheDocument();
+    const modes = screen.getByRole("group", { name: "产物形态" });
+    expect(within(modes).getByRole("button", { name: /幻灯片/ })).toHaveAttribute("aria-pressed", "true");
+    // A mode with one category shows no category row — a lone pill beside
+    // 全部 would say nothing.
+    expect(screen.queryByRole("group", { name: "配方分类" })).not.toBeInTheDocument();
+
+    await user.click(within(modes).getByRole("button", { name: /原型/ }));
+    expect(screen.getByText("CRM 控制台")).toBeInTheDocument();
     expect(screen.getByText("产品官网")).toBeInTheDocument();
-    // The second level belongs to a chosen category, so it is absent up front.
-    expect(screen.queryByRole("group", { name: /子分类/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("路演材料")).not.toBeInTheDocument();
 
     const categories = screen.getByRole("group", { name: "配方分类" });
     await user.click(within(categories).getByRole("button", { name: /业务系统/ }));
-
+    expect(screen.getByText("CRM 控制台")).toBeInTheDocument();
     expect(screen.queryByText("产品官网")).not.toBeInTheDocument();
-    expect(screen.getByText("客户门户")).toBeInTheDocument();
-
-    const subcategories = screen.getByRole("group", { name: "业务系统 子分类" });
-    await user.click(within(subcategories).getByRole("button", { name: /门户/ }));
-
-    expect(screen.getByText("客户门户")).toBeInTheDocument();
-    expect(screen.queryByText("CRM 控制台")).not.toBeInTheDocument();
     // The active facet keeps a state hover cannot take away.
-    expect(within(subcategories).getByRole("button", { name: /门户/ })).toHaveAttribute(
+    expect(within(categories).getByRole("button", { name: /业务系统/ })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+
+    // Switching mode resets the category so a stale facet cannot hide the
+    // whole new mode.
+    await user.click(within(modes).getByRole("button", { name: /幻灯片/ }));
+    expect(screen.getByText("路演材料")).toBeInTheDocument();
   });
 
-  it("narrows by artifact scope and by who published the recipe", async () => {
-    const user = userEvent.setup();
-    listDesignScenarioRecipes.mockResolvedValue({
-      recipes: [
-        recipe({ slug: "crm-console", title: "CRM 控制台", origin: "builtin" }),
-        recipe({ slug: "team-okr", title: "团队 OKR", origin: "workspace" }),
-      ],
-    });
-    renderGallery();
-
-    const scopes = await screen.findByRole("group", { name: "配方形态" });
-    const owners = screen.getByRole("group", { name: "配方归属" });
-    expect(screen.getByText("CRM 控制台")).toBeInTheDocument();
-    expect(screen.getByText("团队 OKR")).toBeInTheDocument();
-
-    await user.click(within(owners).getByRole("button", { name: /官方/ }));
-    expect(screen.getByText("CRM 控制台")).toBeInTheDocument();
-    expect(screen.queryByText("团队 OKR")).not.toBeInTheDocument();
-
-    await user.click(within(owners).getByRole("button", { name: /团队/ }));
-    expect(screen.getByText("团队 OKR")).toBeInTheDocument();
-    expect(screen.queryByText("CRM 控制台")).not.toBeInTheDocument();
-
-    // Nothing produces a live artifact yet, and the scope says so rather than
-    // quietly matching the prototypes.
-    await user.click(within(owners).getByRole("button", { name: /全部/ }));
-    await user.click(within(scopes).getByRole("button", { name: /实况组件/ }));
-    expect(screen.getByText("没有匹配的配方")).toBeInTheDocument();
-
-    await user.click(within(scopes).getByRole("button", { name: /原型/ }));
-    expect(screen.getByText("CRM 控制台")).toBeInTheDocument();
-  });
-
-  it("says why an ownership scope with no publisher behind it is empty", async () => {
+  it("keeps a mode with nothing behind it as a real, empty position", async () => {
     const user = userEvent.setup();
     renderGallery();
 
-    const owners = await screen.findByRole("group", { name: "配方归属" });
-    await user.click(within(owners).getByRole("button", { name: /我的/ }));
-
+    const modes = await screen.findByRole("group", { name: "产物形态" });
+    // Nothing produces a live artifact yet; the pill says 0 rather than
+    // disappearing, and picking it says so instead of matching prototypes.
+    await user.click(within(modes).getByRole("button", { name: /实时产物/ }));
     expect(screen.getByText("没有匹配的配方")).toBeInTheDocument();
-    expect(screen.getByText(/还没有按个人归属/)).toBeInTheDocument();
+    expect(screen.getByText("这一类还没有配方。")).toBeInTheDocument();
+    // The picked-but-empty mode falls back to one with content rather than
+    // stranding the grid.
+    await user.click(within(modes).getByRole("button", { name: /原型/ }));
+    expect(screen.getByText("CRM 控制台")).toBeInTheDocument();
   });
 
   it("offers a way back when a search matches nothing", async () => {

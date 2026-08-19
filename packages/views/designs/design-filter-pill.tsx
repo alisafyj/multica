@@ -1,5 +1,6 @@
 "use client";
 
+import type { LucideIcon } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
 
 /**
@@ -13,6 +14,7 @@ import { cn } from "@multica/ui/lib/utils";
  */
 export function DesignFilterPill({
   label,
+  icon: Icon,
   count,
   selected,
   disabled,
@@ -20,6 +22,8 @@ export function DesignFilterPill({
   onClick,
 }: {
   label: string;
+  /** Leading glyph, for rows where the pills name kinds of thing rather than facets. */
+  icon?: LucideIcon;
   /** Omitted renders the pill without a number rather than with a zero. */
   count?: number;
   selected: boolean;
@@ -40,10 +44,11 @@ export function DesignFilterPill({
         disabled
           ? "cursor-not-allowed border-dashed text-muted-foreground opacity-70"
           : selected
-            ? "cursor-pointer border-primary bg-primary/10 font-medium text-primary hover:border-primary hover:bg-primary/10 hover:text-primary"
-            : "cursor-pointer text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+            ? "cursor-pointer border-primary bg-accent font-medium text-primary hover:border-primary hover:bg-accent hover:text-primary"
+            : "cursor-pointer bg-card text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
     >
+      {Icon ? <Icon className="size-3.5 shrink-0" /> : null}
       <span className="truncate">{label}</span>
       {typeof count === "number" ? (
         <span

@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AppWindow,
   AudioLines,
+  ChartColumn,
   FileCode,
   Image as ImageIcon,
   LayoutTemplate,
@@ -60,69 +61,36 @@ import {
 const ALL_FACET = "__all__";
 
 /**
- * Community sub-scopes. A recipe is a task configuration, so "模板" is the
- * whole catalogue; the other three narrow it by what the recipe can actually
- * do. Nothing produces a live artifact in this phase, so that scope is real
- * but empty rather than hidden.
+ * The first filter row: what the recipe produces. Mirrors the Open Design
+ * community tab, which sorts its catalogue by artifact mode before anything
+ * else — a person looking for a deck never wants prototypes in the way.
+ *
+ * `hyperframes` is a subcategory of prototype in the seed (the surface facet),
+ * so it filters on that rather than on a mode of its own; `live` has no
+ * producer yet and is a real position that is simply empty.
  */
-type RecipeScope = "template" | "prompt" | "prototype" | "live";
+type RecipeMode = "deck" | "prototype" | "live" | "image" | "video" | "hyperframes" | "audio";
 
-const RECIPE_SCOPES: ReadonlyArray<{ value: RecipeScope; label: string }> = [
-  { value: "template", label: "模板" },
-  { value: "prompt", label: "提示词" },
-  { value: "prototype", label: "原型" },
-  { value: "live", label: "实况组件" },
+const RECIPE_MODES: ReadonlyArray<{ value: RecipeMode; label: string; icon: typeof AppWindow }> = [
+  { value: "deck", label: "幻灯片", icon: Presentation },
+  { value: "prototype", label: "原型", icon: AppWindow },
+  { value: "live", label: "实时产物", icon: ChartColumn },
+  { value: "image", label: "图片", icon: ImageIcon },
+  { value: "video", label: "视频", icon: Video },
+  { value: "hyperframes", label: "HyperFrames", icon: LayoutTemplate },
+  { value: "audio", label: "音频", icon: AudioLines },
 ];
 
-/**
- * Ownership. `origin` is the only attribution the catalogue carries, and it
- * names a publisher rather than a person — so "我的" has nothing to select on
- * and says why instead of borrowing someone else's recipes.
- */
-type RecipeOwner = "all" | "mine" | "team" | "official";
-
-const RECIPE_OWNERS: ReadonlyArray<{ value: RecipeOwner; label: string }> = [
-  { value: "all", label: "全部" },
-  { value: "mine", label: "我的" },
-  { value: "team", label: "团队" },
-  { value: "official", label: "官方" },
-];
-
-const OWNER_EMPTY_COPY: Record<RecipeOwner, string> = {
-  all: "换一个关键词，或者清除筛选看看全部配方。",
-  mine: "配方目前按发布来源归类，还没有按个人归属。你在工作区发布的配方会出现在「团队」中。",
-  team: "工作区还没有自己发布的配方。发布之后会出现在这里。",
-  official: "还没有官方配方。官方配方上线后会出现在这里。",
-};
-
-function matchesScope(recipe: DesignScenarioRecipe, scope: RecipeScope): boolean {
-  switch (scope) {
-    case "template":
-      return true;
+function matchesMode(recipe: DesignScenarioRecipe, mode: RecipeMode): boolean {
+  switch (mode) {
+    case "hyperframes":
+      return recipe.subcategory === "HyperFrames";
     case "prototype":
-      return recipe.mode === "prototype";
+      return recipe.mode === "prototype" && recipe.subcategory !== "HyperFrames";
     case "live":
       return recipe.mode === "live";
-    case "prompt":
-      // Its artifact has no producer yet, so the prompt is all it can give.
-      return !canStartRecipe(recipe);
     default:
-      return true;
-  }
-}
-
-function matchesOwner(recipe: DesignScenarioRecipe, owner: RecipeOwner): boolean {
-  switch (owner) {
-    case "all":
-      return true;
-    case "official":
-      return recipe.origin === "builtin";
-    case "team":
-      return recipe.origin !== "builtin";
-    case "mine":
-      return false;
-    default:
-      return true;
+      return recipe.mode === mode;
   }
 }
 
@@ -175,16 +143,49 @@ function uniqueInOrder(values: string[]): string[] {
 }
 
 /**
- * Card media. Most recipes ship without a preview image, so the fallback is a
- * composed tile that states what the recipe is — not an empty frame that reads
- * as a failed load.
+ * Card cover. Follows Open Design: a built-in recipe's cover is the template's
+ * own example output rendered live, not a shipped thumbnail — for prototypes
+ * and decks that is `example.html` in a sandboxed frame, for media templates a
+ * poster. A recipe with neither gets a composed tile that states what it is,
+ * never an empty frame that reads as a failed load.
+ *
+ * The frame is `sandbox` with no `allow-same-origin`, so the example runs as
+ * an opaque origin: it cannot read this app's cookies or storage, and the
+ * server pairs it with a CSP that denies it the network. `pointer-events-none`
+ * keeps the frame from swallowing the card's own click.
  */
 function RecipePreview({ recipe }: { recipe: DesignScenarioRecipe }) {
   const { icon: ModeIcon, label: modeLabel } = modeVisual(recipe.mode);
   const facets = [recipe.category, recipe.subcategory].filter(Boolean).join(" · ");
+  const previewUrl = recipe.preview_kind
+    ? `${api.getBaseUrl()}/api/design-recipes/${encodeURIComponent(recipe.slug)}/preview`
+    : "";
   return (
     <div className="relative aspect-[16/10] shrink-0 overflow-hidden border-b bg-muted/40">
-      {recipe.preview_path ? (
+      {recipe.preview_kind === "html" && previewUrl ? (
+        // The example is authored at desktop width; scaling a 1280-wide frame
+        // down keeps the layout the template intended instead of reflowing it
+        // into a card-width column that looks like nothing the user will get.
+        <div className="pointer-events-none absolute left-0 top-0 h-[250%] w-[250%] origin-top-left scale-[0.4]">
+          <iframe
+            src={previewUrl}
+            title=""
+            aria-hidden="true"
+            tabIndex={-1}
+            loading="lazy"
+            sandbox=""
+            referrerPolicy="no-referrer"
+            className="h-full w-full border-0 bg-background"
+          />
+        </div>
+      ) : recipe.preview_kind === "poster" && previewUrl ? (
+        <img
+          src={previewUrl}
+          alt=""
+          loading="lazy"
+          className="h-full w-full object-cover transition-transform group-hover/recipe:scale-[1.02]"
+        />
+      ) : recipe.preview_path ? (
         <img
           src={recipe.preview_path}
           alt=""
@@ -427,40 +428,46 @@ export function DesignRecipeGallery({
     designScenarioRecipeListOptions(wsId),
   );
   const [search, setSearch] = useState("");
-  const [scope, setScope] = useState<RecipeScope>("template");
-  const [owner, setOwner] = useState<RecipeOwner>("all");
+  // Empty until the user picks: the effective mode below opens on the first
+  // mode with recipes, so the gallery never lands on an empty row. An explicit
+  // pick is honoured even when empty — a click that visibly does nothing is
+  // worse than an honest empty state — but a picked mode that later loses all
+  // its recipes (say the mode row shrinks) still falls back rather than
+  // stranding the grid.
+  const [pickedMode, setPickedMode] = useState<RecipeMode | "">("");
   const [category, setCategory] = useState(ALL_FACET);
-  const [subcategory, setSubcategory] = useState(ALL_FACET);
   const [startTarget, setStartTarget] = useState<DesignScenarioRecipe | null>(null);
 
-  const scopeMatches = useMemo(
-    () => recipes.filter((recipe) => matchesScope(recipe, scope) && matchesOwner(recipe, owner)),
-    [owner, recipes, scope],
+  const modeCounts = useMemo(
+    () => RECIPE_MODES.map((option) => ({
+      ...option,
+      count: recipes.filter((recipe) => matchesMode(recipe, option.value)).length,
+    })),
+    [recipes],
+  );
+  const mode: RecipeMode =
+    pickedMode || (modeCounts.find((option) => option.count > 0)?.value ?? "prototype");
+  const modeMatches = useMemo(
+    () => recipes.filter((recipe) => matchesMode(recipe, mode)),
+    [mode, recipes],
   );
   const categories = useMemo(
-    () => uniqueInOrder(scopeMatches.map((recipe) => recipe.category)),
-    [scopeMatches],
+    () => uniqueInOrder(modeMatches.map((recipe) => recipe.category)),
+    [modeMatches],
   );
   // A facet the catalogue no longer offers falls back to "all" by derivation,
   // so a refreshed catalogue can never strand the grid on an empty filter.
   const activeCategory = categories.includes(category) ? category : ALL_FACET;
   const categoryMatches = useMemo(
     () => activeCategory === ALL_FACET
-      ? scopeMatches
-      : scopeMatches.filter((recipe) => recipe.category === activeCategory),
-    [activeCategory, scopeMatches],
+      ? modeMatches
+      : modeMatches.filter((recipe) => recipe.category === activeCategory),
+    [activeCategory, modeMatches],
   );
-  const subcategories = useMemo(
-    () => uniqueInOrder(categoryMatches.map((recipe) => recipe.subcategory)),
-    [categoryMatches],
-  );
-  const activeSubcategory = subcategories.includes(subcategory) ? subcategory : ALL_FACET;
 
   const query = search.trim().toLowerCase();
   const filtered = useMemo(() => {
-    const scoped = activeSubcategory === ALL_FACET
-      ? categoryMatches
-      : categoryMatches.filter((recipe) => recipe.subcategory === activeSubcategory);
+    const scoped = categoryMatches;
     if (!query) return scoped;
     return scoped.filter((recipe) => [
       recipe.title,
@@ -469,19 +476,12 @@ export function DesignRecipeGallery({
       recipe.subcategory,
       recipe.slug,
     ].join(" ").toLowerCase().includes(query));
-  }, [activeSubcategory, categoryMatches, query]);
+  }, [categoryMatches, query]);
 
-  const filtersApplied = activeCategory !== ALL_FACET
-    || activeSubcategory !== ALL_FACET
-    || scope !== "template"
-    || owner !== "all"
-    || !!query;
+  const filtersApplied = activeCategory !== ALL_FACET || !!query;
   const clearFilters = () => {
     setSearch("");
-    setScope("template");
-    setOwner("all");
     setCategory(ALL_FACET);
-    setSubcategory(ALL_FACET);
   };
 
   return (
@@ -527,18 +527,18 @@ export function DesignRecipeGallery({
           <>
             <div className="mt-5 flex flex-col gap-3">
               <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-                <div role="group" aria-label="配方形态" className="flex flex-wrap items-center gap-1.5">
-                  {RECIPE_SCOPES.map((option) => (
+                {/* Row one, as in Open Design: what the recipe produces. */}
+                <div role="group" aria-label="产物形态" className="flex flex-wrap items-center gap-1.5">
+                  {modeCounts.map((option) => (
                     <DesignFilterPill
                       key={option.value}
                       label={option.label}
-                      count={recipes.filter((recipe) => matchesScope(recipe, option.value)
-                        && matchesOwner(recipe, owner)).length}
-                      selected={scope === option.value}
+                      icon={option.icon}
+                      count={option.count}
+                      selected={mode === option.value}
                       onClick={() => {
-                        setScope(option.value);
+                        setPickedMode(option.value);
                         setCategory(ALL_FACET);
-                        setSubcategory(ALL_FACET);
                       }}
                     />
                   ))}
@@ -549,71 +549,28 @@ export function DesignRecipeGallery({
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                     aria-label="搜索社区配方"
-                    placeholder="搜索配方…"
+                    placeholder="搜索…"
                     className="h-8 pl-8 text-body"
                   />
                 </div>
               </div>
-              <div role="group" aria-label="配方归属" className="flex flex-wrap items-center gap-1.5">
-                {RECIPE_OWNERS.map((option) => (
-                  <DesignFilterPill
-                    key={option.value}
-                    label={option.label}
-                    count={recipes.filter((recipe) => matchesScope(recipe, scope)
-                      && matchesOwner(recipe, option.value)).length}
-                    selected={owner === option.value}
-                    onClick={() => {
-                      setOwner(option.value);
-                      setCategory(ALL_FACET);
-                      setSubcategory(ALL_FACET);
-                    }}
-                  />
-                ))}
-              </div>
-              <div role="group" aria-label="配方分类" className="flex flex-wrap items-center gap-1.5">
-                <DesignFilterPill
-                  label="全部分类"
-                  count={scopeMatches.length}
-                  selected={activeCategory === ALL_FACET}
-                  onClick={() => {
-                    setCategory(ALL_FACET);
-                    setSubcategory(ALL_FACET);
-                  }}
-                />
-                {categories.map((item) => (
-                  <DesignFilterPill
-                    key={item}
-                    label={item}
-                    count={scopeMatches.filter((recipe) => recipe.category === item).length}
-                    selected={activeCategory === item}
-                    onClick={() => {
-                      setCategory(item);
-                      setSubcategory(ALL_FACET);
-                    }}
-                  />
-                ))}
-              </div>
-              {/* The second level only exists inside a chosen category, so it
-                  appears with one and disappears with it. */}
-              {activeCategory !== ALL_FACET && subcategories.length > 0 ? (
-                <div
-                  role="group"
-                  aria-label={`${activeCategory} 子分类`}
-                  className="flex flex-wrap items-center gap-1.5"
-                >
+              {/* Row two: the categories inside the chosen mode. Hidden when a
+                  mode has only one, since a lone pill beside 全部 says nothing. */}
+              {categories.length > 1 ? (
+                <div role="group" aria-label="配方分类" className="flex flex-wrap items-center gap-1.5">
                   <DesignFilterPill
                     label="全部"
-                    count={categoryMatches.length}
-                    selected={activeSubcategory === ALL_FACET}
-                    onClick={() => setSubcategory(ALL_FACET)}
+                    count={modeMatches.length}
+                    selected={activeCategory === ALL_FACET}
+                    onClick={() => setCategory(ALL_FACET)}
                   />
-                  {subcategories.map((item) => (
+                  {categories.map((item) => (
                     <DesignFilterPill
                       key={item}
                       label={item}
-                      count={categoryMatches.filter((recipe) => recipe.subcategory === item).length}
-                      selected={activeSubcategory === item}
-                      onClick={() => setSubcategory(item)}
+                      count={modeMatches.filter((recipe) => recipe.category === item).length}
+                      selected={activeCategory === item}
+                      onClick={() => setCategory(item)}
                     />
                   ))}
                 </div>
@@ -627,10 +584,8 @@ export function DesignRecipeGallery({
                     <Search />
                   </EmptyMedia>
                   <EmptyTitle>没有匹配的配方</EmptyTitle>
-                  {/* An ownership scope with nothing behind it says why rather
-                      than sending the user back to the search box. */}
                   <EmptyDescription>
-                    {owner !== "all" && !query ? OWNER_EMPTY_COPY[owner] : OWNER_EMPTY_COPY.all}
+                    {query ? "换一个关键词，或者清除筛选看看这一类的全部配方。" : "这一类还没有配方。"}
                   </EmptyDescription>
                 </EmptyHeader>
                 {filtersApplied ? (

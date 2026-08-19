@@ -2094,6 +2094,7 @@ export const DesignScenarioRecipeSchema = z.object({
   platform: ProjectDesignSystemPlatformSchema,
   prompt: z.string().catch("").default(""),
   preview_path: z.string().catch("").default(""),
+  preview_kind: z.string().catch("").default(""),
   origin: z.string().catch("").default(""),
   published_at: z.string().catch("").default(""),
 }).loose();

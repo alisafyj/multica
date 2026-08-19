@@ -609,6 +609,8 @@ export interface DesignScenarioRecipe {
   prompt: string;
   /** Relative media path for the card image; empty when there is none. */
   preview_path: string;
+  /** "html" renders the template's own example in a sandboxed frame; "poster" is a still; "" means no cover. */
+  preview_kind: string;
   /** `builtin`, `workspace` or `community`. */
   origin: string;
   published_at: string;
