@@ -12,6 +12,7 @@ describe("paths.workspace(slug)", () => {
     expect(ws.designs()).toBe("/acme/designs");
     expect(ws.designDetail("d1")).toBe("/acme/designs/d1");
     expect(ws.designDraftDetail("draft1")).toBe("/acme/designs/drafts/draft1");
+    expect(ws.designDocumentDetail("doc1")).toBe("/acme/designs/documents/doc1");
     expect(ws.projectDesignSystemDetail("system1")).toBe("/acme/designs/systems/system1");
     expect(ws.designRestoreTaskDetail("task1")).toBe("/acme/designs/restore-tasks/task1");
     expect(ws.autopilots()).toBe("/acme/autopilots");

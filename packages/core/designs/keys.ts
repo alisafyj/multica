@@ -30,6 +30,12 @@ export const designKeys = {
   projectDesignSystemCatalogue: (wsId: string) => ["designs", wsId, "project-design-systems", "catalogue"] as const,
   // Design documents are listed per project, never workspace-wide (DC-042).
   documents: (wsId: string, projectId: string) => ["designs", wsId, "documents", projectId] as const,
+  // One document and its revisions live under the same "documents" prefix so
+  // the task-lifecycle invalidation of that prefix refreshes them too. The
+  // literal "document" segment cannot collide with a project id.
+  document: (wsId: string, documentId: string) => ["designs", wsId, "documents", "document", documentId] as const,
+  documentRevisions: (wsId: string, documentId: string) => ["designs", wsId, "documents", "document", documentId, "revisions"] as const,
+  documentRevision: (wsId: string, documentId: string, revisionId: string) => ["designs", wsId, "documents", "document", documentId, "revisions", revisionId] as const,
   // The community catalogue mixes built-in recipes with the workspace's own,
   // so it is workspace-scoped even though most rows are global (DC-041).
   scenarioRecipes: (wsId: string) => ["designs", wsId, "scenario-recipes"] as const,

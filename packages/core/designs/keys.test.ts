@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { designKeys } from "./keys";
 import {
+  designDocumentDetailOptions,
   designDocumentListOptions,
+  designDocumentRevisionListOptions,
+  designDocumentRevisionOptions,
   projectDesignSystemByProjectOptions,
   projectDesignSystemCatalogueOptions,
   projectDesignSystemDetailOptions,
@@ -61,6 +64,25 @@ describe("designKeys", () => {
     );
     // The list endpoint requires a project, so an unset one stays idle.
     expect(designDocumentListOptions("ws-1", "").enabled).toBe(false);
+  });
+
+  it("keeps a document and its revisions under the documents prefix", () => {
+    // The task-lifecycle realtime handler invalidates ["designs", ws,
+    // "documents"]; the document workspace must be refreshed by that too.
+    const prefix = ["designs", "ws-1", "documents"];
+    expect(designKeys.document("ws-1", "doc-1").slice(0, 3)).toEqual(prefix);
+    expect(designKeys.documentRevisions("ws-1", "doc-1").slice(0, 3)).toEqual(prefix);
+    expect(designKeys.documentRevision("ws-1", "doc-1", "rev-1")).toEqual([
+      "designs", "ws-1", "documents", "document", "doc-1", "revisions", "rev-1",
+    ]);
+    // A document key can never collide with a project's list key.
+    expect(designKeys.document("ws-1", "project-1")).not.toEqual(designKeys.documents("ws-1", "project-1"));
+    expect(designDocumentDetailOptions("ws-1", "doc-1").queryKey).toEqual(designKeys.document("ws-1", "doc-1"));
+    expect(designDocumentRevisionListOptions("ws-1", "doc-1").queryKey).toEqual(designKeys.documentRevisions("ws-1", "doc-1"));
+    expect(designDocumentRevisionOptions("ws-1", "doc-1", "rev-1").queryKey).toEqual(designKeys.documentRevision("ws-1", "doc-1", "rev-1"));
+    expect(designDocumentDetailOptions("ws-1", "").enabled).toBe(false);
+    expect(designDocumentRevisionListOptions("ws-1", "").enabled).toBe(false);
+    expect(designDocumentRevisionOptions("ws-1", "doc-1", "").enabled).toBe(false);
   });
 
   it("keeps project design system query options workspace-scoped", () => {

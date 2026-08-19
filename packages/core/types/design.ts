@@ -796,12 +796,31 @@ export interface CreateDesignDraftAgentTaskResponse {
 
 export interface DesignDocumentPreviewTarget {
   id: string;
-  kind: "page";
+  kind: string;
   path: string;
+}
+
+/** One brief page as the manifest projects it (`multica.design-document/v1`). */
+export interface DesignDocumentPage {
+  id: string;
+  title: string;
+  parent_id: string;
+  /** Package path of the page's prototype document, e.g. `prototype/orders.html`. */
+  entry: string;
+  state_ids: string[];
+}
+
+export interface DesignDocumentFlow {
+  id: string;
+  title: string;
 }
 
 export type DesignDocumentAdjustmentScopeKind = "document" | "page" | "state" | "overlay" | "block";
 
+/**
+ * What an adjustment is scoped to. The server carries `kind` and `id` through
+ * to the agent verbatim; `label` is only what the UI showed the user.
+ */
 export interface DesignDocumentAdjustmentScope {
   kind: DesignDocumentAdjustmentScopeKind;
   id?: string;
@@ -809,40 +828,62 @@ export interface DesignDocumentAdjustmentScope {
 }
 
 export interface AdjustDesignDocumentRequest {
-  project_id: string;
-  agent_id: string;
   instruction: string;
-  scope: Pick<DesignDocumentAdjustmentScope, "kind" | "id">;
+  /** The agent that runs the adjustment; the document's own agent may be gone. */
+  agent_id: string;
+  scope?: Pick<DesignDocumentAdjustmentScope, "kind" | "id">;
+  /**
+   * The revision the user was looking at. When set, the server refuses to
+   * adjust if the document's base moved underneath them (409).
+   */
+  base_revision_id?: string;
+}
+
+export interface SaveDesignDocumentRequest {
+  /** The draft the user is looking at; a save never lands on an unseen draft. */
+  draft_revision_id: string;
+}
+
+/** One row of a document's revision timeline, newest first. */
+export interface DesignDocumentRevisionSummary {
+  id: string;
+  revision_number: number;
+  content_digest: string;
+  /** Empty for a first generation. */
   base_revision_id: string;
-  base_content_digest: string;
+  source_task_id: string;
+  agent_id: string;
+  /** The adjustment instruction; empty for a generation. */
+  instruction: string;
+  scope: unknown;
+  is_draft: boolean;
+  is_saved: boolean;
+  page_count: number;
+  flow_count: number;
+  created_at: string;
 }
 
-export interface DesignDocumentPointerRequest {
-  project_id: string;
-  expected_draft_revision_id: string;
-  expected_draft_content_digest: string;
+export interface ListDesignDocumentRevisionsResponse {
+  revisions: DesignDocumentRevisionSummary[];
 }
 
-export interface DesignDocumentPreviewReceipt {
-  schema_version: "multica.design-preview-receipt/v1";
-  content_digest: string;
-  verification: {
-    passed: boolean;
-    browser: { name: string; version: string };
-  };
-}
-
-export interface DesignDocumentPreview {
-  schema: "multica.design-document-preview/v1";
-  document_id: string;
-  revision_id: string;
-  content_digest: string;
-  resource_base_url: string;
+/**
+ * One revision in full, with a short-lived capability that lets the sandboxed
+ * preview frame fetch the prototype files without a Bearer header.
+ */
+export interface DesignDocumentRevision extends DesignDocumentRevisionSummary {
+  brief: unknown;
+  coverage: unknown;
+  audit: unknown;
+  preview_receipt: unknown;
+  prototype_entry: string;
+  pages: DesignDocumentPage[];
+  flows: DesignDocumentFlow[];
+  preview_targets: DesignDocumentPreviewTarget[];
+  /** Server-relative prefix; append a package path such as `prototype/index.html`. */
+  resource_base_path: string;
   resource_access_token: string;
   resource_access_expires_at: string;
-  targets: DesignDocumentPreviewTarget[];
-  adjustment_scopes: DesignDocumentAdjustmentScope[];
-  preview: DesignDocumentPreviewReceipt;
 }
 
 export interface DesignRestoreTask {

@@ -196,6 +196,39 @@ export function designDocumentListOptions(wsId: string, projectId: string) {
   });
 }
 
+/** One design document with its active task, for the document workspace. */
+export function designDocumentDetailOptions(wsId: string, documentId: string) {
+  return queryOptions({
+    queryKey: designKeys.document(wsId, documentId),
+    queryFn: () => api.getDesignDocument(documentId),
+    enabled: !!documentId,
+  });
+}
+
+/** The revision timeline of one document, newest first. */
+export function designDocumentRevisionListOptions(wsId: string, documentId: string) {
+  return queryOptions({
+    queryKey: designKeys.documentRevisions(wsId, documentId),
+    queryFn: () => api.listDesignDocumentRevisions(documentId),
+    select: (data) => data.revisions,
+    enabled: !!documentId,
+  });
+}
+
+/**
+ * One revision with its preview capability. Revisions are immutable, but the
+ * capability expires after 30 minutes, so the query goes stale well before
+ * that and refetches on the next mount instead of framing a dead URL.
+ */
+export function designDocumentRevisionOptions(wsId: string, documentId: string, revisionId: string) {
+  return queryOptions({
+    queryKey: designKeys.documentRevision(wsId, documentId, revisionId),
+    queryFn: () => api.getDesignDocumentRevision(documentId, revisionId),
+    enabled: !!documentId && !!revisionId,
+    staleTime: 20 * 60 * 1000,
+  });
+}
+
 /**
  * Community catalogue of scenario recipes (DC-041 / DC-048). Always enabled:
  * an empty catalogue is a legitimate answer the gallery renders as an empty

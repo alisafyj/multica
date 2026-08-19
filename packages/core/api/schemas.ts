@@ -87,7 +87,8 @@ import type {
   WebhookDelivery,
   CreateDesignDraftAgentTaskResponse,
   DesignDocument,
-  DesignDocumentPreview,
+  DesignDocumentRevision,
+  ListDesignDocumentRevisionsResponse,
   ListDesignDocumentsResponse,
   DesignDelivery,
   DesignDraft,
@@ -1498,35 +1499,97 @@ export const EMPTY_CREATE_DESIGN_DRAFT_AGENT_TASK_RESPONSE: CreateDesignDraftAge
   status: "failed",
 };
 
-export const DesignDocumentPreviewSchema = z.object({
-  schema: z.literal("multica.design-document-preview/v1"),
-  document_id: z.string(),
-  revision_id: z.string(),
-  content_digest: z.string(),
-  resource_base_url: z.string(),
-  resource_access_token: z.string(),
-  resource_access_expires_at: z.string(),
-  targets: z.array(z.object({ id: z.string(), kind: z.literal("page"), path: z.string() })),
-  adjustment_scopes: z.array(z.object({
-    kind: z.enum(["document", "page", "state", "overlay", "block"]),
-    id: z.string().optional(),
-    label: z.string(),
-  })).default([]),
-  preview: z.object({
-    schema_version: z.literal("multica.design-preview-receipt/v1"),
-    content_digest: z.string(),
-    verification: z.object({
-      passed: z.boolean(),
-      browser: z.object({ name: z.string(), version: z.string() }).loose(),
-    }).loose(),
-  }).loose(),
+const DesignDocumentRevisionSummaryShape = {
+  id: z.string().catch("").default(""),
+  revision_number: z.number().int().catch(0).default(0),
+  content_digest: z.string().catch("").default(""),
+  base_revision_id: z.string().catch("").default(""),
+  source_task_id: z.string().catch("").default(""),
+  agent_id: z.string().catch("").default(""),
+  instruction: z.string().catch("").default(""),
+  scope: z.unknown().transform((value) => value ?? null),
+  is_draft: z.boolean().catch(false).default(false),
+  is_saved: z.boolean().catch(false).default(false),
+  page_count: z.number().int().catch(0).default(0),
+  flow_count: z.number().int().catch(0).default(0),
+  created_at: z.string().catch("").default(""),
+};
+
+export const DesignDocumentRevisionSummarySchema = z.object(DesignDocumentRevisionSummaryShape).loose();
+
+export const ListDesignDocumentRevisionsResponseSchema = z.object({
+  // One bad row must not empty the whole timeline; drop it and keep the rest.
+  revisions: z.preprocess(
+    (value) => Array.isArray(value)
+      ? value.filter((row) => DesignDocumentRevisionSummarySchema.safeParse(row).success)
+      : [],
+    z.array(DesignDocumentRevisionSummarySchema).catch([]),
+  ),
 }).loose();
 
-export const EMPTY_DESIGN_DOCUMENT_PREVIEW: DesignDocumentPreview = {
-  schema: "multica.design-document-preview/v1", document_id: "", revision_id: "", content_digest: "",
-  resource_base_url: "", resource_access_token: "", resource_access_expires_at: "", targets: [],
-  adjustment_scopes: [],
-  preview: { schema_version: "multica.design-preview-receipt/v1", content_digest: "", verification: { passed: false, browser: { name: "", version: "" } } },
+export const EMPTY_LIST_DESIGN_DOCUMENT_REVISIONS_RESPONSE: ListDesignDocumentRevisionsResponse = {
+  revisions: [],
+};
+
+const DesignDocumentPageSchema = z.object({
+  id: z.string().catch("").default(""),
+  title: z.string().catch("").default(""),
+  parent_id: z.string().catch("").default(""),
+  entry: z.string().catch("").default(""),
+  state_ids: z.array(z.string()).catch([]).default([]),
+}).loose();
+
+const DesignDocumentFlowSchema = z.object({
+  id: z.string().catch("").default(""),
+  title: z.string().catch("").default(""),
+}).loose();
+
+const DesignDocumentPreviewTargetSchema = z.object({
+  id: z.string().catch("").default(""),
+  kind: z.string().catch("").default(""),
+  path: z.string().catch("").default(""),
+}).loose();
+
+export const DesignDocumentRevisionSchema = z.object({
+  ...DesignDocumentRevisionSummaryShape,
+  brief: z.unknown().transform((value) => value ?? null),
+  coverage: z.unknown().transform((value) => value ?? null),
+  audit: z.unknown().transform((value) => value ?? null),
+  preview_receipt: z.unknown().transform((value) => value ?? null),
+  prototype_entry: z.string().catch("").default(""),
+  pages: z.array(DesignDocumentPageSchema).catch([]).default([]),
+  flows: z.array(DesignDocumentFlowSchema).catch([]).default([]),
+  preview_targets: z.array(DesignDocumentPreviewTargetSchema).catch([]).default([]),
+  resource_base_path: z.string().catch("").default(""),
+  resource_access_token: z.string().catch("").default(""),
+  resource_access_expires_at: z.string().catch("").default(""),
+}).loose();
+
+export const EMPTY_DESIGN_DOCUMENT_REVISION: DesignDocumentRevision = {
+  id: "",
+  revision_number: 0,
+  content_digest: "",
+  base_revision_id: "",
+  source_task_id: "",
+  agent_id: "",
+  instruction: "",
+  scope: null,
+  is_draft: false,
+  is_saved: false,
+  page_count: 0,
+  flow_count: 0,
+  created_at: "",
+  brief: null,
+  coverage: null,
+  audit: null,
+  preview_receipt: null,
+  prototype_entry: "",
+  pages: [],
+  flows: [],
+  preview_targets: [],
+  resource_base_path: "",
+  resource_access_token: "",
+  resource_access_expires_at: "",
 };
 
 export const DesignDraftMaterializeResponseSchema = z.object({
@@ -2095,6 +2158,7 @@ export const DesignScenarioRecipeSchema = z.object({
   prompt: z.string().catch("").default(""),
   preview_path: z.string().catch("").default(""),
   preview_kind: z.string().catch("").default(""),
+  preview_url: z.string().catch("").default(""),
   origin: z.string().catch("").default(""),
   published_at: z.string().catch("").default(""),
 }).loose();
@@ -2158,7 +2222,6 @@ export const EMPTY_DESIGN_RESTORE_TASK: DesignRestoreTask = {
   file_id: "",
   revision_id: "",
   issue_id: null,
-  preview_url: z.string().catch("").default(""),
   delivery_id: null,
   agent_task_id: null,
   status: "queued",

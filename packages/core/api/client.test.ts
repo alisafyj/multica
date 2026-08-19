@@ -18,24 +18,74 @@ describe("ApiClient design documents", () => {
     ]);
   });
 
-  it("adjusts and saves a Design Document through its base-bound lifecycle routes", async () => {
-    const digest = `sha256:${"a".repeat(64)}`;
+  it("adjusts, saves, discards and restores a Design Document through its lifecycle routes", async () => {
     const document = { id: "document-1", project_id: "project-1", title: "Checkout", draft_revision_id: "revision-1", saved_revision_id: "revision-1", created_at: "2026-08-14T00:00:00Z", updated_at: "2026-08-14T00:00:00Z" };
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(document), { status: 200, headers: { "Content-Type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(document), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const ok = () => new Response(JSON.stringify(document), { status: 200, headers: { "Content-Type": "application/json" } });
+    const fetchMock = vi.fn().mockResolvedValueOnce(ok()).mockResolvedValueOnce(ok()).mockResolvedValueOnce(ok()).mockResolvedValueOnce(ok());
     vi.stubGlobal("fetch", fetchMock);
     const client = new ApiClient("https://api.example.test");
     await expect(client.adjustDesignDocument("document-1", {
-      project_id: "project-1", agent_id: "agent-1", instruction: "Tighten header",
-      scope: { kind: "page", id: "page-checkout" }, base_revision_id: "revision-1", base_content_digest: digest,
+      agent_id: "agent-1", instruction: "Tighten header", scope: { kind: "page", id: "page-checkout" }, base_revision_id: "revision-1",
     })).resolves.toMatchObject({ id: "document-1" });
-    await expect(client.saveDesignDocument("document-1", { project_id: "project-1", expected_draft_revision_id: "revision-1", expected_draft_content_digest: digest })).resolves.toMatchObject(document);
+    await expect(client.saveDesignDocument("document-1", { draft_revision_id: "revision-1" })).resolves.toMatchObject(document);
+    await expect(client.discardDesignDocumentDraft("document-1")).resolves.toMatchObject({ id: "document-1" });
+    await expect(client.restoreDesignDocumentRevision("document-1", "revision-0")).resolves.toMatchObject({ id: "document-1" });
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "https://api.example.test/api/design-documents/document-1/adjust",
       "https://api.example.test/api/design-documents/document-1/save",
+      "https://api.example.test/api/design-documents/document-1/discard",
+      "https://api.example.test/api/design-documents/document-1/revisions/revision-0/restore",
     ]);
-    expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "POST"]);
+    expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "POST", "POST", "POST"]);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      agent_id: "agent-1", instruction: "Tighten header", scope: { kind: "page", id: "page-checkout" }, base_revision_id: "revision-1",
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ draft_revision_id: "revision-1" });
+  });
+
+  it("reads a document, its revision timeline and one revision with the preview capability", async () => {
+    const document = { id: "document-1", project_id: "project-1", title: "Checkout", status: "draft", draft_revision_id: "revision-1", created_at: "2026-08-14T00:00:00Z", updated_at: "2026-08-14T00:00:00Z" };
+    const summary = { id: "revision-1", revision_number: 1, content_digest: `sha256:${"a".repeat(64)}`, source_task_id: "task-1", agent_id: "agent-1", instruction: "", scope: null, is_draft: true, is_saved: false, page_count: 2, flow_count: 0, created_at: "2026-08-14T00:00:00Z" };
+    const revision = {
+      ...summary,
+      brief: { title: "Checkout" }, coverage: {}, audit: { passed: true }, preview_receipt: {},
+      prototype_entry: "prototype/index.html",
+      pages: [{ id: "home", title: "Home", entry: "prototype/index.html", state_ids: [] }],
+      flows: [],
+      preview_targets: [{ id: "prototype-index", kind: "prototype_entry", path: "prototype/index.html" }],
+      resource_base_path: "/api/design-document-previews/ws-1/revision-1/aa/token/files",
+      resource_access_token: "token",
+      resource_access_expires_at: "2026-08-14T00:30:00Z",
+    };
+    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json(document))
+      .mockResolvedValueOnce(json({ revisions: [summary, "garbage"] }))
+      .mockResolvedValueOnce(json(revision));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.getDesignDocument("document-1")).resolves.toMatchObject({ id: "document-1", status: "draft" });
+    await expect(client.listDesignDocumentRevisions("document-1")).resolves.toEqual({ revisions: [expect.objectContaining(summary)] });
+    const detail = await client.getDesignDocumentRevision("document-1", "revision-1");
+    expect(detail.pages[0]?.entry).toBe("prototype/index.html");
+    expect(client.getDesignDocumentPreviewFileURL(detail.resource_base_path, "prototype/orders page.html")).toBe(
+      "https://api.example.test/api/design-document-previews/ws-1/revision-1/aa/token/files/prototype/orders%20page.html",
+    );
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.example.test/api/design-documents/document-1",
+      "https://api.example.test/api/design-documents/document-1/revisions",
+      "https://api.example.test/api/design-documents/document-1/revisions/revision-1",
+    ]);
+  });
+
+  it("falls back to an empty revision when the detail response is malformed", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(["not", "an", "object"]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    const detail = await client.getDesignDocumentRevision("document-1", "revision-1");
+    expect(detail.id).toBe("revision-1");
+    expect(detail.pages).toEqual([]);
+    expect(detail.resource_base_path).toBe("");
   });
 });
 

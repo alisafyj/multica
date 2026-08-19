@@ -31,6 +31,10 @@ type AdjustDesignDocumentRequest struct {
 	// Optional. The page, state or named block the user had selected, carried
 	// through verbatim so the agent scopes the change the way the UI showed it.
 	Scope json.RawMessage `json:"scope"`
+	// Optional. The revision the user was looking at when they asked. When
+	// set, an adjustment whose base moved underneath them is refused instead
+	// of silently landing on content they never saw.
+	BaseRevisionID string `json:"base_revision_id"`
 }
 
 // designDocumentAdjustBase names the revision an adjustment starts from: the
@@ -60,6 +64,7 @@ func (h *Handler) AdjustDesignDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Instruction = strings.TrimSpace(req.Instruction)
 	req.AgentID = strings.TrimSpace(req.AgentID)
+	req.BaseRevisionID = strings.TrimSpace(req.BaseRevisionID)
 	if req.Instruction == "" {
 		writeProjectDesignSystemError(w, http.StatusBadRequest, "instruction_required", "instruction is required")
 		return
@@ -94,6 +99,10 @@ func (h *Handler) AdjustDesignDocument(w http.ResponseWriter, r *http.Request) {
 	baseRevisionID, ok := designDocumentAdjustBase(document)
 	if !ok {
 		writeProjectDesignSystemError(w, http.StatusConflict, "no_revision_to_adjust", "this document has no revision to adjust")
+		return
+	}
+	if req.BaseRevisionID != "" && req.BaseRevisionID != uuidToString(baseRevisionID) {
+		writeProjectDesignSystemError(w, http.StatusConflict, "base_revision_changed", "the revision changed since it was loaded; reload before adjusting")
 		return
 	}
 	baseRevision, err := h.Queries.GetDesignDocumentRevisionInWorkspace(r.Context(), db.GetDesignDocumentRevisionInWorkspaceParams{

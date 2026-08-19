@@ -1206,6 +1206,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		"/api/project-design-system-previews/{workspaceId}/{systemId}/{digest}/{accessToken}/files/*",
 		h.GetProjectDesignSystemPackagePreviewFile,
 	)
+	// Design document prototypes are framed the same way and carry their own
+	// revision-bound capability, issued by GET /api/design-documents/{id}/revisions/{revisionId}.
+	r.Get(
+		"/api/design-document-previews/{workspaceId}/{revisionId}/{digest}/{accessToken}/files/*",
+		h.GetDesignDocumentPreviewFile,
+	)
 	// Built-in recipe covers: bundled, workspace-agnostic, framed by the app.
 	// Unauthenticated for the same reason as the route above — a frame cannot
 	// carry the Bearer header — and fenced by its own CSP instead. The URL
@@ -1860,6 +1866,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/design-systems/builtin/{slug}", h.GetBuiltinDesignSystem)
 			r.Post("/api/design-documents", h.CreateDesignDocument)
 			r.Get("/api/design-documents/{id}", h.GetDesignDocument)
+			r.Get("/api/design-documents/{id}/revisions", h.ListDesignDocumentRevisions)
+			r.Get("/api/design-documents/{id}/revisions/{revisionId}", h.GetDesignDocumentRevision)
+			r.Post("/api/design-documents/{id}/revisions/{revisionId}/restore", h.RestoreDesignDocumentRevision)
 			r.Post("/api/design-documents/{id}/adjust", h.AdjustDesignDocument)
 			r.Post("/api/design-documents/{id}/save", h.SaveDesignDocument)
 			r.Post("/api/design-documents/{id}/discard", h.DiscardDesignDocument)
