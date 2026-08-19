@@ -2106,6 +2106,8 @@ export const BuiltinDesignSystemSchema = z.object({
   name: z.string().catch("").default(""),
   category: z.string().catch("").default(""),
   description: z.string().catch("").default(""),
+  showcase_url: z.string().catch("").default(""),
+  swatches: z.array(z.string()).catch([]).default([]),
 }).loose();
 
 export const ListBuiltinDesignSystemsResponseSchema = z.object({
@@ -2144,7 +2146,7 @@ export const BuiltinDesignSystemDetailSchema = BuiltinDesignSystemSchema.extend(
 }).loose();
 
 export const EMPTY_BUILTIN_DESIGN_SYSTEM_DETAIL: BuiltinDesignSystemDetail = {
-  slug: "", name: "", category: "", description: "", tokens: [], tokens_css: "", design_markdown: "",
+  slug: "", name: "", category: "", description: "", showcase_url: "", swatches: [], tokens: [], tokens_css: "", design_markdown: "",
 };
 
 export const DesignScenarioRecipeSchema = z.object({

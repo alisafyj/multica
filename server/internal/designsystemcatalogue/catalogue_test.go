@@ -59,7 +59,7 @@ func TestListDoesNotExposeTheSharedSlice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if second[0] != original {
+	if second[0].Slug != original.Slug || second[0].Name != original.Name {
 		t.Fatalf("caller mutation leaked into the catalogue: %+v", second[0])
 	}
 }
@@ -92,5 +92,79 @@ func TestGetRejectsUnknownAndTraversalSlugs(t *testing.T) {
 		if ok {
 			t.Fatalf("Get(%q) resolved to %+v", slug, detail.Entry)
 		}
+	}
+}
+
+// Nearly every bundled package ships Open Design's token-driven showcase
+// (system/kit.html plus a dark variant). The catalogue must expose it under a
+// bundle digest so the library can frame it and cache it immutably, and must
+// refuse anything but the two known variants.
+func TestShowcaseIsServedByDigestAndVariant(t *testing.T) {
+	entries, err := List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	withShowcase := 0
+	for _, entry := range entries {
+		if entry.ShowcaseDigest == "" {
+			continue
+		}
+		withShowcase++
+		if len(entry.ShowcaseDigest) != 12 {
+			t.Fatalf("%s showcase digest %q is not 12 hex chars", entry.Slug, entry.ShowcaseDigest)
+		}
+		light, ok := Showcase(entry.Slug, "light")
+		if !ok || !strings.Contains(string(light), "<html") {
+			t.Fatalf("%s light showcase missing", entry.Slug)
+		}
+		if _, ok := Showcase(entry.Slug, "poster"); ok {
+			t.Fatalf("%s served an unknown showcase variant", entry.Slug)
+		}
+	}
+	if withShowcase < 100 {
+		t.Fatalf("only %d packages expose a showcase", withShowcase)
+	}
+	if _, ok := Showcase("nope", "light"); ok {
+		t.Fatal("unknown slug served a showcase")
+	}
+}
+
+// The digest is a cache key: it must change when the showcase changes and be
+// identical for identical bundles, so it is derived from file contents.
+func TestShowcaseDigestFollowsTheBundleContents(t *testing.T) {
+	a := bundleDigest(map[string][]byte{"system/kit.html": []byte("<html>a</html>")})
+	b := bundleDigest(map[string][]byte{"system/kit.html": []byte("<html>b</html>")})
+	again := bundleDigest(map[string][]byte{"system/kit.html": []byte("<html>a</html>")})
+	if a == b || a != again || len(a) != 12 {
+		t.Fatalf("digests a=%q b=%q again=%q", a, b, again)
+	}
+}
+
+// A list row shows the palette at a glance: a handful of concrete colours in
+// declaration order, never aliases, never more than the cap.
+func TestEntriesCarryAFewConcreteSwatches(t *testing.T) {
+	entries, err := List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	withSwatches := 0
+	for _, entry := range entries {
+		if entry.Swatches == nil {
+			t.Fatalf("%s swatches are nil rather than empty", entry.Slug)
+		}
+		if len(entry.Swatches) > maxSwatches {
+			t.Fatalf("%s carries %d swatches", entry.Slug, len(entry.Swatches))
+		}
+		for _, value := range entry.Swatches {
+			if strings.Contains(value, "var(") || strings.TrimSpace(value) == "" {
+				t.Fatalf("%s swatch %q is not a concrete colour", entry.Slug, value)
+			}
+		}
+		if len(entry.Swatches) > 0 {
+			withSwatches++
+		}
+	}
+	if withSwatches < 100 {
+		t.Fatalf("only %d packages carry swatches", withSwatches)
 	}
 }

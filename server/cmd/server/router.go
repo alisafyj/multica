@@ -1220,6 +1220,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// references beside itself.
 	r.Get("/api/design-recipes/{slug}/preview/{digest}", h.GetDesignRecipePreview)
 	r.Get("/api/design-recipes/{slug}/preview/{digest}/*", h.GetDesignRecipePreview)
+	// Built-in design system showcases: the same bundled, digest-versioned,
+	// self-fenced kind of document, framed as a system's cover by the library.
+	r.Get("/api/design-systems/builtin/{slug}/showcase/{digest}/{variant}", h.GetBuiltinDesignSystemShowcase)
 	// Composio OAuth callback (MUL-3843). NOT under the Auth group on purpose:
 	// Composio 302-redirects the user's browser here at the end of the OAuth
 	// flow, and the cookie session is frequently absent (expired session,

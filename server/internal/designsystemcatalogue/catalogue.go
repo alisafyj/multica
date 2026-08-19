@@ -11,13 +11,18 @@
 //
 // Each package carries the three files the catalogue reads: manifest.json for
 // identity, tokens.css for the visual values the library renders, and
-// DESIGN.md for the design language itself.
+// DESIGN.md for the design language itself. Most also carry Open Design's
+// token-driven showcase (system/kit.html and its dark variant), which the
+// library frames as the system's cover the way Open Design's own tab does.
 package designsystemcatalogue
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"sort"
@@ -41,6 +46,23 @@ type Entry struct {
 	// reader sees.
 	Category    string `json:"category"`
 	Description string `json:"description"`
+	// ShowcaseDigest identifies the package's showcase bundle (the kit
+	// documents, by path and content); "" when the package ships none. The
+	// showcase URL carries it so a cover caches immutably and a new build is a
+	// new URL — the same rule the recipe covers follow.
+	ShowcaseDigest string `json:"showcase_digest"`
+	// Swatches are the first few concrete colour values the package declares,
+	// in declaration order, so a list row can show the palette at a glance
+	// without fetching the detail. Empty for packages without design-tokens.json.
+	Swatches []string `json:"swatches"`
+}
+
+const maxSwatches = 6
+
+// showcaseFiles maps a showcase variant onto the package file that renders it.
+var showcaseFiles = map[string]string{
+	"light": "system/kit.html",
+	"dark":  "system/kit.dark.html",
 }
 
 // Token is one declared design token, typed at the source.
@@ -131,6 +153,16 @@ func load() {
 			Category:    preferZH(m.CategoryZH, m.Category),
 			Description: preferZH(m.DescriptionZH, m.Description),
 		}
+		entry.Swatches = swatchesFromTokens(dir.Name())
+		showcase := map[string][]byte{}
+		for _, file := range showcaseFiles {
+			if body, err := packages.ReadFile(path.Join("data", dir.Name(), file)); err == nil {
+				showcase[file] = body
+			}
+		}
+		if len(showcase) > 0 {
+			entry.ShowcaseDigest = bundleDigest(showcase)
+		}
 		entries = append(entries, entry)
 		bySlug[entry.Slug] = entry
 	}
@@ -140,6 +172,78 @@ func load() {
 		}
 		return entries[i].Name < entries[j].Name
 	})
+}
+
+// swatchesFromTokens reads a package's design-tokens.json and keeps the first
+// concrete colour values it declares (aliases such as var(--x) are skipped:
+// they render as nothing in a swatch). Never nil, so the JSON is [] not null.
+func swatchesFromTokens(slug string) []string {
+	swatches := []string{}
+	raw, err := packages.ReadFile(path.Join("data", slug, "design-tokens.json"))
+	if err != nil {
+		return swatches
+	}
+	var parsed designTokens
+	if json.Unmarshal(raw, &parsed) != nil {
+		return swatches
+	}
+	seen := map[string]bool{}
+	for _, token := range parsed.Tokens {
+		value := strings.TrimSpace(token.Value)
+		if token.Type != "color" || value == "" || strings.Contains(value, "var(") || seen[value] {
+			continue
+		}
+		seen[value] = true
+		swatches = append(swatches, value)
+		if len(swatches) == maxSwatches {
+			break
+		}
+	}
+	return swatches
+}
+
+// bundleDigest hashes a set of files by path and content, in path order.
+// Twelve hex chars is plenty for a cache key that only has to differ between
+// builds.
+func bundleDigest(files map[string][]byte) string {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, name := range names {
+		_, _ = io.WriteString(h, name)
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write(files[name])
+		_, _ = h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}
+
+// Showcase returns the showcase document of one variant ("light" or "dark").
+// Reports ok=false for an unknown slug, a package without a showcase, or a
+// variant that is not one of the two, so the handler answers 404.
+func Showcase(slug, variant string) ([]byte, bool) {
+	once.Do(load)
+	if loadErr != nil {
+		return nil, false
+	}
+	entry, ok := bySlug[strings.TrimSpace(slug)]
+	if !ok || entry.ShowcaseDigest == "" {
+		return nil, false
+	}
+	file, ok := showcaseFiles[variant]
+	if !ok {
+		return nil, false
+	}
+	// The slug indexes an in-memory map built from directory names and the
+	// variant indexes a fixed table, so neither can reach ReadFile as a path.
+	body, err := packages.ReadFile(path.Join("data", entry.Slug, file))
+	if err != nil {
+		return nil, false
+	}
+	return body, true
 }
 
 // List returns every built-in system, grouped by category then name so the

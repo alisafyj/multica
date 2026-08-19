@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Boxes, FolderOpen, GitBranch, Package, Search, SwatchBook } from "lucide-react";
+import { Boxes, ExternalLink, FolderOpen, GitBranch, Moon, Package, Search, Sun, SwatchBook } from "lucide-react";
+import { api } from "@multica/core/api";
 import {
   builtinDesignSystemDetailOptions,
   builtinDesignSystemListOptions,
@@ -28,6 +29,7 @@ import {
 import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
+import { ReadonlyContent } from "../editor";
 import { DesignFilterPill } from "./design-filter-pill";
 import { PLATFORM_OPTIONS } from "./design-task-composer";
 
@@ -358,6 +360,102 @@ function colorTokensFromCSS(css: string): Array<{ name: string; value: string }>
   return found;
 }
 
+/**
+ * The design language split the way Open Design's kit view reads it: the text
+ * before the first `##` heading is the identity preamble, and every `##`
+ * heading after it is one module of the system. Front matter and the document
+ * title line are not content and are dropped.
+ */
+export function designMarkdownModules(markdown: string): { preamble: string; sections: Array<{ title: string; body: string }> } {
+  const withoutFrontMatter = markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+  const lines = withoutFrontMatter.split(/\r?\n/);
+  const sections: Array<{ title: string; body: string[] }> = [];
+  const preamble: string[] = [];
+  let current: { title: string; body: string[] } | null = null;
+  for (const line of lines) {
+    const heading = /^##\s+(.+?)\s*$/.exec(line);
+    if (heading) {
+      current = { title: heading[1]!.replace(/^\d+[.)]\s*/, ""), body: [] };
+      sections.push(current);
+      continue;
+    }
+    if (current) current.body.push(line);
+    else if (!/^#\s+/.test(line)) preamble.push(line);
+  }
+  return {
+    preamble: preamble.join("\n").trim(),
+    sections: sections
+      .map((section) => ({ title: section.title, body: section.body.join("\n").trim() }))
+      .filter((section) => section.body.length > 0),
+  };
+}
+
+/** The dark showcase lives beside the light one; the server composes both paths. */
+function showcaseVariantURL(showcaseUrl: string, variant: "light" | "dark"): string {
+  if (!showcaseUrl) return "";
+  return `${api.getBaseUrl()}${showcaseUrl.replace(/\/(light|dark)$/, "")}/${variant}`;
+}
+
+/**
+ * The system's cover: Open Design's token-driven showcase framed the way its
+ * own tab frames it. No scripts run in it (the document has none and its CSP
+ * admits none), so the frame is fully sandboxed.
+ */
+function BuiltinShowcase({ system }: { system: BuiltinDesignSystem }) {
+  const [variant, setVariant] = useState<"light" | "dark">("light");
+  const src = showcaseVariantURL(system.showcase_url, variant);
+  if (!src) return null;
+  return (
+    <section className="flex flex-col gap-2" aria-label="展示">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-body font-medium">展示</h3>
+        <div className="flex items-center gap-0.5">
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label="浅色"
+            aria-pressed={variant === "light"}
+            className={cn(variant === "light" && "bg-accent text-foreground")}
+            onClick={() => setVariant("light")}
+          >
+            <Sun className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label="深色"
+            aria-pressed={variant === "dark"}
+            className={cn(variant === "dark" && "bg-accent text-foreground")}
+            onClick={() => setVariant("dark")}
+          >
+            <Moon className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label="在新标签页中打开"
+            title="在新标签页中打开"
+            onClick={() => window.open(src, "_blank", "noopener,noreferrer")}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+      <iframe
+        key={src}
+        title={`${system.name || system.slug} 展示`}
+        src={src}
+        sandbox=""
+        referrerPolicy="no-referrer"
+        className="h-[380px] w-full rounded-lg border bg-background"
+      />
+    </section>
+  );
+}
+
 function BuiltinSystemDetail({ slug }: { slug: string }) {
   const wsId = useWorkspaceId();
   const { data, isLoading } = useQuery(builtinDesignSystemDetailOptions(wsId, slug));
@@ -378,21 +476,17 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
   // packages that ship no token file.
   const typed = data.tokens ?? [];
   const colors = typed.filter((token) => token.type === "color" && !token.value.includes("var("));
-  const typography = typed.filter((token) => token.type === "typography" || token.type === "font");
+  // Open Design types its font tokens `fontFamily`; older packages may say
+  // `font` or `typography`, so all three count as type.
+  const typography = typed.filter((token) => ["fontFamily", "font", "typography"].includes(token.type));
   const fallbackColors = typed.length === 0 ? colorTokensFromCSS(data.tokens_css ?? "") : [];
   const palette = colors.length > 0
     ? colors.map((token) => ({ name: token.name, value: token.value }))
     : fallbackColors;
 
-  const fontFamily = typography.find((token) => /font(-family)?$/.test(token.name))?.value;
-  // The heading already carries the name, so the excerpt drops the document's
-  // own title lines rather than repeating them.
-  const excerpt = (data.design_markdown ?? "")
-    .split("\n")
-    .filter((line) => !line.startsWith("#"))
-    .join("\n")
-    .trim()
-    .slice(0, 700);
+  const fontFamily = typography.find((token) => /(display|body|sans|font(-family)?)$/.test(token.name))?.value
+    ?? typography[0]?.value;
+  const modules = designMarkdownModules(data.design_markdown ?? "");
 
   return (
     <div className="flex flex-col gap-6">
@@ -402,12 +496,15 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
           {data.category ? <Badge variant="secondary">{data.category}</Badge> : null}
           <Badge variant="outline">官方</Badge>
         </div>
+        {data.description ? <p className="text-body text-muted-foreground">{data.description}</p> : null}
       </div>
 
-      {data.description ? (
+      <BuiltinShowcase system={data} />
+
+      {modules.preamble ? (
         <section className="flex flex-col gap-2">
           <h3 className="text-body font-medium">品牌标识</h3>
-          <p className="text-body text-muted-foreground">{data.description}</p>
+          <ReadonlyContent content={modules.preamble} className="max-w-none text-body leading-7 text-muted-foreground" />
         </section>
       ) : null}
 
@@ -455,12 +552,12 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
         </section>
       ) : null}
 
-      {excerpt ? (
-        <section className="flex flex-col gap-2">
-          <h3 className="text-body font-medium">设计语言</h3>
-          <p className="whitespace-pre-wrap text-body text-muted-foreground">{excerpt}</p>
+      {modules.sections.map((section) => (
+        <section key={section.title} className="flex flex-col gap-2">
+          <h3 className="text-body font-medium">{section.title}</h3>
+          <ReadonlyContent content={section.body} className="max-w-none text-body leading-7" />
         </section>
-      ) : null}
+      ))}
 
       <p className="text-caption text-muted-foreground">
         官方体系是只读参考。要在项目里使用，请在项目的「设计体系」中创建，并以它作为参考风格。
@@ -597,7 +694,16 @@ function BuiltinListItem({
           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
       )}
     >
-      <span className="w-full truncate text-body">{system.name || system.slug}</span>
+      <span className="flex w-full min-w-0 items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-body">{system.name || system.slug}</span>
+        {system.swatches.length > 0 ? (
+          <span className="flex shrink-0 items-center gap-0.5" aria-hidden="true">
+            {system.swatches.slice(0, 5).map((value, index) => (
+              <span key={`${value}-${index}`} className="size-2.5 rounded-full border border-border/60" style={{ background: value }} />
+            ))}
+          </span>
+        ) : null}
+      </span>
       <span className="w-full truncate text-caption text-muted-foreground">
         {system.category || "未分类"}
       </span>

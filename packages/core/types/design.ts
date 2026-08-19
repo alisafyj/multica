@@ -572,6 +572,15 @@ export interface BuiltinDesignSystem {
   name: string;
   category: string;
   description: string;
+  /**
+   * API path of the package's light showcase document (Open Design's token
+   * driven `system/kit.html`), digest-versioned so it caches immutably; "" when
+   * the package ships none. The dark variant is the same path ending in `/dark`
+   * instead of `/light`. Prefix with the API base URL.
+   */
+  showcase_url: string;
+  /** The package's first concrete colour values, for a list row's swatch strip. */
+  swatches: string[];
 }
 
 export interface ListBuiltinDesignSystemsResponse {
