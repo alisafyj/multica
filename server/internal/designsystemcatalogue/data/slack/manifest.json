@@ -2,5 +2,7 @@
   "id": "slack",
   "name": "Slack",
   "category": "Productivity & SaaS",
-  "description": "Bundled Open Design package for Slack, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "效率与 SaaS",
+  "description": "Bundled Open Design package for Slack, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "职场沟通平台。茄紫主色，多彩 Logo 配色，浅色界面配深色侧边栏，温暖亲切。"
 }

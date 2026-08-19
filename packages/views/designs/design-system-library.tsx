@@ -373,9 +373,20 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
   }
   if (!data) return null;
 
-  const swatches = colorTokensFromCSS(data.tokens_css ?? "");
-  // The heading is already the system's name, so the excerpt starts after the
-  // document's own title line rather than repeating it.
+  // Typed at the source, so grouping is a fact from the package rather than a
+  // guess from the value's shape. The CSS sheet is only consulted for the few
+  // packages that ship no token file.
+  const typed = data.tokens ?? [];
+  const colors = typed.filter((token) => token.type === "color" && !token.value.includes("var("));
+  const typography = typed.filter((token) => token.type === "typography" || token.type === "font");
+  const fallbackColors = typed.length === 0 ? colorTokensFromCSS(data.tokens_css ?? "") : [];
+  const palette = colors.length > 0
+    ? colors.map((token) => ({ name: token.name, value: token.value }))
+    : fallbackColors;
+
+  const fontFamily = typography.find((token) => /font(-family)?$/.test(token.name))?.value;
+  // The heading already carries the name, so the excerpt drops the document's
+  // own title lines rather than repeating them.
   const excerpt = (data.design_markdown ?? "")
     .split("\n")
     .filter((line) => !line.startsWith("#"))
@@ -384,27 +395,52 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
     .slice(0, 700);
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-title font-medium">{data.name || slug}</h2>
           {data.category ? <Badge variant="secondary">{data.category}</Badge> : null}
           <Badge variant="outline">官方</Badge>
         </div>
-        {data.description ? (
-          <p className="text-body text-muted-foreground">{data.description}</p>
-        ) : null}
       </div>
 
-      {swatches.length > 0 ? (
+      {data.description ? (
         <section className="flex flex-col gap-2">
-          <h3 className="text-body font-medium">色彩</h3>
+          <h3 className="text-body font-medium">品牌标识</h3>
+          <p className="text-body text-muted-foreground">{data.description}</p>
+        </section>
+      ) : null}
+
+      {typography.length > 0 ? (
+        <section className="flex flex-col gap-2">
+          <h3 className="text-body font-medium">字体排版</h3>
+          <div className="rounded-lg border p-4">
+            {/* Rendered in the system's own family so the sample shows the
+                typeface rather than describing it. */}
+            <p className="text-display leading-none" style={fontFamily ? { fontFamily } : undefined}>
+              Ag 设计
+            </p>
+          </div>
+          <dl className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+            {typography.slice(0, 8).map((token) => (
+              <div key={token.name} className="flex min-w-0 items-baseline gap-2 rounded-md border px-2.5 py-1.5">
+                <dt className="shrink-0 font-mono text-micro text-muted-foreground">{token.name}</dt>
+                <dd className="min-w-0 flex-1 truncate text-right font-mono text-caption">{token.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ) : null}
+
+      {palette.length > 0 ? (
+        <section className="flex flex-col gap-2">
+          <h3 className="text-body font-medium">调色板</h3>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
-            {swatches.map((token) => (
+            {palette.slice(0, 24).map((token) => (
               <div key={token.name} className="flex items-center gap-2 rounded-lg border p-2">
                 <span
                   aria-hidden="true"
-                  className="size-7 shrink-0 rounded-md border"
+                  className="size-8 shrink-0 rounded-md border"
                   style={{ background: token.value }}
                 />
                 <span className="flex min-w-0 flex-col">

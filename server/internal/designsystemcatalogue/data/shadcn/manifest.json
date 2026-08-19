@@ -2,5 +2,7 @@
   "id": "shadcn",
   "name": "Shadcn",
   "category": "Modern & Minimal",
-  "description": "Bundled Open Design package for Shadcn, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "现代极简",
+  "description": "Bundled Open Design package for Shadcn, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "shadcn/ui 风格设计，组件极简干净，单色配色，实用优先模式。"
 }

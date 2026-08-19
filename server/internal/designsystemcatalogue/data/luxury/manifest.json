@@ -2,5 +2,7 @@
   "id": "luxury",
   "name": "Luxury",
   "category": "Professional & Corporate",
-  "description": "Bundled Open Design package for Luxury, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "专业与企业",
+  "description": "Bundled Open Design package for Luxury, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "高端暗色美学，大标题，单色配色，奢侈品牌专属的高级质感。"
 }

@@ -2,5 +2,7 @@
   "id": "playstation",
   "name": "PlayStation",
   "category": "Media & Consumer",
-  "description": "Bundled Open Design package for PlayStation, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "媒体与消费",
+  "description": "Bundled Open Design package for PlayStation, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "游戏主机零售。三层通道布局，静默权威的展示字体，青色悬停缩放效果。"
 }

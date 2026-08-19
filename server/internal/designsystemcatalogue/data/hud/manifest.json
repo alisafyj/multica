@@ -2,5 +2,7 @@
   "id": "hud",
   "name": "HUD Design System",
   "category": "Themed & Unique",
-  "description": "Bundled Open Design package for HUD Design System, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "主题与特色",
+  "description": "Bundled Open Design package for HUD Design System, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "战斗机/直升机平视显示器。磷光绿在近黑底上，全大写数据叠加，棱角几何。高速高空下零歧义。"
 }

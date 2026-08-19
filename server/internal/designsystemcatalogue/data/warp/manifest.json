@@ -2,5 +2,7 @@
   "id": "warp",
   "name": "Warp",
   "category": "Developer Tools",
-  "description": "Bundled Open Design package for Warp, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "开发者工具",
+  "description": "Bundled Open Design package for Warp, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "现代终端。深色 IDE 风格界面，基于块的命令 UI。"
 }

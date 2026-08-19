@@ -2,5 +2,7 @@
   "id": "futuristic",
   "name": "Futuristic",
   "category": "Themed & Unique",
-  "description": "Bundled Open Design package for Futuristic, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "主题与特色",
+  "description": "Bundled Open Design package for Futuristic, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "前瞻性设计，科技感排版，现代布局，简洁的创新驱动美学。"
 }

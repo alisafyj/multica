@@ -2,5 +2,7 @@
   "id": "cal",
   "name": "Cal.com",
   "category": "Productivity & SaaS",
-  "description": "Bundled Open Design package for Cal.com, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "效率与 SaaS",
+  "description": "Bundled Open Design package for Cal.com, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "开源日程安排。干净中性 UI，开发者友好的简洁感。"
 }

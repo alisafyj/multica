@@ -2,5 +2,7 @@
   "id": "bmw",
   "name": "BMW",
   "category": "Automotive",
-  "description": "Bundled Open Design package for BMW, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "汽车",
+  "description": "Bundled Open Design package for BMW, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "豪华汽车。深色高端界面，精准的德系工程美学。"
 }

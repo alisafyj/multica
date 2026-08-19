@@ -2,5 +2,7 @@
   "id": "totality-festival",
   "name": "Totality Festival",
   "category": "Themed & Unique",
-  "description": "Bundled Open Design package for Totality Festival, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "主题与特色",
+  "description": "Bundled Open Design package for Totality Festival, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "宇宙级高端玻璃态深色系统，捕捉日全食的震撼——黑曜石界面，琥珀「日冕」高光，青色大气点缀。"
 }

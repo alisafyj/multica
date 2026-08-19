@@ -2,5 +2,7 @@
   "id": "mono",
   "name": "Mono",
   "category": "Modern & Minimal",
-  "description": "Bundled Open Design package for Mono, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "现代极简",
+  "description": "Bundled Open Design package for Mono, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "等宽字体驱动，矩阵风格设计，高对比元素，紧凑密度，黑客极简美学。"
 }

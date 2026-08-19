@@ -2,5 +2,7 @@
   "id": "creative",
   "name": "Creative",
   "category": "Creative & Artistic",
-  "description": "Bundled Open Design package for Creative, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "创意艺术",
+  "description": "Bundled Open Design package for Creative, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "活泼、角色驱动的设计，富有表现力的排版与大胆图形，适合落地页与创意项目。"
 }

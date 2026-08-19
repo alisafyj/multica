@@ -2,5 +2,7 @@
   "id": "arc",
   "name": "Arc Browser",
   "category": "Productivity & SaaS",
-  "description": "Bundled Open Design package for Arc Browser, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "效率与 SaaS",
+  "description": "Bundled Open Design package for Arc Browser, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "「为你冲浪的浏览器。」半透明界面，渐变温度，侧边栏优先布局。"
 }

@@ -2,5 +2,7 @@
   "id": "nvidia",
   "name": "NVIDIA",
   "category": "Media & Consumer",
-  "description": "Bundled Open Design package for NVIDIA, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "媒体与消费",
+  "description": "Bundled Open Design package for NVIDIA, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "GPU 计算。绿黑能量，技术力量感美学。"
 }

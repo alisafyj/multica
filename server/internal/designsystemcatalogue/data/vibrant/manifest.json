@@ -2,5 +2,7 @@
   "id": "vibrant",
   "name": "Vibrant",
   "category": "Bold & Expressive",
-  "description": "Bundled Open Design package for Vibrant, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "大胆表现",
+  "description": "Bundled Open Design package for Vibrant, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "鲜活多彩的设计，大胆活泼的排版，暖色点缀，充满动态视觉能量。"
 }

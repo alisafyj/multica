@@ -2,5 +2,7 @@
   "id": "together-ai",
   "name": "Together AI",
   "category": "AI & LLM",
-  "description": "Bundled Open Design package for Together AI, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "AI 与大模型",
+  "description": "Bundled Open Design package for Together AI, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "开源 AI 基础设施。技术感，蓝图风格设计。"
 }

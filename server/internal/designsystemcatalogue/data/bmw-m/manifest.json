@@ -2,5 +2,7 @@
   "id": "bmw-m",
   "name": "BMW M",
   "category": "Automotive",
-  "description": "Bundled Open Design package for BMW M, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "汽车",
+  "description": "Bundled Open Design package for BMW M, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "赛车运动子品牌。近黑驾驶舱界面，BMW M 三色点缀，锐利工程几何感。"
 }

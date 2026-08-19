@@ -2,5 +2,7 @@
   "id": "loom",
   "name": "Loom Design System",
   "category": "Themed & Unique",
-  "description": "Bundled Open Design package for Loom Design System, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "主题与特色",
+  "description": "Bundled Open Design package for Loom Design System, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "Loom 异步视频。紫色主色，友好界面，视频优先布局。简洁专业，不失亲和力。"
 }

@@ -2,5 +2,7 @@
   "id": "ibm",
   "name": "IBM",
   "category": "Media & Consumer",
-  "description": "Bundled Open Design package for IBM, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "媒体与消费",
+  "description": "Bundled Open Design package for IBM, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "企业技术。Carbon 设计系统，结构化蓝色调。"
 }

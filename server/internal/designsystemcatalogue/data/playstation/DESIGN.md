@@ -1,367 +1,367 @@
-# Design System Inspired by PlayStation
+# 灵感来自 PlayStation 的设计系统
 
-> Category: Media & Consumer
-> Gaming console retail. Three-surface channel layout, quiet-authority display type, cyan hover-scale.
+> Category: 媒体与消费电子
+> 游戏主机零售。三层曲面通道布局、克制权威的展示字体、青色悬停缩放。
 
-## 1. Visual Theme & Atmosphere
+## 1. 视觉主题与氛围
 
-PlayStation.com carries itself like the marketing wing of a premium consumer-electronics brand that happens to sell entertainment. The page is organized as a **vertical channel of alternating surfaces**: a near-black masthead and hero, a sequence of paper-white editorial panels in the middle, and a deep cobalt-blue footer that anchors the entire experience. Between those surface modes the site leans hard on photography and 3D product renders — the PS5 console, game cover art, DualSense controllers — letting the hardware do the emotional work while the chrome stays restrained.
+PlayStation.com 的气质，像一家恰好也卖娱乐内容的高端消费电子品牌的市场部门。页面以**纵向交替曲面通道**组织：近黑色的顶部导航与 Hero 区、中间一组纸白色的编辑内容面板，以及深钴蓝色的页脚将整体压稳。在这几种曲面模式之间，站点大量借助摄影与 3D 产品渲染——PS5 主机机体、游戏封面、DualSense 手柄——让硬件承载情感张力，而框架本身保持克制。
 
-The signature typographic move is **SST Light (weight 300) at large sizes**. Sony's custom SST family is used from 22px up to 54px in weight 300, giving display headlines a whispered, elegant quality that feels closer to a luxury watch ad than a game store. That "quiet authority" is the exact opposite of The Verge's Manuka shout or Wired's newsstand density — PlayStation wants the type to recede and the product to lead. Body and UI lean on weights 500–700, but the *display* voice is consistently thin and calm.
+标志性的排版手法是 **SST Light（字重 300）在大字号下的运用**。Sony 定制的 SST 字体家族在 22px 到 54px 的范围内以字重 300 使用，为展示性标题赋予一种轻语般的优雅气质，更接近奢侈腕表广告而非游戏商城。这种"克制权威"与 The Verge 的 Manuka 式高喊或 Wired 的报摊式密度恰恰相反——PlayStation 希望字体退到幕后，让产品领衔。正文与 UI 倚重 500–700 字重，但*展示*层的声调始终纤细而沉稳。
 
-The one place restraint breaks is **interaction**. Every primary button has the same hover move: fill swaps to an electric cyan `#1eaedb`, a 2px white border appears, a 2px PlayStation-blue outer ring blooms behind it, and the entire button **scales up 1.2×**. That combination of color pop, border, ring, and lift-scale is a signature move unique to Sony among major brands — a miniature "power-on" animation that the site repeats hundreds of times across a single page.
+唯一突破克制的地方是**交互**。每个主要按钮都有相同的悬停动效：填充色切换为电气青色 `#1eaedb`，出现 2px 白色描边，背后绽放 2px PlayStation 蓝外环，整个按钮**放大 1.2×**。这种颜色爆发、描边、外环与抬升缩放的组合，是 Sony 在主流品牌中独有的签名动效——一个微型"开机"动画，在单一页面中被重复使用数百次。
 
-**Key Characteristics:**
-- Three-surface channel layout: near-black hero, paper-white content, cobalt-blue footer — alternating, never blending
-- SST weight 300 at 22–54px for display — "quiet authority" headlines that let product photography lead
-- PlayStation Blue `#0070cc` as the brand anchor; cyan `#1eaedb` reserved exclusively for hover/focus states
-- Every interactive element scales 1.2× on hover — a signature "power-on" lift unique to PlayStation
-- Pill buttons at full 999px radius; card art in rounded 12–24px rectangles
-- Commerce-orange `#d53b00` used exclusively for PlayStation Store / buy-state CTAs
-- Wide breakpoint coverage up to 2120px — the site scales all the way to 4K-TV browsing contexts
+**核心特征：**
+- 三层曲面通道布局：近黑色 Hero、纸白色内容、钴蓝色页脚——交替出现，从不融合
+- SST 字重 300，22–54px 用于展示——"克制权威"的标题，让产品摄影主导视觉
+- PlayStation Blue `#0070cc` 作为品牌锚点；青色 `#1eaedb` 专属悬停/焦点状态
+- 每个交互元素悬停时放大 1.2×——PlayStation 独有的"开机"抬升签名动效
+- 全胶囊按钮采用 999px 圆角；卡片封面采用 12–24px 圆角矩形
+- 商业橙 `#d53b00` 专用于 PlayStation Store / 购买状态 CTA
+- 断点覆盖范围最高至 2120px——站点可一路缩放至 4K 电视浏览场景
 
-## 2. Color Palette & Roles
+## 2. 色彩体系与角色
 
-### Primary (Brand Anchor)
-- **PlayStation Blue** (`#0070cc`): The brand's anchor color. Used on the primary footer, inline links, primary button fills on dark surfaces, and every "official" marker. Treat this as immovable — it is the color the brand is most associated with in consumer memory.
-- **Console Black** (`#000000`): Pure black for the masthead, hero backdrops, and product presentation zones. PlayStation uses black to frame hardware the way a museum uses black to frame a sculpture.
+### 主色（品牌锚点）
+- **PlayStation Blue**（`#0070cc`）：品牌的锚点色。用于主页脚、行内链接、深色曲面上的主按钮填充，以及所有"官方"标识。视为不可移动——它是品牌在消费者记忆中关联最深的颜色。
+- **Console Black**（`#000000`）：纯黑，用于顶部导航、Hero 背景与产品展示区。PlayStation 用黑色衬托硬件，一如博物馆用黑色衬托雕塑。
 
-### Secondary & Accent
-- **PlayStation Cyan** (`#1eaedb`): The interaction color. Applied ONLY to hover, focus, and active states of buttons and links. Never appears as a default background or a text color at rest. Pair with a 2px `#ffffff` border and a 2px `#0070cc` outer ring on hover for the full signature treatment.
-- **Link Hover Blue** (`#1883fd`): The brighter variant used on inline text-link hovers. Distinct from Cyan — this is the link color, Cyan is the button color.
-- **Dark Link Blue** (`#0068bd`): The link color at rest on light surfaces — a slightly more saturated cousin of the brand blue.
+### 次色与强调色
+- **PlayStation Cyan**（`#1eaedb`）：交互色。**仅**用于按钮和链接的悬停、焦点与激活状态。永远不作为默认背景或静止文字颜色出现。悬停时搭配 2px `#ffffff` 描边与 2px `#0070cc` 外环，呈现完整的签名效果。
+- **Link Hover Blue**（`#1883fd`）：用于行内文字链接悬停的更亮变体。与青色有所区分——这是链接颜色，青色是按钮颜色。
+- **Dark Link Blue**（`#0068bd`）：浅色曲面上链接的静止颜色——品牌蓝的一个略微饱和的近亲。
 
-### Surface & Background
-- **Paper White** (`#ffffff`): Primary content canvas for editorial panels between the masthead and footer.
-- **Ice Mist** (`#f5f7fa`): The atmospheric end-stop of the light section-gradient. Used subtly behind certain panels to lift them off pure white.
-- **Divider Tint** (`#f3f3f3`): The quiet horizontal-rule color between content rows.
-- **Masthead Black** (`#000000`): Top nav and hero canvas — reserved for product-forward zones.
-- **Shadow Black** (`#121314`): The starting anchor of the dark section-gradient when a panel needs atmospheric depth.
-- **Filter Mist** (`rgba(245, 247, 250, 0.3)`): Translucent background used behind sticky filter bars — the only "glassmorphism" moment on the site.
+### 曲面与背景
+- **Paper White**（`#ffffff`）：顶部导航与页脚之间编辑面板的主要内容画布。
+- **Ice Mist**（`#f5f7fa`）：浅色区段渐变的大气感终止色。隐约用于某些面板背后，将其从纯白中轻微抬起。
+- **Divider Tint**（`#f3f3f3`）：内容行之间安静的水平分隔线颜色。
+- **Masthead Black**（`#000000`）：顶部导航与 Hero 画布——专属产品主导区域。
+- **Shadow Black**（`#121314`）：面板需要大气深度时，深色区段渐变的起始锚点。
+- **Filter Mist**（`rgba(245, 247, 250, 0.3)`）：用于置顶筛选栏背后的半透明背景——站点唯一的"玻璃拟态"时刻。
 
-### Neutrals & Text
-- **Display Ink** (`#000000`): Primary display headlines on white surfaces.
-- **Deep Charcoal** (`#1f1f1f`): Body headlines and link color at rest — slightly softer than pure black to reduce visual ring on large blocks.
-- **Body Gray** (`#6b6b6b`): Secondary body text and metadata.
-- **Mute Gray** (`#cccccc`): Tertiary labels, disabled states.
-- **Placeholder Ink** (`rgba(0, 0, 0, 0.6)`): Form placeholder text — 60% black, not a separate gray value.
-- **Inverse White** (`#ffffff`): Primary text on dark and blue surfaces.
-- **Dark-Link Blue** (`#53b1ff`): The link color at rest on dark/black surfaces — a lighter airborne variant of PlayStation Blue for legibility on black.
+### 中性色与文字
+- **Display Ink**（`#000000`）：白色曲面上的主展示标题。
+- **Deep Charcoal**（`#1f1f1f`）：正文标题与静止链接颜色——比纯黑稍柔，以减少大段文字的视觉震动。
+- **Body Gray**（`#6b6b6b`）：次要正文与元数据。
+- **Mute Gray**（`#cccccc`）：三级标签、禁用状态。
+- **Placeholder Ink**（`rgba(0, 0, 0, 0.6)`）：表单占位文字——60% 黑，而非独立灰值。
+- **Inverse White**（`#ffffff`）：深色与蓝色曲面上的主要文字。
+- **Dark-Link Blue**（`#53b1ff`）：深色/黑色曲面上链接的静止颜色——PlayStation Blue 在黑色背景上用于可读性的更轻盈变体。
 
-### Semantic & Commerce
-- **Commerce Orange** (`#d53b00`): Reserved for PlayStation Store buy-state CTAs, price callouts, and "on sale" badges. The only warm color on the site — use sparingly and never outside a commerce context.
-- **Commerce Orange Active** (`#aa2f00`): The pressed/active state of commerce buttons.
-- **Warning Red** (`#c81b3a`): Form errors and destructive-action warnings.
-- **Shadow Wash 80** (`rgba(0, 0, 0, 0.8)`): The dramatic scrim used behind hero text on product photography.
-- **Shadow Wash 16** (`rgba(0, 0, 0, 0.16)`): Low-weight elevation ring on cards.
-- **Shadow Wash 08** (`rgba(0, 0, 0, 0.08)`): Featherweight card elevation — barely visible but separates white panels from white background.
-- **Shadow Wash 06** (`rgba(0, 0, 0, 0.06)`): The lightest shadow in the system.
+### 语义色与商业色
+- **Commerce Orange**（`#d53b00`）：专用于 PlayStation Store 购买状态 CTA、价格标注与"特价"徽章。站点唯一的暖色——用量需克制，且仅在商业场景中使用。
+- **Commerce Orange Active**（`#aa2f00`）：商业按钮的按下/激活状态。
+- **Warning Red**（`#c81b3a`）：表单错误与破坏性操作警告。
+- **Shadow Wash 80**（`rgba(0, 0, 0, 0.8)`）：Hero 摄影上文字背后使用的戏剧性遮罩。
+- **Shadow Wash 16**（`rgba(0, 0, 0, 0.16)`）：卡片上的低权重高程环。
+- **Shadow Wash 08**（`rgba(0, 0, 0, 0.08)`）：极轻卡片高程——几乎不可见，但能将白色面板与白色背景区分开来。
+- **Shadow Wash 06**（`rgba(0, 0, 0, 0.06)`）：系统中最轻的阴影。
 
-### Gradient System
-PlayStation uses **two section gradients** and nothing else:
-- **Light Section Gradient**: from `#ffffff` → `#f5f7fa` — an almost-imperceptible wash that quietly lifts a panel off the canvas.
-- **Dark Section Gradient**: from `#121314` → `#000000` — a short vertical wash that gives hero panels a subtle vignette without introducing any hue shift.
+### 渐变体系
+PlayStation 仅使用**两种区段渐变**：
+- **浅色区段渐变**：从 `#ffffff` → `#f5f7fa`——几乎感知不到的晕染，静静将面板从画布中抬起。
+- **深色区段渐变**：从 `#121314` → `#000000`——短促的纵向晕染，为 Hero 面板提供微妙的暗角效果，且不引入任何色相偏移。
 
-Both gradients are used **only as section backgrounds**, never inside components. There are no gradient buttons, no gradient text, no glowing halos. The brand is blue — not blue-to-purple, not blue-to-cyan.
+两种渐变均**仅作为区段背景**使用，不出现在组件内部。没有渐变按钮、没有渐变文字、没有发光晕圈。品牌色是蓝色——不是蓝到紫，不是蓝到青。
 
-## 3. Typography Rules
+## 3. 字体规范
 
-### Font Family
-- **SST** / **Playstation SST** (Sony, proprietary) — fallback: `Arial`, `Helvetica`. Sony's custom global typeface, designed by Toshi Omagari and Akira Kobayashi. Covers weights 300 / 500 / 600 / 700 across the homepage. The weight **300 at 22–54px** is PlayStation's typographic signature.
-- **SST (condensed / alternate)** — fallback: `helvetica`, `arial`. A compressed variant used in a handful of UI modules where width matters.
-- **Arial** — utility fallback for the rare button variant that renders in system sans.
+### 字体家族
+- **SST** / **Playstation SST**（Sony，专有字体）——回退：`Arial`、`Helvetica`。Sony 的定制全球字体，由 Toshi Omagari 和 Akira Kobayashi 设计。首页覆盖 300 / 500 / 600 / 700 四个字重。**22–54px 的字重 300** 是 PlayStation 的字体签名。
+- **SST（condensed / alternate）**——回退：`helvetica`、`arial`。压缩变体，用于少数宽度受限的 UI 模块。
+- **Arial**——极少数以系统无衬线字体渲染的按钮变体的实用回退。
 
-### Hierarchy
+### 层级
 
-| Role | Font | Size | Weight | Line Height | Letter Spacing | Notes |
+| 角色 | 字体 | 尺寸 | 字重 | 行高 | 字间距 | 备注 |
 |---|---|---|---|---|---|---|
-| Hero Display (XL) | SST | 54px / 3.38rem | 300 | 1.25 | -0.1px | The biggest SST moment on the page — quiet-weight luxury headline |
-| Hero Display (L) | SST | 44px / 2.75rem | 300 | 1.25 | 0.1px | Secondary hero headlines |
-| Large Display | SST | 35px / 2.20rem | 300 | 1.25 | — | Feature panel headlines |
-| Mid Display | SST | 28px / 1.75rem | 300 | 1.25 | 0.1px | Section headings |
-| Compact Display | SST | 22px / 1.38rem | 300 | 1.25 | 0.1px | Module titles — still in light weight 300 |
-| Playstation SST Sub | Playstation SST | 22.5px / 1.41rem | 400 | 1.30 | — | Promotional sub-heading |
-| UI Heading Small | SST | 18px / 1.13rem | 600 | 1.00 | — | Tight UI headings |
-| Button / CTA | SST | 18px / 1.13rem | 500 | 1.25 | 0.4px | Primary button label |
-| Button / Emphasized | SST | 18px / 1.13rem | 700 | 1.25 | 0.45px | Higher-emphasis CTAs (buy, subscribe) |
-| Button Serif | SST | 18px / 1.13rem | 600 | 1.50 | — | Secondary button label |
-| Body Relaxed | SST | 18px / 1.13rem | 400 | 1.50 | 0.1px | Standard reading body |
-| Link Body | SST | 18px / 1.13rem | 400 | 1.50 | — | Inline link text |
-| Compact Button | SST | 14px / 0.88rem | 700 | 1.25 | 0.324px | Mini CTAs in cards |
-| Utility Caption | SST | 14px / 0.88rem | 500 | 1.50 | — | Captions, tag labels |
-| Caption Body | SST | 14px / 0.88rem | 400 | 1.50 | — | Standard metadata |
-| Playstation Caption Bold | Playstation SST | 14px / 0.88rem | 700 | 1.40 | — | Emphasized caption |
-| Playstation Caption Mid | Playstation SST | 14px / 0.88rem | 600 | 1.40 | — | Semi-bold caption |
-| Playstation Button | Playstation SST | 14.4px / 0.90rem | 700 | 1.00 | 0.144px | UI button with tight leading |
-| Playstation Tab | Playstation SST | 14px / 0.88rem | 400 | 1.10 | 0.14px | Tab/pill label |
-| Playstation Compact Caption | Playstation SST | 12.8px / 0.80rem | 400 | 1.10 | — | Smallest UI caption |
-| Micro Caption | SST | 12px / 0.75rem | 500 | 1.50 | — | Footer microcopy, legal text |
-| Compact Caption Bold | SST | 12.06px / 0.75rem | 700 | 1.50 | — | Emphasized micro text |
+| Hero Display (XL) | SST | 54px / 3.38rem | 300 | 1.25 | -0.1px | 页面最大的 SST 时刻——轻字重奢华标题 |
+| Hero Display (L) | SST | 44px / 2.75rem | 300 | 1.25 | 0.1px | 次要 Hero 标题 |
+| Large Display | SST | 35px / 2.20rem | 300 | 1.25 | — | 功能面板标题 |
+| Mid Display | SST | 28px / 1.75rem | 300 | 1.25 | 0.1px | 区段标题 |
+| Compact Display | SST | 22px / 1.38rem | 300 | 1.25 | 0.1px | 模块标题——仍使用轻字重 300 |
+| Playstation SST Sub | Playstation SST | 22.5px / 1.41rem | 400 | 1.30 | — | 促销副标题 |
+| UI Heading Small | SST | 18px / 1.13rem | 600 | 1.00 | — | 紧凑 UI 标题 |
+| Button / CTA | SST | 18px / 1.13rem | 500 | 1.25 | 0.4px | 主按钮标签 |
+| Button / Emphasized | SST | 18px / 1.13rem | 700 | 1.25 | 0.45px | 高强调 CTA（购买、订阅） |
+| Button Serif | SST | 18px / 1.13rem | 600 | 1.50 | — | 次要按钮标签 |
+| Body Relaxed | SST | 18px / 1.13rem | 400 | 1.50 | 0.1px | 标准阅读正文 |
+| Link Body | SST | 18px / 1.13rem | 400 | 1.50 | — | 行内链接文字 |
+| Compact Button | SST | 14px / 0.88rem | 700 | 1.25 | 0.324px | 卡片内迷你 CTA |
+| Utility Caption | SST | 14px / 0.88rem | 500 | 1.50 | — | 说明文字、标签标注 |
+| Caption Body | SST | 14px / 0.88rem | 400 | 1.50 | — | 标准元数据 |
+| Playstation Caption Bold | Playstation SST | 14px / 0.88rem | 700 | 1.40 | — | 强调说明文字 |
+| Playstation Caption Mid | Playstation SST | 14px / 0.88rem | 600 | 1.40 | — | 半粗说明文字 |
+| Playstation Button | Playstation SST | 14.4px / 0.90rem | 700 | 1.00 | 0.144px | 紧凑行距的 UI 按钮 |
+| Playstation Tab | Playstation SST | 14px / 0.88rem | 400 | 1.10 | 0.14px | 标签页/胶囊标签 |
+| Playstation Compact Caption | Playstation SST | 12.8px / 0.80rem | 400 | 1.10 | — | 最小 UI 说明文字 |
+| Micro Caption | SST | 12px / 0.75rem | 500 | 1.50 | — | 页脚微型文案、法律文本 |
+| Compact Caption Bold | SST | 12.06px / 0.75rem | 700 | 1.50 | — | 强调微型文字 |
 
-### Principles
-- **Weight 300 at large sizes is the voice.** PlayStation is the only major console brand that uses a light-weight display for its hero headlines. Resist the urge to "upgrade" display type to 500 or 700 — the quietness is the personality.
-- **Weight jumps at the UI layer.** Below 18px the system shifts to 500–700 for legibility. The weight gradient from 300 (display) → 400 (body) → 500 (captions) → 700 (buttons) is the hierarchy.
-- **Letter-spacing is barely-there.** Most values are 0.1–0.45px, either positive or slightly negative. The `-0.1px` on the 54px hero tightens the display type just enough to read as "designed" without becoming a typographic statement.
-- **Two SST casings.** "SST" and "Playstation SST" are functionally the same family with slightly different metric sets (Playstation SST is tighter at small sizes). Treat them as interchangeable for purposes outside Sony's internal licensing.
-- **No all-caps.** Unlike The Verge or Wired, PlayStation rarely uses UPPERCASE labels. Kickers and tags stay in title case or sentence case — another "quiet authority" move.
-- **No serif anywhere.** The entire system is sans. There is no print-voice counterpoint.
+### 原则
+- **大字号的字重 300 就是声调。** PlayStation 是唯一一个在 Hero 标题使用轻字重展示字体的主要主机品牌。抵制将展示字体"升级"到 500 或 700 的冲动——安静感本身就是个性。
+- **UI 层的字重跳跃。** 18px 以下，系统切换到 500–700 以保证可读性。从 300（展示）→ 400（正文）→ 500（说明文字）→ 700（按钮）的字重梯度即为层级。
+- **字间距极其细微。** 大部分值在 0.1–0.45px 之间，正负皆有。54px Hero 的 `-0.1px` 将展示字体紧收到恰好"有设计感"而不成为排版声明。
+- **两种 SST 写法。**"SST"与"Playstation SST"功能上属于同一字体家族，只是度量集略有差异（Playstation SST 在小字号下更紧凑）。在 Sony 内部授权以外的场合，可视为可互换。
+- **不使用全大写。** 与 The Verge 或 Wired 不同，PlayStation 极少使用全大写标签。引导语与标签保持词首大写或句首大写——另一个"克制权威"的体现。
+- **全程无衬线。** 整个系统均为无衬线字体，没有印刷声调的对比。
 
-## 4. Component Stylings
+## 4. 组件样式
 
-### Buttons
+### 按钮
 
-**Primary — PlayStation Blue Pill**
-- Background: `#0070cc` (PlayStation Blue)
-- Text: `#ffffff`, SST 18px / 500 / 0.4px tracking
-- Border: none at rest
-- Border radius: `999px` — full pill
-- Padding: ~`12px 24px` (variable based on size class)
-- Outline: `rgb(255, 255, 255) none 0px` at rest
-- **Hover (signature move)**:
-  - Background fills to `#1eaedb` (PlayStation Cyan)
-  - Text stays `#ffffff`
-  - 2px `#ffffff` border appears
-  - 2px `#0070cc` outer ring shadow blooms (`0 0 0 2px #0070cc`)
-  - `transform: scale(1.2)` — the button actually grows 20%
-- Active: `opacity: 0.6` — a quick dim to signal press
-- Focus: Same as hover, but the ring turns into `rgb(0, 114, 206) 0px 0px 0px 2px` focus shadow
-- Transition: ~180ms ease on background, transform, and shadow
+**主按钮——PlayStation Blue 胶囊**
+- Background: `#0070cc`（PlayStation Blue）
+- 文字：`#ffffff`，SST 18px / 500 / 0.4px 字间距
+- Border：静止时无描边
+- Border radius: `999px`——完整胶囊
+- Padding: ~`12px 24px`（根据尺寸等级可变）
+- Outline: `rgb(255, 255, 255) none 0px` 静止时
+- **悬停（签名动效）**：
+  - Background 填充为 `#1eaedb`（PlayStation Cyan）
+  - 文字保持 `#ffffff`
+  - 出现 2px `#ffffff` 描边
+  - 2px `#0070cc` 外环阴影绽放（`0 0 0 2px #0070cc`）
+  - `transform: scale(1.2)`——按钮实际放大 20%
+- 激活：`opacity: 0.6`——快速变暗以传达按下反馈
+- 焦点：与悬停相同，但外环变为 `rgb(0, 114, 206) 0px 0px 0px 2px` 焦点阴影
+- Transition：background、transform 与 shadow 约 180ms ease
 
-**Secondary — White Outline on Dark**
+**次要按钮——深色背景上的白色描边**
 - Background: `#ffffff`
-- Text: `#0172ce` (PlayStation Blue variant)
-- Border: `2px outset #000000` — a genuine `outset` border, which is extremely rare in modern CSS
-- Radius: varies (often `999px` or `36px`)
+- 文字：`#0172ce`（PlayStation Blue 变体）
+- Border: `2px outset #000000`——真正的 `outset` 描边，在现代 CSS 中极为罕见
+- Radius：可变（常为 `999px` 或 `36px`）
 - Padding: `16px 20px`
-- Hover: same signature cyan fill + scale(1.2) + ring treatment
-- Focus: same ring treatment
+- 悬停：同款签名青色填充 + scale(1.2) + 外环效果
+- 焦点：同款外环效果
 
-**Commerce Orange**
-- Background: `#d53b00` (Commerce Orange)
-- Text: `#ffffff`, SST 18px / 700 / 0.45px tracking
-- Border radius: `999px` — pill
-- Used only on PS Store / Buy / Subscribe Plus CTAs
-- Active: background darkens to `#aa2f00`
-- Hover: follows the cyan-invert rule like all other buttons (NOT an orange-specific hover)
+**商业橙按钮**
+- Background: `#d53b00`（Commerce Orange）
+- 文字：`#ffffff`，SST 18px / 700 / 0.45px 字间距
+- Border radius: `999px`——胶囊
+- 仅用于 PS Store / 购买 / Subscribe Plus CTA
+- 激活：background 加深至 `#aa2f00`
+- 悬停：与所有其他按钮一样遵循青色反转规则（不是橙色专属悬停）
 
-**Transparent Ghost**
+**透明幽灵按钮**
 - Background: transparent
-- Text: `#1f1f1f` (Deep Charcoal)
+- 文字：`#1f1f1f`（Deep Charcoal）
 - Border: `1px solid #dedede`
-- Padding: `0 10px` (tight, nav-optimized)
-- Hover: cyan fill, white text, 2px white border, scale(1.2)
-- Active: text shifts to `#0072ce`, opacity 0.6
+- Padding: `0 10px`（紧凑，导航优化）
+- 悬停：青色填充、白色文字、2px 白色描边、scale(1.2)
+- 激活：文字切换至 `#0072ce`，opacity 0.6
 
-**Icon Circle**
-- Background: `rgba(0, 0, 0, 0.2)` on photography; `#ffffff` on light surfaces
-- Border radius: `100%` — perfect circle
-- Used for carousel prev/next arrows and share buttons
-- Hover: lightens to `var(--color-role-backgrounds-primary-link-hover)` (roughly `#e5e5e5` on light)
+**图标圆形按钮**
+- Background: 摄影上 `rgba(0, 0, 0, 0.2)`；浅色曲面上 `#ffffff`
+- Border radius: `100%`——完美圆形
+- 用于轮播上一/下一箭头与分享按钮
+- 悬停：浅化至 `var(--color-role-backgrounds-primary-link-hover)`（浅色背景约为 `#e5e5e5`）
 
-**Mini CTA (In-card)**
-- SST 14px / 700 / 0.324px tracking
+**卡片内迷你 CTA**
+- SST 14px / 700 / 0.324px 字间距
 - Padding ~8px 16px
 - Radius: `999px`
-- Used inside game cards for "Buy Now" / "Add to Cart" mini CTAs
+- 用于游戏卡片内"立即购买"/"加入购物车"等迷你 CTA
 
-### Cards & Containers
+### 卡片与容器
 
-**Hero Card (Game Feature)**
-- Background: photography/render — usually black-anchored
-- Border radius: `24px` or `19px` for feature cards
-- Padding: 32–48px interior
-- Shadow: `rgba(0, 0, 0, 0.8) 0px 5px 9px 0px` — a dramatic drop-shadow only used when a card overlaps the hero photography
-- Hover: subtle scale transform, cyan outline appears on primary CTA
+**Hero 卡片（游戏功能）**
+- Background：摄影/渲染图——通常以黑色为底
+- Border radius：功能卡片为 `24px` 或 `19px`
+- Padding：内部 32–48px
+- Shadow: `rgba(0, 0, 0, 0.8) 0px 5px 9px 0px`——仅当卡片与 Hero 摄影重叠时使用的戏剧性投影
+- 悬停：细微缩放变换，主 CTA 出现青色描边
 
-**Game Cover Tile**
-- Background: game cover art, unpadded
-- Border radius: `12px` or `13px` (images) / `19px` (card frame)
-- Shadow: `rgba(0, 0, 0, 0.08) 0px 5px 9px 0px` — feather-weight elevation
-- Hover: the card's primary CTA lights up cyan, the card itself may scale 1.02×
-- Transition: 200ms ease on transform
+**游戏封面瓦片**
+- Background：游戏封面图，无内边距
+- Border radius：图片 `12px` 或 `13px` / 卡片框架 `19px`
+- Shadow: `rgba(0, 0, 0, 0.08) 0px 5px 9px 0px`——极轻高程
+- 悬停：卡片主 CTA 点亮青色，卡片本身可能缩放至 1.02×
+- Transition: transform 200ms ease
 
-**Content Panel (White)**
-- Background: `#ffffff` or the light section gradient `#ffffff → #f5f7fa`
-- Border: typically none; separated from neighbors by spacing and subtle shadows
-- Radius: `12px`–`24px` depending on panel hierarchy
-- Shadow: `rgba(0, 0, 0, 0.06) 0px 5px 9px 0px` — the lightest in the system
+**内容面板（白色）**
+- Background: `#ffffff` 或浅色区段渐变 `#ffffff → #f5f7fa`
+- Border：通常无；通过间距与细微阴影与相邻面板区隔
+- Radius：根据面板层级为 `12px`–`24px`
+- Shadow: `rgba(0, 0, 0, 0.06) 0px 5px 9px 0px`——系统中最轻的阴影
 
-**Dark Card on Dark**
-- Background: `rgba(0, 0, 0, 0.2)` over photography
-- Border radius: `6px` (compact) or `24px` (feature)
-- Used for "press kit" or "stat block" inlays over hero video
+**深色背景上的深色卡片**
+- Background: `rgba(0, 0, 0, 0.2)`，叠于摄影之上
+- Border radius：紧凑型 `6px` / 功能型 `24px`
+- 用于 Hero 视频上的"新闻资料包"或"数据块"嵌入
 
-### Inputs & Forms
-- **Default**: `#ffffff` background, `1px solid #cccccc` border, `3px` border radius (tighter than the rest of the system — inputs are the one place where PlayStation gets genuinely compact), SST 16px text in `#1f1f1f`, placeholder `rgba(0, 0, 0, 0.6)`.
-- **Focus**: 2px `#0070cc` focus ring via `box-shadow: 0 0 0 2px #0070cc`. No border-color change — the ring does the work.
-- **Error**: border and text shift to `#c81b3a` (Warning Red), inline error text below in the same red.
-- **Transition**: ~180ms ease on border and shadow.
+### 输入框与表单
+- **默认**：`#ffffff` 背景，`1px solid #cccccc` 描边，`3px` 圆角（比系统其余部分更紧——输入框是 PlayStation 真正走向紧凑的唯一地方），SST 16px 文字颜色 `#1f1f1f`，占位符 `rgba(0, 0, 0, 0.6)`。
+- **焦点**：通过 `box-shadow: 0 0 0 2px #0070cc` 呈现 2px `#0070cc` 焦点环。描边颜色不变——外环承担所有工作。
+- **错误**：描边与文字切换至 `#c81b3a`（Warning Red），下方显示同色行内错误文字。
+- **Transition**：描边与阴影约 180ms ease。
 
-### Navigation
+### 导航
 
-- **Top nav**: black (`#000000`) full-bleed strip with the PlayStation logo (white) left-aligned, category links centered in SST 14–16px / 500, and a small "Sign In" CTA right-aligned.
-- **Hover on nav link**: color transitions from `#ffffff` to `#1883fd` (Link Hover Blue), no underline.
-- **Active section**: marked by a subtle 2px underline in `#0070cc`.
-- **Mobile**: nav collapses to a hamburger drawer. Inside the drawer, links stack vertically with 16px gaps and 20px horizontal padding.
-- **Sticky behavior**: the nav stays pinned at the top on scroll; when it enters a light-surface zone it **does not invert** — it stays black-backed throughout.
+- **顶部导航**：黑色（`#000000`）全幅通栏，PlayStation logo（白色）左对齐，分类链接居中显示 SST 14–16px / 500，右对齐小型"登录" CTA。
+- **导航链接悬停**：颜色从 `#ffffff` 过渡至 `#1883fd`（Link Hover Blue），无下划线。
+- **当前区段**：以 `#0070cc` 的细 2px 下划线标示。
+- **移动端**：导航折叠为汉堡抽屉。抽屉内，链接纵向堆叠，间距 16px，水平内边距 20px。
+- **吸附行为**：导航在滚动时钉在顶部；进入浅色曲面区域时**不反转**——始终保持黑色背景。
 
-### Image Treatment
+### 图片处理
 
-- **Aspect ratios**: 16:9 hero video/photography, 1:1 console renders, 3:4 game cover art, 4:3 lifestyle imagery.
-- **Corners**: rounded to `12px`, `13px`, or `24px` depending on card context. Game covers get `6–12px`, hero images get `24px`.
-- **Full-bleed**: only in the masthead hero and footer promotional banners. Everything else sits inside a padded content column.
-- **Shadow**: dramatic `rgba(0, 0, 0, 0.8) 0 5px 9px 0` drop on heroes, feather `rgba(0, 0, 0, 0.06) 0 5px 9px 0` on grid tiles.
-- **Hover**: image stays static, the card frame and primary CTA respond.
-- **Lazy loading**: `loading="lazy"` on everything below the fold, `eager` on the masthead hero.
+- **宽高比**：16:9 Hero 视频/摄影，1:1 主机渲染，3:4 游戏封面，4:3 生活方式图片。
+- **圆角**：根据卡片场景圆化至 `12px`、`13px` 或 `24px`。游戏封面为 `6–12px`，Hero 图片为 `24px`。
+- **全幅出血**：仅在顶部 Hero 与页脚促销横幅中使用。其余内容均置于有内边距的内容列内。
+- **阴影**：Hero 上使用戏剧性的 `rgba(0, 0, 0, 0.8) 0 5px 9px 0` 投影，网格瓦片上使用羽化的 `rgba(0, 0, 0, 0.06) 0 5px 9px 0`。
+- **悬停**：图片本身静止，卡片框架与主 CTA 响应交互。
+- **懒加载**：首屏以下所有元素使用 `loading="lazy"`，顶部 Hero 使用 `eager`。
 
-### Game Store Pill (Distinctive)
+### 游戏商城胶囊标签（独特元素）
 - Background: `#ffffff`
-- Text: `#000000`, SST 14px / 500
+- 文字：`#000000`，SST 14px / 500
 - Padding: `14px 18px`
-- Radius: `9999px` — full pill
-- A neutral pill tag that sits next to game covers to label platform ("PS5", "PS4", "PSVR2"). White-on-dark contrast.
+- Radius: `9999px`——完整胶囊
+- 紧靠游戏封面的中性胶囊标签，用于标注平台（"PS5"、"PS4"、"PSVR2"）。深色背景上白底对比。
 
-## 5. Layout Principles
+## 5. 布局原则
 
-### Spacing System
-- **Base unit**: 8px.
-- **Scale**: 1, 2, 3, 4.5, 5, 8, 9, 10, 12, 14, 15, 16, 18, 20, 21px.
-- **Section padding**: 48–96px vertical between major panels. Hero-to-content transitions use the larger end.
-- **Card padding**: 20–32px interior. Feature hero cards can expand to 48px.
-- **Inline spacing**: 8–12px between headline and deck, 12–16px between deck and CTA.
-- **Micro-scale**: The 1/2/3/4.5/5/9/10/12 values are used for pill padding, caption spacing, and border offsets — not for editorial rhythm.
+### 间距系统
+- **基础单位**：8px。
+- **刻度**：1、2、3、4.5、5、8、9、10、12、14、15、16、18、20、21px。
+- **区段内边距**：主要面板之间纵向 48–96px。Hero 到内容的过渡使用较大端。
+- **卡片内边距**：内部 20–32px。功能 Hero 卡片可扩展至 48px。
+- **行内间距**：标题与引言之间 8–12px，引言与 CTA 之间 12–16px。
+- **微刻度**：1/2/3/4.5/5/9/10/12 的值用于胶囊内边距、说明文字间距与描边偏移——不用于编辑节奏。
 
-### Grid & Container
-- **Max width**: ~1920px (dembrandt detected breakpoints up to 2120px). Container caps typically around `1280–1920px` depending on panel.
-- **Column patterns**: 12-column responsive grid that resolves into 3/4/6-column game tile rows depending on hierarchy. Hero zones often span 12 columns; featured tiles sit in 6+3+3 or 4+4+4 configurations.
-- **Outer padding**: 16px mobile → 48px tablet → 64–96px desktop.
-- **Gutters**: 16–24px between columns, tighter (8–12px) inside tile clusters.
+### 网格与容器
+- **最大宽度**：~1920px（dembrandt 检测到断点最高至 2120px）。容器上限通常在 `1280–1920px` 之间，视面板而定。
+- **列模式**：12 列响应式网格，根据层级解析为 3/4/6 列游戏瓦片行。Hero 区通常横跨 12 列；精选瓦片采用 6+3+3 或 4+4+4 布局。
+- **外边距**：移动端 16px → 平板 48px → 桌面 64–96px。
+- **列间距**：列间 16–24px，瓦片簇内更紧（8–12px）。
 
-### Whitespace Philosophy
-PlayStation treats whitespace like a luxury brand treats store lighting — as a premium signal. There is noticeably more vertical breathing room between modules than on any other major retail site, and the white editorial panels often hold only one headline + one image + one CTA at hero-scale padding. The effect is a "gallery pace" where each product gets its own room rather than competing in a grid of thumbnails.
+### 留白哲学
+PlayStation 对待留白，如同奢侈品牌对待店铺灯光——视之为高端信号。模块之间的纵向呼吸空间明显多于任何其他主流零售网站，白色编辑面板往往仅承载一个标题 + 一张图片 + 一个 CTA，搭配 Hero 级别的内边距。效果是一种"展览节奏"——每件产品都有自己的独立空间，而非在缩略图网格中竞争。
 
-### Border Radius Scale
-- **2px** — cookie banner buttons and small admin UI
-- **3px** — form inputs, tab panels (tighter than everything else — a deliberate "functional UI" cue)
-- **6px** — compact buttons and inline images
-- **12px** — standard game cover images and content images
-- **13px** — certain figure wrappers (a 1px offset from 12px for nesting)
-- **19px** — feature cards
-- **20px** — inline tag spans
-- **24px** — hero cards, primary feature frames
-- **36px** — full-pill nav and secondary button variants
-- **48px** — large feature buttons
-- **999px / 100%** — full pill primary buttons and circular icon buttons
+### 圆角刻度
+- **2px**——Cookie 提示按钮与小型管理 UI
+- **3px**——表单输入框、标签面板（比其他一切都紧——刻意的"功能性 UI"暗示）
+- **6px**——紧凑按钮与行内图片
+- **12px**——标准游戏封面图与内容图片
+- **13px**——某些图片包装器（比 12px 偏移 1px，用于嵌套）
+- **19px**——功能卡片
+- **20px**——行内标签 span
+- **24px**——Hero 卡片、主要功能框架
+- **36px**——全胶囊导航与次要按钮变体
+- **48px**——大型功能按钮
+- **999px / 100%**——完整胶囊主按钮与圆形图标按钮
 
-Eleven discrete radius values — one of the richest radius systems of any site in this catalog. The range exists because PlayStation deliberately uses different radii for different *hierarchies*: 3px for utility, 12px for media, 24px for features, 999px for CTAs.
+十一个离散圆角值——是本目录中圆角体系最丰富的站点之一。这个范围的存在，是因为 PlayStation 为不同的*层级*刻意选用不同圆角：3px 用于功能性，12px 用于媒体，24px 用于功能块，999px 用于 CTA。
 
-## 6. Depth & Elevation
+## 6. 深度与高程
 
-| Level | Treatment | Use |
+| 层级 | 处理 | 用途 |
 |---|---|---|
-| 0 | No shadow | Default content on `#ffffff` |
-| 1 | `rgba(0, 0, 0, 0.06) 0 5px 9px 0` | Feather-light editorial panel lift |
-| 2 | `rgba(0, 0, 0, 0.08) 0 5px 9px 0` | Standard grid tile elevation |
-| 3 | `rgba(0, 0, 0, 0.16) 0 5px 9px 0` | Emphasized card (hover or active) |
-| 4 | `rgba(0, 0, 0, 0.8) 0 5px 9px 0` | Hero overlay shadow — dramatic drop used over photography |
-| 5 | `0 0 0 2px #0070cc` (focus ring) | Primary button focus state |
-| 6 | `0 0 0 2px #000000` (hover ring) | Secondary button hover ring |
-| 7 | Section gradient `#121314 → #000000` | Atmospheric depth on dark hero panels |
+| 0 | 无阴影 | `#ffffff` 上的默认内容 |
+| 1 | `rgba(0, 0, 0, 0.06) 0 5px 9px 0` | 极轻编辑面板抬升 |
+| 2 | `rgba(0, 0, 0, 0.08) 0 5px 9px 0` | 标准网格瓦片高程 |
+| 3 | `rgba(0, 0, 0, 0.16) 0 5px 9px 0` | 强调卡片（悬停或激活） |
+| 4 | `rgba(0, 0, 0, 0.8) 0 5px 9px 0` | Hero 叠加阴影——用于摄影上的戏剧性投影 |
+| 5 | `0 0 0 2px #0070cc`（焦点环） | 主按钮焦点状态 |
+| 6 | `0 0 0 2px #000000`（悬停环） | 次要按钮悬停环 |
+| 7 | 区段渐变 `#121314 → #000000` | 深色 Hero 面板的大气深度 |
 
-PlayStation's depth philosophy is **layered but restrained**. The shadow scale runs from 0.06 to 0.16 for normal states, then jumps to 0.8 for hero drops — there is no 0.2, 0.3, 0.4 middle ground. The effect is that most of the page sits almost flat, but when a hero card needs to float over photography, it genuinely *floats*. Elevation is either whispered or shouted, never muttered.
+PlayStation 的深度哲学是**分层但克制**。阴影刻度在正常状态下从 0.06 到 0.16，随后跳至 0.8 用于 Hero 投影——没有 0.2、0.3、0.4 的中间地带。效果是页面大部分区域几乎完全平坦，但当 Hero 卡片需要浮于摄影之上时，它是真正地*浮起来*。高程要么低语，要么呐喊，从不含糊。
 
-### Decorative Depth
-- **Section gradients** (dark and light, both described above) — used only as section backgrounds
-- **Focus/hover rings** at 2px, always blue or cyan depending on state
-- **No glows, blurs, or atmospheric effects** beyond the two section gradients
-- **No gradient buttons or text** — the visual system is solid color blocks everywhere except section transitions
+### 装饰性深度
+- **区段渐变**（深色与浅色，均如上所述）——仅作为区段背景使用
+- **焦点/悬停环**，2px，根据状态始终为蓝色或青色
+- **超出两种区段渐变之外，不使用任何发光、模糊或大气效果**
+- **不使用渐变按钮或渐变文字**——视觉系统在区段过渡以外全部为纯色色块
 
-## 7. Do's and Don'ts
+## 7. 规范与禁忌
 
-### Do
-- **Do** use PlayStation Blue (`#0070cc`) as the primary CTA fill and the footer anchor. It is the brand's anchor color.
-- **Do** use SST weight 300 for every display headline 22px and above. The quiet-weight headline is the voice.
-- **Do** apply the full hover signature to every primary button: cyan fill + 2px white border + 2px blue outer ring + `scale(1.2)`.
-- **Do** use full-pill radius (`999px`) on primary and commerce buttons.
-- **Do** reserve PlayStation Cyan (`#1eaedb`) exclusively for hover, focus, and active states — never as a resting background.
-- **Do** use Commerce Orange (`#d53b00`) only on PlayStation Store / purchase CTAs and price callouts.
-- **Do** alternate dark hero panels with white content panels and anchor with a deep blue footer — the three-surface channel layout is the page rhythm.
-- **Do** use dramatic `rgba(0, 0, 0, 0.8)` hero drop shadows when a card overlaps product photography.
-- **Do** keep the top nav black on every scroll position — it does not invert to white over light panels.
+### 规范
+- **应**以 PlayStation Blue（`#0070cc`）作为主 CTA 填充与页脚锚点色，它是品牌的锚点色。
+- **应**对 22px 及以上的所有展示标题使用 SST 字重 300。克制字重的标题就是品牌声调。
+- **应**为每个主按钮应用完整的悬停签名：青色填充 + 2px 白色描边 + 2px 蓝色外环 + `scale(1.2)`。
+- **应**在主按钮与商业按钮上使用完整胶囊圆角（`999px`）。
+- **应**将 PlayStation Cyan（`#1eaedb`）专属保留给悬停、焦点与激活状态——永远不作为静止背景。
+- **应**仅在 PlayStation Store / 购买 CTA 与价格标注上使用 Commerce Orange（`#d53b00`）。
+- **应**以深色 Hero 面板交替白色内容面板，并以深蓝色页脚收尾——三层曲面通道布局是页面节奏。
+- **应**在卡片与产品摄影重叠时使用戏剧性的 `rgba(0, 0, 0, 0.8)` Hero 投影。
+- **应**在任何滚动位置保持顶部导航为黑色——它不会在浅色面板上反转为白色。
 
-### Don't
-- **Don't** bold display headlines. Weight 300 at 22–54px is the PlayStation voice. Weight 700 display type reads as "another game retailer".
-- **Don't** use ALL-CAPS labels or kickers. PlayStation rarely uses uppercase — it is a quiet-authority brand, not a hazard-tape one.
-- **Don't** use gradient buttons, text, or backgrounds outside the two declared section gradients.
-- **Don't** introduce warm colors outside Commerce Orange. No red CTAs, no yellow highlights, no green success pills.
-- **Don't** use square corners on buttons or media. The system has eleven radii — pick one, but never `0`.
-- **Don't** skip the `scale(1.2)` hover move on primary buttons. The lift-scale is a brand interaction signature.
-- **Don't** use serif type. The system is 100% SST sans.
-- **Don't** let cyan `#1eaedb` appear as a text or background color at rest. It only exists in motion.
-- **Don't** design panels that fight for attention. PlayStation's whitespace rhythm gives each module its own "gallery room".
+### 禁忌
+- **不应**加粗展示标题。22–54px 的字重 300 就是 PlayStation 的声调。700 字重的展示字体读来像"另一家游戏零售商"。
+- **不应**使用全大写标签或引导语。PlayStation 极少使用大写——这是一个克制权威的品牌，而非警示胶带。
+- **不应**在两种已声明的区段渐变以外使用渐变按钮、渐变文字或渐变背景。
+- **不应**在 Commerce Orange 以外引入暖色。不要红色 CTA、不要黄色高亮、不要绿色成功胶囊。
+- **不应**在按钮或媒体上使用直角。系统有十一种圆角——选一种，但永远不要用 `0`。
+- **不应**跳过主按钮的 `scale(1.2)` 悬停动效。抬升缩放是品牌交互签名。
+- **不应**使用衬线字体。系统 100% 为 SST 无衬线。
+- **不应**让青色 `#1eaedb` 以文字或静止背景色的形式出现。它只存在于动态中。
+- **不应**设计互相争抢注意力的面板。PlayStation 的留白节奏为每个模块提供专属的"展览空间"。
 
-## 8. Responsive Behavior
+## 8. 响应式行为
 
-### Breakpoints
+### 断点
 
-| Name | Width | Key Changes |
+| 名称 | 宽度 | 关键变化 |
 |---|---|---|
-| Small Mobile | <400px | Single column, nav collapses to hamburger, SST hero scales to ~28px |
-| Mobile | 400–599px | Single column, tiles stack full-width, padding opens to 16px |
-| Large Mobile | 600–767px | Still single column but 2-column tile option in select modules |
-| Tablet Portrait | 768–1023px | 2-column game grid, nav still condensed |
-| Tablet Landscape | 1024–1279px | 3–4 column grid, full nav restored |
-| Desktop | 1280–1599px | Full editorial grid, max hero display scale (44–54px) |
-| Large Desktop | 1600–1919px | Container caps at 1600px, margins expand |
-| 4K / Big-Screen | ≥1920px | Container expands to 1920px max, hero content scales up to match TV viewing distance |
-| Ultra-Wide | ≥2120px | Extreme breakpoint — page stays anchored, outer margins absorb extra width |
+| Small Mobile | <400px | 单列，导航折叠为汉堡，SST Hero 缩放至 ~28px |
+| Mobile | 400–599px | 单列，瓦片全宽堆叠，内边距打开至 16px |
+| Large Mobile | 600–767px | 仍为单列，但特定模块中有 2 列瓦片选项 |
+| Tablet Portrait | 768–1023px | 2 列游戏网格，导航仍为紧凑态 |
+| Tablet Landscape | 1024–1279px | 3–4 列网格，恢复完整导航 |
+| Desktop | 1280–1599px | 完整编辑网格，最大 Hero 展示尺寸（44–54px） |
+| Large Desktop | 1600–1919px | 容器上限 1600px，外边距扩展 |
+| 4K / Big-Screen | ≥1920px | 容器扩展至最大 1920px，Hero 内容放大以匹配电视观看距离 |
+| Ultra-Wide | ≥2120px | 极限断点——页面保持锚定，外边距吸收额外宽度 |
 
-The dembrandt sweep detected 30 breakpoints between 320px and 2120px — an unusually wide responsive range. PlayStation tunes specifically for **big-screen contexts** (1920–2120px) because PS5 owners frequently browse the site on TVs via the console's browser or via cast-to-TV from a phone. Most retail sites stop tuning at 1440px; PlayStation keeps tuning through 4K.
+dembrandt 扫描在 320px 到 2120px 之间检测到 30 个断点——响应式范围异常宽泛。PlayStation 专门为**大屏场景**（1920–2120px）调优，因为 PS5 用户经常通过主机自带浏览器或手机投屏在电视上浏览。大多数零售站点在 1440px 停止调优；PlayStation 一直调优至 4K。
 
-### Touch Targets
-- Primary pill buttons are ~48–56px tall (SST 18px text + ~12–16px vertical padding) — comfortably WCAG AAA.
-- Nav links are smaller (~32–40px tall) at desktop; on mobile they pad out to 48px+ inside the drawer.
-- Icon circle buttons are 40–48px — touch-friendly.
+### 触控目标
+- 主胶囊按钮高约 48–56px（SST 18px 文字 + 约 12–16px 纵向内边距）——轻松达到 WCAG AAA。
+- 导航链接在桌面端较小（约 32–40px 高）；移动端在抽屉内填充至 48px 以上。
+- 图标圆形按钮为 40–48px——触控友好。
 
-### Collapsing Strategy
-- **Nav**: full nav → condensed → hamburger drawer as viewport narrows. Logo stays pinned left; CTA stays pinned right.
-- **Grid**: 6-col → 4-col → 3-col → 2-col → 1-col. Game tile cards reflow without cropping cover art.
-- **Spacing**: section padding tightens from 96px → 64px → 48px → 32px → 24px as viewport narrows.
-- **Type**: SST hero scales from 54px → 44px → 35px → 28px → 22px. The light weight 300 is preserved at every size.
-- **Hero photography**: art-direction swap — desktop uses wide 16:9 crops, mobile uses 4:3 or 1:1 crops with the product centered.
+### 折叠策略
+- **导航**：随视口收窄，完整导航 → 紧凑态 → 汉堡抽屉。Logo 始终左侧固定；CTA 始终右侧固定。
+- **网格**：6 列 → 4 列 → 3 列 → 2 列 → 1 列。游戏瓦片卡片自动换行，封面图不被裁切。
+- **间距**：区段内边距随视口收窄从 96px → 64px → 48px → 32px → 24px 收紧。
+- **字体**：SST Hero 从 54px → 44px → 35px → 28px → 22px 缩放。轻字重 300 在每个尺寸均保留。
+- **Hero 摄影**：美术指导切换——桌面使用宽幅 16:9 裁切，移动端使用 4:3 或 1:1 裁切，产品居中。
 
-### Image Behavior
-- Responsive raster (`srcset` + `<picture>` with art-direction), aspect ratios preserved per breakpoint.
-- 4K-ready: the site serves high-density imagery at 1920px+ to avoid upscaling on TV browsing.
-- `loading="lazy"` on everything below the fold; hero is `eager` with a preload hint.
+### 图片行为
+- 响应式光栅图（`srcset` + 带美术指导的 `<picture>`），按断点保留宽高比。
+- 4K 就绪：站点在 1920px 以上提供高密度图片，避免电视浏览时图片放大失真。
+- 首屏以下所有内容使用 `loading="lazy"`；Hero 使用 `eager` 并附带预加载提示。
 
-## 9. Agent Prompt Guide
+## 9. Agent 提示指南
 
-### Quick Color Reference
-- **Primary CTA**: "PlayStation Blue (`#0070cc`)"
-- **Hover / Focus Accent**: "PlayStation Cyan (`#1eaedb`)"
-- **Background (White Surface)**: "Paper White (`#ffffff`)"
-- **Background (Dark Surface)**: "Console Black (`#000000`)"
-- **Heading Text on White**: "Display Ink (`#000000`)"
-- **Body Text on White**: "Deep Charcoal (`#1f1f1f`)"
-- **Body Text on Black**: "Inverse White (`#ffffff`)"
-- **Commerce / Buy Accent**: "Commerce Orange (`#d53b00`)"
-- **Footer Anchor**: "PlayStation Blue (`#0070cc`)"
+### 颜色快速参考
+- **主 CTA**："PlayStation Blue（`#0070cc`）"
+- **悬停 / 焦点强调色**："PlayStation Cyan（`#1eaedb`）"
+- **背景（白色曲面）**："Paper White（`#ffffff`）"
+- **背景（深色曲面）**："Console Black（`#000000`）"
+- **白色背景上的标题文字**："Display Ink（`#000000`）"
+- **白色背景上的正文文字**："Deep Charcoal（`#1f1f1f`）"
+- **黑色背景上的正文文字**："Inverse White（`#ffffff`）"
+- **商业 / 购买强调色**："Commerce Orange（`#d53b00`）"
+- **页脚锚点色**："PlayStation Blue（`#0070cc`）"
 
-### Example Component Prompts
-1. *"Create a primary CTA button with a `#0070cc` PlayStation Blue fill, white text in SST 18px / 500 / 0.4px tracking, 999px border radius, 12px × 24px padding. On hover, the background transitions to `#1eaedb` PlayStation Cyan, a 2px `#ffffff` border appears, a 2px `#0070cc` outer ring blooms via box-shadow, and the entire button scales 1.2× — all in a 180ms ease transition."*
-2. *"Design a hero panel on a `#000000` Console Black canvas with a 54px SST weight 300 headline in `#ffffff` with -0.1px letter-spacing and 1.25 line-height. Place a single primary CTA below with the standard PlayStation hover treatment. No ALL-CAPS labels anywhere."*
-3. *"Build a game cover tile: 3:4 aspect ratio image with 12px border radius, feather-weight `rgba(0, 0, 0, 0.08) 0 5px 9px 0` drop shadow, a 14px SST 700 title below, a 12px SST 500 platform tag, and a mini 14px / 700 / 0.324px tracking primary CTA in PlayStation Blue."*
-4. *"Create a commerce pill button for a PlayStation Store purchase: `#d53b00` Commerce Orange fill, `#ffffff` text in SST 18px / 700 / 0.45px tracking, 999px radius, 12px × 28px padding. Active state darkens to `#aa2f00`. Hover follows the standard cyan-invert with 1.2× scale."*
-5. *"Design a white content panel between dark hero sections: `#ffffff` background with the subtle `#ffffff → #f5f7fa` light section gradient, 24px border radius, 48px interior padding, feather-weight `rgba(0, 0, 0, 0.06) 0 5px 9px 0` elevation, a 35px SST 300 headline, a 18px body paragraph, and a single primary CTA."*
+### 示例组件提示词
+1. *"创建一个主 CTA 按钮，填充色为 `#0070cc` PlayStation Blue，白色文字使用 SST 18px / 500 / 0.4px 字间距，圆角 999px，内边距 12px × 24px。悬停时，背景过渡至 `#1eaedb` PlayStation Cyan，出现 2px `#ffffff` 描边，通过 box-shadow 绽放 2px `#0070cc` 外环，整个按钮放大 1.2×——全部在 180ms ease 过渡内完成。"*
+2. *"在 `#000000` Console Black 画布上设计一个 Hero 面板，标题使用 54px SST 字重 300，颜色 `#ffffff`，-0.1px 字间距，行高 1.25。在标题下方放置单个主 CTA，采用标准 PlayStation 悬停效果。任何位置均不使用全大写标签。"*
+3. *"构建一个游戏封面瓦片：3:4 宽高比图片，12px 圆角，羽化投影 `rgba(0, 0, 0, 0.08) 0 5px 9px 0`，下方显示 14px SST 700 标题、12px SST 500 平台标签，以及一个 PlayStation Blue 的迷你主 CTA，使用 14px / 700 / 0.324px 字间距。"*
+4. *"为 PlayStation Store 购买场景创建一个商业胶囊按钮：`#d53b00` Commerce Orange 填充，`#ffffff` 文字使用 SST 18px / 700 / 0.45px 字间距，圆角 999px，内边距 12px × 28px。激活状态加深至 `#aa2f00`。悬停遵循标准青色反转效果，缩放 1.2×。"*
+5. *"在深色 Hero 区段之间设计一个白色内容面板：`#ffffff` 背景搭配细微的 `#ffffff → #f5f7fa` 浅色区段渐变，24px 圆角，48px 内边距，羽化高程 `rgba(0, 0, 0, 0.06) 0 5px 9px 0`，35px SST 300 标题，18px 正文段落，以及单个主 CTA。"*
 
-### Iteration Guide
-When refining existing screens generated with this design system:
-1. **Audit display weight.** Every headline 22px and above should be SST weight 300. If you see weight 500 or 700 at hero scale, you've lost the PlayStation voice.
-2. **Audit the hover treatment.** Every primary button must scale 1.2× on hover with the cyan-fill + white-border + blue-ring combination. Miss any of those four and the interaction signature breaks.
-3. **Audit corners.** Every container and button should land on 2, 3, 6, 12, 13, 19, 20, 24, 36, 48, or 999px / 100%. Square corners break the voice.
-4. **Audit color sprawl.** Only PlayStation Blue (`#0070cc`), Cyan (`#1eaedb`), Commerce Orange (`#d53b00`), and the declared grays/blacks/whites should appear in chrome. If you see any other hue, correct it.
-5. **Audit surface alternation.** The page should alternate dark hero → white content → dark hero → white content → blue footer. If two same-surface panels are adjacent, insert a transition.
-6. **Audit casing.** Sentence case and title case only. No ALL-CAPS labels, buttons, or kickers. If you see uppercase, convert it.
-7. **Audit shadow weight.** Shadow opacity should land on 0.06 / 0.08 / 0.16 / 0.8 — nothing in between. If you see 0.1, 0.2, 0.3, 0.5 drop shadows, correct to the nearest declared tier.
-8. **Audit whitespace.** If two modules feel "competitive" (fighting for attention), add 48–96px of vertical breathing room. PlayStation's gallery-pace rhythm is non-negotiable.
+### 迭代指南
+在对使用本设计系统生成的现有界面进行优化时：
+1. **审查展示字重。** 22px 及以上的每个标题都应使用 SST 字重 300。如果看到 Hero 级别使用字重 500 或 700，说明 PlayStation 声调已经丢失。
+2. **审查悬停效果。** 每个主按钮悬停时必须缩放 1.2×，并结合青色填充 + 白色描边 + 蓝色外环。缺少这四项中的任何一项，交互签名即告破裂。
+3. **审查圆角。** 每个容器与按钮的圆角应落在 2、3、6、12、13、19、20、24、36、48 或 999px / 100%。直角会破坏品牌声调。
+4. **审查色彩蔓延。** 框架中应只出现 PlayStation Blue（`#0070cc`）、Cyan（`#1eaedb`）、Commerce Orange（`#d53b00`），以及已声明的灰色/黑色/白色。如发现其他色相，请更正。
+5. **审查曲面交替。** 页面应交替排列：深色 Hero → 白色内容 → 深色 Hero → 白色内容 → 蓝色页脚。若相邻两个面板曲面相同，请插入一个过渡。
+6. **审查大小写。** 仅使用句首大写与词首大写。不使用全大写标签、按钮或引导语。如发现大写，请转换。
+7. **审查阴影权重。** 阴影不透明度应落在 0.06 / 0.08 / 0.16 / 0.8——不取中间值。如发现 0.1、0.2、0.3、0.5 的投影阴影，请更正至最近的已声明层级。
+8. **审查留白。** 若两个模块感觉"相互竞争"（争夺注意力），请增加 48–96px 的纵向呼吸空间。PlayStation 的展览节奏不可妥协。

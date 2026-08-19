@@ -2,5 +2,7 @@
   "id": "dithered",
   "name": "Dithered",
   "category": "Retro & Nostalgic",
-  "description": "Bundled Open Design package for Dithered, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "复古怀旧",
+  "description": "Bundled Open Design package for Dithered, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "点阵渲染技术，用有限色板模拟色调，怀旧、复古、高对比度视觉。"
 }

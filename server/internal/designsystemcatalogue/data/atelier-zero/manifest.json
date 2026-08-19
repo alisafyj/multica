@@ -2,5 +2,7 @@
   "id": "atelier-zero",
   "name": "Atelier Zero",
   "category": "Editorial · Studio",
-  "description": "Bundled Open Design package for Atelier Zero, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "编辑 · 工作室",
+  "description": "Bundled Open Design package for Atelier Zero, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "杂志级拼贴视觉系统：暖纸张底色，超现实石膏与建筑意象，超大展示字体，发丝细线，罗马数字章节标记，微型编辑注释。灵感来自高端印刷杂志（Monocle、Apartamento、IDEA）的制作水准，转化为可用的网站设计。"
 }

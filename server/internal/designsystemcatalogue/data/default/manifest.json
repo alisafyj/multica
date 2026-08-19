@@ -2,5 +2,7 @@
   "id": "default",
   "name": "Neutral Modern",
   "category": "Starter",
-  "description": "Bundled Open Design package for Neutral Modern, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "入门",
+  "description": "Bundled Open Design package for Neutral Modern, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "干净、以产品为中心的默认风格。适合没有特定情绪要求的场景——B2B 工具、仪表盘和实用页面的理想选择。"
 }

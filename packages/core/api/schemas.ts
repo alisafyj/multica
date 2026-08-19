@@ -2061,13 +2061,27 @@ export const EMPTY_LIST_BUILTIN_DESIGN_SYSTEMS_RESPONSE: ListBuiltinDesignSystem
   design_systems: [],
 };
 
+export const BuiltinDesignSystemTokenSchema = z.object({
+  name: z.string().min(1),
+  value: z.string().catch("").default(""),
+  type: z.string().catch("").default(""),
+}).loose();
+
 export const BuiltinDesignSystemDetailSchema = BuiltinDesignSystemSchema.extend({
+  // Per token: a malformed entry costs one swatch, not the whole palette.
+  tokens: z.preprocess(
+    (value) => Array.isArray(value) ? value : [],
+    z.array(z.unknown()).transform((rows) => rows.flatMap((row) => {
+      const parsed = BuiltinDesignSystemTokenSchema.safeParse(row);
+      return parsed.success ? [parsed.data] : [];
+    })).catch([]),
+  ),
   tokens_css: z.string().catch("").default(""),
   design_markdown: z.string().catch("").default(""),
 }).loose();
 
 export const EMPTY_BUILTIN_DESIGN_SYSTEM_DETAIL: BuiltinDesignSystemDetail = {
-  slug: "", name: "", category: "", description: "", tokens_css: "", design_markdown: "",
+  slug: "", name: "", category: "", description: "", tokens: [], tokens_css: "", design_markdown: "",
 };
 
 export const DesignScenarioRecipeSchema = z.object({

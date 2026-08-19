@@ -2,5 +2,7 @@
   "id": "elegant",
   "name": "Elegant",
   "category": "Professional & Corporate",
-  "description": "Bundled Open Design package for Elegant, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "专业与企业",
+  "description": "Bundled Open Design package for Elegant, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "优雅精致的美学，轻盈排版，极简配色，精抛光布局，透露高级感。"
 }

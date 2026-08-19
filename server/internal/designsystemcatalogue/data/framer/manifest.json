@@ -2,5 +2,7 @@
   "id": "framer",
   "name": "Framer",
   "category": "Design & Creative",
-  "description": "Bundled Open Design package for Framer, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "设计与创意",
+  "description": "Bundled Open Design package for Framer, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "建站工具。大胆黑蓝配色，动效优先，设计感十足。"
 }

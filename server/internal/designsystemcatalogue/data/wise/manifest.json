@@ -2,5 +2,7 @@
   "id": "wise",
   "name": "Wise",
   "category": "Fintech & Crypto",
-  "description": "Bundled Open Design package for Wise, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "金融科技与加密",
+  "description": "Bundled Open Design package for Wise, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "跨境汇款。亮绿色点缀，友好清晰。"
 }

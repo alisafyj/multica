@@ -2,5 +2,7 @@
   "id": "contemporary",
   "name": "Contemporary",
   "category": "Modern & Minimal",
-  "description": "Bundled Open Design package for Contemporary, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "现代极简",
+  "description": "Bundled Open Design package for Contemporary, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "当代极简设计，Bento 网格，深色模式支持，高性能无障碍布局。"
 }

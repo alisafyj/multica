@@ -2,5 +2,7 @@
   "id": "levels",
   "name": "Levels",
   "category": "Layout & Structure",
-  "description": "Bundled Open Design package for Levels, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "布局与结构",
+  "description": "Bundled Open Design package for Levels, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "以转化为核心的设计，去除摩擦，通过清晰、信任与速度引导用户行动。"
 }

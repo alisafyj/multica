@@ -2,5 +2,7 @@
   "id": "cafe",
   "name": "Cafe",
   "category": "Creative & Artistic",
-  "description": "Bundled Open Design package for Cafe, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "创意艺术",
+  "description": "Bundled Open Design package for Cafe, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "舒适咖啡馆风格界面，暖色调，柔和排版，干净布局，带来放松的浏览体验。"
 }

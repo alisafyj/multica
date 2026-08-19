@@ -2,5 +2,7 @@
   "id": "replicate",
   "name": "Replicate",
   "category": "AI & LLM",
-  "description": "Bundled Open Design package for Replicate, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "AI 与大模型",
+  "description": "Bundled Open Design package for Replicate, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "API 运行 ML 模型。干净白色画布，代码优先。"
 }

@@ -2,5 +2,7 @@
   "id": "superhuman",
   "name": "Superhuman",
   "category": "Developer Tools",
-  "description": "Bundled Open Design package for Superhuman, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "开发者工具",
+  "description": "Bundled Open Design package for Superhuman, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "高速邮件客户端。高端深色 UI，键盘优先，紫色光晕。"
 }

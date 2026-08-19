@@ -155,9 +155,12 @@ export function SettingTrigger({
     <button
       type="button"
       className={cn(
-        "flex min-w-0 max-w-64 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-caption transition-colors",
-        "hover:bg-accent/60 data-popup-open:bg-accent data-popup-open:text-accent-foreground",
-        "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent",
+        // Opaque on purpose: the composer sits on the dot grid, and a
+        // transparent control lets the pattern read through the button, which
+        // both muddies the label and hides where the hit area actually is.
+        "flex min-w-0 max-w-64 cursor-pointer items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-caption transition-colors",
+        "hover:bg-accent data-popup-open:bg-accent data-popup-open:text-accent-foreground",
+        "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-card",
         filled ? "text-foreground" : "text-muted-foreground",
         className,
       )}
@@ -201,16 +204,18 @@ function CreateChip({
       title={disabled ? `${description}（即将支持）` : description}
       onClick={onClick}
       className={cn(
-        "flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-caption transition-colors",
+        // Same reason as SettingTrigger: opaque so the dot grid cannot show
+        // through the chip.
+        "flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-full border bg-card px-2.5 text-caption transition-colors",
         disabled
-          ? "cursor-not-allowed border-dashed bg-muted/30 text-muted-foreground"
-          : "cursor-pointer text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+          ? "cursor-not-allowed border-dashed bg-muted text-muted-foreground"
+          : "cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground",
         // Selection has to survive hover, so it lives on border, surface,
         // weight and colour — dimensions hover never touches — and the hover
         // compound is spelled out so a selected chip cannot visually downgrade
         // to a plain hover.
         !disabled && selected
-          ? "border-primary bg-primary/10 font-medium text-primary hover:border-primary hover:bg-primary/10 hover:text-primary"
+          ? "border-primary bg-accent font-medium text-primary hover:border-primary hover:bg-accent hover:text-primary"
           : undefined,
       )}
     >
@@ -332,7 +337,7 @@ function CreateTypeRail({
               <button
                 type="button"
                 aria-label={`全部设计场景，另有 ${hiddenTypes.length} 项`}
-                className="flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-full border px-2.5 text-caption text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+                className="flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-full border bg-card px-2.5 text-caption text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
                 <span>全部</span>
                 <ChevronDown className="size-3.5 shrink-0" />

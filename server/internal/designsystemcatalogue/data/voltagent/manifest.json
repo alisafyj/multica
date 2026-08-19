@@ -2,5 +2,7 @@
   "id": "voltagent",
   "name": "VoltAgent",
   "category": "AI & LLM",
-  "description": "Bundled Open Design package for VoltAgent, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "AI 与大模型",
+  "description": "Bundled Open Design package for VoltAgent, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "AI 智能体框架。纯黑画布，翠绿点缀，终端原生。"
 }

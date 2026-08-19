@@ -1,146 +1,146 @@
-# Design System Inspired by OpenAI
+# 受 OpenAI 启发的设计系统
 
-> Category: AI & LLM
-> Calm, near-monochrome system anchored in deep teal-black with generous white space and editorial typography.
+> Category: AI 与大语言模型
+> 沉静、近乎单色的设计系统，以深青黑为锚点，搭配充裕的留白与编辑风排版。
 
-## 1. Visual Theme & Atmosphere
+## 1. 视觉主题与氛围
 
-OpenAI's product surface reads like a research lab dressed for the public — clinical, restrained, deliberately quiet. The page background is a true white (`#ffffff`) layered against a near-black ink (`#0d0d0d`) with a subtle teal undertone, so even the text feels slightly cooled rather than aggressively dark. The result is a chromatic neutrality that puts model output, code, and prose front and center, not the chrome around them.
+OpenAI 的产品界面读起来像一座面向公众开放的研究室——严谨、克制、刻意地安静。页面背景是纯白（`#ffffff`），与近黑的墨色（`#0d0d0d`）叠置，后者带有隐约的青色底调，使文字呈现出微微冷感，而非咄咄逼人的深暗。这种无彩色中性感将模型输出、代码与文字推至视觉中心，而非让外框喧宾夺主。
 
-The signature move is the use of **Söhne** (or its system stand-in `inter`) at restrained weights — 400 for body, 500 for nav and labels, 600 for emphasis — paired with **Signifier**, a contemporary serif used for editorial display. Where most AI brands lean futuristic, OpenAI's serif headlines give the product a quietly literary tone, as if every announcement is an essay.
+标志性手法是以克制的字重使用 **Söhne**（或其系统替代字体 `inter`）——正文用 400，导航与标签用 500，强调用 600——并与 **Signifier** 搭配，后者是一款当代衬线字体，专用于编辑风展示版面。大多数 AI 品牌倾向于未来感，而 OpenAI 的衬线标题赋予了产品一种悄然的文学气质，仿佛每一篇公告都是一篇随笔。
 
-The shape system is uniformly soft: 8px–12px radii, 9999px pills for tags and chips, no harsh corners anywhere. Section transitions are denoted by whitespace rather than dividers; when borders appear they are `#e5e5e5` hairlines that read as the absence of color rather than its presence.
+形状系统统一圆润：8px–12px 圆角，标签与芯片使用 9999px 全圆角胶囊，无处出现生硬的直角。区块之间以留白而非分隔线过渡；当边框出现时，是 `#e5e5e5` 的细线，读起来像颜色的缺席，而非其存在。
 
-**Key Characteristics:**
-- True white canvas (`#ffffff`) with deep teal-black ink (`#0d0d0d`)
-- Söhne / Inter at modest weights (400, 500, 600) — restraint over assertion
-- Signifier serif for editorial display headlines
-- Soft 8–12px radii everywhere; 9999px pills for chips
-- Hairline borders (`#e5e5e5`) used sparingly; whitespace as primary divider
-- Single-color illustrations in deep teal — no gradients in marks
-- Generous line-height (1.55–1.65) and tracking near zero
+**核心特征：**
+- 纯白画布（`#ffffff`）搭配深青黑墨色（`#0d0d0d`）
+- Söhne / Inter，字重保守（400、500、600）——克制胜于张扬
+- Signifier 衬线字体用于编辑风展示标题
+- 全局软圆角 8–12px；芯片使用 9999px 胶囊
+- 细线边框（`#e5e5e5`）谨慎使用；留白为主要分隔手段
+- 深青色单色插图——标志图形中不使用渐变
+- 行高宽松（1.55–1.65），字间距接近零
 
-## 2. Color Palette & Roles
+## 2. 色彩规范与角色
 
-### Primary
-- **Pure White** (`#ffffff`): Primary background, card surface, button background.
-- **Ink Black** (`#0d0d0d`): Primary text, brand mark, primary CTA.
-- **Soft Black** (`#1a1a1a`): Secondary heading, alternative ink for non-critical text.
+### 主色
+- **纯白** (`#ffffff`)：主背景、卡片表面、按钮背景。
+- **墨黑** (`#0d0d0d`)：主文本、品牌标识、主要行动按钮。
+- **柔黑** (`#1a1a1a`)：次级标题、非关键文字的备选墨色。
 
-### Surface & Background
-- **Mist** (`#fafafa`): Section break background, footer surface.
-- **Pearl** (`#f5f5f5`): Card surface, elevated panel.
-- **Cloud** (`#ececec`): Disabled background, divider tint.
+### 表面与背景
+- **薄雾** (`#fafafa`)：区块分隔背景、页脚表面。
+- **珍珠** (`#f5f5f5`)：卡片表面、高层级面板。
+- **云白** (`#ececec`)：禁用状态背景、分隔色调。
 
-### Brand Accent
-- **OpenAI Teal** (`#10a37f`): Brand primary, link, highlight badge — the lone color in an otherwise neutral system.
-- **Teal Deep** (`#0a7a5e`): Hover and pressed state for the brand color.
-- **Teal Soft** (`#e8f5f0`): Surface tint for success badges, highlight callouts.
+### 品牌强调色
+- **OpenAI 青** (`#10a37f`)：品牌主色、链接、高亮徽章——在中性系统中唯一的彩色。
+- **深青** (`#0a7a5e`)：品牌色的悬停与按下状态。
+- **浅青** (`#e8f5f0`)：成功徽章与高亮提示的底色。
 
-### Neutrals & Text
-- **Graphite** (`#3c3c3c`): Body text, default reading color.
-- **Slate** (`#6e6e6e`): Secondary text, captions, metadata.
-- **Ash** (`#9b9b9b`): Tertiary text, placeholder, disabled label.
-- **Stone** (`#c4c4c4`): Decorative dividers, faint icons.
+### 中性色与文字色
+- **石墨** (`#3c3c3c`)：正文、默认阅读色。
+- **板岩** (`#6e6e6e`)：次要文字、说明文字、元数据。
+- **浅灰** (`#9b9b9b`)：三级文字、占位符、禁用标签。
+- **石色** (`#c4c4c4`)：装饰性分隔线、浅色图标。
 
-### Semantic & Border
-- **Border Hairline** (`#e5e5e5`): Standard hairline separator.
-- **Border Soft** (`#ededed`): Card outline on white surface.
-- **Error** (`#ef4146`): Validation, destructive action.
-- **Warning** (`#f5a623`): Soft amber for advisory states.
-- **Info** (`#2563eb`): Informational link tone (used sparingly; teal still wins).
+### 语义色与边框
+- **细线边框** (`#e5e5e5`)：标准细线分隔符。
+- **柔边框** (`#ededed`)：白色表面上的卡片轮廓。
+- **错误** (`#ef4146`)：表单校验、破坏性操作。
+- **警告** (`#f5a623`)：提示性状态的柔和琥珀色。
+- **信息** (`#2563eb`)：信息类链接色调（谨慎使用；青色仍为首选）。
 
-## 3. Typography Rules
+## 3. 排版规则
 
-### Font Family
-- **Display / Editorial**: `Signifier`, with fallback: `'Source Serif Pro', Georgia, serif`
-- **Body / UI**: `Söhne`, with fallback: `Inter, system-ui, -apple-system, 'Segoe UI', sans-serif`
-- **Code / Mono**: `Söhne Mono`, with fallback: `ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace`
+### 字体族
+- **展示 / 编辑风**：`Signifier`，备用字体：`'Source Serif Pro', Georgia, serif`
+- **正文 / UI**：`Söhne`，备用字体：`Inter, system-ui, -apple-system, 'Segoe UI', sans-serif`
+- **代码 / 等宽**：`Söhne Mono`，备用字体：`ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace`
 
-### Hierarchy
+### 层级
 
-| Role | Font | Size | Weight | Line Height | Letter Spacing | Notes |
+| 角色 | 字体 | 字号 | 字重 | 行高 | 字间距 | 备注 |
 |------|------|------|--------|-------------|----------------|-------|
-| Display | Signifier | 56px (3.5rem) | 400 | 1.08 | -0.02em | Editorial hero, announcement titles |
-| H1 | Söhne | 40px (2.5rem) | 600 | 1.15 | -0.01em | Page heading |
-| H2 | Söhne | 28px (1.75rem) | 600 | 1.2 | -0.005em | Section heading |
-| H3 | Söhne | 20px (1.25rem) | 600 | 1.3 | normal | Sub-section |
-| Body Large | Söhne | 18px (1.125rem) | 400 | 1.6 | normal | Lede paragraphs |
-| Body | Söhne | 16px (1rem) | 400 | 1.65 | normal | Standard reading text |
-| Body Small | Söhne | 14px (0.875rem) | 400 | 1.55 | normal | Card body, dense UI |
-| Caption | Söhne | 13px (0.8125rem) | 500 | 1.4 | 0.01em | Metadata, badges |
-| Label | Söhne | 12px (0.75rem) | 500 | 1.3 | 0.04em | Eyebrow, uppercase nav links |
-| Code | Söhne Mono | 14px (0.875rem) | 400 | 1.55 | normal | Code blocks, terminal output |
+| 展示 | Signifier | 56px (3.5rem) | 400 | 1.08 | -0.02em | 编辑风主视觉、公告标题 |
+| H1 | Söhne | 40px (2.5rem) | 600 | 1.15 | -0.01em | 页面标题 |
+| H2 | Söhne | 28px (1.75rem) | 600 | 1.2 | -0.005em | 区块标题 |
+| H3 | Söhne | 20px (1.25rem) | 600 | 1.3 | normal | 子区块标题 |
+| 大正文 | Söhne | 18px (1.125rem) | 400 | 1.6 | normal | 导语段落 |
+| 正文 | Söhne | 16px (1rem) | 400 | 1.65 | normal | 标准阅读文字 |
+| 小正文 | Söhne | 14px (0.875rem) | 400 | 1.55 | normal | 卡片正文、密集 UI |
+| 说明 | Söhne | 13px (0.8125rem) | 500 | 1.4 | 0.01em | 元数据、徽章 |
+| 标签 | Söhne | 12px (0.75rem) | 500 | 1.3 | 0.04em | 眉题、大写导航链接 |
+| 代码 | Söhne Mono | 14px (0.875rem) | 400 | 1.55 | normal | 代码块、终端输出 |
 
-### Principles
-- **Restraint as identity**: weights cap at 600; 700+ feels off-brand. Hierarchy comes from size and color, not weight.
-- **Serif for soul, sans for system**: Signifier appears only in editorial display moments. The product UI is sans-only.
-- **Negative tracking on display**: -0.02em on display sizes; tracking returns to zero by 16px.
+### 原则
+- **克制即身份**：字重上限为 600；700 及以上会偏离品牌气质。层级通过字号与颜色区分，而非字重。
+- **衬线赋予灵魂，无衬线支撑系统**：Signifier 仅出现在编辑风展示时刻，产品 UI 全部使用无衬线字体。
+- **展示文字负字间距**：展示字号使用 -0.02em；16px 时字间距归零。
 
-## 4. Component Stylings
+## 4. 组件样式
 
-### Buttons
+### 按钮
 
-**Primary**
-- Background: `#0d0d0d`
-- Text: `#ffffff`
-- Padding: 10px 18px
-- Radius: 9999px (full pill) on chips, 12px on rectangular CTAs
-- Hover: `#1a1a1a` background
-- Use: Primary CTA, "Try ChatGPT", "Sign in"
+**主要按钮**
+- 背景：`#0d0d0d`
+- 文字：`#ffffff`
+- 内边距：10px 18px
+- 圆角：芯片使用 9999px（全胶囊），矩形行动按钮使用 12px
+- 悬停：背景 `#1a1a1a`
+- 用途：主要行动按钮、"体验 ChatGPT"、"登录"
 
-**Secondary**
-- Background: `#ffffff`
-- Text: `#0d0d0d`
-- Border: 1px solid `#e5e5e5`
-- Padding: 10px 18px
-- Radius: 12px
-- Hover: background `#fafafa`, border `#d4d4d4`
+**次要按钮**
+- 背景：`#ffffff`
+- 文字：`#0d0d0d`
+- 边框：1px solid `#e5e5e5`
+- 内边距：10px 18px
+- 圆角：12px
+- 悬停：背景 `#fafafa`，边框 `#d4d4d4`
 
-**Brand Accent**
-- Background: `#10a37f`
-- Text: `#ffffff`
-- Padding: 10px 18px
-- Radius: 12px
-- Hover: `#0a7a5e`
-- Use: Highlighted upgrade CTA, success path
+**品牌强调按钮**
+- 背景：`#10a37f`
+- 文字：`#ffffff`
+- 内边距：10px 18px
+- 圆角：12px
+- 悬停：`#0a7a5e`
+- 用途：高亮升级行动按钮、成功路径
 
-### Cards
-- Background: `#ffffff`
-- Border: 1px solid `#ededed`
-- Radius: 16px
-- Padding: 24px–32px
-- Shadow: none by default; on hover `0 4px 16px rgba(13,13,13,0.06)`
+### 卡片
+- 背景：`#ffffff`
+- 边框：1px solid `#ededed`
+- 圆角：16px
+- 内边距：24px–32px
+- 阴影：默认无；悬停时 `0 4px 16px rgba(13,13,13,0.06)`
 
-### Inputs
-- Background: `#ffffff`
-- Border: 1px solid `#e5e5e5`
-- Radius: 12px
-- Padding: 12px 14px
-- Focus: border `#10a37f`, ring `0 0 0 3px rgba(16,163,127,0.12)`
+### 输入框
+- 背景：`#ffffff`
+- 边框：1px solid `#e5e5e5`
+- 圆角：12px
+- 内边距：12px 14px
+- 聚焦：边框 `#10a37f`，光晕 `0 0 0 3px rgba(16,163,127,0.12)`
 
-### Pills & Tags
-- Background: `#f5f5f5`
-- Text: `#3c3c3c`
-- Padding: 4px 10px
-- Radius: 9999px
-- Font: 12px / 500
+### 胶囊与标签
+- 背景：`#f5f5f5`
+- 文字：`#3c3c3c`
+- 内边距：4px 10px
+- 圆角：9999px
+- 字体：12px / 500
 
-## 5. Spacing & Layout
+## 5. 间距与布局
 
-- **Base unit**: 4px. Scale: 4, 8, 12, 16, 24, 32, 48, 64, 96, 128.
-- **Container**: max-width 1200px, 24px gutter on mobile, 48px on desktop.
-- **Section rhythm**: 96–128px vertical between major sections; 64px on mobile.
-- **Grid**: 12-column desktop, 4-column mobile, 24px gap.
+- **基础单位**：4px。尺度：4、8、12、16、24、32、48、64、96、128。
+- **容器**：最大宽度 1200px，移动端 24px 间距，桌面端 48px。
+- **区块节奏**：主要区块之间纵向间距 96–128px；移动端 64px。
+- **栅格**：桌面端 12 列，移动端 4 列，间隙 24px。
 
-## 6. Motion
+## 6. 动效
 
-- **Duration**: 150–220ms for hover; 280–360ms for layout transitions.
-- **Easing**: `cubic-bezier(0.16, 1, 0.3, 1)` (smooth out) for entrances.
-- **Restraint**: no parallax, no scroll-jacking. Subtle fade and translate only.
+- **时长**：悬停 150–220ms；布局过渡 280–360ms。
+- **缓动曲线**：入场动画使用 `cubic-bezier(0.16, 1, 0.3, 1)`（平滑出）。
+- **克制原则**：无视差效果，无滚动劫持。仅使用细微的淡入与位移。
 
-## 7. Usage Guardrails
+## 7. 使用约束
 
-- Preserve the neutral editorial restraint, soft radius, and sparse accent usage together; green accents alone do not create an OpenAI-like surface.
-- Use Signifier-style display moments only for editorial or announcement hierarchy, keeping product controls in the sans system.
-- Avoid ornamental motion, heavy shadows, and oversized decorative cards; the system should feel calm, readable, and deliberate.
+- 需同时保留中性编辑克制感、软圆角与稀少的强调色这三者；仅靠绿色强调色无法营造出 OpenAI 风格的界面。
+- Signifier 风格的展示用法仅限于编辑风或公告层级，产品控件保持在无衬线字体体系内。
+- 避免装饰性动效、厚重阴影与过大的装饰性卡片；整套系统应呈现出沉静、易读、从容的气质。

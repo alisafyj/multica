@@ -2,5 +2,7 @@
   "id": "dramatic",
   "name": "Dramatic",
   "category": "Bold & Expressive",
-  "description": "Bundled Open Design package for Dramatic, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "大胆表现",
+  "description": "Bundled Open Design package for Dramatic, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "高对比度、戏剧性设计，大胆布局，沉浸式视觉，非常规构图，极具视觉冲击力。"
 }

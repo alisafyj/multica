@@ -1,366 +1,366 @@
-# Design System Inspired by Nike
+# 受 Nike 启发的设计系统
 
-> Category: E-Commerce & Retail
-> Athletic retail. Monochrome UI, massive uppercase type, full-bleed photography.
+> Category: 电子商务与零售
+> 运动零售。单色 UI，巨幅大写字体，全出血摄影。
 
-## 1. Visual Theme & Atmosphere
+## 1. 视觉主题与氛围
 
-Nike.com is a kinetic retail cathedral — a site that channels the explosive energy of sport into a digital shopping experience. The design operates on a principle of radical simplicity: strip everything back to black, white, and grey so that athletic photography and product color can dominate without competition. The result feels less like a website and more like a sports editorial laid out with the precision of a luxury magazine. Every pixel of real estate is either selling product or driving toward product.
+Nike.com 是一座充满动感的零售大教堂——将运动的爆发性能量转化为数字购物体验。其设计遵循极简主义原则：将一切剥离至黑、白、灰，让运动摄影和产品色彩无需竞争便能主导视觉。最终效果不像一个网站，更像是以奢侈杂志精准度排版的体育编辑专题。每一个像素要么在销售产品，要么在引导用户走向产品。
 
-The "Podium CDS" (Nike's internal Core Design System) establishes an aggressively monochromatic foundation. The UI disappears into black (`#111111`) text and white surfaces, allowing hero photography — sweating athletes, mid-air shoes, stadium energy — to carry the emotional weight. When color does appear in the UI, it's almost exclusively functional: red for errors, blue for links, green for success. The product itself is the color story. This restraint creates a visual paradox: the most colorful pages on the internet feel the most minimal, because all vibrancy comes from merchandise rather than interface.
+"Podium CDS"（Nike 内部核心设计系统）确立了一套极为单色调的基础。UI 融入黑色（`#111111`）文字与白色表面，让英雄摄影——挥汗如雨的运动员、凌空飞翔的球鞋、体育场的澎湃能量——承载情感重量。当 UI 中出现颜色时，几乎都是功能性的：红色表示错误，蓝色表示链接，绿色表示成功。产品本身才是色彩故事。这种克制创造出一种视觉悖论：互联网上色彩最丰富的页面反而感觉最简约，因为所有活力来自商品而非界面。
 
-The typography system is the other half of Nike's visual identity. Massive uppercase headlines in Nike Futura ND — a custom condensed Futura variant with impossibly tight line-height (0.90) — punch through hero imagery like a typographic shockwave. Below the headlines, the workhorse Helvetica Now family handles everything from navigation to product descriptions with Swiss-precision clarity. This split between expressive display type and functional body type mirrors Nike's brand duality: inspiration meets execution.
+字体系统是 Nike 视觉识别的另一半。Nike Futura ND——一款定制的窄体 Futura 变体，行高极度压缩（0.90）——以巨幅大写标题穿透英雄图像，如同排版冲击波。标题之下，Helvetica Now 字族以瑞士精确度负责从导航到产品描述的一切内容。这种表现型展示字体与功能性正文字体之间的分裂，映照了 Nike 品牌的双重性：激励与执行相遇。
 
-**Key Characteristics:**
-- Monochromatic UI (black/white/grey) that lets product photography be the only color source
-- Massive uppercase display typography (96px, line-height 0.90) that punches through hero images
-- Full-bleed photography with no border radius — imagery fills every available edge
-- Pill-shaped buttons (30px radius) as the primary interactive element
-- 8px spacing grid with athletic discipline — every measurement snaps to the system
-- Category-driven shopping architecture with large navigational image cards
-- Shadow-free, border-minimal elevation model — surface differentiation through grey shifts only
+**主要特征：**
+- 单色调 UI（黑/白/灰），让产品摄影成为唯一的色彩来源
+- 巨幅大写展示字体（96px，行高 0.90），穿透英雄图像
+- 无边框圆角的全出血摄影——图像填充每一个可用边缘
+- 药丸形按钮（30px 圆角）作为主要交互元素
+- 8px 间距网格，严格的运动纪律——每个尺寸都对齐到系统
+- 以类别为驱动的购物架构，配以大型导航图像卡片
+- 无阴影、边框极简的层级模型——仅通过灰度变化区分表面
 
-## 2. Color Palette & Roles
+## 2. 色彩调色板与角色
 
-### Primary
+### 主色
 
-- **Nike Black** (`#111111`): The foundation — primary text, button backgrounds, nav text, hero overlays. Deliberately not pure black (#000000), creating a fractionally softer reading experience
-- **Nike White** (`#FFFFFF`): Primary page canvas, button text on dark, card surfaces, nav bar background
+- **Nike 黑** (`#111111`)：基础——主要文字、按钮背景、导航文字、英雄叠加层。刻意不用纯黑（#000000），营造略微柔和的阅读体验
+- **Nike 白** (`#FFFFFF`)：主要页面画布、深色背景上的按钮文字、卡片表面、导航栏背景
 
-### Surface & Background
+### 表面与背景
 
-- **Snow** (`#FAFAFA`): Lightest surface, near-white subtle differentiation (--podium-cds-color-grey-50)
-- **Light Gray** (`#F5F5F5`): Secondary background, search input fill, image placeholder, loading skeleton (--podium-cds-color-grey-100)
-- **Hover Gray** (`#E5E5E5`): Hover state background, disabled button fill (--podium-cds-color-grey-200)
-- **Dark Surface** (`#28282A`): Primary background on dark/inverted sections (--podium-cds-color-grey-800)
-- **Deep Charcoal** (`#1F1F21`): Inverse primary background, darkest non-black surface (--podium-cds-color-grey-900)
-- **Dark Hover** (`#39393B`): Hover state on dark backgrounds (--podium-cds-color-grey-700)
+- **雪白** (`#FAFAFA`)：最浅表面，接近白色的微妙差异（--podium-cds-color-grey-50）
+- **浅灰** (`#F5F5F5`)：次级背景、搜索输入填充、图像占位符、加载骨架屏（--podium-cds-color-grey-100）
+- **悬停灰** (`#E5E5E5`)：悬停状态背景、禁用按钮填充（--podium-cds-color-grey-200）
+- **深色表面** (`#28282A`)：深色/反色区块的主背景（--podium-cds-color-grey-800）
+- **深炭灰** (`#1F1F21`)：反色主背景，最深的非黑色表面（--podium-cds-color-grey-900）
+- **深色悬停** (`#39393B`)：深色背景上的悬停状态（--podium-cds-color-grey-700）
 
-### Neutrals & Text
+### 中性色与文字色
 
-- **Primary Text** (`#111111`): Main body text, headings, nav links (--podium-cds-color-text-primary)
-- **Secondary Text** (`#707072`): Descriptive copy, metadata, timestamps, price labels (--podium-cds-color-text-secondary)
-- **Disabled Text** (`#9E9EA0`): Inactive elements, unavailable options (--podium-cds-color-text-disabled)
-- **Disabled Inverse** (`#4B4B4D`): Disabled text on dark backgrounds (--podium-cds-color-text-disabled-inverse)
-- **Border Primary** (`#707072`): Standard border color, matching secondary text
-- **Border Secondary** (`#CACACB`): Subtle borders, input borders, divider lines (--podium-cds-color-grey-300)
-- **Border Disabled** (`#CACACB`): Inactive border state
-- **Border Active** (`#111111`): Active/focused border, matching primary text
+- **主要文字** (`#111111`)：正文主体、标题、导航链接（--podium-cds-color-text-primary）
+- **次要文字** (`#707072`)：描述性文案、元数据、时间戳、价格标签（--podium-cds-color-text-secondary）
+- **禁用文字** (`#9E9EA0`)：非活动元素、不可用选项（--podium-cds-color-text-disabled）
+- **禁用反色** (`#4B4B4D`)：深色背景上的禁用文字（--podium-cds-color-text-disabled-inverse）
+- **主要边框** (`#707072`)：标准边框颜色，与次要文字一致
+- **次要边框** (`#CACACB`)：细微边框、输入框边框、分隔线（--podium-cds-color-grey-300）
+- **禁用边框** (`#CACACB`)：非活动边框状态
+- **激活边框** (`#111111`)：激活/聚焦边框，与主要文字一致
 
-### Semantic & Accent
+### 语义色与强调色
 
-- **Nike Red** (`#D30005`): Critical errors, sale badges, urgent notifications (--podium-cds-color-red-600)
-- **Bright Red** (`#EE0005`): Red-500, slightly lighter red for emphasis
-- **Nike Orange Badge** (`#D33918`): Badge text, promotional callouts (--podium-cds-color-text-badge)
-- **Orange Flash** (`#FF5000`): Expressive orange accent (--podium-cds-color-orange-400)
-- **Success Green** (`#007D48`): Confirmation, availability, positive states (--podium-cds-color-green-600)
-- **Success Inverse** (`#1EAA52`): Success on dark backgrounds (--podium-cds-color-green-500)
-- **Link Blue** (`#1151FF`): Text links, informational highlights (--podium-cds-color-blue-500)
-- **Info Inverse** (`#1190FF`): Links on dark backgrounds (--podium-cds-color-blue-400)
-- **Warning Yellow** (`#FEDF35`): Warning backgrounds, attention banners (--podium-cds-color-yellow-200)
-- **Focus Ring** (`rgba(39, 93, 197, 1)`): Keyboard focus indicator ring
+- **Nike 红** (`#D30005`)：严重错误、促销角标、紧急通知（--podium-cds-color-red-600）
+- **亮红** (`#EE0005`)：红色-500，略浅的红色用于强调
+- **Nike 橙色角标** (`#D33918`)：角标文字、促销标注（--podium-cds-color-text-badge）
+- **橙闪** (`#FF5000`)：富有表现力的橙色强调（--podium-cds-color-orange-400）
+- **成功绿** (`#007D48`)：确认、可用性、积极状态（--podium-cds-color-green-600）
+- **成功反色** (`#1EAA52`)：深色背景上的成功色（--podium-cds-color-green-500）
+- **链接蓝** (`#1151FF`)：文字链接、信息高亮（--podium-cds-color-blue-500）
+- **信息反色** (`#1190FF`)：深色背景上的链接（--podium-cds-color-blue-400）
+- **警告黄** (`#FEDF35`)：警告背景、注意横幅（--podium-cds-color-yellow-200）
+- **焦点环** (`rgba(39, 93, 197, 1)`)：键盘焦点指示环
 
-### Extended Color Spectrum (Podium CDS)
+### 扩展色谱（Podium CDS）
 
-Each color ramp runs 50–900 for expressive use in campaigns and product pages:
+每个色阶从 50 到 900，用于活动和产品页面的表现性使用：
 
-- **Red**: `#FFE5E5` → `#EE0005` → `#530300`
-- **Orange**: `#FFE2D6` → `#FF5000` → `#3E1009`
-- **Yellow**: `#FEF087` → `#FCA600` → `#99470A`
-- **Green**: `#DFFFB9` → `#1EAA52` → `#003C2A`
-- **Teal**: `#D4FFFB` → `#008E98` → `#043441`
-- **Blue**: `#D6EEFF` → `#1151FF` → `#020664`
-- **Purple**: `#E4E1FC` → `#6E0FF6` → `#1C0060`
-- **Pink**: `#FFE1F3` → `#ED1AA0` → `#4C012D`
+- **红色**: `#FFE5E5` → `#EE0005` → `#530300`
+- **橙色**: `#FFE2D6` → `#FF5000` → `#3E1009`
+- **黄色**: `#FEF087` → `#FCA600` → `#99470A`
+- **绿色**: `#DFFFB9` → `#1EAA52` → `#003C2A`
+- **青色**: `#D4FFFB` → `#008E98` → `#043441`
+- **蓝色**: `#D6EEFF` → `#1151FF` → `#020664`
+- **紫色**: `#E4E1FC` → `#6E0FF6` → `#1C0060`
+- **粉色**: `#FFE1F3` → `#ED1AA0` → `#4C012D`
 
-### Gradient System
+### 渐变系统
 
-Nike avoids UI gradients. When gradients appear, they are photographic — applied to product hero backgrounds (e.g., a red shoe on a red-to-deeper-red gradient). The design system itself is flat-color only.
+Nike 避免使用 UI 渐变。出现渐变时，均为摄影渐变——应用于产品英雄背景（例如，红色鞋款置于红到深红的渐变背景上）。设计系统本身仅使用纯色。
 
-## 3. Typography Rules
+## 3. 排版规则
 
-### Font Family
+### 字体族
 
-**Display:** Nike Futura ND (custom condensed Futura variant exclusive to Nike)
-- Fallbacks: Helvetica Now Text Medium, Helvetica, Arial
-- Used exclusively for large uppercase display headlines
-- Characteristically tight line-height (0.90) and uppercase transform
+**展示字体：** Nike Futura ND（Nike 专属定制窄体 Futura 变体）
+- 备用字体：Helvetica Now Text Medium、Helvetica、Arial
+- 专用于大型大写展示标题
+- 特有的紧密行高（0.90）与大写变换
 
-**Heading:** Helvetica Now Display Medium
-- Fallbacks: Helvetica, Arial
-- Used for section headings and product titles at 24–32px
+**标题字体：** Helvetica Now Display Medium
+- 备用字体：Helvetica、Arial
+- 用于 24–32px 的章节标题和产品名称
 
-**Body Medium:** Helvetica Now Text Medium (weight 500)
-- Fallbacks: Helvetica, Arial
-- Used for links, buttons, captions, emphasized body text
+**正文 Medium：** Helvetica Now Text Medium（字重 500）
+- 备用字体：Helvetica、Arial
+- 用于链接、按钮、说明文字、强调正文
 
-**Body:** Helvetica Now Text (weight 400)
-- Fallbacks: Helvetica, Arial
-- Used for standard body copy, descriptions, metadata
+**正文：** Helvetica Now Text（字重 400）
+- 备用字体：Helvetica、Arial
+- 用于标准正文、描述、元数据
 
-**Arabic:** Neue Frutiger Arabic — locale-specific alternative
+**阿拉伯语：** Neue Frutiger Arabic——特定语言替代字体
 
-### Hierarchy
+### 层级
 
-| Role | Size | Weight | Line Height | Letter Spacing | Notes |
+| 角色 | 尺寸 | 字重 | 行高 | 字间距 | 备注 |
 |------|------|--------|-------------|----------------|-------|
-| Display | 96px | 500 | 0.90 | — | Nike Futura ND, uppercase, hero headlines |
-| Heading 1 | 32px | 500 | 1.20 | — | Helvetica Now Display Medium, section titles |
-| Heading 2 | 24px | 500 | 1.20 | — | Helvetica Now Display Medium, subsections |
-| Heading 3 | 16px | 500 | 1.50 | — | Helvetica Now Text Medium, card titles |
-| Body | 16px | 400 | 1.75 | — | Helvetica Now Text, product descriptions |
-| Body Medium | 16px | 500 | 1.75 | — | Helvetica Now Text Medium, emphasized text |
-| Link | 16px | 500 | 1.75 | — | Helvetica Now Text Medium, navigation links |
-| Link Small | 14px | 500 | 1.86 | — | Helvetica Now Text Medium, footer/utility links |
-| Button | 16px | 500 | 1.50 | — | Helvetica Now Text Medium, CTA text |
-| Button Small | 14px | 500 | 1.50 | — | Helvetica Now Text Medium, secondary buttons |
-| Caption | 14px | 500 | 1.50 | — | Helvetica Now Text Medium, price labels |
-| Small | 12px | 500 | 1.50 | — | Helvetica Now Text Medium, timestamps |
-| Tiny | 12px | 400 | 1.50 | — | Helvetica Now Text, legal text |
+| 展示 | 96px | 500 | 0.90 | — | Nike Futura ND，大写，英雄标题 |
+| 标题 1 | 32px | 500 | 1.20 | — | Helvetica Now Display Medium，章节标题 |
+| 标题 2 | 24px | 500 | 1.20 | — | Helvetica Now Display Medium，子章节 |
+| 标题 3 | 16px | 500 | 1.50 | — | Helvetica Now Text Medium，卡片标题 |
+| 正文 | 16px | 400 | 1.75 | — | Helvetica Now Text，产品描述 |
+| 正文 Medium | 16px | 500 | 1.75 | — | Helvetica Now Text Medium，强调文字 |
+| 链接 | 16px | 500 | 1.75 | — | Helvetica Now Text Medium，导航链接 |
+| 小链接 | 14px | 500 | 1.86 | — | Helvetica Now Text Medium，页脚/实用链接 |
+| 按钮 | 16px | 500 | 1.50 | — | Helvetica Now Text Medium，CTA 文字 |
+| 小按钮 | 14px | 500 | 1.50 | — | Helvetica Now Text Medium，次级按钮 |
+| 说明 | 14px | 500 | 1.50 | — | Helvetica Now Text Medium，价格标签 |
+| 小号 | 12px | 500 | 1.50 | — | Helvetica Now Text Medium，时间戳 |
+| 微小 | 12px | 400 | 1.50 | — | Helvetica Now Text，法律文字 |
 
-### Principles
+### 原则
 
-Nike's typography is a study in tension. The display layer — Nike Futura ND at 96px with a devastating 0.90 line-height — is engineered to feel like a stadium scoreboard: massive, condensed, uppercase, impossible to ignore. It transforms headlines into battle cries. Below the display layer, Helvetica Now provides a clinical counterpoint: Swiss-precision legibility with generous 1.75 line-height for comfortable product browsing. Weight 500 (Medium) dominates throughout the body text, giving Nike's prose a slight assertiveness without the heaviness of bold — every sentence reads like a confident recommendation, not a shout.
+Nike 的排版是一种张力研究。展示层——Nike Futura ND，96px，行高压缩至 0.90——被设计得如同体育场计分板：巨幅、窄体、大写、无法忽视。它将标题变成战斗口号。展示层之下，Helvetica Now 提供临床式的对应：瑞士精确度的可读性，1.75 行高确保舒适的产品浏览体验。字重 500（Medium）贯穿正文始终，赋予 Nike 文案一种轻微的自信感而不显厚重——每一句话读起来都像一个有把握的建议，而非呼喊。
 
-## 4. Component Stylings
+## 4. 组件样式
 
-### Buttons
+### 按钮
 
-**Primary**
-- Background: Nike Black (`#111111`)
-- Text: White (`#FFFFFF`), 16px/500, Helvetica Now Text Medium
-- Border: none
-- Border radius: fully rounded pill (30px)
-- Padding: ~12px 24px
-- Hover: background shifts to Grey-500 (`#707072`), text hover color
-- Active: scale(0) ripple effect with opacity 0.5
-- Focus: 2px box-shadow ring in `rgba(39, 93, 197, 1)`
-- Transition: background 200ms ease
+**主要按钮**
+- 背景：Nike 黑（`#111111`）
+- 文字：白色（`#FFFFFF`），16px/500，Helvetica Now Text Medium
+- 边框：无
+- 边框圆角：完全圆润药丸形（30px）
+- 内边距：约 12px 24px
+- 悬停：背景变为灰色-500（`#707072`），文字悬停颜色
+- 激活：scale(0) 涟漪效果，透明度 0.5
+- 焦点：2px 盒阴影环，颜色 `rgba(39, 93, 197, 1)`
+- 过渡：背景 200ms ease
 
-**Primary on Dark**
-- Background: White (`#FFFFFF`)
-- Text: Black (`#111111`)
-- Hover: background shifts to Grey-300 (`#CACACB`)
+**深色背景上的主要按钮**
+- 背景：白色（`#FFFFFF`）
+- 文字：黑色（`#111111`）
+- 悬停：背景变为灰色-300（`#CACACB`）
 
-**Secondary (Outlined)**
-- Background: transparent
-- Text: Nike Black (`#111111`)
-- Border: 1.5px solid `#CACACB` (grey-300)
-- Border radius: 30px
-- Hover: border darkens to `#707072`, background to grey-200
+**次要按钮（描边）**
+- 背景：透明
+- 文字：Nike 黑（`#111111`）
+- 边框：1.5px solid `#CACACB`（灰色-300）
+- 边框圆角：30px
+- 悬停：边框加深至 `#707072`，背景变为灰色-200
 
-**Disabled**
-- Background: Grey-200 (`#E5E5E5`)
-- Text: Grey-400 (`#9E9EA0`)
-- Cursor: not-allowed
+**禁用按钮**
+- 背景：灰色-200（`#E5E5E5`）
+- 文字：灰色-400（`#9E9EA0`）
+- 光标：not-allowed
 
-**Icon Button**
-- Background: Grey-100 (`#F5F5F5`)
-- Shape: 30px radius (or 50% for circular)
-- Padding: 6px
-- Hover: Grey-500 background
+**图标按钮**
+- 背景：灰色-100（`#F5F5F5`）
+- 形状：30px 圆角（或 50% 圆形）
+- 内边距：6px
+- 悬停：灰色-500 背景
 
-### Cards & Containers
+### 卡片与容器
 
-- Background: White (`#FFFFFF`) — no visible card boundary in most cases
-- Border radius: 0px for product image cards (edge-to-edge imagery), 20px for interactive containers
-- Shadow: none — Nike uses no card shadows whatsoever
-- Hover: no lift effect on product cards; underline on text links within cards
-- Product cards: image on top (no radius), text metadata below with 12px gap
-- Category cards: full-bleed photography with text overlay on dark gradient
-- Transition: opacity 200ms ease for image swap on hover
+- 背景：白色（`#FFFFFF`）——大多数情况下无可见卡片边界
+- 边框圆角：产品图像卡片为 0px（边缘到边缘图像），交互容器为 20px
+- 阴影：无——Nike 完全不使用卡片阴影
+- 悬停：产品卡片无上浮效果；卡片内文字链接下划线
+- 产品卡片：图像在上（无圆角），文字元数据在下，间距 12px
+- 类别卡片：全出血摄影，深色渐变叠加层上显示文字
+- 过渡：悬停时图像切换的透明度 200ms ease
 
-### Inputs & Forms
+### 输入框与表单
 
-- Background: Grey-100 (`#F5F5F5`)
-- Border: 1px solid `#CACACB` when visible, or borderless on search
-- Border radius: 24px (search inputs), 8px (form inputs)
-- Font: Helvetica Now Text, 16px
-- Focus: border shifts to `#111111` (border-active), 2px focus ring in `rgba(39, 93, 197, 1)`
-- Error: border `#D30005` (critical)
-- Placeholder: Grey-500 (`#707072`)
-- Transition: border-color 200ms ease
+- 背景：灰色-100（`#F5F5F5`）
+- 边框：可见时 1px solid `#CACACB`，搜索框无边框
+- 边框圆角：24px（搜索输入），8px（表单输入）
+- 字体：Helvetica Now Text，16px
+- 焦点：边框变为 `#111111`（边框激活），2px 焦点环 `rgba(39, 93, 197, 1)`
+- 错误：边框 `#D30005`（严重）
+- 占位符：灰色-500（`#707072`）
+- 过渡：边框颜色 200ms ease
 
-### Navigation
+### 导航
 
-- Background: White (`#FFFFFF`), sticky
-- Height: ~60px desktop
-- Left: Nike Swoosh logo (24x24px SVG)
-- Center: Category links (New & Featured, Men, Women, Kids, Sale) in 16px/500 Helvetica Now Text Medium
-- Right: Search (24px radius input), Favorites, Cart icons
-- Hover: text color shifts to Grey-500 (`#707072`)
-- Mobile: hamburger menu, full-screen overlay
-- Top banner: promotional message bar with dark background (#111111) and white text
+- 背景：白色（`#FFFFFF`），粘性定位
+- 高度：桌面端约 60px
+- 左侧：Nike Swoosh 标志（24x24px SVG）
+- 中间：类别链接（新品与精选、男款、女款、童款、特卖），16px/500 Helvetica Now Text Medium
+- 右侧：搜索（24px 圆角输入框）、收藏、购物车图标
+- 悬停：文字颜色变为灰色-500（`#707072`）
+- 移动端：汉堡菜单，全屏叠加层
+- 顶部横幅：深色背景（#111111）白色文字的促销信息栏
 
-### Image Treatment
+### 图像处理
 
-- Hero images: full-bleed, no border radius, edge-to-edge
-- Product grid: square (1:1) or 4:3 aspect ratio, no border radius
-- Category cards: 16:9 or 4:3, full-bleed with text overlay
-- Image placeholder: Grey-100 (`#F5F5F5`) solid background
-- Lazy loading: native loading="lazy", skeleton uses #F5F5F5 bg
-- Product hover: secondary image swap (front → side view)
+- 英雄图像：全出血，无边框圆角，边缘到边缘
+- 产品网格：正方形（1:1）或 4:3 宽高比，无边框圆角
+- 类别卡片：16:9 或 4:3，全出血并带文字叠加层
+- 图像占位符：灰色-100（`#F5F5F5`）纯色背景
+- 懒加载：原生 loading="lazy"，骨架屏使用 #F5F5F5 背景
+- 产品悬停：切换至次级图像（正面 → 侧面视图）
 
-### Promotional Banners
+### 促销横幅
 
-- Full-width dark (`#111111`) background with white text
-- Tight padding (8-12px vertical)
-- Centered text, 12px/500 Helvetica Now Text Medium
-- Used for shipping promotions, member benefits, sale announcements
+- 全宽深色（`#111111`）背景，白色文字
+- 紧凑内边距（垂直 8-12px）
+- 文字居中，12px/500 Helvetica Now Text Medium
+- 用于运费促销、会员权益、特卖公告
 
-## 5. Layout Principles
+## 5. 布局原则
 
-### Spacing System
+### 间距系统
 
-Base unit: 4px (primary grid is 8px multiples)
+基础单位：4px（主网格为 8px 的倍数）
 
-| Token | Value | Use |
+| 令牌 | 值 | 用途 |
 |-------|-------|-----|
-| space-1 | 4px | Tight icon gaps, inline spacing |
-| space-2 | 8px | Base unit, button icon gaps |
-| space-3 | 12px | Card internal padding, tight margins |
-| space-4 | 16px | Standard padding, nav spacing |
-| space-5 | 20px | Product card gaps |
-| space-6 | 24px | Section internal padding, grid gaps |
-| space-7 | 32px | Section breaks |
-| space-8 | 48px | Major section padding |
-| space-9 | 64px | Hero section padding |
-| space-10 | 80px | Large section spacing |
+| space-1 | 4px | 紧凑图标间距、行内间距 |
+| space-2 | 8px | 基础单位、按钮图标间距 |
+| space-3 | 12px | 卡片内边距、紧凑外边距 |
+| space-4 | 16px | 标准内边距、导航间距 |
+| space-5 | 20px | 产品卡片间距 |
+| space-6 | 24px | 章节内边距、网格间距 |
+| space-7 | 32px | 章节分隔 |
+| space-8 | 48px | 主要章节内边距 |
+| space-9 | 64px | 英雄区域内边距 |
+| space-10 | 80px | 大型章节间距 |
 
-### Grid & Container
+### 网格与容器
 
-- Max container width: 1920px
-- Standard content width: ~1440px with horizontal padding
-- Product grid: 3-column on desktop, 2-column on tablet, 1-column on mobile
-- Category grid: 3-column with full-bleed images
-- Grid gap: 4-12px between product cards (intentionally tight)
-- Horizontal padding: 48px desktop, 24px tablet, 16px mobile
+- 最大容器宽度：1920px
+- 标准内容宽度：约 1440px，带水平内边距
+- 产品网格：桌面端 3 列，平板端 2 列，移动端 1 列
+- 类别网格：3 列，全出血图像
+- 网格间距：产品卡片之间 4-12px（刻意紧凑）
+- 水平内边距：桌面 48px，平板 24px，移动 16px
 
-### Whitespace Philosophy
+### 空白哲学
 
-Nike's whitespace strategy is deliberately aggressive — not in the luxurious, breathing way of a fashion brand, but in a compressed, high-density way that fills every pixel with either content or intentional absence. Product grids use minimal gaps (4-12px) to create a sense of abundance and choice. Section breaks are generous (48-80px) to separate shopping contexts. The overall effect is a store that feels packed with product while remaining navigable — like a well-organized athletic superstore.
+Nike 的空白策略刻意激进——不是时尚品牌那种奢侈的呼吸感，而是一种压缩的、高密度的方式，用内容或刻意的留白填满每一个像素。产品网格使用最小间距（4-12px）营造丰盛感和选择感。章节分隔较宽（48-80px）以区分购物情境。整体效果是一家感觉商品琳琅满目却保持可导航性的商店——如同一家布局良好的运动超市。
 
-### Border Radius Scale
+### 边框圆角比例
 
-| Value | Context |
+| 值 | 上下文 |
 |-------|---------|
-| 0px | Product images, hero photography (sharp edges) |
-| 8px | Form inputs (non-search) |
-| 18px | Small interactive elements |
-| 20px | Containers, cards with UI content |
-| 24px | Search inputs, medium pills |
-| 30px | Buttons, tags, filters (full pill) |
-| 50% | Circular icon buttons, avatar placeholders |
+| 0px | 产品图像、英雄摄影（锐利边缘）|
+| 8px | 表单输入（非搜索）|
+| 18px | 小型交互元素 |
+| 20px | 容器、带 UI 内容的卡片 |
+| 24px | 搜索输入、中等药丸形 |
+| 30px | 按钮、标签、筛选（完整药丸形）|
+| 50% | 圆形图标按钮、头像占位符 |
 
-## 6. Depth & Elevation
+## 6. 深度与层级
 
-| Level | Treatment | Use |
+| 层级 | 处理 | 用途 |
 |-------|-----------|-----|
-| Flat | No shadow, no border | Default state for everything |
-| Divider | `0px -1px 0px 0px #E5E5E5 inset` | Subtle inset line between sections |
-| Focus | `0 0 0 2px rgba(39, 93, 197, 1)` | Keyboard focus ring |
-| Overlay | Dark scrim over photography | Text-on-image legibility |
+| 扁平 | 无阴影，无边框 | 一切的默认状态 |
+| 分隔线 | `0px -1px 0px 0px #E5E5E5 inset` | 章节之间的细微嵌入线 |
+| 焦点 | `0 0 0 2px rgba(39, 93, 197, 1)` | 键盘焦点环 |
+| 叠加层 | 摄影上的深色遮罩 | 图像上文字的可读性 |
 
-Nike's elevation philosophy is radically flat. There are no card shadows, no hover lifts, no floating elements. Depth is communicated exclusively through color — dark sections recede, light sections advance, grey shifts indicate state changes. This flatness reinforces the athletic, no-nonsense brand personality: no visual frills, just direct communication. The only "shadow" in the entire system is a 1px inset divider line and the accessibility-required focus ring.
+Nike 的层级哲学是激进的扁平化。没有卡片阴影，没有悬停上浮，没有浮动元素。深度完全通过颜色传递——深色区块后退，浅色区块前进，灰度变化表示状态变化。这种扁平感强化了运动、务实的品牌个性：没有视觉装饰，只有直接的沟通。整个系统中唯一的"阴影"是 1px 嵌入分隔线和无障碍必需的焦点环。
 
-### Decorative Depth
+### 装饰性深度
 
-- **Hero photography overlays**: Dark gradient scrims over full-bleed photography for text readability
-- **Product background gradients**: Colored backgrounds behind hero product shots (e.g., red shoe on red gradient)
-- **Banner bars**: Solid dark (#111111) promotional strips at page top
+- **英雄摄影叠加层**：全出血摄影上的深色渐变遮罩，确保文字可读性
+- **产品背景渐变**：英雄产品图背后的彩色背景（例如，红色鞋款置于红色渐变背景上）
+- **横幅条**：页面顶部的纯深色（#111111）促销条
 
-## 7. Do's and Don'ts
+## 7. 规范与禁忌
 
-### Do
+### 规范
 
-- Use Nike Black (#111111) for all primary text — never pure #000000
-- Keep buttons pill-shaped (30px radius) and limited to primary/secondary variants
-- Use full-bleed, edge-to-edge photography for hero sections — no border radius on images
-- Let product photography provide all color vibrancy; keep UI monochromatic
-- Use uppercase Nike Futura ND ONLY for display headlines (96px+)
-- Maintain tight product grid gaps (4-12px) for a dense, abundant feel
-- Use Grey-100 (#F5F5F5) for all input and placeholder backgrounds
-- Reserve color exclusively for semantic meaning (red=error, green=success, blue=link)
-- Use weight 500 (Medium) for all interactive text elements
+- 所有主要文字使用 Nike 黑（#111111）——绝不使用纯黑 #000000
+- 保持按钮药丸形（30px 圆角），限定为主要/次要变体
+- 英雄区域使用全出血、边缘到边缘的摄影——图像不加边框圆角
+- 让产品摄影提供所有色彩活力；保持 UI 单色调
+- 大写 Nike Futura ND 仅用于展示标题（96px+）
+- 保持紧凑的产品网格间距（4-12px）营造密集、丰盛的感觉
+- 所有输入框和占位符背景使用灰色-100（#F5F5F5）
+- 将颜色专门保留用于语义含义（红色=错误，绿色=成功，蓝色=链接）
+- 所有交互文字元素使用字重 500（Medium）
 
-### Don't
+### 禁忌
 
-- Don't add shadows to cards — Nike's elevation model is entirely flat
-- Don't use border radius on product imagery — only UI elements get rounded corners
-- Don't introduce brand colors beyond the grey scale for UI elements
-- Don't use Nike Futura ND below 24px — it's exclusively a display face
-- Don't add hover lift effects — Nike cards don't animate on hover
-- Don't use regular weight (400) for buttons or links — always use 500
-- Don't place colored backgrounds behind UI elements — color is reserved for product contexts
-- Don't use more than two levels of text hierarchy per card (title + body)
-- Don't add decorative dividers — the 1px inset is the only divider pattern
-- Don't soften the contrast — Nike's design deliberately pushes black-on-white to maximum
+- 不为卡片添加阴影——Nike 的层级模型完全扁平
+- 不为产品图像添加边框圆角——只有 UI 元素才有圆角
+- 不为 UI 元素引入灰度以外的品牌颜色
+- 不在 24px 以下使用 Nike Futura ND——它专属于展示字体
+- 不添加悬停上浮效果——Nike 卡片悬停时不会产生动画
+- 不为按钮或链接使用常规字重（400）——始终使用 500
+- 不在 UI 元素后方添加彩色背景——颜色专用于产品场景
+- 每张卡片不要超过两级文字层级（标题 + 正文）
+- 不添加装饰性分隔线——1px 嵌入线是唯一的分隔线模式
+- 不弱化对比度——Nike 的设计刻意将黑白对比推向最大值
 
-## 8. Responsive Behavior
+## 8. 响应式行为
 
-### Breakpoints
+### 断点
 
-| Name | Width | Key Changes |
+| 名称 | 宽度 | 主要变化 |
 |------|-------|-------------|
-| Mobile | <640px | Single column, hamburger nav, display text scales down, tight 16px padding |
-| Small Tablet | 640-768px | 2-column product grid begins, nav still collapsed |
-| Tablet | 768-960px | 2-column grids, category cards scale, horizontal padding 24px |
-| Small Desktop | 960-1024px | Nav expands to full horizontal, 3-column product grid |
-| Desktop | 1024-1440px | Full layout, expanded nav, 3-column grids, 48px padding |
-| Large Desktop | >1440px | Max-width container centered, increased margins, hero images full-bleed |
+| 移动端 | <640px | 单列，汉堡导航，展示文字缩小，紧凑 16px 内边距 |
+| 小平板 | 640-768px | 开始 2 列产品网格，导航仍折叠 |
+| 平板 | 768-960px | 2 列网格，类别卡片缩放，水平内边距 24px |
+| 小桌面 | 960-1024px | 导航展开为完整水平，3 列产品网格 |
+| 桌面 | 1024-1440px | 完整布局，展开导航，3 列网格，48px 内边距 |
+| 大桌面 | >1440px | 最大宽度容器居中，增加外边距，英雄图像全出血 |
 
-### Touch Targets
+### 触控目标
 
-- Minimum touch target: 44x44px (WCAG AAA)
-- Mobile nav icons: 48x48px touch area
-- Product cards: full surface is tappable
-- Filter pills: minimum 36px height with 12px padding
+- 最小触控目标：44x44px（WCAG AAA）
+- 移动端导航图标：48x48px 触控区域
+- 产品卡片：整个表面均可点击
+- 筛选药丸：最小 36px 高度，12px 内边距
 
-### Collapsing Strategy
+### 折叠策略
 
-- **Navigation**: Full category links → hamburger menu below 960px; search, favorites, cart icons remain visible
-- **Product grids**: 3-col → 2-col at 960px → 1-col at 640px
-- **Hero sections**: Display text scales from 96px → 64px → 48px; hero images remain full-bleed at all sizes
-- **Category cards**: 3-col → 2-col → 1-col with maintained full-bleed imagery
-- **Section padding**: 80px → 48px → 32px → 24px as viewport narrows
-- **Promotional banner**: text wraps or truncates, maintains dark background
+- **导航**：960px 以下完整类别链接 → 汉堡菜单；搜索、收藏、购物车图标保持可见
+- **产品网格**：3 列 → 960px 时 2 列 → 640px 时 1 列
+- **英雄区域**：展示文字从 96px → 64px → 48px 缩小；英雄图像在所有尺寸保持全出血
+- **类别卡片**：3 列 → 2 列 → 1 列，保持全出血图像
+- **章节内边距**：随视口缩小，80px → 48px → 32px → 24px
+- **促销横幅**：文字换行或截断，保持深色背景
 
-### Image Behavior
+### 图像行为
 
-- Responsive images via Nike CDN (`c.static-nike.com`) with width parameters
-- Product images: srcset with multiple resolutions (w_320, w_640, w_960, w_1920)
-- Hero images: full-bleed at all breakpoints, aspect ratio shifts (16:9 desktop → 4:3 mobile)
-- Lazy loading: native loading="lazy", grey-100 placeholder during load
-- Art direction: hero crops change between desktop and mobile compositions
+- 通过 Nike CDN（`c.static-nike.com`）使用宽度参数提供响应式图像
+- 产品图像：srcset 多分辨率（w_320、w_640、w_960、w_1920）
+- 英雄图像：所有断点均全出血，宽高比变化（桌面 16:9 → 移动端 4:3）
+- 懒加载：原生 loading="lazy"，加载期间灰色-100 占位符
+- 艺术指导：英雄裁剪在桌面端和移动端构图之间变化
 
-## 9. Agent Prompt Guide
+## 9. 智能体提示指南
 
-### Quick Color Reference
+### 快速颜色参考
 
-- Primary CTA: Nike Black (`#111111`)
-- Background: White (`#FFFFFF`)
-- Secondary surface: Light Gray (`#F5F5F5`)
-- Heading text: Nike Black (`#111111`)
-- Body text / hover: Secondary Text (`#707072`)
-- Border: Border Secondary (`#CACACB`)
-- Error: Nike Red (`#D30005`)
-- Link: Link Blue (`#1151FF`)
+- 主要 CTA：Nike 黑（`#111111`）
+- 背景：白色（`#FFFFFF`）
+- 次要表面：浅灰（`#F5F5F5`）
+- 标题文字：Nike 黑（`#111111`）
+- 正文文字/悬停：次要文字（`#707072`）
+- 边框：次要边框（`#CACACB`）
+- 错误：Nike 红（`#D30005`）
+- 链接：链接蓝（`#1151FF`）
 
-### Example Component Prompts
+### 组件提示示例
 
-- "Create a product hero section with full-bleed edge-to-edge photography, no border radius, a dark gradient overlay for text, and a massive uppercase 96px/500 headline in Nike Futura style with 0.90 line-height and a Nike Black (#111111) pill button (30px radius)"
-- "Design a 3-column product card grid with square images (no border radius), 4px gap between cards, product name in 16px/500 Nike Black (#111111), price in 14px/500, and secondary text in Grey-500 (#707072)"
-- "Build a sticky white navigation bar with a left-aligned logo, centered category links in 16px/500 (#111111) with hover color #707072, and right-aligned search (24px radius, #F5F5F5 background), favorites, and cart icons"
-- "Create a promotional banner strip with #111111 background, white 12px/500 centered text, and 8px vertical padding — full width, no border radius"
-- "Design a secondary outlined button with transparent background, 1.5px #CACACB border, 30px pill radius, 16px/500 #111111 text, hover border darkening to #707072"
+- "创建一个产品英雄区，全出血边缘到边缘摄影，无边框圆角，深色渐变叠加层用于文字，96px/500 巨幅大写标题采用 Nike Futura 风格，行高 0.90，Nike 黑（#111111）药丸形按钮（30px 圆角）"
+- "设计一个 3 列产品卡片网格，正方形图像（无边框圆角），卡片间距 4px，产品名称 16px/500 Nike 黑（#111111），价格 14px/500，次要文字灰色-500（#707072）"
+- "构建一个粘性白色导航栏，左对齐标志，中间类别链接 16px/500（#111111），悬停颜色 #707072，右对齐搜索（24px 圆角，#F5F5F5 背景）、收藏和购物车图标"
+- "创建一个促销横幅条，#111111 背景，白色 12px/500 居中文字，垂直内边距 8px——全宽，无边框圆角"
+- "设计一个次要描边按钮，透明背景，1.5px #CACACB 边框，30px 药丸圆角，16px/500 #111111 文字，悬停时边框加深至 #707072"
 
-### Iteration Guide
+### 迭代指南
 
-When refining existing screens generated with this design system:
-1. Focus on ONE component at a time
-2. Reference specific color names and hex codes from this document
-3. Remember: product photography is the color — UI stays monochromatic
-4. Use the grey scale for state changes: #F5F5F5 → #E5E5E5 → #CACACB → #707072
-5. If something feels too colorful in the UI, it probably is — Nike keeps UI greyscale
-6. Display type (Nike Futura) should ALWAYS be uppercase and never below 24px
-7. Body type (Helvetica Now) should almost always be weight 500 for interactive elements
+使用此设计系统精修已有界面时：
+1. 一次专注于一个组件
+2. 引用本文档中的具体颜色名称和十六进制代码
+3. 记住：产品摄影是颜色——UI 保持单色调
+4. 使用灰度进行状态变化：#F5F5F5 → #E5E5E5 → #CACACB → #707072
+5. 如果 UI 中某处感觉过于丰富多彩，它很可能确实如此——Nike 保持 UI 灰度
+6. 展示字体（Nike Futura）应始终大写，绝不低于 24px
+7. 正文字体（Helvetica Now）交互元素几乎应始终使用字重 500

@@ -2,5 +2,7 @@
   "id": "sentry",
   "name": "Sentry",
   "category": "Backend & Data",
-  "description": "Bundled Open Design package for Sentry, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "后端与数据",
+  "description": "Bundled Open Design package for Sentry, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "错误监控。深色仪表盘，数据密集，粉紫色点缀。"
 }

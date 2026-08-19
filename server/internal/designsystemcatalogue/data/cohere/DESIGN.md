@@ -1,269 +1,269 @@
-# Design System Inspired by Cohere
+# 受 Cohere 启发的设计系统
 
-> Category: AI & LLM
-> Enterprise AI platform. Vibrant gradients, data-rich dashboard aesthetic.
+> Category: AI 与大语言模型
+> 企业级 AI 平台。充满活力的渐变色调，数据密集的仪表盘美学。
 
-## 1. Visual Theme & Atmosphere
+## 1. 视觉主题与氛围
 
-Cohere's interface is a polished enterprise command deck — confident, clean, and designed to make AI feel like serious infrastructure rather than a consumer toy. The experience lives on a bright white canvas where content is organized into generously rounded cards (22px radius) that create an organic, cloud-like containment language. This is a site that speaks to CTOs and enterprise architects: professional without being cold, sophisticated without being intimidating.
+Cohere 的界面是一个精致的企业级指挥台——自信、简洁，让 AI 呈现出严肃基础设施的质感，而非消费级玩具。整个体验建立在明亮的白色画布之上，内容被组织进带有大圆角（22px）的卡片中，形成一种有机的、云朵般的视觉语言。这是一个面向 CTO 和企业架构师的站点：专业而不冷漠，精致而不令人望而生畏。
 
-The design language bridges two worlds with a dual-typeface system: CohereText, a custom display serif with tight tracking, gives headlines the gravitas of a technology manifesto, while Unica77 Cohere Web handles all body and UI text with geometric Swiss precision. This serif/sans pairing creates a "confident authority meets engineering clarity" personality that perfectly reflects an enterprise AI platform.
+设计语言通过双字体系统连接两个世界：CohereText 是一款带有紧凑字距的定制展示衬线字体，赋予标题以科技宣言的庄重感；Unica77 Cohere Web 则以几何瑞士风格的精准处理所有正文和 UI 文本。这种衬线/无衬线的组合构建出"自信权威遇上工程清晰"的品牌个性，完美契合企业级 AI 平台的定位。
 
-Color is used with extreme restraint — the interface is almost entirely black-and-white with cool gray borders (`#d9d9dd`, `#e5e7eb`). Purple-violet appears only in photographic hero bands, gradient sections, and the interactive blue (`#1863dc`) that signals hover and focus states. This chromatic restraint means that when color DOES appear — in product screenshots, enterprise photography, and the deep purple section — it carries maximum visual weight.
+色彩使用极度克制——界面几乎完全是黑白两色，配以冷灰边框（`#d9d9dd`、`#e5e7eb`）。紫罗兰色仅出现在摄影风格的主视觉横幅、渐变区块，以及表示悬停和焦点状态的交互蓝（`#1863dc`）。这种色彩克制意味着，当色彩真正出现时——在产品截图、企业摄影和深紫色区域中——它将承载最大的视觉分量。
 
-**Key Characteristics:**
-- Bright white canvas with cool gray containment borders
-- 22px signature border-radius — the distinctive "Cohere card" roundness
-- Dual custom typeface: CohereText (display serif) + Unica77 (body sans)
-- Enterprise-grade chromatic restraint: black, white, cool grays, minimal purple-blue accent
-- Deep purple/violet hero sections providing dramatic contrast
-- Ghost/transparent buttons that shift to blue on hover
-- Enterprise photography showing diverse real-world applications
-- CohereMono for code and technical labels with uppercase transforms
+**核心特征：**
+- 明亮白色画布，搭配冷灰边框
+- 22px 标志性圆角——独特的"Cohere 卡片"圆润感
+- 双定制字体：CohereText（展示衬线体）+ Unica77（正文无衬线体）
+- 企业级色彩克制：黑、白、冷灰，最少量的紫蓝强调色
+- 深紫/紫罗兰主视觉区域，提供强烈对比
+- 幽灵/透明按钮，悬停时切换为蓝色
+- 展示多元真实场景的企业摄影
+- CohereMono 用于代码和技术标签，配合大写变换
 
-## 2. Color Palette & Roles
+## 2. 色彩系统与用途
 
-### Primary
-- **Cohere Black** (`#000000`): Primary headline text and maximum-emphasis elements.
-- **Near Black** (`#212121`): Standard body link color — slightly softer than pure black.
-- **Deep Dark** (`#17171c`): A blue-tinted near-black for navigation and dark-section text.
+### 主色
+- **Cohere 黑**（`#000000`）：主要标题文字及最高强调元素。
+- **近黑色**（`#212121`）：标准正文链接颜色——比纯黑稍柔和。
+- **深暗色**（`#17171c`）：带蓝调的近黑色，用于导航和深色区域的文字。
 
-### Secondary & Accent
-- **Interaction Blue** (`#1863dc`): The primary interactive accent — appears on button hover, focus states, and active links. The sole chromatic action color.
-- **Ring Blue** (`#4c6ee6` at 50%): Tailwind ring color for keyboard focus indicators.
-- **Focus Purple** (`#9b60aa`): Input focus border color — a muted violet.
+### 辅助色与强调色
+- **交互蓝**（`#1863dc`）：主要交互强调色——出现在按钮悬停、焦点状态和活跃链接上。唯一的彩色操作色。
+- **环形蓝**（`#4c6ee6` at 50%）：键盘焦点指示器的 Tailwind ring 颜色。
+- **焦点紫**（`#9b60aa`）：输入框焦点边框颜色——柔和的紫罗兰。
 
-### Surface & Background
-- **Pure White** (`#ffffff`): The primary page background and card surface.
-- **Snow** (`#fafafa`): Subtle elevated surfaces and light-section backgrounds.
-- **Lightest Gray** (`#f2f2f2`): Card borders and the softest containment lines.
+### 表面色与背景色
+- **纯白**（`#ffffff`）：主页面背景和卡片表面。
+- **雪白**（`#fafafa`）：微妙的浮起表面和浅色区块背景。
+- **最浅灰**（`#f2f2f2`）：卡片边框和最柔和的边界线。
 
-### Neutrals & Text
-- **Muted Slate** (`#93939f`): De-emphasized footer links and tertiary text — a cool-toned gray with a slight blue-violet tint.
-- **Border Cool** (`#d9d9dd`): Standard section and list-item borders — a cool, slightly purple-tinted gray.
-- **Border Light** (`#e5e7eb`): Lighter border variant — Tailwind's standard gray-200.
+### 中性色与文字色
+- **静音石板**（`#93939f`）：弱化的页脚链接和三级文字——带有轻微蓝紫调的冷灰色。
+- **冷边框**（`#d9d9dd`）：标准区块和列表项边框——略带紫调的冷灰色。
+- **浅边框**（`#e5e7eb`）：更浅的边框变体——Tailwind 标准 gray-200。
 
-### Gradient System
-- **Purple-Violet Hero Band**: Deep purple gradient sections that create dramatic contrast against the white canvas. These appear as full-width bands housing product screenshots and key messaging.
-- **Dark Footer Gradient**: The page transitions through deep purple/charcoal to the black footer, creating a "dusk" effect.
+### 渐变系统
+- **紫罗兰主视觉横幅**：深紫渐变区块，与白色画布形成强烈对比。以全宽横幅的形式容纳产品截图和核心信息。
+- **深色页脚渐变**：页面从深紫/炭灰过渡至黑色页脚，形成"黄昏"效果。
 
-## 3. Typography Rules
+## 3. 字体规范
 
-### Font Family
-- **Display**: `CohereText`, with fallbacks: `Space Grotesk, Inter, ui-sans-serif, system-ui`
-- **Body / UI**: `Unica77 Cohere Web`, with fallbacks: `Inter, Arial, ui-sans-serif, system-ui`
-- **Code**: `CohereMono`, with fallbacks: `Arial, ui-sans-serif, system-ui`
-- **Icons**: `CohereIconDefault` (custom icon font)
+### 字体族
+- **展示字体**：`CohereText`，备用字体：`Space Grotesk, Inter, ui-sans-serif, system-ui`
+- **正文 / UI**：`Unica77 Cohere Web`，备用字体：`Inter, Arial, ui-sans-serif, system-ui`
+- **代码**：`CohereMono`，备用字体：`Arial, ui-sans-serif, system-ui`
+- **图标**：`CohereIconDefault`（定制图标字体）
 
-### Hierarchy
+### 层级
 
-| Role | Font | Size | Weight | Line Height | Letter Spacing | Notes |
+| 用途 | 字体 | 尺寸 | 字重 | 行高 | 字距 | 备注 |
 |------|------|------|--------|-------------|----------------|-------|
-| Display / Hero | CohereText | 72px (4.5rem) | 400 | 1.00 (tight) | -1.44px | Maximum impact, serif authority |
-| Display Secondary | CohereText | 60px (3.75rem) | 400 | 1.00 (tight) | -1.2px | Large section headings |
-| Section Heading | Unica77 | 48px (3rem) | 400 | 1.20 (tight) | -0.48px | Feature section titles |
-| Sub-heading | Unica77 | 32px (2rem) | 400 | 1.20 (tight) | -0.32px | Card headings, feature names |
-| Feature Title | Unica77 | 24px (1.5rem) | 400 | 1.30 | normal | Smaller section titles |
-| Body Large | Unica77 | 18px (1.13rem) | 400 | 1.40 | normal | Intro paragraphs |
-| Body / Button | Unica77 | 16px (1rem) | 400 | 1.50 | normal | Standard body, button text |
-| Button Medium | Unica77 | 14px (0.88rem) | 500 | 1.71 (relaxed) | normal | Smaller buttons, emphasized labels |
-| Caption | Unica77 | 14px (0.88rem) | 400 | 1.40 | normal | Metadata, descriptions |
-| Uppercase Label | Unica77 / CohereMono | 14px (0.88rem) | 400 | 1.40 | 0.28px | Uppercase section labels |
-| Small | Unica77 | 12px (0.75rem) | 400 | 1.40 | normal | Smallest text, footer links |
-| Code Micro | CohereMono | 8px (0.5rem) | 400 | 1.40 | 0.16px | Tiny uppercase code labels |
+| 展示 / 主视觉 | CohereText | 72px (4.5rem) | 400 | 1.00（紧凑） | -1.44px | 最强冲击力，衬线权威感 |
+| 次展示 | CohereText | 60px (3.75rem) | 400 | 1.00（紧凑） | -1.2px | 大区块标题 |
+| 区块标题 | Unica77 | 48px (3rem) | 400 | 1.20（紧凑） | -0.48px | 功能区块标题 |
+| 副标题 | Unica77 | 32px (2rem) | 400 | 1.20（紧凑） | -0.32px | 卡片标题、功能名称 |
+| 功能标题 | Unica77 | 24px (1.5rem) | 400 | 1.30 | normal | 较小的区块标题 |
+| 大正文 | Unica77 | 18px (1.13rem) | 400 | 1.40 | normal | 引言段落 |
+| 正文 / 按钮 | Unica77 | 16px (1rem) | 400 | 1.50 | normal | 标准正文、按钮文字 |
+| 中号按钮 | Unica77 | 14px (0.88rem) | 500 | 1.71（宽松） | normal | 较小按钮、强调标签 |
+| 说明文字 | Unica77 | 14px (0.88rem) | 400 | 1.40 | normal | 元数据、描述 |
+| 大写标签 | Unica77 / CohereMono | 14px (0.88rem) | 400 | 1.40 | 0.28px | 大写区块标签 |
+| 小号文字 | Unica77 | 12px (0.75rem) | 400 | 1.40 | normal | 最小文字、页脚链接 |
+| 代码微型 | CohereMono | 8px (0.5rem) | 400 | 1.40 | 0.16px | 超小大写代码标签 |
 
-### Principles
-- **Serif for declaration, sans for utility**: CohereText carries the brand voice at display scale — its serif terminals give headlines the authority of published research. Unica77 handles everything functional with Swiss-geometric neutrality.
-- **Negative tracking at scale**: CohereText uses -1.2px to -1.44px letter-spacing at 60–72px, creating dense, impactful text blocks.
-- **Single body weight**: Nearly all Unica77 usage is weight 400. Weight 500 appears only for small button emphasis. The system relies on size and spacing, not weight contrast.
-- **Uppercase code labels**: CohereMono uses uppercase with positive letter-spacing (0.16–0.28px) for technical tags and section markers.
+### 原则
+- **衬线用于宣言，无衬线用于功能**：CohereText 在展示尺寸传递品牌声音——其衬线末端赋予标题如同已发表研究成果般的权威感。Unica77 以瑞士几何中性风格处理一切功能性内容。
+- **大尺寸负字距**：CohereText 在 60–72px 时使用 -1.2px 至 -1.44px 字距，形成紧密而有冲击力的文字块。
+- **单一正文字重**：几乎所有 Unica77 的使用都是 400 字重。500 字重仅在小按钮强调时出现。系统依靠尺寸和间距，而非字重对比。
+- **大写代码标签**：CohereMono 使用大写配合正字距（0.16–0.28px），用于技术标签和区块标记。
 
-## 4. Component Stylings
+## 4. 组件样式
 
-### Buttons
+### 按钮
 
-**Ghost / Transparent**
-- Background: transparent (`rgba(255, 255, 255, 0)`)
-- Text: Cohere Black (`#000000`)
-- No border visible
-- Hover: text shifts to Interaction Blue (`#1863dc`), opacity 0.8
-- Focus: solid 2px outline in Interaction Blue
-- The primary button style — invisible until interacted with
+**幽灵 / 透明**
+- 背景：透明（`rgba(255, 255, 255, 0)`）
+- 文字：Cohere 黑（`#000000`）
+- 无可见边框
+- 悬停：文字切换为交互蓝（`#1863dc`），透明度 0.8
+- 焦点：交互蓝 2px 实线轮廓
+- 主要按钮样式——未交互时不可见
 
-**Dark Solid**
-- Background: dark/black
-- Text: Pure White
-- For CTA on light surfaces
-- Pill-shaped or standard radius
+**深色实心**
+- 背景：深色/黑色
+- 文字：纯白
+- 用于浅色表面上的行动召唤
+- 胶囊形或标准圆角
 
-**Outlined**
-- Border-based containment
-- Used in secondary actions
+**描边**
+- 基于边框的视觉围合
+- 用于次要操作
 
-### Cards & Containers
-- Background: Pure White (`#ffffff`)
-- Border: thin solid Lightest Gray (`1px solid #f2f2f2`) for subtle cards; Cool Border (`#d9d9dd`) for emphasized
-- Radius: **22px** — the signature Cohere radius for primary cards, images, and dialog containers. Also 4px, 8px, 16px, 20px for smaller elements
-- Shadow: minimal — Cohere relies on background color and borders rather than shadows
-- Special: `0px 0px 22px 22px` radius (bottom-only rounding) for section containers
-- Dialog: 8px radius for modal/dialog boxes
+### 卡片与容器
+- 背景：纯白（`#ffffff`）
+- 边框：柔和卡片用最浅灰细实线（`1px solid #f2f2f2`）；强调卡片用冷边框（`#d9d9dd`）
+- 圆角：**22px**——主要卡片、图片和对话框容器的标志性 Cohere 圆角。小元素分别使用 4px、8px、16px、20px
+- 阴影：极少——Cohere 依靠背景色和边框，而非阴影
+- 特殊：区块容器使用 `0px 0px 22px 22px` 圆角（仅底部圆角）
+- 对话框：模态/对话框使用 8px 圆角
 
-### Inputs & Forms
-- Text: white on dark input, black on light
-- Focus border: Focus Purple (`#9b60aa`) with `1px solid`
-- Focus shadow: red ring (`rgb(179, 0, 0) 0px 0px 0px 2px`) — likely for error state indication
-- Focus outline: Interaction Blue solid 2px
+### 输入框与表单
+- 文字：深色输入框用白色，浅色用黑色
+- 焦点边框：焦点紫（`#9b60aa`），`1px solid`
+- 焦点阴影：红色环（`rgb(179, 0, 0) 0px 0px 0px 2px`）——可能用于错误状态指示
+- 焦点轮廓：交互蓝实线 2px
 
-### Navigation
-- Clean horizontal nav on white or dark background
-- Logo: Cohere wordmark (custom SVG)
-- Links: Dark text at 16px Unica77
-- CTA: Dark solid button
-- Mobile: hamburger collapse
+### 导航
+- 白色或深色背景上的简洁横向导航
+- Logo：Cohere 文字标（定制 SVG）
+- 链接：16px Unica77 深色文字
+- 行动召唤：深色实心按钮
+- 移动端：折叠为汉堡菜单
 
-### Image Treatment
-- Enterprise photography with diverse subjects and environments
-- Purple-tinted hero photography for dramatic sections
-- Product UI screenshots on dark surfaces
-- Images with 22px radius matching card system
-- Full-bleed purple gradient sections
+### 图片处理
+- 多元场景的企业摄影
+- 戏剧性区块使用带紫色调的主视觉摄影
+- 产品 UI 截图呈现于深色表面
+- 图片使用 22px 圆角与卡片系统保持一致
+- 满幅紫色渐变区块
 
-### Distinctive Components
+### 特色组件
 
-**22px Card System**
-- The 22px border-radius is Cohere's visual signature
-- All primary cards, images, and containers use this radius
-- Creates a cloud-like, organic softness that's distinctive from the typical 8–12px
+**22px 卡片系统**
+- 22px 圆角是 Cohere 的视觉标志
+- 所有主要卡片、图片和容器均使用此圆角
+- 创造出云朵般有机的柔和感，有别于常见的 8–12px
 
-**Enterprise Trust Bar**
-- Company logos displayed in a horizontal strip
-- Demonstrates enterprise adoption
-- Clean, monochrome logo treatment
+**企业信任栏**
+- 横向排列展示合作公司 Logo
+- 体现企业级采用
+- 简洁的单色 Logo 处理
 
-**Purple Hero Bands**
-- Full-width deep purple sections housing product showcases
-- Create dramatic visual breaks in the white page flow
-- Product screenshots float within the purple environment
+**紫色主视觉横幅**
+- 容纳产品展示的全宽深紫区块
+- 在白色页面流中制造戏剧性的视觉断点
+- 产品截图悬浮于紫色环境中
 
-**Uppercase Code Tags**
-- CohereMono in uppercase with letter-spacing
-- Used as section markers and categorization labels
-- Creates a technical, structured information hierarchy
+**大写代码标签**
+- CohereMono 大写配合字距
+- 用作区块标记和分类标签
+- 构建技术性的结构化信息层次
 
-## 5. Layout Principles
+## 5. 布局原则
 
-### Spacing System
-- Base unit: 8px
-- Scale: 2px, 6px, 8px, 10px, 12px, 16px, 20px, 22px, 24px, 28px, 32px, 36px, 40px, 56px, 60px
-- Button padding varies by variant
-- Card internal padding: approximately 24–32px
-- Section vertical spacing: generous (56–60px between sections)
+### 间距系统
+- 基础单位：8px
+- 比例：2px、6px、8px、10px、12px、16px、20px、22px、24px、28px、32px、36px、40px、56px、60px
+- 按钮内边距因变体而异
+- 卡片内边距：约 24–32px
+- 区块垂直间距：宽裕（区块间 56–60px）
 
-### Grid & Container
-- Max container width: up to 2560px (very wide) with responsive scaling
-- Hero: centered with dramatic typography
-- Feature sections: multi-column card grids
-- Enterprise sections: full-width purple bands
-- 26 breakpoints detected — extremely granular responsive system
+### 网格与容器
+- 最大容器宽度：最宽至 2560px，配合响应式缩放
+- 主视觉区：居中展示，戏剧性大字排版
+- 功能区块：多列卡片网格
+- 企业区块：全宽紫色横幅
+- 检测到 26 个断点——极其精细的响应式系统
 
-### Whitespace Philosophy
-- **Enterprise clarity**: Each section presents one clear proposition with breathing room between.
-- **Photography as hero**: Large photographic sections provide visual interest without requiring decorative design elements.
-- **Card grouping**: Related content is grouped into 22px-rounded cards, creating natural information clusters.
+### 留白哲学
+- **企业级清晰度**：每个区块呈现一个清晰的主张，区块之间留有充足呼吸空间。
+- **摄影作为主角**：大幅摄影区块提供视觉趣味，无需额外装饰性设计元素。
+- **卡片分组**：相关内容被归入 22px 圆角卡片，形成自然的信息聚组。
 
-### Border Radius Scale
-- Sharp (4px): Navigation elements, small tags, pagination
-- Comfortable (8px): Dialog boxes, secondary containers, small cards
-- Generous (16px): Featured containers, medium cards
-- Large (20px): Large feature cards
-- Signature (22px): Primary cards, hero images, main containers — THE Cohere radius
-- Pill (9999px): Buttons, tags, status indicators
+### 圆角比例
+- 锐利（4px）：导航元素、小标签、分页
+- 舒适（8px）：对话框、次级容器、小卡片
+- 宽裕（16px）：特色容器、中等卡片
+- 大号（20px）：大型功能卡片
+- 标志性（22px）：主要卡片、主视觉图片、主容器——这才是 Cohere 的圆角
+- 胶囊（9999px）：按钮、标签、状态指示器
 
-## 6. Depth & Elevation
+## 6. 层次与高度
 
-| Level | Treatment | Use |
+| 层级 | 处理方式 | 用途 |
 |-------|-----------|-----|
-| Flat (Level 0) | No shadow, no border | Page background, text blocks |
-| Bordered (Level 1) | `1px solid #f2f2f2` or `#d9d9dd` | Standard cards, list separators |
-| Purple Band (Level 2) | Full-width dark purple background | Hero sections, feature showcases |
+| 平面（0 级） | 无阴影，无边框 | 页面背景、文字块 |
+| 描边（1 级） | `1px solid #f2f2f2` 或 `#d9d9dd` | 标准卡片、列表分隔线 |
+| 紫色横幅（2 级） | 全宽深紫色背景 | 主视觉区块、功能展示 |
 
-**Shadow Philosophy**: Cohere is nearly shadow-free. Depth is communicated through **background color contrast** (white cards on purple bands, white surface on snow), **border containment** (cool gray borders), and the dramatic **light-to-dark section alternation**. When elements need elevation, they achieve it through being white-on-dark rather than through shadow casting.
+**阴影哲学**：Cohere 几乎不使用阴影。深度感通过**背景色对比**（紫色横幅上的白色卡片、雪白表面上的白色）、**边框围合**（冷灰边框），以及戏剧性的**明暗区块交替**来传达。当元素需要提升时，它们通过"深色上的白色"来实现，而非通过投影。
 
-## 7. Do's and Don'ts
+## 7. 规范与禁忌
 
-### Do
-- Use 22px border-radius on all primary cards and containers — it's the visual signature
-- Use CohereText for display headings (72px, 60px) with negative letter-spacing
-- Use Unica77 for all body and UI text at weight 400
-- Keep the palette black-and-white with cool gray borders
-- Use Interaction Blue (#1863dc) only for hover/focus interactive states
-- Use deep purple sections for dramatic visual breaks and product showcases
-- Apply uppercase + letter-spacing on CohereMono for section labels
-- Maintain enterprise-appropriate photography with diverse subjects
+### 规范
+- 所有主要卡片和容器使用 22px 圆角——这是视觉标志
+- 展示标题（72px、60px）使用 CohereText，配合负字距
+- 所有正文和 UI 文字使用 400 字重的 Unica77
+- 保持黑白调色板，配以冷灰边框
+- 交互蓝（#1863dc）仅用于悬停/焦点交互状态
+- 深紫色区块用于戏剧性视觉断点和产品展示
+- 区块标签上的 CohereMono 使用大写配合字距
+- 保持呈现多元场景的企业级摄影风格
 
-### Don't
-- Don't use border-radius other than 22px on primary cards — the signature radius matters
-- Don't introduce warm colors — the palette is strictly cool-toned
-- Don't use heavy shadows — depth comes from color contrast and borders
-- Don't use bold (700+) weight on body text — 400–500 is the range
-- Don't skip the serif/sans hierarchy — CohereText for headlines, Unica77 for body
-- Don't use purple as a surface color for cards — purple is reserved for full-width sections
-- Don't reduce section spacing below 40px — enterprise layouts need breathing room
-- Don't use decoration on buttons by default — ghost/transparent is the base state
+### 禁忌
+- 不要在主要卡片上使用 22px 以外的圆角——标志性圆角至关重要
+- 不要引入暖色——调色板严格为冷色调
+- 不要使用重阴影——深度感来自色彩对比和边框
+- 不要在正文使用粗体（700+）字重——范围限于 400–500
+- 不要跳过衬线/无衬线的层级规则——标题用 CohereText，正文用 Unica77
+- 不要将紫色用作卡片表面色——紫色专属于全宽区块
+- 不要将区块间距压缩至 40px 以下——企业布局需要呼吸空间
+- 不要给按钮添加默认装饰——幽灵/透明是基础状态
 
-## 8. Responsive Behavior
+## 8. 响应式行为
 
-### Breakpoints
-| Name | Width | Key Changes |
+### 断点
+| 名称 | 宽度 | 主要变化 |
 |------|-------|-------------|
-| Small Mobile | <425px | Compact layout, minimal spacing |
-| Mobile | 425–640px | Single column, stacked cards |
-| Large Mobile | 640–768px | Minor spacing adjustments |
-| Tablet | 768–1024px | 2-column grids begin |
-| Desktop | 1024–1440px | Full multi-column layout |
-| Large Desktop | 1440–2560px | Maximum container width |
+| 小屏手机 | <425px | 紧凑布局，最小间距 |
+| 手机 | 425–640px | 单列，堆叠卡片 |
+| 大屏手机 | 640–768px | 小幅间距调整 |
+| 平板 | 768–1024px | 开始使用双列网格 |
+| 桌面 | 1024–1440px | 完整多列布局 |
+| 大屏桌面 | 1440–2560px | 最大容器宽度 |
 
-*26 breakpoints detected — one of the most granularly responsive sites in the dataset.*
+*检测到 26 个断点——是数据集中响应式细腻程度最高的站点之一。*
 
-### Touch Targets
-- Buttons adequately sized for touch interaction
-- Navigation links with comfortable spacing
-- Card surfaces as touch targets
+### 触控目标
+- 按钮尺寸充分满足触控交互需求
+- 导航链接间距舒适
+- 卡片表面作为触控目标
 
-### Collapsing Strategy
-- **Navigation**: Full nav collapses to hamburger
-- **Feature grids**: Multi-column → 2-column → single column
-- **Hero text**: 72px → 48px → 32px progressive scaling
-- **Purple sections**: Maintain full-width, content stacks
-- **Card grids**: 3 → 2 → 1 column
+### 折叠策略
+- **导航**：完整导航折叠为汉堡菜单
+- **功能网格**：多列 → 双列 → 单列
+- **主视觉文字**：72px → 48px → 32px 渐进缩放
+- **紫色区块**：保持全宽，内容堆叠
+- **卡片网格**：3 列 → 2 列 → 1 列
 
-### Image Behavior
-- Photography scales proportionally within 22px-radius containers
-- Product screenshots maintain aspect ratio
-- Purple sections scale background proportionally
+### 图片行为
+- 摄影图片在 22px 圆角容器内等比缩放
+- 产品截图保持宽高比
+- 紫色区块背景等比缩放
 
-## 9. Agent Prompt Guide
+## 9. Agent 提示指南
 
-### Quick Color Reference
-- Primary Text: "Cohere Black (#000000)"
-- Page Background: "Pure White (#ffffff)"
-- Secondary Text: "Near Black (#212121)"
-- Hover Accent: "Interaction Blue (#1863dc)"
-- Muted Text: "Muted Slate (#93939f)"
-- Card Borders: "Lightest Gray (#f2f2f2)"
-- Section Borders: "Border Cool (#d9d9dd)"
+### 快速色彩参考
+- 主文字："Cohere 黑（#000000）"
+- 页面背景："纯白（#ffffff）"
+- 次要文字："近黑色（#212121）"
+- 悬停强调："交互蓝（#1863dc）"
+- 静音文字："静音石板（#93939f）"
+- 卡片边框："最浅灰（#f2f2f2）"
+- 区块边框："冷边框（#d9d9dd）"
 
-### Example Component Prompts
-- "Create a hero section on Pure White (#ffffff) with CohereText at 72px weight 400, line-height 1.0, letter-spacing -1.44px. Cohere Black text. Subtitle in Unica77 at 18px weight 400, line-height 1.4."
-- "Design a feature card with 22px border-radius, 1px solid Lightest Gray (#f2f2f2) border on white. Title in Unica77 at 32px, letter-spacing -0.32px. Body in Unica77 at 16px, Muted Slate (#93939f)."
-- "Build a ghost button: transparent background, Cohere Black text in Unica77 at 16px. On hover, text shifts to Interaction Blue (#1863dc) with 0.8 opacity. Focus: 2px solid Interaction Blue outline."
-- "Create a deep purple full-width section with white text. CohereText at 60px for the heading. Product screenshot floats within using 22px border-radius."
-- "Design a section label using CohereMono at 14px, uppercase, letter-spacing 0.28px. Muted Slate (#93939f) text."
+### 组件提示示例
+- "在纯白（#ffffff）背景上创建主视觉区块，使用 CohereText，72px，字重 400，行高 1.0，字距 -1.44px。Cohere 黑文字。副标题使用 Unica77，18px，字重 400，行高 1.4。"
+- "设计一个功能卡片：22px 圆角，白色背景上 1px 实线最浅灰（#f2f2f2）边框。标题使用 Unica77，32px，字距 -0.32px。正文使用 Unica77，16px，静音石板（#93939f）。"
+- "创建一个幽灵按钮：透明背景，Unica77 16px Cohere 黑文字。悬停时文字切换为交互蓝（#1863dc），透明度 0.8。焦点：2px 实线交互蓝轮廓。"
+- "创建一个深紫色全宽区块，白色文字。标题使用 CohereText，60px。产品截图悬浮其中，使用 22px 圆角。"
+- "使用 CohereMono 设计区块标签：14px，大写，字距 0.28px。静音石板（#93939f）文字。"
 
-### Iteration Guide
-1. Focus on ONE component at a time
-2. Always use 22px radius for primary cards — "the Cohere card roundness"
-3. Specify the typeface — CohereText for headlines, Unica77 for body, CohereMono for labels
-4. Interactive elements use Interaction Blue (#1863dc) on hover only
-5. Keep surfaces white with cool gray borders — no warm tones
-6. Purple is for full-width sections, never card backgrounds
+### 迭代指南
+1. 每次专注于**一个**组件
+2. 主要卡片始终使用 22px 圆角——"Cohere 卡片的圆润感"
+3. 明确指定字体——标题用 CohereText，正文用 Unica77，标签用 CohereMono
+4. 交互元素仅在悬停时使用交互蓝（#1863dc）
+5. 保持白色表面配冷灰边框——不使用暖色调
+6. 紫色专属全宽区块，不作卡片背景

@@ -1,313 +1,313 @@
 # Design System Inspired by Vercel
 
-> Category: Developer Tools
-> Frontend deployment. Black and white precision, Geist font.
+> Category: 开发者工具
+> 前端部署。黑白精准，Geist 字体。
 
 ## 1. Visual Theme & Atmosphere
 
-Vercel's website is the visual thesis of developer infrastructure made invisible — a design system so restrained it borders on philosophical. The page is overwhelmingly white (`#ffffff`) with near-black (`#171717`) text, creating a gallery-like emptiness where every element earns its pixel. This isn't minimalism as decoration; it's minimalism as engineering principle. The Geist design system treats the interface like a compiler treats code — every unnecessary token is stripped away until only structure remains.
+Vercel 的网站是开发者基础设施"隐于无形"这一命题的视觉论文——一套克制到近乎哲学境界的设计体系。页面以大面积白色（`#ffffff`）配近黑色（`#171717`）文字为主调，营造出画廊般的空旷感，每一个元素都以像素为代价争得一席之地。这不是装饰性的极简主义，而是工程原则意义上的极简主义。Geist 设计体系对待界面的方式，如同编译器对待代码——剔除所有多余的标记，直到只剩结构。
 
-The custom Geist font family is the crown jewel. Geist Sans uses aggressive negative letter-spacing (-2.4px to -2.88px at display sizes), creating headlines that feel compressed, urgent, and engineered — like code that's been minified for production. At body sizes, the tracking relaxes but the geometric precision persists. Geist Mono completes the system as the monospace companion for code, terminal output, and technical labels. Both fonts enable OpenType `"liga"` (ligatures) globally, adding a layer of typographic sophistication that rewards close reading.
+定制字体家族 Geist 是整套体系的王冠。Geist Sans 在展示尺寸下采用极强的负字间距（-2.4px 至 -2.88px），所呈现的标题感觉紧凑、急迫、充满工程感——仿佛经过压缩优化的生产代码。在正文尺寸下，字间距有所放松，但几何精准感依然贯穿始终。Geist Mono 作为等宽配套字体，专为代码、终端输出和技术标签而生。两款字体均在全局启用 OpenType `"liga"`（连字），为排版增添了一层经得起细读的精致感。
 
-What distinguishes Vercel from other monochrome design systems is its shadow-as-border philosophy. Instead of traditional CSS borders, Vercel uses `box-shadow: 0px 0px 0px 1px rgba(0,0,0,0.08)` — a zero-offset, zero-blur, 1px-spread shadow that creates a border-like line without the box model implications. This technique allows borders to exist in the shadow layer, enabling smoother transitions, rounded corners without clipping, and a subtler visual weight than traditional borders. The entire depth system is built on layered, multi-value shadow stacks where each layer serves a specific purpose: one for the border, one for soft elevation, one for ambient depth.
+Vercel 区别于其他单色设计体系的关键，在于其"阴影即边框"的理念。它并不使用传统 CSS 边框，而是采用 `box-shadow: 0px 0px 0px 1px rgba(0,0,0,0.08)`——零偏移、零模糊、1px 扩散的阴影，在不影响盒模型的前提下实现类边框效果。这一技术让边框存在于阴影层，从而实现更平滑的过渡、不会被裁剪的圆角，以及比传统边框更轻盈的视觉重量。整个深度体系建立在多值阴影叠加上，每一层各司其职：一层作边框，一层提供柔和的层次感，一层营造环境深度。
 
-**Key Characteristics:**
-- Geist Sans with extreme negative letter-spacing (-2.4px to -2.88px at display) — text as compressed infrastructure
-- Geist Mono for code and technical labels with OpenType `"liga"` globally
-- Shadow-as-border technique: `box-shadow 0px 0px 0px 1px` replaces traditional borders throughout
-- Multi-layer shadow stacks for nuanced depth (border + elevation + ambient in single declarations)
-- Near-pure white canvas with `#171717` text — not quite black, creating micro-contrast softness
-- Workflow-specific accent colors: Ship Red (`#ff5b4f`), Preview Pink (`#de1d8d`), Develop Blue (`#0a72ef`)
-- Focus ring system using `hsla(212, 100%, 48%, 1)` — a saturated blue for accessibility
-- Pill badges (9999px) with tinted backgrounds for status indicators
+**关键特征：**
+- Geist Sans 在展示尺寸下使用极强负字间距（-2.4px 至 -2.88px）——文字即压缩后的基础设施
+- Geist Mono 用于代码和技术标签，全局启用 OpenType `"liga"`
+- 阴影即边框技术：`box-shadow 0px 0px 0px 1px` 取代全局传统边框
+- 多层阴影叠加实现细腻深度（单次声明包含边框 + 层次 + 环境三层）
+- 近纯白画布搭配 `#171717` 文字——并非纯黑，形成微妙的对比柔和感
+- 工作流专属强调色：Ship 红（`#ff5b4f`）、Preview 粉（`#de1d8d`）、Develop 蓝（`#0a72ef`）
+- 焦点环系统使用 `hsla(212, 100%, 48%, 1)`——饱和蓝色，确保无障碍可访问性
+- 胶囊徽章（9999px 圆角）配色调背景，用于状态指示
 
 ## 2. Color Palette & Roles
 
 ### Primary
-- **Vercel Black** (`#171717`): Primary text, headings, dark surface backgrounds. Not pure black — the slight warmth prevents harshness.
-- **Pure White** (`#ffffff`): Page background, card surfaces, button text on dark.
-- **True Black** (`#000000`): Secondary use, `--geist-console-text-color-default`, used in specific console/code contexts.
+- **Vercel 黑**（`#171717`）：主要文字、标题、深色表面背景。并非纯黑——微微的暖调防止视觉刺激。
+- **纯白**（`#ffffff`）：页面背景、卡片表面、深色背景上的按钮文字。
+- **真黑**（`#000000`）：次要用途，`--geist-console-text-color-default`，用于特定控制台/代码场景。
 
 ### Workflow Accent Colors
-- **Ship Red** (`#ff5b4f`): `--ship-text`, the "ship to production" workflow step — warm, urgent coral-red.
-- **Preview Pink** (`#de1d8d`): `--preview-text`, the preview deployment workflow — vivid magenta-pink.
-- **Develop Blue** (`#0a72ef`): `--develop-text`, the development workflow — bright, focused blue.
+- **Ship 红**（`#ff5b4f`）：`--ship-text`，"发布到生产"工作流步骤——温暖、紧迫的珊瑚红。
+- **Preview 粉**（`#de1d8d`）：`--preview-text`，预览部署工作流——鲜艳的洋红粉。
+- **Develop 蓝**（`#0a72ef`）：`--develop-text`，开发工作流——明亮、聚焦的蓝色。
 
 ### Console / Code Colors
-- **Console Blue** (`#0070f3`): `--geist-console-text-color-blue`, syntax highlighting blue.
-- **Console Purple** (`#7928ca`): `--geist-console-text-color-purple`, syntax highlighting purple.
-- **Console Pink** (`#eb367f`): `--geist-console-text-color-pink`, syntax highlighting pink.
+- **控制台蓝**（`#0070f3`）：`--geist-console-text-color-blue`，语法高亮蓝色。
+- **控制台紫**（`#7928ca`）：`--geist-console-text-color-purple`，语法高亮紫色。
+- **控制台粉**（`#eb367f`）：`--geist-console-text-color-pink`，语法高亮粉色。
 
 ### Interactive
-- **Link Blue** (`#0072f5`): Primary link color with underline decoration.
-- **Focus Blue** (`hsla(212, 100%, 48%, 1)`): `--ds-focus-color`, focus ring on interactive elements.
-- **Ring Blue** (`rgba(147, 197, 253, 0.5)`): `--tw-ring-color`, Tailwind ring utility.
+- **链接蓝**（`#0072f5`）：主要链接颜色，带下划线装饰。
+- **焦点蓝**（`hsla(212, 100%, 48%, 1)`）：`--ds-focus-color`，交互元素焦点环。
+- **环蓝**（`rgba(147, 197, 253, 0.5)`）：`--tw-ring-color`，Tailwind 环工具类。
 
 ### Neutral Scale
-- **Gray 900** (`#171717`): Primary text, headings, nav text.
-- **Gray 600** (`#4d4d4d`): Secondary text, description copy.
-- **Gray 500** (`#666666`): Tertiary text, muted links.
-- **Gray 400** (`#808080`): Placeholder text, disabled states.
-- **Gray 100** (`#ebebeb`): Borders, card outlines, dividers.
-- **Gray 50** (`#fafafa`): Subtle surface tint, inner shadow highlight.
+- **灰 900**（`#171717`）：主要文字、标题、导航文字。
+- **灰 600**（`#4d4d4d`）：次要文字、说明文案。
+- **灰 500**（`#666666`）：三级文字、静音链接。
+- **灰 400**（`#808080`）：占位符文字、禁用状态。
+- **灰 100**（`#ebebeb`）：边框、卡片轮廓、分隔线。
+- **灰 50**（`#fafafa`）：微妙表面色调、内阴影高光。
 
 ### Surface & Overlay
-- **Overlay Backdrop** (`hsla(0, 0%, 98%, 1)`): `--ds-overlay-backdrop-color`, modal/dialog backdrop.
-- **Selection Text** (`hsla(0, 0%, 95%, 1)`): `--geist-selection-text-color`, text selection highlight.
-- **Badge Blue Bg** (`#ebf5ff`): Pill badge background, tinted blue surface.
-- **Badge Blue Text** (`#0068d6`): Pill badge text, darker blue for readability.
+- **遮罩背景**（`hsla(0, 0%, 98%, 1)`）：`--ds-overlay-backdrop-color`，模态框/对话框背景。
+- **选中文字**（`hsla(0, 0%, 95%, 1)`）：`--geist-selection-text-color`，文字选中高亮。
+- **徽章蓝背景**（`#ebf5ff`）：胶囊徽章背景，带色调的蓝色表面。
+- **徽章蓝文字**（`#0068d6`）：胶囊徽章文字，更深的蓝色以保证可读性。
 
 ### Shadows & Depth
-- **Border Shadow** (`rgba(0, 0, 0, 0.08) 0px 0px 0px 1px`): The signature — replaces traditional borders.
-- **Subtle Elevation** (`rgba(0, 0, 0, 0.04) 0px 2px 2px`): Minimal lift for cards.
-- **Card Stack** (`rgba(0,0,0,0.08) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 2px, rgba(0,0,0,0.04) 0px 8px 8px -8px, #fafafa 0px 0px 0px 1px`): Full multi-layer card shadow.
-- **Ring Border** (`rgb(235, 235, 235) 0px 0px 0px 1px`): Light gray ring-border for tabs and images.
+- **边框阴影**（`rgba(0, 0, 0, 0.08) 0px 0px 0px 1px`）：标志性技法——取代传统边框。
+- **微浮层**（`rgba(0, 0, 0, 0.04) 0px 2px 2px`）：卡片的最小悬浮感。
+- **卡片叠层**（`rgba(0,0,0,0.08) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 2px, rgba(0,0,0,0.04) 0px 8px 8px -8px, #fafafa 0px 0px 0px 1px`）：完整多层卡片阴影。
+- **环形边框**（`rgb(235, 235, 235) 0px 0px 0px 1px`）：标签页和图片的浅灰环形边框。
 
 ## 3. Typography Rules
 
 ### Font Family
-- **Primary**: `Geist`, with fallbacks: `Arial, Apple Color Emoji, Segoe UI Emoji, Segoe UI Symbol`
-- **Monospace**: `Geist Mono`, with fallbacks: `ui-monospace, SFMono-Regular, Roboto Mono, Menlo, Monaco, Liberation Mono, DejaVu Sans Mono, Courier New`
-- **OpenType Features**: `"liga"` enabled globally on all Geist text; `"tnum"` for tabular numbers on specific captions.
+- **主字体**：`Geist`，备用字体：`Arial, Apple Color Emoji, Segoe UI Emoji, Segoe UI Symbol`
+- **等宽字体**：`Geist Mono`，备用字体：`ui-monospace, SFMono-Regular, Roboto Mono, Menlo, Monaco, Liberation Mono, DejaVu Sans Mono, Courier New`
+- **OpenType 特性**：所有 Geist 文字全局启用 `"liga"`；特定说明文字启用 `"tnum"` 以对齐数字。
 
 ### Hierarchy
 
-| Role | Font | Size | Weight | Line Height | Letter Spacing | Notes |
+| 角色 | 字体 | 字号 | 字重 | 行高 | 字间距 | 备注 |
 |------|------|------|--------|-------------|----------------|-------|
-| Display Hero | Geist | 48px (3.00rem) | 600 | 1.00–1.17 (tight) | -2.4px to -2.88px | Maximum compression, billboard impact |
-| Section Heading | Geist | 40px (2.50rem) | 600 | 1.20 (tight) | -2.4px | Feature section titles |
-| Sub-heading Large | Geist | 32px (2.00rem) | 600 | 1.25 (tight) | -1.28px | Card headings, sub-sections |
-| Sub-heading | Geist | 32px (2.00rem) | 400 | 1.50 | -1.28px | Lighter sub-headings |
-| Card Title | Geist | 24px (1.50rem) | 600 | 1.33 | -0.96px | Feature cards |
-| Card Title Light | Geist | 24px (1.50rem) | 500 | 1.33 | -0.96px | Secondary card headings |
-| Body Large | Geist | 20px (1.25rem) | 400 | 1.80 (relaxed) | normal | Introductions, feature descriptions |
-| Body | Geist | 18px (1.13rem) | 400 | 1.56 | normal | Standard reading text |
-| Body Small | Geist | 16px (1.00rem) | 400 | 1.50 | normal | Standard UI text |
-| Body Medium | Geist | 16px (1.00rem) | 500 | 1.50 | normal | Navigation, emphasized text |
-| Body Semibold | Geist | 16px (1.00rem) | 600 | 1.50 | -0.32px | Strong labels, active states |
-| Button / Link | Geist | 14px (0.88rem) | 500 | 1.43 | normal | Buttons, links, captions |
-| Button Small | Geist | 14px (0.88rem) | 400 | 1.00 (tight) | normal | Compact buttons |
-| Caption | Geist | 12px (0.75rem) | 400–500 | 1.33 | normal | Metadata, tags |
-| Mono Body | Geist Mono | 16px (1.00rem) | 400 | 1.50 | normal | Code blocks |
-| Mono Caption | Geist Mono | 13px (0.81rem) | 500 | 1.54 | normal | Code labels |
-| Mono Small | Geist Mono | 12px (0.75rem) | 500 | 1.00 (tight) | normal | `text-transform: uppercase`, technical labels |
-| Micro Badge | Geist | 7px (0.44rem) | 700 | 1.00 (tight) | normal | `text-transform: uppercase`, tiny badges |
+| 展示大标 | Geist | 48px (3.00rem) | 600 | 1.00–1.17（紧凑） | -2.4px 至 -2.88px | 最大压缩，视觉冲击力强 |
+| 区块标题 | Geist | 40px (2.50rem) | 600 | 1.20（紧凑） | -2.4px | 功能区块标题 |
+| 大号副标题 | Geist | 32px (2.00rem) | 600 | 1.25（紧凑） | -1.28px | 卡片标题、子区块 |
+| 副标题 | Geist | 32px (2.00rem) | 400 | 1.50 | -1.28px | 较轻的副标题 |
+| 卡片标题 | Geist | 24px (1.50rem) | 600 | 1.33 | -0.96px | 功能卡片 |
+| 卡片标题（轻） | Geist | 24px (1.50rem) | 500 | 1.33 | -0.96px | 次要卡片标题 |
+| 大号正文 | Geist | 20px (1.25rem) | 400 | 1.80（宽松） | normal | 介绍性文字、功能描述 |
+| 正文 | Geist | 18px (1.13rem) | 400 | 1.56 | normal | 标准阅读文字 |
+| 小号正文 | Geist | 16px (1.00rem) | 400 | 1.50 | normal | 标准 UI 文字 |
+| 中号正文 | Geist | 16px (1.00rem) | 500 | 1.50 | normal | 导航、强调文字 |
+| 半粗正文 | Geist | 16px (1.00rem) | 600 | 1.50 | -0.32px | 强调标签、激活状态 |
+| 按钮/链接 | Geist | 14px (0.88rem) | 500 | 1.43 | normal | 按钮、链接、说明文字 |
+| 小号按钮 | Geist | 14px (0.88rem) | 400 | 1.00（紧凑） | normal | 紧凑型按钮 |
+| 说明文字 | Geist | 12px (0.75rem) | 400–500 | 1.33 | normal | 元数据、标签 |
+| 等宽正文 | Geist Mono | 16px (1.00rem) | 400 | 1.50 | normal | 代码块 |
+| 等宽说明 | Geist Mono | 13px (0.81rem) | 500 | 1.54 | normal | 代码标签 |
+| 等宽小号 | Geist Mono | 12px (0.75rem) | 500 | 1.00（紧凑） | normal | `text-transform: uppercase`，技术标签 |
+| 微型徽章 | Geist | 7px (0.44rem) | 700 | 1.00（紧凑） | normal | `text-transform: uppercase`，极小徽章 |
 
 ### Principles
-- **Compression as identity**: Geist Sans at display sizes uses -2.4px to -2.88px letter-spacing — the most aggressive negative tracking of any major design system. This creates text that feels _minified_, like code optimized for production. The tracking progressively relaxes as size decreases: -1.28px at 32px, -0.96px at 24px, -0.32px at 16px, and normal at 14px.
-- **Ligatures everywhere**: Every Geist text element enables OpenType `"liga"`. Ligatures aren't decorative — they're structural, creating tighter, more efficient glyph combinations.
-- **Three weights, strict roles**: 400 (body/reading), 500 (UI/interactive), 600 (headings/emphasis). No bold (700) except for tiny micro-badges. This narrow weight range creates hierarchy through size and tracking, not weight.
-- **Mono for identity**: Geist Mono in uppercase with `"tnum"` or `"liga"` serves as the "developer console" voice — compact technical labels that connect the marketing site to the product.
+- **压缩即身份**：Geist Sans 在展示尺寸下使用 -2.4px 至 -2.88px 的字间距——是所有主流设计体系中负字间距最激进的。这使文字呈现出_压缩_感，仿佛为生产环境优化过的代码。字间距随字号减小而逐渐放松：32px 时 -1.28px，24px 时 -0.96px，16px 时 -0.32px，14px 时恢复正常。
+- **连字无处不在**：每一处 Geist 文字均启用 OpenType `"liga"`。连字并非装饰——它是结构性的，创造出更紧密、更高效的字形组合。
+- **三种字重，严格分工**：400（正文/阅读）、500（UI/交互）、600（标题/强调）。除极小徽章外不使用粗体（700）。这种窄字重范围通过字号和字间距构建层次感，而非依赖字重。
+- **等宽即身份**：大写的 Geist Mono 搭配 `"tnum"` 或 `"liga"`，充当"开发者控制台"的声音——紧凑的技术标签将营销站与产品连接起来。
 
 ## 4. Component Stylings
 
 ### Buttons
 
-**Primary White (Shadow-bordered)**
+**主要白色按钮（阴影边框）**
 - Background: `#ffffff`
 - Text: `#171717`
-- Padding: 0px 6px (minimal — content-driven width)
-- Radius: 6px (subtly rounded)
-- Shadow: `rgb(235, 235, 235) 0px 0px 0px 1px` (ring-border)
-- Hover: background shifts to `var(--ds-gray-1000)` (dark)
-- Focus: `2px solid var(--ds-focus-color)` outline + `var(--ds-focus-ring)` shadow
-- Use: Standard secondary button
+- Padding: 0px 6px（极小——由内容决定宽度）
+- Radius: 6px（轻微圆角）
+- Shadow: `rgb(235, 235, 235) 0px 0px 0px 1px`（环形边框）
+- Hover: 背景切换为 `var(--ds-gray-1000)`（深色）
+- Focus: `2px solid var(--ds-focus-color)` 外轮廓 + `var(--ds-focus-ring)` 阴影
+- 用途：标准次要按钮
 
-**Primary Dark (Inferred from Geist system)**
+**主要深色按钮（源自 Geist 体系推断）**
 - Background: `#171717`
 - Text: `#ffffff`
 - Padding: 8px 16px
 - Radius: 6px
-- Use: Primary CTA ("Start Deploying", "Get Started")
+- 用途：主要行动按钮（"Start Deploying"、"Get Started"）
 
-**Pill Button / Badge**
-- Background: `#ebf5ff` (tinted blue)
+**胶囊按钮/徽章**
+- Background: `#ebf5ff`（带色调的蓝色）
 - Text: `#0068d6`
 - Padding: 0px 10px
-- Radius: 9999px (full pill)
-- Font: 12px weight 500
-- Use: Status badges, tags, feature labels
+- Radius: 9999px（完整胶囊）
+- Font: 12px 字重 500
+- 用途：状态徽章、标签、功能标注
 
-**Large Pill (Navigation)**
-- Background: transparent or `#171717`
+**大号胶囊（导航）**
+- Background: 透明或 `#171717`
 - Radius: 64px–100px
-- Use: Tab navigation, section selectors
+- 用途：标签页导航、区块选择器
 
 ### Cards & Containers
 - Background: `#ffffff`
-- Border: via shadow — `rgba(0, 0, 0, 0.08) 0px 0px 0px 1px`
-- Radius: 8px (standard), 12px (featured/image cards)
-- Shadow stack: `rgba(0,0,0,0.08) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 2px, #fafafa 0px 0px 0px 1px`
-- Image cards: `1px solid #ebebeb` with 12px top radius
-- Hover: subtle shadow intensification
+- 边框：通过阴影实现——`rgba(0, 0, 0, 0.08) 0px 0px 0px 1px`
+- Radius: 8px（标准），12px（特色/图片卡片）
+- 阴影叠层：`rgba(0,0,0,0.08) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 2px, #fafafa 0px 0px 0px 1px`
+- 图片卡片：`1px solid #ebebeb`，顶部 12px 圆角
+- Hover：阴影轻微加深
 
 ### Inputs & Forms
-- Radio: standard styling with focus `var(--ds-gray-200)` background
-- Focus shadow: `1px 0 0 0 var(--ds-gray-alpha-600)`
-- Focus outline: `2px solid var(--ds-focus-color)` — consistent blue focus ring
-- Border: via shadow technique, not traditional border
+- 单选框：标准样式，焦点时 `var(--ds-gray-200)` 背景
+- 焦点阴影：`1px 0 0 0 var(--ds-gray-alpha-600)`
+- 焦点外轮廓：`2px solid var(--ds-focus-color)`——统一的蓝色焦点环
+- 边框：通过阴影技术实现，而非传统边框
 
 ### Navigation
-- Clean horizontal nav on white, sticky
-- Vercel logotype left-aligned, 262x52px
-- Links: Geist 14px weight 500, `#171717` text
-- Active: weight 600 or underline
-- CTA: dark pill buttons ("Start Deploying", "Contact Sales")
-- Mobile: hamburger menu collapse
-- Product dropdowns with multi-level menus
+- 白色背景上的简洁水平导航，吸顶固定
+- Vercel 字标左对齐，262x52px
+- 链接：Geist 14px 字重 500，`#171717` 文字
+- 激活状态：字重 600 或下划线
+- 行动按钮：深色胶囊按钮（"Start Deploying"、"Contact Sales"）
+- 移动端：汉堡菜单折叠
+- 产品下拉菜单支持多级展开
 
 ### Image Treatment
-- Product screenshots with `1px solid #ebebeb` border
-- Top-rounded images: `12px 12px 0px 0px` radius
-- Dashboard/code preview screenshots dominate feature sections
-- Soft gradient backgrounds behind hero images (pastel multi-color)
+- 产品截图带 `1px solid #ebebeb` 边框
+- 顶部圆角图片：`12px 12px 0px 0px` 圆角
+- 仪表板/代码预览截图主导功能区块
+- 英雄图片后方带柔和渐变背景（多色粉彩）
 
 ### Distinctive Components
 
-**Workflow Pipeline**
-- Three-step horizontal pipeline: Develop → Preview → Ship
-- Each step has its own accent color: Blue → Pink → Red
-- Connected with lines/arrows
-- The visual metaphor for Vercel's core value proposition
+**工作流管线**
+- 三步水平管线：Develop（开发）→ Preview（预览）→ Ship（发布）
+- 每个步骤有专属强调色：蓝色 → 粉色 → 红色
+- 通过线条/箭头连接
+- Vercel 核心价值主张的视觉隐喻
 
-**Trust Bar / Logo Grid**
-- Company logos (Perplexity, ChatGPT, Cursor, etc.) in grayscale
-- Horizontal scroll or grid layout
-- Subtle `#ebebeb` border separation
+**信任栏/Logo 网格**
+- 合作公司 Logo（Perplexity、ChatGPT、Cursor 等）以灰度展示
+- 横向滚动或网格布局
+- 用 `#ebebeb` 边框轻微分隔
 
-**Metric Cards**
-- Large number display (e.g., "10x faster")
-- Geist 48px weight 600 for the metric
-- Description below in gray body text
-- Shadow-bordered card container
+**指标卡片**
+- 大号数字展示（如"10x faster"）
+- Geist 48px 字重 600 展示指标
+- 下方配灰色正文描述
+- 阴影边框卡片容器
 
 ## 5. Layout Principles
 
 ### Spacing System
-- Base unit: 8px
-- Scale: 1px, 2px, 3px, 4px, 5px, 6px, 8px, 10px, 12px, 14px, 16px, 32px, 36px, 40px
-- Notable gap: jumps from 16px to 32px — no 20px or 24px in primary scale
+- 基础单位：8px
+- 刻度：1px、2px、3px、4px、5px、6px、8px、10px、12px、14px、16px、32px、36px、40px
+- 显著跳跃：从 16px 直接跳到 32px——主刻度中没有 20px 或 24px
 
 ### Grid & Container
-- Max content width: approximately 1200px
-- Hero: centered single-column with generous top padding
-- Feature sections: 2–3 column grids for cards
-- Full-width dividers using `border-bottom: 1px solid #171717`
-- Code/dashboard screenshots as full-width or contained with border
+- 内容最大宽度：约 1200px
+- 英雄区：居中单列，顶部留有充足 padding
+- 功能区：卡片采用 2–3 列网格
+- 全宽分隔线使用 `border-bottom: 1px solid #171717`
+- 代码/仪表板截图以全宽或带边框的方式展示
 
 ### Whitespace Philosophy
-- **Gallery emptiness**: Massive vertical padding between sections (80px–120px+). The white space IS the design — it communicates that Vercel has nothing to prove and nothing to hide.
-- **Compressed text, expanded space**: The aggressive negative letter-spacing on headlines is counterbalanced by generous surrounding whitespace. The text is dense; the space around it is vast.
-- **Section rhythm**: White sections alternate with white sections — there's no color variation between sections. Separation comes from borders (shadow-borders) and spacing alone.
+- **画廊式空旷感**：区块间有大量垂直留白（80px–120px+）。留白本身即设计——它传达出 Vercel 无需证明、无需掩饰的从容。
+- **文字紧凑，空间宽阔**：标题上极强的负字间距与周围充裕的留白形成对位关系。文字密集，而环绕的空间辽阔。
+- **区块节奏**：白色区块与白色区块交替——区块间没有颜色变化。分隔依靠边框（阴影边框）和间距来实现。
 
 ### Border Radius Scale
-- Micro (2px): Inline code snippets, small spans
-- Subtle (4px): Small containers
-- Standard (6px): Buttons, links, functional elements
-- Comfortable (8px): Cards, list items
-- Image (12px): Featured cards, image containers (top-rounded)
-- Large (64px): Tab navigation pills
-- XL (100px): Large navigation links
-- Full Pill (9999px): Badges, status pills, tags
-- Circle (50%): Menu toggle, avatar containers
+- 微型（2px）：行内代码片段、小号标签
+- 细微（4px）：小型容器
+- 标准（6px）：按钮、链接、功能元素
+- 舒适（8px）：卡片、列表项
+- 图片（12px）：特色卡片、图片容器（顶部圆角）
+- 大号（64px）：标签页导航胶囊
+- 超大（100px）：大号导航链接
+- 完整胶囊（9999px）：徽章、状态胶囊、标签
+- 圆形（50%）：菜单切换按钮、头像容器
 
 ## 6. Depth & Elevation
 
-| Level | Treatment | Use |
+| 层级 | 处理方式 | 用途 |
 |-------|-----------|-----|
-| Flat (Level 0) | No shadow | Page background, text blocks |
-| Ring (Level 1) | `rgba(0,0,0,0.08) 0px 0px 0px 1px` | Shadow-as-border for most elements |
-| Light Ring (Level 1b) | `rgb(235,235,235) 0px 0px 0px 1px` | Lighter ring for tabs, images |
-| Subtle Card (Level 2) | Ring + `rgba(0,0,0,0.04) 0px 2px 2px` | Standard cards with minimal lift |
-| Full Card (Level 3) | Ring + Subtle + `rgba(0,0,0,0.04) 0px 8px 8px -8px` + inner `#fafafa` ring | Featured cards, highlighted panels |
-| Focus (Accessibility) | `2px solid hsla(212, 100%, 48%, 1)` outline | Keyboard focus on all interactive elements |
+| 平面（Level 0） | 无阴影 | 页面背景、文字块 |
+| 环形（Level 1） | `rgba(0,0,0,0.08) 0px 0px 0px 1px` | 大多数元素的阴影即边框 |
+| 浅色环形（Level 1b） | `rgb(235,235,235) 0px 0px 0px 1px` | 标签页和图片的较浅环形 |
+| 微卡片（Level 2） | 环形 + `rgba(0,0,0,0.04) 0px 2px 2px` | 带最小浮起感的标准卡片 |
+| 完整卡片（Level 3） | 环形 + 微浮 + `rgba(0,0,0,0.04) 0px 8px 8px -8px` + 内层 `#fafafa` 环 | 特色卡片、高亮面板 |
+| 焦点（无障碍） | `2px solid hsla(212, 100%, 48%, 1)` 外轮廓 | 所有交互元素的键盘焦点 |
 
-**Shadow Philosophy**: Vercel has arguably the most sophisticated shadow system in modern web design. Rather than using shadows for elevation in the traditional Material Design sense, Vercel uses multi-value shadow stacks where each layer has a distinct architectural purpose: one creates the "border" (0px spread, 1px), another adds ambient softness (2px blur), another handles depth at distance (8px blur with negative spread), and an inner ring (`#fafafa`) creates the subtle highlight that makes the card "glow" from within. This layered approach means cards feel built, not floating.
+**阴影哲学**：Vercel 拥有现代 Web 设计中可以说是最精妙的阴影体系。它并非以 Material Design 的传统方式用阴影表达高度，而是通过多值阴影叠加，让每一层承担独特的架构职能：一层制造"边框"（0px 扩散，1px），一层添加环境柔和感（2px 模糊），一层处理远距深度（8px 模糊带负扩散），还有一层内层环（`#fafafa`）形成微妙的高光，让卡片"由内而外地发光"。这种层叠方式使卡片呈现出被精心构建的质感，而非漂浮感。
 
 ### Decorative Depth
-- Hero gradient: soft, pastel multi-color gradient wash behind hero content (barely visible, atmospheric)
-- Section borders: `1px solid #171717` (full dark line) between major sections
-- No background color variation — depth comes entirely from shadow layering and border contrast
+- 英雄渐变：英雄内容后方柔和的多色粉彩渐变（几乎不可见，营造氛围）
+- 区块边框：主要区块之间用 `1px solid #171717`（完整深色线）分隔
+- 无背景色变化——深度完全来自阴影叠加与边框对比
 
 ## 7. Do's and Don'ts
 
 ### Do
-- Use Geist Sans with aggressive negative letter-spacing at display sizes (-2.4px to -2.88px at 48px)
-- Use shadow-as-border (`0px 0px 0px 1px rgba(0,0,0,0.08)`) instead of traditional CSS borders
-- Enable `"liga"` on all Geist text — ligatures are structural, not optional
-- Use the three-weight system: 400 (body), 500 (UI), 600 (headings)
-- Apply workflow accent colors (Red/Pink/Blue) only in their workflow context
-- Use multi-layer shadow stacks for cards (border + elevation + ambient + inner highlight)
-- Keep the color palette achromatic — grays from `#171717` to `#ffffff` are the system
-- Use `#171717` instead of `#000000` for primary text — the micro-warmth matters
+- 在展示尺寸使用带强负字间距的 Geist Sans（48px 时 -2.4px 至 -2.88px）
+- 使用阴影即边框（`0px 0px 0px 1px rgba(0,0,0,0.08)`）而非传统 CSS 边框
+- 在所有 Geist 文字上启用 `"liga"`——连字是结构性的，不可省略
+- 使用三字重体系：400（正文）、500（UI）、600（标题）
+- 仅在对应的工作流场景中使用工作流强调色（红/粉/蓝）
+- 为卡片使用多层阴影叠加（边框 + 层次 + 环境 + 内层高光）
+- 保持色板的消色差调——从 `#171717` 到 `#ffffff` 的灰色系就是整个体系
+- 主要文字用 `#171717` 而非 `#000000`——微弱的暖调至关重要
 
 ### Don't
-- Don't use positive letter-spacing on Geist Sans — it's always negative or zero
-- Don't use weight 700 (bold) on body text — 600 is the maximum, used only for headings
-- Don't use traditional CSS `border` on cards — use the shadow-border technique
-- Don't introduce warm colors (oranges, yellows, greens) into the UI chrome
-- Don't apply the workflow accent colors (Ship Red, Preview Pink, Develop Blue) decoratively
-- Don't use heavy shadows (> 0.1 opacity) — the shadow system is whisper-level
-- Don't increase body text letter-spacing — Geist is designed to run tight
-- Don't use pill radius (9999px) on primary action buttons — pills are for badges/tags only
-- Don't skip the inner `#fafafa` ring in card shadows — it's the glow that makes the system work
+- 不要在 Geist Sans 上使用正字间距——永远是负值或零
+- 不要在正文使用字重 700（粗体）——600 是上限，仅用于标题
+- 不要在卡片上使用传统 CSS `border`——使用阴影边框技术
+- 不要在 UI 主体中引入暖色（橙色、黄色、绿色）
+- 不要将工作流强调色（Ship 红、Preview 粉、Develop 蓝）用于装饰目的
+- 不要使用过重的阴影（不透明度 > 0.1）——该阴影体系的基调是耳语级别
+- 不要增大正文字间距——Geist 本就设计为紧排
+- 不要在主要行动按钮上使用胶囊圆角（9999px）——胶囊只用于徽章/标签
+- 不要省略卡片阴影中的内层 `#fafafa` 环——正是它造就了整套体系的内发光效果
 
 ## 8. Responsive Behavior
 
 ### Breakpoints
-| Name | Width | Key Changes |
+| 名称 | 宽度 | 关键变化 |
 |------|-------|-------------|
-| Mobile Small | <400px | Tight single column, minimal padding |
-| Mobile | 400–600px | Standard mobile, stacked layout |
-| Tablet Small | 600–768px | 2-column grids begin |
-| Tablet | 768–1024px | Full card grids, expanded padding |
-| Desktop Small | 1024–1200px | Standard desktop layout |
-| Desktop | 1200–1400px | Full layout, maximum content width |
-| Large Desktop | >1400px | Centered, generous margins |
+| 小屏手机 | <400px | 紧凑单列，最小 padding |
+| 手机 | 400–600px | 标准移动端，堆叠布局 |
+| 小平板 | 600–768px | 开始出现两列网格 |
+| 平板 | 768–1024px | 完整卡片网格，扩展 padding |
+| 小桌面 | 1024–1200px | 标准桌面布局 |
+| 桌面 | 1200–1400px | 完整布局，最大内容宽度 |
+| 大屏桌面 | >1400px | 居中，充裕边距 |
 
 ### Touch Targets
-- Buttons use comfortable padding (8px–16px vertical)
-- Navigation links at 14px with adequate spacing
-- Pill badges have 10px horizontal padding for tap targets
-- Mobile menu toggle uses 50% radius circular button
+- 按钮使用舒适的 padding（垂直 8px–16px）
+- 导航链接 14px，间距充足
+- 胶囊徽章水平 padding 10px，满足点击目标需求
+- 移动端菜单切换按钮使用 50% 圆角圆形按钮
 
 ### Collapsing Strategy
-- Hero: display 48px → scales down, maintains negative tracking proportionally
-- Navigation: horizontal links + CTAs → hamburger menu
-- Feature cards: 3-column → 2-column → single column stacked
-- Code screenshots: maintain aspect ratio, may horizontally scroll
-- Trust bar logos: grid → horizontal scroll
-- Footer: multi-column → stacked single column
-- Section spacing: 80px+ → 48px on mobile
+- 英雄区：展示字号 48px → 按比例缩小，负字间距等比保持
+- 导航：水平链接 + 行动按钮 → 汉堡菜单
+- 功能卡片：三列 → 两列 → 单列堆叠
+- 代码截图：保持宽高比，可能出现横向滚动
+- 信任栏 Logo：网格 → 横向滚动
+- 页脚：多列 → 单列堆叠
+- 区块间距：80px+ → 移动端缩减至 48px
 
 ### Image Behavior
-- Dashboard screenshots maintain border treatment at all sizes
-- Hero gradient softens/simplifies on mobile
-- Product screenshots use responsive images with consistent border radius
-- Full-width sections maintain edge-to-edge treatment
+- 仪表板截图在各尺寸下保持边框处理
+- 英雄渐变在移动端变得更柔和/简化
+- 产品截图使用响应式图片，保持一致圆角
+- 全宽区块在各端保持边到边的处理方式
 
 ## 9. Agent Prompt Guide
 
 ### Quick Color Reference
-- Primary CTA: Vercel Black (`#171717`)
-- Background: Pure White (`#ffffff`)
-- Heading text: Vercel Black (`#171717`)
-- Body text: Gray 600 (`#4d4d4d`)
-- Border (shadow): `rgba(0, 0, 0, 0.08) 0px 0px 0px 1px`
-- Link: Link Blue (`#0072f5`)
-- Focus ring: Focus Blue (`hsla(212, 100%, 48%, 1)`)
+- 主要行动按钮：Vercel 黑（`#171717`）
+- 背景：纯白（`#ffffff`）
+- 标题文字：Vercel 黑（`#171717`）
+- 正文：灰 600（`#4d4d4d`）
+- 边框（阴影）：`rgba(0, 0, 0, 0.08) 0px 0px 0px 1px`
+- 链接：链接蓝（`#0072f5`）
+- 焦点环：焦点蓝（`hsla(212, 100%, 48%, 1)`）
 
 ### Example Component Prompts
-- "Create a hero section on white background. Headline at 48px Geist weight 600, line-height 1.00, letter-spacing -2.4px, color #171717. Subtitle at 20px Geist weight 400, line-height 1.80, color #4d4d4d. Dark CTA button (#171717, 6px radius, 8px 16px padding) and ghost button (white, shadow-border rgba(0,0,0,0.08) 0px 0px 0px 1px, 6px radius)."
-- "Design a card: white background, no CSS border. Use shadow stack: rgba(0,0,0,0.08) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 2px, #fafafa 0px 0px 0px 1px. Radius 8px. Title at 24px Geist weight 600, letter-spacing -0.96px. Body at 16px weight 400, #4d4d4d."
-- "Build a pill badge: #ebf5ff background, #0068d6 text, 9999px radius, 0px 10px padding, 12px Geist weight 500."
-- "Create navigation: white sticky header. Geist 14px weight 500 for links, #171717 text. Dark pill CTA 'Start Deploying' right-aligned. Shadow-border on bottom: rgba(0,0,0,0.08) 0px 0px 0px 1px."
-- "Design a workflow section showing three steps: Develop (text color #0a72ef), Preview (#de1d8d), Ship (#ff5b4f). Each step: 14px Geist Mono uppercase label + 24px Geist weight 600 title + 16px weight 400 description in #4d4d4d."
+- "在白色背景上创建英雄区。标题 48px Geist 字重 600，行高 1.00，字间距 -2.4px，颜色 #171717。副标题 20px Geist 字重 400，行高 1.80，颜色 #4d4d4d。深色行动按钮（#171717，6px 圆角，8px 16px padding）和幽灵按钮（白色，阴影边框 rgba(0,0,0,0.08) 0px 0px 0px 1px，6px 圆角）。"
+- "设计一张卡片：白色背景，不使用 CSS border。使用阴影叠层：rgba(0,0,0,0.08) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 2px, #fafafa 0px 0px 0px 1px。圆角 8px。标题 24px Geist 字重 600，字间距 -0.96px。正文 16px 字重 400，#4d4d4d。"
+- "创建胶囊徽章：#ebf5ff 背景，#0068d6 文字，9999px 圆角，0px 10px padding，12px Geist 字重 500。"
+- "创建导航：白色吸顶头部。Geist 14px 字重 500 的链接，#171717 文字。右对齐深色胶囊行动按钮 'Start Deploying'。底部阴影边框：rgba(0,0,0,0.08) 0px 0px 0px 1px。"
+- "设计一个展示三步骤的工作流区块：Develop（文字颜色 #0a72ef）、Preview（#de1d8d）、Ship（#ff5b4f）。每个步骤：14px Geist Mono 大写标签 + 24px Geist 字重 600 标题 + 16px 字重 400 描述，颜色 #4d4d4d。"
 
 ### Iteration Guide
-1. Always use shadow-as-border instead of CSS border — `0px 0px 0px 1px rgba(0,0,0,0.08)` is the foundation
-2. Letter-spacing scales with font size: -2.4px at 48px, -1.28px at 32px, -0.96px at 24px, normal at 14px
-3. Three weights only: 400 (read), 500 (interact), 600 (announce)
-4. Color is functional, never decorative — workflow colors (Red/Pink/Blue) mark pipeline stages only
-5. The inner `#fafafa` ring in card shadows is what gives Vercel cards their subtle inner glow
-6. Geist Mono uppercase for technical labels, Geist Sans for everything else
+1. 始终用阴影即边框代替 CSS border——`0px 0px 0px 1px rgba(0,0,0,0.08)` 是基础
+2. 字间距随字号变化：48px 时 -2.4px，32px 时 -1.28px，24px 时 -0.96px，14px 时恢复正常
+3. 仅使用三种字重：400（阅读）、500（交互）、600（强调）
+4. 颜色是功能性的，非装饰性的——工作流颜色（红/粉/蓝）仅标记管线阶段
+5. 卡片阴影中的内层 `#fafafa` 环是赋予 Vercel 卡片微妙内发光的关键
+6. 技术标签用 Geist Mono 大写，其余一律用 Geist Sans

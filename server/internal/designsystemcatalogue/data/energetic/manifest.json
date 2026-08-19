@@ -2,5 +2,7 @@
   "id": "energetic",
   "name": "Energetic",
   "category": "Bold & Expressive",
-  "description": "Bundled Open Design package for Energetic, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "大胆表现",
+  "description": "Bundled Open Design package for Energetic, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "动感鲜活风格，粗边框，几何形态，高对比色彩，富有表现力的排版，传递运动与活力。"
 }

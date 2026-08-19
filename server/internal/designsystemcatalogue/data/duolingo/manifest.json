@@ -2,5 +2,7 @@
   "id": "duolingo",
   "name": "Duolingo",
   "category": "Productivity & SaaS",
-  "description": "Bundled Open Design package for Duolingo, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "效率与 SaaS",
+  "description": "Bundled Open Design package for Duolingo, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "语言学习平台。明亮猫头鹰绿，厚重阴影，游戏化趣味。"
 }

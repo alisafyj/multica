@@ -2,5 +2,7 @@
   "id": "material",
   "name": "Material",
   "category": "Professional & Corporate",
-  "description": "Bundled Open Design package for Material, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "专业与企业",
+  "description": "Bundled Open Design package for Material, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "Google Material Design，分层界面，动态主题，内置动效，响应式跨平台规范。"
 }

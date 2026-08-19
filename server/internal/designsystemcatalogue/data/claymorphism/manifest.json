@@ -2,5 +2,7 @@
   "id": "claymorphism",
   "name": "Claymorphism",
   "category": "Morphism & Effects",
-  "description": "Bundled Open Design package for Claymorphism, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "拟态与特效",
+  "description": "Bundled Open Design package for Claymorphism, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "柔软圆润的 3D 类黏土造型，蓬松活泼的元素，色彩鲜明的界面。"
 }

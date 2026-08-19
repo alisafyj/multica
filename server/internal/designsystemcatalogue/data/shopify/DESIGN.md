@@ -1,353 +1,353 @@
-# Design System Inspired by Shopify
+# 受 Shopify 启发的设计系统
 
-> Category: E-Commerce & Retail
-> E-commerce platform. Dark-first cinematic, neon green accent, ultra-light type.
+> Category: 电子商务与零售
+> 电商平台。深色优先的电影感，霓虹绿强调色，超细字重。
 
-## 1. Visual Theme & Atmosphere
+## 1. 视觉主题与氛围
 
-Shopify.com is a dark-first digital theatre — a website that stages its commerce platform like a cinematic premiere. The entire experience unfolds against an abyss of near-black surfaces that carry the faintest whisper of deep forest green (`#02090A`, `#061A1C`, `#102620`), creating a nocturnal atmosphere that feels less like a SaaS marketing page and more like an exclusive product reveal at a tech keynote. This darkness isn't cold or corporate — it's the warm, enveloping dark of a luxury experience, like sitting in the front row of a darkened auditorium.
+Shopify.com 是一座深色优先的数字剧场——一个将其商业平台以电影首映式的方式呈现的网站。整个体验在近黑色的表面上展开，这些表面带着深邃森林绿的最微弱低语（`#02090A`、`#061A1C`、`#102620`），营造出一种夜间氛围，感觉与其说是一个 SaaS 营销页面，不如说是科技发布会上的一场独家产品揭幕。这种黑暗并不冷酷或企业化——它是奢华体验中温暖包裹的黑暗，就像坐在黑暗礼堂的前排。
 
-The typography is the undeniable star. NeueHaasGrotesk — a refined Helvetica descendant — appears at monumental scale (96px) with impossibly light weight (330-400), creating headlines that feel etched in light rather than printed in ink. The `ss03` OpenType feature gives letterforms a distinctive character that separates Shopify's type from generic Helvetica usage. Below the display layer, Inter Variable handles body text with surgical precision, using equally unusual variable weights (420, 450, 550) that live in the spaces between traditional weight stops. This precision signals a company that sweats every detail.
+排版是当之无愧的主角。NeueHaasGrotesk——一种精致的 Helvetica 后裔——以纪念碑式的尺寸（96px）和难以置信的细字重（330-400）出现，创造出感觉是用光刻就而非用墨水印刷的标题。`ss03` OpenType 特性赋予字形独特个性，使 Shopify 的字体与普通 Helvetica 用法区分开来。在展示层之下，Inter Variable 以外科手术般的精准处理正文，使用同样不寻常的可变字重（420、450、550），这些字重存在于传统字重档位之间的空间里。这种精准度传递出一家对每个细节都精益求精的公司的信号。
 
-Color is used with extreme restraint. The primary accent is Shopify Neon Green (`#36F4A4`) — an electric mint that appears exclusively on focus rings and accent highlights, pulsing like a bioluminescent signal against the dark canvas. Softer green tints (Aloe `#C1FBD4`, Pistachio `#D4F9E0`) provide atmospheric washes. White is the only text color that matters on dark surfaces, while a zinc-based neutral scale (`#A1A1AA` through `#3F3F46`) handles the hierarchy of quiet information. The result is a design that makes commerce technology feel like it belongs in a science-fiction future.
+颜色使用极为克制。主要强调色是 Shopify 霓虹绿（`#36F4A4`）——一种电子薄荷色，只出现在焦点环和强调高亮上，在深色画布上像生物发光信号一样脉动。更柔和的绿色调（芦荟绿 `#C1FBD4`、开心果绿 `#D4F9E0`）提供氛围渲染。白色是深色表面上唯一重要的文字颜色，而基于锌色的中性色阶（`#A1A1AA` 到 `#3F3F46`）处理安静信息的层次结构。结果是一种让商业技术感觉属于科幻未来的设计。
 
-**Key Characteristics:**
-- Dark-first design with deep forest-teal undertones (not pure black)
-- Ultra-light display typography (weight 330) at monumental scale (96px) creating an ethereal presence
-- Neon Green (`#36F4A4`) as the singular high-energy accent against darkness
-- Full-pill buttons (9999px radius) as the primary interactive shape
-- Layered, multi-stage box shadows creating photographic depth
-- Product screenshots embedded in dark UI contexts, matching the surrounding darkness
-- Zinc-based neutral scale for text hierarchy — balanced between warm and cool
+**Key Characteristics：**
+- 深色优先设计，带有深邃森林青绿色底调（非纯黑色）
+- 超细展示排版（字重 330）以纪念碑式尺寸（96px）创造飘逸存在感
+- 霓虹绿（`#36F4A4`）作为黑暗中单一的高能强调色
+- 完整圆角按钮（9999px 圆角半径）作为主要交互形状
+- 分层多级盒阴影创造摄影般的深度感
+- 产品截图嵌入深色 UI 环境中，与周围的黑暗融为一体
+- 基于锌色的中性色阶处理文字层次——在冷暖之间取得平衡
 
-## 2. Color Palette & Roles
+## 2. 色彩面板与用途
 
-### Primary
+### 主色
 
-- **Shopify White** (`#FFFFFF`): Primary text on dark surfaces, button fills, high-contrast elements
-- **Shopify Black** (`#000000`): Body background, button text on white, maximum contrast base (--color-shade-100)
+- **Shopify 白**（`#FFFFFF`）：深色表面上的主要文字，按钮填充，高对比度元素
+- **Shopify 黑**（`#000000`）：页面主背景，白色按钮上的文字，最大对比度基础（--color-shade-100）
 
-### Secondary & Accent
+### 辅助色与强调色
 
-- **Neon Green** (`#36F4A4`): The signature accent — focus rings, interactive highlights, active state indicators. Electric and bioluminescent
-- **Aloe** (`#C1FBD4`): Soft green wash for decorative backgrounds, atmospheric cards (--color-aloe-10)
-- **Pistachio** (`#D4F9E0`): Lightest green tint for subtle surface differentiation (--color-pistachio-10)
+- **霓虹绿**（`#36F4A4`）：标志性强调色——焦点环、交互高亮、激活状态指示器。电子感与生物发光感
+- **芦荟绿**（`#C1FBD4`）：装饰性背景、氛围卡片的柔和绿色渲染（--color-aloe-10）
+- **开心果绿**（`#D4F9E0`）：细微表面差异化的最浅绿色调（--color-pistachio-10）
 
-### Surface & Background
+### 表面与背景色
 
-- **Void** (`#000000`): Root page background — true black for maximum depth
-- **Deep Teal** (`#02090A`): Card surfaces, content containers — near-black with green undertone
-- **Dark Forest** (`#061A1C`): Section backgrounds with visible green character
-- **Forest** (`#102620`): Elevated dark surfaces, header backgrounds — the warmest dark shade
-- **Dark Card Border** (`#1E2C31`): Card borders on dark surfaces, subtle boundary definition
+- **虚空黑**（`#000000`）：根页面背景——真正的黑色以获得最大深度
+- **深青绿**（`#02090A`）：卡片表面、内容容器——带有绿色底调的近黑色
+- **深森林绿**（`#061A1C`）：具有明显绿色特征的区块背景
+- **森林绿**（`#102620`）：提升的深色表面、头部背景——最温暖的深色调
+- **深色卡片边框**（`#1E2C31`）：深色表面上的卡片边框，细微的边界定义
 
-### Neutrals & Text (Zinc Scale)
+### 中性色与文字色（锌色阶）
 
-- **Shade-30** (`#D4D4D8`): Lightest neutral, barely-there borders on dark (--color-shade-30)
-- **Muted Text** (`#A1A1AA`): Secondary text, metadata, descriptions — the quiet voice
-- **Shade-50** (`#71717A`): Tertiary text, timestamps, least important info (--color-shade-50)
-- **Shade-60** (`#52525B`): Disabled text, decorative neutrals (--color-shade-60)
-- **Shade-70** (`#3F3F46`): Subtle dividers, barely-visible UI boundaries (--color-shade-70)
-- **Light Border** (`#E4E4E7`): Borders on light surfaces (rare — only in light-mode modals)
+- **Shade-30**（`#D4D4D8`）：最浅中性色，深色上几乎不可见的边框（--color-shade-30）
+- **静默文字**（`#A1A1AA`）：次级文字、元数据、描述——安静的声音
+- **Shade-50**（`#71717A`）：三级文字、时间戳、最不重要的信息（--color-shade-50）
+- **Shade-60**（`#52525B`）：禁用文字、装饰性中性色（--color-shade-60）
+- **Shade-70**（`#3F3F46`）：细微分割线，几乎不可见的 UI 边界（--color-shade-70）
+- **浅色边框**（`#E4E4E7`）：浅色表面上的边框（罕用——仅在浅色模态框中）
 
-### Semantic & Accent
+### 语义色与强调色
 
-- **Link Muted** (`#9797A2`): Muted link text with underline decoration
-- **Link Sage** (`#9DABAD`): Teal-tinted muted links
-- **Link Lavender** (`#BDBDCA`): Lighter link variant
-- **Link Mint** (`#99B3AD`): Green-tinted link variant for themed sections
+- **Link Muted**（`#9797A2`）：带有下划线装饰的静默链接文字
+- **Link Sage**（`#9DABAD`）：青绿色调的静默链接
+- **Link Lavender**（`#BDBDCA`）：较浅的链接变体
+- **Link Mint**（`#99B3AD`）：主题区块的绿色调链接变体
 
-### Gradient System
+### 渐变系统
 
-- **Dark Teal Wash**: Radial gradient from `#102620` center to `#02090A` edge — used behind product showcases
-- **Green Atmospheric**: Subtle green-tinted ambient gradients behind hero sections, creating depth without solid colors
-- **Spotlight**: Focused bright area fading to black — creates keynote-style presentation lighting
+- **深青绿渲染**：从 `#102620` 中心到 `#02090A` 边缘的径向渐变——用于产品展示区后方
+- **绿色氛围**：英雄区块后方细微的绿色调环境渐变，在不使用纯色的情况下创造深度
+- **聚光灯**：亮度集中区域逐渐消退至黑色——创造发布会风格的演示照明效果
 
-## 3. Typography Rules
+## 3. 排版规则
 
-### Font Family
+### 字体族
 
-**Display:** NeueHaasGrotesk (refined Helvetica descendant, variable font)
-- Fallbacks: Helvetica, Arial, sans-serif
-- OpenType features: `ss03` (stylistic set 3 — distinctive letterform alternates)
-- Available weights: 330, 360, 400, 500, 750 (variable)
-- Used for all headings, hero text, and large display elements
+**展示字体：** NeueHaasGrotesk（精致的 Helvetica 后裔，可变字体）
+- 回退字体：Helvetica、Arial、sans-serif
+- OpenType 特性：`ss03`（风格集 3——独特的字形替代方案）
+- 可用字重：330、360、400、500、750（可变）
+- 用于所有标题、英雄文字和大型展示元素
 
-**Body:** Inter-Variable
-- Fallbacks: Helvetica, Arial, sans-serif
-- OpenType features: `ss03`
-- Available weights: 400, 420, 450, 500, 550 (variable)
-- Used for body text, links, buttons, UI elements
+**正文字体：** Inter-Variable
+- 回退字体：Helvetica、Arial、sans-serif
+- OpenType 特性：`ss03`
+- 可用字重：400、420、450、500、550（可变）
+- 用于正文文字、链接、按钮、UI 元素
 
-**Mono:** ui-monospace
-- Fallbacks: SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New
-- Used for code snippets, data labels, technical content
+**等宽字体：** ui-monospace
+- 回退字体：SFMono-Regular、Menlo、Monaco、Consolas、Liberation Mono、Courier New
+- 用于代码片段、数据标签、技术内容
 
-### Hierarchy
+### 层次结构
 
-| Role | Size | Weight | Line Height | Letter Spacing | Notes |
+| 角色 | 大小 | 字重 | 行高 | 字距 | 备注 |
 |------|------|--------|-------------|----------------|-------|
-| Display XL | 96px | 400 | 1.00 | — | NeueHaasGrotesk, hero headlines, "ss03" |
-| Display XL Bold | 90.74px | 750 | 1.00 | 4.54px | NeueHaasGrotesk, emphasis display |
-| Display XL Tracked | 96px | 400 | 1.00 | 2.4px | NeueHaasGrotesk, spaced display |
-| Display Light | 96px | 330 | 0.96 | — | NeueHaasGrotesk, ethereal display |
-| Heading 1 | 70px | 330 | 1.00 | — | NeueHaasGrotesk, section titles |
-| Heading 2 | 55px | 330 | 1.16 | — | NeueHaasGrotesk, subsections |
-| Heading 3 | 48px | 330 | 1.14 | — | NeueHaasGrotesk, feature titles |
-| Heading 4 | 32px | 360 | 1.14 | 0.32px | NeueHaasGrotesk, card headings |
-| Heading 5 | 28px | 500 | 1.28 | 0.42px | NeueHaasGrotesk, small headings |
-| Heading 6 | 24px | 400 | 1.14 | 0.36px | NeueHaasGrotesk, minor headings |
-| Body Large | 20px | 500 | 1.40 | 0.3px | NeueHaasGrotesk / Inter, lead paragraphs |
-| Body | 18px | 400 | 1.56 | — | Inter-Variable, standard body |
-| Body Medium | 18px | 550 | 1.56 | — | Inter-Variable, emphasized body |
-| Body Small | 16px | 400 | 1.50 | — | Inter / NeueHaasGrotesk, compact body |
-| Body Small Medium | 16px | 420 | 1.50 | — | Inter-Variable, slightly emphasized |
-| Button | 16px | 400 | 1.50 | — | NeueHaasGrotesk, CTA text |
-| Nav Link | 18px | 500 | 1.25 | 0.72px | NeueHaasGrotesk, navigation items |
-| Caption | 14px | 500 | 1.49 | 0.28px | NeueHaasGrotesk / Inter, metadata |
-| Caption Medium | 14px | 550 | 1.49 | 0.28px | Inter-Variable, emphasized caption |
-| Overline | 15.36px | 400 | 1.50 | 1.54px | NeueHaasGrotesk, wide-tracked labels |
-| Micro | 13px | 500 | 1.50 | -0.13px | Inter, tight-tracked small text |
-| Label | 12px | 400 | 1.20 | 0.72px | Inter, uppercase labels |
-| Code | 16px | 400 | 1.50 | — | ui-monospace, uppercase, code blocks |
-| Code Small | 12px | 400 | 1.33 | — | ui-monospace, uppercase, inline code |
+| Display XL | 96px | 400 | 1.00 | — | NeueHaasGrotesk，英雄标题，"ss03" |
+| Display XL Bold | 90.74px | 750 | 1.00 | 4.54px | NeueHaasGrotesk，强调展示 |
+| Display XL Tracked | 96px | 400 | 1.00 | 2.4px | NeueHaasGrotesk，间距展示 |
+| Display Light | 96px | 330 | 0.96 | — | NeueHaasGrotesk，飘逸展示 |
+| Heading 1 | 70px | 330 | 1.00 | — | NeueHaasGrotesk，区块标题 |
+| Heading 2 | 55px | 330 | 1.16 | — | NeueHaasGrotesk，子区块 |
+| Heading 3 | 48px | 330 | 1.14 | — | NeueHaasGrotesk，功能标题 |
+| Heading 4 | 32px | 360 | 1.14 | 0.32px | NeueHaasGrotesk，卡片标题 |
+| Heading 5 | 28px | 500 | 1.28 | 0.42px | NeueHaasGrotesk，小标题 |
+| Heading 6 | 24px | 400 | 1.14 | 0.36px | NeueHaasGrotesk，次要标题 |
+| Body Large | 20px | 500 | 1.40 | 0.3px | NeueHaasGrotesk / Inter，引言段落 |
+| Body | 18px | 400 | 1.56 | — | Inter-Variable，标准正文 |
+| Body Medium | 18px | 550 | 1.56 | — | Inter-Variable，强调正文 |
+| Body Small | 16px | 400 | 1.50 | — | Inter / NeueHaasGrotesk，紧凑正文 |
+| Body Small Medium | 16px | 420 | 1.50 | — | Inter-Variable，轻微强调 |
+| Button | 16px | 400 | 1.50 | — | NeueHaasGrotesk，CTA 文字 |
+| Nav Link | 18px | 500 | 1.25 | 0.72px | NeueHaasGrotesk，导航项目 |
+| Caption | 14px | 500 | 1.49 | 0.28px | NeueHaasGrotesk / Inter，元数据 |
+| Caption Medium | 14px | 550 | 1.49 | 0.28px | Inter-Variable，强调说明文字 |
+| Overline | 15.36px | 400 | 1.50 | 1.54px | NeueHaasGrotesk，宽字距标签 |
+| Micro | 13px | 500 | 1.50 | -0.13px | Inter，紧字距小文字 |
+| Label | 12px | 400 | 1.20 | 0.72px | Inter，大写标签 |
+| Code | 16px | 400 | 1.50 | — | ui-monospace，大写，代码块 |
+| Code Small | 12px | 400 | 1.33 | — | ui-monospace，大写，内联代码 |
 
-### Principles
+### 原则
 
-Shopify's typography is a masterclass in variable font precision. The display layer lives almost exclusively at weights 330-400 — featherweight text that appears to hover above the dark background like projected light. This is the opposite of the bold, heavy approach most SaaS sites take: where others shout, Shopify whispers at scale. The 96px headlines at weight 330 create a paradox of enormous size and delicate stroke that feels both monumental and fragile. The `ss03` OpenType feature activates a stylistic set that gives specific characters (likely 'a', 'g', and certain numerals) a more refined appearance, distinguishing Shopify's typography from standard Helvetica Neue usage. Inter Variable handles the body layer with surgical precision, using weights like 420 and 550 that exist between the traditional stops — every piece of text has exactly the visual weight it needs.
+Shopify 的排版是可变字体精准度的大师级示范。展示层几乎完全使用 330-400 的字重——羽毛般轻盈的文字，看起来像投影光一样悬浮于深色背景之上。这与大多数 SaaS 网站采用的粗重方式截然相反：别人大声呼喊，Shopify 却在巨大尺度上低语。96px 标题配以 330 字重创造出巨大尺寸与纤细笔画的悖论，既有纪念碑感，又有脆弱感。`ss03` OpenType 特性激活了一个风格集，赋予特定字符（可能是 'a'、'g' 和某些数字）更精致的外观，使 Shopify 的排版有别于标准 Helvetica Neue 的用法。Inter Variable 以外科手术般的精准处理正文层，使用 420 和 550 等存在于传统档位之间的字重——每段文字都拥有其所需的准确视觉重量。
 
-## 4. Component Stylings
+## 4. 组件样式
 
-### Buttons
+### 按钮
 
-**Primary (White Fill)**
-- Background: White (`#FFFFFF`)
-- Text: Black (`#000000`)
-- Border: 2px solid transparent
-- Border radius: full pill (9999px)
-- Padding: 12px 26px 12px 16px (asymmetric — more right padding for visual balance)
-- Hover: slight opacity reduction or background shift
-- Focus: 2px `#36F4A4` (Neon Green) outline ring
-- Transition: all 200ms ease
+**主要按钮（白色填充）**
+- 背景：白色（`#FFFFFF`）
+- 文字：黑色（`#000000`）
+- 边框：2px 透明实线
+- 圆角半径：完整圆角（9999px）
+- 内边距：12px 26px 12px 16px（不对称——右侧更多内边距以获得视觉平衡）
+- 悬停：轻微透明度降低或背景偏移
+- 焦点：2px `#36F4A4`（霓虹绿）外框
+- 过渡：all 200ms ease
 
-**Secondary (Ghost/Outlined)**
-- Background: transparent
-- Text: White (`#FFFFFF`)
-- Border: 2px solid White (`#FFFFFF`)
-- Border radius: full pill (9999px)
-- Padding: 12px 26px 12px 16px
-- Hover: fills to white bg with black text
-- Focus: 2px `#36F4A4` outline
+**次要按钮（幽灵/轮廓）**
+- 背景：透明
+- 文字：白色（`#FFFFFF`）
+- 边框：2px 白色实线（`#FFFFFF`）
+- 圆角半径：完整圆角（9999px）
+- 内边距：12px 26px 12px 16px
+- 悬停：填充为白色背景配黑色文字
+- 焦点：2px `#36F4A4` 外框
 
-**Badge/Tag (Neutral Filled)**
-- Background: `rgba(255, 255, 255, 0.2)` (frosted glass)
-- Text: White (`#FFFFFF`)
-- Border: none
-- Border radius: subtly rounded (4px)
-- Padding: 12px 16px
-- Font: 16px regular
+**徽章/标签（中性填充）**
+- 背景：`rgba(255, 255, 255, 0.2)`（磨砂玻璃）
+- 文字：白色（`#FFFFFF`）
+- 边框：无
+- 圆角半径：轻微圆角（4px）
+- 内边距：12px 16px
+- 字体：16px 常规
 
-### Cards & Containers
+### 卡片与容器
 
-- Background: Deep Teal (`#02090A`) on dark pages
-- Border: 1px solid `#1E2C31` (Dark Card Border) — barely visible boundary
-- Border radius: 8px for standard cards, 12px for featured cards, 20px 20px 0 0 for top-rounded cards
-- Shadow: Multi-layered system:
-  - Resting: `rgba(0,0,0,0.1) 0px 0px 0px 1px, rgba(0,0,0,0.1) 0px 2px 2px, rgba(0,0,0,0.1) 0px 4px 4px, rgba(0,0,0,0.1) 0px 8px 8px` + `rgba(255,255,255,0.03) 0px 1px 0px inset`
-  - The inset white highlight creates a subtle top-edge glow
-- Hover: shadow expands, card may slightly brighten
-- Transition: box-shadow 300ms ease, transform 200ms ease
+- 背景：深色页面上的深青绿（`#02090A`）
+- 边框：1px 实线 `#1E2C31`（深色卡片边框）——几乎不可见的边界
+- 圆角半径：标准卡片 8px，特色卡片 12px，顶部圆角卡片 20px 20px 0 0
+- 阴影：多层系统：
+  - 静止状态：`rgba(0,0,0,0.1) 0px 0px 0px 1px, rgba(0,0,0,0.1) 0px 2px 2px, rgba(0,0,0,0.1) 0px 4px 4px, rgba(0,0,0,0.1) 0px 8px 8px` + `rgba(255,255,255,0.03) 0px 1px 0px inset`
+  - 内嵌白色高亮创造细微的顶部边缘发光效果
+- 悬停：阴影扩展，卡片可能略微变亮
+- 过渡：box-shadow 300ms ease，transform 200ms ease
 
-### Inputs & Forms
+### 输入框与表单
 
-- Background: transparent or Dark Forest (`#061A1C`)
-- Text: White (`#FFFFFF`)
-- Border: 1px solid `#3F3F46` (Shade-70)
-- Border radius: 8px
-- Padding: 12px 16px
-- Focus: 2px solid `#36F4A4` (Neon Green focus ring)
-- Placeholder: Shade-50 (`#71717A`)
-- Transition: border-color 200ms ease
+- 背景：透明或深森林绿（`#061A1C`）
+- 文字：白色（`#FFFFFF`）
+- 边框：1px 实线 `#3F3F46`（Shade-70）
+- 圆角半径：8px
+- 内边距：12px 16px
+- 焦点：2px 实线 `#36F4A4`（霓虹绿焦点环）
+- 占位符：Shade-50（`#71717A`）
+- 过渡：border-color 200ms ease
 
-### Navigation
+### 导航
 
-- Background: transparent (overlaid on dark hero), becomes Forest (`#102620`) on scroll
-- Height: ~64px
-- Left: Shopify wordmark logo (SVG, white on dark)
-- Center/Right: nav links in 18px/500 NeueHaasGrotesk, white, letter-spacing 0.72px
-- CTA: White pill button "Start for free" (right)
-- Secondary CTA: Ghost button with white border
-- Hover: links shift to Muted Text (`#A1A1AA`) or gain underline
-- Mobile: hamburger menu, full-screen dark overlay
-- Transition: background 300ms ease on scroll
+- 背景：透明（叠加在深色英雄区上），滚动时变为森林绿（`#102620`）
+- 高度：约 64px
+- 左侧：Shopify 文字标志（SVG，深色背景上的白色）
+- 中/右：18px/500 NeueHaasGrotesk 导航链接，白色，字距 0.72px
+- CTA：白色圆角按钮"Start for free"（右侧）
+- 次要 CTA：带白色边框的幽灵按钮
+- 悬停：链接变为静默文字（`#A1A1AA`）或出现下划线
+- 移动端：汉堡菜单，全屏深色遮罩层
+- 过渡：滚动时背景 300ms ease
 
-### Image Treatment
+### 图片处理
 
-- Product screenshots: embedded in dark UI contexts, matching the surrounding darkness
-- Admin interface previews: shown on dark backgrounds with subtle card borders
-- Aspect ratios: varied — hero images are wide (16:9-ish), feature shots are flexible
-- All images sit flush within dark containers — no bright borders or frames
-- Lazy loading with dark placeholder surfaces
+- 产品截图：嵌入深色 UI 环境中，与周围的黑暗融为一体
+- 管理界面预览：展示在带细微卡片边框的深色背景上
+- 宽高比：多样——英雄图片较宽（约 16:9），功能截图较灵活
+- 所有图片在深色容器内平铺——无亮色边框或边框
+- 延迟加载配以深色占位表面
 
-### Trust Indicators
+### 信任指标
 
-- Statistics displayed prominently: "15+" (years), "150M+" (buyers)
-- Numbers at display scale in NeueHaasGrotesk
-- Partner/developer ecosystem callout sections
-- Dark-themed testimonials integrated into the page flow
+- 突出展示统计数据："15+"（年）、"150M+"（买家）
+- 数字以 NeueHaasGrotesk 展示级别显示
+- 合作伙伴/开发者生态系统专区
+- 深色主题的评价评论融入页面流程中
 
-## 5. Layout Principles
+## 5. 布局原则
 
-### Spacing System
+### 间距系统
 
-Base unit: 8px
+基础单位：8px
 
-| Token | Value | Use |
+| 标记 | 值 | 用途 |
 |-------|-------|-----|
-| space-1 | 4px | Tight inline gaps |
-| space-2 | 8px | Base unit, icon gaps |
-| space-3 | 12px | Card padding, tight margins |
-| space-4 | 16px | Standard element padding |
-| space-5 | 24px | Card gaps, section padding |
-| space-6 | 28px | Medium section spacing |
-| space-7 | 32px | Section breaks |
-| space-8 | 36px | Large padding |
-| space-9 | 40px | Major section padding |
-| space-10 | 64px | Hero section padding, large gaps |
+| space-1 | 4px | 紧凑内联间距 |
+| space-2 | 8px | 基础单位，图标间距 |
+| space-3 | 12px | 卡片内边距，紧凑外边距 |
+| space-4 | 16px | 标准元素内边距 |
+| space-5 | 24px | 卡片间距，区块内边距 |
+| space-6 | 28px | 中等区块间距 |
+| space-7 | 32px | 区块分隔 |
+| space-8 | 36px | 大内边距 |
+| space-9 | 40px | 主要区块内边距 |
+| space-10 | 64px | 英雄区块内边距，大间距 |
 
-### Grid & Container
+### 网格与容器
 
-- Max container width: ~1280px (centered)
-- Hero: full-width, edge-to-edge dark background with centered text
-- Feature sections: 2-column layouts with text and product screenshots
-- Stats sections: horizontal layout with large numbers
-- Horizontal padding: 64px desktop, 32px tablet, 16px mobile
-- Grid gap: 24-32px between major content blocks
+- 最大容器宽度：约 1280px（居中）
+- 英雄区：全宽，边到边的深色背景配居中文字
+- 功能区块：带文字和产品截图的两列布局
+- 统计区块：配大数字的水平布局
+- 水平内边距：桌面 64px，平板 32px，移动端 16px
+- 网格间距：主要内容块之间 24-32px
 
-### Whitespace Philosophy
+### 留白哲学
 
-Shopify's whitespace strategy is theatrical. Sections are separated by vast expanses of dark space — 80px to 120px of pure black breathing room — that create the pacing of a presentation, not a webpage. Each content block is its own "slide" in a keynote-style scroll. Within sections, spacing is tighter and more deliberate, creating focal density against the expansive void. The contrast between macro-level emptiness and micro-level precision is what gives the site its cinematic cadence.
+Shopify 的留白策略是戏剧性的。区块之间以大片深色空间分隔——80px 到 120px 的纯黑色呼吸空间——创造出演示文稿的节奏，而不是网页的节奏。每个内容块都是主题演讲式滚动中独立的"幻灯片"。在区块内部，间距更紧凑也更有意图，在广阔的虚空中创造焦点密度。宏观层面的空旷与微观层面的精准之间的对比，赋予了网站其电影般的韵律。
 
-### Border Radius Scale
+### 圆角半径尺度
 
-| Value | Context |
+| 值 | 应用场景 |
 |-------|---------|
-| 4px | Tags, badges, micro-elements |
-| 8px | Standard cards, inputs, video containers |
-| 12px | Featured cards, image containers, buttons (non-pill) |
-| 20px | Top-rounded cards (20px 20px 0 0), modal headers |
-| 340px | Large rounded decorative elements |
-| 9999px | Pill buttons, pill badges, nav elements |
+| 4px | 标签、徽章、微型元素 |
+| 8px | 标准卡片、输入框、视频容器 |
+| 12px | 特色卡片、图片容器、按钮（非圆角胶囊） |
+| 20px | 顶部圆角卡片（20px 20px 0 0），模态框头部 |
+| 340px | 大型圆角装饰元素 |
+| 9999px | 圆角胶囊按钮、圆角胶囊徽章、导航元素 |
 
-## 6. Depth & Elevation
+## 6. 深度与层级
 
-| Level | Treatment | Use |
+| 层级 | 处理方式 | 用途 |
 |-------|-----------|-----|
-| Base | No shadow, dark surface | Default page background |
-| Subtle | `rgba(0,0,0,0.1) 0px 0px 0px 1px` + inset white glow | Resting cards |
-| Medium | Multi-layer: 1px ring + 2px + 4px + 8px shadow stack | Elevated cards, featured sections |
-| High | `rgba(0,0,0,0.25) 0px 25px 50px -12px` | Modals, dropdowns, overlays |
-| Focus | `0px 0px 0px 2px #36F4A4` | Keyboard focus ring (Neon Green) |
+| 基础 | 无阴影，深色表面 | 默认页面背景 |
+| 细微 | `rgba(0,0,0,0.1) 0px 0px 0px 1px` + 内嵌白色发光 | 静止卡片 |
+| 中等 | 多层：1px 环 + 2px + 4px + 8px 阴影叠加 | 提升卡片，特色区块 |
+| 高 | `rgba(0,0,0,0.25) 0px 25px 50px -12px` | 模态框、下拉框、遮罩层 |
+| 焦点 | `0px 0px 0px 2px #36F4A4` | 键盘焦点环（霓虹绿） |
 
-Shopify's shadow system is unusually sophisticated. Rather than single-value shadows, cards use a stacked, multi-layer approach: a 1px ring for boundary definition, 2px/4px/8px progressive blurs for natural light falloff, and a delicate inset white glow (`rgba(255,255,255,0.03)`) that simulates a top-lit glass surface. On dark backgrounds, shadows darken from already-dark surfaces, so the shadows function more as "ambient occlusion" than traditional elevation — the card appears to sink slightly into the surface rather than float above it.
+Shopify 的阴影系统异常精密。卡片不使用单一值阴影，而是使用叠加的多层方式：用于边界定义的 1px 环、用于自然光衰减的 2px/4px/8px 渐进模糊，以及模拟顶部照明玻璃表面的精致内嵌白色发光（`rgba(255,255,255,0.03)`）。在深色背景上，阴影从已经很深的表面继续加深，因此阴影更像"环境遮挡"而不是传统的高度——卡片看起来略微下沉入表面，而不是漂浮在其上。
 
-### Decorative Depth
+### 装饰性深度
 
-- **Dark teal gradients**: Ambient radial washes behind hero sections and product showcases
-- **Spotlight effects**: Bright centered areas fading to black, creating keynote-style theatrical lighting
-- **Edge glow**: Subtle light colored edges on dark cards via inset box-shadow
-- **Green atmospheric halos**: Faint green tints in background gradients, echoing the brand accent
+- **深青绿渐变**：英雄区块和产品展示区后方的环境径向渲染
+- **聚光灯效果**：从中心亮区消退至黑色的区域，营造发布会式戏剧照明
+- **边缘发光**：通过内嵌盒阴影在深色卡片上形成细微的亮色边缘
+- **绿色氛围光晕**：背景渐变中的微弱绿色调，呼应品牌强调色
 
-## 7. Do's and Don'ts
+## 7. 该做与不该做
 
-### Do
+### 该做
 
-- Use the dark teal-black surface hierarchy (Void → Deep Teal → Dark Forest → Forest) for depth
-- Keep display typography at weight 330-400 — the ethereal lightness is the design's signature
-- Use Neon Green (`#36F4A4`) exclusively for focus states and critical accent highlights
-- Apply 9999px radius to all primary CTA buttons — the full pill is non-negotiable
-- Use the multi-layered shadow system for card elevation — single shadows look flat
-- Maintain the `ss03` OpenType feature across all text — it's part of the typographic identity
-- Use Inter Variable for body text and NeueHaasGrotesk for headings — never mix their roles
-- Create theatrical spacing between sections (80px+) for cinematic pacing
+- 使用深青绿-黑色表面层次（虚空黑 → 深青绿 → 深森林绿 → 森林绿）来营造深度
+- 保持展示排版在 330-400 字重——飘逸的轻盈感是设计的标志
+- 将霓虹绿（`#36F4A4`）专门用于焦点状态和关键强调高亮
+- 为所有主要 CTA 按钮应用 9999px 圆角半径——完整圆角胶囊不可妥协
+- 为卡片高度使用多层阴影系统——单一阴影看起来平淡
+- 在所有文字中保持 `ss03` OpenType 特性——这是排版身份的一部分
+- 正文使用 Inter Variable，标题使用 NeueHaasGrotesk——不要混淆它们的角色
+- 在区块之间创造戏剧性间距（80px+）以获得电影般的节奏
 
-### Don't
+### 不该做
 
-- Don't use pure black (#000000) for text on dark backgrounds — use white (#FFFFFF) only
-- Don't introduce warm colors (orange, red, yellow) — the palette is strictly cool (greens, teals, neutrals)
-- Don't use font weights above 500 for NeueHaasGrotesk body text — heavy weights break the ethereal feel
-- Don't apply green accents to large surfaces — Neon Green is for small, precise highlights only
-- Don't use sharp corners (0px radius) on interactive elements — everything rounds
-- Don't add bright backgrounds — the dark theme is fundamental, not optional
-- Don't use single-layer box shadows — the stacked approach is the system
-- Don't set line-height above 1.56 for body text — Shopify's text is relatively compact
-- Don't mix NeueHaasGrotesk and Inter at the same size/role — their weight scales differ
-- Don't use letter-spacing below 0 for headings — Shopify headings track neutral or positive
+- 不要在深色背景上将纯黑色（#000000）用于文字——只用白色（#FFFFFF）
+- 不要引入暖色（橙色、红色、黄色）——色盘严格限于冷色（绿色、青绿色、中性色）
+- 不要为 NeueHaasGrotesk 正文使用高于 500 的字重——重字重会破坏飘逸感
+- 不要将绿色强调色应用于大面积区域——霓虹绿只用于小而精准的高亮
+- 不要在交互元素上使用尖锐角（0px 圆角）——所有元素都应有圆角
+- 不要添加亮色背景——深色主题是根本，不是可选的
+- 不要使用单层盒阴影——叠加方式是整个系统
+- 不要将正文的行高设置在 1.56 以上——Shopify 的文字相对紧凑
+- 不要在同等大小/角色下混用 NeueHaasGrotesk 和 Inter——它们的字重尺度不同
+- 不要为标题设置低于 0 的字距——Shopify 标题的字距为中性或正值
 
-## 8. Responsive Behavior
+## 8. 响应式行为
 
-### Breakpoints
+### 断点
 
-| Name | Width | Key Changes |
+| 名称 | 宽度 | 主要变化 |
 |------|-------|-------------|
-| Mobile | <640px | Single column, hamburger nav, display text scales to 48px, 16px padding |
-| Tablet | 640-1024px | 2-column grids begin, display text at 70px, 32px padding |
-| Desktop | 1024-1440px | Full layout, expanded nav, 96px display, 64px padding |
-| Large Desktop | >1440px | Max-width container centered, increased section spacing |
+| 移动端 | <640px | 单列，汉堡导航，展示文字缩至 48px，16px 内边距 |
+| 平板 | 640-1024px | 两列网格开始，展示文字 70px，32px 内边距 |
+| 桌面 | 1024-1440px | 完整布局，展开导航，96px 展示文字，64px 内边距 |
+| 大桌面 | >1440px | 最大宽度容器居中，增加区块间距 |
 
-### Touch Targets
+### 触摸目标
 
-- Minimum touch target: 44x44px (WCAG AAA)
-- Pill buttons: 48px height minimum with generous horizontal padding
-- Nav links: 44px touch area
-- Card surfaces: full card is tappable where linked
+- 最小触摸目标：44x44px（WCAG AAA）
+- 圆角胶囊按钮：最低 48px 高度配慷慨的水平内边距
+- 导航链接：44px 触摸区域
+- 卡片表面：链接时整张卡片可点击
 
-### Collapsing Strategy
+### 折叠策略
 
-- **Navigation**: Full horizontal links → hamburger menu below 1024px; logo and CTA button remain visible
-- **Hero section**: 96px display → 70px at tablet → 48px on mobile; maintains single-column center alignment
-- **Feature sections**: 2-column text+image → stacked single column below 768px
-- **Stats**: Horizontal row → stacked vertical on mobile
-- **Section padding**: 64px → 40px → 24px → 16px as viewport narrows
-- **Cards**: Grid → stack, maintaining full-width on mobile
+- **导航**：水平全链接 → 1024px 以下变汉堡菜单；Logo 和 CTA 按钮保持可见
+- **英雄区块**：96px 展示文字 → 平板 70px → 移动端 48px；保持单列居中对齐
+- **功能区块**：文字+图片两列 → 768px 以下叠加为单列
+- **统计**：水平行 → 移动端叠加为垂直
+- **区块内边距**：随视口缩小从 64px → 40px → 24px → 16px
+- **卡片**：网格 → 叠加，移动端保持全宽
 
-### Image Behavior
+### 图片行为
 
-- Product screenshots: responsive within dark containers, maintain aspect ratio
-- Hero images: full-width on all breakpoints, lazy loaded with dark placeholders
-- Admin UI previews: scale proportionally, may crop on mobile
-- All images use CDN (`cdn.shopify.com`) with responsive srcset
+- 产品截图：在深色容器内响应式显示，保持宽高比
+- 英雄图片：所有断点全宽，延迟加载配深色占位符
+- 管理 UI 预览：按比例缩放，移动端可能裁剪
+- 所有图片使用 CDN（`cdn.shopify.com`）配响应式 srcset
 
-## 9. Agent Prompt Guide
+## 9. 智能体提示指南
 
-### Quick Color Reference
+### 快速颜色参考
 
-- Primary CTA: Shopify White (`#FFFFFF`)
-- Page background: Void Black (`#000000`)
-- Card surface: Deep Teal (`#02090A`)
-- Section bg: Dark Forest (`#061A1C`)
-- Elevated bg: Forest (`#102620`)
-- Accent: Neon Green (`#36F4A4`)
-- Body text: White (`#FFFFFF`)
-- Muted text: Muted (`#A1A1AA`)
-- Border dark: Dark Card Border (`#1E2C31`)
+- 主要 CTA：Shopify 白（`#FFFFFF`）
+- 页面背景：虚空黑（`#000000`）
+- 卡片表面：深青绿（`#02090A`）
+- 区块背景：深森林绿（`#061A1C`）
+- 提升背景：森林绿（`#102620`）
+- 强调色：霓虹绿（`#36F4A4`）
+- 正文文字：白色（`#FFFFFF`）
+- 静默文字：静默灰（`#A1A1AA`）
+- 深色边框：深色卡片边框（`#1E2C31`）
 
-### Example Component Prompts
+### 示例组件提示
 
-- "Create a hero section on true black (#000000) background with a 96px/330 NeueHaasGrotesk headline in white, a 20px/500 subtitle in #A1A1AA, and two pill buttons: white filled (9999px radius) and ghost with 2px white border"
-- "Design a feature card on Deep Teal (#02090A) with 1px #1E2C31 border, 12px radius, multi-layer shadow (1px ring + 2px/4px/8px blur at 10% black), containing a 32px/360 white heading and 18px/400 #A1A1AA body text"
-- "Build a stats section on Dark Forest (#061A1C) with 96px/750 white numbers (NeueHaasGrotesk), 16px/400 #A1A1AA descriptive labels, and generous 64px spacing between stat blocks"
-- "Create a sticky nav with transparent background (becomes #102620 on scroll), white Shopify logo left, 18px/500 white nav links with 0.72px letter-spacing, and a white pill 'Start for free' button right"
-- "Design a tag/badge with rgba(255,255,255,0.2) frosted glass background, 4px radius, 12px 16px padding, white 16px text — floating over a dark card surface"
+- "在真实黑色（#000000）背景上创建一个英雄区块，使用 96px/330 的 NeueHaasGrotesk 白色标题、20px/500 的 #A1A1AA 副标题，以及两个圆角胶囊按钮：白色填充（9999px 圆角）和带 2px 白色边框的幽灵按钮"
+- "在深青绿（#02090A）上设计一张带 1px #1E2C31 边框、12px 圆角、多层阴影（1px 环 + 2px/4px/8px 模糊，10% 黑色）的功能卡片，内含 32px/360 白色标题和 18px/400 #A1A1AA 正文"
+- "在深森林绿（#061A1C）上构建一个统计区块，使用 96px/750 白色数字（NeueHaasGrotesk）、16px/400 #A1A1AA 描述标签，以及统计块之间 64px 的慷慨间距"
+- "创建一个粘性导航，背景透明（滚动时变为 #102620），左侧白色 Shopify Logo，18px/500 白色导航链接配 0.72px 字距，右侧白色圆角胶囊按钮'Start for free'"
+- "设计一个带 rgba(255,255,255,0.2) 磨砂玻璃背景、4px 圆角、12px 16px 内边距、16px 白色文字的标签/徽章——漂浮在深色卡片表面上"
 
-### Iteration Guide
+### 迭代指南
 
-When refining existing screens generated with this design system:
-1. Focus on ONE component at a time
-2. Reference specific color names and hex codes from this document
-3. Remember: this is a DARK-FIRST design — light surfaces are the exception, not the rule
-4. Display text should always feel feather-light (weight 330-400) — if it looks heavy, reduce the weight
-5. Neon Green (#36F4A4) is precious — use sparingly for focus and accent only
-6. The dark surface hierarchy (black → deep teal → dark forest → forest) creates subtle depth
-7. Shadows are multi-layered — a single `box-shadow` value won't capture the Shopify card feel
-8. `ss03` OpenType feature must be active on all text for typographic consistency
+使用此设计系统完善已生成的界面时：
+1. 每次专注于**一个**组件
+2. 引用本文档中的具体颜色名称和十六进制代码
+3. 记住：这是**深色优先**设计——浅色表面是例外，不是规则
+4. 展示文字应始终感觉羽毛轻盈（字重 330-400）——如果看起来很重，降低字重
+5. 霓虹绿（#36F4A4）是珍贵的——只为焦点和强调色节俭使用
+6. 深色表面层次（黑色 → 深青绿 → 深森林绿 → 森林绿）创造细微深度
+7. 阴影是多层的——单个 `box-shadow` 值无法捕捉 Shopify 卡片的感觉
+8. `ss03` OpenType 特性必须在所有文字上激活以保持排版一致性

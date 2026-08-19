@@ -2,5 +2,7 @@
   "id": "professional",
   "name": "Professional",
   "category": "Professional & Corporate",
-  "description": "Bundled Open Design package for Professional, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "专业与企业",
+  "description": "Bundled Open Design package for Professional, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "精致的商务设计，现代排版，结构化布局，可信赖的视觉形象。"
 }

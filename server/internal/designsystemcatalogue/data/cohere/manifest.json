@@ -2,5 +2,7 @@
   "id": "cohere",
   "name": "Cohere",
   "category": "AI & LLM",
-  "description": "Bundled Open Design package for Cohere, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "AI 与大模型",
+  "description": "Bundled Open Design package for Cohere, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "企业级 AI 平台。鲜明渐变，数据丰富的仪表盘美学。"
 }

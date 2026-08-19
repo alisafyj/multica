@@ -2,5 +2,7 @@
   "id": "cosmic",
   "name": "Cosmic",
   "category": "Creative & Artistic",
-  "description": "Bundled Open Design package for Cosmic, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "创意艺术",
+  "description": "Bundled Open Design package for Cosmic, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "未来科幻美学，深色主题，鲜艳霓虹点缀，沉浸式空间感元素。"
 }

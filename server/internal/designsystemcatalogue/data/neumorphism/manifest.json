@@ -2,5 +2,7 @@
   "id": "neumorphism",
   "name": "Neumorphism",
   "category": "Morphism & Effects",
-  "description": "Bundled Open Design package for Neumorphism, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "拟态与特效",
+  "description": "Bundled Open Design package for Neumorphism, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "柔软凸起的 UI 元素，单色界面上内外阴影兼具，触感嵌入式外观。"
 }

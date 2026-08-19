@@ -2,5 +2,7 @@
   "id": "bold",
   "name": "Bold",
   "category": "Bold & Expressive",
-  "description": "Bundled Open Design package for Bold, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "大胆表现",
+  "description": "Bundled Open Design package for Bold, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "强烈的视觉存在感，重磅字体，高对比色彩，极具统治力的布局。"
 }

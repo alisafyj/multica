@@ -2,5 +2,7 @@
   "id": "ferrari",
   "name": "Ferrari",
   "category": "Automotive",
-  "description": "Bundled Open Design package for Ferrari, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "汽车",
+  "description": "Bundled Open Design package for Ferrari, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "豪华汽车。明暗对比式编辑风格，法拉利红点缀，电影级黑底。"
 }

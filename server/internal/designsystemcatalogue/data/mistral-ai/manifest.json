@@ -2,5 +2,7 @@
   "id": "mistral-ai",
   "name": "Mistral AI",
   "category": "AI & LLM",
-  "description": "Bundled Open Design package for Mistral AI, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "AI 与大模型",
+  "description": "Bundled Open Design package for Mistral AI, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "开放权重 LLM 提供商。法式工程极简，紫色调。"
 }

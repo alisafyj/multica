@@ -2,5 +2,7 @@
   "id": "cursor",
   "name": "Cursor",
   "category": "Developer Tools",
-  "description": "Bundled Open Design package for Cursor, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "开发者工具",
+  "description": "Bundled Open Design package for Cursor, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "AI 原生代码编辑器。简洁深色界面，渐变点缀色。"
 }

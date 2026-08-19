@@ -2,5 +2,7 @@
   "id": "perplexity",
   "name": "Perplexity AI",
   "category": "AI & LLM",
-  "description": "Bundled Open Design package for Perplexity AI, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "AI 与大模型",
+  "description": "Bundled Open Design package for Perplexity AI, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "对话式 AI 搜索引擎。极深暗色画布，锐利排版，单一紫罗兰色点缀，密集信息层级。"
 }

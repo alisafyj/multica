@@ -2,5 +2,7 @@
   "id": "coinbase",
   "name": "Coinbase",
   "category": "Fintech & Crypto",
-  "description": "Bundled Open Design package for Coinbase, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "金融科技与加密",
+  "description": "Bundled Open Design package for Coinbase, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "加密货币交易所。干净蓝色身份，信任感强，机构级质感。"
 }

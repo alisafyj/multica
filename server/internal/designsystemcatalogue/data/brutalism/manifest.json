@@ -2,5 +2,7 @@
   "id": "brutalism",
   "name": "Brutalism",
   "category": "Bold & Expressive",
-  "description": "Bundled Open Design package for Brutalism, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "大胆表现",
+  "description": "Bundled Open Design package for Brutalism, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "原始反设计美学，源自混凝土建筑，元素朴素，布局强烈，功能极简主义。"
 }

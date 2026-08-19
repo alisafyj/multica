@@ -22,10 +22,17 @@ type BuiltinDesignSystemResponse struct {
 	Description string `json:"description"`
 }
 
+type BuiltinDesignSystemTokenResponse struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	Type  string `json:"type"`
+}
+
 type BuiltinDesignSystemDetailResponse struct {
 	BuiltinDesignSystemResponse
-	TokensCSS      string `json:"tokens_css"`
-	DesignMarkdown string `json:"design_markdown"`
+	Tokens         []BuiltinDesignSystemTokenResponse `json:"tokens"`
+	TokensCSS      string                             `json:"tokens_css"`
+	DesignMarkdown string                             `json:"design_markdown"`
 }
 
 func (h *Handler) ListBuiltinDesignSystems(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +64,12 @@ func (h *Handler) GetBuiltinDesignSystem(w http.ResponseWriter, r *http.Request)
 		writeProjectDesignSystemError(w, http.StatusNotFound, "design_system_not_found", "built-in design system not found")
 		return
 	}
+	tokens := make([]BuiltinDesignSystemTokenResponse, 0, len(detail.Tokens))
+	for _, token := range detail.Tokens {
+		tokens = append(tokens, BuiltinDesignSystemTokenResponse{
+			Name: token.Name, Value: token.Value, Type: token.Type,
+		})
+	}
 	writeJSON(w, http.StatusOK, BuiltinDesignSystemDetailResponse{
 		BuiltinDesignSystemResponse: BuiltinDesignSystemResponse{
 			Slug:        detail.Slug,
@@ -64,6 +77,7 @@ func (h *Handler) GetBuiltinDesignSystem(w http.ResponseWriter, r *http.Request)
 			Category:    detail.Category,
 			Description: detail.Description,
 		},
+		Tokens:         tokens,
 		TokensCSS:      detail.TokensCSS,
 		DesignMarkdown: detail.DesignMarkdown,
 	})

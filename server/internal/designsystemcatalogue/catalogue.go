@@ -33,27 +33,62 @@ var packages embed.FS
 // these, and shipping every package's full text would make the response
 // megabytes for a screen that shows names.
 type Entry struct {
-	Slug        string `json:"slug"`
-	Name        string `json:"name"`
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+	// Category is Open Design's own zh label where it has one, falling back to
+	// the English facet. The catalogue is a Chinese product surface, so the
+	// English key stays an internal grouping value rather than something a
+	// reader sees.
 	Category    string `json:"category"`
 	Description string `json:"description"`
+}
+
+// Token is one declared design token, typed at the source.
+//
+// Read from the package's design-tokens.json rather than scraped out of the
+// stylesheet: the file already states which tokens are colours and which are
+// type, so the detail view groups them by fact instead of by a regex guess.
+type Token struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	Type  string `json:"type"`
 }
 
 // Detail adds the content one system's page needs.
 type Detail struct {
 	Entry
-	// TokensCSS is the package's own custom-property sheet. The library reads
-	// values out of it to render swatches and type samples.
+	// Tokens is empty for the few packages that ship no design-tokens.json;
+	// TokensCSS is always present, so the view can still show the raw sheet.
+	Tokens []Token `json:"tokens"`
+	// TokensCSS is the package's own custom-property sheet.
 	TokensCSS string `json:"tokens_css"`
-	// DesignMarkdown is the design language in prose.
+	// DesignMarkdown is the design language in prose, translated where the
+	// package ships a zh version.
 	DesignMarkdown string `json:"design_markdown"`
 }
 
 type manifest struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Category    string `json:"category"`
-	Description string `json:"description"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Category      string `json:"category"`
+	CategoryZH    string `json:"category_zh"`
+	Description   string `json:"description"`
+	DescriptionZH string `json:"description_zh"`
+}
+
+// designTokens is the shape of a package's design-tokens.json.
+type designTokens struct {
+	Tokens []Token `json:"tokens"`
+}
+
+// preferZH returns the translated string when the package carries one. Open
+// Design translated most but not every package, and an English fallback reads
+// better than a blank field.
+func preferZH(zh, fallback string) string {
+	if zh != "" {
+		return zh
+	}
+	return fallback
 }
 
 var (
@@ -90,7 +125,12 @@ func load() {
 			loadErr = fmt.Errorf("design system %s declares id %q", dir.Name(), m.ID)
 			return
 		}
-		entry := Entry{Slug: m.ID, Name: m.Name, Category: m.Category, Description: m.Description}
+		entry := Entry{
+			Slug:        m.ID,
+			Name:        m.Name,
+			Category:    preferZH(m.CategoryZH, m.Category),
+			Description: preferZH(m.DescriptionZH, m.Description),
+		}
 		entries = append(entries, entry)
 		bySlug[entry.Slug] = entry
 	}
@@ -135,5 +175,14 @@ func Get(slug string) (Detail, bool, error) {
 	if err != nil {
 		return Detail{}, false, fmt.Errorf("read %s design: %w", entry.Slug, err)
 	}
-	return Detail{Entry: entry, TokensCSS: string(tokens), DesignMarkdown: string(design)}, true, nil
+	detail := Detail{Entry: entry, Tokens: []Token{}, TokensCSS: string(tokens), DesignMarkdown: string(design)}
+	// Not every package ships one; a missing token file leaves the typed list
+	// empty rather than failing the read.
+	if raw, err := packages.ReadFile(path.Join("data", entry.Slug, "design-tokens.json")); err == nil {
+		var parsed designTokens
+		if json.Unmarshal(raw, &parsed) == nil && len(parsed.Tokens) > 0 {
+			detail.Tokens = parsed.Tokens
+		}
+	}
+	return detail, true, nil
 }

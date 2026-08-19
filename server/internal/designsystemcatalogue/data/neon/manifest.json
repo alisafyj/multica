@@ -2,5 +2,7 @@
   "id": "neon",
   "name": "Neon",
   "category": "Morphism & Effects",
-  "description": "Bundled Open Design package for Neon, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "拟态与特效",
+  "description": "Bundled Open Design package for Neon, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "电光霓虹发光效果，高对比色彩搭配，界面大胆夺目。"
 }

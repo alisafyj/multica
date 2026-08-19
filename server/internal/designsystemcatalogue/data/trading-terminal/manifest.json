@@ -2,5 +2,7 @@
   "id": "trading-terminal",
   "name": "Trading Terminal Design System",
   "category": "Themed & Unique",
-  "description": "Bundled Open Design package for Trading Terminal Design System, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "主题与特色",
+  "description": "Bundled Open Design package for Trading Terminal Design System, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "Bloomberg 风格金融交易终端。纯深色，数据密集，青色/珊瑚色买卖信号。两米外一目了然。"
 }

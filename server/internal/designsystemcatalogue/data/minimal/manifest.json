@@ -2,5 +2,7 @@
   "id": "minimal",
   "name": "Minimal",
   "category": "Modern & Minimal",
-  "description": "Bundled Open Design package for Minimal, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "现代极简",
+  "description": "Bundled Open Design package for Minimal, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "减法设计，突出留白、干净排版和克制用色，最大化清晰度与专注感。"
 }

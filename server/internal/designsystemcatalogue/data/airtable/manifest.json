@@ -2,5 +2,7 @@
   "id": "airtable",
   "name": "Airtable",
   "category": "Design & Creative",
-  "description": "Bundled Open Design package for Airtable, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "设计与创意",
+  "description": "Bundled Open Design package for Airtable, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "电子表格数据库混合体。色彩丰富，友好，结构化数据美学。"
 }

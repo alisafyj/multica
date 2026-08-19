@@ -2,5 +2,7 @@
   "id": "wechat",
   "name": "WeChat Design System",
   "category": "Social & Messaging",
-  "description": "Bundled Open Design package for WeChat Design System, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "社交与通讯",
+  "description": "Bundled Open Design package for WeChat Design System, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "微信小程序、公众号及开放生态扩展的品牌视觉语言。"
 }

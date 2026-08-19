@@ -1,160 +1,160 @@
-# Design System Inspired by Duolingo
+# 受 Duolingo 启发的设计系统
 
-> Category: Productivity & SaaS
-> Language-learning platform. Bright owl green, chunky shadows, gamified joy.
+> Category: 效率与 SaaS
+> 语言学习平台。明亮的猫头鹰绿、粗厚阴影、游戏化的愉悦感。
 
-## 1. Visual Theme & Atmosphere
+## 1. 视觉主题与氛围
 
-Duolingo is gamification rendered as visual language. The interface is unapologetically bright, with **owl green** (`#58cc02`) as the brand primary and a chunky 4px bottom-shadow on every interactive element that reads like a 3D button waiting to be pressed. The page is white (`#ffffff`) with thick 2–3px borders in a deep gray (`#e5e5e5`) and the entire system reads like an iOS app from 2015 reborn with better hierarchy.
+Duolingo 是以视觉语言呈现的游戏化设计。界面毫无保留地鲜亮，以**猫头鹰绿**（`#58cc02`）为品牌主色，每个可交互元素底部都有粗厚的 4px 阴影，看起来像一个等待被按下的 3D 按钮。页面背景为白色（`#ffffff`），边框为 2–3px 深灰色（`#e5e5e5`），整体系统读起来就像一款 2015 年 iOS 应用以更好的层级感重生。
 
-Typography uses **Feather Bold** (a custom rounded sans) for chrome and **Mona Sans** (or Inter) for body. Display sizes are big and confident — Duolingo never whispers. Headings often carry the green underline-stroke or sit on a green pill, and the mascot Duo (a green owl) appears as an active illustration character, not a static logo.
+排版使用 **Feather Bold**（一种自定义圆角无衬线字体）用于界面框架，**Mona Sans**（或 Inter）用于正文。展示尺寸大而自信——Duolingo 从不低语。标题通常带有绿色下划线笔触或置于绿色胶囊上，吉祥物 Duo（一只绿色猫头鹰）以活跃的插画角色出现，而非静态 logo。
 
-Shape language is friendly: 16–20px radii on cards, 12px on buttons, 9999px on chips and progress bars. Iconography is filled, rounded, and color-coded by skill — every lesson surface has an instantly identifiable color pairing.
+形状语言友好亲切：卡片圆角 16–20px，按钮 12px，标签与进度条 9999px。图标系统为填充、圆角风格，并按技能进行色彩编码——每个课程界面都有一对一眼就能辨识的配色。
 
-**Key Characteristics:**
-- Owl green (`#58cc02`) as the dominant brand color, used in 30%+ of the surface
-- Chunky 4px bottom-shadow on every button (the "tactile press" affordance)
-- 2–3px solid borders, never hairlines
-- Feather Bold (rounded display) + Mona Sans (body)
-- Big confident type — display sizes start at 48px and climb
-- Mascot-as-character: Duo the owl appears in onboarding, errors, streaks
-- Streak orange (`#ff9600`) and gem pink (`#ce82ff`) as secondary brand colors
+**关键特征：**
+- 猫头鹰绿（`#58cc02`）作为主导品牌色，在界面中占据 30% 以上的面积
+- 每个按钮底部有粗厚 4px 阴影（"触觉按压"可供性）
+- 2–3px 实线边框，从不使用细线
+- Feather Bold（圆角展示字体）+ Mona Sans（正文）
+- 大而自信的文字——展示尺寸从 48px 起步并向上攀升
+- 吉祥物即角色：Duo 猫头鹰出现在引导、错误、连击等场景中
+- 连击橙（`#ff9600`）和宝石粉（`#ce82ff`）作为次级品牌色
 
-## 2. Color Palette & Roles
+## 2. 色彩方案与角色
 
-### Primary
-- **Owl Green** (`#58cc02`): Brand primary, primary CTA, correct answer.
-- **Owl Green Deep** (`#58a700`): Pressed/shadow color for green buttons.
-- **Owl Green Light** (`#89e219`): Hover, soft fills.
-- **Owl Green Pale** (`#dbf8c5`): Soft surface, success banner.
+### 主色
+- **猫头鹰绿**（`#58cc02`）：品牌主色、主要行动按钮、正确答案。
+- **深猫头鹰绿**（`#58a700`）：绿色按钮的按压/阴影色。
+- **浅猫头鹰绿**（`#89e219`）：悬停状态、柔和填充。
+- **淡猫头鹰绿**（`#dbf8c5`）：柔和表面、成功横幅。
 
-### Secondary Accents
-- **Streak Orange** (`#ff9600`): Streak counter, fire icon, premium energy.
-- **Streak Orange Deep** (`#cc7a00`): Pressed orange.
-- **Gem Pink** (`#ce82ff`): Gem currency, Super Duolingo.
-- **Eel Blue** (`#1cb0f6`): Hint button, info link.
-- **Cardinal Red** (`#ff4b4b`): Wrong answer, life lost.
-- **Bee Yellow** (`#ffc800`): Pro badge, achievement.
+### 次级强调色
+- **连击橙**（`#ff9600`）：连击计数器、火焰图标、付费能量。
+- **深连击橙**（`#cc7a00`）：橙色按压状态。
+- **宝石粉**（`#ce82ff`）：宝石货币、Super Duolingo。
+- **鳗鱼蓝**（`#1cb0f6`）：提示按钮、信息链接。
+- **红衣主教红**（`#ff4b4b`）：答错、失去生命。
+- **蜜蜂黄**（`#ffc800`）：专业徽章、成就。
 
-### Surface
-- **Snow** (`#ffffff`): Primary background.
-- **Eel** (`#f7f7f7`): Section break, secondary surface.
-- **Swan** (`#e5e5e5`): Disabled background, inset block.
-- **Wolf** (`#777777`): Dark divider, secondary text.
+### 表面色
+- **雪白**（`#ffffff`）：主背景。
+- **鳗鱼灰**（`#f7f7f7`）：区块分隔、次级表面。
+- **天鹅灰**（`#e5e5e5`）：禁用背景、内嵌块。
+- **狼灰**（`#777777`）：深色分隔线、次级文字。
 
-### Ink & Text
-- **Eel Black** (`#3c3c3c`): Primary text.
-- **Wolf** (`#777777`): Secondary text, captions.
-- **Hare** (`#afafaf`): Disabled, placeholder.
+### 墨色与文字
+- **鳗鱼黑**（`#3c3c3c`）：主要文字。
+- **狼灰**（`#777777`）：次要文字、说明文字。
+- **野兔灰**（`#afafaf`）：禁用、占位符。
 
-### Border
-- **Swan** (`#e5e5e5`): Standard 2px border.
-- **Hare** (`#afafaf`): Emphasized border on hover.
+### 边框
+- **天鹅灰**（`#e5e5e5`）：标准 2px 边框。
+- **野兔灰**（`#afafaf`）：悬停时的强调边框。
 
-## 3. Typography Rules
+## 3. 排版规则
 
-### Font Family
-- **Display / UI / Headings**: `Feather Bold`, with fallback: `'DIN Round Pro', 'Helvetica Neue', sans-serif`
-- **Body / Long-form**: `Mona Sans`, with fallback: `'Helvetica Neue', system-ui, sans-serif`
-- **Code (rare, schools/admin)**: `JetBrains Mono`, with fallback: `ui-monospace, Menlo, monospace`
+### 字体家族
+- **展示 / UI / 标题**：`Feather Bold`，备用字体：`'DIN Round Pro', 'Helvetica Neue', sans-serif`
+- **正文 / 长文**：`Mona Sans`，备用字体：`'Helvetica Neue', system-ui, sans-serif`
+- **代码（少用，学校/管理场景）**：`JetBrains Mono`，备用字体：`ui-monospace, Menlo, monospace`
 
-### Hierarchy
+### 层级
 
-| Role | Font | Size | Weight | Line Height | Letter Spacing | Notes |
+| 角色 | 字体 | 尺寸 | 字重 | 行高 | 字间距 | 备注 |
 |------|------|------|--------|-------------|----------------|-------|
-| Display | Feather Bold | 56px (3.5rem) | 800 | 1.05 | -0.01em | Onboarding hero |
-| H1 | Feather Bold | 32px (2rem) | 800 | 1.15 | -0.005em | Page title |
-| H2 | Feather Bold | 24px (1.5rem) | 800 | 1.2 | normal | Section heading |
-| H3 | Feather Bold | 18px (1.125rem) | 700 | 1.25 | normal | Card title, lesson row |
-| Body Large | Mona Sans | 17px (1.0625rem) | 500 | 1.5 | normal | Lesson prompt, instruction |
-| Body | Mona Sans | 15px (0.9375rem) | 400 | 1.5 | normal | Standard prose |
-| Caption | Mona Sans | 13px (0.8125rem) | 600 | 1.4 | 0.01em | XP counter, metadata |
-| Button | Feather Bold | 16px (1rem) | 800 | 1.2 | 0.02em | Standard button label |
-| Streak | Feather Bold | 14px (0.875rem) | 800 | 1.2 | normal | Streak number, on flame |
+| 展示 | Feather Bold | 56px (3.5rem) | 800 | 1.05 | -0.01em | 引导主视觉 |
+| H1 | Feather Bold | 32px (2rem) | 800 | 1.15 | -0.005em | 页面标题 |
+| H2 | Feather Bold | 24px (1.5rem) | 800 | 1.2 | normal | 版块标题 |
+| H3 | Feather Bold | 18px (1.125rem) | 700 | 1.25 | normal | 卡片标题、课程行 |
+| 大正文 | Mona Sans | 17px (1.0625rem) | 500 | 1.5 | normal | 课程提示、说明 |
+| 正文 | Mona Sans | 15px (0.9375rem) | 400 | 1.5 | normal | 标准文段 |
+| 说明文字 | Mona Sans | 13px (0.8125rem) | 600 | 1.4 | 0.01em | 经验值计数、元数据 |
+| 按钮 | Feather Bold | 16px (1rem) | 800 | 1.2 | 0.02em | 标准按钮标签 |
+| 连击 | Feather Bold | 14px (0.875rem) | 800 | 1.2 | normal | 连击数字、火焰上 |
 
-### Principles
-- **800 is default**: Feather Bold runs at 800 across headings and buttons. 700 feels weak in this system.
-- **Big type**: heading sizes are 25–40% larger than typical product brands — confidence as identity.
-- **Rounded letterforms**: every glyph has soft terminals; sharp serifs would break the friendliness contract.
+### 原则
+- **800 是默认值**：Feather Bold 在标题和按钮中以 800 字重运行。在此系统中，700 看起来偏弱。
+- **大字号**：标题尺寸比典型产品品牌大 25–40%——自信即身份。
+- **圆润字形**：每个字形都有柔和末端；锋利衬线会破坏亲和感契约。
 
-## 4. Component Stylings
+## 4. 组件样式
 
-### Buttons
+### 按钮
 
-**Primary (Owl Green)**
-- Background: `#58cc02`
-- Text: `#ffffff`
-- Padding: 14px 24px
-- Radius: 16px
-- Border-bottom: 4px solid `#58a700` (the chunky shadow)
-- Hover: background `#89e219`
-- Active: translate-y 4px, border-bottom 0 (button "presses")
-- Use: "Continue", "Check", main CTA.
+**主要按钮（猫头鹰绿）**
+- 背景：`#58cc02`
+- 文字：`#ffffff`
+- 内边距：14px 24px
+- 圆角：16px
+- 底部边框：4px solid `#58a700`（粗厚阴影）
+- 悬停：背景 `#89e219`
+- 激活：向下位移 4px，底部边框 0（按钮"按下"）
+- 用途："继续"、"检查"、主要行动。
 
-**Secondary (White with Bottom-Shadow)**
-- Background: `#ffffff`
-- Text: `#777777`
-- Border: 2px solid `#e5e5e5`
-- Border-bottom: 4px solid `#e5e5e5`
-- Radius: 16px
-- Padding: 14px 24px
-- Hover: text `#3c3c3c`, border `#afafaf`
+**次要按钮（白色带底部阴影）**
+- 背景：`#ffffff`
+- 文字：`#777777`
+- 边框：2px solid `#e5e5e5`
+- 底部边框：4px solid `#e5e5e5`
+- 圆角：16px
+- 内边距：14px 24px
+- 悬停：文字 `#3c3c3c`，边框 `#afafaf`
 
-**Streak Orange**
-- Background: `#ff9600`
-- Text: `#ffffff`
-- Border-bottom: 4px solid `#cc7a00`
-- Use: streak goal, "Start streak"
+**连击橙按钮**
+- 背景：`#ff9600`
+- 文字：`#ffffff`
+- 底部边框：4px solid `#cc7a00`
+- 用途：连击目标、"开始连击"
 
-**Error (Cardinal Red)**
-- Background: `#ff4b4b`
-- Text: `#ffffff`
-- Border-bottom: 4px solid `#cc3b3b`
-- Use: wrong answer feedback.
+**错误按钮（红衣主教红）**
+- 背景：`#ff4b4b`
+- 文字：`#ffffff`
+- 底部边框：4px solid `#cc3b3b`
+- 用途：答错反馈。
 
-### Cards / Lesson Tiles
-- Background: `#ffffff`
-- Border: 2px solid `#e5e5e5`
-- Border-bottom: 4px solid `#e5e5e5`
-- Radius: 16px
-- Padding: 16px
-- Hover: lift 2px, shadow `0 4px 0 #d7d7d7`
+### 卡片 / 课程格
+- 背景：`#ffffff`
+- 边框：2px solid `#e5e5e5`
+- 底部边框：4px solid `#e5e5e5`
+- 圆角：16px
+- 内边距：16px
+- 悬停：上浮 2px，阴影 `0 4px 0 #d7d7d7`
 
-### Skill Tree Node (Lesson Bubble)
-- Size: 80×72px
-- Background: skill-color tinted (green for active, gray for locked)
-- Border-bottom: 6px solid darker variant
-- Radius: 50% (circular)
-- Active: pulses 1.0 → 1.05 every 1.6s
+### 技能树节点（课程气泡）
+- 尺寸：80×72px
+- 背景：技能色调（激活为绿色，锁定为灰色）
+- 底部边框：6px solid 深色变体
+- 圆角：50%（圆形）
+- 激活：每 1.6s 在 1.0 → 1.05 之间脉冲
 
-### Inputs
-- Background: `#ffffff`
-- Border: 2px solid `#e5e5e5`
-- Radius: 12px
-- Padding: 12px 16px
-- Focus: border `#1cb0f6` (eel blue), ring `0 0 0 3px rgba(28, 176, 246, 0.2)`
+### 输入框
+- 背景：`#ffffff`
+- 边框：2px solid `#e5e5e5`
+- 圆角：12px
+- 内边距：12px 16px
+- 聚焦：边框 `#1cb0f6`（鳗鱼蓝），光晕 `0 0 0 3px rgba(28, 176, 246, 0.2)`
 
-### Progress Bar
-- Track: `#e5e5e5`
-- Fill: `#58cc02` (or `#ff9600` for streak)
-- Radius: 9999px
-- Height: 16px
-- Animated fill: 320ms ease-out on increment.
+### 进度条
+- 轨道：`#e5e5e5`
+- 填充：`#58cc02`（或连击时使用 `#ff9600`）
+- 圆角：9999px
+- 高度：16px
+- 动画填充：递增时 320ms ease-out。
 
-## 5. Spacing & Layout
+## 5. 间距与布局
 
-- **Base unit**: 4px. Scale: 4, 8, 12, 16, 24, 32, 48, 64.
-- **Container**: max 1080px, 24px gutter.
-- **Lesson tree column**: 320px wide; centered on desktop.
+- **基础单位**：4px。比例：4, 8, 12, 16, 24, 32, 48, 64。
+- **容器**：最大 1080px，24px 边距。
+- **课程树列**：宽 320px；在桌面端居中。
 
-## 6. Motion
+## 6. 动效
 
-- **Duration**: 180ms for button press; 320ms for skill-node unlock; 1.6s for active-node pulse.
-- **Easing**: `cubic-bezier(0.34, 1.56, 0.64, 1)` (back-out, slight overshoot) for unlocks.
-- **Mascot**: Duo blinks every 4–6s, jumps on streak milestones (480ms ease-out spring).
+- **时长**：按钮按压 180ms；技能节点解锁 320ms；激活节点脉冲 1.6s。
+- **缓动**：`cubic-bezier(0.34, 1.56, 0.64, 1)`（回弹缓出，轻微过冲）用于解锁动效。
+- **吉祥物**：Duo 每 4–6s 眨眼，在连击里程碑时跳跃（480ms ease-out 弹簧）。
 
-## 7. Usage Guardrails
+## 7. 使用守则
 
-- Keep the high-saturation owl green, chunky bottom shadows, and rounded lesson geometry together; flat green buttons alone do not read as Duolingo.
-- Reserve oversized bold type for lesson, streak, and progress moments where the product needs encouragement or feedback.
-- Use playful motion sparingly around progress state changes, avoiding generic bouncy animation on every control.
+- 保持高饱和度猫头鹰绿、粗厚底部阴影和圆润课程几何形状的组合；单独使用扁平绿色按钮并不能读出 Duolingo 的感觉。
+- 将超大粗体文字保留用于课程、连击和进度等需要鼓励或反馈的产品时刻。
+- 将趣味动效克制地用在进度状态变化周围，避免在每个控件上都使用通用的弹跳动画。

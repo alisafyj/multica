@@ -2,5 +2,7 @@
   "id": "spotify",
   "name": "Spotify",
   "category": "Media & Consumer",
-  "description": "Bundled Open Design package for Spotify, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "媒体与消费",
+  "description": "Bundled Open Design package for Spotify, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "音乐流媒体。暗底上的鲜绿，大胆字体，专辑封面驱动。"
 }

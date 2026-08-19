@@ -1,583 +1,585 @@
-# Design System Inspired by Starbucks
+# 以 Starbucks 为灵感的设计系统
 
-> Category: E-Commerce & Retail
-> Global coffee retail brand. Four-tier green system, warm cream canvas, full-pill buttons.
+> Category: 电商与零售
+> 全球咖啡零售品牌。四层绿色体系，暖奶油色画布，全圆角胶囊按钮。
 
-## 1. Visual Theme & Atmosphere
+## 1. 视觉主题与氛围
 
-Starbucks' design system is a **warm, confident retail flagship** wearing the green of their storefront apron across every surface. The canvas alternates between a neutral-warm cream (`#f2f0eb`) and a ceramic off-white (`#edebe9`) — colors that reference actual store materials: the paper napkins, the café walls, the wood finishes — while the signature **Starbucks Green** (`#006241`) anchors the brand moment on hero bands, CTAs, and the Rewards experience. The greens come in four calibrated shades (Starbucks, Accent, House, Uplift) each mapped to a specific surface role, and gold (`#cba258`) appears only around Rewards-status ceremony — not as a general accent.
+Starbucks 的设计系统是一套**温暖自信的零售旗舰**风格，将门店围裙上的绿色延伸至每一个界面表面。画布在中性暖奶油色（`#f2f0eb`）与陶瓷米白色（`#edebe9`）之间交替——这两种颜色直接取材于真实的店内材质：纸巾、咖啡馆墙面、木质装饰——而标志性的**星巴克绿**（`#006241`）则在主视觉横幅、行动号召区和 Rewards 会员体验中锚定品牌瞬间。绿色体系包含四个经过精心校准的色阶（Starbucks、Accent、House、Uplift），每个色阶对应特定的界面角色；金色（`#cba258`）仅出现在 Rewards 会员等级的仪式感场景中，而非作为通用强调色使用。
 
-Typography carries most of the brand voice. The proprietary **SoDoSans** typeface (custom to Starbucks) sits across nearly every surface with a tight `-0.16px` letter-spacing — it reads confident and friendly rather than fashion-magazine severe. What's unusual: the Rewards page switches to a warm serif (`"Lander Tall", "Iowan Old Style", Georgia`) for specific headline moments, subtly echoing the nostalgic feel of a coffeehouse chalkboard. And the Careers pages use a handwritten script (`"Kalam", "Comic Sans MS", cursive`) for personal cup-name touches. Three typefaces, three contexts — the system is disciplined about when each appears.
+字体承载了品牌声音的大部分重量。专有字体 **SoDoSans**（星巴克定制字体）覆盖了几乎所有界面，搭配紧凑的 `-0.16px` 字符间距——读起来自信友善，而非时尚杂志式的严肃冷峻。值得注意的是：Rewards 页面在特定标题时刻切换为暖调衬线体（`"Lander Tall", "Iowan Old Style", Georgia`），微妙地呼应了咖啡馆黑板的怀旧感。而 Careers 页面则使用手写体（`"Kalam", "Comic Sans MS", cursive`）来呈现杯子上的手写姓名元素。三种字体，三种场景——系统对各自出场时机有严格约束。
 
-The surfaces breathe through rounded geometry. Every button is a 50px full-pill. Cards take a 12px rounded-rectangle. The "Frap" floating CTA — a 56px circular order button in Green Accent (`#00754A`) — is the product's signature depth move: it floats bottom-right with a layered shadow stack (`0 0 6px rgba(0,0,0,0.24)` base + `0 8px 12px rgba(0,0,0,0.14)` ambient) and compresses via `scale(0.95)` on press. Elevations are otherwise restrained — card shadows stay at a whispered `0.14/0.24` alpha, global nav gets a quiet three-layer shadow stack. The whole system feels like clean café signage: legible, warm, and never shouting.
+界面通过圆润的几何形态营造呼吸感。所有按钮均为 50px 全圆角胶囊形。卡片采用 12px 圆角矩形。"Frap"悬浮 CTA——一个绿色强调色（`#00754A`）填充的 56px 圆形订单按钮——是这套产品最具代表性的立体感设计：它悬浮于右下角，带有叠加阴影（`0 0 6px rgba(0,0,0,0.24)` 底层光晕 + `0 8px 12px rgba(0,0,0,0.14)` 环境光），按下时通过 `scale(0.95)` 进行压缩。整体阴影运用克制——卡片阴影保持在轻柔的 `0.14/0.24` 透明度，全局导航使用安静的三层阴影叠加。整套系统的感觉就像干净的咖啡馆标牌：清晰、温暖，从不喧嚣。
 
-**Key Characteristics:**
-- Four-tier green brand system (Starbucks / Accent / House / Uplift) each mapped to a distinct surface role — not a single "brand green"
-- Gold reserved for Rewards-status moments only; never a general-purpose accent
-- Warm-neutral canvas (`#f2f0eb` / `#edebe9`) instead of cold white — references café materials
-- Custom proprietary typeface (SoDoSans) with tight `-0.16px` letter-spacing as the universal voice
-- Context-specific type switches: serif (Lander Tall) for Rewards, script (Kalam) for Careers cup-names
-- Full-pill buttons (`50px` radius) universal, `scale(0.95)` active press the signature micro-interaction
-- Floating "Frap" circular CTA (`56px`, Green Accent fill, layered shadow stack) — the product's signature elevation element
-- Gift-card surfaces designed as **photographed physical product** — every card is a distinct illustrated photograph rather than a generated graphic
-- 12px card radius + whisper-soft shadows keep content cards flat-plus-hint-of-lift
-- Rem-based spacing scale anchored at 1.6rem (~16px) = `--space-3`, stepping to 6.4rem (~64px)
+**核心特征：**
+- 四层绿色品牌体系（Starbucks / Accent / House / Uplift），各自对应独立的界面角色——而非单一的"品牌绿"
+- 金色仅限于 Rewards 会员等级的仪式感场景；绝不作为通用强调色
+- 暖中性画布（`#f2f0eb` / `#edebe9`）而非冷白色——直接引用咖啡馆材质
+- 定制专有字体 SoDoSans，搭配紧凑的 `-0.16px` 字符间距，作为统一的品牌声音
+- 场景专属字体切换：衬线体（Lander Tall）用于 Rewards，手写体（Kalam）用于 Careers 杯名
+- 全圆角胶囊按钮（`50px` 圆角），`scale(0.95)` 按下态为标志性微交互
+- 悬浮"Frap"圆形 CTA（`56px`，绿色强调色填充，叠加阴影）——产品标志性的高度元素
+- 礼品卡界面设计为**实物产品照片**——每张卡片都是独立的插画摄影，而非生成式图形
+- 12px 卡片圆角 + 轻柔阴影，让内容卡保持扁平带微微悬浮感
+- 以 rem 为单位的间距体系，以 1.6rem（约 16px）为锚点，即 `--space-3`，步进至 6.4rem（约 64px）
 
-**Color-block page rhythm:** Cream hero → White content sections → Dark-green (`#1E3932`) feature band with white text → Cream utility zone → Dark-green (`#1E3932`) footer with gold / white text — an espresso-dark bookend around the bright body.
+**色块页面节奏：** 奶油色主视觉区 → 白色内容区 → 深绿色（`#1E3932`）特色横幅（白色文字）→ 奶油色功能区 → 深绿色（`#1E3932`）页脚（金色/白色文字）——深浓咖啡色书挡环绕明亮主体。
 
-## 2. Color Palette & Roles
+## 2. 色彩体系与角色定义
 
-**Source pages analyzed:** homepage, rewards, gift cards, product detail (Pink Energy Drink), product nutrition (Cold Brew).
+**分析页面来源：** 首页、Rewards 会员页、礼品卡页、产品详情页（粉色能量饮品）、产品营养信息页（冷萃咖啡）。
 
-### Primary
+### 主色
 
-- **Starbucks Green** (`#006241`): The historic brand green. Used on h1 headings, primary section headers on the Rewards page, and as the main brand signal wherever a single dominant color is needed.
-- **Green Accent** (`#00754A`): A slightly brighter, more luminous green. The primary filled-CTA color ("Explore our afternoon menu", "See the spring menu") and the fill of the floating Frap circular button.
-- **House Green** (`#1E3932`): The deep near-black brand green. Footer surface, feature-band backgrounds, reward-status dark surfaces, and the headline "Free coffee is just the beginning" hero band on Rewards.
-- **Green Uplift** (`#2b5148`): A secondary mid-dark green used sparingly on decorative accents and dark-gradient moments.
-- **Green Light** (`#d4e9e2`): A pale mint wash used for form-valid-state tints and light green utility surfaces.
+- **Starbucks Green**（`#006241`）：历史品牌绿。用于 h1 标题、Rewards 页面的主要区块标题，以及需要单一主导色彩的品牌信号场景。
+- **Green Accent**（`#00754A`）：稍亮、更鲜亮的绿色。主要填充型 CTA 的颜色（"探索下午茶菜单"、"查看春季菜单"）以及悬浮 Frap 圆形按钮的填充色。
+- **House Green**（`#1E3932`）：深邃近黑的品牌绿。页脚背景、特色横幅背景、Rewards 深色状态面板，以及 Rewards 页面主视觉横幅上的标题"免费咖啡只是个开始"。
+- **Green Uplift**（`#2b5148`）：次级中深绿色，少量用于装饰性强调和深色渐变场景。
+- **Green Light**（`#d4e9e2`）：淡薄荷色，用于表单有效状态的色调背景和浅绿功能性界面。
 
-### Secondary & Accent
+### 次要色与强调色
 
-- **Gold** (`#cba258`): Reserved almost exclusively for Rewards-status ceremony — Gold-tier callouts, partnership badges (SkyMiles, Bonvoy), and premium-feeling accents. Never a general-purpose brand color.
-- **Gold Light** (`#dfc49d`): Softer gold for background washes on gold-tier sections.
-- **Gold Lightest** (`#faf6ee`): Cream-gold page-surface wash used under partnership sections on the Rewards page — ties the gold accent back into the warm neutral system.
+- **Gold**（`#cba258`）：几乎专门保留给 Rewards 会员等级的仪式感场景——金级别提示、合作伙伴徽章（SkyMiles、Bonvoy）以及高级感强调。绝不作为通用品牌色。
+- **Gold Light**（`#dfc49d`）：较柔和的金色，用于金级会员区块的背景色调。
+- **Gold Lightest**（`#faf6ee`）：奶油金页面底色，用于 Rewards 页面合作伙伴区块——将金色强调色与暖中性系统相融合。
 
-### Surface & Background
+### 界面与背景色
 
-- **White** (`#ffffff`): Primary card and modal surface. Also card fill on gift-card tiles.
-- **Neutral Cool** (`#f9f9f9`): Subtle cool-gray surface used on dropdown menus ("Account" dropdown), form-card wraps, and quiet utility containers.
-- **Neutral Warm** (`#f2f0eb`): The warm cream **primary page canvas** for Rewards utility zones and hero bands.
-- **Ceramic** (`#edebe9`): A slightly warmer/darker cream for zone separators, soft page-section washes, and Rewards partnership band.
-- **Black** (`#000000`): Deep ink reserved for the dark top-of-page CTA strip ("Join now") and high-contrast top-nav sign-in buttons.
+- **White**（`#ffffff`）：主要卡片与弹窗界面色。同时作为礼品卡磁贴的卡片填充色。
+- **Neutral Cool**（`#f9f9f9`）：细腻冷灰色，用于下拉菜单（"账户"下拉）、表单卡片包裹容器及低调功能性容器。
+- **Neutral Warm**（`#f2f0eb`）：暖奶油色，作为 Rewards 功能区和主视觉区的**主要页面画布**。
+- **Ceramic**（`#edebe9`）：稍偏暖/深的奶油色，用于区域分隔、柔和页面区块过渡以及 Rewards 合作伙伴横幅。
+- **Black**（`#000000`）：深墨黑，保留给页面顶部深色 CTA 横幅（"立即加入"）以及高对比度顶部导航登录按钮。
 
-### Neutrals & Text
+### 中性色与文字色
 
-- **Text Black** (`rgba(0, 0, 0, 0.87)`): Primary heading and body text color on light surfaces. Not pure black — an 87%-opacity black that reads warmer.
-- **Text Black Soft** (`rgba(0, 0, 0, 0.58)`): Secondary/metadata text on light surfaces.
-- **Text White** (`rgba(255, 255, 255, 1)`): Primary heading/body text on dark green surfaces.
-- **Text White Soft** (`rgba(255, 255, 255, 0.70)`): Secondary text on dark-green surfaces — footer link descriptions, caption text.
-- **Rewards Green** (`#33433d`): A dedicated muted slate-green used only on Rewards-page text blocks — a slightly "dustier" reading color than Text Black that signals "reward surface" without using full Starbucks Green.
+- **Text Black**（`rgba(0, 0, 0, 0.87)`）：浅色背景上的主要标题和正文颜色。非纯黑——87% 不透明度的黑色读起来更温暖。
+- **Text Black Soft**（`rgba(0, 0, 0, 0.58)`）：浅色背景上的次要/元信息文字颜色。
+- **Text White**（`rgba(255, 255, 255, 1)`）：深绿色背景上的主要标题/正文颜色。
+- **Text White Soft**（`rgba(255, 255, 255, 0.70)`）：深绿色背景上的次要文字——页脚链接说明、说明文字。
+- **Rewards Green**（`#33433d`）：专门用于 Rewards 页面文字块的哑光石绿色——比 Text Black 略带"沉静感"的阅读色，传递出"会员界面"的氛围，而无需使用完整的 Starbucks Green。
 
-### Semantic & Accent
+### 语义色与强调色
 
-- **Red** (`#c82014`): Error and destructive state (form invalid, destructive actions).
-- **Yellow** (`#fbbc05`): Warning state, legacy brand touch.
-- **Green Light** (`#d4e9e2` at 33% opacity = `hsl(160 32% 87% / 33%)`): Form valid-field tint background.
-- **Red Tint** (`hsl(4 82% 43% / 5%)`): Invalid-field tint on forms.
+- **Red**（`#c82014`）：错误与破坏性操作状态（表单无效、危险操作）。
+- **Yellow**（`#fbbc05`）：警告状态，品牌历史遗留色。
+- **Green Light**（`#d4e9e2`，33% 不透明度 = `hsl(160 32% 87% / 33%)`）：表单有效字段的色调背景。
+- **Red Tint**（`hsl(4 82% 43% / 5%)`）：表单无效字段的色调背景。
 
-### Black / White Alpha Ladders
+### 黑/白透明度梯度
 
-Two parallel translucent scales for overlay and secondary-text use:
-- `rgba(0,0,0,0.06)` through `rgba(0,0,0,0.90)` in 10% steps — for dark overlays on light surfaces
-- `rgba(255,255,255,0.10)` through `rgba(255,255,255,0.90)` in 10% steps — for light overlays on dark surfaces
+两组平行的半透明色阶，用于遮罩层和次要文字：
+- `rgba(0,0,0,0.06)` 至 `rgba(0,0,0,0.90)`，以 10% 为步进——浅色背景上的深色遮罩
+- `rgba(255,255,255,0.10)` 至 `rgba(255,255,255,0.90)`，以 10% 为步进——深色背景上的浅色遮罩
 
-### Gradient System
+### 渐变系统
 
-No structural gradient tokens observed. Surface hierarchy is solid-color-block throughout — the system relies on its five-tier cream/green surface palette rather than gradients.
+未发现结构性渐变 token。整体界面层次完全依靠纯色色块——系统依赖其五层奶油/绿色界面调色板，而非渐变。
 
-## 3. Typography Rules
+## 3. 字体规范
 
-### Font Family
+### 字体族
 
-- **Primary:** `SoDoSans, "Helvetica Neue", Helvetica, Arial, sans-serif` — Starbucks' proprietary corporate typeface, used across nearly every surface
-- **Loading Fallback:** `"Helvetica Neue", Helvetica, Arial, sans-serif` — what users see before SoDoSans loads
-- **Rewards Serif:** `"Lander Tall", "Iowan Old Style", Georgia, serif` — used on specific Rewards-page headline moments for a warm editorial feel
-- **Careers Script:** `"Kalam", "Comic Sans MS", cursive` — used exclusively for Careers-page "cup name" decorative touches, referencing the hand-written names on Starbucks cups
+- **主字体：** `SoDoSans, "Helvetica Neue", Helvetica, Arial, sans-serif` — 星巴克专有企业字体，覆盖几乎所有界面
+- **加载备用字体：** `"Helvetica Neue", Helvetica, Arial, sans-serif` — SoDoSans 加载前的显示字体
+- **Rewards 衬线体：** `"Lander Tall", "Iowan Old Style", Georgia, serif` — 用于 Rewards 页面特定标题时刻，营造温暖的编辑感
+- **Careers 手写体：** `"Kalam", "Comic Sans MS", cursive` — 专用于 Careers 页面的"杯名"装饰元素，呼应星巴克杯子上的手写姓名
 
-No OpenType stylistic sets explicitly activated at `:root`.
+根节点（`:root`）未显式激活任何 OpenType 样式集。
 
-### Hierarchy
+### 层级体系
 
-| Role | Size | Weight | Line Height | Letter Spacing | Notes |
+| 角色 | 字号 | 字重 | 行高 | 字间距 | 备注 |
 |------|------|--------|-------------|----------------|-------|
-| Display (text-10) | 5.0rem / 80px | 400–600 | 1.2 | -0.16px | Largest Rewards/hero display |
-| Jumbo (text-9) | 3.6rem / 58px | 400–600 | 1.2 | -0.16px | Secondary hero headings |
-| Hero Large (text-8) | 2.8rem / 45px | 400–600 | 1.2–1.5 | -0.16px | Landing section headlines |
-| H1 | 24px | 600 | 36px | -0.16px | Starbucks-Green primary heading |
-| H2 | 24px | 400 | 36px | -0.16px | Regular-weight section title in Text Black |
-| Body Large | 19px | 400–600 | 33.25px (~1.75) | -0.16px | Hero intro copy, feature-band body |
-| Body (text-3) | 1.6rem / 16px | 400 | 1.5 (24px) | -0.01em | Default body copy |
-| Small (text-2) | 1.4rem / ~14px | 400–600 | 1.5 | -0.01em | Button label, metadata, form labels |
-| Micro (text-1) | 1.3rem / ~13px | 400 | 1.5 | -0.01em | Active float-label state, caption micro-copy |
-| Button Label | 14–16px | 400–600 | 1.2 | -0.01em | All pill-button labels |
+| Display (text-10) | 5.0rem / 80px | 400–600 | 1.2 | -0.16px | 最大 Rewards/主视觉展示字 |
+| Jumbo (text-9) | 3.6rem / 58px | 400–600 | 1.2 | -0.16px | 次级主视觉标题 |
+| Hero Large (text-8) | 2.8rem / 45px | 400–600 | 1.2–1.5 | -0.16px | 落地区块标题 |
+| H1 | 24px | 600 | 36px | -0.16px | Starbucks Green 主标题 |
+| H2 | 24px | 400 | 36px | -0.16px | Text Black 正常字重区块标题 |
+| Body Large | 19px | 400–600 | 33.25px（约 1.75）| -0.16px | 主视觉引言文案、特色横幅正文 |
+| Body (text-3) | 1.6rem / 16px | 400 | 1.5（24px）| -0.01em | 默认正文 |
+| Small (text-2) | 1.4rem / 约 14px | 400–600 | 1.5 | -0.01em | 按钮标签、元信息、表单标签 |
+| Micro (text-1) | 1.3rem / 约 13px | 400 | 1.5 | -0.01em | 激活浮动标签状态、说明微文案 |
+| Button Label | 14–16px | 400–600 | 1.2 | -0.01em | 所有胶囊按钮标签 |
 
-**Letter-spacing tokens:**
-- `letterSpacingNormal`: `-0.01em` (default — tight, characteristic)
-- `letterSpacingLoose`: `0.1em` (emphasized caps)
-- `letterSpacingLooser`: `0.15em` (uppercase-style labels, extreme emphasis)
+**字间距 token：**
+- `letterSpacingNormal`：`-0.01em`（默认——紧凑，标志性特征）
+- `letterSpacingLoose`：`0.1em`（强调大写）
+- `letterSpacingLooser`：`0.15em`（全大写样式标签，极度强调）
 
-**Line-height tokens:**
-- `lineHeightNormal`: `1.5` (body)
-- `lineHeightCompact`: `1.2` (display/buttons)
+**行高 token：**
+- `lineHeightNormal`：`1.5`（正文）
+- `lineHeightCompact`：`1.2`（展示字/按钮）
 
-### Principles
+### 原则
 
-- **Tight negative tracking (`-0.01em`)** is applied almost universally — the entire product reads slightly compressed, which gives SoDoSans its confident presence without feeling squeezed.
-- **Weight shifts carry hierarchy, not size shifts.** H1 and H2 share the same 24px/36px size; only weight (600 vs 400) and color (Starbucks-Green vs Text Black) separate them.
-- **Size tokens use rem, anchored to `1rem = 10px`** on this site (via a `font-size: 62.5%` root trick). So `1.6rem` = 16px, `2.4rem` = 24px, etc. The scale is semantic (textSize-1 through textSize-10), not arbitrary pixel values.
-- **Context-specific typeface swaps** — serif on Rewards, script on Careers — are deliberate and localized. Never mix them with the primary sans within the same surface.
-- **Body text never goes pure black** — it sits at `rgba(0,0,0,0.87)` to match the warm-neutral canvas temperature.
+- **全局负向紧缩字距（`-0.01em`）** 几乎无处不在——整套产品读起来略显压缩，赋予 SoDoSans 自信的存在感，却不显得局促。
+- **字重变化承载层级，而非字号变化。** H1 与 H2 共用同一个 24px/36px 字号；区别只在字重（600 对比 400）和颜色（Starbucks Green 对比 Text Black）。
+- **字号 token 使用 rem，以 `1rem = 10px` 为锚点**（通过根节点 `font-size: 62.5%` 实现）。因此 `1.6rem` = 16px，`2.4rem` = 24px，以此类推。字号体系是语义化的（textSize-1 至 textSize-10），而非任意像素值。
+- **场景专属字体切换**——Rewards 用衬线体，Careers 用手写体——是经过深思熟虑的定向设计。切勿在同一界面内与主无衬线字体混用。
+- **正文文字永远不使用纯黑**——固定为 `rgba(0,0,0,0.87)`，以匹配暖中性画布的色温。
 
-### Note on Font Substitutes
+### 字体替代说明
 
-SoDoSans is proprietary to Starbucks (licensed from House Industries, not publicly available). Reasonable open-source substitutes:
-- **Inter** (Google Fonts) — similar humanist geometric proportions, wide weight range
-- **Manrope** — slightly rounder, similar confident feel
-- **Nunito Sans** — warmer, good for a "café" brand substitute
+SoDoSans 是星巴克专有字体（由 House Industries 授权，不对外公开）。合理的开源替代方案：
+- **Inter**（Google Fonts）——相近的人文几何比例，字重覆盖广
+- **Manrope**——稍圆润，有相似的自信感
+- **Nunito Sans**——更温暖，适合"咖啡馆"品牌替代
 
-If substituting, verify the tight `-0.01em` / `-0.16px` tracking still reads well; some open-source fonts need `-0.005em` instead.
+如需替代，请验证紧缩字距 `-0.01em` / `-0.16px` 是否仍然可读；部分开源字体可能需要调整为 `-0.005em`。
 
-Lander Tall (the Rewards serif) is custom — open-source substitutes: **Iowan Old Style** (already in fallback), **Lora**, or **Source Serif Pro**. Kalam (Careers script) is available on Google Fonts directly.
+Lander Tall（Rewards 衬线体）为定制字体——开源替代方案：**Iowan Old Style**（已在备用字体栈中）、**Lora** 或 **Source Serif Pro**。Kalam（Careers 手写体）可在 Google Fonts 直接获取。
 
-## 4. Component Stylings
+## 4. 组件样式
 
-### Buttons
+### 按钮
 
-**1. Primary Filled — "Explore our afternoon menu / Sign up for free"**
-- Background: `#00754A` (Green Accent)
-- Text: `#ffffff`
-- Border: `1px solid #00754A`
-- Radius: `50px` (full pill)
-- Padding: `7px 16px`
-- Font: SoDoSans, 16px, weight 600, letter-spacing `-0.01em`
-- Active state: `transform: scale(0.95)` via `--buttonActiveScale`
-- Transition: `all 0.2s ease`
+**1. 主要填充型——"探索下午茶菜单 / 免费注册"**
+- 背景：`#00754A`（Green Accent）
+- 文字：`#ffffff`
+- 边框：`1px solid #00754A`
+- 圆角：`50px`（全胶囊）
+- 内边距：`7px 16px`
+- 字体：SoDoSans，16px，字重 600，字间距 `-0.01em`
+- 激活态：通过 `--buttonActiveScale` 实现 `transform: scale(0.95)`
+- 过渡：`all 0.2s ease`
 
-**2. Primary Outlined — "Give them a try / Start an order"**
-- Background: transparent
-- Text: `#00754A` (Green Accent)
-- Border: `1px solid #00754A`
-- Same radius/padding/active/transition as Primary Filled
+**2. 主要描边型——"来一试 / 开始点单"**
+- 背景：transparent
+- 文字：`#00754A`（Green Accent）
+- 边框：`1px solid #00754A`
+- 圆角/内边距/激活/过渡与主要填充型相同
 
-**3. Black Filled — "Join now"**
-- Background: `#000000`
-- Text: `#ffffff`
-- Border: `1px solid #000000`
-- Radius: `50px`, Padding: `7px 16px`
-- Font: 14px, weight 600
-- Used on the top-of-page join strip and similar conversion moments
+**3. 黑色填充型——"立即加入"**
+- 背景：`#000000`
+- 文字：`#ffffff`
+- 边框：`1px solid #000000`
+- 圆角：`50px`，内边距：`7px 16px`
+- 字体：14px，字重 600
+- 用于页面顶部加入横幅及类似转化场景
 
-**4. Dark Outlined — "Sign in"**
-- Background: transparent
-- Text: `rgba(0, 0, 0, 0.87)` (Text Black)
-- Border: `1px solid rgba(0, 0, 0, 0.87)`
-- Radius: `50px`, Padding: `7px 16px`
-- Font: 14px, weight 600
+**4. 深色描边型——"登录"**
+- 背景：transparent
+- 文字：`rgba(0, 0, 0, 0.87)`（Text Black）
+- 边框：`1px solid rgba(0, 0, 0, 0.87)`
+- 圆角：`50px`，内边距：`7px 16px`
+- 字体：14px，字重 600
 
-**5. Green-on-Green Inverted — "See the spring menu"**
-- Background: `#ffffff`
-- Text: `#00754A`
-- Border: `1px solid #ffffff`
-- Used when the surface behind the button is the dark green House Green band — white button with green text instead of a filled green pill on green bg
+**5. 绿底反色——"查看春季菜单"**
+- 背景：`#ffffff`
+- 文字：`#00754A`
+- 边框：`1px solid #ffffff`
+- 当按钮背景是深绿色 House Green 横幅时使用——白色按钮配绿色文字，而非绿底上再放绿色填充胶囊
 
-**6. Outlined on Dark — "Learn more / Order now"**
-- Background: transparent
-- Text: `#ffffff`
-- Border: `1px solid #ffffff`
-- Used on dark-green feature bands for secondary action paired with a white filled CTA
+**6. 深色背景描边型——"了解更多 / 立即订购"**
+- 背景：transparent
+- 文字：`#ffffff`
+- 边框：`1px solid #ffffff`
+- 用于深绿色特色横幅上与白色填充 CTA 配对的次要操作
 
-**7. Consent Agree (dark-green variant)**
-- Background: `rgb(0, 130, 72)` (a specific variant green used in the cookie-consent module)
-- Text: `#ffffff`
-- No border, `50px` radius, `7px 16px` padding, 14px / weight 400
-- Slightly brighter than Green Accent — reserved for the consent-banner Agree action
+**7. 同意按钮（深绿变体）**
+- 背景：`rgb(0, 130, 72)`（Cookie 同意模块专用变体绿）
+- 文字：`#ffffff`
+- 无边框，`50px` 圆角，`7px 16px` 内边距，14px / 字重 400
+- 比 Green Accent 略亮——专用于 Cookie 提示横幅的"同意"操作
 
-**8. Frap — Floating Circular Order Button**
-- Background: `#00754A` (Green Accent)
-- Icon: `#ffffff`
-- Size: `5.6rem / 56px` (standard), `4rem / 40px` (mini variant)
-- Radius: `50%` (full circle)
-- Fixed bottom-right, `-0.8rem` touch offset for extra tap comfort
-- Shadow stack: base `0 0 6px rgba(0,0,0,0.24)` + ambient `0 8px 12px rgba(0,0,0,0.14)`
-- Active state: ambient shadow fades to `0 8px 12px rgba(0,0,0,0)`
-- This is the product's signature elevation element — it floats over every scrolled surface
+**8. Frap——悬浮圆形订单按钮**
+- 背景：`#00754A`（Green Accent）
+- 图标：`#ffffff`
+- 尺寸：`5.6rem / 56px`（标准），`4rem / 40px`（迷你变体）
+- 圆角：`50%`（完整圆形）
+- 固定于右下角，`-0.8rem` 触摸偏移量，提供额外的点击舒适区
+- 阴影叠加：底层 `0 0 6px rgba(0,0,0,0.24)` + 环境光 `0 8px 12px rgba(0,0,0,0.14)`
+- 激活态：环境光阴影收缩至 `0 8px 12px rgba(0,0,0,0)`
+- 这是产品标志性的高度元素——它悬浮于每个滚动界面之上
 
-**9. Full-width Feedback Tab — "Provide feedback"**
-- Background: `#00754A`
-- Text: `#ffffff`
-- Radius: `12px 12px 0px 0px` (top-rounded only)
-- Padding: `8px 16px`
-- Font: 14px, weight 400
-- Positioned fixed bottom-right-inside, attached to the viewport edge
+**9. 全宽反馈标签——"提供反馈"**
+- 背景：`#00754A`
+- 文字：`#ffffff`
+- 圆角：`12px 12px 0px 0px`（仅顶部圆角）
+- 内边距：`8px 16px`
+- 字体：14px，字重 400
+- 固定于视口右下角边缘
 
-### Cards & Containers
+### 卡片与容器
 
-**Content Card (default)**
-- Background: `#ffffff` (`--cardBackgroundColor`)
-- Radius: `12px` (`--cardBorderRadius`)
-- Shadow: `0px 0px .5px 0px rgba(0,0,0,0.14), 0px 1px 1px 0px rgba(0,0,0,0.24)` (`--cardBoxShadow`)
-- Used for: feature cards, menu-item tiles, reward-status panels
+**内容卡（默认）**
+- 背景：`#ffffff`（`--cardBackgroundColor`）
+- 圆角：`12px`（`--cardBorderRadius`）
+- 阴影：`0px 0px .5px 0px rgba(0,0,0,0.14), 0px 1px 1px 0px rgba(0,0,0,0.24)`（`--cardBoxShadow`）
+- 用于：特色卡片、菜单商品磁贴、Rewards 状态面板
 
-**Gift Card Tile**
-- Background: illustrated photography fills the card (no solid bg)
-- Radius: similar to cards (`~12px`, slightly tighter on corners)
-- Shadow: lighter than default card — these are treated like physical cards laid on the canvas
-- Labeled by category above the card grid (Spring, Thank You, Birthday, Celebration, Mother's Day, Appreciation, Encouragement, Milestones, Anytime)
+**礼品卡磁贴**
+- 背景：插画摄影铺满整张卡片（无纯色背景）
+- 圆角：与卡片相近（约 `12px`，边角略紧）
+- 阴影：比默认卡片更轻——这类卡片被处理为摆放在画布上的实体卡片
+- 以类别标签分组（春季、感谢、生日、庆典、母亲节、感恩、鼓励、里程碑、随时送）
 
-**Rewards Status Cards (Rewards page signature)**
-- Three-column grid: Bronze / Gold / Silver-ish — each a dark-green (`#1E3932`) panel with:
-  - Colored gradient/color header ring
-  - Numbered "Level" badge
-  - Status title in large SoDoSans weight 600
-  - Stars / benefits list in white/translucent-white text
-  - Bottom "As you earn more stars…" progression caption
+**Rewards 状态卡（Rewards 页面标志性组件）**
+- 三栏网格：铜卡 / 金卡 / 银卡——每块为深绿色（`#1E3932`）面板，包含：
+  - 彩色渐变/纯色标题环
+  - 编号"等级"徽章
+  - 大号 SoDoSans 字重 600 的等级标题
+  - 白色/半透明白色文字的星数/权益列表
+  - 底部"随着你积累更多星数……"晋级说明文字
 
-**Partnership Card (Rewards)**
-- Background: `#faf6ee` (Gold Lightest) warm-cream surface
-- Content: partner logos ("SkyMiles", "Bonvoy") centered, with descriptive text below
-- Radius and shadow follow default card spec
+**合作伙伴卡（Rewards 页）**
+- 背景：`#faf6ee`（Gold Lightest）暖奶油色
+- 内容：居中的合作伙伴 Logo（"SkyMiles"、"Bonvoy"）+ 下方说明文字
+- 圆角与阴影遵循默认卡片规格
 
-**Dropdown Menu (Account dropdown, top-nav)**
-- Background: `#f9f9f9` (Neutral Cool)
-- Menu items at `24px / weight 400` in Text Black
-- No border — just background surface shift against white nav
+**下拉菜单（账户下拉，顶部导航）**
+- 背景：`#f9f9f9`（Neutral Cool）
+- 菜单项：`24px / 字重 400`，Text Black 颜色
+- 无边框——仅通过白色导航栏与背景的色差来区分
 
-**Modal**
-- Padding: `2.4rem` (`--modalPadding`)
-- Top padding: `8.8rem` (`--modalTopPadding`) — leaves room for close button / header
-- Combined vertical padding: `11.2rem`
-- Radius inherits from card spec (`12px`)
+**弹窗**
+- 内边距：`2.4rem`（`--modalPadding`）
+- 顶部内边距：`8.8rem`（`--modalTopPadding`）——为关闭按钮/标题留出空间
+- 垂直内边距合计：`11.2rem`
+- 圆角继承卡片规格（`12px`）
 
-### Inputs & Forms
+### 输入框与表单
 
-**Floating Label Input**
-- Label floats above the input border when focused/filled
-- Desktop label font size: `1.9rem` default, animates to `1.4rem` when active
-- Mobile label font size: `1.6rem` default, animates to `1.3rem` active
-- Label horizontal offset: `12px` from left
-- Active label translate: up to `-12px` with `-50%` Y translation
-- Field padding: `12px`
-- Form horizontal padding: `1.6rem`
-- Validation: valid-field gets `rgba(green-light, 0.33)` tint; invalid-field gets `rgba(red, 0.05)` tint
-- Transition: `0.3s option-label-marker-expansion cubic-bezier(0.32, 2.32, 0.61, 0.27)` on checked-input
+**浮动标签输入框**
+- 聚焦/已填写时标签浮动至输入框边框上方
+- 桌面端标签默认字号 `1.9rem`，激活时动画至 `1.4rem`
+- 移动端标签默认字号 `1.6rem`，激活时动画至 `1.3rem`
+- 标签水平偏移：距左侧 `12px`
+- 激活态标签位移：上移至 `-12px`，同时 Y 轴 `-50%` 偏移
+- 字段内边距：`12px`
+- 表单水平内边距：`1.6rem`
+- 验证：有效字段获得 `rgba(green-light, 0.33)` 色调；无效字段获得 `rgba(red, 0.05)` 色调
+- 过渡：选中输入时使用 `0.3s option-label-marker-expansion cubic-bezier(0.32, 2.32, 0.61, 0.27)`
 
-**Option Icon (checkbox/radio)**
-- Padding: `3px` inner
-- Uses the checked-input cubic-bezier animation above (a slightly "springy" 2.32 overshoot curve)
+**选项图标（复选框/单选框）**
+- 内边距：`3px`
+- 使用上述已选中输入的三次方贝塞尔动画（稍有"弹性"的 2.32 过冲曲线）
 
-### Navigation
+### 导航
 
-**Global Nav (top bar)**
-- Fixed position with progressive heights: `64px` xs → `72px` mobile → `83px` tablet → `99px` desktop
-- Shadow stack: `0 1px 3px rgba(0,0,0,0.1), 0 2px 2px rgba(0,0,0,0.06), 0 0 2px rgba(0,0,0,0.07)` — three-layer soft lift
-- Left: Starbucks wordmark logo, offsetting by `99px` (md) / `131px` (lg) from left edge
-- Primary links inline in SoDoSans weight 400–600: Menu · Rewards · Gift Cards
-- Right: Find a store link + Sign in (outlined) + Join now (black filled)
+**全局导航（顶部栏）**
+- 固定位置，高度随断点递进：`64px` xs → `72px` 移动端 → `83px` 平板 → `99px` 桌面
+- 阴影：`0 1px 3px rgba(0,0,0,0.1), 0 2px 2px rgba(0,0,0,0.06), 0 0 2px rgba(0,0,0,0.07)` — 三层柔和托起感
+- 左侧：Starbucks 文字 Logo，距左边缘偏移 `99px`（md）/ `131px`（lg）
+- 主要链接内联排列，SoDoSans 字重 400–600：菜单 · Rewards · 礼品卡
+- 右侧：查找门店链接 + 登录（描边）+ 立即加入（黑色填充）
 
-**Sub-nav (second bar, e.g., Rewards internal)**
-- Height: `53px` (global subnav) / `48px` (internal subnav)
-- Typically horizontal tab group beneath the global nav
+**子导航（第二栏，如 Rewards 内部）**
+- 高度：`53px`（全局子导航）/ `48px`（内部子导航）
+- 通常为全局导航下方的水平选项卡组
 
-**Mobile Nav**
-- Collapses to a hamburger drawer below tablet breakpoint
-- Frap floating button persists at bottom-right regardless of nav state
+**移动端导航**
+- 平板以下断点折叠为抽屉式汉堡菜单
+- Frap 悬浮按钮无论导航状态如何，始终显示于右下角
 
-### Image Treatment
+### 图片处理
 
-- **Hero photography**: Product photos (beverages in clear glass with colored backgrounds — coral, sage, warm amber) occupy ~40vw of a split-hero layout; text occupies the other 60vw (`--headerCrateProportion: 40vw` / `--contentCrateProportion: 60vw`)
-- **Gift card illustrations**: Each card is a distinct illustrated photograph (painted-feel, hand-drawn-looking, warm color palette). Never generic generated graphics.
-- **Rewards ceremony imagery**: Photographs of Starbucks Rewards App screens held in-hand, angled compositions — product-in-context photography.
-- **Menu thumbnails**: Square or 4:3 product photography with clean white/cream backdrops, slight soft drop-shadow around the glass.
-- **Image fade-in**: `opacity 0.3s ease-in` transition on image load (`--imageFadeTransition`).
+- **主视觉摄影**：饮品照片（彩色背景下盛于透明玻璃杯——珊瑚色、鼠尾草绿、暖琥珀色）占据分割式主视觉约 40vw；文字占另一侧 60vw（`--headerCrateProportion: 40vw` / `--contentCrateProportion: 60vw`）
+- **礼品卡插画**：每张卡片都是独立的插画摄影（画风感强、手绘质感、暖色调）。绝不使用通用生成式图形。
+- **Rewards 仪式感图片**：手持 Starbucks Rewards App 屏幕的摄影，斜角构图——产品场景摄影。
+- **菜单缩略图**：干净白色/奶油色背景下的方形或 4:3 产品摄影，玻璃杯周围有轻柔阴影。
+- **图片淡入**：图片加载时使用 `opacity 0.3s ease-in` 过渡（`--imageFadeTransition`），防止突兀弹出。
 
-### Feature Band (dark-green hero strip)
+### 特色横幅（深绿色主视觉条带）
 
-Full-width `#1E3932` (House Green) band with:
-- Left: white headline + subhead + CTA row
-- Right: product photography or illustration
-- Split ratio ~40/60 or 50/50 depending on section
-- White text throughout with `rgba(255,255,255,0.70)` for secondary copy
-- CTAs follow Green-on-Green Inverted (white filled) + Outlined on Dark (white outline) pairing
+全宽 `#1E3932`（House Green）横幅，包含：
+- 左侧：白色标题 + 副标题 + CTA 按钮组
+- 右侧：产品摄影或插画
+- 分割比例约为 40/60 或 50/50，依区块而定
+- 全程白色文字，次要文案使用 `rgba(255,255,255,0.70)`
+- CTA 采用绿底反色（白色填充）+ 深色背景描边（白色轮廓）的组合
 
-### Expander / Accordion
+### 展开器 / 手风琴
 
-- Duration: `300ms` (`--expanderDuration`)
-- Timing curve: `cubic-bezier(0.25, 0.46, 0.45, 0.94)` — a measured ease-out
-- Used for FAQ sections on Rewards and gift page
+- 时长：`300ms`（`--expanderDuration`）
+- 缓动曲线：`cubic-bezier(0.25, 0.46, 0.45, 0.94)` — 平稳的缓出效果
+- 用于 Rewards 和礼品卡页面的常见问题区块
 
-### Cookie Consent Module
+### Cookie 同意模块
 
-Dark-green modal card at top of page with "Agree" (green-filled) and "Manage preferences" (outlined) buttons. Appears on first visit; dismissible.
+页面顶部的深绿色弹窗卡片，包含"同意"（绿色填充）和"管理偏好"（描边）按钮。首次访问时显示；可关闭。
 
-### Product Detail Components (PDP signature cluster)
+### 产品详情页组件（PDP 标志性组件集群）
 
-A repeating component cluster used on menu product pages (e.g., `/menu/product/40498/iced` for a drink detail, `/menu/product/.../nutrition` for nutrition facts). These extend the component inventory without changing tokens.
+菜单产品页面上反复使用的组件集群（例如 `/menu/product/40498/iced` 饮品详情、`/menu/product/.../nutrition` 营养信息）。这些组件在不改变 token 的前提下扩展了组件库。
 
-**Size Options Selector**
-- Horizontal row of 4 cup-icon buttons (Tall / Grande / Venti / Trenta)
-- Each item: cup silhouette icon on top, size name below (16/700 in Starbucks-Green), fluid-ounce caption (13/400 in Text Black Soft)
-- Active state: a green circular ring outline (`2px solid #00754A`) around the selected cup icon
-- Inactive: no ring, same typography
-- Full-width row, equal spacing
-- Radius of container: `12px` or flat; individual icons are `50%` circular
-- Padding: `16px 24px` internal
+**尺寸选择器**
+- 横向排列 4 个杯形图标按钮（Tall / Grande / Venti / Trenta）
+- 每个选项：顶部杯形轮廓图标 + 下方尺寸名称（16/700，Starbucks Green 颜色）+ 液量说明（13/400，Text Black Soft 颜色）
+- 选中状态：在选中的杯形图标外围显示绿色圆形边框（`2px solid #00754A`）
+- 未选中：无边框，字体排版相同
+- 全宽横向排列，等间距
+- 容器圆角：`12px` 或直角；单个图标使用 `50%` 圆形
+- 内边距：`16px 24px`
 
-**Add-in / Milk Select (outlined rectangle)**
-- Background: `#ffffff`
-- Border: `1px solid #d6dbde` (Input Border)
-- Radius: `4px`
-- Full-width in its column
-- Floating label above top border: "Add-ins" / "Milk" / "Add-ins" — 13/700 in Text Black, uppercase, `0.325px` letter-spacing
-- Value displayed centered (e.g., "Ice", "Coconut", "Strawberry Fruit Inclusions scoop"): 16/400 Text Black
-- Chevron-down icon right side in Text Black Soft
-- Focus: border shifts to Green Accent (`#00754A`)
+**加料/牛奶选择（描边矩形）**
+- 背景：`#ffffff`
+- 边框：`1px solid #d6dbde`（Input Border）
+- 圆角：`4px`
+- 在其列内全宽显示
+- 浮动标签位于顶部边框上方："加料" / "牛奶" / "加料"——13/700，Text Black，大写，`0.325px` 字间距
+- 居中显示当前值（如"冰块"、"椰奶"、"草莓果粒勺"）：16/400，Text Black
+- 右侧显示 Text Black Soft 颜色的向下箭头图标
+- 聚焦时：边框切换为 Green Accent（`#00754A`）
 
-**Numeric Stepper**
-- Embedded inside an Add-in row when a quantity is required (e.g., Strawberry Fruit Inclusions scoop)
-- `−` minus button + count number + `+` plus button, all inline right of the label
-- Buttons: circular `32×32px` with `1px solid #d6dbde` border, neutral gray icon
-- Count number: 16/700 Text Black centered
+**数字步进器**
+- 嵌入于需要填写数量的加料行中（如草莓果粒勺）
+- `−` 减号按钮 + 数字 + `+` 加号按钮，标签右侧内联排列
+- 按钮：`32×32px` 圆形，`1px solid #d6dbde` 边框，中性灰图标
+- 数字：16/700，Text Black，居中显示
 
-**Customize Button**
-- Background: `#ffffff`
-- Text: `#00754A` (Green Accent)
-- Border: `1.5px solid #00754A`
-- Radius: `50px` (full pill)
-- Padding: `14px 40px` (generously larger than default pills — this is a secondary primary action)
-- Label: "Customize" with a gold sparkle ✨ icon inset left
-- Used for: entering the drink-customization flow after size/milk selection
+**自定义按钮**
+- 背景：`#ffffff`
+- 文字：`#00754A`（Green Accent）
+- 边框：`1.5px solid #00754A`
+- 圆角：`50px`（全胶囊）
+- 内边距：`14px 40px`（比默认胶囊更宽大——这是次要主操作）
+- 标签："Customize"，左侧嵌入金色闪光 ✨ 图标
+- 用于：完成尺寸/牛奶选择后进入饮品定制流程
 
-**Add to Order Button (PDP)**
-- Background: `#00754A` (Green Accent)
-- Text: `#ffffff`
-- Radius: `50px`
-- Padding: `14px 32px`
-- Pinned top-right of product card and/or aligned right within the store-availability band
-- Same scale(0.95) active behavior as other primary CTAs
+**加入订单按钮（PDP）**
+- 背景：`#00754A`（Green Accent）
+- 文字：`#ffffff`
+- 圆角：`50px`
+- 内边距：`14px 32px`
+- 固定在产品卡右上角和/或门店可用性横幅内右对齐
+- 与其他主要 CTA 相同的 scale(0.95) 激活行为
 
-**Rewards Cost Pill — "200★ item"**
-- Background: transparent
-- Border: `1px solid #cba258` (Gold)
-- Text: `#cba258` (Gold)
-- Radius: `50px` (full pill)
-- Padding: `4px 12px`
-- Content: "200★ item" where `★` is a small filled star glyph — indicates the Rewards Stars required to redeem this item
-- Font: Proxima Nova 13/700 with `0.5px` letter-spacing
-- Used only on products that are Rewards-redeemable
+**Rewards 积分胶囊——"200★ item"**
+- 背景：transparent
+- 边框：`1px solid #cba258`（Gold）
+- 文字：`#cba258`（Gold）
+- 圆角：`50px`（全胶囊）
+- 内边距：`4px 12px`
+- 内容："200★ item"，其中 `★` 为小型实心星形字符——表示兑换该商品所需的 Rewards 积分
+- 字体：Proxima Nova 13/700，`0.5px` 字间距
+- 仅用于支持 Rewards 积分兑换的商品
 
-**Product Description Band**
-- Full-width dark-green band (`#1E3932` House Green)
-- Contains top-to-bottom:
-  1. Rewards Cost Pill (gold) if applicable
-  2. Product description body copy in white (16/400/1.5)
-  3. Nutritional summary inline ("140 calories, 25g sugar, 2.5g fat") with info-icon tooltip — 14/700 white
-  4. "Full nutrition & ingredients list" outlined-white-on-green pill button
-- Padding: `32px` vertical
-- Appears beneath the primary product header band
+**产品说明横幅**
+- 全宽深绿色横幅（`#1E3932` House Green）
+- 从上至下包含：
+  1. Rewards 积分胶囊（金色，如适用）
+  2. 白色产品说明正文（16/400/1.5）
+  3. 营养信息内联展示（"140 卡路里，25g 糖，2.5g 脂肪"）+ 信息图标提示——14/700 白色
+  4. "完整营养成分及配料表"白色描边胶囊按钮
+- 垂直内边距：`32px`
+- 位于主要产品标题横幅下方
 
-**Ingredients / Nutrition Table**
-- Two-column layout on the Nutrition page
-- Left column: "Ingredients" header + list or "Not available for this item" placeholder text block with an explanatory paragraph in Text Black Soft 14/400
-- Right column: "Nutrition" header + label/value rows
-- Each row: nutrient label (Proxima Nova 14/400) on the left, value (e.g., "140 calories", "25g", "205 mg**") on the right, separated by a `1px solid #e7e7e7` hairline below
-- Footnote for caffeine/asterisk markers in 13/400 Text Black Soft at the bottom
-- Reusable pattern for nutrition facts regulation-compliant tables
+**配料 / 营养信息表格**
+- 营养信息页面的两栏布局
+- 左栏："配料"标题 + 列表，或"该商品暂无信息"占位文字块（附 Text Black Soft 14/400 说明段落）
+- 右栏："营养"标题 + 标签/数值行
+- 每行：营养素名称（Proxima Nova 14/400）居左，数值（如"140 卡路里"、"25g"、"205 mg**"）居右，行下方以 `1px solid #e7e7e7` 细线分隔
+- 咖啡因/星号标注的脚注，位于底部，13/400 Text Black Soft
+- 符合营养标签法规的可复用表格模式
 
-**Store Availability Selector**
-- Appears on dark-green feature band above the size-options row
-- Full-width rounded rectangle with transparent-white interior
-- Text: "For item availability, choose a store" in white, 14/400
-- Right side: chevron-down affordance + shopping-bag SVG icon in white outline
-- Radius: `4px`
-- Height: ~48px
+**门店可用性选择器**
+- 位于尺寸选择器行上方的深绿色特色横幅内
+- 全宽圆角矩形，半透明白色内部
+- 文字："选择门店以查看商品可用性"，白色 14/400
+- 右侧：向下箭头 + 白色描边购物袋 SVG 图标
+- 圆角：`4px`
+- 高度：约 48px
 
-**PDP Breadcrumb**
-- "Menu / Refreshers / Pink Energy Drink" trail above the product title
-- Separator: `/` slash character in Text Black Soft
-- Current page is unlinked, prior pages are underlined green-accent links
-- Font: 14/400 Proxima Nova
-- Appears on all PDP pages
+**PDP 面包屑导航**
+- 产品标题上方显示"菜单 / 清爽饮品 / 粉色能量饮品"路径
+- 分隔符：Text Black Soft 颜色的 `/` 斜杠字符
+- 当前页面无链接，前序页面为绿色强调色下划线链接
+- 字体：14/400 Proxima Nova
+- 出现在所有 PDP 页面
 
-**Back Chevron Link (PDP nutrition / detail sub-pages)**
-- "← Back" text link above section headings on the nutrition page
-- Text in Green Accent (`#00754A`) 14/700 Proxima Nova
-- Left chevron `<` in the same green
-- Alternative to full breadcrumb on deep sub-pages
+**返回箭头链接（PDP 营养信息/详情子页面）**
+- 营养信息页面区块标题上方的"← 返回"文字链接
+- Green Accent（`#00754A`）颜色，14/700 Proxima Nova
+- 左侧 `<` 箭头使用同一绿色
+- 深层子页面上的面包屑替代方案
 
-## 5. Layout Principles
+## 5. 布局原则
 
-### Spacing System
+### 间距系统
 
-Rem-based semantic scale (anchored `1rem = 10px`):
+以 rem 为单位的语义化比例（锚点 `1rem = 10px`）：
 
-| Token | Rem | Pixels | Typical Use |
+| Token | Rem | 像素 | 典型用途 |
 |-------|-----|--------|-------------|
-| `--space-1` | `0.4rem` | 4px | Tightest inline padding |
-| `--space-2` | `0.8rem` | 8px | Small gap, button vertical padding |
-| `--space-3` | `1.6rem` | 16px | Default — card padding, outer gutter xs |
-| `--space-4` | `2.4rem` | 24px | Section inner spacing, outer gutter md |
-| `--space-5` | `3.2rem` | 32px | Major between-section spacing |
-| `--space-6` | `4rem` | 40px | Large gaps, outer gutter lg, header crate |
-| `--space-7` | `4.8rem` | 48px | Section-to-section spacing |
-| `--space-8` | `5.6rem` | 56px | Very large breathing — Frap height |
-| `--space-9` | `6.4rem` | 64px | Widest section padding |
+| `--space-1` | `0.4rem` | 4px | 最紧凑的内联内边距 |
+| `--space-2` | `0.8rem` | 8px | 小间隙，按钮垂直内边距 |
+| `--space-3` | `1.6rem` | 16px | 默认——卡片内边距，xs 外边距 |
+| `--space-4` | `2.4rem` | 24px | 区块内间距，md 外边距 |
+| `--space-5` | `3.2rem` | 32px | 主要区块间距 |
+| `--space-6` | `4rem` | 40px | 大间距，lg 外边距，标题区块 |
+| `--space-7` | `4.8rem` | 48px | 区块间间距 |
+| `--space-8` | `5.6rem` | 56px | 超大留白——Frap 高度 |
+| `--space-9` | `6.4rem` | 64px | 最宽的区块内边距 |
 
-**Gutter tokens:**
-- `--outerGutter: 1.6rem` (16px, default / mobile)
-- `--outerGutterMedium: 2.4rem` (24px, tablet)
-- `--outerGutterLarge: 4.0rem` (40px, desktop)
+**外边距 token：**
+- `--outerGutter: 1.6rem`（16px，默认 / 移动端）
+- `--outerGutterMedium: 2.4rem`（24px，平板）
+- `--outerGutterLarge: 4.0rem`（40px，桌面）
 
-**Universal rhythm constant:** `1.6rem` (16px) appears across every page as the default outer gutter, card padding baseline, and text size 3 body — the system's most frequent spacing unit.
+**通用节奏常量：** `1.6rem`（16px）在每个页面都频繁出现，作为默认外边距、卡片内边距基准以及正文 text-3 字号——是系统中最常用的间距单位。
 
-### Grid & Container
+### 网格与容器
 
-- Column width scale: `--columnWidthSmall: 343px` / `Medium: 500px` / `Large: 720px` / `XLarge: 1440px`
-- Gift-card grid uses a 3-5-up responsive grid of `~343px` tiles
-- Rewards status section: 3-up dark-green panels at `lg+` breakpoints
-- Hero: asymmetric split 40% (image) / 60% (content) via `--headerCrateProportion` / `--contentCrateProportion`
+- 列宽比例：`--columnWidthSmall: 343px` / `Medium: 500px` / `Large: 720px` / `XLarge: 1440px`
+- 礼品卡网格使用 3 至 5 列自适应网格，磁贴约为 `343px`
+- Rewards 状态区块：`lg+` 断点下 3 列深绿色面板
+- 主视觉：通过 `--headerCrateProportion` / `--contentCrateProportion` 实现 40%（图片）/ 60%（内容）的不对称分割
 
-### Whitespace Philosophy
+### 留白哲学
 
-Whitespace carries the feeling of "plenty of space in the café." Section padding leans generous (40–64px). Content blocks are separated by whitespace rather than dividers. The cream canvas (`#f2f0eb`) is itself a visual breath between white cards and green feature bands.
+留白传递出"咖啡馆里空间充裕"的感受。区块内边距偏大（40–64px）。内容块之间以留白分隔，而非分隔线。奶油色画布（`#f2f0eb`）本身就是白色卡片与绿色特色横幅之间的视觉呼吸。
 
-### Border Radius Scale
+### 圆角体系
 
-| Value | Use |
+| 值 | 用途 |
 |-------|-----|
-| `12px` | Cards, modals, menu-item tiles (`--cardBorderRadius`) |
-| `12px 12px 0 0` | Full-width feedback tab (top-rounded only) |
-| `50px` | All buttons — full-pill radius (`--buttonBorderRadius`) |
-| `50%` | Circular icons, Frap floating button, avatar thumbnails |
-| Specialty | `3.3333%/5.298%` elliptical for Starbucks-Visa-Card mockups (`--svcRoundedCorners`) |
+| `12px` | 卡片、弹窗、菜单商品磁贴（`--cardBorderRadius`） |
+| `12px 12px 0 0` | 全宽反馈标签（仅顶部圆角） |
+| `50px` | 所有按钮——全胶囊圆角（`--buttonBorderRadius`） |
+| `50%` | 圆形图标、Frap 悬浮按钮、头像缩略图 |
+| 特殊值 | `3.3333%/5.298%` 椭圆形，用于 Starbucks Visa 卡片模型（`--svcRoundedCorners`） |
 
-## 6. Depth & Elevation
+## 6. 深度与层级
 
-| Level | Treatment | Use |
+| 层级 | 处理方式 | 用途 |
 |-------|-----------|-----|
-| Card | `0 0 0.5px rgba(0,0,0,0.14), 0 1px 1px rgba(0,0,0,0.24)` | Default content cards — a whisper-soft dual-shadow |
-| Global Nav | `0 1px 3px rgba(0,0,0,0.1), 0 2px 2px rgba(0,0,0,0.06), 0 0 2px rgba(0,0,0,0.07)` | Triple-layer soft lift on the fixed top bar |
-| Frap Base | `0 0 6px rgba(0,0,0,0.24)` | Base halo around the floating circular CTA |
-| Frap Ambient | `0 8px 12px rgba(0,0,0,0.14)` | Stacked directional ambient — floats the Frap forward |
-| Gift Card | Light drop shadow around illustrated photograph | Physical-card feel for gift tiles |
-| Starbucks Card (SVC) | `drop-shadow(0 4px 1px rgba(0,0,0,0.11)) drop-shadow(0 0 2px rgba(0,0,0,0.24))` | Stacked SVG drop shadows for Starbucks Card visuals |
+| 卡片 | `0 0 0.5px rgba(0,0,0,0.14), 0 1px 1px rgba(0,0,0,0.24)` | 默认内容卡——轻柔的双重阴影 |
+| 全局导航 | `0 1px 3px rgba(0,0,0,0.1), 0 2px 2px rgba(0,0,0,0.06), 0 0 2px rgba(0,0,0,0.07)` | 固定顶部栏的三层柔和托起感 |
+| Frap 底层光晕 | `0 0 6px rgba(0,0,0,0.24)` | 悬浮圆形 CTA 周围的基础光晕 |
+| Frap 环境光 | `0 8px 12px rgba(0,0,0,0.14)` | 叠加的定向环境光——让 Frap 向前浮起 |
+| 礼品卡 | 插画摄影周围的轻柔投影 | 礼品磁贴的实体卡片质感 |
+| Starbucks Card（SVC）| `drop-shadow(0 4px 1px rgba(0,0,0,0.11)) drop-shadow(0 0 2px rgba(0,0,0,0.24))` | Starbucks Card 视觉的叠加 SVG 阴影 |
 
-**Shadow philosophy:** Whisper-soft, layered over solid — the system never reaches for a single heavy drop shadow. Instead, it stacks 2–3 low-alpha shadows with different offsets to simulate real-world ambient + direct lighting. The Frap button is the most elevated element on any page.
+**阴影哲学：** 轻柔叠加，基于纯色——系统从不使用单一的重投影。而是将 2–3 个低透明度阴影以不同偏移叠加，模拟真实世界的环境光 + 直射光。Frap 按钮是任意页面上层级最高的元素。
 
-### Decorative Depth
+### 装饰性深度
 
-- **No gradient system** — surfaces are solid color-block
-- **Color-block banding** carries perceived depth (dark-green bands read as "recessed feature zones" between cream/white body sections)
-- **SVG filter shadows** on Starbucks-Card visuals add a slight 3D physicality without a box-shadow
+- **无渐变系统**——界面均为纯色色块
+- **色块分区**传递感知深度（深绿色横幅在奶油/白色主体区块之间被读作"内凹特色区域"）
+- **SVG 滤镜阴影**赋予 Starbucks Card 视觉轻微的三维实体感，无需使用 box-shadow
 
-## 7. Do's and Don'ts
+## 7. 规范与禁忌
 
-### Do
-- Use Neutral Warm (`#f2f0eb`) or Ceramic (`#edebe9`) as page canvas instead of pure white — the warm cream is the signature
-- Map the green tiers to their intended surface role — Starbucks Green for headings, Green Accent for CTAs, House Green for deep bands, Uplift for decorative
-- Keep tracking tight at `-0.01em` / `-0.16px` on SoDoSans across the whole system
-- Use 50px full-pill radius on every button without exception
-- Apply `transform: scale(0.95)` as the universal button active state
-- Reserve Gold for Rewards-status ceremony moments only
-- Use SoDoSans for nearly everything; switch to Lander Tall serif only for Rewards editorial headlines; reserve Kalam script for Careers "cup name" moments
-- Layer 2–3 low-alpha shadows instead of one heavier drop shadow for elevation
-- Use the Frap circular CTA as the persistent floating order entry on every shopping surface
-- Let the cream canvas breathe between content cards — use whitespace, not dividers
+### 应该
 
-### Don't
-- Don't use pure white as the page canvas — the warm cream temperature is load-bearing
-- Don't pick "one brand green" — the four-green system is intentional; using only `#006241` everywhere flattens the brand
-- Don't use Gold as a general-purpose accent — it's a Rewards signal only
-- Don't square the corners on buttons — the 50px pill is universal
-- Don't introduce gradient fills — the system is color-block throughout
-- Don't weight-contrast h1 and h2 by size — the hierarchy comes from weight + color (600 Starbucks-Green vs 400 Text Black)
-- Don't use pure black for body text — `rgba(0,0,0,0.87)` matches the warm canvas
-- Don't skip the `scale(0.95)` active feedback on buttons — it's a signature micro-interaction
-- Don't stack single heavy shadows; always layer 2–3 low-alpha ones
-- Don't introduce serifs or scripts into the main shopping flow — they belong to Rewards and Careers contexts respectively
+- 使用 Neutral Warm（`#f2f0eb`）或 Ceramic（`#edebe9`）作为页面画布，而非纯白色——暖奶油色是标志性设计
+- 将绿色层级映射到其预定的界面角色——Starbucks Green 用于标题，Green Accent 用于 CTA，House Green 用于深色横幅，Uplift 用于装饰
+- 在整套系统中保持 SoDoSans 的紧缩字距 `-0.01em` / `-0.16px`
+- 所有按钮无一例外使用 50px 全胶囊圆角
+- 将 `transform: scale(0.95)` 作为通用的按钮激活态
+- 将金色保留用于 Rewards 会员等级的仪式感场景
+- 几乎所有内容使用 SoDoSans；仅在 Rewards 编辑性标题处切换为 Lander Tall 衬线体；Kalam 手写体仅限 Careers"杯名"场景
+- 叠加 2–3 个低透明度阴影，而非单一较重的投影
+- 在所有购物界面持续使用 Frap 圆形 CTA 作为悬浮的下单入口
+- 让奶油色画布在内容卡之间自然呼吸——使用留白，而非分隔线
 
-## 8. Responsive Behavior
+### 不应该
 
-### Breakpoints
+- 不要将纯白色用作页面画布——暖奶油色的温度感是系统的核心承载
+- 不要只选"一种品牌绿"——四层绿色体系是经过深思熟虑的；全用 `#006241` 会使品牌层次扁平化
+- 不要将金色用于通用强调——它是 Rewards 信号，仅此而已
+- 不要将按钮设计为直角——50px 胶囊是通用规范
+- 不要引入渐变填充——系统全程采用纯色色块
+- 不要通过字号区分 h1 和 h2 的层级——层级来自字重 + 颜色（600 Starbucks Green 对比 400 Text Black）
+- 不要将纯黑用于正文——`rgba(0,0,0,0.87)` 才与暖色画布相匹配
+- 不要省略按钮的 `scale(0.95)` 激活反馈——这是标志性微交互
+- 不要使用单一重阴影；始终叠加 2–3 个低透明度阴影
+- 不要在主购物流程中引入衬线或手写体——它们分别属于 Rewards 和 Careers 语境
 
-Inferred from component width tokens and progressive nav heights:
+## 8. 响应式行为
 
-| Name | Width | Key Changes |
+### 断点
+
+根据组件宽度 token 和导航高度递进推导：
+
+| 名称 | 宽度 | 关键变化 |
 |------|-------|-------------|
-| xs | < 480px | Global nav 64px; hamburger menu; single-column layouts; pill buttons full-width |
-| Mobile | 480–767px | Global nav 72px; gift-card grid 2-up; card padding tightens |
-| Tablet | 768–1023px | Global nav 83px; gift-card grid 3-up; hero split begins to appear |
-| Desktop | 1024–1439px | Global nav 99px; gift-card grid 4-up; full asymmetric hero 40/60 |
-| XLarge | 1440px+ | Content caps at `--columnWidthXLarge`; gift-card grid 5-up; extra cream margin |
+| xs | < 480px | 全局导航 64px；汉堡菜单；单列布局；胶囊按钮全宽 |
+| 移动端 | 480–767px | 全局导航 72px；礼品卡网格 2 列；卡片内边距收紧 |
+| 平板 | 768–1023px | 全局导航 83px；礼品卡网格 3 列；开始出现主视觉分割 |
+| 桌面 | 1024–1439px | 全局导航 99px；礼品卡网格 4 列；完整不对称主视觉 40/60 |
+| 超宽 | 1440px+ | 内容限宽至 `--columnWidthXLarge`；礼品卡网格 5 列；额外奶油色边距 |
 
-### Touch Targets
+### 触摸目标
 
-- Pill buttons at `7px 16px` padding measure ~32px tall — below 44px WCAG AAA minimum for touch-only surfaces. On mobile, button padding may be visually expanded to meet the minimum.
-- Frap floating circular button at `56px` is well above minimum.
-- Frap uses `--frapTouchOffset: calc(-1 * .8rem)` to extend tap area 8px beyond visual edge.
-- Form float-label inputs grow their label font size on mobile (1.6rem base vs 1.9rem desktop) — easier to tap and read at arm's-length.
+- 内边距 `7px 16px` 的胶囊按钮约 32px 高——低于纯触控界面的 WCAG AAA 最小 44px 标准。移动端按钮内边距可视觉扩展以达到最低要求。
+- `56px` 的 Frap 悬浮圆形按钮远超最低要求。
+- Frap 使用 `--frapTouchOffset: calc(-1 * .8rem)`，将点击区域向视觉边缘外延伸 8px。
+- 表单浮动标签输入框在移动端字号更大（基础 1.6rem 对比桌面 1.9rem）——在距离感阅读时更易点击和辨认。
 
-### Collapsing Strategy
+### 折叠策略
 
-- **Global nav height scales progressively**: 64 → 72 → 83 → 99px across breakpoints, not a single value
-- **Hero split collapses**: 40/60 asymmetric split → stacked (image top, content below) at mobile
-- **Gift-card grid**: 5-up → 4-up → 3-up → 2-up → 1-up across breakpoints with adjusted card widths
-- **Feature bands**: Stay full-width but text + imagery stack vertically on mobile
-- **Outer gutter scales**: 16px → 24px → 40px as viewport grows
-- **Rewards 3-column status panels**: Stack to single column on mobile
+- **全局导航高度跨断点递进**：64 → 72 → 83 → 99px，而非单一固定值
+- **主视觉分割折叠**：40/60 不对称分割 → 移动端堆叠（图片在上，内容在下）
+- **礼品卡网格**：跨断点 5 列 → 4 列 → 3 列 → 2 列 → 1 列，卡片宽度相应调整
+- **特色横幅**：始终全宽，但移动端上文字与图片垂直堆叠
+- **外边距随视口增大而扩展**：16px → 24px → 40px
+- **Rewards 三列状态面板**：移动端折叠为单列
 
-### Image Behavior
+### 图片行为
 
-- Hero product photography crops tighter vertically on mobile; content becomes the visual anchor
-- Gift-card illustrations preserve aspect ratio; card grid reflows
-- `opacity 0.3s ease-in` fade-in transition on image load (prevents jarring pop-in)
-- Rewards app-in-hand photography scales proportionally; never stretches
+- 移动端主视觉产品摄影垂直裁剪更紧；内容成为视觉锚点
+- 礼品卡插画保持宽高比；卡片网格自动重排
+- 图片加载时使用 `opacity 0.3s ease-in` 淡入过渡（避免突兀弹出）
+- Rewards 手持 App 摄影按比例缩放；不拉伸
 
-## 9. Agent Prompt Guide
+## 9. Agent 提示词指南
 
-### Quick Color Reference
+### 颜色快速参考
 
-- Primary CTA: "Green Accent (`#00754A`)"
-- Primary CTA text: "White (`#ffffff`)"
-- Brand heading: "Starbucks Green (`#006241`)"
-- Feature band / footer: "House Green (`#1E3932`)"
-- Page canvas: "Neutral Warm (`#f2f0eb`)"
-- Card canvas: "White (`#ffffff`)"
-- Heading text on light: "Text Black (`rgba(0,0,0,0.87)`)"
-- Body text on light: "Text Black Soft (`rgba(0,0,0,0.58)`)"
-- Body text on dark-green: "Text White Soft (`rgba(255,255,255,0.70)`)"
-- Rewards accent: "Gold (`#cba258`)"
-- Rewards text: "Rewards Green (`#33433d`)"
-- Destructive: "Red (`#c82014`)"
+- 主要 CTA："Green Accent（`#00754A`）"
+- 主要 CTA 文字："White（`#ffffff`）"
+- 品牌标题："Starbucks Green（`#006241`）"
+- 特色横幅 / 页脚："House Green（`#1E3932`）"
+- 页面画布："Neutral Warm（`#f2f0eb`）"
+- 卡片画布："White（`#ffffff`）"
+- 浅色背景标题文字："Text Black（`rgba(0,0,0,0.87)`）"
+- 浅色背景正文："Text Black Soft（`rgba(0,0,0,0.58)`）"
+- 深绿色背景正文："Text White Soft（`rgba(255,255,255,0.70)`）"
+- Rewards 强调色："Gold（`#cba258`）"
+- Rewards 文字色："Rewards Green（`#33433d`）"
+- 破坏性操作："Red（`#c82014`）"
 
-### Example Component Prompts
+### 组件提示词示例
 
-1. "Create a primary Starbucks CTA pill button with Green Accent (`#00754A`) background, white text 'Explore our afternoon menu', SoDoSans font at 16px weight 600 with `-0.01em` letter-spacing, `50px` border-radius (full pill), `7px 16px` padding. Apply `transform: scale(0.95)` as the active state with a `0.2s ease` transition."
+1. "创建一个星巴克主要 CTA 胶囊按钮：Green Accent（`#00754A`）背景，白色文字'探索下午茶菜单'，SoDoSans 字体，16px 字号，字重 600，字间距 `-0.01em`，`50px` 圆角（全胶囊），`7px 16px` 内边距。激活态使用 `transform: scale(0.95)`，过渡 `0.2s ease`。"
 
-2. "Design a content card with White (`#ffffff`) background at `12px` border-radius, layered shadow `0 0 0.5px rgba(0,0,0,0.14), 0 1px 1px rgba(0,0,0,0.24)`. Pad contents `16–24px` (`--space-3` to `--space-4`). Place on a Neutral Warm (`#f2f0eb`) page canvas with `16px` gap to siblings."
+2. "设计一张内容卡片：White（`#ffffff`）背景，`12px` 圆角，叠加阴影 `0 0 0.5px rgba(0,0,0,0.14), 0 1px 1px rgba(0,0,0,0.24)`。内容内边距 `16–24px`（`--space-3` 至 `--space-4`）。放置于 Neutral Warm（`#f2f0eb`）页面画布上，与相邻元素保持 `16px` 间距。"
 
-3. "Build the Frap floating circular order button — `56px` diameter, Green Accent (`#00754A`) fill, white shopping-bag icon centered. Layered shadow: `0 0 6px rgba(0,0,0,0.24)` + `0 8px 12px rgba(0,0,0,0.14)`. Fixed position bottom-right with `-0.8rem` touch offset. Active state collapses the ambient shadow to `0 8px 12px rgba(0,0,0,0)` with `scale(0.95)`."
+3. "构建 Frap 悬浮圆形订单按钮——直径 `56px`，Green Accent（`#00754A`）填充，居中白色购物袋图标。叠加阴影：`0 0 6px rgba(0,0,0,0.24)` + `0 8px 12px rgba(0,0,0,0.14)`。固定于右下角，`-0.8rem` 触摸偏移。激活态将环境光阴影收缩至 `0 8px 12px rgba(0,0,0,0)`，同时 `scale(0.95)`。"
 
-4. "Build a dark-green feature band — full-width section with House Green (`#1E3932`) background. Left column: white SoDoSans h2 at 24px weight 600, followed by a Text White Soft (`rgba(255,255,255,0.70)`) body paragraph and a CTA row with two buttons (White-filled with Green Accent text for primary, Outlined-on-Dark white border for secondary). Right column: product photography. Split ratio 40/60, stacked vertically below `768px`."
+4. "构建一个深绿色特色横幅——全宽区块，House Green（`#1E3932`）背景。左栏：白色 SoDoSans h2，24px，字重 600；下方为 Text White Soft（`rgba(255,255,255,0.70)`）正文段落；以及含两个按钮的 CTA 行（主要按钮：白色填充配 Green Accent 文字；次要按钮：深色背景白色描边）。右栏：产品摄影。分割比例 40/60，`768px` 以下垂直堆叠。"
 
-5. "Create a Rewards status card — House Green (`#1E3932`) panel with `12px` border-radius, colored gradient top stripe (Bronze/Silver/Gold tier). Title in SoDoSans 24px weight 600 in white. Benefits list as white bullets with `rgba(255,255,255,0.70)` secondary captions. Bottom progression text in Text White Soft. Stack 3 panels in a grid at `lg+`, single column on mobile."
+5. "创建一个 Rewards 状态卡——House Green（`#1E3932`）面板，`12px` 圆角，顶部彩色渐变条（铜卡/银卡/金卡层级）。标题：SoDoSans 24px，字重 600，白色。权益列表：白色项目符号，次要说明使用 `rgba(255,255,255,0.70)`。底部晋级说明文字使用 Text White Soft。`lg+` 断点下 3 列面板网格排列，移动端单列。"
 
-6. "Design a gift-card tile — card radius matches `12px`, fills with an illustrated photograph (hand-drawn watercolor-painted feel) as the entire surface. Subtle drop shadow makes it feel like a physical card on the cream canvas. Group under a category label ('Spring', 'Thank You', 'Birthday') in SoDoSans 24px weight 400 above the grid."
+6. "设计一个礼品卡磁贴——圆角与 `12px` 对齐，整张卡片以插画摄影（手绘水彩风）铺满。轻柔投影使其在奶油色画布上呈现出实体卡片的质感。在网格上方按类别标签分组（'春季'、'感谢'、'生日'），SoDoSans 24px，字重 400。"
 
-7. "Create a Starbucks product-detail header — House Green (`#1E3932`) band with breadcrumb 'Menu / Refreshers / Pink Energy Drink' in 14/400 white above the product title in SoDoSans 32/700 uppercase white. Product photograph centered below title. Below photo: a 4-up size selector row — each cup-icon button shows a vertical cup silhouette, size name ('Tall' / 'Grande' / 'Venti' / 'Trenta') in 16/700 white, and fluid-ounce in 13/400 Text White Soft. Selected size wraps the cup icon in a `2px solid #00754A` circular ring."
+7. "创建一个星巴克产品详情标题——House Green（`#1E3932`）横幅，产品标题上方显示面包屑'菜单 / 清爽饮品 / 粉色能量饮品'（白色 14/400）。产品标题：SoDoSans 32/700 大写白色。标题下方居中显示产品照片。照片下方：4 列尺寸选择器横向排列——每个杯形图标按钮显示竖向杯形轮廓、尺寸名称（'Tall' / 'Grande' / 'Venti' / 'Trenta'，16/700 白色）及液量（13/400 Text White Soft）。选中尺寸的杯形图标外侧显示 `2px solid #00754A` 圆形边框。"
 
-8. "Build a Starbucks customize flow — under the size selector, 3 stacked outlined-rectangle input rows (white bg, `1px solid #d6dbde` border, `4px` radius). Each has a floating label ('Add-ins', 'Milk', 'Add-ins') above the top border in 13/700 Text Black uppercase. Value centered (e.g., 'Ice', 'Coconut'). Right side: chevron-down in Text Black Soft. For the scoop row, embed a numeric stepper (`−` `1` `+` with circular `32px` outlined buttons). Below all three fields: outlined green 'Customize' pill with gold sparkle icon, `50px` radius, `14px 40px` padding. Pair with a Green Accent filled 'Add to Order' pill in the same row."
+8. "构建星巴克自定义流程——在尺寸选择器下方，3 行描边矩形输入框（白色背景，`1px solid #d6dbde` 边框，`4px` 圆角）。每行顶部边框上方显示浮动标签（'加料'、'牛奶'、'加料'）——13/700 Text Black 大写。值居中显示（如'冰块'、'椰奶'）。右侧：Text Black Soft 颜色向下箭头。果粒行内嵌数字步进器（`−` `1` `+`，`32px` 圆形描边按钮）。三个输入框下方：描边绿色'Customize'胶囊按钮（带金色闪光图标），`50px` 圆角，`14px 40px` 内边距。同行搭配 Green Accent 填充的'加入订单'胶囊按钮。"
 
-9. "Design a Starbucks product description band — full-width House Green (`#1E3932`) below product header. Top: a gold-outlined '200★ item' Rewards Cost Pill (`50px` radius, `4px 12px` padding, gold `#cba258` border and text). Below: product description in white 16/400/1.5. Nutritional inline summary in white 14/700 ('140 calories, 25g sugar, 2.5g fat') with info-icon tooltip. Outlined-white-on-green pill button 'Full nutrition &amp; ingredients list'. 32px vertical padding."
+9. "设计星巴克产品说明横幅——产品标题下方的全宽 House Green（`#1E3932`）横幅。顶部：金色描边'200★ item' Rewards 积分胶囊（`50px` 圆角，`4px 12px` 内边距，金色 `#cba258` 边框和文字）。下方：白色产品说明 16/400/1.5。营养信息内联展示（白色 14/700，含信息图标提示，'140 卡路里，25g 糖，2.5g 脂肪'）。白色描边绿底胶囊按钮'完整营养成分及配料表'。垂直内边距 32px。"
 
-10. "Create a Starbucks nutrition facts table — two-column layout inside a White card. Left column: 'Ingredients' header (24/400 Text Black), followed by ingredient list or 'Not available for this item' placeholder paragraph in 14/400 Text Black Soft. Right column: 'Nutrition' header, then label/value rows (nutrient name left, value right) separated by `1px solid #e7e7e7` hairlines. Typography: labels in 14/400 Text Black, values in 14/700 Text Black right-aligned. Footnote asterisk markers in 13/400 Text Black Soft at the bottom."
+10. "创建星巴克营养信息表格——White 卡片内的两栏布局。左栏：'配料'标题（24/400 Text Black），后接配料列表，或占位段落'该商品暂无信息'（14/400 Text Black Soft）。右栏：'营养'标题，然后是标签/数值行（营养素名称居左，数值居右），每行以 `1px solid #e7e7e7` 细线分隔。字体：标签 14/400 Text Black，数值 14/700 Text Black 右对齐。底部星号脚注：13/400 Text Black Soft。"
 
-### Iteration Guide
+### 迭代指南
 
-When refining existing screens generated with this design system:
-1. Focus on ONE component at a time
-2. Reference specific color names and hex codes from this document
-3. Use natural language descriptions ("warm cream canvas," "four-tier green system") alongside exact values
-4. Preserve the 50px pill + `scale(0.95)` active state universally
-5. Check that greens are mapped to their correct role (Green Accent for CTA, Starbucks Green for heading, House Green for band)
-6. Don't introduce gradients — the system is color-block
-7. Keep SoDoSans tracking at `-0.01em` / `-0.16px` across the board
+在基于本设计系统对已有界面进行迭代时：
+1. 每次专注于**一个**组件
+2. 引用本文档中的具体颜色名称和十六进制代码
+3. 在精确数值旁配合自然语言描述（"暖奶油色画布"、"四层绿色体系"）
+4. 全程保持 50px 胶囊 + `scale(0.95)` 激活态
+5. 检查绿色是否映射到正确角色（Green Accent 用于 CTA，Starbucks Green 用于标题，House Green 用于横幅）
+6. 不要引入渐变——系统全程为纯色色块
+7. 全系统统一保持 SoDoSans 字距 `-0.01em` / `-0.16px`
 
-### Known Gaps
+### 已知局限
 
-- SoDoSans is a proprietary typeface not available on Google Fonts — when implementing publicly, use Inter or Manrope as a substitute and document the swap
-- Lander Tall (Rewards serif) is also custom — substitute with Iowan Old Style, Lora, or Source Serif Pro
-- Specific per-component animation timings beyond the few documented (`--duration: 0.4s`, `--iconTransition: all ease-out 0.2s`, `--expanderDuration: 300ms`) are not captured for every interactive surface
-- Form error-state full styling (red border weight, icon placement) visible on the tint token but not exhaustively extracted
-- Careers-page specific components (cup-name card, search radio grid) are referenced in token names but not covered by this extraction
-- Starbucks Visa Card / Starbucks-Card (SVC) detailed mockup specs are hinted at by `--svcRoundedCorners` and `--svcShadowFilter` tokens but not fully documented
+- SoDoSans 是专有字体，无法在 Google Fonts 获取——公开实现时使用 Inter 或 Manrope 作为替代，并记录替换说明
+- Lander Tall（Rewards 衬线体）同为定制字体——可替换为 Iowan Old Style、Lora 或 Source Serif Pro
+- 除已记录的少数几个动画时长（`--duration: 0.4s`、`--iconTransition: all ease-out 0.2s`、`--expanderDuration: 300ms`），其他每个交互界面的具体动画时长未全面记录
+- 表单错误状态的完整样式（红色边框粗细、图标位置）在色调 token 中可见，但未完整提取
+- Careers 页面专属组件（杯名卡片、搜索单选网格）在 token 名称中有所引用，但本次提取未涵盖
+- Starbucks Visa 卡 / Starbucks Card（SVC）的详细模型规格通过 `--svcRoundedCorners` 和 `--svcShadowFilter` token 有所提示，但尚未完整记录

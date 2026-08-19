@@ -2,5 +2,7 @@
   "id": "fantasy",
   "name": "Fantasy",
   "category": "Creative & Artistic",
-  "description": "Bundled Open Design package for Fantasy, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "创意艺术",
+  "description": "Bundled Open Design package for Fantasy, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "游戏奇幻美学，高端视觉，丰富配色，沉浸式主题元素。"
 }

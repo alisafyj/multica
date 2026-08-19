@@ -1,119 +1,119 @@
-# Design System Inspired by Slack
+# 受 Slack 启发的设计系统
 
-> Category: Productivity & SaaS
-> Workplace communication platform. Aubergine-primary, multi-accent logo palette, light surfaces with dark sidebar, warm and approachable.
+> Category: 生产力与 SaaS
+> 职场通讯平台。以深茄紫为主色，多色调 Logo 调色板，明亮界面搭配深色侧边栏，温暖而亲切。
 
-## 1. Visual Theme & Atmosphere
+## 1. 视觉主题与氛围
 
-Slack's identity is built around the idea that work should feel human and even a little fun. The canonical surface is **light** — white content areas with a deep aubergine (`#4A154B`) sidebar — the inverse of dark-first tools. This contrast is intentional: the sidebar is a calm, always-present navigation anchor, while the content area is bright and open.
+Slack 的品牌形象建立在"工作也可以充满人情味，甚至有点趣味"的理念之上。标准界面是**明亮**的——白色内容区搭配深茄紫（`#4A154B`）侧边栏——与深色优先工具形成反差。这种对比是刻意为之：侧边栏是沉稳、始终存在的导航锚点，而内容区则明亮开阔。
 
-The logo palette — blue, green, yellow, red — appears primarily in the hashtag icon and marketing contexts, not scattered through the UI. In the product itself, Slack uses a restrained, professional color system with aubergine as the sole brand anchor.
+Logo 调色板——蓝、绿、黄、红——主要出现在井号图标和营销场景中，而非散落于整个 UI。在产品本身中，Slack 使用克制、专业的配色系统，以茄紫色作为唯一的品牌锚点。
 
-**Key Characteristics:**
-- Light-first content surfaces: white `#FFFFFF` and near-white `#F8F8F8`
-- Deep aubergine `#4A154B` sidebar — the brand's most recognizable UI element
-- Four logo accent colors (blue, green, yellow, red) used sparingly as highlights only
-- Larsseit for headings (marketing), system sans-serif for UI
-- Rounded but not cartoonish: 4–8px radius on most components
-- Dense but breathable: compact message rows with clear thread hierarchy
-- Warm and conversational tone — emojis, reactions, and illustrations are first-class
+**核心特征：**
+- 明亮优先的内容界面：白色 `#FFFFFF` 与近白色 `#F8F8F8`
+- 深茄紫 `#4A154B` 侧边栏——品牌最具辨识度的 UI 元素
+- 四种 Logo 强调色（蓝、绿、黄、红）仅少量用作高亮
+- 标题使用 Larsseit（营销场景），UI 使用系统无衬线字体
+- 圆润但不卡通：大多数组件圆角为 4–8px
+- 紧凑而透气：消息行紧密，线程层级清晰
+- 温暖对话的语调——表情符号、回应和插图是一等公民
 
 ---
 
-## 2. Color Palette & Roles
+## 2. 色彩规范与用途
 
-### Brand Primary
-| Token | Hex | Role |
+### 品牌主色
+| 变量 | Hex | 用途 |
 |---|---|---|
-| `--color-aubergine` | `#4A154B` | Sidebar background, primary brand color |
-| `--color-aubergine-dark` | `#350d36` | Hover states on aubergine surfaces |
-| `--color-aubergine-light` | `#611f69` | Active item highlight in sidebar |
+| `--color-aubergine` | `#4A154B` | 侧边栏背景，品牌主色 |
+| `--color-aubergine-dark` | `#350d36` | 茄紫界面上的悬停状态 |
+| `--color-aubergine-light` | `#611f69` | 侧边栏活跃项高亮 |
 
-### Logo Accent Colors (use sparingly — highlights, icons, marketing only)
-| Token | Hex | Name | Role |
+### Logo 强调色（少量使用——仅用于高亮、图标、营销）
+| 变量 | Hex | 名称 | 用途 |
 |---|---|---|---|
-| `--color-blue` | `#36C5F0` | Sky Blue | Channel icons, links, info states |
-| `--color-green` | `#2EB67D` | Teal Green | Online status, success states |
-| `--color-yellow` | `#ECB22E` | Gold | Away status, warnings, highlights |
-| `--color-red` | `#E01E5A` | Ruby | Notifications, errors, mentions badge |
+| `--color-blue` | `#36C5F0` | 天蓝 | 频道图标、链接、信息状态 |
+| `--color-green` | `#2EB67D` | 青绿 | 在线状态、成功状态 |
+| `--color-yellow` | `#ECB22E` | 金黄 | 离开状态、警告、高亮 |
+| `--color-red` | `#E01E5A` | 宝石红 | 通知、错误、提及徽章 |
 
-### Surface & Background
-| Token | Hex | Role |
+### 界面背景色
+| 变量 | Hex | 用途 |
 |---|---|---|
-| `--bg-primary` | `#FFFFFF` | Main message area, modals |
-| `--bg-secondary` | `#F8F8F8` | Thread panels, secondary surfaces |
-| `--bg-tertiary` | `#F1F1F1` | Input backgrounds, hover states |
-| `--bg-sidebar` | `#4A154B` | Left sidebar (aubergine) |
-| `--bg-sidebar-hover` | `rgba(255,255,255,0.1)` | Sidebar item hover |
-| `--bg-sidebar-active` | `rgba(255,255,255,0.2)` | Active sidebar item |
-| `--bg-message-hover` | `#F8F8F8` | Message row hover |
+| `--bg-primary` | `#FFFFFF` | 主消息区、弹窗 |
+| `--bg-secondary` | `#F8F8F8` | 线程面板、次级界面 |
+| `--bg-tertiary` | `#F1F1F1` | 输入框背景、悬停状态 |
+| `--bg-sidebar` | `#4A154B` | 左侧边栏（茄紫色） |
+| `--bg-sidebar-hover` | `rgba(255,255,255,0.1)` | 侧边栏项悬停 |
+| `--bg-sidebar-active` | `rgba(255,255,255,0.2)` | 活跃侧边栏项 |
+| `--bg-message-hover` | `#F8F8F8` | 消息行悬停 |
 
-### Text Colors
-| Token | Hex | Role |
+### 文字颜色
+| 变量 | Hex | 用途 |
 |---|---|---|
-| `--text-primary` | `#1D1C1D` | Primary body text (near-black) |
-| `--text-secondary` | `#616061` | Timestamps, muted labels |
-| `--text-sidebar` | `rgba(255,255,255,0.9)` | Sidebar channel names |
-| `--text-sidebar-muted` | `rgba(255,255,255,0.6)` | Sidebar inactive items |
-| `--text-link` | `#1264A3` | Inline links in messages |
-| `--text-mention` | `#1264A3` | @mention text color |
+| `--text-primary` | `#1D1C1D` | 主要正文（近黑色） |
+| `--text-secondary` | `#616061` | 时间戳、静音标签 |
+| `--text-sidebar` | `rgba(255,255,255,0.9)` | 侧边栏频道名 |
+| `--text-sidebar-muted` | `rgba(255,255,255,0.6)` | 侧边栏未激活项 |
+| `--text-link` | `#1264A3` | 消息内联链接 |
+| `--text-mention` | `#1264A3` | @提及文字颜色 |
 
-### Semantic Colors
-| Token | Hex | Role |
+### 语义色
+| 变量 | Hex | 用途 |
 |---|---|---|
-| `--color-success` | `#2EB67D` | Success toasts, positive states |
-| `--color-warning` | `#ECB22E` | Warning states |
-| `--color-danger` | `#E01E5A` | Error states, destructive actions |
-| `--color-info` | `#36C5F0` | Informational highlights |
+| `--color-success` | `#2EB67D` | 成功提示、积极状态 |
+| `--color-warning` | `#ECB22E` | 警告状态 |
+| `--color-danger` | `#E01E5A` | 错误状态、破坏性操作 |
+| `--color-info` | `#36C5F0` | 信息性高亮 |
 
-### Border & Divider
-| Token | Hex | Role |
+### 边框与分隔线
+| 变量 | Hex | 用途 |
 |---|---|---|
-| `--border-default` | `#DDDDDD` | Standard dividers, card borders |
-| `--border-subtle` | `#F1F1F1` | Subtle separators between rows |
-| `--border-focus` | `#1264A3` | Focus ring color |
+| `--border-default` | `#DDDDDD` | 标准分隔线、卡片边框 |
+| `--border-subtle` | `#F1F1F1` | 行间微妙分隔线 |
+| `--border-focus` | `#1264A3` | 焦点环颜色 |
 
 ---
 
-## 3. Typography Rules
+## 3. 排版规则
 
-### Typefaces
-| Role | Official | Web Fallback |
+### 字体
+| 用途 | 官方字体 | 网页回退 |
 |---|---|---|
-| Display / Marketing Headings | Larsseit | `'Larsseit', 'Helvetica Neue', Arial, sans-serif` |
-| UI / Body / Chrome | Slack Lato (custom) | `system-ui, -apple-system, BlinkMacSystemFont, sans-serif` |
-| Code / Monospace | — | `'Monaco', 'Menlo', 'Courier New', monospace` |
+| 展示 / 营销标题 | Larsseit | `'Larsseit', 'Helvetica Neue', Arial, sans-serif` |
+| UI / 正文 / 框架 | Slack Lato（定制） | `system-ui, -apple-system, BlinkMacSystemFont, sans-serif` |
+| 代码 / 等宽 | — | `'Monaco', 'Menlo', 'Courier New', monospace` |
 
-> Slack uses **Larsseit** for marketing headlines and a custom Lato variant for in-product UI. For web use, `system-ui` is the safest fallback.
+> Slack 营销标题使用 **Larsseit**，产品内 UI 使用定制版 Lato。网页使用时，`system-ui` 是最安全的回退方案。
 
-### Type Scale
+### 字号层级
 
-| Level | Size | Weight | Line Height | Letter Spacing | Usage |
+| 层级 | 大小 | 字重 | 行高 | 字间距 | 用途 |
 |---|---|---|---|---|---|
-| Display XL | 48px | 800 | 1.1 | -1px | Marketing hero headlines |
-| Display L | 36px | 700 | 1.15 | -0.5px | Section heroes |
-| Heading 1 | 28px | 700 | 1.25 | normal | Modal titles, page headers |
-| Heading 2 | 22px | 700 | 1.3 | normal | Card titles, settings sections |
-| Heading 3 | 18px | 700 | 1.35 | normal | Sub-section headers |
-| Body L | 16px | 400 | 1.5 | normal | Message text, descriptions |
-| Body | 15px | 400 | 1.46667 | normal | Default UI text (Slack's base size) |
-| Body SM | 13px | 400 | 1.38462 | normal | Secondary metadata |
-| Caption | 12px | 400 | 1.33 | normal | Timestamps, hints |
-| Code | 12px | 400 | 1.5 | normal | Inline code, code blocks |
+| Display XL | 48px | 800 | 1.1 | -1px | 营销主视觉标题 |
+| Display L | 36px | 700 | 1.15 | -0.5px | 区块主视觉 |
+| Heading 1 | 28px | 700 | 1.25 | normal | 弹窗标题、页面标题 |
+| Heading 2 | 22px | 700 | 1.3 | normal | 卡片标题、设置区块 |
+| Heading 3 | 18px | 700 | 1.35 | normal | 子区块标题 |
+| Body L | 16px | 400 | 1.5 | normal | 消息文本、描述 |
+| Body | 15px | 400 | 1.46667 | normal | 默认 UI 文字（Slack 基础字号） |
+| Body SM | 13px | 400 | 1.38462 | normal | 次要元数据 |
+| Caption | 12px | 400 | 1.33 | normal | 时间戳、提示 |
+| Code | 12px | 400 | 1.5 | normal | 行内代码、代码块 |
 
-### Type Rules
-- Slack's base body size is **15px** — slightly smaller than 16px for density
-- Unread channels: weight 700 — bold is the primary unread indicator
-- Timestamps: 12px `--text-secondary`, show on hover only
-- Code blocks: background `#F8F8F8`, border `1px solid #DDDDDD`, border-radius 4px
-- Never use font sizes below 12px
-- Marketing headings: letter-spacing `-1px` for large display sizes
+### 排版规则
+- Slack 基础正文字号为 **15px**——比 16px 略小，以提高密度
+- 未读频道：字重 700——粗体是主要的未读指示器
+- 时间戳：12px `--text-secondary`，仅悬停时显示
+- 代码块：背景 `#F8F8F8`，边框 `1px solid #DDDDDD`，圆角 4px
+- 不使用 12px 以下的字号
+- 营销标题：大展示尺寸使用字间距 `-1px`
 
 ---
 
-## 4. Component Stylings
+## 4. 组件样式
 
-### Buttons
+### 按钮
 
 ```css
 /* Primary */
@@ -151,7 +151,7 @@ The logo palette — blue, green, yellow, red — appears primarily in the hasht
 .btn-danger:hover { background: #B3114A; }
 ```
 
-### Input Fields
+### 输入框
 ```css
 .input {
   background: #FFFFFF;
@@ -169,7 +169,7 @@ The logo palette — blue, green, yellow, red — appears primarily in the hasht
 }
 ```
 
-### Sidebar Channel Item
+### 侧边栏频道项
 ```css
 .channel-item {
   height: 28px;
@@ -193,7 +193,7 @@ The logo palette — blue, green, yellow, red — appears primarily in the hasht
 }
 ```
 
-### Unread Badge
+### 未读徽章
 ```css
 .badge {
   background: #E01E5A;
@@ -206,7 +206,7 @@ The logo palette — blue, green, yellow, red — appears primarily in the hasht
 }
 ```
 
-### Message Attachments / Cards
+### 消息附件 / 卡片
 ```css
 .attachment {
   border-left: 4px solid #DDDDDD;
@@ -217,7 +217,7 @@ The logo palette — blue, green, yellow, red — appears primarily in the hasht
 }
 ```
 
-### Reactions
+### 回应
 ```css
 .reaction {
   border: 1px solid #DDDDDD;
@@ -236,9 +236,9 @@ The logo palette — blue, green, yellow, red — appears primarily in the hasht
 
 ---
 
-## 5. Layout Principles
+## 5. 布局原则
 
-### Three-Column Layout
+### 三栏布局
 ```
 ┌──────────────┬──────────────────────────────┬─────────────┐
 │   Sidebar    │        Message Area          │   Thread    │
@@ -247,19 +247,19 @@ The logo palette — blue, green, yellow, red — appears primarily in the hasht
 └──────────────┴──────────────────────────────┴─────────────┘
 ```
 
-### Spacing System (4px base)
-| Token | Value | Usage |
+### 间距系统（基础单位 4px）
+| 变量 | 数值 | 用途 |
 |---|---|---|
-| `--space-1` | 4px | Tight gaps |
-| `--space-2` | 8px | Component padding |
-| `--space-3` | 12px | Input padding |
-| `--space-4` | 16px | Standard padding |
-| `--space-6` | 24px | Card padding |
-| `--space-8` | 32px | Section gaps |
+| `--space-1` | 4px | 紧凑间隙 |
+| `--space-2` | 8px | 组件内边距 |
+| `--space-3` | 12px | 输入框内边距 |
+| `--space-4` | 16px | 标准内边距 |
+| `--space-6` | 24px | 卡片内边距 |
+| `--space-8` | 32px | 区块间距 |
 
-### Sidebar Structure
+### 侧边栏结构
 ```
-[Workspace Name ▼]
+[工作区名称 ▼]
 ────────────────────
 Threads
 All DMs
@@ -275,89 +275,89 @@ Drafts & Sent
   Jane Smith
 ```
 
-### Message Composer
-- Pinned to bottom of message area
-- `border: 1px solid #DDDDDD`, `border-radius: 8px`, `margin: 0 16px 16px`
-- Toolbar: emoji, attach, format, send button
+### 消息编辑器
+- 固定在消息区底部
+- `border: 1px solid #DDDDDD`，`border-radius: 8px`，`margin: 0 16px 16px`
+- 工具栏：表情、附件、格式化、发送按钮
 
 ---
 
-## 6. Depth & Elevation
+## 6. 深度与层级
 
-Slack uses light shadows on a light surface:
+Slack 在明亮界面上使用轻柔阴影：
 
-| Level | Usage | Shadow |
+| 层级 | 用途 | 阴影 |
 |---|---|---|
-| Flat | Message rows, sidebar items | none |
-| Low | Cards, inputs | `0 1px 3px rgba(0,0,0,0.08)` |
-| Medium | Dropdowns, popovers | `0 4px 12px rgba(0,0,0,0.12)` |
-| High | Modals, dialogs | `0 8px 24px rgba(0,0,0,0.15)` |
-| Overlay | Modal backdrops | `rgba(0,0,0,0.5)` |
+| 扁平 | 消息行、侧边栏项 | none |
+| 低 | 卡片、输入框 | `0 1px 3px rgba(0,0,0,0.08)` |
+| 中 | 下拉菜单、弹出层 | `0 4px 12px rgba(0,0,0,0.12)` |
+| 高 | 模态框、对话框 | `0 8px 24px rgba(0,0,0,0.15)` |
+| 遮罩 | 模态背景遮罩 | `rgba(0,0,0,0.5)` |
 
 ---
 
-## 7. Do's and Don'ts
+## 7. 应该与不应该
 
-### ✅ Do
-- Use aubergine `#4A154B` for the sidebar — it is Slack's most iconic UI element
-- Keep the main content area white and light
-- Use `#1D1C1D` (near-black) for all body text, not pure black
-- Bold channel names to show unread status — weight is the indicator
-- Use the four accent colors only for semantic roles (success, warning, danger, info)
-- Apply `border-left: 4px` on message attachments and embeds
-- Show timestamps on hover only
-- Use `#1264A3` for links and focus states
-- Keep sidebar items compact: 28px height, 6px border-radius
+### ✅ 应该
+- 侧边栏使用茄紫色 `#4A154B`——这是 Slack 最标志性的 UI 元素
+- 保持主内容区白色和明亮
+- 所有正文使用 `#1D1C1D`（近黑色），而非纯黑
+- 用粗体频道名表示未读状态——字重是指示器
+- 四种强调色仅用于语义角色（成功、警告、危险、信息）
+- 消息附件和嵌入内容使用 `border-left: 4px`
+- 仅在悬停时显示时间戳
+- 链接和焦点状态使用 `#1264A3`
+- 侧边栏项保持紧凑：高度 28px，圆角 6px
 
-### ❌ Don't
-- Don't use a dark main content area — Slack is light-first
-- Don't scatter blue/green/yellow/red as decorative accents
-- Don't use pure black `#000000` for text
-- Don't use speech bubbles — messages are flat rows
-- Don't make buttons large-radius — 4px is standard
-- Don't show timestamps permanently
-- Don't use ALL CAPS for channel names
-- Don't use font sizes below 12px
+### ❌ 不应该
+- 不要使用深色主内容区——Slack 是明亮优先的
+- 不要将蓝/绿/黄/红作为装饰性强调色散落各处
+- 不要使用纯黑 `#000000` 作为文字颜色
+- 不要使用气泡——消息是扁平行
+- 不要将按钮做成大圆角——4px 是标准
+- 不要永久显示时间戳
+- 不要将频道名全大写
+- 不要使用 12px 以下的字号
 
 ---
 
-## 8. Responsive Behavior
+## 8. 响应式行为
 
-### Breakpoints
-| Breakpoint | Width | Layout |
+### 断点
+| 断点 | 宽度 | 布局 |
 |---|---|---|
-| Mobile | < 768px | Single panel, sidebar as left drawer |
-| Tablet | 768–1024px | Sidebar + message area only |
-| Desktop | > 1024px | Full three-column layout |
+| 移动端 | < 768px | 单面板，侧边栏作为左抽屉 |
+| 平板 | 768–1024px | 侧边栏 + 仅消息区 |
+| 桌面端 | > 1024px | 完整三栏布局 |
 
-### Mobile Adaptations
-- Sidebar: left drawer, swipe right to open
-- Bottom tab bar: Home, DMs, Activity, You
-- Thread panel: full-screen overlay
-- Composer: pinned above keyboard
-- Channel list items: 44px touch target height
-- Aubergine top header bar retained on mobile
+### 移动端适配
+- 侧边栏：左抽屉，向右滑动打开
+- 底部标签栏：首页、私信、动态、我
+- 线程面板：全屏覆盖层
+- 编辑器：固定在键盘上方
+- 频道列表项：44px 触摸目标高度
+- 移动端保留茄紫色顶部标题栏
 
 ---
 
-## 9. Agent Prompt Guide
+## 9. Agent 提示指南
 
-When generating Slack-styled designs, follow this approach:
+生成 Slack 风格设计时，遵循以下方法：
 
-**Color application:**
-> Set `background: #FFFFFF` as the main canvas. Use `#4A154B` (aubergine) for the sidebar. All primary text is `#1D1C1D`. Links and focus rings use `#1264A3`. The four logo colors — `#36C5F0`, `#2EB67D`, `#ECB22E`, `#E01E5A` — are semantic only: info, success, warning, danger.
+**颜色应用：**
+> 将 `background: #FFFFFF` 设为主画布。侧边栏使用 `#4A154B`（茄紫色）。所有主要文字使用 `#1D1C1D`。链接和焦点环使用 `#1264A3`。四种 Logo 颜色——`#36C5F0`、`#2EB67D`、`#ECB22E`、`#E01E5A`——仅作语义用途：信息、成功、警告、危险。
 
-**Typography:**
-> Use `system-ui, -apple-system, sans-serif` for all UI. Base size is 15px. Unread channels: weight 700. Body text: weight 400. Timestamps: 12px `#616061`, hover-only. Code: `Monaco, Menlo, monospace`, 12px, `#F8F8F8` background.
+**排版：**
+> 所有 UI 使用 `system-ui, -apple-system, sans-serif`。基础字号为 15px。未读频道：字重 700。正文：字重 400。时间戳：12px `#616061`，仅悬停显示。代码：`Monaco, Menlo, monospace`，12px，背景 `#F8F8F8`。
 
-**Layout:**
-> Three columns: 240px aubergine sidebar + flex white message area + optional 400px thread panel. Sidebar items: 28px height, 6px radius, bold when unread. Composer: pinned bottom, `border: 1px solid #DDDDDD`, `border-radius: 8px`.
+**布局：**
+> 三栏：240px 茄紫色侧边栏 + 弹性白色消息区 + 可选 400px 线程面板。侧边栏项：高度 28px，圆角 6px，未读时加粗。编辑器：固定底部，`border: 1px solid #DDDDDD`，`border-radius: 8px`。
 
-**Components:**
-> Buttons: 4px radius, 36px height, aubergine primary. Inputs: `1px solid #DDDDDD` border, `#1264A3` focus ring. Message rows: flat, no bubbles, 36px circle avatar. Reactions: pill `border: 1px solid #DDDDDD`, `border-radius: 24px`.
+**组件：**
+> 按钮：圆角 4px，高度 36px，茄紫色主按钮。输入框：`1px solid #DDDDDD` 边框，`#1264A3` 焦点环。消息行：扁平，无气泡，36px 圆形头像。回应：胶囊形 `border: 1px solid #DDDDDD`，`border-radius: 24px`。
 
-**Tone:**
-> Slack is warm, professional, and human. Empty states use friendly illustrations. CTAs are direct: "Send message", "Get started". Error messages are clear and helpful. Never alarming.
+**语调：**
+> Slack 是温暖、专业且充满人情味的。空状态使用友好插图。行动号召直接明确："Send message"、"Get started"。错误信息清晰且有帮助。绝不令人感到警觉。
 
-**Anti-patterns to avoid:**
-> No dark content area. No speech bubbles. No pure black text. No scattered multi-color accents. No ALL CAPS channel names. No font below 12px. No large button radius.
+**需要避免的反模式：**
+> 不要深色内容区。不要气泡。不要纯黑文字。不要散落的多色强调。不要全大写频道名。不要低于 12px 的字号。不要大圆角按钮。

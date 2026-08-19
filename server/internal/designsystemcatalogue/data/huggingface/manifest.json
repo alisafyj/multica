@@ -2,5 +2,7 @@
   "id": "huggingface",
   "name": "Hugging Face",
   "category": "AI & LLM",
-  "description": "Bundled Open Design package for Hugging Face, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "AI 与大模型",
+  "description": "Bundled Open Design package for Hugging Face, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "机器学习社区。明黄色点缀，等宽字体身份，活泼而信息密集。"
 }

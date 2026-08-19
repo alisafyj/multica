@@ -1,92 +1,92 @@
 # Design System Inspired by Discord
 
-> Category: Productivity & SaaS
-> Voice / chat platform. Deep blurple, dark-first surfaces, playful accent moments.
+> Category: 效率与 SaaS
+> 语音 / 聊天平台。深蓝紫主色调，深色优先界面，偶有活泼的强调色点缀。
 
 ## 1. Visual Theme & Atmosphere
 
-Discord's product is engineered for evenings, raids, and group voice — so the entire surface is dark-first. The default canvas is the deep `Background Primary` (`#313338` light theme, `#1e1f22` dark theme), with chat columns layered on slightly lighter or darker shades to denote channels, threads, and side panels. The signature **Blurple** (`#5865f2`) is reserved for the brand mark, primary CTAs, mentions, and the "you" affordance — used sparingly so it pops against the muted neutrals.
+Discord 的产品专为夜间游戏、团队副本和多人语音而生，因此整个界面以深色为主。默认画布采用深邃的"背景主色"（浅色主题为 `#313338`，深色主题为 `#1e1f22`），聊天栏在略浅或略深的色阶之上层叠，用以区分频道、话题和侧边栏。标志性的**蓝紫色**（`#5865f2`）专用于品牌标志、主要操作按钮、@提及以及"当前用户"的标识——用量克制，使其在灰调中层显眼。
 
-Typography is **gg sans** (Discord's custom Whitney-replacement) for prose and chrome, with rounded geometric shapes that feel approachable but still legible at the small sizes a chat client demands. Headings step up incrementally; chat rows are tight (4–8px between message groups) so hours of scrollback feel scannable.
+字体为 **gg sans**（Discord 定制的 Whitney 替代字体），用于正文与界面文字。其圆润的几何形态亲切友好，同时在聊天客户端所需的小字号下仍保持良好的可读性。标题级差适中；聊天行距紧凑（消息组之间仅 4–8px），使长时间滚动历史记录也便于扫读。
 
-The shape language is rounded but not balloon-soft: 8px radii on cards, 4px on inputs, full pills on status badges and tags. Servers are rounded-square avatars at 48px that morph to circles on hover — a tiny piece of motion that has become part of the brand's identity.
+形状语言圆润但不失挺括：卡片圆角为 8px，输入框为 4px，状态徽章和标签为全圆药丸形。服务器头像为 48px 的圆角方形，悬停时变为圆形——这一微小的动效已成为品牌标识的一部分。
 
 **Key Characteristics:**
-- Dark-first surfaces: `#1e1f22` / `#2b2d31` / `#313338` (3-step depth)
-- Blurple `#5865f2` as the only saturated accent in the chat surface
-- gg sans (Whitney-style) for all text — friendly, geometric, neutral
-- Rounded-square server avatars (16px radius) that snap to circles on hover
-- Tight chat-row spacing, generous side-panel padding
-- Status dots: green online, yellow idle, red dnd, gray offline
-- Pixel-snapped 1px dividers in subtle off-white at low alpha
+- 深色优先界面：`#1e1f22` / `#2b2d31` / `#313338`（三层深度）
+- 蓝紫色 `#5865f2` 是聊天界面中唯一的高饱和强调色
+- gg sans（Whitney 风格）统一用于所有文字——亲切、几何、中性
+- 圆角方形服务器头像（圆角半径 16px），悬停时过渡为圆形
+- 聊天行距紧凑，侧边栏内边距宽松
+- 状态指示点：绿色在线、黄色空闲、红色免打扰、灰色离线
+- 低不透明度的细微半白色 1px 像素对齐分割线
 
 ## 2. Color Palette & Roles
 
 ### Primary
-- **Blurple** (`#5865f2`): Brand primary, primary CTA, mention highlight.
-- **Blurple Hover** (`#4752c4`): Hover/active for blurple.
-- **Blurple Soft** (`#7289da`): Legacy blurple, secondary accent in marketing.
+- **Blurple** (`#5865f2`): 品牌主色、主操作按钮、@提及高亮。
+- **Blurple Hover** (`#4752c4`): 蓝紫色的悬停 / 激活态。
+- **Blurple Soft** (`#7289da`): 旧版蓝紫色，营销场景中的次级强调色。
 
-### Surface (Dark Theme — default)
-- **Background Tertiary** (`#1e1f22`): Server list rail, deepest background.
-- **Background Secondary** (`#2b2d31`): Channel sidebar, settings sidebar.
-- **Background Primary** (`#313338`): Chat surface, message column.
-- **Background Floating** (`#111214`): Floating popovers, tooltips, autocomplete.
-- **Background Modifier Hover** (`rgba(78, 80, 88, 0.3)`): Hover overlay on rows.
-- **Background Modifier Selected** (`rgba(78, 80, 88, 0.6)`): Active row.
+### Surface（深色主题——默认）
+- **Background Tertiary** (`#1e1f22`): 服务器列表轨道，最深背景层。
+- **Background Secondary** (`#2b2d31`): 频道侧边栏、设置侧边栏。
+- **Background Primary** (`#313338`): 聊天区域、消息列。
+- **Background Floating** (`#111214`): 浮动弹出层、提示框、自动补全。
+- **Background Modifier Hover** (`rgba(78, 80, 88, 0.3)`): 行悬停遮罩。
+- **Background Modifier Selected** (`rgba(78, 80, 88, 0.6)`): 激活行。
 
-### Surface (Light Theme)
-- **Light Bg Primary** (`#ffffff`): Chat surface in light theme.
-- **Light Bg Secondary** (`#f2f3f5`): Sidebar in light theme.
-- **Light Bg Tertiary** (`#e3e5e8`): Deepest light surface.
+### Surface（浅色主题）
+- **Light Bg Primary** (`#ffffff`): 浅色主题下的聊天区域。
+- **Light Bg Secondary** (`#f2f3f5`): 浅色主题下的侧边栏。
+- **Light Bg Tertiary** (`#e3e5e8`): 浅色主题中最深的表面层。
 
 ### Text
-- **Header Primary** (`#f2f3f5`): Channel headers, modal titles in dark theme.
-- **Header Secondary** (`#b5bac1`): Muted headers.
-- **Text Normal** (`#dbdee1`): Body text in dark theme — slightly cooler than pure white.
-- **Text Muted** (`#949ba4`): Timestamps, server names, secondary metadata.
-- **Text Link** (`#00a8fc`): Hyperlinks in messages — sky blue, distinct from blurple.
-- **Channels Default** (`#80848e`): Inactive channel name in sidebar.
+- **Header Primary** (`#f2f3f5`): 深色主题下的频道标题和模态框标题。
+- **Header Secondary** (`#b5bac1`): 次级标题，视觉减弱。
+- **Text Normal** (`#dbdee1`): 深色主题正文——比纯白略偏冷。
+- **Text Muted** (`#949ba4`): 时间戳、服务器名称、次要元数据。
+- **Text Link** (`#00a8fc`): 消息中的超链接——天蓝色，有别于蓝紫色。
+- **Channels Default** (`#80848e`): 侧边栏中未激活的频道名称。
 
 ### Status & Semantic
-- **Status Online** (`#23a55a`): Online dot, success states.
-- **Status Idle** (`#f0b232`): Idle dot, away.
-- **Status DND** (`#f23f43`): Do-not-disturb, also serves as destructive red.
-- **Status Streaming** (`#593695`): "Streaming" purple.
-- **Status Offline** (`#80848e`): Offline gray.
-- **Mention Highlight** (`rgba(88, 101, 242, 0.1)`): Soft blurple wash on @mention rows.
+- **Status Online** (`#23a55a`): 在线状态点、成功状态。
+- **Status Idle** (`#f0b232`): 空闲状态点、离开。
+- **Status DND** (`#f23f43`): 免打扰，同时作为破坏性操作的红色。
+- **Status Streaming** (`#593695`): "直播中"紫色。
+- **Status Offline** (`#80848e`): 离线灰色。
+- **Mention Highlight** (`rgba(88, 101, 242, 0.1)`): @提及行的柔和蓝紫色底色。
 
 ### Border & Divider
-- **Background Modifier Accent** (`rgba(255, 255, 255, 0.06)`): Standard divider in dark.
-- **Border Subtle** (`#3f4147`): Solid divider for cards.
+- **Background Modifier Accent** (`rgba(255, 255, 255, 0.06)`): 深色主题下的标准分割线。
+- **Border Subtle** (`#3f4147`): 卡片的实线边框。
 
 ## 3. Typography Rules
 
 ### Font Family
-- **Body / UI / Headings**: `gg sans`, with fallback: `"Helvetica Neue", Helvetica, Arial, sans-serif`
-- **Display (legacy / Whitney)**: `Whitney`, with fallback: `gg sans`
-- **Code / Mono**: `"gg mono"`, with fallback: `Consolas, Andale Mono, Courier New, Courier, monospace`
+- **正文 / UI / 标题**: `gg sans`，备用字体：`"Helvetica Neue", Helvetica, Arial, sans-serif`
+- **展示字体（旧版 / Whitney）**: `Whitney`，备用字体：`gg sans`
+- **代码 / 等宽**: `"gg mono"`，备用字体：`Consolas, Andale Mono, Courier New, Courier, monospace`
 
 ### Hierarchy
 
 | Role | Font | Size | Weight | Line Height | Letter Spacing | Notes |
 |------|------|------|--------|-------------|----------------|-------|
-| Display Hero | gg sans | 56px (3.5rem) | 800 | 1.1 | -0.02em | Marketing hero |
-| Page Heading | gg sans | 24px (1.5rem) | 700 | 1.25 | normal | Settings/profile titles |
-| Channel Name | gg sans | 16px (1rem) | 600 | 1.25 | normal | `#general`, channel header |
-| Message Body | gg sans | 16px (1rem) | 400 | 1.375 | normal | Standard chat text |
-| Username | gg sans | 16px (1rem) | 500 | 1.25 | normal | Author of a message |
-| Timestamp | gg sans | 12px (0.75rem) | 500 | 1.25 | normal | "Today at 4:32 PM" |
-| Sidebar Channel | gg sans | 16px (1rem) | 500 | 1.25 | normal | Channel list rows |
-| Server Name | gg sans | 16px (1rem) | 600 | 1.25 | normal | Server header |
-| Caption / Meta | gg sans | 12px (0.75rem) | 400 | 1.3 | 0.02em | Status text, edited tag |
-| Code Inline | gg mono | 0.875em | 400 | inherit | normal | Inline `code` |
-| Code Block | gg mono | 14px (0.875rem) | 400 | 1.5 | normal | ```triple-fenced``` block |
+| Display Hero | gg sans | 56px (3.5rem) | 800 | 1.1 | -0.02em | 营销主视觉 |
+| Page Heading | gg sans | 24px (1.5rem) | 700 | 1.25 | normal | 设置 / 个人资料标题 |
+| Channel Name | gg sans | 16px (1rem) | 600 | 1.25 | normal | `#general`、频道标题 |
+| Message Body | gg sans | 16px (1rem) | 400 | 1.375 | normal | 标准聊天文字 |
+| Username | gg sans | 16px (1rem) | 500 | 1.25 | normal | 消息作者 |
+| Timestamp | gg sans | 12px (0.75rem) | 500 | 1.25 | normal | "今天 16:32" |
+| Sidebar Channel | gg sans | 16px (1rem) | 500 | 1.25 | normal | 频道列表行 |
+| Server Name | gg sans | 16px (1rem) | 600 | 1.25 | normal | 服务器标题 |
+| Caption / Meta | gg sans | 12px (0.75rem) | 400 | 1.3 | 0.02em | 状态文字、已编辑标签 |
+| Code Inline | gg mono | 0.875em | 400 | inherit | normal | 行内 `code` |
+| Code Block | gg mono | 14px (0.875rem) | 400 | 1.5 | normal | ```triple-fenced``` 代码块 |
 
 ### Principles
-- **Friendly geometry**: gg sans replaces Whitney with rounded terminals on a/g/s — the brand wants warmth without breaking legibility.
-- **Weight contrast over color contrast**: hierarchy comes from 400→500→600→700→800 weight steps; the surface stays neutral.
-- **16px body**: chat messages do not shrink below 16px. Density comes from line-height (1.375), not font size.
+- **友好的几何形态**：gg sans 以圆润末端替代 Whitney 的 a/g/s 字形——品牌追求亲切感，同时不牺牲可读性。
+- **字重对比优于颜色对比**：层级通过 400→500→600→700→800 的字重递进来体现；表面色调保持中性。
+- **正文 16px**：聊天消息字号不低于 16px。信息密度通过行高（1.375）控制，而非缩小字号。
 
 ## 4. Component Stylings
 
@@ -98,7 +98,7 @@ The shape language is rounded but not balloon-soft: 8px radii on cards, 4px on i
 - Padding: 8px 16px
 - Radius: 4px
 - Hover: `#4752c4`
-- Use: Primary CTAs, "Continue", "Join Server"
+- 用途：主操作按钮，如"继续"、"加入服务器"
 
 **Secondary**
 - Background: `#4e5058`
@@ -107,10 +107,10 @@ The shape language is rounded but not balloon-soft: 8px radii on cards, 4px on i
 - Radius: 4px
 - Hover: `#6d6f78`
 
-**Tertiary / Subtle (Link-style)**
+**Tertiary / Subtle（链接样式）**
 - Background: transparent
 - Text: `#dbdee1`
-- Hover: text underlined, no background change
+- Hover: 文字加下划线，背景不变
 
 **Danger**
 - Background: `#da373c`
@@ -127,17 +127,17 @@ The shape language is rounded but not balloon-soft: 8px radii on cards, 4px on i
 
 ### Server Avatars
 - Size: 48×48px
-- Radius: 16px (rounded square) by default; transitions to 50% on hover and active.
-- Active state: 4px white pill on the left edge of the icon column.
+- Radius: 默认 16px（圆角方形）；悬停和激活时过渡为 50% 圆形。
+- 激活状态：图标列左侧边缘显示 4px 白色药丸形指示条。
 
 ### Status Dots
 - Size: 10×10px
-- Border: 3px solid background-tertiary (creates the "notch" effect)
-- Position: bottom-right of avatar.
+- Border: 3px solid background-tertiary（形成"缺口"效果）
+- Position: 头像右下角。
 
 ### Cards / Embeds
-- Background: `#2b2d31` (dark) or `#f2f3f5` (light)
-- Left border: 4px solid embed accent color.
+- Background: `#2b2d31`（深色）或 `#f2f3f5`（浅色）
+- Left border: 4px solid，颜色为嵌入内容的强调色。
 - Radius: 4px
 - Padding: 8px 16px
 
@@ -149,20 +149,20 @@ The shape language is rounded but not balloon-soft: 8px radii on cards, 4px on i
 
 ## 5. Spacing & Layout
 
-- **Base unit**: 4px. Scale: 4, 8, 12, 16, 20, 24, 32, 40.
-- **Server rail**: 72px wide, fixed.
-- **Channel sidebar**: 240px wide.
-- **Member list**: 240px wide on desktop.
-- **Chat column**: fluid, min 380px.
+- **基础单位**：4px。刻度：4、8、12、16、20、24、32、40。
+- **服务器轨道**：固定宽度 72px。
+- **频道侧边栏**：宽度 240px。
+- **成员列表**：桌面端宽度 240px。
+- **聊天列**：自适应宽度，最小 380px。
 
 ## 6. Motion
 
-- **Duration**: 200ms for hover; 350ms for the avatar circle-morph; 80ms for tooltip fade.
-- **Easing**: `cubic-bezier(0.215, 0.61, 0.355, 1)` for the avatar morph (snappy then settle).
-- **Notification pulse**: 1.4s ease-in-out infinite on unread mention indicator.
+- **时长**：悬停 200ms；头像圆形变形 350ms；提示框淡入淡出 80ms。
+- **缓动**：头像变形使用 `cubic-bezier(0.215, 0.61, 0.355, 1)`（快速入场后平稳落定）。
+- **未读通知脉冲**：@提及指示器采用 1.4s ease-in-out 无限循环动画。
 
 ## 7. Usage Guardrails
 
-- Preserve the dark shell, compact density, and blurple action hierarchy together; using blurple on a light marketing-style layout breaks the Discord product feel.
-- Keep navigation-heavy surfaces structured around rails, sidebars, and chat columns rather than isolated decorative cards.
-- Use the rounded-square avatar and status-dot language when representing people, servers, or active presence.
+- 保持深色外壳、紧凑密度与蓝紫色操作层级三者并用；若将蓝紫色置于浅色营销风格的布局中，Discord 的产品质感将被破坏。
+- 导航密集型界面应围绕轨道、侧边栏和聊天列来组织，而非孤立的装饰性卡片。
+- 代表人物、服务器或在线状态时，应使用圆角方形头像和状态指示点语言。

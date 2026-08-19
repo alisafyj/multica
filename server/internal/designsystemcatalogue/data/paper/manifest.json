@@ -2,5 +2,7 @@
   "id": "paper",
   "name": "Paper",
   "category": "Retro & Nostalgic",
-  "description": "Bundled Open Design package for Paper, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "复古怀旧",
+  "description": "Bundled Open Design package for Paper, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "纸张质感、印刷风格设计，用色克制，干净的衬线/无衬线排版，触感表面。"
 }

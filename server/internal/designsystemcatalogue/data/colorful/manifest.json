@@ -2,5 +2,7 @@
   "id": "colorful",
   "name": "Colorful",
   "category": "Bold & Expressive",
-  "description": "Bundled Open Design package for Colorful, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "大胆表现",
+  "description": "Bundled Open Design package for Colorful, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "鲜明高对比配色与渐变，界面引人入胜、令人印象深刻且现代感十足。"
 }

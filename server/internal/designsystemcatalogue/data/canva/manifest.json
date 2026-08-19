@@ -2,5 +2,7 @@
   "id": "canva",
   "name": "Canva",
   "category": "Design & Creative",
-  "description": "Bundled Open Design package for Canva, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "设计与创意",
+  "description": "Bundled Open Design package for Canva, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "视觉创作平台。鲜明紫蓝渐变，宽松间距，友好几何造型。"
 }

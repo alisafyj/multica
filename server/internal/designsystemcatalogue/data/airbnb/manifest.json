@@ -2,5 +2,7 @@
   "id": "airbnb",
   "name": "Airbnb",
   "category": "E-Commerce & Retail",
-  "description": "Bundled Open Design package for Airbnb, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "电商与零售",
+  "description": "Bundled Open Design package for Airbnb, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "旅行市场平台。暖珊瑚色点缀，摄影驱动，圆角 UI。"
 }

@@ -578,8 +578,18 @@ export interface ListBuiltinDesignSystemsResponse {
   design_systems: BuiltinDesignSystem[];
 }
 
+/** One declared token, typed by the package rather than inferred from CSS. */
+export interface BuiltinDesignSystemToken {
+  name: string;
+  value: string;
+  /** `color`, `typography`, `spacing`, … as the source package declared it. */
+  type: string;
+}
+
 /** One built-in with the content its detail view renders. */
 export interface BuiltinDesignSystemDetail extends BuiltinDesignSystem {
+  /** Empty for the few packages that ship no typed token file. */
+  tokens: BuiltinDesignSystemToken[];
   tokens_css: string;
   design_markdown: string;
 }

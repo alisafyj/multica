@@ -1,335 +1,335 @@
-# Design System Inspired by IBM
+# 受 IBM 启发的设计系统
 
-> Category: Media & Consumer
-> Enterprise technology. Carbon design system, structured blue palette.
+> Category: 媒体与消费
+> 企业级技术。Carbon 设计系统，结构化蓝色调色板。
 
-## 1. Visual Theme & Atmosphere
+## 1. 视觉主题与氛围
 
-IBM's website is the digital embodiment of enterprise authority built on the Carbon Design System — a design language so methodically structured it reads like an engineering specification rendered as a webpage. The page operates on a stark duality: a bright white (`#ffffff`) canvas with near-black (`#161616`) text, punctuated by a single, unwavering accent — IBM Blue 60 (`#0f62fe`). This isn't playful tech-startup minimalism; it's corporate precision distilled into pixels. Every element exists within Carbon's rigid 2x grid, every color maps to a semantic token, every spacing value snaps to the 8px base unit.
+IBM 的网站是建立在 Carbon 设计系统之上的企业权威的数字化体现——这套设计语言结构严谨，读起来像是以网页形式呈现的工程规范。页面基于鲜明的二元对比运作：明亮的白色（`#ffffff`）画布配以近乎纯黑（`#161616`）的文字，点缀以唯一且始终如一的强调色——IBM 蓝 60（`#0f62fe`）。这不是初创科技公司式的俏皮极简主义；这是将企业精确性凝练为像素的产物。每个元素都存在于 Carbon 严格的 2x 网格中，每种颜色映射至语义化 token，每个间距值都对齐 8px 基础单位。
 
-The IBM Plex type family is the system's backbone. IBM Plex Sans at light weight (300) for display headlines creates an unexpectedly airy, almost delicate quality at large sizes — a deliberate counterpoint to IBM's corporate gravity. At body sizes, regular weight (400) with 0.16px letter-spacing on 14px captions introduces the meticulous micro-tracking that makes Carbon text feel engineered rather than designed. IBM Plex Mono serves code, data, and technical labels, completing the family trinity alongside the rarely-surfaced IBM Plex Serif.
+IBM Plex 字体族是该系统的骨架。细体（300）的 IBM Plex Sans 用于展示标题，在大尺寸下创造出出人意料的轻盈、近乎精致的质感——这是对 IBM 企业厚重感的刻意反衬。在正文尺寸下，常规字重（400）配以 14px 说明文字 0.16px 字间距，引入精心调校的微观字距追踪，使 Carbon 文字质感更像是工程设计而非排版设计。IBM Plex Mono 用于代码、数据和技术标签，与鲜少出现的 IBM Plex Serif 共同构成完整的字体三位一体。
 
-What defines IBM's visual identity beyond monochrome-plus-blue is the reliance on Carbon's component token system. Every interactive state maps to a CSS custom property prefixed with `--cds-` (Carbon Design System). Buttons don't have hardcoded colors; they reference `--cds-button-primary`, `--cds-button-primary-hover`, `--cds-button-primary-active`. This tokenized architecture means the entire visual layer is a thin skin over a deeply systematic foundation — the design equivalent of a well-typed API.
+IBM 视觉身份的定义，超越单色加蓝色之外，在于对 Carbon 组件 token 系统的依赖。每个交互状态都映射至以 `--cds-`（Carbon Design System）为前缀的 CSS 自定义属性。按钮没有硬编码颜色；它们引用 `--cds-button-primary`、`--cds-button-primary-hover`、`--cds-button-primary-active`。这种 token 化架构意味着整个视觉层是一张覆盖在深度系统化基础之上的薄皮——相当于设计领域中一套类型严谨的 API。
 
-**Key Characteristics:**
-- IBM Plex Sans at weight 300 (Light) for display — corporate gravitas through typographic restraint
-- IBM Plex Mono for code and technical content with consistent 0.16px letter-spacing at small sizes
-- Single accent color: IBM Blue 60 (`#0f62fe`) — every interactive element, every CTA, every link
-- Carbon token system (`--cds-*`) driving all semantic colors, enabling theme-switching at the variable level
-- 8px spacing grid with strict adherence — no arbitrary values, everything aligns
-- Flat, borderless cards on `#f4f4f4` Gray 10 surface — depth through background-color layering, not shadows
-- Bottom-border inputs (not boxed) — the signature Carbon form pattern
-- 0px border-radius on primary buttons — unapologetically rectangular, no softening
+**核心特征：**
+- IBM Plex Sans 细体（Light 300）用于展示——通过排版克制传达企业气场
+- IBM Plex Mono 用于代码和技术内容，小尺寸下保持一致的 0.16px 字间距
+- 单一强调色：IBM 蓝 60（`#0f62fe`）——所有交互元素、所有行动号召、所有链接
+- Carbon token 系统（`--cds-*`）驱动所有语义颜色，支持在变量层面切换主题
+- 严格遵循 8px 间距网格——无任意值，一切对齐
+- `#f4f4f4` 灰 10 表面上的扁平无边框卡片——通过背景色分层实现层次，而非阴影
+- 下边框输入框（非盒状）——Carbon 表单的标志性模式
+- 主要按钮圆角 0px——矩形毫不妥协，无任何柔化
 
-## 2. Color Palette & Roles
+## 2. 色彩调色板与角色
 
-### Primary
-- **IBM Blue 60** (`#0f62fe`): The singular interactive color. Primary buttons, links, focus states, active indicators. This is the only chromatic hue in the core UI palette.
-- **White** (`#ffffff`): Page background, card surfaces, button text on blue, `--cds-background`.
-- **Gray 100** (`#161616`): Primary text, headings, dark surface backgrounds, nav bar, footer. `--cds-text-primary`.
+### 主色
+- **IBM 蓝 60**（`#0f62fe`）：唯一交互色。主要按钮、链接、焦点状态、激活指示器。这是核心 UI 调色板中唯一的有彩色调。
+- **白色**（`#ffffff`）：页面背景、卡片表面、蓝底白字、`--cds-background`。
+- **灰 100**（`#161616`）：主要文字、标题、深色表面背景、导航栏、页脚。`--cds-text-primary`。
 
-### Neutral Scale (Gray Family)
-- **Gray 100** (`#161616`): Primary text, headings, dark UI chrome, footer background.
-- **Gray 90** (`#262626`): Secondary dark surfaces, hover states on dark backgrounds.
-- **Gray 80** (`#393939`): Tertiary dark, active states.
-- **Gray 70** (`#525252`): Secondary text, helper text, descriptions. `--cds-text-secondary`.
-- **Gray 60** (`#6f6f6f`): Placeholder text, disabled text.
-- **Gray 50** (`#8d8d8d`): Disabled icons, muted labels.
-- **Gray 30** (`#c6c6c6`): Borders, divider lines, input bottom-borders. `--cds-border-subtle`.
-- **Gray 20** (`#e0e0e0`): Subtle borders, card outlines.
-- **Gray 10** (`#f4f4f4`): Secondary surface background, card fills, alternating rows. `--cds-layer-01`.
-- **Gray 10 Hover** (`#e8e8e8`): Hover state for Gray 10 surfaces.
+### 中性灰度（灰色系列）
+- **灰 100**（`#161616`）：主要文字、标题、深色 UI 装饰、页脚背景。
+- **灰 90**（`#262626`）：次级深色表面、深色背景悬停状态。
+- **灰 80**（`#393939`）：三级深色、激活状态。
+- **灰 70**（`#525252`）：次要文字、辅助文字、说明。`--cds-text-secondary`。
+- **灰 60**（`#6f6f6f`）：占位文字、禁用文字。
+- **灰 50**（`#8d8d8d`）：禁用图标、静音标签。
+- **灰 30**（`#c6c6c6`）：边框、分隔线、输入框下边框。`--cds-border-subtle`。
+- **灰 20**（`#e0e0e0`）：微妙边框、卡片轮廓。
+- **灰 10**（`#f4f4f4`）：次级表面背景、卡片填充、交替行。`--cds-layer-01`。
+- **灰 10 悬停**（`#e8e8e8`）：灰 10 表面的悬停状态。
 
-### Interactive
-- **Blue 60** (`#0f62fe`): Primary interactive — buttons, links, focus. `--cds-link-primary`, `--cds-button-primary`.
-- **Blue 70** (`#0043ce`): Link hover state. `--cds-link-primary-hover`.
-- **Blue 80** (`#002d9c`): Active/pressed state for blue elements.
-- **Blue 10** (`#edf5ff`): Blue tint surface, selected row background.
-- **Focus Blue** (`#0f62fe`): `--cds-focus` — 2px inset border on focused elements.
-- **Focus Inset** (`#ffffff`): `--cds-focus-inset` — white inner ring for focus on dark backgrounds.
+### 交互色
+- **蓝 60**（`#0f62fe`）：主要交互色——按钮、链接、焦点。`--cds-link-primary`，`--cds-button-primary`。
+- **蓝 70**（`#0043ce`）：链接悬停状态。`--cds-link-primary-hover`。
+- **蓝 80**（`#002d9c`）：蓝色元素的激活/按下状态。
+- **蓝 10**（`#edf5ff`）：蓝色浅底表面、选中行背景。
+- **焦点蓝**（`#0f62fe`）：`--cds-focus` — 聚焦元素 2px 内嵌边框。
+- **焦点内嵌**（`#ffffff`）：`--cds-focus-inset` — 深色背景上焦点的白色内圈。
 
-### Support & Status
-- **Red 60** (`#da1e28`): Error, danger. `--cds-support-error`.
-- **Green 50** (`#24a148`): Success. `--cds-support-success`.
-- **Yellow 30** (`#f1c21b`): Warning. `--cds-support-warning`.
-- **Blue 60** (`#0f62fe`): Informational. `--cds-support-info`.
+### 支持色与状态色
+- **红 60**（`#da1e28`）：错误、危险。`--cds-support-error`。
+- **绿 50**（`#24a148`）：成功。`--cds-support-success`。
+- **黄 30**（`#f1c21b`）：警告。`--cds-support-warning`。
+- **蓝 60**（`#0f62fe`）：信息。`--cds-support-info`。
 
-### Dark Theme (Gray 100 Theme)
-- **Background**: Gray 100 (`#161616`). `--cds-background`.
-- **Layer 01**: Gray 90 (`#262626`). Card and container surfaces.
-- **Layer 02**: Gray 80 (`#393939`). Elevated surfaces.
-- **Text Primary**: Gray 10 (`#f4f4f4`). `--cds-text-primary`.
-- **Text Secondary**: Gray 30 (`#c6c6c6`). `--cds-text-secondary`.
-- **Border Subtle**: Gray 80 (`#393939`). `--cds-border-subtle`.
-- **Interactive**: Blue 40 (`#78a9ff`). Links and interactive elements shift lighter for contrast.
+### 深色主题（灰 100 主题）
+- **背景**：灰 100（`#161616`）。`--cds-background`。
+- **图层 01**：灰 90（`#262626`）。卡片和容器表面。
+- **图层 02**：灰 80（`#393939`）。提升表面。
+- **主要文字**：灰 10（`#f4f4f4`）。`--cds-text-primary`。
+- **次要文字**：灰 30（`#c6c6c6`）。`--cds-text-secondary`。
+- **微妙边框**：灰 80（`#393939`）。`--cds-border-subtle`。
+- **交互色**：蓝 40（`#78a9ff`）。链接和交互元素变浅以确保对比度。
 
-## 3. Typography Rules
+## 3. 排版规则
 
-### Font Family
-- **Primary**: `IBM Plex Sans`, with fallbacks: `Helvetica Neue, Arial, sans-serif`
-- **Monospace**: `IBM Plex Mono`, with fallbacks: `Menlo, Courier, monospace`
-- **Serif** (limited use): `IBM Plex Serif`, for editorial/expressive contexts
-- **Icon Font**: `ibm_icons` — proprietary icon glyphs at 20px
+### 字体族
+- **主要字体**：`IBM Plex Sans`，回退字体：`Helvetica Neue, Arial, sans-serif`
+- **等宽字体**：`IBM Plex Mono`，回退字体：`Menlo, Courier, monospace`
+- **衬线字体**（限制使用）：`IBM Plex Serif`，用于编辑/表达性场景
+- **图标字体**：`ibm_icons` — 20px 专有图标字形
 
-### Hierarchy
+### 层级
 
-| Role | Font | Size | Weight | Line Height | Letter Spacing | Notes |
+| 角色 | 字体 | 尺寸 | 字重 | 行高 | 字间距 | 备注 |
 |------|------|------|--------|-------------|----------------|-------|
-| Display 01 | IBM Plex Sans | 60px (3.75rem) | 300 (Light) | 1.17 (70px) | 0 | Maximum impact, light weight for elegance |
-| Display 02 | IBM Plex Sans | 48px (3.00rem) | 300 (Light) | 1.17 (56px) | 0 | Secondary hero, responsive fallback |
-| Heading 01 | IBM Plex Sans | 42px (2.63rem) | 300 (Light) | 1.19 (50px) | 0 | Expressive heading |
-| Heading 02 | IBM Plex Sans | 32px (2.00rem) | 400 (Regular) | 1.25 (40px) | 0 | Section headings |
-| Heading 03 | IBM Plex Sans | 24px (1.50rem) | 400 (Regular) | 1.33 (32px) | 0 | Sub-section titles |
-| Heading 04 | IBM Plex Sans | 20px (1.25rem) | 600 (Semibold) | 1.40 (28px) | 0 | Card titles, feature headers |
-| Heading 05 | IBM Plex Sans | 20px (1.25rem) | 400 (Regular) | 1.40 (28px) | 0 | Lighter card headings |
-| Body Long 01 | IBM Plex Sans | 16px (1.00rem) | 400 (Regular) | 1.50 (24px) | 0 | Standard reading text |
-| Body Long 02 | IBM Plex Sans | 16px (1.00rem) | 600 (Semibold) | 1.50 (24px) | 0 | Emphasized body, labels |
-| Body Short 01 | IBM Plex Sans | 14px (0.88rem) | 400 (Regular) | 1.29 (18px) | 0.16px | Compact body, captions |
-| Body Short 02 | IBM Plex Sans | 14px (0.88rem) | 600 (Semibold) | 1.29 (18px) | 0.16px | Bold captions, nav items |
-| Caption 01 | IBM Plex Sans | 12px (0.75rem) | 400 (Regular) | 1.33 (16px) | 0.32px | Metadata, timestamps |
-| Code 01 | IBM Plex Mono | 14px (0.88rem) | 400 (Regular) | 1.43 (20px) | 0.16px | Inline code, terminal |
-| Code 02 | IBM Plex Mono | 16px (1.00rem) | 400 (Regular) | 1.50 (24px) | 0 | Code blocks |
-| Mono Display | IBM Plex Mono | 42px (2.63rem) | 400 (Regular) | 1.19 (50px) | 0 | Hero mono decorative |
+| Display 01 | IBM Plex Sans | 60px (3.75rem) | 300 (Light) | 1.17 (70px) | 0 | 最大视觉冲击力，细体优雅 |
+| Display 02 | IBM Plex Sans | 48px (3.00rem) | 300 (Light) | 1.17 (56px) | 0 | 次级英雄区，响应式回退 |
+| Heading 01 | IBM Plex Sans | 42px (2.63rem) | 300 (Light) | 1.19 (50px) | 0 | 表达性标题 |
+| Heading 02 | IBM Plex Sans | 32px (2.00rem) | 400 (Regular) | 1.25 (40px) | 0 | 区块标题 |
+| Heading 03 | IBM Plex Sans | 24px (1.50rem) | 400 (Regular) | 1.33 (32px) | 0 | 子区块标题 |
+| Heading 04 | IBM Plex Sans | 20px (1.25rem) | 600 (Semibold) | 1.40 (28px) | 0 | 卡片标题、功能标题 |
+| Heading 05 | IBM Plex Sans | 20px (1.25rem) | 400 (Regular) | 1.40 (28px) | 0 | 较轻的卡片标题 |
+| Body Long 01 | IBM Plex Sans | 16px (1.00rem) | 400 (Regular) | 1.50 (24px) | 0 | 标准阅读文字 |
+| Body Long 02 | IBM Plex Sans | 16px (1.00rem) | 600 (Semibold) | 1.50 (24px) | 0 | 强调正文、标签 |
+| Body Short 01 | IBM Plex Sans | 14px (0.88rem) | 400 (Regular) | 1.29 (18px) | 0.16px | 紧凑正文、说明文字 |
+| Body Short 02 | IBM Plex Sans | 14px (0.88rem) | 600 (Semibold) | 1.29 (18px) | 0.16px | 粗体说明、导航项 |
+| Caption 01 | IBM Plex Sans | 12px (0.75rem) | 400 (Regular) | 1.33 (16px) | 0.32px | 元数据、时间戳 |
+| Code 01 | IBM Plex Mono | 14px (0.88rem) | 400 (Regular) | 1.43 (20px) | 0.16px | 行内代码、终端 |
+| Code 02 | IBM Plex Mono | 16px (1.00rem) | 400 (Regular) | 1.50 (24px) | 0 | 代码块 |
+| Mono Display | IBM Plex Mono | 42px (2.63rem) | 400 (Regular) | 1.19 (50px) | 0 | 英雄区等宽装饰 |
 
-### Principles
-- **Light weight at display sizes**: Carbon's expressive type set uses weight 300 (Light) at 42px+. This creates a distinctive tension — the content speaks with corporate authority while the letterforms whisper with typographic lightness.
-- **Micro-tracking at small sizes**: 0.16px letter-spacing at 14px and 0.32px at 12px. These seemingly negligible values are Carbon's secret weapon for readability at compact sizes — they open up the tight IBM Plex letterforms just enough.
-- **Three functional weights**: 300 (display/expressive), 400 (body/reading), 600 (emphasis/UI labels). Weight 700 is intentionally absent from the production type scale.
-- **Productive vs. Expressive**: Productive sets use tighter line-heights (1.29) for dense UI. Expressive sets breathe more (1.40-1.50) for marketing and editorial content.
+### 原则
+- **展示尺寸使用细体**：Carbon 的表达型字体集在 42px 以上使用细体（300）。这制造出一种独特的张力——内容以企业权威口吻发声，而字形却以排版的轻盈低语表达。
+- **小尺寸微观字距追踪**：14px 时 0.16px 字间距，12px 时 0.32px。这些看似微不足道的值是 Carbon 在紧凑尺寸下提升可读性的秘密武器——它们将紧密的 IBM Plex 字形适度打开。
+- **三个功能字重**：300（展示/表达）、400（正文/阅读）、600（强调/UI 标签）。700 字重被刻意从生产排版规范中排除。
+- **生产型与表达型**：生产型使用更紧的行高（1.29）以适应密集 UI；表达型呼吸感更强（1.40-1.50），用于营销和编辑内容。
 
-## 4. Component Stylings
+## 4. 组件样式
 
-### Buttons
+### 按钮
 
-**Primary Button (Blue)**
-- Background: `#0f62fe` (Blue 60) → `--cds-button-primary`
-- Text: `#ffffff` (White)
-- Padding: 14px 63px 14px 15px (asymmetric — room for trailing icon)
-- Border: 1px solid transparent
-- Border-radius: 0px (sharp rectangle — the Carbon signature)
-- Height: 48px (default), 40px (compact), 64px (expressive)
-- Hover: `#0353e9` (Blue 60 Hover) → `--cds-button-primary-hover`
-- Active: `#002d9c` (Blue 80) → `--cds-button-primary-active`
-- Focus: `2px solid #0f62fe` inset + `1px solid #ffffff` inner
+**主要按钮（蓝色）**
+- 背景：`#0f62fe`（蓝 60）→ `--cds-button-primary`
+- 文字：`#ffffff`（白色）
+- 内边距：14px 63px 14px 15px（不对称——为尾部图标留空间）
+- 边框：1px solid transparent
+- 圆角：0px（锐利矩形——Carbon 标志）
+- 高度：48px（默认）、40px（紧凑）、64px（表达型）
+- 悬停：`#0353e9`（蓝 60 悬停）→ `--cds-button-primary-hover`
+- 激活：`#002d9c`（蓝 80）→ `--cds-button-primary-active`
+- 焦点：`2px solid #0f62fe` 内嵌 + `1px solid #ffffff` 内圈
 
-**Secondary Button (Gray)**
-- Background: `#393939` (Gray 80)
-- Text: `#ffffff`
-- Hover: `#4c4c4c` (Gray 70)
-- Active: `#6f6f6f` (Gray 60)
-- Same padding/radius as primary
+**次要按钮（灰色）**
+- 背景：`#393939`（灰 80）
+- 文字：`#ffffff`
+- 悬停：`#4c4c4c`（灰 70）
+- 激活：`#6f6f6f`（灰 60）
+- 内边距/圆角与主要按钮相同
 
-**Tertiary Button (Ghost Blue)**
-- Background: transparent
-- Text: `#0f62fe` (Blue 60)
-- Border: 1px solid `#0f62fe`
-- Hover: `#0353e9` text + Blue 10 background tint
-- Border-radius: 0px
+**三级按钮（幽灵蓝）**
+- 背景：transparent
+- 文字：`#0f62fe`（蓝 60）
+- 边框：1px solid `#0f62fe`
+- 悬停：`#0353e9` 文字 + 蓝 10 背景浅底
+- 圆角：0px
 
-**Ghost Button**
-- Background: transparent
-- Text: `#0f62fe` (Blue 60)
-- Padding: 14px 16px
-- Border: none
-- Hover: `#e8e8e8` background tint
+**幽灵按钮**
+- 背景：transparent
+- 文字：`#0f62fe`（蓝 60）
+- 内边距：14px 16px
+- 边框：无
+- 悬停：`#e8e8e8` 背景浅底
 
-**Danger Button**
-- Background: `#da1e28` (Red 60)
-- Text: `#ffffff`
-- Hover: `#b81921` (Red 70)
+**危险按钮**
+- 背景：`#da1e28`（红 60）
+- 文字：`#ffffff`
+- 悬停：`#b81921`（红 70）
 
-### Cards & Containers
-- Background: `#ffffff` on white theme, `#f4f4f4` (Gray 10) for elevated cards
-- Border: none (flat design — no border or shadow on most cards)
-- Border-radius: 0px (matching the rectangular button aesthetic)
-- Hover: background shifts to `#e8e8e8` (Gray 10 Hover) for clickable cards
-- Content padding: 16px
-- Separation: background-color layering (white → gray 10 → white) rather than shadows
+### 卡片与容器
+- 背景：白色主题为 `#ffffff`，提升卡片为 `#f4f4f4`（灰 10）
+- 边框：无（扁平设计——大多数卡片无边框或阴影）
+- 圆角：0px（与矩形按钮美学一致）
+- 悬停：可点击卡片背景变为 `#e8e8e8`（灰 10 悬停）
+- 内容内边距：16px
+- 分隔方式：背景色分层（白 → 灰 10 → 白），而非阴影
 
-### Inputs & Forms
-- Background: `#f4f4f4` (Gray 10) — `--cds-field`
-- Text: `#161616` (Gray 100)
-- Padding: 0px 16px (horizontal only)
-- Height: 40px (default), 48px (large)
-- Border: none on sides/top — `2px solid transparent` bottom
-- Bottom-border active: `2px solid #161616` (Gray 100)
-- Focus: `2px solid #0f62fe` (Blue 60) bottom-border — `--cds-focus`
-- Error: `2px solid #da1e28` (Red 60) bottom-border
-- Label: 12px IBM Plex Sans, 0.32px letter-spacing, Gray 70
-- Helper text: 12px, Gray 60
-- Placeholder: Gray 60 (`#6f6f6f`)
-- Border-radius: 0px (top) — inputs are sharp-cornered
+### 输入框与表单
+- 背景：`#f4f4f4`（灰 10）— `--cds-field`
+- 文字：`#161616`（灰 100）
+- 内边距：0px 16px（仅水平方向）
+- 高度：40px（默认）、48px（大型）
+- 边框：侧边/顶部无边框 — 底部 `2px solid transparent`
+- 底边框激活：`2px solid #161616`（灰 100）
+- 焦点：底边框 `2px solid #0f62fe`（蓝 60）— `--cds-focus`
+- 错误：底边框 `2px solid #da1e28`（红 60）
+- 标签：12px IBM Plex Sans，0.32px 字间距，灰 70
+- 辅助文字：12px，灰 60
+- 占位文字：灰 60（`#6f6f6f`）
+- 圆角：0px（顶部）——输入框为尖角
 
-### Navigation
-- Background: `#161616` (Gray 100) — full-width dark masthead
-- Height: 48px
-- Logo: IBM 8-bar logo, white on dark, left-aligned
-- Links: 14px IBM Plex Sans, weight 400, `#c6c6c6` (Gray 30) default
-- Link hover: `#ffffff` text
-- Active link: `#ffffff` with bottom-border indicator
-- Platform switcher: left-aligned horizontal tabs
-- Search: icon-triggered slide-out search field
-- Mobile: hamburger with left-sliding panel
+### 导航
+- 背景：`#161616`（灰 100）— 全宽深色顶栏
+- 高度：48px
+- 标志：IBM 八条纹标志，深色背景上白色，左对齐
+- 链接：14px IBM Plex Sans，字重 400，`#c6c6c6`（灰 30）默认
+- 链接悬停：`#ffffff` 文字
+- 激活链接：`#ffffff` 配下边框指示器
+- 平台切换器：左对齐水平标签
+- 搜索：图标触发的滑出搜索框
+- 移动端：汉堡菜单配左侧滑出面板
 
-### Links
-- Default: `#0f62fe` (Blue 60) with no underline
-- Hover: `#0043ce` (Blue 70) with underline
-- Visited: remains Blue 60 (no visited state change)
-- Inline links: underlined by default in body copy
+### 链接
+- 默认：`#0f62fe`（蓝 60），无下划线
+- 悬停：`#0043ce`（蓝 70），有下划线
+- 已访问：保持蓝 60（无已访问状态变化）
+- 正文内联链接：在正文中默认带下划线
 
-### Distinctive Components
+### 特色组件
 
-**Content Block (Hero/Feature)**
-- Full-width alternating white/gray-10 background bands
-- Headline left-aligned with 60px or 48px display type
-- CTA as blue primary button with arrow icon
-- Image/illustration right-aligned or below on mobile
+**内容块（英雄区/特色区）**
+- 全宽交替白/灰 10 背景带
+- 60px 或 48px 展示型文字左对齐标题
+- 带箭头图标的蓝色主要按钮作为行动号召
+- 图片/插画在移动端右对齐或置于下方
 
-**Tile (Clickable Card)**
-- Background: `#f4f4f4` or `#ffffff`
-- Full-width bottom-border or background-shift hover
-- Arrow icon bottom-right on hover
-- No shadow — flatness is the identity
+**磁贴（可点击卡片）**
+- 背景：`#f4f4f4` 或 `#ffffff`
+- 全宽底边框或背景色切换悬停效果
+- 悬停时右下角显示箭头图标
+- 无阴影——扁平即是身份
 
-**Tag / Label**
-- Background: contextual color at 10% opacity (e.g., Blue 10, Red 10)
-- Text: corresponding 60-grade color
-- Padding: 4px 8px
-- Border-radius: 24px (pill — exception to the 0px rule)
-- Font: 12px weight 400
+**标签**
+- 背景：对应颜色 10% 不透明度（如蓝 10、红 10）
+- 文字：对应 60 级别颜色
+- 内边距：4px 8px
+- 圆角：24px（胶囊形——0px 规则的例外）
+- 字体：12px 字重 400
 
-**Notification Banner**
-- Full-width bar, typically Blue 60 or Gray 100 background
-- White text, 14px
-- Close/dismiss icon right-aligned
+**通知横幅**
+- 全宽条，通常为蓝 60 或灰 100 背景
+- 白色文字，14px
+- 关闭/消除图标右对齐
 
-## 5. Layout Principles
+## 5. 布局原则
 
-### Spacing System
-- Base unit: 8px (Carbon 2x grid)
-- Component spacing scale: 2px, 4px, 8px, 12px, 16px, 24px, 32px, 40px, 48px
-- Layout spacing scale: 16px, 24px, 32px, 48px, 64px, 80px, 96px, 160px
-- Mini unit: 8px (smallest usable spacing)
-- Padding within components: typically 16px
-- Gap between cards/tiles: 1px (hairline) or 16px (standard)
+### 间距系统
+- 基础单位：8px（Carbon 2x 网格）
+- 组件间距比例：2px、4px、8px、12px、16px、24px、32px、40px、48px
+- 布局间距比例：16px、24px、32px、48px、64px、80px、96px、160px
+- 最小单位：8px（最小可用间距）
+- 组件内边距：通常为 16px
+- 卡片/磁贴之间间距：1px（发丝线）或 16px（标准）
 
-### Grid & Container
-- 16-column grid (Carbon's 2x grid system)
-- Max content width: 1584px (max breakpoint)
-- Column gutters: 32px (16px on mobile)
-- Margin: 16px (mobile), 32px (tablet+)
-- Content typically spans 8-12 columns for readable line lengths
-- Full-bleed sections alternate with contained content
+### 网格与容器
+- 16 列网格（Carbon 的 2x 网格系统）
+- 最大内容宽度：1584px（最大断点）
+- 列间距：32px（移动端 16px）
+- 边距：16px（移动端）、32px（平板及以上）
+- 内容通常跨越 8-12 列以保持可读行长
+- 全出血区域与受限内容交替出现
 
-### Whitespace Philosophy
-- **Functional density**: Carbon favors productive density over expansive whitespace. Sections are tightly packed compared to consumer design systems — this reflects IBM's enterprise DNA.
-- **Background-color zoning**: Instead of massive padding between sections, IBM uses alternating background colors (white → gray 10 → white) to create visual separation with minimal vertical space.
-- **Consistent 48px rhythm**: Major section transitions use 48px vertical spacing. Hero sections may use 80px–96px.
+### 留白哲学
+- **功能性密度**：Carbon 偏向生产型密度而非宽松留白。与消费类设计系统相比，各区块排列更为紧凑——这反映了 IBM 的企业基因。
+- **背景色区域划分**：IBM 通过交替背景色（白 → 灰 10 → 白）而非大量内边距来分隔区块，以最小垂直空间实现视觉分离。
+- **一致的 48px 节律**：主要区块过渡使用 48px 垂直间距。英雄区可能使用 80px–96px。
 
-### Border Radius Scale
-- **0px**: Primary buttons, inputs, tiles, cards — the dominant treatment. Carbon is fundamentally rectangular.
-- **2px**: Occasionally on small interactive elements (tags)
-- **24px**: Tags/labels (pill shape — the sole rounded exception)
-- **50%**: Avatar circles, icon containers
+### 圆角规模
+- **0px**：主要按钮、输入框、磁贴、卡片——主导性处理。Carbon 从根本上是矩形的。
+- **2px**：偶尔用于小型交互元素（标签）
+- **24px**：标签（胶囊形——唯一的圆角例外）
+- **50%**：头像圆形、图标容器
 
-## 6. Depth & Elevation
+## 6. 深度与层级
 
-| Level | Treatment | Use |
+| 层级 | 处理方式 | 用途 |
 |-------|-----------|-----|
-| Flat (Level 0) | No shadow, `#ffffff` background | Default page surface |
-| Layer 01 | No shadow, `#f4f4f4` background | Cards, tiles, alternating sections |
-| Layer 02 | No shadow, `#e0e0e0` background | Elevated panels within Layer 01 |
-| Raised | `0 2px 6px rgba(0,0,0,0.3)` | Dropdowns, tooltips, overflow menus |
-| Overlay | `0 2px 6px rgba(0,0,0,0.3)` + dark scrim | Modal dialogs, side panels |
-| Focus | `2px solid #0f62fe` inset + `1px solid #ffffff` | Keyboard focus ring |
-| Bottom-border | `2px solid #161616` on bottom edge | Active input, active tab indicator |
+| 平面（0 级） | 无阴影，`#ffffff` 背景 | 默认页面表面 |
+| 图层 01 | 无阴影，`#f4f4f4` 背景 | 卡片、磁贴、交替区块 |
+| 图层 02 | 无阴影，`#e0e0e0` 背景 | 图层 01 内的提升面板 |
+| 悬浮 | `0 2px 6px rgba(0,0,0,0.3)` | 下拉菜单、工具提示、溢出菜单 |
+| 覆盖层 | `0 2px 6px rgba(0,0,0,0.3)` + 深色遮罩 | 模态对话框、侧面板 |
+| 焦点 | `2px solid #0f62fe` 内嵌 + `1px solid #ffffff` | 键盘焦点环 |
+| 底边框 | 底边 `2px solid #161616` | 激活输入框、激活标签指示器 |
 
-**Shadow Philosophy**: Carbon is deliberately shadow-averse. IBM achieves depth primarily through background-color layering — stacking surfaces of progressively darker grays rather than adding box-shadows. This creates a flat, print-inspired aesthetic where hierarchy is communicated through color value, not simulated light. Shadows are reserved exclusively for floating elements (dropdowns, tooltips, modals) where the element genuinely overlaps content. This restraint gives the rare shadow meaningful impact — when something floats in Carbon, it matters.
+**阴影哲学**：Carbon 刻意回避阴影。IBM 主要通过背景色分层来实现深度——将颜色值逐渐加深的表面叠加，而非添加投影。这创造了一种扁平的、受印刷启发的美学，层次通过色值而非模拟光源来传达。阴影仅保留给真正悬浮在内容之上的元素（下拉菜单、工具提示、模态框）。这种克制赋予了少数阴影有意义的视觉冲击——在 Carbon 中，当某物悬浮时，它才是真正有意义的。
 
-## 7. Do's and Don'ts
+## 7. 应做与避免
 
-### Do
-- Use IBM Plex Sans at weight 300 for display sizes (42px+) — the lightness is intentional
-- Apply 0.16px letter-spacing on 14px body text and 0.32px on 12px captions
-- Use 0px border-radius on buttons, inputs, cards, and tiles — rectangles are the system
-- Reference `--cds-*` token names when implementing (e.g., `--cds-button-primary`, `--cds-text-primary`)
-- Use background-color layering (white → gray 10 → gray 20) for depth instead of shadows
-- Use bottom-border (not box) for input field indicators
-- Maintain the 48px default button height and asymmetric padding for icon accommodation
-- Apply Blue 60 (`#0f62fe`) as the sole accent — one blue to rule them all
+### 应做
+- 在展示尺寸（42px 以上）使用 IBM Plex Sans 细体（300）——这种轻盈是刻意为之
+- 在 14px 正文文字上应用 0.16px 字间距，12px 说明文字应用 0.32px
+- 按钮、输入框、卡片和磁贴使用 0px 圆角——矩形才是系统的语言
+- 实现时引用 `--cds-*` token 名（如 `--cds-button-primary`、`--cds-text-primary`）
+- 使用背景色分层（白 → 灰 10 → 灰 20）实现深度，而非阴影
+- 输入框字段指示器使用下边框（非盒状）
+- 保持 48px 默认按钮高度及为图标适配的不对称内边距
+- 将蓝 60（`#0f62fe`）作为唯一强调色——一蓝统天下
 
-### Don't
-- Don't round button corners — 0px radius is the Carbon identity
-- Don't use shadows on cards or tiles — flatness is the point
-- Don't introduce additional accent colors — IBM's system is monochromatic + blue
-- Don't use weight 700 (Bold) — the scale stops at 600 (Semibold)
-- Don't add letter-spacing to display-size text — tracking is only for 14px and below
-- Don't box inputs with full borders — Carbon inputs use bottom-border only
-- Don't use gradient backgrounds — IBM's surfaces are flat, solid colors
-- Don't deviate from the 8px spacing grid — every value should be divisible by 8 (with 2px and 4px for micro-adjustments)
+### 避免
+- 不要给按钮圆角——0px 圆角是 Carbon 的标志
+- 不要在卡片或磁贴上使用阴影——扁平才是重点
+- 不要引入额外强调色——IBM 系统是单色 + 蓝色
+- 不要使用 700 字重（粗体）——规范到 600（半粗体）为止
+- 不要在展示尺寸文字上添加字间距——字距追踪仅用于 14px 及以下
+- 不要用完整边框框住输入框——Carbon 输入框仅使用下边框
+- 不要使用渐变背景——IBM 表面为扁平实色
+- 不要偏离 8px 间距网格——每个值应能被 8 整除（2px 和 4px 用于微调）
 
-## 8. Responsive Behavior
+## 8. 响应式行为
 
-### Breakpoints
-| Name | Width | Key Changes |
+### 断点
+| 名称 | 宽度 | 关键变化 |
 |------|-------|-------------|
-| Small (sm) | 320px | Single column, hamburger nav, 16px margins |
-| Medium (md) | 672px | 2-column grids begin, expanded content |
-| Large (lg) | 1056px | Full navigation visible, 3-4 column grids |
-| X-Large (xlg) | 1312px | Maximum content density, wide layouts |
-| Max | 1584px | Maximum content width, centered with margins |
+| Small (sm) | 320px | 单列，汉堡导航，16px 边距 |
+| Medium (md) | 672px | 开始两列网格，展开内容 |
+| Large (lg) | 1056px | 全导航可见，3-4 列网格 |
+| X-Large (xlg) | 1312px | 最大内容密度，宽布局 |
+| Max | 1584px | 最大内容宽度，居中带边距 |
 
-### Touch Targets
-- Button height: 48px default, minimum 40px (compact)
-- Navigation links: 48px row height for touch
-- Input height: 40px default, 48px large
-- Icon buttons: 48px square touch target
-- Mobile menu items: full-width 48px rows
+### 触摸目标
+- 按钮高度：48px 默认，最小 40px（紧凑）
+- 导航链接：48px 行高，适合触摸
+- 输入框高度：40px 默认，48px 大型
+- 图标按钮：48px 正方形触摸目标
+- 移动端菜单项：全宽 48px 行
 
-### Collapsing Strategy
-- Hero: 60px display → 42px → 32px heading as viewport narrows
-- Navigation: full horizontal masthead → hamburger with slide-out panel
-- Grid: 4-column → 2-column → single column
-- Tiles/cards: horizontal grid → vertical stack
-- Images: maintain aspect ratio, max-width 100%
-- Footer: multi-column link groups → stacked single column
-- Section padding: 48px → 32px → 16px
+### 折叠策略
+- 英雄区：60px 展示 → 42px → 32px 标题，随视口缩小
+- 导航：全水平顶栏 → 汉堡菜单配滑出面板
+- 网格：4 列 → 2 列 → 单列
+- 磁贴/卡片：水平网格 → 垂直堆叠
+- 图片：保持宽高比，max-width 100%
+- 页脚：多列链接组 → 堆叠单列
+- 区块内边距：48px → 32px → 16px
 
-### Image Behavior
-- Responsive images with `max-width: 100%`
-- Product illustrations scale proportionally
-- Hero images may shift from side-by-side to stacked below
-- Data visualizations maintain aspect ratio with horizontal scroll on mobile
+### 图片行为
+- 响应式图片，`max-width: 100%`
+- 产品插画按比例缩放
+- 英雄区图片可能从并排变为下方堆叠
+- 数据可视化在移动端保持宽高比，水平滚动
 
-## 9. Agent Prompt Guide
+## 9. 代理提示指南
 
-### Quick Color Reference
-- Primary CTA: IBM Blue 60 (`#0f62fe`)
-- Background: White (`#ffffff`)
-- Heading text: Gray 100 (`#161616`)
-- Body text: Gray 100 (`#161616`)
-- Secondary text: Gray 70 (`#525252`)
-- Surface/Card: Gray 10 (`#f4f4f4`)
-- Border: Gray 30 (`#c6c6c6`)
-- Link: Blue 60 (`#0f62fe`)
-- Link hover: Blue 70 (`#0043ce`)
-- Focus ring: Blue 60 (`#0f62fe`)
-- Error: Red 60 (`#da1e28`)
-- Success: Green 50 (`#24a148`)
+### 快速颜色参考
+- 主要行动号召：IBM 蓝 60（`#0f62fe`）
+- 背景：白色（`#ffffff`）
+- 标题文字：灰 100（`#161616`）
+- 正文文字：灰 100（`#161616`）
+- 次要文字：灰 70（`#525252`）
+- 表面/卡片：灰 10（`#f4f4f4`）
+- 边框：灰 30（`#c6c6c6`）
+- 链接：蓝 60（`#0f62fe`）
+- 链接悬停：蓝 70（`#0043ce`）
+- 焦点环：蓝 60（`#0f62fe`）
+- 错误：红 60（`#da1e28`）
+- 成功：绿 50（`#24a148`）
 
-### Example Component Prompts
-- "Create a hero section on white background. Headline at 60px IBM Plex Sans weight 300, line-height 1.17, color #161616. Subtitle at 16px weight 400, line-height 1.50, color #525252, max-width 640px. Blue CTA button (#0f62fe background, #ffffff text, 0px border-radius, 48px height, 14px 63px 14px 15px padding)."
-- "Design a card tile: #f4f4f4 background, 0px border-radius, 16px padding. Title at 20px IBM Plex Sans weight 600, line-height 1.40, color #161616. Body at 14px weight 400, letter-spacing 0.16px, line-height 1.29, color #525252. Hover: background shifts to #e8e8e8."
-- "Build a form field: #f4f4f4 background, 0px border-radius, 40px height, 16px horizontal padding. Label above at 12px weight 400, letter-spacing 0.32px, color #525252. Bottom-border: 2px solid transparent default, 2px solid #0f62fe on focus. Placeholder: #6f6f6f."
-- "Create a dark navigation bar: #161616 background, 48px height. IBM logo white left-aligned. Links at 14px IBM Plex Sans weight 400, color #c6c6c6. Hover: #ffffff text. Active: #ffffff with 2px bottom border."
-- "Build a tag component: Blue 10 (#edf5ff) background, Blue 60 (#0f62fe) text, 4px 8px padding, 24px border-radius, 12px IBM Plex Sans weight 400."
+### 示例组件提示
+- "在白色背景上创建英雄区。标题 60px IBM Plex Sans 细体 300，行高 1.17，颜色 #161616。副标题 16px 字重 400，行高 1.50，颜色 #525252，最大宽度 640px。蓝色行动号召按钮（#0f62fe 背景，#ffffff 文字，0px 圆角，48px 高度，14px 63px 14px 15px 内边距）。"
+- "设计卡片磁贴：#f4f4f4 背景，0px 圆角，16px 内边距。标题 20px IBM Plex Sans 字重 600，行高 1.40，颜色 #161616。正文 14px 字重 400，字间距 0.16px，行高 1.29，颜色 #525252。悬停：背景切换至 #e8e8e8。"
+- "构建表单字段：#f4f4f4 背景，0px 圆角，40px 高度，16px 水平内边距。上方标签 12px 字重 400，字间距 0.32px，颜色 #525252。底边框：默认 2px solid transparent，焦点时 2px solid #0f62fe。占位文字：#6f6f6f。"
+- "创建深色导航栏：#161616 背景，48px 高度。IBM 标志白色左对齐。链接 14px IBM Plex Sans 字重 400，颜色 #c6c6c6。悬停：#ffffff 文字。激活：#ffffff 配 2px 底边框。"
+- "构建标签组件：蓝 10（#edf5ff）背景，蓝 60（#0f62fe）文字，4px 8px 内边距，24px 圆角，12px IBM Plex Sans 字重 400。"
 
-### Iteration Guide
-1. Always use 0px border-radius on buttons, inputs, and cards — this is non-negotiable in Carbon
-2. Letter-spacing only at small sizes: 0.16px at 14px, 0.32px at 12px — never on display text
-3. Three weights: 300 (display), 400 (body), 600 (emphasis) — no bold
-4. Blue 60 is the only accent color — do not introduce secondary accent hues
-5. Depth comes from background-color layering (white → #f4f4f4 → #e0e0e0), not shadows
-6. Inputs have bottom-border only, never fully boxed
-7. Use `--cds-` prefix for token naming to stay Carbon-compatible
-8. 48px is the universal interactive element height
+### 迭代指南
+1. 按钮、输入框和卡片始终使用 0px 圆角——这在 Carbon 中不可谈判
+2. 字间距仅用于小尺寸：14px 时 0.16px，12px 时 0.32px——展示文字绝不添加
+3. 三种字重：300（展示）、400（正文）、600（强调）——无粗体
+4. 蓝 60 是唯一强调色——不引入次要强调色调
+5. 深度来自背景色分层（白 → `#f4f4f4` → `#e0e0e0`），而非阴影
+6. 输入框仅有下边框，绝不全框
+7. 使用 `--cds-` 前缀命名 token，保持 Carbon 兼容性
+8. 48px 是通用交互元素高度

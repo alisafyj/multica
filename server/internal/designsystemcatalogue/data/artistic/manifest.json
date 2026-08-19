@@ -2,5 +2,7 @@
   "id": "artistic",
   "name": "Artistic",
   "category": "Creative & Artistic",
-  "description": "Bundled Open Design package for Artistic, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "创意艺术",
+  "description": "Bundled Open Design package for Artistic, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "高对比、富有表现力的风格，创意排版与大胆色彩，视觉冲击力强的界面。"
 }

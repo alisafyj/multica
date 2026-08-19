@@ -2,5 +2,7 @@
   "id": "refined",
   "name": "Refined",
   "category": "Modern & Minimal",
-  "description": "Bundled Open Design package for Refined, derived from curated DESIGN.md, tokens.css, and components.html fixtures."
+  "category_zh": "现代极简",
+  "description": "Bundled Open Design package for Refined, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "精心打磨的现代极简风格，优雅衬线排版，低调精致的配色。"
 }
