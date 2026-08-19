@@ -53,7 +53,10 @@ export function DesignFilterSelect({
       value={current?.value ?? allValue}
       onValueChange={(next) => onChange(typeof next === "string" ? next : allValue)}
     >
-      <SelectTrigger size="sm" aria-label={label} className={cn("w-full", className)}>
+      {/* bg-card, not the trigger default's transparent surface: the design
+          centre sits on a washed page background, and a translucent dropdown
+          trigger reads as a hole in the page rather than a control. */}
+      <SelectTrigger size="sm" aria-label={label} className={cn("w-full bg-card hover:bg-card", className)}>
         <SelectValue>
           {() => (
             <>

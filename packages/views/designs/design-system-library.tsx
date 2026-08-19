@@ -2,7 +2,22 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Boxes, ExternalLink, FolderOpen, GitBranch, Moon, Package, Plus, Search, Sun, SwatchBook } from "lucide-react";
+import {
+  Boxes,
+  ExternalLink,
+  FolderOpen,
+  GitBranch,
+  Globe,
+  Layers,
+  Monitor,
+  Moon,
+  Package,
+  Plus,
+  Search,
+  Smartphone,
+  Sun,
+  SwatchBook,
+} from "lucide-react";
 import { api } from "@multica/core/api";
 import {
   builtinDesignSystemDetailOptions,
@@ -60,6 +75,24 @@ const ALL_PLATFORMS = "__all__";
 
 function platformLabel(platform: string): string {
   return PLATFORM_OPTIONS.find((option) => option.value === platform)?.label ?? "未标注平台";
+}
+
+/**
+ * The glyph a saved system's row leads with. Open Design's rows lead with a
+ * logo; we have no logo, so the target platform stands in — it is the fact
+ * that separates one system from its neighbours in multi-repo projects.
+ */
+function platformIcon(platform: string): typeof Globe {
+  switch (platform) {
+    case "web":
+      return Globe;
+    case "mobile":
+      return Smartphone;
+    case "cross_platform":
+      return Monitor;
+    default:
+      return Layers;
+  }
 }
 
 // Every saved system in the catalogue belongs to a project of this workspace,
@@ -309,21 +342,24 @@ function SystemListItem({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const initial = (entry.name.trim() || entry.project_title.trim() || "?").slice(0, 1);
+  const PlatformIcon = platformIcon(entry.platform);
   return (
     <button
       type="button"
       aria-pressed={selected}
       onClick={onSelect}
+      // The selected row is a solid surface with a primary ring — visible on
+      // the washed page background where a grey accent washes out — and the
+      // hover compound is spelled out so hovering it cannot demote it.
       className={cn(
         "flex w-full cursor-pointer items-start gap-2.5 rounded-lg p-2.5 text-left transition-colors",
         selected
-          ? "bg-accent font-medium text-foreground hover:bg-accent"
+          ? "bg-background font-medium text-foreground shadow-sm ring-1 ring-primary/40 hover:bg-background"
           : "text-foreground hover:bg-accent/50",
       )}
     >
-      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-caption font-medium text-primary">
-        {initial}
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+        <PlatformIcon className="size-3.5" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-body">{entry.name.trim() || "未命名设计体系"}</span>
@@ -685,15 +721,20 @@ function BuiltinListItem({
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      // Selection is carried by weight and text colour, which hover does not
-      // touch, so hovering the selected row cannot visually demote it.
+      // Same selected treatment as the team rows: a solid surface plus a
+      // primary ring, with the hover compound spelled out so the selected
+      // row stays identifiable while it is hovered.
       className={cn(
-        "flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left transition-colors",
+        "flex w-full items-start gap-2.5 rounded-lg p-2 text-left transition-colors",
         selected
-          ? "bg-accent font-medium text-foreground hover:bg-accent"
+          ? "bg-background font-medium text-foreground shadow-sm ring-1 ring-primary/40 hover:bg-background"
           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
       )}
     >
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+        <Package className="size-3.5" />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
       <span className="flex w-full min-w-0 items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-body">{system.name || system.slug}</span>
         {system.swatches.length > 0 ? (
@@ -704,8 +745,9 @@ function BuiltinListItem({
           </span>
         ) : null}
       </span>
-      <span className="w-full truncate text-caption text-muted-foreground">
+      <span className="w-full truncate text-caption font-normal text-muted-foreground">
         {system.category || "未分类"}
+      </span>
       </span>
     </button>
   );
@@ -809,7 +851,7 @@ export function DesignSystemLibrary({
               onChange={(event) => setSearch(event.target.value)}
               aria-label="搜索设计体系"
               placeholder="搜索设计体系…"
-              className="h-8 pl-8 text-body"
+              className="h-8 bg-card pl-8 text-body"
             />
           </div>
           <CreateDesignSystemButton onCreate={onCreate} />
