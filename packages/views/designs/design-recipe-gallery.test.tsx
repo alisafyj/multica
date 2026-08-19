@@ -321,6 +321,40 @@ describe("DesignRecipeGallery", () => {
     );
   });
 
+  it("opens a detail with the live example, the prompt and both actions, as Open Design's community does", async () => {
+    listDesignScenarioRecipes.mockResolvedValue({
+      recipes: [
+        recipe({
+          slug: "crm-console",
+          title: "CRM 控制台",
+          preview_kind: "html",
+          preview_url: "/api/design-recipes/crm-console/preview/0123abcd4567/",
+        }),
+      ],
+    });
+    const { onUseInComposer } = renderGallery();
+    await userEvent.setup().click(await screen.findByRole("button", { name: "查看「CRM 控制台」" }));
+
+    const dialog = await screen.findByRole("dialog");
+    // The example renders at full size and stays interactive (no
+    // pointer-events guard, no scaling wrapper) — the server's CSP is what
+    // sandboxes it, exactly as for the cover.
+    const frame = within(dialog).getByTitle("CRM 控制台 预览");
+    expect(frame).toHaveAttribute("src", "http://api.test/api/design-recipes/crm-console/preview/0123abcd4567/");
+    expect(within(dialog).getByText("做一个 CRM 客户列表页，支持筛选和批量操作。")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "在新标签页中打开" })).toBeEnabled();
+
+    // 填入首页 from the detail hands the whole recipe over and closes the detail.
+    await userEvent.setup().click(within(dialog).getByRole("button", { name: "填入首页" }));
+    expect(onUseInComposer).toHaveBeenCalledWith(expect.objectContaining({ slug: "crm-console" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    // 直接创建 from the detail opens the start dialog seeded with the prompt.
+    await userEvent.setup().click(screen.getByRole("button", { name: "查看「CRM 控制台」" }));
+    await userEvent.setup().click(within(await screen.findByRole("dialog")).getByRole("button", { name: "直接创建" }));
+    expect(await screen.findByRole("heading", { name: "用「CRM 控制台」创建页面设计" })).toBeInTheDocument();
+  });
+
   it("does not guess a cover URL when the listing sends a kind without a path", async () => {
     listDesignScenarioRecipes.mockResolvedValue({
       recipes: [recipe({ slug: "half", title: "半截", mode: "deck", preview_kind: "html", preview_url: "" })],

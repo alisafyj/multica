@@ -6,9 +6,13 @@ import {
   AppWindow,
   AudioLines,
   ChartColumn,
+  Copy,
+  ExternalLink,
   FileCode,
   Image as ImageIcon,
   LayoutTemplate,
+  Maximize2,
+  Minimize2,
   Presentation,
   Search,
   Video,
@@ -246,23 +250,37 @@ function RecipeCard({
   recipe,
   onUseInComposer,
   onStart,
+  onOpenDetail,
 }: {
   recipe: DesignScenarioRecipe;
   onUseInComposer: (recipe: DesignScenarioRecipe) => void;
   onStart: (recipe: DesignScenarioRecipe) => void;
+  onOpenDetail: (recipe: DesignScenarioRecipe) => void;
 }) {
   const startable = canStartRecipe(recipe);
   const origin = originLabel(recipe.origin);
   const platform = platformLabel(recipe.platform);
   const facets = uniqueInOrder([recipe.category, recipe.subcategory]);
+  const title = recipe.title || recipe.slug;
 
   return (
     <article className="group/recipe flex h-full min-w-0 flex-col overflow-hidden rounded-xl border bg-card transition-colors hover:border-primary/40">
-      <RecipePreview recipe={recipe} />
+      {/* The cover opens the detail, as in Open Design's community; the
+          buttons below act without opening it. */}
+      <button
+        type="button"
+        className="block w-full cursor-pointer text-left"
+        aria-label={`查看「${title}」`}
+        onClick={() => onOpenDetail(recipe)}
+      >
+        <RecipePreview recipe={recipe} />
+      </button>
       <div className="flex min-w-0 flex-1 flex-col gap-2 p-3.5">
         <div className="flex min-w-0 items-start justify-between gap-2">
           <h3 className="line-clamp-2 min-w-0 break-words text-body-lg font-medium">
-            {recipe.title || recipe.slug}
+            <button type="button" className="text-left hover:text-primary" onClick={() => onOpenDetail(recipe)}>
+              {title}
+            </button>
           </h3>
           {origin ? (
             <Badge variant="secondary" className="shrink-0 px-1.5 text-micro font-normal">
@@ -313,6 +331,146 @@ function RecipeCard({
         )}
       </div>
     </article>
+  );
+}
+
+/**
+ * The card's detail, as in Open Design's community: the example rendered live
+ * at full size (interactive — the frame is sandboxed by the server's own CSP,
+ * not scaled down like the cover), the prompt the recipe carries, and the two
+ * ways to act on it. Media recipes show their poster instead.
+ */
+function RecipeDetailDialog({
+  recipe,
+  onClose,
+  onUseInComposer,
+  onStart,
+}: {
+  recipe: DesignScenarioRecipe;
+  onClose: () => void;
+  onUseInComposer: (recipe: DesignScenarioRecipe) => void;
+  onStart: (recipe: DesignScenarioRecipe) => void;
+}) {
+  const [fullscreen, setFullscreen] = useState(false);
+  const startable = canStartRecipe(recipe);
+  const origin = originLabel(recipe.origin);
+  const platform = platformLabel(recipe.platform);
+  const facets = uniqueInOrder([recipe.category, recipe.subcategory]);
+  const { label: modeLabel } = modeVisual(recipe.mode);
+  const previewUrl = recipe.preview_kind && recipe.preview_url ? `${api.getBaseUrl()}${recipe.preview_url}` : "";
+  const title = recipe.title || recipe.slug;
+
+  const copyPrompt = async () => {
+    if (!recipe.prompt) return;
+    try {
+      await navigator.clipboard?.writeText(recipe.prompt);
+      toast.success("已复制提示词");
+    } catch {
+      toast.error("复制失败，请手动选择文本");
+    }
+  };
+
+  const preview = previewUrl && recipe.preview_kind === "html" ? (
+    <iframe
+      src={previewUrl}
+      title={`${title} 预览`}
+      referrerPolicy="no-referrer"
+      className="h-full w-full border-0 bg-background"
+    />
+  ) : previewUrl && recipe.preview_kind === "poster" ? (
+    <img src={previewUrl} alt={`${title} 预览`} className="h-full w-full object-contain" />
+  ) : (
+    <div className="flex h-full w-full items-center justify-center text-caption text-muted-foreground">
+      这个配方没有可预览的示例。
+    </div>
+  );
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent
+        className={cn(
+          "flex flex-col gap-0 overflow-hidden p-0",
+          fullscreen ? "h-[96vh] w-[96vw] max-w-none sm:max-w-none" : "max-h-[90vh] sm:max-w-5xl",
+        )}
+      >
+        <DialogHeader className="shrink-0 border-b px-5 py-3 pr-12">
+          <DialogTitle className="flex min-w-0 flex-wrap items-center gap-2 break-words">
+            <span className="min-w-0 truncate">{title}</span>
+            {origin ? <Badge variant="secondary" className="px-1.5 text-micro font-normal">{origin}</Badge> : null}
+            <Badge variant="outline" className="px-1.5 text-micro font-normal">{modeLabel}</Badge>
+          </DialogTitle>
+          <DialogDescription className="sr-only">配方详情</DialogDescription>
+        </DialogHeader>
+        <div className={cn("grid min-h-0 flex-1 overflow-hidden", fullscreen ? "grid-cols-1" : "lg:grid-cols-[minmax(0,1fr)_320px]")}>
+          <div className="flex min-h-0 flex-col bg-muted/30">
+            <div className="flex shrink-0 items-center justify-end gap-0.5 border-b bg-background px-2 py-1">
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                aria-label="在新标签页中打开"
+                title="在新标签页中打开"
+                disabled={!previewUrl}
+                onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                aria-label={fullscreen ? "退出全屏" : "全屏"}
+                title={fullscreen ? "退出全屏" : "全屏"}
+                onClick={() => setFullscreen((value) => !value)}
+              >
+                {fullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+              </Button>
+            </div>
+            <div className={cn("min-h-0 flex-1", fullscreen ? "" : "aspect-[16/10] lg:aspect-auto lg:min-h-[420px]")}>{preview}</div>
+          </div>
+          {fullscreen ? null : (
+            <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto border-t p-4 lg:border-l lg:border-t-0">
+              {recipe.summary ? <p className="text-body text-muted-foreground">{recipe.summary}</p> : null}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {facets.map((facet) => (
+                  <Badge key={facet} variant="outline" className="max-w-48 px-1.5 text-micro font-normal">
+                    <span className="truncate">{facet}</span>
+                  </Badge>
+                ))}
+                {platform ? <Badge variant="outline" className="px-1.5 text-micro font-normal">{platform}</Badge> : null}
+              </div>
+              {recipe.prompt ? (
+                <section className="flex min-h-0 flex-col gap-1.5" aria-label="提示词">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-caption font-medium text-muted-foreground">提示词</h3>
+                    <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-caption" onClick={() => void copyPrompt()}>
+                      <Copy className="h-3 w-3" />
+                      复制
+                    </Button>
+                  </div>
+                  <p className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-2.5 text-caption leading-5">
+                    {recipe.prompt}
+                  </p>
+                </section>
+              ) : null}
+              <div className="mt-auto flex flex-col gap-2 pt-2">
+                <Button type="button" size="sm" disabled={!startable} onClick={() => { onClose(); onStart(recipe); }}>
+                  直接创建
+                </Button>
+                <Button type="button" size="sm" variant="outline" disabled={!startable} onClick={() => { onClose(); onUseInComposer(recipe); }}>
+                  填入首页
+                </Button>
+                {startable ? null : (
+                  <p className="text-caption text-muted-foreground">
+                    这个配方的产物形态（{modeLabel}）暂时还不能创建。
+                  </p>
+                )}
+              </div>
+            </aside>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -473,6 +631,7 @@ export function DesignRecipeGallery({
   const [pickedMode, setPickedMode] = useState<RecipeMode | "">("");
   const [category, setCategory] = useState(ALL_FACET);
   const [startTarget, setStartTarget] = useState<DesignScenarioRecipe | null>(null);
+  const [detailTarget, setDetailTarget] = useState<DesignScenarioRecipe | null>(null);
 
   const modeCounts = useMemo(
     () => RECIPE_MODES.map((option) => ({
@@ -640,6 +799,7 @@ export function DesignRecipeGallery({
                     recipe={recipe}
                     onUseInComposer={onUseInComposer}
                     onStart={setStartTarget}
+                    onOpenDetail={setDetailTarget}
                   />
                 ))}
               </div>
@@ -647,6 +807,15 @@ export function DesignRecipeGallery({
           </>
         )}
       </div>
+      {detailTarget ? (
+        <RecipeDetailDialog
+          key={detailTarget.slug}
+          recipe={detailTarget}
+          onClose={() => setDetailTarget(null)}
+          onUseInComposer={onUseInComposer}
+          onStart={setStartTarget}
+        />
+      ) : null}
       {startTarget ? (
         <RecipeStartDialog
           key={startTarget.slug}
