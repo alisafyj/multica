@@ -199,6 +199,8 @@ function makeCatalogueEntry(
     project_resource_id: "resource-h5",
     name: "CRM",
     platform: "web",
+    summary: "",
+    has_draft_package: false,
     saved_at: "2026-08-14T00:00:00Z",
     ...overrides,
   };
@@ -767,6 +769,8 @@ describe("ProjectDesignSystemCreate", () => {
           id: "system-admin",
           project_resource_id: "resource-admin",
           platform: "web",
+          summary: "",
+          has_draft_package: false,
           saved_at: "2026-08-15T00:00:00Z",
         }),
         makeCatalogueEntry({ id: "system-project", project_resource_id: "", platform: "cross_platform" }),
@@ -777,6 +781,8 @@ describe("ProjectDesignSystemCreate", () => {
           project_resource_id: "",
           name: "工单中心",
           platform: "mobile",
+          summary: "",
+          has_draft_package: false,
           saved_at: "2026-08-10T00:00:00Z",
         }),
       ], {

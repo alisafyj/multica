@@ -4362,7 +4362,12 @@ func (q *Queries) ListProjectDesignSystemsByProject(ctx context.Context, arg Lis
 }
 
 const listSavedProjectDesignSystemsInWorkspace = `-- name: ListSavedProjectDesignSystemsInWorkspace :many
-SELECT project_design_system.id, project_design_system.workspace_id, project_design_system.project_id, project_design_system.name, project_design_system.platform, project_design_system.current_agent_id, project_design_system.active_task_id, project_design_system.active_operation, project_design_system.input_snapshot, project_design_system.last_error, project_design_system.created_by, project_design_system.created_at, project_design_system.updated_at, project_design_system.saved_at, project_design_system.project_resource_id, project.title AS project_title
+SELECT project_design_system.id, project_design_system.workspace_id, project_design_system.project_id, project_design_system.name, project_design_system.platform, project_design_system.current_agent_id, project_design_system.active_task_id, project_design_system.active_operation, project_design_system.input_snapshot, project_design_system.last_error, project_design_system.created_by, project_design_system.created_at, project_design_system.updated_at, project_design_system.saved_at, project_design_system.project_resource_id, project.title AS project_title,
+       EXISTS (
+           SELECT 1 FROM project_design_system_package
+           WHERE project_design_system_package.design_system_id = project_design_system.id
+             AND project_design_system_package.slot = 'draft'
+       ) AS has_draft_package
 FROM project_design_system
 LEFT JOIN project ON project.id = project_design_system.project_id
 WHERE project_design_system.workspace_id = $1
@@ -4387,6 +4392,7 @@ type ListSavedProjectDesignSystemsInWorkspaceRow struct {
 	SavedAt           pgtype.Timestamptz `json:"saved_at"`
 	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
 	ProjectTitle      pgtype.Text        `json:"project_title"`
+	HasDraftPackage   bool               `json:"has_draft_package"`
 }
 
 // The workspace-level catalogue (DC-054 / B1). Only systems that have
@@ -4395,6 +4401,8 @@ type ListSavedProjectDesignSystemsInWorkspaceRow struct {
 // LEFT JOIN: a standalone system (project_id NULL) belongs to the workspace
 // itself and has no project title; it must still be listed, with the title
 // reading as absent rather than the row dropping out.
+// has_draft_package: a draft slot beside the saved one means the system is
+// being adjusted — the library row shows it as OD shows a draft system.
 func (q *Queries) ListSavedProjectDesignSystemsInWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]ListSavedProjectDesignSystemsInWorkspaceRow, error) {
 	rows, err := q.db.Query(ctx, listSavedProjectDesignSystemsInWorkspace, workspaceID)
 	if err != nil {
@@ -4421,6 +4429,7 @@ func (q *Queries) ListSavedProjectDesignSystemsInWorkspace(ctx context.Context, 
 			&i.SavedAt,
 			&i.ProjectResourceID,
 			&i.ProjectTitle,
+			&i.HasDraftPackage,
 		); err != nil {
 			return nil, err
 		}

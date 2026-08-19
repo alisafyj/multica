@@ -395,6 +395,10 @@ export interface ProjectDesignSystemCatalogueEntry {
   project_resource_id: string;
   name: string;
   platform: ProjectDesignSystemPlatform | "";
+  /** First line of the frozen creation brief — the row's OD-style summary. */
+  summary: string;
+  /** A draft package sits beside the saved one: the system is being adjusted. */
+  has_draft_package: boolean;
   saved_at: string;
 }
 

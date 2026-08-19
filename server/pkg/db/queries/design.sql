@@ -1103,7 +1103,14 @@ ORDER BY (project_resource_id IS NOT NULL), created_at;
 -- LEFT JOIN: a standalone system (project_id NULL) belongs to the workspace
 -- itself and has no project title; it must still be listed, with the title
 -- reading as absent rather than the row dropping out.
-SELECT project_design_system.*, project.title AS project_title
+-- has_draft_package: a draft slot beside the saved one means the system is
+-- being adjusted — the library row shows it as OD shows a draft system.
+SELECT project_design_system.*, project.title AS project_title,
+       EXISTS (
+           SELECT 1 FROM project_design_system_package
+           WHERE project_design_system_package.design_system_id = project_design_system.id
+             AND project_design_system_package.slot = 'draft'
+       ) AS has_draft_package
 FROM project_design_system
 LEFT JOIN project ON project.id = project_design_system.project_id
 WHERE project_design_system.workspace_id = sqlc.arg('workspace_id')

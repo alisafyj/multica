@@ -398,7 +398,39 @@ type designSystemCatalogueEntry struct {
 	ProjectResourceID string `json:"project_resource_id,omitempty"`
 	Name              string `json:"name"`
 	Platform          string `json:"platform"`
-	SavedAt           string `json:"saved_at"`
+	// Summary is the first line of the frozen creation brief, the way OD's
+	// rows lead with the system's own summary before anything else. Empty
+	// when the brief carries no usable line.
+	Summary string `json:"summary,omitempty"`
+	// HasDraftPackage: a draft sits beside the saved package — the system is
+	// being adjusted. The library row shows OD's draft marker for it.
+	HasDraftPackage bool `json:"has_draft_package"`
+	SavedAt         string `json:"saved_at"`
+}
+
+// catalogueSummary lifts a one-line summary out of a frozen input snapshot's
+// brief. The brief is the user's own description of what the system is for;
+// its first non-empty line, bounded, is the closest thing to OD's summary the
+// catalogue can offer without reading package contents.
+func catalogueSummary(inputSnapshot []byte) string {
+	var snapshot struct {
+		Brief string `json:"brief"`
+	}
+	if json.Unmarshal(inputSnapshot, &snapshot) != nil {
+		return ""
+	}
+	for _, line := range strings.Split(snapshot.Brief, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		runes := []rune(line)
+		if len(runes) > 80 {
+			runes = runes[:80]
+		}
+		return string(runes)
+	}
+	return ""
 }
 
 // ListWorkspaceDesignSystemCatalogue lists every saved design system in the
@@ -428,6 +460,8 @@ func (h *Handler) ListWorkspaceDesignSystemCatalogue(w http.ResponseWriter, r *h
 			ProjectResourceID: uuidToString(row.ProjectResourceID),
 			Name:              row.Name,
 			Platform:          row.Platform,
+			Summary:           catalogueSummary(row.InputSnapshot),
+			HasDraftPackage:   row.HasDraftPackage,
 		}
 		if row.SavedAt.Valid {
 			entry.SavedAt = row.SavedAt.Time.UTC().Format(time.RFC3339Nano)

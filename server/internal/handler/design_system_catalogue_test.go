@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/designsystemcatalogue"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // designsystemcatalogueDigestForTest reads the digest the catalogue computed
@@ -198,5 +199,99 @@ func TestResolveProjectDesignSystemReferencesInlinesBuiltinSystems(t *testing.T)
 	}
 	if _, err := testHandler.resolveProjectDesignSystemReferences(ctx, workspaceID, projectID, tooMany); !errors.As(err, &requestErr) || requestErr.code != "too_many_references" {
 		t.Fatalf("four builtin references error = %v, want too_many_references", err)
+	}
+}
+
+// The workspace catalogue feeds the library's rows. OD's rows lead with the
+// system's own summary and mark a system under adjustment; the entry must
+// therefore carry the first line of the frozen brief and whether a draft
+// package sits beside the saved one.
+func TestListWorkspaceDesignSystemCatalogueCarriesSummaryAndDraftFlag(t *testing.T) {
+	ctx := context.Background()
+	projectID := createProjectDesignSystemProject(t, testWorkspaceID, "Catalogue rows")
+	system, err := db.New(testPool).CreateProjectDesignSystem(ctx, db.CreateProjectDesignSystemParams{
+		WorkspaceID:   parseUUID(testWorkspaceID),
+		ProjectID:     projectID,
+		Name:          "看板视觉",
+		Platform:      "web",
+		InputSnapshot: []byte(`{"brief":"统一看板的产品视觉语言。\n第二行不进入摘要。","platform":"web"}`),
+	})
+	if err != nil {
+		t.Fatalf("create system: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM project_design_system_package WHERE design_system_id = $1`, system.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM project_design_system WHERE id = $1`, system.ID)
+	})
+	if _, err := testPool.Exec(ctx, `UPDATE project_design_system SET saved_at = now() WHERE id = $1`, system.ID); err != nil {
+		t.Fatalf("mark saved: %v", err)
+	}
+	seedPackage := func(slot string) {
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO project_design_system_package (
+				design_system_id, slot, design_md, tokens_css, components_html, manifest, validation, integrity_sha256, render_status
+			) VALUES ($1, $2, '# x', ':root{}', '<p></p>', '{}'::jsonb, '{}'::jsonb, 'x', 'passed')
+		`, system.ID, slot); err != nil {
+			t.Fatalf("seed %s package: %v", slot, err)
+		}
+	}
+	seedPackage("saved")
+
+	w := httptest.NewRecorder()
+	testHandler.ListWorkspaceDesignSystemCatalogue(w, newRequest(http.MethodGet, "/api/project-design-systems/catalogue", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		DesignSystems []designSystemCatalogueEntry `json:"design_systems"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	var entry *designSystemCatalogueEntry
+	for i := range body.DesignSystems {
+		if body.DesignSystems[i].ID == uuidToString(system.ID) {
+			entry = &body.DesignSystems[i]
+		}
+	}
+	if entry == nil {
+		t.Fatalf("saved system missing from the catalogue: %+v", body.DesignSystems)
+	}
+	if entry.Summary != "统一看板的产品视觉语言。" {
+		t.Fatalf("summary = %q, want the brief's first line", entry.Summary)
+	}
+	if entry.HasDraftPackage {
+		t.Fatal("saved-only system reports a draft package")
+	}
+
+	// A draft beside the saved package is OD's draft state: the flag flips.
+	seedPackage("draft")
+	w = httptest.NewRecorder()
+	testHandler.ListWorkspaceDesignSystemCatalogue(w, newRequest(http.MethodGet, "/api/project-design-systems/catalogue", nil))
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	for i := range body.DesignSystems {
+		if body.DesignSystems[i].ID == uuidToString(system.ID) {
+			entry = &body.DesignSystems[i]
+		}
+	}
+	if entry == nil || !entry.HasDraftPackage {
+		t.Fatalf("draft flag = %+v", entry)
+	}
+}
+
+func TestCatalogueSummaryBoundsTheFirstLine(t *testing.T) {
+	if got := catalogueSummary([]byte(`{"brief":"  \n第一行摘要\n第二行"}`)); got != "第一行摘要" {
+		t.Fatalf("summary = %q", got)
+	}
+	if got := catalogueSummary([]byte(`{"brief":"` + strings.Repeat("长", 100) + `"}`)); len([]rune(got)) != 80 {
+		t.Fatalf("long line not bounded: %d runes", len([]rune(got)))
+	}
+	if got := catalogueSummary([]byte(`{"brief":""}`)); got != "" {
+		t.Fatalf("empty brief = %q", got)
+	}
+	if got := catalogueSummary(nil); got != "" {
+		t.Fatalf("nil snapshot = %q", got)
 	}
 }

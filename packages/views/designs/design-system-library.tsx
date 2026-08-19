@@ -375,11 +375,22 @@ function SystemListItem({
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-body">{entry.name.trim() || "未命名设计体系"}</span>
         <span className="mt-0.5 truncate text-caption font-normal text-muted-foreground">
-          {entry.project_id
-            ? `${entry.project_title || "未知项目"}${entry.project_resource_id ? " · 仓库专属" : " · 项目通用"}`
-            : "独立设计体系"}
+          {/* OD's chain: the system's own summary first, ownership context as
+              the fallback — a row describes the system before its shelf. */}
+          {entry.summary.trim()
+            || (entry.project_id
+              ? `${entry.project_title || "未知项目"}${entry.project_resource_id ? " · 仓库专属" : " · 项目通用"}`
+              : "独立设计体系")}
         </span>
       </span>
+      {/* OD's row-end status marker, user systems only: a dot that is green
+          when what is saved is current and amber while a draft sits beside
+          it. Carried by colour and title, which hover never touches. */}
+      <span
+        title={entry.has_draft_package ? "已保存，另有未保存的调整草稿" : "已保存"}
+        aria-label={entry.has_draft_package ? "已保存，另有未保存的调整草稿" : "已保存"}
+        className={cn("size-2 shrink-0 rounded-full", entry.has_draft_package ? "bg-amber-500" : "bg-emerald-500")}
+      />
     </button>
   );
 }

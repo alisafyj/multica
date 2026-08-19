@@ -1988,6 +1988,8 @@ export const ProjectDesignSystemCatalogueEntrySchema = z.object({
   project_resource_id: z.string().catch("").default(""),
   name: z.string().catch("").default(""),
   platform: ProjectDesignSystemPlatformSchema,
+  summary: z.string().catch("").default(""),
+  has_draft_package: z.boolean().catch(false).default(false),
   saved_at: z.string().catch("").default(""),
 }).loose();
 

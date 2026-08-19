@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { fireEvent } from "@testing-library/react";
+import { cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -90,6 +90,8 @@ const PROJECT_SYSTEM = {
   project_resource_id: "",
   name: "Multica Web",
   platform: "web",
+  summary: "统一看板的产品视觉语言。",
+  has_draft_package: false,
   saved_at: "2026-08-16T00:00:00Z",
 };
 
@@ -100,6 +102,8 @@ const REPOSITORY_SYSTEM = {
   project_resource_id: "resource-h5",
   name: "看板 H5",
   platform: "mobile",
+  summary: "",
+  has_draft_package: false,
   saved_at: "2026-08-16T02:00:00Z",
 };
 
@@ -281,6 +285,32 @@ describe("DesignSystemLibrary", () => {
     expect(screen.getByText("--text-body")).toBeInTheDocument();
     expect(screen.getByText("--radius")).toBeInTheDocument();
     expect(screen.getByText("主按钮")).toBeInTheDocument();
+  });
+
+  it("shows the system's summary first and the saved/draft dot OD marks rows with", async () => {
+    renderLibrary();
+
+    // OD's row describes the system itself (summary) before its shelf; the
+    // fallback chain only reaches project context when there is no summary.
+    expect(await screen.findByText("统一看板的产品视觉语言。")).toBeInTheDocument();
+    const row = screen.getByRole("button", { name: /Multica Web/ });
+    expect(row).not.toHaveTextContent(/项目通用/);
+
+    // Saved-and-current is a green dot; a draft beside the saved package
+    // turns it amber, exactly OD's published/draft marker.
+    const dot = row.querySelector("span[aria-label='已保存']");
+    expect(dot).not.toBeNull();
+
+    listProjectDesignSystemCatalogue.mockResolvedValue({
+      design_systems: [{ ...PROJECT_SYSTEM, summary: "", has_draft_package: true }],
+    });
+    // Two libraries in one document would both answer the row query; the
+    // first render's row (green, summarised) must not stand in for the new one.
+    cleanup();
+    renderLibrary();
+    const adjusting = await screen.findByRole("button", { name: /Multica Web/ });
+    expect(adjusting.querySelector("span[aria-label='已保存，另有未保存的调整草稿']")).not.toBeNull();
+    expect(adjusting).toHaveTextContent("看板体验 · 项目通用");
   });
 
   it("never offers a workspace default, only the scope a system belongs to", async () => {
