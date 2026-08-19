@@ -587,8 +587,10 @@ Open Design 的两类预置资源按各自性质分别落地，不共用一套�
 - 社区 tab：点击卡片封面或标题打开详情弹层——示例全尺寸实时渲染（可交互、可全屏、可新标签页打开）、提示词（可复制）、分面，以及「直接创建 / 填入首页」，对应 Open Design 社区的 PluginDetailsModal。
 - tweaks：按 DC-050 作为约定而非平台 UI——设计文档 prompt 给出 `--accent/--scale/--density/--mode/--motion` 与 `prototype/tweaks.{css,js}` 的包内侧栏约定（只在需求或调整要求时执行，storage 访问必须 try/catch，不得触达 `parent/top`），工作区调整发起器提供「添加调整面板」预设指令，走正常的调整 → Audit → Preview 路径。
 - critique：按 DC-050 作为产物成型前的迭代改进循环——prompt 在写 coverage 之前运行 designer / critic / brand / a11y / copy 五个视角的评审循环（阈值 8，至多 3 轮），记录到可选的 `critique.json`（`multica.design-document-critique/v1`）；包契约接受并严格校验该文件但分数不影响 Audit 结论；修订详情读取该报告，工作区以“设计评审”面板展示末轮分数、结果与未关闭的发现，并标注“这是智能体自己的评审记录，不决定草稿是否成立”。
+- 首页参考文件：发起器可随提示词暂存截图 / PDF / 文本（最多 8 个、每个 16 MB），服务端按附件 id 解析、读取存储字节并把大小与 SHA-256 钉入冻结输入，守护进程经任务级路由 `GET /api/daemon/tasks/{taskId}/design-document/attachments/{attachmentId}` 只能取上下文列出且字节未变的附件，并落到 `reference/attachments/<id>` 供智能体阅读；prompt 说明位置与“复用图片须复制进 assets/”。
+- 工作区导出：`GET /api/design-documents/{id}/revisions/{revisionId}/archive` 经重新校验后以命名 ZIP 返回修订包，工作区更多菜单提供「下载原型包 (.zip)」，对应 Open Design 的下载为 .zip。
 - 边界：tweaks 与 critique 的真实产出仍待 A6 真实智能体验收；社区缺少 Open Design 未提供的搜索/排序不在本条范围。
-- 证据：`designsystemcatalogue` 与 `handler/design_system_catalogue_test.go`、`design_recipe_gallery.test.tsx`、`design-system-library.test.tsx`、`designdocument/critique_test.go`、`project_design_system_prompt_contract_test.go`、`design-document-critique.test.tsx`、`project-design-system-create.test.tsx`。
+- 证据：`designsystemcatalogue` 与 `handler/design_system_catalogue_test.go`、`design_recipe_gallery.test.tsx`、`design-system-library.test.tsx`、`designdocument/critique_test.go`、`project_design_system_prompt_contract_test.go`、`design-document-critique.test.tsx`、`project-design-system-create.test.tsx`、`handler/design_document_attachments_test.go`、`design-task-composer.test.tsx`、`handler/design_document_revision_test.go`。
 
 ### DC-059 设计文档任务上下文必须可被守护进程领取并声明取证模式
 
