@@ -4,11 +4,12 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getBuiltinDesignSystem, getProjectDesignSystem, listBuiltinDesignSystems, listProjectDesignSystemCatalogue } = vi.hoisted(() => ({
+const { getBuiltinDesignSystem, getProjectDesignSystem, listBuiltinDesignSystems, listProjectDesignSystemCatalogue, listProjects } = vi.hoisted(() => ({
   getBuiltinDesignSystem: vi.fn(),
   getProjectDesignSystem: vi.fn(),
   listBuiltinDesignSystems: vi.fn(),
   listProjectDesignSystemCatalogue: vi.fn(),
+  listProjects: vi.fn(),
 }));
 
 vi.mock("@multica/core/api", () => ({
@@ -17,6 +18,7 @@ vi.mock("@multica/core/api", () => ({
     getProjectDesignSystem,
     listBuiltinDesignSystems,
     listProjectDesignSystemCatalogue,
+    listProjects,
     getBaseUrl: () => "https://api.test",
   },
 }));
@@ -121,13 +123,13 @@ function systemDetail(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function renderLibrary(onOpenProject = vi.fn()) {
+function renderLibrary(onOpenProject = vi.fn(), onCreateInProject = vi.fn()) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const ui: ReactNode = (
     <QueryClientProvider client={queryClient}>
-      <DesignSystemLibrary onOpenProject={onOpenProject} />
+      <DesignSystemLibrary onOpenProject={onOpenProject} onCreateInProject={onCreateInProject} />
     </QueryClientProvider>
   );
   render(ui);
@@ -160,6 +162,8 @@ describe("DesignSystemLibrary", () => {
     listProjectDesignSystemCatalogue.mockResolvedValue({ design_systems: [PROJECT_SYSTEM] });
     getProjectDesignSystem.mockResolvedValue(systemDetail());
     listBuiltinDesignSystems.mockResolvedValue({ design_systems: [BUILTIN_APPLE, BUILTIN_STRIPE] });
+    listProjects.mockReset();
+    listProjects.mockResolvedValue({ projects: [{ id: "project-1", title: "官网改版", color: "#3b82f6", icon: "" }] });
     getBuiltinDesignSystem.mockImplementation(async (slug: string) => slug === "stripe"
       ? { ...BUILTIN_STRIPE, tokens: [], tokens_css: "", design_markdown: "# Stripe" }
       : {
@@ -198,6 +202,19 @@ describe("DesignSystemLibrary", () => {
     await userEvent.click(screen.getByRole("button", { name: /Stripe/ }));
     expect(await screen.findByRole("heading", { name: "Stripe" })).toBeInTheDocument();
     expect(screen.queryByTitle("Stripe 展示")).not.toBeInTheDocument();
+  });
+
+  it("creates a design system by picking the project that will own it", async () => {
+    const onCreateInProject = vi.fn();
+    renderLibrary(vi.fn(), onCreateInProject);
+    expect(await screen.findByRole("heading", { name: "Multica Web" })).toBeInTheDocument();
+
+    // Open Design puts a create action on the page; here a system belongs to a
+    // project (DC-052), so the button asks which project and hands over to
+    // its 设计体系 workbench instead of opening a second creation flow.
+    await userEvent.click(screen.getByRole("button", { name: "新建设计体系" }));
+    await userEvent.click(await screen.findByRole("button", { name: /官网改版/ }));
+    expect(onCreateInProject).toHaveBeenCalledWith("project-1");
   });
 
   it("filters the official catalogue by category from a dropdown", async () => {

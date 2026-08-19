@@ -565,6 +565,13 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
     setOpenProjectIds((current) => current.includes(projectId) ? current : [...current, projectId]);
     setActiveWorkspaceTabId(projectId);
   };
+  // The library hands a project over for its design system — to edit one it
+  // owns or to create one — so the tab opens on 设计体系, not on whichever
+  // asset tab was last active.
+  const openProjectSystems = (projectId: string) => {
+    openProjectTab(projectId);
+    setActiveTab("systems");
+  };
   // "新建设计稿" starts where every design task starts — the home composer —
   // rather than opening a second creation path beside it.
   const openComposer = () => {
@@ -717,7 +724,10 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                 {/* A reading surface only: systems stay scoped to their
                     project and repository, and this library never introduces a
                     workspace default projects would inherit (DC-052). */}
-                <DesignSystemLibrary onOpenProject={openProjectTab} />
+                <DesignSystemLibrary
+                  onOpenProject={openProjectSystems}
+                  onCreateInProject={openProjectSystems}
+                />
               </TabsContent>
             </Tabs>
           </div>

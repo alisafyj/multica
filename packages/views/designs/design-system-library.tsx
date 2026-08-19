@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Boxes, ExternalLink, FolderOpen, GitBranch, Moon, Package, Search, Sun, SwatchBook } from "lucide-react";
+import { Boxes, ExternalLink, FolderOpen, GitBranch, Moon, Package, Plus, Search, Sun, SwatchBook } from "lucide-react";
 import { api } from "@multica/core/api";
 import {
   builtinDesignSystemDetailOptions,
@@ -11,6 +11,7 @@ import {
   projectDesignSystemDetailOptions,
 } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { projectListOptions } from "@multica/core/projects/queries";
 import type {
   BuiltinDesignSystem,
   ProjectDesignSystem,
@@ -30,6 +31,9 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { ReadonlyContent } from "../editor";
+import { matchesPinyin } from "../editor/extensions/pinyin-match";
+import { PickerItem, PropertyPicker } from "../issues/components/pickers/property-picker";
+import { ProjectIcon } from "../projects/components/project-icon";
 import { DesignFilterPill } from "./design-filter-pill";
 import { DesignFilterSelect } from "./design-filter-select";
 import { PLATFORM_OPTIONS } from "./design-task-composer";
@@ -707,6 +711,72 @@ function BuiltinListItem({
 }
 
 /**
+ * "新建设计体系", at the library's top right as Open Design places its create
+ * action on the design-systems page. Open Design hands off to a dedicated
+ * creation flow; here a design system belongs to a project (DC-052), so the
+ * button first asks which project and then opens that project's 设计体系
+ * workbench — the one place systems are created — rather than a second
+ * creation path beside it. The picker is the project picker the composer
+ * uses, minus its "no project" row: there is nothing to create without one.
+ */
+function CreateDesignSystemButton({ onPick }: { onPick: (projectId: string) => void }) {
+  const wsId = useWorkspaceId();
+  const { data: projects = [] } = useQuery(projectListOptions(wsId));
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const query = filter.trim().toLowerCase();
+  const filtered = projects.filter(
+    (project) => project.title.toLowerCase().includes(query) || matchesPinyin(project.title, query),
+  );
+  return (
+    <PropertyPicker
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setFilter("");
+      }}
+      width="w-60"
+      align="end"
+      searchable
+      searchPlaceholder="搜索项目…"
+      onSearchChange={setFilter}
+      header={
+        <p className="px-2 pb-1 pt-1.5 text-caption text-muted-foreground">
+          设计体系属于项目。选一个项目，在它的「设计体系」里创建。
+        </p>
+      }
+      trigger={
+        <>
+          <Plus className="size-3.5" />
+          新建设计体系
+        </>
+      }
+      triggerRender={<Button size="sm" />}
+    >
+      {filtered.length === 0 ? (
+        <p className="px-2 py-3 text-caption text-muted-foreground">
+          {projects.length === 0 ? "还没有项目，先创建一个项目。" : "没有匹配的项目。"}
+        </p>
+      ) : (
+        filtered.map((project) => (
+          <PickerItem
+            key={project.id}
+            selected={false}
+            onClick={() => {
+              setOpen(false);
+              onPick(project.id);
+            }}
+          >
+            <ProjectIcon project={project} size="sm" />
+            <span className="truncate">{project.title}</span>
+          </PickerItem>
+        ))
+      )}
+    </PropertyPicker>
+  );
+}
+
+/**
  * Design system library (DC-054): the workspace-wide view of saved project
  * design systems. It is a reading and pick-up surface only — systems are
  * created inside a project's own scope, and this library never introduces a
@@ -714,9 +784,12 @@ function BuiltinListItem({
  */
 export function DesignSystemLibrary({
   onOpenProject,
+  onCreateInProject,
 }: {
   /** Opens the project that owns a system, where it can be edited. */
   onOpenProject: (projectId: string) => void;
+  /** "新建设计体系" picked a project: open its 设计体系 workbench. */
+  onCreateInProject: (projectId: string) => void;
 }) {
   const wsId = useWorkspaceId();
   const { data: entries = [], isLoading, error, refetch } = useQuery(
@@ -778,15 +851,18 @@ export function DesignSystemLibrary({
             />
           ))}
         </div>
-        <div className="relative w-full sm:w-56">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            aria-label="搜索设计体系"
-            placeholder="搜索设计体系…"
-            className="h-8 pl-8 text-body"
-          />
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <div className="relative min-w-0 flex-1 sm:w-56 sm:flex-none">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              aria-label="搜索设计体系"
+              placeholder="搜索设计体系…"
+              className="h-8 pl-8 text-body"
+            />
+          </div>
+          <CreateDesignSystemButton onPick={onCreateInProject} />
         </div>
       </div>
 
