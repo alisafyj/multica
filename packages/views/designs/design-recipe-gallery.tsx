@@ -65,9 +65,9 @@ const ALL_FACET = "__all__";
  * community tab, which sorts its catalogue by artifact mode before anything
  * else — a person looking for a deck never wants prototypes in the way.
  *
- * `hyperframes` is a subcategory of prototype in the seed (the surface facet),
- * so it filters on that rather than on a mode of its own; `live` has no
- * producer yet and is a real position that is simply empty.
+ * Every position is a `mode` value the seed carries, so the row is a plain
+ * equality over data. `live` has no producer yet and is a real position that
+ * is simply empty rather than a hidden one.
  */
 type RecipeMode = "deck" | "prototype" | "live" | "image" | "video" | "hyperframes" | "audio";
 
@@ -81,17 +81,39 @@ const RECIPE_MODES: ReadonlyArray<{ value: RecipeMode; label: string; icon: type
   { value: "audio", label: "音频", icon: AudioLines },
 ];
 
+/**
+ * Row-two order per mode, as Open Design displays it (facets.ts
+ * SUBCATEGORY_DISPLAY_ORDER / DECK_COMMERCIAL_ORDER). Prototype leads with
+ * what people ask for most; decks lead with the paid scenes. A category not
+ * listed keeps its catalogue position behind the ordered ones, so a new seed
+ * facet appears rather than vanishes.
+ */
+const CATEGORY_DISPLAY_ORDER: Partial<Record<RecipeMode, readonly string[]>> = {
+  prototype: ["落地页 / 营销", "品牌 / 设计", "数据看板", "应用", "开发者工具", "文档 / 报告"],
+  deck: [
+    "融资路演", "企业战略", "B2B 销售", "产品管理", "设计打磨",
+    "市场增长", "数据与财务", "咨询顾问", "政府与政策", "职业培训",
+    "学术研究", "AI 素养", "职业发展", "学生作业", "生活故事",
+  ],
+  image: ["UI / 产品样机", "品牌 / Logo", "分镜", "社交 / 内容", "头像 / 人像", "插画 / 风格"],
+  video: ["动效 / 特效", "社交 / 短视频", "营销 / 产品", "数据 / 解说", "电影感 / 叙事"],
+};
+
+function orderCategories(mode: RecipeMode, categories: string[]): string[] {
+  const order = CATEGORY_DISPLAY_ORDER[mode];
+  if (!order) return categories;
+  const rank = (value: string) => {
+    const index = order.indexOf(value);
+    return index === -1 ? order.length : index;
+  };
+  return categories
+    .map((value, index) => ({ value, index }))
+    .sort((a, b) => rank(a.value) - rank(b.value) || a.index - b.index)
+    .map((entry) => entry.value);
+}
+
 function matchesMode(recipe: DesignScenarioRecipe, mode: RecipeMode): boolean {
-  switch (mode) {
-    case "hyperframes":
-      return recipe.subcategory === "HyperFrames";
-    case "prototype":
-      return recipe.mode === "prototype" && recipe.subcategory !== "HyperFrames";
-    case "live":
-      return recipe.mode === "live";
-    default:
-      return recipe.mode === mode;
-  }
+  return recipe.mode === mode;
 }
 
 /**
@@ -110,6 +132,8 @@ function modeVisual(mode: string): { icon: typeof AppWindow; label: string } {
       return { icon: ImageIcon, label: "图片" };
     case "video":
       return { icon: Video, label: "视频" };
+    case "hyperframes":
+      return { icon: LayoutTemplate, label: "HyperFrames" };
     case "audio":
       return { icon: AudioLines, label: "音频" };
     default:
@@ -452,8 +476,8 @@ export function DesignRecipeGallery({
     [mode, recipes],
   );
   const categories = useMemo(
-    () => uniqueInOrder(modeMatches.map((recipe) => recipe.category)),
-    [modeMatches],
+    () => orderCategories(mode, uniqueInOrder(modeMatches.map((recipe) => recipe.category))),
+    [mode, modeMatches],
   );
   // A facet the catalogue no longer offers falls back to "all" by derivation,
   // so a refreshed catalogue can never strand the grid on an empty filter.
