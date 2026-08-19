@@ -7,14 +7,10 @@ import {
   ExternalLink,
   FolderOpen,
   GitBranch,
-  Globe,
-  Layers,
-  Monitor,
   Moon,
   Package,
   Plus,
   Search,
-  Smartphone,
   Sun,
   SwatchBook,
 } from "lucide-react";
@@ -79,21 +75,38 @@ function platformLabel(platform: string): string {
 }
 
 /**
- * The glyph a saved system's row leads with. Open Design's rows lead with a
- * logo; we have no logo, so the target platform stands in — it is the fact
- * that separates one system from its neighbours in multi-repo projects.
+ * Four swatches for a system that declares none, seeded from its name —
+ * Open Design's `fallbackSwatches` ported verbatim. Every row then carries a
+ * colour identity even before its palette exists, and the same name always
+ * paints the same stripes.
  */
-function platformIcon(platform: string): typeof Globe {
-  switch (platform) {
-    case "web":
-      return Globe;
-    case "mobile":
-      return Smartphone;
-    case "cross_platform":
-      return Monitor;
-    default:
-      return Layers;
-  }
+export function paletteFallbackSwatches(seed: string): string[] {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  const base = h % 360;
+  return [
+    `hsl(${base}, 24%, 94%)`,
+    `hsl(${(base + 90) % 360}, 34%, 74%)`,
+    `hsl(${(base + 180) % 360}, 42%, 34%)`,
+    `hsl(${(base + 28) % 360}, 76%, 54%)`,
+  ];
+}
+
+/**
+ * The palette stripe every design-system row leads with when no image
+ * resolves — Open Design's `SystemRowPaletteLogo`: the system's own first
+ * swatches, or the seeded fallback, painted as equal vertical bands filling
+ * the whole mark. Bare colour, no frame; a row never shows a generic glyph.
+ */
+function RowPaletteMark({ swatches, seed }: { swatches: string[]; seed: string }) {
+  const colors = swatches.length > 0 ? swatches.slice(0, 4) : paletteFallbackSwatches(seed);
+  return (
+    <span aria-hidden="true" className="flex size-10 shrink-0 overflow-hidden rounded-md">
+      {colors.map((color, index) => (
+        <span key={`${color}-${index}`} className="min-w-0 flex-1" style={{ background: color }} />
+      ))}
+    </span>
+  );
 }
 
 // Every saved system in the catalogue belongs to a project of this workspace,
@@ -343,7 +356,6 @@ function SystemListItem({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const PlatformIcon = platformIcon(entry.platform);
   return (
     <button
       type="button"
@@ -353,15 +365,13 @@ function SystemListItem({
       // the washed page background where a grey accent washes out — and the
       // hover compound is spelled out so hovering it cannot demote it.
       className={cn(
-        "flex w-full cursor-pointer items-start gap-2.5 rounded-lg p-2.5 text-left transition-colors",
+        "flex w-full cursor-pointer items-center gap-2.5 rounded-lg p-2 text-left transition-colors",
         selected
           ? "bg-background font-medium text-foreground shadow-sm ring-1 ring-primary/40 hover:bg-background"
           : "text-foreground hover:bg-accent/50",
       )}
     >
-      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-        <PlatformIcon className="size-3.5" />
-      </span>
+      <RowPaletteMark swatches={[]} seed={entry.name.trim() || entry.id} />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-body">{entry.name.trim() || "未命名设计体系"}</span>
         <span className="mt-0.5 truncate text-caption font-normal text-muted-foreground">
@@ -710,33 +720,27 @@ function BuiltinSystemsPanel({ search }: { search: string }) {
 
 /**
  * The row's leading mark. Open Design's rows show the brand's real favicon
- * (Google's favicon service keyed by a curated slug→host table); a slug the
- * table does not cover, or a fetch that fails — offline, blocked — falls back
- * to the package icon tile instead of a broken image, exactly as upstream
- * falls back to its palette stripe.
+ * (Google's favicon service keyed by a curated slug→host table) at the full
+ * row height with no frame; a slug the table does not cover, or a fetch that
+ * fails — offline, blocked — falls back to the palette stripe, exactly as
+ * upstream does, never to a generic glyph or a broken image.
  */
-function BuiltinRowLogo({ slug }: { slug: string }) {
+function BuiltinRowLogo({ slug, swatches, name }: { slug: string; swatches: string[]; name: string }) {
   const logoURL = builtinDesignSystemLogoURL(slug);
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [slug]);
   if (!logoURL || failed) {
-    return (
-      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-        <Package className="size-3.5" />
-      </span>
-    );
+    return <RowPaletteMark swatches={swatches} seed={name || slug} />;
   }
   return (
-    <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
-      <img
-        src={logoURL}
-        alt=""
-        loading="lazy"
-        referrerPolicy="no-referrer"
-        onError={() => setFailed(true)}
-        className="size-4 rounded-sm object-contain"
-      />
-    </span>
+    <img
+      src={logoURL}
+      alt=""
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+      className="size-10 shrink-0 rounded-md object-contain"
+    />
   );
 }
 
@@ -758,23 +762,16 @@ function BuiltinListItem({
       // primary ring, with the hover compound spelled out so the selected
       // row stays identifiable while it is hovered.
       className={cn(
-        "flex w-full items-start gap-2.5 rounded-lg p-2 text-left transition-colors",
+        "flex w-full items-center gap-2.5 rounded-lg p-2 text-left transition-colors",
         selected
           ? "bg-background font-medium text-foreground shadow-sm ring-1 ring-primary/40 hover:bg-background"
           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
       )}
     >
-      <BuiltinRowLogo slug={system.slug} />
+      <BuiltinRowLogo slug={system.slug} swatches={system.swatches} name={system.name} />
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
       <span className="flex w-full min-w-0 items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-body">{system.name || system.slug}</span>
-        {system.swatches.length > 0 ? (
-          <span className="flex shrink-0 items-center gap-0.5" aria-hidden="true">
-            {system.swatches.slice(0, 5).map((value, index) => (
-              <span key={`${value}-${index}`} className="size-2.5 rounded-full border border-border/60" style={{ background: value }} />
-            ))}
-          </span>
-        ) : null}
       </span>
       <span className="w-full truncate text-caption font-normal text-muted-foreground">
         {system.category || "未分类"}

@@ -34,7 +34,20 @@ vi.mock("../common/actor-avatar", () => ({
   ActorAvatar: () => <span data-testid="actor-avatar" />,
 }));
 
-import { DesignSystemLibrary, designMarkdownModules } from "./design-system-library";
+import { DesignSystemLibrary, designMarkdownModules, paletteFallbackSwatches } from "./design-system-library";
+
+describe("paletteFallbackSwatches", () => {
+  it("seeds four stable colour bands from the name, as Open Design does", () => {
+    const first = paletteFallbackSwatches("Stripe");
+    expect(first).toHaveLength(4);
+    first.forEach((color) => expect(color).toMatch(/^hsl\(\d+, \d+%, \d+%\)$/));
+    // Deterministic: the same name always paints the same stripes, a
+    // different name (almost surely) a different base hue.
+    expect(paletteFallbackSwatches("Stripe")).toEqual(first);
+    expect(paletteFallbackSwatches("Notion")).not.toEqual(first);
+    expect(paletteFallbackSwatches("")).toHaveLength(4);
+  });
+});
 
 const BUILTIN_APPLE = {
   slug: "apple",
@@ -217,12 +230,17 @@ describe("DesignSystemLibrary", () => {
     expect(favicon).toHaveAttribute("src", "https://www.google.com/s2/favicons?domain=apple.com&sz=64");
     expect(favicon).toHaveAttribute("referrerpolicy", "no-referrer");
 
-    // A fetch that fails (offline, blocked domain) collapses to the icon tile
-    // rather than a broken image. Scoped to Apple's URL: Stripe's row renders
-    // its own favicon and must survive Apple's failure.
+    // A fetch that fails (offline, blocked domain) collapses to OD's palette
+    // stripe — Apple's three swatches as equal bands — never a broken image
+    // or a generic glyph. Scoped to Apple's URL: Stripe's row renders its own
+    // favicon and must survive Apple's failure.
     fireEvent(favicon as HTMLElement, new Event("error"));
     expect(document.body.querySelector("img[src*='domain=apple.com']")).not.toBeInTheDocument();
     expect(document.body.querySelector("img[src*='domain=stripe.com']")).toBeInTheDocument();
+    const appleRow = screen.getByRole("button", { name: /Apple/ });
+    const stripe = appleRow.querySelector("span[aria-hidden='true'] > span[style]");
+    expect(stripe).not.toBeNull();
+    expect(appleRow.querySelectorAll("span[aria-hidden='true'] > span[style]").length).toBe(3);
   });
 
   it("opens the standalone creation page from the create button", async () => {
