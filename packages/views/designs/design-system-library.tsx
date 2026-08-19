@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Boxes,
@@ -45,6 +45,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { ReadonlyContent } from "../editor";
+import { builtinDesignSystemLogoURL } from "./design-system-domains";
 import { DesignFilterPill } from "./design-filter-pill";
 import { DesignFilterSelect } from "./design-filter-select";
 import { PLATFORM_OPTIONS } from "./design-task-composer";
@@ -707,6 +708,38 @@ function BuiltinSystemsPanel({ search }: { search: string }) {
   );
 }
 
+/**
+ * The row's leading mark. Open Design's rows show the brand's real favicon
+ * (Google's favicon service keyed by a curated slug→host table); a slug the
+ * table does not cover, or a fetch that fails — offline, blocked — falls back
+ * to the package icon tile instead of a broken image, exactly as upstream
+ * falls back to its palette stripe.
+ */
+function BuiltinRowLogo({ slug }: { slug: string }) {
+  const logoURL = builtinDesignSystemLogoURL(slug);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [slug]);
+  if (!logoURL || failed) {
+    return (
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+        <Package className="size-3.5" />
+      </span>
+    );
+  }
+  return (
+    <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
+      <img
+        src={logoURL}
+        alt=""
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+        className="size-4 rounded-sm object-contain"
+      />
+    </span>
+  );
+}
+
 function BuiltinListItem({
   system,
   selected,
@@ -731,9 +764,7 @@ function BuiltinListItem({
           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
       )}
     >
-      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-        <Package className="size-3.5" />
-      </span>
+      <BuiltinRowLogo slug={system.slug} />
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
       <span className="flex w-full min-w-0 items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-body">{system.name || system.slug}</span>

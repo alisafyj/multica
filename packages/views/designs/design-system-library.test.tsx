@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import { fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -202,6 +203,26 @@ describe("DesignSystemLibrary", () => {
     await userEvent.click(screen.getByRole("button", { name: /Stripe/ }));
     expect(await screen.findByRole("heading", { name: "Stripe" })).toBeInTheDocument();
     expect(screen.queryByTitle("Stripe 展示")).not.toBeInTheDocument();
+  });
+
+  it("leads official rows with the brand favicon and falls back to the icon tile when it fails", async () => {
+    renderLibrary();
+    await userEvent.click(await screen.findByRole("button", { name: /官方/ }));
+
+    // Apple's slug is in the curated host table, so the row shows OD's
+    // favicon image, not a generic glyph.
+    await screen.findByRole("heading", { name: "Apple" });
+    const favicon = document.body.querySelector("img[src*='google.com/s2/favicons']");
+    expect(favicon).not.toBeNull();
+    expect(favicon).toHaveAttribute("src", "https://www.google.com/s2/favicons?domain=apple.com&sz=64");
+    expect(favicon).toHaveAttribute("referrerpolicy", "no-referrer");
+
+    // A fetch that fails (offline, blocked domain) collapses to the icon tile
+    // rather than a broken image. Scoped to Apple's URL: Stripe's row renders
+    // its own favicon and must survive Apple's failure.
+    fireEvent(favicon as HTMLElement, new Event("error"));
+    expect(document.body.querySelector("img[src*='domain=apple.com']")).not.toBeInTheDocument();
+    expect(document.body.querySelector("img[src*='domain=stripe.com']")).toBeInTheDocument();
   });
 
   it("opens the standalone creation page from the create button", async () => {
