@@ -6,9 +6,16 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/designrecipepreview"
+	"github.com/multica-ai/multica/server/internal/realtime"
 )
 
 // GetDesignRecipePreview serves the cover for a built-in recipe card.
+//
+// Registered outside the authenticated router, like the design-system package
+// preview: an <iframe> or <img> cannot attach the Bearer header the API
+// otherwise requires, and the covers are bundled product content — identical
+// for every workspace, holding no user data — so there is nothing a login
+// would protect. What the route does protect is the app: see below.
 //
 // The HTML variant is a template's own example output, authored upstream and
 // rendered inside a sandboxed iframe on the gallery card. It is served as a
@@ -37,10 +44,22 @@ func (h *Handler) GetDesignRecipePreview(w http.ResponseWriter, r *http.Request)
 		// and scripts are what the examples are made of; the network is what
 		// they must not have. `frame-ancestors 'self'` keeps the cover from
 		// being embedded by another site.
+		// frame-ancestors names the app origins: the cover is served from the
+		// API origin and framed by the web app, so 'self' alone would refuse
+		// the one embedder that is supposed to work.
+		ancestors := "'self'"
+		for _, origin := range realtime.AllowedOrigins() {
+			// CORS accepts the literal "null" for opaque origins (the Figma
+			// plugin panel); frame-ancestors has no such source, so only real
+			// scheme://host entries are copied across.
+			if strings.Contains(origin, "://") {
+				ancestors += " " + origin
+			}
+		}
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "+
 				"img-src data: blob:; font-src data:; media-src data: blob:; "+
-				"connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'")
+				"connect-src 'none'; frame-ancestors "+ancestors+"; base-uri 'none'; form-action 'none'")
 	}
 	w.Header().Set("Content-Type", preview.ContentType)
 	w.WriteHeader(http.StatusOK)

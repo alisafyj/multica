@@ -134,6 +134,8 @@ function modeVisual(mode: string): { icon: typeof AppWindow; label: string } {
       return { icon: Video, label: "视频" };
     case "hyperframes":
       return { icon: LayoutTemplate, label: "HyperFrames" };
+    case "live":
+      return { icon: ChartColumn, label: "实时产物" };
     case "audio":
       return { icon: AudioLines, label: "音频" };
     default:

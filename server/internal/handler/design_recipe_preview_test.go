@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/designrecipepreview"
+	"github.com/multica-ai/multica/server/internal/realtime"
 )
 
 func firstPreviewSlug(t *testing.T, kind designrecipepreview.Kind) string {
@@ -26,6 +27,8 @@ func firstPreviewSlug(t *testing.T, kind designrecipepreview.Kind) string {
 // leave with a CSP that denies it the network — that header is the difference
 // between a cover and an exfiltration path.
 func TestGetDesignRecipePreviewServesHTMLWithANetworklessCSP(t *testing.T) {
+	realtime.SetAllowedOrigins([]string{"https://app.example.test"})
+	t.Cleanup(func() { realtime.SetAllowedOrigins(nil) })
 	slug := firstPreviewSlug(t, designrecipepreview.KindHTML)
 	w := httptest.NewRecorder()
 	testHandler.GetDesignRecipePreview(w,
@@ -37,7 +40,9 @@ func TestGetDesignRecipePreviewServesHTMLWithANetworklessCSP(t *testing.T) {
 		t.Fatalf("content-type = %q", ct)
 	}
 	csp := w.Header().Get("Content-Security-Policy")
-	for _, must := range []string{"default-src 'none'", "connect-src 'none'", "frame-ancestors 'self'"} {
+	// The cover is framed by the web app on another origin, so 'self' alone
+	// would refuse the only embedder that matters.
+	for _, must := range []string{"default-src 'none'", "connect-src 'none'", "frame-ancestors 'self' https://app.example.test"} {
 		if !strings.Contains(csp, must) {
 			t.Fatalf("CSP %q lacks %q", csp, must)
 		}

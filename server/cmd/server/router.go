@@ -1206,6 +1206,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		"/api/project-design-system-previews/{workspaceId}/{systemId}/{digest}/{accessToken}/files/*",
 		h.GetProjectDesignSystemPackagePreviewFile,
 	)
+	// Built-in recipe covers: bundled, workspace-agnostic, framed by the app.
+	// Unauthenticated for the same reason as the route above — a frame cannot
+	// carry the Bearer header — and fenced by its own CSP instead.
+	r.Get("/api/design-recipes/{slug}/preview", h.GetDesignRecipePreview)
 	// Composio OAuth callback (MUL-3843). NOT under the Auth group on purpose:
 	// Composio 302-redirects the user's browser here at the end of the OAuth
 	// flow, and the cookie session is frequently absent (expired session,
@@ -1848,7 +1852,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/project-design-systems/catalogue", h.ListWorkspaceDesignSystemCatalogue)
 			r.Get("/api/design-documents", h.ListDesignDocuments)
 			r.Get("/api/design-recipes", h.ListDesignScenarioRecipes)
-			r.Get("/api/design-recipes/{slug}/preview", h.GetDesignRecipePreview)
 			r.Get("/api/design-systems/builtin", h.ListBuiltinDesignSystems)
 			r.Get("/api/design-systems/builtin/{slug}", h.GetBuiltinDesignSystem)
 			r.Post("/api/design-documents", h.CreateDesignDocument)
