@@ -16,6 +16,7 @@ type pmoAgentCandidate struct {
 	ID           string
 	OwnerID      string
 	RuntimeBound bool
+	Provider     string
 }
 
 // normalizePMOOwnerEmail converts a PM snapshot owner external_id into the
@@ -67,18 +68,16 @@ func pmoSnapshotOwners(snapshot PMOSnapshot) map[string]*PMOExternalOwner {
 
 // matchPMOAgentMappings merges explicit Agent mappings with automatic exact
 // email matches. A member is only an intermediate lookup: automatic mapping
-// selects their first runtime-bound Agent in ListAgents creation order.
-// ponytail: keep this deterministic default; use explicit mappings when role-specific routing matters.
+// prefers their runtime-bound coding Agent by provider: Codex, Claude, OpenCode.
 func matchPMOAgentMappings(owners map[string]*PMOExternalOwner, memberEmailToUserID map[string]string, agents []pmoAgentCandidate, existing map[string]string) map[string]string {
 	result := make(map[string]string, len(existing)+len(owners))
 	eligibleAgentIDs := make(map[string]struct{}, len(agents))
-	owned := map[string][]string{}
 	for _, agent := range agents {
 		if agent.RuntimeBound && agent.OwnerID != "" && agent.ID != "" {
 			eligibleAgentIDs[agent.ID] = struct{}{}
-			owned[agent.OwnerID] = append(owned[agent.OwnerID], agent.ID)
 		}
 	}
+	defaultAgents := pmoDefaultAgentsByOwner(agents)
 	for externalID, agentID := range existing {
 		if _, eligible := eligibleAgentIDs[agentID]; externalID != "" && eligible {
 			result[externalID] = agentID
@@ -93,8 +92,8 @@ func matchPMOAgentMappings(owners map[string]*PMOExternalOwner, memberEmailToUse
 			continue
 		}
 		userID := memberEmailToUserID[strings.ToLower(email)]
-		if candidates := owned[userID]; len(candidates) > 0 {
-			result[externalID] = candidates[0]
+		if agentID := defaultAgents[userID]; agentID != "" {
+			result[externalID] = agentID
 		}
 	}
 	return result
@@ -170,29 +169,52 @@ func listPMOAgentCandidates(ctx context.Context, qtx *db.Queries, workspaceID pg
 	if err != nil {
 		return nil, fmt.Errorf("list workspace agents: %w", err)
 	}
+	runtimeRows, err := qtx.ListAgentRuntimes(ctx, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list workspace agent runtimes: %w", err)
+	}
+	providersByRuntimeID := make(map[string]string, len(runtimeRows))
+	for _, runtime := range runtimeRows {
+		providersByRuntimeID[util.UUIDToString(runtime.ID)] = runtime.Provider
+	}
 	agents := make([]pmoAgentCandidate, 0, len(agentRows))
 	for _, agent := range agentRows {
+		runtimeID := util.UUIDToString(agent.RuntimeID)
 		agents = append(agents, pmoAgentCandidate{
 			ID:           util.UUIDToString(agent.ID),
 			OwnerID:      util.UUIDToString(agent.OwnerID),
 			RuntimeBound: agent.RuntimeID.Valid,
+			Provider:     providersByRuntimeID[runtimeID],
 		})
 	}
 	return agents, nil
 }
 
 func resolvePMOLegacyMemberMappings(legacy map[string]string, agents []pmoAgentCandidate) map[string]string {
-	owned := map[string][]string{}
-	for _, agent := range agents {
-		if agent.RuntimeBound && agent.OwnerID != "" && agent.ID != "" {
-			owned[agent.OwnerID] = append(owned[agent.OwnerID], agent.ID)
-		}
-	}
+	defaultAgents := pmoDefaultAgentsByOwner(agents)
 	result := make(map[string]string, len(legacy))
 	for externalID, memberID := range legacy {
-		if candidates := owned[memberID]; len(candidates) > 0 {
-			result[externalID] = candidates[0]
+		if agentID := defaultAgents[memberID]; agentID != "" {
+			result[externalID] = agentID
 		}
 	}
 	return result
+}
+
+func pmoDefaultAgentsByOwner(agents []pmoAgentCandidate) map[string]string {
+	providerPriority := map[string]int{"codex": 0, "claude": 1, "opencode": 2}
+	selected := map[string]string{}
+	selectedPriority := map[string]int{}
+	for _, agent := range agents {
+		priority, supported := providerPriority[strings.ToLower(strings.TrimSpace(agent.Provider))]
+		if !supported || !agent.RuntimeBound || agent.OwnerID == "" || agent.ID == "" {
+			continue
+		}
+		currentPriority, exists := selectedPriority[agent.OwnerID]
+		if !exists || priority < currentPriority {
+			selected[agent.OwnerID] = agent.ID
+			selectedPriority[agent.OwnerID] = priority
+		}
+	}
+	return selected
 }

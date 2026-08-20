@@ -147,15 +147,19 @@ func addPMOApplyMember(t *testing.T, f pmoApplyFixture, account string) pgtype.U
 }
 
 func addPMOApplyAgent(t *testing.T, f pmoApplyFixture, ownerID pgtype.UUID) pgtype.UUID {
+	return addPMOApplyAgentWithProvider(t, f, ownerID, "codex")
+}
+
+func addPMOApplyAgentWithProvider(t *testing.T, f pmoApplyFixture, ownerID pgtype.UUID, provider string) pgtype.UUID {
 	t.Helper()
 	ctx := context.Background()
 	suffix := time.Now().UnixNano()
 	var runtimeID string
 	if err := f.pool.QueryRow(ctx, `
 		INSERT INTO agent_runtime (workspace_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, last_seen_at)
-		VALUES ($1, $2, 'cloud', 'pmo_apply_email_runtime', 'online', 'pmo apply email runtime', '{}'::jsonb, $3, now())
+		VALUES ($1, $2, 'cloud', $3, 'online', 'pmo apply email runtime', '{}'::jsonb, $4, now())
 		RETURNING id
-	`, f.workspaceID, fmt.Sprintf("PMO Apply Email Runtime %d", suffix), ownerID).Scan(&runtimeID); err != nil {
+	`, f.workspaceID, fmt.Sprintf("PMO Apply Email Runtime %d", suffix), provider, ownerID).Scan(&runtimeID); err != nil {
 		t.Fatalf("create pmo apply email runtime: %v", err)
 	}
 	var agentID string
@@ -788,12 +792,12 @@ func TestApplyPMORunUpgradesUniqueLegacyMemberAssignee(t *testing.T) {
 	}
 }
 
-func TestApplyPMORunUpgradesLegacyMemberToFirstEligibleAgent(t *testing.T) {
+func TestApplyPMORunUpgradesLegacyMemberToPreferredCodingAgent(t *testing.T) {
 	f := newPMOApplyFixture(t)
 	ctx := context.Background()
 	memberID := addPMOApplyMember(t, f, "yanmeichen")
-	firstAgentID := addPMOApplyAgent(t, f, memberID)
-	_ = addPMOApplyAgent(t, f, memberID)
+	_ = addPMOApplyAgentWithProvider(t, f, memberID, "openclaw")
+	codexAgentID := addPMOApplyAgentWithProvider(t, f, memberID, "codex")
 
 	owner := map[string]any{"external_id": "YanMeiChen", "display_name": "Yan Mei Chen"}
 	parent := pmoRequirement("EXT-P-001", "P-001", "Ambiguous Legacy Project", "planned", "planned", 1)
@@ -812,12 +816,12 @@ func TestApplyPMORunUpgradesLegacyMemberToFirstEligibleAgent(t *testing.T) {
 	}
 	childLink := pmoLinkByExternal(t, f, "requirement", "EXT-I-001")
 	issue := issueByID(t, f.pool, childLink.LocalID)
-	if issue.AssigneeType.String != "agent" || issue.AssigneeID != firstAgentID {
-		t.Fatalf("legacy assignee = %q/%v, want first agent/%v", issue.AssigneeType.String, issue.AssigneeID, firstAgentID)
+	if issue.AssigneeType.String != "agent" || issue.AssigneeID != codexAgentID {
+		t.Fatalf("legacy assignee = %q/%v, want codex agent/%v", issue.AssigneeType.String, issue.AssigneeID, codexAgentID)
 	}
 	link := pmoLinkByExternal(t, f, "assignee", "YanMeiChen")
-	if link.LocalType.String != "agent" || link.LocalID != firstAgentID {
-		t.Fatalf("legacy link = %+v, want first agent/%v", link, firstAgentID)
+	if link.LocalType.String != "agent" || link.LocalID != codexAgentID {
+		t.Fatalf("legacy link = %+v, want codex agent/%v", link, codexAgentID)
 	}
 	if _, err := f.svc.Queries.GetPMOSyncLink(ctx, db.GetPMOSyncLinkParams{
 		WorkspaceID: f.workspaceID, ConfigID: f.configID, ExternalType: "requirement", ExternalKey: "EXT-P-001",
