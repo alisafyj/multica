@@ -889,7 +889,9 @@ export function DesignSystemLibrary({
   const { data: entries = [], isLoading, error, refetch } = useQuery(
     projectDesignSystemCatalogueOptions(wsId),
   );
-  const [scope, setScope] = useState<LibraryScope>("team");
+  // 官方 opens first: a workspace starts with no saved systems of its own,
+  // and the bundled catalogue is the scope that always has something to show.
+  const [scope, setScope] = useState<LibraryScope>("official");
   const [platform, setPlatform] = useState<string>(ALL_PLATFORMS);
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState("");

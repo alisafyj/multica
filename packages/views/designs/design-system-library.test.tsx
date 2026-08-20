@@ -196,6 +196,17 @@ describe("DesignSystemLibrary", () => {
       });
   });
 
+  it("opens on the 官方 scope, which always has content", async () => {
+    renderLibrary();
+
+    // No click: the bundled catalogue renders immediately…
+    expect(await screen.findByRole("heading", { name: "Design System Inspired by Apple" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /官方/ })).toHaveAttribute("aria-pressed", "true");
+    // …and the workspace's own systems stay one click away.
+    await userEvent.click(screen.getByRole("button", { name: /团队/ }));
+    expect(await screen.findByRole("heading", { name: "Multica Web" })).toBeInTheDocument();
+  });
+
   it("renders the official detail as Open Design's kit modules, in its order", async () => {
     renderLibrary();
     await userEvent.click(await screen.findByRole("button", { name: /官方/ }));
@@ -278,7 +289,7 @@ describe("DesignSystemLibrary", () => {
   it("opens the standalone creation page from the create button", async () => {
     const onCreate = vi.fn();
     renderLibrary(vi.fn(), onCreate);
-    expect(await screen.findByRole("heading", { name: "Multica Web" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Design System Inspired by Apple" })).toBeInTheDocument();
 
     // Open Design puts a create action on the page; here it opens the
     // standalone creation flow, where a system belongs to no project.
@@ -306,6 +317,7 @@ describe("DesignSystemLibrary", () => {
 
   it("opens the first saved system and shows its own token sections", async () => {
     renderLibrary();
+    await userEvent.click(await screen.findByRole("button", { name: /团队/ }));
 
     expect(await screen.findByRole("heading", { name: "Multica Web" })).toBeInTheDocument();
     expect(screen.getByText("项目绑定 · 看板体验 · Web")).toBeInTheDocument();
@@ -317,6 +329,7 @@ describe("DesignSystemLibrary", () => {
 
   it("shows the system's summary first and the saved/draft dot OD marks rows with", async () => {
     renderLibrary();
+    await userEvent.click(await screen.findByRole("button", { name: /团队/ }));
 
     // OD's row describes the system itself (summary) before its shelf; the
     // fallback chain only reaches project context when there is no summary.
@@ -336,6 +349,7 @@ describe("DesignSystemLibrary", () => {
     // first render's row (green, summarised) must not stand in for the new one.
     cleanup();
     renderLibrary();
+    await userEvent.click(await screen.findByRole("button", { name: /团队/ }));
     const adjusting = await screen.findByRole("button", { name: /Multica Web/ });
     expect(adjusting.querySelector("span[aria-label='已保存，另有未保存的调整草稿']")).not.toBeNull();
     expect(adjusting).toHaveTextContent("看板体验 · 项目通用");
@@ -347,6 +361,7 @@ describe("DesignSystemLibrary", () => {
     });
     const user = userEvent.setup();
     renderLibrary();
+    await user.click(await screen.findByRole("button", { name: /团队/ }));
 
     // Repository scope replaces inheritance: each system is its own, and no
     // system is ever the workspace default (DC-052).
@@ -365,6 +380,7 @@ describe("DesignSystemLibrary", () => {
   it("marks a system under adjustment as a draft from the detail payload", async () => {
     getProjectDesignSystem.mockResolvedValue(systemDetail({ status: "draft" }));
     renderLibrary();
+    await userEvent.click(await screen.findByRole("button", { name: /团队/ }));
 
     expect(await screen.findByText("草稿")).toBeInTheDocument();
   });
@@ -384,6 +400,7 @@ describe("DesignSystemLibrary", () => {
   it("hands editing back to the project that owns the system", async () => {
     const user = userEvent.setup();
     const onOpenProject = renderLibrary();
+    await user.click(await screen.findByRole("button", { name: /团队/ }));
 
     await user.click(await screen.findByRole("button", { name: "打开项目" }));
     expect(onOpenProject).toHaveBeenCalledWith("project-1");
@@ -392,6 +409,7 @@ describe("DesignSystemLibrary", () => {
   it("keeps the list usable when the detail payload cannot be loaded", async () => {
     getProjectDesignSystem.mockRejectedValue(new Error("nope"));
     renderLibrary();
+    await userEvent.click(await screen.findByRole("button", { name: /团队/ }));
 
     expect(await screen.findByText("无法加载这套设计体系的内容。")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Multica Web" })).toBeInTheDocument();
