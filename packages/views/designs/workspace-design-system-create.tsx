@@ -5,10 +5,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   ArrowRight,
+  ChevronDown,
   ChevronRight,
   ExternalLink,
   Globe,
   LoaderCircle,
+  Paintbrush,
   Paperclip,
   Search,
   Sparkles,
@@ -18,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
+import { builtinDesignSystemListOptions, projectDesignSystemCatalogueOptions } from "@multica/core/designs/queries";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -70,6 +73,18 @@ export function sourceLinkLabel(url: string): string {
   }
 }
 
+/** A Figma design/file URL — the only shape the Figma URL row accepts. */
+export function isFigmaLink(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return false;
+    if (parsed.hostname.replace(/^www\./, "") !== "figma.com") return false;
+    return /^\/(design|file)\//.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
 interface StagedFile {
   id: string;
   name: string;
@@ -97,6 +112,10 @@ export function WorkspaceDesignSystemCreate() {
   const paths = useWorkspacePaths();
   const queryClient = useQueryClient();
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  // Copy sources for 粘贴 DESIGN.md: the official catalogue plus the
+  // workspace's own saved systems (their V2 packages carry DESIGN.md at root).
+  const { data: builtinSystems = [] } = useQuery(builtinDesignSystemListOptions(wsId));
+  const { data: teamSystems = [] } = useQuery(projectDesignSystemCatalogueOptions(wsId));
   const { upload, uploadWithToast, uploading } = useFileUpload(api, (error, file) =>
     toast.error(`${file.name}：${error.message}`),
   );
@@ -105,15 +124,26 @@ export function WorkspaceDesignSystemCreate() {
   const [sourceInput, setSourceInput] = useState("");
   const [links, setLinks] = useState<string[]>([]);
   const [files, setFiles] = useState<StagedFile[]>([]);
+  const [figs, setFigs] = useState<StagedFile[]>([]);
   const [brief, setBrief] = useState("");
   const [designMd, setDesignMd] = useState("");
   const [designMdMode, setDesignMdMode] = useState<"edit" | "preview">("edit");
+  const [copySourceKey, setCopySourceKey] = useState("");
   const [notes, setNotes] = useState("");
+  const [figmaInput, setFigmaInput] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [brandPickerOpen, setBrandPickerOpen] = useState(false);
   const [agentId, setAgentId] = useState("");
   const [platform, setPlatform] = useState("web");
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const figInputRef = useRef<HTMLInputElement>(null);
+  // What the user typed by hand, restored when a copy source is deselected —
+  // upstream's manualDesignMdRef.
+  const manualDesignMdRef = useRef("");
+  // Guards the copy load against out-of-order responses when the user
+  // switches sources quickly.
+  const copyRequestRef = useRef(0);
 
   const currentAgent = agents.find((agent) => agent.id === agentId);
   const agentAvailable = isAgentAvailable(currentAgent);
@@ -136,8 +166,13 @@ export function WorkspaceDesignSystemCreate() {
   const createSystem = useMutation({
     mutationFn: async () => {
       const references: ProjectDesignSystemReferenceInput[] = [
-        ...links.map((link) => ({ kind: "link" as const, value: link, label: "来源链接" })),
+        ...links.map((link) => ({
+          kind: "link" as const,
+          value: link,
+          label: isFigmaLink(link) ? "Figma 设计来源" : "来源链接",
+        })),
         ...files.map((file) => ({ kind: "attachment" as const, attachment_id: file.id, label: file.name })),
+        ...figs.map((file) => ({ kind: "attachment" as const, attachment_id: file.id, label: file.name })),
       ];
       // A pasted DESIGN.md becomes an attachment at submit time: the server's
       // frozen input then carries the exact bytes the user pasted.
@@ -172,9 +207,16 @@ export function WorkspaceDesignSystemCreate() {
     setSourceInput("");
   };
 
-  const stageFiles = async (incoming: FileList | File[]) => {
+  const stageInto = async (
+    incoming: FileList | File[],
+    set: React.Dispatch<React.SetStateAction<StagedFile[]>>,
+    extension?: string,
+  ) => {
     for (const file of Array.from(incoming)) {
-      if (files.length >= MAX_FILES) return;
+      if (extension && !file.name.toLowerCase().endsWith(extension)) {
+        toast.error(`${file.name} 不是 ${extension} 文件`);
+        continue;
+      }
       if (file.size > MAX_FILE_BYTES) {
         toast.error(`${file.name} 超过 12 MB 上限`);
         continue;
@@ -182,12 +224,76 @@ export function WorkspaceDesignSystemCreate() {
       const result = await uploadWithToast(file);
       if (!result) continue;
       const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : "";
-      setFiles((current) => (
+      set((current) => (
         current.some((item) => item.id === result.id) || current.length >= MAX_FILES
           ? current
           : [...current, { id: result.id, name: result.filename || file.name, contentType: file.type, previewUrl }]
       ));
     }
+  };
+
+  const stageFiles = (incoming: FileList | File[]) => stageInto(incoming, setFiles);
+  const stageFigs = (incoming: FileList | File[]) => stageInto(incoming, setFigs, ".fig");
+
+  // 从现有设计系统复制 — upstream's semantics: the pick fills the paste box
+  // with that system's DESIGN.md; deselecting restores the hand-typed text.
+  const loadCopySource = async (key: string): Promise<string> => {
+    if (key.startsWith("builtin:")) {
+      const detail = await api.getBuiltinDesignSystem(key.slice("builtin:".length));
+      if (!detail.design_markdown) throw new Error("empty DESIGN.md");
+      return detail.design_markdown;
+    }
+    const id = key.slice("team:".length);
+    const preview = await api.getProjectDesignSystemPackagePreview(id);
+    const url = api.getProjectDesignSystemPackagePreviewFileURL(
+      id,
+      wsId,
+      preview.content_digest,
+      preview.resource_access_token,
+      "DESIGN.md",
+    );
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`load DESIGN.md (${resp.status})`);
+    return resp.text();
+  };
+
+  const copySource = useMutation({
+    mutationFn: async ({ key, requestId }: { key: string; requestId: number }) => {
+      const text = await loadCopySource(key);
+      return { text, requestId };
+    },
+    onSuccess: ({ text, requestId }) => {
+      if (requestId !== copyRequestRef.current) return;
+      setDesignMd(text);
+      setDesignMdMode("edit");
+    },
+  });
+
+  const handleCopySourceChange = (key: string) => {
+    const requestId = ++copyRequestRef.current;
+    setCopySourceKey(key);
+    copySource.reset();
+    if (!key) {
+      setDesignMd(manualDesignMdRef.current);
+      setDesignMdMode("edit");
+      return;
+    }
+    copySource.mutate({ key, requestId });
+  };
+
+  const trimmedFigma = figmaInput.trim();
+  const validFigma = isFigmaLink(trimmedFigma);
+  const addFigmaLink = () => {
+    if (!validFigma) return;
+    setFigmaInput("");
+    setLinks((current) => {
+      if (current.includes(trimmedFigma)) return current;
+      if (current.length >= MAX_LINKS) {
+        toast.error(`最多 ${MAX_LINKS} 个来源链接`);
+        return current;
+      }
+      return [...current, trimmedFigma];
+    });
   };
 
   // Open Design's pick semantics: the brand's website joins the source links,
@@ -422,10 +528,50 @@ export function WorkspaceDesignSystemCreate() {
                       预览
                     </button>
                   </div>
+                  {builtinSystems.length > 0 || teamSystems.length > 0 ? (
+                    <div className="flex flex-wrap items-center gap-2.5 rounded-lg bg-muted/40 px-3.5 py-2.5">
+                      <span className="text-caption font-medium">从现有设计系统复制</span>
+                      <span className="relative inline-flex items-center">
+                        <Paintbrush aria-hidden="true" className="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground" />
+                        <select
+                          aria-label="选择设计系统"
+                          value={copySourceKey}
+                          onChange={(event) => handleCopySourceChange(event.target.value)}
+                          className="h-8 max-w-56 rounded-md border bg-background pl-8 pr-2 text-caption"
+                        >
+                          <option value="">选择设计系统</option>
+                          {teamSystems.length > 0 ? (
+                            <optgroup label="团队">
+                              {teamSystems.map((system) => (
+                                <option key={system.id} value={`team:${system.id}`}>{system.name}</option>
+                              ))}
+                            </optgroup>
+                          ) : null}
+                          <optgroup label="官方">
+                            {builtinSystems.map((system) => (
+                              <option key={system.slug} value={`builtin:${system.slug}`}>{system.name}</option>
+                            ))}
+                          </optgroup>
+                        </select>
+                      </span>
+                      {copySource.isPending ? (
+                        <span role="status" className="text-caption text-muted-foreground">正在加载 DESIGN.md…</span>
+                      ) : null}
+                      {copySource.isError ? (
+                        <span role="alert" className="text-caption text-destructive">无法加载该设计系统。</span>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {designMdMode === "edit" ? (
                     <Textarea
                       value={designMd}
-                      onChange={(event) => setDesignMd(event.target.value)}
+                      onChange={(event) => {
+                        setDesignMd(event.target.value);
+                        // Typing detaches the copy source and becomes the text
+                        // a later deselect restores.
+                        manualDesignMdRef.current = event.target.value;
+                        if (copySourceKey) setCopySourceKey("");
+                      }}
                       aria-label="粘贴 DESIGN.md"
                       rows={5}
                       placeholder={'---\nname: Heritage\ncolors:\n  primary: "#1A1C1E"\n  tertiary: "#B8422E"\n---\n\n## Overview\n...'}
@@ -439,16 +585,117 @@ export function WorkspaceDesignSystemCreate() {
                 </div>
               </FormRow>
 
-              <FormRow label="备注" optional alignTop>
-                <Textarea
-                  value={notes}
-                  onChange={(event) => setNotes(event.target.value)}
-                  aria-label="备注"
-                  rows={3}
-                  placeholder="例如：我们使用温暖自然的配色和圆角。品牌语气有趣但专业..."
-                  className="min-h-[86px] resize-none text-body"
-                />
-              </FormRow>
+              {/* Open Design's 高级 disclosure. Its repository-access panel
+                  and local-folder picker belong to upstream's own daemon; here
+                  those rows explain how the same needs are met in this
+                  product, and the working rows (.fig, Figma URL, 备注) stay. */}
+              <div className="border-t">
+                <button
+                  type="button"
+                  aria-expanded={advancedOpen}
+                  onClick={() => setAdvancedOpen((open) => !open)}
+                  className="flex w-full items-center gap-2 px-4 py-3.5 text-caption font-semibold hover:bg-muted/30 sm:px-[18px]"
+                >
+                  {advancedOpen ? <ChevronDown className="size-3.5 text-muted-foreground" /> : <ChevronRight className="size-3.5 text-muted-foreground" />}
+                  高级 · 仓库、本地代码、Figma
+                </button>
+                {advancedOpen ? (
+                  <>
+                    <FormRow label="GitHub 仓库" alignTop>
+                      <p className="text-caption leading-5 text-muted-foreground">
+                        仓库链接直接加到上方「GitHub 或网站」即可。生成任务在你的机器上由守护进程执行，能否克隆取决于所选智能体自身的 GitHub 凭据。
+                      </p>
+                    </FormRow>
+                    <FormRow label="关联本地代码" alignTop>
+                      <p className="text-caption leading-5 text-muted-foreground">
+                        浏览器拿不到本地文件夹的真实路径。需要参考本地代码时，把绝对路径写进下方备注——任务在你的机器上执行，智能体可以直接读取该目录。
+                      </p>
+                    </FormRow>
+                    <FormRow label="上传 .fig" optional hint="原样随任务提供给智能体；Multica 不在本地解码。" alignTop>
+                      <div className="space-y-2.5">
+                        <input
+                          ref={figInputRef}
+                          type="file"
+                          multiple
+                          accept=".fig"
+                          className="hidden"
+                          aria-label="上传 .fig 文件"
+                          onChange={(event) => {
+                            if (event.target.files) void stageFigs(event.target.files);
+                            event.target.value = "";
+                          }}
+                        />
+                        <button
+                          type="button"
+                          aria-label="上传 .fig — 拖放或点击浏览"
+                          className="flex min-h-[56px] w-full items-center justify-center rounded-xl border-[1.5px] border-dashed px-4 py-3 text-caption text-muted-foreground transition-colors hover:border-primary/50"
+                          onClick={() => figInputRef.current?.click()}
+                          onDragOver={(event) => event.preventDefault()}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            if (event.dataTransfer.files.length) void stageFigs(event.dataTransfer.files);
+                          }}
+                        >
+                          拖入 .fig 或<span className="text-primary">点击浏览</span>
+                        </button>
+                        {figs.length > 0 ? (
+                          <div aria-label="已暂存的 .fig" className="flex flex-wrap gap-2">
+                            {figs.map((file) => (
+                              <span key={file.id} className="inline-flex h-7 max-w-72 items-center gap-1.5 rounded-full border bg-muted/40 py-0.5 pl-2.5 pr-1 text-caption">
+                                <Paperclip className="size-3.5 shrink-0 text-muted-foreground" />
+                                <span className="truncate">{file.name}</span>
+                                <button
+                                  type="button"
+                                  aria-label={`移除 ${file.name}`}
+                                  className="rounded-full p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                  onClick={() => setFigs((current) => current.filter((item) => item.id !== file.id))}
+                                >
+                                  <X className="size-3" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </FormRow>
+                    <FormRow label="Figma URL" optional hint="保存为 Figma 设计来源，智能体把它作为标准参考。" alignTop>
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          <Input
+                            value={figmaInput}
+                            onChange={(event) => setFigmaInput(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                                event.preventDefault();
+                                addFigmaLink();
+                              }
+                            }}
+                            aria-label="Figma URL"
+                            placeholder="https://figma.com/design/… 或 /file/…"
+                            className="h-9 min-w-0 flex-1 basis-56 text-body"
+                          />
+                          <Button type="button" size="sm" variant="outline" className="h-9" disabled={!validFigma} onClick={addFigmaLink}>
+                            添加
+                          </Button>
+                        </div>
+                        {trimmedFigma && !validFigma ? (
+                          <p className="text-caption text-destructive">请输入 figma.com/design/… 或 figma.com/file/… 链接。</p>
+                        ) : null}
+                      </div>
+                    </FormRow>
+                    <FormRow label="备注" optional alignTop>
+                      <Textarea
+                        value={notes}
+                        onChange={(event) => setNotes(event.target.value)}
+                        aria-label="备注"
+                        rows={3}
+                        placeholder="例如：我们使用温暖自然的配色和圆角。品牌语气有趣但专业..."
+                        className="min-h-[86px] resize-none text-body"
+                      />
+                    </FormRow>
+                  </>
+                ) : null}
+              </div>
 
               {/* Multica's own rows: generation runs as the picked agent's
                   task (P-008), and the platform shapes the component forms. */}
