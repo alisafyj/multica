@@ -392,6 +392,52 @@ func TestSubscriberIssueCreated_AutopilotMapPayload(t *testing.T) {
 	}
 }
 
+func TestExtractIssueFields_ServiceMapPayload(t *testing.T) {
+	projectID := "550e8400-e29b-41d4-a716-446655440001"
+	issue, ok := extractIssueFields(map[string]any{
+		"id":           "550e8400-e29b-41d4-a716-446655440002",
+		"workspace_id": "550e8400-e29b-41d4-a716-446655440003",
+		"title":        "PMO completed issue",
+		"status":       "done",
+		"priority":     "medium",
+		"creator_type": "member",
+		"creator_id":   "550e8400-e29b-41d4-a716-446655440004",
+		"project_id":   &projectID,
+	})
+	if !ok {
+		t.Fatal("extractIssueFields rejected service map payload")
+	}
+	if issue.Title != "PMO completed issue" || issue.Status != "done" || issue.ProjectID == nil || *issue.ProjectID != projectID {
+		t.Fatalf("extracted issue = %+v", issue)
+	}
+}
+
+func TestExtractIssueDomainUpdateRequiresMarkerForServiceMap(t *testing.T) {
+	issueMap := map[string]any{
+		"id":           "550e8400-e29b-41d4-a716-446655440002",
+		"workspace_id": "550e8400-e29b-41d4-a716-446655440003",
+		"title":        "PMO completed issue",
+		"status":       "done",
+		"creator_id":   "550e8400-e29b-41d4-a716-446655440004",
+	}
+	if _, ok := extractIssueDomainUpdate(map[string]any{"issue": issueMap}); ok {
+		t.Fatal("realtime-only service map enabled domain side effects")
+	}
+	issue, ok := extractIssueDomainUpdate(map[string]any{
+		"issue": issueMap, "domain_side_effects": true,
+	})
+	if !ok || issue.Status != "done" {
+		t.Fatalf("marked domain update = %+v, %v", issue, ok)
+	}
+	handlerIssue := handler.IssueResponse{ID: "issue", CreatorID: "creator", Status: "done"}
+	if issue, ok := extractIssueDomainUpdate(map[string]any{"issue": handlerIssue}); !ok || issue.ID != handlerIssue.ID || issue.Status != handlerIssue.Status {
+		t.Fatalf("handler domain update = %+v, %v", issue, ok)
+	}
+	if _, ok := extractIssueDomainUpdate(map[string]any{"issue": handlerIssue, "realtime_only": true}); ok {
+		t.Fatal("realtime-only handler payload enabled domain side effects")
+	}
+}
+
 // Verify parseUUID is consistent — the local helper should agree with util.MustParseUUID
 // for valid input, and panic on invalid input (the silent-zero behavior was removed
 // after #1661 to prevent silent SQL writes against a zero UUID).

@@ -3,12 +3,14 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -117,6 +119,34 @@ func parsePGUUID(t *testing.T, s string) pgtype.UUID {
 		t.Fatalf("parse uuid %q: %v", s, err)
 	}
 	return u
+}
+
+func TestPMOWorkspaceLockBlocksConcurrentIssueCounterWrite(t *testing.T) {
+	f := newPMOApplyFixture(t)
+	ctx := context.Background()
+
+	holder, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin holder: %v", err)
+	}
+	defer holder.Rollback(ctx)
+	if _, err := db.New(f.pool).WithTx(holder).LockWorkspaceForIssueCounterWrite(ctx, f.workspaceID); err != nil {
+		t.Fatalf("lock PMO workspace: %v", err)
+	}
+
+	competing, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin competing counter write: %v", err)
+	}
+	defer competing.Rollback(ctx)
+	if _, err := competing.Exec(ctx, `SET LOCAL lock_timeout = '50ms'`); err != nil {
+		t.Fatalf("set lock timeout: %v", err)
+	}
+	_, err = competing.Exec(ctx, `UPDATE workspace SET issue_counter = issue_counter + 1 WHERE id = $1`, f.workspaceID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+		t.Fatalf("concurrent issue counter write error = %v, want SQLSTATE 55P03", err)
+	}
 }
 
 // addPMOApplyMember inserts a user with a corporate @soyoung.com email and a
@@ -419,6 +449,190 @@ func TestApplyPMORunFirstImportCreatesHierarchy(t *testing.T) {
 	}
 }
 
+func TestApplyPMORunCompletedProjectCompletesCreatedIssues(t *testing.T) {
+	f := newPMOApplyFixture(t)
+	ctx := context.Background()
+	owner := map[string]any{"external_id": "EXT-U-001", "display_name": "Mapped Agent"}
+	child := pmoChildWithTasks(t, "EXT-I-001", "I-001", "Open Child", "todo", 2,
+		pmoTask("EXT-T-001", "EXT-S-001", "Open Child Task", "in_progress"))
+	child["owner"] = owner
+	if _, err := f.svc.SetAssigneeMapping(ctx, f.workspaceID, f.configID, "EXT-U-001", f.agentID); err != nil {
+		t.Fatalf("SetAssigneeMapping: %v", err)
+	}
+
+	snapshot := buildPMOSnapshotJSON(t,
+		pmoRequirement("EXT-P-001", "P-001", "Completed Project", "completed", "completed", 1),
+		[]map[string]any{child},
+		nil)
+	run := seedPMOPreview(t, f, snapshot)
+
+	if _, err := f.svc.ApplyRun(ctx, f.workspaceID, run.ID, nil); err != nil {
+		t.Fatalf("ApplyRun: %v", err)
+	}
+	for _, identity := range [][2]string{{"requirement", "EXT-I-001"}, {"task", "EXT-T-001"}} {
+		link := pmoLinkByExternal(t, f, identity[0], identity[1])
+		if issue := issueByID(t, f.pool, link.LocalID); issue.Status != "done" {
+			t.Errorf("%s/%s status = %q, want done", identity[0], identity[1], issue.Status)
+		}
+	}
+	childLink := pmoLinkByExternal(t, f, "requirement", "EXT-I-001")
+	var queued int
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE issue_id = $1`, childLink.LocalID).Scan(&queued); err != nil {
+		t.Fatalf("count queued tasks: %v", err)
+	}
+	if queued != 0 {
+		t.Fatalf("queued tasks for issue created done = %d, want 0", queued)
+	}
+}
+
+func TestApplyPMORunCompletedProjectWinsOverIncomingOpenIssueStatus(t *testing.T) {
+	f := newPMOApplyFixture(t)
+	ctx := context.Background()
+
+	initial := buildPMOSnapshotJSON(t,
+		pmoRequirement("EXT-P-001", "P-001", "Completing Project", "planned", "planned", 1),
+		[]map[string]any{pmoChildWithTasks(t, "EXT-I-001", "I-001", "Child", "todo", 2)},
+		nil)
+	firstRun := seedPMOPreview(t, f, initial)
+	if _, err := f.svc.ApplyRun(ctx, f.workspaceID, firstRun.ID, nil); err != nil {
+		t.Fatalf("initial ApplyRun: %v", err)
+	}
+
+	completed := buildPMOSnapshotJSON(t,
+		pmoRequirement("EXT-P-001", "P-001", "Completing Project", "completed", "completed", 1),
+		[]map[string]any{
+			pmoChildWithTasks(t, "EXT-I-001", "I-001", "Child", "in_progress", 2),
+			pmoChildWithTasks(t, "EXT-I-002", "I-002", "New Child", "todo", 3),
+		},
+		nil)
+	secondRun := seedPMOPreview(t, f, completed)
+	updatedEvents := make(chan events.Event, 1)
+	completedParents := make(chan []db.Issue, 1)
+	f.svc.NotifyParentsOfBatchChildDone = func(_ context.Context, issues []db.Issue) {
+		completedParents <- issues
+	}
+	f.bus.Subscribe(protocol.EventIssueUpdated, func(event events.Event) {
+		payload, ok := event.Payload.(map[string]any)
+		if !ok || payload["status_changed"] != true {
+			return
+		}
+		updatedEvents <- event
+	})
+	if _, err := f.svc.ApplyRun(ctx, f.workspaceID, secondRun.ID, nil); err != nil {
+		t.Fatalf("completed ApplyRun: %v", err)
+	}
+
+	childLink := pmoLinkByExternal(t, f, "requirement", "EXT-I-001")
+	if issue := issueByID(t, f.pool, childLink.LocalID); issue.Status != "done" {
+		t.Fatalf("issue status after completed project apply = %q, want done", issue.Status)
+	}
+	projectLink := pmoLinkByExternal(t, f, "requirement", "EXT-P-001")
+	newChildLink := pmoLinkByExternal(t, f, "requirement", "EXT-I-002")
+	newChild := issueByID(t, f.pool, newChildLink.LocalID)
+	if newChild.ProjectID != projectLink.LocalID || newChild.Status != "done" {
+		t.Fatalf("new issue in existing completed project = project %v status %q, want %v/done",
+			newChild.ProjectID, newChild.Status, projectLink.LocalID)
+	}
+	if got := len(updatedEvents); got != 1 {
+		t.Fatalf("issue:updated events = %d, want 1", got)
+	}
+	payload := (<-updatedEvents).Payload.(map[string]any)
+	issuePayload, ok := payload["issue"].(map[string]any)
+	if !ok || issuePayload["id"] != util.UUIDToString(childLink.LocalID) || issuePayload["status"] != "done" {
+		t.Fatalf("issue:updated payload = %#v", payload)
+	}
+	if got := len(completedParents); got != 1 {
+		t.Fatalf("parent completion callbacks = %d, want 1", got)
+	}
+	completedIssues := <-completedParents
+	if len(completedIssues) != 1 || completedIssues[0].ID != childLink.LocalID {
+		t.Fatalf("parent completion callback issues = %+v", completedIssues)
+	}
+}
+
+func TestApplyPMORunCancellationNotifiesParentBarrier(t *testing.T) {
+	f := newPMOApplyFixture(t)
+	ctx := context.Background()
+
+	initial := buildPMOSnapshotJSON(t,
+		pmoRequirement("EXT-P-001", "P-001", "Planned Project", "planned", "planned", 1),
+		[]map[string]any{pmoChildWithTasks(t, "EXT-I-001", "I-001", "Child", "todo", 2)},
+		nil)
+	firstRun := seedPMOPreview(t, f, initial)
+	if _, err := f.svc.ApplyRun(ctx, f.workspaceID, firstRun.ID, nil); err != nil {
+		t.Fatalf("initial ApplyRun: %v", err)
+	}
+
+	cancelled := buildPMOSnapshotJSON(t,
+		pmoRequirement("EXT-P-001", "P-001", "Planned Project", "planned", "planned", 1),
+		[]map[string]any{pmoChildWithTasks(t, "EXT-I-001", "I-001", "Child", "cancelled", 2)},
+		nil)
+	secondRun := seedPMOPreview(t, f, cancelled)
+	terminalParents := make(chan []db.Issue, 1)
+	f.svc.NotifyParentsOfBatchChildDone = func(_ context.Context, issues []db.Issue) {
+		terminalParents <- issues
+	}
+	if _, err := f.svc.ApplyRun(ctx, f.workspaceID, secondRun.ID, nil); err != nil {
+		t.Fatalf("cancelled ApplyRun: %v", err)
+	}
+
+	childLink := pmoLinkByExternal(t, f, "requirement", "EXT-I-001")
+	if issue := issueByID(t, f.pool, childLink.LocalID); issue.Status != "cancelled" {
+		t.Fatalf("issue status after cancellation = %q, want cancelled", issue.Status)
+	}
+	if got := len(terminalParents); got != 1 {
+		t.Fatalf("parent terminal callbacks = %d, want 1", got)
+	}
+	terminalIssues := <-terminalParents
+	if len(terminalIssues) != 1 || terminalIssues[0].ID != childLink.LocalID || terminalIssues[0].Status != "cancelled" {
+		t.Fatalf("parent terminal callback issues = %+v", terminalIssues)
+	}
+}
+
+func TestApplyPMORunCompletedProjectDoesNotCloseIssueMovedElsewhere(t *testing.T) {
+	f := newPMOApplyFixture(t)
+	ctx := context.Background()
+
+	initial := buildPMOSnapshotJSON(t,
+		pmoRequirement("EXT-P-001", "P-001", "Source Project", "planned", "planned", 1),
+		[]map[string]any{pmoChildWithTasks(t, "EXT-I-001", "I-001", "Moved Child", "todo", 2)},
+		nil)
+	firstRun := seedPMOPreview(t, f, initial)
+	if _, err := f.svc.ApplyRun(ctx, f.workspaceID, firstRun.ID, nil); err != nil {
+		t.Fatalf("initial ApplyRun: %v", err)
+	}
+
+	childLink := pmoLinkByExternal(t, f, "requirement", "EXT-I-001")
+	var otherProjectID string
+	if err := f.pool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title, status, priority, created_by)
+		VALUES ($1, 'Local Destination', 'planned', 'medium', $2)
+		RETURNING id
+	`, f.workspaceID, f.ownerID).Scan(&otherProjectID); err != nil {
+		t.Fatalf("create destination project: %v", err)
+	}
+	if _, err := f.pool.Exec(ctx, `UPDATE issue SET project_id = $1 WHERE id = $2`, otherProjectID, childLink.LocalID); err != nil {
+		t.Fatalf("move issue: %v", err)
+	}
+
+	completed := buildPMOSnapshotJSON(t,
+		pmoRequirement("EXT-P-001", "P-001", "Source Project", "completed", "completed", 1),
+		[]map[string]any{pmoChildWithTasks(t, "EXT-I-001", "I-001", "Moved Child", "todo", 2)},
+		nil)
+	secondRun := seedPMOPreview(t, f, completed)
+	if _, err := f.svc.ApplyRun(ctx, f.workspaceID, secondRun.ID, nil); err != nil {
+		t.Fatalf("completed ApplyRun: %v", err)
+	}
+
+	issue := issueByID(t, f.pool, childLink.LocalID)
+	if issue.Status != "todo" {
+		t.Fatalf("moved issue status = %q, want todo", issue.Status)
+	}
+	if !issue.ProjectID.Valid || util.UUIDToString(issue.ProjectID) != otherProjectID {
+		t.Fatalf("moved issue project_id = %q, want %q", util.UUIDToString(issue.ProjectID), otherProjectID)
+	}
+}
+
 func TestApplyPMORunIdempotentRerun(t *testing.T) {
 	f := newPMOApplyFixture(t)
 	ctx := context.Background()
@@ -445,6 +659,10 @@ func TestApplyPMORunIdempotentRerun(t *testing.T) {
 	projects2, issues2, links2 := countPMOEntities(t, f.pool, f.workspaceID)
 	if projects != projects2 || issues != issues2 || links != links2 {
 		t.Fatalf("rerun created rows: %d/%d/%d -> %d/%d/%d", projects, issues, links, projects2, issues2, links2)
+	}
+	childLink := pmoLinkByExternal(t, f, "requirement", "EXT-I-001")
+	if issue := issueByID(t, f.pool, childLink.LocalID); issue.Status != "todo" {
+		t.Fatalf("planned project rerun changed issue status to %q, want todo", issue.Status)
 	}
 }
 

@@ -2821,54 +2821,96 @@ func refreshUntouchedNullableIssueParams(params *db.UpdateIssueParams, current d
 	}
 }
 
-func (h *Handler) updateIssueWithDescriptionMerge(ctx context.Context, workspaceID pgtype.UUID, params db.UpdateIssueParams, rawFields map[string]json.RawMessage, base *string) (db.Issue, db.Issue, error) {
+func (h *Handler) updateIssueLocked(ctx context.Context, workspaceID pgtype.UUID, params db.UpdateIssueParams, rawFields map[string]json.RawMessage, base *string, mergeDescription bool) (db.Issue, db.Issue, error) {
 	if h.TxStarter == nil {
-		return db.Issue{}, db.Issue{}, errors.New("issue description update requires transaction starter")
+		return db.Issue{}, db.Issue{}, errors.New("issue update requires transaction starter")
 	}
-	tx, err := h.TxStarter.Begin(ctx)
-	if err != nil {
-		return db.Issue{}, db.Issue{}, fmt.Errorf("begin issue description update: %w", err)
-	}
-	defer tx.Rollback(ctx)
+	_, projectTouched := rawFields["project_id"]
 
-	qtx := h.Queries.WithTx(tx)
-	current, err := qtx.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{
-		ID:          params.ID,
-		WorkspaceID: workspaceID,
-	})
-	if err != nil {
-		return db.Issue{}, db.Issue{}, fmt.Errorf("lock issue description: %w", err)
-	}
-	attachments, err := qtx.ListAttachmentsByIssue(ctx, db.ListAttachmentsByIssueParams{
-		IssueID:     current.ID,
-		WorkspaceID: current.WorkspaceID,
-	})
-	if err != nil {
-		return db.Issue{}, db.Issue{}, fmt.Errorf("list issue attachments for description merge: %w", err)
-	}
+	for {
+		tx, err := h.TxStarter.Begin(ctx)
+		if err != nil {
+			return db.Issue{}, db.Issue{}, fmt.Errorf("begin issue update: %w", err)
+		}
+		qtx := h.Queries.WithTx(tx)
+		rollback := func(err error) (db.Issue, db.Issue, error) {
+			tx.Rollback(ctx)
+			return db.Issue{}, db.Issue{}, err
+		}
 
-	currentDescription := ""
-	if current.Description.Valid {
-		currentDescription = current.Description.String
-	}
-	incomingDescription := ""
-	if params.Description.Valid {
-		incomingDescription = params.Description.String
-	}
-	params.Description = pgtype.Text{
-		String: mergeIssueChannelMediaDescription(currentDescription, incomingDescription, base, attachments),
-		Valid:  true,
-	}
-	refreshUntouchedNullableIssueParams(&params, current, rawFields)
+		if _, err := qtx.LockWorkspaceForIssueWrite(ctx, workspaceID); err != nil {
+			return rollback(fmt.Errorf("lock issue workspace: %w", err))
+		}
+		observed, err := qtx.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+			ID: params.ID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			return rollback(fmt.Errorf("load issue before update: %w", err))
+		}
+		targetProjectID := params.ProjectID
+		if !projectTouched {
+			targetProjectID = observed.ProjectID
+		}
+		var targetProject db.Project
+		if targetProjectID.Valid {
+			targetProject, err = qtx.LockProjectInWorkspaceForIssueWrite(ctx, db.LockProjectInWorkspaceForIssueWriteParams{
+				ID: targetProjectID, WorkspaceID: workspaceID,
+			})
+			if err != nil {
+				return rollback(fmt.Errorf("lock issue project: %w", err))
+			}
+		}
+		current, err := qtx.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{
+			ID: params.ID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			return rollback(fmt.Errorf("lock issue: %w", err))
+		}
+		if !projectTouched && current.ProjectID != targetProjectID {
+			tx.Rollback(ctx)
+			continue
+		}
 
-	issue, err := qtx.UpdateIssue(ctx, params)
-	if err != nil {
-		return db.Issue{}, db.Issue{}, fmt.Errorf("update locked issue description: %w", err)
+		refreshUntouchedNullableIssueParams(&params, current, rawFields)
+		if targetProject.ID.Valid && targetProject.Status == "completed" {
+			targetStatus := current.Status
+			if params.Status.Valid {
+				targetStatus = params.Status.String
+			}
+			if targetStatus != "done" && targetStatus != "cancelled" {
+				params.Status = pgtype.Text{String: "done", Valid: true}
+			}
+		}
+		if mergeDescription {
+			attachments, err := qtx.ListAttachmentsByIssue(ctx, db.ListAttachmentsByIssueParams{
+				IssueID: current.ID, WorkspaceID: current.WorkspaceID,
+			})
+			if err != nil {
+				return rollback(fmt.Errorf("list issue attachments for description merge: %w", err))
+			}
+			currentDescription := ""
+			if current.Description.Valid {
+				currentDescription = current.Description.String
+			}
+			incomingDescription := ""
+			if params.Description.Valid {
+				incomingDescription = params.Description.String
+			}
+			params.Description = pgtype.Text{
+				String: mergeIssueChannelMediaDescription(currentDescription, incomingDescription, base, attachments),
+				Valid:  true,
+			}
+		}
+
+		issue, err := qtx.UpdateIssue(ctx, params)
+		if err != nil {
+			return rollback(fmt.Errorf("update locked issue: %w", err))
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return db.Issue{}, db.Issue{}, fmt.Errorf("commit issue update: %w", err)
+		}
+		return issue, current, nil
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return db.Issue{}, db.Issue{}, fmt.Errorf("commit issue description update: %w", err)
-	}
-	return issue, current, nil
 }
 
 func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
@@ -3077,17 +3119,11 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var issue db.Issue
-	if req.Description != nil {
-		var lockedPrev db.Issue
-		issue, lockedPrev, err = h.updateIssueWithDescriptionMerge(
-			r.Context(), prevIssue.WorkspaceID, params, rawFields, req.DescriptionBase,
-		)
-		if err == nil {
-			prevIssue = lockedPrev
-		}
-	} else {
-		issue, err = h.Queries.UpdateIssue(r.Context(), params)
+	issue, lockedPrev, err := h.updateIssueLocked(
+		r.Context(), prevIssue.WorkspaceID, params, rawFields, req.DescriptionBase, req.Description != nil,
+	)
+	if err == nil {
+		prevIssue = lockedPrev
 	}
 	if err != nil {
 		slog.Warn("update issue failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
@@ -3105,7 +3141,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 
 	assigneeChanged := (req.AssigneeType != nil || req.AssigneeID != nil) &&
 		(prevIssue.AssigneeType.String != issue.AssigneeType.String || uuidToString(prevIssue.AssigneeID) != uuidToString(issue.AssigneeID))
-	statusChanged := req.Status != nil && prevIssue.Status != issue.Status
+	statusChanged := prevIssue.Status != issue.Status
 	priorityChanged := req.Priority != nil && prevIssue.Priority != issue.Priority
 	// project_changed gates the client's per-project issue-list refetch the way
 	// status/assignee flags gate theirs. Without it the client must diff
@@ -3266,7 +3302,7 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 // triggering execution. Moving out of backlog is handled separately in
 // UpdateIssue.
 func (h *Handler) shouldEnqueueAgentTask(ctx context.Context, issue db.Issue) bool {
-	if issue.Status == "backlog" {
+	if issue.Status == "backlog" || issue.Status == "done" || issue.Status == "cancelled" {
 		return false
 	}
 	return h.isAgentAssigneeReady(ctx, issue)
@@ -3703,20 +3739,14 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		var issue db.Issue
-		if req.Updates.Description != nil {
-			// One batch-level base cannot describe multiple issue documents.
-			// Preserve every marked channel-media block conservatively, matching
-			// legacy single-update clients that omit description_base.
-			var lockedPrev db.Issue
-			issue, lockedPrev, err = h.updateIssueWithDescriptionMerge(
-				r.Context(), prevIssue.WorkspaceID, params, rawUpdates, nil,
-			)
-			if err == nil {
-				prevIssue = lockedPrev
-			}
-		} else {
-			issue, err = h.Queries.UpdateIssue(r.Context(), params)
+		// One batch-level base cannot describe multiple issue documents.
+		// Preserve every marked channel-media block conservatively, matching
+		// legacy single-update clients that omit description_base.
+		issue, lockedPrev, err := h.updateIssueLocked(
+			r.Context(), prevIssue.WorkspaceID, params, rawUpdates, nil, req.Updates.Description != nil,
+		)
+		if err == nil {
+			prevIssue = lockedPrev
 		}
 		if err != nil {
 			slog.Warn("batch update issue failed", "issue_id", issueID, "error", err)
@@ -3729,7 +3759,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 
 		assigneeChanged := (req.Updates.AssigneeType != nil || req.Updates.AssigneeID != nil) &&
 			(prevIssue.AssigneeType.String != issue.AssigneeType.String || uuidToString(prevIssue.AssigneeID) != uuidToString(issue.AssigneeID))
-		statusChanged := req.Updates.Status != nil && prevIssue.Status != issue.Status
+		statusChanged := prevIssue.Status != issue.Status
 		priorityChanged := req.Updates.Priority != nil && prevIssue.Priority != issue.Priority
 		projectChanged := req.Updates.ProjectID != nil && uuidToString(prevIssue.ProjectID) != uuidToString(issue.ProjectID)
 

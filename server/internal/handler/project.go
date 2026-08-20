@@ -577,14 +577,99 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 			params.DueDate = pgtype.Date{Valid: false} // explicit null = clear date
 		}
 	}
-	project, err := h.Queries.UpdateProject(r.Context(), params)
+	var project db.Project
+	var completedIssues []db.Issue
+	completedPrevious := map[string]string{}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start project update")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	if _, err := qtx.LockProjectInWorkspaceForUpdate(r.Context(), db.LockProjectInWorkspaceForUpdateParams{
+		ID: idUUID, WorkspaceID: wsUUID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock project")
+		return
+	}
+	lockedProject, err := qtx.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
+		ID: idUUID, WorkspaceID: wsUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	// Nullable fields are passed explicitly to UpdateProject. Refresh every
+	// omitted field from the locked row so a concurrent update observed before
+	// acquiring the lock is not written back over the newer value.
+	if _, present := rawFields["description"]; !present {
+		params.Description = lockedProject.Description
+	}
+	if _, present := rawFields["icon"]; !present {
+		params.Icon = lockedProject.Icon
+	}
+	if _, present := rawFields["lead_type"]; !present {
+		params.LeadType = lockedProject.LeadType
+	}
+	if _, present := rawFields["lead_id"]; !present {
+		params.LeadID = lockedProject.LeadID
+	}
+	if _, present := rawFields["start_date"]; !present {
+		params.StartDate = lockedProject.StartDate
+	}
+	if _, present := rawFields["due_date"]; !present {
+		params.DueDate = lockedProject.DueDate
+	}
+
+	project, err = qtx.UpdateProject(r.Context(), params)
 	if err != nil {
 		h.writeProjectWriteError(w, r, err, "update")
 		return
 	}
+	if project.Status == "completed" {
+		previous, err := qtx.ListOpenProjectIssueStatusesForUpdate(r.Context(), db.ListOpenProjectIssueStatusesForUpdateParams{
+			ProjectID: project.ID, WorkspaceID: project.WorkspaceID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to lock project issues")
+			return
+		}
+		for _, issue := range previous {
+			completedPrevious[uuidToString(issue.ID)] = issue.Status
+		}
+
+		// Completing the project is the administrative bulk-close operation;
+		// unlike a user completing one UI-design issue, it intentionally closes
+		// every open issue and preserves only done/cancelled terminal rows.
+		completedIssues, err = qtx.CompleteProjectIssues(r.Context(), db.CompleteProjectIssuesParams{
+			ProjectID: project.ID, WorkspaceID: project.WorkspaceID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to complete project issues")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit project update")
+		return
+	}
+
 	resp := projectToResponse(project)
 	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), project.ID)
 	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
+	if len(completedIssues) > 0 {
+		prefix := h.getIssuePrefix(r.Context(), project.WorkspaceID)
+		for _, issue := range completedIssues {
+			h.publish(protocol.EventIssueUpdated, workspaceID, "member", userID, map[string]any{
+				"issue":          issueToResponse(issue, prefix),
+				"status_changed": true,
+				"prev_status":    completedPrevious[uuidToString(issue.ID)],
+			})
+		}
+		h.notifyParentsOfBatchChildDone(r.Context(), completedIssues)
+	}
 	h.publish(protocol.EventProjectUpdated, workspaceID, "member", userID, map[string]any{"project": resp})
 	writeJSON(w, http.StatusOK, resp)
 }
