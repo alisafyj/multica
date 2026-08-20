@@ -1005,8 +1005,8 @@ func (s *PMOService) upsertAssigneeLinks(ctx context.Context, qtx *db.Queries, w
 			BaselineLocal:    localJSON,
 			ExternalMetadata: []byte(`{}`),
 		}
-		// Explicit Agent mappings win. Legacy member links are upgraded only
-		// when assigneeMappings contains a unique eligible Agent.
+		// Explicit Agent mappings win. Legacy member links are upgraded when
+		// assigneeMappings contains an eligible Agent.
 		if existing.ID.Valid && existing.LocalID.Valid && existing.LocalType.String == pmoLocalTypeAgent {
 			params.LocalType = existing.LocalType
 			params.LocalID = existing.LocalID
