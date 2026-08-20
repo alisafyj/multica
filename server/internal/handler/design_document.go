@@ -12,8 +12,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/designdocument"
+	"github.com/multica-ai/multica/server/internal/designsystemcatalogue"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -52,12 +54,17 @@ type CreateDesignDocumentRequest struct {
 	// means no grounding at all, and the document says so.
 	ProjectResourceID string `json:"project_resource_id"`
 	// Optional traceable link only.
-	IssueID     string          `json:"issue_id"`
-	Title       string          `json:"title"`
-	Platform    string          `json:"platform"`
-	Recipe      string          `json:"recipe"`
-	Brief       string          `json:"brief"`
-	Attachments json.RawMessage `json:"attachments"`
+	IssueID string `json:"issue_id"`
+	// Optional explicit design system for this run (DC-060). A workspace
+	// system id, or the slug of a bundled catalogue system — never both.
+	// Unset keeps the repository -> project fallback (DC-053).
+	DesignSystemID      string          `json:"design_system_id"`
+	BuiltinDesignSystem string          `json:"builtin_design_system"`
+	Title               string          `json:"title"`
+	Platform            string          `json:"platform"`
+	Recipe              string          `json:"recipe"`
+	Brief               string          `json:"brief"`
+	Attachments         json.RawMessage `json:"attachments"`
 }
 
 type DesignDocumentResponse struct {
@@ -88,13 +95,17 @@ type DesignDocumentResponse struct {
 // belong here — server-side ids and timestamps would make the digest differ
 // between two identical requests.
 type designDocumentInputSnapshot struct {
-	AgentID           string          `json:"agent_id"`
-	ProjectResourceID string          `json:"project_resource_id,omitempty"`
-	IssueID           string          `json:"issue_id,omitempty"`
-	Platform          string          `json:"platform"`
-	Recipe            string          `json:"recipe"`
-	Brief             string          `json:"brief"`
-	Attachments       json.RawMessage `json:"attachments,omitempty"`
+	AgentID           string `json:"agent_id"`
+	ProjectResourceID string `json:"project_resource_id,omitempty"`
+	IssueID           string `json:"issue_id,omitempty"`
+	// The design system the user named for this run, frozen with the rest of
+	// the inputs so a regeneration reruns under the same choice (DC-060).
+	DesignSystemID      string          `json:"design_system_id,omitempty"`
+	BuiltinDesignSystem string          `json:"builtin_design_system,omitempty"`
+	Platform            string          `json:"platform"`
+	Recipe              string          `json:"recipe"`
+	Brief               string          `json:"brief"`
+	Attachments         json.RawMessage `json:"attachments,omitempty"`
 }
 
 func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +118,8 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 	req.AgentID = strings.TrimSpace(req.AgentID)
 	req.ProjectResourceID = strings.TrimSpace(req.ProjectResourceID)
 	req.IssueID = strings.TrimSpace(req.IssueID)
+	req.DesignSystemID = strings.TrimSpace(req.DesignSystemID)
+	req.BuiltinDesignSystem = strings.TrimSpace(req.BuiltinDesignSystem)
 	req.Title = strings.TrimSpace(req.Title)
 	req.Platform = strings.TrimSpace(req.Platform)
 	req.Recipe = strings.TrimSpace(req.Recipe)
@@ -138,6 +151,12 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validProjectDesignSystemPlatform(req.Platform) {
 		writeProjectDesignSystemError(w, http.StatusBadRequest, "platform_invalid", "platform must be web, mobile, or cross_platform")
+		return
+	}
+	// One design system, or none. Accepting both would leave the agent to
+	// guess which visual language actually governs the run.
+	if req.DesignSystemID != "" && req.BuiltinDesignSystem != "" {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "design_system_ambiguous", "choose either a workspace design system or a built-in one, not both")
 		return
 	}
 	workspaceUUID, requesterUUID, ok := h.projectDesignSystemRequestScope(w, r)
@@ -202,13 +221,15 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	input := designDocumentInputSnapshot{
-		AgentID:           req.AgentID,
-		ProjectResourceID: uuidToString(scope.ProjectResourceID),
-		IssueID:           uuidToString(issueUUID),
-		Platform:          req.Platform,
-		Recipe:            req.Recipe,
-		Brief:             req.Brief,
-		Attachments:       attachmentsJSON,
+		AgentID:             req.AgentID,
+		ProjectResourceID:   uuidToString(scope.ProjectResourceID),
+		IssueID:             uuidToString(issueUUID),
+		DesignSystemID:      req.DesignSystemID,
+		BuiltinDesignSystem: req.BuiltinDesignSystem,
+		Platform:            req.Platform,
+		Recipe:              req.Recipe,
+		Brief:               req.Brief,
+		Attachments:         attachmentsJSON,
 	}
 	inputJSON, err := json.Marshal(input)
 	if err != nil || len(inputJSON) > designDocumentMaxSnapshotBytes {
@@ -455,9 +476,39 @@ func (h *Handler) createDesignDocumentTask(
 		return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: verdict.Detail}
 	}
 
-	// Pin the design system the agent must design under, resolved through the
-	// repository -> project fallback (DC-052). Digest included so the
-	// revision records exactly which system constrained it.
+	// Pin the design system the agent must design under: the user's explicit
+	// choice when there is one (DC-060), otherwise the repository -> project
+	// fallback (DC-052). Digest included so the revision records exactly which
+	// system constrained it.
+	designSystemUUID := pgtype.UUID{}
+	if input.DesignSystemID != "" {
+		parsed, err := util.ParseUUID(input.DesignSystemID)
+		if err != nil {
+			return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{
+				status: http.StatusBadRequest, code: "design_system_invalid", message: "design_system_id is invalid",
+			}
+		}
+		designSystemUUID = parsed
+	}
+	var builtinContext *service.BuiltinDesignContext
+	if input.BuiltinDesignSystem != "" {
+		detail, found, err := designsystemcatalogue.Get(input.BuiltinDesignSystem)
+		if err != nil {
+			return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("design_context_failed", "failed to load the built-in design system")
+		}
+		if !found {
+			return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{
+				status: http.StatusNotFound, code: "design_system_not_found", message: "built-in design system not found",
+			}
+		}
+		builtinContext = &service.BuiltinDesignContext{
+			Slug:           detail.Slug,
+			Name:           detail.Name,
+			Category:       detail.Category,
+			DesignMarkdown: detail.DesignMarkdown,
+			TokensCSS:      detail.TokensCSS,
+		}
+	}
 	designContext, err := (service.ProjectDesignContextResolver{
 		Store:        queries,
 		AllowedHosts: h.projectDesignSystemAllowedHosts(),
@@ -465,6 +516,8 @@ func (h *Handler) createDesignDocumentTask(
 		WorkspaceID:       workspaceID,
 		ProjectID:         projectID,
 		ProjectResourceID: scope.ProjectResourceID,
+		DesignSystemID:    designSystemUUID,
+		Builtin:           builtinContext,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrSavedDesignContextInvalid) {

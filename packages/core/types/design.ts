@@ -697,6 +697,13 @@ export interface CreateDesignDocumentRequest {
   project_resource_id?: string;
   /** Optional traceable link only — it never moves the issue (DC-045). */
   issue_id?: string;
+  /**
+   * Optional explicit design system for this run (DC-060). A saved workspace
+   * system's id, or `builtin_design_system` for a bundled catalogue slug —
+   * never both. Unset keeps the repository -> project fallback (DC-053).
+   */
+  design_system_id?: string;
+  builtin_design_system?: string;
   title?: string;
   platform: ProjectDesignSystemPlatform;
   /**

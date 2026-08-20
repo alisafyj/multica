@@ -18,6 +18,7 @@ import {
   ListTodo,
   LoaderCircle,
   Monitor,
+  Palette,
   PanelsTopLeft,
   Paperclip,
   Presentation,
@@ -31,6 +32,10 @@ import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { isAgentRuntimeBound } from "@multica/core/agents";
 import { designKeys } from "@multica/core/designs/keys";
+import {
+  builtinDesignSystemListOptions,
+  projectDesignSystemCatalogueOptions,
+} from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { projectOpenIssuesOptions } from "@multica/core/issues/queries";
@@ -39,10 +44,12 @@ import { projectListOptions } from "@multica/core/projects/queries";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import type {
   Agent,
+  BuiltinDesignSystem,
   DesignDocument,
   DesignDocumentRecipe,
   DesignScenarioRecipe,
   Issue,
+  ProjectDesignSystemCatalogueEntry,
   ProjectDesignSystemPlatform,
   ProjectResource,
 } from "@multica/core/types";
@@ -611,6 +618,118 @@ function IssueSetting({
   );
 }
 
+/**
+ * The design system this run must design under (DC-060). Open Design's home
+ * carries the same picker: design systems are workspace platform material, so
+ * any saved system — or a bundled catalogue preset — can govern a page design,
+ * independent of which project the document belongs to.
+ *
+ * "不指定设计体系" is a real choice, not an empty state: it hands the run to the
+ * repository -> project fallback, which is how every design task worked before
+ * this picker existed.
+ */
+export function DesignSystemSetting({
+  workspaceSystems,
+  builtinSystems,
+  designSystemId,
+  builtinSlug,
+  onChange,
+}: {
+  workspaceSystems: ProjectDesignSystemCatalogueEntry[];
+  builtinSystems: BuiltinDesignSystem[];
+  designSystemId: string;
+  builtinSlug: string;
+  onChange: (selection: { designSystemId: string; builtinSlug: string }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const query = filter.trim().toLowerCase();
+  const selectedWorkspace = workspaceSystems.find((system) => system.id === designSystemId);
+  const selectedBuiltin = builtinSystems.find((system) => system.slug === builtinSlug);
+  const filteredWorkspace = workspaceSystems.filter((system) =>
+    matchesQuery(`${system.name} ${system.project_title} ${system.summary}`, query),
+  );
+  // The catalogue is 150+ entries; unsearched it would bury 你的体系, so it
+  // shows a head slice until the user types.
+  const filteredBuiltin = query
+    ? builtinSystems.filter((system) => matchesQuery(`${system.name} ${system.category} ${system.slug}`, query))
+    : builtinSystems.slice(0, 12);
+
+  const pick = (selection: { designSystemId: string; builtinSlug: string }) => {
+    onChange(selection);
+    setOpen(false);
+  };
+
+  return (
+    <PropertyPicker
+      open={open}
+      onOpenChange={setOpen}
+      width="w-72"
+      align="start"
+      searchable
+      searchPlaceholder="搜索设计体系…"
+      onSearchChange={setFilter}
+      triggerRender={
+        <SettingTrigger filled={!!selectedWorkspace || !!selectedBuiltin} aria-label="设计体系" />
+      }
+      trigger={
+        <>
+          <Palette className="size-3.5 shrink-0" />
+          <span className="truncate">
+            {selectedWorkspace?.name ?? selectedBuiltin?.name ?? "不指定设计体系"}
+          </span>
+        </>
+      }
+    >
+      <PickerItem
+        emptyValue
+        selected={!designSystemId && !builtinSlug}
+        onClick={() => pick({ designSystemId: "", builtinSlug: "" })}
+      >
+        <CircleDashed className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="truncate text-muted-foreground">不指定设计体系</span>
+      </PickerItem>
+      {filteredWorkspace.length > 0 ? (
+        <div className="px-2 pb-1 pt-2 text-micro font-semibold uppercase tracking-wider text-muted-foreground">
+          你的体系
+        </div>
+      ) : null}
+      {filteredWorkspace.map((system) => (
+        <PickerItem
+          key={system.id}
+          selected={system.id === designSystemId}
+          tooltip={system.summary || undefined}
+          onClick={() => pick({ designSystemId: system.id, builtinSlug: "" })}
+        >
+          <SwatchBook className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="truncate">{system.name}</span>
+        </PickerItem>
+      ))}
+      {filteredBuiltin.length > 0 ? (
+        <div className="px-2 pb-1 pt-2 text-micro font-semibold uppercase tracking-wider text-muted-foreground">
+          官方预设
+        </div>
+      ) : null}
+      {filteredBuiltin.map((system) => (
+        <PickerItem
+          key={system.slug}
+          selected={system.slug === builtinSlug}
+          tooltip={system.category || undefined}
+          onClick={() => pick({ designSystemId: "", builtinSlug: system.slug })}
+        >
+          {system.swatches.length > 0 ? (
+            <span aria-hidden="true" className="size-3.5 shrink-0 rounded-full border" style={{ background: system.swatches[3] ?? system.swatches[0] }} />
+          ) : (
+            <SwatchBook className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <span className="truncate">{system.name}</span>
+        </PickerItem>
+      ))}
+      {query && filteredWorkspace.length === 0 && filteredBuiltin.length === 0 ? <PickerEmpty /> : null}
+    </PropertyPicker>
+  );
+}
+
 export function PlatformSetting({
   platform,
   onChange,
@@ -682,6 +801,10 @@ export function DesignTaskComposer({
   const [agentId, setAgentId] = useState("");
   const [repositoryId, setRepositoryId] = useState("");
   const [issueId, setIssueId] = useState("");
+  // Mutually exclusive by construction: the server refuses a request carrying
+  // both, and the picker only ever sets one of them.
+  const [designSystemId, setDesignSystemId] = useState("");
+  const [builtinSlug, setBuiltinSlug] = useState("");
   const [platform, setPlatform] = useState<ProjectDesignSystemPlatform>("web");
   // Reference files staged with the prompt, as Open Design's composer does.
   // Uploaded through the ordinary route; only the ids travel with the request.
@@ -728,6 +851,8 @@ export function DesignTaskComposer({
     enabled: !!projectId,
   });
   const { data: issues = [] } = useQuery(projectOpenIssuesOptions(wsId, projectId));
+  const { data: workspaceSystems = [] } = useQuery(projectDesignSystemCatalogueOptions(wsId));
+  const { data: builtinSystems = [] } = useQuery(builtinDesignSystemListOptions(wsId));
 
   const selectedProject = projects.find((project) => project.id === projectId);
   const repositories = useMemo(
@@ -751,6 +876,8 @@ export function DesignTaskComposer({
         agent_id: agentId,
         ...(activeRepositoryId ? { project_resource_id: activeRepositoryId } : {}),
         ...(activeIssueId ? { issue_id: activeIssueId } : {}),
+        ...(designSystemId ? { design_system_id: designSystemId } : {}),
+        ...(builtinSlug ? { builtin_design_system: builtinSlug } : {}),
         platform,
         recipe,
         brief: trimmedBrief,
@@ -879,6 +1006,16 @@ export function DesignTaskComposer({
               disabled={!projectId}
               onChange={setIssueId}
             />
+            <DesignSystemSetting
+              workspaceSystems={workspaceSystems}
+              builtinSystems={builtinSystems}
+              designSystemId={designSystemId}
+              builtinSlug={builtinSlug}
+              onChange={(selection) => {
+                setDesignSystemId(selection.designSystemId);
+                setBuiltinSlug(selection.builtinSlug);
+              }}
+            />
             <PlatformSetting platform={platform} onChange={setPlatform} />
             <div className="ml-auto flex min-w-0 items-center gap-2">
               <AgentSetting agents={agents} agentId={agentId} onChange={setAgentId} />
@@ -942,8 +1079,11 @@ export function DesignTaskComposer({
             never do is leave the user believing the agent read code. */}
         <p className="mt-3 text-caption text-muted-foreground">
           {activeRepositoryId
-            ? "已选择仓库：智能体会在任务内对该仓库做一次有界只读取证，并使用该仓库的设计体系。"
-            : "未选择仓库：本次不读取任何代码仓库，智能体只依据你的描述、关联任务和项目级设计体系生成。"}
+            ? "已选择仓库：智能体会在任务内对该仓库做一次有界只读取证。"
+            : "未选择仓库：本次不读取任何代码仓库，智能体只依据你的描述与关联任务生成。"}
+          {designSystemId || builtinSlug
+            ? "设计体系已指定：本次按你选中的体系设计，不使用项目自己的体系。"
+            : "设计体系未指定：沿用所选仓库或项目自己的设计体系。"}
         </p>
 
         <DesignExamplePrompts onUse={applyRecipe} onBrowseRecipes={onBrowseRecipes} />

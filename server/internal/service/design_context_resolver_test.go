@@ -180,6 +180,104 @@ func TestProjectDesignContextResolverReturnsStoreFailures(t *testing.T) {
 	}
 }
 
+// DC-060: design systems are workspace platform material, so a design document
+// may be pinned to one that belongs to no project at all. The explicit pick
+// replaces the repository/project fallback rather than competing with it.
+func TestProjectDesignContextResolverPinsAnExplicitWorkspaceSystem(t *testing.T) {
+	workspaceID := mustDesignContextUUID(t, "e2f576ee-5a61-4844-8dee-719996169571")
+	documentProjectID := mustDesignContextUUID(t, "79560402-5bd7-420a-9e16-79e06557507a")
+	systemID := mustDesignContextUUID(t, "317ac5d7-00b8-4abd-b4ce-df2ed9f695de")
+	sourceTaskID := mustDesignContextUUID(t, "57ec9b56-6fac-4799-a438-e4926443c94e")
+	// Standalone: the chosen system carries no project id, and the document's
+	// own project must not be required to match it.
+	system, saved := validSavedDesignContextFixture(t, workspaceID, pgtype.UUID{}, systemID, sourceTaskID)
+	store := &fakeProjectDesignContextStore{explicitSystem: system, saved: saved}
+
+	resolved, err := (ProjectDesignContextResolver{Store: store}).Resolve(context.Background(), ResolveProjectDesignContextParams{
+		WorkspaceID:    workspaceID,
+		ProjectID:      documentProjectID,
+		DesignSystemID: systemID,
+	})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if resolved.Source != DesignContextSourceCloudSavedWorkspace || resolved.Package == nil {
+		t.Fatalf("resolved = source:%q package:%#v", resolved.Source, resolved.Package)
+	}
+	if resolved.Package.Scope != DesignContextScopeWorkspace || resolved.Package.DesignSystemID != util.UUIDToString(systemID) {
+		t.Fatalf("resolved package = %#v", resolved.Package)
+	}
+	if resolved.Digest != saved.IntegritySha256 {
+		t.Fatalf("resolved digest = %q, want the saved package digest", resolved.Digest)
+	}
+	// The fallback scopes must not have been consulted at all.
+	if len(store.packageSlots) != 1 {
+		t.Fatalf("package lookups = %v, want exactly the chosen system's", store.packageSlots)
+	}
+}
+
+// An explicit choice never falls back: designing under a different system than
+// the one the user named would misrepresent the result.
+func TestProjectDesignContextResolverFailsWhenTheChosenSystemIsUnusable(t *testing.T) {
+	workspaceID := mustDesignContextUUID(t, "e2f576ee-5a61-4844-8dee-719996169571")
+	projectID := mustDesignContextUUID(t, "79560402-5bd7-420a-9e16-79e06557507a")
+	systemID := mustDesignContextUUID(t, "317ac5d7-00b8-4abd-b4ce-df2ed9f695de")
+	fallbackSystem, fallbackSaved := validSavedDesignContextFixture(
+		t, workspaceID, projectID, mustDesignContextUUID(t, "0a2b8f34-2c1a-4a56-9c1f-6d5f4e2a1b90"),
+		mustDesignContextUUID(t, "57ec9b56-6fac-4799-a438-e4926443c94e"))
+	// The project HAS a usable system; the chosen one is missing. Falling
+	// through to the project's would silently ignore the user's decision.
+	store := &fakeProjectDesignContextStore{system: fallbackSystem, saved: fallbackSaved}
+
+	_, err := (ProjectDesignContextResolver{Store: store}).Resolve(context.Background(), ResolveProjectDesignContextParams{
+		WorkspaceID:    workspaceID,
+		ProjectID:      projectID,
+		DesignSystemID: systemID,
+	})
+	if !errors.Is(err, ErrSavedDesignContextInvalid) {
+		t.Fatalf("Resolve() error = %v, want ErrSavedDesignContextInvalid", err)
+	}
+}
+
+// A bundled catalogue system is inlined, not resolved as a saved package: it
+// ships DESIGN.md and tokens.css but no validated components package, and the
+// context must not pretend otherwise.
+func TestProjectDesignContextResolverInlinesABuiltinCatalogueSystem(t *testing.T) {
+	workspaceID := mustDesignContextUUID(t, "e2f576ee-5a61-4844-8dee-719996169571")
+	projectID := mustDesignContextUUID(t, "79560402-5bd7-420a-9e16-79e06557507a")
+	store := &fakeProjectDesignContextStore{}
+
+	resolved, err := (ProjectDesignContextResolver{Store: store}).Resolve(context.Background(), ResolveProjectDesignContextParams{
+		WorkspaceID: workspaceID,
+		ProjectID:   projectID,
+		Builtin: &BuiltinDesignContext{
+			Slug:           "agentic",
+			Name:           "Agentic",
+			DesignMarkdown: "# Agentic\n\n## Colors\n",
+			TokensCSS:      ":root { --accent: #ff5701; }",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if resolved.Source != DesignContextSourceBuiltinCatalogue || resolved.Package != nil || resolved.Builtin == nil {
+		t.Fatalf("resolved = source:%q package:%#v builtin:%#v", resolved.Source, resolved.Package, resolved.Builtin)
+	}
+	if resolved.Builtin.Slug != "agentic" || resolved.Builtin.TokensCSS == "" {
+		t.Fatalf("resolved builtin = %#v", resolved.Builtin)
+	}
+	// The digest pins the exact bytes, so a later bundle update cannot change
+	// what this revision was designed under without changing the digest.
+	if len(resolved.Digest) != 64 {
+		t.Fatalf("resolved digest = %q, want a sha256 hex digest", resolved.Digest)
+	}
+	changed := *resolved.Builtin
+	changed.TokensCSS = ":root { --accent: #000000; }"
+	if builtinDesignContextDigest(changed) == resolved.Digest {
+		t.Fatal("digest did not change when the catalogue content changed")
+	}
+}
+
 type fakeProjectDesignContextStore struct {
 	system       db.ProjectDesignSystem
 	systemErr    error
@@ -196,6 +294,18 @@ type fakeProjectDesignContextStore struct {
 	// Records which design system ids the package lookup was asked for, so a
 	// test can prove the fallback consulted the repository scope first.
 	packageSystemIDs []pgtype.UUID
+
+	// Explicit workspace pick (DC-060). Left zero by the fallback tests, which
+	// never name a system and so never reach this lookup.
+	explicitSystem    db.ProjectDesignSystem
+	explicitSystemErr error
+}
+
+func (s *fakeProjectDesignContextStore) GetProjectDesignSystemInWorkspace(_ context.Context, _ db.GetProjectDesignSystemInWorkspaceParams) (db.ProjectDesignSystem, error) {
+	if s.explicitSystemErr == nil && !s.explicitSystem.ID.Valid {
+		return db.ProjectDesignSystem{}, pgx.ErrNoRows
+	}
+	return s.explicitSystem, s.explicitSystemErr
 }
 
 func (s *fakeProjectDesignContextStore) GetProjectDesignSystemByProject(_ context.Context, _ db.GetProjectDesignSystemByProjectParams) (db.ProjectDesignSystem, error) {

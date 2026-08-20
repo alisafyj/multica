@@ -12,6 +12,8 @@ const {
   listIssues,
   listProjectResources,
   listProjects,
+  listProjectDesignSystemCatalogue,
+  listBuiltinDesignSystems,
   toastError,
   toastSuccess,
   uploadFile,
@@ -23,6 +25,8 @@ const {
   listIssues: vi.fn(),
   listProjectResources: vi.fn(),
   listProjects: vi.fn(),
+  listProjectDesignSystemCatalogue: vi.fn(),
+  listBuiltinDesignSystems: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
   uploadFile: vi.fn(),
@@ -37,6 +41,8 @@ vi.mock("@multica/core/api", () => ({
     listIssues,
     listProjectResources,
     listProjects,
+    listProjectDesignSystemCatalogue,
+    listBuiltinDesignSystems,
     uploadFile,
   },
 }));
@@ -164,6 +170,24 @@ describe("DesignTaskComposer", () => {
     listProjects.mockReset();
     toastError.mockReset();
     toastSuccess.mockReset();
+    listProjectDesignSystemCatalogue.mockReset();
+    listBuiltinDesignSystems.mockReset();
+    listProjectDesignSystemCatalogue.mockResolvedValue({
+      design_systems: [{
+        id: "system-1",
+        project_id: "",
+        project_title: "",
+        project_resource_id: "",
+        name: "品牌视觉基线",
+        platform: "web",
+        summary: "克制的工具品牌",
+        has_draft_package: false,
+        saved_at: "2026-08-20T00:00:00Z",
+      }],
+    });
+    listBuiltinDesignSystems.mockResolvedValue({
+      design_systems: [{ slug: "agentic", name: "Agentic", category: "工具", description: "", swatches: ["#ffffff", "#f6f6f1", "#111827", "#ff5701"] }],
+    });
     listAgents.mockResolvedValue([AGENT]);
     listDesignDocuments.mockResolvedValue({ documents: [] });
     listDesignScenarioRecipes.mockResolvedValue({ recipes: [] });
@@ -301,6 +325,50 @@ describe("DesignTaskComposer", () => {
 
     expect(await screen.findByText("示例提示词")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "从社区模板开始" })).not.toBeInTheDocument();
+  });
+
+  // DC-060: design systems are workspace platform material, so the home
+  // composer can pin any saved system — or a bundled catalogue preset — to a
+  // page design, independent of which project the document belongs to.
+  it("pins a chosen workspace design system to the run", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+
+    await pickProject(user);
+    await pickAgent(user);
+    await user.type(screen.getByLabelText("页面需求描述"), "客户列表页");
+
+    await user.click(screen.getByRole("button", { name: "设计体系" }));
+    await user.click(await screen.findByRole("button", { name: "品牌视觉基线" }));
+    expect(screen.getByText(/设计体系已指定/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "生成页面设计" }));
+    await waitFor(() => expect(createDesignDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ design_system_id: "system-1" }),
+    ));
+    expect(createDesignDocument.mock.calls[0]?.[0]).not.toHaveProperty("builtin_design_system");
+  });
+
+  it("pins a bundled catalogue preset instead, never both", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+
+    await pickProject(user);
+    await pickAgent(user);
+    await user.type(screen.getByLabelText("页面需求描述"), "客户列表页");
+
+    // Picking the preset after a workspace system replaces it: the server
+    // refuses a request carrying both.
+    await user.click(screen.getByRole("button", { name: "设计体系" }));
+    await user.click(await screen.findByRole("button", { name: "品牌视觉基线" }));
+    await user.click(screen.getByRole("button", { name: "设计体系" }));
+    await user.click(await screen.findByRole("button", { name: "Agentic" }));
+
+    await user.click(screen.getByRole("button", { name: "生成页面设计" }));
+    await waitFor(() => expect(createDesignDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ builtin_design_system: "agentic" }),
+    ));
+    expect(createDesignDocument.mock.calls[0]?.[0]).not.toHaveProperty("design_system_id");
   });
 
   it("seeds the brief from an example prompt and sends that recipe", async () => {

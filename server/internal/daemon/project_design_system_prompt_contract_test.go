@@ -589,3 +589,23 @@ func TestDesignDocumentPromptPointsAtReferenceAttachments(t *testing.T) {
 		}
 	}
 }
+
+// A design document may be pinned to a system the user chose from the
+// workspace library, or to a bundled catalogue system inlined as content
+// (DC-060). The prompt must tell the agent which it got and what that means —
+// especially that a catalogue system governs the visual language without
+// handing over its brand identity.
+func TestDesignDocumentPromptExplainsEveryDesignContextSource(t *testing.T) {
+	prompt := BuildPrompt(designDocumentPromptTaskWithInput(t, "unavailable"), "opencode")
+	for _, want := range []string{
+		"`cloud_saved_workspace_design_system` is a system the user picked from the workspace library",
+		"`builtin_catalogue_design_system`",
+		"`design_context.builtin`",
+		"do not reproduce its brand identity, product names or copy",
+		"`none` means no design system was pinned",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("design document prompt lacks %q", want)
+		}
+	}
+}

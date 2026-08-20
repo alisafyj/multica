@@ -614,6 +614,7 @@ Open Design 的两类预置资源按各自性质分别落地，不共用一套�
 - 依据：用户明确表述——设计体系、提示词模版等应被看做工作区（团队空间）的平台物料，供所有项目参考；只有首页产生设计稿时需要绑定项目，以表明是哪个项目的设计稿。
 - 含义：给团队空间贡献一套设计体系不要求先有项目；体系与模版的创建、维护、浏览都在工作区层面成立。设计稿（design document）保持项目归属，是唯一必须声明项目的产物。
 - 现状核对：设计稿已符合——`design_document.project_id` 为 `NOT NULL`（迁移 880），首页发起时选择项目；设计体系自迁移 899（`899_standalone_design_systems`）起支持 `project_id` 为空的工作区级创建，独立创建页 `/{slug}/designs/systems/new` 即此路径，产物进入库的「团队」范围；社区提示词模版本就不属于任何项目。项目绑定体系（DC-052 的每项目一套）仍然存在且项目工作台继续可用。
+- 2026-08-20 落地（首页对齐 Open Design）：上游首页 composer 有「设计体系」选择器，可为本次生成指定任意体系；我们此前只有「仓库 → 项目」自动回退，工作区级体系与官方目录都用不上——这与本条的定位矛盾。现已打通：`POST /api/design-documents` 接受互斥的 `design_system_id`（工作区任一已保存体系，含独立体系）或 `builtin_design_system`（内置目录 slug），二者同传返回 `design_system_ambiguous`；解析器新增两条来源——`cloud_saved_workspace_design_system`（按 id 加载、只校验工作区归属与已保存包，显式选择不回退，不可用即报错而非静默改用项目体系）与 `builtin_catalogue_design_system`（目录只有 DESIGN.md + tokens.css、没有通过 `projectdesignsystem.Validate` 的组件包，因此内联进 `design_context.builtin` 并按内容取 sha256 摘要钉住字节，绝不伪装成平台已校验的包）。选择随冻结输入保存，重新生成沿用。任务 prompt 按 `design_context.source` 分别说明四种情形（项目/仓库自有、工作区显式指定、内置目录内联但不得复制品牌身份、none 不得声称受体系约束）。首页 composer 增加「设计体系」pill（你的体系 + 官方预设，可搜索），底部说明文案按是否指定分别措辞。
 - 待办（后续切片，本条不改变已实现路径）：项目「设计体系」子 tab 与工作区库的关系收敛（项目引用工作区体系，还是项目专属体系并存）；既有项目绑定体系是否迁移为工作区级；复制端点的 standalone 目标支持。
 - 证据：`server/migrations/880_design_document.up.sql`、`server/migrations/899_standalone_design_systems.up.sql`、`packages/views/designs/workspace-design-system-create.tsx`。
 
