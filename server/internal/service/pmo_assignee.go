@@ -66,8 +66,9 @@ func pmoSnapshotOwners(snapshot PMOSnapshot) map[string]*PMOExternalOwner {
 }
 
 // matchPMOAgentMappings merges explicit Agent mappings with automatic exact
-// email matches. A member is only an intermediate lookup: the owner must have
-// exactly one runtime-bound Agent to resolve automatically.
+// email matches. A member is only an intermediate lookup: automatic mapping
+// selects their first runtime-bound Agent in ListAgents creation order.
+// ponytail: keep this deterministic default; use explicit mappings when role-specific routing matters.
 func matchPMOAgentMappings(owners map[string]*PMOExternalOwner, memberEmailToUserID map[string]string, agents []pmoAgentCandidate, existing map[string]string) map[string]string {
 	result := make(map[string]string, len(existing)+len(owners))
 	eligibleAgentIDs := make(map[string]struct{}, len(agents))
@@ -92,7 +93,7 @@ func matchPMOAgentMappings(owners map[string]*PMOExternalOwner, memberEmailToUse
 			continue
 		}
 		userID := memberEmailToUserID[strings.ToLower(email)]
-		if candidates := owned[userID]; len(candidates) == 1 {
+		if candidates := owned[userID]; len(candidates) > 0 {
 			result[externalID] = candidates[0]
 		}
 	}
@@ -100,7 +101,7 @@ func matchPMOAgentMappings(owners map[string]*PMOExternalOwner, memberEmailToUse
 }
 
 // ResolvePMOAssigneeMappings combines explicit Agent mappings with exact
-// workspace-member email matches followed by unique eligible Agent selection.
+// workspace-member email matches followed by eligible Agent selection.
 func ResolvePMOAssigneeMappings(
 	ctx context.Context,
 	qtx *db.Queries,
@@ -189,7 +190,7 @@ func resolvePMOLegacyMemberMappings(legacy map[string]string, agents []pmoAgentC
 	}
 	result := make(map[string]string, len(legacy))
 	for externalID, memberID := range legacy {
-		if candidates := owned[memberID]; len(candidates) == 1 {
+		if candidates := owned[memberID]; len(candidates) > 0 {
 			result[externalID] = candidates[0]
 		}
 	}

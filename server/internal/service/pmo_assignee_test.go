@@ -22,7 +22,7 @@ func TestNormalizePMOOwnerEmail(t *testing.T) {
 	}
 }
 
-func TestMatchPMOAgentMappingsUsesOnlyUniqueEligibleOwnedAgent(t *testing.T) {
+func TestMatchPMOAgentMappingsUsesFirstEligibleOwnedAgent(t *testing.T) {
 	owners := map[string]*PMOExternalOwner{
 		"fengyujie": {ExternalID: "fengyujie", DisplayName: "风尘（冯钰杰）"},
 		"multi":     {ExternalID: "multi", DisplayName: "Multiple"},
@@ -44,8 +44,11 @@ func TestMatchPMOAgentMappingsUsesOnlyUniqueEligibleOwnedAgent(t *testing.T) {
 	if got["fengyujie"] != "agent-1" {
 		t.Fatalf("unique mapping = %q", got["fengyujie"])
 	}
-	if got["multi"] != "" || got["missing"] != "" {
-		t.Fatalf("ambiguous or missing owner must stay unresolved: %#v", got)
+	if got["multi"] != "agent-2" {
+		t.Fatalf("multi-agent owner mapping = %q, want first eligible agent", got["multi"])
+	}
+	if got["missing"] != "" {
+		t.Fatalf("missing owner must stay unresolved: %#v", got)
 	}
 	if _, ok := got["fengyujie"]; !ok {
 		t.Fatalf("unique owner should be present: %#v", got)
@@ -82,5 +85,20 @@ func TestMatchPMOAgentMappingsDropsUnavailableExplicitAgent(t *testing.T) {
 	})
 	if got["yanmeichen"] != "" {
 		t.Fatalf("unavailable explicit mapping must stay unresolved: %#v", got)
+	}
+}
+
+func TestResolvePMOLegacyMemberMappingsUsesFirstEligibleOwnedAgent(t *testing.T) {
+	got := resolvePMOLegacyMemberMappings(
+		map[string]string{"fengyujie": "user-1"},
+		[]pmoAgentCandidate{
+			{ID: "agent-unbound", OwnerID: "user-1", RuntimeBound: false},
+			{ID: "agent-1", OwnerID: "user-1", RuntimeBound: true},
+			{ID: "agent-2", OwnerID: "user-1", RuntimeBound: true},
+		},
+	)
+
+	if got["fengyujie"] != "agent-1" {
+		t.Fatalf("legacy multi-agent mapping = %q, want first eligible agent", got["fengyujie"])
 	}
 }

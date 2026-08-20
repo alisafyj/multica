@@ -788,11 +788,11 @@ func TestApplyPMORunUpgradesUniqueLegacyMemberAssignee(t *testing.T) {
 	}
 }
 
-func TestApplyPMORunLeavesAmbiguousLegacyMemberAssigneeUnresolved(t *testing.T) {
+func TestApplyPMORunUpgradesLegacyMemberToFirstEligibleAgent(t *testing.T) {
 	f := newPMOApplyFixture(t)
 	ctx := context.Background()
 	memberID := addPMOApplyMember(t, f, "yanmeichen")
-	_ = addPMOApplyAgent(t, f, memberID)
+	firstAgentID := addPMOApplyAgent(t, f, memberID)
 	_ = addPMOApplyAgent(t, f, memberID)
 
 	owner := map[string]any{"external_id": "YanMeiChen", "display_name": "Yan Mei Chen"}
@@ -807,17 +807,17 @@ func TestApplyPMORunLeavesAmbiguousLegacyMemberAssigneeUnresolved(t *testing.T) 
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if applied.Status != "applied_with_review" {
-		t.Fatalf("status = %q, want applied_with_review", applied.Status)
+	if applied.Status != "applied" {
+		t.Fatalf("status = %q, want applied", applied.Status)
 	}
 	childLink := pmoLinkByExternal(t, f, "requirement", "EXT-I-001")
 	issue := issueByID(t, f.pool, childLink.LocalID)
-	if issue.AssigneeID.Valid || issue.AssigneeType.Valid {
-		t.Fatalf("ambiguous legacy assignee must remain unresolved: %q/%v", issue.AssigneeType.String, issue.AssigneeID)
+	if issue.AssigneeType.String != "agent" || issue.AssigneeID != firstAgentID {
+		t.Fatalf("legacy assignee = %q/%v, want first agent/%v", issue.AssigneeType.String, issue.AssigneeID, firstAgentID)
 	}
 	link := pmoLinkByExternal(t, f, "assignee", "YanMeiChen")
-	if link.LocalID.Valid || link.LocalType.Valid {
-		t.Fatalf("ambiguous legacy link must remain unresolved: %+v", link)
+	if link.LocalType.String != "agent" || link.LocalID != firstAgentID {
+		t.Fatalf("legacy link = %+v, want first agent/%v", link, firstAgentID)
 	}
 	if _, err := f.svc.Queries.GetPMOSyncLink(ctx, db.GetPMOSyncLinkParams{
 		WorkspaceID: f.workspaceID, ConfigID: f.configID, ExternalType: "requirement", ExternalKey: "EXT-P-001",
