@@ -583,7 +583,8 @@ Open Design 的两类预置资源按各自性质分别落地，不共用一套�
 - 状态：`confirmed`
 - 日期：2026-08-19
 - 依据：用户目标“在 multica 里面使用 OD 完整的首页、社区、设计体系功能”，以及 DC-050（tweaks 与 critique 进入产品）。
-- 设计体系 tab：官方体系详情以 Open Design 自带的 `system/kit.html`（含深色变体）为封面展示，随二进制嵌入并以 bundle 摘要版本化的未鉴权路由 `/api/design-systems/builtin/{slug}/showcase/{digest}/{light|dark}` 提供（CSP 不允许脚本与网络，`frame-ancestors *` 与社区封面同理）；详情按 DESIGN.md 的 `##` 章节逐模块完整展示而非 700 字摘录；字体 Token 类型为 `fontFamily`，字体排版段落恢复渲染；列表行带色板条。
+- 设计体系 tab：官方体系详情以 Open Design 自带的 `system/kit.html`（含深色变体）为封面展示，随二进制嵌入并以 bundle 摘要版本化的未鉴权路由 `/api/design-systems/builtin/{slug}/showcase/{digest}/{variant}` 提供（CSP 不允许脚本与网络，`frame-ancestors *` 与社区封面同理）。
+- 2026-08-20 用户验收修正：详情不再逐章节展示 DESIGN.md，而是复刻 Open Design DesignKitView 的模块结构与顺序——品牌标识（定位语）、Logo（内置包无 Logo 资产，如实显示「暂无 Logo」）、字体排版（Typography 章节的三个字族 + 权重刻度 + 以 DESIGN.md H1 为样例行）、调色板（色彩章节的命名色卡：标签、OD 推断的角色 chip、hex、用途文案，按 hex 去重、上限 12）、图像与布局（布局准则要点）、设计系统（kit 框 + 浅色/深色 + `system/kit.html` 标注 + `system/tokens.default.json` 契约 chips）、设计系统素材（六个派生页实时装框，`system/artifacts/*` 已随二进制打包并作为 `artifact-{id}` 变体经同一摘要路由提供）。列表行色条同步改为 OD 的四槽规则：从 DESIGN.md 自身的命名色中按 [背景, 辅助, 前景, 强调] 提示词挑选（front matter 色表填满四槽时优先），不再取 design-tokens.json 的前几个声明色（那会让所有卡片同为深色）。解析对我们保留中文 DESIGN.md 的包接受 CJK 标签与全角标点，这是相对上游的有意偏差。
 - 官方体系作为参考风格：项目设计体系创建工作台的参考资料新增「官方设计体系 · 参考风格」，最多 3 个，服务端以 `builtin_design_system` 引用把包内 DESIGN.md 与 tokens.css 内联进冻结的输入快照，prompt 要求智能体采纳其方向、产出项目自己的体系而不复制品牌身份。这是 DC-056“挑选 → 以其为参考风格”的落地，不是复制。
 - 社区 tab：点击卡片封面或标题打开详情弹层——示例全尺寸实时渲染（可交互、可全屏、可新标签页打开）、提示词（可复制）、分面，以及「直接创建 / 填入首页」，对应 Open Design 社区的 PluginDetailsModal。
 - tweaks：按 DC-050 作为约定而非平台 UI——设计文档 prompt 给出 `--accent/--scale/--density/--mode/--motion` 与 `prototype/tweaks.{css,js}` 的包内侧栏约定（只在需求或调整要求时执行，storage 访问必须 try/catch，不得触达 `parent/top`），工作区调整发起器提供「添加调整面板」预设指令，走正常的调整 → Audit → Preview 路径。
