@@ -590,8 +590,10 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
           <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
             {fonts.map((font) => (
               <div key={font.role} className="overflow-hidden rounded-lg border bg-card">
+                {/* Specimen glyphs, not UI text: the nearest steps above the
+                    role ramp to OD's 52px/32px are text-5xl and text-4xl. */}
                 <div
-                  className="flex h-[104px] items-center justify-center bg-background text-[52px] leading-none text-foreground"
+                  className="flex h-[104px] items-center justify-center bg-background text-5xl leading-none text-foreground"
                   style={{ fontFamily: font.family }}
                 >
                   Ag
@@ -616,7 +618,7 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
                   </span>
                 </p>
                 <span
-                  className="truncate text-[32px] leading-[1.2] text-foreground"
+                  className="truncate text-4xl leading-[1.2] text-foreground"
                   style={{ fontFamily: font.family }}
                 >
                   {font.sample}
