@@ -1577,6 +1577,16 @@ func (h *Handler) resolveProjectDesignSystemReferences(
 				return nil, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "reference_invalid", message: "reference link must be an HTTPS URL"}
 			}
 			result = append(result, projectDesignSystemReferenceSnapshot{Kind: input.Kind, Label: input.Label, URL: parsed.String()})
+		case "local_path":
+			// A directory on the machine that will execute the generation
+			// task (the picked agent's own daemon). The server never touches
+			// the filesystem here — the path is frozen verbatim and the
+			// prompt tells the agent to read it as code evidence.
+			path := strings.TrimSpace(input.Value)
+			if len(path) > 4096 || !isAbsoluteLocalPath(path) {
+				return nil, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "reference_invalid", message: "local path must be an absolute path"}
+			}
+			result = append(result, projectDesignSystemReferenceSnapshot{Kind: input.Kind, Label: input.Label, Value: path})
 		case "design_file":
 			fileID, err := util.ParseUUID(strings.TrimSpace(input.DesignFileID))
 			if err != nil {

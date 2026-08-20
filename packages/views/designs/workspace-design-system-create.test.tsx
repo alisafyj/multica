@@ -65,6 +65,18 @@ vi.mock("../navigation", () => ({
   useNavigation: () => ({ push: navigate }),
 }));
 
+const { isDesktopShellMock, pickDirectoryMock, validateLocalDirectoryMock } = vi.hoisted(() => ({
+  isDesktopShellMock: vi.fn(() => false),
+  pickDirectoryMock: vi.fn(),
+  validateLocalDirectoryMock: vi.fn(),
+}));
+
+vi.mock("../platform", () => ({
+  isDesktopShell: isDesktopShellMock,
+  pickDirectory: pickDirectoryMock,
+  validateLocalDirectory: validateLocalDirectoryMock,
+}));
+
 // ReadonlyContent drags in lowlight + KaTeX + Mermaid; the preview pane's
 // rendering is the editor suite's concern, not this page's.
 vi.mock("../editor", () => ({
@@ -99,6 +111,9 @@ function requirementHint(): string {
 describe("WorkspaceDesignSystemCreate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // clearAllMocks keeps implementations; pin the web default explicitly so
+    // a desktop test's override cannot leak into later tests.
+    isDesktopShellMock.mockReturnValue(false);
     listAgents.mockResolvedValue([AGENT]);
     listBuiltinDesignSystems.mockResolvedValue([{ slug: "apple", name: "Apple", category: "媒体与消费", description: "", swatches: [] }]);
     listCatalogue.mockResolvedValue([{ id: "sys-1", name: "团队基线", project_id: "", project_title: "", project_resource_id: "", platform: "web", summary: "", has_draft_package: false, saved_at: "2026-08-20T00:00:00Z" }]);
@@ -294,6 +309,44 @@ describe("WorkspaceDesignSystemCreate", () => {
         }),
       ),
     );
+  });
+
+  it("links a local folder on desktop and submits it as a local_path reference", async () => {
+    const user = userEvent.setup();
+    isDesktopShellMock.mockReturnValue(true);
+    pickDirectoryMock.mockResolvedValue({ ok: true, path: "/Users/dev/brand-site", basename: "brand-site" });
+    // Read-only is enough for code evidence; the shared validator's
+    // write-access demand must not block the reference.
+    validateLocalDirectoryMock.mockResolvedValue({ ok: false, reason: "not_writable" });
+    createProjectDesignSystem.mockResolvedValue({ id: "system-5", project_id: "", name: "本地" });
+    renderCreate();
+
+    await user.click(screen.getByRole("button", { name: /高级 · 仓库、本地代码、Figma/ }));
+    await user.click(screen.getByRole("button", { name: /浏览文件夹/ }));
+    expect(within(await screen.findByLabelText("已关联的本地代码")).getByText("brand-site")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("设计体系名称"), "本地");
+    await user.type(screen.getByLabelText("品牌描述"), "从本地站点提取。");
+    await screen.findByRole("option", { name: /小设计/ });
+    await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
+    await user.click(screen.getByRole("button", { name: /继续生成/ }));
+
+    await vi.waitFor(() =>
+      expect(createProjectDesignSystem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          references: [{ kind: "local_path", value: "/Users/dev/brand-site", label: "brand-site" }],
+        }),
+      ),
+    );
+  });
+
+  it("keeps the local-code row explanatory in the browser, where paths are unreachable", async () => {
+    const user = userEvent.setup();
+    renderCreate();
+
+    await user.click(screen.getByRole("button", { name: /高级 · 仓库、本地代码、Figma/ }));
+    expect(screen.queryByRole("button", { name: /浏览文件夹/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/桌面应用里这一行可以直接选择文件夹/)).toBeInTheDocument();
   });
 
   it("stages dropped files as attachment references and lets them be removed", async () => {

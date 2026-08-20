@@ -506,6 +506,27 @@ func TestDesignDocumentPromptRunsTheCritiqueLoopAsAReport(t *testing.T) {
 	}
 }
 
+// Link references split into two pipelines, as Open Design's create flow
+// does: a GitHub repository URL is code evidence the agent clones read-only
+// with its own credentials, every other URL is a style reference to fetch —
+// and a local_path names a directory on the executing machine, read directly.
+func TestProjectDesignSystemPromptPartitionsLinkAndLocalPathReferences(t *testing.T) {
+	prompt := buildProjectDesignSystemPrompt()
+	for _, want := range []string{
+		"`github.com/<owner>/<repo>`",
+		"clone it read-only on this machine with your own git or GitHub CLI credentials",
+		"Every other link is a style reference",
+		"never treat it as code",
+		"`local_path` names a directory on the machine executing this task",
+		"exactly like a cloned repository, without modifying it",
+		"record the gap in `DESIGN.md`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt lacks %q", want)
+		}
+	}
+}
+
 // A catalogue system named as a style reference (DC-056) must be presented to
 // the agent as direction to adopt, not an identity to copy.
 func TestProjectDesignSystemPromptExplainsBuiltinReferences(t *testing.T) {

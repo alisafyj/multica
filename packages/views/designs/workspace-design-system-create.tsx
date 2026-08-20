@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  FolderOpen,
   Globe,
   LoaderCircle,
   Paintbrush,
@@ -39,6 +40,7 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
 import { ReadonlyContent } from "../editor";
 import { useNavigation } from "../navigation";
+import { isDesktopShell, pickDirectory, validateLocalDirectory } from "../platform";
 import {
   BRAND_CATEGORIES,
   BRAND_REFERENCES,
@@ -131,6 +133,7 @@ export function WorkspaceDesignSystemCreate() {
   const [copySourceKey, setCopySourceKey] = useState("");
   const [notes, setNotes] = useState("");
   const [figmaInput, setFigmaInput] = useState("");
+  const [localPaths, setLocalPaths] = useState<Array<{ path: string; name: string }>>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [brandPickerOpen, setBrandPickerOpen] = useState(false);
   const [agentId, setAgentId] = useState("");
@@ -173,6 +176,7 @@ export function WorkspaceDesignSystemCreate() {
         })),
         ...files.map((file) => ({ kind: "attachment" as const, attachment_id: file.id, label: file.name })),
         ...figs.map((file) => ({ kind: "attachment" as const, attachment_id: file.id, label: file.name })),
+        ...localPaths.map((folder) => ({ kind: "local_path" as const, value: folder.path, label: folder.name })),
       ];
       // A pasted DESIGN.md becomes an attachment at submit time: the server's
       // frozen input then carries the exact bytes the user pasted.
@@ -279,6 +283,24 @@ export function WorkspaceDesignSystemCreate() {
       return;
     }
     copySource.mutate({ key, requestId });
+  };
+
+  // Desktop only: the Electron shell's native folder picker. The picked path
+  // becomes a local_path reference — a directory the executing agent reads
+  // directly on this machine.
+  const addLocalFolder = async () => {
+    const picked = await pickDirectory();
+    if (!picked.ok || !picked.path) return;
+    const validated = await validateLocalDirectory(picked.path);
+    // The shared validator also demands write access (it serves project
+    // resources); a read-only folder is fine for reading as code evidence.
+    if (!(validated.ok === true || validated.reason === "not_writable")) {
+      toast.error("这个文件夹不可读，请换一个位置");
+      return;
+    }
+    const path = picked.path;
+    const name = picked.basename || path;
+    setLocalPaths((current) => (current.some((item) => item.path === path) ? current : [...current, { path, name }]));
   };
 
   const trimmedFigma = figmaInput.trim();
@@ -606,10 +628,42 @@ export function WorkspaceDesignSystemCreate() {
                         仓库链接直接加到上方「GitHub 或网站」即可。生成任务在你的机器上由守护进程执行，能否克隆取决于所选智能体自身的 GitHub 凭据。
                       </p>
                     </FormRow>
-                    <FormRow label="关联本地代码" alignTop>
-                      <p className="text-caption leading-5 text-muted-foreground">
-                        浏览器拿不到本地文件夹的真实路径。需要参考本地代码时，把绝对路径写进下方备注——任务在你的机器上执行，智能体可以直接读取该目录。
-                      </p>
+                    <FormRow
+                      label="关联本地代码"
+                      optional={isDesktopShell()}
+                      hint={isDesktopShell() ? "用这台电脑上的文件夹作为代码证据；任务在你的机器上执行，智能体直接读取该目录。" : undefined}
+                      alignTop
+                    >
+                      {isDesktopShell() ? (
+                        <div className="space-y-2.5">
+                          <Button type="button" size="sm" variant="outline" onClick={() => void addLocalFolder()}>
+                            <FolderOpen className="size-3.5" />
+                            浏览文件夹
+                          </Button>
+                          {localPaths.length > 0 ? (
+                            <div aria-label="已关联的本地代码" className="flex flex-wrap gap-2">
+                              {localPaths.map((folder) => (
+                                <span key={folder.path} title={folder.path} className="inline-flex h-7 max-w-72 items-center gap-1.5 rounded-full border bg-muted/40 py-0.5 pl-2.5 pr-1 text-caption">
+                                  <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+                                  <span className="truncate font-mono text-micro">{folder.name}</span>
+                                  <button
+                                    type="button"
+                                    aria-label={`移除 ${folder.name}`}
+                                    className="rounded-full p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                    onClick={() => setLocalPaths((current) => current.filter((item) => item.path !== folder.path))}
+                                  >
+                                    <X className="size-3" />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <p className="text-caption leading-5 text-muted-foreground">
+                          浏览器拿不到本地文件夹的真实路径——桌面应用里这一行可以直接选择文件夹。在浏览器里请把绝对路径写进下方备注：任务在你的机器上执行，智能体可以直接读取该目录。
+                        </p>
+                      )}
                     </FormRow>
                     <FormRow label="上传 .fig" optional hint="原样随任务提供给智能体；Multica 不在本地解码。" alignTop>
                       <div className="space-y-2.5">

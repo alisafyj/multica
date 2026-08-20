@@ -22,7 +22,7 @@ export type DesignProjectRulesSource = "project_rules" | "gallery_specs_legacy" 
 export type GalleryNativeVersion = "1.0";
 export type ProjectDesignSystemStatus = "unestablished" | "generating" | "validating" | "draft" | "saved";
 export type ProjectDesignSystemPlatform = "web" | "mobile" | "cross_platform";
-export type ProjectDesignSystemReferenceKind = "attachment" | "brand_color" | "link" | "design_file" | "design_system_profile" | "builtin_design_system";
+export type ProjectDesignSystemReferenceKind = "attachment" | "brand_color" | "link" | "design_file" | "design_system_profile" | "builtin_design_system" | "local_path";
 export type ProjectDesignSystemScope =
   | { kind: "all" }
   | { kind: "section" | "token_group" | "component" | "block"; id: string };

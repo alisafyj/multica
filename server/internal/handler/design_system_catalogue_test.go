@@ -202,6 +202,36 @@ func TestResolveProjectDesignSystemReferencesInlinesBuiltinSystems(t *testing.T)
 	}
 }
 
+// A local_path reference names a directory on the machine that executes the
+// task (the picked agent's own daemon). The server freezes the path verbatim
+// without touching any filesystem, and only absolute paths — Unix or Windows,
+// regardless of the server's own OS — are accepted.
+func TestResolveProjectDesignSystemReferencesFreezesLocalPaths(t *testing.T) {
+	ctx := context.Background()
+	workspaceID := parseUUID(testWorkspaceID)
+	projectID := createProjectDesignSystemProject(t, testWorkspaceID, "Local path references")
+
+	resolved, err := testHandler.resolveProjectDesignSystemReferences(ctx, workspaceID, projectID, []ProjectDesignSystemReferenceInput{
+		{Kind: "local_path", Value: "  /Users/dev/brand-site  ", Label: "本地代码"},
+		{Kind: "local_path", Value: `C:\dev\brand-site`},
+	})
+	if err != nil {
+		t.Fatalf("resolve local_path references: %v", err)
+	}
+	if len(resolved) != 2 || resolved[0].Value != "/Users/dev/brand-site" || resolved[0].Label != "本地代码" || resolved[1].Value != `C:\dev\brand-site` {
+		t.Fatalf("resolved = %+v", resolved)
+	}
+
+	var requestErr *projectDesignSystemRequestError
+	for _, invalid := range []string{"", "relative/path", "./here", "~", "~/code"} {
+		if _, err := testHandler.resolveProjectDesignSystemReferences(ctx, workspaceID, projectID, []ProjectDesignSystemReferenceInput{
+			{Kind: "local_path", Value: invalid},
+		}); !errors.As(err, &requestErr) || requestErr.code != "reference_invalid" {
+			t.Fatalf("local_path %q error = %v, want reference_invalid", invalid, err)
+		}
+	}
+}
+
 // The workspace catalogue feeds the library's rows. OD's rows lead with the
 // system's own summary and mark a system under adjustment; the entry must
 // therefore carry the first line of the frozen brief and whether a draft
