@@ -5,23 +5,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const navigate = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
-const { createProjectDesignSystem, listBuiltinDesignSystems, listAgents, uploadFile } = vi.hoisted(() => ({
+const { createProjectDesignSystem, listAgents, uploadFile } = vi.hoisted(() => ({
   createProjectDesignSystem: vi.fn(),
-  listBuiltinDesignSystems: vi.fn(),
   listAgents: vi.fn(),
   uploadFile: vi.fn(),
 }));
 
 vi.mock("@multica/core/api", () => ({
-  api: { createProjectDesignSystem, listBuiltinDesignSystems, uploadFile },
+  api: { createProjectDesignSystem, uploadFile },
 }));
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
-}));
-
-vi.mock("@multica/core/designs/queries", () => ({
-  builtinDesignSystemListOptions: () => ({ queryKey: ["builtin-design-systems"], queryFn: listBuiltinDesignSystems }),
 }));
 
 vi.mock("@multica/core/workspace/queries", () => ({
@@ -54,6 +49,7 @@ vi.mock("sonner", () => ({
 }));
 
 import { WorkspaceDesignSystemCreate, sourceLinkLabel } from "./workspace-design-system-create";
+import { BRAND_CATEGORIES, BRAND_CATEGORY_LABELS, BRAND_REFERENCES, QUICK_PICK_BRANDS } from "./brand-references";
 
 const AGENT = { id: "agent-1", workspace_id: "ws-1", name: "小设计", runtime_id: "runtime-1", runtime_bound: true, archived_at: null, status: "online" };
 
@@ -77,13 +73,6 @@ describe("WorkspaceDesignSystemCreate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     listAgents.mockResolvedValue([AGENT]);
-    // The options object the module builds normally selects `.design_systems`
-    // out of the API response; this mock replaces the whole options, so it
-    // resolves the already-selected array.
-    listBuiltinDesignSystems.mockResolvedValue([
-      { slug: "apple", name: "Apple", category: "媒体与消费", description: "", swatches: ["#0071e3"] },
-      { slug: "agentic", name: "Agentic", category: "工具", description: "", swatches: ["#ff5701"] },
-    ]);
   });
 
   it("replicates Open Design's creation page: sticky-topbar generate, hero, one extraction card", () => {
@@ -118,13 +107,13 @@ describe("WorkspaceDesignSystemCreate", () => {
     await user.type(screen.getByLabelText("粘贴 DESIGN.md"), "# Tokens");
     await user.click(screen.getByRole("radio", { name: "移动端" }));
 
-    // 从品牌开始 opens the picker; the quick-pick chip adds the official
-    // system as a reference and shows up as a chip among the sources.
+    // 从品牌开始: the quick-pick chip adds the brand's website to the source
+    // links (Open Design's pick semantics) and shows up as a labelled chip.
     await user.click(screen.getByRole("button", { name: /从品牌开始/ }));
     const dialog = await screen.findByRole("dialog");
-    await user.click(await within(dialog).findByRole("button", { name: "Apple" }));
-    await user.click(within(dialog).getByRole("button", { name: "完成" }));
-    expect(within(screen.getByLabelText("已添加的来源")).getByText("Apple")).toBeInTheDocument();
+    const quickPicks = within(dialog).getByRole("group", { name: "热门品牌 · 点击添加" });
+    await user.click(within(quickPicks).getByRole("button", { name: "Shopify" }));
+    expect(within(screen.getByLabelText("已添加的来源链接")).getByText("shopify.com")).toBeInTheDocument();
 
     // agents query resolves on the next tick; pick once options appear.
     await screen.findByRole("option", { name: /小设计/ });
@@ -141,7 +130,7 @@ describe("WorkspaceDesignSystemCreate", () => {
           platform: "mobile",
           references: [
             { kind: "link", value: "https://acme.example", label: "来源链接" },
-            { kind: "builtin_design_system", value: "apple", label: "Apple" },
+            { kind: "link", value: "https://shopify.com", label: "来源链接" },
             { kind: "attachment", attachment_id: "att-md", label: "粘贴的 DESIGN.md" },
           ],
         }),
@@ -152,6 +141,33 @@ describe("WorkspaceDesignSystemCreate", () => {
     expect(pasted.name).toBe("DESIGN.md");
     expect(await pasted.text()).toBe("# Tokens");
     expect(navigate).toHaveBeenCalledWith("/acme/designs/systems/system-9");
+  });
+
+  it("filters the brand wall by category and search, like Open Design's picker", async () => {
+    const user = userEvent.setup();
+    renderCreate();
+
+    await user.click(screen.getByRole("button", { name: /从品牌开始/ }));
+    const dialog = await screen.findByRole("dialog");
+
+    // Category nav narrows the wall and hides the quick-pick row.
+    await user.click(within(dialog).getByRole("button", { name: "汽车" }));
+    expect(within(dialog).queryByRole("group", { name: "热门品牌 · 点击添加" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /Porsche/ })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Shopify/ })).not.toBeInTheDocument();
+
+    // Search matches the zh category label too (typing 媒体 finds Vogue).
+    await user.click(within(dialog).getByRole("button", { name: "全部" }));
+    await user.type(within(dialog).getByLabelText("搜索品牌"), "媒体");
+    expect(within(dialog).getByRole("button", { name: /Vogue/ })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Porsche/ })).not.toBeInTheDocument();
+
+    // Picking from the wall adds the site and closes the picker.
+    await user.clear(within(dialog).getByLabelText("搜索品牌"));
+    await user.type(within(dialog).getByLabelText("搜索品牌"), "vogue");
+    await user.click(within(dialog).getByRole("button", { name: /Vogue/ }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText("已添加的来源链接")).getByText("vogue.com")).toBeInTheDocument();
   });
 
   it("stages dropped files as attachment references and lets them be removed", async () => {
@@ -201,5 +217,29 @@ describe("sourceLinkLabel", () => {
     expect(sourceLinkLabel("https://github.com/vercel/next.js")).toBe("vercel/next.js");
     expect(sourceLinkLabel("https://docs.acme.example/brand/")).toBe("docs.acme.example/brand");
     expect(sourceLinkLabel("not a url")).toBe("not a url");
+  });
+});
+
+// Canonical for the ported catalogue: Open Design's fame ordering decides the
+// wall and the quick-pick row, and every bucket carries its zh label.
+describe("brand references", () => {
+  it("leads the wall and quick picks with Open Design's fame ordering", () => {
+    expect(QUICK_PICK_BRANDS.map((brand) => brand.name)).toEqual([
+      "Shopify",
+      "Slack",
+      "Stripe",
+      "Nike",
+      "New Balance",
+      "Nespresso",
+      "Spotify",
+      "Vogue",
+    ]);
+    expect(BRAND_REFERENCES).toHaveLength(65);
+  });
+
+  it("labels every category in Chinese", () => {
+    for (const category of BRAND_CATEGORIES) {
+      expect(BRAND_CATEGORY_LABELS[category], category).toBeTruthy();
+    }
   });
 });

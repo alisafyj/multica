@@ -593,7 +593,7 @@ Open Design 的两类预置资源按各自性质分别落地，不共用一套�
 - 首页参考文件：发起器可随提示词暂存截图 / PDF / 文本（最多 8 个、每个 16 MB），服务端按附件 id 解析、读取存储字节并把大小与 SHA-256 钉入冻结输入，守护进程经任务级路由 `GET /api/daemon/tasks/{taskId}/design-document/attachments/{attachmentId}` 只能取上下文列出且字节未变的附件，并落到 `reference/attachments/<id>` 供智能体阅读；prompt 说明位置与“复用图片须复制进 assets/”。
 - 工作区导出：`GET /api/design-documents/{id}/revisions/{revisionId}/archive` 经重新校验后以命名 ZIP 返回修订包，工作区更多菜单提供「下载原型包 (.zip)」，对应 Open Design 的下载为 .zip。
 - 设计体系 tab：顶栏右侧「新建设计体系」对应 Open Design 设计体系页右上的创建按钮；Open Design 进入专门的创建流程，这里体系属于项目（DC-052），按钮先选项目、再打开该项目 tab 的「设计体系」工作台（库内「去项目编辑」同样落到该子 tab），不另开第二条创建路径。官方目录 20 个分类由 pill 云改为下拉（`DesignFilterSelect`），列表不再被挤到首屏以下。
-- 2026-08-20 修正「不另开第二条创建路径」：设计体系可以不挂项目而独立创建（`project_id` 为空 + 必填 `name`，迁移 899），库顶栏「新建设计体系」进入独立创建页 `/{slug}/designs/systems/new`。该页按用户要求复刻 Open Design 的创建流程：置顶栏左「← 返回」右「继续生成」（生成动作在顶栏，无底部栏）、左列固定 hero（三步 · 约 3 分钟 · DESIGN.md/tokens/UI Kit/预览 交付物与示意卡）、右列一张 220px 标签列的分行卡片——GitHub 或网站（含来源 chip、favicon 式标签规则 owner/repo）、从品牌开始（弹窗 + 热门品牌快捷 chip）、添加文件（拖放/浏览，单个 12 MB 上限）、描述品牌、粘贴 DESIGN.md（编辑/预览分段 + awesome-design-md 参考链接）、备注。与上游的有意偏差：①智能体与平台必选（P-008 生成即任务）；②名称必填（体系是库内长期实体，上游自动命名）；③描述品牌必填（服务端 brief 为生成的主输入，上游任一来源即可提交）；④「从品牌开始」选的是官方目录（`builtin_design_system` 引用、上限 3、内联 DESIGN.md 与 tokens），不是上游那样加品牌官网 URL——引用语义更强；⑤粘贴的 DESIGN.md 在提交时落成 `DESIGN.md` 附件进入冻结输入（服务端无专用字段）；⑥备注并入 brief（`\n\n备注：`），提交后不单独存在；⑦高级区（GitHub 仓库 / 本地代码 / .fig / Figma URL）与「从现有设计系统复制」省略——前者的引用种类是项目绑定的，后者的复制端点要求 `project_id`；「从资料库选择」上游 0.19.2 也隐藏。
+- 2026-08-20 修正「不另开第二条创建路径」：设计体系可以不挂项目而独立创建（`project_id` 为空 + 必填 `name`，迁移 899），库顶栏「新建设计体系」进入独立创建页 `/{slug}/designs/systems/new`。该页按用户要求复刻 Open Design 的创建流程：置顶栏左「← 返回」右「继续生成」（生成动作在顶栏，无底部栏）、左列固定 hero（三步 · 约 3 分钟 · DESIGN.md/tokens/UI Kit/预览 交付物与示意卡）、右列一张 220px 标签列的分行卡片——GitHub 或网站（含来源 chip、favicon 式标签规则 owner/repo）、从品牌开始、添加文件（拖放/浏览，单个 12 MB 上限）、描述品牌、粘贴 DESIGN.md（编辑/预览分段 + awesome-design-md 参考链接）、备注。二次验收（用户以上游截图纠正）后，「从品牌开始」按上游 BrandPickerModal 完整复刻：65 品牌 / 14 行业分类的参考目录随 views 内置（`brand-references.ts`，fame 分层排序、Google favicon 服务、中文分类标签取上游 zh-CN 文案），弹窗为左侧搜索 + 纵向分类导航、右侧「热门品牌 · 点击添加」chips 与双列品牌墙（悬停出「添加」按钮、分页 + 无限滚动），选中即把 `https://<域名>` 加入来源链接——与上游语义一致；官方体系引用不再由此页添加（项目工作台的参考资料仍支持）。与上游的有意偏差：①智能体与平台必选（P-008 生成即任务）；②名称必填（体系是库内长期实体，上游自动命名）；③描述品牌必填（服务端 brief 为生成的主输入，上游任一来源即可提交）；④粘贴的 DESIGN.md 在提交时落成 `DESIGN.md` 附件进入冻结输入（服务端无专用字段）；⑤备注并入 brief（`\n\n备注：`），提交后不单独存在；⑥高级区（GitHub 仓库 / 本地代码 / .fig / Figma URL）与「从现有设计系统复制」省略——前者的引用种类是项目绑定的，后者的复制端点要求 `project_id`；「从资料库选择」上游 0.19.2 也隐藏。
 - 边界：tweaks 与 critique 的真实产出仍待 A6 真实智能体验收；社区缺少 Open Design 未提供的搜索/排序不在本条范围。
 - 证据：`designsystemcatalogue` 与 `handler/design_system_catalogue_test.go`、`design_recipe_gallery.test.tsx`、`design-system-library.test.tsx`、`designdocument/critique_test.go`、`project_design_system_prompt_contract_test.go`、`design-document-critique.test.tsx`、`project-design-system-create.test.tsx`、`handler/design_document_attachments_test.go`、`design-task-composer.test.tsx`、`handler/design_document_revision_test.go`。
 
@@ -605,6 +605,16 @@ Open Design 的两类预置资源按各自性质分别落地，不共用一套�
 - 决策：服务端上下文新增 `execution_ready` 与 `input{schema_version, repository_grounding, repository?}`：首次生成选了仓库为 `pending`、未选为 `unavailable`；调整为 `pinned` 并携带一份合法的取证回执（当前为显式 `unavailable` 回执，说明调整不重读仓库、以不可变基线为据）。claim 按 DC-053 只把文档绑定的那一个仓库交给守护进程（未选仓库则不交任何仓库，避免无关仓库不可达导致阻塞）。prompt 按模式说明：`pending` 时告知 checkout 位置并要求写回 `work/repository-grounding.json`（守护进程按 checkout 逐文件校验 SHA-256）；`pinned` 与 `unavailable` 分别给出不得声称读过代码的声明。
 - 边界：取证回执仍只在守护进程本地形成并随 `design_document_grounding` 上报，服务端尚未按修订持久化（需要新的迁移与产品决策）；A6 真实智能体验收仍待完成。
 - 证据：`handler/design_document_binding_test.go`（`TestDesignDocumentContextsAreExecutionReadyWithAGroundingEnvelope`）、`handler/daemon_test.go`（claim 仓库范围）、`daemon/project_design_system_prompt_contract_test.go`（按模式的 prompt）。
+
+### DC-060 设计体系与提示词模版是工作区级平台物料，设计稿按项目归属
+
+- 状态：`confirmed`（方向）
+- 日期：2026-08-20
+- 依据：用户明确表述——设计体系、提示词模版等应被看做工作区（团队空间）的平台物料，供所有项目参考；只有首页产生设计稿时需要绑定项目，以表明是哪个项目的设计稿。
+- 含义：给团队空间贡献一套设计体系不要求先有项目；体系与模版的创建、维护、浏览都在工作区层面成立。设计稿（design document）保持项目归属，是唯一必须声明项目的产物。
+- 现状核对：设计稿已符合——`design_document.project_id` 为 `NOT NULL`（迁移 880），首页发起时选择项目；设计体系自迁移 899（`899_standalone_design_systems`）起支持 `project_id` 为空的工作区级创建，独立创建页 `/{slug}/designs/systems/new` 即此路径，产物进入库的「团队」范围；社区提示词模版本就不属于任何项目。项目绑定体系（DC-052 的每项目一套）仍然存在且项目工作台继续可用。
+- 待办（后续切片，本条不改变已实现路径）：项目「设计体系」子 tab 与工作区库的关系收敛（项目引用工作区体系，还是项目专属体系并存）；既有项目绑定体系是否迁移为工作区级；复制端点的 standalone 目标支持。
+- 证据：`server/migrations/880_design_document.up.sql`、`server/migrations/899_standalone_design_systems.up.sql`、`packages/views/designs/workspace-design-system-create.tsx`。
 
 ## 下一步
 

@@ -1,27 +1,28 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  ArrowRight,
   ChevronRight,
   ExternalLink,
   Globe,
   LoaderCircle,
   Paperclip,
+  Search,
   Sparkles,
   UploadCloud,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
-import { builtinDesignSystemListOptions } from "@multica/core/designs/queries";
 import { designKeys } from "@multica/core/designs/keys";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
-import type { Agent, BuiltinDesignSystem, ProjectDesignSystemReferenceInput } from "@multica/core/types";
+import type { Agent, ProjectDesignSystemReferenceInput } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   Dialog,
@@ -35,21 +36,20 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
 import { ReadonlyContent } from "../editor";
 import { useNavigation } from "../navigation";
-import { PLATFORM_OPTIONS, isAgentAvailable, visibleBuiltinSystems } from "./project-design-system-create";
+import {
+  BRAND_CATEGORIES,
+  BRAND_REFERENCES,
+  QUICK_PICK_BRANDS,
+  brandCategoryLabel,
+  brandFaviconUrl,
+  type BrandReference,
+} from "./brand-references";
+import { PLATFORM_OPTIONS, isAgentAvailable } from "./project-design-system-create";
 
-const MAX_BUILTIN_REFERENCES = 3;
 const MAX_LINKS = 8;
 const MAX_FILES = 20;
 /** Open Design's per-file cap on the asset dropzone. */
 const MAX_FILE_BYTES = 12 << 20;
-
-/**
- * The brands Open Design pins as quick picks, intersected with what our
- * catalogue actually bundles — a pick adds the official system as a style
- * reference (richer than upstream's website URL: the reference inlines the
- * package's design language and tokens).
- */
-const QUICK_PICK_SLUGS = ["shopify", "slack", "stripe", "nike", "spotify", "airbnb", "apple", "notion"];
 
 /**
  * Open Design's sourceUrlLabel: protocol and www stripped, trailing slash
@@ -97,7 +97,6 @@ export function WorkspaceDesignSystemCreate() {
   const paths = useWorkspacePaths();
   const queryClient = useQueryClient();
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const { data: builtinSystems = [] } = useQuery(builtinDesignSystemListOptions(wsId));
   const { upload, uploadWithToast, uploading } = useFileUpload(api, (error, file) =>
     toast.error(`${file.name}：${error.message}`),
   );
@@ -110,7 +109,6 @@ export function WorkspaceDesignSystemCreate() {
   const [designMd, setDesignMd] = useState("");
   const [designMdMode, setDesignMdMode] = useState<"edit" | "preview">("edit");
   const [notes, setNotes] = useState("");
-  const [builtinSlugs, setBuiltinSlugs] = useState<string[]>([]);
   const [brandPickerOpen, setBrandPickerOpen] = useState(false);
   const [agentId, setAgentId] = useState("");
   const [platform, setPlatform] = useState("web");
@@ -140,10 +138,6 @@ export function WorkspaceDesignSystemCreate() {
       const references: ProjectDesignSystemReferenceInput[] = [
         ...links.map((link) => ({ kind: "link" as const, value: link, label: "来源链接" })),
         ...files.map((file) => ({ kind: "attachment" as const, attachment_id: file.id, label: file.name })),
-        ...builtinSlugs.flatMap((slug) => {
-          const builtin = builtinSystems.find((item) => item.slug === slug);
-          return builtin ? [{ kind: "builtin_design_system" as const, value: slug, label: builtin.name }] : [];
-        }),
       ];
       // A pasted DESIGN.md becomes an attachment at submit time: the server's
       // frozen input then carries the exact bytes the user pasted.
@@ -196,19 +190,20 @@ export function WorkspaceDesignSystemCreate() {
     }
   };
 
-  const toggleBuiltin = (slug: string) => {
-    setBuiltinSlugs((current) =>
-      current.includes(slug)
-        ? current.filter((item) => item !== slug)
-        : current.length >= MAX_BUILTIN_REFERENCES
-          ? current
-          : [...current, slug],
-    );
+  // Open Design's pick semantics: the brand's website joins the source links,
+  // de-duplicated, and the picker closes.
+  const addBrandLink = (brand: BrandReference) => {
+    const link = `https://${brand.domain}`;
+    setBrandPickerOpen(false);
+    setLinks((current) => {
+      if (current.includes(link)) return current;
+      if (current.length >= MAX_LINKS) {
+        toast.error(`最多 ${MAX_LINKS} 个来源链接`);
+        return current;
+      }
+      return [...current, link];
+    });
   };
-
-  const pickedBuiltins = builtinSlugs
-    .map((slug) => builtinSystems.find((item) => item.slug === slug))
-    .filter((item): item is BuiltinDesignSystem => Boolean(item));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -286,11 +281,11 @@ export function WorkspaceDesignSystemCreate() {
                   </div>
                   {trimmedInput && !validLink ? <p className="text-caption text-destructive">请输入 https:// 开头的完整链接。</p> : null}
                   {duplicate ? <p className="text-caption text-muted-foreground">这个链接已经添加过了。</p> : null}
-                  {links.length > 0 || pickedBuiltins.length > 0 ? (
-                    <div aria-label="已添加的来源" className="flex flex-wrap gap-2">
+                  {links.length > 0 ? (
+                    <div aria-label="已添加的来源链接" className="flex flex-wrap gap-2">
                       {links.map((link) => (
                         <span key={link} className="inline-flex h-7 max-w-72 items-center gap-1.5 rounded-full border bg-muted/40 py-0.5 pl-2 pr-1 text-caption">
-                          <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+                          <SourceLinkFavicon url={link} />
                           <a href={link} target="_blank" rel="noreferrer" title={`打开 ${sourceLinkLabel(link)}`} className="truncate hover:underline">
                             {sourceLinkLabel(link)}
                           </a>
@@ -299,28 +294,6 @@ export function WorkspaceDesignSystemCreate() {
                             aria-label={`移除 ${sourceLinkLabel(link)}`}
                             className="rounded-full p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                             onClick={() => setLinks((current) => current.filter((item) => item !== link))}
-                          >
-                            <X className="size-3" />
-                          </button>
-                        </span>
-                      ))}
-                      {pickedBuiltins.map((builtin) => (
-                        <span key={builtin.slug} className="inline-flex h-7 max-w-72 items-center gap-1.5 rounded-full border bg-muted/40 py-0.5 pl-2 pr-1 text-caption">
-                          {builtin.swatches.length > 0 ? (
-                            <span aria-hidden="true" className="flex shrink-0 gap-0.5">
-                              {builtin.swatches.slice(0, 3).map((swatch, index) => (
-                                <span key={`${swatch}-${index}`} className="size-2.5 rounded-full border" style={{ background: swatch }} />
-                              ))}
-                            </span>
-                          ) : (
-                            <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
-                          )}
-                          <span className="truncate">{builtin.name}</span>
-                          <button
-                            type="button"
-                            aria-label={`移除 ${builtin.name}`}
-                            className="rounded-full p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                            onClick={() => toggleBuiltin(builtin.slug)}
                           >
                             <X className="size-3" />
                           </button>
@@ -526,14 +499,30 @@ export function WorkspaceDesignSystemCreate() {
         </div>
       </main>
 
-      <BrandPickerDialog
-        open={brandPickerOpen}
-        onClose={() => setBrandPickerOpen(false)}
-        systems={builtinSystems}
-        picked={builtinSlugs}
-        onToggle={toggleBuiltin}
-      />
+      {brandPickerOpen ? <BrandPickerDialog onClose={() => setBrandPickerOpen(false)} onPick={addBrandLink} /> : null}
     </div>
+  );
+}
+
+/** Favicon for a source-link chip, with the globe as the offline fallback. */
+function SourceLinkFavicon({ url }: { url: string }) {
+  const [failed, setFailed] = useState(false);
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    // Not a parseable URL — keep the globe.
+  }
+  if (!host || failed) return <Globe className="size-3.5 shrink-0 text-muted-foreground" />;
+  return (
+    <img
+      src={brandFaviconUrl(host, 32)}
+      alt=""
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      className="size-4 shrink-0 rounded-[3px] object-contain"
+      onError={() => setFailed(true)}
+    />
   );
 }
 
@@ -655,106 +644,211 @@ function CreateHero() {
   );
 }
 
-/**
- * 从品牌开始 — Open Design's brand picker as a dialog: a quick-picks row of
- * well-known brands, then the searchable catalogue. Picking one adds the
- * official system as a style reference chip on the page.
- */
-function BrandPickerDialog({
-  open,
-  onClose,
-  systems,
-  picked,
-  onToggle,
-}: {
-  open: boolean;
-  onClose: () => void;
-  systems: BuiltinDesignSystem[];
-  picked: string[];
-  onToggle: (slug: string) => void;
-}) {
-  const [search, setSearch] = useState("");
-  const quickPicks = useMemo(
-    () => QUICK_PICK_SLUGS
-      .map((slug) => systems.find((system) => system.slug === slug))
-      .filter((system): system is BuiltinDesignSystem => Boolean(system)),
-    [systems],
+const BRAND_PAGE_SIZE = 24;
+const ALL_BRAND_CATEGORIES = "all";
+
+/** Favicon tile with a monogram fallback, as upstream's BrandFavicon. */
+function BrandFavicon({ domain, name, className }: { domain: string; name: string; className?: string }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+  }, [domain]);
+  if (failed) {
+    return (
+      <span
+        aria-hidden="true"
+        className={cn("flex items-center justify-center rounded-md bg-muted font-semibold text-muted-foreground", className)}
+      >
+        {name.slice(0, 1).toUpperCase()}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={brandFaviconUrl(domain, 64)}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      className={cn("object-contain", className)}
+      onError={() => setFailed(true)}
+    />
   );
-  const visible = useMemo(() => visibleBuiltinSystems(systems, search, picked), [systems, search, picked]);
-  const full = picked.length >= MAX_BUILTIN_REFERENCES;
+}
+
+/**
+ * 从品牌开始 — Open Design's brand reference picker in its compact modal
+ * form: search and a vertical category nav on the left, the quick-pick row
+ * and the two-up brand wall on the right. Picking a brand hands it to the
+ * host, which adds `https://<domain>` to the source links.
+ *
+ * The host mounts this only while open, so every open starts back at the
+ * all-categories first page, matching upstream's unmount-on-close behaviour.
+ */
+function BrandPickerDialog({ onClose, onPick }: { onClose: () => void; onPick: (brand: BrandReference) => void }) {
+  const [category, setCategory] = useState(ALL_BRAND_CATEGORIES);
+  const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState(BRAND_PAGE_SIZE);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return BRAND_REFERENCES.filter((brand) => {
+      if (category !== ALL_BRAND_CATEGORIES && brand.category !== category) return false;
+      if (!q) return true;
+      // Match the raw bucket AND its zh label, so typing 汽车 finds Porsche.
+      return (
+        brand.name.toLowerCase().includes(q) ||
+        brand.domain.toLowerCase().includes(q) ||
+        brand.category.toLowerCase().includes(q) ||
+        brandCategoryLabel(brand.category).toLowerCase().includes(q)
+      );
+    });
+  }, [category, query]);
+
+  // Narrowing the wall (new filter / search) starts over from the top.
+  useEffect(() => {
+    setLimit(BRAND_PAGE_SIZE);
+  }, [category, query]);
+
+  // Infinite scroll with the modal body as the observer root; runtimes
+  // without IntersectionObserver (jsdom) keep the 显示更多 button instead.
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setLimit((current) => Math.min(current + BRAND_PAGE_SIZE, filtered.length));
+        }
+      },
+      { root: scrollRef.current, rootMargin: "600px 0px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [filtered.length]);
+
+  const visible = filtered.slice(0, limit);
+  const showQuickPicks = category === ALL_BRAND_CATEGORIES && query.trim() === "";
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent className="flex max-h-[85vh] flex-col gap-3 sm:max-w-xl">
-        <DialogHeader className="shrink-0">
-          <DialogTitle>从品牌开始</DialogTitle>
-          <DialogDescription>
-            从官方设计体系里选一个品牌，作为这套体系的参考风格加入（最多 {MAX_BUILTIN_REFERENCES} 个）。
+    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent className="flex h-[min(680px,84vh)] w-[calc(100%-2rem)] flex-col gap-0 p-0 sm:max-w-[920px]">
+        <DialogHeader className="shrink-0 gap-1.5 px-6 pb-3.5 pt-5 text-left">
+          <DialogTitle className="text-title-lg font-bold">从品牌开始</DialogTitle>
+          <DialogDescription className="text-caption">
+            搜索数百个品牌，选择一个后我们会把它的网站作为风格参考加入。
           </DialogDescription>
         </DialogHeader>
-        {quickPicks.length > 0 ? (
-          <div className="shrink-0">
-            <p className="text-micro font-semibold uppercase tracking-wider text-muted-foreground">热门品牌 · 点击添加</p>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {quickPicks.map((system) => (
-                <button
-                  key={system.slug}
-                  type="button"
-                  aria-pressed={picked.includes(system.slug)}
-                  disabled={!picked.includes(system.slug) && full}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-full border py-1 pl-2 pr-3 text-caption font-medium transition-colors disabled:opacity-50",
-                    picked.includes(system.slug) ? "border-primary bg-primary/10 text-foreground" : "bg-card hover:border-primary/50",
-                  )}
-                  onClick={() => onToggle(system.slug)}
-                >
-                  {system.swatches.length > 0 ? (
-                    <span aria-hidden="true" className="size-3 rounded-full border" style={{ background: system.swatches[3] ?? system.swatches[0] }} />
-                  ) : null}
-                  {system.name}
-                </button>
-              ))}
+        {/* One scrolling surface under the pinned header, as upstream. */}
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden border-t px-6 pb-5 pt-4">
+          <div className="flex flex-col items-stretch gap-5 sm:flex-row sm:items-start">
+            <aside className="flex shrink-0 flex-col gap-3 sm:sticky sm:top-0 sm:w-[200px]">
+              <div className="relative flex items-center">
+                <Search aria-hidden="true" className="pointer-events-none absolute left-3 size-3.5 text-muted-foreground" />
+                <Input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  aria-label="搜索品牌"
+                  placeholder="搜索品牌…"
+                  className="h-[38px] rounded-full bg-muted/40 pl-9 text-caption"
+                />
+              </div>
+              <nav aria-label="品牌分类" className="flex flex-row flex-wrap gap-0.5 sm:flex-col sm:flex-nowrap">
+                {[ALL_BRAND_CATEGORIES, ...BRAND_CATEGORIES].map((value) => {
+                  const active = category === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setCategory(value)}
+                      className={cn(
+                        "rounded-md px-2.5 py-[7px] text-left text-caption",
+                        active
+                          ? "bg-primary/10 font-medium text-primary"
+                          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                      )}
+                    >
+                      {value === ALL_BRAND_CATEGORIES ? "全部" : brandCategoryLabel(value)}
+                    </button>
+                  );
+                })}
+              </nav>
+            </aside>
+
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
+              {showQuickPicks ? (
+                <div role="group" aria-label="热门品牌 · 点击添加" className="flex flex-col gap-2">
+                  <span className="text-micro font-semibold uppercase tracking-wider text-muted-foreground">
+                    热门品牌 · 点击添加
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {QUICK_PICK_BRANDS.map((brand) => (
+                      <button
+                        key={`quick-${brand.domain}`}
+                        type="button"
+                        onClick={() => onPick(brand)}
+                        className="inline-flex items-center gap-2 rounded-full border bg-card py-1.5 pl-2 pr-3 text-caption font-medium transition-colors hover:border-primary hover:bg-primary/10"
+                      >
+                        <BrandFavicon domain={brand.domain} name={brand.name} className="size-[22px] rounded-[4px]" />
+                        <span className="whitespace-nowrap">{brand.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
+                {visible.map((brand) => (
+                  <button
+                    key={brand.domain}
+                    type="button"
+                    onClick={() => onPick(brand)}
+                    className="group relative -mx-2 flex min-w-0 items-center gap-3 rounded-lg px-2 py-4 text-left transition-colors hover:bg-muted/50"
+                  >
+                    <span className="flex size-[46px] shrink-0 items-center justify-center overflow-hidden">
+                      <BrandFavicon domain={brand.domain} name={brand.name} className="size-full rounded-md text-title" />
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="truncate text-caption font-semibold" title={brand.name}>{brand.name}</span>
+                      <span className="truncate text-micro text-muted-foreground">{brandCategoryLabel(brand.category)}</span>
+                    </span>
+                    {/* Hover affordance: the 添加 pill slides in from the trailing edge. */}
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute right-2 inline-flex translate-y-1.5 items-center gap-1 rounded-full bg-primary px-3.5 py-2 text-micro font-semibold text-primary-foreground opacity-0 transition-all group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100"
+                    >
+                      添加
+                      <ArrowRight className="size-3" />
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {visible.length === 0 ? (
+                <p className="py-2 text-caption text-muted-foreground">没有匹配的品牌。</p>
+              ) : null}
+
+              {limit < filtered.length ? (
+                <>
+                  <div ref={sentinelRef} aria-hidden="true" className="h-px" />
+                  <div className="flex justify-center">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="rounded-full"
+                      onClick={() => setLimit((current) => Math.min(current + BRAND_PAGE_SIZE, filtered.length))}
+                    >
+                      显示更多
+                    </Button>
+                  </div>
+                </>
+              ) : null}
             </div>
           </div>
-        ) : null}
-        <Input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          aria-label="搜索官方设计体系"
-          placeholder="搜索官方设计体系…"
-          className="h-9 shrink-0 text-body"
-        />
-        <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border">
-          {visible.map((system) => {
-            const checked = picked.includes(system.slug);
-            return (
-              <label key={system.slug} className={cn("flex min-w-0 cursor-pointer items-center gap-3 border-b px-3 py-2.5 last:border-b-0", !checked && full && "cursor-not-allowed opacity-50")}>
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  disabled={!checked && full}
-                  onChange={() => onToggle(system.slug)}
-                  aria-label={system.name}
-                  className="h-4 w-4 shrink-0 accent-primary"
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-body">{system.name}</span>
-                  <span className="block truncate text-caption text-muted-foreground">{system.category}{system.description ? ` · ${system.description}` : ""}</span>
-                </span>
-                {system.swatches.length > 0 ? (
-                  <span aria-hidden="true" className="flex shrink-0 gap-0.5">
-                    {system.swatches.slice(0, 4).map((swatch, index) => (
-                      <span key={`${swatch}-${index}`} className="size-3.5 rounded-full border" style={{ backgroundColor: swatch }} />
-                    ))}
-                  </span>
-                ) : null}
-              </label>
-            );
-          })}
-          {visible.length === 0 ? <p className="px-3 py-3 text-caption text-muted-foreground">没有匹配的官方体系。</p> : null}
-        </div>
-        <div className="flex shrink-0 justify-end">
-          <Button type="button" onClick={onClose}>完成</Button>
         </div>
       </DialogContent>
     </Dialog>
