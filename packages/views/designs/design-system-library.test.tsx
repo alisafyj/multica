@@ -34,17 +34,17 @@ vi.mock("../common/actor-avatar", () => ({
   ActorAvatar: () => <span data-testid="actor-avatar" />,
 }));
 
-import { DesignSystemLibrary, needsLightText, paletteFallbackSwatches } from "./design-system-library";
+import { DesignSystemLibrary, isLightHex, paletteFallbackSwatches } from "./design-system-library";
 
 describe("paletteFallbackSwatches", () => {
-  it("prints light text on dark swatches and dark text on light ones", () => {
-    expect(needsLightText("#141413")).toBe(true);
-    expect(needsLightText("#0071E3")).toBe(true);
-    expect(needsLightText("#F5F4ED")).toBe(false);
-    expect(needsLightText("#FFFFFF")).toBe(false);
-    expect(needsLightText("#fff")).toBe(false);
-    // Garbage never crashes the card; it just keeps dark text.
-    expect(needsLightText("not-a-colour")).toBe(false);
+  it("classifies swatch backgrounds with Open Design's isLightHex rule", () => {
+    expect(isLightHex("#141413")).toBe(false);
+    expect(isLightHex("#0071E3")).toBe(false);
+    expect(isLightHex("#F5F4ED")).toBe(true);
+    expect(isLightHex("#FFFFFF")).toBe(true);
+    // Anything that is not a six-digit hex counts as light — dark text wins.
+    expect(isLightHex("#fff")).toBe(true);
+    expect(isLightHex("not-a-colour")).toBe(true);
   });
 
   it("seeds four stable colour bands from the name, as Open Design does", () => {

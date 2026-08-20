@@ -398,18 +398,15 @@ const ALL_CATEGORIES = "__all__";
 
 
 /**
- * Whether a hex colour needs light text on top of it — the palette card prints
- * the hex on the swatch itself, as Open Design's kit view does.
+ * Open Design's isLightHex: anything that is not a six-digit hex counts as
+ * light, so the hex printed on the swatch stays dark-on-light by default.
  */
-export function needsLightText(hex: string): boolean {
-  const value = hex.replace("#", "");
-  const expanded = value.length === 3 ? value.split("").map((c) => c + c).join("") : value;
-  if (expanded.length < 6) return false;
-  const r = parseInt(expanded.slice(0, 2), 16);
-  const g = parseInt(expanded.slice(2, 4), 16);
-  const b = parseInt(expanded.slice(4, 6), 16);
-  if ([r, g, b].some(Number.isNaN)) return false;
-  return 0.299 * r + 0.587 * g + 0.114 * b < 140;
+export function isLightHex(hex: string): boolean {
+  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return true;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return r * 0.299 + g * 0.587 + b * 0.114 > 150;
 }
 
 /** The dark showcase lives beside the light one; the server composes both paths. */
@@ -431,7 +428,7 @@ function BuiltinKitModule({ system }: { system: BuiltinDesignSystemDetail }) {
   if (!src) return null;
   return (
     <section className="flex flex-col gap-2" aria-label="设计系统">
-      <h3 className="text-body font-medium">设计系统</h3>
+      <h3 className="text-caption font-semibold tracking-wide text-muted-foreground">设计系统</h3>
       <div className="overflow-hidden rounded-lg border">
         <div className="flex items-center justify-between gap-2 border-b bg-muted/30 px-2 py-1">
           <div className="flex items-center gap-0.5">
@@ -570,7 +567,7 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
 
       {data.identity ? (
         <section className="flex flex-col gap-2" aria-label="品牌标识">
-          <h3 className="text-body font-medium">品牌标识</h3>
+          <h3 className="text-caption font-semibold tracking-wide text-muted-foreground">品牌标识</h3>
           <p className="text-body leading-7 text-muted-foreground">{data.identity}</p>
         </section>
       ) : null}
@@ -578,7 +575,7 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
       {/* Bundled packages ship no logo asset, exactly as Open Design's kit
           view shows for them: an empty slot, never a guessed image. */}
       <section className="flex flex-col gap-2" aria-label="Logo">
-        <h3 className="text-body font-medium">Logo</h3>
+        <h3 className="text-caption font-semibold tracking-wide text-muted-foreground">Logo</h3>
         <div className="flex h-24 items-center justify-center rounded-lg border border-dashed text-caption text-muted-foreground">
           暂无 Logo
         </div>
@@ -586,30 +583,44 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
 
       {fonts.length > 0 ? (
         <section className="flex flex-col gap-3" aria-label="字体排版">
-          <h3 className="text-body font-medium">字体排版</h3>
-          <div className="grid grid-cols-3 gap-2">
+          <h3 className="text-caption font-semibold tracking-wide text-muted-foreground">字体排版</h3>
+          {/* Open Design's fontTiles: auto-fill cards ≥140px, an Ag specimen
+              area 104px tall at 52px on the page background, name and role in
+              the panel footer. */}
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
             {fonts.map((font) => (
-              <div key={font.role} className="flex flex-col items-center gap-1 rounded-lg border px-2 py-3 text-center">
-                <span className="text-title leading-none" style={{ fontFamily: font.family }}>Ag</span>
-                <span className="mt-1 line-clamp-2 w-full break-words text-caption leading-4">{font.family}</span>
-                <span className="text-micro uppercase tracking-wide text-muted-foreground">{font.role}</span>
+              <div key={font.role} className="overflow-hidden rounded-lg border bg-card">
+                <div
+                  className="flex h-[104px] items-center justify-center bg-background text-[52px] leading-none text-foreground"
+                  style={{ fontFamily: font.family }}
+                >
+                  Ag
+                </div>
+                <div className="px-3 pb-2.5 pt-2">
+                  <span className="block break-words text-caption font-semibold leading-tight">{font.family}</span>
+                  <span className="mt-px block text-micro uppercase tracking-wider text-muted-foreground">{font.role}</span>
+                </div>
               </div>
             ))}
           </div>
-          <div className="flex flex-col gap-2.5">
+          {/* fontList: one specimen row per role — the role tag and family on
+              a baseline, then the sample at 32px, single line, ellipsised. */}
+          <div className="flex flex-col gap-3.5">
             {fonts.map((font) => (
-              <div key={font.role} className="min-w-0">
-                <p className="text-micro text-muted-foreground">
-                  <span className="uppercase tracking-wide">{font.role}</span>
-                  <span className="ml-1.5 font-medium text-foreground">{font.family}</span>
-                  {weights ? <span> · {weights}</span> : null}
+              <div key={font.role} className="flex min-w-0 flex-col gap-2">
+                <p className="flex min-w-0 items-baseline gap-2.5">
+                  <span className="shrink-0 text-micro font-semibold uppercase tracking-wide text-muted-foreground">{font.role}</span>
+                  <span className="min-w-0 truncate text-caption font-semibold">
+                    {font.family}
+                    {weights ? <span className="font-medium text-muted-foreground"> · {weights}</span> : null}
+                  </span>
                 </p>
-                <p
-                  className={cn("truncate leading-tight", font.role === "Mono" ? "text-title" : "text-display")}
+                <span
+                  className="truncate text-[32px] leading-[1.2] text-foreground"
                   style={{ fontFamily: font.family }}
                 >
                   {font.sample}
-                </p>
+                </span>
               </div>
             ))}
           </div>
@@ -617,30 +628,29 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
       ) : null}
 
       {data.palette.length > 0 ? (
-        <section className="flex flex-col gap-2" aria-label="调色板">
-          <h3 className="text-body font-medium">调色板</h3>
-          {/* Open Design's swatch card: the hex printed on the colour itself,
-              then the name, the inferred role line, and the full usage note. */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6">
+        <section className="flex flex-col gap-3" aria-label="调色板">
+          <h3 className="text-caption font-semibold tracking-wide text-muted-foreground">调色板</h3>
+          {/* Open Design's paletteGrid: auto-fill swatch cards ≥150px; the
+              84px chip prints the hex bottom-left with its own contrast rule,
+              then name, role line and the full usage note in the body. */}
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
             {data.palette.map((entry) => (
-              <div key={`${entry.name}-${entry.value}`} className="flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card">
-                <span className="relative block h-20 w-full border-b" style={{ background: entry.value }}>
+              <div key={`${entry.name}-${entry.value}`} className="min-w-0 overflow-hidden rounded-lg border bg-card">
+                <span className="flex h-[84px] items-end p-2" style={{ background: entry.value }}>
                   <span
-                    className={cn(
-                      "absolute bottom-2 left-2.5 font-mono text-caption",
-                      needsLightText(entry.value) ? "text-white/90" : "text-black/70",
-                    )}
+                    className="font-mono text-micro uppercase tabular-nums"
+                    style={{ color: isLightHex(entry.value) ? "rgba(0,0,0,.65)" : "rgba(255,255,255,.9)" }}
                   >
                     {entry.value}
                   </span>
                 </span>
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5 p-2.5">
-                  <span className="break-words text-body font-medium leading-5">{entry.name}</span>
+                <span className="flex min-w-0 flex-col gap-0.5 px-3 pb-3 pt-2">
+                  <span className="break-words text-caption font-semibold leading-tight">{entry.name}</span>
                   {entry.role ? (
-                    <span className="truncate text-caption lowercase text-muted-foreground">{entry.role}</span>
+                    <span className="truncate text-micro lowercase text-muted-foreground">{entry.role}</span>
                   ) : null}
                   {entry.usage ? (
-                    <span className="mt-1 break-words text-caption leading-5 text-muted-foreground">{entry.usage}</span>
+                    <span className="mt-1 break-words text-micro leading-relaxed text-muted-foreground">{entry.usage}</span>
                   ) : null}
                 </span>
               </div>
@@ -651,7 +661,7 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
 
       {data.layout_guidelines.length > 0 ? (
         <section className="flex flex-col gap-2" aria-label="图像与布局">
-          <h3 className="text-body font-medium">图像与布局</h3>
+          <h3 className="text-caption font-semibold tracking-wide text-muted-foreground">图像与布局</h3>
           <p className="text-caption text-muted-foreground">布局准则</p>
           <ul className="list-disc space-y-1 pl-5 text-body leading-6">
             {data.layout_guidelines.map((guideline) => (
@@ -665,7 +675,7 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
 
       {data.artifacts.length > 0 ? (
         <section className="flex flex-col gap-2" aria-label="设计系统素材">
-          <h3 className="text-body font-medium">设计系统素材</h3>
+          <h3 className="text-caption font-semibold tracking-wide text-muted-foreground">设计系统素材</h3>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-4">
             {data.artifacts.map((artifact) => (
               <BuiltinArtifactCard key={artifact.id} artifact={artifact} systemName={data.name || slug} />
