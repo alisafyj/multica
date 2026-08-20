@@ -2,48 +2,40 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { designScenarioRecipeListOptions } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import type { DesignScenarioRecipe } from "@multica/core/types";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@multica/ui/components/ui/dropdown-menu";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { DesignFilterPill } from "./design-filter-pill";
+import { RecipePreview } from "./design-recipe-gallery";
 
 // Sentinel for "no category picked". Recipe categories are free-form server
 // strings, so no real value can be reserved for it.
 const ALL_CATEGORIES = "__all__";
 
-/**
- * Card media. Recipes rarely ship a preview image, so the fallback is a
- * composed tile rather than an empty frame that would read as a failed load.
- */
-function ExampleThumb({ recipe }: { recipe: DesignScenarioRecipe }) {
-  if (recipe.preview_path) {
-    return (
-      <div className="aspect-[16/10] overflow-hidden bg-muted/40">
-        <img src={recipe.preview_path} alt="" loading="lazy" className="size-full object-cover" />
-      </div>
-    );
-  }
-  return (
-    <div className="relative aspect-[16/10] overflow-hidden bg-muted/40">
-      <div className="absolute inset-3 rounded-lg border bg-background p-2.5 shadow-sm">
-        <span className="block h-1.5 w-2/5 rounded-full bg-primary/30" />
-        <span className="mt-1.5 block h-1.5 w-3/4 rounded-full bg-muted" />
-        <span className="mt-2.5 block h-8 rounded-md bg-muted/80" />
-      </div>
-    </div>
-  );
-}
+/** Categories shown as pills before the rest fold into 更多, as Open Design's
+ *  home does — the catalogue carries 20+ and a full pill cloud buries the
+ *  cards it filters. */
+const VISIBLE_CATEGORY_COUNT = 6;
 
 /**
- * Example prompts on the create panel. Every card is a published catalogue
- * recipe — the same data the community tab shows — so picking one seeds the
- * brief exactly as the gallery's "填入首页" does, without a second round trip.
+ * Example prompts on the create panel — Open Design's 示例提示词 wall. Every
+ * card is a published catalogue recipe, the same data the community tab shows,
+ * rendered with the community card's own live preview so the wall shows what
+ * the recipe actually produces. Picking one seeds the brief exactly as the
+ * gallery's "填入首页" does, without a second round trip.
  *
  * The category row is built from the catalogue's own categories rather than a
  * fixed list: a hard-coded taxonomy would render filters that match nothing
- * the moment the catalogue says something else.
+ * the moment the catalogue says something else. The first few render as
+ * pills; the rest fold into 更多.
  */
 export function DesignExamplePrompts({
   onUse,
@@ -69,6 +61,14 @@ export function DesignExamplePrompts({
     ? recipes
     : recipes.filter((recipe) => recipe.category === activeCategory);
 
+  const pillCategories = categories.slice(0, VISIBLE_CATEGORY_COUNT);
+  // The active category always renders as a pill, even when it lives in the
+  // folded tail — a filter that hides its own selection reads as "no filter".
+  if (activeCategory !== ALL_CATEGORIES && !pillCategories.includes(activeCategory)) {
+    pillCategories.push(activeCategory);
+  }
+  const foldedCategories = categories.filter((item) => !pillCategories.includes(item));
+
   if (!isLoading && recipes.length === 0) return null;
 
   return (
@@ -88,9 +88,9 @@ export function DesignExamplePrompts({
       </div>
 
       {isLoading ? (
-        <div className="mt-3 flex gap-3 overflow-hidden">
-          {Array.from({ length: 4 }).map((_, index) => (
-            <Skeleton key={index} className="h-40 w-52 shrink-0 rounded-xl" />
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Skeleton key={index} className="h-44 rounded-xl" />
           ))}
         </div>
       ) : (
@@ -102,7 +102,7 @@ export function DesignExamplePrompts({
                 selected={activeCategory === ALL_CATEGORIES}
                 onClick={() => setCategory(ALL_CATEGORIES)}
               />
-              {categories.map((item) => (
+              {pillCategories.map((item) => (
                 <DesignFilterPill
                   key={item}
                   label={item}
@@ -110,19 +110,42 @@ export function DesignExamplePrompts({
                   onClick={() => setCategory(item)}
                 />
               ))}
+              {foldedCategories.length > 0 ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label={`更多分类，另有 ${foldedCategories.length} 项`}
+                        className="flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-full border bg-card px-2.5 text-caption text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      >
+                        <span>更多</span>
+                        <ChevronDown className="size-3.5 shrink-0" />
+                      </button>
+                    }
+                  />
+                  <DropdownMenuContent align="start" className="max-h-72 w-48 overflow-y-auto">
+                    {foldedCategories.map((item) => (
+                      <DropdownMenuItem key={item} onClick={() => setCategory(item)}>
+                        <span className="truncate">{item}</span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
             </div>
           ) : null}
 
-          <div className="-mx-1 mt-3 flex snap-x gap-3 overflow-x-auto px-1 pb-2">
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {visible.map((recipe) => (
               <button
                 key={recipe.slug}
                 type="button"
                 onClick={() => onUse(recipe)}
                 title={recipe.summary || recipe.title}
-                className="flex w-52 shrink-0 snap-start cursor-pointer flex-col overflow-hidden rounded-xl border bg-card text-left transition-colors hover:border-primary/50"
+                className="group/recipe flex min-w-0 cursor-pointer flex-col overflow-hidden rounded-xl border bg-card text-left transition-colors hover:border-primary/50"
               >
-                <ExampleThumb recipe={recipe} />
+                <RecipePreview recipe={recipe} />
                 <span className="min-w-0 px-3 py-2.5">
                   <span className="block truncate text-caption font-medium">
                     {recipe.title || recipe.slug}

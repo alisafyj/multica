@@ -197,7 +197,7 @@ function uniqueInOrder(values: string[]): string[] {
  * (`assets/deck-stage.js`), and only a directory URL resolves them under the
  * same route.
  */
-function RecipePreview({ recipe }: { recipe: DesignScenarioRecipe }) {
+export function RecipePreview({ recipe }: { recipe: DesignScenarioRecipe }) {
   const { icon: ModeIcon, label: modeLabel } = modeVisual(recipe.mode);
   const facets = [recipe.category, recipe.subcategory].filter(Boolean).join(" · ");
   const previewUrl = recipe.preview_kind && recipe.preview_url ? `${api.getBaseUrl()}${recipe.preview_url}` : "";

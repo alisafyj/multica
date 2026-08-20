@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const navigate = vi.hoisted(() => vi.fn());
 const {
   createDesignDocument,
   listAgents,
@@ -17,6 +18,8 @@ const {
   toastError,
   toastSuccess,
   uploadFile,
+  createChatSession,
+  sendChatMessage,
 } = vi.hoisted(() => ({
   createDesignDocument: vi.fn(),
   listAgents: vi.fn(),
@@ -30,11 +33,15 @@ const {
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
   uploadFile: vi.fn(),
+  createChatSession: vi.fn(),
+  sendChatMessage: vi.fn(),
 }));
 
 vi.mock("@multica/core/api", () => ({
   api: {
     createDesignDocument,
+    createChatSession,
+    sendChatMessage,
     listAgents,
     listDesignDocuments,
     listDesignScenarioRecipes,
@@ -53,6 +60,17 @@ vi.mock("@multica/core/hooks", () => ({
 
 vi.mock("sonner", () => ({
   toast: { error: toastError, success: toastSuccess },
+}));
+
+vi.mock("../navigation", () => ({
+  useNavigation: () => ({ push: navigate }),
+}));
+
+vi.mock("@multica/core/paths", () => ({
+  useWorkspacePaths: () => ({
+    designs: () => "/acme/designs",
+    chatSession: (id: string) => `/acme/chat/${id}`,
+  }),
 }));
 
 // Avatars resolve names through workspace providers this composer test does
@@ -170,6 +188,9 @@ describe("DesignTaskComposer", () => {
     listProjects.mockReset();
     toastError.mockReset();
     toastSuccess.mockReset();
+    createChatSession.mockReset();
+    sendChatMessage.mockReset();
+    navigate.mockReset();
     listProjectDesignSystemCatalogue.mockReset();
     listBuiltinDesignSystems.mockReset();
     listProjectDesignSystemCatalogue.mockResolvedValue({
@@ -256,7 +277,6 @@ describe("DesignTaskComposer", () => {
     await user.type(screen.getByLabelText("页面需求描述"), "客户列表页");
     await user.upload(screen.getByLabelText("上传参考文件"), new File(["png"], "home.png", { type: "image/png" }));
     expect(await screen.findByText("home.png")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "添加参考文件" })).toHaveTextContent("参考文件 1");
 
     await user.click(screen.getByRole("button", { name: "生成页面设计" }));
     await waitFor(() => expect(createDesignDocument).toHaveBeenCalledTimes(1));
@@ -301,7 +321,7 @@ describe("DesignTaskComposer", () => {
     expect(screen.getByRole("button", { name: "实时看板（即将支持）" })).toBeDisabled();
 
     await user.click(slides);
-    expect(screen.getByRole("button", { name: "UI Mockup" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "原型" })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("sends the community entry to the gallery instead of arming a recipe", async () => {
@@ -369,6 +389,48 @@ describe("DesignTaskComposer", () => {
       expect.objectContaining({ builtin_design_system: "agentic" }),
     ));
     expect(createDesignDocument.mock.calls[0]?.[0]).not.toHaveProperty("design_system_id");
+  });
+
+  // Open Design's composer modes: 提问 and 规划 hand the prompt to an agent
+  // chat instead of creating a design document.
+  it("提问 mode starts an agent chat with the prompt and never creates a document", async () => {
+    const user = userEvent.setup();
+    createChatSession.mockResolvedValue({ id: "chat-1" });
+    sendChatMessage.mockResolvedValue({});
+    renderComposer();
+
+    await pickAgent(user);
+    await user.type(screen.getByLabelText("页面需求描述"), "这个布局有什么可改进的？");
+
+    await user.click(screen.getByRole("button", { name: "创作模式" }));
+    await user.click(await screen.findByRole("menuitem", { name: /提问/ }));
+    // Design-only settings leave the row; no project is required.
+    expect(screen.queryByRole("button", { name: "项目" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "发送提问" }));
+    await waitFor(() => expect(createChatSession).toHaveBeenCalledWith(expect.objectContaining({ agent_id: "agent-1" })));
+    expect(sendChatMessage).toHaveBeenCalledWith("chat-1", "这个布局有什么可改进的？", []);
+    expect(createDesignDocument).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith("/acme/chat/chat-1");
+  });
+
+  it("规划 mode wraps the prompt in the planning instruction", async () => {
+    const user = userEvent.setup();
+    createChatSession.mockResolvedValue({ id: "chat-2" });
+    sendChatMessage.mockResolvedValue({});
+    renderComposer();
+
+    await pickAgent(user);
+    await user.type(screen.getByLabelText("页面需求描述"), "会员中心改版");
+    await user.click(screen.getByRole("button", { name: "创作模式" }));
+    await user.click(await screen.findByRole("menuitem", { name: /规划/ }));
+    await user.click(screen.getByRole("button", { name: "生成规划" }));
+
+    await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(1));
+    const content = sendChatMessage.mock.calls[0]?.[1] as string;
+    expect(content).toContain("设计规划");
+    expect(content).toContain("会员中心改版");
+    expect(navigate).toHaveBeenCalledWith("/acme/chat/chat-2");
   });
 
   it("seeds the brief from an example prompt and sends that recipe", async () => {

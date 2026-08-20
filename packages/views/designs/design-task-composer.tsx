@@ -4,9 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AppWindow,
+  ArrowUp,
   AudioLines,
   Bot,
   ChartColumn,
+  Check,
   ChevronDown,
   CircleDashed,
   FileCode,
@@ -17,10 +19,13 @@ import {
   Image as ImageIcon,
   ListTodo,
   LoaderCircle,
+  Map as MapIcon,
+  MessageCircleQuestion,
   Monitor,
   Palette,
   PanelsTopLeft,
   Paperclip,
+  Plus,
   Presentation,
   Smartphone,
   Sparkles,
@@ -41,6 +46,7 @@ import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { projectOpenIssuesOptions } from "@multica/core/issues/queries";
 import { projectResourcesOptions } from "@multica/core/projects";
 import { projectListOptions } from "@multica/core/projects/queries";
+import { useWorkspacePaths } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import type {
   Agent,
@@ -63,6 +69,7 @@ import {
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
 import { ActorAvatar } from "../common/actor-avatar";
+import { useNavigation } from "../navigation";
 import {
   PickerEmpty,
   PickerItem,
@@ -93,7 +100,7 @@ const CREATE_TYPES: ReadonlyArray<{
   description: string;
   icon: typeof AppWindow;
 }> = [
-  { id: "ui-mockup", recipe: "ui-mockup", label: "UI Mockup", description: "可交互的应用界面稿", icon: AppWindow },
+  { id: "ui-mockup", recipe: "ui-mockup", label: "原型", description: "可交互的应用界面稿", icon: AppWindow },
   { id: "deck", label: "幻灯片", description: "成套的演示页面", icon: Presentation },
   { id: "wireframe", recipe: "wireframe", label: "线框图", description: "低保真的页面与流程", icon: PanelsTopLeft },
   { id: "mobile-app", recipe: "mobile-app", label: "移动应用", description: "iOS 与 Android 界面", icon: Smartphone },
@@ -116,6 +123,39 @@ export const PLATFORM_OPTIONS: ReadonlyArray<{
   { value: "mobile", label: "移动端" },
   { value: "cross_platform", label: "跨端" },
 ];
+
+/**
+ * Open Design's composer modes. 设计 is the artifact path this composer has
+ * always been; 规划 and 提问 hand the prompt to an agent CHAT instead — a
+ * planning conversation whose output the user brings back here, or a plain
+ * question that must not create a design document at all.
+ */
+type ComposerMode = "design" | "plan" | "ask";
+
+const COMPOSER_MODES: ReadonlyArray<{
+  id: ComposerMode;
+  label: string;
+  description: string;
+  icon: typeof Sparkles;
+}> = [
+  { id: "plan", label: "规划", description: "先和智能体产出可编辑的规划，确认后再回到这里生成设计稿。", icon: MapIcon },
+  { id: "design", label: "设计", description: "创建具体的设计产物：页面原型、线框图、移动应用界面等。", icon: Sparkles },
+  { id: "ask", label: "提问", description: "快速问答、修改建议和讨论，不产出新的设计稿。", icon: MessageCircleQuestion },
+];
+
+/**
+ * The planning instruction 规划 mode wraps around the user's words. Ends by
+ * asking for a ready-to-paste 需求描述, which is the honest bridge back to
+ * 设计 mode until a structured plan-to-generate hand-off exists.
+ */
+export function planInstruction(brief: string): string {
+  return [
+    "请为下面的设计需求产出一份可讨论、可修改的设计规划，包含：目标与受众、页面清单、关键流程、需要覆盖的状态与边界情况、开放问题。",
+    "最后单独给出一段可以直接粘贴到设计稿需求描述里的最终版本。",
+    "",
+    brief,
+  ].join("\n");
+}
 
 // Mirrors `designDocumentMaxBriefBytes` on the server. Counted in characters
 // here, so a Chinese brief hits this well before the byte limit — the point is
@@ -792,6 +832,9 @@ export function DesignTaskComposer({
 }) {
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
+  const navigation = useNavigation();
+  const paths = useWorkspacePaths();
+  const [mode, setMode] = useState<ComposerMode>("design");
   const [brief, setBrief] = useState("");
   // Widened past the built-in chips on purpose: a community recipe contributes
   // its slug here, and the server validates it against the catalogue.
@@ -832,6 +875,9 @@ export function DesignTaskComposer({
   // the recipe the user chose. The gallery and the example rail hand over the
   // same shape, so they share this path.
   const applyRecipe = useCallback((picked: DesignScenarioRecipe) => {
+    // A recipe is a design-mode artifact; applying one while asking or
+    // planning is a mode switch, not a dead click.
+    setMode("design");
     setRecipe(picked.slug);
     setAppliedRecipe(picked);
     setBrief(picked.prompt);
@@ -902,18 +948,43 @@ export function DesignTaskComposer({
       toast.error(error instanceof Error ? error.message : "创建页面设计任务失败"),
   });
 
-  const missingRequirement = !projectId
+  // 规划 / 提问 hand the prompt to an agent chat: the session opens, the
+  // first message is sent, and the composer navigates into the conversation.
+  const startChat = useMutation({
+    mutationFn: async () => {
+      const session = await api.createChatSession({
+        agent_id: agentId,
+        title: trimmedBrief.slice(0, 60),
+        ...(projectId ? { project_id: projectId } : {}),
+      });
+      const content = mode === "plan" ? planInstruction(trimmedBrief) : trimmedBrief;
+      await api.sendChatMessage(session.id, content, attachments.map((item) => item.id));
+      return session;
+    },
+    onSuccess: (session) => {
+      setBrief("");
+      setAttachments([]);
+      navigation.push(paths.chatSession(session.id));
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "发起对话失败"),
+  });
+
+  const missingRequirement = mode === "design" && !projectId
     ? "请选择项目"
     : !agentId
       ? "请选择智能体"
       : !trimmedBrief
-        ? "请描述你想要的页面"
+        ? (mode === "ask" ? "请输入你的问题" : mode === "plan" ? "请描述要规划的内容" : "请描述你想要的页面")
         : briefTooLong
           ? `需求描述超出 ${BRIEF_MAX_LENGTH} 字上限`
           : uploading
             ? "参考文件上传中"
             : "";
-  const canSubmit = !missingRequirement && !createDocument.isPending;
+  const submitPending = createDocument.isPending || startChat.isPending;
+  const canSubmit = !missingRequirement && !submitPending;
+  const activeMode = COMPOSER_MODES.find((item) => item.id === mode) ?? COMPOSER_MODES[1]!;
+  const submitLabel = mode === "design" ? "生成页面设计" : mode === "plan" ? "生成规划" : "发送提问";
 
   return (
     <div className="relative min-h-0 flex-1 overflow-y-auto">
@@ -926,7 +997,9 @@ export function DesignTaskComposer({
           recipe={recipe}
           onPick={(picked) => {
             // A built-in chip and a catalogue recipe are the same field, so
-            // picking one has to drop the other.
+            // picking one has to drop the other. Scenario chips are design
+            // artifacts, so picking one in 规划/提问 switches back to 设计.
+            setMode("design");
             setAppliedRecipe(null);
             setRecipe((current) => (current === picked ? "default" : picked));
           }}
@@ -973,60 +1046,115 @@ export function DesignTaskComposer({
                 event.target.value = "";
               }}
             />
-            <button
-              type="button"
-              aria-label="添加参考文件"
-              title={attachments.length >= MAX_ATTACHMENTS ? `最多 ${MAX_ATTACHMENTS} 个参考文件` : "添加参考文件（截图、PDF、文本）"}
-              disabled={uploading || attachments.length >= MAX_ATTACHMENTS}
-              onClick={() => fileInputRef.current?.click()}
-              className={cn(
-                "flex min-w-0 cursor-pointer items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-caption transition-colors hover:bg-accent",
-                "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-card",
-                attachments.length > 0 ? "text-foreground" : "text-muted-foreground",
-              )}
-            >
-              {uploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Paperclip className="size-3.5" />}
-              <span className="truncate">{attachments.length > 0 ? `参考文件 ${attachments.length}` : "参考文件"}</span>
-            </button>
-            <ProjectPicker
-              projectId={projectId || null}
-              onUpdate={(updates) => setProjectId(updates.project_id ?? "")}
-              align="start"
-              triggerRender={<SettingTrigger filled={!!selectedProject} aria-label="项目" />}
-            />
-            <RepositorySetting
-              repositories={repositories}
-              repositoryId={activeRepositoryId}
-              disabled={!projectId}
-              onChange={setRepositoryId}
-            />
-            <IssueSetting
-              issues={issues}
-              issueId={activeIssueId}
-              disabled={!projectId}
-              onChange={setIssueId}
-            />
-            <DesignSystemSetting
-              workspaceSystems={workspaceSystems}
-              builtinSystems={builtinSystems}
-              designSystemId={designSystemId}
-              builtinSlug={builtinSlug}
-              onChange={(selection) => {
-                setDesignSystemId(selection.designSystemId);
-                setBuiltinSlug(selection.builtinSlug);
-              }}
-            />
-            <PlatformSetting platform={platform} onChange={setPlatform} />
+            {/* Open Design's + menu: attach lives here rather than as its
+                own chip, alongside the shortcuts that have a real producer. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="添加"
+                    title="添加"
+                    className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  >
+                    {uploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Plus className="size-4" />}
+                  </button>
+                }
+              />
+              <DropdownMenuContent align="start" className="w-56">
+                <DropdownMenuItem
+                  disabled={uploading || attachments.length >= MAX_ATTACHMENTS}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Paperclip className="size-4" />
+                  <span className="flex-1 truncate">附加文件</span>
+                  {attachments.length > 0 ? (
+                    <span className="shrink-0 text-caption text-muted-foreground">{attachments.length}/{MAX_ATTACHMENTS}</span>
+                  ) : null}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setMode("design");
+                    setAppliedRecipe(null);
+                    setRecipe("figma-migration");
+                  }}
+                >
+                  <Frame className="size-4" />
+                  <span className="flex-1 truncate">从 Figma 导入</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {mode === "design" ? (
+              <>
+                <ProjectPicker
+                  projectId={projectId || null}
+                  onUpdate={(updates) => setProjectId(updates.project_id ?? "")}
+                  align="start"
+                  triggerRender={<SettingTrigger filled={!!selectedProject} aria-label="项目" />}
+                />
+                <RepositorySetting
+                  repositories={repositories}
+                  repositoryId={activeRepositoryId}
+                  disabled={!projectId}
+                  onChange={setRepositoryId}
+                />
+                <IssueSetting
+                  issues={issues}
+                  issueId={activeIssueId}
+                  disabled={!projectId}
+                  onChange={setIssueId}
+                />
+                <DesignSystemSetting
+                  workspaceSystems={workspaceSystems}
+                  builtinSystems={builtinSystems}
+                  designSystemId={designSystemId}
+                  builtinSlug={builtinSlug}
+                  onChange={(selection) => {
+                    setDesignSystemId(selection.designSystemId);
+                    setBuiltinSlug(selection.builtinSlug);
+                  }}
+                />
+                <PlatformSetting platform={platform} onChange={setPlatform} />
+              </>
+            ) : null}
             <div className="ml-auto flex min-w-0 items-center gap-2">
+              {/* Open Design's mode chip: 规划 / 设计 / 提问, each with its
+                  own submission path. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={<SettingTrigger filled aria-label="创作模式" />}
+                >
+                  <activeMode.icon className="size-3.5 shrink-0" />
+                  <span className="truncate">{activeMode.label}</span>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-80">
+                  {COMPOSER_MODES.map((item) => (
+                    <DropdownMenuItem key={item.id} className="items-start gap-2 py-2" onClick={() => setMode(item.id)}>
+                      <item.icon className="mt-0.5 size-4 shrink-0" />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center justify-between gap-2 text-body font-medium">
+                          {item.label}
+                          {item.id === mode ? <Check className="size-3.5 shrink-0" /> : null}
+                        </span>
+                        <span className="mt-0.5 block text-caption leading-5 text-muted-foreground">{item.description}</span>
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
               <AgentSetting agents={agents} agentId={agentId} onChange={setAgentId} />
+              {/* Open Design's round ↑ submit. The accessible name carries
+                  what submission means in the current mode. */}
               <Button
                 type="button"
-                size="sm"
-                className="shrink-0"
+                size="icon-sm"
+                aria-label={submitLabel}
+                title={submitLabel}
+                className="size-8 shrink-0 rounded-full"
                 disabled={!canSubmit}
-                onClick={() => createDocument.mutate()}
+                onClick={() => (mode === "design" ? createDocument.mutate() : startChat.mutate())}
               >
-                {createDocument.isPending ? "创建中…" : "生成页面设计"}
+                {submitPending ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
               </Button>
             </div>
           </div>
@@ -1036,7 +1164,7 @@ export function DesignTaskComposer({
           {/* Says which field is still missing instead of leaving a dead
               button — "disabled" on its own does not point anywhere. */}
           <p role="status" className="text-caption text-muted-foreground">
-            {createDocument.isPending ? "" : missingRequirement}
+            {submitPending ? "" : missingRequirement}
           </p>
           <p
             className={cn(
@@ -1077,14 +1205,22 @@ export function DesignTaskComposer({
         {/* DC-053: no repository is a legitimate way to work, so this reads as
             a statement of what will happen, never as a warning. What it must
             never do is leave the user believing the agent read code. */}
-        <p className="mt-3 text-caption text-muted-foreground">
-          {activeRepositoryId
-            ? "已选择仓库：智能体会在任务内对该仓库做一次有界只读取证。"
-            : "未选择仓库：本次不读取任何代码仓库，智能体只依据你的描述与关联任务生成。"}
-          {designSystemId || builtinSlug
-            ? "设计体系已指定：本次按你选中的体系设计，不使用项目自己的体系。"
-            : "设计体系未指定：沿用所选仓库或项目自己的设计体系。"}
-        </p>
+        {mode === "design" ? (
+          <p className="mt-3 text-caption text-muted-foreground">
+            {activeRepositoryId
+              ? "已选择仓库：智能体会在任务内对该仓库做一次有界只读取证。"
+              : "未选择仓库：本次不读取任何代码仓库，智能体只依据你的描述与关联任务生成。"}
+            {designSystemId || builtinSlug
+              ? "设计体系已指定：本次按你选中的体系设计，不使用项目自己的体系。"
+              : "设计体系未指定：沿用所选仓库或项目自己的设计体系。"}
+          </p>
+        ) : (
+          <p className="mt-3 text-caption text-muted-foreground">
+            {mode === "plan"
+              ? "规划会以对话进行：智能体产出可修改的设计规划，最终的需求描述可以带回这里生成设计稿。"
+              : "提问会以对话进行，不创建新的设计稿。"}
+          </p>
+        )}
 
         <DesignExamplePrompts onUse={applyRecipe} onBrowseRecipes={onBrowseRecipes} />
         <DesignRecentDocuments onOpenDocument={onOpenDocument} />

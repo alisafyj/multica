@@ -1550,6 +1550,13 @@ const DesignDocumentPreviewTargetSchema = z.object({
   path: z.string().catch("").default(""),
 }).loose();
 
+const DesignDocumentFileSchema = z.object({
+  path: z.string().catch("").default(""),
+  role: z.string().catch("").default(""),
+  media_type: z.string().catch("").default(""),
+  size_bytes: z.number().catch(0).default(0),
+}).loose();
+
 export const DesignDocumentRevisionSchema = z.object({
   ...DesignDocumentRevisionSummaryShape,
   brief: z.unknown().transform((value) => value ?? null),
@@ -1561,6 +1568,7 @@ export const DesignDocumentRevisionSchema = z.object({
   pages: z.array(DesignDocumentPageSchema).catch([]).default([]),
   flows: z.array(DesignDocumentFlowSchema).catch([]).default([]),
   preview_targets: z.array(DesignDocumentPreviewTargetSchema).catch([]).default([]),
+  files: z.array(DesignDocumentFileSchema).catch([]).default([]),
   resource_base_path: z.string().catch("").default(""),
   resource_access_token: z.string().catch("").default(""),
   resource_access_expires_at: z.string().catch("").default(""),
@@ -1589,6 +1597,7 @@ export const EMPTY_DESIGN_DOCUMENT_REVISION: DesignDocumentRevision = {
   pages: [],
   flows: [],
   preview_targets: [],
+  files: [],
   resource_base_path: "",
   resource_access_token: "",
   resource_access_expires_at: "",

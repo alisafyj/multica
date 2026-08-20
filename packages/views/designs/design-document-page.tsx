@@ -5,7 +5,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
   CircleAlert,
+  Code2,
   ExternalLink,
+  Eye,
   History,
   LoaderCircle,
   Maximize2,
@@ -17,6 +19,8 @@ import {
   Scan,
   Smartphone,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
@@ -65,6 +69,7 @@ import { useNavigation } from "../navigation";
 import { useTimeAgo } from "../i18n/use-time-ago";
 import { designDocumentStatusLabel } from "./design-document-card";
 import { DesignDocumentCritique, parseCritique } from "./design-document-critique";
+import { DesignDocumentSourceView } from "./design-document-source-view";
 import { AgentSetting } from "./design-task-composer";
 import { DesignTaskActivity, taskOperationLabel } from "./project-design-system-task-activity";
 
@@ -92,6 +97,10 @@ const VIEWPORTS: ReadonlyArray<{ id: PreviewViewport; label: string; width: numb
   { id: "desktop", label: "桌面", width: 1280, icon: Monitor },
   { id: "mobile", label: "移动", width: 390, icon: Smartphone },
 ];
+
+/** Zoom presets for the preview frame; index into ZOOM_LEVELS. */
+const ZOOM_LEVELS = [0.5, 0.75, 1, 1.25, 1.5] as const;
+const ZOOM_DEFAULT_INDEX = 2;
 
 /** The viewport a document opens in: a mobile design starts on a phone width. */
 function defaultViewport(platform: string): PreviewViewport {
@@ -265,6 +274,10 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
 
   const [viewport, setViewport] = useState<PreviewViewport | null>(null);
   const effectiveViewport = viewport ?? defaultViewport(document?.platform ?? "");
+  // Open Design's 预览/代码 toggle: the same revision, rendered or read.
+  const [viewMode, setViewMode] = useState<"preview" | "code">("preview");
+  const [zoomIndex, setZoomIndex] = useState(ZOOM_DEFAULT_INDEX);
+  const zoom = ZOOM_LEVELS[zoomIndex] ?? 1;
   const [reloadKey, setReloadKey] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
   useEffect(() => {
@@ -410,11 +423,34 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
     );
   }
 
+  const frameWidth = VIEWPORTS.find((option) => option.id === effectiveViewport)?.width ?? null;
   const previewFrame = (
     <div className={cn("relative flex min-h-0 flex-1 flex-col overflow-hidden", fullscreen ? "fixed inset-0 z-50 bg-background" : "rounded-lg border bg-muted/30")}>
       <div className="flex shrink-0 items-center gap-2 border-b bg-background px-2 py-1.5">
+        {/* Open Design's 预览/代码 segmented: the same revision, rendered or read. */}
+        <div role="group" aria-label="查看方式" className="flex shrink-0 items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5">
+          <button
+            type="button"
+            aria-pressed={viewMode === "preview"}
+            onClick={() => setViewMode("preview")}
+            className={cn("flex items-center gap-1 rounded-md px-2 py-0.5 text-caption", viewMode === "preview" ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+          >
+            <Eye className="h-3.5 w-3.5" />
+            预览
+          </button>
+          <button
+            type="button"
+            aria-pressed={viewMode === "code"}
+            disabled={!revision}
+            onClick={() => setViewMode("code")}
+            className={cn("flex items-center gap-1 rounded-md px-2 py-0.5 text-caption disabled:opacity-50", viewMode === "code" ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+          >
+            <Code2 className="h-3.5 w-3.5" />
+            代码
+          </button>
+        </div>
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" role="tablist" aria-label="页面">
-          {entries.map((entry) => (
+          {viewMode === "preview" ? entries.map((entry) => (
             <button
               key={entry.entry}
               type="button"
@@ -428,32 +464,54 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
             >
               {entry.title}
             </button>
-          ))}
-          {entries.length === 0 && !revisionQuery.isLoading ? <span className="px-2 text-caption text-muted-foreground">暂无可预览的页面</span> : null}
+          )) : (
+            <span className="px-2 text-caption text-muted-foreground">{revision ? `${revision.files.length} 个文件` : ""}</span>
+          )}
+          {viewMode === "preview" && entries.length === 0 && !revisionQuery.isLoading ? <span className="px-2 text-caption text-muted-foreground">暂无可预览的页面</span> : null}
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
-          {VIEWPORTS.map(({ id, label, icon: Icon }) => (
-            <Button
-              key={id}
-              type="button"
-              size="icon-sm"
-              variant="ghost"
-              title={label}
-              aria-label={label}
-              aria-pressed={effectiveViewport === id}
-              className={cn(effectiveViewport === id && "bg-accent text-foreground")}
-              onClick={() => setViewport(id)}
-            >
-              <Icon className="h-3.5 w-3.5" />
-            </Button>
-          ))}
-          <span className="mx-1 h-4 w-px bg-border" aria-hidden />
-          <Button type="button" size="icon-sm" variant="ghost" title="重新加载" aria-label="重新加载" onClick={() => setReloadKey((value) => value + 1)}>
-            <RotateCw className="h-3.5 w-3.5" />
-          </Button>
-          <Button type="button" size="icon-sm" variant="ghost" title="在新标签页中打开" aria-label="在新标签页中打开" disabled={!previewUrl} onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}>
-            <ExternalLink className="h-3.5 w-3.5" />
-          </Button>
+          {viewMode === "preview" ? (
+            <>
+              {VIEWPORTS.map(({ id, label, icon: Icon }) => (
+                <Button
+                  key={id}
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  title={label}
+                  aria-label={label}
+                  aria-pressed={effectiveViewport === id}
+                  className={cn(effectiveViewport === id && "bg-accent text-foreground")}
+                  onClick={() => setViewport(id)}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                </Button>
+              ))}
+              <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+              <Button type="button" size="icon-sm" variant="ghost" title="缩小" aria-label="缩小" disabled={zoomIndex === 0} onClick={() => setZoomIndex((index) => Math.max(0, index - 1))}>
+                <ZoomOut className="h-3.5 w-3.5" />
+              </Button>
+              <button
+                type="button"
+                title="恢复 100%"
+                aria-label={`缩放 ${Math.round(zoom * 100)}%，点击恢复 100%`}
+                className="min-w-11 rounded px-1 text-center text-micro tabular-nums text-muted-foreground hover:text-foreground"
+                onClick={() => setZoomIndex(ZOOM_DEFAULT_INDEX)}
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+              <Button type="button" size="icon-sm" variant="ghost" title="放大" aria-label="放大" disabled={zoomIndex === ZOOM_LEVELS.length - 1} onClick={() => setZoomIndex((index) => Math.min(ZOOM_LEVELS.length - 1, index + 1))}>
+                <ZoomIn className="h-3.5 w-3.5" />
+              </Button>
+              <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+              <Button type="button" size="icon-sm" variant="ghost" title="重新加载" aria-label="重新加载" onClick={() => setReloadKey((value) => value + 1)}>
+                <RotateCw className="h-3.5 w-3.5" />
+              </Button>
+              <Button type="button" size="icon-sm" variant="ghost" title="在新标签页中打开" aria-label="在新标签页中打开" disabled={!previewUrl} onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}>
+                <ExternalLink className="h-3.5 w-3.5" />
+              </Button>
+            </>
+          ) : null}
           <Button type="button" size="icon-sm" variant="ghost" title={fullscreen ? "退出全屏" : "全屏"} aria-label={fullscreen ? "退出全屏" : "全屏"} onClick={() => setFullscreen((value) => !value)}>
             {fullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
           </Button>
@@ -465,25 +523,45 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
           <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-caption" onClick={() => setPinnedRevisionId("")}>回到当前版本</Button>
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1 items-start justify-center overflow-auto p-3">
-        {revisionQuery.isLoading ? (
-          <Skeleton className="h-full min-h-64 w-full" />
-        ) : previewUrl ? (
-          <iframe
-            key={`${selectedRevisionId}:${shownEntry}:${reloadKey}`}
-            title={`${title} · ${shownPage?.title ?? "预览"}`}
-            src={previewUrl}
-            sandbox="allow-scripts"
-            referrerPolicy="no-referrer"
-            className="h-full min-h-[480px] rounded-md border bg-background shadow-sm"
-            style={{ width: VIEWPORTS.find((option) => option.id === effectiveViewport)?.width ?? "100%", maxWidth: "100%" }}
-          />
-        ) : (
-          <div className="flex h-full min-h-64 w-full flex-col items-center justify-center gap-2 text-center text-caption text-muted-foreground">
-            {status === "running" ? "智能体正在生成，完成并通过校验后这里会显示原型。" : status === "failed" ? "这次运行没有产出可用的原型。" : "还没有可预览的版本。"}
-          </div>
-        )}
-      </div>
+      {viewMode === "code" && revision ? (
+        <div className="min-h-0 flex-1">
+          <DesignDocumentSourceView key={revision.id} revision={revision} />
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 items-start justify-center overflow-auto p-3">
+          {revisionQuery.isLoading ? (
+            <Skeleton className="h-full min-h-64 w-full" />
+          ) : previewUrl ? (
+            // Zoom wrapper: the outer box takes the scaled footprint so the
+            // scroll area is honest, while the iframe keeps its full CSS width
+            // and is transform-scaled down/up inside it.
+            <div
+              className="h-full min-h-[480px]"
+              style={{ width: frameWidth ? frameWidth * zoom : `${100 * zoom}%`, maxWidth: zoom <= 1 ? "100%" : undefined }}
+            >
+              <iframe
+                key={`${selectedRevisionId}:${shownEntry}:${reloadKey}`}
+                title={`${title} · ${shownPage?.title ?? "预览"}`}
+                src={previewUrl}
+                sandbox="allow-scripts"
+                referrerPolicy="no-referrer"
+                className="rounded-md border bg-background shadow-sm"
+                style={{
+                  width: frameWidth ?? `${100 / zoom}%`,
+                  height: `${100 / zoom}%`,
+                  minHeight: 480 / zoom,
+                  transform: `scale(${zoom})`,
+                  transformOrigin: "top left",
+                }}
+              />
+            </div>
+          ) : (
+            <div className="flex h-full min-h-64 w-full flex-col items-center justify-center gap-2 text-center text-caption text-muted-foreground">
+              {status === "running" ? "智能体正在生成，完成并通过校验后这里会显示原型。" : status === "failed" ? "这次运行没有产出可用的原型。" : "还没有可预览的版本。"}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 

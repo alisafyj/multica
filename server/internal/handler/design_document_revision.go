@@ -75,6 +75,10 @@ type DesignDocumentRevisionResponse struct {
 	Pages          []designdocument.PageIndexEntry `json:"pages"`
 	Flows          []designdocument.FlowIndexEntry `json:"flows"`
 	PreviewTargets []designdocument.PreviewTarget  `json:"preview_targets"`
+	// Files is the package's artifact index, so the workspace can offer a
+	// source view and per-file download over the same capability route the
+	// preview frame already uses.
+	Files []designdocument.ArtifactIndexEntry `json:"files"`
 	// ResourceBasePath is the server-relative prefix under which the archive
 	// files are served; append a package path such as prototype/index.html.
 	ResourceBasePath        string `json:"resource_base_path"`
@@ -151,6 +155,7 @@ func (h *Handler) GetDesignDocumentRevision(w http.ResponseWriter, r *http.Reque
 		Pages:                                 manifest.Pages,
 		Flows:                                 manifest.Flows,
 		PreviewTargets:                        manifest.PreviewTargets,
+		Files:                                 manifest.Files,
 		ResourceBasePath: designDocumentPreviewResourceBasePath(
 			uuidToString(workspaceUUID), uuidToString(revision.ID), revision.ContentDigest, accessToken,
 		),
@@ -165,6 +170,9 @@ func (h *Handler) GetDesignDocumentRevision(w http.ResponseWriter, r *http.Reque
 	}
 	if response.PreviewTargets == nil {
 		response.PreviewTargets = []designdocument.PreviewTarget{}
+	}
+	if response.Files == nil {
+		response.Files = []designdocument.ArtifactIndexEntry{}
 	}
 	writeJSON(w, http.StatusOK, response)
 }

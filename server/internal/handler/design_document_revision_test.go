@@ -184,6 +184,11 @@ func TestGetDesignDocumentRevisionIssuesAPreviewCapability(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
+	// Files is the artifact index the workspace's source view reads; it must
+	// list the archive's paths and never be null.
+	if body.Files == nil || len(body.Files) == 0 || body.Files[0].Path == "" {
+		t.Fatalf("revision files = %#v, want the package's artifact index", body.Files)
+	}
 	if body.PrototypeEntry != "prototype/index.html" || len(body.PreviewTargets) == 0 || body.Pages == nil || body.Flows == nil {
 		t.Fatalf("manifest projections = %+v", body)
 	}

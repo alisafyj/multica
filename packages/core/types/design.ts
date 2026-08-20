@@ -862,6 +862,14 @@ export interface CreateDesignDraftAgentTaskResponse {
   status: string;
 }
 
+/** One archive file of a revision, from the package's artifact index. */
+export interface DesignDocumentFileEntry {
+  path: string;
+  role: string;
+  media_type: string;
+  size_bytes: number;
+}
+
 export interface DesignDocumentPreviewTarget {
   id: string;
   kind: string;
@@ -950,6 +958,8 @@ export interface DesignDocumentRevision extends DesignDocumentRevisionSummary {
   pages: DesignDocumentPage[];
   flows: DesignDocumentFlow[];
   preview_targets: DesignDocumentPreviewTarget[];
+  /** The package's artifact index: the source view and per-file download. */
+  files: DesignDocumentFileEntry[];
   /** Server-relative prefix; append a package path such as `prototype/index.html`. */
   resource_base_path: string;
   resource_access_token: string;

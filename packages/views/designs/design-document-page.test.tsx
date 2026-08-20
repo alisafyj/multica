@@ -144,6 +144,10 @@ function revision(overrides: Record<string, unknown> = {}) {
       { id: "prototype-index", kind: "prototype_entry", path: "prototype/index.html" },
       { id: "prototype-orders", kind: "prototype_page", path: "prototype/orders.html" },
     ],
+    files: [
+      { path: "prototype/index.html", role: "prototype_entry", media_type: "text/html", size_bytes: 2048 },
+      { path: "assets/logo.png", role: "asset", media_type: "image/png", size_bytes: 4096 },
+    ],
     resource_base_path: "/api/design-document-previews/ws-1/revision-2/bb/token/files",
     resource_access_token: "token",
     resource_access_expires_at: "2026-08-19T00:40:00Z",
@@ -239,6 +243,34 @@ describe("DesignDocumentPage", () => {
     // Only a revision that is not the draft offers to be brought back.
     expect(within(timeline).getAllByRole("button", { name: "回退到此版本" })).toHaveLength(1);
     expect(screen.getByText("未做仓库取证")).toBeInTheDocument();
+  });
+
+  // Open Design's 预览/代码 toggle: the same revision, rendered or read. The
+  // source view lists the package's artifact index and fetches text files
+  // over the capability route the preview frame already uses.
+  it("switches to the 代码 view, lists the package files and shows a file's source", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: async () => "<!doctype html><title>Orders</title>" });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      renderPage();
+      await screen.findByRole("tab", { name: "首页" });
+
+      await user.click(screen.getByRole("button", { name: "代码" }));
+      const filesNav = screen.getByRole("navigation", { name: "包内文件" });
+      expect(within(filesNav).getByText("prototype/index.html")).toBeInTheDocument();
+      expect(within(filesNav).getByText("assets/logo.png")).toBeInTheDocument();
+
+      // The prototype entry opens by default; its bytes render as source.
+      expect(await screen.findByLabelText("prototype/index.html 的源码")).toHaveTextContent("<!doctype html>");
+      expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("prototype/index.html"));
+
+      // Back to 预览 restores the page tabs.
+      await user.click(screen.getByRole("button", { name: "预览" }));
+      expect(screen.getByRole("tab", { name: "首页" })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("sends an adjustment scoped to the current page against the revision on screen", async () => {
