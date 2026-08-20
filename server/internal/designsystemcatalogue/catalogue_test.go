@@ -284,3 +284,46 @@ func TestPaletteParsesAcrossTheBundle(t *testing.T) {
 		t.Fatalf("only %d packages parse all seven foundations", complete)
 	}
 }
+
+// The brand packages parse through Open Design's own quirks, reproduced
+// deliberately: Claude's typography families come from the prose bullets whose
+// labels name a role (the reference renders exactly these strings), the
+// shared weight scale from the first weights line, and the palette role line
+// falls back to the lowercased label when no semantic role matches.
+func TestBrandPackagesParseLikeOpenDesign(t *testing.T) {
+	detail, ok, err := Get("claude")
+	if err != nil || !ok {
+		t.Fatalf("Get(claude) = ok:%v err:%v", ok, err)
+	}
+	if detail.Typography.Display != "Line-heights of 1.10" ||
+		detail.Typography.Body != "Most body text uses 1.60 line-height" ||
+		detail.Typography.Mono != "" {
+		t.Fatalf("typography = %+v", detail.Typography)
+	}
+	if len(detail.Typography.Weights) != 1 || detail.Typography.Weights[0] != "500" {
+		t.Fatalf("weights = %+v", detail.Typography.Weights)
+	}
+	if len(detail.Palette) != 12 {
+		t.Fatalf("palette has %d cards", len(detail.Palette))
+	}
+	first := detail.Palette[0]
+	if first.Name != "Anthropic Near Black" || first.Role != "anthropic near black" || first.Value != "#141413" ||
+		!strings.HasPrefix(first.Usage, "The primary text color") {
+		t.Fatalf("palette[0] = %+v", first)
+	}
+	roles := map[string]string{}
+	for _, entry := range detail.Palette {
+		roles[entry.Name] = entry.Role
+	}
+	for name, want := range map[string]string{
+		"Terracotta Brand": "accent",
+		"Error Crimson":    "danger",
+		"Dark Surface":     "surface",
+		"Focus Blue":       "focus blue",
+		"Parchment":        "parchment",
+	} {
+		if roles[name] != want {
+			t.Fatalf("role of %q = %q, want %q", name, roles[name], want)
+		}
+	}
+}

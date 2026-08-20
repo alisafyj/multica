@@ -397,6 +397,21 @@ function SystemListItem({
 const ALL_CATEGORIES = "__all__";
 
 
+/**
+ * Whether a hex colour needs light text on top of it — the palette card prints
+ * the hex on the swatch itself, as Open Design's kit view does.
+ */
+export function needsLightText(hex: string): boolean {
+  const value = hex.replace("#", "");
+  const expanded = value.length === 3 ? value.split("").map((c) => c + c).join("") : value;
+  if (expanded.length < 6) return false;
+  const r = parseInt(expanded.slice(0, 2), 16);
+  const g = parseInt(expanded.slice(2, 4), 16);
+  const b = parseInt(expanded.slice(4, 6), 16);
+  if ([r, g, b].some(Number.isNaN)) return false;
+  return 0.299 * r + 0.587 * g + 0.114 * b < 140;
+}
+
 /** The dark showcase lives beside the light one; the server composes both paths. */
 function showcaseVariantURL(showcaseUrl: string, variant: "light" | "dark"): string {
   if (!showcaseUrl) return "";
@@ -576,7 +591,7 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
             {fonts.map((font) => (
               <div key={font.role} className="flex flex-col items-center gap-1 rounded-lg border px-2 py-3 text-center">
                 <span className="text-title leading-none" style={{ fontFamily: font.family }}>Ag</span>
-                <span className="mt-1 w-full truncate text-caption">{font.family}</span>
+                <span className="mt-1 line-clamp-2 w-full break-words text-caption leading-4">{font.family}</span>
                 <span className="text-micro uppercase tracking-wide text-muted-foreground">{font.role}</span>
               </div>
             ))}
@@ -604,18 +619,28 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
       {data.palette.length > 0 ? (
         <section className="flex flex-col gap-2" aria-label="调色板">
           <h3 className="text-body font-medium">调色板</h3>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+          {/* Open Design's swatch card: the hex printed on the colour itself,
+              then the name, the inferred role line, and the full usage note. */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6">
             {data.palette.map((entry) => (
-              <div key={`${entry.name}-${entry.value}`} className="flex min-w-0 flex-col overflow-hidden rounded-lg border">
-                <span aria-hidden="true" className="h-14 w-full border-b" style={{ background: entry.value }} />
-                <span className="flex min-w-0 flex-col gap-0.5 p-2">
-                  <span className="font-mono text-micro text-muted-foreground">{entry.value}</span>
-                  <span className="truncate text-caption font-medium">
-                    {entry.name}
-                    {entry.role ? <span className="ml-1 font-normal text-muted-foreground">{entry.role}</span> : null}
+              <div key={`${entry.name}-${entry.value}`} className="flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card">
+                <span className="relative block h-20 w-full border-b" style={{ background: entry.value }}>
+                  <span
+                    className={cn(
+                      "absolute bottom-2 left-2.5 font-mono text-caption",
+                      needsLightText(entry.value) ? "text-white/90" : "text-black/70",
+                    )}
+                  >
+                    {entry.value}
                   </span>
+                </span>
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5 p-2.5">
+                  <span className="break-words text-body font-medium leading-5">{entry.name}</span>
+                  {entry.role ? (
+                    <span className="truncate text-caption lowercase text-muted-foreground">{entry.role}</span>
+                  ) : null}
                   {entry.usage ? (
-                    <span className="line-clamp-2 text-micro leading-4 text-muted-foreground">{entry.usage}</span>
+                    <span className="mt-1 break-words text-caption leading-5 text-muted-foreground">{entry.usage}</span>
                   ) : null}
                 </span>
               </div>

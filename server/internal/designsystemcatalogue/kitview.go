@@ -366,52 +366,146 @@ func swatchesFromDesignMarkdown(document designMarkdownDocument) []string {
 	return pickSwatchRow(scraped).values
 }
 
-// paletteRoles maps a colour label onto Open Design's role chip. A label that
-// names no role yields an empty chip rather than a guessed one.
+// inferPaletteRole is Open Design's inferRole: ten keyword tests in priority
+// order, then the cleaned lowercase label itself — the role line under a name
+// like "Parchment" simply reads "parchment".
 func inferPaletteRole(label string) string {
 	lowered := strings.ToLower(label)
-	switch {
-	case strings.Contains(lowered, "secondary"):
-		return "accent-secondary"
-	case strings.Contains(lowered, "primary"), strings.Contains(lowered, "accent"), strings.Contains(lowered, "brand"):
-		return "accent"
-	case strings.Contains(lowered, "success"):
-		return "success"
-	case strings.Contains(lowered, "warning"):
-		return "warning"
-	case strings.Contains(lowered, "danger"), strings.Contains(lowered, "error"), strings.Contains(lowered, "alert"):
-		return "danger"
-	case strings.Contains(lowered, "surface"), strings.Contains(lowered, "background"), strings.Contains(lowered, "canvas"):
-		return "surface"
-	case strings.Contains(lowered, "text"), strings.Contains(lowered, "foreground"), strings.Contains(lowered, "ink"):
-		return "foreground"
-	default:
-		return ""
+	for _, rule := range []struct {
+		pattern *regexp.Regexp
+		role    string
+	}{
+		{regexp.MustCompile(`background|canvas|page|paper`), "background"},
+		{regexp.MustCompile(`surface|card|panel|elevated`), "surface"},
+		{regexp.MustCompile(`foreground|text|ink|body|heading|content|on-`), "foreground"},
+		{regexp.MustCompile(`muted|secondary text|metadata|caption|subtle|slate`), "muted"},
+		{regexp.MustCompile(`border|hairline|divider|line|outline|stroke`), "border"},
+		{regexp.MustCompile(`accent secondary|secondary|tertiary`), "accent-secondary"},
+		{regexp.MustCompile(`accent|primary|brand|cta|link|highlight`), "accent"},
+		{regexp.MustCompile(`success|ok|positive|green`), "success"},
+		{regexp.MustCompile(`warn|amber|caution`), "warning"},
+		{regexp.MustCompile(`danger|error|destructive|red|negative`), "danger"},
+	} {
+		if rule.pattern.MatchString(lowered) {
+			return rule.role
+		}
 	}
+	fallback := strings.TrimSpace(asciiRolePattern.ReplaceAllString(lowered, ""))
+	if fallback != "" {
+		return fallback
+	}
+	// A label with no ASCII at all (our zh packages) keeps itself as the
+	// role line, the way Open Design's fallback keeps the label.
+	if trimmed := strings.TrimSpace(lowered); trimmed != "" {
+		return trimmed
+	}
+	return "color"
 }
 
+var asciiRolePattern = regexp.MustCompile(`[^a-z0-9 ]`)
+
+// titleCaseLabel is Open Design's titleCase: dashes and underscores become
+// spaces and each ASCII word is capitalised; CJK passes through unchanged.
+func titleCaseLabel(value string) string {
+	value = strings.NewReplacer("-", " ", "_", " ").Replace(value)
+	words := strings.Fields(value)
+	for i, word := range words {
+		runes := []rune(word)
+		if runes[0] >= 'a' && runes[0] <= 'z' {
+			runes[0] = runes[0] - 'a' + 'A'
+		}
+		words[i] = string(runes)
+	}
+	return strings.Join(words, " ")
+}
+
+var trailingParens = regexp.MustCompile(`\s*[(（].*[)）]\s*$`)
+
 // parsePalette builds the 调色板 cards from the colour section (front matter
-// as fallback), de-duplicated by hex with the first occurrence winning and
-// capped at 12 so a kitchen-sink document stays readable — Open Design's
-// parseColors behaviour.
+// as fallback), following Open Design's parseColors: table rows map
+// role|name|hex|usage, bullets take the bold label, the role is inferred from
+// it, everything after the hex is the usage note; de-duplicated by hex with
+// the first occurrence winning and capped at 12.
 func parsePalette(document designMarkdownDocument) []PaletteEntry {
-	colors := scrapeNamedColors(document.section("color", "palette", "色彩", "颜色", "调色"))
-	if len(colors) == 0 {
-		colors = frontmatterColors(document.Frontmatter)
+	lines := document.section("color", "palette", "色彩", "颜色", "调色")
+	parsed := []PaletteEntry{}
+	for _, line := range lines {
+		if !strings.Contains(line, "#") {
+			continue
+		}
+		hexIndex := hexPattern.FindStringIndex(line)
+		if hexIndex == nil {
+			continue
+		}
+		hex := strings.ToLower(line[hexIndex[0]:hexIndex[1]])
+		if strings.HasPrefix(line, "|") {
+			cells := []string{}
+			for _, cell := range strings.Split(strings.Trim(line, "|"), "|") {
+				if cell = strings.TrimSpace(cell); cell != "" {
+					cells = append(cells, cell)
+				}
+			}
+			if len(cells) == 0 || allSeparatorCells(cells) || isTableHeader(cells) {
+				continue
+			}
+			role := cleanLabel(cells[0])
+			name := ""
+			if len(cells) > 1 {
+				name = cleanLabel(cells[1])
+			}
+			if name == "" {
+				name = titleCaseLabel(role)
+			}
+			usage := ""
+			if len(cells) > 3 {
+				usage = cleanLabel(cells[3])
+			} else if len(cells) > 2 {
+				usage = cleanLabel(cells[2])
+			}
+			if usage == "—" {
+				usage = ""
+			}
+			if role == "" {
+				role = inferPaletteRole(name)
+			}
+			parsed = append(parsed, PaletteEntry{Name: name, Role: role, Value: strings.ToUpper(hex), Usage: usage})
+			continue
+		}
+		label := ""
+		if match := boldLabelPattern.FindStringSubmatch(line); match != nil {
+			label = cleanLabel(match[1])
+		} else if match := asciiLabelForm.FindStringSubmatch(line[:hexIndex[0]]); match != nil {
+			label = cleanLabel(match[1])
+		}
+		usage := strings.TrimSpace(line[hexIndex[1]:])
+		usage = strings.TrimLeft(usage, " \t—–-:：(（`)）")
+		usage = strings.TrimSuffix(strings.TrimSpace(usage), ")")
+		name := titleCaseLabel(trailingParens.ReplaceAllString(label, ""))
+		role := inferPaletteRole(label)
+		if name == "" {
+			name = titleCaseLabel(role)
+		}
+		parsed = append(parsed, PaletteEntry{Name: name, Role: role, Value: strings.ToUpper(hex), Usage: usage})
+	}
+	if len(parsed) == 0 {
+		for _, color := range frontmatterColors(document.Frontmatter) {
+			parsed = append(parsed, PaletteEntry{
+				Name:  titleCaseLabel(color.name),
+				Role:  color.name,
+				Value: strings.ToUpper(color.value),
+				Usage: "",
+			})
+		}
 	}
 	seen := map[string]struct{}{}
 	entries := []PaletteEntry{}
-	for _, color := range colors {
-		if _, dup := seen[color.value]; dup {
+	for _, entry := range parsed {
+		key := strings.ToLower(entry.Value)
+		if _, dup := seen[key]; dup {
 			continue
 		}
-		seen[color.value] = struct{}{}
-		entries = append(entries, PaletteEntry{
-			Name:  color.name,
-			Role:  inferPaletteRole(color.name),
-			Value: strings.ToUpper(color.value),
-			Usage: color.usage,
-		})
+		seen[key] = struct{}{}
+		entries = append(entries, entry)
 		if len(entries) == 12 {
 			break
 		}
@@ -419,44 +513,140 @@ func parsePalette(document designMarkdownDocument) []PaletteEntry {
 	return entries
 }
 
-// parseTypography reads the Families line ("primary=X, display=Y, mono=Z")
-// with Open Design's alias chain, then the weight scale.
+func cleanLabel(value string) string {
+	value = strings.NewReplacer("*", "", "`", "").Replace(value)
+	return strings.TrimSpace(strings.TrimRight(strings.TrimSpace(value), ":："))
+}
+
+func allSeparatorCells(cells []string) bool {
+	for _, cell := range cells {
+		if strings.Trim(cell, "-: ") != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func isTableHeader(cells []string) bool {
+	hasRole := false
+	hasHex := false
+	for _, cell := range cells {
+		lowered := strings.ToLower(strings.TrimSpace(cell))
+		if lowered == "role" {
+			hasRole = true
+		}
+		if lowered == "hex" {
+			hasHex = true
+		}
+	}
+	return hasRole && hasHex
+}
+
+// parseTypography reads the Families line// parseTypography is Open Design's: a shared weights line first, then the
+// preset "Families: primary=X, display=Y, mono=Z" line with its alias chain,
+// then per-role bold bullets whose label names a role — the family being
+// whatever the bullet says up to the first dash, parenthesis or backtick,
+// quirks included, because the reference renders exactly that.
 func parseTypography(typographySection []string) Typography {
 	typography := Typography{Weights: []string{}}
-	families := map[string]string{}
 	for _, line := range typographySection {
-		lowered := strings.ToLower(line)
-		if strings.Contains(lowered, "famil") && strings.Contains(line, "=") {
-			for _, pair := range strings.Split(line[strings.Index(line, ":")+1:], ",") {
-				key, value, found := strings.Cut(strings.TrimSpace(pair), "=")
-				if !found {
-					continue
-				}
-				families[strings.ToLower(strings.Trim(strings.TrimSpace(key), "*`"))] = strings.Trim(strings.TrimSpace(value), "*`")
-			}
+		if weightMention.MatchString(line) && weightPattern.MatchString(line) {
+			typography.Weights = parseWeightScale(line)
+			break
+		}
+	}
+	for _, line := range typographySection {
+		if !familiesMention.MatchString(line) || !strings.Contains(line, "=") {
 			continue
 		}
-		if strings.Contains(lowered, "weight") {
-			for _, weight := range weightPattern.FindAllString(line, -1) {
-				typography.Weights = append(typography.Weights, weight)
-			}
+		families := map[string]string{}
+		for _, match := range familyPairPattern.FindAllStringSubmatch(line, -1) {
+			families[strings.ToLower(match[1])] = cleanLabel(match[2])
 		}
-	}
-	first := func(keys ...string) string {
-		for _, key := range keys {
-			if value := families[key]; value != "" {
-				return value
+		first := func(keys ...string) string {
+			for _, key := range keys {
+				if value := families[key]; value != "" {
+					return value
+				}
 			}
+			return ""
 		}
-		return ""
+		typography.Display = first("display", "heading", "primary")
+		typography.Body = first("body", "text", "primary", "display")
+		typography.Mono = first("mono", "code")
+		break
 	}
-	typography.Display = first("display", "heading", "primary")
-	typography.Body = first("body", "text", "primary", "display")
-	typography.Mono = first("mono", "code")
+	for _, line := range typographySection {
+		match := roleBulletPattern.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+		label := strings.ToLower(match[1])
+		var slot *string
+		switch {
+		case strings.Contains(label, "mono") || strings.Contains(label, "code"):
+			slot = &typography.Mono
+		case strings.Contains(label, "body") || strings.Contains(label, "text"):
+			slot = &typography.Body
+		case strings.Contains(label, "display") || strings.Contains(label, "head") || strings.Contains(label, "title"):
+			slot = &typography.Display
+		default:
+			continue
+		}
+		if *slot != "" {
+			continue
+		}
+		family := familyFromLine(line)
+		if family == "" {
+			continue
+		}
+		*slot = family
+	}
 	return typography
 }
 
-// parseLayoutGuidelines flattens the first spacing/layout section's bullets
+var (
+	weightMention     = regexp.MustCompile(`(?i)weights?`)
+	familiesMention   = regexp.MustCompile(`(?i)families?`)
+	familyPairPattern = regexp.MustCompile(`(\w+)\s*=\s*([^,]+)`)
+	roleBulletPattern = regexp.MustCompile(`^[-*]\s*\*\*(.+?)\*\*`)
+	quotedFamily      = regexp.MustCompile(`["'“”]([^"'“”]+)["'“”]`)
+	familyStops       = regexp.MustCompile("—|–| - | or |\\(|`")
+	afterRoleLabel    = regexp.MustCompile(`^[-*]\s*\*\*.+?\*\*[:：]?\s*`)
+)
+
+// parseWeightScale keeps the line's three-digit numbers, unique, 100–900.
+func parseWeightScale(line string) []string {
+	weights := []string{}
+	seen := map[string]struct{}{}
+	for _, weight := range weightPattern.FindAllString(line, -1) {
+		if weight < "100" || weight > "900" {
+			continue
+		}
+		if _, dup := seen[weight]; dup {
+			continue
+		}
+		seen[weight] = struct{}{}
+		weights = append(weights, weight)
+	}
+	return weights
+}
+
+// familyFromLine is Open Design's: a quoted family wins; otherwise the text
+// after the bold label up to the first dash, " - ", " or ", parenthesis or
+// backtick.
+func familyFromLine(line string) string {
+	if match := quotedFamily.FindStringSubmatch(line); match != nil {
+		return cleanLabel(match[1])
+	}
+	afterLabel := afterRoleLabel.ReplaceAllString(line, "")
+	if loc := familyStops.FindStringIndex(afterLabel); loc != nil {
+		afterLabel = afterLabel[:loc[0]]
+	}
+	return cleanLabel(afterLabel)
+}
+
+// parseLayoutGuidelines flattens the first spacing/layout section's bullets// parseLayoutGuidelines flattens the first spacing/layout section's bullets
 // into plain sentences, at most six — the kit view's 布局准则 list.
 func parseLayoutGuidelines(layoutSection []string) []string {
 	guidelines := []string{}
