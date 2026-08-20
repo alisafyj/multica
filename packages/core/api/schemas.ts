@@ -2136,7 +2136,35 @@ export const BuiltinDesignSystemTokenSchema = z.object({
   type: z.string().catch("").default(""),
 }).loose();
 
+const BuiltinDesignSystemPaletteEntrySchema = z.object({
+  name: z.string().catch("").default(""),
+  role: z.string().catch("").default(""),
+  value: z.string().catch("").default(""),
+  usage: z.string().catch("").default(""),
+}).loose();
+
+const BuiltinDesignSystemArtifactSchema = z.object({
+  id: z.string().catch("").default(""),
+  label: z.string().catch("").default(""),
+  url: z.string().catch("").default(""),
+}).loose();
+
 export const BuiltinDesignSystemDetailSchema = BuiltinDesignSystemSchema.extend({
+  title: z.string().catch("").default(""),
+  identity: z.string().catch("").default(""),
+  palette: z.array(BuiltinDesignSystemPaletteEntrySchema).catch([]).default([]),
+  typography: z.object({
+    display: z.string().catch("").default(""),
+    body: z.string().catch("").default(""),
+    mono: z.string().catch("").default(""),
+    weights: z.array(z.string()).catch([]).default([]),
+  }).loose().catch({ display: "", body: "", mono: "", weights: [] }),
+  layout_guidelines: z.array(z.string()).catch([]).default([]),
+  token_contract: z.array(z.object({
+    name: z.string().catch("").default(""),
+    value: z.string().catch("").default(""),
+  }).loose()).catch([]).default([]),
+  artifacts: z.array(BuiltinDesignSystemArtifactSchema).catch([]).default([]),
   // Per token: a malformed entry costs one swatch, not the whole palette.
   tokens: z.preprocess(
     (value) => Array.isArray(value) ? value : [],
@@ -2150,7 +2178,10 @@ export const BuiltinDesignSystemDetailSchema = BuiltinDesignSystemSchema.extend(
 }).loose();
 
 export const EMPTY_BUILTIN_DESIGN_SYSTEM_DETAIL: BuiltinDesignSystemDetail = {
-  slug: "", name: "", category: "", description: "", showcase_url: "", swatches: [], tokens: [], tokens_css: "", design_markdown: "",
+  slug: "", name: "", category: "", description: "", showcase_url: "", swatches: [],
+  title: "", identity: "", palette: [], typography: { display: "", body: "", mono: "", weights: [] },
+  layout_guidelines: [], token_contract: [], artifacts: [],
+  tokens: [], tokens_css: "", design_markdown: "",
 };
 
 export const DesignScenarioRecipeSchema = z.object({

@@ -57,12 +57,18 @@ type Entry struct {
 	Swatches []string `json:"swatches"`
 }
 
-const maxSwatches = 6
-
-// showcaseFiles maps a showcase variant onto the package file that renders it.
+// showcaseFiles maps a showcase variant onto the package file that renders
+// it: the kit documents plus the derived artifact pages, all served under the
+// same bundle digest.
 var showcaseFiles = map[string]string{
-	"light": "system/kit.html",
-	"dark":  "system/kit.dark.html",
+	"light":               "system/kit.html",
+	"dark":                "system/kit.dark.html",
+	"artifact-landing":    "system/artifacts/landing.html",
+	"artifact-deck":       "system/artifacts/deck.html",
+	"artifact-poster":     "system/artifacts/poster.html",
+	"artifact-email":      "system/artifacts/email.html",
+	"artifact-newsletter": "system/artifacts/newsletter.html",
+	"artifact-form":       "system/artifacts/form.html",
 }
 
 // Token is one declared design token, typed at the source.
@@ -76,9 +82,27 @@ type Token struct {
 	Type  string `json:"type"`
 }
 
-// Detail adds the content one system's page needs.
+// Detail adds the content one system's page needs — the modules Open Design's
+// kit view renders, each parsed from the package file that owns it.
 type Detail struct {
 	Entry
+	// Title is DESIGN.md's own H1, the kit view's page heading.
+	Title string `json:"title"`
+	// Identity is the positioning line 品牌标识 shows.
+	Identity string `json:"identity"`
+	// Palette are the 调色板 cards: the colour section's named colours with
+	// Open Design's inferred role chips and the usage text after each hex.
+	Palette []PaletteEntry `json:"palette"`
+	// Typography carries the three declared families and the weight scale.
+	Typography Typography `json:"typography"`
+	// LayoutGuidelines are the Spacing & Grid bullets, flattened.
+	LayoutGuidelines []string `json:"layout_guidelines"`
+	// TokenContract is system/tokens.default.json in file order — the chips
+	// under the kit frame.
+	TokenContract []TokenContractEntry `json:"token_contract"`
+	// Artifacts are the derived pages under system/artifacts, in display
+	// order, served as showcase variants "artifact-<id>".
+	Artifacts []Artifact `json:"artifacts"`
 	// Tokens is empty for the few packages that ship no design-tokens.json;
 	// TokensCSS is always present, so the view can still show the raw sheet.
 	Tokens []Token `json:"tokens"`
@@ -153,7 +177,12 @@ func load() {
 			Category:    preferZH(m.CategoryZH, m.Category),
 			Description: preferZH(m.DescriptionZH, m.Description),
 		}
-		entry.Swatches = swatchesFromTokens(dir.Name())
+		if raw, err := packages.ReadFile(path.Join("data", dir.Name(), "DESIGN.md")); err == nil {
+			entry.Swatches = swatchesFromDesignMarkdown(parseDesignMarkdown(string(raw)))
+		}
+		if entry.Swatches == nil {
+			entry.Swatches = []string{}
+		}
 		showcase := map[string][]byte{}
 		for _, file := range showcaseFiles {
 			if body, err := packages.ReadFile(path.Join("data", dir.Name(), file)); err == nil {
@@ -172,34 +201,6 @@ func load() {
 		}
 		return entries[i].Name < entries[j].Name
 	})
-}
-
-// swatchesFromTokens reads a package's design-tokens.json and keeps the first
-// concrete colour values it declares (aliases such as var(--x) are skipped:
-// they render as nothing in a swatch). Never nil, so the JSON is [] not null.
-func swatchesFromTokens(slug string) []string {
-	swatches := []string{}
-	raw, err := packages.ReadFile(path.Join("data", slug, "design-tokens.json"))
-	if err != nil {
-		return swatches
-	}
-	var parsed designTokens
-	if json.Unmarshal(raw, &parsed) != nil {
-		return swatches
-	}
-	seen := map[string]bool{}
-	for _, token := range parsed.Tokens {
-		value := strings.TrimSpace(token.Value)
-		if token.Type != "color" || value == "" || strings.Contains(value, "var(") || seen[value] {
-			continue
-		}
-		seen[value] = true
-		swatches = append(swatches, value)
-		if len(swatches) == maxSwatches {
-			break
-		}
-	}
-	return swatches
 }
 
 // bundleDigest hashes a set of files by path and content, in path order.
@@ -286,6 +287,34 @@ func Get(slug string) (Detail, bool, error) {
 		var parsed designTokens
 		if json.Unmarshal(raw, &parsed) == nil && len(parsed.Tokens) > 0 {
 			detail.Tokens = parsed.Tokens
+		}
+	}
+	// The kit-view modules. DESIGN.md is parsed untranslated: the zh variant
+	// rewrites prose, and the module parsers key on the template's own labels.
+	if raw, err := packages.ReadFile(path.Join("data", entry.Slug, "DESIGN.md")); err == nil {
+		document := parseDesignMarkdown(string(raw))
+		detail.Title = document.Title
+		detail.Identity = document.identityText()
+		detail.Palette = parsePalette(document)
+		detail.Typography = parseTypography(document.section("typograph", "字体", "排版"))
+		detail.LayoutGuidelines = parseLayoutGuidelines(document.section("layout", "spacing", "grid", "composition", "布局", "间距", "栅格"))
+	}
+	if detail.Palette == nil {
+		detail.Palette = []PaletteEntry{}
+	}
+	if detail.LayoutGuidelines == nil {
+		detail.LayoutGuidelines = []string{}
+	}
+	detail.TokenContract = []TokenContractEntry{}
+	if raw, err := packages.ReadFile(path.Join("data", entry.Slug, "system", "tokens.default.json")); err == nil {
+		if contract, err := parseTokenContract(raw); err == nil {
+			detail.TokenContract = contract
+		}
+	}
+	detail.Artifacts = []Artifact{}
+	for _, artifact := range artifactPages {
+		if _, err := packages.ReadFile(path.Join("data", entry.Slug, "system", "artifacts", artifact.ID+".html")); err == nil {
+			detail.Artifacts = append(detail.Artifacts, artifact)
 		}
 	}
 	return detail, true, nil

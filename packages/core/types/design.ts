@@ -607,7 +607,43 @@ export interface BuiltinDesignSystemToken {
 }
 
 /** One built-in with the content its detail view renders. */
+/** One 调色板 card: the document's own label, OD's inferred role chip, hex, usage. */
+export interface BuiltinDesignSystemPaletteEntry {
+  name: string;
+  /** Empty when the label names no role; the chip is then hidden. */
+  role: string;
+  value: string;
+  usage: string;
+}
+
+export interface BuiltinDesignSystemTypography {
+  display: string;
+  body: string;
+  mono: string;
+  weights: string[];
+}
+
+export interface BuiltinDesignSystemTokenContractEntry {
+  name: string;
+  value: string;
+}
+
+/** One 设计系统素材 card; `url` is digest-versioned, prefix with the API base. */
+export interface BuiltinDesignSystemArtifact {
+  id: string;
+  label: string;
+  url: string;
+}
+
 export interface BuiltinDesignSystemDetail extends BuiltinDesignSystem {
+  /** DESIGN.md's own H1 — the kit view's heading and typography sample line. */
+  title: string;
+  identity: string;
+  palette: BuiltinDesignSystemPaletteEntry[];
+  typography: BuiltinDesignSystemTypography;
+  layout_guidelines: string[];
+  token_contract: BuiltinDesignSystemTokenContractEntry[];
+  artifacts: BuiltinDesignSystemArtifact[];
   /** Empty for the few packages that ship no typed token file. */
   tokens: BuiltinDesignSystemToken[];
   tokens_css: string;

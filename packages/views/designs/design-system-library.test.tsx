@@ -34,7 +34,7 @@ vi.mock("../common/actor-avatar", () => ({
   ActorAvatar: () => <span data-testid="actor-avatar" />,
 }));
 
-import { DesignSystemLibrary, designMarkdownModules, paletteFallbackSwatches } from "./design-system-library";
+import { DesignSystemLibrary, paletteFallbackSwatches } from "./design-system-library";
 
 describe("paletteFallbackSwatches", () => {
   it("seeds four stable colour bands from the name, as Open Design does", () => {
@@ -67,21 +67,26 @@ const BUILTIN_STRIPE = {
   swatches: [],
 };
 
-const APPLE_DESIGN_MD = `---
-title: Apple
----
-# Apple
-
-Apple 的视觉语言以留白和克制为核心。
-
-## Color Palette
-
-主色 #0071e3 只用于行动。
-
-## Typography
-
-SF Pro Display 用于标题。
-`;
+/** The kit-view modules the server parses out of a package (DC-058). */
+const APPLE_DETAIL_MODULES = {
+  title: "Design System Inspired by Apple",
+  identity: "克制的编辑式版式，单一强调色，以产品摄影为核心。",
+  palette: [
+    { name: "Primary", role: "accent", value: "#0071E3", usage: "Token from style foundations." },
+    { name: "Surface", role: "surface", value: "#FFFFFF", usage: "Token from style foundations." },
+    { name: "Text", role: "foreground", value: "#1D1D1F", usage: "Token from style foundations." },
+  ],
+  typography: { display: "SF Pro Display", body: "SF Pro Text", mono: "SF Mono", weights: ["400", "600", "700"] },
+  layout_guidelines: ["Spacing scale: 8pt baseline grid", "Keep vertical rhythm consistent across sections and components."],
+  token_contract: [
+    { name: "colorPrimary", value: "#0071e3" },
+    { name: "fontSize", value: "15" },
+  ],
+  artifacts: [
+    { id: "landing", label: "Landing page", url: "/api/design-systems/builtin/apple/showcase/abc123def456/artifact-landing" },
+    { id: "deck", label: "Pitch deck", url: "/api/design-systems/builtin/apple/showcase/abc123def456/artifact-deck" },
+  ],
+};
 
 const PROJECT_SYSTEM = {
   id: "system-1",
@@ -154,23 +159,6 @@ function renderLibrary(onOpenProject = vi.fn(), onCreate = vi.fn()) {
   return onOpenProject;
 }
 
-// The markdown splitter has its matrix here; the DOM test below only checks
-// that the modules reach the page.
-describe("designMarkdownModules", () => {
-  it("drops front matter and the title, keeps the preamble and one module per ## heading", () => {
-    const modules = designMarkdownModules(APPLE_DESIGN_MD);
-    expect(modules.preamble).toBe("Apple 的视觉语言以留白和克制为核心。");
-    expect(modules.sections.map((section) => section.title)).toEqual(["Color Palette", "Typography"]);
-    expect(modules.sections[0]?.body).toBe("主色 #0071e3 只用于行动。");
-  });
-
-  it("strips numbering from headings and skips empty sections", () => {
-    const modules = designMarkdownModules("## 1. 语调\n\n直接。\n\n## 2) 空章节\n\n## 3. 布局\n网格。");
-    expect(modules.sections.map((section) => section.title)).toEqual(["语调", "布局"]);
-    expect(designMarkdownModules("")).toEqual({ preamble: "", sections: [] });
-  });
-});
-
 describe("DesignSystemLibrary", () => {
   beforeEach(() => {
     getProjectDesignSystem.mockReset();
@@ -183,43 +171,73 @@ describe("DesignSystemLibrary", () => {
     listProjects.mockReset();
     listProjects.mockResolvedValue({ projects: [{ id: "project-1", title: "官网改版", color: "#3b82f6", icon: "" }] });
     getBuiltinDesignSystem.mockImplementation(async (slug: string) => slug === "stripe"
-      ? { ...BUILTIN_STRIPE, tokens: [], tokens_css: "", design_markdown: "# Stripe" }
+      ? {
+        ...BUILTIN_STRIPE,
+        title: "", identity: "", palette: [], typography: { display: "", body: "", mono: "", weights: [] },
+        layout_guidelines: [], token_contract: [], artifacts: [],
+        tokens: [], tokens_css: "", design_markdown: "# Stripe",
+      }
       : {
         ...BUILTIN_APPLE,
-        tokens: [
-          { name: "--bg", value: "#ffffff", type: "color" },
-          { name: "--accent", value: "#0071e3", type: "color" },
-          { name: "--font-display", value: "\"SF Pro Display\", sans-serif", type: "fontFamily" },
-        ],
+        ...APPLE_DETAIL_MODULES,
+        tokens: [],
         tokens_css: ":root{--bg:#ffffff}",
-        design_markdown: APPLE_DESIGN_MD,
+        design_markdown: "# Design System Inspired by Apple",
       });
   });
 
-  it("frames the official showcase and renders the design language as modules", async () => {
+  it("renders the official detail as Open Design's kit modules, in its order", async () => {
     renderLibrary();
     await userEvent.click(await screen.findByRole("button", { name: /官方/ }));
 
-    // The list row shows the palette at a glance; the first row opens.
-    expect(await screen.findByRole("heading", { name: "Apple" })).toBeInTheDocument();
-    const frame = screen.getByTitle("Apple 展示");
+    // Header carries DESIGN.md's own H1, as OD's kit view does.
+    expect(await screen.findByRole("heading", { name: "Design System Inspired by Apple" })).toBeInTheDocument();
+
+    // The seven modules, in Open Design's order.
+    const regions = screen.getAllByRole("region").map((region) => region.getAttribute("aria-label"));
+    const moduleOrder = ["品牌标识", "Logo", "字体排版", "调色板", "图像与布局", "设计系统", "设计系统素材"];
+    expect(regions.filter((label) => moduleOrder.includes(label ?? ""))).toEqual(moduleOrder);
+
+    // 品牌标识 is the positioning line; Logo is honestly empty for bundles.
+    expect(screen.getByText("克制的编辑式版式，单一强调色，以产品摄影为核心。")).toBeInTheDocument();
+    expect(screen.getByText("暂无 Logo")).toBeInTheDocument();
+
+    // 字体排版: three families with the weight scale and the H1 as sample.
+    expect(screen.getAllByText("SF Pro Display").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/400\/600\/700/).length).toBe(3);
+    expect(screen.getByText("const brand = await extract(url);")).toBeInTheDocument();
+
+    // 调色板: the parsed cards with role chips and the usage line.
+    expect(screen.getByText("#0071E3")).toBeInTheDocument();
+    expect(screen.getByText("accent")).toBeInTheDocument();
+    expect(screen.getAllByText("Token from style foundations.").length).toBe(3);
+
+    // 图像与布局: the 布局准则 bullets.
+    expect(screen.getByText("布局准则")).toBeInTheDocument();
+    expect(screen.getByText("Spacing scale: 8pt baseline grid")).toBeInTheDocument();
+
+    // 设计系统: the kit frame with its file caption, theme toggle and chips.
+    const frame = screen.getByTitle("Apple 设计系统");
     expect(frame).toHaveAttribute("src", "https://api.test/api/design-systems/builtin/apple/showcase/abc123def456/light");
     expect(frame).toHaveAttribute("sandbox", "");
+    expect(screen.getByText("system/kit.html")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "深色" }));
-    expect(screen.getByTitle("Apple 展示")).toHaveAttribute("src", "https://api.test/api/design-systems/builtin/apple/showcase/abc123def456/dark");
+    expect(screen.getByTitle("Apple 设计系统")).toHaveAttribute("src", "https://api.test/api/design-systems/builtin/apple/showcase/abc123def456/dark");
+    expect(screen.getByText("colorPrimary")).toBeInTheDocument();
 
-    // Identity preamble, then one module per heading, plus typed tokens.
-    expect(screen.getByText("Apple 的视觉语言以留白和克制为核心。")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Color Palette" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Typography" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "字体排版" })).toBeInTheDocument();
-    expect(screen.getByText("--font-display")).toBeInTheDocument();
-    expect(screen.getByText("--accent")).toBeInTheDocument();
+    // 设计系统素材: one framed card per artifact with its fixed caption.
+    expect(screen.getByTitle("Apple Landing page")).toHaveAttribute(
+      "src",
+      "https://api.test/api/design-systems/builtin/apple/showcase/abc123def456/artifact-landing",
+    );
+    expect(screen.getByText("Landing page")).toBeInTheDocument();
+    expect(screen.getByText("Pitch deck")).toBeInTheDocument();
 
-    // A package without a showcase simply has no cover.
+    // A package without a showcase or artifacts simply has neither module.
     await userEvent.click(screen.getByRole("button", { name: /Stripe/ }));
     expect(await screen.findByRole("heading", { name: "Stripe" })).toBeInTheDocument();
-    expect(screen.queryByTitle("Stripe 展示")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Stripe 设计系统")).not.toBeInTheDocument();
+    expect(screen.queryByText("Landing page")).not.toBeInTheDocument();
   });
 
   it("leads official rows with the brand favicon and falls back to the icon tile when it fails", async () => {
@@ -228,7 +246,7 @@ describe("DesignSystemLibrary", () => {
 
     // Apple's slug is in the curated host table, so the row shows OD's
     // favicon image, not a generic glyph.
-    await screen.findByRole("heading", { name: "Apple" });
+    await screen.findByRole("heading", { name: "Design System Inspired by Apple" });
     const favicon = document.body.querySelector("img[src*='google.com/s2/favicons']");
     expect(favicon).not.toBeNull();
     expect(favicon).toHaveAttribute("src", "https://www.google.com/s2/favicons?domain=apple.com&sz=64");
@@ -261,7 +279,7 @@ describe("DesignSystemLibrary", () => {
   it("filters the official catalogue by category from a dropdown", async () => {
     renderLibrary();
     await userEvent.click(await screen.findByRole("button", { name: /官方/ }));
-    expect(await screen.findByRole("heading", { name: "Apple" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Design System Inspired by Apple" })).toBeInTheDocument();
 
     // Twenty-odd categories as pills buried the list; a select keeps the
     // list in view. The trigger carries the active label and its count.

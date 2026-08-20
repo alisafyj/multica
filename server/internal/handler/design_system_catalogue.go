@@ -57,11 +57,30 @@ type BuiltinDesignSystemTokenResponse struct {
 	Type  string `json:"type"`
 }
 
+// BuiltinDesignSystemArtifactResponse is one 设计系统素材 card: the derived
+// page, its caption, and the digest-versioned URL that frames it.
+type BuiltinDesignSystemArtifactResponse struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	URL   string `json:"url"`
+}
+
 type BuiltinDesignSystemDetailResponse struct {
 	BuiltinDesignSystemResponse
-	Tokens         []BuiltinDesignSystemTokenResponse `json:"tokens"`
-	TokensCSS      string                             `json:"tokens_css"`
-	DesignMarkdown string                             `json:"design_markdown"`
+	// Title is DESIGN.md's own H1 — the kit view's page heading and the
+	// typography sample line.
+	Title    string `json:"title"`
+	Identity string `json:"identity"`
+	// Palette / Typography / LayoutGuidelines / TokenContract / Artifacts are
+	// the kit-view modules, parsed server-side from the package's own files.
+	Palette          []designsystemcatalogue.PaletteEntry       `json:"palette"`
+	Typography       designsystemcatalogue.Typography           `json:"typography"`
+	LayoutGuidelines []string                                   `json:"layout_guidelines"`
+	TokenContract    []designsystemcatalogue.TokenContractEntry `json:"token_contract"`
+	Artifacts        []BuiltinDesignSystemArtifactResponse      `json:"artifacts"`
+	Tokens           []BuiltinDesignSystemTokenResponse         `json:"tokens"`
+	TokensCSS        string                                     `json:"tokens_css"`
+	DesignMarkdown   string                                     `json:"design_markdown"`
 }
 
 func (h *Handler) ListBuiltinDesignSystems(w http.ResponseWriter, r *http.Request) {
@@ -94,8 +113,23 @@ func (h *Handler) GetBuiltinDesignSystem(w http.ResponseWriter, r *http.Request)
 			Name: token.Name, Value: token.Value, Type: token.Type,
 		})
 	}
+	artifacts := make([]BuiltinDesignSystemArtifactResponse, 0, len(detail.Artifacts))
+	for _, artifact := range detail.Artifacts {
+		artifacts = append(artifacts, BuiltinDesignSystemArtifactResponse{
+			ID:    artifact.ID,
+			Label: artifact.Label,
+			URL:   builtinDesignSystemShowcasePath(detail.Entry, "artifact-"+artifact.ID),
+		})
+	}
 	writeJSON(w, http.StatusOK, BuiltinDesignSystemDetailResponse{
 		BuiltinDesignSystemResponse: builtinDesignSystemResponse(detail.Entry),
+		Title:                       detail.Title,
+		Identity:                    detail.Identity,
+		Palette:                     detail.Palette,
+		Typography:                  detail.Typography,
+		LayoutGuidelines:            detail.LayoutGuidelines,
+		TokenContract:               detail.TokenContract,
+		Artifacts:                   artifacts,
 		Tokens:                      tokens,
 		TokensCSS:                   detail.TokensCSS,
 		DesignMarkdown:              detail.DesignMarkdown,

@@ -7,11 +7,9 @@ import {
   ExternalLink,
   FolderOpen,
   GitBranch,
-  Moon,
   Package,
   Plus,
   Search,
-  Sun,
   SwatchBook,
 } from "lucide-react";
 import { api } from "@multica/core/api";
@@ -24,6 +22,8 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import type {
   BuiltinDesignSystem,
+  BuiltinDesignSystemArtifact,
+  BuiltinDesignSystemDetail,
   ProjectDesignSystem,
   ProjectDesignSystemCatalogueEntry,
   ProjectDesignSystemTokenGroup,
@@ -40,7 +40,6 @@ import {
 import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
-import { ReadonlyContent } from "../editor";
 import { builtinDesignSystemLogoURL } from "./design-system-domains";
 import { DesignFilterPill } from "./design-filter-pill";
 import { DesignFilterSelect } from "./design-filter-select";
@@ -397,62 +396,6 @@ function SystemListItem({
 
 const ALL_CATEGORIES = "__all__";
 
-/**
- * Colour tokens pulled straight out of a package's `tokens.css`.
- *
- * A design system is judged by its palette long before its prose, so the
- * detail view leads with real swatches rather than a file listing. Parsed with
- * a scan for custom properties instead of a CSS parser: the sheets are
- * generated, and a value this misses is one missing swatch, not a broken page.
- */
-function colorTokensFromCSS(css: string): Array<{ name: string; value: string }> {
-  const found: Array<{ name: string; value: string }> = [];
-  const seen = new Set<string>();
-  const pattern = /(--[a-z0-9-]+)\s*:\s*([^;{}]+);/gi;
-  let match = pattern.exec(css);
-  while (match !== null && found.length < 24) {
-    const name = match[1] ?? "";
-    const value = (match[2] ?? "").trim();
-    // A var() alias resolves to another token that is already listed, so it
-    // would render as a duplicate swatch with no colour of its own.
-    if (looksLikeColor(value) && !seen.has(name) && !value.includes("var(")) {
-      seen.add(name);
-      found.push({ name, value });
-    }
-    match = pattern.exec(css);
-  }
-  return found;
-}
-
-/**
- * The design language split the way Open Design's kit view reads it: the text
- * before the first `##` heading is the identity preamble, and every `##`
- * heading after it is one module of the system. Front matter and the document
- * title line are not content and are dropped.
- */
-export function designMarkdownModules(markdown: string): { preamble: string; sections: Array<{ title: string; body: string }> } {
-  const withoutFrontMatter = markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
-  const lines = withoutFrontMatter.split(/\r?\n/);
-  const sections: Array<{ title: string; body: string[] }> = [];
-  const preamble: string[] = [];
-  let current: { title: string; body: string[] } | null = null;
-  for (const line of lines) {
-    const heading = /^##\s+(.+?)\s*$/.exec(line);
-    if (heading) {
-      current = { title: heading[1]!.replace(/^\d+[.)]\s*/, ""), body: [] };
-      sections.push(current);
-      continue;
-    }
-    if (current) current.body.push(line);
-    else if (!/^#\s+/.test(line)) preamble.push(line);
-  }
-  return {
-    preamble: preamble.join("\n").trim(),
-    sections: sections
-      .map((section) => ({ title: section.title, body: section.body.join("\n").trim() }))
-      .filter((section) => section.body.length > 0),
-  };
-}
 
 /** The dark showcase lives beside the light one; the server composes both paths. */
 function showcaseVariantURL(showcaseUrl: string, variant: "light" | "dark"): string {
@@ -461,65 +404,121 @@ function showcaseVariantURL(showcaseUrl: string, variant: "light" | "dark"): str
 }
 
 /**
- * The system's cover: Open Design's token-driven showcase framed the way its
- * own tab frames it. No scripts run in it (the document has none and its CSP
- * admits none), so the frame is fully sandboxed.
+ * 设计系统 — Open Design's kit module: the package's token-driven
+ * system/kit.html framed with a 浅色/深色 toggle and the file name as its
+ * caption, and the token contract chips from system/tokens.default.json
+ * below it. No scripts run in the frame (the document has none and its CSP
+ * admits none).
  */
-function BuiltinShowcase({ system }: { system: BuiltinDesignSystem }) {
+function BuiltinKitModule({ system }: { system: BuiltinDesignSystemDetail }) {
   const [variant, setVariant] = useState<"light" | "dark">("light");
   const src = showcaseVariantURL(system.showcase_url, variant);
   if (!src) return null;
   return (
-    <section className="flex flex-col gap-2" aria-label="展示">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-body font-medium">展示</h3>
-        <div className="flex items-center gap-0.5">
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label="浅色"
-            aria-pressed={variant === "light"}
-            className={cn(variant === "light" && "bg-accent text-foreground")}
-            onClick={() => setVariant("light")}
-          >
-            <Sun className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label="深色"
-            aria-pressed={variant === "dark"}
-            className={cn(variant === "dark" && "bg-accent text-foreground")}
-            onClick={() => setVariant("dark")}
-          >
-            <Moon className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label="在新标签页中打开"
-            title="在新标签页中打开"
-            onClick={() => window.open(src, "_blank", "noopener,noreferrer")}
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-          </Button>
+    <section className="flex flex-col gap-2" aria-label="设计系统">
+      <h3 className="text-body font-medium">设计系统</h3>
+      <div className="overflow-hidden rounded-lg border">
+        <div className="flex items-center justify-between gap-2 border-b bg-muted/30 px-2 py-1">
+          <div className="flex items-center gap-0.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              aria-pressed={variant === "light"}
+              className={cn("h-6 px-2 text-caption", variant === "light" && "bg-accent text-foreground")}
+              onClick={() => setVariant("light")}
+            >
+              浅色
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              aria-pressed={variant === "dark"}
+              className={cn("h-6 px-2 text-caption", variant === "dark" && "bg-accent text-foreground")}
+              onClick={() => setVariant("dark")}
+            >
+              深色
+            </Button>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="font-mono text-micro text-muted-foreground">system/kit.html</span>
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              aria-label="在新标签页中打开"
+              title="在新标签页中打开"
+              onClick={() => window.open(src, "_blank", "noopener,noreferrer")}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
+        <iframe
+          key={src}
+          title={`${system.name || system.slug} 设计系统`}
+          src={src}
+          sandbox=""
+          referrerPolicy="no-referrer"
+          className="h-[420px] w-full border-0 bg-background"
+        />
       </div>
-      <iframe
-        key={src}
-        title={`${system.name || system.slug} 展示`}
-        src={src}
-        sandbox=""
-        referrerPolicy="no-referrer"
-        className="h-[380px] w-full rounded-lg border bg-background"
-      />
+      {system.token_contract.some((token) => token.name === "colorPrimary") ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {system.token_contract.map((token) => (
+            <span key={token.name} className="inline-flex max-w-72 items-center gap-1.5 rounded-md border bg-card px-1.5 py-1">
+              {token.value.startsWith("#") ? (
+                <span aria-hidden="true" className="size-3.5 shrink-0 rounded-sm border" style={{ background: token.value }} />
+              ) : null}
+              <span className="shrink-0 font-mono text-micro font-medium">{token.name}</span>
+              <span className="truncate font-mono text-micro text-muted-foreground">{token.value}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
 
+/**
+ * 设计系统素材 — Open Design's asset grid: the six derived pages framed live
+ * at card size with their fixed captions. Clicking opens the page itself.
+ */
+function BuiltinArtifactCard({ artifact, systemName }: { artifact: BuiltinDesignSystemArtifact; systemName: string }) {
+  const src = `${api.getBaseUrl()}${artifact.url}`;
+  return (
+    <button
+      type="button"
+      className="group/artifact flex min-w-0 cursor-pointer flex-col overflow-hidden rounded-lg border bg-card text-left transition-colors hover:border-primary/40"
+      aria-label={`打开 ${artifact.label}`}
+      onClick={() => window.open(src, "_blank", "noopener,noreferrer")}
+    >
+      <span className="relative block aspect-[4/3] overflow-hidden border-b bg-muted/30">
+        <span className="pointer-events-none absolute left-0 top-0 block h-[300%] w-[300%] origin-top-left scale-[0.3333]">
+          <iframe
+            src={src}
+            title={`${systemName} ${artifact.label}`}
+            aria-hidden="true"
+            tabIndex={-1}
+            loading="lazy"
+            sandbox=""
+            referrerPolicy="no-referrer"
+            className="h-full w-full border-0 bg-background"
+          />
+        </span>
+      </span>
+      <span className="truncate px-2.5 py-2 text-caption text-muted-foreground">{artifact.label}</span>
+    </button>
+  );
+}
+
+/**
+ * The 官方 detail, structured as Open Design's kit view renders a package:
+ * 品牌标识 → Logo → 字体排版 → 调色板 → 图像与布局 → 设计系统 → 设计系统素材,
+ * every module fed by the field the server parsed from the package's own
+ * files rather than by re-showing DESIGN.md wholesale.
+ */
 function BuiltinSystemDetail({ slug }: { slug: string }) {
   const wsId = useWorkspaceId();
   const { data, isLoading } = useQuery(builtinDesignSystemDetailOptions(wsId, slug));
@@ -535,80 +534,89 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
   }
   if (!data) return null;
 
-  // Typed at the source, so grouping is a fact from the package rather than a
-  // guess from the value's shape. The CSS sheet is only consulted for the few
-  // packages that ship no token file.
-  const typed = data.tokens ?? [];
-  const colors = typed.filter((token) => token.type === "color" && !token.value.includes("var("));
-  // Open Design types its font tokens `fontFamily`; older packages may say
-  // `font` or `typography`, so all three count as type.
-  const typography = typed.filter((token) => ["fontFamily", "font", "typography"].includes(token.type));
-  const fallbackColors = typed.length === 0 ? colorTokensFromCSS(data.tokens_css ?? "") : [];
-  const palette = colors.length > 0
-    ? colors.map((token) => ({ name: token.name, value: token.value }))
-    : fallbackColors;
-
-  const fontFamily = typography.find((token) => /(display|body|sans|font(-family)?)$/.test(token.name))?.value
-    ?? typography[0]?.value;
-  const modules = designMarkdownModules(data.design_markdown ?? "");
+  const sampleText = data.title || data.name || slug;
+  const fonts = [
+    { role: "Display", family: data.typography.display, sample: sampleText },
+    { role: "Body", family: data.typography.body, sample: sampleText },
+    { role: "Mono", family: data.typography.mono, sample: "const brand = await extract(url);" },
+  ].filter((font) => font.family);
+  const weights = data.typography.weights.join("/");
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-title font-medium">{data.name || slug}</h2>
+          <h2 className="text-title font-medium">{data.title || data.name || slug}</h2>
           {data.category ? <Badge variant="secondary">{data.category}</Badge> : null}
           <Badge variant="outline">官方</Badge>
         </div>
         {data.description ? <p className="text-body text-muted-foreground">{data.description}</p> : null}
       </div>
 
-      <BuiltinShowcase system={data} />
-
-      {modules.preamble ? (
-        <section className="flex flex-col gap-2">
+      {data.identity ? (
+        <section className="flex flex-col gap-2" aria-label="品牌标识">
           <h3 className="text-body font-medium">品牌标识</h3>
-          <ReadonlyContent content={modules.preamble} className="max-w-none text-body leading-7 text-muted-foreground" />
+          <p className="text-body leading-7 text-muted-foreground">{data.identity}</p>
         </section>
       ) : null}
 
-      {typography.length > 0 ? (
-        <section className="flex flex-col gap-2">
+      {/* Bundled packages ship no logo asset, exactly as Open Design's kit
+          view shows for them: an empty slot, never a guessed image. */}
+      <section className="flex flex-col gap-2" aria-label="Logo">
+        <h3 className="text-body font-medium">Logo</h3>
+        <div className="flex h-24 items-center justify-center rounded-lg border border-dashed text-caption text-muted-foreground">
+          暂无 Logo
+        </div>
+      </section>
+
+      {fonts.length > 0 ? (
+        <section className="flex flex-col gap-3" aria-label="字体排版">
           <h3 className="text-body font-medium">字体排版</h3>
-          <div className="rounded-lg border p-4">
-            {/* Rendered in the system's own family so the sample shows the
-                typeface rather than describing it. */}
-            <p className="text-display leading-none" style={fontFamily ? { fontFamily } : undefined}>
-              Ag 设计
-            </p>
-          </div>
-          <dl className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-            {typography.slice(0, 8).map((token) => (
-              <div key={token.name} className="flex min-w-0 items-baseline gap-2 rounded-md border px-2.5 py-1.5">
-                <dt className="shrink-0 font-mono text-micro text-muted-foreground">{token.name}</dt>
-                <dd className="min-w-0 flex-1 truncate text-right font-mono text-caption">{token.value}</dd>
+          <div className="grid grid-cols-3 gap-2">
+            {fonts.map((font) => (
+              <div key={font.role} className="flex flex-col items-center gap-1 rounded-lg border px-2 py-3 text-center">
+                <span className="text-title leading-none" style={{ fontFamily: font.family }}>Ag</span>
+                <span className="mt-1 w-full truncate text-caption">{font.family}</span>
+                <span className="text-micro uppercase tracking-wide text-muted-foreground">{font.role}</span>
               </div>
             ))}
-          </dl>
+          </div>
+          <div className="flex flex-col gap-2.5">
+            {fonts.map((font) => (
+              <div key={font.role} className="min-w-0">
+                <p className="text-micro text-muted-foreground">
+                  <span className="uppercase tracking-wide">{font.role}</span>
+                  <span className="ml-1.5 font-medium text-foreground">{font.family}</span>
+                  {weights ? <span> · {weights}</span> : null}
+                </p>
+                <p
+                  className={cn("truncate leading-tight", font.role === "Mono" ? "text-title" : "text-display")}
+                  style={{ fontFamily: font.family }}
+                >
+                  {font.sample}
+                </p>
+              </div>
+            ))}
+          </div>
         </section>
       ) : null}
 
-      {palette.length > 0 ? (
-        <section className="flex flex-col gap-2">
+      {data.palette.length > 0 ? (
+        <section className="flex flex-col gap-2" aria-label="调色板">
           <h3 className="text-body font-medium">调色板</h3>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
-            {palette.slice(0, 24).map((token) => (
-              <div key={token.name} className="flex items-center gap-2 rounded-lg border p-2">
-                <span
-                  aria-hidden="true"
-                  className="size-8 shrink-0 rounded-md border"
-                  style={{ background: token.value }}
-                />
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate font-mono text-caption">{token.name}</span>
-                  <span className="truncate font-mono text-micro text-muted-foreground">
-                    {token.value}
+            {data.palette.map((entry) => (
+              <div key={`${entry.name}-${entry.value}`} className="flex min-w-0 flex-col overflow-hidden rounded-lg border">
+                <span aria-hidden="true" className="h-14 w-full border-b" style={{ background: entry.value }} />
+                <span className="flex min-w-0 flex-col gap-0.5 p-2">
+                  <span className="font-mono text-micro text-muted-foreground">{entry.value}</span>
+                  <span className="truncate text-caption font-medium">
+                    {entry.name}
+                    {entry.role ? <span className="ml-1 font-normal text-muted-foreground">{entry.role}</span> : null}
                   </span>
+                  {entry.usage ? (
+                    <span className="line-clamp-2 text-micro leading-4 text-muted-foreground">{entry.usage}</span>
+                  ) : null}
                 </span>
               </div>
             ))}
@@ -616,12 +624,30 @@ function BuiltinSystemDetail({ slug }: { slug: string }) {
         </section>
       ) : null}
 
-      {modules.sections.map((section) => (
-        <section key={section.title} className="flex flex-col gap-2">
-          <h3 className="text-body font-medium">{section.title}</h3>
-          <ReadonlyContent content={section.body} className="max-w-none text-body leading-7" />
+      {data.layout_guidelines.length > 0 ? (
+        <section className="flex flex-col gap-2" aria-label="图像与布局">
+          <h3 className="text-body font-medium">图像与布局</h3>
+          <p className="text-caption text-muted-foreground">布局准则</p>
+          <ul className="list-disc space-y-1 pl-5 text-body leading-6">
+            {data.layout_guidelines.map((guideline) => (
+              <li key={guideline}>{guideline}</li>
+            ))}
+          </ul>
         </section>
-      ))}
+      ) : null}
+
+      <BuiltinKitModule system={data} />
+
+      {data.artifacts.length > 0 ? (
+        <section className="flex flex-col gap-2" aria-label="设计系统素材">
+          <h3 className="text-body font-medium">设计系统素材</h3>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-4">
+            {data.artifacts.map((artifact) => (
+              <BuiltinArtifactCard key={artifact.id} artifact={artifact} systemName={data.name || slug} />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <p className="text-caption text-muted-foreground">
         官方体系是只读参考。要在项目里使用，请在项目的「设计体系」中创建，并以它作为参考风格。
