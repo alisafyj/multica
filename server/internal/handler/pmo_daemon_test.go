@@ -124,7 +124,7 @@ func createPMOEmailAgentForTest(t *testing.T, account string) (string, string) {
 	var runtimeID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_runtime (workspace_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, last_seen_at)
-		VALUES ($1, 'PMO Email Runtime', 'cloud', 'pmo_email_test', 'online', 'pmo email test runtime', '{}'::jsonb, $2, now())
+		VALUES ($1, 'PMO Email Runtime', 'cloud', 'codex', 'online', 'pmo email test runtime', '{}'::jsonb, $2, now())
 		RETURNING id
 	`, testWorkspaceID, userID).Scan(&runtimeID); err != nil {
 		t.Fatalf("create pmo email runtime: %v", err)
