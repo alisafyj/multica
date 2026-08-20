@@ -12,9 +12,15 @@ const apiMocks = vi.hoisted(() => ({
   adjustProjectDesignSystem: vi.fn(),
   regenerateProjectDesignSystem: vi.fn(),
   saveProjectDesignSystem: vi.fn(),
+  listTaskMessages: vi.fn(),
 }));
 
 vi.mock("@multica/core/api", () => ({ api: apiMocks }));
+
+// The transcript surface has its own suite; here only its presence matters.
+vi.mock("../common/task-transcript", () => ({
+  TranscriptButton: ({ title }: { title?: string }) => <button type="button">{title ?? "查看执行过程"}</button>,
+}));
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
@@ -234,6 +240,73 @@ describe("ProjectDesignSystemPage", () => {
     );
 
     await waitFor(() => expect(screen.queryByRole("button", { name: "保存调整" })).not.toBeInTheDocument());
+  });
+
+  it("shows the live task status for a first generation instead of an empty canvas", async () => {
+    apiMocks.listTaskMessages.mockResolvedValue([]);
+    renderPage(makeSystem({
+      project_id: "",
+      status: "generating",
+      has_unsaved_changes: false,
+      active_task: {
+        id: "task-1",
+        agent_id: "agent-1",
+        status: "running",
+        operation: "generate",
+        error: null,
+        failure_reason: null,
+        wait_reason: null,
+        created_at: "2026-08-20T09:09:00Z",
+        dispatched_at: "2026-08-20T09:09:40Z",
+        started_at: "2026-08-20T09:09:44Z",
+        completed_at: null,
+      },
+      content: {
+        sections: [],
+        token_groups: [],
+        locators: [],
+        preview_html: "",
+        integrity_sha256: "",
+      },
+      preview_validation: { status: "none", integrity_sha256: "", report: {}, verified_at: null },
+    }));
+
+    expect(await screen.findByRole("heading", { name: "正在生成设计体系" })).toBeInTheDocument();
+    expect(screen.getByLabelText("智能体任务活动")).toBeInTheDocument();
+    expect(screen.getByText("智能体执行中")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查看执行过程" })).toBeInTheDocument();
+    // The empty canvas's misleading fallback must not render here.
+    expect(screen.queryByText(/UI Kit 暂时不可用/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "在线 UI Kit" })).not.toBeInTheDocument();
+  });
+
+  it("offers regenerate with the frozen inputs after a failed first generation", async () => {
+    const user = userEvent.setup();
+    apiMocks.regenerateProjectDesignSystem.mockResolvedValue(makeSystem({ project_id: "", status: "generating" }));
+    renderPage(makeSystem({
+      project_id: "",
+      status: "unestablished",
+      has_unsaved_changes: false,
+      active_task: null,
+      last_error: { code: "project_design_system_task_failed" },
+      content: {
+        sections: [],
+        token_groups: [],
+        locators: [],
+        preview_html: "",
+        integrity_sha256: "",
+      },
+      preview_validation: { status: "none", integrity_sha256: "", report: {}, verified_at: null },
+    }));
+
+    expect(await screen.findByRole("heading", { name: "生成未完成" })).toBeInTheDocument();
+    expect(screen.getByText("智能体执行失败。请检查智能体状态后重新生成。")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("执行智能体"), "agent-2");
+    await user.click(screen.getByRole("button", { name: "重新生成" }));
+    await waitFor(() => expect(apiMocks.regenerateProjectDesignSystem).toHaveBeenCalledWith("system-1", {
+      agent_id: "agent-2",
+    }));
   });
 
   it("requires confirmation before regenerate and preserves saved content until success", async () => {

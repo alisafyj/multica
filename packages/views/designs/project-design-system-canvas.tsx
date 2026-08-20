@@ -74,6 +74,9 @@ const TOKEN_GROUP_LABELS: Record<string, string> = {
   component: "组件 Token",
 };
 
+// The standalone detail page reuses these for its generating/failed branches.
+export { errorMessage as designSystemErrorMessage, isAgentAvailable as isDesignSystemAgentAvailable };
+
 const TOKEN_REFERENCE_PATTERN = /var\(\s*(--[-_a-zA-Z0-9]+)\s*\)/g;
 const MAX_TOKEN_REFERENCE_DEPTH = 24;
 const TYPOGRAPHY_PREVIEW_SAMPLE = "Aa";
