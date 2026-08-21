@@ -1,7 +1,7 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import type { DesignDocument } from "@multica/core/types";
-import { Badge } from "@multica/ui/components/ui/badge";
 import { cn } from "@multica/ui/lib/utils";
 import { useTimeAgo } from "../i18n/use-time-ago";
 
@@ -52,37 +52,74 @@ export function designDocumentSourceLabel(recipe: string): string {
 }
 
 /**
- * Placeholder media. Design documents carry no thumbnail today, so this is a
- * composed tile rather than an empty frame that would read as a failed image.
+ * The scenario a document was made for — Open Design's card kind tag
+ * (RecentProjectsStrip `ProjectTag` / `projectCategory`), which anchors the
+ * bottom-right of every card. Built-in recipes name their own scenario; a
+ * catalogue slug has no fixed scenario, so it reads as 模板, the same word
+ * {@link designDocumentSourceLabel} uses for that origin.
  */
-function DocumentPreview({ running }: { running: boolean }) {
-  return (
-    <div className="relative aspect-[4/3] overflow-hidden bg-muted/50">
-      <div className="absolute inset-4 overflow-hidden rounded-lg border bg-background shadow-sm">
-        <div className="h-7 border-b bg-muted/40" />
-        <div className="grid grid-cols-3 gap-2 p-2.5">
-          <span className="h-12 rounded-md bg-primary/10" />
-          <span className="h-12 rounded-md bg-primary/5" />
-          <span className="h-12 rounded-md bg-primary/10" />
-        </div>
-        <div className="space-y-1.5 px-2.5">
-          <span className="block h-1.5 w-3/4 rounded-full bg-muted" />
-          <span className="block h-1.5 w-1/2 rounded-full bg-muted" />
-        </div>
-      </div>
-      {running ? (
-        <span className="absolute left-3 top-3 inline-flex h-5 items-center gap-1.5 rounded-full bg-background/90 px-2 text-caption font-medium text-foreground shadow-sm">
-          <span className="size-1.5 animate-pulse rounded-full bg-primary" />
-          生成中
-        </span>
-      ) : null}
-    </div>
-  );
+export function designDocumentKindLabel(recipe: string): string {
+  switch (recipe.trim()) {
+    case "wireframe":
+      return "线框图";
+    case "mobile-app":
+      return "移动应用";
+    case "web-clone":
+      return "网站复刻";
+    case "figma-migration":
+      return "来自 Figma";
+    case "":
+    case "default":
+    case "ui-mockup":
+      return "原型";
+    default:
+      return "模板";
+  }
 }
 
 /**
- * One design document as a card. `onOpen` takes the user to the document's own
- * workspace; without it the card is plain content rather than a control.
+ * The cover a document shows, ported from Open Design's `projectCover`
+ * fallback branch (RecentProjectsStrip.tsx). A design document carries no
+ * thumbnail — the saved package's preview needs a per-revision capability
+ * token, far too much for a grid — so every card takes the fallback: a hue
+ * derived from the document's own id, plus its first character.
+ *
+ * Deriving the hue from the id rather than picking one colour keeps a grid of
+ * coverless cards distinguishable at a glance and stable across reloads,
+ * which a shared neutral placeholder never is: Open Design's cards read as
+ * documents, ours read as three identical loading skeletons.
+ */
+export function designDocumentCover(document: DesignDocument): {
+  style: CSSProperties;
+  initial: string;
+} {
+  let hash = 0;
+  for (let index = 0; index < document.id.length; index += 1) {
+    hash = (hash * 31 + document.id.charCodeAt(index)) >>> 0;
+  }
+  const hue = hash % 360;
+  const secondHue = (hue + 38) % 360;
+  const trimmed = document.title.trim();
+  return {
+    style: {
+      background:
+        `radial-gradient(circle at 30% 28%, hsl(${hue} 70% 78% / 0.55), transparent 42%),`
+        + ` linear-gradient(135deg, hsl(${hue} 65% 88%), hsl(${secondHue} 70% 90%))`,
+    },
+    initial: (trimmed ? Array.from(trimmed)[0]! : "?").toUpperCase(),
+  };
+}
+
+/**
+ * One design document as a card, in Open Design's recent-projects shape: a
+ * 16/9 cover with the caption below it on the page itself. The card carries no
+ * surface, border or padding of its own (their `.recent-projects__card` is
+ * `background: transparent` with a transparent 1px border) — the cover and the
+ * two caption lines are the whole card, and the grid gap is the only spacing
+ * between them.
+ *
+ * `onOpen` takes the user to the document's own workspace; without it the card
+ * is plain content rather than a control.
  */
 export function DesignDocumentCard({
   document,
@@ -100,31 +137,55 @@ export function DesignDocumentCard({
   const status = designDocumentStatusLabel(document.status);
   const title = document.title.trim() || "未命名设计稿";
   const updatedAt = document.updated_at || document.created_at;
-  const meta = [projectTitle.trim(), designDocumentSourceLabel(document.recipe)]
+  const cover = designDocumentCover(document);
+  const where = [projectTitle.trim(), updatedAt ? timeAgo(updatedAt) : ""]
     .filter((part) => part.length > 0)
     .join(" · ");
 
   const body = (
     <>
-      <DocumentPreview running={running} />
-      <div className="min-w-0 p-3">
-        <div className="flex min-w-0 items-start justify-between gap-2">
-          <span className="min-w-0 flex-1 truncate text-body font-medium">{title}</span>
-          {status && !running ? (
-            <Badge variant="secondary" className="shrink-0 px-1.5 text-micro font-normal">
-              {status}
-            </Badge>
-          ) : null}
-        </div>
-        <div className="mt-2.5 flex items-center justify-between gap-2 text-caption text-muted-foreground">
-          <span className="truncate">{meta}</span>
-          {updatedAt ? <span className="shrink-0">{timeAgo(updatedAt)}</span> : null}
+      <div
+        style={cover.style}
+        aria-hidden
+        className="relative flex aspect-[16/9] items-center justify-center overflow-hidden rounded-lg"
+      >
+        <span className="text-display font-medium text-foreground/25">{cover.initial}</span>
+        {/* Hairline ring drawn over the cover, not as a border: a light cover
+            would otherwise melt into the page. Open Design raises it to 22%
+            for exactly this gradient fallback, where their usual 8% ring
+            disappears into the colour variation. */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded-[inherit] border"
+          style={{ borderColor: "color-mix(in srgb, var(--foreground) 22%, transparent)" }}
+        />
+        {status ? (
+          <span
+            className={cn(
+              "absolute left-2 top-2 inline-flex h-5 items-center gap-1.5 rounded-full bg-background/90 px-2 text-caption font-medium shadow-sm",
+              document.status === "failed" ? "text-destructive" : "text-foreground",
+            )}
+          >
+            {running ? <span className="size-1.5 animate-pulse rounded-full bg-primary" /> : null}
+            {status}
+          </span>
+        ) : null}
+      </div>
+      {/* Caption: name, then where·when on the left with the kind tag pushed
+          to the bottom-right corner — Open Design's `card-footer`. */}
+      <div className="mt-2 flex min-w-0 flex-col gap-1">
+        <span className="min-w-0 truncate text-body font-medium group-hover/document:text-primary">
+          {title}
+        </span>
+        <div className="flex min-w-0 items-center justify-between gap-2 text-caption text-muted-foreground">
+          <span className="min-w-0 flex-1 truncate">{where}</span>
+          <span className="shrink-0">{designDocumentKindLabel(document.recipe)}</span>
         </div>
       </div>
     </>
   );
 
-  const shell = "flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card text-left";
+  const shell = "flex min-w-0 flex-col text-left";
   if (!onOpen) {
     return <article className={shell}>{body}</article>;
   }
@@ -133,7 +194,7 @@ export function DesignDocumentCard({
       type="button"
       onClick={onOpen}
       title={projectTitle ? `打开「${projectTitle}」的这份设计稿` : "打开这份设计稿"}
-      className={cn(shell, "cursor-pointer transition-colors hover:border-primary/50")}
+      className={cn(shell, "group/document cursor-pointer")}
     >
       {body}
     </button>

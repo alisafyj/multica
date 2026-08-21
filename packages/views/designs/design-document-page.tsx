@@ -18,6 +18,7 @@ import {
   RotateCw,
   Scan,
   Smartphone,
+  Tablet,
   X,
   ZoomIn,
   ZoomOut,
@@ -90,11 +91,12 @@ export const ADJUSTMENT_PRESETS: ReadonlyArray<{ id: string; label: string; inst
   },
 ];
 
-type PreviewViewport = "fit" | "desktop" | "mobile";
+type PreviewViewport = "fit" | "desktop" | "tablet" | "mobile";
 
 const VIEWPORTS: ReadonlyArray<{ id: PreviewViewport; label: string; width: number | null; icon: typeof Monitor }> = [
   { id: "fit", label: "适应", width: null, icon: Scan },
   { id: "desktop", label: "桌面", width: 1280, icon: Monitor },
+  { id: "tablet", label: "平板", width: 768, icon: Tablet },
   { id: "mobile", label: "移动", width: 390, icon: Smartphone },
 ];
 

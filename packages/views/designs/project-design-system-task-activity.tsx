@@ -8,8 +8,11 @@ import { taskMessagesOptions } from "@multica/core/chat/queries";
 import { designKeys } from "@multica/core/designs/keys";
 import { useWorkspaceId } from "@multica/core/hooks";
 import type { Agent, ProjectDesignSystem, ProjectDesignSystemTask, TaskMessagePayload } from "@multica/core/types";
+import type { AgentTask } from "@multica/core/types/agent";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { TranscriptButton } from "../common/task-transcript";
+import { taskMessageSnippet } from "./task-message-snippet";
 
 const STALE_AFTER_MS = 3 * 60_000;
 const ACTIVE_TASK_STATUSES = new Set(["queued", "dispatched", "running", "waiting_local_directory"]);
@@ -58,6 +61,29 @@ function formatDuration(milliseconds: number): string {
   if (hours > 0) return `${hours} 小时 ${minutes} 分`;
   if (minutes > 0) return `${minutes} 分 ${seconds} 秒`;
   return `${seconds} 秒`;
+}
+
+/**
+ * The transcript dialog speaks AgentTask; a design task carries the same run
+ * identity minus queue plumbing it never had (runtime, issue, priority). The
+ * dialog optional-chains everything this fills with blanks.
+ */
+function transcriptTask(task: ProjectDesignSystemTask): AgentTask {
+  return {
+    id: task.id,
+    agent_id: task.agent_id,
+    runtime_id: "",
+    issue_id: "",
+    status: task.status as AgentTask["status"],
+    priority: 0,
+    dispatched_at: task.dispatched_at ?? null,
+    started_at: task.started_at,
+    completed_at: task.completed_at,
+    result: null,
+    error: task.error,
+    failure_reason: task.failure_reason ?? "",
+    created_at: task.created_at,
+  };
 }
 
 function newestActivityAt(
@@ -146,8 +172,21 @@ export function DesignTaskActivity({
           {canStop ? <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : null}
           <span>{taskStatusLabel(task.status)}</span>
         </div>
-        <Badge variant="secondary">{taskOperationLabel(task.operation)}</Badge>
+        <div className="flex shrink-0 items-center gap-1">
+          <TranscriptButton
+            task={transcriptTask(task)}
+            agentName={agent?.name ?? "智能体"}
+            isLive={canStop}
+            title="查看执行过程"
+          />
+          <Badge variant="secondary">{taskOperationLabel(task.operation)}</Badge>
+        </div>
       </div>
+      {canStop && taskMessageSnippet(messages[messages.length - 1]) ? (
+        <p aria-live="polite" className="mt-3 truncate text-caption text-muted-foreground">
+          {taskMessageSnippet(messages[messages.length - 1])}
+        </p>
+      ) : null}
 
       <dl className={`mt-4 grid gap-4 ${compact ? "grid-cols-2" : "sm:grid-cols-4"}`}>
         <div className="min-w-0">

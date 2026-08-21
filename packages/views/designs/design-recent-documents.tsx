@@ -82,13 +82,13 @@ export function DesignRecentDocuments({
         <span>打开设计稿所在项目的「设计稿」查看全部</span>
       </header>
       {loading ? (
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, index) => (
-            <Skeleton key={index} className="h-52 w-full rounded-lg" />
+        <div className="mt-3 grid gap-4 grid-cols-2 min-[564px]:grid-cols-3 min-[756px]:grid-cols-4 min-[948px]:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <Skeleton key={index} className="aspect-[16/9] w-full rounded-lg" />
           ))}
         </div>
       ) : (
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-3 grid gap-4 grid-cols-2 min-[564px]:grid-cols-3 min-[756px]:grid-cols-4 min-[948px]:grid-cols-5">
           {visible.map((item) => (
             <DesignDocumentCard
               key={item.document.id}
