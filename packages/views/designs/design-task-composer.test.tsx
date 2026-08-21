@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const navigate = vi.hoisted(() => vi.fn());
 const {
@@ -83,7 +83,11 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import zhCommon from "../locales/zh-Hans/common.json";
 import zhIssues from "../locales/zh-Hans/issues.json";
 import zhProjects from "../locales/zh-Hans/projects.json";
-import { DesignTaskComposer } from "./design-task-composer";
+import { DesignTaskComposer, STATIC_BRIEF_PLACEHOLDER } from "./design-task-composer";
+import {
+  DEFAULT_TYPEWRITER_TIMING,
+  PLACEHOLDER_BRIEF_EXAMPLES,
+} from "./typewriter-placeholder";
 
 const AGENT = {
   id: "agent-1",
@@ -219,6 +223,12 @@ describe("DesignTaskComposer", () => {
       total: 1,
     });
     createDesignDocument.mockResolvedValue(createdDocument());
+  });
+
+  // The typewriter tests install fake timers; restore them even when their
+  // assertions throw so later suites keep real time.
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("keeps submit closed until project, agent and brief are all present", async () => {
@@ -645,6 +655,53 @@ describe("DesignTaskComposer", () => {
     await user.click(await screen.findByRole("button", { name: "crm-h5" }));
 
     expect(screen.queryByText(/已选择仓库/)).not.toBeInTheDocument();
+  });
+
+  // Wiring only — the typewriter's phase/step matrix is canonical in
+  // typewriter-placeholder.test.ts. Fake timers drive the type→hold→delete
+  // chain; fireEvent keeps focus/change synchronous alongside them. Each step
+  // needs its own act: the next timer is only scheduled after React commits
+  // the previous state, so one advanceTimersByTime cannot cascade the chain.
+  async function typeSteps(steps: number) {
+    for (let i = 0; i < steps; i += 1) {
+      await act(async () => {
+        vi.advanceTimersByTime(DEFAULT_TYPEWRITER_TIMING.typeMs);
+      });
+    }
+  }
+
+  it("types the rotating example briefs into the empty design composer's placeholder", async () => {
+    vi.useFakeTimers();
+    renderComposer();
+
+    const input = screen.getByLabelText("页面需求描述");
+    // Nothing typed yet: the first example starts as an empty line.
+    expect(input).toHaveAttribute("placeholder", "");
+
+    await typeSteps(3);
+    expect(input).toHaveAttribute("placeholder", PLACEHOLDER_BRIEF_EXAMPLES[0]!.slice(0, 3));
+  });
+
+  it("freezes the full example while the composer is focused and falls back once a brief is typed", async () => {
+    vi.useFakeTimers();
+    renderComposer();
+
+    const input = screen.getByLabelText("页面需求描述");
+    await typeSteps(2);
+    // Mid-word fragment before focus…
+    expect(input).toHaveAttribute("placeholder", PLACEHOLDER_BRIEF_EXAMPLES[0]!.slice(0, 2));
+
+    fireEvent.focus(input);
+    // …the whole line while typing could begin: a caret must never sit over
+    // moving or half-deleted text (OD issue #118).
+    expect(input).toHaveAttribute("placeholder", PLACEHOLDER_BRIEF_EXAMPLES[0]);
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+    });
+    expect(input).toHaveAttribute("placeholder", PLACEHOLDER_BRIEF_EXAMPLES[0]);
+
+    fireEvent.change(input, { target: { value: "客户列表页" } });
+    expect(input).toHaveAttribute("placeholder", STATIC_BRIEF_PLACEHOLDER);
   });
 
   it("reports grounding from the server's own flag, not from what was submitted", async () => {

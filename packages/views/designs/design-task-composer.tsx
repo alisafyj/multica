@@ -78,6 +78,10 @@ import { StatusIcon } from "../issues/components/status-icon";
 import { DesignDotGrid } from "./design-dot-grid";
 import { DesignExamplePrompts, PROTOTYPE_FAMILY } from "./design-example-prompts";
 import { DesignRecentDocuments } from "./design-recent-documents";
+import {
+  PLACEHOLDER_BRIEF_EXAMPLES,
+  useTypewriterPlaceholder,
+} from "./typewriter-placeholder";
 
 /**
  * The creation rail (DC-049). Open Design's fixed ten top-level output types
@@ -163,6 +167,10 @@ export function planInstruction(brief: string): string {
 export const BRIEF_MAX_LENGTH = 4000;
 /** Mirrors the server's design document attachment cap. */
 const MAX_ATTACHMENTS = 8;
+/** The placeholder shown whenever the typewriter rotation is off — plan/ask
+ *  modes and any moment the examples are unavailable. Exported for the
+ *  composer suite, which asserts the fallback without copying the copy. */
+export const STATIC_BRIEF_PLACEHOLDER = "例如：做一个 CRM 客户列表页，支持筛选、批量操作和客户详情抽屉。";
 
 /**
  * A recipe the community gallery handed to the composer (DC-041). Carries its
@@ -714,7 +722,18 @@ export function DesignTaskComposer({
   // Reference files staged with the prompt, as Open Design's composer does.
   // Uploaded through the ordinary route; only the ids travel with the request.
   const [attachments, setAttachments] = useState<Array<{ id: string; name: string }>>([]);
+  // Focus only gates the placeholder animation (it freezes while the caret is
+  // in the box); nothing else on the panel reads it.
+  const [briefFocused, setBriefFocused] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // The empty design composer types rotating example briefs into the
+  // placeholder; every other state shows the static line.
+  const typedBriefPlaceholder = useTypewriterPlaceholder(PLACEHOLDER_BRIEF_EXAMPLES, {
+    enabled: mode === "design" && brief.length === 0,
+    paused: briefFocused,
+  });
+  const briefPlaceholder =
+    mode === "design" && brief.length === 0 ? typedBriefPlaceholder : STATIC_BRIEF_PLACEHOLDER;
   const { upload, uploading } = useFileUpload(api, (error, file) => toast.error(`${file.name}：${error.message}`));
   const stageFiles = async (files: FileList | File[]) => {
     for (const file of Array.from(files).slice(0, MAX_ATTACHMENTS)) {
@@ -901,8 +920,10 @@ export function DesignTaskComposer({
             <Textarea
               value={brief}
               onChange={(event) => setBrief(event.target.value)}
+              onFocus={() => setBriefFocused(true)}
+              onBlur={() => setBriefFocused(false)}
               aria-label="页面需求描述"
-              placeholder="例如：做一个 CRM 客户列表页，支持筛选、批量操作和客户详情抽屉。"
+              placeholder={briefPlaceholder}
               className="min-h-32 resize-none border-0 bg-transparent px-4 py-3.5 text-body shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
             />
             {attachments.length > 0 ? (

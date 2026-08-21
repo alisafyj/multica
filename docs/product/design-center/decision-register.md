@@ -1,6 +1,6 @@
 # Multica 设计中心决策台账
 
-> 最后更新：2026-08-16
+> 最后更新：2026-08-21
 > 规则：保留历史，通过状态变化表达推翻或替代，不删除旧决策
 
 ## 状态说明
@@ -619,6 +619,16 @@ Open Design 的两类预置资源按各自性质分别落地，不共用一套�
 - 2026-08-20 续（首页与工作台对齐 Open Design 的第二批）：①设计稿工作台新增「预览/代码」切换——修订响应携带包内 artifact index（`files`，永不为 null），代码视图经预览能力路由逐文件读取（文本内联展示、图片直渲、二进制与超过 1.5MB 仅下载、逐文件下载），这也是上游「本轮产出的文件」清单的对应物；预览侧新增缩放（50–150%，transform 包裹保持内部布局宽度），设备宽度切换此前已存在。上游的「分享」未迁移：我们的预览能力令牌 30 分钟过期，复制链接会在半小时后失效、名不副实，持久分享路由列为后续切片。②首页 composer 增加上游的三模式选择器——设计（默认，创建设计稿）、提问（把提示词交给智能体对话，不产出设计稿）、规划（同样走对话，但包裹规划指令：目标/页面清单/关键流程/状态与边界/开放问题，并要求产出可直接粘贴回需求描述的最终版本——规划到生成的结构化交接列为后续切片）；提问/规划复用既有 chat（createChatSession + sendChatMessage + 跳转会话），不需要项目，设计专属的项目/仓库/任务/设计体系/平台 pill 在这两个模式下隐藏；场景芯片、社区配方、从 Figma 导入都会切回设计模式。③「参考文件」chip 收进上游式「+」菜单（附加文件、从 Figma 导入）；提交按钮改为上游的圆形 ↑（无障碍名随模式变化）；「UI Mockup」芯片改名「原型」；示例提示词区保持上游的单行横滑（网格版被用户否决），复用社区卡的实时预览、分类 pill 超过 6 个折入「更多」。④用户裁定：平台选择（Web/移动端/跨端）从首页 composer 与社区「直接创建」弹层移除——设备切换属于设计稿预览页；目标平台改由场景推导（移动应用场景 → mobile，其余 → web，目录配方用其自带的 platform 建议值），服务端字段与库页的平台标注不变。上游 + 菜单的「引用其它项目 / 插件 / 连接器 / MCP」不迁移：分别没有跨项目文件引用种类与对应的插件/连接器体系，智能体的能力由其自身技能与 MCP 配置决定。
 - 待办（后续切片，本条不改变已实现路径）：项目「设计体系」子 tab 与工作区库的关系收敛（项目引用工作区体系，还是项目专属体系并存）；既有项目绑定体系是否迁移为工作区级；复制端点的 standalone 目标支持；设计稿预览的持久分享路由；规划对话到设计生成的结构化交接。
 - 证据：`server/migrations/880_design_document.up.sql`、`server/migrations/899_standalone_design_systems.up.sql`、`packages/views/designs/workspace-design-system-create.tsx`。
+
+### DC-061 首页 composer 的打字机 placeholder 采用原生属性驱动
+
+- 状态：`confirmed`
+- 日期：2026-08-21
+- 依据：用户要求首页输入框的 placeholder 具备打字机效果。上游实现为 Open Design 的 `apps/web/src/components/home-hero/placeholderScenarios.ts` 与 `PlaceholderCarousel.tsx`（type → hold → delete → next 状态机，42/22/1900/320ms）。
+- 决策：状态机按原语义移植到 `packages/views/designs/typewriter-placeholder.ts`（纯函数 `advanceTypewriter` + `useTypewriterPlaceholder`），但**驱动 textarea 的原生 `placeholder` 属性而非上游的覆盖层 div**——上游需要覆盖层是因为要在 Lexical 编辑器上画闪烁光标 span，原生属性无需对齐与指针事件处理。焦点暂停语义取整句：聚焦且为空时冻结并显示**当前完整例句**（半删片段读起来像损坏文案；上游则整个隐藏覆盖层，OD issue #118 的动机——光标不得压在移动文字上）。`prefers-reduced-motion` 降级为整句轮换。规划/提问模式与已输入状态回落到静态文案 `STATIC_BRIEF_PLACEHOLDER`。
+- 明确不迁移：上游把场景绑定到「空提交 → 建模板」的行为。我们的轮换纯属提示，提交仍要求输入需求描述。
+- 证据：`packages/views/designs/typewriter-placeholder.test.ts`（状态机矩阵，node 环境）、`packages/views/designs/design-task-composer.test.tsx`（typing/冻结/回落接线，伪计时器逐 act 步进）。
+
 
 ## 下一步
 
