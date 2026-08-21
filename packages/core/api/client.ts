@@ -213,6 +213,9 @@ import type {
   DesignDocumentRevision,
   ListDesignDocumentRevisionsResponse,
   ListDesignDocumentsResponse,
+  DesignDocumentShare,
+  ListDesignDocumentSharesResponse,
+  DesignDocumentShareExchange,
   CreateDesignDraftRequest,
   CreateDesignDeliveryRequest,
   CreateDesignFileRequest,
@@ -503,6 +506,12 @@ import {
   EMPTY_DESIGN_DOCUMENT_REVISION,
   ListDesignDocumentRevisionsResponseSchema,
   EMPTY_LIST_DESIGN_DOCUMENT_REVISIONS_RESPONSE,
+  DesignDocumentShareSchema,
+  EMPTY_DESIGN_DOCUMENT_SHARE,
+  ListDesignDocumentSharesResponseSchema,
+  EMPTY_LIST_DESIGN_DOCUMENT_SHARES_RESPONSE,
+  DesignDocumentShareExchangeSchema,
+  EMPTY_DESIGN_DOCUMENT_SHARE_EXCHANGE,
   DesignDraftMaterializeResponseSchema,
   DesignDraftSchema,
   DesignSystemProfileSchema,
@@ -4262,6 +4271,44 @@ export class ApiClient {
     });
   }
 
+  /**
+   * Mints the document's live link for one revision, or hands back the one
+   * that already exists — a revision keeps at most one live link, so creating
+   * twice returns the same URL the creator already holds (201 the first time,
+   * 200 after).
+   */
+  async createDesignDocumentRevisionShare(documentId: string, revisionId: string): Promise<DesignDocumentShare> {
+    const raw = await this.fetch<unknown>(
+      `/api/design-documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/share`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      DesignDocumentShareSchema,
+      { ...EMPTY_DESIGN_DOCUMENT_SHARE, document_id: documentId, revision_id: revisionId },
+      { endpoint: "POST /api/design-documents/{id}/revisions/{revisionId}/share" },
+    );
+  }
+
+  /** The document's live links, newest first; revoked links are absent. */
+  async listDesignDocumentShares(documentId: string): Promise<ListDesignDocumentSharesResponse> {
+    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/shares`);
+    return parseWithFallback(raw, ListDesignDocumentSharesResponseSchema, EMPTY_LIST_DESIGN_DOCUMENT_SHARES_RESPONSE, {
+      endpoint: "GET /api/design-documents/{id}/shares",
+    });
+  }
+
+  /**
+   * Revokes a share link — the only way one dies. 204 with no body; a missing
+   * or already-revoked id reads as 404 before there is anything to parse.
+   */
+  async revokeDesignDocumentShare(documentId: string, shareId: string): Promise<void> {
+    await this.fetch<unknown>(
+      `/api/design-documents/${encodeURIComponent(documentId)}/shares/${encodeURIComponent(shareId)}`,
+      { method: "DELETE" },
+    );
+  }
+
   async getDesignDraft(id: string): Promise<DesignDraft> {
     const raw = await this.fetch<unknown>(`/api/design-drafts/${encodeURIComponent(id)}`);
     return parseWithFallback(raw, DesignDraftSchema, { ...EMPTY_DESIGN_DRAFT, id }, {
@@ -5707,5 +5754,48 @@ export class ApiClient {
       EMPTY_REDEEM_WECOM_BINDING_TOKEN_RESPONSE,
       { endpoint: "POST /api/wecom/binding/redeem" },
     );
+  }
+}
+
+/** What the public share page learned about a link. */
+export type DesignDocumentShareExchangeResult =
+  | { status: "live"; exchange: DesignDocumentShareExchange }
+  /** Unknown, revoked, orphaned or invalid-manifest link — the uniform 404. */
+  | { status: "dead" }
+  /** Network or server failure, or an unparsable exchange body. */
+  | { status: "error" };
+
+/**
+ * Fetches the public exchange for a share token. Deliberately NOT an ApiClient
+ * method: the share page is for anonymous visitors, and this client's requests
+ * carry auth headers and session credentials plus a 401 logout hook — none of
+ * which belong on a public link. A 404 here is expected UX (链接已失效), not an
+ * exception, so it comes back as a value.
+ */
+export async function fetchDesignDocumentShareExchange(token: string): Promise<DesignDocumentShareExchangeResult> {
+  try {
+    const response = await fetch(`/api/design-shares/${encodeURIComponent(token)}`, {
+      // No credentials: the token alone decides access, and a session cookie
+      // would only risk tying the anonymous visit to a logged-in account.
+      credentials: "omit",
+    });
+    if (response.status === 404) {
+      return { status: "dead" };
+    }
+    if (!response.ok) {
+      return { status: "error" };
+    }
+    const raw: unknown = await response.json();
+    const exchange = parseWithFallback(raw, DesignDocumentShareExchangeSchema, EMPTY_DESIGN_DOCUMENT_SHARE_EXCHANGE, {
+      endpoint: "GET /api/design-shares/{token}",
+    });
+    // A body that parsed to the empty fallback carries no capability, so the
+    // frame cannot boot; treat it as a failed load the visitor can retry.
+    if (!exchange.resource_base_path || !exchange.resource_access_token) {
+      return { status: "error" };
+    }
+    return { status: "live", exchange };
+  } catch {
+    return { status: "error" };
   }
 }

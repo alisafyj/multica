@@ -1448,3 +1448,40 @@ export interface FigmaPluginAuthStatus {
   workspace_id?: string;
   expires_at?: string;
 }
+
+/**
+ * One durable share link for a saved design document revision (DC-062 item 5).
+ * The link never expires; only revocation removes it from the list.
+ */
+export interface DesignDocumentShare {
+  share_id: string;
+  /** Raw token; re-creating the link returns the same value the creator holds. */
+  token: string;
+  /** Absolute URL ready to paste — web origin plus `/shares/{token}`. */
+  url: string;
+  revision_id: string;
+  document_id: string;
+  document_title: string;
+  created_at: string;
+  revoked_at: string | null;
+}
+
+export interface ListDesignDocumentSharesResponse {
+  /** Live links only, newest first; never null. */
+  shares: DesignDocumentShare[];
+}
+
+/**
+ * The public face of a share link: what an anonymous visitor's exchange
+ * returns. The capability is minted per visit and expires on its own.
+ */
+export interface DesignDocumentShareExchange {
+  document_title: string;
+  pages: DesignDocumentPage[];
+  /** Package path of the entry prototype document; empty falls back to the first page's entry. */
+  prototype_entry: string;
+  /** Server-relative prefix; append a package path such as `prototype/index.html`. */
+  resource_base_path: string;
+  resource_access_token: string;
+  resource_access_expires_at: string;
+}

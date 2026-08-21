@@ -5,11 +5,13 @@ export {
   errorCode,
   PreviewTooLargeError,
   PreviewUnsupportedError,
+  fetchDesignDocumentShareExchange,
 } from "./client";
 export type {
   ApiClientOptions,
   ClientRuntimeSnapshot,
   ClientUsageRequest,
+  DesignDocumentShareExchangeResult,
 } from "./client";
 export { parseWithFallback, setSchemaLogger } from "./schema";
 export type { ParseOptions } from "./schema";

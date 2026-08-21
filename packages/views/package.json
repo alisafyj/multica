@@ -30,6 +30,7 @@
     "./runtimes": "./runtimes/index.ts",
     "./billing": "./billing/index.ts",
     "./designs": "./designs/index.ts",
+    "./designs/inline-prototype": "./designs/inline-prototype.ts",
     "./testing": "./testing/index.ts",
     "./dashboard": "./dashboard/index.ts",
     "./squads": "./squads/index.ts",

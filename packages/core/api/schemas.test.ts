@@ -114,6 +114,11 @@ import {
   DesignDocumentRevisionSchema,
   ListDesignDocumentRevisionsResponseSchema,
   EMPTY_DESIGN_DOCUMENT_REVISION,
+  DesignDocumentShareSchema,
+  ListDesignDocumentSharesResponseSchema,
+  EMPTY_DESIGN_DOCUMENT_SHARE,
+  DesignDocumentShareExchangeSchema,
+  EMPTY_DESIGN_DOCUMENT_SHARE_EXCHANGE,
   EMPTY_PLUGIN_CATALOG,
   PluginCatalogResponseSchema,
   PluginInstallationSchema,
@@ -184,6 +189,79 @@ describe("Design Document revision schemas", () => {
       revisions: [revision, "garbage", { ...revision, id: "revision-2", revision_number: 1 }],
     });
     expect(parsed.revisions.map((row) => row.id)).toEqual(["revision-1", "revision-2"]);
+  });
+});
+
+describe("Design document share schemas", () => {
+  const share = {
+    share_id: "share-1",
+    token: "tok_abc123",
+    url: "https://app.example.com/shares/tok_abc123",
+    revision_id: "revision-1",
+    document_id: "doc-1",
+    document_title: "Orders prototype",
+    created_at: "2026-08-21T00:00:00Z",
+    revoked_at: null,
+  };
+
+  it("keeps the token and the paste-ready url of a live share", () => {
+    const parsed = DesignDocumentShareSchema.parse(share);
+    expect(parsed.token).toBe("tok_abc123");
+    expect(parsed.url).toBe(share.url);
+    expect(parsed.revoked_at).toBeNull();
+  });
+
+  it("survives a malformed share instead of dropping the whole link", () => {
+    const parsed = parseWithFallback(
+      { ...share, token: 42, revoked_at: 123 },
+      DesignDocumentShareSchema,
+      EMPTY_DESIGN_DOCUMENT_SHARE,
+      { endpoint: "GET /api/design-documents/{id}/shares" },
+    );
+    expect(parsed.share_id).toBe("share-1");
+    expect(parsed.token).toBe("");
+    expect(parsed.revoked_at).toBeNull();
+  });
+
+  it("drops only the malformed rows of a share list", () => {
+    const parsed = ListDesignDocumentSharesResponseSchema.parse({
+      shares: [share, "garbage", { ...share, share_id: "share-2" }],
+    });
+    expect(parsed.shares.map((row) => row.share_id)).toEqual(["share-1", "share-2"]);
+  });
+
+  it("keeps the capability of an exchange whose pages projection rotted", () => {
+    const parsed = parseWithFallback(
+      {
+        document_title: "Orders prototype",
+        pages: "nope",
+        prototype_entry: "prototype/orders.html",
+        resource_base_path: "/api/design-document-previews/ws/rev/files",
+        resource_access_token: "token",
+        resource_access_expires_at: "2026-08-21T00:30:00Z",
+      },
+      DesignDocumentShareExchangeSchema,
+      EMPTY_DESIGN_DOCUMENT_SHARE_EXCHANGE,
+      { endpoint: "GET /api/design-shares/{token}" },
+    );
+    expect(parsed.document_title).toBe("Orders prototype");
+    expect(parsed.pages).toEqual([]);
+    expect(parsed.resource_base_path).toBe("/api/design-document-previews/ws/rev/files");
+    expect(parsed.resource_access_token).toBe("token");
+  });
+
+  it("parses an unparsable exchange down to the empty fallback", () => {
+    const parsed = parseWithFallback(
+      "internal error",
+      DesignDocumentShareExchangeSchema,
+      EMPTY_DESIGN_DOCUMENT_SHARE_EXCHANGE,
+      { endpoint: "GET /api/design-shares/{token}" },
+    );
+    expect(parsed).toEqual(EMPTY_DESIGN_DOCUMENT_SHARE_EXCHANGE);
+    // The anonymous fetcher treats an empty capability as a failed load, not a
+    // dead link — asserted here so the fallback cannot silently gain fields.
+    expect(parsed.resource_base_path).toBe("");
+    expect(parsed.resource_access_token).toBe("");
   });
 });
 

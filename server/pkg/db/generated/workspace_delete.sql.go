@@ -239,6 +239,9 @@ deleted_open_design_runs AS (
 deleted_design_document_revisions AS (
     DELETE FROM design_document_revision WHERE design_document_revision.workspace_id = $1
 ),
+deleted_design_document_shares AS (
+    DELETE FROM design_document_share WHERE design_document_share.workspace_id = $1
+),
 deleted_design_documents AS (
     DELETE FROM design_document WHERE design_document.workspace_id = $1
     RETURNING design_document.id

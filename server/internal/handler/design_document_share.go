@@ -88,7 +88,12 @@ func (h *Handler) loadShareableRevision(w http.ResponseWriter, r *http.Request, 
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "revision_lookup_failed", "failed to load the design document revision")
 		return db.DesignDocumentRevision{}, false
 	}
-	if document.DraftRevisionID.Valid && document.DraftRevisionID == revisionUUID {
+	// Saving keeps the draft pointer (the draft becomes the saved revision), so
+	// a revision is only unshareable while it is the draft and has never been
+	// saved. Historical revisions past the current draft stay shareable.
+	unsavedDraft := document.DraftRevisionID.Valid && document.DraftRevisionID == revisionUUID &&
+		(!document.SavedRevisionID.Valid || document.SavedRevisionID != revisionUUID)
+	if unsavedDraft {
 		writeProjectDesignSystemError(w, http.StatusConflict, "share_draft_revision", "a draft revision cannot be shared; save it first")
 		return db.DesignDocumentRevision{}, false
 	}

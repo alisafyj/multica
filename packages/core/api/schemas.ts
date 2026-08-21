@@ -90,6 +90,9 @@ import type {
   DesignDocumentRevision,
   ListDesignDocumentRevisionsResponse,
   ListDesignDocumentsResponse,
+  DesignDocumentShare,
+  ListDesignDocumentSharesResponse,
+  DesignDocumentShareExchange,
   DesignDelivery,
   DesignDraft,
   DesignDraftMaterializeResponse,
@@ -1598,6 +1601,60 @@ export const EMPTY_DESIGN_DOCUMENT_REVISION: DesignDocumentRevision = {
   flows: [],
   preview_targets: [],
   files: [],
+  resource_base_path: "",
+  resource_access_token: "",
+  resource_access_expires_at: "",
+};
+
+export const DesignDocumentShareSchema = z.object({
+  share_id: z.string().catch("").default(""),
+  token: z.string().catch("").default(""),
+  url: z.string().catch("").default(""),
+  revision_id: z.string().catch("").default(""),
+  document_id: z.string().catch("").default(""),
+  document_title: z.string().catch("").default(""),
+  created_at: z.string().catch("").default(""),
+  revoked_at: z.string().nullable().catch(null).default(null),
+}).loose();
+
+export const ListDesignDocumentSharesResponseSchema = z.object({
+  // One bad row must not empty the whole list; drop it and keep the rest.
+  shares: z.preprocess(
+    (value) => Array.isArray(value)
+      ? value.filter((row) => DesignDocumentShareSchema.safeParse(row).success)
+      : [],
+    z.array(DesignDocumentShareSchema).catch([]),
+  ),
+}).loose();
+
+export const EMPTY_LIST_DESIGN_DOCUMENT_SHARES_RESPONSE: ListDesignDocumentSharesResponse = {
+  shares: [],
+};
+
+export const EMPTY_DESIGN_DOCUMENT_SHARE: DesignDocumentShare = {
+  share_id: "",
+  token: "",
+  url: "",
+  revision_id: "",
+  document_id: "",
+  document_title: "",
+  created_at: "",
+  revoked_at: null,
+};
+
+export const DesignDocumentShareExchangeSchema = z.object({
+  document_title: z.string().catch("").default(""),
+  pages: z.array(DesignDocumentPageSchema).catch([]).default([]),
+  prototype_entry: z.string().catch("").default(""),
+  resource_base_path: z.string().catch("").default(""),
+  resource_access_token: z.string().catch("").default(""),
+  resource_access_expires_at: z.string().catch("").default(""),
+}).loose();
+
+export const EMPTY_DESIGN_DOCUMENT_SHARE_EXCHANGE: DesignDocumentShareExchange = {
+  document_title: "",
+  pages: [],
+  prototype_entry: "",
   resource_base_path: "",
   resource_access_token: "",
   resource_access_expires_at: "",
