@@ -10,10 +10,9 @@ import { projectDesignSystemDetailOptions } from "@multica/core/designs/queries"
 import { useWorkspaceId } from "@multica/core/hooks";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import { agentListOptions } from "@multica/core/workspace/queries";
-import type { Agent, AgentTask, ProjectDesignSystem, ProjectDesignSystemTask } from "@multica/core/types";
+import type { Agent, ProjectDesignSystem } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
-import { TranscriptButton } from "../common/task-transcript";
 import {
   ProjectDesignSystemCanvas,
   designSystemErrorMessage,
@@ -36,41 +35,6 @@ function ProjectDesignSystemPageSkeleton() {
   );
 }
 
-const AGENT_TASK_STATUSES = new Set<AgentTask["status"]>([
-  "queued",
-  "dispatched",
-  "waiting_local_directory",
-  "running",
-  "completed",
-  "failed",
-  "cancelled",
-]);
-
-/**
- * Adapt the design-system task shape to the transcript surface's AgentTask.
- * TranscriptButton reads only the task id (to fetch/subscribe the message
- * stream); the remaining required fields are structural filler.
- */
-function transcriptTask(task: ProjectDesignSystemTask): AgentTask {
-  const status = AGENT_TASK_STATUSES.has(task.status as AgentTask["status"])
-    ? (task.status as AgentTask["status"])
-    : "running";
-  return {
-    id: task.id,
-    agent_id: task.agent_id,
-    runtime_id: "",
-    issue_id: "",
-    status,
-    priority: 0,
-    dispatched_at: task.dispatched_at ?? null,
-    started_at: task.started_at,
-    completed_at: task.completed_at,
-    result: null,
-    error: task.error,
-    created_at: task.created_at,
-  };
-}
-
 /**
  * First generation in flight and nothing to render yet. Mirrors the project
  * workbench's task-status branch — evidence only (live task activity plus the
@@ -78,7 +42,6 @@ function transcriptTask(task: ProjectDesignSystemTask): AgentTask {
  * extraction chat beside the pending preview.
  */
 function GeneratingView({ system, agents }: { system: ProjectDesignSystem; agents: Agent[] }) {
-  const agentName = agents.find((agent) => agent.id === system.active_task?.agent_id)?.name ?? "智能体";
   return (
     <div className="min-h-0 flex-1 overflow-auto">
       <div className="mx-auto w-full max-w-3xl px-6 py-10">
@@ -90,14 +53,6 @@ function GeneratingView({ system, agents }: { system: ProjectDesignSystem; agent
             <h2 className="text-title-sm font-semibold">正在生成设计体系</h2>
             <p className="mt-1 break-words text-body text-muted-foreground">{system.name}</p>
           </div>
-          {system.active_task ? (
-            <TranscriptButton
-              task={transcriptTask(system.active_task)}
-              agentName={agentName}
-              isLive
-              title="查看执行过程"
-            />
-          ) : null}
         </div>
         <ProjectDesignSystemTaskActivity system={system} agents={agents} />
         <p className="mt-4 text-caption text-muted-foreground">

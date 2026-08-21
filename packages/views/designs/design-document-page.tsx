@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
@@ -14,10 +14,12 @@ import {
   Minimize2,
   Monitor,
   MoreHorizontal,
+  MousePointerClick,
   RotateCcw,
   RotateCw,
   Scan,
   Smartphone,
+  SquareDashedMousePointer,
   Tablet,
   X,
   ZoomIn,
@@ -68,11 +70,17 @@ import { cn } from "@multica/ui/lib/utils";
 import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
 import { useTimeAgo } from "../i18n/use-time-ago";
+import { annotationInstruction, annotationLabel, type Annotation } from "./annotation-instruction";
 import { designDocumentStatusLabel } from "./design-document-card";
 import { DesignDocumentCritique, parseCritique } from "./design-document-critique";
 import { DesignDocumentSourceView } from "./design-document-source-view";
+import { DesignDocumentStaticView } from "./design-document-static-view";
 import { AgentSetting } from "./design-task-composer";
+import type { CanvasMode } from "./prototype-canvas";
 import { DesignTaskActivity, taskOperationLabel } from "./project-design-system-task-activity";
+
+/** What the workbench's main pane is showing. */
+type DocumentViewMode = "preview" | "annotate" | "code";
 
 const INSTRUCTION_MAX_LENGTH = 8000;
 
@@ -276,8 +284,21 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
 
   const [viewport, setViewport] = useState<PreviewViewport | null>(null);
   const effectiveViewport = viewport ?? defaultViewport(document?.platform ?? "");
-  // Open Design's 预览/代码 toggle: the same revision, rendered or read.
-  const [viewMode, setViewMode] = useState<"preview" | "code">("preview");
+  // Open Design's 预览/代码 toggle, widened: 标注 marks the static canvas for
+  // the agent, 预览 stays the live sandboxed frame, 代码 reads the package.
+  const [viewMode, setViewMode] = useState<DocumentViewMode>("preview");
+  const [markMode, setMarkMode] = useState<CanvasMode>("select");
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const annotationSeq = useRef(0);
+  const addAnnotation = (annotation: Omit<Annotation, "id" | "pagePath" | "pageTitle">) => {
+    annotationSeq.current += 1;
+    setAnnotations((current) => [...current, {
+      ...annotation,
+      id: `annotation-${annotationSeq.current}`,
+      pagePath: shownEntry,
+      pageTitle: shownPage?.title ?? shownEntry,
+    }]);
+  };
   const [zoomIndex, setZoomIndex] = useState(ZOOM_DEFAULT_INDEX);
   const zoom = ZOOM_LEVELS[zoomIndex] ?? 1;
   const [reloadKey, setReloadKey] = useState(0);
@@ -323,12 +344,14 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   };
 
   const adjust = useMutation({
-    mutationFn: (payload: { instruction: string; scopeToPage: boolean }) => {
+    mutationFn: (payload: { instruction: string; scopeToPage: boolean; annotations: Annotation[] }) => {
       const scope: Pick<DesignDocumentAdjustmentScope, "kind" | "id"> = payload.scopeToPage && shownPage
         ? { kind: "page", id: shownPage.page?.id ?? shownPage.entry }
         : { kind: "document" };
       return api.adjustDesignDocument(documentId, {
-        instruction: payload.instruction.trim(),
+        // Marks made on the canvas become part of the instruction, each note
+        // anchored to the selector its pick resolved to.
+        instruction: annotationInstruction(payload.annotations, payload.instruction).trim(),
         agent_id: agentId,
         scope,
         base_revision_id: currentRevisionId || undefined,
@@ -339,6 +362,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
       // Clear only the text that was sent — a queued flush must not wipe
       // whatever the user has started typing since.
       setInstruction((current) => (current === payload.instruction ? "" : current));
+      setAnnotations((current) => current.filter((row) => !payload.annotations.some((sent) => sent.id === row.id)));
       setPinnedRevisionId("");
       await refresh();
     },
@@ -349,7 +373,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   // fired automatically when the run lands (Open Design queues chat sends the
   // same way); if the run produces nothing to adjust, the text goes back into
   // the composer instead of being lost.
-  const [queuedAdjustment, setQueuedAdjustment] = useState<{ instruction: string; scopeToPage: boolean } | null>(null);
+  const [queuedAdjustment, setQueuedAdjustment] = useState<{ instruction: string; scopeToPage: boolean; annotations: Annotation[] } | null>(null);
   const flushAdjust = adjust.mutate;
   useEffect(() => {
     if (running || !queuedAdjustment) return;
@@ -434,7 +458,9 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   const composerOpen = canAdjust || running;
   const instructionBlocker = !composerOpen
     ? "还没有可以调整的版本"
-    : !instruction.trim()
+    // A mark carries its own message: the anchor plus its note is already an
+    // instruction, so an empty box is only a blocker when nothing is marked.
+    : !instruction.trim() && annotations.length === 0
       ? "描述你想怎么改"
       : !agentId
         ? "选择执行调整的智能体"
@@ -468,30 +494,32 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   const previewFrame = (
     <div className={cn("relative flex min-h-0 flex-1 flex-col overflow-hidden", fullscreen ? "fixed inset-0 z-50 bg-background" : "rounded-lg border bg-muted/30")}>
       <div className="flex shrink-0 items-center gap-2 border-b bg-background px-2 py-1.5">
-        {/* Open Design's 预览/代码 segmented: the same revision, rendered or read. */}
+        {/* Open Design's 预览/代码 segmented, widened by 标注: the same
+            revision, run live, marked up statically, or read as source. */}
         <div role="group" aria-label="查看方式" className="flex shrink-0 items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5">
-          <button
-            type="button"
-            aria-pressed={viewMode === "preview"}
-            onClick={() => setViewMode("preview")}
-            className={cn("flex items-center gap-1 rounded-md px-2 py-0.5 text-caption", viewMode === "preview" ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
-          >
-            <Eye className="h-3.5 w-3.5" />
-            预览
-          </button>
-          <button
-            type="button"
-            aria-pressed={viewMode === "code"}
-            disabled={!revision}
-            onClick={() => setViewMode("code")}
-            className={cn("flex items-center gap-1 rounded-md px-2 py-0.5 text-caption disabled:opacity-50", viewMode === "code" ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
-          >
-            <Code2 className="h-3.5 w-3.5" />
-            代码
-          </button>
+          {([
+            { id: "preview", label: "预览", icon: Eye },
+            { id: "annotate", label: "标注", icon: SquareDashedMousePointer },
+            { id: "code", label: "代码", icon: Code2 },
+          ] as const).map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={viewMode === id}
+              disabled={id !== "preview" && !revision}
+              onClick={() => setViewMode(id)}
+              className={cn(
+                "flex items-center gap-1 rounded-md px-2 py-0.5 text-caption disabled:opacity-50",
+                viewMode === id ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </button>
+          ))}
         </div>
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" role="tablist" aria-label="页面">
-          {viewMode === "preview" ? entries.map((entry) => (
+          {viewMode !== "code" ? entries.map((entry) => (
             <button
               key={entry.entry}
               type="button"
@@ -508,10 +536,37 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
           )) : (
             <span className="px-2 text-caption text-muted-foreground">{revision ? `${revision.files.length} 个文件` : ""}</span>
           )}
-          {viewMode === "preview" && entries.length === 0 && !revisionQuery.isLoading ? <span className="px-2 text-caption text-muted-foreground">暂无可预览的页面</span> : null}
+          {viewMode !== "code" && entries.length === 0 && !revisionQuery.isLoading ? <span className="px-2 text-caption text-muted-foreground">暂无可预览的页面</span> : null}
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
-          {viewMode === "preview" ? (
+          {viewMode === "annotate" ? (
+            <>
+              {/* What a drag on the canvas means: pick one element, or draw
+                  a box around a group. */}
+              <div role="group" aria-label="标注方式" className="mr-1 flex items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5">
+                {([
+                  { id: "select", label: "选元素", icon: MousePointerClick },
+                  { id: "region", label: "框选", icon: SquareDashedMousePointer },
+                ] as const).map(({ id, label, icon: Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    aria-pressed={markMode === id}
+                    title={label}
+                    onClick={() => setMarkMode(id)}
+                    className={cn(
+                      "flex items-center gap-1 rounded-md px-2 py-0.5 text-caption",
+                      markMode === id ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : null}
+          {viewMode !== "code" ? (
             <>
               {VIEWPORTS.map(({ id, label, icon: Icon }) => (
                 <Button
@@ -544,13 +599,17 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
               <Button type="button" size="icon-sm" variant="ghost" title="放大" aria-label="放大" disabled={zoomIndex === ZOOM_LEVELS.length - 1} onClick={() => setZoomIndex((index) => Math.min(ZOOM_LEVELS.length - 1, index + 1))}>
                 <ZoomIn className="h-3.5 w-3.5" />
               </Button>
-              <span className="mx-1 h-4 w-px bg-border" aria-hidden />
-              <Button type="button" size="icon-sm" variant="ghost" title="重新加载" aria-label="重新加载" onClick={() => setReloadKey((value) => value + 1)}>
-                <RotateCw className="h-3.5 w-3.5" />
-              </Button>
-              <Button type="button" size="icon-sm" variant="ghost" title="在新标签页中打开" aria-label="在新标签页中打开" disabled={!previewUrl} onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}>
-                <ExternalLink className="h-3.5 w-3.5" />
-              </Button>
+              {viewMode === "preview" ? (
+                <>
+                  <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+                  <Button type="button" size="icon-sm" variant="ghost" title="重新加载" aria-label="重新加载" onClick={() => setReloadKey((value) => value + 1)}>
+                    <RotateCw className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button type="button" size="icon-sm" variant="ghost" title="在新标签页中打开" aria-label="在新标签页中打开" disabled={!previewUrl} onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}>
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </Button>
+                </>
+              ) : null}
             </>
           ) : null}
           <Button type="button" size="icon-sm" variant="ghost" title={fullscreen ? "退出全屏" : "全屏"} aria-label={fullscreen ? "退出全屏" : "全屏"} onClick={() => setFullscreen((value) => !value)}>
@@ -567,6 +626,21 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
       {viewMode === "code" && revision ? (
         <div className="min-h-0 flex-1">
           <DesignDocumentSourceView key={revision.id} revision={revision} />
+        </div>
+      ) : viewMode === "annotate" ? (
+        <div className="min-h-0 flex-1">
+          <DesignDocumentStaticView
+            key={`${selectedRevisionId}:${shownEntry}`}
+            revision={revision}
+            entryPath={shownEntry}
+            title={`${title} · ${shownPage?.title ?? "标注"}`}
+            frameWidth={frameWidth}
+            zoom={zoom}
+            mode={markMode}
+            onPick={(descriptor) => addAnnotation({ element: descriptor, note: "" })}
+            onRegion={(region) => addAnnotation({ region, note: "" })}
+            onPageLink={(path) => setActiveEntry(path)}
+          />
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 items-start justify-center overflow-auto p-3">
@@ -729,11 +803,11 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
               if (instructionBlocker || busy) return;
               if (running) {
                 // Queue while the run is live; the latest submission wins.
-                setQueuedAdjustment({ instruction, scopeToPage });
+                setQueuedAdjustment({ instruction, scopeToPage, annotations });
                 setInstruction("");
                 return;
               }
-              adjust.mutate({ instruction, scopeToPage });
+              adjust.mutate({ instruction, scopeToPage, annotations });
             }}
             aria-label="调整设计稿"
           >
@@ -769,6 +843,39 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                 </button>
               ))}
             </div>
+            {annotations.length > 0 ? (
+              // Each mark keeps its own note, so one send can carry several
+              // separate asks that the agent can locate individually.
+              <ul className="mt-2 space-y-1.5" aria-label="标注">
+                {annotations.map((annotation) => (
+                  <li key={annotation.id} className="rounded-md border bg-background px-2 py-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="min-w-0 flex-1 truncate text-caption font-medium" title={annotation.element?.selector}>
+                        {annotationLabel(annotation)}
+                      </span>
+                      <span className="shrink-0 text-micro text-muted-foreground">{annotation.pageTitle}</span>
+                      <button
+                        type="button"
+                        aria-label={`删除标注 ${annotationLabel(annotation)}`}
+                        className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        onClick={() => setAnnotations((current) => current.filter((row) => row.id !== annotation.id))}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <input
+                      value={annotation.note}
+                      aria-label={`${annotationLabel(annotation)} 的修改说明`}
+                      placeholder="这里要怎么改？"
+                      className="mt-1 w-full bg-transparent text-caption outline-none placeholder:text-muted-foreground"
+                      onChange={(event) => setAnnotations((current) => current.map((row) => (
+                        row.id === annotation.id ? { ...row, note: event.target.value } : row
+                      )))}
+                    />
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             {queuedAdjustment ? (
               <div className="mt-2 flex items-start justify-between gap-2 rounded-md border border-dashed px-2.5 py-1.5 text-caption leading-5">
                 <span className="min-w-0">
@@ -802,11 +909,11 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !instructionBlocker && !busy) {
                   event.preventDefault();
                   if (running) {
-                    setQueuedAdjustment({ instruction, scopeToPage });
+                    setQueuedAdjustment({ instruction, scopeToPage, annotations });
                     setInstruction("");
                     return;
                   }
-                  adjust.mutate({ instruction, scopeToPage });
+                  adjust.mutate({ instruction, scopeToPage, annotations });
                 }
               }}
             />

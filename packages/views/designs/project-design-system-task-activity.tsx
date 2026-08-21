@@ -63,10 +63,23 @@ function formatDuration(milliseconds: number): string {
   return `${seconds} 秒`;
 }
 
+const AGENT_TASK_STATUSES = new Set<AgentTask["status"]>([
+  "queued",
+  "dispatched",
+  "waiting_local_directory",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
 /**
  * The transcript dialog speaks AgentTask; a design task carries the same run
  * identity minus queue plumbing it never had (runtime, issue, priority). The
  * dialog optional-chains everything this fills with blanks.
+ *
+ * Status is checked rather than cast: an installed client can meet a status
+ * its build predates, and the dialog branches on the value.
  */
 function transcriptTask(task: ProjectDesignSystemTask): AgentTask {
   return {
@@ -74,7 +87,9 @@ function transcriptTask(task: ProjectDesignSystemTask): AgentTask {
     agent_id: task.agent_id,
     runtime_id: "",
     issue_id: "",
-    status: task.status as AgentTask["status"],
+    status: AGENT_TASK_STATUSES.has(task.status as AgentTask["status"])
+      ? (task.status as AgentTask["status"])
+      : "running",
     priority: 0,
     dispatched_at: task.dispatched_at ?? null,
     started_at: task.started_at,
