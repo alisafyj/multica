@@ -641,7 +641,16 @@ Open Design 的两类预置资源按各自性质分别落地，不共用一套�
   - **明确不迁移**：Vercel / Cloudflare Pages 部署（Multica 不承担托管）；OD Studio 的终端、旁路会话与文件树工作区（DC-048 已裁定 Studio 本体不迁移）；逐文件版本管理（我们的版本是文档级不可变修订，语义更强）。
 - 决策：迁移顺序按「解除死路 → 精修能力 → 分发能力」排列，依次为 ①交付 → ②手动编辑 → ③导出与截图 → ④演示 → ⑤分享发布 → ⑥模板 → ⑦重命名/改挂 → ⑧分栏。交付排第一，因为在它落地之前整条链路的产物无人消费，其余功能都只是让一份没有出口的设计稿更好看。
 - 交付的边界（本条确认，实施细节见后续证据）：只交付 `saved` 修订（草稿不是承诺，P-011/DC-034）；交付建立 Design Document 与 Issue 的可追溯关联并在 Issue 上留下可审计记录；实现智能体在任务工作区内拿到的是经过 Audit 与 Preview 门禁的那个包本身，不是一个它打不开的链接；交付不自动改变 Issue 状态（DC-045）。
-- 证据：待实施切片补充。
+- 迁移清单（依次实施，完成即回填证据）：
+  1. **交付给实现智能体** — `confirmed`，已完成（2026-08-22）。
+  2. **手动编辑面板**（直接改字体/颜色/布局）。
+  3. **导出 PNG / PDF / PPTX 与截图发对话**。
+  4. **演示模式与演讲者备注**。
+  5. **持久分享与单文件发布**。
+  6. **存为模板**。
+  7. **重命名与改挂 Issue**。
+  8. **预览/代码分栏**。
+- 证据（第 1 项）：`POST /api/design-documents/{id}/deliver` 只接受已保存修订并在 Issue 上留系统评论；claim 侧由 `designDeliveryContextForIssue` 按文档自身的 saved 指针解析出 `design_delivery_context`；守护进程经 `GET /api/daemon/tasks/{taskId}/design-delivery/archive` 取包、按钉住的 digest 全量复验后以只读解包到 `.agent_context/design_delivery/package/`；两侧的 wire schema 由跨边界测试锁定（DC-059 的同类漂移）。测试：`handler/design_document_deliver_test.go`（只交付 saved、跨项目拒绝、取消交付、未交付不产生上下文）、`handler/design_delivery_binding_test.go`（schema 一致、信封字段、prompt 必须声明取证模式且禁止照抄原型）。
 
 ## 下一步
 
