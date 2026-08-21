@@ -88,9 +88,9 @@ export function DesignExamplePrompts({
       </div>
 
       {isLoading ? (
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, index) => (
-            <Skeleton key={index} className="h-44 rounded-xl" />
+        <div className="mt-3 flex gap-3 overflow-hidden">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <Skeleton key={index} className="h-48 w-64 shrink-0 rounded-xl" />
           ))}
         </div>
       ) : (
@@ -136,14 +136,17 @@ export function DesignExamplePrompts({
             </div>
           ) : null}
 
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {/* One row, scrolled sideways — Open Design's home wall. The -mx/px
+              pair lets the row bleed to the panel edge so a cut-off card
+              signals there is more to scroll. */}
+          <div className="-mx-1 mt-3 flex snap-x gap-3 overflow-x-auto px-1 pb-2">
             {visible.map((recipe) => (
               <button
                 key={recipe.slug}
                 type="button"
                 onClick={() => onUse(recipe)}
                 title={recipe.summary || recipe.title}
-                className="group/recipe flex min-w-0 cursor-pointer flex-col overflow-hidden rounded-xl border bg-card text-left transition-colors hover:border-primary/50"
+                className="group/recipe flex w-64 shrink-0 snap-start cursor-pointer flex-col overflow-hidden rounded-xl border bg-card text-left transition-colors hover:border-primary/50"
               >
                 <RecipePreview recipe={recipe} />
                 <span className="min-w-0 px-3 py-2.5">
