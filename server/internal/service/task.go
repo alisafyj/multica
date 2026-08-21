@@ -4446,6 +4446,16 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		if err := s.markProjectDesignSystemTaskFailed(ctx, qtx, t, failureReason, errMsg); err != nil {
 			return fmt.Errorf("mark project design system task failed: %w", err)
 		}
+		// Design documents release here for the same reason as the two above:
+		// this is the path a daemon-reported failure takes, and the sweepers
+		// that call HandleFailedTasks only ever see tasks they themselves
+		// failed. Without this, an agent that dies mid-run (a provider stream
+		// disconnect, a crashed CLI) leaves active_task_id pointing at a task
+		// that will never finish, and the document reads 生成中 forever while
+		// every guard keyed on that pointer refuses to touch it.
+		if err := s.markDesignDocumentTaskFailed(ctx, qtx, t, failureReason, errMsg); err != nil {
+			return fmt.Errorf("mark design document task failed: %w", err)
+		}
 
 		// Create the retry child atomically with the fail. CreateRetryTask reads
 		// the just-failed parent row (same tx), so it inherits chat_input_task_id
@@ -4605,6 +4615,13 @@ func (s *TaskService) FailTasksWithProfileSync(ctx context.Context, fail func(*d
 				return err
 			}
 			if err := s.markOpenDesignRunTaskFailed(ctx, qtx, task, failureCode, message); err != nil {
+				return err
+			}
+			designDocumentCode := "design_document_task_failed"
+			if task.FailureReason.Valid && strings.TrimSpace(task.FailureReason.String) != "" {
+				designDocumentCode = task.FailureReason.String
+			}
+			if err := s.markDesignDocumentTaskFailed(ctx, qtx, task, designDocumentCode, message); err != nil {
 				return err
 			}
 		}

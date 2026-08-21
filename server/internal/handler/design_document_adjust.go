@@ -92,7 +92,7 @@ func (h *Handler) AdjustDesignDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	// A second run against the same document would race the first one's
 	// pointer move, and both would claim the same base.
-	if document.ActiveTaskID.Valid {
+	if h.designDocumentRunIsLive(r.Context(), h.Queries, document) {
 		writeProjectDesignSystemError(w, http.StatusConflict, "operation_in_progress", "a design task is still running for this document")
 		return
 	}
@@ -164,7 +164,7 @@ func (h *Handler) createDesignDocumentAdjustTask(
 	if err != nil {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("lookup_failed", "failed to load the design document")
 	}
-	if document.ActiveTaskID.Valid {
+	if h.designDocumentRunIsLive(ctx, queries, document) {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "operation_in_progress", message: "a design task is still running for this document"}
 	}
 	if lockedBase, ok := designDocumentAdjustBase(document); !ok || lockedBase != baseRevision.ID {

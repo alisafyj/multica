@@ -49,7 +49,7 @@ func (h *Handler) SaveDesignDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	// A running task is about to move the draft. Saving now would publish a
 	// revision the user is already replacing.
-	if document.ActiveTaskID.Valid {
+	if h.designDocumentRunIsLive(r.Context(), h.Queries, document) {
 		writeProjectDesignSystemError(w, http.StatusConflict, "operation_in_progress", "a design task is still running for this document")
 		return
 	}
@@ -85,7 +85,7 @@ func (h *Handler) DiscardDesignDocument(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if document.ActiveTaskID.Valid {
+	if h.designDocumentRunIsLive(r.Context(), h.Queries, document) {
 		writeProjectDesignSystemError(w, http.StatusConflict, "operation_in_progress", "a design task is still running for this document")
 		return
 	}
@@ -125,7 +125,7 @@ func (h *Handler) DeleteDesignDocument(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if h.designDocumentRunIsLive(r.Context(), document) {
+	if h.designDocumentRunIsLive(r.Context(), h.Queries, document) {
 		writeProjectDesignSystemError(w, http.StatusConflict, "operation_in_progress", "a design task is still running for this document")
 		return
 	}

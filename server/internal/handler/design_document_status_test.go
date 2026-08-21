@@ -41,13 +41,31 @@ func TestDesignDocumentStatusKeepsRunningWhileTheTaskIsLive(t *testing.T) {
 	}
 }
 
-// Callers that did not load the task (list endpoints before this fix, and any
-// future caller with no task in hand) keep the pointer-only reading rather
-// than silently downgrading a running document to idle.
-func TestDesignDocumentStatusTrustsThePointerWhenNoTaskWasLoaded(t *testing.T) {
+// A pointer that resolves to no task at all is the longest-lived version of
+// the same wedge: the task row is gone (retention, a purged workspace, a
+// hand-deleted row) so there is nothing left to mark terminal, and a status
+// that trusts the bare pointer reports 生成中 for as long as the document
+// exists. Real occurrence: a document sat at 生成中 for two days pointing at a
+// task row that no longer existed.
+func TestDesignDocumentStatusDoesNotReportRunningForAPointerWithNoTask(t *testing.T) {
+	document := db.DesignDocument{ActiveTaskID: ddUUID(), DraftRevisionID: ddUUID()}
+	if got := designDocumentStatus(document, nil); got == "running" {
+		t.Fatal("a pointer that resolves to no task still reported the document as running")
+	}
+	if got := designDocumentStatus(document, nil); got != "draft" {
+		t.Fatalf("status with an unresolvable pointer = %q, want the draft it actually has", got)
+	}
+}
+
+// The display lean must stay the opposite of the guard lean. designDocumentStatus
+// treats an unreadable run as finished (a stale label self-corrects on the next
+// poll); designDocumentRunIsLive treats one as live (a guard that guesses wrong
+// destroys work). Pinning both here keeps a later "consistency" cleanup from
+// collapsing them into one default.
+func TestDesignDocumentStatusAndGuardLeanOppositeWays(t *testing.T) {
 	document := db.DesignDocument{ActiveTaskID: ddUUID()}
-	if got := designDocumentStatus(document, nil); got != "running" {
-		t.Fatalf("status without a loaded task = %q, want running", got)
+	if got := designDocumentStatus(document, nil); got == "running" {
+		t.Fatal("status must not claim a run it could not resolve")
 	}
 }
 

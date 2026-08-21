@@ -62,21 +62,11 @@ func TestDeleteDesignDocumentClearsADocumentWhoseRunAlreadyEnded(t *testing.T) {
 	for _, status := range []string{"failed", "cancelled", "completed"} {
 		t.Run(status, func(t *testing.T) {
 			fixture := createDesignDocumentRevisionFixture(t)
-			queries := db.New(testPool)
-			if _, err := testPool.Exec(context.Background(),
-				`UPDATE agent_task_queue SET status = $2 WHERE id = $1`,
-				fixture.Document.ActiveTaskID, status,
-			); err != nil {
-				t.Fatalf("age the fixture task: %v", err)
-			}
-			if _, err := queries.UpdateDesignDocumentActiveTask(context.Background(), db.UpdateDesignDocumentActiveTaskParams{
-				ID:            fixture.Document.ID,
-				WorkspaceID:   fixture.Document.WorkspaceID,
-				ActiveTaskID:  fixture.Document.ActiveTaskID,
-				InputSnapshot: fixture.Document.InputSnapshot,
-			}); err != nil {
-				t.Fatalf("re-arm the dangling pointer: %v", err)
-			}
+			// armDesignDocumentRun, not the fixture's own pointer: the fixture
+			// leaves active_task_id NULL, so re-arming from it wrote NULL back
+			// and this case silently deleted a document with no pointer at all
+			// — green against the very guard it exists to hold.
+			armDesignDocumentRun(t, fixture, status)
 
 			recorder := deleteDesignDocumentRequest(t, uuidToString(fixture.Document.ID))
 			if recorder.Code != http.StatusNoContent {

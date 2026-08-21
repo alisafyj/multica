@@ -411,7 +411,7 @@ func (h *Handler) RestoreDesignDocumentRevision(w http.ResponseWriter, r *http.R
 	}
 	// A running task is about to move the draft itself; restoring underneath
 	// it would make the run land on a base the user no longer looks at.
-	if document.ActiveTaskID.Valid {
+	if h.designDocumentRunIsLive(r.Context(), h.Queries, document) {
 		writeProjectDesignSystemError(w, http.StatusConflict, "operation_in_progress", "a design task is still running for this document")
 		return
 	}

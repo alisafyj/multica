@@ -387,9 +387,10 @@ func TestRestoreDesignDocumentRevisionMovesOnlyTheDraftPointer(t *testing.T) {
 		t.Fatalf("restoring another document's revision: status = %d, want 404", recorder.Code)
 	}
 
-	if _, err := testPool.Exec(ctx, `UPDATE design_document SET active_task_id = $1 WHERE id = $2`, fixture.Revision.SourceTaskID, fixture.Document.ID); err != nil {
-		t.Fatalf("mark running: %v", err)
-	}
+	// A real running task row, not the revision's source task id: that id
+	// names no agent_task_queue row, and "a pointer at a task that does not
+	// exist" is the released case, not the running one.
+	armDesignDocumentRun(t, fixture, "running")
 	if recorder := restore(uuidToString(second.ID)); recorder.Code != http.StatusConflict {
 		t.Fatalf("restoring while a task runs: status = %d, want 409; body = %s", recorder.Code, recorder.Body.String())
 	}

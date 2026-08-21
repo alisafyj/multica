@@ -345,12 +345,18 @@ func isTerminalTaskStatus(status string) bool {
 
 // designDocumentStatus derives the status from the document's own pointers.
 //
-// `task` is the row `active_task_id` points at, when the caller loaded it. It
-// is consulted only to disprove "running": a task that already reached a
-// terminal state cannot still be generating, and treating the pointer alone as
-// proof of work is what leaves a document reading "生成中" forever after a task
-// dies without releasing it. Callers that pass nil get the pointer-only
-// reading, which is correct for list endpoints that never claim a live task.
+// `task` is the row `active_task_id` points at. It is consulted only to
+// disprove "running": a task that already reached a terminal state cannot
+// still be generating, and treating the pointer alone as proof of work is what
+// leaves a document reading "生成中" forever after a task dies without
+// releasing it.
+//
+// nil means the pointer resolves to no task — the caller had none to resolve,
+// or the row is gone. Neither is a running generation, so nil never reads as
+// running. That is deliberately the opposite lean from designDocumentRunIsLive
+// below, which assumes a run it could not read is live: a guard that guesses
+// wrong destroys work, while a status that guesses wrong is corrected by the
+// next poll. The dangerous direction differs, so the default does too.
 // designDocumentRunIsLive reports whether a document's active_task_id still
 // points at a task that can actually finish.
 //
@@ -360,11 +366,19 @@ func isTerminalTaskStatus(status string) bool {
 // operation it protects — the same wedge behind "生成中 forever" that
 // designDocumentStatus below already resolves by looking the task up. Guards
 // must ask this, not the pointer, or a dead run becomes a permanent dead end.
-func (h *Handler) designDocumentRunIsLive(ctx context.Context, document db.DesignDocument) bool {
+//
+// `queries` is the handle to ask on: guards that re-check inside the
+// enqueue transaction must read the task through that transaction, not
+// through h.Queries, or they read around their own row lock.
+func (h *Handler) designDocumentRunIsLive(
+	ctx context.Context,
+	queries *db.Queries,
+	document db.DesignDocument,
+) bool {
 	if !document.ActiveTaskID.Valid {
 		return false
 	}
-	task, err := h.Queries.GetAgentTaskInWorkspace(ctx, db.GetAgentTaskInWorkspaceParams{
+	task, err := queries.GetAgentTaskInWorkspace(ctx, db.GetAgentTaskInWorkspaceParams{
 		ID: document.ActiveTaskID, WorkspaceID: document.WorkspaceID,
 	})
 	switch {
@@ -383,7 +397,7 @@ func (h *Handler) designDocumentRunIsLive(ctx context.Context, document db.Desig
 
 func designDocumentStatus(document db.DesignDocument, task *db.AgentTaskQueue) string {
 	activeTaskRunning := document.ActiveTaskID.Valid &&
-		(task == nil || !isTerminalTaskStatus(task.Status))
+		task != nil && !isTerminalTaskStatus(task.Status)
 	switch {
 	case activeTaskRunning:
 		return "running"
