@@ -205,6 +205,7 @@ import type {
   CreateDesignDraftAgentTaskRequest,
   CreateDesignDraftAgentTaskResponse,
   AdjustDesignDocumentRequest,
+  DeliverDesignDocumentRequest,
   RegenerateDesignDocumentRequest,
   SaveDesignDocumentRequest,
   DesignDocument,
@@ -4198,6 +4199,21 @@ export class ApiClient {
     });
     return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
       endpoint: "POST /api/design-documents/{id}/regenerate",
+    });
+  }
+
+  /**
+   * Hands a saved design to the issue whose implementation it governs, so the
+   * agent working that issue receives the package (DC-062). The server refuses
+   * a document with no saved revision.
+   */
+  async deliverDesignDocument(documentId: string, data: DeliverDesignDocumentRequest): Promise<DesignDocument> {
+    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/deliver`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
+      endpoint: "POST /api/design-documents/{id}/deliver",
     });
   }
 

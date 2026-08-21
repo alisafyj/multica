@@ -181,6 +181,9 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 	if err := writeDesignDocumentContext(workDir, ctx, manifest); err != nil {
 		return fmt.Errorf("write design document context: %w", err)
 	}
+	if err := writeDesignDeliveryContext(workDir, ctx, manifest); err != nil {
+		return fmt.Errorf("write design delivery context: %w", err)
+	}
 
 	if len(ctx.AgentSkills) > 0 {
 		// Hermes materializes skills into its per-task HERMES_HOME/skills during
@@ -1564,10 +1567,85 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 		fmt.Fprintf(&b, "> %s\n\n", ctx.HandoffNote)
 	}
 
+	// A design was delivered for this issue (DC-062). It is the agreed target,
+	// so the agent is pointed at it before it starts inventing an interface.
+	if section := renderDesignDeliverySection(ctx.DesignDeliveryContext); section != "" {
+		b.WriteString(section)
+	}
+
 	b.WriteString("## Quick Start\n\n")
 	fmt.Fprintf(&b, "Run `multica issue get %s --output json` to fetch the full issue details.\n\n", ctx.IssueID)
 
 	return b.String()
+}
+
+// renderDesignDeliverySection tells an implementing agent that a reviewed
+// design is already on disk, and what it is allowed to conclude from it.
+//
+// Two things have to be said explicitly, or the agent will assume the wrong
+// one. The prototype is a specification of structure, states and interaction —
+// not source to copy into the product, whose stack and conventions it knows
+// nothing about. And whether the design was written against this repository is
+// a fact the delivery carries (DC-053); an agent that assumes it was will
+// "match the existing components" that the design never looked at.
+func renderDesignDeliverySection(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	var delivery struct {
+		Title              string `json:"title"`
+		Platform           string `json:"platform"`
+		RevisionNumber     int32  `json:"revision_number"`
+		RepositoryGrounded bool   `json:"repository_grounded"`
+		PrototypeEntry     string `json:"prototype_entry"`
+		Pages              []struct {
+			Title string `json:"title"`
+			Entry string `json:"entry"`
+		} `json:"pages"`
+	}
+	if json.Unmarshal([]byte(raw), &delivery) != nil {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("## Delivered Design\n\n")
+	title := strings.TrimSpace(delivery.Title)
+	if title == "" {
+		title = "the delivered design"
+	}
+	fmt.Fprintf(&b, "A reviewed design (%s, v%d, %s) was delivered for this issue. Its package is extracted read-only at `.agent_context/design_delivery/package/`, and `.agent_context/design_delivery/delivery.json` names what it contains.\n\n",
+		title, delivery.RevisionNumber, platformLabelForPrompt(delivery.Platform))
+	if entry := strings.TrimSpace(delivery.PrototypeEntry); entry != "" {
+		fmt.Fprintf(&b, "Start from `package/%s`.\n", entry)
+	}
+	if len(delivery.Pages) > 0 {
+		b.WriteString("\nPages to implement:\n")
+		for _, page := range delivery.Pages {
+			fmt.Fprintf(&b, "- %s — `package/%s`\n", strings.TrimSpace(page.Title), page.Entry)
+		}
+	}
+	b.WriteString("\n- Read `brief.json` for the requirement the design answers and `coverage.json` for what it claims to cover.\n")
+	b.WriteString("- The prototype is a specification, not source to copy: reproduce its structure, states, copy and interaction in THIS project's stack and component conventions. Never paste its markup or CSS into the product wholesale.\n")
+	if delivery.RepositoryGrounded {
+		b.WriteString("- This design was produced with read-only access to the repository, so its structure is expected to fit what is already here.\n")
+	} else {
+		b.WriteString("- This design was produced WITHOUT reading the repository. Where it conflicts with existing components or patterns, follow the codebase and say what you changed and why.\n")
+	}
+	b.WriteString("- If you cannot implement part of it, say which part and why rather than silently dropping it.\n\n")
+	return b.String()
+}
+
+func platformLabelForPrompt(platform string) string {
+	switch platform {
+	case "mobile":
+		return "mobile"
+	case "cross_platform":
+		return "cross-platform"
+	case "web":
+		return "web"
+	default:
+		return "unspecified platform"
+	}
 }
 
 func renderProjectDesignSystemContext() string {

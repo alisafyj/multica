@@ -13,6 +13,8 @@ const {
   listAgents,
   listDesignDocumentRevisions,
   listTaskMessages,
+  deliverDesignDocument,
+  listIssues,
   navigate,
   regenerateDesignDocument,
   restoreDesignDocumentRevision,
@@ -28,6 +30,8 @@ const {
   listAgents: vi.fn(),
   listDesignDocumentRevisions: vi.fn(),
   listTaskMessages: vi.fn(),
+  deliverDesignDocument: vi.fn(),
+  listIssues: vi.fn(),
   navigate: vi.fn(),
   regenerateDesignDocument: vi.fn(),
   restoreDesignDocumentRevision: vi.fn(),
@@ -46,6 +50,8 @@ vi.mock("@multica/core/api", () => ({
     getProject,
     listAgents,
     listDesignDocumentRevisions,
+    deliverDesignDocument,
+    listIssues,
     listTaskMessages,
     regenerateDesignDocument,
     restoreDesignDocumentRevision,
@@ -182,6 +188,8 @@ beforeEach(() => {
   getProject.mockResolvedValue({ id: "project-1", title: "CRM", workspace_id: "ws-1" });
   listAgents.mockResolvedValue([AGENT]);
   listTaskMessages.mockResolvedValue([]);
+  listIssues.mockResolvedValue({ issues: [{ id: "issue-1", identifier: "MUL-7", title: "实现订单总览", status: "todo" }], total: 1 });
+  deliverDesignDocument.mockImplementation(async (_id: string, body: { issue_id: string }) => document({ issue_id: body.issue_id }));
   adjustDesignDocument.mockResolvedValue(document({ status: "running", active_task: { id: "task-3", agent_id: "agent-1", status: "queued", operation: "adjust", error: null, created_at: "2026-08-19T00:20:00Z", started_at: null, completed_at: null } }));
   saveDesignDocument.mockResolvedValue(document({ status: "saved", saved_revision_id: "revision-2" }));
   discardDesignDocumentDraft.mockResolvedValue(document({ status: "empty", draft_revision_id: "" }));
@@ -384,6 +392,28 @@ describe("DesignDocumentPage", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "重新生成" }));
     await waitFor(() => expect(regenerateDesignDocument).toHaveBeenCalledWith("document-1", {}));
+  });
+
+  // The end of the designer's flow (DC-062). A draft must not be deliverable:
+  // an agent building from something the designer never stood behind is the
+  // failure this gate exists to prevent.
+  it("only offers delivery once the design is saved", async () => {
+    renderPage();
+    await screen.findByTitle("订单总览 · 首页");
+    expect(screen.getByLabelText("交付给实现任务")).toBeDisabled();
+    expect(screen.getByText(/草稿不是承诺/)).toBeInTheDocument();
+  });
+
+  it("delivers the saved design to the issue that implements it", async () => {
+    getDesignDocument.mockResolvedValue(document({ status: "saved", saved_revision_id: "revision-2" }));
+    renderPage();
+    await screen.findByTitle("订单总览 · 首页");
+
+    await userEvent.click(screen.getByLabelText("交付给实现任务"));
+    await userEvent.click(await screen.findByText("实现订单总览"));
+
+    await waitFor(() => expect(deliverDesignDocument).toHaveBeenCalledWith("document-1", { issue_id: "issue-1" }));
+    expect(toastSuccess).toHaveBeenCalledWith("已交付给实现任务");
   });
 
   it("keeps the rerun away from documents that have a revision to adjust", async () => {

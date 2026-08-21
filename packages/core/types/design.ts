@@ -915,6 +915,14 @@ export interface AdjustDesignDocumentRequest {
   base_revision_id?: string;
 }
 
+export interface DeliverDesignDocumentRequest {
+  /**
+   * The issue whose implementation this design governs. Empty detaches the
+   * delivery, which is how it is taken back.
+   */
+  issue_id: string;
+}
+
 export interface RegenerateDesignDocumentRequest {
   /**
    * Optional replacement agent for the rerun — the failure may have been the

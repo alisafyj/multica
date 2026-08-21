@@ -505,6 +505,100 @@ func (q *Queries) GetNextDesignDocumentRevisionNumber(ctx context.Context, desig
 	return next_revision_number, err
 }
 
+const listDeliveredDesignDocumentsByIssue = `-- name: ListDeliveredDesignDocumentsByIssue :many
+SELECT
+    d.id, d.workspace_id, d.project_id, d.project_resource_id, d.issue_id, d.title, d.platform, d.recipe, d.draft_revision_id, d.saved_revision_id, d.current_agent_id, d.active_task_id, d.active_operation, d.input_snapshot, d.last_error, d.created_by, d.created_at, d.updated_at, d.saved_at,
+    r.id AS saved_revision_uuid,
+    r.revision_number AS saved_revision_number,
+    r.content_digest AS saved_content_digest,
+    r.package_schema AS saved_package_schema
+FROM design_document d
+JOIN design_document_revision r ON r.id = d.saved_revision_id
+WHERE d.workspace_id = $1
+  AND d.issue_id = $2
+  AND d.saved_revision_id IS NOT NULL
+ORDER BY d.saved_at DESC NULLS LAST, d.updated_at DESC
+`
+
+type ListDeliveredDesignDocumentsByIssueParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+}
+
+type ListDeliveredDesignDocumentsByIssueRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	ProjectResourceID   pgtype.UUID        `json:"project_resource_id"`
+	IssueID             pgtype.UUID        `json:"issue_id"`
+	Title               string             `json:"title"`
+	Platform            string             `json:"platform"`
+	Recipe              string             `json:"recipe"`
+	DraftRevisionID     pgtype.UUID        `json:"draft_revision_id"`
+	SavedRevisionID     pgtype.UUID        `json:"saved_revision_id"`
+	CurrentAgentID      pgtype.UUID        `json:"current_agent_id"`
+	ActiveTaskID        pgtype.UUID        `json:"active_task_id"`
+	ActiveOperation     pgtype.Text        `json:"active_operation"`
+	InputSnapshot       []byte             `json:"input_snapshot"`
+	LastError           []byte             `json:"last_error"`
+	CreatedBy           pgtype.UUID        `json:"created_by"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	SavedAt             pgtype.Timestamptz `json:"saved_at"`
+	SavedRevisionUuid   pgtype.UUID        `json:"saved_revision_uuid"`
+	SavedRevisionNumber int32              `json:"saved_revision_number"`
+	SavedContentDigest  string             `json:"saved_content_digest"`
+	SavedPackageSchema  string             `json:"saved_package_schema"`
+}
+
+// The designs an implementing agent working this issue is entitled to read:
+// linked to the issue AND already saved. A draft is not a promise, so it is
+// never delivered (P-011 / DC-034). Newest saved first, so a task that finds
+// several takes the most recently promised one.
+func (q *Queries) ListDeliveredDesignDocumentsByIssue(ctx context.Context, arg ListDeliveredDesignDocumentsByIssueParams) ([]ListDeliveredDesignDocumentsByIssueRow, error) {
+	rows, err := q.db.Query(ctx, listDeliveredDesignDocumentsByIssue, arg.WorkspaceID, arg.IssueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDeliveredDesignDocumentsByIssueRow{}
+	for rows.Next() {
+		var i ListDeliveredDesignDocumentsByIssueRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.ProjectResourceID,
+			&i.IssueID,
+			&i.Title,
+			&i.Platform,
+			&i.Recipe,
+			&i.DraftRevisionID,
+			&i.SavedRevisionID,
+			&i.CurrentAgentID,
+			&i.ActiveTaskID,
+			&i.ActiveOperation,
+			&i.InputSnapshot,
+			&i.LastError,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SavedAt,
+			&i.SavedRevisionUuid,
+			&i.SavedRevisionNumber,
+			&i.SavedContentDigest,
+			&i.SavedPackageSchema,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDesignDocumentRevisions = `-- name: ListDesignDocumentRevisions :many
 SELECT id, workspace_id, design_document_id, revision_number, package_schema, content_digest, archive_object_key, artifact_index, manifest, brief, coverage, audit, preview, input_snapshot_sha256, base_revision_id, design_system_digest, source_task_id, agent_id, instruction, scope, created_at FROM design_document_revision
 WHERE workspace_id = $1
@@ -737,6 +831,52 @@ type SetDesignDocumentFailureParams struct {
 // a failure never degrades what the user already has (DC-034).
 func (q *Queries) SetDesignDocumentFailure(ctx context.Context, arg SetDesignDocumentFailureParams) (DesignDocument, error) {
 	row := q.db.QueryRow(ctx, setDesignDocumentFailure, arg.LastError, arg.ID, arg.WorkspaceID)
+	var i DesignDocument
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.ProjectResourceID,
+		&i.IssueID,
+		&i.Title,
+		&i.Platform,
+		&i.Recipe,
+		&i.DraftRevisionID,
+		&i.SavedRevisionID,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+	)
+	return i, err
+}
+
+const setDesignDocumentIssue = `-- name: SetDesignDocumentIssue :one
+UPDATE design_document SET
+    issue_id = $1,
+    updated_at = now()
+WHERE id = $2
+  AND workspace_id = $3
+RETURNING id, workspace_id, project_id, project_resource_id, issue_id, title, platform, recipe, draft_revision_id, saved_revision_id, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+`
+
+type SetDesignDocumentIssueParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Delivery links a design document to the issue whose implementation it
+// governs (DC-062). Only the link moves: draft/saved pointers, the active
+// task and the failure record are untouched, and the issue's own status is
+// never changed by a delivery (DC-045).
+func (q *Queries) SetDesignDocumentIssue(ctx context.Context, arg SetDesignDocumentIssueParams) (DesignDocument, error) {
+	row := q.db.QueryRow(ctx, setDesignDocumentIssue, arg.IssueID, arg.ID, arg.WorkspaceID)
 	var i DesignDocument
 	err := row.Scan(
 		&i.ID,

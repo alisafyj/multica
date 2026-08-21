@@ -485,16 +485,21 @@ function RepositorySetting({
  * the issue's status, assignee or priority — so an unlinked design document is
  * an ordinary exploratory one, not an incomplete one.
  */
-function IssueSetting({
+export function IssueSetting({
   issues,
   issueId,
   disabled,
   onChange,
+  label = "关联任务",
+  emptyLabel = "不关联任务",
 }: {
   issues: Issue[];
   issueId: string;
   disabled: boolean;
   onChange: (issueId: string) => void;
+  /** What the control is for; the workbench uses it to deliver a design. */
+  label?: string;
+  emptyLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
@@ -514,7 +519,7 @@ function IssueSetting({
       searchPlaceholder="搜索任务…"
       onSearchChange={setFilter}
       triggerRender={
-        <SettingTrigger filled={!!selected} disabled={disabled} aria-label="关联任务" />
+        <SettingTrigger filled={!!selected} disabled={disabled} aria-label={label} />
       }
       trigger={
         selected ? (
@@ -525,7 +530,7 @@ function IssueSetting({
         ) : (
           <>
             <ListTodo className="size-3.5 shrink-0" />
-            <span className="truncate">不关联任务</span>
+            <span className="truncate">{emptyLabel}</span>
           </>
         )
       }

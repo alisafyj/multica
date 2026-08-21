@@ -190,6 +190,7 @@ type TaskContextForEnv struct {
 	DesignSystemProfileAnalyzeContext string // non-empty for UI specification profile analysis tasks
 	ProjectDesignSystemContext        string // non-empty for project design-system generation tasks
 	DesignDocumentContext             string // non-empty for page-design tasks producing a design document
+	DesignDeliveryContext             string // non-empty when a saved design document was delivered to this task's issue (DC-062)
 	PMOSyncContext                    string // non-empty for PMO requirement sync tasks (prompt-only, no issue checkout)
 	HandoffNote                       string // assignment handoff instruction; rendered into issue_context.md (MUL-3375)
 	IsSquadLeader                     bool   // true when THIS TASK runs the agent in the squad-leader role (may exit silently on no_action); derived from the claim's is_leader_task / squad_id, never sniffed from instructions text (MUL-5811)

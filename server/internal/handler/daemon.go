@@ -2085,6 +2085,16 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.WorkspaceID = uuidToString(issue.WorkspaceID)
 			resp.ThreadName = issue.Title
 
+			// A design delivered to this issue travels with the task, so the
+			// agent implements the design that was promised instead of
+			// inventing one (DC-062). Resolved from the document's own saved
+			// pointer; the task never names a revision.
+			if delivery := h.designDeliveryContextForIssue(r.Context(), issue.WorkspaceID, issue.ID); delivery != nil {
+				if encoded, err := json.Marshal(delivery); err == nil {
+					resp.DesignDeliveryContext = encoded
+				}
+			}
+
 			// Squad-leader briefing injection: keyed off the task being a
 			// leader-task (is_leader_task) carrying a squad_id — NOT off the
 			// issue being assigned to a squad. The task flag is stamped at

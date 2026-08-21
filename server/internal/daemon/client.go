@@ -543,6 +543,47 @@ func (c *Client) DownloadDesignDocumentInput(ctx context.Context, taskID, inputP
 	return content, resp.Header.Clone(), nil
 }
 
+// DownloadDesignDeliveryArchive fetches the design package delivered to this
+// task's issue (DC-062). Nothing about the revision is sent: the server
+// resolves it from the issue's own delivery link, so this daemon can only ever
+// receive the design that was actually promised to the work it is doing.
+func (c *Client) DownloadDesignDeliveryArchive(ctx context.Context, taskID, expectedDigest string) ([]byte, error) {
+	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(expectedDigest) == "" {
+		return nil, errors.New("design delivery archive request is invalid")
+	}
+	path := fmt.Sprintf("/api/daemon/tasks/%s/design-delivery/archive", taskID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	c.setIdentityHeaders(req)
+	archiveClient := *c.client
+	archiveClient.Timeout = openDesignArchiveDownloadTimeout
+	resp, err := archiveClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+	}
+	const maxDeliveryArchiveBytes = 100 << 20
+	archive, err := io.ReadAll(io.LimitReader(resp.Body, maxDeliveryArchiveBytes+1))
+	if err != nil || len(archive) > maxDeliveryArchiveBytes {
+		return nil, errors.New("design delivery archive exceeds its bounded size")
+	}
+	// The digest the claim pinned must match the one the archive route reports,
+	// or the package on disk would not be the design the task was given.
+	if resp.Header.Get(designdocument.DeliveryArchiveDigestHeader) != expectedDigest {
+		return nil, errors.New("design delivery archive digest does not match the delivered revision")
+	}
+	return archive, nil
+}
+
 func (c *Client) ReportOpenDesignRunResult(ctx context.Context, taskID, openDesignRunID string, result opendesign.CollectedRunResult) error {
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/open-design/result", taskID), opendesign.RunResultRequest{
 		OpenDesignRunID:  openDesignRunID,

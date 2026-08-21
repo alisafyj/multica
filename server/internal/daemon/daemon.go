@@ -6418,6 +6418,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		DesignSystemProfileAnalyzeContext: strings.TrimSpace(string(task.DesignSystemProfileAnalyzeContext)),
 		ProjectDesignSystemContext:        strings.TrimSpace(string(task.ProjectDesignSystemContext)),
 		DesignDocumentContext:             strings.TrimSpace(string(task.DesignDocumentContext)),
+		DesignDeliveryContext:             strings.TrimSpace(string(task.DesignDeliveryContext)),
 		PMOSyncContext:                    string(task.PMOSyncContext),
 		HandoffNote:                       task.HandoffNote,
 		IsSquadLeader:                     taskIsSquadLeader(task),
@@ -6905,6 +6906,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// rather than letting it design against an empty base/.
 	if err := d.restoreDesignDocumentBaseArchive(prepareCtx, task, env.RootDir, env.WorkDir); err != nil {
 		return TaskResult{}, fmt.Errorf("prepare design document base archive: %w", err)
+	}
+	// An implementation task whose issue carries a delivered design gets the
+	// package on disk before the agent starts, for the same reason the base
+	// archive does: a design that cannot be restored must fail the task rather
+	// than let the agent build from nothing and call it done (DC-062).
+	if err := d.restoreDesignDeliveryPackage(prepareCtx, task, env.RootDir, env.WorkDir); err != nil {
+		return TaskResult{}, fmt.Errorf("prepare delivered design package: %w", err)
 	}
 	taskTempDir, err := ensureTaskTempDir(env.RootDir, task.WorkspaceID, task.ID)
 	if err != nil {

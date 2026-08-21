@@ -35,6 +35,7 @@ import {
 } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { projectOpenIssuesOptions } from "@multica/core/issues/queries";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import type {
@@ -75,7 +76,7 @@ import { designDocumentStatusLabel } from "./design-document-card";
 import { DesignDocumentCritique, parseCritique } from "./design-document-critique";
 import { DesignDocumentSourceView } from "./design-document-source-view";
 import { DesignDocumentStaticView } from "./design-document-static-view";
-import { AgentSetting } from "./design-task-composer";
+import { AgentSetting, IssueSetting } from "./design-task-composer";
 import type { CanvasMode } from "./prototype-canvas";
 import { DesignTaskActivity, taskOperationLabel } from "./project-design-system-task-activity";
 
@@ -258,6 +259,10 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   const document = documentQuery.data;
   const { data: revisions = [] } = useQuery(designDocumentRevisionListOptions(wsId, documentId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const { data: projectIssues = [] } = useQuery({
+    ...projectOpenIssuesOptions(wsId, document?.project_id ?? ""),
+    enabled: !!document?.project_id,
+  });
   const { data: project } = useQuery({
     ...projectDetailOptions(wsId, document?.project_id ?? ""),
     enabled: !!document?.project_id,
@@ -328,6 +333,17 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   // The dead end a rerun exists for: nothing generated yet (the first run
   // failed or was stopped) and nothing running. Mirrors the server's guard.
   const canRegenerate = !!document && !running && !document.draft_revision_id && !document.saved_revision_id;
+  // Only a saved revision is deliverable: a draft is a work in progress, not a
+  // promise an agent should build from (P-011 / DC-034).
+  const canDeliver = !!document?.saved_revision_id && !running;
+  // The delivered issue may be closed by now, so it is kept in the list even
+  // when the open-issue query no longer returns it — otherwise the picker
+  // would render the current delivery as "尚未交付".
+  const deliveryIssues = useMemo(() => {
+    const linked = document?.issue_id ?? "";
+    if (!linked || projectIssues.some((issue) => issue.id === linked)) return projectIssues;
+    return [{ id: linked, identifier: "已交付", title: "当前交付的任务", status: "in_progress" } as (typeof projectIssues)[number], ...projectIssues];
+  }, [document?.issue_id, projectIssues]);
   const errorMessage = status === "failed" ? documentErrorMessage(document?.last_error) : null;
   const previewUrl = revision && shownEntry ? api.getDesignDocumentPreviewFileURL(revision.resource_base_path, shownEntry) : "";
 
@@ -425,6 +441,20 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
       window.setTimeout(() => URL.revokeObjectURL(href), 10_000);
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "下载失败"),
+  });
+
+  // Handing the saved design to the issue whose implementation it governs
+  // (DC-062). This is the end of the designer's flow: from here the package
+  // travels with that issue's task, so an implementing agent builds from the
+  // design instead of guessing at one.
+  const deliver = useMutation({
+    mutationFn: (issueId: string) => api.deliverDesignDocument(documentId, { issue_id: issueId }),
+    onSuccess: async (next, issueId) => {
+      applyDocument(next);
+      toast.success(issueId ? "已交付给实现任务" : "已取消交付");
+      await refresh();
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "交付失败"),
   });
 
   const restore = useMutation({
@@ -767,6 +797,32 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
             ) : null}
 
             {critique ? <div className="mt-3"><DesignDocumentCritique critique={critique} /></div> : null}
+
+            {/* The end of the flow (DC-062): a saved design is handed to the
+                issue whose implementation it governs, and the agent working
+                that issue receives the package itself. */}
+            <div className="mt-3 rounded-lg border bg-card p-3">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-caption font-medium text-muted-foreground">交付实现</h2>
+                <IssueSetting
+                  issues={deliveryIssues}
+                  issueId={document.issue_id}
+                  disabled={!canDeliver || deliver.isPending}
+                  onChange={(issueId) => deliver.mutate(issueId)}
+                  label="交付给实现任务"
+                  emptyLabel="尚未交付"
+                />
+              </div>
+              <p className="mt-2 text-caption leading-5 text-muted-foreground">
+                {deliver.isPending
+                  ? "正在交付…"
+                  : document.issue_id
+                    ? "执行该任务的智能体会在工作区中收到这份已保存的设计包，按其中的页面与状态实现。"
+                    : canDeliver
+                      ? "选择一个任务，把这份已保存的设计交给实现它的智能体。"
+                      : "保存这份设计稿之后才能交付——草稿不是承诺。"}
+              </p>
+            </div>
 
             <section className="mt-3" aria-label="版本">
               <div className="mb-2 flex items-center justify-between px-0.5">

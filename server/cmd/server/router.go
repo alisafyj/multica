@@ -1274,6 +1274,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/tasks/{taskId}/project-design-system/base-package", h.DownloadProjectDesignSystemBasePackage)
 		r.Get("/tasks/{taskId}/open-design/base-archive", h.DownloadOpenDesignBaseArchive)
 		r.Get("/tasks/{taskId}/design-document/base-archive", h.DownloadDesignDocumentBaseArchive)
+		r.Get("/tasks/{taskId}/design-delivery/archive", h.DownloadDesignDeliveryArchive)
 		// Reference attachments the daemon materializes into reference/attachments
 		// before a design document session starts; pinned by digest in the
 		// task context, so the route only answers for listed ids.
@@ -1879,6 +1880,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/design-documents/{id}/revisions/{revisionId}/archive", h.DownloadDesignDocumentRevisionArchive)
 			r.Post("/api/design-documents/{id}/adjust", h.AdjustDesignDocument)
 			r.Post("/api/design-documents/{id}/regenerate", h.RegenerateDesignDocument)
+			r.Post("/api/design-documents/{id}/deliver", h.DeliverDesignDocument)
 			r.Post("/api/design-documents/{id}/save", h.SaveDesignDocument)
 			r.Post("/api/design-documents/{id}/discard", h.DiscardDesignDocument)
 			r.Delete("/api/design-documents/{id}", h.DeleteDesignDocument)

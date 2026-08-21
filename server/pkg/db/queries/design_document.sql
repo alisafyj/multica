@@ -217,3 +217,33 @@ DELETE FROM design_document
 WHERE design_document.id = sqlc.arg('id')
   AND design_document.workspace_id = sqlc.arg('workspace_id')
   AND (SELECT count(*) FROM deleted_revisions) >= 0;
+
+-- Delivery links a design document to the issue whose implementation it
+-- governs (DC-062). Only the link moves: draft/saved pointers, the active
+-- task and the failure record are untouched, and the issue's own status is
+-- never changed by a delivery (DC-045).
+-- name: SetDesignDocumentIssue :one
+UPDATE design_document SET
+    issue_id = sqlc.narg('issue_id'),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+RETURNING *;
+
+-- The designs an implementing agent working this issue is entitled to read:
+-- linked to the issue AND already saved. A draft is not a promise, so it is
+-- never delivered (P-011 / DC-034). Newest saved first, so a task that finds
+-- several takes the most recently promised one.
+-- name: ListDeliveredDesignDocumentsByIssue :many
+SELECT
+    d.*,
+    r.id AS saved_revision_uuid,
+    r.revision_number AS saved_revision_number,
+    r.content_digest AS saved_content_digest,
+    r.package_schema AS saved_package_schema
+FROM design_document d
+JOIN design_document_revision r ON r.id = d.saved_revision_id
+WHERE d.workspace_id = sqlc.arg('workspace_id')
+  AND d.issue_id = sqlc.arg('issue_id')
+  AND d.saved_revision_id IS NOT NULL
+ORDER BY d.saved_at DESC NULLS LAST, d.updated_at DESC;

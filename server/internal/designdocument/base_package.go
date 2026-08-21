@@ -24,6 +24,10 @@ const (
 	// BaseArchiveContentDigestHeader carries the served archive's content
 	// digest so the daemon can reject a substituted body before reading it.
 	BaseArchiveContentDigestHeader = "X-Multica-Design-Document-Base-Digest"
+	// DeliveryArchiveDigestHeader carries the digest of a package delivered to
+	// an implementation task, so the daemon can refuse a mismatch before a byte
+	// reaches the agent's filesystem (DC-062).
+	DeliveryArchiveDigestHeader = "X-Multica-Design-Delivery-Digest"
 	// BaseArchiveRevisionIDHeader names the revision the served archive is.
 	BaseArchiveRevisionIDHeader = "X-Multica-Design-Document-Base-Revision"
 	// BaseArchiveMaxBytes bounds a base archive download. It is the same
