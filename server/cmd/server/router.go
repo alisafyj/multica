@@ -1212,6 +1212,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		"/api/design-document-previews/{workspaceId}/{revisionId}/{digest}/{accessToken}/files/*",
 		h.GetDesignDocumentPreviewFile,
 	)
+	// The public exchange for durable design share links (DC-062 item 5): no
+	// session, no workspace header — the raw token in the path alone decides.
+	// Every dead link (unknown, revoked, orphaned by a deleted document) answers
+	// with the same 404, and each visit receives a fresh short-lived capability
+	// for the archive bytes.
+	r.Get("/api/design-shares/{token}", h.GetDesignDocumentShareExchange)
 	// Built-in recipe covers: bundled, workspace-agnostic, framed by the app.
 	// Unauthenticated for the same reason as the route above — a frame cannot
 	// carry the Bearer header — and fenced by its own CSP instead. The URL
@@ -1885,6 +1891,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/api/design-documents/{id}/save", h.SaveDesignDocument)
 			r.Post("/api/design-documents/{id}/discard", h.DiscardDesignDocument)
 			r.Delete("/api/design-documents/{id}", h.DeleteDesignDocument)
+			r.Post("/api/design-documents/{id}/revisions/{revisionId}/share", h.CreateDesignDocumentRevisionShare)
+			r.Get("/api/design-documents/{id}/shares", h.ListDesignDocumentShares)
+			r.Delete("/api/design-documents/{id}/shares/{shareId}", h.RevokeDesignDocumentShare)
 			r.Post("/api/project-design-systems/repository-analysis", h.AnalyzeProjectDesignSystemRepository)
 			r.Get("/api/project-design-systems/{id}", h.GetProjectDesignSystem)
 			r.Get("/api/project-design-systems/{id}/package-preview", h.GetProjectDesignSystemPackagePreview)

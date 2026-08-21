@@ -644,12 +644,13 @@ Open Design 的两类预置资源按各自性质分别落地，不共用一套�
 - 迁移清单（依次实施，完成即回填证据）：
   1. **交付给实现智能体** — `confirmed`，已完成（2026-08-22）。
   2. **手动编辑面板**（直接改字体/颜色/布局）— `confirmed`，已完成（2026-08-22）。
-  3. **导出 PNG / PDF / PPTX 与截图发对话**。
+  3. **导出 PNG / PDF / PPTX 与截图** — `confirmed`，已完成（2026-08-22）。
   4. **演示模式与演讲者备注**。
   5. **持久分享与单文件发布** — 2026-08-22 移交给并行会话（`design-center-three-tab-b2`）实施：它主要是服务端的路由、能力令牌与吊销模型，紧邻该会话已在做的删除/生命周期链路。产物复用本会话已完成的 `packages/views/designs/inline-prototype.ts`（`inlinePrototypePage` 把一页连同全部资源内联成自包含 HTML）；工作台里的分享入口仍由本会话接线，避免两个会话同时改 `design-document-page.tsx`。界线：**导出成单文件下载**属第 3 项（纯客户端），**发布到长期 URL**属本项（服务端）。
   6. **存为模板**。
   7. **重命名与改挂 Issue**。
   8. **预览/代码分栏**。
+- 证据（第 3 项）：导出与截图全部在客户端完成，复用静态画布的自包含文档——离开工作台的就是工作台显示的那一份，不需要服务端。光栅化用 `foreignObject` + canvas：只有在文档已经全资源内联（data URI）时才成立，因为 `<img>` 载入的 SVG 不允许取网络资源，也正因如此 canvas 不会被污染、`toBlob` 不会抛。范围按格式语义固定，不弹配置：**图片与单页 HTML 导当前页，PDF 与 PPTX 导全部页**。PDF 用 JPEG + `/DCTDecode`（PDF 唯一原样嵌入的图像编码，换 PNG 就要解码再 deflate，代码更多、文件更大、还多一种打不开的可能）；PPTX 是自写的最小 OOXML 包 + 自写 ZIP（仓库无 zip 依赖，全部 STORE 不压缩——幻灯片主体是 PNG，压不动，而错误的 deflate 流会让 PowerPoint 直接拒绝打开）。页面尺寸按各自像素而非纸张/16:9，移动端长页保持长页。截图优先写剪贴板、失败回落下载。**明确不做「截图发对话」**：标注功能已经把选择器和覆盖元素直接交给智能体，比一张图信息量大；截图的真正用途是发给人，所以出口是剪贴板与文件。测试：`zip-writer.test.ts`（字节布局、CRC 标准向量、目录偏移、UTF-8 名、确定性）、`export-pdf.test.ts`（按 reader 的方式走 xref 偏移、DCTDecode 原样嵌入、页面尺寸）、`export-pptx.test.ts`（content types 覆盖每个 part、**所有 .rels 的 Target 都能解析到真实存在的 part**、媒体与幻灯片对应、XML 转义）。
 - 证据（第 2 项）：手动编辑是唯一没有智能体参与的设计文档操作。`POST /api/design-documents/{id}/manual-edit` 校验编辑集（属性白名单 + 值/选择器不得逃逸出规则）后入队 `manual_edit` 任务，钉住当前 base 修订、沿用 pinned 取证；守护进程在原本启动智能体的位置改为**确定性应用**——读回只读 base、`designdocument.ApplyManualEdits` 生成每页一份 `prototype/manual-edits/<page>.css` 并注入 `<link>`、整包写入 `$MULTICA_OUTPUT_DIR`，随后**完全复用**既有收尾链路（收集 → 静态 Audit → Chrome 预览门禁 → 上传 → 新修订 → draft 移动）。即：跳过的是作者，不是校验；一次把页面改瞎的覆盖同样会被门禁拒绝。覆盖写进独立样式表而非改写智能体的规则，是为了让「人改了什么」始终可读，底下的设计保持原样。迁移 900 放宽了 `active_operation` 的 CHECK。测试：`designdocument/manual_edit_test.go`（注入安全矩阵、确定性、链接不累积、清除语义）、`daemon/design_document_manual_edit_test.go`（整包落盘、坏编辑集失败、只有 manual_edit 跳过智能体）、`handler/design_document_manual_edit_test.go`（上下文契约、白名单拒绝、陈旧 base 冲突）、`views/manual-edit-model.test.ts`（待应用编辑集矩阵）。
 - 证据（第 1 项）：`POST /api/design-documents/{id}/deliver` 只接受已保存修订并在 Issue 上留系统评论；claim 侧由 `designDeliveryContextForIssue` 按文档自身的 saved 指针解析出 `design_delivery_context`；守护进程经 `GET /api/daemon/tasks/{taskId}/design-delivery/archive` 取包、按钉住的 digest 全量复验后以只读解包到 `.agent_context/design_delivery/package/`；两侧的 wire schema 由跨边界测试锁定（DC-059 的同类漂移）。测试：`handler/design_document_deliver_test.go`（只交付 saved、跨项目拒绝、取消交付、未交付不产生上下文）、`handler/design_delivery_binding_test.go`（schema 一致、信封字段、prompt 必须声明取证模式且禁止照抄原型）。
 
