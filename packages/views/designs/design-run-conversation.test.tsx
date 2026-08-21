@@ -1,0 +1,79 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
+
+import { DesignRunConversation } from "./design-run-conversation";
+
+function message(overrides: Record<string, unknown> = {}) {
+  return {
+    id: `message-${overrides.seq ?? 1}`,
+    task_id: "task-1",
+    seq: 1,
+    type: "text",
+    content: "",
+    created_at: "2026-08-22T02:00:00Z",
+    ...overrides,
+  } as never;
+}
+
+describe("DesignRunConversation", () => {
+  it("renders the run in order instead of one truncated line", () => {
+    render(
+      <DesignRunConversation
+        live
+        messages={[
+          message({ seq: 1, type: "thinking", content: "先看品牌色" }),
+          message({ seq: 2, type: "tool_use", tool: "Read", input: { path: "src/app.tsx" } }),
+          message({ seq: 3, type: "text", content: "已经写好首屏" }),
+        ]}
+      />,
+    );
+
+    const stream = screen.getByLabelText("智能体执行过程");
+    expect(stream).toHaveTextContent("先看品牌色");
+    // A tool call reads as its name plus the argument that identifies it,
+    // never the whole input object.
+    expect(stream).toHaveTextContent("Read");
+    expect(stream).toHaveTextContent("src/app.tsx");
+    expect(stream).toHaveTextContent("已经写好首屏");
+  });
+
+  // The run is a log, so it announces politely — and only while it is moving.
+  it("announces only while the run is live", () => {
+    const messages = [message({ seq: 1, content: "生成完成" })];
+    const { rerender } = render(<DesignRunConversation live messages={messages} />);
+    expect(screen.getByLabelText("智能体执行过程")).toHaveAttribute("aria-live", "polite");
+
+    rerender(<DesignRunConversation live={false} messages={messages} />);
+    expect(screen.getByLabelText("智能体执行过程")).not.toHaveAttribute("aria-live");
+  });
+
+  // A stream that yanks the viewport away mid-sentence is unreadable, so
+  // scrolling up detaches; the offer to reattach is explicit.
+  it("stops following when the reader scrolls up, and offers the way back", async () => {
+    const user = userEvent.setup();
+    const messages = Array.from({ length: 12 }, (_, index) =>
+      message({ seq: index + 1, content: `第 ${index + 1} 步` }),
+    );
+    render(<DesignRunConversation live messages={messages} />);
+    const stream = screen.getByLabelText("智能体执行过程");
+    expect(screen.queryByRole("button", { name: "回到最新" })).not.toBeInTheDocument();
+
+    // jsdom gives every element a zero layout, so drive the scroll contract
+    // through the values the handler actually reads.
+    Object.defineProperty(stream, "scrollHeight", { value: 800, configurable: true });
+    Object.defineProperty(stream, "clientHeight", { value: 200, configurable: true });
+    stream.scrollTop = 100;
+    stream.dispatchEvent(new Event("scroll", { bubbles: true }));
+
+    const backToLatest = await screen.findByRole("button", { name: "回到最新" });
+    await user.click(backToLatest);
+    expect(stream.scrollTop).toBe(800);
+    expect(screen.queryByRole("button", { name: "回到最新" })).not.toBeInTheDocument();
+  });
+
+  it("renders nothing before the first message arrives", () => {
+    render(<DesignRunConversation live messages={[]} />);
+    expect(screen.queryByLabelText("智能体执行过程")).not.toBeInTheDocument();
+  });
+});

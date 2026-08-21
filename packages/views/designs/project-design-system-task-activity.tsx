@@ -12,7 +12,7 @@ import type { AgentTask } from "@multica/core/types/agent";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { TranscriptButton } from "../common/task-transcript";
-import { taskMessageSnippet } from "./task-message-snippet";
+import { DesignRunConversation } from "./design-run-conversation";
 
 const STALE_AFTER_MS = 3 * 60_000;
 const ACTIVE_TASK_STATUSES = new Set(["queued", "dispatched", "running", "waiting_local_directory"]);
@@ -32,6 +32,7 @@ export function taskOperationLabel(operation: string): string {
   if (operation === "repository_analysis") return "仓库分析";
   if (operation === "adjust") return "调整";
   if (operation === "regenerate") return "重新生成";
+  if (operation === "manual_edit") return "手动修改";
   return "生成";
 }
 
@@ -197,11 +198,11 @@ export function DesignTaskActivity({
           <Badge variant="secondary">{taskOperationLabel(task.operation)}</Badge>
         </div>
       </div>
-      {canStop && taskMessageSnippet(messages[messages.length - 1]) ? (
-        <p aria-live="polite" className="mt-3 truncate text-caption text-muted-foreground">
-          {taskMessageSnippet(messages[messages.length - 1])}
-        </p>
-      ) : null}
+      {/* The run itself, inline — Open Design keeps the agent's work in the
+          column rather than behind a button. This replaces the single
+          truncated ambient line: same messages, but readable in order. The
+          transcript dialog above stays for the full, filterable record. */}
+      <DesignRunConversation messages={messages} live={canStop} className="mt-3" />
 
       <dl className={`mt-4 grid gap-4 ${compact ? "grid-cols-2" : "sm:grid-cols-4"}`}>
         <div className="min-w-0">
