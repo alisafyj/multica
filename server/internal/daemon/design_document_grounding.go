@@ -78,7 +78,7 @@ func isDesignDocumentAdjustment(raw json.RawMessage) bool {
 		Operation      string `json:"operation"`
 		ExecutionReady bool   `json:"execution_ready"`
 	}
-	return json.Unmarshal(raw, &contextValue) == nil && contextValue.Type == "design_document_task" && contextValue.Operation == "adjust" && contextValue.ExecutionReady
+	return json.Unmarshal(raw, &contextValue) == nil && contextValue.Type == "design_document_task" && designDocumentOperationUsesBase(contextValue.Operation) && contextValue.ExecutionReady
 }
 
 func materializeDesignDocumentInputs(ctx context.Context, task Task, workDir string, client *Client) error {
@@ -94,7 +94,7 @@ func materializeDesignDocumentInputs(ctx context.Context, task Task, workDir str
 		return errors.New("invalid Design Document input context")
 	}
 	root := filepath.Join(workDir, ".agent_context", "design_document")
-	if envelope.Operation == "adjust" {
+	if designDocumentOperationUsesBase(envelope.Operation) {
 		// The base revision itself is restored separately by
 		// restoreDesignDocumentBaseArchive + execenv.ExtractDesignDocumentBase,
 		// which own the real base/ directory execenv reserved. There is
@@ -165,10 +165,10 @@ func prepareDesignDocumentGrounding(ctx context.Context, task Task, workDir, dae
 			Repository          json.RawMessage `json:"repository"`
 		} `json:"input"`
 	}
-	if json.Unmarshal(task.DesignDocumentContext, &envelope) != nil || envelope.Type != "design_document_task" || (envelope.Operation != "generate" && envelope.Operation != "adjust") || !envelope.ExecutionReady {
+	if json.Unmarshal(task.DesignDocumentContext, &envelope) != nil || envelope.Type != "design_document_task" || (envelope.Operation != "generate" && !designDocumentOperationUsesBase(envelope.Operation)) || !envelope.ExecutionReady {
 		return nil, errors.New("invalid Design Document grounding context")
 	}
-	if envelope.Operation == "adjust" {
+	if designDocumentOperationUsesBase(envelope.Operation) {
 		if envelope.Input.RepositoryGrounding != "pinned" {
 			return nil, errors.New("invalid pinned Design Document grounding context")
 		}

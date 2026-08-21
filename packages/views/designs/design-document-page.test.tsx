@@ -394,6 +394,23 @@ describe("DesignDocumentPage", () => {
     await waitFor(() => expect(regenerateDesignDocument).toHaveBeenCalledWith("document-1", {}));
   });
 
+  // 编辑 is the second way to change a design: the designer edits it directly
+  // instead of asking an agent. It still produces a revision, so it carries
+  // the same preconditions an adjustment does.
+  it("opens the properties panel in 编辑 mode and blocks an empty apply", async () => {
+    renderPage();
+    await screen.findByTitle("订单总览 · 首页");
+
+    await userEvent.click(screen.getByRole("button", { name: "编辑" }));
+    expect(await screen.findByText(/在画布上点选一个元素/)).toBeInTheDocument();
+    // Nothing picked, nothing changed: applying would create a revision
+    // identical to its base.
+    expect(screen.getByRole("button", { name: "应用修改" })).toBeDisabled();
+    expect(screen.getByText("在画布上选中元素后修改属性")).toBeInTheDocument();
+    // The adjust composer steps aside: one way to change the design at a time.
+    expect(screen.queryByPlaceholderText(/描述你想怎么改/)).not.toBeInTheDocument();
+  });
+
   // The end of the designer's flow (DC-062). A draft must not be deliverable:
   // an agent building from something the designer never stood behind is the
   // failure this gate exists to prevent.

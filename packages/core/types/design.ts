@@ -915,6 +915,23 @@ export interface AdjustDesignDocumentRequest {
   base_revision_id?: string;
 }
 
+/** One element's style overrides, as the properties panel produced them. */
+export interface DesignDocumentManualEdit {
+  /** Package path of the page the edit was made on. */
+  page: string;
+  /** Selector the pick resolved to in that page's document. */
+  selector: string;
+  /** Property -> value; an empty value clears the override. */
+  declarations: Record<string, string>;
+}
+
+export interface ManualEditDesignDocumentRequest {
+  edits: DesignDocumentManualEdit[];
+  /** Whose runtime runs the Audit and browser gate; no agent authors the edit. */
+  agent_id: string;
+  base_revision_id?: string;
+}
+
 export interface DeliverDesignDocumentRequest {
   /**
    * The issue whose implementation this design governs. Empty detaches the

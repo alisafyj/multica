@@ -8,6 +8,11 @@ vi.mock("@multica/core/api", () => ({
 import { elementsInRegion, PrototypeCanvas } from "./prototype-canvas";
 
 let objectUrlSeq = 0;
+// Saved and put back by hand: these are direct property assignments, and
+// vi.restoreAllMocks() only restores spies. Leaving a stubbed
+// URL.createObjectURL behind breaks every later suite that makes a blob URL.
+const realCreateObjectURL = URL.createObjectURL;
+const realRevokeObjectURL = URL.revokeObjectURL;
 
 beforeEach(() => {
   // jsdom has no object-URL support. Each call returns a distinct URL, as the
@@ -18,6 +23,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  URL.createObjectURL = realCreateObjectURL;
+  URL.revokeObjectURL = realRevokeObjectURL;
   vi.restoreAllMocks();
 });
 

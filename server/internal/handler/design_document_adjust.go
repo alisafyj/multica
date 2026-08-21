@@ -239,6 +239,25 @@ func (h *Handler) designDocumentAdjustTaskContext(
 	instruction string,
 	scope json.RawMessage,
 ) ([]byte, error) {
+	return h.designDocumentBaseBoundTaskContext(ctx, queries, requesterID, document, baseRevision, agentID, service.DesignDocumentAdjust, instruction, scope, nil)
+}
+
+// designDocumentBaseBoundTaskContext builds the envelope for any run that
+// starts from an immutable base revision — an agent adjustment or a manual
+// edit. They differ only in who applies the change; everything that decides
+// what the run is allowed to touch is identical, so it is stated once.
+func (h *Handler) designDocumentBaseBoundTaskContext(
+	ctx context.Context,
+	queries *db.Queries,
+	requesterID pgtype.UUID,
+	document db.DesignDocument,
+	baseRevision db.DesignDocumentRevision,
+	agentID pgtype.UUID,
+	operation service.DesignDocumentOperation,
+	instruction string,
+	scope json.RawMessage,
+	manualEdits json.RawMessage,
+) ([]byte, error) {
 	project, err := queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
 		ID: document.ProjectID, WorkspaceID: document.WorkspaceID,
 	})
@@ -293,7 +312,7 @@ func (h *Handler) designDocumentAdjustTaskContext(
 	}
 	contextJSON, err := json.Marshal(service.DesignDocumentTaskContext{
 		Type:              service.DesignDocumentTaskContextType,
-		Operation:         service.DesignDocumentAdjust,
+		Operation:         operation,
 		RequesterID:       uuidToString(requesterID),
 		WorkspaceID:       uuidToString(document.WorkspaceID),
 		ProjectID:         uuidToString(document.ProjectID),
@@ -323,6 +342,7 @@ func (h *Handler) designDocumentAdjustTaskContext(
 		InputSnapshotSHA256: baseRevision.InputSnapshotSha256,
 		ExecutionReady:      true,
 		Input:               pinnedInput,
+		ManualEdits:         manualEdits,
 	})
 	if err != nil {
 		return nil, projectDesignSystemInternalError("context_failed", "failed to build agent task context")

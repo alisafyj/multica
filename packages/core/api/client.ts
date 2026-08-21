@@ -206,6 +206,7 @@ import type {
   CreateDesignDraftAgentTaskResponse,
   AdjustDesignDocumentRequest,
   DeliverDesignDocumentRequest,
+  ManualEditDesignDocumentRequest,
   RegenerateDesignDocumentRequest,
   SaveDesignDocumentRequest,
   DesignDocument,
@@ -4214,6 +4215,21 @@ export class ApiClient {
     });
     return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
       endpoint: "POST /api/design-documents/{id}/deliver",
+    });
+  }
+
+  /**
+   * Applies the designer's own style overrides. No agent authors the change —
+   * the daemon rewrites the package deterministically — but it still passes
+   * the same Audit and browser gate before it becomes a revision (DC-062).
+   */
+  async manualEditDesignDocument(documentId: string, data: ManualEditDesignDocumentRequest): Promise<DesignDocument> {
+    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/manual-edit`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
+      endpoint: "POST /api/design-documents/{id}/manual-edit",
     });
   }
 

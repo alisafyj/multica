@@ -6999,6 +6999,26 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			taskResult = finalized
 		}()
 	}
+	// A manual edit is the one design-document operation with no agent in it:
+	// the designer already saw the result, so the daemon applies the overrides
+	// itself and returns. The deferred finalize above still collects, audits,
+	// runs the browser gate and uploads — this branch skips the author, never
+	// the checks (DC-062).
+	if isDesignDocumentManualEdit(task.DesignDocumentContext) {
+		_ = d.client.ReportProgress(ctx, task.ID, "Applying manual edits", 1, 2)
+		if err := applyDesignDocumentManualEdits(task, env.WorkDir, env.OutputDir); err != nil {
+			return TaskResult{
+				Status: "blocked", Comment: "manual edit failed: " + err.Error(),
+				WorkDir: env.WorkDir, EnvRoot: env.RootDir,
+				FailureReason: "design_document_manual_edit_failed",
+			}, nil
+		}
+		return TaskResult{
+			Status: "completed", Comment: "Applied the designer's manual edits.",
+			WorkDir: env.WorkDir, EnvRoot: env.RootDir,
+		}, nil
+	}
+
 	_ = d.client.ReportProgress(ctx, task.ID, fmt.Sprintf("Launching %s", provider), 1, 2)
 
 	reused := gateResumeToReusedWorkdir(&task, &taskCtx, env.WorkDir, sessionHomeReachable(provider, env, envReused), taskLog)

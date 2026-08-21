@@ -643,13 +643,14 @@ Open Design 的两类预置资源按各自性质分别落地，不共用一套�
 - 交付的边界（本条确认，实施细节见后续证据）：只交付 `saved` 修订（草稿不是承诺，P-011/DC-034）；交付建立 Design Document 与 Issue 的可追溯关联并在 Issue 上留下可审计记录；实现智能体在任务工作区内拿到的是经过 Audit 与 Preview 门禁的那个包本身，不是一个它打不开的链接；交付不自动改变 Issue 状态（DC-045）。
 - 迁移清单（依次实施，完成即回填证据）：
   1. **交付给实现智能体** — `confirmed`，已完成（2026-08-22）。
-  2. **手动编辑面板**（直接改字体/颜色/布局）。
+  2. **手动编辑面板**（直接改字体/颜色/布局）— `confirmed`，已完成（2026-08-22）。
   3. **导出 PNG / PDF / PPTX 与截图发对话**。
   4. **演示模式与演讲者备注**。
   5. **持久分享与单文件发布**。
   6. **存为模板**。
   7. **重命名与改挂 Issue**。
   8. **预览/代码分栏**。
+- 证据（第 2 项）：手动编辑是唯一没有智能体参与的设计文档操作。`POST /api/design-documents/{id}/manual-edit` 校验编辑集（属性白名单 + 值/选择器不得逃逸出规则）后入队 `manual_edit` 任务，钉住当前 base 修订、沿用 pinned 取证；守护进程在原本启动智能体的位置改为**确定性应用**——读回只读 base、`designdocument.ApplyManualEdits` 生成每页一份 `prototype/manual-edits/<page>.css` 并注入 `<link>`、整包写入 `$MULTICA_OUTPUT_DIR`，随后**完全复用**既有收尾链路（收集 → 静态 Audit → Chrome 预览门禁 → 上传 → 新修订 → draft 移动）。即：跳过的是作者，不是校验；一次把页面改瞎的覆盖同样会被门禁拒绝。覆盖写进独立样式表而非改写智能体的规则，是为了让「人改了什么」始终可读，底下的设计保持原样。迁移 900 放宽了 `active_operation` 的 CHECK。测试：`designdocument/manual_edit_test.go`（注入安全矩阵、确定性、链接不累积、清除语义）、`daemon/design_document_manual_edit_test.go`（整包落盘、坏编辑集失败、只有 manual_edit 跳过智能体）、`handler/design_document_manual_edit_test.go`（上下文契约、白名单拒绝、陈旧 base 冲突）、`views/manual-edit-model.test.ts`（待应用编辑集矩阵）。
 - 证据（第 1 项）：`POST /api/design-documents/{id}/deliver` 只接受已保存修订并在 Issue 上留系统评论；claim 侧由 `designDeliveryContextForIssue` 按文档自身的 saved 指针解析出 `design_delivery_context`；守护进程经 `GET /api/daemon/tasks/{taskId}/design-delivery/archive` 取包、按钉住的 digest 全量复验后以只读解包到 `.agent_context/design_delivery/package/`；两侧的 wire schema 由跨边界测试锁定（DC-059 的同类漂移）。测试：`handler/design_document_deliver_test.go`（只交付 saved、跨项目拒绝、取消交付、未交付不产生上下文）、`handler/design_delivery_binding_test.go`（schema 一致、信封字段、prompt 必须声明取证模式且禁止照抄原型）。
 
 ## 下一步

@@ -1881,6 +1881,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/api/design-documents/{id}/adjust", h.AdjustDesignDocument)
 			r.Post("/api/design-documents/{id}/regenerate", h.RegenerateDesignDocument)
 			r.Post("/api/design-documents/{id}/deliver", h.DeliverDesignDocument)
+			r.Post("/api/design-documents/{id}/manual-edit", h.ManualEditDesignDocument)
 			r.Post("/api/design-documents/{id}/save", h.SaveDesignDocument)
 			r.Post("/api/design-documents/{id}/discard", h.DiscardDesignDocument)
 			r.Delete("/api/design-documents/{id}", h.DeleteDesignDocument)

@@ -42,7 +42,7 @@ func (d *Daemon) restoreDesignDocumentBaseArchive(ctx context.Context, task Task
 	if taskContext.Type != "design_document_task" {
 		return nil
 	}
-	if taskContext.Operation != "adjust" && taskContext.Operation != "regenerate" {
+	if !designDocumentOperationUsesBase(taskContext.Operation) {
 		return nil
 	}
 	reference := designdocument.BasePackageReference{
@@ -71,4 +71,20 @@ func (d *Daemon) restoreDesignDocumentBaseArchive(ctx context.Context, task Task
 		return fmt.Errorf("extract design document base archive: %w", err)
 	}
 	return nil
+}
+
+// designDocumentOperationUsesBase reports whether a run starts from an
+// immutable base revision rather than from nothing.
+//
+// All three of these restore base/, ground against a pinned receipt instead of
+// re-reading the repository, and emit a whole new package. They differ only in
+// who produces that package: an agent for adjust and regenerate, the daemon
+// itself for a manual edit (DC-062).
+func designDocumentOperationUsesBase(operation string) bool {
+	switch operation {
+	case "adjust", "regenerate", "manual_edit":
+		return true
+	default:
+		return false
+	}
 }

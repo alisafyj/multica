@@ -6774,6 +6774,9 @@ const (
 	DesignDocumentGenerate   DesignDocumentOperation = "generate"
 	DesignDocumentAdjust     DesignDocumentOperation = "adjust"
 	DesignDocumentRegenerate DesignDocumentOperation = "regenerate"
+	// A designer's own edits, applied deterministically with no agent in the
+	// loop (DC-062). The daemon still runs the Audit and browser gate.
+	DesignDocumentManualEdit DesignDocumentOperation = "manual_edit"
 )
 
 // DesignDocumentTaskContext is the canonical input a page-design task runs
@@ -6821,4 +6824,8 @@ type DesignDocumentTaskContext struct {
 	ExecutionReady bool `json:"execution_ready"`
 	// Input is the grounding envelope the daemon's prepare pass reads.
 	Input DesignDocumentTaskInput `json:"input"`
+	// ManualEdits carries a designer's own style overrides for a manual_edit
+	// run. The daemon applies them exactly as written and no model reads them,
+	// which is what makes a manual edit reproducible (DC-062).
+	ManualEdits json.RawMessage `json:"manual_edits,omitempty"`
 }

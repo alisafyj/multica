@@ -15,6 +15,7 @@ import {
   Monitor,
   MoreHorizontal,
   MousePointerClick,
+  Paintbrush,
   RotateCcw,
   RotateCw,
   Scan,
@@ -72,16 +73,25 @@ import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
 import { useTimeAgo } from "../i18n/use-time-ago";
 import { annotationInstruction, annotationLabel, type Annotation } from "./annotation-instruction";
+import type { ElementDescriptor } from "./element-descriptor";
+import {
+  countDeclarations,
+  submittableEdits,
+  withDeclaration,
+  withoutSelector,
+  type ManualEdit,
+} from "./manual-edit-model";
+import { ManualEditPanel } from "./manual-edit-panel";
 import { designDocumentStatusLabel } from "./design-document-card";
 import { DesignDocumentCritique, parseCritique } from "./design-document-critique";
 import { DesignDocumentSourceView } from "./design-document-source-view";
 import { DesignDocumentStaticView } from "./design-document-static-view";
 import { AgentSetting, IssueSetting } from "./design-task-composer";
-import type { CanvasMode } from "./prototype-canvas";
+import { safeQuery, type CanvasMode } from "./prototype-canvas";
 import { DesignTaskActivity, taskOperationLabel } from "./project-design-system-task-activity";
 
 /** What the workbench's main pane is showing. */
-type DocumentViewMode = "preview" | "annotate" | "code";
+type DocumentViewMode = "preview" | "annotate" | "edit" | "code";
 
 const INSTRUCTION_MAX_LENGTH = 8000;
 
@@ -294,6 +304,14 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   const [viewMode, setViewMode] = useState<DocumentViewMode>("preview");
   const [markMode, setMarkMode] = useState<CanvasMode>("select");
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  // The designer's pending overrides, and the element the panel is bound to.
+  // The picked node lives in a ref, not state: it belongs to a canvas document
+  // that remounts on every page or revision change, and re-rendering against a
+  // detached node would show styles from a document nobody is looking at.
+  const [manualEdits, setManualEdits] = useState<ManualEdit[]>([]);
+  const [picked, setPicked] = useState<ElementDescriptor | null>(null);
+  const pickedElement = useRef<Element | null>(null);
+  const [pickedComputed, setPickedComputed] = useState<CSSStyleDeclaration | null>(null);
   const annotationSeq = useRef(0);
   const addAnnotation = (annotation: Omit<Annotation, "id" | "pagePath" | "pageTitle">) => {
     annotationSeq.current += 1;
@@ -447,6 +465,70 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   // (DC-062). This is the end of the designer's flow: from here the package
   // travels with that issue's task, so an implementing agent builds from the
   // design instead of guessing at one.
+  /**
+   * Repaints every pending override for one page onto a freshly mounted
+   * canvas. A selector that no longer resolves is skipped rather than treated
+   * as an error: the run applies the edit set against the package, and this is
+   * only what the designer is looking at.
+   */
+  const repaintManualEdits = (canvasDocument: Document, edits: ReadonlyArray<ManualEdit>, page: string) => {
+    for (const edit of edits) {
+      if (edit.page !== page) continue;
+      const target = safeQuery(canvasDocument, edit.selector);
+      if (!(target instanceof HTMLElement)) continue;
+      for (const [property, value] of Object.entries(edit.declarations)) {
+        if (value.trim() === "") target.style.removeProperty(property);
+        else target.style.setProperty(property, value, "important");
+      }
+    }
+  };
+
+  /** Paints one override straight onto the canvas so the change is instant. */
+  const applyToCanvas = (property: string, value: string) => {
+    const element = pickedElement.current;
+    if (!(element instanceof HTMLElement)) return;
+    if (value.trim() === "") element.style.removeProperty(property);
+    // "important" mirrors what the generated stylesheet will use, so the
+    // canvas shows the same result the persisted revision will.
+    else element.style.setProperty(property, value, "important");
+  };
+
+  const changeManualEdit = (property: string, value: string) => {
+    if (!picked) return;
+    applyToCanvas(property, value);
+    setManualEdits((current) => withDeclaration(current, shownEntry, picked.selector, property, value));
+  };
+
+  const clearManualEdit = () => {
+    const element = pickedElement.current;
+    const current = manualEdits.find((edit) => edit.page === shownEntry && edit.selector === picked?.selector);
+    if (element instanceof HTMLElement && current) {
+      for (const property of Object.keys(current.declarations)) element.style.removeProperty(property);
+    }
+    if (picked) setManualEdits((edits) => withoutSelector(edits, shownEntry, picked.selector));
+  };
+
+  // Applying the pending overrides. No agent runs — the daemon rewrites the
+  // package deterministically — but the same Audit and browser gate decide
+  // whether it becomes a revision (DC-062).
+  const manualEdit = useMutation({
+    mutationFn: () => api.manualEditDesignDocument(documentId, {
+      edits: submittableEdits(manualEdits),
+      agent_id: agentId,
+      base_revision_id: currentRevisionId || undefined,
+    }),
+    onSuccess: async (next) => {
+      applyDocument(next);
+      setManualEdits([]);
+      setPicked(null);
+      pickedElement.current = null;
+      setPickedComputed(null);
+      setPinnedRevisionId("");
+      await refresh();
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "无法应用手动修改"),
+  });
+
   const deliver = useMutation({
     mutationFn: (issueId: string) => api.deliverDesignDocument(documentId, { issue_id: issueId }),
     onSuccess: async (next, issueId) => {
@@ -481,11 +563,20 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
     onError: (error) => toast.error(error instanceof Error ? error.message : "无法重新生成"),
   });
 
-  const busy = adjust.isPending || save.isPending || discard.isPending || restore.isPending || regenerate.isPending;
+  const busy = adjust.isPending || save.isPending || discard.isPending || restore.isPending || regenerate.isPending || manualEdit.isPending;
   // While a run is active the composer stays open: the submission queues and
   // fires when the run lands. Only a document with nothing to adjust and
   // nothing on the way keeps it closed.
   const composerOpen = canAdjust || running;
+  // A manual edit lands as a revision, so it needs the same preconditions an
+  // adjustment does — plus something actually changed.
+  const manualEditBlocker = !canAdjust
+    ? (running ? "任务执行中，完成后可以继续编辑" : "还没有可以编辑的版本")
+    : countDeclarations(manualEdits) === 0
+      ? "在画布上选中元素后修改属性"
+      : !agentId
+        ? "选择一个智能体来运行校验"
+        : null;
   const instructionBlocker = !composerOpen
     ? "还没有可以调整的版本"
     // A mark carries its own message: the anchor plus its note is already an
@@ -530,6 +621,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
           {([
             { id: "preview", label: "预览", icon: Eye },
             { id: "annotate", label: "标注", icon: SquareDashedMousePointer },
+            { id: "edit", label: "编辑", icon: Paintbrush },
             { id: "code", label: "代码", icon: Code2 },
           ] as const).map(({ id, label, icon: Icon }) => (
             <button
@@ -657,19 +749,40 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
         <div className="min-h-0 flex-1">
           <DesignDocumentSourceView key={revision.id} revision={revision} />
         </div>
-      ) : viewMode === "annotate" ? (
+      ) : viewMode === "annotate" || viewMode === "edit" ? (
         <div className="min-h-0 flex-1">
           <DesignDocumentStaticView
-            key={`${selectedRevisionId}:${shownEntry}`}
+            key={`${selectedRevisionId}:${shownEntry}:${viewMode}`}
             revision={revision}
             entryPath={shownEntry}
-            title={`${title} · ${shownPage?.title ?? "标注"}`}
+            title={`${title} · ${shownPage?.title ?? (viewMode === "edit" ? "编辑" : "标注")}`}
             frameWidth={frameWidth}
             zoom={zoom}
-            mode={markMode}
-            onPick={(descriptor) => addAnnotation({ element: descriptor, note: "" })}
-            onRegion={(region) => addAnnotation({ region, note: "" })}
+            mode={viewMode === "edit" ? "select" : markMode}
+            pickedSelector={viewMode === "edit" ? picked?.selector ?? "" : ""}
+            onPick={(descriptor, element) => {
+              if (viewMode === "annotate") {
+                addAnnotation({ element: descriptor, note: "" });
+                return;
+              }
+              pickedElement.current = element;
+              setPicked(descriptor);
+              setPickedComputed(element.ownerDocument.defaultView?.getComputedStyle(element) ?? null);
+            }}
+            onRegion={(region) => {
+              if (viewMode === "annotate") addAnnotation({ region, note: "" });
+            }}
             onPageLink={(path) => setActiveEntry(path)}
+            onDocumentReady={(canvasDocument) => {
+              // The node the panel was bound to belonged to the document that
+              // just went away, so the pick is dropped. The pending overrides
+              // are not: they are repainted onto the fresh document, or a page
+              // switch would look like the edits had been undone.
+              pickedElement.current = null;
+              setPicked(null);
+              setPickedComputed(null);
+              repaintManualEdits(canvasDocument, manualEdits, shownEntry);
+            }}
           />
         </div>
       ) : (
@@ -852,6 +965,37 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
             </section>
           </div>
 
+          {viewMode === "edit" ? (
+            <div className="shrink-0 rounded-lg border bg-card p-3">
+              <ManualEditPanel
+                descriptor={picked}
+                page={shownEntry}
+                edits={manualEdits}
+                computed={pickedComputed}
+                onChange={changeManualEdit}
+                onClear={clearManualEdit}
+                onDeselect={() => {
+                  pickedElement.current = null;
+                  setPicked(null);
+                  setPickedComputed(null);
+                }}
+              />
+              <div className="mt-3 flex items-center justify-between gap-2 border-t pt-3">
+                <span className="min-w-0 truncate text-caption text-muted-foreground">
+                  {manualEditBlocker ?? `将应用 ${countDeclarations(manualEdits)} 项修改`}
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={!!manualEditBlocker || busy}
+                  onClick={() => manualEdit.mutate()}
+                >
+                  {manualEdit.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
+                  应用修改
+                </Button>
+              </div>
+            </div>
+          ) : (
           <form
             className="shrink-0 rounded-lg border bg-card p-3"
             onSubmit={(event) => {
@@ -981,6 +1125,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
               </Button>
             </div>
           </form>
+          )}
         </aside>
 
         <main className="flex min-h-0 flex-col lg:h-full">
