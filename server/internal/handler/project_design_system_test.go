@@ -200,6 +200,7 @@ func TestCreateProjectDesignSystemStandalone(t *testing.T) {
 
 	// A project row must not be required, and a second standalone system must
 	// not conflict with the first.
+	standaloneIDs := map[string]string{}
 	for i, name := range []string{"品牌 A", "品牌 B"} {
 		response := performProjectDesignSystemRequest(t, testHandler.CreateProjectDesignSystem, http.MethodPost, "/api/project-design-systems", map[string]any{
 			"name": name, "agent_id": agentID, "platform": "web",
@@ -220,6 +221,7 @@ func TestCreateProjectDesignSystemStandalone(t *testing.T) {
 		if created.ProjectID != "" || created.Name != name {
 			t.Fatalf("standalone response = %+v, want no project and name %q", created, name)
 		}
+		standaloneIDs[name] = created.ID
 	}
 
 	// Earlier runs of this suite leave their rows in the shared test
@@ -232,12 +234,16 @@ func TestCreateProjectDesignSystemStandalone(t *testing.T) {
 		t.Fatalf("standalone systems = %d, want %d (this run adds two)", count, existing+2)
 	}
 
+	// Scoped to the system this run created. Ordering over every standalone
+	// system and taking the first picks the oldest row in the database, which
+	// on a shared dev database is somebody's real design system, not this
+	// test's — the same reason the count above is relative to `existing`.
 	var contextRaw []byte
 	if err := testPool.QueryRow(context.Background(), `
 		SELECT q.context FROM agent_task_queue q
 		JOIN project_design_system s ON s.active_task_id = q.id
-		WHERE s.project_id IS NULL ORDER BY s.created_at LIMIT 1
-	`).Scan(&contextRaw); err != nil {
+		WHERE s.id = $1
+	`, standaloneIDs["品牌 A"]).Scan(&contextRaw); err != nil {
 		t.Fatalf("load standalone task context: %v", err)
 	}
 	var taskContext struct {
