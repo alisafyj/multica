@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -247,7 +247,9 @@ describe("DesignTaskComposer", () => {
     await pickProject(user);
     await pickAgent(user);
     await user.type(screen.getByLabelText("页面需求描述"), "  客户列表页  ");
-    await user.click(screen.getByRole("button", { name: /线框图/ }));
+    // 线框图 is 原型's own scene, not a top-level chip — pick 原型 first.
+    await user.click(screen.getByRole("button", { name: "原型" }));
+    await user.click(await screen.findByRole("button", { name: "线框图" }));
 
     await user.click(screen.getByRole("button", { name: "生成页面设计" }));
 
@@ -296,14 +298,54 @@ describe("DesignTaskComposer", () => {
     const user = userEvent.setup();
     renderComposer();
 
-    const wireframe = await screen.findByRole("button", { name: /线框图/ });
-    expect(wireframe).toHaveAttribute("aria-pressed", "false");
+    const prototype = screen.getByRole("button", { name: "原型" });
+    expect(prototype).toHaveAttribute("aria-pressed", "false");
 
+    await user.click(prototype);
+    expect(prototype).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(prototype);
+    expect(prototype).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("surfaces 线框图 and 移动应用 only as 原型's own scene row, not as top-level chips", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+
+    // Neither scene competes with 原型 for a rail slot until it is active.
+    expect(screen.queryByRole("button", { name: "线框图" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "移动应用" })).not.toBeInTheDocument();
+
+    const prototype = screen.getByRole("button", { name: "原型" });
+    await user.click(prototype);
+    const scenes = screen.getByRole("group", { name: "原型场景" });
+    const wireframe = within(scenes).getByRole("button", { name: "线框图" });
+    const mobile = within(scenes).getByRole("button", { name: "移动应用" });
+
+    // Picking a scene replaces the recipe outright, but 原型 keeps reading
+    // as selected — the family, not just the bare scenario, is active.
     await user.click(wireframe);
     expect(wireframe).toHaveAttribute("aria-pressed", "true");
+    expect(prototype).toHaveAttribute("aria-pressed", "true");
 
-    await user.click(wireframe);
+    // A different scene swaps cleanly, no need to step back through 原型.
+    await user.click(mobile);
+    expect(mobile).toHaveAttribute("aria-pressed", "true");
     expect(wireframe).toHaveAttribute("aria-pressed", "false");
+    expect(prototype).toHaveAttribute("aria-pressed", "true");
+
+    // Clicking 原型 itself falls back to the bare scene without leaving the
+    // family — the scene row stays open with nothing picked in it.
+    await user.click(prototype);
+    expect(prototype).toHaveAttribute("aria-pressed", "true");
+    expect(mobile).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("group", { name: "原型场景" })).toBeInTheDocument();
+
+    // Clicking 原型 again while it is the bare active scene clears the whole
+    // family, and the scene row goes with it.
+    await user.click(prototype);
+    expect(prototype).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("group", { name: "原型场景" })).not.toBeInTheDocument();
   });
 
   it("keeps every unbuilt creation scenario in the rail without letting it run", async () => {
@@ -315,10 +357,10 @@ describe("DesignTaskComposer", () => {
     const slides = await screen.findByRole("button", { name: "幻灯片（即将支持）" });
     expect(slides).toBeDisabled();
     expect(slides).not.toHaveAttribute("aria-pressed");
-    // A design system belongs to a project's own scope (DC-052), so this
-    // position is never live from the composer.
-    expect(screen.getByRole("button", { name: "创建设计体系（即将支持）" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "实时看板（即将支持）" })).toBeDisabled();
+    // Creating a design system has its own entry point on the 设计体系 tab
+    // (DC-052 / DC-054), so this rail never offers it as a scenario.
+    expect(screen.queryByRole("button", { name: /创建设计体系/ })).not.toBeInTheDocument();
 
     await user.click(slides);
     expect(screen.getByRole("button", { name: "原型" })).toHaveAttribute("aria-pressed", "false");
@@ -484,9 +526,10 @@ describe("DesignTaskComposer", () => {
     const user = userEvent.setup();
     renderComposer(vi.fn(), { recipeSelection: { token: 1, recipe: RECIPE } });
 
-    await user.click(await screen.findByRole("button", { name: /线框图/ }));
+    await user.click(await screen.findByRole("button", { name: "原型" }));
+    await user.click(await screen.findByRole("button", { name: "线框图" }));
     expect(screen.queryByText("CRM 控制台")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /线框图/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "线框图" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("drops the gallery recipe when its clear affordance is used", async () => {
