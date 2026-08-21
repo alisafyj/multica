@@ -351,6 +351,36 @@ func isTerminalTaskStatus(status string) bool {
 // proof of work is what leaves a document reading "生成中" forever after a task
 // dies without releasing it. Callers that pass nil get the pointer-only
 // reading, which is correct for list endpoints that never claim a live task.
+// designDocumentRunIsLive reports whether a document's active_task_id still
+// points at a task that can actually finish.
+//
+// The pointer alone is not the answer. A task that failed, was cancelled, or
+// completed without clearing the pointer leaves it set forever, and a guard
+// written as `ActiveTaskID.Valid` then locks the document out of every
+// operation it protects — the same wedge behind "生成中 forever" that
+// designDocumentStatus below already resolves by looking the task up. Guards
+// must ask this, not the pointer, or a dead run becomes a permanent dead end.
+func (h *Handler) designDocumentRunIsLive(ctx context.Context, document db.DesignDocument) bool {
+	if !document.ActiveTaskID.Valid {
+		return false
+	}
+	task, err := h.Queries.GetAgentTaskInWorkspace(ctx, db.GetAgentTaskInWorkspaceParams{
+		ID: document.ActiveTaskID, WorkspaceID: document.WorkspaceID,
+	})
+	switch {
+	// The task row is gone: nothing is going to complete into this document,
+	// so the pointer is a leftover and must not lock the document.
+	case errors.Is(err, pgx.ErrNoRows):
+		return false
+	// Any other failure means we could not read the task, not that there is
+	// none. A caller guarding a destructive step has to assume the run is
+	// live and let the user retry, rather than act on an unread row.
+	case err != nil:
+		return true
+	}
+	return !isTerminalTaskStatus(task.Status)
+}
+
 func designDocumentStatus(document db.DesignDocument, task *db.AgentTaskQueue) string {
 	activeTaskRunning := document.ActiveTaskID.Valid &&
 		(task == nil || !isTerminalTaskStatus(task.Status))

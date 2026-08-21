@@ -112,16 +112,20 @@ func (h *Handler) DiscardDesignDocument(w http.ResponseWriter, r *http.Request) 
 // be left behind with orphan revisions or the reverse. There is no undo, which
 // is why the client asks first.
 //
-// A running document is refused rather than deleted. The agent task outlives
-// the row it was enqueued for, so deleting mid-run would leave a task
-// completing into a document that no longer exists — the same reason discard
-// refuses it.
+// A live run is refused rather than deleted: the agent task outlives the row
+// it was enqueued for, so deleting mid-run would leave a task completing into
+// a document that no longer exists.
+//
+// "Live" is the task's own status, not the pointer — a document whose run
+// failed or was cancelled keeps active_task_id set, and guarding on the
+// pointer would make exactly the documents a user most wants to clean up the
+// only ones that can never be deleted.
 func (h *Handler) DeleteDesignDocument(w http.ResponseWriter, r *http.Request) {
 	document, workspaceUUID, ok := h.loadDesignDocumentForRequest(w, r)
 	if !ok {
 		return
 	}
-	if document.ActiveTaskID.Valid {
+	if h.designDocumentRunIsLive(r.Context(), document) {
 		writeProjectDesignSystemError(w, http.StatusConflict, "operation_in_progress", "a design task is still running for this document")
 		return
 	}
