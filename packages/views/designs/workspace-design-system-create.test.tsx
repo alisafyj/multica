@@ -142,6 +142,13 @@ describe("WorkspaceDesignSystemCreate", () => {
     }
     expect(screen.getByRole("button", { name: /高级 · 仓库、本地代码、Figma/ })).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByLabelText("备注")).not.toBeInTheDocument();
+
+    // Required rows carry the red asterisk; optional rows carry no 可选 tag.
+    for (const label of ["名称", "描述品牌", "智能体"]) {
+      expect(screen.getByText(label).parentElement?.textContent).toContain("*");
+    }
+    expect(screen.getByText("粘贴 DESIGN.md").parentElement?.textContent).not.toContain("*");
+    expect(screen.queryByText("可选")).not.toBeInTheDocument();
   });
 
   it("sends a standalone create with the collected sources, then opens the system", async () => {

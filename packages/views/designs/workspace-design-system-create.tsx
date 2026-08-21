@@ -373,7 +373,7 @@ export function WorkspaceDesignSystemCreate() {
             <div className="mt-3 overflow-hidden rounded-lg border bg-card shadow-sm">
               {/* 名称 — Multica's own row: a standalone system is a long-lived
                   library entity and needs an identity upstream does not ask for. */}
-              <FormRow label="名称">
+              <FormRow label="名称" required>
                 <Input
                   value={name}
                   onChange={(event) => setName(event.target.value)}
@@ -502,7 +502,7 @@ export function WorkspaceDesignSystemCreate() {
 
               {/* Upstream marks this 可选; here the brief is what the agent
                   generates from, so it is required (P-008). */}
-              <FormRow label="描述品牌" hint="品牌语气、简介和产品上下文。会用于生成和后续调整。" alignTop>
+              <FormRow label="描述品牌" required hint="品牌语气、简介和产品上下文。会用于生成和后续调整。" alignTop>
                 <Textarea
                   value={brief}
                   onChange={(event) => setBrief(event.target.value)}
@@ -515,7 +515,6 @@ export function WorkspaceDesignSystemCreate() {
 
               <FormRow
                 label="粘贴 DESIGN.md"
-                optional
                 hint="粘贴 DESIGN.md，即可直接从 token、设计理由和组件指南创建设计体系。"
                 hintAction={
                   <a
@@ -630,7 +629,6 @@ export function WorkspaceDesignSystemCreate() {
                     </FormRow>
                     <FormRow
                       label="关联本地代码"
-                      optional={isDesktopShell()}
                       hint={isDesktopShell() ? "用这台电脑上的文件夹作为代码证据；任务在你的机器上执行，智能体直接读取该目录。" : undefined}
                       alignTop
                     >
@@ -665,7 +663,7 @@ export function WorkspaceDesignSystemCreate() {
                         </p>
                       )}
                     </FormRow>
-                    <FormRow label="上传 .fig" optional hint="原样随任务提供给智能体；Multica 不在本地解码。" alignTop>
+                    <FormRow label="上传 .fig" hint="原样随任务提供给智能体；Multica 不在本地解码。" alignTop>
                       <div className="space-y-2.5">
                         <input
                           ref={figInputRef}
@@ -712,7 +710,7 @@ export function WorkspaceDesignSystemCreate() {
                         ) : null}
                       </div>
                     </FormRow>
-                    <FormRow label="Figma URL" optional hint="保存为 Figma 设计来源，智能体把它作为标准参考。" alignTop>
+                    <FormRow label="Figma URL" hint="保存为 Figma 设计来源，智能体把它作为标准参考。" alignTop>
                       <div className="space-y-2">
                         <div className="flex flex-wrap items-center gap-2.5">
                           <Input
@@ -737,7 +735,7 @@ export function WorkspaceDesignSystemCreate() {
                         ) : null}
                       </div>
                     </FormRow>
-                    <FormRow label="备注" optional alignTop>
+                    <FormRow label="备注" alignTop>
                       <Textarea
                         value={notes}
                         onChange={(event) => setNotes(event.target.value)}
@@ -753,7 +751,7 @@ export function WorkspaceDesignSystemCreate() {
 
               {/* Multica's own rows: generation runs as the picked agent's
                   task (P-008), and the platform shapes the component forms. */}
-              <FormRow label="智能体">
+              <FormRow label="智能体" required>
                 <select
                   aria-label="智能体"
                   value={agentId}
@@ -829,14 +827,15 @@ function SourceLinkFavicon({ url }: { url: string }) {
 
 function FormRow({
   label,
-  optional,
+  required,
   hint,
   hintAction,
   alignTop,
   children,
 }: {
   label: string;
-  optional?: boolean;
+  /** Marks a field the submit gate demands; optional rows carry no marker. */
+  required?: boolean;
   hint?: string;
   hintAction?: React.ReactNode;
   alignTop?: boolean;
@@ -850,8 +849,10 @@ function FormRow({
       )}
     >
       <div className="min-w-0">
-        <strong className="block text-caption font-semibold leading-tight">{label}</strong>
-        {optional ? <span className="mt-0.5 block text-micro font-medium text-muted-foreground">可选</span> : null}
+        <strong className="block text-caption font-semibold leading-tight">
+          <span>{label}</span>
+          {required ? <span aria-hidden="true" className="ml-0.5 text-destructive">*</span> : null}
+        </strong>
         {hint ? (
           <span className="mt-1 block text-micro leading-4 text-muted-foreground">
             {hint}
