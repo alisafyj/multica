@@ -367,6 +367,58 @@ describe("DesignTaskComposer", () => {
     expect(screen.queryByRole("group", { name: "原型场景" })).not.toBeInTheDocument();
   });
 
+  it("steps an armed scene back to bare 原型 from the scene row itself", async () => {
+    const user = userEvent.setup();
+    // Two prototype recipes so the facet pills carry real cards and 移动应用's
+    // implied 应用 filter is observable on the wall.
+    listDesignScenarioRecipes.mockResolvedValue({
+      recipes: [
+        RECIPE,
+        { ...RECIPE, slug: "ops-app", title: "运营移动端", category: "应用" },
+        { ...RECIPE, slug: "landing", title: "营销落地页", category: "落地页 / 营销" },
+      ],
+    });
+    renderComposer();
+
+    await user.click(screen.getByRole("button", { name: "原型" }));
+    const scenes = screen.getByRole("group", { name: "原型场景" });
+
+    // 移动应用 shares the 应用 facet: only 应用 cards stay on the wall, and
+    // the 应用 pill itself does not light up — the scene is what is armed.
+    await user.click(within(scenes).getByRole("button", { name: "移动应用" }));
+    expect(await screen.findByText("运营移动端")).toBeInTheDocument();
+    expect(screen.queryByText("营销落地页")).not.toBeInTheDocument();
+    expect(within(scenes).getByRole("button", { name: "应用" })).toHaveAttribute("aria-pressed", "false");
+
+    // Re-picking the armed scene steps back to bare 原型, not out of the
+    // family: the row stays and the whole prototype pool returns.
+    await user.click(within(scenes).getByRole("button", { name: "移动应用" }));
+    expect(within(scenes).getByRole("button", { name: "移动应用" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "原型" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByText("营销落地页")).toBeInTheDocument();
+
+    // A facet pick while a scene is armed re-arms bare 原型 and filters: the
+    // facet narrows what 原型 produces, it does not refine 线框图.
+    await user.click(within(scenes).getByRole("button", { name: "线框图" }));
+    await user.click(within(scenes).getByRole("button", { name: "落地页 / 营销" }));
+    expect(within(scenes).getByRole("button", { name: "线框图" })).toHaveAttribute("aria-pressed", "false");
+    expect(within(scenes).getByRole("button", { name: "落地页 / 营销" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByText("营销落地页")).toBeInTheDocument();
+    expect(screen.queryByText("运营移动端")).not.toBeInTheDocument();
+  });
+
+  it("shows the armed Figma migration as a clearable line, since it has no rail chip", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+
+    await user.click(screen.getByRole("button", { name: "添加" }));
+    await user.click(await screen.findByText("从 Figma 导入"));
+    expect(await screen.findByText(/来自 Figma：把 Figma 稿转成页面设计/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "取消从 Figma 导入" }));
+    expect(screen.queryByText(/来自 Figma：把 Figma 稿转成页面设计/)).not.toBeInTheDocument();
+  });
+
   it("keeps every unbuilt creation scenario in the rail without letting it run", async () => {
     const user = userEvent.setup();
     renderComposer();
@@ -376,10 +428,13 @@ describe("DesignTaskComposer", () => {
     const slides = await screen.findByRole("button", { name: "幻灯片（即将支持）" });
     expect(slides).toBeDisabled();
     expect(slides).not.toHaveAttribute("aria-pressed");
-    expect(screen.getByRole("button", { name: "实时看板（即将支持）" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "HyperFrames（即将支持）" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "实时产物（即将支持）" })).toBeDisabled();
     // Creating a design system has its own entry point on the 设计体系 tab
-    // (DC-052 / DC-054), so this rail never offers it as a scenario.
+    // (DC-052 / DC-054), and 来自 Figma lives in the + menu as a migration
+    // action, so neither takes a rail position.
     expect(screen.queryByRole("button", { name: /创建设计体系/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /来自 Figma/ })).not.toBeInTheDocument();
 
     await user.click(slides);
     expect(screen.getByRole("button", { name: "原型" })).toHaveAttribute("aria-pressed", "false");

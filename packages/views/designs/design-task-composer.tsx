@@ -17,16 +17,15 @@ import {
   GitBranch,
   Globe,
   Image as ImageIcon,
+  LayoutTemplate,
   ListTodo,
   LoaderCircle,
   Map as MapIcon,
   MessageCircleQuestion,
   Palette,
-  PanelsTopLeft,
   Paperclip,
   Plus,
   Presentation,
-  Smartphone,
   Sparkles,
   SwatchBook,
   Video,
@@ -77,23 +76,25 @@ import {
 import { ProjectPicker } from "../projects/components/project-picker";
 import { StatusIcon } from "../issues/components/status-icon";
 import { DesignDotGrid } from "./design-dot-grid";
-import { DesignExamplePrompts } from "./design-example-prompts";
+import { DesignExamplePrompts, PROTOTYPE_FAMILY } from "./design-example-prompts";
 import { DesignRecentDocuments } from "./design-recent-documents";
 
 /**
- * The creation rail (DC-049). One ordered list of every top-level artifact
- * type the design centre presents, live and not-yet-live together, so the
- * rail reads as the whole product surface rather than two stacked tiers.
- * Fixed at ten entries: Wireframe and Mobile app are not here — they are
- * 原型's own second-level scenes (`PROTOTYPE_SCENES`), and creating a design
- * system is an action with its own entry point (the 设计体系 tab's own 新建
- * button) rather than a scenario this rail seeds (DC-052 / DC-054).
+ * The creation rail (DC-049). Open Design's fixed ten top-level output types
+ * in its exact order (home-hero/chips.ts CREATE_RAIL_ORDER), live and
+ * not-yet-live together, so the rail reads as the whole product surface
+ * rather than two stacked tiers. Not here on purpose: 线框图 and 移动应用
+ * are 原型's second-level scenes on the example wall's row (see
+ * design-example-prompts.tsx); 来自 Figma is a migration action living in
+ * the composer's + menu, mirroring upstream's migrate group; and creating a
+ * design system has its own entry point on the 设计体系 tab (DC-052 /
+ * DC-054).
  *
  * A chip carrying a `recipe` starts a real page-design task; the recipe is the
  * configuration the agent follows, not a different artifact kind. Picking none
  * leaves the recipe at `default`, the free-form path. Chips without one keep
  * their position but stay inert — nothing in this phase produces a deck,
- * image, video, audio, WebGL or live artifact.
+ * image, document, HyperFrames, video, audio, live artifact or WebGL piece.
  */
 const CREATE_TYPES: ReadonlyArray<{
   id: string;
@@ -104,36 +105,15 @@ const CREATE_TYPES: ReadonlyArray<{
 }> = [
   { id: "ui-mockup", recipe: "ui-mockup", label: "原型", description: "可交互的应用界面稿", icon: AppWindow },
   { id: "deck", label: "幻灯片", description: "成套的演示页面", icon: Presentation },
-  { id: "document", label: "文档", description: "长文与报告版式", icon: FileText },
-  { id: "figma-migration", recipe: "figma-migration", label: "来自 Figma", description: "把 Figma 稿转成页面设计", icon: Frame },
   { id: "image", label: "图片", description: "单张视觉素材", icon: ImageIcon },
-  { id: "webgl", label: "WebGL 体验", description: "三维与实时渲染", icon: Sparkles },
-  { id: "live-board", label: "实时看板", description: "接入实时数据的看板", icon: ChartColumn },
+  { id: "document", label: "文档", description: "长文与报告版式", icon: FileText },
+  { id: "hyperframes", label: "HyperFrames", description: "HTML 连续帧动画合成", icon: LayoutTemplate },
+  { id: "web-clone", recipe: "web-clone", label: "网站复刻", description: "按现有网站还原页面", icon: Globe },
   { id: "video", label: "视频", description: "分镜与动态素材", icon: Video },
   { id: "audio", label: "音频", description: "语音与音效素材", icon: AudioLines },
-  { id: "web-clone", recipe: "web-clone", label: "网站复刻", description: "按现有网站还原页面", icon: Globe },
+  { id: "live-board", label: "实时产物", description: "可刷新、接入数据的实时页面", icon: ChartColumn },
+  { id: "webgl", label: "WebGL 体验", description: "三维与实时渲染", icon: Sparkles },
 ];
-
-/**
- * 原型's second-level scene rail (DC-049 amended). Wireframe and Mobile app
- * are real recipes, not modifiers of `ui-mockup` — picking one replaces the
- * recipe outright — but they only ever refine 原型, so they surface here
- * instead of competing with it for a top-level slot. Shown once 原型 (or an
- * already-picked scene) is the active recipe; clicking 原型 itself falls back
- * to the bare scene, and clicking the active scene again clears the pick
- * entirely, both through the rail's ordinary toggle in `onPick`.
- */
-const PROTOTYPE_SCENES: ReadonlyArray<{
-  recipe: Extract<DesignDocumentRecipe, "wireframe" | "mobile-app">;
-  label: string;
-  description: string;
-  icon: typeof AppWindow;
-}> = [
-  { recipe: "wireframe", label: "线框图", description: "低保真的页面与流程", icon: PanelsTopLeft },
-  { recipe: "mobile-app", label: "移动应用", description: "iOS 与 Android 界面", icon: Smartphone },
-];
-
-const PROTOTYPE_FAMILY = new Set<string>(["ui-mockup", "wireframe", "mobile-app"]);
 
 export const PLATFORM_OPTIONS: ReadonlyArray<{
   value: ProjectDesignSystemPlatform;
@@ -374,90 +354,73 @@ function CreateTypeRail({
   }, [selectedId]);
 
   const hiddenTypes = CREATE_TYPES.filter((type) => hiddenIds.has(type.id));
-  const prototypeFamilyActive = PROTOTYPE_FAMILY.has(recipe);
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <div role="group" aria-label="设计场景" className="relative flex items-center gap-1.5">
-        <div ref={railRef} className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-          {CREATE_TYPES.map((type) => (
-            <div
-              key={type.id}
-              ref={(node) => {
-                if (node) chipRefs.current.set(type.id, node);
-                else chipRefs.current.delete(type.id);
-              }}
-              // Folded chips stay mounted so their width remains measurable —
-              // remeasuring an unmounted chip is what makes a rail oscillate
-              // between two widths.
-              className={cn("shrink-0", hiddenIds.has(type.id) && "pointer-events-none absolute -z-10 opacity-0")}
-              aria-hidden={hiddenIds.has(type.id) || undefined}
-            >
-              <CreateChip
-                label={type.label}
-                description={type.description}
-                icon={type.icon}
-                // 原型 reads as selected for its whole family — plain or
-                // refined into a scene below — so the rail never looks empty
-                // while a scene chip is what is actually active.
-                selected={
-                  type.recipe
-                    ? type.id === "ui-mockup"
-                      ? PROTOTYPE_FAMILY.has(recipe)
-                      : recipe === type.recipe
-                    : undefined
-                }
+    <div role="group" aria-label="设计场景" className="relative flex items-center gap-1.5">
+      <div ref={railRef} className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+        {CREATE_TYPES.map((type) => (
+          <div
+            key={type.id}
+            ref={(node) => {
+              if (node) chipRefs.current.set(type.id, node);
+              else chipRefs.current.delete(type.id);
+            }}
+            // Folded chips stay mounted so their width remains measurable —
+            // remeasuring an unmounted chip is what makes a rail oscillate
+            // between two widths.
+            className={cn("shrink-0", hiddenIds.has(type.id) && "pointer-events-none absolute -z-10 opacity-0")}
+            aria-hidden={hiddenIds.has(type.id) || undefined}
+          >
+            <CreateChip
+              label={type.label}
+              description={type.description}
+              icon={type.icon}
+              // 原型 reads as selected for its whole family — plain or
+              // refined into a scene below — so the rail never looks empty
+              // while a scene chip is what is actually active.
+              selected={
+                type.recipe
+                  ? type.id === "ui-mockup"
+                    ? PROTOTYPE_FAMILY.has(recipe)
+                    : recipe === type.recipe
+                  : undefined
+              }
+              disabled={!type.recipe}
+              onClick={type.recipe ? () => onPick(type.recipe!) : undefined}
+            />
+          </div>
+        ))}
+      </div>
+      {hiddenTypes.length > 0 ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <button
+                type="button"
+                aria-label={`全部设计场景，另有 ${hiddenTypes.length} 项`}
+                className="flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-full border bg-card px-2.5 text-caption text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <span>全部</span>
+                <ChevronDown className="size-3.5 shrink-0" />
+              </button>
+            }
+          />
+          <DropdownMenuContent align="end" className="w-56">
+            {hiddenTypes.map((type) => (
+              <DropdownMenuItem
+                key={type.id}
                 disabled={!type.recipe}
                 onClick={type.recipe ? () => onPick(type.recipe!) : undefined}
-              />
-            </div>
-          ))}
-        </div>
-        {hiddenTypes.length > 0 ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <button
-                  type="button"
-                  aria-label={`全部设计场景，另有 ${hiddenTypes.length} 项`}
-                  className="flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-full border bg-card px-2.5 text-caption text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                >
-                  <span>全部</span>
-                  <ChevronDown className="size-3.5 shrink-0" />
-                </button>
-              }
-            />
-            <DropdownMenuContent align="end" className="w-56">
-              {hiddenTypes.map((type) => (
-                <DropdownMenuItem
-                  key={type.id}
-                  disabled={!type.recipe}
-                  onClick={type.recipe ? () => onPick(type.recipe!) : undefined}
-                >
-                  <type.icon className="size-4 shrink-0" />
-                  <span className="flex-1 truncate">{type.label}</span>
-                  {!type.recipe ? (
-                    <span className="shrink-0 text-caption text-muted-foreground">即将支持</span>
-                  ) : null}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
-      </div>
-      {prototypeFamilyActive ? (
-        <div role="group" aria-label="原型场景" className="flex flex-wrap items-center gap-1.5 pl-5">
-          {PROTOTYPE_SCENES.map((scene) => (
-            <CreateChip
-              key={scene.recipe}
-              label={scene.label}
-              description={scene.description}
-              icon={scene.icon}
-              selected={recipe === scene.recipe}
-              onClick={() => onPick(scene.recipe)}
-            />
-          ))}
-        </div>
+              >
+                <type.icon className="size-4 shrink-0" />
+                <span className="flex-1 truncate">{type.label}</span>
+                {!type.recipe ? (
+                  <span className="shrink-0 text-caption text-muted-foreground">即将支持</span>
+                ) : null}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
     </div>
   );
@@ -1022,6 +985,25 @@ export function DesignTaskComposer({
             }}
           />
 
+          {/* 来自 Figma is armed from the + menu, not the rail, so while it
+              is the active recipe this line is its visible, clearable state —
+              without it the armed migration would be invisible. */}
+          {recipe === "figma-migration" ? (
+            <div className="mt-2 flex items-center gap-2 self-start rounded-lg border bg-card px-2.5 py-1.5">
+              <Frame className="size-3.5 shrink-0 text-muted-foreground" />
+              <p className="min-w-0 flex-1 truncate text-caption">来自 Figma：把 Figma 稿转成页面设计</p>
+              <button
+                type="button"
+                aria-label="取消从 Figma 导入"
+                title="取消从 Figma 导入"
+                className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                onClick={() => setRecipe("default")}
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          ) : null}
+
           <div className="mt-3 rounded-2xl border bg-card shadow-sm transition-colors focus-within:border-primary/60">
             <Textarea
               value={brief}
@@ -1241,7 +1223,18 @@ export function DesignTaskComposer({
 
         {/* Open Design breaks its equivalent strip and grid out of the hero's
             narrow column to the full page shell — see the comment above. */}
-        <DesignExamplePrompts onUse={applyRecipe} onBrowseRecipes={onBrowseRecipes} />
+        <DesignExamplePrompts
+          onUse={applyRecipe}
+          onBrowseRecipes={onBrowseRecipes}
+          recipe={recipe}
+          onPickPrototypeScene={(picked) => {
+            setMode("design");
+            setAppliedRecipe(null);
+            setRecipe(picked);
+            // Platform follows the scenario, same as the rail's own onPick.
+            setPlatform(picked === "mobile-app" ? "mobile" : "web");
+          }}
+        />
         <DesignRecentDocuments onOpenDocument={onOpenDocument} />
       </div>
     </div>
