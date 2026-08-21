@@ -298,8 +298,10 @@ export function DesignExamplePrompts({
           ) : (
             // One row, scrolled sideways — Open Design's home wall. The -mx/px
             // pair lets the row bleed to the panel edge so a cut-off card
-            // signals there is more to scroll.
-            <div className="-mx-1 mt-3 flex snap-x gap-3 overflow-x-auto px-1 pb-2">
+            // signals there is more to scroll; the scrollbar itself stays
+            // invisible (their .home-hero__plugin-presets does the same) —
+            // wheel/trackpad still scroll it.
+            <div className="no-scrollbar -mx-1 mt-3 flex snap-x gap-3 overflow-x-auto px-1 pb-2">
               {visible.map((item) => (
                 <button
                   key={item.slug}
