@@ -1189,6 +1189,34 @@ func buildDesignDocumentPrompt(task Task) string {
 		b.WriteString("- This task has NO repository grounding: no repository was attached. Design from the requirement and the design system alone, and do not describe the result as matching existing code — you have not seen any.\n")
 	}
 	b.WriteString("- Before exiting, verify every required artifact is on disk and non-empty. Do not report success otherwise.\n")
+	b.WriteString(designDocumentQuestionForm())
+	return b.String()
+}
+
+// designDocumentQuestionForm teaches the agent the one UI block it can put in
+// front of the user, and — more importantly — when NOT to.
+//
+// This run is a one-shot task. There is no channel back into it: the queue has
+// no awaiting-input state, so an agent that asks a question and waits has
+// simply stalled, and an agent that asks and then exits has asked nothing. The
+// form is therefore a REPORT of the decisions this run had to make on the
+// user's behalf, offered at the end, and the workspace turns an answer into
+// the brief for the next adjustment. That is the opposite of Open Design's
+// rule, where the same markup gates the work because their session is a live
+// chat that can wait for a reply.
+func designDocumentQuestionForm() string {
+	var b strings.Builder
+	b.WriteString("\nAsking the user to decide:\n")
+	b.WriteString("- Never stop and wait for an answer. This run cannot receive one: finish the design under your best assumption, state the assumption, and only then offer the choice.\n")
+	b.WriteString("- When the requirement genuinely left a design decision open and the alternatives are worth a real choice, end your final message with a question form. The workspace renders it as controls and turns the answer into the brief for the next adjustment; a markdown list of options renders as plain text and makes the user retype it.\n")
+	b.WriteString("- Emit it as a block in your final assistant text, not through a tool call:\n")
+	b.WriteString("  <question-form id=\"direction\" title=\"这几处我先替你定了\">\n")
+	b.WriteString("  {\"questions\":[{\"id\":\"tone\",\"label\":\"整体气质\",\"type\":\"radio\",\"options\":[\"克制\",\"热烈\"]}]}\n")
+	b.WriteString("  </question-form>\n")
+	b.WriteString("- The body is JSON. Every question needs `label` and a `type` of radio, checkbox, select, text, textarea, number, range, date, time, datetime-local, color, url, email, tel, switch, or direction-cards. Keep `id` values machine-readable and unlocalized; write every label, option and placeholder in the requirement's own language.\n")
+	b.WriteString("- Use `direction-cards` when the choice is visual. Each card carries `id`, `label`, `mood`, `references`, `palette` (4-6 colours) and `displayFont` / `bodyFont`, so the user judges the direction by looking at swatches and type rather than by reading option labels.\n")
+	b.WriteString("- Leave `allowCustom` unset on finite-choice questions so the user can answer in their own words. Ask at most one form, with at most five questions, about decisions that actually change the design — never to confirm work you already did correctly.\n")
+	b.WriteString("- Do not repeat the form's questions as prose beside it, and do not emit a form when the requirement already settled the decision or a pinned design system dictates it.\n")
 	return b.String()
 }
 
