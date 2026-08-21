@@ -995,244 +995,252 @@ export function DesignTaskComposer({
   return (
     <div className="relative min-h-0 flex-1 overflow-y-auto">
       <DesignDotGrid />
-      <div className="relative z-10 mx-auto flex w-full max-w-4xl flex-col px-4 py-8 sm:px-6 sm:py-10">
-        {/* The whole creation surface on one line. Only the scenarios with a
-            real producer are live; the rest keep their position so the rail
-            reads as complete without promising anything. */}
-        <CreateTypeRail
-          recipe={recipe}
-          onPick={(picked) => {
-            // A built-in chip and a catalogue recipe are the same field, so
-            // picking one has to drop the other. Scenario chips are design
-            // artifacts, so picking one in 规划/提问 switches back to 设计.
-            setMode("design");
-            setAppliedRecipe(null);
-            setRecipe((current) => {
-              const next = current === picked ? "default" : picked;
-              // No platform pill on the composer (the preview page owns
-              // device switching): the target platform follows the scenario.
-              setPlatform(next === "mobile-app" ? "mobile" : "web");
-              return next;
-            });
-          }}
-        />
-
-        <div className="mt-3 rounded-2xl border bg-card shadow-sm transition-colors focus-within:border-primary/60">
-          <Textarea
-            value={brief}
-            onChange={(event) => setBrief(event.target.value)}
-            aria-label="页面需求描述"
-            placeholder="例如：做一个 CRM 客户列表页，支持筛选、批量操作和客户详情抽屉。"
-            className="min-h-32 resize-none border-0 bg-transparent px-4 py-3.5 text-body shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
+      {/* Open Design's own home margins: the page shell runs wide (their
+          1600px) so the example wall and recent documents below can breathe,
+          while the composer itself stays a narrower reading column (their
+          960px) nested inside it — see the max-w-[960px] wrapper below. */}
+      <div className="relative z-10 mx-auto flex w-full max-w-[1600px] flex-col px-4 py-8 sm:px-9 sm:py-10">
+        <div className="mx-auto flex w-full max-w-[960px] flex-col">
+          {/* The whole creation surface on one line. Only the scenarios with a
+              real producer are live; the rest keep their position so the rail
+              reads as complete without promising anything. */}
+          <CreateTypeRail
+            recipe={recipe}
+            onPick={(picked) => {
+              // A built-in chip and a catalogue recipe are the same field, so
+              // picking one has to drop the other. Scenario chips are design
+              // artifacts, so picking one in 规划/提问 switches back to 设计.
+              setMode("design");
+              setAppliedRecipe(null);
+              setRecipe((current) => {
+                const next = current === picked ? "default" : picked;
+                // No platform pill on the composer (the preview page owns
+                // device switching): the target platform follows the scenario.
+                setPlatform(next === "mobile-app" ? "mobile" : "web");
+                return next;
+              });
+            }}
           />
-          {attachments.length > 0 ? (
-            <ul className="flex flex-wrap items-center gap-1.5 px-3 pb-2" aria-label="参考文件">
-              {attachments.map((item) => (
-                <li key={item.id} className="inline-flex h-6 max-w-56 items-center gap-1 rounded-full border bg-background px-2 text-caption">
-                  <Paperclip className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{item.name}</span>
-                  <button
-                    type="button"
-                    aria-label={`移除 ${item.name}`}
-                    className="ml-0.5 rounded-full p-0.5 text-muted-foreground hover:text-foreground"
-                    onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {/* Settings live in the card so choosing a project never means
-              leaving the sentence being written. */}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-3 pb-3">
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,.pdf,.txt,.md,.json"
-              className="hidden"
-              aria-label="上传参考文件"
-              onChange={(event) => {
-                if (event.target.files) void stageFiles(event.target.files);
-                event.target.value = "";
-              }}
+
+          <div className="mt-3 rounded-2xl border bg-card shadow-sm transition-colors focus-within:border-primary/60">
+            <Textarea
+              value={brief}
+              onChange={(event) => setBrief(event.target.value)}
+              aria-label="页面需求描述"
+              placeholder="例如：做一个 CRM 客户列表页，支持筛选、批量操作和客户详情抽屉。"
+              className="min-h-32 resize-none border-0 bg-transparent px-4 py-3.5 text-body shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
             />
-            {/* Open Design's + menu: attach lives here rather than as its
-                own chip, alongside the shortcuts that have a real producer. */}
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label="添加"
-                    title="添加"
-                    className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                  >
-                    {uploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Plus className="size-4" />}
-                  </button>
-                }
-              />
-              <DropdownMenuContent align="start" className="w-56">
-                <DropdownMenuItem
-                  disabled={uploading || attachments.length >= MAX_ATTACHMENTS}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Paperclip className="size-4" />
-                  <span className="flex-1 truncate">附加文件</span>
-                  {attachments.length > 0 ? (
-                    <span className="shrink-0 text-caption text-muted-foreground">{attachments.length}/{MAX_ATTACHMENTS}</span>
-                  ) : null}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    setMode("design");
-                    setAppliedRecipe(null);
-                    setRecipe("figma-migration");
-                  }}
-                >
-                  <Frame className="size-4" />
-                  <span className="flex-1 truncate">从 Figma 导入</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            {mode === "design" ? (
-              <>
-                <ProjectPicker
-                  projectId={projectId || null}
-                  onUpdate={(updates) => setProjectId(updates.project_id ?? "")}
-                  align="start"
-                  triggerRender={<SettingTrigger filled={!!selectedProject} aria-label="项目" />}
-                />
-                <RepositorySetting
-                  repositories={repositories}
-                  repositoryId={activeRepositoryId}
-                  disabled={!projectId}
-                  onChange={setRepositoryId}
-                />
-                <IssueSetting
-                  issues={issues}
-                  issueId={activeIssueId}
-                  disabled={!projectId}
-                  onChange={setIssueId}
-                />
-                <DesignSystemSetting
-                  workspaceSystems={workspaceSystems}
-                  builtinSystems={builtinSystems}
-                  designSystemId={designSystemId}
-                  builtinSlug={builtinSlug}
-                  onChange={(selection) => {
-                    setDesignSystemId(selection.designSystemId);
-                    setBuiltinSlug(selection.builtinSlug);
-                  }}
-                />
-              </>
+            {attachments.length > 0 ? (
+              <ul className="flex flex-wrap items-center gap-1.5 px-3 pb-2" aria-label="参考文件">
+                {attachments.map((item) => (
+                  <li key={item.id} className="inline-flex h-6 max-w-56 items-center gap-1 rounded-full border bg-background px-2 text-caption">
+                    <Paperclip className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{item.name}</span>
+                    <button
+                      type="button"
+                      aria-label={`移除 ${item.name}`}
+                      className="ml-0.5 rounded-full p-0.5 text-muted-foreground hover:text-foreground"
+                      onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
             ) : null}
-            <div className="ml-auto flex min-w-0 items-center gap-2">
-              {/* Open Design's mode chip: 规划 / 设计 / 提问, each with its
-                  own submission path. */}
+            {/* Settings live in the card so choosing a project never means
+                leaving the sentence being written. */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-3 pb-3">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*,.pdf,.txt,.md,.json"
+                className="hidden"
+                aria-label="上传参考文件"
+                onChange={(event) => {
+                  if (event.target.files) void stageFiles(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+              {/* Open Design's + menu: attach lives here rather than as its
+                  own chip, alongside the shortcuts that have a real producer. */}
               <DropdownMenu>
                 <DropdownMenuTrigger
-                  render={<SettingTrigger filled aria-label="创作模式" />}
-                >
-                  <activeMode.icon className="size-3.5 shrink-0" />
-                  <span className="truncate">{activeMode.label}</span>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-80">
-                  {COMPOSER_MODES.map((item) => (
-                    <DropdownMenuItem key={item.id} className="items-start gap-2 py-2" onClick={() => setMode(item.id)}>
-                      <item.icon className="mt-0.5 size-4 shrink-0" />
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center justify-between gap-2 text-body font-medium">
-                          {item.label}
-                          {item.id === mode ? <Check className="size-3.5 shrink-0" /> : null}
-                        </span>
-                        <span className="mt-0.5 block text-caption leading-5 text-muted-foreground">{item.description}</span>
-                      </span>
-                    </DropdownMenuItem>
-                  ))}
+                  render={
+                    <button
+                      type="button"
+                      aria-label="添加"
+                      title="添加"
+                      className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    >
+                      {uploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Plus className="size-4" />}
+                    </button>
+                  }
+                />
+                <DropdownMenuContent align="start" className="w-56">
+                  <DropdownMenuItem
+                    disabled={uploading || attachments.length >= MAX_ATTACHMENTS}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Paperclip className="size-4" />
+                    <span className="flex-1 truncate">附加文件</span>
+                    {attachments.length > 0 ? (
+                      <span className="shrink-0 text-caption text-muted-foreground">{attachments.length}/{MAX_ATTACHMENTS}</span>
+                    ) : null}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setMode("design");
+                      setAppliedRecipe(null);
+                      setRecipe("figma-migration");
+                    }}
+                  >
+                    <Frame className="size-4" />
+                    <span className="flex-1 truncate">从 Figma 导入</span>
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-              <AgentSetting agents={agents} agentId={agentId} onChange={setAgentId} />
-              {/* Open Design's round ↑ submit. The accessible name carries
-                  what submission means in the current mode. */}
-              <Button
-                type="button"
-                size="icon-sm"
-                aria-label={submitLabel}
-                title={submitLabel}
-                className="size-8 shrink-0 rounded-full"
-                disabled={!canSubmit}
-                onClick={() => (mode === "design" ? createDocument.mutate() : startChat.mutate())}
-              >
-                {submitPending ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
-              </Button>
+              {mode === "design" ? (
+                <>
+                  <ProjectPicker
+                    projectId={projectId || null}
+                    onUpdate={(updates) => setProjectId(updates.project_id ?? "")}
+                    align="start"
+                    triggerRender={<SettingTrigger filled={!!selectedProject} aria-label="项目" />}
+                  />
+                  <RepositorySetting
+                    repositories={repositories}
+                    repositoryId={activeRepositoryId}
+                    disabled={!projectId}
+                    onChange={setRepositoryId}
+                  />
+                  <IssueSetting
+                    issues={issues}
+                    issueId={activeIssueId}
+                    disabled={!projectId}
+                    onChange={setIssueId}
+                  />
+                  <DesignSystemSetting
+                    workspaceSystems={workspaceSystems}
+                    builtinSystems={builtinSystems}
+                    designSystemId={designSystemId}
+                    builtinSlug={builtinSlug}
+                    onChange={(selection) => {
+                      setDesignSystemId(selection.designSystemId);
+                      setBuiltinSlug(selection.builtinSlug);
+                    }}
+                  />
+                </>
+              ) : null}
+              <div className="ml-auto flex min-w-0 items-center gap-2">
+                {/* Open Design's mode chip: 规划 / 设计 / 提问, each with its
+                    own submission path. */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={<SettingTrigger filled aria-label="创作模式" />}
+                  >
+                    <activeMode.icon className="size-3.5 shrink-0" />
+                    <span className="truncate">{activeMode.label}</span>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-80">
+                    {COMPOSER_MODES.map((item) => (
+                      <DropdownMenuItem key={item.id} className="items-start gap-2 py-2" onClick={() => setMode(item.id)}>
+                        <item.icon className="mt-0.5 size-4 shrink-0" />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center justify-between gap-2 text-body font-medium">
+                            {item.label}
+                            {item.id === mode ? <Check className="size-3.5 shrink-0" /> : null}
+                          </span>
+                          <span className="mt-0.5 block text-caption leading-5 text-muted-foreground">{item.description}</span>
+                        </span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <AgentSetting agents={agents} agentId={agentId} onChange={setAgentId} />
+                {/* Open Design's round ↑ submit. The accessible name carries
+                    what submission means in the current mode. */}
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  aria-label={submitLabel}
+                  title={submitLabel}
+                  className="size-8 shrink-0 rounded-full"
+                  disabled={!canSubmit}
+                  onClick={() => (mode === "design" ? createDocument.mutate() : startChat.mutate())}
+                >
+                  {submitPending ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-          {/* Says which field is still missing instead of leaving a dead
-              button — "disabled" on its own does not point anywhere. */}
-          <p role="status" className="text-caption text-muted-foreground">
-            {submitPending ? "" : missingRequirement}
-          </p>
-          <p
-            className={cn(
-              "ml-auto text-caption",
-              briefTooLong ? "text-destructive" : "text-muted-foreground",
-            )}
-          >
-            {brief.length} / {BRIEF_MAX_LENGTH}
-          </p>
-        </div>
-
-        {/* A catalogue recipe is not one of the five chips, so without this row
-            the user would have no sign of which scenario is armed. */}
-        {appliedRecipe ? (
-          <div className="mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2">
-            <FileCode className="size-3.5 shrink-0 text-primary" />
-            <p className="min-w-0 flex-1 truncate text-caption">
-              <span className="text-muted-foreground">已套用社区配方：</span>
-              <span className="font-medium text-foreground">
-                {appliedRecipe.title || appliedRecipe.slug}
-              </span>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            {/* Says which field is still missing instead of leaving a dead
+                button — "disabled" on its own does not point anywhere. */}
+            <p role="status" className="text-caption text-muted-foreground">
+              {submitPending ? "" : missingRequirement}
             </p>
-            <button
-              type="button"
-              aria-label="不使用该社区配方"
-              title="不使用该社区配方"
-              className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              onClick={() => {
-                setAppliedRecipe(null);
-                setRecipe("default");
-              }}
+            <p
+              className={cn(
+                "ml-auto text-caption",
+                briefTooLong ? "text-destructive" : "text-muted-foreground",
+              )}
             >
-              <X className="size-3" />
-            </button>
+              {brief.length} / {BRIEF_MAX_LENGTH}
+            </p>
           </div>
-        ) : null}
 
-        {/* DC-053: no repository is a legitimate way to work, so this reads as
-            a statement of what will happen, never as a warning. What it must
-            never do is leave the user believing the agent read code. */}
-        {mode === "design" ? (
-          <p className="mt-3 text-caption text-muted-foreground">
-            {activeRepositoryId
-              ? "已选择仓库：智能体会在任务内对该仓库做一次有界只读取证。"
-              : "未选择仓库：本次不读取任何代码仓库，智能体只依据你的描述与关联任务生成。"}
-            {designSystemId || builtinSlug
-              ? "设计体系已指定：本次按你选中的体系设计，不使用项目自己的体系。"
-              : "设计体系未指定：沿用所选仓库或项目自己的设计体系。"}
-          </p>
-        ) : (
-          <p className="mt-3 text-caption text-muted-foreground">
-            {mode === "plan"
-              ? "规划会以对话进行：智能体产出可修改的设计规划，最终的需求描述可以带回这里生成设计稿。"
-              : "提问会以对话进行，不创建新的设计稿。"}
-          </p>
-        )}
+          {/* A catalogue recipe is not one of the five chips, so without this row
+              the user would have no sign of which scenario is armed. */}
+          {appliedRecipe ? (
+            <div className="mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2">
+              <FileCode className="size-3.5 shrink-0 text-primary" />
+              <p className="min-w-0 flex-1 truncate text-caption">
+                <span className="text-muted-foreground">已套用社区配方：</span>
+                <span className="font-medium text-foreground">
+                  {appliedRecipe.title || appliedRecipe.slug}
+                </span>
+              </p>
+              <button
+                type="button"
+                aria-label="不使用该社区配方"
+                title="不使用该社区配方"
+                className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                onClick={() => {
+                  setAppliedRecipe(null);
+                  setRecipe("default");
+                }}
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          ) : null}
 
+          {/* DC-053: no repository is a legitimate way to work, so this reads as
+              a statement of what will happen, never as a warning. What it must
+              never do is leave the user believing the agent read code. */}
+          {mode === "design" ? (
+            <p className="mt-3 text-caption text-muted-foreground">
+              {activeRepositoryId
+                ? "已选择仓库：智能体会在任务内对该仓库做一次有界只读取证。"
+                : "未选择仓库：本次不读取任何代码仓库，智能体只依据你的描述与关联任务生成。"}
+              {designSystemId || builtinSlug
+                ? "设计体系已指定：本次按你选中的体系设计，不使用项目自己的体系。"
+                : "设计体系未指定：沿用所选仓库或项目自己的设计体系。"}
+            </p>
+          ) : (
+            <p className="mt-3 text-caption text-muted-foreground">
+              {mode === "plan"
+                ? "规划会以对话进行：智能体产出可修改的设计规划，最终的需求描述可以带回这里生成设计稿。"
+                : "提问会以对话进行，不创建新的设计稿。"}
+            </p>
+          )}
+        </div>
+
+        {/* Open Design breaks its equivalent strip and grid out of the hero's
+            narrow column to the full page shell — see the comment above. */}
         <DesignExamplePrompts onUse={applyRecipe} onBrowseRecipes={onBrowseRecipes} />
         <DesignRecentDocuments onOpenDocument={onOpenDocument} />
       </div>
