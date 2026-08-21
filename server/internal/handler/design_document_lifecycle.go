@@ -105,6 +105,36 @@ func (h *Handler) DiscardDesignDocument(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, designDocumentResponse(discarded, nil))
 }
 
+// DeleteDesignDocument removes a document and every revision it owns.
+//
+// Unlike save and discard above, this one destroys content: the delete query
+// takes the revisions with it in a single statement, so a document can never
+// be left behind with orphan revisions or the reverse. There is no undo, which
+// is why the client asks first.
+//
+// A running document is refused rather than deleted. The agent task outlives
+// the row it was enqueued for, so deleting mid-run would leave a task
+// completing into a document that no longer exists — the same reason discard
+// refuses it.
+func (h *Handler) DeleteDesignDocument(w http.ResponseWriter, r *http.Request) {
+	document, workspaceUUID, ok := h.loadDesignDocumentForRequest(w, r)
+	if !ok {
+		return
+	}
+	if document.ActiveTaskID.Valid {
+		writeProjectDesignSystemError(w, http.StatusConflict, "operation_in_progress", "a design task is still running for this document")
+		return
+	}
+	if err := h.Queries.DeleteDesignDocument(r.Context(), db.DeleteDesignDocumentParams{
+		ID:          document.ID,
+		WorkspaceID: workspaceUUID,
+	}); err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "delete_failed", "failed to delete the design document")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // GetDesignDocument returns one document with its active task, if any.
 func (h *Handler) GetDesignDocument(w http.ResponseWriter, r *http.Request) {
 	document, _, ok := h.loadDesignDocumentForRequest(w, r)

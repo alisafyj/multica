@@ -4220,6 +4220,16 @@ export class ApiClient {
     });
   }
 
+  /**
+   * Deletes a document and every revision it owns. 204 with no body — there
+   * is nothing left to parse, and nothing to fall back to.
+   */
+  async deleteDesignDocument(documentId: string): Promise<void> {
+    await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}`, {
+      method: "DELETE",
+    });
+  }
+
   async getDesignDraft(id: string): Promise<DesignDraft> {
     const raw = await this.fetch<unknown>(`/api/design-drafts/${encodeURIComponent(id)}`);
     return parseWithFallback(raw, DesignDraftSchema, { ...EMPTY_DESIGN_DRAFT, id }, {

@@ -1,7 +1,14 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
+import { Download, LoaderCircle, MoreHorizontal, Trash2 } from "lucide-react";
 import type { DesignDocument } from "@multica/core/types";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@multica/ui/components/ui/dropdown-menu";
 import { cn } from "@multica/ui/lib/utils";
 import { useTimeAgo } from "../i18n/use-time-ago";
 
@@ -125,14 +132,29 @@ export function DesignDocumentCard({
   document,
   projectTitle,
   onOpen,
+  onDownload,
+  onDelete,
+  busy = false,
 }: {
   document: DesignDocument;
   /** Empty renders nothing rather than a placeholder project name. */
   projectTitle: string;
   /** Absent renders the card as plain content instead of a control. */
   onOpen?: () => void;
+  /**
+   * Downloads the document's newest package. Each item of the card menu
+   * renders only when its handler is supplied — Open Design's own card menu
+   * gates every entry the same way, so a surface never shows an action it
+   * cannot carry out.
+   */
+  onDownload?: () => void;
+  /** Deletes the document and its revisions. Confirmed by the caller. */
+  onDelete?: () => void;
+  /** An action for this card is in flight; the menu reads as busy. */
+  busy?: boolean;
 }) {
   const timeAgo = useTimeAgo();
+  const [menuOpen, setMenuOpen] = useState(false);
   const running = isDesignDocumentRunning(document.status);
   const status = designDocumentStatusLabel(document.status);
   const title = document.title.trim() || "未命名设计稿";
@@ -141,6 +163,11 @@ export function DesignDocumentCard({
   const where = [projectTitle.trim(), updatedAt ? timeAgo(updatedAt) : ""]
     .filter((part) => part.length > 0)
     .join(" · ");
+  // A document with no revision has no package to download, and one with a
+  // live run cannot be deleted — the server refuses both, so the menu says so
+  // instead of offering a click that fails.
+  const hasPackage = Boolean(document.saved_revision_id || document.draft_revision_id);
+  const menuActions = Boolean(onDownload || onDelete);
 
   const body = (
     <>
@@ -186,17 +213,64 @@ export function DesignDocumentCard({
   );
 
   const shell = "flex min-w-0 flex-col text-left";
+  // The menu sits beside the open control, never inside it: a button cannot
+  // nest a button, and Open Design's own card puts its `...` outside
+  // `card-main` for the same reason.
+  const menu = menuActions ? (
+    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`「${title}」的更多操作`}
+            className={cn(
+              "absolute right-2 top-2 flex size-7 items-center justify-center rounded-md border bg-background/90 text-muted-foreground shadow-sm transition-opacity hover:text-foreground",
+              // Revealed on hover like Open Design's, but never hidden from
+              // keyboard or while it is open — an action reachable only by
+              // pointer is not reachable at all.
+              menuOpen ? "opacity-100" : "opacity-0 focus-visible:opacity-100 group-hover/document:opacity-100",
+            )}
+          >
+            {busy ? <LoaderCircle className="size-3.5 animate-spin" /> : <MoreHorizontal className="size-3.5" />}
+          </button>
+        }
+      />
+      <DropdownMenuContent align="end" className="w-48">
+        {onDownload ? (
+          <DropdownMenuItem disabled={busy || !hasPackage} onClick={onDownload}>
+            <Download className="size-4" />
+            <span className="flex-1 truncate">下载原型包 (.zip)</span>
+          </DropdownMenuItem>
+        ) : null}
+        {onDelete ? (
+          <DropdownMenuItem variant="destructive" disabled={busy || running} onClick={onDelete}>
+            <Trash2 className="size-4" />
+            <span className="flex-1 truncate">删除</span>
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : null;
+
   if (!onOpen) {
-    return <article className={shell}>{body}</article>;
+    return (
+      <article className={cn(shell, "group/document relative")}>
+        {body}
+        {menu}
+      </article>
+    );
   }
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      title={projectTitle ? `打开「${projectTitle}」的这份设计稿` : "打开这份设计稿"}
-      className={cn(shell, "group/document cursor-pointer")}
-    >
-      {body}
-    </button>
+    <div className={cn(shell, "group/document relative")}>
+      <button
+        type="button"
+        onClick={onOpen}
+        title={projectTitle ? `打开「${projectTitle}」的这份设计稿` : "打开这份设计稿"}
+        className={cn(shell, "cursor-pointer")}
+      >
+        {body}
+      </button>
+      {menu}
+    </div>
   );
 }

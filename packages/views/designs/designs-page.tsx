@@ -31,6 +31,7 @@ import {
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
 import { AppLink, useNavigation } from "../navigation";
+import { useDesignDocumentActions } from "./design-document-actions";
 import { DesignDocumentCard } from "./design-document-card";
 import { DesignFilterPill } from "./design-filter-pill";
 import { DesignRecipeGallery } from "./design-recipe-gallery";
@@ -292,6 +293,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
   const queryClient = useQueryClient();
+  const documentActions = useDesignDocumentActions();
   const { data: files = [], isLoading, error, refetch } = useQuery(designFileListOptions(wsId));
   const { data: folders = [] } = useQuery(designFolderListOptions(wsId));
   const { data: templates = [], isLoading: templatesLoading } = useQuery(designTemplateListOptions(wsId));
@@ -821,6 +823,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                         document={document}
                         projectTitle={selectedProject?.title ?? ""}
                         onOpen={() => openDocument(document)}
+                        {...documentActions.cardProps(document)}
                       />
                     ))}
                   </div>
@@ -931,6 +934,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {documentActions.dialog}
       <Dialog open={createFolderOpen} onOpenChange={(open) => { setCreateFolderOpen(open); if (!open) setNewFolderName(""); }}>
         <DialogContent>
           <DialogHeader>

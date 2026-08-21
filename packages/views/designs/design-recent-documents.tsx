@@ -7,6 +7,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { projectListOptions } from "@multica/core/projects/queries";
 import type { DesignDocument } from "@multica/core/types";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { useDesignDocumentActions } from "./design-document-actions";
 import { DesignDocumentCard } from "./design-document-card";
 
 /**
@@ -39,6 +40,7 @@ export function DesignRecentDocuments({
   onOpenDocument?: (document: DesignDocument) => void;
 }) {
   const wsId = useWorkspaceId();
+  const documentActions = useDesignDocumentActions();
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
 
   const scanned = useMemo(
@@ -102,10 +104,12 @@ export function DesignRecentDocuments({
               onOpen={
                 onOpenDocument ? () => onOpenDocument(item.document) : undefined
               }
+              {...documentActions.cardProps(item.document)}
             />
           ))}
         </div>
       )}
+      {documentActions.dialog}
     </section>
   );
 }
