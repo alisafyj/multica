@@ -130,11 +130,18 @@ export function DesignTaskActivity({
   agents,
   compact = false,
   onStopped,
+  onAnswerForm,
 }: {
   task: ProjectDesignSystemTask | null | undefined;
   agents: Agent[];
   compact?: boolean;
   onStopped?: () => Promise<unknown> | void;
+  /**
+   * Receives the answer text when the user submits a question form the agent
+   * emitted. Absent renders any form read-only, which is the honest state on
+   * a surface with nowhere to send a reply.
+   */
+  onAnswerForm?: (text: string) => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -202,7 +209,12 @@ export function DesignTaskActivity({
           column rather than behind a button. This replaces the single
           truncated ambient line: same messages, but readable in order. The
           transcript dialog above stays for the full, filterable record. */}
-      <DesignRunConversation messages={messages} live={canStop} className="mt-3" />
+      <DesignRunConversation
+        messages={messages}
+        live={canStop}
+        className="mt-3"
+        {...(onAnswerForm ? { onAnswerForm } : {})}
+      />
 
       <dl className={`mt-4 grid gap-4 ${compact ? "grid-cols-2" : "sm:grid-cols-4"}`}>
         <div className="min-w-0">

@@ -881,7 +881,20 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
 
             {activeTask && running ? (
               <div className="mt-3 rounded-lg border bg-card px-3">
-                <DesignTaskActivity task={activeTask} agents={agents} compact onStopped={refresh} />
+                <DesignTaskActivity
+                  task={activeTask}
+                  agents={agents}
+                  compact
+                  onStopped={refresh}
+                  // Our runs are one-shot tasks with no input channel, so an
+                  // answer cannot reach the agent mid-run. It goes where a
+                  // reply genuinely does reach it: the adjustment brief for
+                  // the next turn, which the user can still edit before
+                  // sending.
+                  onAnswerForm={(text) =>
+                    setInstruction((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text))
+                  }
+                />
               </div>
             ) : null}
             {errorMessage ? (
