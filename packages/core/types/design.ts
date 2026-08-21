@@ -915,6 +915,14 @@ export interface AdjustDesignDocumentRequest {
   base_revision_id?: string;
 }
 
+export interface RegenerateDesignDocumentRequest {
+  /**
+   * Optional replacement agent for the rerun — the failure may have been the
+   * agent. Empty keeps the agent the frozen snapshot recorded.
+   */
+  agent_id?: string;
+}
+
 export interface SaveDesignDocumentRequest {
   /** The draft the user is looking at; a save never lands on an unseen draft. */
   draft_revision_id: string;

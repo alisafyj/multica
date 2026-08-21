@@ -476,103 +476,11 @@ func (h *Handler) createDesignDocumentTask(
 		return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: verdict.Detail}
 	}
 
-	// Pin the design system the agent must design under: the user's explicit
-	// choice when there is one (DC-060), otherwise the repository -> project
-	// fallback (DC-052). Digest included so the revision records exactly which
-	// system constrained it.
-	designSystemUUID := pgtype.UUID{}
-	if input.DesignSystemID != "" {
-		parsed, err := util.ParseUUID(input.DesignSystemID)
-		if err != nil {
-			return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{
-				status: http.StatusBadRequest, code: "design_system_invalid", message: "design_system_id is invalid",
-			}
-		}
-		designSystemUUID = parsed
-	}
-	var builtinContext *service.BuiltinDesignContext
-	if input.BuiltinDesignSystem != "" {
-		detail, found, err := designsystemcatalogue.Get(input.BuiltinDesignSystem)
-		if err != nil {
-			return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("design_context_failed", "failed to load the built-in design system")
-		}
-		if !found {
-			return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{
-				status: http.StatusNotFound, code: "design_system_not_found", message: "built-in design system not found",
-			}
-		}
-		builtinContext = &service.BuiltinDesignContext{
-			Slug:           detail.Slug,
-			Name:           detail.Name,
-			Category:       detail.Category,
-			DesignMarkdown: detail.DesignMarkdown,
-			TokensCSS:      detail.TokensCSS,
-		}
-	}
-	designContext, err := (service.ProjectDesignContextResolver{
-		Store:        queries,
-		AllowedHosts: h.projectDesignSystemAllowedHosts(),
-	}).Resolve(ctx, service.ResolveProjectDesignContextParams{
-		WorkspaceID:       workspaceID,
-		ProjectID:         projectID,
-		ProjectResourceID: scope.ProjectResourceID,
-		DesignSystemID:    designSystemUUID,
-		Builtin:           builtinContext,
-	})
+	contextJSON, err := h.designDocumentGenerateTaskContext(
+		ctx, queries, requesterID, workspaceID, projectID, scope.ProjectResourceID, issueID, document.ID, agent.ID, input, inputJSON, attachments,
+	)
 	if err != nil {
-		if errors.Is(err, service.ErrSavedDesignContextInvalid) {
-			return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusUnprocessableEntity, code: "design_context_invalid", message: "saved design system is invalid"}
-		}
-		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("design_context_failed", "failed to resolve design context")
-	}
-	designContextJSON, err := json.Marshal(designContext)
-	if err != nil {
-		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("design_context_failed", "failed to encode design context")
-	}
-
-	inputDigest, err := projectdesignsystem.SnapshotDigest(inputJSON)
-	if err != nil {
-		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("input_digest_failed", "failed to digest design inputs")
-	}
-	project, err := queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
-		ID: projectID, WorkspaceID: workspaceID,
-	})
-	if err != nil {
-		return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_not_found", message: "project not found"}
-	}
-	projectJSON, err := json.Marshal(map[string]string{
-		"id":          uuidToString(projectID),
-		"title":       project.Title,
-		"description": project.Description.String,
-	})
-	if err != nil {
-		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
-	}
-
-	contextJSON, err := json.Marshal(service.DesignDocumentTaskContext{
-		Type:                service.DesignDocumentTaskContextType,
-		Operation:           service.DesignDocumentGenerate,
-		RequesterID:         uuidToString(requesterID),
-		WorkspaceID:         uuidToString(workspaceID),
-		ProjectID:           uuidToString(projectID),
-		ProjectResourceID:   uuidToString(scope.ProjectResourceID),
-		IssueID:             uuidToString(issueID),
-		DesignDocumentID:    uuidToString(document.ID),
-		AgentID:             uuidToString(agent.ID),
-		Project:             projectJSON,
-		Platform:            input.Platform,
-		Recipe:              input.Recipe,
-		Brief:               input.Brief,
-		Attachments:         input.Attachments,
-		DesignContext:       designContextJSON,
-		DesignSystemDigest:  designContext.Digest,
-		PackageSchema:       designDocumentPackageSchema,
-		InputSnapshotSHA256: inputDigest,
-		ExecutionReady:      true,
-		Input:               designDocumentGenerateInput(scope.ProjectResourceID.Valid, attachments),
-	})
-	if err != nil {
-		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
+		return db.DesignDocument{}, db.AgentTaskQueue{}, err
 	}
 
 	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{
@@ -600,6 +508,126 @@ func (h *Handler) createDesignDocumentTask(
 		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("transaction_failed", "failed to commit design generation")
 	}
 	return document, task, nil
+}
+
+// designDocumentGenerateTaskContext builds the envelope of a generation run —
+// the first one, or a rerun after a first attempt that never produced a
+// revision. Everything derives from the frozen composer snapshot so a rerun
+// sees exactly what the first run saw (bar the agent, which the caller may
+// have replaced). The design system is re-resolved from the frozen CHOICE, not
+// copied: its digest is pinned here so the run itself stays deterministic.
+func (h *Handler) designDocumentGenerateTaskContext(
+	ctx context.Context,
+	queries *db.Queries,
+	requesterID pgtype.UUID,
+	workspaceID pgtype.UUID,
+	projectID pgtype.UUID,
+	projectResourceID pgtype.UUID,
+	issueID pgtype.UUID,
+	documentID pgtype.UUID,
+	agentID pgtype.UUID,
+	input designDocumentInputSnapshot,
+	inputJSON []byte,
+	attachments []designDocumentAttachmentSnapshot,
+) ([]byte, error) {
+	// Pin the design system the agent must design under: the user's explicit
+	// choice when there is one (DC-060), otherwise the repository -> project
+	// fallback (DC-052).
+	designSystemUUID := pgtype.UUID{}
+	if input.DesignSystemID != "" {
+		parsed, err := util.ParseUUID(input.DesignSystemID)
+		if err != nil {
+			return nil, &projectDesignSystemRequestError{
+				status: http.StatusBadRequest, code: "design_system_invalid", message: "design_system_id is invalid",
+			}
+		}
+		designSystemUUID = parsed
+	}
+	var builtinContext *service.BuiltinDesignContext
+	if input.BuiltinDesignSystem != "" {
+		detail, found, err := designsystemcatalogue.Get(input.BuiltinDesignSystem)
+		if err != nil {
+			return nil, projectDesignSystemInternalError("design_context_failed", "failed to load the built-in design system")
+		}
+		if !found {
+			return nil, &projectDesignSystemRequestError{
+				status: http.StatusNotFound, code: "design_system_not_found", message: "built-in design system not found",
+			}
+		}
+		builtinContext = &service.BuiltinDesignContext{
+			Slug:           detail.Slug,
+			Name:           detail.Name,
+			Category:       detail.Category,
+			DesignMarkdown: detail.DesignMarkdown,
+			TokensCSS:      detail.TokensCSS,
+		}
+	}
+	designContext, err := (service.ProjectDesignContextResolver{
+		Store:        queries,
+		AllowedHosts: h.projectDesignSystemAllowedHosts(),
+	}).Resolve(ctx, service.ResolveProjectDesignContextParams{
+		WorkspaceID:       workspaceID,
+		ProjectID:         projectID,
+		ProjectResourceID: projectResourceID,
+		DesignSystemID:    designSystemUUID,
+		Builtin:           builtinContext,
+	})
+	if err != nil {
+		if errors.Is(err, service.ErrSavedDesignContextInvalid) {
+			return nil, &projectDesignSystemRequestError{status: http.StatusUnprocessableEntity, code: "design_context_invalid", message: "saved design system is invalid"}
+		}
+		return nil, projectDesignSystemInternalError("design_context_failed", "failed to resolve design context")
+	}
+	designContextJSON, err := json.Marshal(designContext)
+	if err != nil {
+		return nil, projectDesignSystemInternalError("design_context_failed", "failed to encode design context")
+	}
+
+	inputDigest, err := projectdesignsystem.SnapshotDigest(inputJSON)
+	if err != nil {
+		return nil, projectDesignSystemInternalError("input_digest_failed", "failed to digest design inputs")
+	}
+	project, err := queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
+		ID: projectID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return nil, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "project_not_found", message: "project not found"}
+	}
+	projectJSON, err := json.Marshal(map[string]string{
+		"id":          uuidToString(projectID),
+		"title":       project.Title,
+		"description": project.Description.String,
+	})
+	if err != nil {
+		return nil, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
+	}
+
+	contextJSON, err := json.Marshal(service.DesignDocumentTaskContext{
+		Type:                service.DesignDocumentTaskContextType,
+		Operation:           service.DesignDocumentGenerate,
+		RequesterID:         uuidToString(requesterID),
+		WorkspaceID:         uuidToString(workspaceID),
+		ProjectID:           uuidToString(projectID),
+		ProjectResourceID:   uuidToString(projectResourceID),
+		IssueID:             uuidToString(issueID),
+		DesignDocumentID:    uuidToString(documentID),
+		AgentID:             uuidToString(agentID),
+		Project:             projectJSON,
+		Platform:            input.Platform,
+		Recipe:              input.Recipe,
+		Brief:               input.Brief,
+		Attachments:         input.Attachments,
+		DesignContext:       designContextJSON,
+		DesignSystemDigest:  designContext.Digest,
+		PackageSchema:       designDocumentPackageSchema,
+		InputSnapshotSHA256: inputDigest,
+		ExecutionReady:      true,
+		Input:               designDocumentGenerateInput(projectResourceID.Valid, attachments),
+	})
+	if err != nil {
+		return nil, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
+	}
+	return contextJSON, nil
 }
 
 // designDocumentGenerateInput is the grounding envelope of a first generation

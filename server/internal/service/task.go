@@ -2485,6 +2485,9 @@ func (s *TaskService) cancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 			if err := s.markProjectDesignSystemTaskFailed(ctx, qtx, task, "project_design_system_cancelled", "project design system task was cancelled"); err != nil {
 				return err
 			}
+			if err := s.markDesignDocumentTaskFailed(ctx, qtx, task, "design_document_cancelled", "design document task was cancelled"); err != nil {
+				return err
+			}
 		}
 		cancelled = rows
 		return nil
@@ -2675,6 +2678,9 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 			if err := s.markProjectDesignSystemTaskFailed(ctx, qtx, task, "project_design_system_cancelled", "project design system task was cancelled"); err != nil {
 				return fmt.Errorf("mark project design system task cancelled: %w", err)
 			}
+			if err := s.markDesignDocumentTaskFailed(ctx, qtx, task, "design_document_cancelled", "design document task was cancelled"); err != nil {
+				return fmt.Errorf("mark design document task cancelled: %w", err)
+			}
 			return nil
 		})
 	} else {
@@ -2706,6 +2712,12 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 			}
 			if err := s.markProjectDesignSystemTaskFailed(ctx, qtx, cancelled, "project_design_system_cancelled", "project design system task was cancelled"); err != nil {
 				return fmt.Errorf("mark project design system task cancelled: %w", err)
+			}
+			// Design documents were missing here: stopping a run left the
+			// document's active_task_id pointing at the cancelled task forever,
+			// and every later adjust/save/discard answered operation_in_progress.
+			if err := s.markDesignDocumentTaskFailed(ctx, qtx, cancelled, "design_document_cancelled", "design document task was cancelled"); err != nil {
+				return fmt.Errorf("mark design document task cancelled: %w", err)
 			}
 			if !cancelled.ChatSessionID.Valid {
 				return nil

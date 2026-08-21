@@ -28,6 +28,7 @@ func TestDesignDocumentRevisionRoutesAreRegistered(t *testing.T) {
 		http.MethodPost: {
 			"/api/design-documents/{id}/revisions/{revisionId}/restore": false,
 			"/api/design-documents/{id}/adjust":                         false,
+			"/api/design-documents/{id}/regenerate":                     false,
 			"/api/design-documents/{id}/save":                           false,
 			"/api/design-documents/{id}/discard":                        false,
 		},

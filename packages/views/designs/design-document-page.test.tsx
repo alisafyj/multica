@@ -14,6 +14,7 @@ const {
   listDesignDocumentRevisions,
   listTaskMessages,
   navigate,
+  regenerateDesignDocument,
   restoreDesignDocumentRevision,
   saveDesignDocument,
   toastError,
@@ -28,6 +29,7 @@ const {
   listDesignDocumentRevisions: vi.fn(),
   listTaskMessages: vi.fn(),
   navigate: vi.fn(),
+  regenerateDesignDocument: vi.fn(),
   restoreDesignDocumentRevision: vi.fn(),
   saveDesignDocument: vi.fn(),
   toastError: vi.fn(),
@@ -45,6 +47,7 @@ vi.mock("@multica/core/api", () => ({
     listAgents,
     listDesignDocumentRevisions,
     listTaskMessages,
+    regenerateDesignDocument,
     restoreDesignDocumentRevision,
     saveDesignDocument,
     cancelTaskById: vi.fn(),
@@ -353,5 +356,37 @@ describe("DesignDocumentPage", () => {
     expect(screen.getByText("第一版正在生成。")).toBeInTheDocument();
     expect(screen.getByLabelText("智能体任务活动")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "保存为设计稿" })).not.toBeInTheDocument();
+    // A live run is not the dead end — no rerun offer while it could still land.
+    expect(screen.queryByRole("button", { name: "重新生成" })).not.toBeInTheDocument();
+  });
+
+  // The dead end: the first run failed (or was stopped) before any revision
+  // landed, so there is nothing to adjust — the page must offer the rerun.
+  it("offers 重新生成 when the first run died before producing a revision", async () => {
+    getDesignDocument.mockResolvedValue(document({
+      status: "failed",
+      draft_revision_id: "",
+      saved_revision_id: "",
+      last_error: { code: "design_document_cancelled", message: "design document task was cancelled" },
+      active_task: null,
+    }));
+    listDesignDocumentRevisions.mockResolvedValue({ revisions: [] });
+    regenerateDesignDocument.mockResolvedValue(document({
+      status: "running",
+      draft_revision_id: "",
+      saved_revision_id: "",
+      last_error: null,
+      active_task: { id: "task-2", agent_id: "agent-1", status: "queued", operation: "generate", error: null, created_at: "2026-08-19T00:30:00Z", started_at: null, completed_at: null },
+    }));
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: "重新生成" }));
+    await waitFor(() => expect(regenerateDesignDocument).toHaveBeenCalledWith("document-1", {}));
+  });
+
+  it("keeps the rerun away from documents that have a revision to adjust", async () => {
+    renderPage();
+    await screen.findByTitle("订单总览 · 首页");
+    expect(screen.queryByRole("button", { name: "重新生成" })).not.toBeInTheDocument();
   });
 });

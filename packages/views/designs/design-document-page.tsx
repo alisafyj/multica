@@ -302,6 +302,9 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   const canSave = !!document && !running && (status === "draft" || status === "draft_ahead_of_saved") && !!document.draft_revision_id;
   const canDiscard = !!document && !running && !!document.draft_revision_id && document.draft_revision_id !== document.saved_revision_id;
   const canAdjust = !!document && !running && (!!document.draft_revision_id || !!document.saved_revision_id);
+  // The dead end a rerun exists for: nothing generated yet (the first run
+  // failed or was stopped) and nothing running. Mirrors the server's guard.
+  const canRegenerate = !!document && !running && !document.draft_revision_id && !document.saved_revision_id;
   const errorMessage = status === "failed" ? documentErrorMessage(document?.last_error) : null;
   const previewUrl = revision && shownEntry ? api.getDesignDocumentPreviewFileURL(revision.resource_base_path, shownEntry) : "";
 
@@ -390,7 +393,20 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
     onError: (error) => toast.error(error instanceof Error ? error.message : "回退失败"),
   });
 
-  const busy = adjust.isPending || save.isPending || discard.isPending || restore.isPending;
+  // Reruns a first generation that failed or was stopped, from the frozen
+  // composer inputs. The agent picker still works in that state, so a user
+  // who suspects the agent can swap it before rerunning.
+  const regenerate = useMutation({
+    mutationFn: () => api.regenerateDesignDocument(documentId, agentOverride ? { agent_id: agentOverride } : {}),
+    onSuccess: async (next) => {
+      applyDocument(next);
+      setPinnedRevisionId("");
+      await refresh();
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "无法重新生成"),
+  });
+
+  const busy = adjust.isPending || save.isPending || discard.isPending || restore.isPending || regenerate.isPending;
   const instructionBlocker = !canAdjust
     ? (running ? "任务执行中，完成后可以继续调整" : "还没有可以调整的版本")
     : !instruction.trim()
@@ -634,6 +650,20 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                   <div className="text-muted-foreground">{errorMessage}</div>
                   {revisions.length > 0 ? <div className="mt-1 text-muted-foreground">上一版仍然可用，可以在此基础上继续调整。</div> : null}
                 </div>
+              </div>
+            ) : null}
+            {canRegenerate ? (
+              // The rerun for a dead end: nothing was ever generated, so
+              // there is no revision to adjust — only the frozen inputs to
+              // run again (with a different agent, if the user swapped one).
+              <div className="mt-3 rounded-lg border bg-card p-3">
+                <Button type="button" size="sm" disabled={busy} onClick={() => regenerate.mutate()}>
+                  {regenerate.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                  重新生成
+                </Button>
+                <p className="mt-2 text-caption leading-5 text-muted-foreground">
+                  沿用首次提交的需求与设置重新运行。也可以先在下方更换执行智能体。
+                </p>
               </div>
             ) : null}
 

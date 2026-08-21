@@ -205,6 +205,7 @@ import type {
   CreateDesignDraftAgentTaskRequest,
   CreateDesignDraftAgentTaskResponse,
   AdjustDesignDocumentRequest,
+  RegenerateDesignDocumentRequest,
   SaveDesignDocumentRequest,
   DesignDocument,
   DesignDocumentRevision,
@@ -4182,6 +4183,21 @@ export class ApiClient {
     });
     return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
       endpoint: "POST /api/design-documents/{id}/adjust",
+    });
+  }
+
+  /**
+   * Reruns a generation that never produced a revision (failed or stopped),
+   * from the document's frozen input snapshot. The server refuses once a
+   * revision exists — that state is adjusted, not regenerated over.
+   */
+  async regenerateDesignDocument(documentId: string, data: RegenerateDesignDocumentRequest = {}): Promise<DesignDocument> {
+    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/regenerate`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
+      endpoint: "POST /api/design-documents/{id}/regenerate",
     });
   }
 
