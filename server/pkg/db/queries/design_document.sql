@@ -207,7 +207,13 @@ WHERE id = sqlc.arg('id')
 RETURNING *;
 
 -- name: DeleteDesignDocument :exec
-WITH deleted_revisions AS (
+WITH deleted_shares AS (
+    DELETE FROM design_document_share
+    WHERE design_document_share.workspace_id = sqlc.arg('workspace_id')
+      AND design_document_share.design_document_id = sqlc.arg('id')
+    RETURNING design_document_share.id
+),
+deleted_revisions AS (
     DELETE FROM design_document_revision
     WHERE design_document_revision.workspace_id = sqlc.arg('workspace_id')
       AND design_document_revision.design_document_id = sqlc.arg('id')
@@ -247,3 +253,50 @@ WHERE d.workspace_id = sqlc.arg('workspace_id')
   AND d.issue_id = sqlc.arg('issue_id')
   AND d.saved_revision_id IS NOT NULL
 ORDER BY d.saved_at DESC NULLS LAST, d.updated_at DESC;
+
+-- Durable share links (DC-062 item 5). A share points at one saved revision
+-- and outlives every capability: the link never expires, only revocation
+-- kills it, and the bytes it hands out are served through the short-lived
+-- preview capability the public exchange re-issues per visit.
+
+-- The one live link a revision may have, for the create-or-return endpoint.
+-- name: GetLiveDesignDocumentShareByRevision :one
+SELECT * FROM design_document_share
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND design_document_id = sqlc.arg('design_document_id')
+  AND revision_id = sqlc.arg('revision_id')
+  AND revoked_at IS NULL;
+
+-- name: CreateDesignDocumentShare :one
+INSERT INTO design_document_share (
+    workspace_id, design_document_id, revision_id, token, created_by
+) VALUES (
+    sqlc.arg('workspace_id'), sqlc.arg('design_document_id'),
+    sqlc.arg('revision_id'), sqlc.arg('token'), sqlc.arg('created_by')
+)
+RETURNING *;
+
+-- name: ListDesignDocumentShares :many
+SELECT * FROM design_document_share
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND design_document_id = sqlc.arg('design_document_id')
+  AND revoked_at IS NULL
+ORDER BY created_at DESC;
+
+-- Revoking is the only way a share dies; the guard keeps a second revoke or
+-- a revoke-after-re-share from stamping a new revoked_at over the first.
+-- name: RevokeDesignDocumentShare :one
+UPDATE design_document_share SET
+    revoked_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND design_document_id = sqlc.arg('design_document_id')
+  AND revoked_at IS NULL
+RETURNING *;
+
+-- The public exchange looks a link up by raw token alone. Revoked links read
+-- as absent here, which is what makes the uniform 404 truthful.
+-- name: GetLiveDesignDocumentShareByToken :one
+SELECT * FROM design_document_share
+WHERE token = sqlc.arg('token')
+  AND revoked_at IS NULL;

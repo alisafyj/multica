@@ -267,8 +267,54 @@ func (q *Queries) CreateDesignDocumentRevision(ctx context.Context, arg CreateDe
 	return i, err
 }
 
+const createDesignDocumentShare = `-- name: CreateDesignDocumentShare :one
+INSERT INTO design_document_share (
+    workspace_id, design_document_id, revision_id, token, created_by
+) VALUES (
+    $1, $2,
+    $3, $4, $5
+)
+RETURNING id, workspace_id, design_document_id, revision_id, token, created_by, created_at, revoked_at
+`
+
+type CreateDesignDocumentShareParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	DesignDocumentID pgtype.UUID `json:"design_document_id"`
+	RevisionID       pgtype.UUID `json:"revision_id"`
+	Token            string      `json:"token"`
+	CreatedBy        pgtype.UUID `json:"created_by"`
+}
+
+func (q *Queries) CreateDesignDocumentShare(ctx context.Context, arg CreateDesignDocumentShareParams) (DesignDocumentShare, error) {
+	row := q.db.QueryRow(ctx, createDesignDocumentShare,
+		arg.WorkspaceID,
+		arg.DesignDocumentID,
+		arg.RevisionID,
+		arg.Token,
+		arg.CreatedBy,
+	)
+	var i DesignDocumentShare
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.DesignDocumentID,
+		&i.RevisionID,
+		&i.Token,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const deleteDesignDocument = `-- name: DeleteDesignDocument :exec
-WITH deleted_revisions AS (
+WITH deleted_shares AS (
+    DELETE FROM design_document_share
+    WHERE design_document_share.workspace_id = $2
+      AND design_document_share.design_document_id = $1
+    RETURNING design_document_share.id
+),
+deleted_revisions AS (
     DELETE FROM design_document_revision
     WHERE design_document_revision.workspace_id = $2
       AND design_document_revision.design_document_id = $1
@@ -489,6 +535,66 @@ func (q *Queries) GetDesignDocumentRevisionInWorkspace(ctx context.Context, arg 
 	return i, err
 }
 
+const getLiveDesignDocumentShareByRevision = `-- name: GetLiveDesignDocumentShareByRevision :one
+
+SELECT id, workspace_id, design_document_id, revision_id, token, created_by, created_at, revoked_at FROM design_document_share
+WHERE workspace_id = $1
+  AND design_document_id = $2
+  AND revision_id = $3
+  AND revoked_at IS NULL
+`
+
+type GetLiveDesignDocumentShareByRevisionParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	DesignDocumentID pgtype.UUID `json:"design_document_id"`
+	RevisionID       pgtype.UUID `json:"revision_id"`
+}
+
+// Durable share links (DC-062 item 5). A share points at one saved revision
+// and outlives every capability: the link never expires, only revocation
+// kills it, and the bytes it hands out are served through the short-lived
+// preview capability the public exchange re-issues per visit.
+// The one live link a revision may have, for the create-or-return endpoint.
+func (q *Queries) GetLiveDesignDocumentShareByRevision(ctx context.Context, arg GetLiveDesignDocumentShareByRevisionParams) (DesignDocumentShare, error) {
+	row := q.db.QueryRow(ctx, getLiveDesignDocumentShareByRevision, arg.WorkspaceID, arg.DesignDocumentID, arg.RevisionID)
+	var i DesignDocumentShare
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.DesignDocumentID,
+		&i.RevisionID,
+		&i.Token,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const getLiveDesignDocumentShareByToken = `-- name: GetLiveDesignDocumentShareByToken :one
+SELECT id, workspace_id, design_document_id, revision_id, token, created_by, created_at, revoked_at FROM design_document_share
+WHERE token = $1
+  AND revoked_at IS NULL
+`
+
+// The public exchange looks a link up by raw token alone. Revoked links read
+// as absent here, which is what makes the uniform 404 truthful.
+func (q *Queries) GetLiveDesignDocumentShareByToken(ctx context.Context, token string) (DesignDocumentShare, error) {
+	row := q.db.QueryRow(ctx, getLiveDesignDocumentShareByToken, token)
+	var i DesignDocumentShare
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.DesignDocumentID,
+		&i.RevisionID,
+		&i.Token,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const getNextDesignDocumentRevisionNumber = `-- name: GetNextDesignDocumentRevisionNumber :one
 SELECT COALESCE(MAX(revision_number), 0) + 1 AS next_revision_number
 FROM design_document_revision
@@ -653,6 +759,48 @@ func (q *Queries) ListDesignDocumentRevisions(ctx context.Context, arg ListDesig
 	return items, nil
 }
 
+const listDesignDocumentShares = `-- name: ListDesignDocumentShares :many
+SELECT id, workspace_id, design_document_id, revision_id, token, created_by, created_at, revoked_at FROM design_document_share
+WHERE workspace_id = $1
+  AND design_document_id = $2
+  AND revoked_at IS NULL
+ORDER BY created_at DESC
+`
+
+type ListDesignDocumentSharesParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	DesignDocumentID pgtype.UUID `json:"design_document_id"`
+}
+
+func (q *Queries) ListDesignDocumentShares(ctx context.Context, arg ListDesignDocumentSharesParams) ([]DesignDocumentShare, error) {
+	rows, err := q.db.Query(ctx, listDesignDocumentShares, arg.WorkspaceID, arg.DesignDocumentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DesignDocumentShare{}
+	for rows.Next() {
+		var i DesignDocumentShare
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.DesignDocumentID,
+			&i.RevisionID,
+			&i.Token,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDesignDocumentsByProject = `-- name: ListDesignDocumentsByProject :many
 SELECT id, workspace_id, project_id, project_resource_id, issue_id, title, platform, recipe, draft_revision_id, saved_revision_id, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at FROM design_document
 WHERE workspace_id = $1
@@ -705,6 +853,40 @@ func (q *Queries) ListDesignDocumentsByProject(ctx context.Context, arg ListDesi
 		return nil, err
 	}
 	return items, nil
+}
+
+const revokeDesignDocumentShare = `-- name: RevokeDesignDocumentShare :one
+UPDATE design_document_share SET
+    revoked_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND design_document_id = $3
+  AND revoked_at IS NULL
+RETURNING id, workspace_id, design_document_id, revision_id, token, created_by, created_at, revoked_at
+`
+
+type RevokeDesignDocumentShareParams struct {
+	ID               pgtype.UUID `json:"id"`
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	DesignDocumentID pgtype.UUID `json:"design_document_id"`
+}
+
+// Revoking is the only way a share dies; the guard keeps a second revoke or
+// a revoke-after-re-share from stamping a new revoked_at over the first.
+func (q *Queries) RevokeDesignDocumentShare(ctx context.Context, arg RevokeDesignDocumentShareParams) (DesignDocumentShare, error) {
+	row := q.db.QueryRow(ctx, revokeDesignDocumentShare, arg.ID, arg.WorkspaceID, arg.DesignDocumentID)
+	var i DesignDocumentShare
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.DesignDocumentID,
+		&i.RevisionID,
+		&i.Token,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
 }
 
 const saveDesignDocumentDraft = `-- name: SaveDesignDocumentDraft :one

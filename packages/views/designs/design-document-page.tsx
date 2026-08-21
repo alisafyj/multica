@@ -15,6 +15,8 @@ import {
   Monitor,
   MoreHorizontal,
   MousePointerClick,
+  Camera,
+  Download,
   Paintbrush,
   RotateCcw,
   RotateCw,
@@ -73,6 +75,8 @@ import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
 import { useTimeAgo } from "../i18n/use-time-ago";
 import { annotationInstruction, annotationLabel, type Annotation } from "./annotation-instruction";
+import { exportDesignDocument, exportScopeLabel, captureScreenshot, type ExportFormat } from "./export-design-document";
+import { inlinePrototypePage } from "./inline-prototype";
 import type { ElementDescriptor } from "./element-descriptor";
 import {
   countDeclarations,
@@ -87,7 +91,7 @@ import { DesignDocumentCritique, parseCritique } from "./design-document-critiqu
 import { DesignDocumentSourceView } from "./design-document-source-view";
 import { DesignDocumentStaticView } from "./design-document-static-view";
 import { AgentSetting, IssueSetting } from "./design-task-composer";
-import { safeQuery, type CanvasMode } from "./prototype-canvas";
+import { revisionFileSource, safeQuery, type CanvasMode } from "./prototype-canvas";
 import { DesignTaskActivity, taskOperationLabel } from "./project-design-system-task-activity";
 
 /** What the workbench's main pane is showing. */
@@ -529,6 +533,51 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
     onError: (error) => toast.error(error instanceof Error ? error.message : "无法应用手动修改"),
   });
 
+  // Export and screenshot. Both rasterise the same self-contained document the
+  // static canvas mounts, so what leaves the workbench is what the workbench
+  // showed — and neither needs the server.
+  const [exportProgress, setExportProgress] = useState("");
+  const loadInlinedPage = async (entry: string): Promise<string> => {
+    if (!revision) throw new Error("没有可导出的版本");
+    const cached = queryClient.getQueryData<{ html: string }>(
+      ["design-document-inlined", revision.content_digest, entry, true],
+    );
+    if (cached?.html) return cached.html;
+    const result = await inlinePrototypePage(entry, revisionFileSource(revision), { stripScripts: true });
+    queryClient.setQueryData(["design-document-inlined", revision.content_digest, entry, true], result);
+    return result.html;
+  };
+
+  const runExport = useMutation({
+    mutationFn: async (format: ExportFormat) => {
+      await exportDesignDocument({
+        format,
+        pages: entries.map((entry) => ({ entry: entry.entry, title: entry.title })),
+        currentEntry: shownEntry,
+        title,
+        // The export uses the viewport on screen; "适应" has no fixed width,
+        // so a desktop width stands in rather than exporting a guess.
+        width: frameWidth ?? 1280,
+        loadPage: loadInlinedPage,
+        onProgress: (done, total) => setExportProgress(total > 1 ? `正在导出 ${done}/${total} 页…` : "正在导出…"),
+      });
+    },
+    onSuccess: () => toast.success("已导出"),
+    onError: (error) => toast.error(error instanceof Error ? error.message : "导出失败"),
+    onSettled: () => setExportProgress(""),
+  });
+
+  const screenshot = useMutation({
+    mutationFn: async () => captureScreenshot({
+      html: await loadInlinedPage(shownEntry),
+      width: frameWidth ?? 1280,
+      title,
+      pageTitle: shownPage?.title ?? "",
+    }),
+    onSuccess: (destination) => toast.success(destination === "clipboard" ? "已复制到剪贴板" : "剪贴板不可用，已下载图片"),
+    onError: (error) => toast.error(error instanceof Error ? error.message : "截图失败"),
+  });
+
   const deliver = useMutation({
     mutationFn: (issueId: string) => api.deliverDesignDocument(documentId, { issue_id: issueId }),
     onSuccess: async (next, issueId) => {
@@ -734,11 +783,56 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
               ) : null}
             </>
           ) : null}
+          {viewMode !== "code" ? (
+            <>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                title="截图当前页并复制"
+                aria-label="截图"
+                disabled={!revision || screenshot.isPending}
+                onClick={() => screenshot.mutate()}
+              >
+                {screenshot.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={(
+                    <Button type="button" size="icon-sm" variant="ghost" aria-label="导出" title="导出" disabled={!revision || runExport.isPending}>
+                      {runExport.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                    </Button>
+                  )}
+                />
+                <DropdownMenuContent align="end">
+                  {([
+                    { format: "png" as const, label: "图片 (PNG)" },
+                    { format: "html" as const, label: "单页 HTML（自包含）" },
+                    { format: "pdf" as const, label: "PDF" },
+                    { format: "pptx" as const, label: "演示文稿 (PPTX)" },
+                  ]).map(({ format, label }) => (
+                    <DropdownMenuItem key={format} disabled={runExport.isPending} onClick={() => runExport.mutate(format)}>
+                      {label}
+                      <span className="ml-auto pl-3 text-caption text-muted-foreground">
+                        {exportScopeLabel(format, entries.length)}
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+            </>
+          ) : null}
           <Button type="button" size="icon-sm" variant="ghost" title={fullscreen ? "退出全屏" : "全屏"} aria-label={fullscreen ? "退出全屏" : "全屏"} onClick={() => setFullscreen((value) => !value)}>
             {fullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
           </Button>
         </div>
       </div>
+      {exportProgress ? (
+        <div aria-live="polite" className="shrink-0 border-b bg-muted/40 px-3 py-1.5 text-caption text-muted-foreground">
+          {exportProgress}
+        </div>
+      ) : null}
       {viewingHistory && revision ? (
         <div className="flex shrink-0 items-center justify-between gap-3 border-b bg-muted/40 px-3 py-1.5 text-caption">
           <span className="flex items-center gap-1.5 text-muted-foreground"><History className="h-3.5 w-3.5" />正在查看历史版本 v{revision.revision_number}</span>

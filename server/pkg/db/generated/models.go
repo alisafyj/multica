@@ -628,6 +628,17 @@ type DesignDocumentRevision struct {
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
+type DesignDocumentShare struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	DesignDocumentID pgtype.UUID        `json:"design_document_id"`
+	RevisionID       pgtype.UUID        `json:"revision_id"`
+	Token            string             `json:"token"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+}
+
 type DesignDraft struct {
 	ID                  pgtype.UUID        `json:"id"`
 	WorkspaceID         pgtype.UUID        `json:"workspace_id"`

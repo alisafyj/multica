@@ -394,6 +394,33 @@ describe("DesignDocumentPage", () => {
     await waitFor(() => expect(regenerateDesignDocument).toHaveBeenCalledWith("document-1", {}));
   });
 
+  // Export scope follows from what each format is for, so the menu states it
+  // rather than asking the user to configure anything.
+  it("offers every export format and says what each one covers", async () => {
+    renderPage();
+    await screen.findByTitle("订单总览 · 首页");
+
+    await userEvent.click(screen.getByRole("button", { name: "导出" }));
+    const menu = await screen.findByRole("menu");
+    for (const label of ["图片 (PNG)", "单页 HTML（自包含）", "PDF", "演示文稿 (PPTX)"]) {
+      expect(within(menu).getByText(label)).toBeInTheDocument();
+    }
+    // A picture and a self-contained page are of the page on screen; a
+    // document and a deck are of the whole design.
+    expect(within(menu).getAllByText("当前页")).toHaveLength(2);
+    expect(within(menu).getAllByText("全部 2 页")).toHaveLength(2);
+  });
+
+  it("keeps export and screenshot out of the source view, which has nothing to rasterise", async () => {
+    renderPage();
+    await screen.findByTitle("订单总览 · 首页");
+    expect(screen.getByRole("button", { name: "截图" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "代码" }));
+    expect(screen.queryByRole("button", { name: "截图" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "导出" })).not.toBeInTheDocument();
+  });
+
   // 编辑 is the second way to change a design: the designer edits it directly
   // instead of asking an agent. It still produces a revision, so it carries
   // the same preconditions an adjustment does.
