@@ -240,6 +240,25 @@ describe("DesignTaskComposer", () => {
     expect(createDesignDocument).not.toHaveBeenCalled();
   });
 
+  // The composer has no platform pill (device switching lives on the
+  // preview page); the target platform follows the picked scenario.
+  it("derives the platform from the scenario instead of a platform pill", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+
+    await pickProject(user);
+    await pickAgent(user);
+    await user.type(screen.getByLabelText("页面需求描述"), "司机端接单页");
+    expect(screen.queryByRole("button", { name: "目标平台" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "原型" }));
+    await user.click(await screen.findByRole("button", { name: "移动应用" }));
+    await user.click(screen.getByRole("button", { name: "生成页面设计" }));
+
+    await waitFor(() => expect(createDesignDocument).toHaveBeenCalledTimes(1));
+    expect(createDesignDocument.mock.calls[0]?.[0]).toMatchObject({ recipe: "mobile-app", platform: "mobile" });
+  });
+
   it("sends the picked scenario recipe and omits the optional links it has no value for", async () => {
     const user = userEvent.setup();
     const onCreated = renderComposer();

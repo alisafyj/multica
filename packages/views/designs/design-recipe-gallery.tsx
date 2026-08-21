@@ -56,7 +56,6 @@ import {
   AgentSetting,
   BRIEF_MAX_LENGTH,
   PLATFORM_OPTIONS,
-  PlatformSetting,
   SettingTrigger,
 } from "./design-task-composer";
 
@@ -497,7 +496,9 @@ function RecipeStartDialog({
   // opening a different card starts from that recipe's prompt rather than
   // from whatever the previous one was edited into.
   const [brief, setBrief] = useState(recipe.prompt);
-  const [platform, setPlatform] = useState<ProjectDesignSystemPlatform>(recipe.platform || "web");
+  // No platform pill here either (the preview page owns device switching):
+  // the target platform is the recipe's own suggestion.
+  const platform: ProjectDesignSystemPlatform = recipe.platform || "web";
 
   const trimmedBrief = brief.trim();
   const briefTooLong = brief.length > BRIEF_MAX_LENGTH;
@@ -564,7 +565,6 @@ function RecipeStartDialog({
             triggerRender={<SettingTrigger filled={!!projectId} aria-label="项目" />}
           />
           <AgentSetting agents={agents} agentId={agentId} onChange={setAgentId} />
-          <PlatformSetting platform={platform} onChange={setPlatform} />
         </div>
         <Textarea
           value={brief}

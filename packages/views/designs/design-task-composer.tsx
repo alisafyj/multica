@@ -21,7 +21,6 @@ import {
   LoaderCircle,
   Map as MapIcon,
   MessageCircleQuestion,
-  Monitor,
   Palette,
   PanelsTopLeft,
   Paperclip,
@@ -817,46 +816,6 @@ export function DesignSystemSetting({
   );
 }
 
-export function PlatformSetting({
-  platform,
-  onChange,
-}: {
-  platform: ProjectDesignSystemPlatform;
-  onChange: (platform: ProjectDesignSystemPlatform) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const selected = PLATFORM_OPTIONS.find((option) => option.value === platform);
-
-  return (
-    <PropertyPicker
-      open={open}
-      onOpenChange={setOpen}
-      width="w-40"
-      align="start"
-      triggerRender={<SettingTrigger filled aria-label="目标平台" />}
-      trigger={
-        <>
-          <Monitor className="size-3.5 shrink-0" />
-          <span className="truncate">{selected?.label ?? "Web"}</span>
-        </>
-      }
-    >
-      {PLATFORM_OPTIONS.map((option) => (
-        <PickerItem
-          key={option.value}
-          selected={option.value === platform}
-          onClick={() => {
-            onChange(option.value);
-            setOpen(false);
-          }}
-        >
-          <span className="truncate">{option.label}</span>
-        </PickerItem>
-      ))}
-    </PropertyPicker>
-  );
-}
-
 /**
  * Design centre home composer: the cross-project entry point for page-design
  * tasks (DC-042 / DC-049). Project and agent are required; repository, issue
@@ -928,7 +887,7 @@ export function DesignTaskComposer({
     setRecipe(picked.slug);
     setAppliedRecipe(picked);
     setBrief(picked.prompt);
-    if (picked.platform) setPlatform(picked.platform);
+    setPlatform(picked.platform || "web");
   }, []);
   const appliedToken = useRef<number | null>(null);
   useEffect(() => {
@@ -1048,7 +1007,13 @@ export function DesignTaskComposer({
             // artifacts, so picking one in 规划/提问 switches back to 设计.
             setMode("design");
             setAppliedRecipe(null);
-            setRecipe((current) => (current === picked ? "default" : picked));
+            setRecipe((current) => {
+              const next = current === picked ? "default" : picked;
+              // No platform pill on the composer (the preview page owns
+              // device switching): the target platform follows the scenario.
+              setPlatform(next === "mobile-app" ? "mobile" : "web");
+              return next;
+            });
           }}
         />
 
@@ -1161,7 +1126,6 @@ export function DesignTaskComposer({
                     setBuiltinSlug(selection.builtinSlug);
                   }}
                 />
-                <PlatformSetting platform={platform} onChange={setPlatform} />
               </>
             ) : null}
             <div className="ml-auto flex min-w-0 items-center gap-2">
