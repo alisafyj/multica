@@ -323,25 +323,44 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   };
 
   const adjust = useMutation({
-    mutationFn: () => {
-      const scope: Pick<DesignDocumentAdjustmentScope, "kind" | "id"> = scopeToPage && shownPage
+    mutationFn: (payload: { instruction: string; scopeToPage: boolean }) => {
+      const scope: Pick<DesignDocumentAdjustmentScope, "kind" | "id"> = payload.scopeToPage && shownPage
         ? { kind: "page", id: shownPage.page?.id ?? shownPage.entry }
         : { kind: "document" };
       return api.adjustDesignDocument(documentId, {
-        instruction: instruction.trim(),
+        instruction: payload.instruction.trim(),
         agent_id: agentId,
         scope,
         base_revision_id: currentRevisionId || undefined,
       });
     },
-    onSuccess: async (next) => {
+    onSuccess: async (next, payload) => {
       applyDocument(next);
-      setInstruction("");
+      // Clear only the text that was sent — a queued flush must not wipe
+      // whatever the user has started typing since.
+      setInstruction((current) => (current === payload.instruction ? "" : current));
       setPinnedRevisionId("");
       await refresh();
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "无法发起调整"),
   });
+
+  // An instruction submitted while a run is still active. It is held here and
+  // fired automatically when the run lands (Open Design queues chat sends the
+  // same way); if the run produces nothing to adjust, the text goes back into
+  // the composer instead of being lost.
+  const [queuedAdjustment, setQueuedAdjustment] = useState<{ instruction: string; scopeToPage: boolean } | null>(null);
+  const flushAdjust = adjust.mutate;
+  useEffect(() => {
+    if (running || !queuedAdjustment) return;
+    setQueuedAdjustment(null);
+    if (canAdjust) {
+      flushAdjust(queuedAdjustment);
+    } else {
+      setInstruction((current) => current || queuedAdjustment.instruction);
+      toast.error("这次运行没有产出可调整的版本，排队的调整未发送");
+    }
+  }, [running, queuedAdjustment, canAdjust, flushAdjust]);
 
   const save = useMutation({
     mutationFn: () => api.saveDesignDocument(documentId, { draft_revision_id: document?.draft_revision_id ?? "" }),
@@ -409,8 +428,12 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   });
 
   const busy = adjust.isPending || save.isPending || discard.isPending || restore.isPending || regenerate.isPending;
-  const instructionBlocker = !canAdjust
-    ? (running ? "任务执行中，完成后可以继续调整" : "还没有可以调整的版本")
+  // While a run is active the composer stays open: the submission queues and
+  // fires when the run lands. Only a document with nothing to adjust and
+  // nothing on the way keeps it closed.
+  const composerOpen = canAdjust || running;
+  const instructionBlocker = !composerOpen
+    ? "还没有可以调整的版本"
     : !instruction.trim()
       ? "描述你想怎么改"
       : !agentId
@@ -703,7 +726,14 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
             className="shrink-0 rounded-lg border bg-card p-3"
             onSubmit={(event) => {
               event.preventDefault();
-              if (!instructionBlocker && !busy) adjust.mutate();
+              if (instructionBlocker || busy) return;
+              if (running) {
+                // Queue while the run is live; the latest submission wins.
+                setQueuedAdjustment({ instruction, scopeToPage });
+                setInstruction("");
+                return;
+              }
+              adjust.mutate({ instruction, scopeToPage });
             }}
             aria-label="调整设计稿"
           >
@@ -732,33 +762,59 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                   key={preset.id}
                   type="button"
                   className="inline-flex h-6 items-center rounded-full border bg-card px-2 text-caption text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-                  disabled={!canAdjust || busy}
+                  disabled={!composerOpen || busy}
                   onClick={() => setInstruction(preset.instruction)}
                 >
                   {preset.label}
                 </button>
               ))}
             </div>
+            {queuedAdjustment ? (
+              <div className="mt-2 flex items-start justify-between gap-2 rounded-md border border-dashed px-2.5 py-1.5 text-caption leading-5">
+                <span className="min-w-0">
+                  <span className="text-muted-foreground">已排队 · 任务结束后自动发起：</span>
+                  <span className="line-clamp-2 break-words">{queuedAdjustment.instruction}</span>
+                </span>
+                <button
+                  type="button"
+                  aria-label="取消排队的调整"
+                  title="取消排队的调整"
+                  className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  onClick={() => setQueuedAdjustment(null)}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ) : null}
             <Textarea
               value={instruction}
               onChange={(event) => setInstruction(event.target.value)}
-              placeholder={canAdjust ? "描述你想怎么改，例如：把顶部导航收紧，订单列表增加筛选。" : "生成完成后可以在这里继续调整。"}
+              placeholder={canAdjust
+                ? "描述你想怎么改，例如：把顶部导航收紧，订单列表增加筛选。"
+                : running
+                  ? "任务执行中，现在提交会排队，结束后自动发起。"
+                  : "生成完成后可以在这里继续调整。"}
               rows={3}
               maxLength={INSTRUCTION_MAX_LENGTH}
-              disabled={!canAdjust || busy}
+              disabled={!composerOpen || busy}
               className="mt-2 min-h-[72px] resize-none text-body"
               onKeyDown={(event) => {
                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !instructionBlocker && !busy) {
                   event.preventDefault();
-                  adjust.mutate();
+                  if (running) {
+                    setQueuedAdjustment({ instruction, scopeToPage });
+                    setInstruction("");
+                    return;
+                  }
+                  adjust.mutate({ instruction, scopeToPage });
                 }
               }}
             />
             <div className="mt-2 flex items-center justify-between gap-2">
               <span className="min-w-0 truncate text-caption text-muted-foreground">{instructionBlocker ?? "⌘/Ctrl + Enter 发送"}</span>
-              <Button type="submit" size="sm" disabled={!!instructionBlocker || busy} aria-label="发起调整">
+              <Button type="submit" size="sm" disabled={!!instructionBlocker || busy} aria-label={running ? "排队调整" : "发起调整"}>
                 {adjust.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
-                调整
+                {running ? "排队调整" : "调整"}
               </Button>
             </div>
           </form>

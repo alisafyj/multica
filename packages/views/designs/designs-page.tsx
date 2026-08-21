@@ -810,11 +810,11 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                     beside the imported files rather than replacing them: both
                     are this project's design work. */}
                 {projectDocumentsLoading ? (
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="aspect-[4/3] w-full" />)}
+                  <div className="grid gap-4 grid-cols-2 min-[564px]:grid-cols-3 min-[756px]:grid-cols-4 min-[948px]:grid-cols-5">
+                    {Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="aspect-[16/9] w-full rounded-lg" />)}
                   </div>
                 ) : visibleDocuments.length > 0 ? (
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  <div className="grid gap-4 grid-cols-2 min-[564px]:grid-cols-3 min-[756px]:grid-cols-4 min-[948px]:grid-cols-5">
                     {visibleDocuments.map((document) => (
                       <DesignDocumentCard
                         key={document.id}

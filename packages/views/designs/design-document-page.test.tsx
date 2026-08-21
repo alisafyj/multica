@@ -296,8 +296,10 @@ describe("DesignDocumentPage", () => {
       scope: { kind: "page", id: "orders" },
       base_revision_id: "revision-2",
     });
-    // The document now runs a task: the composer waits for it.
-    expect(await screen.findByText("任务执行中，完成后可以继续调整")).toBeInTheDocument();
+    // The document now runs a task: the composer switches to queue mode
+    // instead of closing.
+    expect(await screen.findByRole("button", { name: "排队调整" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/任务执行中，现在提交会排队/)).toBeEnabled();
     expect(screen.getByLabelText("智能体任务活动")).toBeInTheDocument();
   });
 
@@ -388,5 +390,57 @@ describe("DesignDocumentPage", () => {
     renderPage();
     await screen.findByTitle("订单总览 · 首页");
     expect(screen.queryByRole("button", { name: "重新生成" })).not.toBeInTheDocument();
+  });
+
+  // Open Design queues chat sends during a run; the composer does the same:
+  // a submission while running is held and fired when the run lands.
+  it("queues an adjustment during a run and flushes it when the run lands", async () => {
+    getDesignDocument.mockResolvedValue(document({
+      status: "running",
+      active_task: { id: "task-9", agent_id: "agent-1", status: "running", operation: "adjust", error: null, created_at: "2026-08-19T00:20:00Z", started_at: "2026-08-19T00:20:01Z", completed_at: null },
+    }));
+    const queryClient = renderPage();
+
+    const textarea = await screen.findByPlaceholderText(/任务执行中，现在提交会排队/);
+    await userEvent.type(textarea, "顶栏加一个搜索框");
+    await userEvent.click(screen.getByRole("button", { name: "排队调整" }));
+    expect(adjustDesignDocument).not.toHaveBeenCalled();
+    expect(screen.getByText(/已排队/)).toBeInTheDocument();
+    expect(screen.getByText("顶栏加一个搜索框")).toBeInTheDocument();
+
+    // The run lands: the document refetches as adjustable and the queued
+    // instruction fires on its own.
+    getDesignDocument.mockResolvedValue(document());
+    await queryClient.invalidateQueries();
+    await waitFor(() => expect(adjustDesignDocument).toHaveBeenCalledTimes(1));
+    expect(adjustDesignDocument.mock.calls[0]?.[1]).toMatchObject({ instruction: "顶栏加一个搜索框" });
+  });
+
+  it("hands the queued text back when the run dies without a revision", async () => {
+    getDesignDocument.mockResolvedValue(document({
+      status: "running",
+      draft_revision_id: "",
+      saved_revision_id: "",
+      active_task: { id: "task-1", agent_id: "agent-1", status: "running", operation: "generate", error: null, created_at: "2026-08-19T00:00:00Z", started_at: "2026-08-19T00:00:01Z", completed_at: null },
+    }));
+    listDesignDocumentRevisions.mockResolvedValue({ revisions: [] });
+    const queryClient = renderPage();
+
+    const textarea = await screen.findByPlaceholderText(/任务执行中，现在提交会排队/);
+    await userEvent.type(textarea, "配色换成品牌蓝");
+    await userEvent.click(screen.getByRole("button", { name: "排队调整" }));
+
+    getDesignDocument.mockResolvedValue(document({
+      status: "failed",
+      draft_revision_id: "",
+      saved_revision_id: "",
+      last_error: { code: "design_document_cancelled", message: "design document task was cancelled" },
+      active_task: null,
+    }));
+    await queryClient.invalidateQueries();
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("这次运行没有产出可调整的版本，排队的调整未发送"));
+    expect(adjustDesignDocument).not.toHaveBeenCalled();
+    expect((screen.getByPlaceholderText(/生成完成后可以在这里继续调整|描述你想怎么改/) as HTMLTextAreaElement).value).toBe("配色换成品牌蓝");
   });
 });

@@ -15,7 +15,12 @@ import { DesignDocumentCard } from "./design-document-card";
  * that bounded; a workspace-wide listing endpoint would replace the fan-out.
  */
 const SCANNED_PROJECT_LIMIT = 12;
-const RECENT_LIMIT = 6;
+/**
+ * Two full rows of the 5-across grid below. Slicing already-fetched results
+ * costs nothing extra — the fan-out is bounded by SCANNED_PROJECT_LIMIT — so
+ * this is purely about the wall ending on a clean row rather than an orphan.
+ */
+const RECENT_LIMIT = 10;
 
 function updatedAtOf(document: DesignDocument): number {
   const value = Date.parse(document.updated_at || document.created_at || "");
