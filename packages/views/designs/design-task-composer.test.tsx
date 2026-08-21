@@ -367,15 +367,14 @@ describe("DesignTaskComposer", () => {
     expect(screen.queryByRole("group", { name: "原型场景" })).not.toBeInTheDocument();
   });
 
-  it("steps an armed scene back to bare 原型 from the scene row itself", async () => {
+  it("gives each scene its own wall: mobile by platform, wireframe by seed, 应用 by category", async () => {
     const user = userEvent.setup();
-    // Two prototype recipes so the facet pills carry real cards and 移动应用's
-    // implied 应用 filter is observable on the wall.
     listDesignScenarioRecipes.mockResolvedValue({
       recipes: [
         RECIPE,
-        { ...RECIPE, slug: "ops-app", title: "运营移动端", category: "应用" },
-        { ...RECIPE, slug: "landing", title: "营销落地页", category: "落地页 / 营销" },
+        { ...RECIPE, slug: "mobile-onboarding", title: "移动端引导", category: "应用", platform: "mobile" },
+        { ...RECIPE, slug: "dating-web", title: "约会网站", category: "应用", platform: "web" },
+        { ...RECIPE, slug: "wireframe-greybox", title: "灰盒线框图", category: "品牌 / 设计", platform: "web" },
       ],
     });
     renderComposer();
@@ -383,28 +382,35 @@ describe("DesignTaskComposer", () => {
     await user.click(screen.getByRole("button", { name: "原型" }));
     const scenes = screen.getByRole("group", { name: "原型场景" });
 
-    // 移动应用 shares the 应用 facet: only 应用 cards stay on the wall, and
-    // the 应用 pill itself does not light up — the scene is what is armed.
+    // 移动应用 filters on the catalogue's platform axis, not the 应用
+    // category — 应用 also holds web apps, which stay out here.
     await user.click(within(scenes).getByRole("button", { name: "移动应用" }));
-    expect(await screen.findByText("运营移动端")).toBeInTheDocument();
-    expect(screen.queryByText("营销落地页")).not.toBeInTheDocument();
+    expect(await screen.findByText("移动端引导")).toBeInTheDocument();
+    expect(screen.queryByText("约会网站")).not.toBeInTheDocument();
+    expect(screen.queryByText("灰盒线框图")).not.toBeInTheDocument();
     expect(within(scenes).getByRole("button", { name: "应用" })).toHaveAttribute("aria-pressed", "false");
 
-    // Re-picking the armed scene steps back to bare 原型, not out of the
+    // 线框图 shows the seeded wireframe templates and nothing else.
+    await user.click(within(scenes).getByRole("button", { name: "线框图" }));
+    expect(await screen.findByText("灰盒线框图")).toBeInTheDocument();
+    expect(screen.queryByText("移动端引导")).not.toBeInTheDocument();
+
+    // The 应用 pill is the category: web and mobile apps together, wireframes
+    // out — and picking it re-arms bare 原型 rather than refining 线框图.
+    await user.click(within(scenes).getByRole("button", { name: "应用" }));
+    expect(within(scenes).getByRole("button", { name: "线框图" })).toHaveAttribute("aria-pressed", "false");
+    expect(await screen.findByText("约会网站")).toBeInTheDocument();
+    expect(screen.getByText("移动端引导")).toBeInTheDocument();
+    expect(screen.queryByText("灰盒线框图")).not.toBeInTheDocument();
+
+    // Re-picking an armed scene steps back to bare 原型, not out of the
     // family: the row stays and the whole prototype pool returns.
+    await user.click(within(scenes).getByRole("button", { name: "移动应用" }));
     await user.click(within(scenes).getByRole("button", { name: "移动应用" }));
     expect(within(scenes).getByRole("button", { name: "移动应用" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "原型" })).toHaveAttribute("aria-pressed", "true");
-    expect(await screen.findByText("营销落地页")).toBeInTheDocument();
-
-    // A facet pick while a scene is armed re-arms bare 原型 and filters: the
-    // facet narrows what 原型 produces, it does not refine 线框图.
-    await user.click(within(scenes).getByRole("button", { name: "线框图" }));
-    await user.click(within(scenes).getByRole("button", { name: "落地页 / 营销" }));
-    expect(within(scenes).getByRole("button", { name: "线框图" })).toHaveAttribute("aria-pressed", "false");
-    expect(within(scenes).getByRole("button", { name: "落地页 / 营销" })).toHaveAttribute("aria-pressed", "true");
-    expect(await screen.findByText("营销落地页")).toBeInTheDocument();
-    expect(screen.queryByText("运营移动端")).not.toBeInTheDocument();
+    expect(await screen.findByText("灰盒线框图")).toBeInTheDocument();
+    expect(screen.getByText("约会网站")).toBeInTheDocument();
   });
 
   it("shows the armed Figma migration as a clearable line, since it has no rail chip", async () => {

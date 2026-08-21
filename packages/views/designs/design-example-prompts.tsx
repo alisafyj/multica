@@ -35,21 +35,37 @@ export const PROTOTYPE_FAMILY: ReadonlySet<string> = new Set(["ui-mockup", "wire
 export type PrototypeFamilyRecipe = "ui-mockup" | "wireframe" | "mobile-app";
 
 /**
- * 原型's second-level scenes, ported from Open Design's fixed prototype
- * sub-chip rail (home-hero/sub-chips.ts PROTOTYPE_SUB_CHIPS): 移动应用 and
+ * 原型's second-level scenes, at Open Design's fixed prototype sub-chip
+ * positions (home-hero/sub-chips.ts PROTOTYPE_SUB_CHIPS): 移动应用 and
  * 线框图 are real recipes spliced into the facet row between 数据看板 and
- * 应用 — their upstream positions. 移动应用 shares the 应用 facet as its
- * implied card filter; 线框图 is a fidelity constraint, not a taxonomy, so it
- * leaves the whole prototype pool visible.
+ * 应用. Their card filters diverge from upstream deliberately: Open Design
+ * aliases mobile to the 应用 facet and leaves wireframe unfiltered, which on
+ * our catalogue made 移动应用 / 线框图 / 应用 show one identical wall. Our
+ * catalogue carries a real platform axis and real wireframe seeds, so each
+ * scene shows its own set.
  */
 const PROTOTYPE_SCENES: ReadonlyArray<{
   recipe: PrototypeFamilyRecipe;
   label: string;
   icon: typeof Smartphone;
-  impliedCategory: string | null;
+  matches: (recipe: DesignScenarioRecipe) => boolean;
 }> = [
-  { recipe: "mobile-app", label: "移动应用", icon: Smartphone, impliedCategory: "应用" },
-  { recipe: "wireframe", label: "线框图", icon: PanelsTopLeft, impliedCategory: null },
+  {
+    recipe: "mobile-app",
+    label: "移动应用",
+    icon: Smartphone,
+    // The catalogue's own device axis, not the 应用 category — 应用 also
+    // holds web apps, and the row's 应用 pill already shows those.
+    matches: (item) => item.platform === "mobile",
+  },
+  {
+    recipe: "wireframe",
+    label: "线框图",
+    icon: PanelsTopLeft,
+    // The seeded wireframe templates carry the slug prefix; nothing else in
+    // the catalogue marks fidelity.
+    matches: (item) => item.slug === "wireframe" || item.slug.startsWith("wireframe-"),
+  },
 ];
 
 /** Open Design's fixed prototype row order around the two scenes: visible
@@ -113,14 +129,13 @@ export function DesignExamplePrompts({
   const activeScene = sceneMode
     ? PROTOTYPE_SCENES.find((scene) => scene.recipe === recipe) ?? null
     : null;
-  // A scene carries its own card filter (移动应用 shares 应用; 线框图 keeps
-  // the whole pool), overriding the category pick while it is armed.
-  const filterCategory = activeScene
-    ? activeScene.impliedCategory ?? ALL_CATEGORIES
-    : activeCategory;
-  const visible = filterCategory === ALL_CATEGORIES
-    ? recipes
-    : recipes.filter((item) => item.category === filterCategory);
+  // A scene carries its own card filter, overriding the category pick while
+  // it is armed.
+  const visible = activeScene
+    ? recipes.filter(activeScene.matches)
+    : activeCategory === ALL_CATEGORIES
+      ? recipes
+      : recipes.filter((item) => item.category === activeCategory);
 
   const pillCategories = categories.slice(0, VISIBLE_CATEGORY_COUNT);
   // The active category always renders as a pill, even when it lives in the
@@ -188,9 +203,15 @@ export function DesignExamplePrompts({
               label={scene.label}
               icon={scene.icon}
               selected={recipe === scene.recipe}
-              // Re-picking the armed scene steps back to bare 原型, not out
-              // of the family — the rail chip owns leaving it.
-              onClick={() => onPickPrototypeScene?.(recipe === scene.recipe ? "ui-mockup" : scene.recipe)}
+              // The row is one selection slot, as upstream's: arming a scene
+              // replaces any facet pick rather than layering on top of it, so
+              // stepping back out cannot land on a stale filter. Re-picking
+              // the armed scene steps back to bare 原型, not out of the
+              // family — the rail chip owns leaving it.
+              onClick={() => {
+                setCategory(ALL_CATEGORIES);
+                onPickPrototypeScene?.(recipe === scene.recipe ? "ui-mockup" : scene.recipe);
+              }}
             />
           ))}
           {PROTOTYPE_ROW_TAIL.map(sceneCategoryPill)}

@@ -278,17 +278,10 @@ function CreateChip({
 }
 
 /**
- * The creation rail: one row that shows as many types as fit and folds the
- * rest behind 全部.
- *
- * Measurement, not a scroll container: a rail that scrolls hides the types it
- * cut off behind a gesture, while folding them into a menu keeps every type
- * one click away at any width. Which chips fit is a layout fact, so it is read
- * from the DOM after paint rather than guessed from a character count — chip
- * widths depend on the rendered font.
- *
- * The selected chip is always shown, even when it would measure out: a rail
- * that hides the active选择 reads as if nothing is selected at all.
+ * The creation rail: Open Design's fixed ten, all visible. The row wraps on
+ * narrow widths instead of folding into a menu — with the list capped at ten
+ * there is nothing worth hiding, and a rail that always shows every type
+ * reads as the complete surface at a glance.
  */
 function CreateTypeRail({
   recipe,
@@ -300,128 +293,28 @@ function CreateTypeRail({
   recipe: DesignDocumentRecipe | string;
   onPick: (recipe: Exclude<DesignDocumentRecipe, "default">) => void;
 }) {
-  const railRef = useRef<HTMLDivElement | null>(null);
-  const chipRefs = useRef(new Map<string, HTMLElement>());
-  const [hiddenIds, setHiddenIds] = useState<ReadonlySet<string>>(() => new Set());
-
-  const selectedId = recipe === "default" ? null : recipe;
-
-  useEffect(() => {
-    const rail = railRef.current;
-    if (!rail) return;
-
-    const measure = () => {
-      // No layout to read yet (first paint, a hidden ancestor, or a test
-      // environment without layout). Folding on a zero width would hide every
-      // chip; showing them all is the honest answer until a real width exists.
-      if (rail.clientWidth === 0) {
-        setHiddenIds((current) => (current.size === 0 ? current : new Set()));
-        return;
-      }
-      // Room the 全部 trigger needs once anything folds. Reserved
-      // unconditionally: measuring against the full width would let the last
-      // chip fit, then be pushed out by the trigger it caused to appear.
-      const reserved = 84;
-      const limit = rail.clientWidth - reserved;
-      const next = new Set<string>();
-      // The selected chip is never folded, so its width is committed before
-      // anything competes for the row. Charging it in document order instead
-      // would let earlier chips spend the budget and leave the selected one to
-      // be clipped by the rail's own overflow.
-      const selectedNode = selectedId ? chipRefs.current.get(selectedId) : undefined;
-      let used = selectedNode ? selectedNode.offsetWidth + 6 : 0;
-      for (const type of CREATE_TYPES) {
-        if (type.id === selectedId) continue;
-        const node = chipRefs.current.get(type.id);
-        if (!node) continue;
-        const width = node.offsetWidth + 6; // gap-1.5
-        if (used + width > limit) {
-          next.add(type.id);
-          continue;
-        }
-        used += width;
-      }
-      setHiddenIds((current) => {
-        if (current.size === next.size && [...next].every((id) => current.has(id))) return current;
-        return next;
-      });
-    };
-
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(rail);
-    return () => observer.disconnect();
-  }, [selectedId]);
-
-  const hiddenTypes = CREATE_TYPES.filter((type) => hiddenIds.has(type.id));
-
   return (
-    <div role="group" aria-label="设计场景" className="relative flex items-center gap-1.5">
-      <div ref={railRef} className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-        {CREATE_TYPES.map((type) => (
-          <div
-            key={type.id}
-            ref={(node) => {
-              if (node) chipRefs.current.set(type.id, node);
-              else chipRefs.current.delete(type.id);
-            }}
-            // Folded chips stay mounted so their width remains measurable —
-            // remeasuring an unmounted chip is what makes a rail oscillate
-            // between two widths.
-            className={cn("shrink-0", hiddenIds.has(type.id) && "pointer-events-none absolute -z-10 opacity-0")}
-            aria-hidden={hiddenIds.has(type.id) || undefined}
-          >
-            <CreateChip
-              label={type.label}
-              description={type.description}
-              icon={type.icon}
-              // 原型 reads as selected for its whole family — plain or
-              // refined into a scene below — so the rail never looks empty
-              // while a scene chip is what is actually active.
-              selected={
-                type.recipe
-                  ? type.id === "ui-mockup"
-                    ? PROTOTYPE_FAMILY.has(recipe)
-                    : recipe === type.recipe
-                  : undefined
-              }
-              disabled={!type.recipe}
-              onClick={type.recipe ? () => onPick(type.recipe!) : undefined}
-            />
-          </div>
-        ))}
-      </div>
-      {hiddenTypes.length > 0 ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <button
-                type="button"
-                aria-label={`全部设计场景，另有 ${hiddenTypes.length} 项`}
-                className="flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-full border bg-card px-2.5 text-caption text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <span>全部</span>
-                <ChevronDown className="size-3.5 shrink-0" />
-              </button>
-            }
-          />
-          <DropdownMenuContent align="end" className="w-56">
-            {hiddenTypes.map((type) => (
-              <DropdownMenuItem
-                key={type.id}
-                disabled={!type.recipe}
-                onClick={type.recipe ? () => onPick(type.recipe!) : undefined}
-              >
-                <type.icon className="size-4 shrink-0" />
-                <span className="flex-1 truncate">{type.label}</span>
-                {!type.recipe ? (
-                  <span className="shrink-0 text-caption text-muted-foreground">即将支持</span>
-                ) : null}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : null}
+    <div role="group" aria-label="设计场景" className="flex flex-wrap items-center gap-1.5">
+      {CREATE_TYPES.map((type) => (
+        <CreateChip
+          key={type.id}
+          label={type.label}
+          description={type.description}
+          icon={type.icon}
+          // 原型 reads as selected for its whole family — plain or refined
+          // into a scene on the example wall's row — so the rail never looks
+          // empty while a scene recipe is what is actually armed.
+          selected={
+            type.recipe
+              ? type.id === "ui-mockup"
+                ? PROTOTYPE_FAMILY.has(recipe)
+                : recipe === type.recipe
+              : undefined
+          }
+          disabled={!type.recipe}
+          onClick={type.recipe ? () => onPick(type.recipe!) : undefined}
+        />
+      ))}
     </div>
   );
 }
