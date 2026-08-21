@@ -2,7 +2,9 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, TriangleAlert, Wrench } from "lucide-react";
+import { splitAgentUi } from "@multica/core/designs/agent-ui";
 import { cn } from "@multica/ui/lib/utils";
+import { DesignAgentCard, DesignAgentForm } from "./design-agent-form";
 // Straight from the module, not the package barrel: the barrel also carries
 // the transcript dialog and button, so surfaces that mock it for those React
 // components would otherwise stub this pure function out from under us.
@@ -26,7 +28,13 @@ function toolSummary(item: TimelineItem): string {
   return "";
 }
 
-function ConversationRow({ item }: { item: TimelineItem }) {
+function ConversationRow({
+  item,
+  onAnswerForm,
+}: {
+  item: TimelineItem;
+  onAnswerForm?: (text: string) => void;
+}) {
   if (item.type === "tool_use") {
     const summary = toolSummary(item);
     return (
@@ -45,6 +53,36 @@ function ConversationRow({ item }: { item: TimelineItem }) {
       </div>
     );
   }
+  // `text` may carry the UI blocks the agent writes into its own prose — a
+  // question form, or a display card showing its work. Splitting keeps the
+  // words around a block exactly where the agent put them.
+  const segments = item.type === "text" ? splitAgentUi(item.content ?? "") : null;
+  if (segments && segments.some((segment) => segment.kind !== "text")) {
+    return (
+      <div className="flex min-w-0 flex-col gap-2">
+        {segments.map((segment, index) => {
+          if (segment.kind === "form") {
+            return (
+              <DesignAgentForm
+                key={`${item.seq}-${index}`}
+                form={segment.form}
+                {...(onAnswerForm ? { onSubmit: onAnswerForm } : {})}
+              />
+            );
+          }
+          if (segment.kind === "card") {
+            return <DesignAgentCard key={`${item.seq}-${index}`} card={segment.card} />;
+          }
+          return segment.text.trim() ? (
+            <p key={`${item.seq}-${index}`} className="min-w-0 whitespace-pre-wrap break-words text-caption">
+              {segment.text.trim()}
+            </p>
+          ) : null;
+        })}
+      </div>
+    );
+  }
+
   // `thinking` is the agent reasoning aloud and `text` is what it says; both
   // are prose, so they read as prose. Thinking stays muted so the two are
   // still distinguishable without a label for each line.
@@ -77,11 +115,18 @@ export function DesignRunConversation({
   messages,
   live,
   className,
+  onAnswerForm,
 }: {
   messages: TaskMessagePayload[];
   /** The task is still running: follow the tail and keep the region polite. */
   live: boolean;
   className?: string;
+  /**
+   * Receives a submitted question-form's answer text. Absent renders any form
+   * read-only — which is the honest state on a surface that has nowhere to
+   * send a reply.
+   */
+  onAnswerForm?: (text: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [following, setFollowing] = useState(true);
@@ -123,7 +168,11 @@ export function DesignRunConversation({
         className="no-scrollbar flex max-h-56 flex-col gap-2 overflow-y-auto rounded-lg border bg-muted/30 px-3 py-2.5"
       >
         {visible.map((item) => (
-          <ConversationRow key={item.seq} item={item} />
+          <ConversationRow
+            key={item.seq}
+            item={item}
+            {...(onAnswerForm ? { onAnswerForm } : {})}
+          />
         ))}
       </div>
       {live && !following ? (
