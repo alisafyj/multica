@@ -681,16 +681,16 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
             >
               <div className="shrink-0 overflow-x-auto overflow-y-hidden border-b px-4">
                 <TabsList variant="line" className="h-10 gap-5 p-0 group-data-horizontal/tabs:h-10">
-                  <TabsTrigger value="create" className="h-10 flex-none gap-2 px-1">
+                  <TabsTrigger value="create" className="h-10 flex-none gap-2 px-1 group-data-horizontal/tabs:after:bottom-0">
                     <Sparkles className="h-3.5 w-3.5" />
                     <span>创作</span>
                   </TabsTrigger>
-                  <TabsTrigger value="community" className="h-10 flex-none gap-2 px-1">
+                  <TabsTrigger value="community" className="h-10 flex-none gap-2 px-1 group-data-horizontal/tabs:after:bottom-0">
                     <Users className="h-3.5 w-3.5" />
                     <span>社区</span>
                     <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1 text-micro font-normal tabular-nums">{scenarioRecipes.length}</Badge>
                   </TabsTrigger>
-                  <TabsTrigger value="systems" className="h-10 flex-none gap-2 px-1">
+                  <TabsTrigger value="systems" className="h-10 flex-none gap-2 px-1 group-data-horizontal/tabs:after:bottom-0">
                     <Palette className="h-3.5 w-3.5" />
                     <span>设计体系</span>
                     <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1 text-micro font-normal tabular-nums">{designSystemCatalogue.length}</Badge>
@@ -750,24 +750,24 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
           >
             <div className="shrink-0 overflow-x-auto overflow-y-hidden border-b px-4">
               <TabsList variant="line" className="h-10 gap-5 p-0 group-data-horizontal/tabs:h-10">
-                <TabsTrigger value="designs" className="h-10 flex-none gap-2 px-1">
+                <TabsTrigger value="designs" className="h-10 flex-none gap-2 px-1 group-data-horizontal/tabs:after:bottom-0">
                   <Folder className="h-3.5 w-3.5" />
                   <span>设计稿</span>
                   {/* Both halves of the tab: generated page designs and the
                       files imported into it. */}
                   <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1 text-micro font-normal tabular-nums">{projectFiles.length + projectDocuments.length}</Badge>
                 </TabsTrigger>
-                <TabsTrigger value="drafts" className="h-10 flex-none gap-2 px-1">
+                <TabsTrigger value="drafts" className="h-10 flex-none gap-2 px-1 group-data-horizontal/tabs:after:bottom-0">
                   <ClipboardList className="h-3.5 w-3.5" />
                   <span>设计草稿</span>
                   <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1 text-micro font-normal tabular-nums">{pendingDesignDrafts.length}</Badge>
                 </TabsTrigger>
-                <TabsTrigger value="templates" className="h-10 flex-none gap-2 px-1">
+                <TabsTrigger value="templates" className="h-10 flex-none gap-2 px-1 group-data-horizontal/tabs:after:bottom-0">
                   <FileJson className="h-3.5 w-3.5" />
                   <span>模版</span>
                   <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1 text-micro font-normal tabular-nums">{projectTemplates.length}</Badge>
                 </TabsTrigger>
-                <TabsTrigger value="systems" className="h-10 flex-none gap-2 px-1">
+                <TabsTrigger value="systems" className="h-10 flex-none gap-2 px-1 group-data-horizontal/tabs:after:bottom-0">
                   <Palette className="h-3.5 w-3.5" />
                   <span>设计体系</span>
                   <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1 text-micro font-normal tabular-nums">{projectDesignSystemCount}</Badge>
