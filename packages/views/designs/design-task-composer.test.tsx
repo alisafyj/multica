@@ -482,7 +482,6 @@ describe("DesignTaskComposer", () => {
 
     await user.click(screen.getByRole("button", { name: "设计体系" }));
     await user.click(await screen.findByRole("button", { name: "品牌视觉基线" }));
-    expect(screen.getByText(/设计体系已指定/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "生成页面设计" }));
     await waitFor(() => expect(createDesignDocument).toHaveBeenCalledWith(
@@ -630,22 +629,22 @@ describe("DesignTaskComposer", () => {
     );
   });
 
-  it("states plainly that no repository was read, without framing it as an error", async () => {
+  // 2026-08-21, user request: the strip below the input no longer carries
+  // standing repository / design-system state hints. DC-053's "never leave the
+  // user believing the agent read code" guarantee lives in the post-submit
+  // toast and the server's repository_grounded flag (next test), not here.
+  it("keeps the strip below the input free of repository and design-system state hints", async () => {
     const user = userEvent.setup();
     renderComposer();
 
-    // DC-053: skipping the repository is a legitimate choice, so the copy is a
-    // statement of what will happen — but it must never leave the user
-    // believing the agent inspected code.
-    expect(
-      await screen.findByText(/未选择仓库：本次不读取任何代码仓库/),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/未选择仓库/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/设计体系未指定/)).not.toBeInTheDocument();
 
     await pickProject(user);
     await user.click(await screen.findByRole("button", { name: "代码仓库" }));
     await user.click(await screen.findByRole("button", { name: "crm-h5" }));
 
-    expect(await screen.findByText(/已选择仓库：智能体会在任务内对该仓库做一次有界只读取证/)).toBeInTheDocument();
+    expect(screen.queryByText(/已选择仓库/)).not.toBeInTheDocument();
   });
 
   it("reports grounding from the server's own flag, not from what was submitted", async () => {

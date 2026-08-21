@@ -1093,25 +1093,19 @@ export function DesignTaskComposer({
             </div>
           ) : null}
 
-          {/* DC-053: no repository is a legitimate way to work, so this reads as
-              a statement of what will happen, never as a warning. What it must
-              never do is leave the user believing the agent read code. */}
-          {mode === "design" ? (
-            <p className="mt-3 text-caption text-muted-foreground">
-              {activeRepositoryId
-                ? "已选择仓库：智能体会在任务内对该仓库做一次有界只读取证。"
-                : "未选择仓库：本次不读取任何代码仓库，智能体只依据你的描述与关联任务生成。"}
-              {designSystemId || builtinSlug
-                ? "设计体系已指定：本次按你选中的体系设计，不使用项目自己的体系。"
-                : "设计体系未指定：沿用所选仓库或项目自己的设计体系。"}
-            </p>
-          ) : (
+          {/* The composer modes that hand the brief to a chat need one line
+              saying where the submit goes; nothing else on the panel does. The
+              repository / design-system state hint that used to share this slot
+              was dropped at the user's request (2026-08-21): the "agent did not
+              read code" guarantee lives in the post-submit toast and the
+              server's repository_grounded flag, not in standing copy. */}
+          {mode !== "design" ? (
             <p className="mt-3 text-caption text-muted-foreground">
               {mode === "plan"
                 ? "规划会以对话进行：智能体产出可修改的设计规划，最终的需求描述可以带回这里生成设计稿。"
                 : "提问会以对话进行，不创建新的设计稿。"}
             </p>
-          )}
+          ) : null}
         </div>
 
         {/* Open Design breaks its equivalent strip and grid out of the hero's
