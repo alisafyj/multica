@@ -1552,9 +1552,27 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			case aborted := <-turnDone:
 				finishTurn(aborted)
 			case activity := <-semanticActivityCh:
-				lastSemanticActivity = time.Now()
 				lastSemanticActivityDescription = activity
-				resetTimer(semanticTimer, semanticInactivityTimeout)
+				// A provider retry is not progress. Codex emits error:retry
+				// every time it reconnects a dropped model stream, so a run
+				// whose stream keeps failing produces a steady beat of
+				// activity while accomplishing nothing — and a watchdog that
+				// accepts it never fires. Observed: a run held open for ~30
+				// minutes on a dead stream, three times the 10 minute
+				// watchdog, ending only when Codex itself gave up.
+				//
+				// The description is still recorded even when the clock is
+				// not reset, so the timeout diagnostic names the retry storm
+				// that held the run open and idle_for measures from the last
+				// real progress rather than the last reconnect.
+				//
+				// isCodexFirstTurnProgressActivity already refuses error:retry
+				// for the first-turn timer; this is the same rule applied to
+				// the timer that governs the rest of the run.
+				if activity != codexRetryActivity {
+					lastSemanticActivity = time.Now()
+					resetTimer(semanticTimer, semanticInactivityTimeout)
+				}
 				if activity == "status:running" && !firstTurnStarted {
 					firstTurnStarted = true
 					firstItemWait.start(time.Now())
@@ -2004,8 +2022,13 @@ func codexFirstTurnNoProgressTimeout(semanticInactivityTimeout, configured time.
 	return scaled
 }
 
+// codexRetryActivity is the semantic activity Codex reports when it reconnects
+// a dropped model stream. It is the one activity that proves the opposite of
+// progress, so both inactivity timers refuse it.
+const codexRetryActivity = "error:retry"
+
 func isCodexFirstTurnProgressActivity(activity string) bool {
-	return activity != "" && activity != "status:running" && activity != "error:retry"
+	return activity != "" && activity != "status:running" && activity != codexRetryActivity
 }
 
 func buildCodexTimeoutDiagnosticError(diag codexTimeoutDiagnostic, stderrTail string) string {

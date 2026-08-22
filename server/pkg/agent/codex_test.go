@@ -5838,3 +5838,55 @@ func TestCodexHandleServerRequestAcceptsFileChangeInsideWorkspace(t *testing.T) 
 		t.Fatalf("expected decision=accept for in-workspace patch path, got %v", result["decision"])
 	}
 }
+
+// A retry storm must not hold a run open forever.
+//
+// Codex emits an `error` notification with willRetry=true every time it
+// reconnects a dropped model stream. Those reconnects used to reset the
+// semantic-inactivity watchdog, so a run whose provider stream kept failing
+// looked continuously active while producing nothing: the 10 minute watchdog
+// never fired, and a real run survived ~30 minutes on a dead stream before
+// Codex itself gave up. The retries are recorded but no longer count as
+// progress, so the watchdog fires on schedule.
+func TestCodexSemanticInactivityFiresThroughARetryStorm(t *testing.T) {
+	t.Parallel()
+
+	// Reconnect notifications arrive faster than the watchdog window, which is
+	// precisely the shape that used to keep the timer permanently armed.
+	fakePath := writeFakeCodexAppServer(t, ""+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
+		`read line`+"\n"+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-retry"}}}'`+"\n"+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
+		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-retry","turn":{"id":"turn-retry"}}}'`+"\n"+
+		`i=0`+"\n"+
+		`while [ $i -lt 25 ]; do`+"\n"+
+		`  echo '{"jsonrpc":"2.0","method":"error","params":{"error":{"message":"stream disconnected before completion"},"willRetry":true}}'`+"\n"+
+		`  sleep 0.1`+"\n"+
+		`  i=$((i+1))`+"\n"+
+		`done`+"\n")
+
+	result := executeFakeCodex(t, fakePath, ExecOptions{
+		// The execution ceiling sits far above the watchdog, so a run that
+		// reaches it proves the watchdog never fired rather than that the
+		// fixture ran out of script.
+		Timeout:                    3 * time.Second,
+		SemanticInactivityTimeout:  400 * time.Millisecond,
+		FirstTurnNoProgressTimeout: 3 * time.Second,
+	})
+
+	if result.Status != "timeout" {
+		t.Fatalf("expected timeout, got status=%q error=%q", result.Status, result.Error)
+	}
+	if !strings.Contains(result.Error, CodexSemanticInactivityMarker) {
+		t.Fatalf("a retry storm must trip the inactivity watchdog, got %q", result.Error)
+	}
+	// The diagnostic has to name what held the run open; "last activity:
+	// error:retry" is the whole story of this failure.
+	if !strings.Contains(result.Error, codexRetryActivity) {
+		t.Fatalf("timeout diagnostic should name the retry storm, got %q", result.Error)
+	}
+}
