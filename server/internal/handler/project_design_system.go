@@ -18,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -48,7 +49,7 @@ type CreateProjectDesignSystemRequest struct {
 	ProjectID string `json:"project_id"`
 	// Optional. Empty creates the project-level system used across
 	// repositories; a repository id creates that repository's own (DC-052).
-	ProjectResourceID string                              `json:"project_resource_id"`
+	ProjectResourceID string `json:"project_resource_id"`
 	// Name of a standalone system. Ignored for project systems, which take
 	// the project's title.
 	Name       string                              `json:"name"`
@@ -790,6 +791,7 @@ func (h *Handler) createProjectDesignSystemTask(
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
 	}
 	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{
+		ID:        dbid.NewV7(),
 		AgentID:   agent.ID,
 		RuntimeID: agent.RuntimeID,
 		Priority:  0,
@@ -883,6 +885,7 @@ func (h *Handler) createStandaloneDesignSystemTask(
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
 	}
 	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{
+		ID:        dbid.NewV7(),
 		AgentID:   agent.ID,
 		RuntimeID: agent.RuntimeID,
 		Priority:  0,
@@ -996,7 +999,7 @@ func (h *Handler) createProjectDesignSystemRepositoryAnalysisTask(
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build repository analysis task context")
 	}
-	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
+	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{ID: dbid.NewV7(), AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("enqueue_failed", "failed to enqueue repository analysis")
 	}
@@ -1108,7 +1111,7 @@ func (h *Handler) enqueueExistingProjectDesignSystemTask(
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
 	}
-	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
+	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{ID: dbid.NewV7(), AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("enqueue_failed", "failed to enqueue design system operation")
 	}

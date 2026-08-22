@@ -43,7 +43,7 @@ func createDesignDocumentAttachmentForTest(t *testing.T, storage *mockStorage, f
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, attachment.ID)
 	})
-	return attachment
+	return attachment.Attachment()
 }
 
 func sha256ReferenceForTest(body []byte) string {

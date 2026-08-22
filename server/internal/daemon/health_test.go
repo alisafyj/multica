@@ -3,9 +3,11 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -319,18 +321,67 @@ func TestRepoCheckoutUsesTaskScopedProjectRefByDefault(t *testing.T) {
 	const workspaceID = "ws-checkout"
 	const repoURL = "https://github.com/org/repo.git"
 	cache := &recordingRepoCache{lookupPath: "/cache/org/repo.git"}
-	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, cache)
+	workDir := t.TempDir()
+	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, workDir, cache)
 	d.registerTaskRepos(workspaceID, "task-1", []RepoData{{URL: repoURL, Ref: "release/v2"}})
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"/tmp/work","task_id":"task-1"}`)
-	d.repoCheckoutHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/repo/checkout", body))
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","agent_name":"Other Agent","task_id":"task-1"}`)
+	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if got := cache.lastCreateParams().Ref; got != "release/v2" {
 		t.Fatalf("CreateWorktree Ref = %q, want release/v2", got)
+	}
+	if got := cache.lastCreateParams().AgentName; got != "Test Agent" {
+		t.Fatalf("CreateWorktree AgentName = %q, want token-bound active agent", got)
+	}
+}
+
+func TestRepoCheckoutRejectsMissingTaskCredential(t *testing.T) {
+	t.Parallel()
+
+	const workspaceID = "ws-checkout"
+	const repoURL = "https://github.com/org/repo.git"
+	cache := &recordingRepoCache{lookupPath: "/cache/org/repo.git"}
+	workDir := t.TempDir()
+	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, workDir, cache)
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1"}`)
+	d.repoCheckoutHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/repo/checkout", body))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// WorktreeParams gained a []string field upstream, so it is no longer comparable.
+	if got := cache.lastCreateParams(); !reflect.DeepEqual(got, repocache.WorktreeParams{}) {
+		t.Fatalf("unauthorized checkout reached repo cache: %+v", got)
+	}
+}
+
+func TestRepoCheckoutRejectsAnotherTaskWorkdir(t *testing.T) {
+	t.Parallel()
+
+	const workspaceID = "ws-checkout"
+	const repoURL = "https://github.com/org/repo.git"
+	cache := &recordingRepoCache{lookupPath: "/cache/org/repo.git"}
+	workDir := t.TempDir()
+	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, workDir, cache)
+	otherWorkDir := t.TempDir()
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + otherWorkDir + `","task_id":"task-1"}`)
+	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// WorktreeParams gained a []string field upstream, so it is no longer comparable.
+	if got := cache.lastCreateParams(); !reflect.DeepEqual(got, repocache.WorktreeParams{}) {
+		t.Fatalf("cross-task workdir checkout reached repo cache: %+v", got)
 	}
 }
 
@@ -340,12 +391,13 @@ func TestRepoCheckoutExplicitRefOverridesProjectDefault(t *testing.T) {
 	const workspaceID = "ws-checkout"
 	const repoURL = "https://github.com/org/repo.git"
 	cache := &recordingRepoCache{lookupPath: "/cache/org/repo.git"}
-	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, cache)
+	workDir := t.TempDir()
+	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, workDir, cache)
 	d.registerTaskRepos(workspaceID, "task-1", []RepoData{{URL: repoURL, Ref: "release/v2"}})
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"/tmp/work","task_id":"task-1","ref":"hotfix"}`)
-	d.repoCheckoutHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/repo/checkout", body))
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1","ref":"hotfix"}`)
+	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -361,11 +413,12 @@ func TestRepoCheckoutForwardsIsolatedMode(t *testing.T) {
 	const workspaceID = "ws-checkout"
 	const repoURL = "https://github.com/org/repo.git"
 	cache := &recordingRepoCache{lookupPath: "/cache/org/repo.git"}
-	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, cache)
+	workDir := t.TempDir()
+	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, workDir, cache)
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"/tmp/work","task_id":"task-1","checkout_mode":"isolated"}`)
-	d.repoCheckoutHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/repo/checkout", body))
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1","checkout_mode":"isolated"}`)
+	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -381,11 +434,12 @@ func TestRepoCheckoutRejectsUnknownMode(t *testing.T) {
 	const workspaceID = "ws-checkout"
 	const repoURL = "https://github.com/org/repo.git"
 	cache := &recordingRepoCache{lookupPath: "/cache/org/repo.git"}
-	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, cache)
+	workDir := t.TempDir()
+	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, workDir, cache)
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"/tmp/work","task_id":"task-1","checkout_mode":"unsafe"}`)
-	d.repoCheckoutHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/repo/checkout", body))
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1","checkout_mode":"unsafe"}`)
+	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
@@ -404,11 +458,12 @@ func TestRepoCheckoutReturnsRetryableBusyToCapableClient(t *testing.T) {
 	const workspaceID = "ws-checkout"
 	const repoURL = "https://github.com/org/repo.git"
 	cache := &busyRepoCache{recordingRepoCache: recordingRepoCache{lookupPath: "/cache/org/repo.git"}}
-	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, cache)
+	workDir := t.TempDir()
+	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, workDir, cache)
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"/tmp/work","task_id":"task-1","retry_busy":true}`)
-	d.repoCheckoutHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/repo/checkout", body))
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1","retry_busy":true}`)
+	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
@@ -424,7 +479,7 @@ func TestRepoCheckoutReturnsRetryableBusyToCapableClient(t *testing.T) {
 	}
 }
 
-func newRepoCheckoutTestDaemon(t *testing.T, workspaceID, repoURL string, cache repoCacheBackend) *Daemon {
+func newRepoCheckoutTestDaemon(t *testing.T, workspaceID, repoURL, workDir string, cache repoCacheBackend) *Daemon {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/daemon/workspaces/"+workspaceID+"/repos" {
@@ -438,7 +493,7 @@ func newRepoCheckoutTestDaemon(t *testing.T, workspaceID, repoURL string, cache 
 		})
 	}))
 	t.Cleanup(srv.Close)
-	return &Daemon{
+	d := &Daemon{
 		cfg:       Config{CLIVersion: "v1.0.0"},
 		client:    NewClient(srv.URL),
 		repoCache: cache,
@@ -447,6 +502,20 @@ func newRepoCheckoutTestDaemon(t *testing.T, workspaceID, repoURL string, cache 
 		},
 		logger: slog.Default(),
 	}
+	d.registerActiveRepoCheckoutTask("mat_repo_checkout_test", activeRepoCheckoutTask{
+		WorkspaceID: workspaceID,
+		TaskID:      "task-1",
+		AgentID:     "agent-1",
+		AgentName:   "Test Agent",
+		WorkDir:     workDir,
+	})
+	return d
+}
+
+func authorizedRepoCheckoutRequest(body io.Reader) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/repo/checkout", body)
+	req.Header.Set("Authorization", "Bearer mat_repo_checkout_test")
+	return req
 }
 
 type busyRepoCache struct {
@@ -584,12 +653,13 @@ func TestRepoCheckoutPassesPeerURLsForMultiRepoTask(t *testing.T) {
 	const repoB = "https://github.com/org-b/app.git"
 
 	cache := &recordingRepoCache{lookupPath: "/cache/org-a/app.git"}
-	d := newRepoCheckoutTestDaemon(t, workspaceID, repoA, cache)
+	workDir := t.TempDir()
+	d := newRepoCheckoutTestDaemon(t, workspaceID, repoA, workDir, cache)
 	d.registerTaskRepos(workspaceID, "task-1", []RepoData{{URL: repoA}, {URL: repoB}})
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoA + `","workspace_id":"` + workspaceID + `","workdir":"/tmp/work","task_id":"task-1"}`)
-	d.repoCheckoutHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/repo/checkout", body))
+	body := strings.NewReader(`{"url":"` + repoA + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1"}`)
+	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
 
 	got := cache.lastCreateParams()
 	if len(got.PeerURLs) != 2 {
@@ -611,12 +681,13 @@ func TestRepoCheckoutOmitsPeerURLsForSingleRepoTask(t *testing.T) {
 	const repoURL = "https://github.com/org/repo.git"
 
 	cache := &recordingRepoCache{lookupPath: "/cache/org/repo.git"}
-	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, cache)
+	workDir := t.TempDir()
+	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, workDir, cache)
 	d.registerTaskRepos(workspaceID, "task-1", []RepoData{{URL: repoURL}})
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"/tmp/work","task_id":"task-1"}`)
-	d.repoCheckoutHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/repo/checkout", body))
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1"}`)
+	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
 
 	if got := cache.lastCreateParams(); len(got.PeerURLs) != 0 {
 		t.Fatalf("PeerURLs = %v, want empty for a single-repo task", got.PeerURLs)

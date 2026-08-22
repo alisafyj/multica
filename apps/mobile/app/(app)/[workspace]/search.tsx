@@ -30,7 +30,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useTranslation } from "react-i18next";
 import type {
   Issue,
-  IssueStatus,
+  IssueStatusCategory,
   SearchIssueResult,
   SearchProjectResult,
 } from "@multica/core/types";
@@ -46,7 +46,9 @@ import {
   useViewedIssuesStore,
 } from "@/data/viewed-issues-store";
 import { issueDetailOptions } from "@/data/queries/issues";
+import { issueColumnCategory } from "@/lib/issue-status";
 import { useIssueLabels } from "@/lib/use-issue-labels";
+import { useIssueStatuses } from "@/lib/use-issue-statuses";
 import { useProjectLabels } from "@/lib/use-project-labels";
 import { buildSearchRows, type RowItem } from "@/lib/search-rows";
 
@@ -121,11 +123,12 @@ function HighlightText({
 // RowItem + buildSearchRows live in lib/search-rows.ts so the ordering rules
 // (including the cancelled partition) are testable without mounting the screen.
 
-function issueIconColor(status: IssueStatus): string {
+function issueIconColor(category: IssueStatusCategory): string {
   // Tag color for the status label at the end of an issue row.
-  // Mirrors STATUS_CONFIG.iconColor (status-icon.tsx STATUS_COLOR) so the
-  // text tint matches the leading status icon visually.
-  switch (status) {
+  // Mirrors STATUS_CONFIG.iconColor (status-icon.tsx CATEGORY_COLOR) so the
+  // text tint matches the leading status icon visually. Keyed on CATEGORY: a
+  // custom status inherits its category's tint, exactly as its glyph does.
+  switch (category) {
     case "in_progress":
       return "text-warning";
     case "in_review":
@@ -160,16 +163,23 @@ function SearchIssueRow({ item, query, slug }: SearchIssueRowProps) {
   // (packages/views/search/search-command.tsx:632) and the backend only
   // populates `matched_snippet` for comment matches anyway
   // (server/internal/handler/issue.go:592). Keep mobile strictly aligned.
-  const { statusLabel } = useIssueLabels();
   const showSnippet =
     item.match_source === "comment" && !!item.matched_snippet;
+  const { statusLabel } = useIssueLabels();
+  const { colorOf } = useIssueStatuses();
+  const category = issueColumnCategory(item);
   return (
     <Pressable
       onPress={() => navigateOnTap(slug, `/${slug}/issue/${item.id}`)}
       className="active:bg-secondary px-4 py-3"
     >
       <View className="flex-row items-center gap-3">
-        <StatusIcon status={item.status as IssueStatus} size={14} />
+        <StatusIcon
+          status={item.status}
+          category={category}
+          color={colorOf(item.status)}
+          size={14}
+        />
         <PriorityIcon priority={item.priority} size={14} />
         <Text className="text-xs text-muted-foreground shrink-0 w-16">
           {item.identifier}
@@ -182,7 +192,7 @@ function SearchIssueRow({ item, query, slug }: SearchIssueRowProps) {
             numberOfLines={1}
           />
         </View>
-        <Text className={`text-xs shrink-0 ${issueIconColor(item.status as IssueStatus)}`}>
+        <Text className={`text-xs shrink-0 ${issueIconColor(category)}`}>
           {statusLabel(item.status)}
         </Text>
       </View>
@@ -263,20 +273,27 @@ interface RecentRowProps {
 
 function RecentRow({ item, slug }: RecentRowProps) {
   const { statusLabel } = useIssueLabels();
+  const { colorOf } = useIssueStatuses();
+  const category = issueColumnCategory(item);
   return (
     <Pressable
       onPress={() => navigateOnTap(slug, `/${slug}/issue/${item.id}`)}
       className="active:bg-secondary px-4 py-3"
     >
       <View className="flex-row items-center gap-3">
-        <StatusIcon status={item.status as IssueStatus} size={14} />
+        <StatusIcon
+          status={item.status}
+          category={category}
+          color={colorOf(item.status)}
+          size={14}
+        />
         <Text className="text-xs text-muted-foreground shrink-0 w-16">
           {item.identifier}
         </Text>
         <Text className="flex-1 text-sm text-foreground" numberOfLines={1}>
           {item.title}
         </Text>
-        <Text className={`text-xs shrink-0 ${issueIconColor(item.status as IssueStatus)}`}>
+        <Text className={`text-xs shrink-0 ${issueIconColor(category)}`}>
           {statusLabel(item.status)}
         </Text>
       </View>

@@ -33,6 +33,7 @@
   },
   "help": {
     "trigger": "Help",
+    "download_desktop": "Desktop app",
     "docs": "Docs",
     "changelog": "Change log",
     "download_clients": "Download apps",

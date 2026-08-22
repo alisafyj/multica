@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 	"io"
 	"net/http"
 	"strings"
@@ -161,6 +162,7 @@ func (h *Handler) regenerateDesignDocumentTask(
 	}
 
 	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{
+		ID:        dbid.NewV7(),
 		AgentID:   agent.ID,
 		RuntimeID: agent.RuntimeID,
 		Priority:  0,

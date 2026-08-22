@@ -53,6 +53,7 @@ vi.mock("./account-tab", () => ({ AccountTab: () => null }));
 vi.mock("./preferences-tab", () => ({ PreferencesTab: () => null }));
 vi.mock("./keyboard-shortcuts-tab", () => ({ KeyboardShortcutsTab: () => null }));
 vi.mock("./issue-tab", () => ({ IssueTab: () => null }));
+vi.mock("./issue-statuses-tab", () => ({ IssueStatusesTab: () => null }));
 vi.mock("./chat-tab", () => ({ ChatTab: () => null }));
 vi.mock("./tokens-tab", () => ({ TokensTab: () => <div>Token settings</div> }));
 vi.mock("./workspace-tab", () => ({ WorkspaceTab: () => null }));
@@ -68,6 +69,7 @@ vi.mock("./quick-actions-tab", () => ({ QuickActionsTab: () => null }));
 vi.mock("./mcp-tab", () => ({ McpTab: () => null }));
 
 import { SettingsPage } from "./settings-page";
+
 
 describe("SettingsPage auth mode", () => {
   it.each([true, null])("hides PAT settings when useSySso is %s", (mode) => {

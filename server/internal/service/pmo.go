@@ -13,6 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
 const PMOSyncContextType = "pmo_sync"
@@ -289,6 +290,7 @@ func (s *PMOService) StartRun(ctx context.Context, workspaceID, configID, reques
 		overlayData = s.TaskSvc.buildRuntimeMCPOverlay(ctx, requestedBy, agent)
 	}
 	task, err := qtx.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{
+		ID:                   dbid.NewV7(),
 		AgentID:              agent.ID,
 		RuntimeID:            agent.RuntimeID,
 		Priority:             priorityToInt("high"),

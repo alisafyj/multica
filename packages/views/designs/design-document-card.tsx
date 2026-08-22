@@ -176,7 +176,7 @@ export function DesignDocumentCard({
         aria-hidden
         className="relative flex aspect-[16/9] items-center justify-center overflow-hidden rounded-lg"
       >
-        <span className="text-display font-medium text-foreground/25">{cover.initial}</span>
+        <span className="text-display font-medium text-faint-foreground">{cover.initial}</span>
         {/* Hairline ring drawn over the cover, not as a border: a light cover
             would otherwise melt into the page. Open Design raises it to 22%
             for exactly this gradient fallback, where their usual 8% ring

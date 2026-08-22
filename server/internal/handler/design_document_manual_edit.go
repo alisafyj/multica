@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 	"net/http"
 	"strings"
 
@@ -181,6 +182,7 @@ func (h *Handler) createDesignDocumentManualEditTask(
 	}
 
 	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{
+		ID:        dbid.NewV7(),
 		AgentID:   agent.ID,
 		RuntimeID: agent.RuntimeID,
 		Priority:  0,

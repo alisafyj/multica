@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -115,6 +116,7 @@ func (h *Handler) createDesignDocumentDeliveryComment(ctx context.Context, issue
 		title,
 	)
 	comment, err := h.Queries.CreateComment(ctx, db.CreateCommentParams{
+		ID:          dbid.NewV7(),
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 		AuthorType:  "system",
@@ -132,7 +134,7 @@ func (h *Handler) createDesignDocumentDeliveryComment(ctx context.Context, issue
 		return
 	}
 	h.publish(protocol.EventCommentCreated, uuidToString(issue.WorkspaceID), "system", "", map[string]any{
-		"comment":             commentToResponse(comment, nil, nil),
+		"comment":             commentToResponse(comment.Comment(), nil, nil),
 		"issue_title":         issue.Title,
 		"issue_assignee_type": textToPtr(issue.AssigneeType),
 		"issue_assignee_id":   uuidToPtr(issue.AssigneeID),

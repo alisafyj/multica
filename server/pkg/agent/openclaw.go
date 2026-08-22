@@ -90,7 +90,7 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		signalProcessGroup(cmd, syscall.SIGKILL)
 		return nil
 	}
-	b.cfg.Logger.Info("agent command", "exec", execPath, "args", args)
+	b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(args, trustAgentCommandPositional(0, "agent")))
 	// 500ms, matching cursor-agent — the other backend whose CLI can deliver a
 	// terminal result while keeping a process alive.
 	//

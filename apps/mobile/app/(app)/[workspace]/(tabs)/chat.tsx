@@ -42,6 +42,7 @@ export default function ChatListPage() {
   const { data: sessions = [] } = useQuery(chatSessionsOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
+
   const deleteSession = useDeleteChatSession();
 
   const memberRole = members.find((m) => m.user_id === userId)?.role;

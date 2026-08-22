@@ -33,7 +33,7 @@ const forkMigrationPrefixStart = 800
 // numbering gap would pass this check; the uniqueness test still catches it
 // once upstream owns that number. The realistic violation (anything between
 // lastUpstreamMigrationPrefix and 800) is rejected below.
-const lastUpstreamMigrationPrefix = 341
+const lastUpstreamMigrationPrefix = 397
 
 // existingForkMigrationPrefixes are fork-local migrations that were applied to
 // production before the 800+ rule; they keep their numbers forever because the
@@ -76,6 +76,11 @@ var existingForkMigrationPrefixes = map[string]bool{
 	"317": true, // 317_product_map
 }
 
+// legacyDuplicateMigrationStems lists prefixes that were already duplicated
+// before this lint existed. It is a frozen historical record, not an escape
+// hatch: a new collision must be renumbered instead of added here. Prefix 362
+// was briefly listed and is deliberately absent again — the later of the two
+// migrations was renumbered to 376, which its idempotent DDL made safe.
 var legacyDuplicateMigrationStems = map[string][]string{
 	"020": {"020_issue_number", "020_task_session"},
 	"026": {"026_comment_reactions", "026_task_messages"},

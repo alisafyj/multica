@@ -31,7 +31,16 @@ import { AttributeChip } from "./attribute-chip";
 import { useActorLookup } from "@/data/use-actor-name";
 import { findProject, projectListOptions } from "@/data/queries/projects";
 import { useWorkspaceStore } from "@/data/workspace-store";
-import { issueStatusLabel, issuePriorityLabel } from "@/lib/issue-status";
+import { issuePriorityLabel, issueStatusLabel } from "@/lib/issue-status";
+import { PRIORITY_LABEL as PRIORITY_FULL_LABEL } from "@/lib/issue-status";
+import { useIssueStatuses } from "@/lib/use-issue-statuses";
+
+// Chip placeholder shortens `none` from "No priority" → "Priority" so the
+// unset chip reads as a placeholder, not as a confusing assigned value.
+const PRIORITY_CHIP_LABEL: Record<IssuePriority, string> = {
+  ...PRIORITY_FULL_LABEL,
+  none: "Priority",
+};
 
 /**
  * The picker fields the issue-detail attribute row can open. Bound to a
@@ -68,6 +77,10 @@ export function AttributeRow({ issue }: { issue: Issue }) {
   const wsId = useWorkspaceStore((s) => s.currentWorkspaceId);
   const wsSlug = useWorkspaceStore((s) => s.currentWorkspaceSlug);
   const { getName } = useActorLookup();
+  // The chip shows the issue's own status, which may be a custom one — name
+  // and colour come from the workspace catalog, the glyph from its category.
+  // (MUL-6243)
+  const { categoryOf, colorOf, labelOf } = useIssueStatuses();
 
   // Project read-only — fetch list to look up the title + icon. Cheap
   // (cached after first issue-detail visit).
@@ -107,8 +120,15 @@ export function AttributeRow({ issue }: { issue: Issue }) {
     <View className="flex-row flex-wrap gap-2">
       {/* Status — always shown */}
       <AttributeChip
-        icon={<StatusIcon status={issue.status} size={14} />}
-        label={issueStatusLabel(t, issue.status)}
+        icon={
+          <StatusIcon
+            status={issue.status}
+            category={categoryOf(issue.status)}
+            color={colorOf(issue.status)}
+            size={14}
+          />
+        }
+        label={issueStatusLabel(t, issue.status, labelOf(issue.status))}
         variant="filled"
         onPress={() => openPicker("status")}
       />

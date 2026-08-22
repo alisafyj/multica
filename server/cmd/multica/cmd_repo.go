@@ -360,7 +360,7 @@ type checkoutResult struct {
 // loop honors it (bounded by the 5-minute context) instead of failing the
 // checkout — mirrors upstream's retry-aware single-checkout flow so the
 // fork's --all path gets the same behavior per repo.
-func doCheckoutRequest(parentCtx context.Context, daemonPort string, reqBody map[string]any) (checkoutResult, error) {
+func doCheckoutRequest(parentCtx context.Context, daemonPort, taskToken string, reqBody map[string]any) (checkoutResult, error) {
 	data, err := json.Marshal(reqBody)
 	if err != nil {
 		return checkoutResult{}, fmt.Errorf("encode request: %w", err)
@@ -380,6 +380,7 @@ func doCheckoutRequest(parentCtx context.Context, daemonPort string, reqBody map
 			return checkoutResult{}, fmt.Errorf("create daemon checkout request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+taskToken)
 		resp, err := client.Do(req)
 		if err != nil {
 			return checkoutResult{}, fmt.Errorf("connect to daemon: %w", err)
@@ -435,6 +436,10 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 
 	workspaceID := os.Getenv("MULTICA_WORKSPACE_ID")
 	agentName := os.Getenv("MULTICA_AGENT_NAME")
+	taskToken := os.Getenv("MULTICA_TOKEN")
+	if taskToken == "" {
+		return fmt.Errorf("MULTICA_TOKEN not set (repo checkout requires the active task credential)")
+	}
 	taskID := os.Getenv("MULTICA_TASK_ID")
 
 	// Use current working directory as the checkout target.
@@ -454,7 +459,7 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 		"retry_busy":    true,
 	}
 
-	result, err := doCheckoutRequest(cmd.Context(), daemonPort, reqBody)
+	result, err := doCheckoutRequest(cmd.Context(), daemonPort, taskToken, reqBody)
 	if err != nil {
 		return err
 	}
@@ -511,6 +516,7 @@ func runRepoCheckoutAll(workDir string) error {
 
 	workspaceID := os.Getenv("MULTICA_WORKSPACE_ID")
 	agentName := os.Getenv("MULTICA_AGENT_NAME")
+	taskToken := os.Getenv("MULTICA_TOKEN")
 	taskID := os.Getenv("MULTICA_TASK_ID")
 	checkoutMode := strings.TrimSpace(os.Getenv("MULTICA_REPO_CHECKOUT_MODE"))
 
@@ -562,7 +568,7 @@ func runRepoCheckoutAll(workDir string) error {
 			"checkout_mode": checkoutMode,
 			"retry_busy":    true,
 		}
-		result, checkErr := doCheckoutRequest(context.Background(), daemonPort, reqBody)
+		result, checkErr := doCheckoutRequest(context.Background(), daemonPort, taskToken, reqBody)
 		if checkErr != nil {
 			fmt.Fprintf(os.Stderr, "FAIL  %s: %v\n", repo.url, checkErr)
 			errs = append(errs, fmt.Errorf("%s: %w", repo.url, checkErr))

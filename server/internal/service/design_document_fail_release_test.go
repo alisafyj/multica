@@ -191,7 +191,7 @@ func TestFailTaskReleasesTheDesignDocumentItWasGenerating(t *testing.T) {
 	// The exact failure that wedged the real document: the provider stream
 	// dropped mid-run and the daemon reported it.
 	if _, err := svc.FailTask(ctx, taskUUID, "stream disconnected before completion", "", "", "",
-		"agent_error.provider_network", false, ""); err != nil {
+		"agent_error.provider_network", false, "", ""); err != nil {
 		t.Fatalf("FailTask: %v", err)
 	}
 

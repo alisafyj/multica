@@ -198,6 +198,9 @@ export function downloadBlob(blob: Blob, filename: string): void {
  */
 export function exportFilename(title: string, suffix: string, extension: string): string {
   const cleaned = Array.from(title.trim())
+    // The control range is the point: these characters are illegal in file
+    // names on every target platform, so stripping them is deliberate.
+    // eslint-disable-next-line no-control-regex
     .filter((character) => !/[\x00-\x1f/\\:*?"<>|]/.test(character))
     .join("")
     .trim();

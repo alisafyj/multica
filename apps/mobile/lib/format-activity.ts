@@ -26,8 +26,18 @@ import {
   issueStatusLabel,
 } from "./issue-status";
 
-function statusName(t: IssueTranslate, value: string | undefined): string {
-  return value ? issueStatusLabel(t, value) : "?";
+/**
+ * Names a status KEY. Built-ins get their translation; a CUSTOM status has no
+ * translation key, so `resolveLabel` (the workspace catalog) names it, and a
+ * key nobody knows falls back to the raw value rather than rendering blank.
+ * (MUL-6243 + this app's i18n.)
+ */
+function statusName(
+  t: IssueTranslate,
+  value: string | undefined,
+  resolveLabel?: (statusKey: string) => string,
+): string {
+  return value ? issueStatusLabel(t, value, resolveLabel?.(value)) : "?";
 }
 
 function priorityName(t: IssueTranslate, value: string | undefined): string {
@@ -51,6 +61,7 @@ export function formatActivity(
     id: string | null | undefined,
   ) => string,
   t: IssueTranslate,
+  resolveStatusLabel?: (statusKey: string) => string,
 ): string {
   const details = (entry.details ?? {}) as Record<string, string>;
   switch (entry.action) {
@@ -58,8 +69,8 @@ export function formatActivity(
       return t("activity.verb.created");
     case "status_changed":
       return t("activity.verb.status_changed", {
-        from: statusName(t, details.from),
-        to: statusName(t, details.to),
+        from: statusName(t, details.from, resolveStatusLabel),
+        to: statusName(t, details.to, resolveStatusLabel),
       });
     case "priority_changed":
       return t("activity.verb.priority_changed", {

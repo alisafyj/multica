@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"github.com/google/uuid"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -25,6 +26,7 @@ func TestListChatSessionTasksAndTaskMessages(t *testing.T) {
 	taskID := insertPendingChatTask(t, agentID, sessionID, "completed")
 
 	if _, err := testHandler.Queries.CreateTaskMessage(ctx, db.CreateTaskMessageParams{
+		ID:      newTaskMessageID(t),
 		TaskID:  util.MustParseUUID(taskID),
 		Seq:     1,
 		Type:    "tool_use",
@@ -106,4 +108,14 @@ func TestChatSessionInspectionPrivateAgentForbidsAfterAccessRevoked(t *testing.T
 			}
 		})
 	}
+}
+
+// newTaskMessageID mints the id upstream made explicit on CreateTaskMessage.
+func newTaskMessageID(t *testing.T) pgtype.UUID {
+	t.Helper()
+	id, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("new task message id: %v", err)
+	}
+	return util.MustParseUUID(id.String())
 }

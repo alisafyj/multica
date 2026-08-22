@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 	"net/http"
 	"strings"
 	"time"
@@ -303,6 +304,7 @@ func (h *Handler) createProjectDesignSystemCopyTask(
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
 	}
 	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{
+		ID:        dbid.NewV7(),
 		AgentID:   agent.ID,
 		RuntimeID: agent.RuntimeID,
 		Priority:  0,
@@ -390,8 +392,8 @@ func (h *Handler) loadCopyBasePackage(
 }
 
 type designSystemCatalogueEntry struct {
-	ID                string `json:"id"`
-	ProjectID         string `json:"project_id"`
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
 	// Empty for a standalone system: it belongs to the workspace itself
 	// and no project stands behind it.
 	ProjectTitle      string `json:"project_title,omitempty"`
@@ -404,7 +406,7 @@ type designSystemCatalogueEntry struct {
 	Summary string `json:"summary,omitempty"`
 	// HasDraftPackage: a draft sits beside the saved package — the system is
 	// being adjusted. The library row shows OD's draft marker for it.
-	HasDraftPackage bool `json:"has_draft_package"`
+	HasDraftPackage bool   `json:"has_draft_package"`
 	SavedAt         string `json:"saved_at"`
 }
 
