@@ -35,6 +35,8 @@ func designerCharter() string {
 	// contract check never will, because a package can be structurally perfect
 	// and visually flat.
 	b.WriteString("- Build hierarchy with weight, size, spacing and colour role — not with borders and boxes. Nesting a bordered card inside a bordered panel inside a bordered section is the default failure mode of generated UI; prefer whitespace and typographic contrast to another rounded rectangle.\n")
+	b.WriteString("- Colour is an emphasis budget, not a mood filter. Page and surface backgrounds stay near-neutral unless the requirement or the pinned system asks otherwise — do not wash a whole page in a warm beige, peach or orange tint. Spend colour on actions, status, data and a single accent; a page tinted everywhere has spent the budget before anything needed emphasis.\n")
+	b.WriteString("- Shadows are for things that genuinely float above the page — a menu, a modal, a popover, a dragged item. A drop shadow on every card, or a gradient on every surface, is the tell of a generated page. The opposite failure is just as common: an all-grey page with no accent anywhere reads as unfinished rather than restrained.\n")
 	b.WriteString("- Keep spacing on one consistent scale, and keep the same rhythm across pages. Ad-hoc values (11px here, 13px there) read as sloppiness even when nobody can name why.\n")
 	b.WriteString("- Every interactive element needs its full state set: rest, hover, active, focus-visible, disabled, and — where the flow implies them — loading, empty, and error. A prototype whose buttons only have a rest state is a mockup, not a prototype.\n")
 	b.WriteString("- Text must stay readable against its background at every size you use, and an icon-only control must carry an accessible name. Do not express a text tone by making a solid colour transparent; use the design system's own muted / secondary role instead.\n")
@@ -89,4 +91,49 @@ func designPlanDiscipline() string {
 	var b strings.Builder
 	b.WriteString("- Keep a working plan. Lay out the steps before you start writing files, and update it as each one lands — the user is watching this run and cannot interrupt it, so the plan is the only thing that tells them what is done and what is left. Use your plan tool if you have one (`update_plan`, `TodoWrite`); a one-line tweak does not need one, a page design does.\n")
 	return b.String()
+}
+
+// visualLanguageCommitment is stacked only when this run has no pinned design
+// system — which is the composer's default ("不指定设计体系" is a first-class
+// choice there) and therefore the state of a new project's first design task.
+//
+// The design_context rule tells the agent what `source: "none"` means: "design
+// from the requirement alone". That is honest about provenance and says nothing
+// about what to do, so the run improvises — each page picks its own colours and
+// the second page drifts from the first.
+//
+// Open Design fills this exact hole with a five-entry direction library, gated
+// on having no active design system (it drops the library entirely when one is
+// active, calling it dead weight). This product does not need that library: the
+// built-in catalogue already ships 152 systems, each with a full DESIGN.md and
+// tokens.css, and the composer can pin any of them. What it needs is the idea
+// underneath the library — one deliberate commitment instead of drift — which
+// costs a rule rather than a second, weaker vocabulary competing with the
+// catalogue.
+func visualLanguageCommitment() string {
+	var b strings.Builder
+	b.WriteString("No design system is pinned to this run, so the visual language is yours to choose. Choose it once, deliberately, before you write any CSS:\n")
+	b.WriteString("- Decide it first and write it down as custom properties on `:root` — background, surface, foreground, muted, border, one accent, a type scale and a spacing step — then have every rule reference those. A page that hardcodes its own colours cannot stay consistent with the next one, and this document is judged as a single design.\n")
+	b.WriteString("- Fit it to what the requirement actually is. A trading console, a reading surface, a consumer onboarding flow and an internal admin tool share neither palette nor density nor type treatment; committing to one and carrying it through every page is the work.\n")
+	b.WriteString("- Record the choice in `coverage.json` under `design_system_consistency.findings`: one line naming the language you committed to and why it suits this product. The next revision reads it to stay consistent, and a language that worked is what the user later saves as this project's design system.\n")
+	b.WriteString("- Choosing it yourself is not the same as being constrained by one. Do not describe the result as conforming to a design system, and do not name a system you were not given.\n\n")
+	return b.String()
+}
+
+// designContextSourceOf reports which design system this task resolved to, or
+// "" when the task carries no design context at all. Both "" and "none" mean
+// nothing governs the visual language.
+func designContextSourceOf(task Task) string {
+	if len(task.DesignDocumentContext) == 0 {
+		return ""
+	}
+	var envelope struct {
+		DesignContext struct {
+			Source string `json:"source"`
+		} `json:"design_context"`
+	}
+	if err := jsonUnmarshal(task.DesignDocumentContext, &envelope); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(envelope.DesignContext.Source)
 }

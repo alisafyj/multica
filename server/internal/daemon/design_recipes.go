@@ -26,7 +26,7 @@ var designRecipeBriefs = map[string]string{
 
 	"ui-mockup": "- Recipe: high-fidelity UI mockup. Design at shipping fidelity — real type scale, real spacing, real states, real content. This is the recipe where visual polish IS the deliverable, so treat a flat or approximate screen as a failed run rather than a first draft.\n",
 
-	"wireframe": "- Recipe: wireframe. Structure and priority are the deliverable, not decoration: work in the design system's neutral roles, keep type to a small number of sizes, and let layout and hierarchy carry the argument. Still ship real labels and plausible content — a wireframe with placeholder rectangles communicates nothing about whether the structure works. Do not add colour, imagery or shadow that the structural point does not need.\n",
+	"wireframe": "- Recipe: wireframe. Structure and priority are the deliverable, not decoration: work in neutral surface, border and text roles, keep type to a small number of sizes, and let layout and hierarchy carry the argument. Still ship real labels and plausible content — a wireframe with placeholder rectangles communicates nothing about whether the structure works. Do not add colour, imagery or shadow that the structural point does not need.\n",
 
 	"web-clone": "- Recipe: rebuild an existing screen. Reference material (attachments, repository evidence, a pinned URL in the requirement) is the source of truth for layout, density and component vocabulary. State plainly in `coverage.json` what you matched, what you deliberately changed, and what you could not see well enough to reproduce — an invented detail presented as a match is worse than an acknowledged gap.\n",
 

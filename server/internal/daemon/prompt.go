@@ -1188,6 +1188,14 @@ func buildDesignDocumentPrompt(task Task) string {
 	// standard frames every stage rather than reading as an afterthought.
 	b.WriteString(designerCharter())
 
+	// Nothing governs the look on a run with no pinned design system, which is
+	// the composer's default. Stacked before the recipe so a recipe that speaks
+	// of "the design system's neutral roles" has a referent by the time it is
+	// read.
+	if source := designContextSourceOf(task); source == "" || source == "none" {
+		b.WriteString(visualLanguageCommitment())
+	}
+
 	// What picking this scenario chip actually means. Empty for the default
 	// chip and for community recipes, whose body already reached the brief.
 	if recipe := designRecipeBrief(task); recipe != "" {

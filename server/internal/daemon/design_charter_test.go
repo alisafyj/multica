@@ -2,8 +2,11 @@ package daemon
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/designdocument"
 )
 
 func designDocumentPromptForCharter(t *testing.T) string {
@@ -153,6 +156,102 @@ func TestUnknownAndDefaultRecipesContributeNoBody(t *testing.T) {
 		prompt := designDocumentPromptWithRecipe(t, recipe)
 		if strings.Contains(prompt, "Recipe:\n") {
 			t.Fatalf("recipe %q emitted a body; built-in bodies must not cover community slugs", recipe)
+		}
+	}
+}
+
+// designDocumentPromptWithSource builds a prompt for a run whose design context
+// resolved to the given source. "" omits `design_context` entirely, which is
+// what a task carries when the composer's default — 不指定设计体系 — is left
+// alone.
+func designDocumentPromptWithSource(t *testing.T, source string) string {
+	t.Helper()
+	context := `{"type":"design_document_task","operation":"generate","execution_ready":true`
+	if source != "" {
+		context += `,"design_context":{"version":"multica.design-context/v1","source":"` + source + `"}`
+	}
+	context += `}`
+	return BuildPrompt(Task{IssueID: "issue-1", DesignDocumentContext: json.RawMessage(context)}, "opencode")
+}
+
+// With nothing pinned, the run picks the visual language itself — so it is told
+// to pick once and bind it, rather than improvise per page. Both the explicit
+// "none" and an absent design context mean the same thing here.
+func TestDesignDocumentPromptCommitsToAVisualLanguageWithoutASystem(t *testing.T) {
+	for _, source := range []string{"", "none"} {
+		name := source
+		if name == "" {
+			name = "absent"
+		}
+		t.Run(name, func(t *testing.T) {
+			prompt := designDocumentPromptWithSource(t, source)
+			for _, want := range []string{
+				"No design system is pinned to this run",
+				"custom properties on `:root`",
+				"design_system_consistency.findings",
+				"Do not describe the result as conforming to a design system",
+			} {
+				if !strings.Contains(prompt, want) {
+					t.Fatalf("design document prompt is missing %q", want)
+				}
+			}
+		})
+	}
+}
+
+// A pinned system already governs the look. Repeating "choose the visual
+// language yourself" beside it would compete with the system the user chose,
+// which is the failure mode Open Design avoids by dropping its whole direction
+// library once a system is active.
+func TestDesignDocumentPromptDropsTheVisualLanguageRuleWhenASystemIsPinned(t *testing.T) {
+	for _, source := range []string{
+		"cloud_saved_project_design_system",
+		"cloud_saved_repository_design_system",
+		"cloud_saved_workspace_design_system",
+		"builtin_catalogue_design_system",
+	} {
+		t.Run(source, func(t *testing.T) {
+			if prompt := designDocumentPromptWithSource(t, source); strings.Contains(prompt, "No design system is pinned to this run") {
+				t.Fatal("the no-system visual language rule leaked into a run that has a pinned design system")
+			}
+		})
+	}
+}
+
+// The rule tells the agent to record its choice at a path inside coverage.json,
+// which is decoded strictly: an unknown field fails the audit. Pin the prompt's
+// wording to the real struct tags so renaming either one cannot silently start
+// instructing agents to produce a package the platform rejects.
+func TestVisualLanguageRecordPathMatchesTheCoverageSchema(t *testing.T) {
+	field := func(v any, name string) string {
+		t.Helper()
+		structField, ok := reflect.TypeOf(v).FieldByName(name)
+		if !ok {
+			t.Fatalf("%T has no field %s", v, name)
+		}
+		return strings.Split(structField.Tag.Get("json"), ",")[0]
+	}
+	path := field(designdocument.Coverage{}, "DesignSystemConsistency") + "." +
+		field(designdocument.CoverageDesignSystem{}, "Findings")
+
+	if prompt := designDocumentPromptWithSource(t, "none"); !strings.Contains(prompt, path) {
+		t.Fatalf("the prompt does not name the real coverage path %q", path)
+	}
+}
+
+// The charter names the two colour and depth habits that survive every
+// structural check: a page can pass the audit, carry every state and still
+// read as machine-made because everything is tinted and everything floats.
+func TestDesignCharterWarnsOffTheGeneratedPageTells(t *testing.T) {
+	prompt := designDocumentPromptForCharter(t)
+	for _, want := range []string{
+		"Colour is an emphasis budget",
+		"warm beige, peach or orange tint",
+		"A drop shadow on every card",
+		"all-grey page with no accent anywhere",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("design charter is missing %q", want)
 		}
 	}
 }
