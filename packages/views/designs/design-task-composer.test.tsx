@@ -325,6 +325,28 @@ describe("DesignTaskComposer", () => {
       expect(payload).not.toHaveProperty("issue_id");
     });
 
+    // The list is open issues only, which is right — a design is delivered to
+    // work that still has work left in it. What was wrong was saying nothing
+    // about it: a project whose other tasks are done showed one row out of
+    // three and read as a list that had failed to refresh.
+    it("says the linkable list is open tasks only", async () => {
+      const user = userEvent.setup();
+      listIssues.mockResolvedValue({
+        issues: [{ id: "issue-1", identifier: "CRM-12", title: "客户列表页需求", status: "todo" }],
+        total: 1,
+      });
+      renderComposer();
+
+      await pickProject(user);
+      await user.click(screen.getByRole("button", { name: "任务卡片" }));
+
+      expect(await screen.findByText("关联已有任务")).toBeInTheDocument();
+      expect(screen.getByText("仅未完成")).toBeInTheDocument();
+      // The server answers this picker with open_only=true, so the request
+      // itself must never ask for the whole set and filter it here.
+      expect(listIssues).toHaveBeenCalledWith(expect.objectContaining({ open_only: true }));
+    });
+
     // Naming an existing issue already links the document to it; creating a
     // second one would split the trail, so the two are mutually exclusive
     // outcomes of the same control rather than a picker plus a toggle.

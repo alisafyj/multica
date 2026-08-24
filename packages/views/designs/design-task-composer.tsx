@@ -565,7 +565,7 @@ export function IssueSetting({
       ))}
       {issues.length === 0 ? (
         <div className="px-2 py-1.5 text-caption text-muted-foreground">
-          当前项目没有进行中的任务。
+          当前项目没有未完成的任务。
         </div>
       ) : null}
       {issues.length > 0 && filtered.length === 0 && query ? <PickerEmpty /> : null}
@@ -662,7 +662,14 @@ export function IssueDestinationSetting({
         <Plus className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="truncate">同步创建任务</span>
       </PickerItem>
-      <div className="px-2 pb-1 pt-2 text-caption text-muted-foreground">关联已有任务</div>
+      {/* The scope belongs on the header, not only in the empty state: this
+          list is open issues, and a project whose other tasks are done showed
+          one row out of three with nothing saying why — which reads as a list
+          that failed to refresh rather than one that is doing its job. */}
+      <div className="flex items-baseline justify-between gap-2 px-2 pb-1 pt-2 text-caption text-muted-foreground">
+        <span>关联已有任务</span>
+        <span>仅未完成</span>
+      </div>
       {filtered.map((issue) => (
         <PickerItem
           key={issue.id}
@@ -683,7 +690,7 @@ export function IssueDestinationSetting({
       ))}
       {issues.length === 0 ? (
         <div className="px-2 py-1.5 text-caption text-muted-foreground">
-          当前项目没有进行中的任务。
+          当前项目没有未完成的任务。
         </div>
       ) : null}
       {issues.length > 0 && filtered.length === 0 && query ? <PickerEmpty /> : null}
