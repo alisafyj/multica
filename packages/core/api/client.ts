@@ -4283,6 +4283,21 @@ export class ApiClient {
     });
   }
 
+  /**
+   * Design documents pointing at one issue — the companion the launcher opened
+   * beside a run, or a document the user linked to this task. Same endpoint and
+   * same shape as the project listing; the issue form is what lets a task card
+   * show the design being made for it.
+   */
+  async listDesignDocumentsForIssue(issueId: string): Promise<ListDesignDocumentsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/design-documents?issue_id=${encodeURIComponent(issueId)}`,
+    );
+    return parseWithFallback(raw, ListDesignDocumentsResponseSchema, EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE, {
+      endpoint: "GET /api/design-documents?issue_id",
+    });
+  }
+
   async createDesignDocument(data: CreateDesignDocumentRequest): Promise<DesignDocument> {
     const raw = await this.fetch<unknown>("/api/design-documents", {
       method: "POST",

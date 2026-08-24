@@ -90,6 +90,7 @@ import { ThreadNavPanel, mentionsUser, type ThreadNavThread } from "./thread-nav
 import { collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
+import { IssueDesignDocumentsSection } from "./issue-design-documents-section";
 import { IssueDesignRestoreSection, isRawDesignFallbackDelivery } from "./issue-design-restore-section";
 import { QuickActionsSection } from "./quick-actions-section";
 import { PluginPanelSection } from "../../plugins";
@@ -2627,6 +2628,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           </PropRow>
         </div>}
       </div>
+
+      <IssueDesignDocumentsSection issue={issue} />
 
       <IssueDesignRestoreSection issue={issue} agents={agents} />
 

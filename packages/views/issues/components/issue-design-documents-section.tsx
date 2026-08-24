@@ -1,0 +1,67 @@
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { LoaderCircle, Palette } from "lucide-react";
+import { issueDesignDocumentsOptions } from "@multica/core/designs/queries";
+import { useWorkspacePaths } from "@multica/core/paths";
+import type { DesignDocument, Issue } from "@multica/core/types";
+import { AppLink } from "../../navigation";
+import { designDocumentStatusLabel } from "../../designs/design-document-card";
+
+/**
+ * The designs being made for this task.
+ *
+ * A design run linked to an issue used to be invisible from it: the card
+ * showed whatever had last touched it — in the case that prompted this, a run
+ * cancelled twenty minutes earlier — while an agent was actively designing
+ * for it. This is the issue's side of that link: what exists, what state it is
+ * in, and a way into it.
+ *
+ * Deliberately not a copy of the run's transcript. A document that goes
+ * through eight revisions would bury everything else on the card, and the same
+ * messages rendered in two places drift apart. The design page owns the
+ * conversation; the issue owns knowing that it is happening.
+ */
+export function IssueDesignDocumentsSection({ issue }: { issue: Issue }) {
+  const paths = useWorkspacePaths();
+  const { data: documents = [], isPending } = useQuery(
+    issueDesignDocumentsOptions(issue.workspace_id, issue.id),
+  );
+
+  // Nothing to show when no design points here. Nothing while the first fetch
+  // is in flight either: a header that appears empty and then fills is noisier
+  // than one that arrives complete.
+  if (isPending || documents.length === 0) return null;
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-1 px-2 py-1 text-caption font-medium text-muted-foreground">
+        <Palette className="!size-3 shrink-0 stroke-[2.5]" />
+        设计稿
+      </div>
+      <div className="pl-2">
+        {documents.map((document) => (
+          <AppLink
+            key={document.id}
+            href={paths.designDocumentDetail(document.id)}
+            className="-mx-2 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-caption transition-colors hover:bg-accent/50"
+          >
+            <DocumentIcon document={document} />
+            <span className="min-w-0 flex-1 truncate">{document.title}</span>
+            <span className="shrink-0 text-muted-foreground">
+              {designDocumentStatusLabel(document.status) ?? ""}
+            </span>
+          </AppLink>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** A live run spins; anything else is a document sitting still. */
+function DocumentIcon({ document }: { document: DesignDocument }) {
+  if (document.status === "running") {
+    return <LoaderCircle className="size-3.5 shrink-0 animate-spin text-muted-foreground" />;
+  }
+  return <Palette className="size-3.5 shrink-0 text-muted-foreground" />;
+}

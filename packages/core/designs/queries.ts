@@ -196,6 +196,20 @@ export function designDocumentListOptions(wsId: string, projectId: string) {
   });
 }
 
+/**
+ * Design documents pointing at one issue, for the issue's own view of them. An
+ * empty `issueId` stays idle: there is no workspace-wide listing to fall back
+ * on, and asking for one would 400.
+ */
+export function issueDesignDocumentsOptions(wsId: string, issueId: string) {
+  return queryOptions({
+    queryKey: designKeys.documentsByIssue(wsId, issueId),
+    queryFn: () => api.listDesignDocumentsForIssue(issueId),
+    select: (data) => data.documents,
+    enabled: !!issueId,
+  });
+}
+
 /** One design document with its active task, for the document workspace. */
 export function designDocumentDetailOptions(wsId: string, documentId: string) {
   return queryOptions({

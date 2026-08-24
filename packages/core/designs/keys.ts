@@ -30,6 +30,10 @@ export const designKeys = {
   projectDesignSystemCatalogue: (wsId: string) => ["designs", wsId, "project-design-systems", "catalogue"] as const,
   // Design documents are listed per project, never workspace-wide (DC-042).
   documents: (wsId: string, projectId: string) => ["designs", wsId, "documents", projectId] as const,
+  // Kept under the same "documents" prefix so a document write invalidates the
+  // issue's view of it along with the project's.
+  documentsByIssue: (wsId: string, issueId: string) =>
+    ["designs", wsId, "documents", "issue", issueId] as const,
   // One document and its revisions live under the same "documents" prefix so
   // the task-lifecycle invalidation of that prefix refreshes them too. The
   // literal "document" segment cannot collide with a project id.
