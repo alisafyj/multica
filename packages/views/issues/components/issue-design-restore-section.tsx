@@ -12,9 +12,10 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { ISSUE_DESIGN_ROLE_FRONTEND, ISSUE_DESIGN_ROLE_KEY, ISSUE_DESIGN_ROLE_UI, explicitIssueDesignRole, issueDesignRole } from "@multica/core/issues/design-role";
 import { childIssuesOptions, issueKeys } from "@multica/core/issues/queries";
 import { useCommentDraftStore } from "@multica/core/issues/stores";
+import { projectResourcesOptions } from "@multica/core/projects";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
-import type { Agent, DesignDelivery, DesignDraft, DesignFile, DesignFrame, DesignRestorePlan, DesignRestoreTask, DesignRestoreTaskInputV1, GalleryNativeJson, Issue, MemberWithUser } from "@multica/core/types";
+import type { Agent, DesignDelivery, DesignDraft, DesignFile, DesignFrame, DesignRestorePlan, DesignRestoreTask, DesignRestoreTaskInputV1, GalleryNativeJson, Issue, MemberWithUser, ProjectResource } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@multica/ui/components/ui/hover-card";
@@ -344,6 +345,56 @@ function framePreviewUrl(nativeJson: GalleryNativeJson | undefined, frameId: str
   return previewAsset?.url ?? thumbnailAsset?.url ?? frame.thumbnailDataUrl ?? frame.thumbnailUrl ?? fallback ?? null;
 }
 
+function projectResourceLabel(resource: ProjectResource) {
+  const ref = resource.resource_ref as { url?: string };
+  const url = typeof ref?.url === "string" ? ref.url : "";
+  return resource.label?.trim() || url.replace(/^https?:\/\/(www\.)?github\.com\//i, "").replace(/\.git$/, "") || url || resource.id;
+}
+
+function buildRestoreScopeCalls(items: IssueDesignScopeItem[], fileId: string, revisionId: string) {
+  const groups = new Map<string, IssueDesignScopeItem[]>();
+  const ungrouped: IssueDesignScopeItem[] = [];
+  items.forEach((item) => {
+    if (item.groupId) {
+      const list = groups.get(item.groupId) ?? [];
+      list.push(item);
+      groups.set(item.groupId, list);
+    } else {
+      ungrouped.push(item);
+    }
+  });
+  const calls: string[] = [];
+  groups.forEach((groupItems) => {
+    const first = groupItems[0];
+    calls.push(JSON.stringify({
+      detailLevel: "normal",
+      scope: {
+        version: "1.0",
+        kind: "figma_group",
+        designFileId: fileId,
+        revisionId,
+        groupId: first?.groupId,
+        groupName: first?.groupName,
+        frameIds: groupItems.map((item) => item.frameId),
+      },
+    }));
+  });
+  ungrouped.forEach((item) => {
+    calls.push(JSON.stringify({
+      detailLevel: "normal",
+      scope: {
+        version: "1.0",
+        kind: "frame",
+        designFileId: fileId,
+        revisionId,
+        frameId: item.frameId,
+        label: item.frameName,
+      },
+    }));
+  });
+  return calls;
+}
+
 export function issueDesignScopeOptions(frames: DesignFrame[]): IssueDesignScopeOption[] {
   const groups = groupedFrames(frames);
   return [
@@ -654,6 +705,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const queryClient = useQueryClient();
   const [fileId, setFileId] = useState("");
   const [selectedFrameIds, setSelectedFrameIds] = useState<string[]>([]);
+  const [targetResourceId, setTargetResourceId] = useState("");
   const [agentId, setAgentId] = useState("");
   const [restoreTask, setRestoreTask] = useState<DesignRestoreTask | null>(null);
   const [deliveryHistoryOpen, setDeliveryHistoryOpen] = useState(false);
@@ -691,6 +743,11 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
     ...designFileListOptions(wsId),
     enabled: roleReady,
   });
+  const { data: projectResources = [] } = useQuery({
+    ...projectResourcesOptions(wsId, issue.project_id ?? ""),
+    enabled: roleReady && !!issue.project_id,
+  });
+  const repoResources = useMemo(() => projectResources.filter((resource) => resource.resource_type === "github_repo"), [projectResources]);
   const { data: restoreTasks = [] } = useQuery({
     ...designRestoreTaskListOptions(wsId),
     enabled: roleReady,
@@ -927,24 +984,32 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
       toast.error("请选择有效设计稿和还原范围");
       return;
     }
-    const calls = restoreItems.map((item) => JSON.stringify({
-      detailLevel: "normal",
-      scope: {
-        version: "1.0",
-        kind: "frame",
-        designFileId: restoreFileId,
-        revisionId: restoreRevisionId,
-        frameId: item.frameId,
-        label: item.frameName,
-      },
-    }));
-    const prompt = [
-      "使用 multica-design MCP 还原设计稿。",
-      "依次调用 multica_design_get_restore_pack：",
-      ...calls,
-      "分组=同一业务页面多状态/弹窗；按 Restore Pack 实现并复用当前项目结构。",
-    ].join("\n");
-    useCommentDraftStore.getState().injectDraft(`new:${issue.id}`, prompt);
+    const targetRepo = repoResources.find((resource) => resource.id === targetResourceId) ?? null;
+    const calls = buildRestoreScopeCalls(restoreItems, restoreFileId, restoreRevisionId);
+    const lines = [
+      "【任务】",
+      "把下面的设计稿还原成前端页面/组件。",
+      "",
+      "【还原范围】",
+      `设计稿：${restoreFileId}`,
+      `版本：${restoreRevisionId}`,
+      targetRepo ? `目标仓库：${projectResourceLabel(targetRepo)}` : "目标仓库：请根据当前 Issue 关联项目自行判断。",
+      "",
+      "【执行步骤】",
+      "1. 调用 multica_design_get_restore_pack，参数如下：",
+      ...calls.map((call) => `   ${call}`),
+      "2. 先读仓库，定位每个画板/分组应落在哪个路由或组件；优先复用现有组件。",
+      "3. 按 Restore Pack 的 group/state 分组实现；同一业务页面的多状态/弹窗归到同一处。",
+      "",
+      "【约束】",
+      "- 禁止把整帧 preview/thumbnail 当作还原结果。",
+      "- 可见图层/导出资产优先使用。",
+      "- 无法结构化时明确说明阻塞，不要硬凑。",
+      "",
+      "【输出】",
+      "用自然语言说明：改动了哪些文件、每个画板/分组落在哪个组件/文件、跑了哪些检查、还有哪些阻塞。",
+    ];
+    useCommentDraftStore.getState().injectDraft(`new:${issue.id}`, lines.join("\n"));
     toast.success("已生成还原提示到评论区");
   };
   const deliveryActionDisabled = !selectedDeliveryTargetIssue || !selectedFileId || !selectedRevisionId || !restoreFrameId || !restoreItems.length || createDelivery.isPending;
@@ -1184,6 +1249,14 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
                     ) : (
                       <div className="text-caption text-muted-foreground">暂无交付范围</div>
                     )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-caption font-medium text-muted-foreground">目标仓库（可选）</label>
+                    <select value={targetResourceId} onChange={(event) => setTargetResourceId(event.target.value)} className="h-8 w-full rounded-md border bg-background px-2 text-caption">
+                      <option value="">让 Agent 自行判断</option>
+                      {repoResources.map((resource) => <option key={resource.id} value={resource.id}>{projectResourceLabel(resource)}</option>)}
+                    </select>
+                    {!repoResources.length ? <div className="mt-1 text-caption text-muted-foreground">当前项目暂无关联仓库</div> : null}
                   </div>
                 </>
               ) : null}
