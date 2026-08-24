@@ -131,8 +131,16 @@ export function DesignTaskActivity({
   compact = false,
   onStopped,
   onAnswerForm,
+  showConversation = true,
 }: {
   task: ProjectDesignSystemTask | null | undefined;
+  /**
+   * Render the run's messages inline. The document workspace turns this off:
+   * there the whole thread — this task and every finished one — is rendered by
+   * DesignDocumentConversation, and a second copy here would duplicate the
+   * live turn.
+   */
+  showConversation?: boolean;
   agents: Agent[];
   compact?: boolean;
   onStopped?: () => Promise<unknown> | void;
@@ -209,12 +217,14 @@ export function DesignTaskActivity({
           column rather than behind a button. This replaces the single
           truncated ambient line: same messages, but readable in order. The
           transcript dialog above stays for the full, filterable record. */}
-      <DesignRunConversation
-        messages={messages}
-        live={canStop}
-        className="mt-3"
-        {...(onAnswerForm ? { onAnswerForm } : {})}
-      />
+      {showConversation ? (
+        <DesignRunConversation
+          messages={messages}
+          live={canStop}
+          className="mt-3"
+          {...(onAnswerForm ? { onAnswerForm } : {})}
+        />
+      ) : null}
 
       <dl className={`mt-4 grid gap-4 ${compact ? "grid-cols-2" : "sm:grid-cols-4"}`}>
         <div className="min-w-0">

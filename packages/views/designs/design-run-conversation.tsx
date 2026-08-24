@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, TriangleAlert, Wrench } from "lucide-react";
+import { Check, ChevronDown, Circle, ListTodo, LoaderCircle, TriangleAlert, Wrench } from "lucide-react";
 import { splitAgentUi } from "@multica/core/designs/agent-ui";
 import { cn } from "@multica/ui/lib/utils";
 import { DesignAgentCard, DesignAgentForm } from "./design-agent-form";
@@ -28,6 +28,69 @@ function toolSummary(item: TimelineItem): string {
   return "";
 }
 
+/** One row of an agent's plan, as normalised by every backend's `todo_write`. */
+interface TodoRow {
+  content: string;
+  status: string;
+}
+
+/**
+ * Reads a `todo_write` payload. Returns an empty list for anything unreadable
+ * so a protocol change degrades to "no checklist" rather than a broken one.
+ */
+export function todoRows(input: Record<string, unknown> | undefined): TodoRow[] {
+  const raw = input?.["todos"];
+  if (!Array.isArray(raw)) return [];
+  const rows: TodoRow[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const content = typeof record.content === "string" ? record.content.trim() : "";
+    if (!content) continue;
+    const status = typeof record.status === "string" ? record.status : "pending";
+    rows.push({ content, status });
+  }
+  return rows;
+}
+
+function TodoChecklist({ rows }: { rows: TodoRow[] }) {
+  const done = rows.filter((row) => row.status === "completed").length;
+  return (
+    <div className="min-w-0">
+      <div className="flex items-baseline gap-1.5 text-caption text-muted-foreground">
+        <ListTodo className="size-3 shrink-0 translate-y-0.5" />
+        <span className="font-medium text-foreground">待办</span>
+        <span>
+          {done}/{rows.length}
+        </span>
+      </div>
+      <ul className="mt-1 space-y-0.5">
+        {rows.map((row, index) => (
+          <li key={`${index}-${row.content}`} className="flex items-baseline gap-1.5 text-caption">
+            {row.status === "completed" ? (
+              <Check className="size-3 shrink-0 translate-y-0.5 text-muted-foreground" />
+            ) : row.status === "in_progress" ? (
+              <LoaderCircle className="size-3 shrink-0 translate-y-0.5 animate-spin text-muted-foreground" />
+            ) : (
+              <Circle className="size-3 shrink-0 translate-y-0.5 text-muted-foreground/50" />
+            )}
+            <span
+              className={cn(
+                "min-w-0",
+                // Done reads as done without hiding it: struck through and
+                // dimmed, so the list still shows what the run covered.
+                row.status === "completed" ? "text-muted-foreground line-through" : "text-foreground",
+              )}
+            >
+              {row.content}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function ConversationRow({
   item,
   onAnswerForm,
@@ -36,6 +99,12 @@ function ConversationRow({
   onAnswerForm?: (text: string) => void;
 }) {
   if (item.type === "tool_use") {
+    // The agent's plan is a tool call on the wire; on screen it is the run's
+    // progress, which is the one thing a watcher actually wants to see.
+    if (item.tool === "todo_write") {
+      const rows = todoRows(item.input);
+      if (rows.length > 0) return <TodoChecklist rows={rows} />;
+    }
     const summary = toolSummary(item);
     return (
       <div className="flex min-w-0 items-baseline gap-1.5 text-caption text-muted-foreground">

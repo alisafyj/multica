@@ -698,6 +698,12 @@ export interface CreateDesignDocumentRequest {
   /** Optional traceable link only — it never moves the issue (DC-045). */
   issue_id?: string;
   /**
+   * Open a companion task card for this run when no `issue_id` is given. The
+   * created issue is a traceable companion on the tasks page, never a driver:
+   * the design task does not move it (DC-045).
+   */
+  create_issue?: boolean;
+  /**
    * Optional explicit design system for this run (DC-060). A saved workspace
    * system's id, or `builtin_design_system` for a bundled catalogue slug —
    * never both. Unset keeps the repository -> project fallback (DC-053).

@@ -485,6 +485,42 @@ function RepositorySetting({
  * the issue's status, assignee or priority — so an unlinked design document is
  * an ordinary exploratory one, not an incomplete one.
  */
+/**
+ * Opens a companion task card alongside the design run.
+ *
+ * Only offered when no issue was picked: naming an existing issue already
+ * links the document to it, and creating a second one would split the trail.
+ * The card is a traceable companion, not a driver — the design task never
+ * moves it (DC-045).
+ */
+export function CompanionIssueSetting({
+  enabled,
+  disabled,
+  onChange,
+}: {
+  enabled: boolean;
+  disabled: boolean;
+  onChange: (enabled: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      aria-pressed={enabled}
+      onClick={() => onChange(!enabled)}
+      className={cn(
+        "flex min-w-0 cursor-pointer items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-caption",
+        "hover:bg-accent",
+        "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-card",
+        enabled ? "text-foreground" : "text-muted-foreground",
+      )}
+    >
+      <ListTodo className="size-3.5 shrink-0" />
+      <span className="truncate">{enabled ? "同步创建任务" : "不创建任务"}</span>
+    </button>
+  );
+}
+
 export function IssueSetting({
   issues,
   issueId,
@@ -719,6 +755,9 @@ export function DesignTaskComposer({
   const [agentId, setAgentId] = useState("");
   const [repositoryId, setRepositoryId] = useState("");
   const [issueId, setIssueId] = useState("");
+  // Default on: a design run that leaves no trace on the tasks page is the
+  // exception, not the norm. Turning it off is one click away.
+  const [createIssue, setCreateIssue] = useState(true);
   // Mutually exclusive by construction: the server refuses a request carrying
   // both, and the picker only ever sets one of them.
   const [designSystemId, setDesignSystemId] = useState("");
@@ -808,6 +847,7 @@ export function DesignTaskComposer({
         agent_id: agentId,
         ...(activeRepositoryId ? { project_resource_id: activeRepositoryId } : {}),
         ...(activeIssueId ? { issue_id: activeIssueId } : {}),
+        ...(!activeIssueId && createIssue ? { create_issue: true } : {}),
         ...(designSystemId ? { design_system_id: designSystemId } : {}),
         ...(builtinSlug ? { builtin_design_system: builtinSlug } : {}),
         platform,
@@ -1022,6 +1062,13 @@ export function DesignTaskComposer({
                     disabled={!projectId}
                     onChange={setIssueId}
                   />
+                  {activeIssueId ? null : (
+                    <CompanionIssueSetting
+                      enabled={createIssue}
+                      disabled={!projectId}
+                      onChange={setCreateIssue}
+                    />
+                  )}
                   <DesignSystemSetting
                     workspaceSystems={workspaceSystems}
                     builtinSystems={builtinSystems}

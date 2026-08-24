@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -54,6 +55,10 @@ type CreateDesignDocumentRequest struct {
 	// Optional. Naming a repository grounds the task against it; omitting it
 	// means no grounding at all, and the document says so.
 	ProjectResourceID string `json:"project_resource_id"`
+	// CreateIssue opens a companion task card for this run when no issue was
+	// named. Traceable link only, exactly like IssueID: the design task never
+	// moves the issue it created (DC-045).
+	CreateIssue bool `json:"create_issue"`
 	// Optional traceable link only.
 	IssueID string `json:"issue_id"`
 	// Optional explicit design system for this run (DC-060). A workspace
@@ -206,6 +211,33 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 		title = project.Title
 	}
 
+	// The launcher can open a task card next to the design run. The issue is a
+	// traceable companion, never a driver: nothing in the design task moves it
+	// (DC-045). It is created before the document so the document row can carry
+	// its id, and deleted again if the document fails — this repo resolves
+	// dependent cleanup in application code, not with cascades.
+	createdIssueID := pgtype.UUID{}
+	if req.CreateIssue && !issueUUID.Valid {
+		created, issueErr := h.IssueService.Create(r.Context(), service.IssueCreateParams{
+			WorkspaceID:  workspaceUUID,
+			Title:        title,
+			Description:  pgtype.Text{String: req.Brief, Valid: strings.TrimSpace(req.Brief) != ""},
+			Status:       "todo",
+			Priority:     "none",
+			AssigneeType: pgtype.Text{String: "agent", Valid: true},
+			AssigneeID:   agentUUID,
+			CreatorType:  "member",
+			CreatorID:    requesterUUID,
+			ProjectID:    projectUUID,
+		}, service.IssueCreateOpts{ActorID: uuidToString(requesterUUID)})
+		if issueErr != nil {
+			writeProjectDesignSystemError(w, http.StatusInternalServerError, "issue_create_failed", "failed to create the companion task")
+			return
+		}
+		issueUUID = created.Issue.ID
+		createdIssueID = created.Issue.ID
+	}
+
 	// Reference attachments are resolved and pinned here, once: the frozen
 	// input records what they are and the exact bytes they were, so the run
 	// (and any later adjustment carrying them forward) cannot see a different
@@ -242,6 +274,16 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 		r.Context(), workspaceUUID, requesterUUID, projectUUID, scope, issueUUID, agentUUID, title, input, inputJSON, attachments,
 	)
 	if err != nil {
+		if createdIssueID.Valid {
+			// The companion issue only exists for a document that was created.
+			if deleteErr := h.Queries.DeleteIssue(r.Context(), db.DeleteIssueParams{
+				ID:          createdIssueID,
+				WorkspaceID: workspaceUUID,
+			}); deleteErr != nil {
+				slog.Error("design document: companion issue left behind after a failed create",
+					"issue_id", uuidToString(createdIssueID), "error", deleteErr)
+			}
+		}
 		writeProjectDesignSystemRequestError(w, err)
 		return
 	}

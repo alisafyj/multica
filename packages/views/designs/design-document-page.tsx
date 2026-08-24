@@ -93,6 +93,8 @@ import { DesignDocumentStaticView } from "./design-document-static-view";
 import { AgentSetting, IssueSetting } from "./design-task-composer";
 import { revisionFileSource, safeQuery, type CanvasMode } from "./prototype-canvas";
 import { DesignTaskActivity, taskOperationLabel } from "./project-design-system-task-activity";
+import { DesignDocumentConversation } from "./design-document-conversation";
+import { DesignNextSteps } from "./design-next-steps";
 
 /** What the workbench's main pane is showing. */
 type DocumentViewMode = "preview" | "annotate" | "edit" | "code";
@@ -229,7 +231,12 @@ function RevisionRow({
   const agent = agents.find((candidate) => candidate.id === revision.agent_id);
   const isAdjustment = revision.instruction.trim().length > 0 || revision.base_revision_id !== "";
   return (
-    <li className={cn("group rounded-lg border bg-card p-3 transition-colors", selected ? "border-primary/60" : "hover:border-primary/30")}>
+    <li
+      className={cn(
+        "group -mx-4 border-l-2 px-4 py-2.5 transition-colors",
+        selected ? "border-l-primary bg-accent/40" : "border-l-transparent hover:bg-accent/25",
+      )}
+    >
       <button type="button" className="block w-full text-left" onClick={onSelect} aria-current={selected ? "true" : undefined}>
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2 text-body font-medium">
@@ -662,7 +669,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
 
   const frameWidth = VIEWPORTS.find((option) => option.id === effectiveViewport)?.width ?? null;
   const previewFrame = (
-    <div className={cn("relative flex min-h-0 flex-1 flex-col overflow-hidden", fullscreen ? "fixed inset-0 z-50 bg-background" : "rounded-lg border bg-muted/30")}>
+    <div className={cn("relative flex min-h-0 flex-1 flex-col overflow-hidden", fullscreen ? "fixed inset-0 z-50 bg-background" : "bg-muted/30")}>
       <div className="flex shrink-0 items-center gap-2 border-b bg-background px-2 py-1.5">
         {/* Open Design's 预览/代码 segmented, widened by 标注: the same
             revision, run live, marked up statically, or read as source. */}
@@ -956,10 +963,14 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
         )}
       />
 
-      <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[340px_minmax(0,1fr)]">
-        <aside className="flex min-h-0 flex-col gap-3 overflow-hidden lg:h-full">
-          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-            <div className="rounded-lg border bg-card p-3">
+      {/* One page, split by a single line. The left column used to stack
+          rounded cards inside a padded grid cell — a rounded rectangle inside a
+          rounded rectangle inside a page — which spent most of its width on
+          borders and gutters. Sections below are flat and separated by rules. */}
+      <div className="grid min-h-0 flex-1 lg:grid-cols-[360px_minmax(0,1fr)]">
+        <aside className="flex min-h-0 flex-col overflow-hidden border-b lg:h-full lg:border-b-0 lg:border-r">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="border-b px-4 py-3">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted-foreground">
                 {project ? <span>{project.title}</span> : null}
                 {platformLabel(document.platform) ? <span>{platformLabel(document.platform)}</span> : null}
@@ -974,25 +985,36 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
             </div>
 
             {activeTask && running ? (
-              <div className="mt-3 rounded-lg border bg-card px-3">
+              <div className="border-b px-4">
                 <DesignTaskActivity
                   task={activeTask}
                   agents={agents}
                   compact
                   onStopped={refresh}
-                  // Our runs are one-shot tasks with no input channel, so an
-                  // answer cannot reach the agent mid-run. It goes where a
-                  // reply genuinely does reach it: the adjustment brief for
-                  // the next turn, which the user can still edit before
-                  // sending.
-                  onAnswerForm={(text) =>
-                    setInstruction((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text))
-                  }
+                  // The thread below renders every turn's messages, this one
+                  // included; a second copy here would duplicate the live turn.
+                  showConversation={false}
                 />
               </div>
             ) : null}
+            {/* The document's whole agent history, not just the running task.
+                Keeping finished turns on screen is what lets the adjustment box
+                below read as the next message in a conversation. */}
+            <DesignDocumentConversation
+              revisions={revisions}
+              activeTask={activeTask}
+              {...(revision ? { revision } : {})}
+              className="border-b px-4 py-3"
+              // Our runs are one-shot tasks with no input channel, so an
+              // answer cannot reach the agent mid-run. It goes where a reply
+              // genuinely does reach it: the adjustment brief for the next
+              // turn, which the user can still edit before sending.
+              onAnswerForm={(text) =>
+                setInstruction((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text))
+              }
+            />
             {errorMessage ? (
-              <div role="alert" className="mt-3 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-caption leading-5">
+              <div role="alert" className="flex items-start gap-2 border-b border-destructive/40 bg-destructive/5 px-4 py-3 text-caption leading-5">
                 <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
                 <div className="min-w-0">
                   <div className="font-medium text-destructive">{activeTask ? `${taskOperationLabel(activeTask.operation)}失败` : "运行失败"}</div>
@@ -1005,7 +1027,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
               // The rerun for a dead end: nothing was ever generated, so
               // there is no revision to adjust — only the frozen inputs to
               // run again (with a different agent, if the user swapped one).
-              <div className="mt-3 rounded-lg border bg-card p-3">
+              <div className="border-b px-4 py-3">
                 <Button type="button" size="sm" disabled={busy} onClick={() => regenerate.mutate()}>
                   {regenerate.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
                   重新生成
@@ -1016,12 +1038,12 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
               </div>
             ) : null}
 
-            {critique ? <div className="mt-3"><DesignDocumentCritique critique={critique} /></div> : null}
+            {critique ? <div className="border-b px-4 py-3"><DesignDocumentCritique critique={critique} /></div> : null}
 
             {/* The end of the flow (DC-062): a saved design is handed to the
                 issue whose implementation it governs, and the agent working
                 that issue receives the package itself. */}
-            <div className="mt-3 rounded-lg border bg-card p-3">
+            <div className="border-b px-4 py-3">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="text-caption font-medium text-muted-foreground">交付实现</h2>
                 <IssueSetting
@@ -1044,17 +1066,17 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
               </p>
             </div>
 
-            <section className="mt-3" aria-label="版本">
+            <section className="px-4 py-3" aria-label="版本">
               <div className="mb-2 flex items-center justify-between px-0.5">
                 <h2 className="text-caption font-medium text-muted-foreground">版本</h2>
                 <span className="text-caption text-muted-foreground">{revisions.length}</span>
               </div>
               {revisions.length === 0 ? (
-                <p className="rounded-lg border border-dashed px-3 py-4 text-center text-caption text-muted-foreground">
+                <p className="py-2 text-caption text-muted-foreground">
                   {running ? "第一版正在生成。" : "还没有生成任何版本。"}
                 </p>
               ) : (
-                <ol className="space-y-2">
+                <ol className="-mx-4 divide-y border-y">
                   {revisions.map((row) => (
                     <RevisionRow
                       key={row.id}
@@ -1073,7 +1095,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
           </div>
 
           {viewMode === "edit" ? (
-            <div className="shrink-0 rounded-lg border bg-card p-3">
+            <div className="shrink-0 border-t px-4 py-3">
               <ManualEditPanel
                 descriptor={picked}
                 page={shownEntry}
@@ -1104,7 +1126,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
             </div>
           ) : (
           <form
-            className="shrink-0 rounded-lg border bg-card p-3"
+            className="shrink-0 border-t px-4 py-3"
             onSubmit={(event) => {
               event.preventDefault();
               if (instructionBlocker || busy) return;
@@ -1153,9 +1175,9 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
             {annotations.length > 0 ? (
               // Each mark keeps its own note, so one send can carry several
               // separate asks that the agent can locate individually.
-              <ul className="mt-2 space-y-1.5" aria-label="标注">
+              <ul className="mt-2 divide-y border-y" aria-label="标注">
                 {annotations.map((annotation) => (
-                  <li key={annotation.id} className="rounded-md border bg-background px-2 py-1.5">
+                  <li key={annotation.id} className="py-1.5">
                     <div className="flex items-center gap-1.5">
                       <span className="min-w-0 flex-1 truncate text-caption font-medium" title={annotation.element?.selector}>
                         {annotationLabel(annotation)}
@@ -1184,7 +1206,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
               </ul>
             ) : null}
             {queuedAdjustment ? (
-              <div className="mt-2 flex items-start justify-between gap-2 rounded-md border border-dashed px-2.5 py-1.5 text-caption leading-5">
+              <div className="mt-2 flex items-start justify-between gap-2 border-l-2 border-muted-foreground/30 pl-2.5 text-caption leading-5">
                 <span className="min-w-0">
                   <span className="text-muted-foreground">已排队 · 任务结束后自动发起：</span>
                   <span className="line-clamp-2 break-words">{queuedAdjustment.instruction}</span>
@@ -1199,6 +1221,19 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                   <X className="h-3 w-3" />
                 </button>
               </div>
+            ) : null}
+            {/* Ready-made follow-ups for the next turn. They seed the box
+                rather than dispatch anything, so what gets sent is always
+                text the user has seen and can still edit. Hidden until a
+                revision exists: there is nothing to refine before then. */}
+            {revisions.length > 0 ? (
+              <DesignNextSteps
+                className="mb-2"
+                disabled={busy}
+                onPick={(text) =>
+                  setInstruction((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text))
+                }
+              />
             ) : null}
             <Textarea
               value={instruction}

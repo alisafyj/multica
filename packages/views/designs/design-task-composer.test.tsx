@@ -289,6 +289,9 @@ describe("DesignTaskComposer", () => {
       platform: "web",
       recipe: "wireframe",
       brief: "客户列表页",
+      // Default on: a design run that leaves no trace on the tasks page is the
+      // exception. The next test turns it off.
+      create_issue: true,
     });
     // Optional links stay absent rather than being sent as empty strings the
     // server would have to parse as UUIDs.
@@ -296,6 +299,24 @@ describe("DesignTaskComposer", () => {
     expect(payload).not.toHaveProperty("project_resource_id");
     expect(payload).not.toHaveProperty("issue_id");
     expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ project_id: "project-1" }));
+  });
+
+  // The companion task card is a default, not a rule: turning it off must stop
+  // sending the flag rather than send `false`, so the server keeps one meaning
+  // for "absent" across old and new clients.
+  it("stops asking for a companion task card once the toggle is off", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+
+    await pickProject(user);
+    await pickAgent(user);
+    await user.type(screen.getByLabelText("页面需求描述"), "客户列表页");
+    await user.click(screen.getByRole("button", { name: "同步创建任务" }));
+    await user.click(screen.getByRole("button", { name: "生成页面设计" }));
+
+    await waitFor(() => expect(createDesignDocument).toHaveBeenCalledTimes(1));
+    const payload = createDesignDocument.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(payload).not.toHaveProperty("create_issue");
   });
 
   it("stages reference files by attachment id and sends them with the request", async () => {

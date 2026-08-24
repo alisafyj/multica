@@ -17,6 +17,52 @@ function message(overrides: Record<string, unknown> = {}) {
 }
 
 describe("DesignRunConversation", () => {
+  // Codex delivers its plan as a `turn/plan/updated` notification, normalised
+  // to a `todo_write` tool call. On screen it is the run's progress, so it
+  // renders as a checklist rather than the one-line tool summary.
+  it("renders an agent plan as a checklist with its progress", () => {
+    render(
+      <DesignRunConversation
+        live
+        messages={[
+          message({
+            seq: 1,
+            type: "tool_use",
+            tool: "todo_write",
+            input: {
+              todos: [
+                { content: "审计当前视觉层级", status: "completed" },
+                { content: "修正排版与间距", status: "in_progress" },
+                { content: "验证响应式", status: "pending" },
+              ],
+            },
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("待办")).toBeInTheDocument();
+    expect(screen.getByText("1/3")).toBeInTheDocument();
+    expect(screen.getByText("修正排版与间距")).toBeInTheDocument();
+    // Done stays visible — struck through, not hidden: the list is the record
+    // of what the run covered.
+    expect(screen.getByText("审计当前视觉层级")).toHaveClass("line-through");
+  });
+
+  // An unreadable payload degrades to the ordinary tool line instead of
+  // rendering an empty checklist that reads as "the agent planned nothing".
+  it("falls back to the tool line when a plan payload is unreadable", () => {
+    render(
+      <DesignRunConversation
+        live
+        messages={[message({ seq: 1, type: "tool_use", tool: "todo_write", input: { todos: "nope" } })]}
+      />,
+    );
+
+    expect(screen.queryByText("待办")).not.toBeInTheDocument();
+    expect(screen.getByText("todo_write")).toBeInTheDocument();
+  });
+
   it("renders the run in order instead of one truncated line", () => {
     render(
       <DesignRunConversation
