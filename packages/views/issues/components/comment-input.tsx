@@ -43,6 +43,9 @@ function CommentInput({ issueId, onSubmit }: CommentInputProps) {
     useCommentDraftStore.getState().getDraft(draftKey),
   );
   const [content, setContent] = useState(initialDraft ?? "");
+  const [editorDefault, setEditorDefault] = useState(initialDraft ?? "");
+  const [editorKey, setEditorKey] = useState(0);
+  const [appliedInjection, setAppliedInjection] = useState(0);
   const [isEmpty, setIsEmpty] = useState(() => !initialDraft?.trim());
   const [suppressedAgentIds, setSuppressedAgentIds] = useState<Set<string>>(() => new Set());
   const triggerPreview = useCommentTriggerPreview({ issueId, content });
@@ -80,6 +83,17 @@ function CommentInput({ issueId, onSubmit }: CommentInputProps) {
   // Flush on every onUpdate (debounced upstream) + visibilitychange/pagehide
   // so tab close / mobile background doesn't lose work. Cleared on submit.
   const setDraft = useCommentDraftStore((s) => s.setDraft);
+  const injectedNonce = useCommentDraftStore((s) => s.draftInjections[draftKey] ?? 0);
+  useEffect(() => {
+    if (injectedNonce === appliedInjection) return;
+    const next = useCommentDraftStore.getState().getDraft(draftKey) ?? "";
+    setEditorDefault(next);
+    setContent(next);
+    setIsEmpty(!next.trim());
+    setEditorKey((key) => key + 1);
+    setAppliedInjection(injectedNonce);
+    lazy.activate();
+  }, [appliedInjection, draftKey, injectedNonce, lazy.activate]);
   useEffect(() => {
     const flush = () => {
       const md = editorRef.current?.getMarkdown();
@@ -210,8 +224,9 @@ function CommentInput({ issueId, onSubmit }: CommentInputProps) {
         aria-busy={submitting || undefined}
       >
         <ContentEditor
+          key={editorKey}
           ref={editorRef}
-          defaultValue={initialDraft}
+          defaultValue={editorDefault}
           onReady={lazy.onReady}
           placeholder={t(($) => $.comment.leave_comment_placeholder)}
           onUpdate={(md) => {
