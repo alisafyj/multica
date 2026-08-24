@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"log/slog"
 	"net/http"
@@ -114,6 +115,34 @@ type designDocumentInputSnapshot struct {
 	Attachments         json.RawMessage `json:"attachments,omitempty"`
 }
 
+// designDocumentTitleFromBrief names a design after what was asked for.
+//
+// The launcher sends no title, and the fallback used to be the project's own
+// name — so every document in a project was called the same thing, which made
+// the design library unreadable and, once the companion task carried that name
+// too, made the second launch in a project collide with the first one's task
+// under the active-duplicate guard.
+//
+// The first line is the title: a brief that opens with a sentence names itself,
+// and one that runs long is cut on a rune boundary so a Chinese brief does not
+// lose its last character to a byte slice.
+func designDocumentTitleFromBrief(brief string, fallback string) string {
+	line := brief
+	if cut := strings.IndexAny(line, "\r\n"); cut >= 0 {
+		line = line[:cut]
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return fallback
+	}
+	const maxRunes = 60
+	runes := []rune(line)
+	if len(runes) <= maxRunes {
+		return line
+	}
+	return strings.TrimSpace(string(runes[:maxRunes])) + "…"
+}
+
 func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 	var req CreateDesignDocumentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -208,7 +237,7 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 
 	title := req.Title
 	if title == "" {
-		title = project.Title
+		title = designDocumentTitleFromBrief(req.Brief, project.Title)
 	}
 
 	// The launcher can open a task card next to the design run. The issue is a
@@ -229,6 +258,13 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 			CreatorType:  "member",
 			CreatorID:    requesterUUID,
 			ProjectID:    projectUUID,
+			// Two design runs are two pieces of work even when they are asked
+			// for in the same words, and the user requested a card for THIS
+			// one. Without this the active-duplicate guard rejected the second
+			// companion in a project and took the whole design document with
+			// it — the launcher reported only "failed to create the companion
+			// task" and no design ran at all.
+			AllowDuplicate: true,
 		}, service.IssueCreateOpts{
 			ActorID: uuidToString(requesterUUID),
 			// The agent assignee is a readable trace of who is doing the work,
@@ -239,7 +275,8 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 			SuppressAssigneeRun: true,
 		})
 		if issueErr != nil {
-			writeProjectDesignSystemError(w, http.StatusInternalServerError, "issue_create_failed", "failed to create the companion task")
+			writeProjectDesignSystemError(w, http.StatusInternalServerError, "issue_create_failed",
+				fmt.Sprintf("failed to create the companion task: %v", issueErr))
 			return
 		}
 		issueUUID = created.Issue.ID

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/testutil"
@@ -136,5 +137,65 @@ func TestCreateDesignDocumentPrefersTheNamedIssueOverACompanion(t *testing.T) {
 	issueID, _, _, found := companionIssueOf(t, created.ID)
 	if !found || issueID != namedIssueID {
 		t.Fatalf("document issue = (%q, %v), want the named issue %q", issueID, found, namedIssueID)
+	}
+}
+
+// The launcher sends no title, so the server names the design. It used to fall
+// back to the project's name, which gave every document in a project the same
+// title — and, once a companion task carried it too, made the SECOND launch in
+// a project collide with the first one's task and fail outright.
+func TestDesignDocumentTitleComesFromTheBrief(t *testing.T) {
+	long := strings.Repeat("订单", 40)
+	for name, tc := range map[string]struct{ brief, fallback, want string }{
+		"first line names it": {
+			brief:    "客户列表页，支持筛选与批量操作。\n第二段说明不参与命名。",
+			fallback: "某个项目",
+			want:     "客户列表页，支持筛选与批量操作。",
+		},
+		"single line":                     {brief: "登录页", fallback: "某个项目", want: "登录页"},
+		"blank falls back to the project": {brief: "   \n  ", fallback: "某个项目", want: "某个项目"},
+		"long brief is cut on a rune boundary": {
+			brief:    long,
+			fallback: "某个项目",
+			want:     string([]rune(long)[:60]) + "…",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := designDocumentTitleFromBrief(tc.brief, tc.fallback); got != tc.want {
+				t.Fatalf("designDocumentTitleFromBrief() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The bug a user hit: launching a second design in a project reported only
+// "failed to create the companion task" and ran no design at all, because the
+// active-duplicate guard saw the first launch's task. Two runs are two pieces
+// of work, so both get a card.
+func TestCreateDesignDocumentOpensACompanionForEveryLaunch(t *testing.T) {
+	projectID := createProjectDesignSystemProject(t, testWorkspaceID, "Repeat launch project")
+	agentID, _ := createProjectDesignSystemAgent(t, "online")
+
+	body := map[string]any{
+		"project_id":   projectID,
+		"agent_id":     agentID,
+		"platform":     "web",
+		"brief":        "同一句话发起两次。",
+		"create_issue": true,
+	}
+	first := createDesignDocumentForCompanionTest(t, body)
+	second := createDesignDocumentForCompanionTest(t, body)
+
+	firstIssue, firstTitle, _, firstFound := companionIssueOf(t, first.ID)
+	secondIssue, secondTitle, _, secondFound := companionIssueOf(t, second.ID)
+	if !firstFound || !secondFound {
+		t.Fatalf("companion issues found = (%v, %v), want both", firstFound, secondFound)
+	}
+	if firstIssue == secondIssue {
+		t.Fatal("both documents point at one task — the second launch reused the first one's card")
+	}
+	// Named from the brief, not from the project, on both runs.
+	if firstTitle != "同一句话发起两次。" || secondTitle != "同一句话发起两次。" {
+		t.Fatalf("companion titles = (%q, %q), want the brief's first line", firstTitle, secondTitle)
 	}
 }
