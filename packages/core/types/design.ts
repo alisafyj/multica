@@ -557,7 +557,12 @@ export type DesignDocumentRecipe =
   | "web-clone"
   | "wireframe"
   | "mobile-app"
-  | "figma-migration";
+  | "figma-migration"
+  // Same pipeline, different format: a deck is a set of slide pages, a
+  // long-form piece is a reading layout. Both are HTML the package already
+  // carries, so they are recipes rather than new artifact kinds.
+  | "deck"
+  | "long-form";
 
 /**
  * A published entry of the community catalogue (DC-041 / DC-048). A recipe is

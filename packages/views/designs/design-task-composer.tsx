@@ -96,27 +96,35 @@ import {
  *
  * A chip carrying a `recipe` starts a real page-design task; the recipe is the
  * configuration the agent follows, not a different artifact kind. Picking none
- * leaves the recipe at `default`, the free-form path. Chips without one keep
- * their position but stay inert — nothing in this phase produces a deck,
- * image, document, HyperFrames, video, audio, live artifact or WebGL piece.
+ * leaves the recipe at `default`, the free-form path.
+ *
+ * A chip without one carries `unavailable` instead, and says what is actually
+ * missing. They are not one queue: a deck and a long-form document were only
+ * ever recipes over the pipeline that already exists, so they run; an image,
+ * a video and an audio piece need a deliverable this package cannot hold; and
+ * a live artifact is not unbuilt at all — it contradicts the rule that makes
+ * a prototype safe to preview, which is that it runs with the network off.
+ * "即将支持" on all of them alike told the user the same untrue thing.
  */
 const CREATE_TYPES: ReadonlyArray<{
   id: string;
   recipe?: Exclude<DesignDocumentRecipe, "default">;
   label: string;
   description: string;
+  /** Why this cannot be picked. Present exactly when `recipe` is absent. */
+  unavailable?: string;
   icon: typeof AppWindow;
 }> = [
   { id: "ui-mockup", recipe: "ui-mockup", label: "原型", description: "可交互的应用界面稿", icon: AppWindow },
-  { id: "deck", label: "幻灯片", description: "成套的演示页面", icon: Presentation },
-  { id: "image", label: "图片", description: "单张视觉素材", icon: ImageIcon },
-  { id: "document", label: "文档", description: "长文与报告版式", icon: FileText },
-  { id: "hyperframes", label: "HyperFrames", description: "HTML 连续帧动画合成", icon: LayoutTemplate },
+  { id: "deck", recipe: "deck", label: "幻灯片", description: "成套的演示页面", icon: Presentation },
+  { id: "image", label: "图片", description: "单张视觉素材", unavailable: "产物必须包含可交互的原型页面，单张素材还没有对应的产物形态", icon: ImageIcon },
+  { id: "document", recipe: "long-form", label: "文档", description: "长文与报告版式", icon: FileText },
+  { id: "hyperframes", label: "HyperFrames", description: "HTML 连续帧动画合成", unavailable: "逐帧合成的产物契约尚未定义", icon: LayoutTemplate },
   { id: "web-clone", recipe: "web-clone", label: "网站复刻", description: "按现有网站还原页面", icon: Globe },
-  { id: "video", label: "视频", description: "分镜与动态素材", icon: Video },
-  { id: "audio", label: "音频", description: "语音与音效素材", icon: AudioLines },
-  { id: "live-board", label: "实时产物", description: "可刷新、接入数据的实时页面", icon: ChartColumn },
-  { id: "webgl", label: "WebGL 体验", description: "三维与实时渲染", icon: Sparkles },
+  { id: "video", label: "视频", description: "分镜与动态素材", unavailable: "需要视频生成能力，设计包也无法承载视频产物", icon: Video },
+  { id: "audio", label: "音频", description: "语音与音效素材", unavailable: "需要音频生成能力，设计包也无法承载音频产物", icon: AudioLines },
+  { id: "live-board", label: "实时产物", description: "可刷新、接入数据的实时页面", unavailable: "原型必须在断网下运行，接入实时数据与这条规则冲突", icon: ChartColumn },
+  { id: "webgl", label: "WebGL 体验", description: "三维与实时渲染", unavailable: "离线规则下不能引入渲染库，需要自带实现，尚未支持", icon: Sparkles },
 ];
 
 export const PLATFORM_OPTIONS: ReadonlyArray<{
@@ -243,14 +251,15 @@ function CreateChip({
   description,
   icon: Icon,
   selected,
-  disabled,
+  unavailable,
   onClick,
 }: {
   label: string;
   description: string;
   icon: typeof AppWindow;
   selected?: boolean;
-  disabled?: boolean;
+  /** Why this chip cannot be picked; absent means it can. */
+  unavailable?: string;
   onClick?: () => void;
 }) {
   return (
@@ -258,23 +267,23 @@ function CreateChip({
       type="button"
       // Omitted for chips that navigate rather than toggle a recipe — a
       // pressed state they can never enter would only mislead.
-      aria-pressed={disabled || selected === undefined ? undefined : selected}
-      aria-label={disabled ? `${label}（即将支持）` : undefined}
-      disabled={disabled}
-      title={disabled ? `${description}（即将支持）` : description}
+      aria-pressed={unavailable || selected === undefined ? undefined : selected}
+      aria-label={unavailable ? `${label}（暂不可用：${unavailable}）` : undefined}
+      disabled={!!unavailable}
+      title={unavailable ? `${description}\n暂不可用：${unavailable}` : description}
       onClick={onClick}
       className={cn(
         // Same reason as SettingTrigger: opaque so the dot grid cannot show
         // through the chip.
         "flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-full border bg-card px-2.5 text-caption transition-colors",
-        disabled
+        unavailable
           ? "cursor-not-allowed border-dashed bg-muted text-muted-foreground"
           : "cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground",
         // Selection has to survive hover, so it lives on border, surface,
         // weight and colour — dimensions hover never touches — and the hover
         // compound is spelled out so a selected chip cannot visually downgrade
         // to a plain hover.
-        !disabled && selected
+        !unavailable && selected
           ? "border-primary bg-accent font-medium text-primary hover:border-primary hover:bg-accent hover:text-primary"
           : undefined,
       )}
@@ -319,7 +328,7 @@ function CreateTypeRail({
                 : recipe === type.recipe
               : undefined
           }
-          disabled={!type.recipe}
+          {...(type.unavailable ? { unavailable: type.unavailable } : {})}
           onClick={type.recipe ? () => onPick(type.recipe!) : undefined}
         />
       ))}

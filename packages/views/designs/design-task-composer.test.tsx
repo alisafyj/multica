@@ -509,25 +509,48 @@ describe("DesignTaskComposer", () => {
     expect(screen.queryByText(/来自 Figma：把 Figma 稿转成页面设计/)).not.toBeInTheDocument();
   });
 
-  it("keeps every unbuilt creation scenario in the rail without letting it run", async () => {
+  // A deck and a long-form document are formats of the same page design, so
+  // they run on the pipeline that already exists rather than waiting for one.
+  it("runs the format scenarios the page pipeline can already produce", async () => {
     const user = userEvent.setup();
     renderComposer();
 
-    // The rail lays out the whole surface, so a position with no producer
-    // still holds its place — while saying in its name that it cannot run.
-    const slides = await screen.findByRole("button", { name: "幻灯片（即将支持）" });
-    expect(slides).toBeDisabled();
-    expect(slides).not.toHaveAttribute("aria-pressed");
-    expect(screen.getByRole("button", { name: "HyperFrames（即将支持）" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "实时产物（即将支持）" })).toBeDisabled();
+    const slides = await screen.findByRole("button", { name: "幻灯片" });
+    expect(slides).toBeEnabled();
+    await user.click(slides);
+    expect(slides).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "原型" })).toHaveAttribute("aria-pressed", "false");
+
+    await pickProject(user);
+    await pickAgent(user);
+    await user.type(screen.getByLabelText("页面需求描述"), "季度评审汇报");
+    await user.click(screen.getByRole("button", { name: "生成页面设计" }));
+
+    await waitFor(() => expect(createDesignDocument).toHaveBeenCalledTimes(1));
+    expect((createDesignDocument.mock.calls[0]?.[0] as Record<string, unknown>).recipe).toBe("deck");
+  });
+
+  // The rail lays out the whole surface, so a scenario with no producer holds
+  // its place — but it has to say what is actually missing. These are not one
+  // queue: a video needs a deliverable this package cannot hold, and a live
+  // artifact contradicts the rule that a prototype runs with the network off.
+  // "即将支持" on both told the user the same untrue thing.
+  it("says why a scenario it cannot produce is unavailable", async () => {
+    renderComposer();
+
+    const live = await screen.findByRole("button", { name: /实时产物（暂不可用：/ });
+    expect(live).toBeDisabled();
+    expect(live).not.toHaveAttribute("aria-pressed");
+    expect(live.getAttribute("aria-label")).toContain("原型必须在断网下运行");
+    expect(
+      screen.getByRole("button", { name: /视频（暂不可用：/ }).getAttribute("aria-label"),
+    ).toContain("需要视频生成能力");
+
     // Creating a design system has its own entry point on the 设计体系 tab
     // (DC-052 / DC-054), and 来自 Figma lives in the + menu as a migration
     // action, so neither takes a rail position.
     expect(screen.queryByRole("button", { name: /创建设计体系/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /来自 Figma/ })).not.toBeInTheDocument();
-
-    await user.click(slides);
-    expect(screen.getByRole("button", { name: "原型" })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("sends the community entry to the gallery instead of arming a recipe", async () => {

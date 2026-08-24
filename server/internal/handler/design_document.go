@@ -48,6 +48,11 @@ var designDocumentRecipes = map[string]struct{}{
 	"wireframe":       {},
 	"mobile-app":      {},
 	"figma-migration": {},
+	// Same pipeline, different format: a deck is a set of slide pages and a
+	// long-form piece is a reading layout, both of them HTML the package
+	// contract already carries. They are recipes, not artifact kinds.
+	"deck":      {},
+	"long-form": {},
 }
 
 type CreateDesignDocumentRequest struct {

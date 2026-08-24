@@ -32,6 +32,10 @@ var designRecipeBriefs = map[string]string{
 
 	"mobile-app": "- Recipe: mobile app screen. Design for a phone viewport first: reachable primary actions, touch targets no smaller than 44px, safe-area padding at top and bottom, and vertical scroll as the default navigation. Do not deliver a desktop layout narrowed down — a mobile screen has its own information order.\n",
 
+	"deck": "- Recipe: presentation deck. Every slide is its own page in `brief.json` with its own stable ID, and moving between them is part of what you are delivering — a deck that cannot be advanced is a pile of images. One idea per slide, type sized to be read from the back of a room, and one master layout carried through rather than ten different compositions. Detail the presenter would say out loud belongs in the slide's notes, not set in 11px beneath the headline.\n",
+
+	"long-form": "- Recipe: long-form document. Reading is the deliverable: set a comfortable measure, keep one clear column for body text, and let the type scale and vertical rhythm carry the structure. Headings must be navigable and carry the same stable IDs `brief.json` declares. Typeset tables, figures, pull quotes and callouts as part of the page rather than dropping them in as boxes. This is not a marketing page — no hero band, no feature triptych.\n",
+
 	"figma-migration": "- Recipe: migrate a Figma design. The attached export is the design intent; your job is to make it real, runnable HTML honouring the pinned design system's tokens. Where the export and the design system disagree on a token, follow the design system and record the substitution in `coverage.json`. Absolute-positioning everything to match the export pixel for pixel is not a migration — the result must survive a resize.\n",
 }
 

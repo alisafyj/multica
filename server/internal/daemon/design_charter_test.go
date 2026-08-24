@@ -296,3 +296,31 @@ func TestDesignDocumentPromptCarriesTheRequiredFileSchemas(t *testing.T) {
 		t.Fatal("the prompt does not say that an unknown field fails the package")
 	}
 }
+
+// A deck and a long-form document are formats of the same page design, so they
+// are recipes over the pipeline that already exists rather than artifact kinds
+// it cannot produce. Each has to say what its own format demands — otherwise
+// picking 幻灯片 changes one string and produces the same screen as 原型, which
+// is exactly the gap the built-in recipes were written to close.
+func TestDesignRecipesCoverTheFormatChips(t *testing.T) {
+	deck := designDocumentPromptWithRecipe(t, "deck")
+	longForm := designDocumentPromptWithRecipe(t, "long-form")
+
+	if !strings.Contains(deck, "Recipe: presentation deck") {
+		t.Fatal("the deck chip produces no recipe body")
+	}
+	if !strings.Contains(longForm, "Recipe: long-form document") {
+		t.Fatal("the long-form chip produces no recipe body")
+	}
+	if deck == longForm {
+		t.Fatal("a deck and a long-form document produce the same prompt")
+	}
+	// Each names the failure its own format invites: a deck nobody can advance,
+	// a reading layout dressed up as a landing page.
+	if !strings.Contains(deck, "cannot be advanced") {
+		t.Fatal("the deck recipe does not require the deck to be navigable")
+	}
+	if !strings.Contains(longForm, "not a marketing page") {
+		t.Fatal("the long-form recipe does not rule out marketing-page tropes")
+	}
+}
