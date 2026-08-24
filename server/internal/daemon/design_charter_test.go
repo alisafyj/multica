@@ -255,3 +255,21 @@ func TestDesignCharterWarnsOffTheGeneratedPageTells(t *testing.T) {
 		}
 	}
 }
+
+// A complete, valid package was thrown away at the last step because the agent
+// wrote prototype/favicon.svg — web habit puts a favicon next to index.html,
+// and the collector rejects anything under prototype/ that is not code. Naming
+// the habit is what makes the rule actionable; "images go in assets/" was
+// already there and did not stop it.
+func TestDesignDocumentPromptRulesOutAPrototypeFavicon(t *testing.T) {
+	prompt := designDocumentPromptForCharter(t)
+	for _, want := range []string{
+		"including a favicon",
+		"Do not write one.",
+		"`../assets/<file>`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("package contract is missing %q", want)
+		}
+	}
+}
