@@ -13,9 +13,10 @@ import { ISSUE_DESIGN_ROLE_FRONTEND, ISSUE_DESIGN_ROLE_KEY, ISSUE_DESIGN_ROLE_UI
 import { childIssuesOptions, issueKeys } from "@multica/core/issues/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
-import type { Agent, DesignDelivery, DesignDraft, DesignFile, DesignFrame, DesignRestorePlan, DesignRestoreTask, DesignRestoreTaskInputV1, Issue, MemberWithUser } from "@multica/core/types";
+import type { Agent, DesignDelivery, DesignDraft, DesignFile, DesignFrame, DesignRestorePlan, DesignRestoreTask, DesignRestoreTaskInputV1, GalleryNativeJson, Issue, MemberWithUser } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@multica/ui/components/ui/hover-card";
 import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/native-select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@multica/ui/components/ui/sheet";
 import { Textarea } from "@multica/ui/components/ui/textarea";
@@ -333,6 +334,15 @@ function frameScopeItem(frame: DesignFrame): IssueDesignScopeItem {
   };
 }
 
+function framePreviewUrl(nativeJson: GalleryNativeJson | undefined, frameId: string, fallback?: string | null) {
+  if (!nativeJson) return fallback ?? null;
+  const frame = nativeJson.frames.find((item) => item.id === frameId);
+  if (!frame) return fallback ?? null;
+  const previewAsset = frame.previewAssetId ? nativeJson.assets[frame.previewAssetId] : undefined;
+  const thumbnailAsset = frame.thumbnailAssetId ? nativeJson.assets[frame.thumbnailAssetId] : undefined;
+  return previewAsset?.url ?? thumbnailAsset?.url ?? frame.thumbnailDataUrl ?? frame.thumbnailUrl ?? fallback ?? null;
+}
+
 export function issueDesignScopeOptions(frames: DesignFrame[]): IssueDesignScopeOption[] {
   const groups = groupedFrames(frames);
   return [
@@ -642,7 +652,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const navigation = useNavigation();
   const queryClient = useQueryClient();
   const [fileId, setFileId] = useState("");
-  const [scopeOptionId, setScopeOptionId] = useState("");
+  const [selectedFrameIds, setSelectedFrameIds] = useState<string[]>([]);
   const [agentId, setAgentId] = useState("");
   const [restoreTask, setRestoreTask] = useState<DesignRestoreTask | null>(null);
   const [isOrchestrating, setIsOrchestrating] = useState(false);
@@ -698,22 +708,33 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
     enabled: !!selectedFileId,
   });
   const frames = selectedFileDetail?.current_revision?.native_json?.frames ?? [];
+  const nativeJson = selectedFileDetail?.current_revision?.native_json;
   const scopeOptions = useMemo(() => issueDesignScopeOptions(frames), [frames]);
-  const selectedScopeOption = scopeOptions.find((option) => option.id === scopeOptionId)
-    ?? scopeOptions.find((option) => option.items.some((item) => item.frameId === activeDeliveryFrameId))
-    ?? scopeOptions[0]
-    ?? null;
-  const selectedFrameId = activeDeliveryFrameId || selectedScopeOption?.items[0]?.frameId || "";
+  const groupOptions = useMemo(() => scopeOptions.filter((option) => option.kind === "figma_group"), [scopeOptions]);
+  const ungroupedOptions = useMemo(() => {
+    const groupedFrameIds = new Set(groupOptions.flatMap((option) => option.items.map((item) => item.frameId)));
+    return scopeOptions.filter((option) => option.kind === "frame" && !groupedFrameIds.has(option.items[0]?.frameId ?? ""));
+  }, [scopeOptions, groupOptions]);
+  const selectedFrameIdSet = useMemo(() => new Set(selectedFrameIds), [selectedFrameIds]);
+  const selectedScopeItems = useMemo(() => frames.filter((frame) => selectedFrameIdSet.has(frame.id)).map(frameScopeItem), [frames, selectedFrameIdSet]);
+  const selectedFrameId = activeDeliveryFrameId || selectedScopeItems[0]?.frameId || "";
   const selectedFrame = frames.find((frame: DesignFrame) => frame.id === selectedFrameId);
+  const toggleScopeFrameIds = (ids: string[], checked: boolean) => {
+    setSelectedFrameIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => (checked ? next.add(id) : next.delete(id)));
+      return Array.from(next);
+    });
+  };
   const availableAgents = useMemo(() => agents.filter((agent) => !agent.archived_at && agent.runtime_id), [agents]);
   const assignedAvailableAgent = issue.assignee_type === "agent" ? availableAgents.find((agent) => agent.id === issue.assignee_id) : undefined;
   const selectedAgent = availableAgents.find((agent) => agent.id === agentId) ?? assignedAvailableAgent ?? availableAgents[0];
   const selectedRevisionId = selectedFileDetail?.current_revision?.id;
   const restoreFileId = receivedDesignDelivery?.file_id ?? selectedFileId;
   const restoreRevisionId = receivedDesignDelivery?.revision_id ?? selectedRevisionId;
-  const restoreFrameId = receivedDesignDelivery ? activeDeliveryFrameId || selectedFrameId : selectedScopeOption?.items[0]?.frameId || selectedFrameId;
-  const restoreFrameName = receivedDesignDelivery ? activeDeliveryFrameName || selectedScopeOption?.label || selectedFrame?.name || "默认画板" : selectedScopeOption?.label || selectedFrame?.name || "默认画板";
-  const restoreItems = receivedDesignDelivery ? restoreItemsFromDelivery(receivedDesignDelivery) : selectedScopeOption?.items ?? [];
+  const restoreFrameId = receivedDesignDelivery ? activeDeliveryFrameId || selectedFrameId : selectedScopeItems[0]?.frameId || selectedFrameId;
+  const restoreFrameName = receivedDesignDelivery ? activeDeliveryFrameName || selectedScopeItems[0]?.frameName || selectedFrame?.name || "默认画板" : selectedScopeItems[0]?.frameName || selectedFrame?.name || "默认画板";
+  const restoreItems = receivedDesignDelivery ? restoreItemsFromDelivery(receivedDesignDelivery) : selectedScopeItems;
   const existingIssueRestoreTask = useMemo(() => {
     if (!restoreRevisionId) return null;
     return selectIssueRestoreTask(restoreTasks, issue.id, restoreRevisionId, receivedDesignDelivery?.id);
@@ -1058,7 +1079,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="font-medium text-foreground">{displayStatusHint}</div>
-                <div className="mt-1 truncate text-muted-foreground">{selectedScopeOption?.label || selectedFrame?.name || "默认画板"} · {primaryAgent?.name ?? "等待可用 Agent"}{agentTask ? ` · ${agentTask.status}` : ""}</div>
+                <div className="mt-1 truncate text-muted-foreground">{selectedScopeItems.length ? `已选 ${selectedScopeItems.length} 个画板` : selectedFrame?.name || "默认画板"} · {primaryAgent?.name ?? "等待可用 Agent"}{agentTask ? ` · ${agentTask.status}` : ""}</div>
               </div>
               {activeRestoreTask ? <span className="shrink-0 font-mono text-muted-foreground">{activeRestoreTask.id.slice(0, 8)}</span> : null}
             </div>
@@ -1158,18 +1179,76 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
             <div className="space-y-2 border-t p-2">
               {!receivedDesignDelivery ? (
                 <>
-                  <select value={selectedFileId} onChange={(event) => { setFileId(event.target.value); setScopeOptionId(""); }} className="h-8 w-full rounded-md border bg-background px-2">
+                  <select value={selectedFileId} onChange={(event) => { setFileId(event.target.value); setSelectedFrameIds([]); }} className="h-8 w-full rounded-md border bg-background px-2">
                     {projectDesignFiles.length ? projectDesignFiles.map((file) => <option key={file.id} value={file.id}>{file.title}</option>) : <option value="">当前项目暂无设计稿</option>}
                   </select>
-                  <select value={selectedScopeOption?.id ?? ""} onChange={(event) => setScopeOptionId(event.target.value)} className="h-8 w-full rounded-md border bg-background px-2" disabled={!scopeOptions.length}>
-                    {scopeOptions.length ? scopeOptions.map((option) => {
-                      const item = option.items[0];
-                      const labelText = option.kind === "figma_group"
-                        ? `${option.label} · ${option.items.length} 个画板`
-                        : item?.groupName ? `${item.groupName} / ${option.label}` : option.label;
-                      return <option key={option.id} value={option.id}>{labelText}</option>;
-                    }) : <option value="">暂无交付范围</option>}
-                  </select>
+                  <div className="rounded-md border bg-background p-2">
+                    <div className="mb-1 text-caption font-medium text-muted-foreground">还原范围（可多选，悬停查看缩略图）</div>
+                    {scopeOptions.length ? (
+                      <div className="max-h-60 space-y-1 overflow-y-auto pr-1">
+                        {groupOptions.map((option) => {
+                          const ids = option.items.map((item) => item.frameId);
+                          const allSelected = ids.length > 0 && ids.every((id) => selectedFrameIdSet.has(id));
+                          const groupThumb = framePreviewUrl(nativeJson, ids[0] ?? "", selectedFileDetail?.file.thumbnail_url ?? null);
+                          return (
+                            <div key={option.id}>
+                              <HoverCard>
+                                <HoverCardTrigger render={
+                                  <label className="flex w-full cursor-pointer items-center gap-2 rounded px-1 py-1 hover:bg-muted">
+                                    <input type="checkbox" className="size-4 accent-primary" checked={allSelected} onChange={(event) => toggleScopeFrameIds(ids, event.target.checked)} />
+                                    <span className="truncate text-caption font-medium">{option.label} · {option.items.length} 个画板</span>
+                                  </label>
+                                } />
+                                <HoverCardContent className="w-auto p-2">
+                                  {groupThumb ? <img src={groupThumb} alt={option.label} className="max-h-48 max-w-64 rounded-md border" loading="lazy" /> : <span className="text-caption text-muted-foreground">暂无缩略图</span>}
+                                </HoverCardContent>
+                              </HoverCard>
+                              <div className="ml-5 space-y-0.5 border-l pl-2">
+                                {option.items.map((item) => {
+                                  const checked = selectedFrameIdSet.has(item.frameId);
+                                  const thumb = framePreviewUrl(nativeJson, item.frameId, selectedFileDetail?.file.thumbnail_url ?? null);
+                                  return (
+                                    <HoverCard key={item.frameId}>
+                                      <HoverCardTrigger render={
+                                        <label className="flex w-full cursor-pointer items-center gap-2 rounded px-1 py-1 hover:bg-muted">
+                                          <input type="checkbox" className="size-4 accent-primary" checked={checked} onChange={(event) => toggleScopeFrameIds([item.frameId], event.target.checked)} />
+                                          <span className="truncate text-caption">{item.frameName}</span>
+                                        </label>
+                                      } />
+                                      <HoverCardContent className="w-auto p-2">
+                                        {thumb ? <img src={thumb} alt={item.frameName} className="max-h-48 max-w-64 rounded-md border" loading="lazy" /> : <span className="text-caption text-muted-foreground">暂无缩略图</span>}
+                                      </HoverCardContent>
+                                    </HoverCard>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {ungroupedOptions.map((option) => {
+                          const item = option.items[0];
+                          if (!item) return null;
+                          const checked = selectedFrameIdSet.has(item.frameId);
+                          const thumb = framePreviewUrl(nativeJson, item.frameId, selectedFileDetail?.file.thumbnail_url ?? null);
+                          return (
+                            <HoverCard key={option.id}>
+                              <HoverCardTrigger render={
+                                <label className="flex w-full cursor-pointer items-center gap-2 rounded px-1 py-1 hover:bg-muted">
+                                  <input type="checkbox" className="size-4 accent-primary" checked={checked} onChange={(event) => toggleScopeFrameIds([item.frameId], event.target.checked)} />
+                                  <span className="truncate text-caption">{item.frameName}</span>
+                                </label>
+                              } />
+                              <HoverCardContent className="w-auto p-2">
+                                {thumb ? <img src={thumb} alt={item.frameName} className="max-h-48 max-w-64 rounded-md border" loading="lazy" /> : <span className="text-caption text-muted-foreground">暂无缩略图</span>}
+                              </HoverCardContent>
+                            </HoverCard>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-caption text-muted-foreground">暂无交付范围</div>
+                    )}
+                  </div>
                 </>
               ) : null}
               <select value={primaryAgent?.id ?? ""} onChange={(event) => setAgentId(event.target.value)} className="h-8 w-full rounded-md border bg-background px-2" disabled={!availableAgents.length}>
