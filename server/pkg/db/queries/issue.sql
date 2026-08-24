@@ -220,6 +220,29 @@ UPDATE issue SET
 WHERE id = $1 AND workspace_id = $3
 RETURNING *;
 
+-- name: StartDesignDocumentCompanionIssue :one
+-- Move a design launcher's companion card to in_progress when its own run
+-- starts, and only then.
+--
+-- The gate is origin_type: that card IS the design work, so nothing else in
+-- the product is ever going to move it off todo, and leaving it there while
+-- its own agent designs is simply wrong. A task the USER linked to a document
+-- carries a different origin and is untouched — that one is normally the
+-- implementation the design feeds into, and advancing it would claim
+-- implementation had started.
+--
+-- The status test lives in the WHERE clause so two runs starting at once
+-- cannot both believe they made the transition, and so a card a human already
+-- moved (to in_progress, in_review, done) is never dragged backwards. No rows
+-- means there was nothing to advance, which is the common case.
+UPDATE issue SET
+    status = 'in_progress',
+    revision = revision + 1,
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
+    updated_at = now()
+WHERE id = $1 AND origin_type = 'design_document' AND status = 'todo'
+RETURNING *;
+
 -- name: CreateIssueWithOrigin :one
 INSERT INTO issue (
     workspace_id, title, description, status, priority,

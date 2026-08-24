@@ -90,12 +90,26 @@ func TestCreateDesignDocumentOpensACompanionIssueWhenAsked(t *testing.T) {
 	// the design task itself for the same local directory. The companion is a
 	// trace of who owns the work, not a second dispatch.
 	var taskCount int
-	if err := testPool.QueryRow(context.Background(),
-		`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1`, parseUUID(issueID)).Scan(&taskCount); err != nil {
+	var linkedTaskID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*), coalesce(min(id::text), '')
+		FROM agent_task_queue WHERE issue_id = $1
+	`, parseUUID(issueID)).Scan(&taskCount, &linkedTaskID); err != nil {
 		t.Fatalf("count tasks on the companion issue: %v", err)
 	}
-	if taskCount != 0 {
-		t.Fatalf("companion issue has %d queued tasks, want none — creating it must not also start a run", taskCount)
+	if taskCount != 1 {
+		t.Fatalf("companion issue has %d tasks, want exactly the design run", taskCount)
+	}
+	// The one task must be the design run itself. Anything else here is the
+	// second, independent dispatch this flag exists to suppress.
+	var activeTaskID string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT coalesce(active_task_id::text, '') FROM design_document WHERE id = $1`,
+		parseUUID(created.ID)).Scan(&activeTaskID); err != nil {
+		t.Fatalf("read the document's active task: %v", err)
+	}
+	if linkedTaskID != activeTaskID {
+		t.Fatalf("the task on the companion issue is %q, not the design run %q", linkedTaskID, activeTaskID)
 	}
 }
 
@@ -197,5 +211,95 @@ func TestCreateDesignDocumentOpensACompanionForEveryLaunch(t *testing.T) {
 	// Named from the brief, not from the project, on both runs.
 	if firstTitle != "同一句话发起两次。" || secondTitle != "同一句话发起两次。" {
 		t.Fatalf("companion titles = (%q, %q), want the brief's first line", firstTitle, secondTitle)
+	}
+}
+
+// designRunTaskIssueOf reads the issue the design run's queue row is attached
+// to. The link used to exist only in the other direction: the document knew its
+// issue, the run did not, so the issue's card showed no agent activity while an
+// agent was designing for it.
+func designRunTaskIssueOf(t *testing.T, documentID string) (issueID string, found bool) {
+	t.Helper()
+	err := testPool.QueryRow(context.Background(), `
+		SELECT coalesce(q.issue_id::text, '')
+		FROM design_document d
+		JOIN agent_task_queue q ON q.id = d.active_task_id
+		WHERE d.id = $1
+	`, parseUUID(documentID)).Scan(&issueID)
+	if err != nil {
+		t.Fatalf("read the design run's issue link: %v", err)
+	}
+	return issueID, issueID != ""
+}
+
+func TestDesignRunIsVisibleOnTheIssueItRunsFor(t *testing.T) {
+	projectID := createProjectDesignSystemProject(t, testWorkspaceID, "Run visibility project")
+	agentID, _ := createProjectDesignSystemAgent(t, "online")
+
+	t.Run("companion task", func(t *testing.T) {
+		created := createDesignDocumentForCompanionTest(t, map[string]any{
+			"project_id": projectID, "agent_id": agentID, "platform": "web",
+			"brief": "运行要出现在任务卡片上。", "create_issue": true,
+		})
+		companionID, _, _, _ := companionIssueOf(t, created.ID)
+		linked, found := designRunTaskIssueOf(t, created.ID)
+		if !found || linked != companionID {
+			t.Fatalf("design run issue = (%q, %v), want the companion %q", linked, found, companionID)
+		}
+	})
+
+	t.Run("linked task", func(t *testing.T) {
+		namedIssueID := dbfx.Issue(t, "已有的实现任务", testutil.Cols{"project_id": projectID})
+		created := createDesignDocumentForCompanionTest(t, map[string]any{
+			"project_id": projectID, "agent_id": agentID, "platform": "web",
+			"brief": "关联已有任务也要看得见。", "issue_id": namedIssueID,
+		})
+		linked, found := designRunTaskIssueOf(t, created.ID)
+		if !found || linked != namedIssueID {
+			t.Fatalf("design run issue = (%q, %v), want the linked issue %q", linked, found, namedIssueID)
+		}
+	})
+
+	// No issue at all is a legitimate way to work, and the run must still be
+	// created rather than refused for want of one.
+	t.Run("no task", func(t *testing.T) {
+		created := createDesignDocumentForCompanionTest(t, map[string]any{
+			"project_id": projectID, "agent_id": agentID, "platform": "web",
+			"brief": "不关联任务。",
+		})
+		if linked, found := designRunTaskIssueOf(t, created.ID); found {
+			t.Fatalf("a run with no issue was linked to %q", linked)
+		}
+	})
+}
+
+// The companion card is the design work, so it carries an origin that says so —
+// which is the only thing that later distinguishes it from a task the user
+// picked out of the project, and the gate on advancing its status.
+func TestCompanionIssueRecordsThatTheDesignLauncherOpenedIt(t *testing.T) {
+	projectID := createProjectDesignSystemProject(t, testWorkspaceID, "Companion origin project")
+	agentID, _ := createProjectDesignSystemAgent(t, "online")
+
+	companion := createDesignDocumentForCompanionTest(t, map[string]any{
+		"project_id": projectID, "agent_id": agentID, "platform": "web",
+		"brief": "伴生卡片要记录来源。", "create_issue": true,
+	})
+	companionID, _, _, _ := companionIssueOf(t, companion.ID)
+
+	namedIssueID := dbfx.Issue(t, "用户自己的任务", testutil.Cols{"project_id": projectID})
+	_ = createDesignDocumentForCompanionTest(t, map[string]any{
+		"project_id": projectID, "agent_id": agentID, "platform": "web",
+		"brief": "关联的任务不该被标记为设计来源。", "issue_id": namedIssueID,
+	})
+
+	for issueID, want := range map[string]string{companionID: "design_document", namedIssueID: ""} {
+		var origin string
+		if err := testPool.QueryRow(context.Background(),
+			`SELECT coalesce(origin_type, '') FROM issue WHERE id = $1`, parseUUID(issueID)).Scan(&origin); err != nil {
+			t.Fatalf("read issue origin: %v", err)
+		}
+		if origin != want {
+			t.Fatalf("issue %s origin = %q, want %q", issueID, origin, want)
+		}
 	}
 }

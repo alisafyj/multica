@@ -801,6 +801,62 @@ func (q *Queries) ListDesignDocumentShares(ctx context.Context, arg ListDesignDo
 	return items, nil
 }
 
+const listDesignDocumentsByIssue = `-- name: ListDesignDocumentsByIssue :many
+SELECT id, workspace_id, project_id, project_resource_id, issue_id, title, platform, recipe, draft_revision_id, saved_revision_id, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at FROM design_document
+WHERE workspace_id = $1
+  AND issue_id = $2
+ORDER BY updated_at DESC
+`
+
+type ListDesignDocumentsByIssueParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+}
+
+// An issue can have several designs pointing at it — a companion card opened
+// with the run, or a task the user linked from more than one document. Most
+// recently touched first, which is the one the issue should lead with.
+// Backed by idx_design_document_issue (workspace_id, issue_id).
+func (q *Queries) ListDesignDocumentsByIssue(ctx context.Context, arg ListDesignDocumentsByIssueParams) ([]DesignDocument, error) {
+	rows, err := q.db.Query(ctx, listDesignDocumentsByIssue, arg.WorkspaceID, arg.IssueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DesignDocument{}
+	for rows.Next() {
+		var i DesignDocument
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.ProjectResourceID,
+			&i.IssueID,
+			&i.Title,
+			&i.Platform,
+			&i.Recipe,
+			&i.DraftRevisionID,
+			&i.SavedRevisionID,
+			&i.CurrentAgentID,
+			&i.ActiveTaskID,
+			&i.ActiveOperation,
+			&i.InputSnapshot,
+			&i.LastError,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SavedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDesignDocumentsByProject = `-- name: ListDesignDocumentsByProject :many
 SELECT id, workspace_id, project_id, project_resource_id, issue_id, title, platform, recipe, draft_revision_id, saved_revision_id, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at FROM design_document
 WHERE workspace_id = $1

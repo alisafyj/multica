@@ -115,6 +115,11 @@ type designDocumentInputSnapshot struct {
 	Attachments         json.RawMessage `json:"attachments,omitempty"`
 }
 
+// issueOriginDesignDocument marks an issue the design launcher opened beside a
+// run, as opposed to one the user linked. Only the former may have its status
+// advanced by the design run — see the companion create below.
+const issueOriginDesignDocument = "design_document"
+
 // designDocumentTitleFromBrief names a design after what was asked for.
 //
 // The launcher sends no title, and the fallback used to be the project's own
@@ -258,6 +263,14 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 			CreatorType:  "member",
 			CreatorID:    requesterUUID,
 			ProjectID:    projectUUID,
+			// Where this card came from, which is what later tells it apart
+			// from a task the user picked out of the project. The companion IS
+			// the design work and may be advanced when its own agent starts; a
+			// task the user linked is usually the implementation the design
+			// feeds into, and moving that would claim implementation began.
+			// No origin_id: design_document already indexes (workspace_id,
+			// issue_id), so the issue side reaches its document without one.
+			OriginType: pgtype.Text{String: issueOriginDesignDocument, Valid: true},
 			// Two design runs are two pieces of work even when they are asked
 			// for in the same words, and the user requested a card for THIS
 			// one. Without this the active-duplicate guard rejected the second
@@ -378,20 +391,36 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	projectUUID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("project_id")), "project_id")
-	if !ok {
-		return
+	// Two ways to ask: a project lists its design library, an issue lists the
+	// designs pointing at it. The issue form is what lets a task card say a
+	// design exists for it instead of looking untouched.
+	var documents []db.DesignDocument
+	var err error
+	if raw := strings.TrimSpace(r.URL.Query().Get("issue_id")); raw != "" {
+		issueUUID, ok := parseUUIDOrBadRequest(w, raw, "issue_id")
+		if !ok {
+			return
+		}
+		documents, err = h.Queries.ListDesignDocumentsByIssue(r.Context(), db.ListDesignDocumentsByIssueParams{
+			WorkspaceID: workspaceUUID,
+			IssueID:     issueUUID,
+		})
+	} else {
+		projectUUID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("project_id")), "project_id")
+		if !ok {
+			return
+		}
+		if _, projectErr := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
+			ID: projectUUID, WorkspaceID: workspaceUUID,
+		}); projectErr != nil {
+			writeProjectDesignSystemError(w, http.StatusNotFound, "project_not_found", "project not found")
+			return
+		}
+		documents, err = h.Queries.ListDesignDocumentsByProject(r.Context(), db.ListDesignDocumentsByProjectParams{
+			WorkspaceID: workspaceUUID,
+			ProjectID:   projectUUID,
+		})
 	}
-	if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
-		ID: projectUUID, WorkspaceID: workspaceUUID,
-	}); err != nil {
-		writeProjectDesignSystemError(w, http.StatusNotFound, "project_not_found", "project not found")
-		return
-	}
-	documents, err := h.Queries.ListDesignDocumentsByProject(r.Context(), db.ListDesignDocumentsByProjectParams{
-		WorkspaceID: workspaceUUID,
-		ProjectID:   projectUUID,
-	})
 	if err != nil {
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "lookup_failed", "failed to load design documents")
 		return
@@ -404,10 +433,10 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 		// disagree with the list it was opened from.
 		var activeTask *db.AgentTaskQueue
 		if document.ActiveTaskID.Valid {
-			task, err := h.Queries.GetAgentTask(r.Context(), document.ActiveTaskID)
-			if err == nil {
+			task, taskErr := h.Queries.GetAgentTask(r.Context(), document.ActiveTaskID)
+			if taskErr == nil {
 				activeTask = &task
-			} else if !errors.Is(err, pgx.ErrNoRows) {
+			} else if !errors.Is(taskErr, pgx.ErrNoRows) {
 				writeProjectDesignSystemError(w, http.StatusInternalServerError, "lookup_failed", "failed to load design documents")
 				return
 			}
@@ -621,6 +650,10 @@ func (h *Handler) createDesignDocumentTask(
 		RuntimeID: agent.RuntimeID,
 		Priority:  0,
 		Context:   contextJSON,
+		// The design document already points at this issue; without the link
+		// pointing back, the issue's card knew nothing about the run happening
+		// for it and read as untouched work while an agent designed against it.
+		IssueID: issueID,
 	})
 	if err != nil {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("enqueue_failed", "failed to enqueue design generation")

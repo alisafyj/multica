@@ -199,6 +199,10 @@ func (h *Handler) createDesignDocumentAdjustTask(
 		RuntimeID: agent.RuntimeID,
 		Priority:  0,
 		Context:   contextJSON,
+		// The design document already points at this issue; without the link
+		// pointing back, the issue's card knew nothing about the run happening
+		// for it and read as untouched work while an agent designed against it.
+		IssueID: document.IssueID,
 	})
 	if err != nil {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("enqueue_failed", "failed to enqueue the design adjustment")

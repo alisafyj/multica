@@ -59,6 +59,16 @@ WHERE workspace_id = sqlc.arg('workspace_id')
   AND project_id = sqlc.arg('project_id')
 ORDER BY updated_at DESC;
 
+-- An issue can have several designs pointing at it — a companion card opened
+-- with the run, or a task the user linked from more than one document. Most
+-- recently touched first, which is the one the issue should lead with.
+-- Backed by idx_design_document_issue (workspace_id, issue_id).
+-- name: ListDesignDocumentsByIssue :many
+SELECT * FROM design_document
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND issue_id = sqlc.arg('issue_id')
+ORDER BY updated_at DESC;
+
 -- name: GetDesignDocumentByActiveTask :one
 SELECT * FROM design_document
 WHERE workspace_id = sqlc.arg('workspace_id')

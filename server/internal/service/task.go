@@ -4059,7 +4059,41 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	// the issue-card agent activity indicator) lags by up to half a minute
 	// on the transition users care about most.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskRunning, task)
+	s.startDesignDocumentCompanionIssue(ctx, task)
 	return &task, nil
+}
+
+// startDesignDocumentCompanionIssue moves the design launcher's companion card
+// off todo when the run it was opened for begins.
+//
+// The card is created by 同步创建任务 and is a trace of the design work, not a
+// driver of it: DC-045 keeps a design from pushing an issue around, and that
+// stays true in the direction that matters — nothing here ever closes a card,
+// moves it backwards, or touches a task the USER linked to a document. What it
+// fixes is the opposite failure: a card whose own agent is working sitting in
+// 待办, which is the state a user reported as "the design task has no progress".
+//
+// Both conditions are in the SQL, so a card a human has already moved is left
+// alone and concurrent starts cannot both claim the transition. No row is the
+// ordinary outcome and not a problem.
+func (s *TaskService) startDesignDocumentCompanionIssue(ctx context.Context, task db.AgentTaskQueue) {
+	if !task.IssueID.Valid {
+		return
+	}
+	issue, err := s.Queries.StartDesignDocumentCompanionIssue(ctx, task.IssueID)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("start design companion issue failed",
+				"issue_id", util.UUIDToString(task.IssueID),
+				"task_id", util.UUIDToString(task.ID),
+				"error", err)
+		}
+		return
+	}
+	// Direct write, so the issue:updated the HTTP handler would have emitted
+	// has to be emitted here — otherwise every board and status filter keeps
+	// showing 待办 until something else touches the row.
+	s.broadcastIssueUpdated(ctx, issue, "todo")
 }
 
 func (s *TaskService) cancelDeferredEscalationsForTask(ctx context.Context, taskID pgtype.UUID) {

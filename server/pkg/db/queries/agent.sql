@@ -430,9 +430,12 @@ WHERE id = @id
 -- locks the owners' workspace rows in the writer's own transaction and returns
 -- false once they are gone, so this statement writes no row instead of stranding
 -- a task in a workspace that has just been deleted (MUL-5999).
--- Quick-create tasks have no issue / chat / autopilot link; the entire job
--- description (prompt, requester, workspace) lives in context JSONB. The
--- daemon detects this variant via context.type == "quick_create".
+-- The job description (prompt, requester, workspace) lives in context JSONB;
+-- the daemon reads context.type to tell the variants apart. issue_id is
+-- optional and NULL for a true quick-create, which has no issue: a design
+-- document run passes the issue its document is linked to, so the task shows
+-- up as agent activity on that issue's card instead of the issue looking idle
+-- while an agent works for it.
 -- The requester who opened the quick-create modal is a direct_human originator
 -- and accountable; attribution provenance is stamped so this path is not a
 -- NULL-source enqueue bypass (MUL-4302 §2).
@@ -443,7 +446,7 @@ INSERT INTO agent_task_queue (
     id
 )
 SELECT
-    $1, $2, NULL, 'queued', $3, $4,
+    $1, $2, sqlc.narg(issue_id), 'queued', $3, $4,
     sqlc.narg(originator_user_id),
     sqlc.narg(accountable_user_id),
     sqlc.narg(runtime_mcp_overlay),
@@ -452,7 +455,7 @@ SELECT
     sqlc.narg(trigger_evidence_kind),
     sqlc.narg(trigger_evidence_ref_id),
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
-WHERE lock_task_owner_rows($1, NULL, $2)
+WHERE lock_task_owner_rows($1, sqlc.narg(issue_id), $2)
 RETURNING *;
 
 -- name: CreateDeferredAgentTask :one

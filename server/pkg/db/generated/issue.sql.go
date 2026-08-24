@@ -1575,6 +1575,66 @@ func (q *Queries) SetIssueMetadataKey(ctx context.Context, arg SetIssueMetadataK
 	return i, err
 }
 
+const startDesignDocumentCompanionIssue = `-- name: StartDesignDocumentCompanionIssue :one
+UPDATE issue SET
+    status = 'in_progress',
+    revision = revision + 1,
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
+    updated_at = now()
+WHERE id = $1 AND origin_type = 'design_document' AND status = 'todo'
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at
+`
+
+// Move a design launcher's companion card to in_progress when its own run
+// starts, and only then.
+//
+// The gate is origin_type: that card IS the design work, so nothing else in
+// the product is ever going to move it off todo, and leaving it there while
+// its own agent designs is simply wrong. A task the USER linked to a document
+// carries a different origin and is untouched — that one is normally the
+// implementation the design feeds into, and advancing it would claim
+// implementation had started.
+//
+// The status test lives in the WHERE clause so two runs starting at once
+// cannot both believe they made the transition, and so a card a human already
+// moved (to in_progress, in_review, done) is never dragged backwards. No rows
+// means there was nothing to advance, which is the common case.
+func (q *Queries) StartDesignDocumentCompanionIssue(ctx context.Context, id pgtype.UUID) (Issue, error) {
+	row := q.db.QueryRow(ctx, startDesignDocumentCompanionIssue, id)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeType,
+		&i.AssigneeID,
+		&i.CreatorType,
+		&i.CreatorID,
+		&i.ParentIssueID,
+		&i.AcceptanceCriteria,
+		&i.ContextRefs,
+		&i.Position,
+		&i.DueDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Number,
+		&i.ProjectID,
+		&i.OriginType,
+		&i.OriginID,
+		&i.FirstExecutedAt,
+		&i.StartDate,
+		&i.Metadata,
+		&i.Stage,
+		&i.Properties,
+		&i.Revision,
+		&i.LastActivityAt,
+	)
+	return i, err
+}
+
 const updateIssue = `-- name: UpdateIssue :one
 WITH candidate AS (
     SELECT
