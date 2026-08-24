@@ -1179,6 +1179,11 @@ func buildDesignDocumentPrompt(task Task) string {
 
 	b.WriteString(designDocumentAdjustment(task))
 
+	// Craft standard before task contract: the stages below say what to
+	// produce, the charter says what "good" means. Stacked first so the
+	// standard frames every stage rather than reading as an afterthought.
+	b.WriteString(designerCharter())
+
 	b.WriteString("Stages (one Agent session, no delegation):\n")
 	b.WriteString("1. Inventory the evidence — the requirement, the pinned design system, the optional task (Issue), the optional repository grounding, and the immutable base for adjust / regenerate. Classify each item as a confirmed fact, a conflict needing a decision, or a documented fallback.\n")
 	b.WriteString("2. Decide the page set. A document may hold a main page, its sub-pages, page states, overlays and the key flows that connect them. Design only what the requirement supports — pages nobody asked for are template residue.\n")
