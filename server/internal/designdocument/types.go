@@ -69,8 +69,9 @@ type PackageBinding struct {
 	// BaseRevisionSHA256 is the content digest of the revision this package
 	// adjusts. It is empty for a first generation.
 	BaseRevisionSHA256 string `json:"base_revision_sha256,omitempty"`
-	// DesignSystemSHA256 is the content digest of the project saved design
-	// system the prototype must stay consistent with.
+	// DesignSystemSHA256 is the content digest of the design system the
+	// prototype must stay consistent with. It is empty when no design system
+	// was pinned to the run, which is the composer's default.
 	DesignSystemSHA256 string `json:"design_system_sha256"`
 }
 

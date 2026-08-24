@@ -639,7 +639,13 @@ func validateBinding(binding PackageBinding) error {
 	if !validSHA256Reference(binding.InputSnapshotSHA256) {
 		return errors.New("design document package binding has an invalid input snapshot digest")
 	}
-	if !validSHA256Reference(binding.DesignSystemSHA256) {
+	// An empty design system digest is a run with nothing pinned — the
+	// composer's default, and the state of every project that has not built a
+	// design system yet. The digest binds the prototype to the system it had to
+	// stay consistent with; when there was no system there is nothing to bind
+	// to, and requiring one here rejected the finished package of every
+	// unpinned run. Same rule as the base revision digest below.
+	if binding.DesignSystemSHA256 != "" && !validSHA256Reference(binding.DesignSystemSHA256) {
 		return errors.New("design document package binding has an invalid project design system digest")
 	}
 	// An empty base revision digest is the first generation of a document.

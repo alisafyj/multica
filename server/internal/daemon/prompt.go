@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/designdocument"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
@@ -1364,9 +1365,12 @@ func designDocumentPackageContract() string {
 	var b strings.Builder
 	b.WriteString("Package contract — write these files under `$MULTICA_OUTPUT_DIR`. Any other path is rejected before the audit runs:\n\n")
 	b.WriteString("Required:\n")
-	b.WriteString("- `brief.json` — the semantic layer described above.\n")
+	b.WriteString("- `brief.json` — the semantic layer described above. `schema_version` is `" + designdocument.BriefSchemaV1 + "`, and the file decodes as exactly this shape:\n")
+	b.WriteString("```json\n" + designdocument.SchemaOutline(designdocument.Brief{}) + "\n```\n")
 	b.WriteString("- `prototype/index.html` — the prototype entry point, a complete HTML document.\n")
-	b.WriteString("- `coverage.json` — requirement coverage and honest gaps.\n\n")
+	b.WriteString("- `coverage.json` — requirement coverage and honest gaps. `schema_version` is `" + designdocument.CoverageSchemaV1 + "`, and the file decodes as exactly this shape:\n")
+	b.WriteString("```json\n" + designdocument.SchemaOutline(designdocument.Coverage{}) + "\n```\n")
+	b.WriteString("Both files are decoded strictly: a field name that is not in the shape above fails the package, and so does a missing one (a `?` marks the only fields you may leave out). Use these names exactly — do not translate them, pluralise them, or add a field of your own because it seemed useful.\n\n")
 	b.WriteString("Optional:\n")
 	b.WriteString("- `prototype/<path>.html`, `prototype/<path>.css`, `prototype/<path>.js` — split the prototype as its real complexity requires.\n")
 	b.WriteString("- `assets/<file>` — images and fonts the prototype references.\n")

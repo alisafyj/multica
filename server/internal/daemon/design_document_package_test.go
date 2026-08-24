@@ -958,7 +958,7 @@ func TestFinalizeDesignDocumentPackageRejectsInvalidTaskBinding(t *testing.T) {
 		mutate func(map[string]any)
 	}{
 		{name: "missing platform", mutate: func(envelope map[string]any) { delete(envelope, "platform") }},
-		{name: "missing design system digest", mutate: func(envelope map[string]any) { delete(envelope, "design_system_digest") }},
+		{name: "malformed design system digest", mutate: func(envelope map[string]any) { envelope["design_system_digest"] = "nope" }},
 		{name: "missing workspace", mutate: func(envelope map[string]any) { delete(envelope, "workspace_id") }},
 		{name: "malformed input digest", mutate: func(envelope map[string]any) { envelope["input_snapshot_sha256"] = "not-a-digest" }},
 	} {

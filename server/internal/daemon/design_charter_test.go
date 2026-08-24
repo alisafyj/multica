@@ -273,3 +273,26 @@ func TestDesignDocumentPromptRulesOutAPrototypeFavicon(t *testing.T) {
 		}
 	}
 }
+
+// brief.json and coverage.json are required and decoded with unknown fields
+// rejected, and the prompt described them only in prose — "the semantic
+// layer", "requirement coverage and honest gaps". No agent can infer
+// `requirement_coverage` from that, so every run invented its own field names
+// and every finished package was thrown away at the gate. The one file whose
+// schema the prompt did carry, critique.json, is the optional one.
+func TestDesignDocumentPromptCarriesTheRequiredFileSchemas(t *testing.T) {
+	prompt := designDocumentPromptForCharter(t)
+	for name, want := range map[string]string{
+		"brief schema":     designdocument.SchemaOutline(designdocument.Brief{}),
+		"coverage schema":  designdocument.SchemaOutline(designdocument.Coverage{}),
+		"brief version":    designdocument.BriefSchemaV1,
+		"coverage version": designdocument.CoverageSchemaV1,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("the design document prompt does not carry the %s", name)
+		}
+	}
+	if !strings.Contains(prompt, "decoded strictly") {
+		t.Fatal("the prompt does not say that an unknown field fails the package")
+	}
+}
