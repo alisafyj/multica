@@ -922,65 +922,30 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
     onError: (error) => toast.error(error instanceof Error ? error.message : "提交 UI Agent 设计稿任务失败"),
   });
 
-  const createRestoreTask = useMutation({
-    mutationFn: async () => {
-      if (!restoreFileId || !restoreRevisionId || !restoreFrameId) throw new Error("请选择有效设计稿和画板");
-      return api.createDesignRestoreTask({
-        file_id: restoreFileId,
-        revision_id: restoreRevisionId,
-        issue_id: issue.id,
-        delivery_id: receivedDesignDelivery?.id,
-        input: createIssueDesignRestoreTaskInput({
-          issueId: issue.id,
-          projectId: issue.project_id,
-          restoreFileId,
-          restoreRevisionId,
-          restoreFrameId,
-          restoreFrameName,
-          restoreItems,
-          receivedDesignDelivery,
-        }),
-      });
-    },
-    onSuccess: async (task) => {
-      setRestoreTask(task);
-      await queryClient.invalidateQueries({ queryKey: designKeys.restoreTasks(wsId) });
-      toast.success("已创建设计还原任务");
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "创建设计还原任务失败"),
-  });
-
-  const prepareRestoreDraft = async () => {
+  const prepareRestoreDraft = () => {
     if (!restoreFileId || !restoreRevisionId || !restoreItems.length) {
       toast.error("请选择有效设计稿和还原范围");
       return;
     }
-    try {
-      let task = activeRestoreTask;
-      if (!task) task = await createRestoreTask.mutateAsync();
-      const calls = restoreItems.map((item) => JSON.stringify({
-        detailLevel: "normal",
-        scope: {
-          version: "1.0",
-          kind: "frame",
-          designFileId: restoreFileId,
-          revisionId: restoreRevisionId,
-          frameId: item.frameId,
-          label: item.frameName,
-        },
-      }));
-      const prompt = [
-        "使用 multica-design MCP 还原设计稿。",
-        `Restore Task: ${task.id}`,
-        "依次调用 multica_design_get_restore_pack：",
-        ...calls,
-        "分组=同一业务页面多状态/弹窗；按 Restore Pack 实现并复用当前项目结构。",
-      ].join("\n");
-      useCommentDraftStore.getState().injectDraft(`new:${issue.id}`, prompt);
-      toast.success("已生成还原提示到评论区");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "生成还原提示失败");
-    }
+    const calls = restoreItems.map((item) => JSON.stringify({
+      detailLevel: "normal",
+      scope: {
+        version: "1.0",
+        kind: "frame",
+        designFileId: restoreFileId,
+        revisionId: restoreRevisionId,
+        frameId: item.frameId,
+        label: item.frameName,
+      },
+    }));
+    const prompt = [
+      "使用 multica-design MCP 还原设计稿。",
+      "依次调用 multica_design_get_restore_pack：",
+      ...calls,
+      "分组=同一业务页面多状态/弹窗；按 Restore Pack 实现并复用当前项目结构。",
+    ].join("\n");
+    useCommentDraftStore.getState().injectDraft(`new:${issue.id}`, prompt);
+    toast.success("已生成还原提示到评论区");
   };
   const deliveryActionDisabled = !selectedDeliveryTargetIssue || !selectedFileId || !selectedRevisionId || !restoreFrameId || !restoreItems.length || createDelivery.isPending;
   const openActiveDelivery = () => {
@@ -1229,7 +1194,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
           </details>
         ) : null}
         {roleReady && !availableAgents.length ? <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">当前没有绑定 runtime 的可用 Agent。请先创建/恢复 Agent，否则无法派发。</div> : null}
-        {roleReady && !controlsLocked && canStartRestore && (!activeRestoreTask?.agent_task_id || currentStatus === "failed") ? <Button size="sm" className="w-full" disabled={!restoreFileId || !restoreRevisionId || !restoreItems.length || createRestoreTask.isPending} onClick={() => void prepareRestoreDraft()}><WandSparkles className="size-3.5" />{createRestoreTask.isPending ? "生成中…" : "生成还原提示"}</Button> : null}
+        {roleReady && !controlsLocked && canStartRestore && (!activeRestoreTask?.agent_task_id || currentStatus === "failed") ? <Button size="sm" className="w-full" disabled={!restoreFileId || !restoreRevisionId || !restoreItems.length} onClick={() => prepareRestoreDraft()}><WandSparkles className="size-3.5" />生成还原提示</Button> : null}
         {roleReady ? <RestoreExecutionDiagnostic task={activeRestoreTask} /> : null}
         {canHandoffToFrontend ? (
           <details className="rounded-md border bg-background/60">
