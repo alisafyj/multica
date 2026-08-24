@@ -485,42 +485,6 @@ function RepositorySetting({
  * the issue's status, assignee or priority — so an unlinked design document is
  * an ordinary exploratory one, not an incomplete one.
  */
-/**
- * Opens a companion task card alongside the design run.
- *
- * Only offered when no issue was picked: naming an existing issue already
- * links the document to it, and creating a second one would split the trail.
- * The card is a traceable companion, not a driver — the design task never
- * moves it (DC-045).
- */
-export function CompanionIssueSetting({
-  enabled,
-  disabled,
-  onChange,
-}: {
-  enabled: boolean;
-  disabled: boolean;
-  onChange: (enabled: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      aria-pressed={enabled}
-      onClick={() => onChange(!enabled)}
-      className={cn(
-        "flex min-w-0 cursor-pointer items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-caption",
-        "hover:bg-accent",
-        "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-card",
-        enabled ? "text-foreground" : "text-muted-foreground",
-      )}
-    >
-      <ListTodo className="size-3.5 shrink-0" />
-      <span className="truncate">{enabled ? "同步创建任务" : "不创建任务"}</span>
-    </button>
-  );
-}
-
 export function IssueSetting({
   issues,
   issueId,
@@ -589,6 +553,124 @@ export function IssueSetting({
           tooltip={issue.title}
           onClick={() => {
             onChange(issue.id);
+            setOpen(false);
+          }}
+        >
+          <StatusIcon status={issue.status} className="size-3.5 shrink-0" />
+          <span className="shrink-0 font-mono text-caption text-muted-foreground">
+            {issue.identifier}
+          </span>
+          <span className="truncate">{issue.title}</span>
+        </PickerItem>
+      ))}
+      {issues.length === 0 ? (
+        <div className="px-2 py-1.5 text-caption text-muted-foreground">
+          当前项目没有进行中的任务。
+        </div>
+      ) : null}
+      {issues.length > 0 && filtered.length === 0 && query ? <PickerEmpty /> : null}
+    </PropertyPicker>
+  );
+}
+
+/**
+ * The launcher's single control for what happens to the task-card side of a
+ * run: nothing, a new companion card, or a link to an existing one. These
+ * used to be two separate chips — a picker for an existing issue, plus a
+ * toggle for creating one — which read as unrelated settings even though
+ * only one of the three outcomes can ever be true at once.
+ *
+ * The companion card is a traceable record, never a driver: naming an
+ * existing issue here does not move it, and a created one is not either
+ * (DC-045).
+ */
+export function IssueDestinationSetting({
+  issues,
+  issueId,
+  createIssue,
+  disabled,
+  onChangeIssue,
+  onChangeCreate,
+}: {
+  issues: Issue[];
+  issueId: string;
+  /** Ignored once `issueId` is set — an existing issue already answers this. */
+  createIssue: boolean;
+  disabled: boolean;
+  onChangeIssue: (issueId: string) => void;
+  onChangeCreate: (createIssue: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const selected = issues.find((issue) => issue.id === issueId);
+  const query = filter.trim().toLowerCase();
+  const filtered = issues.filter((issue) =>
+    matchesQuery(`${issue.identifier} ${issue.title}`, query),
+  );
+
+  return (
+    <PropertyPicker
+      open={open}
+      onOpenChange={setOpen}
+      width="w-72"
+      align="start"
+      searchable
+      searchPlaceholder="搜索任务…"
+      onSearchChange={setFilter}
+      triggerRender={
+        <SettingTrigger filled={!!selected || createIssue} disabled={disabled} aria-label="任务卡片" />
+      }
+      trigger={
+        selected ? (
+          <>
+            <StatusIcon status={selected.status} className="size-3.5 shrink-0" />
+            <span className="truncate">{selected.identifier}</span>
+          </>
+        ) : createIssue ? (
+          <>
+            <Plus className="size-3.5 shrink-0" />
+            <span className="truncate">同步创建任务</span>
+          </>
+        ) : (
+          <>
+            <ListTodo className="size-3.5 shrink-0" />
+            <span className="truncate">不创建任务</span>
+          </>
+        )
+      }
+    >
+      <PickerItem
+        emptyValue
+        selected={!issueId && !createIssue}
+        onClick={() => {
+          onChangeIssue("");
+          onChangeCreate(false);
+          setOpen(false);
+        }}
+      >
+        <CircleDashed className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="truncate text-muted-foreground">不创建任务</span>
+      </PickerItem>
+      <PickerItem
+        selected={!issueId && createIssue}
+        onClick={() => {
+          onChangeIssue("");
+          onChangeCreate(true);
+          setOpen(false);
+        }}
+      >
+        <Plus className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="truncate">同步创建任务</span>
+      </PickerItem>
+      <div className="px-2 pb-1 pt-2 text-caption text-muted-foreground">关联已有任务</div>
+      {filtered.map((issue) => (
+        <PickerItem
+          key={issue.id}
+          selected={issue.id === issueId}
+          tooltip={issue.title}
+          onClick={() => {
+            onChangeIssue(issue.id);
+            onChangeCreate(false);
             setOpen(false);
           }}
         >
@@ -1056,19 +1138,14 @@ export function DesignTaskComposer({
                     disabled={!projectId}
                     onChange={setRepositoryId}
                   />
-                  <IssueSetting
+                  <IssueDestinationSetting
                     issues={issues}
                     issueId={activeIssueId}
+                    createIssue={createIssue}
                     disabled={!projectId}
-                    onChange={setIssueId}
+                    onChangeIssue={setIssueId}
+                    onChangeCreate={setCreateIssue}
                   />
-                  {activeIssueId ? null : (
-                    <CompanionIssueSetting
-                      enabled={createIssue}
-                      disabled={!projectId}
-                      onChange={setCreateIssue}
-                    />
-                  )}
                   <DesignSystemSetting
                     workspaceSystems={workspaceSystems}
                     builtinSystems={builtinSystems}

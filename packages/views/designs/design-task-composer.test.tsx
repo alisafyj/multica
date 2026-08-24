@@ -301,22 +301,53 @@ describe("DesignTaskComposer", () => {
     expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ project_id: "project-1" }));
   });
 
-  // The companion task card is a default, not a rule: turning it off must stop
-  // sending the flag rather than send `false`, so the server keeps one meaning
-  // for "absent" across old and new clients.
-  it("stops asking for a companion task card once the toggle is off", async () => {
-    const user = userEvent.setup();
-    renderComposer();
+  // Creating a companion card, linking an existing one, and doing neither are
+  // one setting with three outcomes, not two independent switches — this is
+  // what stops "不关联任务" and "同步创建任务" from reading as unrelated chips.
+  describe("the task-card control", () => {
+    // The companion card is a default, not a rule: turning it off must stop
+    // sending the flag rather than send `false`, so the server keeps one
+    // meaning for "absent" across old and new clients.
+    it("stops asking for a companion task card once set to none", async () => {
+      const user = userEvent.setup();
+      renderComposer();
 
-    await pickProject(user);
-    await pickAgent(user);
-    await user.type(screen.getByLabelText("页面需求描述"), "客户列表页");
-    await user.click(screen.getByRole("button", { name: "同步创建任务" }));
-    await user.click(screen.getByRole("button", { name: "生成页面设计" }));
+      await pickProject(user);
+      await pickAgent(user);
+      await user.type(screen.getByLabelText("页面需求描述"), "客户列表页");
+      await user.click(screen.getByRole("button", { name: "任务卡片" }));
+      await user.click(await screen.findByRole("button", { name: "不创建任务" }));
+      await user.click(screen.getByRole("button", { name: "生成页面设计" }));
 
-    await waitFor(() => expect(createDesignDocument).toHaveBeenCalledTimes(1));
-    const payload = createDesignDocument.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(payload).not.toHaveProperty("create_issue");
+      await waitFor(() => expect(createDesignDocument).toHaveBeenCalledTimes(1));
+      const payload = createDesignDocument.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(payload).not.toHaveProperty("create_issue");
+      expect(payload).not.toHaveProperty("issue_id");
+    });
+
+    // Naming an existing issue already links the document to it; creating a
+    // second one would split the trail, so the two are mutually exclusive
+    // outcomes of the same control rather than a picker plus a toggle.
+    it("links an existing issue instead of creating one", async () => {
+      const user = userEvent.setup();
+      listIssues.mockResolvedValue({
+        issues: [{ id: "issue-1", identifier: "CRM-12", title: "客户列表页需求", status: "todo" }],
+        total: 1,
+      });
+      renderComposer();
+
+      await pickProject(user);
+      await pickAgent(user);
+      await user.type(screen.getByLabelText("页面需求描述"), "客户列表页");
+      await user.click(screen.getByRole("button", { name: "任务卡片" }));
+      await user.click(await screen.findByRole("button", { name: /CRM-12/ }));
+      await user.click(screen.getByRole("button", { name: "生成页面设计" }));
+
+      await waitFor(() => expect(createDesignDocument).toHaveBeenCalledTimes(1));
+      const payload = createDesignDocument.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(payload).toMatchObject({ issue_id: "issue-1" });
+      expect(payload).not.toHaveProperty("create_issue");
+    });
   });
 
   it("stages reference files by attachment id and sends them with the request", async () => {
