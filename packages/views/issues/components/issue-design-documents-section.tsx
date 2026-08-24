@@ -5,6 +5,7 @@ import { LoaderCircle, Palette } from "lucide-react";
 import { issueDesignDocumentsOptions } from "@multica/core/designs/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { DesignDocument, Issue } from "@multica/core/types";
+import { useT } from "../../i18n";
 import { AppLink } from "../../navigation";
 import { designDocumentStatusLabel } from "../../designs/design-document-card";
 
@@ -23,6 +24,7 @@ import { designDocumentStatusLabel } from "../../designs/design-document-card";
  * conversation; the issue owns knowing that it is happening.
  */
 export function IssueDesignDocumentsSection({ issue }: { issue: Issue }) {
+  const { t } = useT("issues");
   const paths = useWorkspacePaths();
   const { data: documents = [], isPending } = useQuery(
     issueDesignDocumentsOptions(issue.workspace_id, issue.id),
@@ -37,7 +39,7 @@ export function IssueDesignDocumentsSection({ issue }: { issue: Issue }) {
     <div>
       <div className="mb-2 flex items-center gap-1 px-2 py-1 text-caption font-medium text-muted-foreground">
         <Palette className="!size-3 shrink-0 stroke-[2.5]" />
-        设计稿
+        {t(($) => $.detail.section_design_documents)}
       </div>
       <div className="pl-2">
         {documents.map((document) => (

@@ -265,6 +265,7 @@
     "add_sub_issue_tooltip": "サブタスクを追加",
     "add_sub_issue_aria": "サブタスクを追加",
     "section_properties": "プロパティ",
+    "section_design_documents": "デザイン",
     "section_parent_issue": "親タスク",
     "section_pull_requests": "Pull requests",
     "section_metadata": "メタデータ",

@@ -267,6 +267,7 @@
     "add_sub_issue_tooltip": "Add sub-issue",
     "add_sub_issue_aria": "Add sub-issue",
     "section_properties": "Properties",
+    "section_design_documents": "Designs",
     "section_parent_issue": "Parent issue",
     "section_pull_requests": "Pull requests",
     "section_metadata": "Metadata",
