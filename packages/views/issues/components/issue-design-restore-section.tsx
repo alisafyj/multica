@@ -11,6 +11,7 @@ import { designDeliveriesByIssueOptions, designDraftListOptions, designFileDetai
 import { useWorkspaceId } from "@multica/core/hooks";
 import { ISSUE_DESIGN_ROLE_FRONTEND, ISSUE_DESIGN_ROLE_KEY, ISSUE_DESIGN_ROLE_UI, explicitIssueDesignRole, issueDesignRole } from "@multica/core/issues/design-role";
 import { childIssuesOptions, issueKeys } from "@multica/core/issues/queries";
+import { useCommentDraftStore } from "@multica/core/issues/stores";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import type { Agent, DesignDelivery, DesignDraft, DesignFile, DesignFrame, DesignRestorePlan, DesignRestoreTask, DesignRestoreTaskInputV1, GalleryNativeJson, Issue, MemberWithUser } from "@multica/core/types";
@@ -655,7 +656,6 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const [selectedFrameIds, setSelectedFrameIds] = useState<string[]>([]);
   const [agentId, setAgentId] = useState("");
   const [restoreTask, setRestoreTask] = useState<DesignRestoreTask | null>(null);
-  const [isOrchestrating, setIsOrchestrating] = useState(false);
   const [deliveryHistoryOpen, setDeliveryHistoryOpen] = useState(false);
   const [deliveryTargetIssueId, setDeliveryTargetIssueId] = useState("");
   const [cancelReason, setCancelReason] = useState("");
@@ -771,7 +771,6 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const currentStatusCopy = statusCopy(currentStatus);
   const controlsLocked = isLockedStatus(currentStatus);
   const primaryAgent = selectedAgent;
-  const primaryActionLabel = currentStatus === "failed" ? "重新交给 Agent" : isUiIssue ? "交给 UI Agent 还原" : "交给 Agent 还原";
   const staleReceivedStatus = !activeDesignDelivery && isFrontendIssue ? inactiveReceivedDelivery?.status : null;
   const displayStatusLabel = !roleReady
     ? "未标记"
@@ -951,66 +950,38 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
     onError: (error) => toast.error(error instanceof Error ? error.message : "创建设计还原任务失败"),
   });
 
-  const runRestoreFlow = async () => {
-    if (currentStatus === "running" || currentStatus === "completed") return;
-    if (!primaryAgent) {
-      toast.error(restoreAgentUnavailableCopy(!!receivedDesignDelivery));
+  const prepareRestoreDraft = async () => {
+    if (!restoreFileId || !restoreRevisionId || !restoreItems.length) {
+      toast.error("请选择有效设计稿和还原范围");
       return;
     }
-    setIsOrchestrating(true);
     try {
-      const retryingFailedTask = activeRestoreTask?.status === "failed" || activeRestoreTask?.status === "cancelled";
-      let task = retryingFailedTask ? null : activeRestoreTask;
-      let plan = retryingFailedTask ? undefined : restorePlan;
-      if (!task) {
-        if (!restoreFileId || !restoreRevisionId || !restoreFrameId) throw new Error("请选择有效设计稿和交付范围");
-        task = await createRestoreTask.mutateAsync();
-      }
-      if (!plan) {
-        plan = await api.generateDesignRestorePlan(task.id);
-        await queryClient.invalidateQueries({ queryKey: designKeys.restorePlan(wsId, task.id) });
-      }
-      const candidates = targetCandidates(plan);
-      if (plan.status === "draft" && planNeedsTarget(plan) && candidates.length) {
-        plan = await api.updateDesignRestorePlan(task.id, {
-          plan: {
-            ...plan.plan,
-            targets: {
-              ...planTargets(plan),
-              selected: selectedTarget(plan) ?? candidates[0],
-              needsUserSelection: false,
-            },
-          },
-          review_notes: plan.review_notes ?? undefined,
-        });
-        await queryClient.invalidateQueries({ queryKey: designKeys.restorePlan(wsId, task.id) });
-      }
-      if (plan.status === "draft" && !planNeedsTarget(plan)) {
-        plan = await api.approveDesignRestorePlan(task.id);
-        await queryClient.invalidateQueries({ queryKey: designKeys.restorePlan(wsId, task.id) });
-      }
-      if (!retryingFailedTask && task.agent_task_id) {
-        toast.info("任务已派发，等待 Agent 领取");
-        return;
-      }
-      if (plan.status !== "approved") throw new Error("Restore Plan 尚未准备好，请打开完整 Restore Plan 查看");
-      const result = await api.dispatchDesignRestoreTask(task.id, {
-        agent_id: primaryAgent.id,
-        issue_id: issue.id,
-        prompt: restoreDispatchPrompt(!!receivedDesignDelivery),
-      });
-      setRestoreTask(result.task);
-      await queryClient.invalidateQueries({ queryKey: designKeys.restoreTask(wsId, result.task.id) });
-      await queryClient.invalidateQueries({ queryKey: designKeys.restoreTasks(wsId) });
-      await queryClient.invalidateQueries({ queryKey: designKeys.restoreMappings(wsId, result.task.id) });
-      toast.success(`已交给 Agent：${primaryAgent.name}`);
+      let task = activeRestoreTask;
+      if (!task) task = await createRestoreTask.mutateAsync();
+      const calls = restoreItems.map((item) => JSON.stringify({
+        detailLevel: "normal",
+        scope: {
+          version: "1.0",
+          kind: "frame",
+          designFileId: restoreFileId,
+          revisionId: restoreRevisionId,
+          frameId: item.frameId,
+          label: item.frameName,
+        },
+      }));
+      const prompt = [
+        "使用 multica-design MCP 还原设计稿。",
+        `Restore Task: ${task.id}`,
+        "依次调用 multica_design_get_restore_pack：",
+        ...calls,
+        "分组=同一业务页面多状态/弹窗；按 Restore Pack 实现并复用当前项目结构。",
+      ].join("\n");
+      useCommentDraftStore.getState().injectDraft(`new:${issue.id}`, prompt);
+      toast.success("已生成还原提示到评论区");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "还原流程启动失败");
-    } finally {
-      setIsOrchestrating(false);
+      toast.error(error instanceof Error ? error.message : "生成还原提示失败");
     }
   };
-  const primaryActionPending = createRestoreTask.isPending || isOrchestrating;
   const deliveryActionDisabled = !selectedDeliveryTargetIssue || !selectedFileId || !selectedRevisionId || !restoreFrameId || !restoreItems.length || createDelivery.isPending;
   const openActiveDelivery = () => {
     if (!activeDesignDelivery) return;
@@ -1258,7 +1229,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
           </details>
         ) : null}
         {roleReady && !availableAgents.length ? <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">当前没有绑定 runtime 的可用 Agent。请先创建/恢复 Agent，否则无法派发。</div> : null}
-        {roleReady && !controlsLocked && canStartRestore && (!activeRestoreTask?.agent_task_id || currentStatus === "failed") ? <Button size="sm" variant={isUiIssue ? "default" : "default"} className="w-full" disabled={!restoreFileId || !restoreFrameId || primaryActionPending || !primaryAgent} onClick={() => void runRestoreFlow()}><WandSparkles className="size-3.5" />{primaryActionPending ? "正在准备…" : primaryActionLabel}</Button> : null}
+        {roleReady && !controlsLocked && canStartRestore && (!activeRestoreTask?.agent_task_id || currentStatus === "failed") ? <Button size="sm" className="w-full" disabled={!restoreFileId || !restoreRevisionId || !restoreItems.length || createRestoreTask.isPending} onClick={() => void prepareRestoreDraft()}><WandSparkles className="size-3.5" />{createRestoreTask.isPending ? "生成中…" : "生成还原提示"}</Button> : null}
         {roleReady ? <RestoreExecutionDiagnostic task={activeRestoreTask} /> : null}
         {canHandoffToFrontend ? (
           <details className="rounded-md border bg-background/60">
