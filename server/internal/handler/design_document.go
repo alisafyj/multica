@@ -229,7 +229,15 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 			CreatorType:  "member",
 			CreatorID:    requesterUUID,
 			ProjectID:    projectUUID,
-		}, service.IssueCreateOpts{ActorID: uuidToString(requesterUUID)})
+		}, service.IssueCreateOpts{
+			ActorID: uuidToString(requesterUUID),
+			// The agent assignee is a readable trace of who is doing the work,
+			// not a dispatch instruction: creating the issue must not ALSO start
+			// an independent agent run that would race the design task for the
+			// same local directory (that run is what actually wedged the design
+			// task behind an unrelated one before this flag existed).
+			SuppressAssigneeRun: true,
+		})
 		if issueErr != nil {
 			writeProjectDesignSystemError(w, http.StatusInternalServerError, "issue_create_failed", "failed to create the companion task")
 			return

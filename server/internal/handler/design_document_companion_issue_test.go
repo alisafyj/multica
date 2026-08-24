@@ -82,6 +82,20 @@ func TestCreateDesignDocumentOpensACompanionIssueWhenAsked(t *testing.T) {
 	if assigneeID != agentID {
 		t.Fatalf("companion issue assignee = %q, want the design agent %q", assigneeID, agentID)
 	}
+
+	// This is the bug that actually wedged a user's design task: assigning an
+	// agent at create time is normally an instruction to run, so creating the
+	// companion issue this way ALSO auto-enqueued an independent task racing
+	// the design task itself for the same local directory. The companion is a
+	// trace of who owns the work, not a second dispatch.
+	var taskCount int
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1`, parseUUID(issueID)).Scan(&taskCount); err != nil {
+		t.Fatalf("count tasks on the companion issue: %v", err)
+	}
+	if taskCount != 0 {
+		t.Fatalf("companion issue has %d queued tasks, want none — creating it must not also start a run", taskCount)
+	}
 }
 
 // Absent or false leaves the tasks page alone. A design run that leaves no

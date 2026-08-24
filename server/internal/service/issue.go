@@ -124,6 +124,15 @@ type IssueCreateOpts struct {
 	// still resolving, then promotes the returned task after attachment binding.
 	// Zero preserves the ordinary immediate enqueue path.
 	AssignedAgentRunFireAt time.Time
+
+	// SuppressAssigneeRun skips the automatic assigned-agent run this service
+	// normally starts the moment an issue is created with an agent assignee.
+	// For a caller that assigns an agent purely to record who owns the work —
+	// a companion issue traced from another run, for instance — the ordinary
+	// behavior would start a second, independent run racing the first one for
+	// the same resources (local directory locks, runtime capacity) with
+	// nothing to show for it beyond a stray transcript on the issue.
+	SuppressAssigneeRun bool
 }
 
 // ErrActiveDuplicate signals that the duplicate guard found an active
@@ -465,7 +474,7 @@ func (s *IssueService) afterCreate(ctx context.Context, res IssueCreateResult, p
 
 	s.publishIssueCreated(issue, attachments, labels, p.CreatorType, actorID, opts)
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
-	if opts.AssignedAgentRunFireAt.IsZero() {
+	if opts.AssignedAgentRunFireAt.IsZero() && !opts.SuppressAssigneeRun {
 		assignedTaskID = s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, opts.AssignedAgentRunFireAt)
 	}
 
