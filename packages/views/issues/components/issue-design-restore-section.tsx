@@ -154,7 +154,7 @@ function hasExplicitDesignRole(issue: Issue) {
 }
 
 function designRoleCopy(role: ReturnType<typeof issueDesignRole>) {
-  if (role === ISSUE_DESIGN_ROLE_UI) return "UI 设计";
+  if (role === ISSUE_DESIGN_ROLE_UI) return "UI 还原";
   if (role === ISSUE_DESIGN_ROLE_FRONTEND) return "前端开发";
   return "未选择";
 }
@@ -633,8 +633,10 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const roleIsExplicit = hasExplicitDesignRole(issue);
   const isUiIssue = role === ISSUE_DESIGN_ROLE_UI;
   const isFrontendIssue = role === ISSUE_DESIGN_ROLE_FRONTEND;
-  const showDesignDelivery = isUiIssue || isFrontendIssue || !!issue.parent_issue_id;
+  const showDesignDelivery = isUiIssue || !isFrontendIssue;
   const roleReady = isUiIssue || isFrontendIssue;
+  const deliveryLinkageEnabled = false;
+  const designDraftGenerationEnabled = false;
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
@@ -778,7 +780,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const historyCount = sortedDesignDeliveries.length;
   const cancelReasonTooLong = cancelReason.length > 500;
   const canStartRestore = isUiIssue || !!receivedDesignDelivery;
-  const canHandoffToFrontend = isUiIssue && (currentStatus === "completed" || !!sourceDesignDelivery);
+  const canHandoffToFrontend = deliveryLinkageEnabled && isUiIssue && (currentStatus === "completed" || !!sourceDesignDelivery);
   const statusBadgeVariant: "secondary" | "destructive" | "outline" = activeDesignDelivery || currentStatus === "completed"
     ? "secondary"
     : staleReceivedStatus === "cancelled" || currentStatus === "failed" || currentStatus === "blocked"
@@ -1030,8 +1032,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
               <Button
                 size="sm"
                 variant="ghost"
-                disabled={markDesignRole.isPending}
-                onClick={() => markDesignRole.mutate(ISSUE_DESIGN_ROLE_UI)}
+                onClick={() => toast.info("UI 设计即将上线")}
               >
                 设为 UI 设计
               </Button>
@@ -1039,9 +1040,9 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
                 size="sm"
                 variant="ghost"
                 disabled={markDesignRole.isPending}
-                onClick={() => markDesignRole.mutate(ISSUE_DESIGN_ROLE_FRONTEND)}
+                onClick={() => markDesignRole.mutate(ISSUE_DESIGN_ROLE_UI)}
               >
-                设为前端开发
+                设为 UI 还原
               </Button>
             </>
           ) : null}
@@ -1057,11 +1058,11 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="font-medium text-foreground">{displayStatusHint}</div>
-                <div className="mt-1 truncate text-muted-foreground">{activeDesignDelivery ? activeDeliveryScopeTitle : selectedScopeOption?.label || selectedFrame?.name || "默认画板"} · {primaryAgent?.name ?? "等待可用 Agent"}{agentTask ? ` · ${agentTask.status}` : ""}</div>
+                <div className="mt-1 truncate text-muted-foreground">{selectedScopeOption?.label || selectedFrame?.name || "默认画板"} · {primaryAgent?.name ?? "等待可用 Agent"}{agentTask ? ` · ${agentTask.status}` : ""}</div>
               </div>
-              {activeDesignDelivery ? <span className="shrink-0 font-mono text-muted-foreground">{activeDesignDelivery.id.slice(0, 8)}</span> : activeRestoreTask ? <span className="shrink-0 font-mono text-muted-foreground">{activeRestoreTask.id.slice(0, 8)}</span> : null}
+              {activeRestoreTask ? <span className="shrink-0 font-mono text-muted-foreground">{activeRestoreTask.id.slice(0, 8)}</span> : null}
             </div>
-            {activeDesignDelivery ? (
+            {deliveryLinkageEnabled && activeDesignDelivery ? (
               <div className="mt-3 space-y-2 border-t pt-2">
                 <div className="grid grid-cols-2 gap-2 text-muted-foreground">
                   <div className="min-w-0">
@@ -1108,7 +1109,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
                 </div>
               </div>
             ) : null}
-            {!activeDesignDelivery && historyCount ? (
+            {deliveryLinkageEnabled && !activeDesignDelivery && historyCount ? (
               <div className="mt-3 flex items-center justify-between gap-3 rounded-md bg-muted px-2 py-1.5 text-muted-foreground">
                 <span>{staleReceivedStatus === "superseded" ? "收到的设计交付已被更新覆盖" : staleReceivedStatus === "cancelled" ? "收到的设计交付已撤回" : `已有 ${historyCount} 次历史交付记录`}</span>
                 <Button size="sm" variant="ghost" onClick={() => setDeliveryHistoryOpen(true)}>
@@ -1118,7 +1119,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
             ) : null}
           </div>
           ) : null}
-        {roleReady && isUiIssue ? (
+        {designDraftGenerationEnabled && roleReady && isUiIssue ? (
           <div className="rounded-md border bg-background p-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -1179,8 +1180,6 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
         ) : null}
         {roleReady && !availableAgents.length ? <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">当前没有绑定 runtime 的可用 Agent。请先创建/恢复 Agent，否则无法派发。</div> : null}
         {roleReady && !controlsLocked && canStartRestore && (!activeRestoreTask?.agent_task_id || currentStatus === "failed") ? <Button size="sm" variant={isUiIssue ? "default" : "default"} className="w-full" disabled={!restoreFileId || !restoreFrameId || primaryActionPending || !primaryAgent} onClick={() => void runRestoreFlow()}><WandSparkles className="size-3.5" />{primaryActionPending ? "正在准备…" : primaryActionLabel}</Button> : null}
-        {roleReady && isUiIssue && !parentIssueId ? <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">UI 设计 Issue 需要位于父 Issue 下，才能交付给同级前端开发。</div> : null}
-        {roleReady && isUiIssue && parentIssueId && !deliveryTargets.length ? <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">未找到可交付的同级子 Issue。请先创建前端开发 Issue，或在对应子 Issue 中设为前端开发。</div> : null}
         {roleReady ? <RestoreExecutionDiagnostic task={activeRestoreTask} /> : null}
         {canHandoffToFrontend ? (
           <details className="rounded-md border bg-background/60">
