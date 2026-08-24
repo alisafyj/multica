@@ -306,9 +306,16 @@ describe("DesignDocumentPage", () => {
     });
     // The document now runs a task: the composer switches to queue mode
     // instead of closing.
+    // Sending clears the box, so the composer has nothing staged and its one
+    // control is the run's stop — Open Design's rule, not a second button.
+    const queueBox = await screen.findByPlaceholderText(/任务执行中，现在提交会排队/);
+    expect(queueBox).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "停止任务" })).toBeInTheDocument();
+    // Typing again gives the same slot something to send, so it goes back to
+    // queueing rather than stopping.
+    await userEvent.type(queueBox, "再紧凑一点");
     expect(await screen.findByRole("button", { name: "排队调整" })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/任务执行中，现在提交会排队/)).toBeEnabled();
-    expect(screen.getByLabelText("智能体任务活动")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "停止任务" })).not.toBeInTheDocument();
   });
 
   it("offers the tweaks panel as a ready-made adjustment (DC-050)", async () => {
@@ -364,7 +371,10 @@ describe("DesignDocumentPage", () => {
     renderPage();
     expect(await screen.findByText("智能体正在生成，完成并通过校验后这里会显示原型。")).toBeInTheDocument();
     expect(screen.getByText("第一版正在生成。")).toBeInTheDocument();
-    expect(screen.getByLabelText("智能体任务活动")).toBeInTheDocument();
+    // The live run is visible through the composer now, not through a card
+    // stacked above the thread: nothing is staged, so the send control is the
+    // stop control.
+    expect(screen.getByRole("button", { name: "停止任务" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "保存为设计稿" })).not.toBeInTheDocument();
     // A live run is not the dead end — no rerun offer while it could still land.
     expect(screen.queryByRole("button", { name: "重新生成" })).not.toBeInTheDocument();
@@ -446,6 +456,23 @@ describe("DesignDocumentPage", () => {
     await screen.findByTitle("订单总览 · 首页");
     expect(screen.getByLabelText("交付给实现任务")).toBeDisabled();
     expect(screen.getByText(/草稿不是承诺/)).toBeInTheDocument();
+  });
+
+  // The launcher's companion task writes issue_id when the document is created,
+  // long before there is anything to hand over. Reading that column as the
+  // delivery state announced 已交付 while the first version was still being
+  // generated — a promise the document had not made.
+  it("does not call a linked task a delivery before anything is saved", async () => {
+    getDesignDocument.mockResolvedValue(document({
+      status: "running",
+      saved_revision_id: "",
+      issue_id: "issue-1",
+      active_task: { id: "task-1", agent_id: "agent-1", status: "running", operation: "generate" },
+    }));
+    renderPage();
+
+    expect(await screen.findByText(/已关联任务，但还没有交付/)).toBeInTheDocument();
+    expect(screen.queryByText(/会在工作区中收到这份已保存的设计包/)).not.toBeInTheDocument();
   });
 
   it("delivers the saved design to the issue that implements it", async () => {

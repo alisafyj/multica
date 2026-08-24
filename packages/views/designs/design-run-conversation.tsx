@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Circle, ListTodo, LoaderCircle, TriangleAlert, Wrench } from "lucide-react";
 import { splitAgentUi } from "@multica/core/designs/agent-ui";
 import { cn } from "@multica/ui/lib/utils";
@@ -17,6 +17,12 @@ import type { TaskMessagePayload } from "@multica/core/types";
  * the recent tail, so a long run cannot turn the sidebar into a scroll trap.
  */
 const VISIBLE_ITEMS = 40;
+
+// A small slack: "at the bottom" has to survive sub-pixel heights and the row
+// that arrives between the scroll event and the handler reading it.
+function atBottom(node: HTMLElement): boolean {
+  return node.scrollHeight - node.scrollTop - node.clientHeight < 24;
+}
 
 /** A tool call reads as one line, so its arguments are summarised, not dumped. */
 function toolSummary(item: TimelineItem): string {
@@ -185,6 +191,7 @@ export function DesignRunConversation({
   live,
   className,
   onAnswerForm,
+  scrollParentRef,
 }: {
   messages: TaskMessagePayload[];
   /** The task is still running: follow the tail and keep the region polite. */
@@ -196,8 +203,18 @@ export function DesignRunConversation({
    * send a reply.
    */
   onAnswerForm?: (text: string) => void;
+  /**
+   * The scrollable ancestor this thread lives in. Passing one makes the run
+   * read as part of the page rather than as a panel embedded in it: the rows
+   * flow flush with everything around them, nothing clips at a fixed height,
+   * and the tail is followed by scrolling that ancestor. Without it the
+   * component keeps its own bounded, bordered viewport, which is still right
+   * for a drawer or a card where the page itself does not scroll.
+   */
+  scrollParentRef?: RefObject<HTMLElement | null>;
 }) {
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const ownScrollRef = useRef<HTMLDivElement | null>(null);
+  const flush = !!scrollParentRef;
   const [following, setFollowing] = useState(true);
 
   const items = buildTimeline(messages);
@@ -206,10 +223,20 @@ export function DesignRunConversation({
 
   // Before paint, so a new line never renders at the old offset first.
   useLayoutEffect(() => {
-    const node = scrollRef.current;
+    const node = scrollParentRef?.current ?? ownScrollRef.current;
     if (!node || !following) return;
     node.scrollTop = node.scrollHeight;
-  }, [newestSeq, following]);
+  }, [newestSeq, following, scrollParentRef]);
+
+  // In flush mode the element that scrolls is not ours, so the "is the user
+  // still at the tail" question has to be asked of the ancestor.
+  useEffect(() => {
+    const node = scrollParentRef?.current;
+    if (!node) return;
+    const onScroll = () => setFollowing(atBottom(node));
+    node.addEventListener("scroll", onScroll, { passive: true });
+    return () => node.removeEventListener("scroll", onScroll);
+  }, [scrollParentRef]);
 
   // A finished run leaves the tail on screen: re-arm follow so the next run
   // starts attached rather than wherever the last one was left.
@@ -222,19 +249,21 @@ export function DesignRunConversation({
   return (
     <div className={cn("relative", className)}>
       <div
-        ref={scrollRef}
+        ref={ownScrollRef}
         // Live output is a log, not an alert: announce politely, and only
         // while it is actually moving.
         aria-live={live ? "polite" : undefined}
         aria-label="智能体执行过程"
-        onScroll={(event) => {
-          const node = event.currentTarget;
-          // A small slack: "at the bottom" has to survive sub-pixel heights
-          // and the row that arrives between the scroll and this handler.
-          const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 24;
-          setFollowing(atBottom);
-        }}
-        className="no-scrollbar flex max-h-56 flex-col gap-2 overflow-y-auto rounded-lg border bg-muted/30 px-3 py-2.5"
+        {...(flush ? {} : { onScroll: (event: { currentTarget: HTMLDivElement }) => setFollowing(atBottom(event.currentTarget)) })}
+        className={cn(
+          "flex flex-col gap-2",
+          flush
+            ? // Part of the page: no frame, no tint, no ceiling. The rows sit
+              // in the sidebar's own rhythm instead of inside a panel that
+              // reads as a widget the agent was put into.
+              "min-w-0"
+            : "no-scrollbar max-h-56 overflow-y-auto rounded-lg border bg-muted/30 px-3 py-2.5",
+        )}
       >
         {visible.map((item) => (
           <ConversationRow
@@ -244,12 +273,12 @@ export function DesignRunConversation({
           />
         ))}
       </div>
-      {live && !following ? (
+      {live && !following && !flush ? (
         <button
           type="button"
           onClick={() => {
             setFollowing(true);
-            const node = scrollRef.current;
+            const node = ownScrollRef.current;
             if (node) node.scrollTop = node.scrollHeight;
           }}
           className="absolute bottom-2 left-1/2 flex -translate-x-1/2 cursor-pointer items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-caption text-muted-foreground shadow-sm hover:text-foreground"

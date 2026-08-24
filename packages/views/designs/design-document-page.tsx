@@ -27,6 +27,7 @@ import {
   X,
   ZoomIn,
   ZoomOut,
+  Square,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
@@ -92,7 +93,7 @@ import { DesignDocumentSourceView } from "./design-document-source-view";
 import { DesignDocumentStaticView } from "./design-document-static-view";
 import { AgentSetting, IssueSetting } from "./design-task-composer";
 import { revisionFileSource, safeQuery, type CanvasMode } from "./prototype-canvas";
-import { DesignTaskActivity, taskOperationLabel } from "./project-design-system-task-activity";
+import { formatDuration, taskOperationLabel } from "./project-design-system-task-activity";
 import { DesignDocumentConversation } from "./design-document-conversation";
 import { DesignNextSteps } from "./design-next-steps";
 
@@ -365,13 +366,19 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   // Only a saved revision is deliverable: a draft is a work in progress, not a
   // promise an agent should build from (P-011 / DC-034).
   const canDeliver = !!document?.saved_revision_id && !running;
+  // Linking an issue and delivering to it are the same column but not the same
+  // event: the launcher's companion task sets issue_id when the document is
+  // created, while a delivery only exists once there is a saved revision for
+  // the other agent to receive. Reading issue_id alone announced 已交付 while
+  // the first version was still generating.
+  const delivered = !!document?.issue_id && !!document?.saved_revision_id;
   // The delivered issue may be closed by now, so it is kept in the list even
   // when the open-issue query no longer returns it — otherwise the picker
   // would render the current delivery as "尚未交付".
   const deliveryIssues = useMemo(() => {
     const linked = document?.issue_id ?? "";
     if (!linked || projectIssues.some((issue) => issue.id === linked)) return projectIssues;
-    return [{ id: linked, identifier: "已交付", title: "当前交付的任务", status: "in_progress" } as (typeof projectIssues)[number], ...projectIssues];
+    return [{ id: linked, identifier: "当前任务", title: "文档关联的任务", status: "in_progress" } as (typeof projectIssues)[number], ...projectIssues];
   }, [document?.issue_id, projectIssues]);
   const errorMessage = status === "failed" ? documentErrorMessage(document?.last_error) : null;
   const previewUrl = revision && shownEntry ? api.getDesignDocumentPreviewFileURL(revision.resource_base_path, shownEntry) : "";
@@ -619,6 +626,20 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
     onError: (error) => toast.error(error instanceof Error ? error.message : "无法重新生成"),
   });
 
+  // The run's own clock. It replaces the activity card's 运行时长 field: with
+  // the card gone, elapsed time is the one datum a watcher actually reads, and
+  // it belongs next to the control that can end the run.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  const stopTask = useMutation({
+    mutationFn: (taskId: string) => api.cancelTaskById(taskId),
+    onSettled: () => refresh(),
+  });
   const busy = adjust.isPending || save.isPending || discard.isPending || restore.isPending || regenerate.isPending || manualEdit.isPending;
   // While a run is active the composer stays open: the submission queues and
   // fires when the run lands. Only a document with nothing to adjust and
@@ -644,6 +665,18 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
         : instruction.length > INSTRUCTION_MAX_LENGTH
           ? "说明太长了"
           : null;
+
+  const sidebarScrollRef = useRef<HTMLDivElement | null>(null);
+  const startedAtMs = (() => {
+    const raw = activeTask?.started_at ?? activeTask?.dispatched_at ?? null;
+    if (!raw) return null;
+    const parsed = Date.parse(raw);
+    return Number.isNaN(parsed) ? null : parsed;
+  })();
+  // Open Design's rule, ported: the send control becomes the stop control only
+  // while the agent is working AND there is nothing to send. With text or a
+  // mark staged, the user's intent is to queue, so the control stays 排队调整.
+  const showStop = running && !!activeTask && !instruction.trim() && annotations.length === 0;
 
   const statusLabel = document ? designDocumentStatusLabel(document.status) : null;
 
@@ -969,7 +1002,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
           borders and gutters. Sections below are flat and separated by rules. */}
       <div className="grid min-h-0 flex-1 lg:grid-cols-[360px_minmax(0,1fr)]">
         <aside className="flex min-h-0 flex-col overflow-hidden border-b lg:h-full lg:border-b-0 lg:border-r">
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div ref={sidebarScrollRef} className="min-h-0 flex-1 overflow-y-auto">
             <div className="border-b px-4 py-3">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted-foreground">
                 {project ? <span>{project.title}</span> : null}
@@ -984,35 +1017,6 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
               ) : null}
             </div>
 
-            {activeTask && running ? (
-              <div className="border-b px-4">
-                <DesignTaskActivity
-                  task={activeTask}
-                  agents={agents}
-                  compact
-                  onStopped={refresh}
-                  // The thread below renders every turn's messages, this one
-                  // included; a second copy here would duplicate the live turn.
-                  showConversation={false}
-                />
-              </div>
-            ) : null}
-            {/* The document's whole agent history, not just the running task.
-                Keeping finished turns on screen is what lets the adjustment box
-                below read as the next message in a conversation. */}
-            <DesignDocumentConversation
-              revisions={revisions}
-              activeTask={activeTask}
-              {...(revision ? { revision } : {})}
-              className="border-b px-4 py-3"
-              // Our runs are one-shot tasks with no input channel, so an
-              // answer cannot reach the agent mid-run. It goes where a reply
-              // genuinely does reach it: the adjustment brief for the next
-              // turn, which the user can still edit before sending.
-              onAnswerForm={(text) =>
-                setInstruction((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text))
-              }
-            />
             {errorMessage ? (
               <div role="alert" className="flex items-start gap-2 border-b border-destructive/40 bg-destructive/5 px-4 py-3 text-caption leading-5">
                 <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
@@ -1058,11 +1062,13 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
               <p className="mt-2 text-caption leading-5 text-muted-foreground">
                 {deliver.isPending
                   ? "正在交付…"
-                  : document.issue_id
+                  : delivered
                     ? "执行该任务的智能体会在工作区中收到这份已保存的设计包，按其中的页面与状态实现。"
-                    : canDeliver
-                      ? "选择一个任务，把这份已保存的设计交给实现它的智能体。"
-                      : "保存这份设计稿之后才能交付——草稿不是承诺。"}
+                    : document.issue_id
+                      ? "已关联任务，但还没有交付：保存这份设计稿之后，它才会作为设计包交给该任务的智能体。"
+                      : canDeliver
+                        ? "选择一个任务，把这份已保存的设计交给实现它的智能体。"
+                        : "保存这份设计稿之后才能交付——草稿不是承诺。"}
               </p>
             </div>
 
@@ -1092,6 +1098,25 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                 </ol>
               )}
             </section>
+            {/* Last in the scroll region, directly above the composer: the
+                thread is the one section that grows without bound while a run
+                is live, so anything placed under it would be pushed off screen
+                by the agent's own output. Here it reads — and follows — like a
+                conversation, and the box below is the next message in it. */}
+            <DesignDocumentConversation
+              revisions={revisions}
+              activeTask={activeTask}
+              {...(revision ? { revision } : {})}
+              scrollParentRef={sidebarScrollRef}
+              className="border-t px-4 py-3"
+              // Our runs are one-shot tasks with no input channel, so an
+              // answer cannot reach the agent mid-run. It goes where a reply
+              // genuinely does reach it: the adjustment brief for the next
+              // turn, which the user can still edit before sending.
+              onAnswerForm={(text) =>
+                setInstruction((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text))
+              }
+            />
           </div>
 
           {viewMode === "edit" ? (
@@ -1260,11 +1285,46 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
               }}
             />
             <div className="mt-2 flex items-center justify-between gap-2">
-              <span className="min-w-0 truncate text-caption text-muted-foreground">{instructionBlocker ?? "⌘/Ctrl + Enter 发送"}</span>
-              <Button type="submit" size="sm" disabled={!!instructionBlocker || busy} aria-label={running ? "排队调整" : "发起调整"}>
-                {adjust.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
-                {running ? "排队调整" : "调整"}
-              </Button>
+              <span className="min-w-0 truncate text-caption text-muted-foreground">
+                {running && startedAtMs !== null
+                  ? `已运行 ${formatDuration(now - startedAtMs)}`
+                  : (instructionBlocker ?? "⌘/Ctrl + Enter 发送")}
+              </span>
+              {showStop ? (
+                // One slot, two meanings — Open Design's rule: while the agent
+                // is working and the box is empty, the send control IS the stop
+                // control. Typing anything turns it back into 排队调整, because
+                // then the user has something to send rather than something to
+                // end.
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="group"
+                  disabled={stopTask.isPending}
+                  onClick={() => stopTask.mutate(activeTask.id)}
+                  aria-label="停止任务"
+                >
+                  {stopTask.isPending
+                    ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                    : <Square className="h-3.5 w-3.5 fill-current" />}
+                  {/* Both labels share one grid cell so the swap cannot resize
+                      the button under the pointer. */}
+                  <span className="grid">
+                    <span className="col-start-1 row-start-1 group-hover:invisible group-focus-visible:invisible">
+                      {stopTask.isPending ? "正在停止" : "执行中"}
+                    </span>
+                    <span className="invisible col-start-1 row-start-1 group-hover:visible group-focus-visible:visible">
+                      停止
+                    </span>
+                  </span>
+                </Button>
+              ) : (
+                <Button type="submit" size="sm" disabled={!!instructionBlocker || busy} aria-label={running ? "排队调整" : "发起调整"}>
+                  {adjust.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
+                  {running ? "排队调整" : "调整"}
+                </Button>
+              )}
             </div>
           </form>
           )}

@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
@@ -121,5 +122,40 @@ describe("DesignRunConversation", () => {
   it("renders nothing before the first message arrives", () => {
     render(<DesignRunConversation live messages={[]} />);
     expect(screen.queryByLabelText("智能体执行过程")).not.toBeInTheDocument();
+  });
+});
+
+describe("DesignRunConversation layout", () => {
+  const one = [message({ seq: 1, type: "text", content: "开始设计。" })];
+
+  // Default: a self-contained panel. Right where the page around it does not
+  // scroll — a drawer, a card — because the run needs a viewport of its own.
+  it("keeps its own bounded viewport when no scroll parent is given", () => {
+    render(<DesignRunConversation live messages={one} />);
+    const log = screen.getByLabelText("智能体执行过程");
+    expect(log.className).toContain("overflow-y-auto");
+    expect(log.className).toContain("border");
+  });
+
+  // Given the ancestor that scrolls, the run stops being a widget the agent
+  // was put inside: no frame, no tint, and no ceiling that silently clips the
+  // output halfway through a long run.
+  it("flows flush with the page when it is given the scroll parent", () => {
+    function Host() {
+      const ref = useRef<HTMLDivElement | null>(null);
+      return (
+        <div ref={ref} style={{ overflowY: "auto" }}>
+          <DesignRunConversation live messages={one} scrollParentRef={ref} />
+        </div>
+      );
+    }
+    render(<Host />);
+    const log = screen.getByLabelText("智能体执行过程");
+    expect(log.className).not.toContain("overflow-y-auto");
+    expect(log.className).not.toContain("max-h-56");
+    expect(log.className).not.toContain("border");
+    expect(log.className).not.toContain("bg-muted");
+    // Its content is still the run itself, not a summary of it.
+    expect(screen.getByText("开始设计。")).toBeInTheDocument();
   });
 });

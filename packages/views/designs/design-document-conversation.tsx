@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { type RefObject, useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { FileText, LoaderCircle } from "lucide-react";
 import { api } from "@multica/core/api";
@@ -104,6 +104,7 @@ export function DesignDocumentConversation({
   activeTask,
   revision,
   onAnswerForm,
+  scrollParentRef,
   className,
 }: {
   revisions: DesignDocumentRevisionSummary[];
@@ -115,6 +116,8 @@ export function DesignDocumentConversation({
    * read-only, which is the honest state where a reply has nowhere to go.
    */
   onAnswerForm?: (text: string) => void;
+  /** The scrollable ancestor; passing one renders every turn flush. */
+  scrollParentRef?: RefObject<HTMLElement | null>;
   className?: string;
 }) {
   const turns = useMemo(() => conversationTurns(revisions, activeTask), [revisions, activeTask]);
@@ -154,6 +157,7 @@ export function DesignDocumentConversation({
                   messages={messages}
                   live={turn.live}
                   onAnswerForm={turn.live ? onAnswerForm : undefined}
+                  {...(scrollParentRef ? { scrollParentRef } : {})}
                   className="mt-2"
                 />
                 {produced.length > 0 ? (
