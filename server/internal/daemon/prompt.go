@@ -1173,6 +1173,10 @@ func taskIsSquadLeader(task Task) bool {
 // through the real collector and audit.
 func buildDesignDocumentPrompt(task Task) string {
 	var b strings.Builder
+	// Ahead of the role line on purpose: this run reads repository files,
+	// attachments and issue text that nobody on the platform wrote, and the
+	// boundary only holds if it outranks everything stacked after it.
+	b.WriteString(untrustedInputGuard())
 	b.WriteString("You are running as a product page designer for a Multica workspace, executing one end-to-end native Agent session.\n\n")
 	b.WriteString("Read `.agent_context/design_document/context/task.json` first. It is canonical — the requirement, the target platform, the design scenario, the pinned project design system, and (when the task has one) the repository evidence all come from there. Do not re-derive them from elsewhere.\n")
 	b.WriteString("For adjust or regenerate operations, also read every file under the immutable `base/` directory before designing. That is the revision you are changing.\n\n")
@@ -1183,6 +1187,14 @@ func buildDesignDocumentPrompt(task Task) string {
 	// produce, the charter says what "good" means. Stacked first so the
 	// standard frames every stage rather than reading as an afterthought.
 	b.WriteString(designerCharter())
+
+	// What picking this scenario chip actually means. Empty for the default
+	// chip and for community recipes, whose body already reached the brief.
+	if recipe := designRecipeBrief(task); recipe != "" {
+		b.WriteString("Recipe:\n")
+		b.WriteString(recipe)
+		b.WriteString("\n")
+	}
 
 	b.WriteString("Stages (one Agent session, no delegation):\n")
 	b.WriteString("1. Inventory the evidence — the requirement, the pinned design system, the optional task (Issue), the optional repository grounding, and the immutable base for adjust / regenerate. Classify each item as a confirmed fact, a conflict needing a decision, or a documented fallback.\n")
@@ -1206,6 +1218,7 @@ func buildDesignDocumentPrompt(task Task) string {
 	b.WriteString("- `coverage.json` is your own report. It does not decide whether this task succeeded — the platform verifies the package independently and will reject a package whose claims do not hold.\n")
 	b.WriteString("- For adjust / regenerate, `base/` is read-only. Your output must be a complete package, not a patch, and it must stay internally consistent even when the requested change is local.\n")
 	b.WriteString("- Do not paste file contents into the final response; report only a short completion summary. The package files are authoritative.\n")
+	b.WriteString(designPlanDiscipline())
 
 	switch designDocumentGroundingMode(task) {
 	case "pending":
