@@ -343,7 +343,6 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   }, [fullscreen]);
 
   const [instruction, setInstruction] = useState("");
-  const [scopeToPage, setScopeToPage] = useState(false);
   const [agentOverride, setAgentOverride] = useState("");
   const [discardOpen, setDiscardOpen] = useState(false);
 
@@ -391,10 +390,11 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   };
 
   const adjust = useMutation({
-    mutationFn: (payload: { instruction: string; scopeToPage: boolean; annotations: Annotation[]; attachments: Array<{ id: string; name: string }> }) => {
-      const scope: Pick<DesignDocumentAdjustmentScope, "kind" | "id"> = payload.scopeToPage && shownPage
-        ? { kind: "page", id: shownPage.page?.id ?? shownPage.entry }
-        : { kind: "document" };
+    mutationFn: (payload: { instruction: string; annotations: Annotation[]; attachments: Array<{ id: string; name: string }> }) => {
+      // Always the whole document. A mark on the canvas still carries its own
+      // element selector, so narrowing has not gone away — only the toggle
+      // that made every adjustment ask which of two things it meant.
+      const scope: Pick<DesignDocumentAdjustmentScope, "kind" | "id"> = { kind: "document" };
       return api.adjustDesignDocument(documentId, {
         // Marks made on the canvas become part of the instruction, each note
         // anchored to the selector its pick resolved to.
@@ -426,7 +426,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   // fired automatically when the run lands (Open Design queues chat sends the
   // same way); if the run produces nothing to adjust, the text goes back into
   // the composer instead of being lost.
-  const [queuedAdjustment, setQueuedAdjustment] = useState<{ instruction: string; scopeToPage: boolean; annotations: Annotation[]; attachments: Array<{ id: string; name: string }> } | null>(null);
+  const [queuedAdjustment, setQueuedAdjustment] = useState<{ instruction: string; annotations: Annotation[]; attachments: Array<{ id: string; name: string }> } | null>(null);
   const flushAdjust = adjust.mutate;
   useEffect(() => {
     if (running || !queuedAdjustment) return;
@@ -1206,17 +1206,17 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                 </div>
               ) : (
               <form
-                className="shrink-0 border-t px-4 py-3"
+                className="shrink-0 px-4 py-3"
                 onSubmit={(event) => {
                   event.preventDefault();
                   if (instructionBlocker || busy) return;
                   if (running) {
                     // Queue while the run is live; the latest submission wins.
-                    setQueuedAdjustment({ instruction, scopeToPage, annotations, attachments: turnAttachments });
+                    setQueuedAdjustment({ instruction, annotations, attachments: turnAttachments });
                     setInstruction("");
                     return;
                   }
-                  adjust.mutate({ instruction, scopeToPage, annotations, attachments: turnAttachments });
+                  adjust.mutate({ instruction, annotations, attachments: turnAttachments });
                 }}
                 aria-label="调整设计稿"
               >
@@ -1226,15 +1226,24 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                 {/* One card, the same one the home composer uses: the box and
                     everything qualifying the send live on a single rounded
                     surface, so writing and configuring are not two places. */}
-                <div
-                  className={cn(
-                    "rounded-2xl border shadow-sm transition-colors focus-within:border-primary/60",
-                    // The box lost its own border to the card, so a closed
-                    // composer has to read as closed from the card itself —
-                    // otherwise a disabled field looks exactly like an empty one.
-                    composerOpen ? "bg-card" : "bg-muted/40 shadow-none",
-                  )}
-                >
+                {/* Open Design's shape, read off .composer-shell rather than
+                    guessed at: a tinted frame with real padding, holding a
+                    near-white box for the text and the controls as its sibling.
+                    The frame is the container; the white box is where writing
+                    happens. Getting it inverted — white frame, transparent box —
+                    is what made this look flat. */}
+                <div className="flex flex-col gap-1.5 rounded-2xl border bg-muted/50 p-2">
+                  <div
+                    className={cn(
+                      "rounded-lg border border-transparent transition-colors",
+                      // .composer-input-wrap: near-panel at rest, panel on
+                      // focus. A closed composer keeps the frame's tint so a
+                      // disabled field never reads as an empty one.
+                      composerOpen
+                        ? "bg-card focus-within:border-primary/30"
+                        : "bg-transparent",
+                    )}
+                  >
                   <Textarea
                     value={instruction}
                     onChange={(event) => setInstruction(event.target.value)}
@@ -1251,11 +1260,11 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                       if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !instructionBlocker && !busy) {
                         event.preventDefault();
                         if (running) {
-                          setQueuedAdjustment({ instruction, scopeToPage, annotations, attachments: turnAttachments });
+                          setQueuedAdjustment({ instruction, annotations, attachments: turnAttachments });
                           setInstruction("");
                           return;
                         }
-                        adjust.mutate({ instruction, scopeToPage, annotations, attachments: turnAttachments });
+                        adjust.mutate({ instruction, annotations, attachments: turnAttachments });
                       }
                     }}
                   />
@@ -1309,8 +1318,9 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                       </button>
                     </div>
                   ) : null}
-                                  {turnAttachments.length > 0 ? (
-                    <ul className="flex flex-wrap items-center gap-1.5 px-3 pb-2" aria-label="本次参考文件">
+                  </div>
+                  {turnAttachments.length > 0 ? (
+                    <ul className="flex flex-wrap items-center gap-1.5 px-1" aria-label="本次参考文件">
                       {turnAttachments.map((item) => (
                         <li key={item.id} className="inline-flex h-6 max-w-56 items-center gap-1 rounded-full border bg-background px-2 text-caption">
                           <Paperclip className="size-3 shrink-0 text-muted-foreground" />
@@ -1329,7 +1339,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                   ) : null}
   {/* The run's plan, pinned: it says what is left, and the
                       transcript above is exactly where that answer scrolls away. */}
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-3 pb-3">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-1">
                     {/* References for this change. Same control and same route as
                         the home composer's +: only the ids travel with the
                         request, and the bytes are pinned server-side before the
@@ -1356,24 +1366,6 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                     >
                       {attachmentUploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Plus className="size-4" />}
                     </button>
-                    <button
-                      type="button"
-                      className={cn(
-                        "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-caption transition-colors",
-                        scopeToPage && shownPage ? "border-primary/50 bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
-                      )}
-                      aria-pressed={scopeToPage && !!shownPage}
-                      disabled={!shownPage}
-                      onClick={() => setScopeToPage((value) => !value)}
-                      title={shownPage ? "只调整当前页面" : "先选择一个页面"}
-                    >
-                      {scopeToPage && shownPage ? `仅当前页面 · ${shownPage.title}` : "整份文档"}
-                      {scopeToPage && shownPage ? <X className="h-3 w-3" /> : null}
-                    </button>
-                    {/* Who runs this, next to the control that sends it: the agent is
-                        part of the submission, not a property of the panel above.
-                        Grouped with the button so three children under
-                        justify-between cannot strand it in the middle. */}
                     <div className="ml-auto flex shrink-0 items-center gap-2">
                       <AgentSetting agents={agents} agentId={agentId} onChange={setAgentOverride} />
                       {showStop ? (
@@ -1417,7 +1409,12 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                   <span className="min-w-0 truncate text-caption text-muted-foreground">
                     {running && startedAtMs !== null
                       ? `已运行 ${formatDuration(now - startedAtMs)}`
-                      : (instructionBlocker ?? "⌘/Ctrl + Enter 发送")}
+                      // With nothing to adjust yet, the placeholder inside the
+                      // box already says so; repeating it under the box was
+                      // one line of the same sentence twice.
+                      : !composerOpen
+                        ? ""
+                        : (instructionBlocker ?? "⌘/Ctrl + Enter 发送")}
                   </span>
                 </div>
               </form>

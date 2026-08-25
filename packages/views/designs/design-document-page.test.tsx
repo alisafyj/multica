@@ -297,11 +297,13 @@ describe("DesignDocumentPage", () => {
     }
   });
 
-  it("sends an adjustment scoped to the current page against the revision on screen", async () => {
+  // Every adjustment addresses the whole document. The page-scope toggle is
+  // gone: it made each send ask which of two things it meant, and a mark on
+  // the canvas already narrows more precisely than a page ever could.
+  it("sends an adjustment against the revision on screen", async () => {
     renderPage();
     await screen.findByTitle("订单总览 · 首页");
     await userEvent.click(screen.getByRole("tab", { name: "订单列表" }));
-    await userEvent.click(screen.getByRole("button", { name: "整份文档" }));
     await userEvent.type(screen.getByPlaceholderText(/描述你想怎么改/), "订单列表加一个状态筛选");
     // Once the adjustment is accepted the server reports the document as
     // running; the refetch after the mutation must see that too.
@@ -314,7 +316,7 @@ describe("DesignDocumentPage", () => {
     expect(adjustDesignDocument).toHaveBeenCalledWith("document-1", {
       instruction: "订单列表加一个状态筛选",
       agent_id: "agent-1",
-      scope: { kind: "page", id: "orders" },
+      scope: { kind: "document" },
       base_revision_id: "revision-2",
     });
     // The document now runs a task: the composer switches to queue mode
