@@ -7536,6 +7536,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if localAssignment != nil && !localAssignment.UsesWorktree() && localDirectoryLockExempt(task) {
 		promptOptions = append(promptOptions, WithSharedLocalDirectory())
 	}
+	// The package contract can then name the directory instead of only naming
+	// the variable that holds it.
+	if env.OutputDir != "" {
+		promptOptions = append(promptOptions, WithOutputDir(env.OutputDir))
+	}
 	prompt := BuildPrompt(task, provider, promptOptions...)
 
 	// Pass task-scoped auth credentials and context so the spawned agent CLI

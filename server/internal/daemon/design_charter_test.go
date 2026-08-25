@@ -324,3 +324,57 @@ func TestDesignRecipesCoverTheFormatChips(t *testing.T) {
 		t.Fatal("the long-form recipe does not rule out marketing-page tropes")
 	}
 }
+
+// A run wrote a complete, correct package — brief, coverage, critique and a
+// three-file prototype — into `.agent_context/design_document/work/` and was
+// rejected for producing nothing at all. MULTICA_OUTPUT_DIR was exported and
+// AGENTS.md named it, but the prompt only ever named the VARIABLE, while the
+// one literal path it showed was under `work/` — where an empty directory of
+// that name was sitting. So the contract names the real directory, and rules
+// out the one wrong place that looks right.
+func TestDesignDocumentPromptNamesTheOutputDirectory(t *testing.T) {
+	const dir = "/Users/someone/workspaces/ws/task/output/design-document"
+	prompt := BuildPrompt(
+		Task{IssueID: "issue-1", DesignDocumentContext: json.RawMessage(
+			`{"type":"design_document_task","operation":"generate","execution_ready":true}`)},
+		"opencode", WithOutputDir(dir),
+	)
+	if !strings.Contains(prompt, "`"+dir+"`") {
+		t.Fatal("the package contract does not name the run's output directory")
+	}
+	if !strings.Contains(prompt, "`.agent_context/design_document/work/` is NOT that directory") {
+		t.Fatal("the contract does not rule out the work directory")
+	}
+
+	// Without the option the contract still stands on the variable alone: a
+	// caller that cannot answer where the package goes must not print an empty
+	// path as if it were one.
+	bare := designDocumentPromptForCharter(t)
+	if strings.Contains(bare, "On this run `$MULTICA_OUTPUT_DIR` is") {
+		t.Fatal("a run with no known output directory claimed to name one")
+	}
+	if !strings.Contains(bare, "`.agent_context/design_document/work/` is NOT that directory") {
+		t.Fatal("the work-directory rule should hold whether or not the path is known")
+	}
+}
+
+// The required files have to read as one list. The schemas used to sit between
+// them, pushing "write these files under $MULTICA_OUTPUT_DIR" thirty-six lines
+// away from the last file it governed.
+func TestDesignDocumentPromptKeepsTheRequiredListContiguous(t *testing.T) {
+	prompt := designDocumentPromptForCharter(t)
+	start := strings.Index(prompt, "Required:\n")
+	if start < 0 {
+		t.Fatal("no required file list in the package contract")
+	}
+	block := prompt[start:]
+	block = block[:strings.Index(block, "\n\n")]
+	for _, want := range []string{"`brief.json`", "`prototype/index.html`", "`coverage.json`"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("the required list does not hold %s in one block:\n%s", want, block)
+		}
+	}
+	if strings.Contains(block, "```") {
+		t.Fatalf("a schema block broke the required list apart:\n%s", block)
+	}
+}

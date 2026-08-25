@@ -80,6 +80,7 @@ func perTurnContextBlocks(task Task, opts promptOpts) string {
 // common BuildPrompt(task, provider) call sites stay unchanged.
 type promptOpts struct {
 	sharedLocalDirectory bool
+	outputDir            string
 }
 
 // PromptOption tunes per-turn prompt copy with run-scoped context.
@@ -93,6 +94,21 @@ type PromptOption func(*promptOpts)
 // has to be told (issue #7344).
 func WithSharedLocalDirectory() PromptOption {
 	return func(o *promptOpts) { o.sharedLocalDirectory = true }
+}
+
+// WithOutputDir names the directory the platform collects this run's package
+// from, so the contract can state it as a path instead of only as
+// `$MULTICA_OUTPUT_DIR`.
+//
+// The variable is exported into the agent's environment and AGENTS.md names it,
+// yet a run wrote a complete, correct package into
+// `.agent_context/design_document/work/` and was rejected for producing
+// nothing. That directory is the only literal path the prompt ever showed —
+// it exists for one grounding receipt — and an empty folder called `work` next
+// to an unresolved variable is a better guess than it should be. Naming the
+// real path removes the guess.
+func WithOutputDir(dir string) PromptOption {
+	return func(o *promptOpts) { o.outputDir = strings.TrimSpace(dir) }
 }
 
 // buildSharedLocalDirectoryBlock warns an unlocked turn that its working
@@ -158,7 +174,7 @@ func BuildPrompt(task Task, provider string, options ...PromptOption) string {
 	for _, apply := range options {
 		apply(&opts)
 	}
-	body := buildPromptBody(task, provider)
+	body := buildPromptBody(task, provider, opts.outputDir)
 	// Run-scoped context is appended, never prepended: everything ahead of it
 	// is stable across runs of a resumed session, and appending keeps it after
 	// the cached prefix (MUL-5377).
@@ -171,7 +187,7 @@ func BuildPrompt(task Task, provider string, options ...PromptOption) string {
 	return body
 }
 
-func buildPromptBody(task Task, provider string) string {
+func buildPromptBody(task Task, provider string, outputDir string) string {
 	if task.ChatSessionID != "" {
 		return buildChatPrompt(task)
 	}
@@ -215,7 +231,7 @@ func buildPromptBody(task Task, provider string) string {
 		return buildProjectDesignSystemPrompt()
 	}
 	if len(task.DesignDocumentContext) > 0 {
-		return buildDesignDocumentPrompt(task)
+		return buildDesignDocumentPrompt(task, outputDir)
 	}
 	if len(task.PMOSyncContext) > 0 {
 		return buildPMOSyncPrompt(task, provider)
@@ -1172,7 +1188,7 @@ func taskIsSquadLeader(task Task) bool {
 // The accepted file set mirrors designdocument's collector. Keep the two in
 // sync; the crossing test builds a package from this text and pushes it
 // through the real collector and audit.
-func buildDesignDocumentPrompt(task Task) string {
+func buildDesignDocumentPrompt(task Task, outputDir string) string {
 	var b strings.Builder
 	// Ahead of the role line on purpose: this run reads repository files,
 	// attachments and issue text that nobody on the platform wrote, and the
@@ -1214,7 +1230,7 @@ func buildDesignDocumentPrompt(task Task) string {
 	b.WriteString("6. Write `coverage.json` mapping what you delivered back to the requirement, and state honestly what you did not cover and why.\n")
 	b.WriteString("7. Read back every file, open the prototype's own logic in your head end to end, and verify each declared flow is reachable. Promise-only or delegated work is not completion.\n\n")
 
-	b.WriteString(designDocumentPackageContract())
+	b.WriteString(designDocumentPackageContract(outputDir))
 
 	b.WriteString("Rules:\n")
 	b.WriteString("- The pinned design system arrives as `design_context` in task.json, and its `source` says what you were given. `cloud_saved_project_design_system` / `cloud_saved_repository_design_system` is this project's or repository's own saved package — the accumulated house style. `cloud_saved_workspace_design_system` is a system the user picked from the workspace library for this run: treat it as the governing visual language even though it was authored elsewhere, and do not blend it with any other project's. `builtin_catalogue_design_system` is a bundled catalogue system inlined as `design_context.builtin` (`design_markdown` plus `tokens_css`, no validated components package): design under its token families, type and spacing logic, and say in the prototype's own notes which of its decisions you followed — but do not reproduce its brand identity, product names or copy. `none` means no design system was pinned: design from the requirement alone and never claim a system constrained you.\n")
@@ -1361,21 +1377,27 @@ func designDocumentTaskIsUngrounded(task Task) bool {
 // designDocumentPackageContract states the exact file set the platform
 // collector accepts, mirroring designdocument's classifier. Any other path is
 // rejected before the audit runs.
-func designDocumentPackageContract() string {
+func designDocumentPackageContract(outputDir string) string {
 	var b strings.Builder
 	b.WriteString("Package contract — write these files under `$MULTICA_OUTPUT_DIR`. Any other path is rejected before the audit runs:\n\n")
+	if outputDir != "" {
+		b.WriteString("On this run `$MULTICA_OUTPUT_DIR` is `" + outputDir + "`. Write there, at exactly the paths below.\n")
+	}
+	b.WriteString("`.agent_context/design_document/work/` is NOT that directory. It holds one grounding receipt and nothing else; a package written there is a package the platform never sees, and the run fails reporting that you produced no files at all.\n\n")
 	b.WriteString("Required:\n")
-	b.WriteString("- `brief.json` — the semantic layer described above. `schema_version` is `" + designdocument.BriefSchemaV1 + "`, and the file decodes as exactly this shape:\n")
-	b.WriteString("```json\n" + designdocument.SchemaOutline(designdocument.Brief{}) + "\n```\n")
+	b.WriteString("- `brief.json` — the semantic layer described above.\n")
 	b.WriteString("- `prototype/index.html` — the prototype entry point, a complete HTML document.\n")
-	b.WriteString("- `coverage.json` — requirement coverage and honest gaps. `schema_version` is `" + designdocument.CoverageSchemaV1 + "`, and the file decodes as exactly this shape:\n")
-	b.WriteString("```json\n" + designdocument.SchemaOutline(designdocument.Coverage{}) + "\n```\n")
-	b.WriteString("Both files are decoded strictly: a field name that is not in the shape above fails the package, and so does a missing one (a `?` marks the only fields you may leave out). Use these names exactly — do not translate them, pluralise them, or add a field of your own because it seemed useful.\n\n")
+	b.WriteString("- `coverage.json` — requirement coverage and honest gaps.\n\n")
 	b.WriteString("Optional:\n")
 	b.WriteString("- `prototype/<path>.html`, `prototype/<path>.css`, `prototype/<path>.js` — split the prototype as its real complexity requires.\n")
 	b.WriteString("- `assets/<file>` — images and fonts the prototype references.\n")
 	b.WriteString("  Anything under `prototype/` that is not `.html`, `.css` or `.js` is rejected and the whole run fails with it — including a favicon, which web habit puts next to `index.html` and which this package has no use for: the prototype is rendered inside a frame where no tab icon is ever shown. Do not write one. An image the DESIGN needs goes in `assets/` and is referenced as `../assets/<file>`.\n")
 	b.WriteString("- `critique.json` — the review loop from stage 5, schema `multica.design-document-critique/v1`: `{\"schema_version\", \"threshold\": 8, \"max_rounds\": 3, \"outcome\": \"passed\" | \"stopped_at_max_rounds\" | \"not_run\", \"rounds\": [{\"index\": 1, \"scores\": {\"designer\": 0-10, \"critic\": 0-10, \"brand\": 0-10, \"a11y\": 0-10, \"copy\": 0-10}, \"findings\": [{\"lens\", \"severity\": \"must_fix\" | \"should_fix\" | \"note\", \"summary\", \"resolved\": true | false}]}]}`. Exactly those fields, every round scoring all five lenses. It is your own report, like coverage: it never decides whether the package passes, so record the real scores — a low score is information, not a reason to leave the file out.\n\n")
+	b.WriteString("`brief.json` and `coverage.json` are decoded strictly: a field name that is not in the shape below fails the package, and so does a missing one (a `?` marks the only fields you may leave out). Use these names exactly — do not translate them, pluralise them, or add a field of your own because it seemed useful.\n\n")
+	b.WriteString("`brief.json`, `schema_version` `" + designdocument.BriefSchemaV1 + "`:\n")
+	b.WriteString("```json\n" + designdocument.SchemaOutline(designdocument.Brief{}) + "\n```\n")
+	b.WriteString("`coverage.json`, `schema_version` `" + designdocument.CoverageSchemaV1 + "`:\n")
+	b.WriteString("```json\n" + designdocument.SchemaOutline(designdocument.Coverage{}) + "\n```\n\n")
 	b.WriteString("Do NOT write `manifest.json`. The platform generates it from what you produced; a manifest of your own is an undeclared path and fails the collector.\n\n")
 	b.WriteString("Inside `prototype/`, package-local HTML, CSS and JavaScript are allowed and expected. Use them for page switching, tabs, filtering and sorting, modals and drawers and menus, form input with local validation, loading / empty / error / success states, and mock data transitions. `localStorage` is allowed for local state such as remembering the current page.\n\n")
 	b.WriteString("Three prototype rules the audit enforces that are easy to trip by habit:\n")
