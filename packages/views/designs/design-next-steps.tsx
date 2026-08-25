@@ -44,6 +44,17 @@ export const NEXT_STEPS: NextStep[] = [
     label: "可访问性",
     instruction: "检查文本对比度、焦点顺序与键盘可达性，为图标按钮补上可读名称。",
   },
+  // Last, and only here: the panel is the one follow-up that adds tooling
+  // rather than refining the design. It used to hold a permanent chip above
+  // the composer, which spent a fixed slot on a niche request and offered it
+  // from the moment any revision existed. Now that every design is already
+  // token-driven, this asks for the control surface alone.
+  {
+    id: "tweaks",
+    label: "调整面板",
+    instruction:
+      "为原型添加一个调整面板（tweaks）：一个默认收起、可从浮动标签打开的包内侧栏控件，绑定已有的 --accent / --scale / --density / --motion，并补上明暗切换（--mode），含色板与取色、缩放与密度滑杆、动效开关和重置。选择保存在 localStorage 并在加载时恢复。整个包继续离线可运行，其余设计保持不变。",
+  },
 ];
 
 export function DesignNextSteps({

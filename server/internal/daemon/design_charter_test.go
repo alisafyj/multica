@@ -378,3 +378,31 @@ func TestDesignDocumentPromptKeepsTheRequiredListContiguous(t *testing.T) {
 		t.Fatalf("a schema block broke the required list apart:\n%s", block)
 	}
 }
+
+// A tunable design is cheap while the CSS is being written and expensive
+// afterwards: `var(--accent)` costs the same keystrokes as a literal, and
+// retrofitting it means rewriting the stylesheet. The product had that
+// backwards — it offered the retrofit as an adjustment and never asked for the
+// variables up front — so the charter now requires them of every run.
+func TestDesignCharterRequiresTunableTokens(t *testing.T) {
+	prompt := designDocumentPromptForCharter(t)
+	for _, want := range []string{"`--accent`", "`--scale`", "`--density`", "`--motion`", "cannot be added afterwards"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("the craft standard does not require %s", want)
+		}
+	}
+
+	// A second palette is design work rather than a multiplier, so light/dark
+	// stays with the panel request instead of being demanded of every run.
+	charter := prompt[:strings.Index(prompt, "Tweaks panel —")]
+	if strings.Contains(charter, "`--mode`") {
+		t.Fatal("the charter demands a dark palette of every run")
+	}
+	if !strings.Contains(prompt, "Add `--mode`") {
+		t.Fatal("the tweaks panel no longer asks for the mode variable")
+	}
+	// And the panel stops re-teaching what every design already carries.
+	if !strings.Contains(prompt, "not rethreading the stylesheet") {
+		t.Fatal("the tweaks contract still asks for work the charter already required")
+	}
+}
