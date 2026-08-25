@@ -160,8 +160,9 @@ type Task struct {
 	// order. Rendered into the brief's status-command line; empty (including on
 	// old servers that never send the field) keeps the brief byte-identical to
 	// the built-in-only form. IssueStatusesOmitted is the cap overflow count.
-	IssueStatuses        []IssueStatusData `json:"issue_statuses,omitempty"`
-	IssueStatusesOmitted int               `json:"issue_statuses_omitted,omitempty"`
+	IssueStatuses            []IssueStatusData `json:"issue_statuses,omitempty"`
+	IssueStatusesOmitted     int               `json:"issue_statuses_omitted,omitempty"`
+	QuickCreateSourceContext json.RawMessage   `json:"quick_create_source_context,omitempty"` // immutable historical context, separate from the new instruction
 
 	SquadID               string `json:"squad_id,omitempty"`                // when the picker was a squad, the squad's UUID; Agent is still the resolved leader
 	SquadName             string `json:"squad_name,omitempty"`              // display name for the picker squad, used in prompt text

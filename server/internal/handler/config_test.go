@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 func TestGetConfigReportsCdnSignedMode(t *testing.T) {
@@ -62,6 +63,7 @@ func TestGetConfigIncludesRuntimeAuthConfig(t *testing.T) {
 
 	t.Setenv("POSTHOG_API_KEY", "phc_test")
 	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
+	t.Setenv("MULTICA_DAEMON_SERVER_URL", "")
 	t.Setenv("MULTICA_PUBLIC_URL", "https://api.example.com/")
 	t.Setenv("MULTICA_APP_URL", "https://app.example.com/")
 	t.Setenv("GOOGLE_CLIENT_ID", "legacy-google-client")
@@ -108,6 +110,22 @@ func TestGetConfigIncludesRuntimeAuthConfig(t *testing.T) {
 	}
 	if cfg.DaemonAppURL != "https://app.example.com" {
 		t.Fatalf("daemon_app_url: want https://app.example.com, got %q", cfg.DaemonAppURL)
+	}
+}
+
+func TestGetConfigUsesDaemonServerURLOverride(t *testing.T) {
+	t.Setenv("MULTICA_DAEMON_SERVER_URL", " https://api.internal.example/// ")
+	t.Setenv("MULTICA_PUBLIC_URL", "https://hooks.example.com/")
+	t.Setenv("MULTICA_APP_URL", "https://app.example.com/")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	var cfg AppConfig
+	testutil.Call(t, testHandler.GetConfig, req).Want(http.StatusOK).JSON(&cfg)
+	if cfg.DaemonServerURL != "https://api.internal.example" {
+		t.Fatalf("daemon_server_url: want override URL, got %q", cfg.DaemonServerURL)
+	}
+	if cfg.DaemonAppURL != "https://app.example.com" {
+		t.Fatalf("daemon_app_url: want app URL, got %q", cfg.DaemonAppURL)
 	}
 }
 
@@ -171,6 +189,7 @@ func TestGetConfigRestoresLegacyAuthConfigWhenSySSOIsDisabled(t *testing.T) {
 }
 
 func TestGetConfigUsesAppURLForSameOriginDaemonSetup(t *testing.T) {
+	t.Setenv("MULTICA_DAEMON_SERVER_URL", "")
 	t.Setenv("MULTICA_PUBLIC_URL", "")
 	t.Setenv("MULTICA_APP_URL", "https://multica.internal.example/")
 
@@ -195,6 +214,7 @@ func TestGetConfigUsesAppURLForSameOriginDaemonSetup(t *testing.T) {
 }
 
 func TestGetConfigUsesFrontendOriginForSameOriginDaemonSetup(t *testing.T) {
+	t.Setenv("MULTICA_DAEMON_SERVER_URL", "")
 	t.Setenv("MULTICA_PUBLIC_URL", "")
 	t.Setenv("MULTICA_APP_URL", "")
 	t.Setenv("FRONTEND_ORIGIN", "https://multica.internal.example/")
@@ -460,6 +480,13 @@ func TestGetConfigExposesFrontendFeatureFlags(t *testing.T) {
 	}
 	if !cfg.FeatureFlags["settings_resource_labels"] {
 		t.Fatalf("settings_resource_labels: want true for installed clients, got false")
+	}
+	// Deliberately unpublished: pre-v0.4.33 clients gate their "New status"
+	// button on this key and fail closed, which is how a client that predates
+	// the v0.4.31 rendering fixes is kept from creating one. See
+	// featureflags.TestCustomIssueStatusesIsNotPublished.
+	if _, published := cfg.FeatureFlags["custom_issue_statuses"]; published {
+		t.Fatalf("custom_issue_statuses: want unpublished, got %v", cfg.FeatureFlags["custom_issue_statuses"])
 	}
 
 	withComposioMCPAppsFlag(t, h, true)

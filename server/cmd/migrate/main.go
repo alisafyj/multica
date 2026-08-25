@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/attributionbackfill"
+	"github.com/multica-ai/multica/server/internal/chatoriginbackfill"
 	"github.com/multica-ai/multica/server/internal/dbstartup"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/migrations"
@@ -245,78 +246,97 @@ var concurrentIndexCleanups = map[string]string{
 	// These fork-local migrations predate MUL-6288's "total" registration
 	// requirement, so they never needed an entry before.
 	// Design Center (this fork's own feature, not from upstream).
-	"282_test_case_project_status_index":               "test_case_project_status_idx",
-	"283_test_case_generation_job_index":               "test_case_generation_job_idx",
-	"284_test_case_revision_case_index":                "test_case_revision_case_idx",
-	"285_test_case_repo_case_index":                    "test_case_repo_case_idx",
-	"286_test_case_repo_resource_index":                "test_case_repo_resource_idx",
-	"287_test_case_module_index":                       "test_case_module_idx",
-	"289_test_generation_job_workspace_index":          "test_generation_job_workspace_idx",
-	"290_test_generation_job_agent_task_index":         "test_generation_job_agent_task_idx",
-	"291_test_generation_job_project_status_index":     "test_generation_job_project_status_idx",
-	"292_test_generation_plan_live_index":              "test_generation_plan_live_idx",
-	"293_test_case_proposal_target_index":              "test_case_proposal_target_idx",
-	"294_test_case_proposal_job_index":                 "test_case_proposal_job_idx",
-	"296_test_plan_project_index":                      "test_plan_project_idx",
-	"297_test_plan_case_order_index":                   "test_plan_case_order_idx",
-	"298_test_run_project_index":                       "test_run_project_idx",
-	"299_test_run_agent_task_index":                    "test_run_agent_task_idx",
-	"300_test_run_source_index":                        "test_run_source_idx",
-	"301_test_run_case_order_index":                    "test_run_case_order_idx",
-	"302_test_run_case_timeline_index":                 "test_run_case_timeline_idx",
-	"303_attachment_test_run_case_index":               "attachment_test_run_case_idx",
-	"304_test_capability_key_index":                    "test_capability_key_idx",
-	"305_test_capability_kind_index":                   "test_capability_kind_idx",
-	"307_pmo_sync_config_id_index":                     "pmo_sync_config_id_idx",
-	"308_pmo_sync_run_id_index":                        "pmo_sync_run_id_idx",
-	"309_pmo_sync_link_id_index":                       "pmo_sync_link_id_idx",
-	"311_pmo_sync_config_root_index":                   "pmo_sync_config_workspace_root_idx",
-	"312_pmo_sync_run_history_index":                   "pmo_sync_run_history_idx",
-	"313_pmo_sync_run_active_index":                    "pmo_sync_run_active_idx",
-	"314_pmo_sync_run_agent_task_index":                "pmo_sync_run_agent_task_idx",
-	"315_pmo_sync_link_identity_index":                 "pmo_sync_link_identity_idx",
-	"343_comment_delegated_failure_pending_index":      "idx_comment_delegated_failure_pending",
-	"345_plugin_installation_workspace_key_index":      "idx_plugin_installation_workspace_key",
-	"346_plugin_storage_scope_key_index":               "idx_plugin_storage_scope_key",
-	"347_plugin_secret_installation_key_index":         "idx_plugin_secret_installation_key",
-	"349_agent_task_queue_chat_terminal_resume_index":  "idx_agent_task_queue_chat_terminal_resume",
-	"350_agent_task_queue_chat_retired_session_index":  "idx_agent_task_queue_chat_retired_session",
-	"353_autopilot_quota_period_scope_index":           "uq_autopilot_quota_period_scope",
-	"354_autopilot_quota_reservation_id_index":         "autopilot_quota_reservation_pkey_uidx",
-	"355_autopilot_quota_reservation_key_index":        "uq_autopilot_quota_reservation_key",
-	"356_autopilot_run_quota_reservation_index":        "uq_autopilot_run_quota_reservation",
-	"357_webhook_delivery_replay_idempotency_index":    "uq_webhook_delivery_replay_idempotency",
-	"358_autopilot_quota_reservation_state_index":      "idx_autopilot_quota_reservation_state",
-	"361_issue_last_activity_index":                    "idx_issue_workspace_last_activity",
-	"363_plugin_invocation_installation_index":         "idx_plugin_invocation_installation_created",
-	"364_plugin_invocation_created_at_index":           "idx_plugin_invocation_created_at",
-	"378_channel_chat_context_generation_key":          "channel_chat_context_generation_session_revision_idx",
-	"390_agent_task_queue_dispatched_reclaim_v2_index": "idx_agent_task_queue_dispatched_reclaim_v2",
-	"393_plugin_package_workspace_key_index":           "idx_plugin_package_workspace_key",
-	"394_plugin_package_version_unique_index":          "idx_plugin_package_version_unique",
-	"395_plugin_package_version_package_index":         "idx_plugin_package_version_package",
-	"396_plugin_package_file_path_index":               "idx_plugin_package_file_path",
-	"397_plugin_installation_package_version_index":    "idx_plugin_installation_package_version",
-	"862_idx_design_template_blueprint_latest":         "idx_design_template_blueprint_latest",
-	"863_idx_design_component_recipe_set_latest":       "idx_design_component_recipe_set_latest",
-	"865_idx_project_design_system_workspace":          "idx_project_design_system_workspace",
-	"866_idx_project_design_system_active_task":        "idx_project_design_system_active_task",
-	"867_idx_project_design_system_package_system":     "idx_project_design_system_package_system",
-	"871_idx_open_design_run_design_system":            "idx_open_design_run_design_system",
-	"872_idx_open_design_run_workspace_status":         "idx_open_design_run_workspace_status",
-	"875_idx_design_draft_semantic_issue_version":      "idx_design_draft_semantic_issue_version",
-	"876_idx_design_draft_semantic_reviewable":         "idx_design_draft_semantic_reviewable",
-	"878_idx_project_design_system_resource_scope":     "idx_project_design_system_resource_scope",
-	"879_idx_project_design_system_project_scope":      "idx_project_design_system_project_scope",
-	"881_idx_design_document_revision_number":          "idx_design_document_revision_number",
-	"882_idx_design_document_project":                  "idx_design_document_project",
-	"883_idx_design_document_issue":                    "idx_design_document_issue",
-	"884_idx_design_document_active_task":              "idx_design_document_active_task",
-	"886_idx_design_scenario_recipe_builtin_slug":      "idx_design_scenario_recipe_builtin_slug",
-	"887_idx_design_scenario_recipe_workspace_slug":    "idx_design_scenario_recipe_workspace_slug",
-	"888_idx_design_scenario_recipe_gallery":           "idx_design_scenario_recipe_gallery",
-	"902_idx_design_document_share_token":              "idx_design_document_share_token",
-	"903_idx_design_document_share_live_revision":      "idx_design_document_share_live_revision",
+	"282_test_case_project_status_index":                   "test_case_project_status_idx",
+	"283_test_case_generation_job_index":                   "test_case_generation_job_idx",
+	"284_test_case_revision_case_index":                    "test_case_revision_case_idx",
+	"285_test_case_repo_case_index":                        "test_case_repo_case_idx",
+	"286_test_case_repo_resource_index":                    "test_case_repo_resource_idx",
+	"287_test_case_module_index":                           "test_case_module_idx",
+	"289_test_generation_job_workspace_index":              "test_generation_job_workspace_idx",
+	"290_test_generation_job_agent_task_index":             "test_generation_job_agent_task_idx",
+	"291_test_generation_job_project_status_index":         "test_generation_job_project_status_idx",
+	"292_test_generation_plan_live_index":                  "test_generation_plan_live_idx",
+	"293_test_case_proposal_target_index":                  "test_case_proposal_target_idx",
+	"294_test_case_proposal_job_index":                     "test_case_proposal_job_idx",
+	"296_test_plan_project_index":                          "test_plan_project_idx",
+	"297_test_plan_case_order_index":                       "test_plan_case_order_idx",
+	"298_test_run_project_index":                           "test_run_project_idx",
+	"299_test_run_agent_task_index":                        "test_run_agent_task_idx",
+	"300_test_run_source_index":                            "test_run_source_idx",
+	"301_test_run_case_order_index":                        "test_run_case_order_idx",
+	"302_test_run_case_timeline_index":                     "test_run_case_timeline_idx",
+	"303_attachment_test_run_case_index":                   "attachment_test_run_case_idx",
+	"304_test_capability_key_index":                        "test_capability_key_idx",
+	"305_test_capability_kind_index":                       "test_capability_kind_idx",
+	"307_pmo_sync_config_id_index":                         "pmo_sync_config_id_idx",
+	"308_pmo_sync_run_id_index":                            "pmo_sync_run_id_idx",
+	"309_pmo_sync_link_id_index":                           "pmo_sync_link_id_idx",
+	"311_pmo_sync_config_root_index":                       "pmo_sync_config_workspace_root_idx",
+	"312_pmo_sync_run_history_index":                       "pmo_sync_run_history_idx",
+	"313_pmo_sync_run_active_index":                        "pmo_sync_run_active_idx",
+	"314_pmo_sync_run_agent_task_index":                    "pmo_sync_run_agent_task_idx",
+	"315_pmo_sync_link_identity_index":                     "pmo_sync_link_identity_idx",
+	"343_comment_delegated_failure_pending_index":          "idx_comment_delegated_failure_pending",
+	"345_plugin_installation_workspace_key_index":          "idx_plugin_installation_workspace_key",
+	"346_plugin_storage_scope_key_index":                   "idx_plugin_storage_scope_key",
+	"347_plugin_secret_installation_key_index":             "idx_plugin_secret_installation_key",
+	"349_agent_task_queue_chat_terminal_resume_index":      "idx_agent_task_queue_chat_terminal_resume",
+	"350_agent_task_queue_chat_retired_session_index":      "idx_agent_task_queue_chat_retired_session",
+	"353_autopilot_quota_period_scope_index":               "uq_autopilot_quota_period_scope",
+	"354_autopilot_quota_reservation_id_index":             "autopilot_quota_reservation_pkey_uidx",
+	"355_autopilot_quota_reservation_key_index":            "uq_autopilot_quota_reservation_key",
+	"356_autopilot_run_quota_reservation_index":            "uq_autopilot_run_quota_reservation",
+	"357_webhook_delivery_replay_idempotency_index":        "uq_webhook_delivery_replay_idempotency",
+	"358_autopilot_quota_reservation_state_index":          "idx_autopilot_quota_reservation_state",
+	"361_issue_last_activity_index":                        "idx_issue_workspace_last_activity",
+	"363_plugin_invocation_installation_index":             "idx_plugin_invocation_installation_created",
+	"364_plugin_invocation_created_at_index":               "idx_plugin_invocation_created_at",
+	"378_channel_chat_context_generation_key":              "channel_chat_context_generation_session_revision_idx",
+	"390_agent_task_queue_dispatched_reclaim_v2_index":     "idx_agent_task_queue_dispatched_reclaim_v2",
+	"393_plugin_package_workspace_key_index":               "idx_plugin_package_workspace_key",
+	"394_plugin_package_version_unique_index":              "idx_plugin_package_version_unique",
+	"395_plugin_package_version_package_index":             "idx_plugin_package_version_package",
+	"396_plugin_package_file_path_index":                   "idx_plugin_package_file_path",
+	"397_plugin_installation_package_version_index":        "idx_plugin_installation_package_version",
+	"862_idx_design_template_blueprint_latest":             "idx_design_template_blueprint_latest",
+	"863_idx_design_component_recipe_set_latest":           "idx_design_component_recipe_set_latest",
+	"865_idx_project_design_system_workspace":              "idx_project_design_system_workspace",
+	"866_idx_project_design_system_active_task":            "idx_project_design_system_active_task",
+	"867_idx_project_design_system_package_system":         "idx_project_design_system_package_system",
+	"871_idx_open_design_run_design_system":                "idx_open_design_run_design_system",
+	"872_idx_open_design_run_workspace_status":             "idx_open_design_run_workspace_status",
+	"875_idx_design_draft_semantic_issue_version":          "idx_design_draft_semantic_issue_version",
+	"876_idx_design_draft_semantic_reviewable":             "idx_design_draft_semantic_reviewable",
+	"878_idx_project_design_system_resource_scope":         "idx_project_design_system_resource_scope",
+	"879_idx_project_design_system_project_scope":          "idx_project_design_system_project_scope",
+	"881_idx_design_document_revision_number":              "idx_design_document_revision_number",
+	"882_idx_design_document_project":                      "idx_design_document_project",
+	"883_idx_design_document_issue":                        "idx_design_document_issue",
+	"884_idx_design_document_active_task":                  "idx_design_document_active_task",
+	"886_idx_design_scenario_recipe_builtin_slug":          "idx_design_scenario_recipe_builtin_slug",
+	"887_idx_design_scenario_recipe_workspace_slug":        "idx_design_scenario_recipe_workspace_slug",
+	"888_idx_design_scenario_recipe_gallery":               "idx_design_scenario_recipe_gallery",
+	"902_idx_design_document_share_token":                  "idx_design_document_share_token",
+	"903_idx_design_document_share_live_revision":          "idx_design_document_share_live_revision",
+	"398_issue_workspace_status_position_index":            "idx_issue_workspace_status_position",
+	"400_plugin_hook_schedule_installation_key_index":      "idx_plugin_hook_schedule_installation_key",
+	"401_plugin_hook_schedule_enabled_index":               "idx_plugin_hook_schedule_enabled",
+	"408_issue_source_context_id_index":                    "idx_issue_source_context_id",
+	"409_issue_source_context_issue_index":                 "idx_issue_source_context_issue",
+	"410_issue_source_context_origin_task_index":           "idx_issue_source_context_origin_task",
+	"411_attachment_source_context_index":                  "idx_attachment_source_context",
+	"412_issue_source_context_object_intent_key_index":     "idx_issue_source_context_object_intent_key",
+	"413_issue_source_context_object_intent_due_index":     "idx_issue_source_context_object_intent_due",
+	"414_issue_source_context_object_intent_context_index": "idx_issue_source_context_object_intent_context",
+	"416_seat_capacity_operation_token_index":              "idx_seat_capacity_outbox_operation_token",
+	"418_seat_capacity_due_index":                          "idx_seat_capacity_outbox_due",
+	"419_seat_capacity_share_join_index":                   "idx_seat_capacity_outbox_share_join",
+	"421_channel_chat_active_route_index":                  "idx_channel_chat_session_binding_active_route",
+	"423_channel_task_delivery_pkey_index":                 "channel_task_delivery_pkey",
+	"426_channel_outbound_message_id_index":                "idx_channel_outbound_message_id",
+	"428_channel_task_delivery_binding_index":              "idx_channel_task_delivery_binding",
+	"429_channel_task_delivery_installation_index":         "idx_channel_task_delivery_installation",
+	"430_channel_outbound_message_binding_index":           "idx_channel_outbound_message_binding_route",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction
@@ -330,6 +350,7 @@ var concurrentDownIndexCleanups = map[string]string{
 	"256_drop_agent_task_queue_chat_pending_v2":             "idx_agent_task_queue_chat_pending_v2",
 	"258_drop_pending_issue_agent_v1":                       "idx_one_pending_task_per_issue_agent",
 	"262_drop_agent_task_queue_terminal_completed_at_v1":    "idx_agent_task_queue_terminal_completed_at",
+	"422_channel_chat_route_history":                        "channel_chat_session_binding_installation_id_channel_chat_i_key",
 	"300_drop_redundant_issue_workspace_number_index":       "idx_issue_workspace_number",
 	"301_drop_redundant_sys_cron_job_plan_index":            "idx_sys_cron_exec_job_plan",
 	"302_drop_redundant_channel_chat_session_binding_index": "idx_channel_chat_session_binding_session",
@@ -344,6 +365,7 @@ var preMigrationHooks = func() map[string]preMigrationHook {
 	hooks := map[string]preMigrationHook{
 		"103_drop_legacy_daily_rollups":                         runTaskUsageHourlyHook,
 		"198_agent_task_attribution_strict_constraint_validate": runAttributionStrictHook,
+		"431_chat_explicit_origin_backfill":                     runChatOriginBackfillHook,
 	}
 	for version, index := range concurrentIndexCleanups {
 		hooks[version] = cleanupInvalidConcurrentIndexHook(index)
@@ -352,12 +374,62 @@ var preMigrationHooks = func() map[string]preMigrationHook {
 }()
 
 var preRollbackHooks = func() map[string]preMigrationHook {
-	hooks := make(map[string]preMigrationHook, len(concurrentDownIndexCleanups))
+	hooks := make(map[string]preMigrationHook, len(concurrentDownIndexCleanups)+len(sourceContextMigrationVersions)+1)
 	for version, index := range concurrentDownIndexCleanups {
 		hooks[version] = cleanupInvalidConcurrentIndexHook(index)
 	}
+	// Source-context indexes are split into one-statement concurrent
+	// migrations. Register the guard on every step so a rollback from any
+	// partially applied version fails before dropping its first live index.
+	for _, version := range sourceContextMigrationVersions {
+		hooks[version] = ensureSourceContextRollbackSafe
+	}
+	hooks["430_channel_outbound_message_binding_index"] = refuseChannelChatRouteHistoryRollback
 	return hooks
 }()
+
+var sourceContextMigrationVersions = []string{
+	"407_issue_source_context",
+	"408_issue_source_context_id_index",
+	"409_issue_source_context_issue_index",
+	"410_issue_source_context_origin_task_index",
+	"411_attachment_source_context_index",
+	"412_issue_source_context_object_intent_key_index",
+	"413_issue_source_context_object_intent_due_index",
+	"414_issue_source_context_object_intent_context_index",
+}
+
+type rowQuerier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func refuseChannelChatRouteHistoryRollback(ctx context.Context, pool *pgxpool.Pool) error {
+	return refuseChannelChatRouteHistoryRollbackWith(ctx, pool)
+}
+
+func runChatOriginBackfillHook(ctx context.Context, pool *pgxpool.Pool) error {
+	_, err := chatoriginbackfill.Hook(ctx, pool, chatoriginbackfill.HookOptions{})
+	return err
+}
+
+func refuseChannelChatRouteHistoryRollbackWith(ctx context.Context, query rowQuerier) error {
+	var channelChatRouteStateExists bool
+	if err := query.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM channel_chat_session_binding AS binding
+			LEFT JOIN chat_session AS session ON session.id = binding.chat_session_id
+			WHERE binding.retired_at IS NOT NULL
+			   OR session.explicitly_created_at IS NOT NULL
+		)
+	`).Scan(&channelChatRouteStateExists); err != nil {
+		return fmt.Errorf("check channel chat route state: %w", err)
+	}
+	if channelChatRouteStateExists {
+		return errors.New("cannot roll back channel chat routes after /new has created a channel Chat")
+	}
+	return nil
+}
 
 var upMigrationConditions = map[string]migrationCondition{
 	// Fresh databases that successfully built the CJK-friendly bigram index do
@@ -378,6 +450,21 @@ func hooksForDirection(direction string) map[string]preMigrationHook {
 	default:
 		return nil
 	}
+}
+
+func ensureSourceContextRollbackSafe(ctx context.Context, pool *pgxpool.Pool) error {
+	var dataExists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM issue_source_context)
+		    OR EXISTS (SELECT 1 FROM attachment WHERE source_context_id IS NOT NULL)
+		    OR EXISTS (SELECT 1 FROM issue_source_context_object_intent)
+	`).Scan(&dataExists); err != nil {
+		return fmt.Errorf("inspect source-context rollback ownership: %w", err)
+	}
+	if dataExists {
+		return errors.New("cannot roll back issue source context while captured data or stored objects still exist; remove source-context captures and their stored objects through application cleanup, then retry")
+	}
+	return nil
 }
 
 func conditionsForDirection(direction string) map[string]migrationCondition {
