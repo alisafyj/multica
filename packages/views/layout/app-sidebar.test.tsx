@@ -241,21 +241,17 @@ describe("PinRow", () => {
   });
 });
 
-describe("workspace nav — Requirements", () => {
+describe("workspace nav", () => {
   beforeEach(() => {
     summary.current = [];
     workspaces.current = [];
   });
 
-  it("renders the pmo nav item right after projects", () => {
-    // renderWithI18n so the label resolves from layout.json's nav registry
-    // instead of i18next's uninitialized key fallback.
+  it("hides product map and requirements management", () => {
     const { container } = renderWithI18n(<AppSidebar />);
-    const pmoNav = container.querySelector<HTMLElement>('button[data-href="/acme/pmo"]');
-    expect(pmoNav).not.toBeNull();
-    expect(pmoNav?.textContent).toContain("Requirements");
-    const projectsNav = container.querySelector<HTMLElement>('button[data-href="/acme/projects"]');
-    expect(projectsNav?.nextElementSibling).toBe(pmoNav);
+    expect(container.querySelector('button[data-href="/acme/products"]')).toBeNull();
+    expect(container.querySelector('button[data-href="/acme/pmo"]')).toBeNull();
+    expect(container.querySelector('button[data-href="/acme/projects"]')).not.toBeNull();
   });
 });
 
