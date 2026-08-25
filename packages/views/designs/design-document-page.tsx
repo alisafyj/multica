@@ -1220,190 +1220,205 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                 }}
                 aria-label="调整设计稿"
               >
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {/* References for this change. Same control and same route as
-                      the home composer's +: only the ids travel with the
-                      request, and the bytes are pinned server-side before the
-                      run is created. */}
-                  <input
-                    ref={attachmentInputRef}
-                    type="file"
-                    multiple
-                    accept="image/*,.pdf,.txt,.md,.json"
-                    className="hidden"
-                    aria-label="上传参考文件"
-                    onChange={(event) => {
-                      if (event.target.files) void stageAttachments(event.target.files);
-                      event.target.value = "";
+                {/* The plan sits above the box, as Open Design's does: it is
+                    the run's state, not part of the message being written. */}
+                <DesignRunPlan rows={planRows} className="mb-2" />
+                {/* One card, the same one the home composer uses: the box and
+                    everything qualifying the send live on a single rounded
+                    surface, so writing and configuring are not two places. */}
+                <div
+                  className={cn(
+                    "rounded-2xl border shadow-sm transition-colors focus-within:border-primary/60",
+                    // The box lost its own border to the card, so a closed
+                    // composer has to read as closed from the card itself —
+                    // otherwise a disabled field looks exactly like an empty one.
+                    composerOpen ? "bg-card" : "bg-muted/40 shadow-none",
+                  )}
+                >
+                  <Textarea
+                    value={instruction}
+                    onChange={(event) => setInstruction(event.target.value)}
+                    placeholder={canAdjust
+                      ? "描述你想怎么改，例如：把顶部导航收紧，订单列表增加筛选。"
+                      : running
+                        ? "任务执行中，现在提交会排队，结束后自动发起。"
+                        : "生成完成后可以在这里继续调整。"}
+                    rows={3}
+                    maxLength={INSTRUCTION_MAX_LENGTH}
+                    disabled={!composerOpen || busy}
+                    className="min-h-24 resize-none border-0 bg-transparent px-4 py-3.5 text-body shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
+                    onKeyDown={(event) => {
+                      if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !instructionBlocker && !busy) {
+                        event.preventDefault();
+                        if (running) {
+                          setQueuedAdjustment({ instruction, scopeToPage, annotations, attachments: turnAttachments });
+                          setInstruction("");
+                          return;
+                        }
+                        adjust.mutate({ instruction, scopeToPage, annotations, attachments: turnAttachments });
+                      }
                     }}
                   />
-                  <button
-                    type="button"
-                    aria-label="附加参考文件"
-                    title="附加参考文件"
-                    disabled={!composerOpen || busy || turnAttachments.length >= MAX_TURN_ATTACHMENTS}
-                    onClick={() => attachmentInputRef.current?.click()}
-                    className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {attachmentUploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Plus className="size-4" />}
-                  </button>
-                  <button
-                    type="button"
-                    className={cn(
-                      "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-caption transition-colors",
-                      scopeToPage && shownPage ? "border-primary/50 bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
-                    )}
-                    aria-pressed={scopeToPage && !!shownPage}
-                    disabled={!shownPage}
-                    onClick={() => setScopeToPage((value) => !value)}
-                    title={shownPage ? "只调整当前页面" : "先选择一个页面"}
-                  >
-                    {scopeToPage && shownPage ? `仅当前页面 · ${shownPage.title}` : "整份文档"}
-                    {scopeToPage && shownPage ? <X className="h-3 w-3" /> : null}
-                  </button>
-                </div>
-                {annotations.length > 0 ? (
-                  // Each mark keeps its own note, so one send can carry several
-                  // separate asks that the agent can locate individually.
-                  <ul className="mt-2 divide-y border-y" aria-label="标注">
-                    {annotations.map((annotation) => (
-                      <li key={annotation.id} className="py-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className="min-w-0 flex-1 truncate text-caption font-medium" title={annotation.element?.selector}>
-                            {annotationLabel(annotation)}
-                          </span>
-                          <span className="shrink-0 text-micro text-muted-foreground">{annotation.pageTitle}</span>
+                  {annotations.length > 0 ? (
+                    // Each mark keeps its own note, so one send can carry several
+                    // separate asks that the agent can locate individually.
+                    <ul className="divide-y border-t px-3" aria-label="标注">
+                      {annotations.map((annotation) => (
+                        <li key={annotation.id} className="py-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="min-w-0 flex-1 truncate text-caption font-medium" title={annotation.element?.selector}>
+                              {annotationLabel(annotation)}
+                            </span>
+                            <span className="shrink-0 text-micro text-muted-foreground">{annotation.pageTitle}</span>
+                            <button
+                              type="button"
+                              aria-label={`删除标注 ${annotationLabel(annotation)}`}
+                              className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                              onClick={() => setAnnotations((current) => current.filter((row) => row.id !== annotation.id))}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                          <input
+                            value={annotation.note}
+                            aria-label={`${annotationLabel(annotation)} 的修改说明`}
+                            placeholder="这里要怎么改？"
+                            className="mt-1 w-full bg-transparent text-caption outline-none placeholder:text-muted-foreground"
+                            onChange={(event) => setAnnotations((current) => current.map((row) => (
+                              row.id === annotation.id ? { ...row, note: event.target.value } : row
+                            )))}
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {queuedAdjustment ? (
+                    <div className="mt-2 flex items-start justify-between gap-2 border-l-2 border-muted-foreground/30 pl-2.5 text-caption leading-5">
+                      <span className="min-w-0">
+                        <span className="text-muted-foreground">已排队 · 任务结束后自动发起：</span>
+                        <span className="line-clamp-2 break-words">{queuedAdjustment.instruction}</span>
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="取消排队的调整"
+                        title="取消排队的调整"
+                        className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        onClick={() => setQueuedAdjustment(null)}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : null}
+                                  {turnAttachments.length > 0 ? (
+                    <ul className="flex flex-wrap items-center gap-1.5 px-3 pb-2" aria-label="本次参考文件">
+                      {turnAttachments.map((item) => (
+                        <li key={item.id} className="inline-flex h-6 max-w-56 items-center gap-1 rounded-full border bg-background px-2 text-caption">
+                          <Paperclip className="size-3 shrink-0 text-muted-foreground" />
+                          <span className="truncate">{item.name}</span>
                           <button
                             type="button"
-                            aria-label={`删除标注 ${annotationLabel(annotation)}`}
-                            className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                            onClick={() => setAnnotations((current) => current.filter((row) => row.id !== annotation.id))}
+                            aria-label={`移除 ${item.name}`}
+                            className="ml-0.5 shrink-0 cursor-pointer rounded-full p-0.5 text-muted-foreground hover:text-foreground"
+                            onClick={() => setTurnAttachments((current) => current.filter((row) => row.id !== item.id))}
                           >
-                            <X className="h-3 w-3" />
+                            <X className="size-3" />
                           </button>
-                        </div>
-                        <input
-                          value={annotation.note}
-                          aria-label={`${annotationLabel(annotation)} 的修改说明`}
-                          placeholder="这里要怎么改？"
-                          className="mt-1 w-full bg-transparent text-caption outline-none placeholder:text-muted-foreground"
-                          onChange={(event) => setAnnotations((current) => current.map((row) => (
-                            row.id === annotation.id ? { ...row, note: event.target.value } : row
-                          )))}
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                {queuedAdjustment ? (
-                  <div className="mt-2 flex items-start justify-between gap-2 border-l-2 border-muted-foreground/30 pl-2.5 text-caption leading-5">
-                    <span className="min-w-0">
-                      <span className="text-muted-foreground">已排队 · 任务结束后自动发起：</span>
-                      <span className="line-clamp-2 break-words">{queuedAdjustment.instruction}</span>
-                    </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+  {/* The run's plan, pinned: it says what is left, and the
+                      transcript above is exactly where that answer scrolls away. */}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-3 pb-3">
+                    {/* References for this change. Same control and same route as
+                        the home composer's +: only the ids travel with the
+                        request, and the bytes are pinned server-side before the
+                        run is created. */}
+                    <input
+                      ref={attachmentInputRef}
+                      type="file"
+                      multiple
+                      accept="image/*,.pdf,.txt,.md,.json"
+                      className="hidden"
+                      aria-label="上传参考文件"
+                      onChange={(event) => {
+                        if (event.target.files) void stageAttachments(event.target.files);
+                        event.target.value = "";
+                      }}
+                    />
                     <button
                       type="button"
-                      aria-label="取消排队的调整"
-                      title="取消排队的调整"
-                      className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                      onClick={() => setQueuedAdjustment(null)}
+                      aria-label="附加参考文件"
+                      title="附加参考文件"
+                      disabled={!composerOpen || busy || turnAttachments.length >= MAX_TURN_ATTACHMENTS}
+                      onClick={() => attachmentInputRef.current?.click()}
+                      className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <X className="h-3 w-3" />
+                      {attachmentUploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Plus className="size-4" />}
                     </button>
+                    <button
+                      type="button"
+                      className={cn(
+                        "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-caption transition-colors",
+                        scopeToPage && shownPage ? "border-primary/50 bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+                      )}
+                      aria-pressed={scopeToPage && !!shownPage}
+                      disabled={!shownPage}
+                      onClick={() => setScopeToPage((value) => !value)}
+                      title={shownPage ? "只调整当前页面" : "先选择一个页面"}
+                    >
+                      {scopeToPage && shownPage ? `仅当前页面 · ${shownPage.title}` : "整份文档"}
+                      {scopeToPage && shownPage ? <X className="h-3 w-3" /> : null}
+                    </button>
+                    {/* Who runs this, next to the control that sends it: the agent is
+                        part of the submission, not a property of the panel above.
+                        Grouped with the button so three children under
+                        justify-between cannot strand it in the middle. */}
+                    <div className="ml-auto flex shrink-0 items-center gap-2">
+                      <AgentSetting agents={agents} agentId={agentId} onChange={setAgentOverride} />
+                      {showStop ? (
+                      // One slot, two meanings — Open Design's rule: while the agent
+                      // is working and the box is empty, the send control IS the stop
+                      // control. Typing anything turns it back into 排队调整, because
+                      // then the user has something to send rather than something to
+                      // end.
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="group"
+                        disabled={stopTask.isPending}
+                        onClick={() => stopTask.mutate(activeTask.id)}
+                        aria-label="停止任务"
+                      >
+                        {stopTask.isPending
+                          ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                          : <Square className="size-3 fill-current" />}
+                        {/* Both labels share one grid cell so the swap cannot resize
+                            the button under the pointer. */}
+                        <span className="grid">
+                          <span className="col-start-1 row-start-1 group-hover:invisible group-focus-visible:invisible">
+                            {stopTask.isPending ? "正在停止" : "执行中"}
+                          </span>
+                          <span className="invisible col-start-1 row-start-1 group-hover:visible group-focus-visible:visible">
+                            停止
+                          </span>
+                        </span>
+                      </Button>
+                    ) : (
+                      <Button type="submit" size="sm" disabled={!!instructionBlocker || busy} aria-label={running ? "排队调整" : "发起调整"}>
+                        {adjust.isPending ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
+                      </Button>
+                      )}
+                    </div>
                   </div>
-                ) : null}
-                                {turnAttachments.length > 0 ? (
-                  <ul className="mt-2 divide-y border-y" aria-label="本次参考文件">
-                    {turnAttachments.map((item) => (
-                      <li key={item.id} className="flex items-center gap-2 py-1.5 text-caption">
-                        <Paperclip className="size-3 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 flex-1 truncate">{item.name}</span>
-                        <button
-                          type="button"
-                          aria-label={`移除 ${item.name}`}
-                          className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground"
-                          onClick={() => setTurnAttachments((current) => current.filter((row) => row.id !== item.id))}
-                        >
-                          <X className="size-3" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-{/* The run's plan, pinned: it says what is left, and the
-                    transcript above is exactly where that answer scrolls away. */}
-                <DesignRunPlan rows={planRows} className="mb-2" />
-                <Textarea
-                  value={instruction}
-                  onChange={(event) => setInstruction(event.target.value)}
-                  placeholder={canAdjust
-                    ? "描述你想怎么改，例如：把顶部导航收紧，订单列表增加筛选。"
-                    : running
-                      ? "任务执行中，现在提交会排队，结束后自动发起。"
-                      : "生成完成后可以在这里继续调整。"}
-                  rows={3}
-                  maxLength={INSTRUCTION_MAX_LENGTH}
-                  disabled={!composerOpen || busy}
-                  className="mt-2 min-h-[72px] resize-none text-body"
-                  onKeyDown={(event) => {
-                    if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !instructionBlocker && !busy) {
-                      event.preventDefault();
-                      if (running) {
-                        setQueuedAdjustment({ instruction, scopeToPage, annotations, attachments: turnAttachments });
-                        setInstruction("");
-                        return;
-                      }
-                      adjust.mutate({ instruction, scopeToPage, annotations, attachments: turnAttachments });
-                    }
-                  }}
-                />
-                <div className="mt-2 flex items-center justify-between gap-2">
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-x-3 px-1">
                   <span className="min-w-0 truncate text-caption text-muted-foreground">
                     {running && startedAtMs !== null
                       ? `已运行 ${formatDuration(now - startedAtMs)}`
                       : (instructionBlocker ?? "⌘/Ctrl + Enter 发送")}
                   </span>
-                  {/* Who runs this, next to the control that sends it: the agent is
-                      part of the submission, not a property of the panel above.
-                      Grouped with the button so three children under
-                      justify-between cannot strand it in the middle. */}
-                  <div className="flex shrink-0 items-center gap-2">
-                    <AgentSetting agents={agents} agentId={agentId} onChange={setAgentOverride} />
-                    {showStop ? (
-                    // One slot, two meanings — Open Design's rule: while the agent
-                    // is working and the box is empty, the send control IS the stop
-                    // control. Typing anything turns it back into 排队调整, because
-                    // then the user has something to send rather than something to
-                    // end.
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="group"
-                      disabled={stopTask.isPending}
-                      onClick={() => stopTask.mutate(activeTask.id)}
-                      aria-label="停止任务"
-                    >
-                      {stopTask.isPending
-                        ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                        : <Square className="size-3 fill-current" />}
-                      {/* Both labels share one grid cell so the swap cannot resize
-                          the button under the pointer. */}
-                      <span className="grid">
-                        <span className="col-start-1 row-start-1 group-hover:invisible group-focus-visible:invisible">
-                          {stopTask.isPending ? "正在停止" : "执行中"}
-                        </span>
-                        <span className="invisible col-start-1 row-start-1 group-hover:visible group-focus-visible:visible">
-                          停止
-                        </span>
-                      </span>
-                    </Button>
-                  ) : (
-                    <Button type="submit" size="sm" disabled={!!instructionBlocker || busy} aria-label={running ? "排队调整" : "发起调整"}>
-                      {adjust.isPending ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
-                    </Button>
-                    )}
-                  </div>
                 </div>
               </form>
               )}
