@@ -34,7 +34,7 @@ type Coverage struct {
 // that answer it.
 type CoverageRequirement struct {
 	RequirementID string   `json:"requirement_id"`
-	Status        string   `json:"status"`
+	Status        string   `json:"status" enum:"covered,partial,not_covered"`
 	PageIDs       []string `json:"page_ids"`
 	StateIDs      []string `json:"state_ids"`
 	Notes         string   `json:"notes,omitempty"`
@@ -43,7 +43,7 @@ type CoverageRequirement struct {
 // CoverageEntry is the coverage status of one declared brief object.
 type CoverageEntry struct {
 	RefID  string `json:"ref_id"`
-	Status string `json:"status"`
+	Status string `json:"status" enum:"covered,partial,not_covered"`
 	Notes  string `json:"notes,omitempty"`
 }
 
@@ -73,7 +73,7 @@ type CoverageGap struct {
 type CoverageAgentCheck struct {
 	ID     string `json:"id"`
 	Claim  string `json:"claim"`
-	Result string `json:"result"`
+	Result string `json:"result" enum:"pass,fail,unknown"`
 }
 
 const coveragePath = "coverage.json"

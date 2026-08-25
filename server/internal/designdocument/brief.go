@@ -27,7 +27,8 @@ type BriefRequirement struct {
 	Summary string `json:"summary"`
 	// Origin records where the requirement came from so coverage can separate
 	// user requirements from task (issue) requirements.
-	Origin string `json:"origin"`
+	// Closed set, generated into the prompt from briefRequirementOrigins.
+	Origin string `json:"origin" enum:"user_input,issue,repository,assumption"`
 }
 
 // BriefPage is a page or sub page of the design document.
@@ -53,7 +54,7 @@ type BriefState struct {
 // BriefOverlay is a dialog, drawer, menu or other floating layer of a page.
 type BriefOverlay struct {
 	ID    string `json:"id"`
-	Kind  string `json:"kind"`
+	Kind  string `json:"kind" enum:"dialog,drawer,menu,popover,sheet,toast"`
 	Label string `json:"label"`
 }
 

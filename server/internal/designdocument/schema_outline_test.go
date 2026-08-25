@@ -1,6 +1,7 @@
 package designdocument
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -56,5 +57,67 @@ func TestValidateBindingAcceptsNoPinnedDesignSystem(t *testing.T) {
 	binding.DesignSystemSHA256 = "not-a-digest"
 	if err := validateBinding(binding); err == nil {
 		t.Fatal("a malformed design system digest was accepted")
+	}
+}
+
+// The enum tags exist so the prompt can name a field's allowed values instead
+// of calling it "string" — a run wrote "task.json brief" for a requirement's
+// origin, which describes where the requirement came from perfectly and is not
+// one of the four words the audit accepts.
+//
+// Their whole value is being the same values the audit enforces, so this holds
+// each tag to the map it stands for. Adding a case to one and not the other
+// fails here rather than at the gate, on someone's finished package.
+func TestSchemaOutlineEnumsMatchTheValidators(t *testing.T) {
+	for name, tc := range map[string]struct {
+		value   any
+		field   string
+		allowed map[string]struct{}
+	}{
+		"brief requirement origin": {Brief{}, "", briefRequirementOrigins},
+		"brief overlay kind":       {BriefOverlay{}, "Kind", briefOverlayKinds},
+		"coverage entry status":    {CoverageEntry{}, "Status", coverageStatuses},
+		"coverage requirement status": {
+			CoverageRequirement{}, "Status", coverageStatuses,
+		},
+		"agent check result": {CoverageAgentCheck{}, "Result", coverageAgentResults},
+	} {
+		t.Run(name, func(t *testing.T) {
+			value, field := tc.value, tc.field
+			if field == "" {
+				value, field = BriefRequirement{}, "Origin"
+			}
+			structField, ok := reflect.TypeOf(value).FieldByName(field)
+			if !ok {
+				t.Fatalf("%T has no field %s", value, field)
+			}
+			tag := structField.Tag.Get("enum")
+			if tag == "" {
+				t.Fatalf("%T.%s has no enum tag, so the prompt calls it a bare string", value, field)
+			}
+			tagged := map[string]struct{}{}
+			for _, item := range strings.Split(tag, ",") {
+				tagged[strings.TrimSpace(item)] = struct{}{}
+			}
+			if len(tagged) != len(tc.allowed) {
+				t.Fatalf("enum tag %q has %d values, the validator accepts %d", tag, len(tagged), len(tc.allowed))
+			}
+			for want := range tc.allowed {
+				if _, ok := tagged[want]; !ok {
+					t.Fatalf("the validator accepts %q but the enum tag does not list it: %q", want, tag)
+				}
+			}
+		})
+	}
+}
+
+// The rendered form has to be readable as a choice, not as a type.
+func TestSchemaOutlineRendersAllowedValues(t *testing.T) {
+	outline := SchemaOutline(Brief{})
+	if !strings.Contains(outline, `origin: "user_input" | "issue" | "repository" | "assumption"`) {
+		t.Fatalf("the brief outline does not spell out the origins:\n%s", outline)
+	}
+	if strings.Contains(outline, "origin: string") {
+		t.Fatalf("the brief outline still calls a closed set a string:\n%s", outline)
 	}
 }

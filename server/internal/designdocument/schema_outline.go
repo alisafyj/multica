@@ -3,6 +3,7 @@ package designdocument
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 )
 
@@ -72,9 +73,29 @@ func structFields(t reflect.Type, depth int) []string {
 		if optional {
 			name += "?"
 		}
-		fields = append(fields, name+": "+outlineType(field.Type, depth+1))
+		fields = append(fields, name+": "+fieldShape(field, depth))
 	}
 	return fields
+}
+
+// fieldShape renders a field's type, or its allowed values when it has a
+// closed set.
+//
+// "string" is true of an enum and useless: a run wrote `"task.json brief"` for
+// a requirement's origin — an accurate description of where the requirement
+// came from, and not one of the four words the audit accepts. The values live
+// on the field as an `enum` tag so they are declared once, beside the field,
+// and TestSchemaOutlineEnumsMatchTheValidators holds them to what the audit
+// actually enforces.
+func fieldShape(field reflect.StructField, depth int) string {
+	if allowed, ok := field.Tag.Lookup("enum"); ok && strings.TrimSpace(allowed) != "" {
+		values := strings.Split(allowed, ",")
+		for i, value := range values {
+			values[i] = strconv.Quote(strings.TrimSpace(value))
+		}
+		return strings.Join(values, " | ")
+	}
+	return outlineType(field.Type, depth+1)
 }
 
 // jsonFieldName reports the wire name of a struct field, whether it may be
