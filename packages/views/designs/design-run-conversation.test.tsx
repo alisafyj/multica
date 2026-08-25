@@ -18,10 +18,10 @@ function message(overrides: Record<string, unknown> = {}) {
 }
 
 describe("DesignRunConversation", () => {
-  // Codex delivers its plan as a `turn/plan/updated` notification, normalised
-  // to a `todo_write` tool call. On screen it is the run's progress, so it
-  // renders as a checklist rather than the one-line tool summary.
-  it("renders an agent plan as a checklist with its progress", () => {
+  // The plan is pinned above the composer, not left here: a checklist that
+  // scrolls away with the tool calls it summarises cannot answer "what is
+  // left", which is the only reason it is on screen. See design-run-plan.
+  it("leaves the agent's plan to the pinned bar", () => {
     render(
       <DesignRunConversation
         live
@@ -34,7 +34,6 @@ describe("DesignRunConversation", () => {
               todos: [
                 { content: "审计当前视觉层级", status: "completed" },
                 { content: "修正排版与间距", status: "in_progress" },
-                { content: "验证响应式", status: "pending" },
               ],
             },
           }),
@@ -42,12 +41,8 @@ describe("DesignRunConversation", () => {
       />,
     );
 
-    expect(screen.getByText("待办")).toBeInTheDocument();
-    expect(screen.getByText("1/3")).toBeInTheDocument();
-    expect(screen.getByText("修正排版与间距")).toBeInTheDocument();
-    // Done stays visible — struck through, not hidden: the list is the record
-    // of what the run covered.
-    expect(screen.getByText("审计当前视觉层级")).toHaveClass("line-through");
+    expect(screen.queryByText("审计当前视觉层级")).not.toBeInTheDocument();
+    expect(screen.queryByText("todo_write")).not.toBeInTheDocument();
   });
 
   // An unreadable payload degrades to the ordinary tool line instead of

@@ -30,6 +30,7 @@ import {
   Square,
 } from "lucide-react";
 import { toast } from "sonner";
+import { taskMessagesOptions } from "@multica/core/chat/queries";
 import { api } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
 import {
@@ -96,6 +97,7 @@ import { revisionFileSource, safeQuery, type CanvasMode } from "./prototype-canv
 import { formatDuration, taskOperationLabel } from "./project-design-system-task-activity";
 import { DesignDocumentConversation } from "./design-document-conversation";
 import { DesignNextSteps } from "./design-next-steps";
+import { DesignRunPlan, latestTodoRows } from "./design-run-plan";
 
 /** What the workbench's main pane is showing. */
 type DocumentViewMode = "preview" | "annotate" | "edit" | "code";
@@ -666,6 +668,11 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
           ? "说明太长了"
           : null;
 
+  // The newest turn's plan, for the bar pinned above the composer. Same query
+  // key the thread reads, so this is the cache and not a second fetch.
+  const { data: activeTaskMessages = [] } = useQuery(taskMessagesOptions(activeTask?.id ?? ""));
+  const planRows = useMemo(() => latestTodoRows(activeTaskMessages), [activeTaskMessages]);
+
   const sidebarScrollRef = useRef<HTMLDivElement | null>(null);
   const startedAtMs = (() => {
     const raw = activeTask?.started_at ?? activeTask?.dispatched_at ?? null;
@@ -1117,6 +1124,21 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                 setInstruction((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text))
               }
             />
+            {/* Ready-made follow-ups, at the end of the thread and only once
+                the run is over — they are what the conversation arrives at,
+                not a fixture above the input. Offering them mid-run would
+                propose refining a design that does not exist yet. They seed
+                the box rather than dispatch anything, so what gets sent is
+                always text the user has seen and can still edit. */}
+            {!running && revisions.length > 0 ? (
+              <DesignNextSteps
+                className="border-t px-4 py-3"
+                disabled={busy}
+                onPick={(text) =>
+                  setInstruction((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text))
+                }
+              />
+            ) : null}
           </div>
 
           {viewMode === "edit" ? (
@@ -1247,19 +1269,9 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                 </button>
               </div>
             ) : null}
-            {/* Ready-made follow-ups for the next turn. They seed the box
-                rather than dispatch anything, so what gets sent is always
-                text the user has seen and can still edit. Hidden until a
-                revision exists: there is nothing to refine before then. */}
-            {revisions.length > 0 ? (
-              <DesignNextSteps
-                className="mb-2"
-                disabled={busy}
-                onPick={(text) =>
-                  setInstruction((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text))
-                }
-              />
-            ) : null}
+            {/* The run's plan, pinned: it says what is left, and the
+                transcript above is exactly where that answer scrolls away. */}
+            <DesignRunPlan rows={planRows} className="mb-2" />
             <Textarea
               value={instruction}
               onChange={(event) => setInstruction(event.target.value)}

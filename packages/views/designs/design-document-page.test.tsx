@@ -448,6 +448,47 @@ describe("DesignDocumentPage", () => {
     expect(screen.queryByPlaceholderText(/描述你想怎么改/)).not.toBeInTheDocument();
   });
 
+  // taskMessagesOptions is gated on a UUID task id, so a plan fixture has to
+  // carry a real one or the query never runs and the bar never renders.
+  const PLAN_TASK_ID = "01a03707-5b0d-7728-87ba-daf0d4a5b315";
+
+  // Two lists, two homes, and they are not interchangeable. The plan answers
+  // "what is left" and belongs where it cannot scroll away — pinned above the
+  // composer. The follow-ups are what the conversation arrives at, so they
+  // land at the end of the thread, and only once there is a design to refine.
+  it("pins the run's plan and holds the follow-ups until it lands", async () => {
+    getDesignDocument.mockResolvedValue(document({
+      status: "running",
+      draft_revision_id: "",
+      active_task: { id: PLAN_TASK_ID, agent_id: "agent-1", status: "running", operation: "generate" },
+    }));
+    listTaskMessages.mockResolvedValue([
+      {
+        task_id: PLAN_TASK_ID, seq: 1, type: "tool_use", tool: "todo_write",
+        input: { todos: [
+          { content: "锁定页面范围", status: "completed" },
+          { content: "实现原型", status: "in_progress" },
+        ] },
+      },
+    ]);
+    renderPage();
+
+    // Pinned, collapsed, and present while the run is still going.
+    expect(await screen.findByText("待办")).toBeInTheDocument();
+    expect(screen.getByText("1/2")).toBeInTheDocument();
+    // Nothing to refine yet, so no follow-ups.
+    expect(screen.queryByText("设计润色")).not.toBeInTheDocument();
+  });
+
+  it("offers the follow-ups once a version exists", async () => {
+    getDesignDocument.mockResolvedValue(document({ status: "saved", saved_revision_id: "revision-2" }));
+    renderPage();
+    await screen.findByTitle("订单总览 · 首页");
+
+    expect(screen.getByText("设计润色")).toBeInTheDocument();
+    expect(screen.getByText("下一步")).toBeInTheDocument();
+  });
+
   // The end of the designer's flow (DC-062). A draft must not be deliverable:
   // an agent building from something the designer never stood behind is the
   // failure this gate exists to prevent.
