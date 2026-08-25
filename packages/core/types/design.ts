@@ -924,6 +924,12 @@ export interface AdjustDesignDocumentRequest {
    * adjust if the document's base moved underneath them (409).
    */
   base_revision_id?: string;
+  /**
+   * Reference files for THIS change, on top of the ones frozen at creation.
+   * The document's own references say what it is for; these say what to look
+   * at now, and the agent receives both in one directory with these last.
+   */
+  attachments?: Array<{ attachment_id: string }>;
 }
 
 /** One element's style overrides, as the properties panel produced them. */

@@ -36,6 +36,11 @@ type AdjustDesignDocumentRequest struct {
 	// set, an adjustment whose base moved underneath them is refused instead
 	// of silently landing on content they never saw.
 	BaseRevisionID string `json:"base_revision_id"`
+
+	// Reference files for THIS change, on top of the ones frozen at creation.
+	// The document's own references say what it is for; these say what to look
+	// at now, and both reach the agent as reference/attachments.
+	Attachments json.RawMessage `json:"attachments,omitempty"`
 }
 
 // designDocumentAdjustBase names the revision an adjustment starts from: the
@@ -122,8 +127,17 @@ func (h *Handler) AdjustDesignDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolved and pinned before the run is created, exactly as creation does:
+	// the frozen input records what the files ARE, so the run cannot later see
+	// different bytes under the same id.
+	turnAttachments, attachmentErr := h.resolveDesignDocumentAttachments(r.Context(), workspaceUUID, req.Attachments)
+	if attachmentErr != nil {
+		writeProjectDesignSystemRequestError(w, attachmentErr)
+		return
+	}
+
 	updated, task, err := h.createDesignDocumentAdjustTask(
-		r.Context(), workspaceUUID, requesterUUID, document, baseRevision, agentUUID, req.Instruction, req.Scope,
+		r.Context(), workspaceUUID, requesterUUID, document, baseRevision, agentUUID, req.Instruction, req.Scope, turnAttachments,
 	)
 	if err != nil {
 		writeProjectDesignSystemRequestError(w, err)
@@ -147,6 +161,7 @@ func (h *Handler) createDesignDocumentAdjustTask(
 	agentID pgtype.UUID,
 	instruction string,
 	scope json.RawMessage,
+	turnAttachments []designDocumentAttachmentSnapshot,
 ) (db.DesignDocument, db.AgentTaskQueue, error) {
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
@@ -188,7 +203,7 @@ func (h *Handler) createDesignDocumentAdjustTask(
 		return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: verdict.Detail}
 	}
 
-	contextJSON, err := h.designDocumentAdjustTaskContext(ctx, queries, requesterID, document, baseRevision, agent.ID, instruction, scope)
+	contextJSON, err := h.designDocumentAdjustTaskContext(ctx, queries, requesterID, document, baseRevision, agent.ID, instruction, scope, turnAttachments)
 	if err != nil {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, err
 	}
@@ -235,6 +250,23 @@ func (h *Handler) createDesignDocumentAdjustTask(
 // from the request: repository scope, issue link and platform decide what the
 // agent is allowed to read and what the package binds to, so letting a request
 // restate them would let an adjustment silently retarget the document.
+// designDocumentRunAttachments is what an adjustment's agent sees: the
+// document's own references, then this turn's.
+//
+// One list, because the daemon writes one directory and the prompt names one
+// directory. The ORDER is the whole signal — it is what tells the agent which
+// files are the standing context the document was made from and which are the
+// thing the current request wants looked at — so it is stated here rather than
+// left to an inline append nobody would think to check.
+func designDocumentRunAttachments(
+	document []service.DesignDocumentTaskAttachment,
+	turn []designDocumentAttachmentSnapshot,
+) []service.DesignDocumentTaskAttachment {
+	merged := make([]service.DesignDocumentTaskAttachment, 0, len(document)+len(turn))
+	merged = append(merged, document...)
+	return append(merged, designDocumentTaskAttachments(turn)...)
+}
+
 func (h *Handler) designDocumentAdjustTaskContext(
 	ctx context.Context,
 	queries *db.Queries,
@@ -244,8 +276,9 @@ func (h *Handler) designDocumentAdjustTaskContext(
 	agentID pgtype.UUID,
 	instruction string,
 	scope json.RawMessage,
+	turnAttachments []designDocumentAttachmentSnapshot,
 ) ([]byte, error) {
-	return h.designDocumentBaseBoundTaskContext(ctx, queries, requesterID, document, baseRevision, agentID, service.DesignDocumentAdjust, instruction, scope, nil)
+	return h.designDocumentBaseBoundTaskContext(ctx, queries, requesterID, document, baseRevision, agentID, service.DesignDocumentAdjust, instruction, scope, nil, turnAttachments)
 }
 
 // designDocumentBaseBoundTaskContext builds the envelope for any run that
@@ -263,6 +296,10 @@ func (h *Handler) designDocumentBaseBoundTaskContext(
 	instruction string,
 	scope json.RawMessage,
 	manualEdits json.RawMessage,
+	// References attached to THIS turn, appended after the document's own. A
+	// manual edit passes none: nothing about it asks an agent to look at
+	// anything.
+	turnAttachments []designDocumentAttachmentSnapshot,
 ) ([]byte, error) {
 	project, err := queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
 		ID: document.ProjectID, WorkspaceID: document.WorkspaceID,
@@ -312,10 +349,28 @@ func (h *Handler) designDocumentBaseBoundTaskContext(
 		}
 	}
 
+	// The document's own references, then this turn's. One directory, because
+	// that is the one the prompt names and the daemon writes; the ordering is
+	// what tells the agent which is the standing context and which is the ask.
+	var documentAttachments []service.DesignDocumentTaskAttachment
+	if len(input.Attachments) > 0 {
+		if err := json.Unmarshal(input.Attachments, &documentAttachments); err != nil {
+			return nil, projectDesignSystemInternalError("input_snapshot_invalid", "the stored design inputs could not be read")
+		}
+	}
+	runAttachments := designDocumentRunAttachments(documentAttachments, turnAttachments)
+	runAttachmentsJSON, err := json.Marshal(runAttachments)
+	if err != nil {
+		return nil, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
+	}
+
 	pinnedInput, err := designDocumentPinnedInput()
 	if err != nil {
 		return nil, projectDesignSystemInternalError("context_failed", "failed to build agent task context")
 	}
+	// Staged by the daemon from here: the top-level list is what the agent
+	// reads, this envelope is what the daemon downloads.
+	pinnedInput.Attachments = runAttachments
 	contextJSON, err := json.Marshal(service.DesignDocumentTaskContext{
 		Type:              service.DesignDocumentTaskContextType,
 		Operation:         operation,
@@ -330,7 +385,7 @@ func (h *Handler) designDocumentBaseBoundTaskContext(
 		Platform:          document.Platform,
 		Recipe:            document.Recipe,
 		Brief:             input.Brief,
-		Attachments:       input.Attachments,
+		Attachments:       runAttachmentsJSON,
 		DesignContext:     designContextJSON,
 		// Pins the exact package the run starts from. The completion path
 		// stores it as the new revision's base_revision_id, so an adjustment's

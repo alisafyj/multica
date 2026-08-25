@@ -175,7 +175,7 @@ func (h *Handler) createDesignDocumentManualEditTask(
 
 	contextJSON, err := h.designDocumentBaseBoundTaskContext(
 		ctx, queries, requesterID, document, baseRevision, agent.ID,
-		service.DesignDocumentManualEdit, manualEditInstruction(edits), nil, manualEditsJSON,
+		service.DesignDocumentManualEdit, manualEditInstruction(edits), nil, manualEditsJSON, nil,
 	)
 	if err != nil {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, err

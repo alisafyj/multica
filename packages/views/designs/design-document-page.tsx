@@ -31,9 +31,12 @@ import {
   ZoomIn,
   ZoomOut,
   Square,
+  Paperclip,
+  Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { taskMessagesOptions } from "@multica/core/chat/queries";
+import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { api } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
 import {
@@ -104,6 +107,8 @@ import { DesignRunPlan, latestTodoRows } from "./design-run-plan";
 
 /** What the workbench's main pane is showing. */
 type DocumentViewMode = "preview" | "annotate" | "edit" | "code";
+
+const MAX_TURN_ATTACHMENTS = 8;
 
 const INSTRUCTION_MAX_LENGTH = 8000;
 
@@ -386,7 +391,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   };
 
   const adjust = useMutation({
-    mutationFn: (payload: { instruction: string; scopeToPage: boolean; annotations: Annotation[] }) => {
+    mutationFn: (payload: { instruction: string; scopeToPage: boolean; annotations: Annotation[]; attachments: Array<{ id: string; name: string }> }) => {
       const scope: Pick<DesignDocumentAdjustmentScope, "kind" | "id"> = payload.scopeToPage && shownPage
         ? { kind: "page", id: shownPage.page?.id ?? shownPage.entry }
         : { kind: "document" };
@@ -397,6 +402,9 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
         agent_id: agentId,
         scope,
         base_revision_id: currentRevisionId || undefined,
+        ...(payload.attachments.length
+          ? { attachments: payload.attachments.map((item) => ({ attachment_id: item.id })) }
+          : {}),
       });
     },
     onSuccess: async (next, payload) => {
@@ -405,6 +413,9 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
       // whatever the user has started typing since.
       setInstruction((current) => (current === payload.instruction ? "" : current));
       setAnnotations((current) => current.filter((row) => !payload.annotations.some((sent) => sent.id === row.id)));
+    // Sent references belong to the turn that sent them, so the next message
+    // starts empty rather than silently re-attaching them.
+    setTurnAttachments((current) => current.filter((row) => !payload.attachments.some((sent) => sent.id === row.id)));
       setPinnedRevisionId("");
       await refresh();
     },
@@ -415,7 +426,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   // fired automatically when the run lands (Open Design queues chat sends the
   // same way); if the run produces nothing to adjust, the text goes back into
   // the composer instead of being lost.
-  const [queuedAdjustment, setQueuedAdjustment] = useState<{ instruction: string; scopeToPage: boolean; annotations: Annotation[] } | null>(null);
+  const [queuedAdjustment, setQueuedAdjustment] = useState<{ instruction: string; scopeToPage: boolean; annotations: Annotation[]; attachments: Array<{ id: string; name: string }> } | null>(null);
   const flushAdjust = adjust.mutate;
   useEffect(() => {
     if (running || !queuedAdjustment) return;
@@ -666,6 +677,30 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   // way the inbox and chat panes already are.
   const compact = useIsCompact();
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: "multica_design_document_layout" });
+  // References staged for THIS turn. Uploaded through the ordinary route; only
+  // the ids travel with the request, exactly as the home composer does it.
+  const [turnAttachments, setTurnAttachments] = useState<Array<{ id: string; name: string }>>([]);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const { upload: uploadAttachment, uploading: attachmentUploading } = useFileUpload(
+    api,
+    (error: Error, file: File) => toast.error(`${file.name}：${error.message}`),
+  );
+  const stageAttachments = async (files: FileList | File[]) => {
+    for (const file of Array.from(files).slice(0, MAX_TURN_ATTACHMENTS)) {
+      try {
+        const result = await uploadAttachment(file);
+        if (!result) continue;
+        setTurnAttachments((current) => (
+          current.some((item) => item.id === result.id) || current.length >= MAX_TURN_ATTACHMENTS
+            ? current
+            : [...current, { id: result.id, name: result.filename || file.name }]
+        ));
+      } catch {
+        // Reported through the hook's onError; nothing else to do here.
+      }
+    }
+  };
+
   const sidebarScrollRef = useRef<HTMLDivElement | null>(null);
   const startedAtMs = (() => {
     const raw = activeTask?.started_at ?? activeTask?.dispatched_at ?? null;
@@ -1177,15 +1212,41 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                   if (instructionBlocker || busy) return;
                   if (running) {
                     // Queue while the run is live; the latest submission wins.
-                    setQueuedAdjustment({ instruction, scopeToPage, annotations });
+                    setQueuedAdjustment({ instruction, scopeToPage, annotations, attachments: turnAttachments });
                     setInstruction("");
                     return;
                   }
-                  adjust.mutate({ instruction, scopeToPage, annotations });
+                  adjust.mutate({ instruction, scopeToPage, annotations, attachments: turnAttachments });
                 }}
                 aria-label="调整设计稿"
               >
                 <div className="flex flex-wrap items-center gap-1.5">
+                  {/* References for this change. Same control and same route as
+                      the home composer's +: only the ids travel with the
+                      request, and the bytes are pinned server-side before the
+                      run is created. */}
+                  <input
+                    ref={attachmentInputRef}
+                    type="file"
+                    multiple
+                    accept="image/*,.pdf,.txt,.md,.json"
+                    className="hidden"
+                    aria-label="上传参考文件"
+                    onChange={(event) => {
+                      if (event.target.files) void stageAttachments(event.target.files);
+                      event.target.value = "";
+                    }}
+                  />
+                  <button
+                    type="button"
+                    aria-label="附加参考文件"
+                    title="附加参考文件"
+                    disabled={!composerOpen || busy || turnAttachments.length >= MAX_TURN_ATTACHMENTS}
+                    onClick={() => attachmentInputRef.current?.click()}
+                    className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {attachmentUploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Plus className="size-4" />}
+                  </button>
                   <button
                     type="button"
                     className={cn(
@@ -1251,7 +1312,25 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                     </button>
                   </div>
                 ) : null}
-                {/* The run's plan, pinned: it says what is left, and the
+                                {turnAttachments.length > 0 ? (
+                  <ul className="mt-2 divide-y border-y" aria-label="本次参考文件">
+                    {turnAttachments.map((item) => (
+                      <li key={item.id} className="flex items-center gap-2 py-1.5 text-caption">
+                        <Paperclip className="size-3 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                        <button
+                          type="button"
+                          aria-label={`移除 ${item.name}`}
+                          className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground"
+                          onClick={() => setTurnAttachments((current) => current.filter((row) => row.id !== item.id))}
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+{/* The run's plan, pinned: it says what is left, and the
                     transcript above is exactly where that answer scrolls away. */}
                 <DesignRunPlan rows={planRows} className="mb-2" />
                 <Textarea
@@ -1270,11 +1349,11 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                     if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !instructionBlocker && !busy) {
                       event.preventDefault();
                       if (running) {
-                        setQueuedAdjustment({ instruction, scopeToPage, annotations });
+                        setQueuedAdjustment({ instruction, scopeToPage, annotations, attachments: turnAttachments });
                         setInstruction("");
                         return;
                       }
-                      adjust.mutate({ instruction, scopeToPage, annotations });
+                      adjust.mutate({ instruction, scopeToPage, annotations, attachments: turnAttachments });
                     }
                   }}
                 />

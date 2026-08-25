@@ -208,21 +208,44 @@ func TestMaterializeDesignDocumentInputsCreatesReadOnlyPinnedFiles(t *testing.T)
 // TestDesignDocumentAdjustmentReusesPinnedGrounding verifies that an
 // adjustment task reuses its pinned grounding facts rather than re-deriving
 // them. The base revision itself is restored separately by
-// restoreDesignDocumentBaseArchive (see design_document_base_test.go);
-// materializeDesignDocumentInputs is a no-op for "adjust" and is exercised
-// here only to confirm it stays that way.
+// restoreDesignDocumentBaseArchive (see design_document_base_test.go), so
+// materializeDesignDocumentInputs has no repository work to do here.
+//
+// It is NOT a no-op any more: an adjustment carries reference attachments —
+// the document's own plus whatever was attached to this turn — and used to
+// skip staging them, which left task.json listing files the agent could not
+// open. See TestDesignDocumentAdjustmentStagesItsAttachments.
 func TestDesignDocumentAdjustmentReusesPinnedGrounding(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	grounding := `{"schema_version":"multica.design-document-grounding/v1","status":"unavailable","repositories":[],"facts":[],"conflicts":[],"missing":[],"warnings":["Pinned unavailable grounding."]}`
-	contextJSON := `{"type":"design_document_task","operation":"adjust","execution_ready":true,"document_id":"11111111-1111-1111-1111-111111111111","base_revision_id":"22222222-2222-2222-2222-222222222222","base_content_digest":"` + digest + `","input":{"repository_grounding":"pinned","repository":` + grounding + `,"attachments":[{"id":"attachment-1","size_bytes":10,"sha256":"` + digest + `"}],"design_system":{"content_digest":"` + digest + `"}}}`
+	contextJSON := `{"type":"design_document_task","operation":"adjust","execution_ready":true,"document_id":"11111111-1111-1111-1111-111111111111","base_revision_id":"22222222-2222-2222-2222-222222222222","base_content_digest":"` + digest + `","input":{"repository_grounding":"pinned","repository":` + grounding + `,"attachments":[{"id":"attachment-1","size_bytes":20,"sha256":"` + sha256Reference([]byte("adjustment reference")) + `"}],"design_system":{"content_digest":"` + digest + `"}}}`
 	task := Task{ID: "task-adjust", WorkspaceID: "workspace-1", DesignDocumentContext: json.RawMessage(contextJSON)}
 	env, err := execenv.Prepare(execenv.PrepareParams{WorkspacesRoot: t.TempDir(), WorkspaceID: task.WorkspaceID, TaskID: task.ID, Provider: "opencode", Task: execenv.TaskContextForEnv{DesignDocumentContext: contextJSON}}, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer env.Cleanup(true)
-	if err := materializeDesignDocumentInputs(context.Background(), task, env.WorkDir, NewClient("")); err != nil {
+	reference := []byte("adjustment reference")
+	attachmentServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/daemon/tasks/task-adjust/design-document/attachments/attachment-1" {
+			w.Header().Set("X-Multica-Content-SHA256", sha256Reference(reference))
+			_, _ = w.Write(reference)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer attachmentServer.Close()
+	if err := materializeDesignDocumentInputs(context.Background(), task, env.WorkDir, NewClient(attachmentServer.URL)); err != nil {
 		t.Fatal(err)
+	}
+	// The reference the prompt promises is on disk, read-only, under the id
+	// the context named.
+	staged := filepath.Join(env.WorkDir, ".agent_context", "design_document", "reference", "attachments", "attachment-1")
+	if got, err := os.ReadFile(staged); err != nil || string(got) != string(reference) {
+		t.Fatalf("staged adjustment attachment = %q, err=%v", got, err)
+	}
+	if info, err := os.Stat(staged); err != nil || info.Mode().Perm() != 0o444 {
+		t.Fatalf("staged adjustment attachment mode = %v, err=%v", info, err)
 	}
 	state, err := prepareDesignDocumentGrounding(context.Background(), task, env.WorkDir, "daemon-1", nil, slog.Default())
 	if err != nil || state.pinned == nil || state.pinned.Status != "unavailable" || len(state.Repositories) != 0 {

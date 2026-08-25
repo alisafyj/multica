@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -49,5 +51,38 @@ func TestDesignDocumentAdjustFallsBackToTheSavedRevision(t *testing.T) {
 func TestDesignDocumentAdjustHasNoBaseWithoutAnyRevision(t *testing.T) {
 	if base, ok := designDocumentAdjustBase(db.DesignDocument{}); ok {
 		t.Fatalf("a document with no revision reported base %v", base)
+	}
+}
+
+// An adjustment's agent reads one attachments directory holding two different
+// things: what the document was made from, and what this request wants looked
+// at. Order is the only thing that separates them, and the prompt tells the
+// agent to read it that way — so the document's own references come first and
+// this turn's come last, always.
+func TestDesignDocumentRunAttachmentsKeepsThisTurnLast(t *testing.T) {
+	document := []service.DesignDocumentTaskAttachment{{ID: "doc-1"}, {ID: "doc-2"}}
+	turn := []designDocumentAttachmentSnapshot{{AttachmentID: "turn-1"}}
+
+	merged := designDocumentRunAttachments(document, turn)
+
+	var ids []string
+	for _, attachment := range merged {
+		ids = append(ids, attachment.ID)
+	}
+	if strings.Join(ids, ",") != "doc-1,doc-2,turn-1" {
+		t.Fatalf("run attachments = %v, want the document's own first", ids)
+	}
+	// The document's frozen list must not grow a turn's reference: it is read
+	// back out of the stored snapshot on every later adjustment.
+	if len(document) != 2 {
+		t.Fatalf("the document's own list was appended to in place: %v", document)
+	}
+}
+
+// Neither side present is the ordinary case and must produce an empty list
+// rather than a nil the encoder writes as null.
+func TestDesignDocumentRunAttachmentsIsEmptyWithoutAny(t *testing.T) {
+	if merged := designDocumentRunAttachments(nil, nil); merged == nil || len(merged) != 0 {
+		t.Fatalf("run attachments = %v, want an empty list", merged)
 	}
 }

@@ -16,6 +16,7 @@ vi.mock("@multica/ui/components/ui/resizable", () => ({
 
 const {
   adjustDesignDocument,
+  uploadFile,
   discardDesignDocumentDraft,
   getDesignDocument,
   getDesignDocumentRevision,
@@ -33,6 +34,7 @@ const {
   toastSuccess,
 } = vi.hoisted(() => ({
   adjustDesignDocument: vi.fn(),
+  uploadFile: vi.fn(),
   discardDesignDocumentDraft: vi.fn(),
   getDesignDocument: vi.fn(),
   getDesignDocumentRevision: vi.fn(),
@@ -53,6 +55,7 @@ const {
 vi.mock("@multica/core/api", () => ({
   api: {
     adjustDesignDocument,
+    uploadFile,
     discardDesignDocumentDraft,
     getDesignDocument,
     getDesignDocumentRevision,
@@ -497,6 +500,30 @@ describe("DesignDocumentPage", () => {
 
     expect(screen.getByText("设计润色")).toBeInTheDocument();
     expect(screen.getByText("下一步")).toBeInTheDocument();
+  });
+
+  // You could attach a reference when creating a design and not when changing
+  // one, so "照这张图改" had nowhere to put the image. The ids travel with the
+  // request; the server pins the bytes before the run exists.
+  it("sends references staged for this change", async () => {
+    const user = userEvent.setup();
+    uploadFile.mockResolvedValue({ id: "attachment-9", filename: "参考.png", url: "https://cdn.test/x.png" });
+    renderPage();
+    await screen.findByTitle("订单总览 · 首页");
+
+    const picker = screen.getByLabelText("上传参考文件") as HTMLInputElement;
+    await user.upload(picker, new File(["x"], "参考.png", { type: "image/png" }));
+    expect(await screen.findByText("参考.png")).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText(/描述你想怎么改/), "照这张图改配色");
+    await user.click(screen.getByRole("button", { name: "发起调整" }));
+
+    await waitFor(() => expect(adjustDesignDocument).toHaveBeenCalledTimes(1));
+    expect(adjustDesignDocument.mock.calls[0]?.[1]).toMatchObject({
+      attachments: [{ attachment_id: "attachment-9" }],
+    });
+    // Sent references belong to the turn that sent them.
+    await waitFor(() => expect(screen.queryByText("参考.png")).not.toBeInTheDocument());
   });
 
   // The end of the designer's flow (DC-062). A draft must not be deliverable:
