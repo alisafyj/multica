@@ -1233,17 +1233,12 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                     happens. Getting it inverted — white frame, transparent box —
                     is what made this look flat. */}
                 <div className="flex flex-col gap-1.5 rounded-2xl border bg-muted/50 p-2">
-                  <div
-                    className={cn(
-                      "rounded-lg border border-transparent transition-colors",
-                      // .composer-input-wrap: near-panel at rest, panel on
-                      // focus. A closed composer keeps the frame's tint so a
-                      // disabled field never reads as an empty one.
-                      composerOpen
-                        ? "bg-card focus-within:border-primary/30"
-                        : "bg-transparent",
-                    )}
-                  >
+                  {/* .composer-input-wrap: the white box the writing happens
+                      in. It stays white even with nothing to adjust — Open
+                      Design tints its readonly composer, but a box that
+                      disappears into its own frame stops reading as a box, and
+                      the placeholder inside already says why it is closed. */}
+                  <div className="rounded-lg border border-transparent bg-card transition-colors focus-within:border-primary/30">
                   <Textarea
                     value={instruction}
                     onChange={(event) => setInstruction(event.target.value)}
@@ -1255,7 +1250,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                     rows={3}
                     maxLength={INSTRUCTION_MAX_LENGTH}
                     disabled={!composerOpen || busy}
-                    className="min-h-24 resize-none border-0 bg-transparent px-4 py-3.5 text-body shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
+                    className="min-h-24 resize-none border-0 bg-transparent px-4 py-3.5 text-body shadow-none focus-visible:border-0 focus-visible:ring-0 disabled:bg-transparent disabled:opacity-100 dark:bg-transparent dark:disabled:bg-transparent"
                     onKeyDown={(event) => {
                       if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !instructionBlocker && !busy) {
                         event.preventDefault();
@@ -1378,7 +1373,9 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                         type="button"
                         size="sm"
                         variant="outline"
-                        className="group"
+                        // Same 36px height as the send it replaces, so the slot
+                        // does not jump when a run starts.
+                        className="group h-9 rounded-full"
                         disabled={stopTask.isPending}
                         onClick={() => stopTask.mutate(activeTask.id)}
                         aria-label="停止任务"
@@ -1398,7 +1395,16 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                         </span>
                       </Button>
                     ) : (
-                      <Button type="submit" size="sm" disabled={!!instructionBlocker || busy} aria-label={running ? "排队调整" : "发起调整"}>
+                      <Button
+                        type="submit"
+                        size="icon-sm"
+                        // .composer-send: a 36px filled circle with a hairline
+                        // shadow, half-opacity when it cannot fire.
+                        className="size-9 shrink-0 rounded-full shadow-xs disabled:opacity-50 disabled:shadow-none"
+                        disabled={!!instructionBlocker || busy}
+                        aria-label={running ? "排队调整" : "发起调整"}
+                        title={running ? "排队调整" : "发起调整"}
+                      >
                         {adjust.isPending ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
                       </Button>
                       )}
