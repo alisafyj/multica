@@ -554,11 +554,43 @@ describe("DesignTaskComposer", () => {
 
     // Arming 幻灯片 narrows it to what a deck is filed under — an image
     // catalogue's 分镜 is not a slide facet, and neither is a prototype's.
+    // The row survives, because which KIND of deck is a real choice.
     await user.click(screen.getByRole("button", { name: "幻灯片" }));
 
     expect(await screen.findByRole("button", { name: "融资路演" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "分镜" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "业务系统" })).not.toBeInTheDocument();
+  });
+
+  // 文档 is the one chip that names a facet rather than a mode: the catalogue
+  // has no document mode and files long-form work under prototype's 文档 / 报告.
+  // Scoping it to the mode alone gave 文档 and 网站复刻 an identical row and
+  // offered 数据看板 to someone who asked for a document.
+  it("pins the document scenario to the facet the catalogue files it under", async () => {
+    const user = userEvent.setup();
+    listDesignScenarioRecipes.mockResolvedValue({
+      recipes: [
+        { ...RECIPE, slug: "annual", title: "年度报告", category: "文档 / 报告" },
+        { ...RECIPE, slug: "board", title: "运营看板", category: "数据看板" },
+        { ...RECIPE, slug: "landing", title: "产品落地页", category: "落地页 / 营销" },
+      ],
+    });
+    renderComposer();
+    await screen.findByRole("button", { name: "数据看板" });
+
+    await user.click(screen.getByRole("button", { name: "文档" }));
+
+    await waitFor(() => expect(screen.getByText("年度报告")).toBeInTheDocument());
+    expect(screen.queryByText("运营看板")).not.toBeInTheDocument();
+    expect(screen.queryByText("产品落地页")).not.toBeInTheDocument();
+    // One facet left, so the filter row has nothing to offer and steps aside.
+    expect(screen.queryByRole("button", { name: "数据看板" })).not.toBeInTheDocument();
+
+    // 网站复刻 is genuinely mode-wide — a landing page, a dashboard and an app
+    // can all be rebuilt — so its row keeps every prototype facet.
+    await user.click(screen.getByRole("button", { name: "网站复刻" }));
+    expect(await screen.findByRole("button", { name: "数据看板" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "落地页 / 营销" })).toBeInTheDocument();
   });
 
   // The rail lays out the whole surface, so a scenario with no producer holds

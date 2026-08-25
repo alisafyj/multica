@@ -33,26 +33,28 @@ const VISIBLE_CATEGORY_COUNT = 6;
 export const PROTOTYPE_FAMILY: ReadonlySet<string> = new Set(["ui-mockup", "wireframe", "mobile-app"]);
 
 /**
- * What each built-in chip produces, in the catalogue's own `mode` vocabulary.
+ * What each built-in chip produces, in the catalogue's own vocabulary.
  *
  * The wall used to scope itself only for the prototype family and show the
- * WHOLE catalogue for anything else — so arming 幻灯片 built its category row
- * out of deck, image, video and prototype facets at once, and offered 分镜 and
- * UI / 产品样机 next to 企业战略. Every chip that produces something now says
- * which mode that is, and the wall shows that mode's facets and nothing else.
+ * WHOLE catalogue for anything else, so arming 幻灯片 built its facet row out
+ * of deck, image, video and prototype facets at once and offered 分镜 next to
+ * 企业战略.
  *
- * 文档 is a prototype-mode recipe, not a mode of its own: the catalogue files
- * a long-form piece under prototype's 文档 / 报告 facet, which is the row this
- * mapping puts in front of the user.
+ * Most chips name a MODE, and their facet row is a real choice inside it: a
+ * deck can be 融资路演 or 企业战略, and 网站复刻 can rebuild a landing page, a
+ * dashboard or an app. 文档 is the exception — the catalogue has no document
+ * mode, it files long-form work under prototype's 文档 / 报告 facet. Mapping it
+ * to the mode alone gave 文档 and 网站复刻 the same row, offering 数据看板 and
+ * 落地页 / 营销 to someone who asked for a document, so it pins the facet too.
  */
-const RECIPE_CATALOGUE_MODE: Readonly<Record<string, string>> = {
-  "ui-mockup": "prototype",
-  wireframe: "prototype",
-  "mobile-app": "prototype",
-  "web-clone": "prototype",
-  "figma-migration": "prototype",
-  "long-form": "prototype",
-  deck: "deck",
+const RECIPE_CATALOGUE_SCOPE: Readonly<Record<string, { mode: string; category?: string }>> = {
+  "ui-mockup": { mode: "prototype" },
+  wireframe: { mode: "prototype" },
+  "mobile-app": { mode: "prototype" },
+  "web-clone": { mode: "prototype" },
+  "figma-migration": { mode: "prototype" },
+  deck: { mode: "deck" },
+  "long-form": { mode: "prototype", category: "文档 / 报告" },
 };
 
 export type PrototypeFamilyRecipe = "ui-mockup" | "wireframe" | "mobile-app";
@@ -138,10 +140,13 @@ export function DesignExamplePrompts({
   // example wall to the active chip. An unmapped recipe — the free-form
   // default, or a community slug whose mode this component never sees — scopes
   // to nothing, which is the honest answer for "no particular kind".
-  const armedMode = RECIPE_CATALOGUE_MODE[recipe];
+  const armed = RECIPE_CATALOGUE_SCOPE[recipe];
   const recipes = useMemo(
-    () => (armedMode ? allRecipes.filter((item) => item.mode === armedMode) : allRecipes),
-    [allRecipes, armedMode],
+    () => (armed
+      ? allRecipes.filter((item) =>
+        item.mode === armed.mode && (!armed.category || item.category === armed.category))
+      : allRecipes),
+    [allRecipes, armed],
   );
 
   const categories = useMemo(
