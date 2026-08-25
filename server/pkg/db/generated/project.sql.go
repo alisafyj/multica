@@ -395,6 +395,42 @@ func (q *Queries) LockProjectForDelete(ctx context.Context, arg LockProjectForDe
 	return id, err
 }
 
+const lockProjectInWorkspaceForIssueWrite = `-- name: LockProjectInWorkspaceForIssueWrite :one
+SELECT id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, created_by FROM project
+WHERE id = $1 AND workspace_id = $2
+FOR SHARE
+`
+
+type LockProjectInWorkspaceForIssueWriteParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Serializes issue creation with project completion. A create that owns this
+// share lock commits before the completion sweep; one that waits behind a
+// project FOR UPDATE re-reads the completed status and creates a terminal issue.
+func (q *Queries) LockProjectInWorkspaceForIssueWrite(ctx context.Context, arg LockProjectInWorkspaceForIssueWriteParams) (Project, error) {
+	row := q.db.QueryRow(ctx, lockProjectInWorkspaceForIssueWrite, arg.ID, arg.WorkspaceID)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Icon,
+		&i.Status,
+		&i.LeadType,
+		&i.LeadID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Priority,
+		&i.StartDate,
+		&i.DueDate,
+		&i.CreatedBy,
+	)
+	return i, err
+}
+
 const lockProjectInWorkspaceForUpdate = `-- name: LockProjectInWorkspaceForUpdate :one
 SELECT id FROM project
 WHERE id = $1 AND workspace_id = $2

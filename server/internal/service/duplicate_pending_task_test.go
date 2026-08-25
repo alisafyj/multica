@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -97,5 +98,104 @@ func TestEnqueueTaskForMentionCoalescesDuplicatePendingTask(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("pending task count = %d, want exactly 1", n)
+	}
+}
+
+func TestEnqueueTaskForIssueCreateRejectsTerminalIssue(t *testing.T) {
+	pool := newResolveOriginatorPool(t)
+	ctx := context.Background()
+	q := db.New(pool)
+	workspaceID, userID, _, issueID := seedAttributionFixture(t, pool)
+	if _, err := pool.Exec(ctx, `UPDATE issue SET status = 'done' WHERE id = $1`, issueID); err != nil {
+		t.Fatalf("complete issue: %v", err)
+	}
+	issue, err := q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+		ID:          util.MustParseUUID(issueID),
+		WorkspaceID: util.MustParseUUID(workspaceID),
+	})
+	if err != nil {
+		t.Fatalf("load issue: %v", err)
+	}
+
+	svc := &TaskService{Queries: q, TxStarter: pool, Bus: events.New()}
+	_, err = svc.EnqueueTaskForIssueCreate(ctx, issue, util.MustParseUUID(userID))
+	if !errors.Is(err, ErrIssueNotRunnable) {
+		t.Fatalf("EnqueueTaskForIssueCreate: err = %v, want ErrIssueNotRunnable", err)
+	}
+	var tasks int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE issue_id = $1`, issue.ID).Scan(&tasks); err != nil {
+		t.Fatalf("count issue tasks: %v", err)
+	}
+	if tasks != 0 {
+		t.Fatalf("terminal issue task count = %d, want 0", tasks)
+	}
+}
+
+func TestEnqueueTaskForIssueCreateWaitsForCompletionAndRejectsStaleSnapshot(t *testing.T) {
+	pool := newResolveOriginatorPool(t)
+	ctx := context.Background()
+	q := db.New(pool)
+	workspaceID, userID, _, issueID := seedAttributionFixture(t, pool)
+	var projectID pgtype.UUID
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title, status, created_by)
+		VALUES ($1, 'task admission race', 'planned', $2) RETURNING id
+	`, workspaceID, userID).Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE issue SET project_id = $1 WHERE id = $2`, projectID, issueID); err != nil {
+		t.Fatalf("link issue to project: %v", err)
+	}
+	issue, err := q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+		ID:          util.MustParseUUID(issueID),
+		WorkspaceID: util.MustParseUUID(workspaceID),
+	})
+	if err != nil {
+		t.Fatalf("load issue: %v", err)
+	}
+
+	completionTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin completion: %v", err)
+	}
+	defer completionTx.Rollback(ctx)
+	if _, err := completionTx.Exec(ctx, `SELECT id FROM workspace WHERE id = $1 FOR UPDATE`, workspaceID); err != nil {
+		t.Fatalf("lock workspace: %v", err)
+	}
+	if _, err := completionTx.Exec(ctx, `UPDATE project SET status = 'completed' WHERE id = $1`, projectID); err != nil {
+		t.Fatalf("complete project: %v", err)
+	}
+	if _, err := completionTx.Exec(ctx, `UPDATE issue SET status = 'done' WHERE id = $1`, issueID); err != nil {
+		t.Fatalf("complete issue: %v", err)
+	}
+
+	svc := &TaskService{Queries: q, TxStarter: pool, Bus: events.New()}
+	enqueued := make(chan error, 1)
+	go func() {
+		_, err := svc.EnqueueTaskForIssueCreate(ctx, issue, util.MustParseUUID(userID))
+		enqueued <- err
+	}()
+	select {
+	case err := <-enqueued:
+		t.Fatalf("enqueue did not wait for completion: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := completionTx.Commit(ctx); err != nil {
+		t.Fatalf("commit completion: %v", err)
+	}
+	select {
+	case err := <-enqueued:
+		if !errors.Is(err, ErrIssueNotRunnable) {
+			t.Fatalf("EnqueueTaskForIssueCreate: err = %v, want ErrIssueNotRunnable", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("enqueue remained blocked after completion committed")
+	}
+	var tasks int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE issue_id = $1`, issue.ID).Scan(&tasks); err != nil {
+		t.Fatalf("count issue tasks: %v", err)
+	}
+	if tasks != 0 {
+		t.Fatalf("post-completion task count = %d, want 0", tasks)
 	}
 }

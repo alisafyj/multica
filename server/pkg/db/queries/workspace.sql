@@ -63,6 +63,17 @@ UPDATE workspace SET issue_counter = issue_counter + 1
 WHERE id = $1
 RETURNING issue_counter;
 
+-- name: LockWorkspaceForIssueWrite :one
+-- Issue/project writes take the workspace row first, matching DeleteWorkspace's
+-- workspace -> project lock order and preventing a cross-order deadlock. KEY
+-- SHARE permits concurrent issue writes while still blocking workspace delete.
+SELECT id FROM workspace WHERE id = $1 FOR KEY SHARE;
+
+-- name: LockWorkspaceForIssueCounterWrite :one
+-- PMO holds project locks while creating issues, so it must take the same
+-- strong workspace lock as IncrementIssueCounter before touching a project.
+SELECT id FROM workspace WHERE id = $1 FOR UPDATE;
+
 -- name: IncrementTestCaseCounter :one
 -- Mirrors IncrementIssueCounter: takes the workspace row lock so two concurrent
 -- creates in the same workspace cannot allocate the same case number.

@@ -428,6 +428,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	// PMO apply reuses the shared issue-creation pipeline inside its own
 	// transaction (same numbering / duplicate guard / position semantics).
 	h.PMOService.IssueSvc = h.IssueService
+	h.PMOService.NotifyParentsOfBatchChildDone = h.notifyParentsOfBatchChildDone
 
 	// GitHub API snapshot pipeline for PR cards (MUL-5265). Built
 	// unconditionally but inert (every trigger no-ops) when the App private key

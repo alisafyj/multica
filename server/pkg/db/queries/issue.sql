@@ -80,6 +80,25 @@ WHERE workspace_id = sqlc.arg('workspace_id')
 SELECT * FROM issue
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: ListOpenProjectIssueStatusesForUpdate :many
+SELECT id, status FROM issue
+WHERE project_id = sqlc.arg('project_id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND status NOT IN ('done', 'cancelled')
+ORDER BY id
+FOR UPDATE;
+
+-- name: CompleteProjectIssues :many
+-- Project completion is an explicit bulk close: all open states become done,
+-- while the two terminal states retain their existing meaning.
+UPDATE issue SET
+    status = 'done',
+    updated_at = now()
+WHERE project_id = sqlc.arg('project_id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND status NOT IN ('done', 'cancelled')
+RETURNING *;
+
 -- name: LockIssueForChannelMediaBind :one
 -- Channel media resolves after /issue creation. Hold a key-share lock while
 -- the attachment row is written so a concurrent issue delete cannot land

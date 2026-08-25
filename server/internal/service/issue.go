@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 	"time"
 
@@ -199,7 +200,7 @@ type IssueCreateResult struct {
 //  9. Publish EventIssueCreated to the bus (payload via opts.BroadcastPayload).
 //  10. Capture the IssueCreated analytics event.
 //  11. Enqueue the ordinary agent task or trigger the squad leader when the
-//     issue is assigned and not in `backlog`.
+//     issue is assigned and has a runnable status.
 //
 // Validation that lives in the service (parent existence, project
 // workspace membership, parent → project back-fill) is enforced here so
@@ -273,11 +274,19 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 		}
 	}
 
-	// Resolve and validate parent / project before reading from the
-	// duplicate guard so a forged parent or project ID is rejected
-	// before we touch the issue counter. Both checks scope by
-	// WorkspaceID — there is no path from this service to a row in a
-	// foreign workspace.
+	// Workspace is the root lock for workspace-scoped writes. Take it before
+	// project rows so workspace deletion (workspace -> project) cannot deadlock
+	// with issue creation (project -> workspace counter). It follows the
+	// catalog lock above, keeping the global catalog -> workspace -> project
+	// order intact.
+	issueNumber, err := qtx.IncrementIssueCounter(ctx, p.WorkspaceID)
+	if err != nil {
+		return IssueCreateResult{}, fmt.Errorf("increment counter: %w", err)
+	}
+
+	// Resolve and validate parent / project after taking the workspace root
+	// lock and before reading from the duplicate guard. Both checks scope by
+	// WorkspaceID, so no foreign-workspace row can enter this transaction.
 	projectID := p.ProjectID
 	if p.ParentIssueID.Valid {
 		parent, err := qtx.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
@@ -294,19 +303,23 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 			projectID = parent.ProjectID
 		}
 	}
+	issueStatus := p.Status
 	if projectID.Valid {
-		if _, err := qtx.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
+		project, err := qtx.LockProjectInWorkspaceForIssueWrite(ctx, db.LockProjectInWorkspaceForIssueWriteParams{
 			ID:          projectID,
 			WorkspaceID: p.WorkspaceID,
-		}); err != nil {
+		})
+		if err != nil {
 			return IssueCreateResult{}, ErrProjectNotFound
+		}
+		if project.Status == "completed" && issueStatus != "done" && issueStatus != "cancelled" {
+			issueStatus = "done"
 		}
 	}
 
-	// Validate labels before we increment the issue counter so a stale or
-	// wrong-scope selection fails the create cheaply. The de-duplicated rows
-	// are attached to the issue below, inside this same transaction, and
-	// echoed back as the authoritative snapshot in the result.
+	// Validate labels under the same workspace-root transaction. The
+	// de-duplicated rows are attached below and echoed back as the
+	// authoritative snapshot in the result.
 	labels, err := validateIssueLabels(ctx, qtx, p.WorkspaceID, p.LabelIDs)
 	if err != nil {
 		return IssueCreateResult{}, err
@@ -321,11 +334,6 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 		return IssueCreateResult{DuplicateIssue: &dup}, ErrActiveDuplicate
 	}
 
-	issueNumber, err := qtx.IncrementIssueCounter(ctx, p.WorkspaceID)
-	if err != nil {
-		return IssueCreateResult{}, fmt.Errorf("increment counter: %w", err)
-	}
-
 	// New issues sort to the top of their (workspace, status) column for
 	// manual ordering. Computed inside the tx, after IncrementIssueCounter
 	// has already taken the workspace row lock, so two concurrent creates
@@ -335,7 +343,7 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 	// a reorder is still allowed to collide on position — manual ordering
 	// is best-effort and the UI tolerates equal positions by falling back
 	// to the secondary ORDER BY key.
-	newPosition, err := issueposition.NextTopPosition(ctx, tx, p.WorkspaceID, p.Status)
+	newPosition, err := issueposition.NextTopPosition(ctx, tx, p.WorkspaceID, issueStatus)
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("next top position: %w", err)
 	}
@@ -346,7 +354,7 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 			WorkspaceID:   p.WorkspaceID,
 			Title:         p.Title,
 			Description:   p.Description,
-			Status:        p.Status,
+			Status:        issueStatus,
 			Priority:      p.Priority,
 			AssigneeType:  p.AssigneeType,
 			AssigneeID:    p.AssigneeID,
@@ -367,7 +375,7 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 			WorkspaceID:   p.WorkspaceID,
 			Title:         p.Title,
 			Description:   p.Description,
-			Status:        p.Status,
+			Status:        issueStatus,
 			Priority:      p.Priority,
 			AssigneeType:  p.AssigneeType,
 			AssigneeID:    p.AssigneeID,
@@ -428,7 +436,8 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 // created issue after the apply transaction commits. Attachment linking
 // uses s.Queries (post-commit is outside the caller's transaction).
 func (s *IssueService) afterCreate(ctx context.Context, res IssueCreateResult, p IssueCreateParams, opts IssueCreateOpts) IssueCreateResult {
-	issue := res.Issue
+	issue := reloadIssueAfterCreate(ctx, s.Queries, res.Issue)
+	res.Issue = issue
 	labels := res.Labels
 	attachments := s.linkAttachments(ctx, issue, p.AttachmentIDs)
 	res.Attachments = attachments
@@ -441,8 +450,7 @@ func (s *IssueService) afterCreate(ctx context.Context, res IssueCreateResult, p
 	var assignedTaskID pgtype.UUID
 	if !opts.AssignedAgentRunFireAt.IsZero() {
 		assignedTask := res.deferredAssignedTask
-		assignedTaskID = assignedTask.ID
-		if assignedTaskID.Valid {
+		if assignedTask.ID.Valid && issueStatusAllowsEnqueue(issue.Status) {
 			if err := s.TaskService.hydrateDeferredChannelIssueTaskOverlay(ctx, assignedTask); err != nil {
 				// Runtime overlays are best-effort on every enqueue path. The task is
 				// already durable and safely deferred, so an optional integration
@@ -452,7 +460,7 @@ func (s *IssueService) afterCreate(ctx context.Context, res IssueCreateResult, p
 					"task_id", util.UUIDToString(assignedTask.ID),
 					"error", err)
 			}
-		} else if s.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
+		} else if !assignedTask.ID.Valid && s.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
 			// AssignedAgentRunFireAt currently belongs to channel /issue, which
 			// always resolves an agent assignee. Preserve the ordinary squad path
 			// for any future caller that supplies the option with a squad.
@@ -460,7 +468,23 @@ func (s *IssueService) afterCreate(ctx context.Context, res IssueCreateResult, p
 		}
 	}
 
+	issue = reloadIssueAfterCreate(ctx, s.Queries, issue)
+	res.Issue = issue
 	s.publishIssueCreated(issue, attachments, labels, p.CreatorType, actorID, opts)
+	issue = reconcileIssueAfterCreated(ctx, s.Queries, issue, func(previous, current db.Issue) {
+		s.publishIssueUpdatedAfterCreate(previous, current, attachments, labels, p.CreatorType, actorID, opts)
+	})
+	res.Issue = issue
+	if res.deferredAssignedTask.ID.Valid {
+		if issueStatusAllowsEnqueue(issue.Status) {
+			assignedTaskID = res.deferredAssignedTask.ID
+		} else if _, err := s.Queries.CancelAgentTask(ctx, res.deferredAssignedTask.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("cancel terminal issue deferred task failed",
+				"issue_id", util.UUIDToString(issue.ID),
+				"task_id", util.UUIDToString(res.deferredAssignedTask.ID),
+				"error", err)
+		}
+	}
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
 	if opts.AssignedAgentRunFireAt.IsZero() {
 		assignedTaskID = s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, opts.AssignedAgentRunFireAt)
@@ -468,6 +492,33 @@ func (s *IssueService) afterCreate(ctx context.Context, res IssueCreateResult, p
 
 	res.AssignedTaskID = assignedTaskID
 	return res
+}
+
+func reloadIssueAfterCreate(ctx context.Context, queries *db.Queries, issue db.Issue) db.Issue {
+	if queries == nil {
+		return issue
+	}
+	current, err := queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+		ID: issue.ID, WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("reload issue after create failed",
+			"issue_id", util.UUIDToString(issue.ID), "error", err)
+		return issue
+	}
+	return current
+}
+
+func reconcileIssueAfterCreated(ctx context.Context, queries *db.Queries, published db.Issue, publish func(db.Issue, db.Issue)) db.Issue {
+	for ctx.Err() == nil {
+		current := reloadIssueAfterCreate(ctx, queries, published)
+		if reflect.DeepEqual(current, published) {
+			return current
+		}
+		publish(published, current)
+		published = current
+	}
+	return published
 }
 
 const (
@@ -587,6 +638,43 @@ func (s *IssueService) publishIssueCreated(issue db.Issue, attachments []db.Atta
 	})
 }
 
+// publishIssueUpdatedAfterCreate closes the only interval in which a committed
+// issue can change while its synchronous issue:created listeners are running.
+// The second read happens after every created listener has returned, so either
+// the concurrent writer publishes later itself or this reconciliation is the
+// final event clients observe. No database connection is held while listeners
+// run.
+func (s *IssueService) publishIssueUpdatedAfterCreate(previous, current db.Issue, attachments []db.Attachment, labels []db.IssueLabel, creatorType, actorID string, opts IssueCreateOpts) {
+	if s.Bus == nil {
+		return
+	}
+	var issuePayload any = map[string]any{"id": util.UUIDToString(current.ID)}
+	if opts.BroadcastPayload != nil {
+		payload := opts.BroadcastPayload(current, attachments, labels)
+		if built, ok := payload["issue"]; ok {
+			issuePayload = built
+		} else {
+			issuePayload = payload
+		}
+	}
+	s.Bus.Publish(events.Event{
+		Type:        protocol.EventIssueUpdated,
+		WorkspaceID: util.UUIDToString(current.WorkspaceID),
+		ActorType:   creatorType,
+		ActorID:     actorID,
+		Payload: map[string]any{
+			"issue":            issuePayload,
+			"realtime_only":    true,
+			"assignee_changed": previous.AssigneeType != current.AssigneeType || previous.AssigneeID != current.AssigneeID,
+			"status_changed":   previous.Status != current.Status,
+			"priority_changed": previous.Priority != current.Priority,
+			"project_changed":  previous.ProjectID != current.ProjectID,
+			"prev_status":      previous.Status,
+			"prev_priority":    previous.Priority,
+		},
+	})
+}
+
 // PublishAttachmentsChanged refreshes attachments and the issue projection
 // after a detached channel media transaction. Issue creation is broadcast
 // before the remote download finishes, so the attachment event closes the
@@ -637,6 +725,26 @@ func (s *IssueService) PublishAttachmentsChanged(ctx context.Context, issue db.I
 			"project_changed":  false,
 		},
 	})
+}
+
+func (s *IssueService) publishStatusChanges(_ context.Context, changes []pmoIssueStatusChange, actorType, actorID, issuePrefix string) {
+	if s.Bus == nil {
+		return
+	}
+	for _, change := range changes {
+		s.Bus.Publish(events.Event{
+			Type:        protocol.EventIssueUpdated,
+			WorkspaceID: util.UUIDToString(change.issue.WorkspaceID),
+			ActorType:   actorType,
+			ActorID:     actorID,
+			Payload: map[string]any{
+				"issue":               IssueToMap(change.issue, issuePrefix),
+				"status_changed":      true,
+				"prev_status":         change.previousStatus,
+				"domain_side_effects": true,
+			},
+		})
+	}
 }
 
 func (s *IssueService) captureCreatedAnalytics(issue db.Issue, creatorType, actorID string, opts IssueCreateOpts) {
@@ -710,12 +818,16 @@ func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue,
 		var task db.AgentTaskQueue
 		var err error
 		if agentRunFireAt.IsZero() {
-			task, err = s.TaskService.EnqueueTaskForIssue(ctx, issue)
+			task, err = s.TaskService.EnqueueTaskForIssueCreate(ctx, issue, pgtype.UUID{})
 		} else {
 			task, err = s.TaskService.EnqueueDeferredChannelIssueTask(ctx, issue, agentRunFireAt)
 		}
 		if err != nil {
-			slog.Warn("enqueue agent task on create failed",
+			log := slog.Warn
+			if errors.Is(err, ErrIssueNotRunnable) {
+				log = slog.Debug
+			}
+			log("enqueue agent task on create skipped",
 				"issue_id", util.UUIDToString(issue.ID),
 				"error", err)
 		} else {
@@ -729,18 +841,21 @@ func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue,
 }
 
 // shouldEnqueueAgentTaskWithQueries returns true when an issue create should
-// trigger the assigned agent. Backlog issues are skipped — backlog acts as a
-// parking lot for pre-assigning without immediate execution. The assignment
-// path does the same test through agentAssigneeVerdict, which also tells it
-// WHY a refusal happened; this one runs inside the create transaction, where
-// there is nothing to tell anyone yet.
+// trigger the assigned agent. Backlog and terminal issues are skipped —
+// backlog acts as a parking lot for pre-assigning without immediate
+// execution, and a done or cancelled issue has nothing left to run. The
+// assignment path does the same test through agentAssigneeVerdict, which also
+// tells it WHY a refusal happened; this one runs inside the create
+// transaction, where there is nothing to tell anyone yet.
 //
 // Mirrors handler.shouldEnqueueAgentTask; kept here to make the service
 // self-contained, since both code paths must move together.
 func (s *IssueService) shouldEnqueueAgentTaskWithQueries(ctx context.Context, q *db.Queries, issue db.Issue) bool {
 	// Resolved through q, not s.Queries: this runs inside the create
-	// transaction and must see the same snapshot as the rest of it. (MUL-6243)
-	if issuestatus.Effective(ctx, q, issue.WorkspaceID, issue.Status) == "backlog" {
+	// transaction and must see the same snapshot as the rest of it. The
+	// effective key, not the raw one, so a custom status parks or terminates
+	// like the built-in it inherits. (MUL-6243)
+	if !issueStatusAllowsEnqueue(issuestatus.Effective(ctx, q, issue.WorkspaceID, issue.Status)) {
 		return false
 	}
 	return isAgentAssigneeReadyWithQueries(ctx, q, issue)
@@ -773,10 +888,14 @@ func agentAssigneeVerdict(ctx context.Context, q *db.Queries, issue db.Issue) (A
 }
 
 func (s *IssueService) shouldEnqueueSquadLeaderOnAssign(ctx context.Context, issue db.Issue) bool {
-	if issuestatus.Effective(ctx, s.Queries, issue.WorkspaceID, issue.Status) == "backlog" {
+	if !issueStatusAllowsEnqueue(issuestatus.Effective(ctx, s.Queries, issue.WorkspaceID, issue.Status)) {
 		return false
 	}
 	return s.isSquadLeaderReady(ctx, issue)
+}
+
+func issueStatusAllowsEnqueue(status string) bool {
+	return status != "backlog" && status != "done" && status != "cancelled"
 }
 
 func (s *IssueService) isSquadLeaderReady(ctx context.Context, issue db.Issue) bool {
@@ -818,7 +937,7 @@ func (s *IssueService) enqueueSquadLeaderTask(ctx context.Context, issue db.Issu
 	if err != nil || hasPending {
 		return
 	}
-	if _, err := s.TaskService.EnqueueTaskForSquadLeader(ctx, issue, squad.LeaderID, squad.ID, triggerCommentID); err != nil {
+	if _, err := s.TaskService.EnqueueTaskForSquadLeaderOnIssueCreate(ctx, issue, squad.LeaderID, squad.ID, pgtype.UUID{}); err != nil {
 		slog.Warn("enqueue squad leader task on create failed",
 			"issue_id", util.UUIDToString(issue.ID),
 			"squad_id", util.UUIDToString(squad.ID),
