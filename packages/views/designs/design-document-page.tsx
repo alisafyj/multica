@@ -834,7 +834,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                 disabled={!revision || screenshot.isPending}
                 onClick={() => screenshot.mutate()}
               >
-                {screenshot.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
+                {screenshot.isPending ? <LoaderCircle className="size-3 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger
@@ -1307,7 +1307,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                     >
                       {stopTask.isPending
                         ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                        : <Square className="h-3.5 w-3.5 fill-current" />}
+                        : <Square className="size-3 fill-current" />}
                       {/* Both labels share one grid cell so the swap cannot resize
                           the button under the pointer. */}
                       <span className="grid">
@@ -1321,8 +1321,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                     </Button>
                   ) : (
                     <Button type="submit" size="sm" disabled={!!instructionBlocker || busy} aria-label={running ? "排队调整" : "发起调整"}>
-                      {adjust.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
-                      {running ? "排队调整" : "调整"}
+                      {adjust.isPending ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
                     </Button>
                     )}
                   </div>
