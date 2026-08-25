@@ -4,6 +4,16 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// react-resizable-panels measures real layout, which jsdom does not have, so
+// its panels render empty and every assertion below loses the sidebar. Same
+// substitution the inbox page's suite makes; the split itself is not what
+// these tests are about.
+vi.mock("@multica/ui/components/ui/resizable", () => ({
+  ResizablePanelGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  ResizablePanel: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  ResizableHandle: () => null,
+}));
+
 const {
   adjustDesignDocument,
   discardDesignDocumentDraft,

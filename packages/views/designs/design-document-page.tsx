@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@multica/ui/components/ui/resizable";
+import { useDefaultLayout } from "react-resizable-panels";
+import { useIsCompact } from "@multica/ui/hooks/use-mobile";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
@@ -658,6 +661,11 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   const { data: activeTaskMessages = [] } = useQuery(taskMessagesOptions(activeTask?.id ?? ""));
   const planRows = useMemo(() => latestTodoRows(activeTaskMessages), [activeTaskMessages]);
 
+  // The reading width of the conversation is the user's call, and it stays
+  // theirs between visits — a durable layout preference, persisted by id the
+  // way the inbox and chat panes already are.
+  const compact = useIsCompact();
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: "multica_design_document_layout" });
   const sidebarScrollRef = useRef<HTMLDivElement | null>(null);
   const startedAtMs = (() => {
     const raw = activeTask?.started_at ?? activeTask?.dispatched_at ?? null;
@@ -992,336 +1000,368 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
           rounded cards inside a padded grid cell — a rounded rectangle inside a
           rounded rectangle inside a page — which spent most of its width on
           borders and gutters. Sections below are flat and separated by rules. */}
-      <div className="grid min-h-0 flex-1 lg:grid-cols-[360px_minmax(0,1fr)]">
-        <aside className="flex min-h-0 flex-col overflow-hidden border-b lg:h-full lg:border-b-0 lg:border-r">
-          <div ref={sidebarScrollRef} className="min-h-0 flex-1 overflow-y-auto">
-            <div className="border-b px-4 py-3">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted-foreground">
-                {project ? <span>{project.title}</span> : null}
-                {platformLabel(document.platform) ? <span>{platformLabel(document.platform)}</span> : null}
-                <span>{document.repository_grounded ? "已按仓库取证" : "未做仓库取证"}</span>
-              </div>
-              {briefOf(document) ? (
-                <details className="mt-2 group">
-                  <summary className="cursor-pointer list-none text-caption font-medium text-foreground">需求描述</summary>
-                  <p className="mt-1.5 whitespace-pre-wrap text-caption leading-5 text-muted-foreground">{briefOf(document)}</p>
-                </details>
-              ) : null}
-            </div>
-
-            {errorMessage ? (
-              <div role="alert" className="flex items-start gap-2 border-b border-destructive/40 bg-destructive/5 px-4 py-3 text-caption leading-5">
-                <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
-                <div className="min-w-0">
-                  <div className="font-medium text-destructive">{activeTask ? `${taskOperationLabel(activeTask.operation)}失败` : "运行失败"}</div>
-                  <div className="text-muted-foreground">{errorMessage}</div>
-                  {revisions.length > 0 ? <div className="mt-1 text-muted-foreground">上一版仍然可用，可以在此基础上继续调整。</div> : null}
+      {/* One page split by a line the user can drag. Below `lg` the two
+          stack instead, as they always have: a 300px minimum beside a
+          preview leaves neither of them usable on a narrow window. The
+          two arms render the same sidebar, so it is built once here. */}
+      {(() => {
+        const sidebar = (
+          <>
+              <div ref={sidebarScrollRef} className="min-h-0 flex-1 overflow-y-auto">
+                <div className="border-b px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted-foreground">
+                    {project ? <span>{project.title}</span> : null}
+                    {platformLabel(document.platform) ? <span>{platformLabel(document.platform)}</span> : null}
+                    <span>{document.repository_grounded ? "已按仓库取证" : "未做仓库取证"}</span>
+                  </div>
+                  {briefOf(document) ? (
+                    <details className="mt-2 group">
+                      <summary className="cursor-pointer list-none text-caption font-medium text-foreground">需求描述</summary>
+                      <p className="mt-1.5 whitespace-pre-wrap text-caption leading-5 text-muted-foreground">{briefOf(document)}</p>
+                    </details>
+                  ) : null}
                 </div>
-              </div>
-            ) : null}
-            {canRegenerate ? (
-              // The rerun for a dead end: nothing was ever generated, so
-              // there is no revision to adjust — only the frozen inputs to
-              // run again (with a different agent, if the user swapped one).
-              <div className="border-b px-4 py-3">
-                <Button type="button" size="sm" disabled={busy} onClick={() => regenerate.mutate()}>
-                  {regenerate.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                  重新生成
-                </Button>
-                <p className="mt-2 text-caption leading-5 text-muted-foreground">
-                  沿用首次提交的需求与设置重新运行。也可以先在下方更换执行智能体。
-                </p>
-              </div>
-            ) : null}
 
-            {critique ? <div className="border-b px-4 py-3"><DesignDocumentCritique critique={critique} /></div> : null}
-
-            {/* The end of the flow (DC-062): a saved design is handed to the
-                issue whose implementation it governs, and the agent working
-                that issue receives the package itself. */}
-            <div className="border-b px-4 py-3">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="text-caption font-medium text-muted-foreground">交付实现</h2>
-                <IssueSetting
-                  issues={deliveryIssues}
-                  issueId={document.issue_id}
-                  disabled={!canDeliver || deliver.isPending}
-                  onChange={(issueId) => deliver.mutate(issueId)}
-                  label="交付给实现任务"
-                  emptyLabel="尚未交付"
-                />
-              </div>
-              <p className="mt-2 text-caption leading-5 text-muted-foreground">
-                {deliver.isPending
-                  ? "正在交付…"
-                  : delivered
-                    ? "执行该任务的智能体会在工作区中收到这份已保存的设计包，按其中的页面与状态实现。"
-                    : document.issue_id
-                      ? "已关联任务，但还没有交付：保存这份设计稿之后，它才会作为设计包交给该任务的智能体。"
-                      : canDeliver
-                        ? "选择一个任务，把这份已保存的设计交给实现它的智能体。"
-                        : "保存这份设计稿之后才能交付——草稿不是承诺。"}
-              </p>
-            </div>
-
-            <section className="px-4 py-3" aria-label="版本">
-              <div className="mb-2 flex items-center justify-between px-0.5">
-                <h2 className="text-caption font-medium text-muted-foreground">版本</h2>
-                <span className="text-caption text-muted-foreground">{revisions.length}</span>
-              </div>
-              {revisions.length === 0 ? (
-                <p className="py-2 text-caption text-muted-foreground">
-                  {running ? "第一版正在生成。" : "还没有生成任何版本。"}
-                </p>
-              ) : (
-                <ol className="-mx-4 divide-y border-y">
-                  {revisions.map((row) => (
-                    <RevisionRow
-                      key={row.id}
-                      revision={row}
-                      selected={row.id === selectedRevisionId}
-                      entries={entries}
-                      agents={agents}
-                      busy={busy || running}
-                      onSelect={() => setPinnedRevisionId(row.id === currentRevisionId ? "" : row.id)}
-                      onRestore={() => restore.mutate(row.id)}
-                    />
-                  ))}
-                </ol>
-              )}
-            </section>
-            {/* Last in the scroll region, directly above the composer: the
-                thread is the one section that grows without bound while a run
-                is live, so anything placed under it would be pushed off screen
-                by the agent's own output. Here it reads — and follows — like a
-                conversation, and the box below is the next message in it. */}
-            <DesignDocumentConversation
-              revisions={revisions}
-              activeTask={activeTask}
-              {...(revision ? { revision } : {})}
-              scrollParentRef={sidebarScrollRef}
-              className="border-t px-4 py-3"
-              // Our runs are one-shot tasks with no input channel, so an
-              // answer cannot reach the agent mid-run. It goes where a reply
-              // genuinely does reach it: the adjustment brief for the next
-              // turn, which the user can still edit before sending.
-              onAnswerForm={(text) =>
-                setInstruction((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text))
-              }
-            />
-            {/* Ready-made follow-ups, at the end of the thread and only once
-                the run is over — they are what the conversation arrives at,
-                not a fixture above the input. Offering them mid-run would
-                propose refining a design that does not exist yet. They seed
-                the box rather than dispatch anything, so what gets sent is
-                always text the user has seen and can still edit. */}
-            {!running && revisions.length > 0 ? (
-              <DesignNextSteps
-                className="border-t px-4 py-3"
-                disabled={busy}
-                onPick={(text) =>
-                  setInstruction((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text))
-                }
-              />
-            ) : null}
-          </div>
-
-          {viewMode === "edit" ? (
-            <div className="shrink-0 border-t px-4 py-3">
-              <ManualEditPanel
-                descriptor={picked}
-                page={shownEntry}
-                edits={manualEdits}
-                computed={pickedComputed}
-                onChange={changeManualEdit}
-                onClear={clearManualEdit}
-                onDeselect={() => {
-                  pickedElement.current = null;
-                  setPicked(null);
-                  setPickedComputed(null);
-                }}
-              />
-              <div className="mt-3 flex items-center justify-between gap-2 border-t pt-3">
-                <span className="min-w-0 truncate text-caption text-muted-foreground">
-                  {manualEditBlocker ?? `将应用 ${countDeclarations(manualEdits)} 项修改`}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={!!manualEditBlocker || busy}
-                  onClick={() => manualEdit.mutate()}
-                >
-                  {manualEdit.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
-                  应用修改
-                </Button>
-              </div>
-            </div>
-          ) : (
-          <form
-            className="shrink-0 border-t px-4 py-3"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (instructionBlocker || busy) return;
-              if (running) {
-                // Queue while the run is live; the latest submission wins.
-                setQueuedAdjustment({ instruction, scopeToPage, annotations });
-                setInstruction("");
-                return;
-              }
-              adjust.mutate({ instruction, scopeToPage, annotations });
-            }}
-            aria-label="调整设计稿"
-          >
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                className={cn(
-                  "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-caption transition-colors",
-                  scopeToPage && shownPage ? "border-primary/50 bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
-                )}
-                aria-pressed={scopeToPage && !!shownPage}
-                disabled={!shownPage}
-                onClick={() => setScopeToPage((value) => !value)}
-                title={shownPage ? "只调整当前页面" : "先选择一个页面"}
-              >
-                {scopeToPage && shownPage ? `仅当前页面 · ${shownPage.title}` : "整份文档"}
-                {scopeToPage && shownPage ? <X className="h-3 w-3" /> : null}
-              </button>
-            </div>
-            {annotations.length > 0 ? (
-              // Each mark keeps its own note, so one send can carry several
-              // separate asks that the agent can locate individually.
-              <ul className="mt-2 divide-y border-y" aria-label="标注">
-                {annotations.map((annotation) => (
-                  <li key={annotation.id} className="py-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <span className="min-w-0 flex-1 truncate text-caption font-medium" title={annotation.element?.selector}>
-                        {annotationLabel(annotation)}
-                      </span>
-                      <span className="shrink-0 text-micro text-muted-foreground">{annotation.pageTitle}</span>
-                      <button
-                        type="button"
-                        aria-label={`删除标注 ${annotationLabel(annotation)}`}
-                        className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                        onClick={() => setAnnotations((current) => current.filter((row) => row.id !== annotation.id))}
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
+                {errorMessage ? (
+                  <div role="alert" className="flex items-start gap-2 border-b border-destructive/40 bg-destructive/5 px-4 py-3 text-caption leading-5">
+                    <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
+                    <div className="min-w-0">
+                      <div className="font-medium text-destructive">{activeTask ? `${taskOperationLabel(activeTask.operation)}失败` : "运行失败"}</div>
+                      <div className="text-muted-foreground">{errorMessage}</div>
+                      {revisions.length > 0 ? <div className="mt-1 text-muted-foreground">上一版仍然可用，可以在此基础上继续调整。</div> : null}
                     </div>
-                    <input
-                      value={annotation.note}
-                      aria-label={`${annotationLabel(annotation)} 的修改说明`}
-                      placeholder="这里要怎么改？"
-                      className="mt-1 w-full bg-transparent text-caption outline-none placeholder:text-muted-foreground"
-                      onChange={(event) => setAnnotations((current) => current.map((row) => (
-                        row.id === annotation.id ? { ...row, note: event.target.value } : row
-                      )))}
+                  </div>
+                ) : null}
+                {canRegenerate ? (
+                  // The rerun for a dead end: nothing was ever generated, so
+                  // there is no revision to adjust — only the frozen inputs to
+                  // run again (with a different agent, if the user swapped one).
+                  <div className="border-b px-4 py-3">
+                    <Button type="button" size="sm" disabled={busy} onClick={() => regenerate.mutate()}>
+                      {regenerate.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                      重新生成
+                    </Button>
+                    <p className="mt-2 text-caption leading-5 text-muted-foreground">
+                      沿用首次提交的需求与设置重新运行。也可以先在下方更换执行智能体。
+                    </p>
+                  </div>
+                ) : null}
+
+                {critique ? <div className="border-b px-4 py-3"><DesignDocumentCritique critique={critique} /></div> : null}
+
+                {/* The end of the flow (DC-062): a saved design is handed to the
+                    issue whose implementation it governs, and the agent working
+                    that issue receives the package itself. */}
+                <div className="border-b px-4 py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className="text-caption font-medium text-muted-foreground">交付实现</h2>
+                    <IssueSetting
+                      issues={deliveryIssues}
+                      issueId={document.issue_id}
+                      disabled={!canDeliver || deliver.isPending}
+                      onChange={(issueId) => deliver.mutate(issueId)}
+                      label="交付给实现任务"
+                      emptyLabel="尚未交付"
                     />
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {queuedAdjustment ? (
-              <div className="mt-2 flex items-start justify-between gap-2 border-l-2 border-muted-foreground/30 pl-2.5 text-caption leading-5">
-                <span className="min-w-0">
-                  <span className="text-muted-foreground">已排队 · 任务结束后自动发起：</span>
-                  <span className="line-clamp-2 break-words">{queuedAdjustment.instruction}</span>
-                </span>
-                <button
-                  type="button"
-                  aria-label="取消排队的调整"
-                  title="取消排队的调整"
-                  className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                  onClick={() => setQueuedAdjustment(null)}
-                >
-                  <X className="h-3 w-3" />
-                </button>
+                  </div>
+                  <p className="mt-2 text-caption leading-5 text-muted-foreground">
+                    {deliver.isPending
+                      ? "正在交付…"
+                      : delivered
+                        ? "执行该任务的智能体会在工作区中收到这份已保存的设计包，按其中的页面与状态实现。"
+                        : document.issue_id
+                          ? "已关联任务，但还没有交付：保存这份设计稿之后，它才会作为设计包交给该任务的智能体。"
+                          : canDeliver
+                            ? "选择一个任务，把这份已保存的设计交给实现它的智能体。"
+                            : "保存这份设计稿之后才能交付——草稿不是承诺。"}
+                  </p>
+                </div>
+
+                <section className="px-4 py-3" aria-label="版本">
+                  <div className="mb-2 flex items-center justify-between px-0.5">
+                    <h2 className="text-caption font-medium text-muted-foreground">版本</h2>
+                    <span className="text-caption text-muted-foreground">{revisions.length}</span>
+                  </div>
+                  {revisions.length === 0 ? (
+                    <p className="py-2 text-caption text-muted-foreground">
+                      {running ? "第一版正在生成。" : "还没有生成任何版本。"}
+                    </p>
+                  ) : (
+                    <ol className="-mx-4 divide-y border-y">
+                      {revisions.map((row) => (
+                        <RevisionRow
+                          key={row.id}
+                          revision={row}
+                          selected={row.id === selectedRevisionId}
+                          entries={entries}
+                          agents={agents}
+                          busy={busy || running}
+                          onSelect={() => setPinnedRevisionId(row.id === currentRevisionId ? "" : row.id)}
+                          onRestore={() => restore.mutate(row.id)}
+                        />
+                      ))}
+                    </ol>
+                  )}
+                </section>
+                {/* Last in the scroll region, directly above the composer: the
+                    thread is the one section that grows without bound while a run
+                    is live, so anything placed under it would be pushed off screen
+                    by the agent's own output. Here it reads — and follows — like a
+                    conversation, and the box below is the next message in it. */}
+                <DesignDocumentConversation
+                  revisions={revisions}
+                  activeTask={activeTask}
+                  {...(revision ? { revision } : {})}
+                  scrollParentRef={sidebarScrollRef}
+                  className="border-t px-4 py-3"
+                  // Our runs are one-shot tasks with no input channel, so an
+                  // answer cannot reach the agent mid-run. It goes where a reply
+                  // genuinely does reach it: the adjustment brief for the next
+                  // turn, which the user can still edit before sending.
+                  onAnswerForm={(text) =>
+                    setInstruction((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text))
+                  }
+                />
+                {/* Ready-made follow-ups, at the end of the thread and only once
+                    the run is over — they are what the conversation arrives at,
+                    not a fixture above the input. Offering them mid-run would
+                    propose refining a design that does not exist yet. They seed
+                    the box rather than dispatch anything, so what gets sent is
+                    always text the user has seen and can still edit. */}
+                {!running && revisions.length > 0 ? (
+                  <DesignNextSteps
+                    className="border-t px-4 py-3"
+                    disabled={busy}
+                    onPick={(text) =>
+                      setInstruction((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text))
+                    }
+                  />
+                ) : null}
               </div>
-            ) : null}
-            {/* The run's plan, pinned: it says what is left, and the
-                transcript above is exactly where that answer scrolls away. */}
-            <DesignRunPlan rows={planRows} className="mb-2" />
-            <Textarea
-              value={instruction}
-              onChange={(event) => setInstruction(event.target.value)}
-              placeholder={canAdjust
-                ? "描述你想怎么改，例如：把顶部导航收紧，订单列表增加筛选。"
-                : running
-                  ? "任务执行中，现在提交会排队，结束后自动发起。"
-                  : "生成完成后可以在这里继续调整。"}
-              rows={3}
-              maxLength={INSTRUCTION_MAX_LENGTH}
-              disabled={!composerOpen || busy}
-              className="mt-2 min-h-[72px] resize-none text-body"
-              onKeyDown={(event) => {
-                if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !instructionBlocker && !busy) {
+
+              {viewMode === "edit" ? (
+                <div className="shrink-0 border-t px-4 py-3">
+                  <ManualEditPanel
+                    descriptor={picked}
+                    page={shownEntry}
+                    edits={manualEdits}
+                    computed={pickedComputed}
+                    onChange={changeManualEdit}
+                    onClear={clearManualEdit}
+                    onDeselect={() => {
+                      pickedElement.current = null;
+                      setPicked(null);
+                      setPickedComputed(null);
+                    }}
+                  />
+                  <div className="mt-3 flex items-center justify-between gap-2 border-t pt-3">
+                    <span className="min-w-0 truncate text-caption text-muted-foreground">
+                      {manualEditBlocker ?? `将应用 ${countDeclarations(manualEdits)} 项修改`}
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={!!manualEditBlocker || busy}
+                      onClick={() => manualEdit.mutate()}
+                    >
+                      {manualEdit.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
+                      应用修改
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+              <form
+                className="shrink-0 border-t px-4 py-3"
+                onSubmit={(event) => {
                   event.preventDefault();
+                  if (instructionBlocker || busy) return;
                   if (running) {
+                    // Queue while the run is live; the latest submission wins.
                     setQueuedAdjustment({ instruction, scopeToPage, annotations });
                     setInstruction("");
                     return;
                   }
                   adjust.mutate({ instruction, scopeToPage, annotations });
-                }
-              }}
-            />
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <span className="min-w-0 truncate text-caption text-muted-foreground">
-                {running && startedAtMs !== null
-                  ? `已运行 ${formatDuration(now - startedAtMs)}`
-                  : (instructionBlocker ?? "⌘/Ctrl + Enter 发送")}
-              </span>
-              {/* Who runs this, next to the control that sends it: the agent is
-                  part of the submission, not a property of the panel above.
-                  Grouped with the button so three children under
-                  justify-between cannot strand it in the middle. */}
-              <div className="flex shrink-0 items-center gap-2">
-                <AgentSetting agents={agents} agentId={agentId} onChange={setAgentOverride} />
-                {showStop ? (
-                // One slot, two meanings — Open Design's rule: while the agent
-                // is working and the box is empty, the send control IS the stop
-                // control. Typing anything turns it back into 排队调整, because
-                // then the user has something to send rather than something to
-                // end.
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="group"
-                  disabled={stopTask.isPending}
-                  onClick={() => stopTask.mutate(activeTask.id)}
-                  aria-label="停止任务"
-                >
-                  {stopTask.isPending
-                    ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                    : <Square className="h-3.5 w-3.5 fill-current" />}
-                  {/* Both labels share one grid cell so the swap cannot resize
-                      the button under the pointer. */}
-                  <span className="grid">
-                    <span className="col-start-1 row-start-1 group-hover:invisible group-focus-visible:invisible">
-                      {stopTask.isPending ? "正在停止" : "执行中"}
+                }}
+                aria-label="调整设计稿"
+              >
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    className={cn(
+                      "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-caption transition-colors",
+                      scopeToPage && shownPage ? "border-primary/50 bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+                    )}
+                    aria-pressed={scopeToPage && !!shownPage}
+                    disabled={!shownPage}
+                    onClick={() => setScopeToPage((value) => !value)}
+                    title={shownPage ? "只调整当前页面" : "先选择一个页面"}
+                  >
+                    {scopeToPage && shownPage ? `仅当前页面 · ${shownPage.title}` : "整份文档"}
+                    {scopeToPage && shownPage ? <X className="h-3 w-3" /> : null}
+                  </button>
+                </div>
+                {annotations.length > 0 ? (
+                  // Each mark keeps its own note, so one send can carry several
+                  // separate asks that the agent can locate individually.
+                  <ul className="mt-2 divide-y border-y" aria-label="标注">
+                    {annotations.map((annotation) => (
+                      <li key={annotation.id} className="py-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="min-w-0 flex-1 truncate text-caption font-medium" title={annotation.element?.selector}>
+                            {annotationLabel(annotation)}
+                          </span>
+                          <span className="shrink-0 text-micro text-muted-foreground">{annotation.pageTitle}</span>
+                          <button
+                            type="button"
+                            aria-label={`删除标注 ${annotationLabel(annotation)}`}
+                            className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            onClick={() => setAnnotations((current) => current.filter((row) => row.id !== annotation.id))}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                        <input
+                          value={annotation.note}
+                          aria-label={`${annotationLabel(annotation)} 的修改说明`}
+                          placeholder="这里要怎么改？"
+                          className="mt-1 w-full bg-transparent text-caption outline-none placeholder:text-muted-foreground"
+                          onChange={(event) => setAnnotations((current) => current.map((row) => (
+                            row.id === annotation.id ? { ...row, note: event.target.value } : row
+                          )))}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {queuedAdjustment ? (
+                  <div className="mt-2 flex items-start justify-between gap-2 border-l-2 border-muted-foreground/30 pl-2.5 text-caption leading-5">
+                    <span className="min-w-0">
+                      <span className="text-muted-foreground">已排队 · 任务结束后自动发起：</span>
+                      <span className="line-clamp-2 break-words">{queuedAdjustment.instruction}</span>
                     </span>
-                    <span className="invisible col-start-1 row-start-1 group-hover:visible group-focus-visible:visible">
-                      停止
-                    </span>
+                    <button
+                      type="button"
+                      aria-label="取消排队的调整"
+                      title="取消排队的调整"
+                      className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      onClick={() => setQueuedAdjustment(null)}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ) : null}
+                {/* The run's plan, pinned: it says what is left, and the
+                    transcript above is exactly where that answer scrolls away. */}
+                <DesignRunPlan rows={planRows} className="mb-2" />
+                <Textarea
+                  value={instruction}
+                  onChange={(event) => setInstruction(event.target.value)}
+                  placeholder={canAdjust
+                    ? "描述你想怎么改，例如：把顶部导航收紧，订单列表增加筛选。"
+                    : running
+                      ? "任务执行中，现在提交会排队，结束后自动发起。"
+                      : "生成完成后可以在这里继续调整。"}
+                  rows={3}
+                  maxLength={INSTRUCTION_MAX_LENGTH}
+                  disabled={!composerOpen || busy}
+                  className="mt-2 min-h-[72px] resize-none text-body"
+                  onKeyDown={(event) => {
+                    if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !instructionBlocker && !busy) {
+                      event.preventDefault();
+                      if (running) {
+                        setQueuedAdjustment({ instruction, scopeToPage, annotations });
+                        setInstruction("");
+                        return;
+                      }
+                      adjust.mutate({ instruction, scopeToPage, annotations });
+                    }
+                  }}
+                />
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate text-caption text-muted-foreground">
+                    {running && startedAtMs !== null
+                      ? `已运行 ${formatDuration(now - startedAtMs)}`
+                      : (instructionBlocker ?? "⌘/Ctrl + Enter 发送")}
                   </span>
-                </Button>
-              ) : (
-                <Button type="submit" size="sm" disabled={!!instructionBlocker || busy} aria-label={running ? "排队调整" : "发起调整"}>
-                  {adjust.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
-                  {running ? "排队调整" : "调整"}
-                </Button>
-                )}
-              </div>
+                  {/* Who runs this, next to the control that sends it: the agent is
+                      part of the submission, not a property of the panel above.
+                      Grouped with the button so three children under
+                      justify-between cannot strand it in the middle. */}
+                  <div className="flex shrink-0 items-center gap-2">
+                    <AgentSetting agents={agents} agentId={agentId} onChange={setAgentOverride} />
+                    {showStop ? (
+                    // One slot, two meanings — Open Design's rule: while the agent
+                    // is working and the box is empty, the send control IS the stop
+                    // control. Typing anything turns it back into 排队调整, because
+                    // then the user has something to send rather than something to
+                    // end.
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="group"
+                      disabled={stopTask.isPending}
+                      onClick={() => stopTask.mutate(activeTask.id)}
+                      aria-label="停止任务"
+                    >
+                      {stopTask.isPending
+                        ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                        : <Square className="h-3.5 w-3.5 fill-current" />}
+                      {/* Both labels share one grid cell so the swap cannot resize
+                          the button under the pointer. */}
+                      <span className="grid">
+                        <span className="col-start-1 row-start-1 group-hover:invisible group-focus-visible:invisible">
+                          {stopTask.isPending ? "正在停止" : "执行中"}
+                        </span>
+                        <span className="invisible col-start-1 row-start-1 group-hover:visible group-focus-visible:visible">
+                          停止
+                        </span>
+                      </span>
+                    </Button>
+                  ) : (
+                    <Button type="submit" size="sm" disabled={!!instructionBlocker || busy} aria-label={running ? "排队调整" : "发起调整"}>
+                      {adjust.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
+                      {running ? "排队调整" : "调整"}
+                    </Button>
+                    )}
+                  </div>
+                </div>
+              </form>
+              )}
+          </>
+        );
+        if (compact) {
+          return (
+            <div className="grid min-h-0 flex-1">
+              <aside className="flex min-h-0 flex-col overflow-hidden border-b">{sidebar}</aside>
+              <main className="flex min-h-0 flex-col">{previewFrame}</main>
             </div>
-          </form>
-          )}
-        </aside>
-
-        <main className="flex min-h-0 flex-col lg:h-full">
-          {previewFrame}
-        </main>
-      </div>
+          );
+        }
+        return (
+          <ResizablePanelGroup
+            orientation="horizontal"
+            className="min-h-0 flex-1"
+            defaultLayout={defaultLayout}
+            onLayoutChanged={onLayoutChanged}
+          >
+            <ResizablePanel
+              id="conversation"
+              defaultSize={360}
+              minSize={300}
+              maxSize={720}
+              groupResizeBehavior="preserve-pixel-size"
+            >
+              <aside className="flex h-full min-h-0 flex-col overflow-hidden border-r">{sidebar}</aside>
+            </ResizablePanel>
+            <ResizableHandle />
+            <ResizablePanel id="preview" minSize="30%">
+              <main className="flex h-full min-h-0 flex-col">{previewFrame}</main>
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        );
+      })()}
 
       <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
         <AlertDialogContent>
