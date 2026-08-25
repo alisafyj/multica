@@ -1190,7 +1190,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
                         {groupOptions.map((option) => {
                           const ids = option.items.map((item) => item.frameId);
                           const allSelected = ids.length > 0 && ids.every((id) => selectedFrameIdSet.has(id));
-                          const groupThumb = framePreviewUrl(nativeJson, ids[0] ?? "", selectedFileDetail?.file.thumbnail_url ?? null);
+                          const groupThumb = framePreviewUrl(nativeJson, ids[0] ?? "", selectedFileDetail?.file?.thumbnail_url ?? null);
                           return (
                             <div key={option.id}>
                               <HoverCard>
@@ -1207,7 +1207,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
                               <div className="ml-5 space-y-0.5 border-l pl-2">
                                 {option.items.map((item) => {
                                   const checked = selectedFrameIdSet.has(item.frameId);
-                                  const thumb = framePreviewUrl(nativeJson, item.frameId, selectedFileDetail?.file.thumbnail_url ?? null);
+                                  const thumb = framePreviewUrl(nativeJson, item.frameId, selectedFileDetail?.file?.thumbnail_url ?? null);
                                   return (
                                     <HoverCard key={item.frameId}>
                                       <HoverCardTrigger render={
@@ -1230,7 +1230,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
                           const item = option.items[0];
                           if (!item) return null;
                           const checked = selectedFrameIdSet.has(item.frameId);
-                          const thumb = framePreviewUrl(nativeJson, item.frameId, selectedFileDetail?.file.thumbnail_url ?? null);
+                          const thumb = framePreviewUrl(nativeJson, item.frameId, selectedFileDetail?.file?.thumbnail_url ?? null);
                           return (
                             <HoverCard key={option.id}>
                               <HoverCardTrigger render={
