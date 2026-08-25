@@ -11,11 +11,14 @@ import { designDeliveriesByIssueOptions, designDraftListOptions, designFileDetai
 import { useWorkspaceId } from "@multica/core/hooks";
 import { ISSUE_DESIGN_ROLE_FRONTEND, ISSUE_DESIGN_ROLE_KEY, ISSUE_DESIGN_ROLE_UI, explicitIssueDesignRole, issueDesignRole } from "@multica/core/issues/design-role";
 import { childIssuesOptions, issueKeys } from "@multica/core/issues/queries";
+import { useCommentDraftStore } from "@multica/core/issues/stores";
+import { projectResourcesOptions } from "@multica/core/projects";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
-import type { Agent, DesignDelivery, DesignDraft, DesignFile, DesignFrame, DesignRestorePlan, DesignRestoreTask, DesignRestoreTaskInputV1, Issue, MemberWithUser } from "@multica/core/types";
+import type { Agent, DesignDelivery, DesignDraft, DesignFile, DesignFrame, DesignRestorePlan, DesignRestoreTask, DesignRestoreTaskInputV1, GalleryNativeJson, Issue, MemberWithUser, ProjectResource } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@multica/ui/components/ui/hover-card";
 import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/native-select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@multica/ui/components/ui/sheet";
 import { Textarea } from "@multica/ui/components/ui/textarea";
@@ -154,7 +157,7 @@ function hasExplicitDesignRole(issue: Issue) {
 }
 
 function designRoleCopy(role: ReturnType<typeof issueDesignRole>) {
-  if (role === ISSUE_DESIGN_ROLE_UI) return "UI 设计";
+  if (role === ISSUE_DESIGN_ROLE_UI) return "UI 还原";
   if (role === ISSUE_DESIGN_ROLE_FRONTEND) return "前端开发";
   return "未选择";
 }
@@ -331,6 +334,65 @@ function frameScopeItem(frame: DesignFrame): IssueDesignScopeItem {
     ...(groupName ? { groupName } : {}),
     ...(groupPath.length ? { groupPath } : {}),
   };
+}
+
+function framePreviewUrl(nativeJson: GalleryNativeJson | undefined, frameId: string, fallback?: string | null) {
+  if (!nativeJson) return fallback ?? null;
+  const frame = nativeJson.frames.find((item) => item.id === frameId);
+  if (!frame) return fallback ?? null;
+  const previewAsset = frame.previewAssetId ? nativeJson.assets[frame.previewAssetId] : undefined;
+  const thumbnailAsset = frame.thumbnailAssetId ? nativeJson.assets[frame.thumbnailAssetId] : undefined;
+  return previewAsset?.url ?? thumbnailAsset?.url ?? frame.thumbnailDataUrl ?? frame.thumbnailUrl ?? fallback ?? null;
+}
+
+function projectResourceLabel(resource: ProjectResource) {
+  const ref = resource.resource_ref as { url?: string };
+  const url = typeof ref?.url === "string" ? ref.url : "";
+  return resource.label?.trim() || url.replace(/^https?:\/\/(www\.)?github\.com\//i, "").replace(/\.git$/, "") || url || resource.id;
+}
+
+function buildRestoreScopeCalls(items: IssueDesignScopeItem[], fileId: string, revisionId: string) {
+  const groups = new Map<string, IssueDesignScopeItem[]>();
+  const ungrouped: IssueDesignScopeItem[] = [];
+  items.forEach((item) => {
+    if (item.groupId) {
+      const list = groups.get(item.groupId) ?? [];
+      list.push(item);
+      groups.set(item.groupId, list);
+    } else {
+      ungrouped.push(item);
+    }
+  });
+  const calls: string[] = [];
+  groups.forEach((groupItems) => {
+    const first = groupItems[0];
+    calls.push(JSON.stringify({
+      detailLevel: "normal",
+      scope: {
+        version: "1.0",
+        kind: "figma_group",
+        designFileId: fileId,
+        revisionId,
+        groupId: first?.groupId,
+        groupName: first?.groupName,
+        frameIds: groupItems.map((item) => item.frameId),
+      },
+    }));
+  });
+  ungrouped.forEach((item) => {
+    calls.push(JSON.stringify({
+      detailLevel: "normal",
+      scope: {
+        version: "1.0",
+        kind: "frame",
+        designFileId: fileId,
+        revisionId,
+        frameId: item.frameId,
+        label: item.frameName,
+      },
+    }));
+  });
+  return calls;
 }
 
 export function issueDesignScopeOptions(frames: DesignFrame[]): IssueDesignScopeOption[] {
@@ -633,17 +695,19 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const roleIsExplicit = hasExplicitDesignRole(issue);
   const isUiIssue = role === ISSUE_DESIGN_ROLE_UI;
   const isFrontendIssue = role === ISSUE_DESIGN_ROLE_FRONTEND;
-  const showDesignDelivery = isUiIssue || isFrontendIssue || !!issue.parent_issue_id;
+  const showDesignDelivery = isUiIssue || !isFrontendIssue;
   const roleReady = isUiIssue || isFrontendIssue;
+  const deliveryLinkageEnabled = false;
+  const designDraftGenerationEnabled = false;
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
   const queryClient = useQueryClient();
   const [fileId, setFileId] = useState("");
-  const [scopeOptionId, setScopeOptionId] = useState("");
+  const [selectedFrameIds, setSelectedFrameIds] = useState<string[]>([]);
+  const [targetResourceId, setTargetResourceId] = useState("");
   const [agentId, setAgentId] = useState("");
   const [restoreTask, setRestoreTask] = useState<DesignRestoreTask | null>(null);
-  const [isOrchestrating, setIsOrchestrating] = useState(false);
   const [deliveryHistoryOpen, setDeliveryHistoryOpen] = useState(false);
   const [deliveryTargetIssueId, setDeliveryTargetIssueId] = useState("");
   const [cancelReason, setCancelReason] = useState("");
@@ -679,6 +743,11 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
     ...designFileListOptions(wsId),
     enabled: roleReady,
   });
+  const { data: projectResources = [] } = useQuery({
+    ...projectResourcesOptions(wsId, issue.project_id ?? ""),
+    enabled: roleReady && !!issue.project_id,
+  });
+  const repoResources = useMemo(() => projectResources.filter((resource) => resource.resource_type === "github_repo"), [projectResources]);
   const { data: restoreTasks = [] } = useQuery({
     ...designRestoreTaskListOptions(wsId),
     enabled: roleReady,
@@ -696,22 +765,33 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
     enabled: !!selectedFileId,
   });
   const frames = selectedFileDetail?.current_revision?.native_json?.frames ?? [];
+  const nativeJson = selectedFileDetail?.current_revision?.native_json;
   const scopeOptions = useMemo(() => issueDesignScopeOptions(frames), [frames]);
-  const selectedScopeOption = scopeOptions.find((option) => option.id === scopeOptionId)
-    ?? scopeOptions.find((option) => option.items.some((item) => item.frameId === activeDeliveryFrameId))
-    ?? scopeOptions[0]
-    ?? null;
-  const selectedFrameId = activeDeliveryFrameId || selectedScopeOption?.items[0]?.frameId || "";
+  const groupOptions = useMemo(() => scopeOptions.filter((option) => option.kind === "figma_group"), [scopeOptions]);
+  const ungroupedOptions = useMemo(() => {
+    const groupedFrameIds = new Set(groupOptions.flatMap((option) => option.items.map((item) => item.frameId)));
+    return scopeOptions.filter((option) => option.kind === "frame" && !groupedFrameIds.has(option.items[0]?.frameId ?? ""));
+  }, [scopeOptions, groupOptions]);
+  const selectedFrameIdSet = useMemo(() => new Set(selectedFrameIds), [selectedFrameIds]);
+  const selectedScopeItems = useMemo(() => frames.filter((frame) => selectedFrameIdSet.has(frame.id)).map(frameScopeItem), [frames, selectedFrameIdSet]);
+  const selectedFrameId = activeDeliveryFrameId || selectedScopeItems[0]?.frameId || "";
   const selectedFrame = frames.find((frame: DesignFrame) => frame.id === selectedFrameId);
+  const toggleScopeFrameIds = (ids: string[], checked: boolean) => {
+    setSelectedFrameIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => (checked ? next.add(id) : next.delete(id)));
+      return Array.from(next);
+    });
+  };
   const availableAgents = useMemo(() => agents.filter((agent) => !agent.archived_at && agent.runtime_id), [agents]);
   const assignedAvailableAgent = issue.assignee_type === "agent" ? availableAgents.find((agent) => agent.id === issue.assignee_id) : undefined;
   const selectedAgent = availableAgents.find((agent) => agent.id === agentId) ?? assignedAvailableAgent ?? availableAgents[0];
   const selectedRevisionId = selectedFileDetail?.current_revision?.id;
   const restoreFileId = receivedDesignDelivery?.file_id ?? selectedFileId;
   const restoreRevisionId = receivedDesignDelivery?.revision_id ?? selectedRevisionId;
-  const restoreFrameId = receivedDesignDelivery ? activeDeliveryFrameId || selectedFrameId : selectedScopeOption?.items[0]?.frameId || selectedFrameId;
-  const restoreFrameName = receivedDesignDelivery ? activeDeliveryFrameName || selectedScopeOption?.label || selectedFrame?.name || "默认画板" : selectedScopeOption?.label || selectedFrame?.name || "默认画板";
-  const restoreItems = receivedDesignDelivery ? restoreItemsFromDelivery(receivedDesignDelivery) : selectedScopeOption?.items ?? [];
+  const restoreFrameId = receivedDesignDelivery ? activeDeliveryFrameId || selectedFrameId : selectedScopeItems[0]?.frameId || selectedFrameId;
+  const restoreFrameName = receivedDesignDelivery ? activeDeliveryFrameName || selectedScopeItems[0]?.frameName || selectedFrame?.name || "默认画板" : selectedScopeItems[0]?.frameName || selectedFrame?.name || "默认画板";
+  const restoreItems = receivedDesignDelivery ? restoreItemsFromDelivery(receivedDesignDelivery) : selectedScopeItems;
   const existingIssueRestoreTask = useMemo(() => {
     if (!restoreRevisionId) return null;
     return selectIssueRestoreTask(restoreTasks, issue.id, restoreRevisionId, receivedDesignDelivery?.id);
@@ -748,7 +828,6 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const currentStatusCopy = statusCopy(currentStatus);
   const controlsLocked = isLockedStatus(currentStatus);
   const primaryAgent = selectedAgent;
-  const primaryActionLabel = currentStatus === "failed" ? "重新交给 Agent" : isUiIssue ? "交给 UI Agent 还原" : "交给 Agent 还原";
   const staleReceivedStatus = !activeDesignDelivery && isFrontendIssue ? inactiveReceivedDelivery?.status : null;
   const displayStatusLabel = !roleReady
     ? "未标记"
@@ -778,7 +857,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const historyCount = sortedDesignDeliveries.length;
   const cancelReasonTooLong = cancelReason.length > 500;
   const canStartRestore = isUiIssue || !!receivedDesignDelivery;
-  const canHandoffToFrontend = isUiIssue && (currentStatus === "completed" || !!sourceDesignDelivery);
+  const canHandoffToFrontend = deliveryLinkageEnabled && isUiIssue && (currentStatus === "completed" || !!sourceDesignDelivery);
   const statusBadgeVariant: "secondary" | "destructive" | "outline" = activeDesignDelivery || currentStatus === "completed"
     ? "secondary"
     : staleReceivedStatus === "cancelled" || currentStatus === "failed" || currentStatus === "blocked"
@@ -900,94 +979,39 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
     onError: (error) => toast.error(error instanceof Error ? error.message : "提交 UI Agent 设计稿任务失败"),
   });
 
-  const createRestoreTask = useMutation({
-    mutationFn: async () => {
-      if (!restoreFileId || !restoreRevisionId || !restoreFrameId) throw new Error("请选择有效设计稿和画板");
-      return api.createDesignRestoreTask({
-        file_id: restoreFileId,
-        revision_id: restoreRevisionId,
-        issue_id: issue.id,
-        delivery_id: receivedDesignDelivery?.id,
-        input: createIssueDesignRestoreTaskInput({
-          issueId: issue.id,
-          projectId: issue.project_id,
-          restoreFileId,
-          restoreRevisionId,
-          restoreFrameId,
-          restoreFrameName,
-          restoreItems,
-          receivedDesignDelivery,
-        }),
-      });
-    },
-    onSuccess: async (task) => {
-      setRestoreTask(task);
-      await queryClient.invalidateQueries({ queryKey: designKeys.restoreTasks(wsId) });
-      toast.success("已创建设计还原任务");
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "创建设计还原任务失败"),
-  });
-
-  const runRestoreFlow = async () => {
-    if (currentStatus === "running" || currentStatus === "completed") return;
-    if (!primaryAgent) {
-      toast.error(restoreAgentUnavailableCopy(!!receivedDesignDelivery));
+  const prepareRestoreDraft = () => {
+    if (!restoreFileId || !restoreRevisionId || !restoreItems.length) {
+      toast.error("请选择有效设计稿和还原范围");
       return;
     }
-    setIsOrchestrating(true);
-    try {
-      const retryingFailedTask = activeRestoreTask?.status === "failed" || activeRestoreTask?.status === "cancelled";
-      let task = retryingFailedTask ? null : activeRestoreTask;
-      let plan = retryingFailedTask ? undefined : restorePlan;
-      if (!task) {
-        if (!restoreFileId || !restoreRevisionId || !restoreFrameId) throw new Error("请选择有效设计稿和交付范围");
-        task = await createRestoreTask.mutateAsync();
-      }
-      if (!plan) {
-        plan = await api.generateDesignRestorePlan(task.id);
-        await queryClient.invalidateQueries({ queryKey: designKeys.restorePlan(wsId, task.id) });
-      }
-      const candidates = targetCandidates(plan);
-      if (plan.status === "draft" && planNeedsTarget(plan) && candidates.length) {
-        plan = await api.updateDesignRestorePlan(task.id, {
-          plan: {
-            ...plan.plan,
-            targets: {
-              ...planTargets(plan),
-              selected: selectedTarget(plan) ?? candidates[0],
-              needsUserSelection: false,
-            },
-          },
-          review_notes: plan.review_notes ?? undefined,
-        });
-        await queryClient.invalidateQueries({ queryKey: designKeys.restorePlan(wsId, task.id) });
-      }
-      if (plan.status === "draft" && !planNeedsTarget(plan)) {
-        plan = await api.approveDesignRestorePlan(task.id);
-        await queryClient.invalidateQueries({ queryKey: designKeys.restorePlan(wsId, task.id) });
-      }
-      if (!retryingFailedTask && task.agent_task_id) {
-        toast.info("任务已派发，等待 Agent 领取");
-        return;
-      }
-      if (plan.status !== "approved") throw new Error("Restore Plan 尚未准备好，请打开完整 Restore Plan 查看");
-      const result = await api.dispatchDesignRestoreTask(task.id, {
-        agent_id: primaryAgent.id,
-        issue_id: issue.id,
-        prompt: restoreDispatchPrompt(!!receivedDesignDelivery),
-      });
-      setRestoreTask(result.task);
-      await queryClient.invalidateQueries({ queryKey: designKeys.restoreTask(wsId, result.task.id) });
-      await queryClient.invalidateQueries({ queryKey: designKeys.restoreTasks(wsId) });
-      await queryClient.invalidateQueries({ queryKey: designKeys.restoreMappings(wsId, result.task.id) });
-      toast.success(`已交给 Agent：${primaryAgent.name}`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "还原流程启动失败");
-    } finally {
-      setIsOrchestrating(false);
-    }
+    const targetRepo = repoResources.find((resource) => resource.id === targetResourceId) ?? null;
+    const calls = buildRestoreScopeCalls(restoreItems, restoreFileId, restoreRevisionId);
+    const lines = [
+      "【任务】",
+      "把下面的设计稿还原成前端页面/组件。",
+      "",
+      "【还原范围】",
+      `设计稿：${restoreFileId}`,
+      `版本：${restoreRevisionId}`,
+      targetRepo ? `目标仓库：${projectResourceLabel(targetRepo)}` : "目标仓库：请根据当前 Issue 关联项目自行判断。",
+      "",
+      "【执行步骤】",
+      "1. 调用 multica_design_get_restore_pack，参数如下：",
+      ...calls.map((call) => `   ${call}`),
+      "2. 先读仓库，定位每个画板/分组应落在哪个路由或组件；优先复用现有组件。",
+      "3. 按 Restore Pack 的 group/state 分组实现；同一业务页面的多状态/弹窗归到同一处。",
+      "",
+      "【约束】",
+      "- 禁止把整帧 preview/thumbnail 当作还原结果。",
+      "- 可见图层/导出资产优先使用。",
+      "- 无法结构化时明确说明阻塞，不要硬凑。",
+      "",
+      "【输出】",
+      "用自然语言说明：改动了哪些文件、每个画板/分组落在哪个组件/文件、跑了哪些检查、还有哪些阻塞。",
+    ];
+    useCommentDraftStore.getState().injectDraft(`new:${issue.id}`, lines.join("\n"));
+    toast.success("已生成还原提示到评论区");
   };
-  const primaryActionPending = createRestoreTask.isPending || isOrchestrating;
   const deliveryActionDisabled = !selectedDeliveryTargetIssue || !selectedFileId || !selectedRevisionId || !restoreFrameId || !restoreItems.length || createDelivery.isPending;
   const openActiveDelivery = () => {
     if (!activeDesignDelivery) return;
@@ -1030,8 +1054,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
               <Button
                 size="sm"
                 variant="ghost"
-                disabled={markDesignRole.isPending}
-                onClick={() => markDesignRole.mutate(ISSUE_DESIGN_ROLE_UI)}
+                onClick={() => toast.info("UI 设计即将上线")}
               >
                 设为 UI 设计
               </Button>
@@ -1039,9 +1062,9 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
                 size="sm"
                 variant="ghost"
                 disabled={markDesignRole.isPending}
-                onClick={() => markDesignRole.mutate(ISSUE_DESIGN_ROLE_FRONTEND)}
+                onClick={() => markDesignRole.mutate(ISSUE_DESIGN_ROLE_UI)}
               >
-                设为前端开发
+                设为 UI 还原
               </Button>
             </>
           ) : null}
@@ -1057,11 +1080,11 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="font-medium text-foreground">{displayStatusHint}</div>
-                <div className="mt-1 truncate text-muted-foreground">{activeDesignDelivery ? activeDeliveryScopeTitle : selectedScopeOption?.label || selectedFrame?.name || "默认画板"} · {primaryAgent?.name ?? "等待可用 Agent"}{agentTask ? ` · ${agentTask.status}` : ""}</div>
+                <div className="mt-1 truncate text-muted-foreground">{selectedScopeItems.length ? `已选 ${selectedScopeItems.length} 个画板` : selectedFrame?.name || "默认画板"} · {primaryAgent?.name ?? "等待可用 Agent"}{agentTask ? ` · ${agentTask.status}` : ""}</div>
               </div>
-              {activeDesignDelivery ? <span className="shrink-0 font-mono text-muted-foreground">{activeDesignDelivery.id.slice(0, 8)}</span> : activeRestoreTask ? <span className="shrink-0 font-mono text-muted-foreground">{activeRestoreTask.id.slice(0, 8)}</span> : null}
+              {activeRestoreTask ? <span className="shrink-0 font-mono text-muted-foreground">{activeRestoreTask.id.slice(0, 8)}</span> : null}
             </div>
-            {activeDesignDelivery ? (
+            {deliveryLinkageEnabled && activeDesignDelivery ? (
               <div className="mt-3 space-y-2 border-t pt-2">
                 <div className="grid grid-cols-2 gap-2 text-muted-foreground">
                   <div className="min-w-0">
@@ -1108,7 +1131,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
                 </div>
               </div>
             ) : null}
-            {!activeDesignDelivery && historyCount ? (
+            {deliveryLinkageEnabled && !activeDesignDelivery && historyCount ? (
               <div className="mt-3 flex items-center justify-between gap-3 rounded-md bg-muted px-2 py-1.5 text-muted-foreground">
                 <span>{staleReceivedStatus === "superseded" ? "收到的设计交付已被更新覆盖" : staleReceivedStatus === "cancelled" ? "收到的设计交付已撤回" : `已有 ${historyCount} 次历史交付记录`}</span>
                 <Button size="sm" variant="ghost" onClick={() => setDeliveryHistoryOpen(true)}>
@@ -1118,7 +1141,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
             ) : null}
           </div>
           ) : null}
-        {roleReady && isUiIssue ? (
+        {designDraftGenerationEnabled && roleReady && isUiIssue ? (
           <div className="rounded-md border bg-background p-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -1157,18 +1180,84 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
             <div className="space-y-2 border-t p-2">
               {!receivedDesignDelivery ? (
                 <>
-                  <select value={selectedFileId} onChange={(event) => { setFileId(event.target.value); setScopeOptionId(""); }} className="h-8 w-full rounded-md border bg-background px-2">
+                  <select value={selectedFileId} onChange={(event) => { setFileId(event.target.value); setSelectedFrameIds([]); }} className="h-8 w-full rounded-md border bg-background px-2">
                     {projectDesignFiles.length ? projectDesignFiles.map((file) => <option key={file.id} value={file.id}>{file.title}</option>) : <option value="">当前项目暂无设计稿</option>}
                   </select>
-                  <select value={selectedScopeOption?.id ?? ""} onChange={(event) => setScopeOptionId(event.target.value)} className="h-8 w-full rounded-md border bg-background px-2" disabled={!scopeOptions.length}>
-                    {scopeOptions.length ? scopeOptions.map((option) => {
-                      const item = option.items[0];
-                      const labelText = option.kind === "figma_group"
-                        ? `${option.label} · ${option.items.length} 个画板`
-                        : item?.groupName ? `${item.groupName} / ${option.label}` : option.label;
-                      return <option key={option.id} value={option.id}>{labelText}</option>;
-                    }) : <option value="">暂无交付范围</option>}
-                  </select>
+                  <div className="rounded-md border bg-background p-2">
+                    <div className="mb-1 text-caption font-medium text-muted-foreground">还原范围（可多选，悬停查看缩略图）</div>
+                    {scopeOptions.length ? (
+                      <div className="max-h-60 space-y-1 overflow-y-auto pr-1">
+                        {groupOptions.map((option) => {
+                          const ids = option.items.map((item) => item.frameId);
+                          const allSelected = ids.length > 0 && ids.every((id) => selectedFrameIdSet.has(id));
+                          const groupThumb = framePreviewUrl(nativeJson, ids[0] ?? "", selectedFileDetail?.file?.thumbnail_url ?? null);
+                          return (
+                            <div key={option.id}>
+                              <HoverCard>
+                                <HoverCardTrigger render={
+                                  <label className="flex w-full cursor-pointer items-center gap-2 rounded px-1 py-1 hover:bg-muted">
+                                    <input type="checkbox" className="size-4 accent-primary" checked={allSelected} onChange={(event) => toggleScopeFrameIds(ids, event.target.checked)} />
+                                    <span className="truncate text-caption font-medium">{option.label} · {option.items.length} 个画板</span>
+                                  </label>
+                                } />
+                                <HoverCardContent className="w-auto p-2">
+                                  {groupThumb ? <img src={groupThumb} alt={option.label} className="max-h-48 max-w-64 rounded-md border" loading="lazy" /> : <span className="text-caption text-muted-foreground">暂无缩略图</span>}
+                                </HoverCardContent>
+                              </HoverCard>
+                              <div className="ml-5 space-y-0.5 border-l pl-2">
+                                {option.items.map((item) => {
+                                  const checked = selectedFrameIdSet.has(item.frameId);
+                                  const thumb = framePreviewUrl(nativeJson, item.frameId, selectedFileDetail?.file?.thumbnail_url ?? null);
+                                  return (
+                                    <HoverCard key={item.frameId}>
+                                      <HoverCardTrigger render={
+                                        <label className="flex w-full cursor-pointer items-center gap-2 rounded px-1 py-1 hover:bg-muted">
+                                          <input type="checkbox" className="size-4 accent-primary" checked={checked} onChange={(event) => toggleScopeFrameIds([item.frameId], event.target.checked)} />
+                                          <span className="truncate text-caption">{item.frameName}</span>
+                                        </label>
+                                      } />
+                                      <HoverCardContent className="w-auto p-2">
+                                        {thumb ? <img src={thumb} alt={item.frameName} className="max-h-48 max-w-64 rounded-md border" loading="lazy" /> : <span className="text-caption text-muted-foreground">暂无缩略图</span>}
+                                      </HoverCardContent>
+                                    </HoverCard>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {ungroupedOptions.map((option) => {
+                          const item = option.items[0];
+                          if (!item) return null;
+                          const checked = selectedFrameIdSet.has(item.frameId);
+                          const thumb = framePreviewUrl(nativeJson, item.frameId, selectedFileDetail?.file?.thumbnail_url ?? null);
+                          return (
+                            <HoverCard key={option.id}>
+                              <HoverCardTrigger render={
+                                <label className="flex w-full cursor-pointer items-center gap-2 rounded px-1 py-1 hover:bg-muted">
+                                  <input type="checkbox" className="size-4 accent-primary" checked={checked} onChange={(event) => toggleScopeFrameIds([item.frameId], event.target.checked)} />
+                                  <span className="truncate text-caption">{item.frameName}</span>
+                                </label>
+                              } />
+                              <HoverCardContent className="w-auto p-2">
+                                {thumb ? <img src={thumb} alt={item.frameName} className="max-h-48 max-w-64 rounded-md border" loading="lazy" /> : <span className="text-caption text-muted-foreground">暂无缩略图</span>}
+                              </HoverCardContent>
+                            </HoverCard>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-caption text-muted-foreground">暂无交付范围</div>
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-caption font-medium text-muted-foreground">目标仓库（可选）</label>
+                    <select value={targetResourceId} onChange={(event) => setTargetResourceId(event.target.value)} className="h-8 w-full rounded-md border bg-background px-2 text-caption">
+                      <option value="">让 Agent 自行判断</option>
+                      {repoResources.map((resource) => <option key={resource.id} value={resource.id}>{projectResourceLabel(resource)}</option>)}
+                    </select>
+                    {!repoResources.length ? <div className="mt-1 text-caption text-muted-foreground">当前项目暂无关联仓库</div> : null}
+                  </div>
                 </>
               ) : null}
               <select value={primaryAgent?.id ?? ""} onChange={(event) => setAgentId(event.target.value)} className="h-8 w-full rounded-md border bg-background px-2" disabled={!availableAgents.length}>
@@ -1178,9 +1267,7 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
           </details>
         ) : null}
         {roleReady && !availableAgents.length ? <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">当前没有绑定 runtime 的可用 Agent。请先创建/恢复 Agent，否则无法派发。</div> : null}
-        {roleReady && !controlsLocked && canStartRestore && (!activeRestoreTask?.agent_task_id || currentStatus === "failed") ? <Button size="sm" variant={isUiIssue ? "default" : "default"} className="w-full" disabled={!restoreFileId || !restoreFrameId || primaryActionPending || !primaryAgent} onClick={() => void runRestoreFlow()}><WandSparkles className="size-3.5" />{primaryActionPending ? "正在准备…" : primaryActionLabel}</Button> : null}
-        {roleReady && isUiIssue && !parentIssueId ? <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">UI 设计 Issue 需要位于父 Issue 下，才能交付给同级前端开发。</div> : null}
-        {roleReady && isUiIssue && parentIssueId && !deliveryTargets.length ? <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">未找到可交付的同级子 Issue。请先创建前端开发 Issue，或在对应子 Issue 中设为前端开发。</div> : null}
+        {roleReady && !controlsLocked && canStartRestore && (!activeRestoreTask?.agent_task_id || currentStatus === "failed") ? <Button size="sm" className="w-full" disabled={!restoreFileId || !restoreRevisionId || !restoreItems.length} onClick={() => prepareRestoreDraft()}><WandSparkles className="size-3.5" />生成还原提示</Button> : null}
         {roleReady ? <RestoreExecutionDiagnostic task={activeRestoreTask} /> : null}
         {canHandoffToFrontend ? (
           <details className="rounded-md border bg-background/60">

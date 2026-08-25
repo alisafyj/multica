@@ -434,7 +434,7 @@ describe("comment composers", () => {
     });
 
     expect(useCommentDraftStore.getState().getDraft("new:issue-1")).toBe("test.de");
-    expect(editorDefaultValues.values.at(-1)).toBeUndefined();
+    expect(editorDefaultValues.values.at(-1)).toBe("");
   });
 
   it("keeps the reply editor's initial draft snapshot after persistence rerenders", () => {

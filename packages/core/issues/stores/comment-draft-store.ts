@@ -71,6 +71,11 @@ interface CommentDraftStore {
   /** Drop a placeholder (e.g. a dismissed failure). */
   removeUpload: (key: CommentDraftKey, clientUploadId: string) => void;
   clearDraft: (key: CommentDraftKey) => void;
+  /** Non-persisted nonce map used by composers to remount when an external
+   *  flow (e.g. the design restore sidebar) injects a draft body. */
+  draftInjections: Record<string, number>;
+  /** Write a draft body from outside the composer and signal a remount. */
+  injectDraft: (key: CommentDraftKey, content: string) => void;
 }
 
 // Drafts older than 30 days are dropped on store init. Without TTL the store
@@ -156,6 +161,7 @@ export const useCommentDraftStore = create<CommentDraftStore>()(
   persist(
     (set, get) => ({
       drafts: {},
+      draftInjections: {},
       getDraft: (key) => get().drafts[key]?.content,
       getAttachments: (key) => deriveUploaded(uploadsOf(get().drafts, key)),
       getUploads: (key) => uploadsOf(get().drafts, key),
@@ -235,9 +241,18 @@ export const useCommentDraftStore = create<CommentDraftStore>()(
           delete next[key];
           return { drafts: next };
         }),
+      injectDraft: (key, content) =>
+        set((s) => ({
+          drafts: writeDraft(s.drafts, key, content, uploadsOf(s.drafts, key)),
+          draftInjections: {
+            ...s.draftInjections,
+            [key]: (s.draftInjections[key] ?? 0) + 1,
+          },
+        })),
     }),
     {
       name: "multica_comment_drafts",
+      partialize: (state) => ({ drafts: state.drafts }),
       storage: createJSONStorage(() => createWorkspaceAwareStorage(defaultStorage)),
       onRehydrateStorage: () => (state) => {
         if (state) {
