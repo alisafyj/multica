@@ -530,6 +530,37 @@ describe("DesignTaskComposer", () => {
     expect((createDesignDocument.mock.calls[0]?.[0] as Record<string, unknown>).recipe).toBe("deck");
   });
 
+  // The example wall scopes itself to what the armed chip produces. It used to
+  // do that only for the prototype family and show the WHOLE catalogue for
+  // anything else, so arming 幻灯片 built its facet row out of deck, image and
+  // prototype categories at once and offered 分镜 next to 企业战略.
+  it("shows the armed scenario's own facets on the example wall", async () => {
+    const user = userEvent.setup();
+    listDesignScenarioRecipes.mockResolvedValue({
+      recipes: [
+        RECIPE,
+        { ...RECIPE, slug: "pitch", title: "路演稿", category: "融资路演", mode: "deck" },
+        { ...RECIPE, slug: "qbr", title: "季度评审", category: "企业战略", mode: "deck" },
+        { ...RECIPE, slug: "storyboard", title: "分镜脚本", category: "分镜", mode: "image" },
+      ],
+    });
+    renderComposer();
+
+    // Wait for the wall itself: its facets only exist once the catalogue has
+    // landed, and the create rail above it renders long before that.
+    await screen.findByRole("button", { name: "融资路演" });
+    expect(screen.getByRole("button", { name: "分镜" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "业务系统" })).toBeInTheDocument();
+
+    // Arming 幻灯片 narrows it to what a deck is filed under — an image
+    // catalogue's 分镜 is not a slide facet, and neither is a prototype's.
+    await user.click(screen.getByRole("button", { name: "幻灯片" }));
+
+    expect(await screen.findByRole("button", { name: "融资路演" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "分镜" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "业务系统" })).not.toBeInTheDocument();
+  });
+
   // The rail lays out the whole surface, so a scenario with no producer holds
   // its place — but it has to say what is actually missing. These are not one
   // queue: a video needs a deliverable this package cannot hold, and a live

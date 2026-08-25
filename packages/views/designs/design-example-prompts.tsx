@@ -32,6 +32,29 @@ const VISIBLE_CATEGORY_COUNT = 6;
  */
 export const PROTOTYPE_FAMILY: ReadonlySet<string> = new Set(["ui-mockup", "wireframe", "mobile-app"]);
 
+/**
+ * What each built-in chip produces, in the catalogue's own `mode` vocabulary.
+ *
+ * The wall used to scope itself only for the prototype family and show the
+ * WHOLE catalogue for anything else — so arming 幻灯片 built its category row
+ * out of deck, image, video and prototype facets at once, and offered 分镜 and
+ * UI / 产品样机 next to 企业战略. Every chip that produces something now says
+ * which mode that is, and the wall shows that mode's facets and nothing else.
+ *
+ * 文档 is a prototype-mode recipe, not a mode of its own: the catalogue files
+ * a long-form piece under prototype's 文档 / 报告 facet, which is the row this
+ * mapping puts in front of the user.
+ */
+const RECIPE_CATALOGUE_MODE: Readonly<Record<string, string>> = {
+  "ui-mockup": "prototype",
+  wireframe: "prototype",
+  "mobile-app": "prototype",
+  "web-clone": "prototype",
+  "figma-migration": "prototype",
+  "long-form": "prototype",
+  deck: "deck",
+};
+
 export type PrototypeFamilyRecipe = "ui-mockup" | "wireframe" | "mobile-app";
 
 /**
@@ -111,11 +134,14 @@ export function DesignExamplePrompts({
   const [category, setCategory] = useState(ALL_CATEGORIES);
 
   const sceneMode = !!onPickPrototypeScene && PROTOTYPE_FAMILY.has(recipe);
-  // While 原型 is armed the wall shows what 原型 produces, as Open Design
-  // scopes its example wall to the active chip.
+  // The wall shows what the armed chip produces, as Open Design scopes its
+  // example wall to the active chip. An unmapped recipe — the free-form
+  // default, or a community slug whose mode this component never sees — scopes
+  // to nothing, which is the honest answer for "no particular kind".
+  const armedMode = RECIPE_CATALOGUE_MODE[recipe];
   const recipes = useMemo(
-    () => (sceneMode ? allRecipes.filter((item) => item.mode === "prototype") : allRecipes),
-    [allRecipes, sceneMode],
+    () => (armedMode ? allRecipes.filter((item) => item.mode === armedMode) : allRecipes),
+    [allRecipes, armedMode],
   );
 
   const categories = useMemo(
