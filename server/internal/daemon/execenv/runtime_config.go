@@ -188,6 +188,7 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 // For Cursor:   writes {workDir}/AGENTS.md  (skills discovered natively from .cursor/skills/)
 // For Kimi:        writes {workDir}/AGENTS.md  (Kimi Code CLI reads AGENTS.md natively; skills auto-discovered from project skills dirs)
 // For Reasonix:    writes {workDir}/AGENTS.md  (Reasonix reads AGENTS.md and .reasonix/skills/ natively)
+// For DSH:         writes {workDir}/AGENTS.md  (DSH reads AGENTS.md and .dsh/skills/ natively)
 // For Kiro:        writes {workDir}/AGENTS.md  (Kiro CLI reads AGENTS.md natively; skills auto-discovered from project skills dirs)
 // For Qoder/Qoder CN: writes {workDir}/AGENTS.md  (skills discovered from .qoder/skills/; user-level roots are unaffected)
 // For Antigravity: writes {workDir}/AGENTS.md  (agy CLI reads AGENTS.md natively; skills discovered natively from .agents/skills/ — see https://antigravity.google/docs/gcli-migration)
@@ -230,7 +231,7 @@ func runtimeConfigPath(workDir, provider string) string {
 		return filepath.Join(workDir, "CODEBUDDY.md")
 	case "qwen":
 		return filepath.Join(workDir, "QWEN.md")
-	case "codex", "copilot", "opencode", "deveco", "openclaw", "hermes", "pi", "cursor", "kimi", "reasonix", "kiro", "antigravity", "qoder", "qoderclicn", "traecli", "grok", "qwenpaw":
+	case "codex", "copilot", "opencode", "deveco", "openclaw", "hermes", "pi", "cursor", "kimi", "reasonix", "dsh", "kiro", "antigravity", "qoder", "qoderclicn", "traecli", "grok", "qwenpaw", "mcode", "dim", "zeroclaw":
 		return filepath.Join(workDir, "AGENTS.md")
 	default:
 		return ""
@@ -660,13 +661,13 @@ func buildMetaSkillContentFull(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("Hard guardrails:\n")
 		b.WriteString("- Do NOT call `multica issue get`, `multica issue status`, or `multica issue comment add` for this task.\n")
 		b.WriteString("- Do NOT modify repositories, call Figma, or upload design files.\n")
-		b.WriteString("- Write `DESIGN.md`, `tokens.css`, and `components.html` to `MULTICA_OUTPUT_DIR`.\n\n")
+		b.WriteString("- Write the design system package to `MULTICA_OUTPUT_DIR`, following the package contract in the user message exactly. Any file outside that contract is rejected before the audit runs.\n\n")
 	} else if ctx.DesignDocumentContext != "" {
-		b.WriteString("**This task creates a Native V2 Design Document.** Read `.agent_context/design_document/context/task.json`; ignore the default Issue workflow.\n\n")
+		b.WriteString("**This task creates a page-design Design Document.** Read `.agent_context/design_document/context/task.json` and follow the package contract in the user message; ignore the default assignment-task workflow.\n\n")
 		b.WriteString("Hard guardrails:\n")
-		b.WriteString("- Do NOT call `multica issue get`, `multica issue status`, or `multica issue comment add`.\n")
+		b.WriteString("- Do NOT call `multica issue get`, `multica issue status`, or `multica issue comment add` for this task.\n")
 		b.WriteString("- Treat `context/` and `reference/` as read-only and do not modify repository checkouts.\n")
-		b.WriteString("- Write the complete staged package to `MULTICA_OUTPUT_DIR`; do not create `manifest.json`.\n\n")
+		b.WriteString("- Write the complete package to `MULTICA_OUTPUT_DIR`, following the package contract in the user message exactly. Any file outside that contract is rejected before the audit runs.\n\n")
 	} else if ctx.AutopilotRunID != "" {
 		// Autopilot run_only task: no issue exists, so the agent must not
 		// follow the assignment/comment workflow.
@@ -836,9 +837,9 @@ func buildMetaSkillContentFull(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- Output exactly one JSON object, no markdown or prose.\n")
 		b.WriteString("- Include `profile_json`, `analysis_errors`, and `summary`.\n")
 	case ctx.ProjectDesignSystemContext != "":
-		b.WriteString("This is a project design system task. The platform reads the three files from `MULTICA_OUTPUT_DIR`; final stdout is only a short completion summary.\n")
+		b.WriteString("This is a project design system task. The platform reads the package files from `MULTICA_OUTPUT_DIR`; final stdout is only a short completion summary.\n")
 	case ctx.DesignDocumentContext != "":
-		b.WriteString("This is a Design Document task. The platform reads the staged package from `MULTICA_OUTPUT_DIR`; final stdout is only a short completion summary.\n")
+		b.WriteString("This is a Design Document task. The platform reads the package files from `MULTICA_OUTPUT_DIR`; final stdout is only a short completion summary.\n")
 	default:
 		if ctx.IsSquadLeader {
 			b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`** — unless your outcome is `no_action`. When you evaluate a trigger and decide no action is needed, calling `multica squad activity <issue-id> no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment that announces no_action, acknowledges another agent, or says you are exiting silently — such comments are noise. For all other outcomes (`action`, `failed`), a comment is still mandatory.\n\n")

@@ -1,0 +1,8 @@
+{
+  "id": "posthog",
+  "name": "PostHog",
+  "category": "Backend & Data",
+  "category_zh": "后端与数据",
+  "description": "Bundled Open Design package for PostHog, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "产品分析。刺猬品牌，开发者友好的深色 UI。"
+}

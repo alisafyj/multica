@@ -94,7 +94,7 @@ UPDATE project_design_system SET
 WHERE id = $1
   AND workspace_id = $2
   AND active_task_id = $3
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
 `
 
 type ClearProjectDesignSystemActiveTaskParams struct {
@@ -121,6 +121,7 @@ func (q *Queries) ClearProjectDesignSystemActiveTask(ctx context.Context, arg Cl
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SavedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
@@ -131,7 +132,7 @@ UPDATE project_design_system SET
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $2
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
 `
 
 type ClearProjectDesignSystemDraftStateParams struct {
@@ -157,6 +158,7 @@ func (q *Queries) ClearProjectDesignSystemDraftState(ctx context.Context, arg Cl
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SavedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
@@ -172,7 +174,7 @@ WHERE id = $2
   AND workspace_id = $3
   AND active_task_id = $4
   AND active_operation = 'repository_analysis'
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
 `
 
 type CompleteProjectDesignSystemRepositoryAnalysisParams struct {
@@ -205,6 +207,7 @@ func (q *Queries) CompleteProjectDesignSystemRepositoryAnalysis(ctx context.Cont
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SavedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
@@ -1139,6 +1142,7 @@ const createProjectDesignSystem = `-- name: CreateProjectDesignSystem :one
 INSERT INTO project_design_system (
     workspace_id,
     project_id,
+    project_resource_id,
     name,
     platform,
     current_agent_id,
@@ -1158,30 +1162,33 @@ SELECT
     $7,
     $8,
     $9,
-    $10
+    $10,
+    $11
 FROM project
 WHERE project.id = $2
   AND project.workspace_id = $1
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
 `
 
 type CreateProjectDesignSystemParams struct {
-	WorkspaceID     pgtype.UUID `json:"workspace_id"`
-	ProjectID       pgtype.UUID `json:"project_id"`
-	Name            string      `json:"name"`
-	Platform        string      `json:"platform"`
-	CurrentAgentID  pgtype.UUID `json:"current_agent_id"`
-	ActiveTaskID    pgtype.UUID `json:"active_task_id"`
-	ActiveOperation pgtype.Text `json:"active_operation"`
-	InputSnapshot   []byte      `json:"input_snapshot"`
-	LastError       []byte      `json:"last_error"`
-	CreatedBy       pgtype.UUID `json:"created_by"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	ProjectID         pgtype.UUID `json:"project_id"`
+	ProjectResourceID pgtype.UUID `json:"project_resource_id"`
+	Name              string      `json:"name"`
+	Platform          string      `json:"platform"`
+	CurrentAgentID    pgtype.UUID `json:"current_agent_id"`
+	ActiveTaskID      pgtype.UUID `json:"active_task_id"`
+	ActiveOperation   pgtype.Text `json:"active_operation"`
+	InputSnapshot     []byte      `json:"input_snapshot"`
+	LastError         []byte      `json:"last_error"`
+	CreatedBy         pgtype.UUID `json:"created_by"`
 }
 
 func (q *Queries) CreateProjectDesignSystem(ctx context.Context, arg CreateProjectDesignSystemParams) (ProjectDesignSystem, error) {
 	row := q.db.QueryRow(ctx, createProjectDesignSystem,
 		arg.WorkspaceID,
 		arg.ProjectID,
+		arg.ProjectResourceID,
 		arg.Name,
 		arg.Platform,
 		arg.CurrentAgentID,
@@ -1207,6 +1214,7 @@ func (q *Queries) CreateProjectDesignSystem(ctx context.Context, arg CreateProje
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SavedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
@@ -1332,6 +1340,83 @@ func (q *Queries) CreateSemanticDesignDraft(ctx context.Context, arg CreateSeman
 		&i.RecipeSetID,
 		&i.ParentDraftID,
 		&i.Version,
+	)
+	return i, err
+}
+
+const createStandaloneDesignSystem = `-- name: CreateStandaloneDesignSystem :one
+INSERT INTO project_design_system (
+    workspace_id,
+    project_id,
+    project_resource_id,
+    name,
+    platform,
+    current_agent_id,
+    active_task_id,
+    active_operation,
+    input_snapshot,
+    last_error,
+    created_by
+)
+SELECT
+    $1,
+    NULL,
+    NULL,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
+`
+
+type CreateStandaloneDesignSystemParams struct {
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	Name            string      `json:"name"`
+	Platform        string      `json:"platform"`
+	CurrentAgentID  pgtype.UUID `json:"current_agent_id"`
+	ActiveTaskID    pgtype.UUID `json:"active_task_id"`
+	ActiveOperation pgtype.Text `json:"active_operation"`
+	InputSnapshot   []byte      `json:"input_snapshot"`
+	LastError       []byte      `json:"last_error"`
+	CreatedBy       pgtype.UUID `json:"created_by"`
+}
+
+// The standalone twin of CreateProjectDesignSystem: the row belongs to the
+// workspace itself (project_id NULL), so there is no project row to gate the
+// insert on and the name comes from the requester.
+func (q *Queries) CreateStandaloneDesignSystem(ctx context.Context, arg CreateStandaloneDesignSystemParams) (ProjectDesignSystem, error) {
+	row := q.db.QueryRow(ctx, createStandaloneDesignSystem,
+		arg.WorkspaceID,
+		arg.Name,
+		arg.Platform,
+		arg.CurrentAgentID,
+		arg.ActiveTaskID,
+		arg.ActiveOperation,
+		arg.InputSnapshot,
+		arg.LastError,
+		arg.CreatedBy,
+	)
+	var i ProjectDesignSystem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Platform,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
@@ -1602,6 +1687,37 @@ type DeleteProjectDesignSystemPackageSlotParams struct {
 
 func (q *Queries) DeleteProjectDesignSystemPackageSlot(ctx context.Context, arg DeleteProjectDesignSystemPackageSlotParams) error {
 	_, err := q.db.Exec(ctx, deleteProjectDesignSystemPackageSlot, arg.DesignSystemID, arg.Slot, arg.WorkspaceID)
+	return err
+}
+
+const deleteProjectDesignSystemsByResource = `-- name: DeleteProjectDesignSystemsByResource :exec
+WITH deleted_packages AS (
+    DELETE FROM project_design_system_package
+    WHERE project_design_system_package.design_system_id IN (
+        SELECT project_design_system.id
+        FROM project_design_system
+        WHERE project_design_system.workspace_id = $1
+          AND project_design_system.project_resource_id = $2
+    )
+    RETURNING project_design_system_package.id
+)
+DELETE FROM project_design_system
+WHERE project_design_system.workspace_id = $1
+  AND project_design_system.project_resource_id = $2
+  AND (SELECT count(*) FROM deleted_packages) >= 0
+`
+
+type DeleteProjectDesignSystemsByResourceParams struct {
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	ProjectResourceID pgtype.UUID `json:"project_resource_id"`
+}
+
+// Repository deletion clears the system it owns, packages first. The column
+// carries no foreign key per repository policy, so the caller runs this in
+// the same transaction as the project_resource delete. Mirrors the CTE shape
+// the project-delete path already uses.
+func (q *Queries) DeleteProjectDesignSystemsByResource(ctx context.Context, arg DeleteProjectDesignSystemsByResourceParams) error {
+	_, err := q.db.Exec(ctx, deleteProjectDesignSystemsByResource, arg.WorkspaceID, arg.ProjectResourceID)
 	return err
 }
 
@@ -2857,9 +2973,10 @@ func (q *Queries) GetNextSemanticDesignDraftVersion(ctx context.Context, arg Get
 
 const getProjectDesignSystemByProject = `-- name: GetProjectDesignSystemByProject :one
 
-SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at FROM project_design_system
+SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id FROM project_design_system
 WHERE workspace_id = $1
   AND project_id = $2
+  AND project_resource_id IS NULL
 `
 
 type GetProjectDesignSystemByProjectParams struct {
@@ -2868,6 +2985,8 @@ type GetProjectDesignSystemByProjectParams struct {
 }
 
 // Project design systems
+// Project-level system: the one used across repositories and whenever a
+// design task runs without a repository (DC-052 / DC-053).
 func (q *Queries) GetProjectDesignSystemByProject(ctx context.Context, arg GetProjectDesignSystemByProjectParams) (ProjectDesignSystem, error) {
 	row := q.db.QueryRow(ctx, getProjectDesignSystemByProject, arg.WorkspaceID, arg.ProjectID)
 	var i ProjectDesignSystem
@@ -2886,12 +3005,51 @@ func (q *Queries) GetProjectDesignSystemByProject(ctx context.Context, arg GetPr
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SavedAt,
+		&i.ProjectResourceID,
+	)
+	return i, err
+}
+
+const getProjectDesignSystemByResource = `-- name: GetProjectDesignSystemByResource :one
+SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id FROM project_design_system
+WHERE workspace_id = $1
+  AND project_id = $2
+  AND project_resource_id = $3
+`
+
+type GetProjectDesignSystemByResourceParams struct {
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	ProjectID         pgtype.UUID `json:"project_id"`
+	ProjectResourceID pgtype.UUID `json:"project_resource_id"`
+}
+
+// The system owned by one repository. Callers fall back to
+// GetProjectDesignSystemByProject when this returns no rows.
+func (q *Queries) GetProjectDesignSystemByResource(ctx context.Context, arg GetProjectDesignSystemByResourceParams) (ProjectDesignSystem, error) {
+	row := q.db.QueryRow(ctx, getProjectDesignSystemByResource, arg.WorkspaceID, arg.ProjectID, arg.ProjectResourceID)
+	var i ProjectDesignSystem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Platform,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
 
 const getProjectDesignSystemInWorkspace = `-- name: GetProjectDesignSystemInWorkspace :one
-SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at FROM project_design_system
+SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id FROM project_design_system
 WHERE id = $1
   AND workspace_id = $2
 `
@@ -2919,12 +3077,13 @@ func (q *Queries) GetProjectDesignSystemInWorkspace(ctx context.Context, arg Get
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SavedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
 
 const getProjectDesignSystemInWorkspaceForUpdate = `-- name: GetProjectDesignSystemInWorkspaceForUpdate :one
-SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at FROM project_design_system
+SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id FROM project_design_system
 WHERE id = $1
   AND workspace_id = $2
 FOR UPDATE
@@ -2953,6 +3112,7 @@ func (q *Queries) GetProjectDesignSystemInWorkspaceForUpdate(ctx context.Context
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SavedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
@@ -4058,7 +4218,7 @@ func (q *Queries) ListDesignTemplates(ctx context.Context, workspaceID pgtype.UU
 }
 
 const listProjectDesignSystemTasks = `-- name: ListProjectDesignSystemTasks :many
-SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, plugin_execution_manifest_id, branch_name FROM agent_task_queue
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision FROM agent_task_queue
 WHERE context->>'project_design_system_id' = $1::uuid::text
   AND context->>'workspace_id' = $2::uuid::text
   AND EXISTS (
@@ -4138,8 +4298,139 @@ func (q *Queries) ListProjectDesignSystemTasks(ctx context.Context, arg ListProj
 			&i.RetiredSessionID,
 			&i.QuickActionsDisabled,
 			&i.RegenerateQuickActionsFor,
-			&i.PluginExecutionManifestID,
 			&i.BranchName,
+			&i.DurableWorkDir,
+			&i.ChannelContextRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectDesignSystemsByProject = `-- name: ListProjectDesignSystemsByProject :many
+SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id FROM project_design_system
+WHERE workspace_id = $1
+  AND project_id = $2
+ORDER BY (project_resource_id IS NOT NULL), created_at
+`
+
+type ListProjectDesignSystemsByProjectParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+// Every system under a project, project-level row first so the scope
+// switcher can render it as the default entry.
+func (q *Queries) ListProjectDesignSystemsByProject(ctx context.Context, arg ListProjectDesignSystemsByProjectParams) ([]ProjectDesignSystem, error) {
+	rows, err := q.db.Query(ctx, listProjectDesignSystemsByProject, arg.WorkspaceID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectDesignSystem{}
+	for rows.Next() {
+		var i ProjectDesignSystem
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.Name,
+			&i.Platform,
+			&i.CurrentAgentID,
+			&i.ActiveTaskID,
+			&i.ActiveOperation,
+			&i.InputSnapshot,
+			&i.LastError,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SavedAt,
+			&i.ProjectResourceID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSavedProjectDesignSystemsInWorkspace = `-- name: ListSavedProjectDesignSystemsInWorkspace :many
+SELECT project_design_system.id, project_design_system.workspace_id, project_design_system.project_id, project_design_system.name, project_design_system.platform, project_design_system.current_agent_id, project_design_system.active_task_id, project_design_system.active_operation, project_design_system.input_snapshot, project_design_system.last_error, project_design_system.created_by, project_design_system.created_at, project_design_system.updated_at, project_design_system.saved_at, project_design_system.project_resource_id, project.title AS project_title,
+       EXISTS (
+           SELECT 1 FROM project_design_system_package
+           WHERE project_design_system_package.design_system_id = project_design_system.id
+             AND project_design_system_package.slot = 'draft'
+       ) AS has_draft_package
+FROM project_design_system
+LEFT JOIN project ON project.id = project_design_system.project_id
+WHERE project_design_system.workspace_id = $1
+  AND project_design_system.saved_at IS NOT NULL
+ORDER BY project_design_system.saved_at DESC
+`
+
+type ListSavedProjectDesignSystemsInWorkspaceRow struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	Name              string             `json:"name"`
+	Platform          string             `json:"platform"`
+	CurrentAgentID    pgtype.UUID        `json:"current_agent_id"`
+	ActiveTaskID      pgtype.UUID        `json:"active_task_id"`
+	ActiveOperation   pgtype.Text        `json:"active_operation"`
+	InputSnapshot     []byte             `json:"input_snapshot"`
+	LastError         []byte             `json:"last_error"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	SavedAt           pgtype.Timestamptz `json:"saved_at"`
+	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
+	ProjectTitle      pgtype.Text        `json:"project_title"`
+	HasDraftPackage   bool               `json:"has_draft_package"`
+}
+
+// The workspace-level catalogue (DC-054 / B1). Only systems that have
+// actually been saved are listed: a draft is not something another project
+// should be copying from, since nobody has accepted it yet (DC-034).
+// LEFT JOIN: a standalone system (project_id NULL) belongs to the workspace
+// itself and has no project title; it must still be listed, with the title
+// reading as absent rather than the row dropping out.
+// has_draft_package: a draft slot beside the saved one means the system is
+// being adjusted — the library row shows it as OD shows a draft system.
+func (q *Queries) ListSavedProjectDesignSystemsInWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]ListSavedProjectDesignSystemsInWorkspaceRow, error) {
+	rows, err := q.db.Query(ctx, listSavedProjectDesignSystemsInWorkspace, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSavedProjectDesignSystemsInWorkspaceRow{}
+	for rows.Next() {
+		var i ListSavedProjectDesignSystemsInWorkspaceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.Name,
+			&i.Platform,
+			&i.CurrentAgentID,
+			&i.ActiveTaskID,
+			&i.ActiveOperation,
+			&i.InputSnapshot,
+			&i.LastError,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SavedAt,
+			&i.ProjectResourceID,
+			&i.ProjectTitle,
+			&i.HasDraftPackage,
 		); err != nil {
 			return nil, err
 		}
@@ -4201,7 +4492,7 @@ UPDATE project_design_system SET
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $2
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
 `
 
 type MarkProjectDesignSystemSavedParams struct {
@@ -4227,6 +4518,7 @@ func (q *Queries) MarkProjectDesignSystemSaved(ctx context.Context, arg MarkProj
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SavedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
@@ -4426,7 +4718,7 @@ UPDATE project_design_system SET
 WHERE id = $2
   AND workspace_id = $3
   AND active_task_id = $4
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
 `
 
 type SetProjectDesignSystemFailureParams struct {
@@ -4459,6 +4751,7 @@ func (q *Queries) SetProjectDesignSystemFailure(ctx context.Context, arg SetProj
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SavedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
@@ -4841,7 +5134,7 @@ UPDATE project_design_system SET
     updated_at = now()
 WHERE id = $6
   AND workspace_id = $7
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
 `
 
 type UpdateProjectDesignSystemInputAndTaskParams struct {
@@ -4880,6 +5173,7 @@ func (q *Queries) UpdateProjectDesignSystemInputAndTask(ctx context.Context, arg
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SavedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }

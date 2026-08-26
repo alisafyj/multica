@@ -1,0 +1,8 @@
+{
+  "id": "hashicorp",
+  "name": "HashiCorp",
+  "category": "Backend & Data",
+  "category_zh": "后端与数据",
+  "description": "Bundled Open Design package for HashiCorp, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "基础设施自动化。企业级简洁，黑白配色。"
+}

@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -597,6 +598,7 @@ func (h *Handler) publishDesignReady(r *http.Request, file db.DesignFile, revisi
 	}
 	for _, member := range members {
 		item, err := h.Queries.CreateInboxItem(r.Context(), db.CreateInboxItemParams{
+			ID:            dbid.NewV7(),
 			WorkspaceID:   file.WorkspaceID,
 			RecipientType: "member",
 			RecipientID:   member.UserID,
@@ -1287,7 +1289,7 @@ func (h *Handler) enqueueDesignSystemProfileAnalyzeTask(ctx context.Context, que
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("marshal design system profile analysis context: %w", err)
 	}
-	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
+	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{ID: dbid.NewV7(), AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("create design system profile analysis task: %w", err)
 	}
@@ -1333,7 +1335,7 @@ func (h *Handler) enqueueDesignTemplateBlueprintAnalyzeTask(ctx context.Context,
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("marshal template blueprint analysis context: %w", err)
 	}
-	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
+	task, err := queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{ID: dbid.NewV7(), AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("create template blueprint analysis task: %w", err)
 	}
@@ -2948,6 +2950,7 @@ func (h *Handler) createDesignRestoreIssueSystemComment(ctx context.Context, iss
 		return
 	}
 	comment, err := h.Queries.CreateComment(ctx, db.CreateCommentParams{
+		ID:          dbid.NewV7(),
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 		AuthorType:  "system",
@@ -2961,7 +2964,7 @@ func (h *Handler) createDesignRestoreIssueSystemComment(ctx context.Context, iss
 		return
 	}
 	h.publish(protocol.EventCommentCreated, uuidToString(issue.WorkspaceID), "system", "", map[string]any{
-		"comment":             commentToResponse(comment, nil, nil),
+		"comment":             commentToResponse(comment.Comment(), nil, nil),
 		"issue_title":         issue.Title,
 		"issue_assignee_type": textToPtr(issue.AssigneeType),
 		"issue_assignee_id":   uuidToPtr(issue.AssigneeID),
@@ -3341,7 +3344,7 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to build restore task context")
 		return
 	}
-	agentTask, err := h.Queries.CreateQuickCreateTask(r.Context(), db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
+	agentTask, err := h.Queries.CreateQuickCreateTask(r.Context(), db.CreateQuickCreateTaskParams{ID: dbid.NewV7(), AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create agent task")
 		return
@@ -5784,7 +5787,7 @@ func (h *Handler) CreateDesignDraftAgentTask(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to build task context")
 		return
 	}
-	task, err := h.Queries.CreateQuickCreateTask(r.Context(), db.CreateQuickCreateTaskParams{AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
+	task, err := h.Queries.CreateQuickCreateTask(r.Context(), db.CreateQuickCreateTaskParams{ID: dbid.NewV7(), AgentID: agent.ID, RuntimeID: agent.RuntimeID, Priority: 0, Context: contextJSON})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enqueue design draft task")
 		return

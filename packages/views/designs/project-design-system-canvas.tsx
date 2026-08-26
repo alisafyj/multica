@@ -74,6 +74,9 @@ const TOKEN_GROUP_LABELS: Record<string, string> = {
   component: "组件 Token",
 };
 
+// The standalone detail page reuses these for its generating/failed branches.
+export { errorMessage as designSystemErrorMessage, isAgentAvailable as isDesignSystemAgentAvailable };
+
 const TOKEN_REFERENCE_PATTERN = /var\(\s*(--[-_a-zA-Z0-9]+)\s*\)/g;
 const MAX_TOKEN_REFERENCE_DEPTH = 24;
 const TYPOGRAPHY_PREVIEW_SAMPLE = "Aa";
@@ -299,9 +302,13 @@ function updateSystemCache(
   system: ProjectDesignSystem,
 ) {
   queryClient.setQueryData(designKeys.projectDesignSystem(wsId, system.id), system);
-  queryClient.setQueryData(
-    designKeys.projectDesignSystemByProject(wsId, system.project_id),
-    system,
+  // Refresh every repository scope currently showing this system instead of
+  // one rebuilt key: a repository without its own system reads the
+  // project-level one, so the cached scope is not derivable from the
+  // system's `project_resource_id` (DC-052).
+  queryClient.setQueriesData<ProjectDesignSystem>(
+    { queryKey: designKeys.projectDesignSystemProjectScopes(wsId, system.project_id) },
+    (previous) => (previous?.id === system.id ? system : previous),
   );
 }
 
@@ -476,7 +483,8 @@ export function ProjectDesignSystemCanvas({
   agents,
 }: {
   system: ProjectDesignSystem;
-  project: Project;
+  /** Absent for a standalone system: it belongs to no project. */
+  project?: Project;
   agents: Agent[];
 }) {
   const wsId = useWorkspaceId();
@@ -620,7 +628,7 @@ export function ProjectDesignSystemCanvas({
   );
   const saveActionLabel = system.saved_at ? "保存调整" : "保存为项目设计体系";
   const showSaveAction = !system.saved_at || system.has_unsaved_changes;
-  const showSystemTitle = Boolean(system.name.trim() && system.name.trim() !== project.title.trim());
+  const showSystemTitle = Boolean(project ? system.name.trim() && system.name.trim() !== project.title.trim() : system.name.trim());
   const isDiscardingAdjustment = Boolean(system.saved_at);
   const discardDisabled = Boolean(
     isBusy

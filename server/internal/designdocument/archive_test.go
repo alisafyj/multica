@@ -3,366 +3,681 @@ package designdocument
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
 
-func TestCollectDirectoryIsDeterministicAndSelfValidating(t *testing.T) {
+func TestCollectDirectoryBuildsDeterministicManifestAndArchive(t *testing.T) {
+	root := copyFixture(t)
 	binding := validBinding()
-	first, err := CollectDirectory(copyFixture(t), binding)
+
+	first, err := CollectDirectory(root, binding)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("CollectDirectory() error = %v", err)
 	}
-	second, err := CollectDirectory(copyFixture(t), binding)
+	second, err := CollectDirectory(root, binding)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("second CollectDirectory() error = %v", err)
 	}
 	if !bytes.Equal(first.Archive, second.Archive) {
-		t.Fatal("archives differ")
+		t.Fatal("CollectDirectory() archive is not byte deterministic")
 	}
-	if first.Manifest.ContentDigest != second.Manifest.ContentDigest {
-		t.Fatal("content digests differ")
+	if !reflect.DeepEqual(first.Manifest, second.Manifest) {
+		t.Fatal("CollectDirectory() manifest is not deterministic")
 	}
-	validated, err := ValidateArchive(first.Archive, binding)
+	if first.Manifest.SchemaVersion != PackageSchemaV1 || first.Manifest.Binding != binding {
+		t.Fatalf("manifest identity = %#v", first.Manifest)
+	}
+	if !strings.HasPrefix(first.Manifest.ContentDigest, "sha256:") || len(first.Manifest.ContentDigest) != 71 {
+		t.Fatalf("content digest = %q", first.Manifest.ContentDigest)
+	}
+	if first.Manifest.PrototypeEntry != "prototype/index.html" {
+		t.Fatalf("prototype entry = %q", first.Manifest.PrototypeEntry)
+	}
+	if !sort.SliceIsSorted(first.Manifest.Files, func(i, j int) bool {
+		return first.Manifest.Files[i].Path < first.Manifest.Files[j].Path
+	}) {
+		t.Fatalf("manifest files are not sorted: %#v", first.Manifest.Files)
+	}
+	wantTargets := []PreviewTarget{
+		{ID: "index", Kind: "prototype_entry", Path: "prototype/index.html"},
+		{ID: "orders", Kind: "prototype_page", Path: "prototype/orders.html"},
+	}
+	if !reflect.DeepEqual(first.Manifest.PreviewTargets, wantTargets) {
+		t.Fatalf("preview targets = %#v, want %#v", first.Manifest.PreviewTargets, wantTargets)
+	}
+	wantPages := []PageIndexEntry{
+		{
+			ID:       "page.order-detail",
+			Title:    "Order detail",
+			ParentID: "page.orders",
+			Entry:    "prototype/orders.html",
+			StateIDs: []string{"state.order-detail.default", "state.order-detail.approved"},
+		},
+		{
+			ID:       "page.orders",
+			Title:    "Order workspace",
+			Entry:    "prototype/index.html",
+			StateIDs: []string{"state.orders.loading", "state.orders.default", "state.orders.empty"},
+		},
+	}
+	if !reflect.DeepEqual(first.Manifest.Pages, wantPages) {
+		t.Fatalf("manifest pages = %#v, want %#v", first.Manifest.Pages, wantPages)
+	}
+	if !reflect.DeepEqual(first.Manifest.Flows, []FlowIndexEntry{{ID: "flow.approve-order", Title: "Approve one order"}}) {
+		t.Fatalf("manifest flows = %#v", first.Manifest.Flows)
+	}
+	if !first.Audit.Passed || first.Audit.SchemaVersion != AuditSchemaV1 {
+		t.Fatalf("audit = %#v", first.Audit)
+	}
+	if first.Audit.ContentDigest != first.Manifest.ContentDigest {
+		t.Fatalf("audit digest = %q, manifest digest = %q", first.Audit.ContentDigest, first.Manifest.ContentDigest)
+	}
+
+	script, err := ReadArtifact(first.Archive, first.Manifest.Files, "prototype/app.js")
+	if err != nil {
+		t.Fatalf("ReadArtifact() error = %v", err)
+	}
+	wantScript, err := os.ReadFile(filepath.Join(root, "prototype", "app.js"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !equalJSON(t, validated.Manifest, first.Manifest) {
-		t.Fatalf("manifest changed after validation")
+	if !bytes.Equal(script, wantScript) {
+		t.Fatal("ReadArtifact() returned different bytes")
 	}
-	if validated.Manifest.PrototypeEntry != "prototype/index.html" || len(validated.Manifest.PreviewTargets) != 1 || validated.Manifest.PreviewTargets[0].ID != "main" || validated.Manifest.PreviewTargets[0].Kind != "page" {
-		t.Fatalf("unexpected preview contract: %#v", validated.Manifest)
+
+	digestA, err := SnapshotDigest(json.RawMessage(`{"project":"crm","platform":"web"}`))
+	if err != nil {
+		t.Fatalf("SnapshotDigest() error = %v", err)
 	}
-	files := unzip(t, first.Archive)
-	var manifest map[string]any
-	if err := json.Unmarshal(files["manifest.json"], &manifest); err != nil {
-		t.Fatal(err)
+	digestB, err := SnapshotDigest(json.RawMessage(" { \n \"platform\" : \"web\", \"project\" : \"crm\" } "))
+	if err != nil {
+		t.Fatalf("SnapshotDigest() reordered error = %v", err)
 	}
-	if _, nested := manifest["binding"]; nested {
-		t.Fatal("manifest binding must be flat")
-	}
-	for _, field := range []string{"document_id", "revision_id", "workspace_id", "project_id", "task_id", "agent_id", "input_snapshot_sha256"} {
-		if manifest[field] == nil {
-			t.Fatalf("manifest is missing flat binding field %q", field)
-		}
-	}
-	for _, entry := range first.Manifest.Files {
-		if entry.Role == "" || len(entry.SHA256) != 64 || strings.Trim(entry.SHA256, "0123456789abcdef") != "" {
-			t.Fatalf("invalid manifest file entry: %#v", entry)
-		}
+	if digestA != digestB {
+		t.Fatalf("SnapshotDigest() = %q and %q for equivalent JSON", digestA, digestB)
 	}
 }
 
-func TestValidateArchiveReportsBindingFieldMismatch(t *testing.T) {
-	binding := validBinding()
-	collected, err := CollectDirectory(copyFixture(t), binding)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tests := []struct {
-		name, code string
-		mutate     func(*Binding)
-	}{
-		{"workspace", "binding_workspace_mismatch", func(v *Binding) { v.WorkspaceID = "other" }},
-		{"project", "binding_project_mismatch", func(v *Binding) { v.ProjectID = "other" }},
-		{"document", "binding_document_mismatch", func(v *Binding) { v.DocumentID = "other" }},
-		{"revision", "binding_revision_mismatch", func(v *Binding) { v.RevisionID = "other" }},
-		{"task", "binding_task_mismatch", func(v *Binding) { v.TaskID = "other" }},
-		{"agent", "binding_agent_mismatch", func(v *Binding) { v.AgentID = "other" }},
-		{"issue", "binding_issue_mismatch", func(v *Binding) { v.IssueID = "other" }},
-		{"platform", "binding_target_platform_mismatch", func(v *Binding) { v.TargetPlatform = "mobile" }},
-		{"input", "binding_input_snapshot_mismatch", func(v *Binding) { v.InputSnapshotSHA256 = sha('b') }},
-		{"base revision", "binding_base_revision_mismatch", func(v *Binding) { v.BaseRevisionID = "base-2" }},
-		{"base digest", "binding_base_content_digest_mismatch", func(v *Binding) { v.BaseContentDigest = sha('c') }},
-		{"design system id", "binding_design_system_id_mismatch", func(v *Binding) { v.DesignSystemID = "ds-2" }},
-		{"design system task", "binding_design_system_source_task_mismatch", func(v *Binding) { v.DesignSystemSourceTaskID = "task-ds-2" }},
-		{"design system digest", "binding_design_system_content_digest_mismatch", func(v *Binding) { v.DesignSystemContentDigest = sha('d') }},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			candidate := binding
-			tt.mutate(&candidate)
-			result, err := ValidateArchive(collected.Archive, candidate)
-			assertCode(t, result.Audit, err, tt.code)
+func TestCollectDirectoryRequiresContractFiles(t *testing.T) {
+	for _, name := range []string{"brief.json", "coverage.json", "prototype/index.html"} {
+		t.Run(name, func(t *testing.T) {
+			root := copyFixture(t)
+			if err := os.Remove(filepath.Join(root, filepath.FromSlash(name))); err != nil {
+				t.Fatal(err)
+			}
+			collected, err := CollectDirectory(root, validBinding())
+			if err == nil {
+				t.Fatalf("CollectDirectory() accepted package without %s", name)
+			}
+			if name == "prototype/index.html" {
+				// The entry is also the Preview root, so discovery fails first.
+				assertErrorContains(t, err, "prototype/index.html")
+				return
+			}
+			assertDiagnosticCode(t, collected.Audit, err, "artifact_missing")
 		})
 	}
 }
 
-func TestCollectAndValidateRejectStructureAndSchemaTampering(t *testing.T) {
-	t.Run("missing required", func(t *testing.T) {
-		root := copyFixture(t)
-		os.Remove(filepath.Join(root, "coverage.json"))
-		result, err := CollectDirectory(root, validBinding())
-		assertCode(t, result.Audit, err, "artifact_missing")
-	})
-	t.Run("unknown file", func(t *testing.T) {
-		root := copyFixture(t)
-		write(t, root, "notes.txt", []byte("no"))
-		result, err := CollectDirectory(root, validBinding())
-		assertCode(t, result.Audit, err, "archive_path_undeclared")
-	})
-	t.Run("SVG asset", func(t *testing.T) {
-		root := copyFixture(t)
-		write(t, root, "assets/icon.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`))
-		result, err := CollectDirectory(root, validBinding())
-		assertCode(t, result.Audit, err, "archive_path_undeclared")
-	})
-	t.Run("brief unknown", func(t *testing.T) {
-		root := copyFixture(t)
-		mutateObjectFile(t, root, "brief.json", func(v map[string]any) { v["pixels"] = true })
-		result, err := CollectDirectory(root, validBinding())
-		assertCode(t, result.Audit, err, "brief_invalid")
-	})
-	t.Run("coverage unknown", func(t *testing.T) {
-		root := copyFixture(t)
-		mutateObjectFile(t, root, "coverage.json", func(v map[string]any) { v["score"] = 100 })
-		result, err := CollectDirectory(root, validBinding())
-		assertCode(t, result.Audit, err, "coverage_invalid")
-	})
-
-	collected, err := CollectDirectory(copyFixture(t), validBinding())
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestCollectDirectoryRejectsUndeclaredPaths(t *testing.T) {
 	tests := []struct {
-		name, code string
-		mutate     func(map[string][]byte)
+		name     string
+		path     string
+		contents string
 	}{
-		{"manifest unknown", "manifest_invalid", func(f map[string][]byte) {
-			mutateJSONBytes(t, f, "manifest.json", func(v map[string]any) { v["extra"] = true })
-		}},
-		{"manifest missing", "manifest_missing", func(f map[string][]byte) { delete(f, "manifest.json") }},
-		{"index tampered", "manifest_index_mismatch", func(f map[string][]byte) {
-			mutateJSONBytes(t, f, "manifest.json", func(v map[string]any) { v["files"].([]any)[0].(map[string]any)["size_bytes"] = float64(1) })
-		}},
-		{"index order", "manifest_index_mismatch", func(f map[string][]byte) {
-			mutateJSONBytes(t, f, "manifest.json", func(v map[string]any) { a := v["files"].([]any); a[0], a[1] = a[1], a[0] })
-		}},
-		{"role tampered", "manifest_index_mismatch", func(f map[string][]byte) {
-			mutateJSONBytes(t, f, "manifest.json", func(v map[string]any) { v["files"].([]any)[0].(map[string]any)["role"] = "asset" })
-		}},
-		{"digest", "content_digest_mismatch", func(f map[string][]byte) {
-			mutateJSONBytes(t, f, "manifest.json", func(v map[string]any) { v["content_digest"] = sha('f') })
-		}},
-		{"preview undeclared", "manifest_preview_targets_mismatch", func(f map[string][]byte) {
-			mutateJSONBytes(t, f, "manifest.json", func(v map[string]any) {
-				v["preview_targets"].([]any)[0].(map[string]any)["path"] = "prototype/missing.html"
-			})
-		}},
-		{"preview non html", "manifest_preview_targets_mismatch", func(f map[string][]byte) {
-			mutateJSONBytes(t, f, "manifest.json", func(v map[string]any) { v["preview_targets"].([]any)[0].(map[string]any)["path"] = "prototype/app.js" })
-		}},
-		{"missing main", "manifest_preview_targets_mismatch", func(f map[string][]byte) {
-			mutateJSONBytes(t, f, "manifest.json", func(v map[string]any) { v["preview_targets"] = []any{} })
-		}},
+		{name: "agent written manifest", path: "manifest.json", contents: "{}"},
+		{name: "root readme", path: "README.md", contents: "notes"},
+		{name: "legacy design system artifact", path: "tokens.css", contents: ":root{}"},
+		{name: "prototype typescript", path: "prototype/app.ts", contents: "export {};"},
+		{name: "prototype json", path: "prototype/data.json", contents: "{}"},
+		{name: "asset text", path: "assets/notes.txt", contents: "notes"},
+		{name: "asset archive", path: "assets/bundle.zip", contents: "binary"},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			files := unzip(t, collected.Archive)
-			tt.mutate(files)
-			archive := zipFiles(t, files)
-			result, err := ValidateArchive(archive, validBinding())
-			assertCode(t, result.Audit, err, tt.code)
+			root := copyFixture(t)
+			target := filepath.Join(root, filepath.FromSlash(tt.path))
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte(tt.contents), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := CollectDirectory(root, validBinding())
+			assertErrorContains(t, err, "archive_path_undeclared")
 		})
 	}
+}
 
-	t.Run("duplicate manifest", func(t *testing.T) {
-		archive := appendDuplicate(t, collected.Archive, "manifest.json", []byte(`{}`))
-		result, err := ValidateArchive(archive, validBinding())
-		assertCode(t, result.Audit, err, "archive_duplicate_path")
+func TestCollectDirectoryRejectsUndeclaredDirectories(t *testing.T) {
+	for _, name := range []string{"docs", "source", "fonts", "ui-kit"} {
+		t.Run(name, func(t *testing.T) {
+			root := copyFixture(t)
+			if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(name)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			_, err := CollectDirectory(root, validBinding())
+			assertErrorContains(t, err, "archive_path_undeclared")
+		})
+	}
+}
+
+func TestCollectDirectoryRejectsLinksAndTraversal(t *testing.T) {
+	t.Run("symlink", func(t *testing.T) {
+		root := copyFixture(t)
+		if err := os.Symlink(filepath.Join(root, "brief.json"), filepath.Join(root, "assets", "brief-link.svg")); err != nil {
+			t.Skipf("symlink unsupported: %v", err)
+		}
+		_, err := CollectDirectory(root, validBinding())
+		assertErrorContains(t, err, "archive_link_forbidden")
 	})
+
+	t.Run("hardlink", func(t *testing.T) {
+		root := copyFixture(t)
+		if err := os.Link(filepath.Join(root, "assets", "crm-mark.svg"), filepath.Join(root, "assets", "crm-mark-copy.svg")); err != nil {
+			t.Skipf("hardlink unsupported: %v", err)
+		}
+		_, err := CollectDirectory(root, validBinding())
+		assertErrorContains(t, err, "archive_hardlink_forbidden")
+	})
+
+	t.Run("archive traversal", func(t *testing.T) {
+		entries := readZipEntries(t, collectValid(t, validBinding()).Archive)
+		ordered := zipEntriesFromMap(entries)
+		ordered = append(ordered, zipEntry{name: "../escape", contents: []byte("outside")})
+		pkg, err := ValidateArchive(buildZip(t, ordered), validBinding())
+		assertDiagnosticCode(t, pkg.Audit, err, "archive_path_invalid")
+	})
+}
+
+func TestCollectDirectoryEnforcesFileCountAndByteLimits(t *testing.T) {
+	t.Run("file count", func(t *testing.T) {
+		root := copyFixture(t)
+		for index := 0; index < maxFiles; index++ {
+			name := filepath.Join(root, "assets", "generated", formatTestIndex(index)+".png")
+			if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(name, []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, err := CollectDirectory(root, validBinding())
+		assertErrorContains(t, err, "archive_file_count_exceeded")
+	})
+
+	t.Run("prototype source bytes", func(t *testing.T) {
+		root := copyFixture(t)
+		oversized := append(bytes.Repeat([]byte("/* padding */\n"), int(maxSourceBytes/14)+1), []byte("\n")...)
+		if err := os.WriteFile(filepath.Join(root, "prototype", "app.js"), oversized, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := CollectDirectory(root, validBinding())
+		assertErrorContains(t, err, "archive_file_too_large")
+	})
+
+	t.Run("asset bytes", func(t *testing.T) {
+		root := copyFixture(t)
+		if err := os.WriteFile(filepath.Join(root, "assets", "oversized.png"), bytes.Repeat([]byte{'x'}, int(maxAssetBytes)+1), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := CollectDirectory(root, validBinding())
+		assertErrorContains(t, err, "archive_file_too_large")
+	})
+}
+
+func TestValidateArchiveRecomputesEveryDigest(t *testing.T) {
+	collected := collectValid(t, validBinding())
+
+	t.Run("empty archive", func(t *testing.T) {
+		pkg, err := ValidateArchive(buildZip(t, nil), validBinding())
+		assertDiagnosticCode(t, pkg.Audit, err, "manifest_missing")
+	})
+
+	t.Run("artifact bytes", func(t *testing.T) {
+		entries := readZipEntries(t, collected.Archive)
+		entries["prototype/app.js"] = append(entries["prototype/app.js"], []byte("\n// tampered\n")...)
+		pkg, err := ValidateArchive(buildZipFromMap(t, entries), validBinding())
+		assertDiagnosticCode(t, pkg.Audit, err, "manifest_index_mismatch")
+	})
+
+	t.Run("manifest index", func(t *testing.T) {
+		entries := readZipEntries(t, collected.Archive)
+		var manifest Manifest
+		if err := json.Unmarshal(entries["manifest.json"], &manifest); err != nil {
+			t.Fatal(err)
+		}
+		manifest.Files[0].Role = "tampered"
+		entries["manifest.json"], _ = json.Marshal(manifest)
+		pkg, err := ValidateArchive(buildZipFromMap(t, entries), validBinding())
+		assertDiagnosticCode(t, pkg.Audit, err, "manifest_index_mismatch")
+	})
+
+	t.Run("manifest content digest", func(t *testing.T) {
+		entries := readZipEntries(t, collected.Archive)
+		var manifest Manifest
+		if err := json.Unmarshal(entries["manifest.json"], &manifest); err != nil {
+			t.Fatal(err)
+		}
+		manifest.ContentDigest = "sha256:" + strings.Repeat("f", 64)
+		entries["manifest.json"], _ = json.Marshal(manifest)
+		pkg, err := ValidateArchive(buildZipFromMap(t, entries), validBinding())
+		assertDiagnosticCode(t, pkg.Audit, err, "content_digest_mismatch")
+	})
+
+	t.Run("manifest schema", func(t *testing.T) {
+		entries := readZipEntries(t, collected.Archive)
+		var manifest Manifest
+		if err := json.Unmarshal(entries["manifest.json"], &manifest); err != nil {
+			t.Fatal(err)
+		}
+		manifest.SchemaVersion = "multica.project-design-system/v2"
+		entries["manifest.json"], _ = json.Marshal(manifest)
+		pkg, err := ValidateArchive(buildZipFromMap(t, entries), validBinding())
+		assertDiagnosticCode(t, pkg.Audit, err, "manifest_schema_invalid")
+	})
+
+	t.Run("duplicate archive entry", func(t *testing.T) {
+		entries := readZipEntries(t, collected.Archive)
+		ordered := zipEntriesFromMap(entries)
+		ordered = append(ordered, zipEntry{name: "brief.json", contents: entries["brief.json"]})
+		pkg, err := ValidateArchive(buildZip(t, ordered), validBinding())
+		assertDiagnosticCode(t, pkg.Audit, err, "archive_duplicate_path")
+	})
+
+	t.Run("zip bomb", func(t *testing.T) {
+		entries := readZipEntries(t, collected.Archive)
+		entries["assets/bomb.png"] = bytes.Repeat([]byte{'0'}, int(maxAssetBytes)+1)
+		pkg, err := ValidateArchive(buildZipFromMap(t, entries), validBinding())
+		assertDiagnosticCode(t, pkg.Audit, err, "archive_file_too_large")
+	})
+}
+
+func TestValidateArchivePreflightsEOCDMetadata(t *testing.T) {
+	tests := []struct {
+		name    string
+		archive []byte
+		code    string
+	}{
+		{
+			name:    "entry count",
+			archive: buildEOCD(nil, 0, 0, maxFiles+1, maxFiles+1, 0, 0),
+			code:    "archive_file_count_exceeded",
+		},
+		{
+			name:    "ZIP64 sentinel",
+			archive: buildEOCD(nil, 0, 0, ^uint16(0), ^uint16(0), ^uint32(0), ^uint32(0)),
+			code:    "archive_invalid",
+		},
+		{
+			name: "ZIP64 locator",
+			archive: buildEOCD([]byte{
+				0x50, 0x4b, 0x06, 0x07,
+				0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			}, 0, 0, 0, 0, 0, 0),
+			code: "archive_invalid",
+		},
+		{
+			name:    "multi disk",
+			archive: buildEOCD(nil, 1, 1, 0, 0, 0, 0),
+			code:    "archive_invalid",
+		},
+		{
+			name:    "central directory bounds",
+			archive: buildEOCD(nil, 0, 0, 0, 0, 1, 22),
+			code:    "archive_invalid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pkg, err := ValidateArchive(tt.archive, validBinding())
+			assertDiagnosticCode(t, pkg.Audit, err, tt.code)
+		})
+	}
+}
+
+func TestValidateArchivePreflightRejectsAmbiguousEOCDInComment(t *testing.T) {
+	archive := buildZip(t, nil)
+	actualEOCD := findEOCDForTest(t, archive)
+	fakeEOCD := buildEOCD(nil, 0, 0, 0, 0, 0, 0)
+	archive = append(archive, fakeEOCD...)
+	binary.LittleEndian.PutUint16(archive[actualEOCD+20:actualEOCD+22], uint16(len(fakeEOCD)))
+
+	pkg, err := ValidateArchive(archive, validBinding())
+	assertDiagnosticCode(t, pkg.Audit, err, "archive_invalid")
+}
+
+func TestValidateArchiveBindsTaskRevisionAndBaseDigest(t *testing.T) {
+	collected := collectValid(t, validBinding())
 
 	for _, tt := range []struct {
-		name, path string
+		name   string
+		mutate func(*PackageBinding)
 	}{
-		{"traversal", "../outside.png"},
-		{"absolute", "/outside.png"},
-		{"backslash", `assets\\outside.png`},
+		{name: "task", mutate: func(binding *PackageBinding) { binding.TaskID = "task-other" }},
+		{name: "revision", mutate: func(binding *PackageBinding) { binding.RevisionID = "revision-other" }},
+		{name: "document", mutate: func(binding *PackageBinding) { binding.DesignDocumentID = "document-other" }},
+		{name: "issue", mutate: func(binding *PackageBinding) { binding.IssueID = "issue-other" }},
+		{name: "platform", mutate: func(binding *PackageBinding) { binding.Platform = "desktop" }},
+		{name: "input snapshot", mutate: func(binding *PackageBinding) {
+			binding.InputSnapshotSHA256 = "sha256:" + strings.Repeat("b", 64)
+		}},
+		{name: "base revision", mutate: func(binding *PackageBinding) {
+			binding.BaseRevisionSHA256 = "sha256:" + strings.Repeat("c", 64)
+		}},
 	} {
-		t.Run(tt.name+" archive path", func(t *testing.T) {
-			files := unzip(t, collected.Archive)
-			files[tt.path] = []byte("x")
-			result, err := ValidateArchive(zipFiles(t, files), validBinding())
-			assertCode(t, result.Audit, err, "archive_path_invalid")
+		t.Run(tt.name, func(t *testing.T) {
+			expected := validBinding()
+			tt.mutate(&expected)
+			if _, err := ValidateArchive(collected.Archive, expected); err == nil {
+				t.Fatalf("ValidateArchive() accepted a package bound to a different %s", tt.name)
+			}
 		})
 	}
 
-	t.Run("duplicate preview target id", func(t *testing.T) {
-		root := copyFixture(t)
-		write(t, root, "prototype/detail-one.html", []byte("<!doctype html><title>one</title>"))
-		write(t, root, "prototype/detail_one.html", []byte("<!doctype html><title>two</title>"))
-		result, err := CollectDirectory(root, validBinding())
-		assertCode(t, result.Audit, err, "preview_target_duplicate")
+	t.Run("adjustment keeps its base revision", func(t *testing.T) {
+		adjust := validBinding()
+		adjust.BaseRevisionSHA256 = "sha256:" + strings.Repeat("c", 64)
+		adjusted := collectValid(t, adjust)
+		if adjusted.Manifest.Binding.BaseRevisionSHA256 != adjust.BaseRevisionSHA256 {
+			t.Fatalf("base revision = %q", adjusted.Manifest.Binding.BaseRevisionSHA256)
+		}
+		firstGeneration := adjust
+		firstGeneration.BaseRevisionSHA256 = ""
+		if _, err := ValidateArchive(adjusted.Archive, firstGeneration); err == nil {
+			t.Fatal("ValidateArchive() accepted an adjustment as a first generation")
+		}
 	})
-	t.Run("main preview is independent of sort position", func(t *testing.T) {
-		root := copyFixture(t)
-		write(t, root, "prototype/about.html", []byte("<!doctype html><title>about</title>"))
-		result, err := CollectDirectory(root, validBinding())
+}
+
+func TestValidateBindingRejectsIncompleteIdentity(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*PackageBinding)
+	}{
+		{name: "workspace", mutate: func(binding *PackageBinding) { binding.WorkspaceID = "" }},
+		{name: "project", mutate: func(binding *PackageBinding) { binding.ProjectID = " " }},
+		{name: "document", mutate: func(binding *PackageBinding) { binding.DesignDocumentID = "" }},
+		{name: "revision", mutate: func(binding *PackageBinding) { binding.RevisionID = "" }},
+		{name: "agent", mutate: func(binding *PackageBinding) { binding.AgentID = "agent\n1" }},
+		{name: "platform", mutate: func(binding *PackageBinding) { binding.Platform = "watch" }},
+		{name: "optional resource", mutate: func(binding *PackageBinding) { binding.ProjectResourceID = " resource " }},
+		{name: "input snapshot", mutate: func(binding *PackageBinding) { binding.InputSnapshotSHA256 = "abc" }},
+		{name: "design system", mutate: func(binding *PackageBinding) { binding.DesignSystemSHA256 = "" }},
+		{name: "base revision", mutate: func(binding *PackageBinding) { binding.BaseRevisionSHA256 = "sha256:xyz" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			binding := validBinding()
+			tt.mutate(&binding)
+			if _, err := CollectDirectory(copyFixture(t), binding); err == nil {
+				t.Fatalf("CollectDirectory() accepted an invalid %s binding", tt.name)
+			}
+		})
+	}
+
+	t.Run("optional fields may be empty", func(t *testing.T) {
+		binding := validBinding()
+		binding.ProjectResourceID = ""
+		binding.IssueID = ""
+		binding.BaseRevisionSHA256 = ""
+		if _, err := CollectDirectory(copyFixture(t), binding); err != nil {
+			t.Fatalf("CollectDirectory() rejected a first generation binding: %v", err)
+		}
+	})
+}
+
+func TestDiscoverPreviewTargetsOrdersEntryFirst(t *testing.T) {
+	index := []ArtifactIndexEntry{
+		{Path: "prototype/zeta.html", Role: "prototype_page", MediaType: "text/html; charset=utf-8"},
+		{Path: "prototype/orders/list.html", Role: "prototype_page", MediaType: "text/html; charset=utf-8"},
+		{Path: "prototype/index.html", Role: "prototype_entry", MediaType: "text/html; charset=utf-8"},
+	}
+	targets, err := DiscoverPreviewTargets(index)
+	if err != nil {
+		t.Fatalf("DiscoverPreviewTargets() error = %v", err)
+	}
+	want := []PreviewTarget{
+		{ID: "index", Kind: "prototype_entry", Path: "prototype/index.html"},
+		{ID: "orders.list", Kind: "prototype_page", Path: "prototype/orders/list.html"},
+		{ID: "zeta", Kind: "prototype_page", Path: "prototype/zeta.html"},
+	}
+	if !reflect.DeepEqual(targets, want) {
+		t.Fatalf("targets = %#v, want %#v", targets, want)
+	}
+}
+
+func TestDiscoverPreviewTargetsRejectsInvalidSets(t *testing.T) {
+	entry := ArtifactIndexEntry{Path: "prototype/index.html", Role: "prototype_entry", MediaType: "text/html; charset=utf-8"}
+
+	t.Run("missing entry", func(t *testing.T) {
+		index := []ArtifactIndexEntry{{Path: "prototype/orders.html", Role: "prototype_page", MediaType: "text/html; charset=utf-8"}}
+		if _, err := DiscoverPreviewTargets(index); err == nil {
+			t.Fatal("DiscoverPreviewTargets() accepted a package without prototype/index.html")
+		}
+	})
+
+	t.Run("entry id collision", func(t *testing.T) {
+		index := []ArtifactIndexEntry{
+			entry,
+			{Path: "prototype/index.html", Role: "prototype_page", MediaType: "text/html; charset=utf-8"},
+		}
+		if _, err := DiscoverPreviewTargets(index); err == nil {
+			t.Fatal("DiscoverPreviewTargets() accepted a duplicate entry target")
+		}
+	})
+
+	t.Run("unstable target id", func(t *testing.T) {
+		index := []ArtifactIndexEntry{
+			entry,
+			{Path: "prototype/Orders View.html", Role: "prototype_page", MediaType: "text/html; charset=utf-8"},
+		}
+		if _, err := DiscoverPreviewTargets(index); err == nil {
+			t.Fatal("DiscoverPreviewTargets() accepted an unstable Preview target ID")
+		}
+	})
+
+	t.Run("too many targets", func(t *testing.T) {
+		index := []ArtifactIndexEntry{entry}
+		for count := 0; count < maxPreviewTargets; count++ {
+			index = append(index, ArtifactIndexEntry{
+				Path:      "prototype/page-" + formatTestIndex(count) + ".html",
+				Role:      "prototype_page",
+				MediaType: "text/html; charset=utf-8",
+			})
+		}
+		if _, err := DiscoverPreviewTargets(index); err == nil {
+			t.Fatal("DiscoverPreviewTargets() accepted more targets than the Preview limit")
+		}
+	})
+}
+
+func validBinding() PackageBinding {
+	return PackageBinding{
+		WorkspaceID:         "workspace-1",
+		ProjectID:           "project-1",
+		ProjectResourceID:   "resource-1",
+		IssueID:             "issue-1",
+		DesignDocumentID:    "document-1",
+		RevisionID:          "revision-1",
+		TaskID:              "task-1",
+		AgentID:             "agent-1",
+		Platform:            "web",
+		InputSnapshotSHA256: "sha256:" + strings.Repeat("a", 64),
+		DesignSystemSHA256:  "sha256:" + strings.Repeat("e", 64),
+	}
+}
+
+func collectValid(t *testing.T, binding PackageBinding) CollectedPackage {
+	t.Helper()
+	collected, err := CollectDirectory(copyFixture(t), binding)
+	if err != nil {
+		t.Fatalf("CollectDirectory() error = %v", err)
+	}
+	return collected
+}
+
+func copyFixture(t *testing.T) string {
+	t.Helper()
+	source := filepath.Join("testdata", "valid")
+	destination := t.TempDir()
+	err := filepath.WalkDir(source, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(source, current)
+		if err != nil || relative == "." {
+			return err
+		}
+		target := filepath.Join(destination, relative)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		contents, err := os.ReadFile(current)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, contents, 0o644)
+	})
+	if err != nil {
+		t.Fatalf("copy design document fixture: %v", err)
+	}
+	return destination
+}
+
+func writeFixtureFile(t *testing.T, root, name string, contents []byte) {
+	t.Helper()
+	target := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, contents, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type zipEntry struct {
+	name     string
+	contents []byte
+}
+
+func buildZip(t *testing.T, entries []zipEntry) []byte {
+	t.Helper()
+	var output bytes.Buffer
+	writer := zip.NewWriter(&output)
+	for _, entry := range entries {
+		file, err := writer.Create(entry.name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(result.Manifest.PreviewTargets) != 2 || result.Manifest.PreviewTargets[0].Path != "prototype/about.html" || result.Manifest.PreviewTargets[1].Path != "prototype/index.html" {
-			t.Fatalf("preview targets are not path sorted: %#v", result.Manifest.PreviewTargets)
+		if _, err := file.Write(entry.contents); err != nil {
+			t.Fatal(err)
 		}
-	})
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return output.Bytes()
 }
 
-func TestBindingValidation(t *testing.T) {
-	tests := []struct {
-		name, code string
-		mutate     func(*Binding)
-	}{
-		{"identity", "binding_identity_invalid", func(v *Binding) { v.TaskID = " bad\n" }},
-		{"sha", "binding_digest_invalid", func(v *Binding) { v.InputSnapshotSHA256 = "sha256:ABC" }},
-		{"base pair", "binding_base_pair_invalid", func(v *Binding) { v.BaseContentDigest = "" }},
-		{"design system triple", "binding_design_system_triple_invalid", func(v *Binding) { v.DesignSystemContentDigest = "" }},
-		{"platform", "binding_target_platform_invalid", func(v *Binding) { v.TargetPlatform = "desktop" }},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			v := validBinding()
-			tt.mutate(&v)
-			result, err := CollectDirectory(copyFixture(t), v)
-			assertCode(t, result.Audit, err, tt.code)
-		})
-	}
-}
-
-func validBinding() Binding {
-	return Binding{DocumentID: "doc-1", RevisionID: "rev-1", WorkspaceID: "ws-1", ProjectID: "project-1", IssueID: "issue-1", TaskID: "task-1", AgentID: "agent-1", TargetPlatform: "web", InputSnapshotSHA256: sha('a'), BaseRevisionID: "base-1", BaseContentDigest: sha('b'), DesignSystemID: "ds-1", DesignSystemSourceTaskID: "task-ds-1", DesignSystemContentDigest: sha('c')}
-}
-func sha(c byte) string { return "sha256:" + strings.Repeat(string(c), 64) }
-func copyFixture(t *testing.T) string {
+func buildZipFromMap(t *testing.T, entries map[string][]byte) []byte {
 	t.Helper()
-	root := t.TempDir()
-	err := filepath.WalkDir("testdata/v1-valid", func(p string, d os.DirEntry, e error) error {
-		if e != nil {
-			return e
-		}
-		rel, _ := filepath.Rel("testdata/v1-valid", p)
-		if rel == "." {
-			return nil
-		}
-		dst := filepath.Join(root, rel)
-		if d.IsDir() {
-			return os.MkdirAll(dst, 0755)
-		}
-		raw, e := os.ReadFile(p)
-		if e != nil {
-			return e
-		}
-		return os.WriteFile(dst, raw, 0644)
-	})
+	return buildZip(t, zipEntriesFromMap(entries))
+}
+
+func zipEntriesFromMap(entries map[string][]byte) []zipEntry {
+	names := make([]string, 0, len(entries))
+	for name := range entries {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	ordered := make([]zipEntry, 0, len(names))
+	for _, name := range names {
+		ordered = append(ordered, zipEntry{name: name, contents: entries[name]})
+	}
+	return ordered
+}
+
+func readZipEntries(t *testing.T, archive []byte) map[string][]byte {
+	t.Helper()
+	reader, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return root
-}
-func write(t *testing.T, root, name string, raw []byte) {
-	t.Helper()
-	dst := filepath.Join(root, filepath.FromSlash(name))
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dst, raw, 0644); err != nil {
-		t.Fatal(err)
-	}
-}
-func equalJSON(t *testing.T, a, b any) bool {
-	t.Helper()
-	x, _ := json.Marshal(a)
-	y, _ := json.Marshal(b)
-	return bytes.Equal(x, y)
-}
-func mutateObjectFile(t *testing.T, root, name string, fn func(map[string]any)) {
-	t.Helper()
-	raw, _ := os.ReadFile(filepath.Join(root, name))
-	var v map[string]any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		t.Fatal(err)
-	}
-	fn(v)
-	raw, _ = json.Marshal(v)
-	write(t, root, name, raw)
-}
-func mutateJSONBytes(t *testing.T, files map[string][]byte, name string, fn func(map[string]any)) {
-	t.Helper()
-	var v map[string]any
-	if err := json.Unmarshal(files[name], &v); err != nil {
-		t.Fatal(err)
-	}
-	fn(v)
-	files[name], _ = json.Marshal(v)
-}
-func unzip(t *testing.T, raw []byte) map[string][]byte {
-	t.Helper()
-	r, e := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
-	if e != nil {
-		t.Fatal(e)
-	}
-	out := map[string][]byte{}
-	for _, f := range r.File {
-		rc, e := f.Open()
-		if e != nil {
-			t.Fatal(e)
+	entries := make(map[string][]byte, len(reader.File))
+	for _, file := range reader.File {
+		stream, err := file.Open()
+		if err != nil {
+			t.Fatal(err)
 		}
-		var b bytes.Buffer
-		b.ReadFrom(rc)
-		rc.Close()
-		out[f.Name] = b.Bytes()
-	}
-	return out
-}
-func zipFiles(t *testing.T, files map[string][]byte) []byte {
-	t.Helper()
-	var b bytes.Buffer
-	w := zip.NewWriter(&b)
-	for name, raw := range files {
-		h := &zip.FileHeader{Name: name, Method: zip.Deflate}
-		h.SetMode(0644)
-		x, e := w.CreateHeader(h)
-		if e != nil {
-			t.Fatal(e)
+		contents, err := io.ReadAll(stream)
+		closeErr := stream.Close()
+		if err != nil || closeErr != nil {
+			t.Fatalf("read zip entry %s: %v", file.Name, err)
 		}
-		x.Write(raw)
+		entries[file.Name] = contents
 	}
-	if e := w.Close(); e != nil {
-		t.Fatal(e)
-	}
-	return b.Bytes()
+	return entries
 }
-func appendDuplicate(t *testing.T, archive []byte, name string, raw []byte) []byte {
-	t.Helper()
-	files := unzip(t, archive)
-	var b bytes.Buffer
-	w := zip.NewWriter(&b)
-	for n, v := range files {
-		h := &zip.FileHeader{Name: n, Method: zip.Deflate}
-		h.SetMode(0644)
-		x, _ := w.CreateHeader(h)
-		x.Write(v)
-	}
-	for i := 0; i < 2; i++ {
-		h := &zip.FileHeader{Name: name, Method: zip.Deflate}
-		h.SetMode(0644)
-		x, _ := w.CreateHeader(h)
-		x.Write(raw)
-	}
-	w.Close()
-	return b.Bytes()
+
+func buildEOCD(prefix []byte, diskNumber, centralDirectoryDisk, entriesOnDisk, totalEntries uint16, centralDirectorySize, centralDirectoryOffset uint32) []byte {
+	archive := make([]byte, len(prefix)+22)
+	copy(archive, prefix)
+	eocd := archive[len(prefix):]
+	binary.LittleEndian.PutUint32(eocd[0:4], 0x06054b50)
+	binary.LittleEndian.PutUint16(eocd[4:6], diskNumber)
+	binary.LittleEndian.PutUint16(eocd[6:8], centralDirectoryDisk)
+	binary.LittleEndian.PutUint16(eocd[8:10], entriesOnDisk)
+	binary.LittleEndian.PutUint16(eocd[10:12], totalEntries)
+	binary.LittleEndian.PutUint32(eocd[12:16], centralDirectorySize)
+	binary.LittleEndian.PutUint32(eocd[16:20], centralDirectoryOffset)
+	return archive
 }
-func assertCode(t *testing.T, report AuditReport, err error, code string) {
+
+func findEOCDForTest(t *testing.T, archive []byte) int {
 	t.Helper()
-	if err == nil {
-		t.Fatalf("expected %s", code)
+	for offset := len(archive) - 22; offset >= 0; offset-- {
+		if binary.LittleEndian.Uint32(archive[offset:offset+4]) == 0x06054b50 {
+			return offset
+		}
 	}
-	for _, d := range report.Diagnostics {
-		if d.Code == code {
+	t.Fatal("ZIP archive has no EOCD")
+	return -1
+}
+
+func formatTestIndex(index int) string {
+	return string([]byte{
+		byte('0' + (index/100)%10),
+		byte('0' + (index/10)%10),
+		byte('0' + index%10),
+	})
+}
+
+func assertErrorContains(t *testing.T, err error, code string) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), code) {
+		t.Fatalf("error = %v, want %q", err, code)
+	}
+}
+
+func assertDiagnosticCode(t *testing.T, report AuditReport, err error, code string) {
+	t.Helper()
+	assertErrorContains(t, err, code)
+	for _, diagnostic := range report.Diagnostics {
+		if diagnostic.Code == code {
 			return
 		}
 	}
-	t.Fatalf("want %s, report=%#v err=%v", code, report, err)
+	t.Fatalf("diagnostics = %#v, want code %q", report.Diagnostics, code)
 }

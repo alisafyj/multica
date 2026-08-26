@@ -23,7 +23,8 @@ import { formatDateOnly } from "@multica/core/issues/date";
 import { useActorLookup } from "@/data/use-actor-name";
 import { useNewIssueDraftStore } from "@/data/stores/new-issue-draft-store";
 import { useWorkspaceStore } from "@/data/workspace-store";
-import { issuePriorityLabel, issueStatusLabel } from "@/lib/issue-status";
+import { issuePriorityLabel, issueStatusLabel, PRIORITY_LABEL } from "@/lib/issue-status";
+import { useIssueStatuses } from "@/lib/use-issue-statuses";
 
 /**
  * Picker fields the new-issue draft form can open. Bound to a typed map
@@ -55,6 +56,8 @@ export function CreateFormAttributeRow() {
   const project = useNewIssueDraftStore((s) => s.project);
 
   const { getName } = useActorLookup();
+  // The draft can hold a custom status the user picked in the sheet. (MUL-6243)
+  const { categoryOf, colorOf, labelOf } = useIssueStatuses();
   const assigneeLabel = assignee
     ? getName(assignee.type, assignee.id)
     : t("attribute.assignee_placeholder");
@@ -75,8 +78,15 @@ export function CreateFormAttributeRow() {
     <View>
       <View className="flex-row flex-wrap gap-2">
         <AttributeChip
-          icon={<StatusIcon status={status} size={12} />}
-          label={issueStatusLabel(t, status)}
+          icon={
+            <StatusIcon
+              status={status}
+              category={categoryOf(status)}
+              color={colorOf(status)}
+              size={12}
+            />
+          }
+          label={issueStatusLabel(t, status, labelOf(status))}
           variant="filled"
           onPress={() => open("status")}
         />

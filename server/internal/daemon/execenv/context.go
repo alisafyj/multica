@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -26,9 +28,10 @@ const TaskContextMarkerRelPath = ".multica/daemon_task_context.json"
 const TaskContextMarkerManagedBy = "multica-daemon-task"
 
 type taskContextMarkerFile struct {
-	ManagedBy string `json:"managed_by"`
-	AgentID   string `json:"agent_id,omitempty"`
-	IssueID   string `json:"issue_id,omitempty"`
+	ManagedBy     string `json:"managed_by"`
+	AgentID       string `json:"agent_id,omitempty"`
+	IssueID       string `json:"issue_id,omitempty"`
+	ChatSessionID string `json:"chat_session_id,omitempty"`
 }
 
 // EnsureWorkspacesRootMarker writes a persistent daemon-task marker at
@@ -133,10 +136,12 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 // Cursor:      skills → {workDir}/.cursor/skills/{name}/SKILL.md  (native discovery)
 // Kimi:        skills → {workDir}/.kimi/skills/{name}/SKILL.md  (native discovery)
 // Reasonix:    skills → {workDir}/.reasonix/skills/{name}/SKILL.md  (native discovery)
+// DSH:         skills → {workDir}/.dsh/skills/{name}/SKILL.md  (native discovery)
 // Kiro:        skills → {workDir}/.kiro/skills/{name}/SKILL.md  (native discovery)
 // Qoder/Qoder CN: skills → {workDir}/.qoder/skills/{name}/SKILL.md  (project-level; see the provider docs)
 // Qwen Code:    skills → {workDir}/.qwen/skills/{name}/SKILL.md  (native project-level discovery)
 // QwenPaw:      skills → {workDir}/.qwenpaw/skills/{name}/SKILL.md  (native project-level discovery)
+// MiniMax Code: skills → {workDir}/.minimax/skills/{name}/SKILL.md  (native project-level discovery)
 // Antigravity: skills → {workDir}/.agents/skills/{name}/SKILL.md  (native discovery — see https://antigravity.google/docs/gcli-migration "Workspace skills")
 // Default:     skills → {workDir}/.agent_context/skills/{name}/SKILL.md
 //
@@ -176,7 +181,10 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 		return fmt.Errorf("write project design system context: %w", err)
 	}
 	if err := writeDesignDocumentContext(workDir, ctx, manifest); err != nil {
-		return fmt.Errorf("write Design Document context: %w", err)
+		return fmt.Errorf("write design document context: %w", err)
+	}
+	if err := writeDesignDeliveryContext(workDir, ctx, manifest); err != nil {
+		return fmt.Errorf("write design delivery context: %w", err)
 	}
 
 	if len(ctx.AgentSkills) > 0 {
@@ -208,75 +216,6 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 	}
 
 	return nil
-}
-
-func writeDesignDocumentContext(workDir string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
-	if strings.TrimSpace(ctx.DesignDocumentContext) == "" {
-		return nil
-	}
-	var task map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(ctx.DesignDocumentContext), &task); err != nil {
-		return fmt.Errorf("decode task context: %w", err)
-	}
-	var discriminator, operation string
-	var executionReady bool
-	if json.Unmarshal(task["type"], &discriminator) != nil || discriminator != "design_document_task" ||
-		json.Unmarshal(task["operation"], &operation) != nil || (operation != "first_generation" && operation != "adjust") ||
-		json.Unmarshal(task["execution_ready"], &executionReady) != nil || !executionReady {
-		return errors.New("invalid Design Document task context")
-	}
-	root := filepath.Join(workDir, ".agent_context", "design_document")
-	contextDir := filepath.Join(root, "context")
-	inputDir := filepath.Join(contextDir, "input-snapshots")
-	factsDir := filepath.Join(contextDir, "repository-facts")
-	designSystemDir := filepath.Join(contextDir, "design-system")
-	baseDir := filepath.Join(contextDir, "base")
-	referenceDir := filepath.Join(root, "reference")
-	workDirPath := filepath.Join(root, "work")
-	for _, dir := range []string{inputDir, factsDir, designSystemDir, baseDir, referenceDir, workDirPath} {
-		if err := recordMkdirAll(dir, 0o755, manifest); err != nil {
-			return err
-		}
-	}
-	taskJSON, err := json.MarshalIndent(task, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode Design Document task context: %w", err)
-	}
-	if err := recordWriteFile(filepath.Join(contextDir, "task.json"), taskJSON, 0o444, manifest); err != nil {
-		return err
-	}
-	input := task["input"]
-	if len(input) == 0 || string(input) == "null" {
-		return errors.New("Design Document task input is required")
-	}
-	if err := recordWriteFile(filepath.Join(inputDir, "pending.json"), input, 0o444, manifest); err != nil {
-		return err
-	}
-	if err := recordWriteFile(filepath.Join(factsDir, "checkout.json"), []byte(`{"schema_version":"multica.design-document-checkout/v1","repositories":[]}`), 0o444, manifest); err != nil {
-		return err
-	}
-	var snapshot struct {
-		Attachments  json.RawMessage `json:"attachments"`
-		DesignSystem json.RawMessage `json:"design_system"`
-	}
-	if err := json.Unmarshal(input, &snapshot); err != nil {
-		return fmt.Errorf("decode Design Document task input: %w", err)
-	}
-	binding := snapshot.DesignSystem
-	if len(binding) == 0 || string(binding) == "null" {
-		binding = []byte(`{}`)
-	}
-	if err := recordWriteFile(filepath.Join(designSystemDir, "binding.json"), binding, 0o444, manifest); err != nil {
-		return err
-	}
-	attachments := snapshot.Attachments
-	if len(attachments) == 0 || string(attachments) == "null" {
-		attachments = []byte(`[]`)
-	}
-	if err := recordWriteFile(filepath.Join(referenceDir, "index.json"), attachments, 0o444, manifest); err != nil {
-		return err
-	}
-	return stampV2ReadOnly(contextDir, inputDir, factsDir, designSystemDir, referenceDir)
 }
 
 // WriteDesignDocumentRepositoryFacts atomically replaces the daemon-owned
@@ -479,7 +418,11 @@ func writeV2ProjectDesignSystemContext(root string, task map[string]json.RawMess
 		return err
 	}
 
-	if operation == "adjust" || operation == "regenerate" {
+	// base/ is materialized whenever the task carries one, not only for
+	// adjust and regenerate. A generate task seeded from another system —
+	// copying the consumer site's system across to the admin console, say —
+	// needs the same immutable reference tree to read from.
+	if base, present := task["base_package"]; present && len(base) > 0 && string(base) != "null" {
 		if err := writeV2BaseDirectory(root, task, manifest); err != nil {
 			return err
 		}
@@ -550,6 +493,10 @@ func stampV2ReadOnly(dirs ...string) error {
 // and writeV2BaseDirectory.
 var v2SidecarDirNames = []string{"context", "reference", "base"}
 
+// v2SidecarRootNames are the read-only sidecar roots a native task can
+// materialize under .agent_context. A task has exactly one of them.
+var v2SidecarRootNames = []string{"project_design_system", "design_document"}
+
 // RestoreV2SidecarWritability chmods the V2 native agent sidecar
 // directories back to 0o755 so production cleanup (os.RemoveAll on
 // envRoot / workdir) can unlink their contents after the run. The
@@ -596,10 +543,16 @@ func RestoreV2SidecarWritability(workdir string) error {
 	if !isRealDirectory(agentContext) {
 		return nil
 	}
-	projectRoot := filepath.Join(agentContext, "project_design_system")
-	if isRealDirectory(projectRoot) {
+	// Both native sidecar kinds stamp themselves read-only, so both have to
+	// be restored or their task directory can never be reclaimed. A task
+	// only ever has one of them; the other is simply absent.
+	for _, sidecar := range v2SidecarRootNames {
+		root := filepath.Join(agentContext, sidecar)
+		if !isRealDirectory(root) {
+			continue
+		}
 		for _, name := range v2SidecarDirNames {
-			dir := filepath.Join(projectRoot, name)
+			dir := filepath.Join(root, name)
 			if !isRealDirectory(dir) {
 				continue
 			}
@@ -608,14 +561,20 @@ func RestoreV2SidecarWritability(workdir string) error {
 			}
 		}
 	}
+	// design_document additionally seals a few directories nested under
+	// context/ (see writeDesignDocumentContext's stampV2ReadOnly call) that
+	// the shallow v2SidecarDirNames pass above never reaches — chmod on a
+	// directory does not recurse, so each of these needs its own call or it
+	// stays 0o555 and os.RemoveAll fails to unlink beneath it.
 	designRoot := filepath.Join(agentContext, "design_document")
 	if isRealDirectory(designRoot) {
-		for _, relative := range []string{"context", "context/input-snapshots", "context/repository-facts", "context/design-system", "context/base", "reference", "reference/attachments"} {
+		for _, relative := range []string{"context/input-snapshots", "context/repository-facts", "context/design-system", "reference/attachments"} {
 			dir := filepath.Join(designRoot, filepath.FromSlash(relative))
-			if isRealDirectory(dir) {
-				if err := os.Chmod(dir, 0o755); err != nil {
-					return fmt.Errorf("restore Design Document sidecar writability on %s: %w", dir, err)
-				}
+			if !isRealDirectory(dir) {
+				continue
+			}
+			if err := os.Chmod(dir, 0o755); err != nil {
+				return fmt.Errorf("restore Design Document sidecar writability on %s: %w", dir, err)
 			}
 		}
 	}
@@ -631,9 +590,10 @@ func writeTaskContextMarker(workDir string, ctx TaskContextForEnv, manifest *sid
 	// cleanup. If a crash leaves it behind, the CLI intentionally treats it
 	// as daemon context and fails closed instead of using a user PAT.
 	payload := taskContextMarkerFile{
-		ManagedBy: TaskContextMarkerManagedBy,
-		AgentID:   ctx.AgentID,
-		IssueID:   ctx.IssueID,
+		ManagedBy:     TaskContextMarkerManagedBy,
+		AgentID:       ctx.AgentID,
+		IssueID:       ctx.IssueID,
+		ChatSessionID: ctx.ChatSessionID,
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
@@ -960,6 +920,10 @@ func skillsDirPath(workDir, provider string) string {
 		// Reasonix discovers project skills from .reasonix/skills/ and loads
 		// AGENTS.md independently, so repository memory and task skills coexist.
 		return filepath.Join(workDir, ".reasonix", "skills")
+	case "dsh":
+		// DSH scans both .dsh/skills and .agents/skills. Prefer its branded
+		// project root so runtime-specific skills stay isolated.
+		return filepath.Join(workDir, ".dsh", "skills")
 	case "kiro":
 		// Kiro CLI auto-discovers project-level skills from .kiro/skills/
 		// in the workdir.
@@ -976,6 +940,9 @@ func skillsDirPath(workDir, provider string) string {
 		// QwenPaw discovers workspace-level skills from <workDir>/skill_pool/.
 		// See get_workspace_skills_dir in QwenPaw's skill_system/store.py.
 		return filepath.Join(workDir, "skill_pool")
+	case "mcode":
+		// MiniMax Code discovers project-level skills from .minimax/skills/.
+		return filepath.Join(workDir, ".minimax", "skills")
 	case "traecli":
 		// Official TRAE CLI discovers project-level skills from .traecli/skills/
 		// in the workdir (global skills live in ~/.traecli/skills). See
@@ -1606,14 +1573,89 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 		fmt.Fprintf(&b, "> %s\n\n", ctx.HandoffNote)
 	}
 
+	// A design was delivered for this issue (DC-062). It is the agreed target,
+	// so the agent is pointed at it before it starts inventing an interface.
+	if section := renderDesignDeliverySection(ctx.DesignDeliveryContext); section != "" {
+		b.WriteString(section)
+	}
+
 	b.WriteString("## Quick Start\n\n")
 	fmt.Fprintf(&b, "Run `multica issue get %s --output json` to fetch the full issue details.\n\n", ctx.IssueID)
 
 	return b.String()
 }
 
+// renderDesignDeliverySection tells an implementing agent that a reviewed
+// design is already on disk, and what it is allowed to conclude from it.
+//
+// Two things have to be said explicitly, or the agent will assume the wrong
+// one. The prototype is a specification of structure, states and interaction —
+// not source to copy into the product, whose stack and conventions it knows
+// nothing about. And whether the design was written against this repository is
+// a fact the delivery carries (DC-053); an agent that assumes it was will
+// "match the existing components" that the design never looked at.
+func renderDesignDeliverySection(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	var delivery struct {
+		Title              string `json:"title"`
+		Platform           string `json:"platform"`
+		RevisionNumber     int32  `json:"revision_number"`
+		RepositoryGrounded bool   `json:"repository_grounded"`
+		PrototypeEntry     string `json:"prototype_entry"`
+		Pages              []struct {
+			Title string `json:"title"`
+			Entry string `json:"entry"`
+		} `json:"pages"`
+	}
+	if json.Unmarshal([]byte(raw), &delivery) != nil {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("## Delivered Design\n\n")
+	title := strings.TrimSpace(delivery.Title)
+	if title == "" {
+		title = "the delivered design"
+	}
+	fmt.Fprintf(&b, "A reviewed design (%s, v%d, %s) was delivered for this issue. Its package is extracted read-only at `.agent_context/design_delivery/package/`, and `.agent_context/design_delivery/delivery.json` names what it contains.\n\n",
+		title, delivery.RevisionNumber, platformLabelForPrompt(delivery.Platform))
+	if entry := strings.TrimSpace(delivery.PrototypeEntry); entry != "" {
+		fmt.Fprintf(&b, "Start from `package/%s`.\n", entry)
+	}
+	if len(delivery.Pages) > 0 {
+		b.WriteString("\nPages to implement:\n")
+		for _, page := range delivery.Pages {
+			fmt.Fprintf(&b, "- %s — `package/%s`\n", strings.TrimSpace(page.Title), page.Entry)
+		}
+	}
+	b.WriteString("\n- Read `brief.json` for the requirement the design answers and `coverage.json` for what it claims to cover.\n")
+	b.WriteString("- The prototype is a specification, not source to copy: reproduce its structure, states, copy and interaction in THIS project's stack and component conventions. Never paste its markup or CSS into the product wholesale.\n")
+	if delivery.RepositoryGrounded {
+		b.WriteString("- This design was produced with read-only access to the repository, so its structure is expected to fit what is already here.\n")
+	} else {
+		b.WriteString("- This design was produced WITHOUT reading the repository. Where it conflicts with existing components or patterns, follow the codebase and say what you changed and why.\n")
+	}
+	b.WriteString("- If you cannot implement part of it, say which part and why rather than silently dropping it.\n\n")
+	return b.String()
+}
+
+func platformLabelForPrompt(platform string) string {
+	switch platform {
+	case "mobile":
+		return "mobile"
+	case "cross_platform":
+		return "cross-platform"
+	case "web":
+		return "web"
+	default:
+		return "unspecified platform"
+	}
+}
+
 func renderProjectDesignSystemContext() string {
-	return "# Project Design System\n\nRead `.agent_context/project_design_system/task.json` before designing. Write the completed package to `$MULTICA_OUTPUT_DIR`.\n"
+	return "# Project Design System\n\nRead `.agent_context/project_design_system/task.json` before designing. Write the completed package to `$MULTICA_OUTPUT_DIR`, following the package contract in the user message exactly.\n"
 }
 
 func renderDesignDocumentContext() string {
@@ -1720,4 +1762,170 @@ func renderAutopilotContext(ctx TaskContextForEnv) string {
 	}
 
 	return b.String()
+}
+
+// writeDesignDocumentContext materializes the read-only workspace a
+// page-design task runs against, under
+// {workdir}/.agent_context/design_document/ (P-011 / DC-042):
+//
+//	context/task.json          the canonical, immutable task envelope
+//	context/design-system.json the pinned saved design system, when one exists
+//	context/repository.json    repository grounding, when a repo was attached
+//	base/                      the base revision, for adjust / regenerate
+//
+// Everything is stamped read-only. The agent's writable area is
+// $MULTICA_OUTPUT_DIR, and keeping the inputs immutable is what makes a
+// revision's input_snapshot_sha256 mean anything: an agent that could edit
+// its own brief could make any package look like it matched the request.
+func writeDesignDocumentContext(workDir string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
+	if strings.TrimSpace(ctx.DesignDocumentContext) == "" {
+		return nil
+	}
+
+	var task map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(ctx.DesignDocumentContext), &task); err != nil {
+		return fmt.Errorf("decode design document task context: %w", err)
+	}
+	var discriminator string
+	if err := json.Unmarshal(task["type"], &discriminator); err != nil || discriminator != "design_document_task" {
+		return fmt.Errorf("invalid design document task context type")
+	}
+	var operation string
+	if err := json.Unmarshal(task["operation"], &operation); err != nil {
+		return fmt.Errorf("decode design document operation: %w", err)
+	}
+	if operation != "generate" && operation != "adjust" && operation != "regenerate" {
+		return fmt.Errorf("unsupported design document operation %q", operation)
+	}
+
+	root := filepath.Join(workDir, ".agent_context", "design_document")
+	if err := recordMkdirAll(root, 0o755, manifest); err != nil {
+		return err
+	}
+	contextDir := filepath.Join(root, "context")
+	if err := recordMkdirAll(contextDir, 0o755, manifest); err != nil {
+		return err
+	}
+	// reference/, context/design-system/ and context/repository-facts/ are
+	// reserved but left for the daemon to fill in after this prepare step:
+	// materializeDesignDocumentInputs downloads attachment and design-system
+	// package bytes into the first two, and the grounding pass writes the
+	// checkout receipt into the third. None of the three arrive inline in the
+	// envelope the way design-system.json and repository.json below do.
+	referenceDir := filepath.Join(root, "reference")
+	designSystemDir := filepath.Join(contextDir, "design-system")
+	factsDir := filepath.Join(contextDir, "repository-facts")
+	for _, dir := range []string{referenceDir, designSystemDir, factsDir} {
+		if err := recordMkdirAll(dir, 0o755, manifest); err != nil {
+			return err
+		}
+	}
+	// work/ stays writable: the agent and the daemon's own grounding finalize
+	// pass (finalizeDesignDocumentGrounding) both use it as scratch space, the
+	// latter reading back repository-grounding.json once the agent exits.
+	if err := recordMkdirAll(filepath.Join(root, "work"), 0o755, manifest); err != nil {
+		return err
+	}
+	// WriteDesignDocumentRepositoryFacts only ever replaces an existing
+	// checkout receipt, so the grounding pass has something to overwrite even
+	// when it finishes with nothing gathered (e.g. repository access denied).
+	if err := recordWriteFile(filepath.Join(factsDir, "checkout.json"), []byte(`{"schema_version":"multica.design-document-checkout/v1","repositories":[]}`), 0o444, manifest); err != nil {
+		return err
+	}
+
+	taskJSON, err := json.MarshalIndent(task, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode design document task context: %w", err)
+	}
+	if err := recordWriteFile(filepath.Join(contextDir, "task.json"), taskJSON, 0o444, manifest); err != nil {
+		return err
+	}
+
+	// Split the two large optional blocks into their own files so the agent
+	// can read the design constraint and the repository evidence without
+	// paging through the whole envelope.
+	for _, block := range []struct {
+		key      string
+		filename string
+	}{
+		{key: "design_context", filename: "design-system.json"},
+		{key: "repository_grounding", filename: "repository.json"},
+	} {
+		raw, present := task[block.key]
+		if !present || len(raw) == 0 || string(raw) == "null" {
+			continue
+		}
+		var probe any
+		if err := json.Unmarshal(raw, &probe); err != nil || probe == nil {
+			continue
+		}
+		if err := recordWriteFile(filepath.Join(contextDir, block.filename), raw, 0o444, manifest); err != nil {
+			return err
+		}
+	}
+
+	// base/ is the immutable revision an adjustment starts from. It is
+	// absent on first generation because there is nothing to adjust.
+	//
+	// Unlike every other input here, the base does NOT arrive in the envelope:
+	// a design document package is an archive of prototype source and assets,
+	// so the task context carries only base_revision_id + base_content_digest
+	// and the daemon downloads and extracts the archive into this directory.
+	// The directory is therefore reserved WRITABLE — ExtractDesignDocumentBase
+	// stamps it read-only once the verified package is on disk. Stamping it
+	// here would make the daemon fail writing the workspace it just built.
+	if operation == "adjust" || operation == "regenerate" {
+		if _, inline := task["base_package"]; inline {
+			// Inline base contents mean the producer and this consumer
+			// disagree about how a base travels. Silently ignoring them would
+			// hand the agent an empty base/ and let it "adjust" from nothing.
+			return errors.New("design document base package must be a reference, not inline contents")
+		}
+		if !designDocumentDeclaresBase(task) {
+			return fmt.Errorf("design document %s task has no base revision to adjust", operation)
+		}
+		if err := recordMkdirAll(designDocumentBaseDir(workDir), 0o755, manifest); err != nil {
+			return err
+		}
+	}
+
+	// base/ is deliberately absent here: it is stamped by
+	// ExtractDesignDocumentBase, once the daemon has the verified package.
+	return stampV2ReadOnly(contextDir, referenceDir, designSystemDir, factsDir)
+}
+
+// designDocumentDeclaresBase reports whether the task pins the revision an
+// adjustment starts from. Both halves are required: the id decides which
+// archive the daemon asks for, the digest decides whether the bytes it gets
+// back are the ones this task was pinned to.
+func designDocumentDeclaresBase(task map[string]json.RawMessage) bool {
+	for _, key := range []string{"base_revision_id", "base_content_digest"} {
+		raw, present := task[key]
+		if !present {
+			return false
+		}
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil || strings.TrimSpace(value) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// safeDesignDocumentBaseName rejects any base entry that could escape the
+// base directory. The names come from a package the platform built, but this
+// writes to the agent's filesystem, so it validates rather than trusts.
+func safeDesignDocumentBaseName(name string) bool {
+	if name == "" || strings.HasPrefix(name, "/") || strings.Contains(name, "\\") {
+		return false
+	}
+	if !fs.ValidPath(name) || path.Clean(name) != name {
+		return false
+	}
+	for _, segment := range strings.Split(name, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
 }

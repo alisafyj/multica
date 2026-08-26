@@ -150,11 +150,27 @@ export function designSystemDetailOptions(wsId: string, id: string) {
   });
 }
 
-export function projectDesignSystemByProjectOptions(wsId: string, projectId: string) {
+// `projectResourceId` is the repository scope (DC-052). It is part of the key
+// so switching repositories cannot serve another repository's cached system;
+// omitting it asks for the project-level system.
+export function projectDesignSystemByProjectOptions(wsId: string, projectId: string, projectResourceId?: string) {
   return queryOptions({
-    queryKey: designKeys.projectDesignSystemByProject(wsId, projectId),
-    queryFn: () => api.getProjectDesignSystemForProject(projectId),
+    queryKey: designKeys.projectDesignSystemByProject(wsId, projectId, projectResourceId),
+    queryFn: () => api.getProjectDesignSystemForProject(projectId, { project_resource_id: projectResourceId }),
     enabled: !!projectId,
+  });
+}
+
+/**
+ * Saved systems that a new scope can be copied from (B1). Workspace-wide by
+ * design — the picker filters out the scope it is offered in, because the
+ * server rejects copying a system onto itself.
+ */
+export function projectDesignSystemCatalogueOptions(wsId: string) {
+  return queryOptions({
+    queryKey: designKeys.projectDesignSystemCatalogue(wsId),
+    queryFn: () => api.listProjectDesignSystemCatalogue(),
+    select: (data) => data.design_systems,
   });
 }
 
@@ -163,6 +179,80 @@ export function projectDesignSystemDetailOptions(wsId: string, id: string) {
     queryKey: designKeys.projectDesignSystem(wsId, id),
     queryFn: () => api.getProjectDesignSystem(id),
     enabled: !!id,
+  });
+}
+
+/**
+ * Design documents of one project (DC-042). The list endpoint requires a
+ * project, so an empty `projectId` keeps the query idle instead of asking the
+ * server for a workspace-wide list it does not serve.
+ */
+export function designDocumentListOptions(wsId: string, projectId: string) {
+  return queryOptions({
+    queryKey: designKeys.documents(wsId, projectId),
+    queryFn: () => api.listDesignDocuments(projectId),
+    select: (data) => data.documents,
+    enabled: !!projectId,
+  });
+}
+
+/**
+ * Design documents pointing at one issue, for the issue's own view of them. An
+ * empty `issueId` stays idle: there is no workspace-wide listing to fall back
+ * on, and asking for one would 400.
+ */
+export function issueDesignDocumentsOptions(wsId: string, issueId: string) {
+  return queryOptions({
+    queryKey: designKeys.documentsByIssue(wsId, issueId),
+    queryFn: () => api.listDesignDocumentsForIssue(issueId),
+    select: (data) => data.documents,
+    enabled: !!issueId,
+  });
+}
+
+/** One design document with its active task, for the document workspace. */
+export function designDocumentDetailOptions(wsId: string, documentId: string) {
+  return queryOptions({
+    queryKey: designKeys.document(wsId, documentId),
+    queryFn: () => api.getDesignDocument(documentId),
+    enabled: !!documentId,
+  });
+}
+
+/** The revision timeline of one document, newest first. */
+export function designDocumentRevisionListOptions(wsId: string, documentId: string) {
+  return queryOptions({
+    queryKey: designKeys.documentRevisions(wsId, documentId),
+    queryFn: () => api.listDesignDocumentRevisions(documentId),
+    select: (data) => data.revisions,
+    enabled: !!documentId,
+  });
+}
+
+/**
+ * One revision with its preview capability. Revisions are immutable, but the
+ * capability expires after 30 minutes, so the query goes stale well before
+ * that and refetches on the next mount instead of framing a dead URL.
+ */
+export function designDocumentRevisionOptions(wsId: string, documentId: string, revisionId: string) {
+  return queryOptions({
+    queryKey: designKeys.documentRevision(wsId, documentId, revisionId),
+    queryFn: () => api.getDesignDocumentRevision(documentId, revisionId),
+    enabled: !!documentId && !!revisionId,
+    staleTime: 20 * 60 * 1000,
+  });
+}
+
+/**
+ * Community catalogue of scenario recipes (DC-041 / DC-048). Always enabled:
+ * an empty catalogue is a legitimate answer the gallery renders as an empty
+ * state, not a reason to keep the query idle.
+ */
+export function designScenarioRecipeListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: designKeys.scenarioRecipes(wsId),
+    queryFn: () => api.listDesignScenarioRecipes(),
+    select: (data) => data.recipes,
   });
 }
 
@@ -181,27 +271,25 @@ export function designDraftDetailOptions(wsId: string, id: string) {
   });
 }
 
-export function designDocumentTaskListOptions(wsId: string, projectId?: string) {
+
+/**
+ * The bundled built-in design systems (the library's 官方 scope). Not
+ * workspace data — the catalogue ships with the server and is identical
+ * everywhere — but the key stays workspace-scoped so it is evicted with the
+ * rest of a workspace's cache rather than outliving it.
+ */
+export function builtinDesignSystemListOptions(wsId: string) {
   return queryOptions({
-    queryKey: designKeys.documentTasks(wsId, projectId),
-    queryFn: () => api.listDesignDocumentAgentTasks(projectId ? { project_id: projectId } : {}),
-    select: (data) => data.tasks,
+    queryKey: designKeys.builtinDesignSystems(wsId),
+    queryFn: () => api.listBuiltinDesignSystems(),
+    select: (data) => data.design_systems,
   });
 }
 
-export function designDocumentListOptions(wsId: string, projectId: string) {
+export function builtinDesignSystemDetailOptions(wsId: string, slug: string) {
   return queryOptions({
-    queryKey: designKeys.documents(wsId, projectId),
-    queryFn: () => api.listDesignDocuments(projectId),
-    select: (data) => data.documents,
-    enabled: Boolean(projectId),
-  });
-}
-
-export function designDocumentPreviewOptions(wsId: string, projectId: string, documentId: string) {
-  return queryOptions({
-    queryKey: designKeys.documentPreview(wsId, projectId, documentId),
-    queryFn: () => api.getDesignDocumentPreview(documentId, projectId),
-    enabled: Boolean(projectId && documentId),
+    queryKey: designKeys.builtinDesignSystem(wsId, slug),
+    queryFn: () => api.getBuiltinDesignSystem(slug),
+    enabled: !!slug,
   });
 }

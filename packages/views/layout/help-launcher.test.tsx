@@ -1,8 +1,10 @@
+
 import type { ReactNode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configStore } from "@multica/core/config";
 import enLayout from "../locales/en/layout.json";
+import { isDesktopShell } from "../platform/local-directory";
 import { HelpLauncher } from "./help-launcher";
 
 const mockToastSuccess = vi.hoisted(() => vi.fn());
@@ -11,6 +13,15 @@ const mockCheckForUpdates = vi.hoisted(() => vi.fn());
 
 vi.mock("sonner", () => ({
   toast: { success: mockToastSuccess, error: mockToastError },
+    }
+  )
+);
+
+// The download entry is gated on the desktop-shell probe, which reads a
+// preload-injected bridge that jsdom never has. Mock it so both platforms are
+// reachable from the same suite.
+vi.mock("../platform/local-directory", () => ({
+  isDesktopShell: vi.fn(() => false),
 }));
 
 // react-i18next isn't initialised in the views test env, so resolve the
@@ -65,6 +76,7 @@ vi.mock("@multica/ui/components/ui/dropdown-menu", async () => {
       ) : (
         <div onClick={onClick}>{children}</div>
       ),
+
     DropdownMenuGroup: ({ children }: { children: ReactNode }) => (
       <GroupContext.Provider value={true}>{children}</GroupContext.Provider>
     ),
@@ -85,6 +97,8 @@ beforeEach(() => {
   mockToastSuccess.mockClear();
   mockToastError.mockClear();
   mockCheckForUpdates.mockReset();
+
+  vi.mocked(isDesktopShell).mockReturnValue(false);
 });
 
 afterEach(() => {
@@ -197,5 +211,25 @@ describe("HelpLauncher", () => {
     render(<HelpLauncher />);
     screen.getByText("Check for updates").click();
     await waitFor(() => expect(mockToastError).toHaveBeenCalled());
+  }
+);
+
+  // MUL-6462: after web onboarding the desktop download CTA was unreachable —
+  // no entry anywhere in the app, so users had to remember the URL or detour
+  // through the marketing site. The Help menu is the persistent home for it.
+  it("links to the download page on web", () => {
+    render(<HelpLauncher />);
+    const link = screen.getByRole("link", { name: /Desktop app/ });
+    expect(link).toHaveAttribute("href", "https://multica.ai/download");
+  });
+
+  // AppSidebar is shared: apps/desktop renders the same component tree. Without
+  // this gate the desktop app would offer to download the desktop app.
+  it("hides the download entry inside the desktop shell", () => {
+    vi.mocked(isDesktopShell).mockReturnValue(true);
+    render(<HelpLauncher />);
+    expect(screen.queryByText("Desktop app")).not.toBeInTheDocument();
+    // The rest of the menu is unaffected by the gate.
+    expect(screen.getByText("Docs")).toBeInTheDocument();
   });
 });

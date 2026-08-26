@@ -190,6 +190,9 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 					writeError(w, http.StatusServiceUnavailable, "cloud pat verifier unavailable")
 					return
 				}
+				if rejectTemporarilyDisabledUser(w, r, identity.OwnerID, "", DaemonAuthPathCloudPAT) {
+					return
+				}
 				r.Header.Set("X-User-ID", identity.OwnerID)
 				// Mirror the regular Auth middleware: tag the auth
 				// path so any downstream guard (handler.
@@ -209,6 +212,9 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 			if !useSySSO && strings.HasPrefix(tokenString, "mul_") {
 				hash := auth.HashToken(tokenString)
 				if userID, ok := patCache.Get(r.Context(), hash); ok {
+					if rejectTemporarilyDisabledUser(w, r, userID, "", DaemonAuthPathPAT) {
+						return
+					}
 					r.Header.Set("X-User-ID", userID)
 					ctx := context.WithValue(r.Context(), ctxKeyDaemonAuthPath, DaemonAuthPathPAT)
 					next.ServeHTTP(w, r.WithContext(ctx))
@@ -225,6 +231,9 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 					return
 				}
 				userID := uuidToString(pat.UserID)
+				if rejectTemporarilyDisabledUser(w, r, userID, "", DaemonAuthPathPAT) {
+					return
+				}
 				r.Header.Set("X-User-ID", userID)
 				var expiresAt time.Time
 				if pat.ExpiresAt.Valid {
@@ -247,6 +256,9 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 			if err != nil {
 				slog.Warn("daemon_auth: invalid token", "path", r.URL.Path, "error", err)
 				writeError(w, http.StatusUnauthorized, "invalid token")
+				return
+			}
+			if rejectTemporarilyDisabledUser(w, r, identity.UserID, identity.Email, DaemonAuthPathJWT) {
 				return
 			}
 			r.Header.Set("X-User-ID", identity.UserID)

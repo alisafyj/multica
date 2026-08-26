@@ -1,0 +1,8 @@
+{
+  "id": "vercel",
+  "name": "Vercel",
+  "category": "Developer Tools",
+  "category_zh": "开发者工具",
+  "description": "Bundled Open Design package for Vercel, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "前端部署。黑白精准，Geist 字体。"
+}

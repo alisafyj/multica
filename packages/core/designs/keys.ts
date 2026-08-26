@@ -1,3 +1,11 @@
+/**
+ * Key segment for the project-level design system: the one shared across
+ * repositories and used when no repository is picked (DC-052). Repository
+ * scopes use their `project_resource_id`, which is a UUID and can never
+ * collide with this sentinel.
+ */
+export const PROJECT_LEVEL_DESIGN_SCOPE = "project-level";
+
 export const designKeys = {
   all: (wsId: string) => ["designs", wsId] as const,
   folders: (wsId: string) => ["designs", wsId, "folders"] as const,
@@ -13,15 +21,33 @@ export const designKeys = {
   designSystems: (wsId: string, projectId?: string) => ["designs", wsId, "design-systems", projectId ?? "all"] as const,
   designSystem: (wsId: string, id: string) => ["designs", wsId, "design-systems", id] as const,
   projectDesignSystems: (wsId: string) => ["designs", wsId, "project-design-systems"] as const,
-  projectDesignSystemByProject: (wsId: string, projectId: string) => ["designs", wsId, "project-design-systems", "project", projectId] as const,
+  projectDesignSystemProjectScopes: (wsId: string, projectId: string) => ["designs", wsId, "project-design-systems", "project", projectId] as const,
+  projectDesignSystemByProject: (wsId: string, projectId: string, projectResourceId?: string | null) => ["designs", wsId, "project-design-systems", "project", projectId, projectResourceId ? projectResourceId : PROJECT_LEVEL_DESIGN_SCOPE] as const,
   projectDesignSystem: (wsId: string, id: string) => ["designs", wsId, "project-design-systems", "system", id] as const,
   projectDesignSystemPackagePreview: (wsId: string, id: string) => ["designs", wsId, "project-design-systems", "system", id, "package-preview"] as const,
-  drafts: (wsId: string) => ["designs", wsId, "drafts"] as const,
-  documentTasks: (wsId: string, projectId?: string) => projectId
-    ? ["designs", wsId, "document-tasks", projectId] as const
-    : ["designs", wsId, "document-tasks"] as const,
+  // Copy sources are workspace-wide, not per project: a system in one project
+  // can seed a scope in another (B1).
+  projectDesignSystemCatalogue: (wsId: string) => ["designs", wsId, "project-design-systems", "catalogue"] as const,
+  // Design documents are listed per project, never workspace-wide (DC-042).
   documents: (wsId: string, projectId: string) => ["designs", wsId, "documents", projectId] as const,
-  documentPreview: (wsId: string, projectId: string, documentId: string) => ["designs", wsId, "documents", projectId, documentId, "preview"] as const,
+  // Kept under the same "documents" prefix so a document write invalidates the
+  // issue's view of it along with the project's.
+  documentsByIssue: (wsId: string, issueId: string) =>
+    ["designs", wsId, "documents", "issue", issueId] as const,
+  // One document and its revisions live under the same "documents" prefix so
+  // the task-lifecycle invalidation of that prefix refreshes them too. The
+  // literal "document" segment cannot collide with a project id.
+  document: (wsId: string, documentId: string) => ["designs", wsId, "documents", "document", documentId] as const,
+  documentRevisions: (wsId: string, documentId: string) => ["designs", wsId, "documents", "document", documentId, "revisions"] as const,
+  documentRevision: (wsId: string, documentId: string, revisionId: string) => ["designs", wsId, "documents", "document", documentId, "revisions", revisionId] as const,
+  // The community catalogue mixes built-in recipes with the workspace's own,
+  // so it is workspace-scoped even though most rows are global (DC-041).
+  scenarioRecipes: (wsId: string) => ["designs", wsId, "scenario-recipes"] as const,
+  // Bundled built-in systems, kept apart from projectDesignSystem* keys so a
+  // read-only catalogue entry never shares a cache slot with a saved system.
+  builtinDesignSystems: (wsId: string) => ["designs", wsId, "builtin-design-systems"] as const,
+  builtinDesignSystem: (wsId: string, slug: string) => ["designs", wsId, "builtin-design-systems", slug] as const,
+  drafts: (wsId: string) => ["designs", wsId, "drafts"] as const,
   draft: (wsId: string, id: string) => ["designs", wsId, "drafts", id] as const,
   repoAnalyses: (wsId: string, projectId: string) => ["designs", wsId, "repo-analyses", projectId] as const,
   repoAnalysis: (wsId: string, id: string) => ["designs", wsId, "repo-analysis", id] as const,

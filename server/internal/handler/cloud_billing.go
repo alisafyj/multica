@@ -48,11 +48,12 @@ const stripeSignatureHeader = "Stripe-Signature"
 
 const idempotencyKeyHeader = "Idempotency-Key"
 const maxCloudSubscriptionIdempotencyKeyLength = 255
+const maxCloudSubscriptionSeatPurchaseIdempotencyKeyLength = 200
+const maxCloudSubscriptionSeats = 10_000
 
 type cloudSubscriptionCheckoutRequest struct {
 	Interval       string `json:"interval"`
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
-	CustomerEmail  string `json:"customer_email,omitempty"`
 }
 
 // This is an intentional allowlist: additive cloud fields are not forwarded
@@ -62,6 +63,19 @@ type cloudSubscriptionCheckoutUpstreamRequest struct {
 	Interval       string `json:"interval"`
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 	CustomerEmail  string `json:"customer_email,omitempty"`
+}
+
+type cloudSubscriptionSeatPurchasePreviewRequest struct {
+	AdditionalSeats int `json:"additional_seats"`
+}
+
+type cloudSubscriptionSeatPurchaseRequest struct {
+	AdditionalSeats         int    `json:"additional_seats"`
+	ExpectedCurrentSeats    int    `json:"expected_current_seats"`
+	ExpectedPurchaseVersion int64  `json:"expected_purchase_version"`
+	AcceptedProrationAmount int64  `json:"accepted_proration_amount"`
+	Currency                string `json:"currency"`
+	IdempotencyKey          string `json:"idempotency_key,omitempty"`
 }
 
 // requireCloudSubscriptionWorkspace is the handler-level backstop behind the
@@ -157,9 +171,42 @@ func (h *Handler) GetCloudWorkspaceEntitlements(w http.ResponseWriter, r *http.R
 	h.proxyCloudSubscription(w, r, http.MethodGet, "/api/v1/entitlements/"+workspaceID, userID, nil, nil)
 }
 
+// GetCloudWorkspaceSubscriptionSummary forwards cloud's Billing-page read:
+// the resolved entitlement plus local subscription facts (seats, interval,
+// cancellation and grace state, Portal availability). Member-readable like
+// entitlements; cloud re-verifies membership against its product database.
+//
+// Cloud serves this from its own database without calling Stripe, so this stays
+// available while Stripe is degraded. A cloud that predates the endpoint
+// answers 404 and the client treats the page as unavailable — never as Free.
+func (h *Handler) GetCloudWorkspaceSubscriptionSummary(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.requireCloudSubscriptionWorkspace(w, r)
+	if !ok {
+		return
+	}
+	h.proxyCloudSubscription(w, r, http.MethodGet, "/api/v1/subscriptions/"+workspaceID+"/summary", userID, nil, nil)
+}
+
+// GetCloudWorkspaceSubscriptionPrices forwards cloud's validated per-seat price
+// read so the client never hardcodes an amount that Stripe can change.
+//
+// Member-readable: seeing what Pro costs is not a privileged action, and cloud
+// scopes the read to a workspace this caller belongs to. Cloud returns only
+// currency, minor-unit amount and interval — Price and Product IDs stay server
+// side — and answers 503 when a configured Price cannot be validated, which the
+// client renders as "price confirmed at Checkout" rather than a guessed number.
+func (h *Handler) GetCloudWorkspaceSubscriptionPrices(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.requireCloudSubscriptionWorkspace(w, r)
+	if !ok {
+		return
+	}
+	h.proxyCloudSubscription(w, r, http.MethodGet, "/api/v1/subscriptions/"+workspaceID+"/prices", userID, nil, nil)
+}
+
 // CreateCloudWorkspaceSubscriptionCheckout injects the middleware-resolved
-// workspace into the upstream body. A caller cannot use a valid role in one
-// workspace to smuggle a different workspace_id through JSON.
+// workspace and authenticated user's stored email into the upstream body. A
+// caller cannot smuggle a different workspace or Stripe payer identity through
+// JSON; Cloud remains authoritative for the price, quantity, and Checkout.
 func (h *Handler) CreateCloudWorkspaceSubscriptionCheckout(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.requireCloudSubscriptionWorkspace(w, r, "owner", "admin")
 	if !ok {
@@ -182,11 +229,25 @@ func (h *Handler) CreateCloudWorkspaceSubscriptionCheckout(w http.ResponseWriter
 	if !ok {
 		return
 	}
+	payerUserID, ok := parseUUIDOrBadRequest(w, userID, "user id")
+	if !ok {
+		return
+	}
+	user, err := h.Queries.GetUser(r.Context(), payerUserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve checkout payer")
+		return
+	}
+	customerEmail := strings.TrimSpace(user.Email)
+	if customerEmail == "" {
+		writeError(w, http.StatusInternalServerError, "checkout payer email is unavailable")
+		return
+	}
 	upstreamBody, err := json.Marshal(cloudSubscriptionCheckoutUpstreamRequest{
 		WorkspaceID:    workspaceID,
 		Interval:       in.Interval,
 		IdempotencyKey: idempotencyKey,
-		CustomerEmail:  in.CustomerEmail,
+		CustomerEmail:  customerEmail,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to build subscription request")
@@ -204,6 +265,92 @@ func (h *Handler) ReconcileCloudWorkspaceSubscriptionSeats(w http.ResponseWriter
 		return
 	}
 	h.proxyCloudSubscription(w, r, http.MethodPost, "/api/v1/subscriptions/"+workspaceID+"/seats/reconcile", userID, nil, nil)
+}
+
+// PreviewCloudWorkspaceSubscriptionSeatPurchase accepts only an additive seat
+// count. Cloud reads the authoritative current quantity and returns Stripe's
+// estimated proration plus the next full recurring invoice.
+func (h *Handler) PreviewCloudWorkspaceSubscriptionSeatPurchase(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.requireCloudSubscriptionWorkspace(w, r, "owner", "admin")
+	if !ok {
+		return
+	}
+	body, ok := readCloudRuntimeJSONBody(w, r)
+	if !ok {
+		return
+	}
+	var in cloudSubscriptionSeatPurchasePreviewRequest
+	if err := json.Unmarshal(body, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if in.AdditionalSeats < 1 || in.AdditionalSeats > maxCloudSubscriptionSeats {
+		writeError(w, http.StatusBadRequest, "additional_seats must be within 1..10000")
+		return
+	}
+	upstreamBody, err := json.Marshal(in)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to build seat purchase preview")
+		return
+	}
+	h.proxyCloudSubscription(w, r, http.MethodPost,
+		"/api/v1/subscriptions/"+workspaceID+"/seats/purchase-preview", userID, upstreamBody, nil)
+}
+
+// PurchaseCloudWorkspaceSubscriptionSeats forwards a user-confirmed quote.
+// The allowlisted body omits any client workspace or absolute target quantity;
+// Cloud repeats the quote and owns concurrency, idempotency, and Stripe writes.
+func (h *Handler) PurchaseCloudWorkspaceSubscriptionSeats(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.requireCloudSubscriptionWorkspace(w, r, "owner", "admin")
+	if !ok {
+		return
+	}
+	body, ok := readCloudRuntimeJSONBody(w, r)
+	if !ok {
+		return
+	}
+	var in cloudSubscriptionSeatPurchaseRequest
+	if err := json.Unmarshal(body, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if in.AdditionalSeats < 1 || in.ExpectedCurrentSeats < 1 ||
+		in.AdditionalSeats > maxCloudSubscriptionSeats ||
+		in.ExpectedCurrentSeats > maxCloudSubscriptionSeats-in.AdditionalSeats ||
+		in.ExpectedPurchaseVersion < 1 || in.AcceptedProrationAmount < 0 || !isASCIICurrency(in.Currency) {
+		writeError(w, http.StatusBadRequest, "invalid seat purchase confirmation")
+		return
+	}
+	key, ok := requireCloudSubscriptionIdempotencyKey(w, r, in.IdempotencyKey)
+	if !ok {
+		return
+	}
+	if len(key) > maxCloudSubscriptionSeatPurchaseIdempotencyKeyLength {
+		writeError(w, http.StatusBadRequest, "seat purchase idempotency key must be at most 200 bytes")
+		return
+	}
+	in.Currency = strings.ToLower(in.Currency)
+	in.IdempotencyKey = key
+	upstreamBody, err := json.Marshal(in)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to build seat purchase request")
+		return
+	}
+	h.proxyCloudSubscription(w, r, http.MethodPost,
+		"/api/v1/subscriptions/"+workspaceID+"/seats/purchases", userID, upstreamBody,
+		http.Header{idempotencyKeyHeader: []string{key}})
+}
+
+func isASCIICurrency(value string) bool {
+	if len(value) != 3 {
+		return false
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Handler) CreateCloudWorkspaceSubscriptionPortal(w http.ResponseWriter, r *http.Request) {

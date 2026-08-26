@@ -361,7 +361,9 @@ func (s *PMOService) applySnapshotInTx(
 		}
 
 		if entity.LocalType == PMOLocalProject && entityLocalID.Valid {
-			project, err := qtx.GetProject(ctx, entityLocalID)
+			project, err := qtx.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
+				ID: entityLocalID, WorkspaceID: workspaceID,
+			})
 			if err != nil {
 				return result, fmt.Errorf("pmo apply: reload applied project: %w", err)
 			}
@@ -744,7 +746,7 @@ func (s *PMOService) applyEntityFields(
 
 	switch entity.LocalType {
 	case PMOLocalProject:
-		if err := s.applyProjectFields(ctx, qtx, link.LocalID, workloadPropertyID, writes); err != nil {
+		if err := s.applyProjectFields(ctx, qtx, workspaceID, link.LocalID, writes); err != nil {
 			return pending, nil, err
 		}
 	case PMOLocalIssue:
@@ -760,8 +762,8 @@ func (s *PMOService) applyEntityFields(
 // applyProjectFields writes one UpdateProject carrying the unchanged current
 // values for every field it does NOT explicitly change, so a partial write
 // never nulls an untouched column.
-func (s *PMOService) applyProjectFields(ctx context.Context, qtx *db.Queries, projectID pgtype.UUID, _ pgtype.UUID, writes map[string]any) error {
-	current, err := qtx.GetProject(ctx, projectID)
+func (s *PMOService) applyProjectFields(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, projectID pgtype.UUID, writes map[string]any) error {
+	current, err := qtx.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: projectID, WorkspaceID: workspaceID})
 	if err != nil {
 		return fmt.Errorf("pmo apply: reload project: %w", err)
 	}

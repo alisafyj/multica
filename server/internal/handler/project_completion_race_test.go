@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -48,17 +47,6 @@ func (s *rollbackOnCommitStarter) Begin(ctx context.Context) (pgx.Tx, error) {
 		return nil, err
 	}
 	return &rollbackOnCommitTx{Tx: tx}, nil
-}
-
-type rollbackOnCommitTx struct {
-	pgx.Tx
-}
-
-func (tx *rollbackOnCommitTx) Commit(ctx context.Context) error {
-	if err := tx.Tx.Rollback(ctx); err != nil {
-		return err
-	}
-	return errors.New("forced commit failure")
 }
 
 func (tx *firstCommitHookTx) Commit(ctx context.Context) error {

@@ -41,21 +41,27 @@
   },
   "empty_state": {
     "first_time": {
-      "title": "与你的智能体聊天",
-      "subtitle_prefix": "✨ 它们了解你的工作区——",
-      "subtitle_highlight": "issue、项目、skill",
-      "subtitle_suffix": "。",
-      "description": "试着让它做个总结、帮你规划一天，或者交给它处理一件小事。"
+      "title": "与你的智能体聊天"
     },
     "returning": {
       "title_named": "嗨，我是 {{name}}",
       "title_default": "欢迎回到 Multica",
       "subtitle": "试着问问"
     },
-    "starter_prompts": {
-      "list_issues": "按优先级列出我的未完成 issue",
-      "summarize_today": "总结我今天做了什么",
-      "plan_next": "帮我规划接下来要做什么"
+    "pick_example": "挑一个例子开始，发送前可以先改。",
+    "fallback_prompts": {
+      "capabilities": {
+        "label": "你能帮我做什么？",
+        "prompt": "你最擅长帮忙做哪些事？简要说明。"
+      },
+      "first_task": {
+        "label": "建议第一件事",
+        "prompt": "推荐三件我可以交给你的有用任务。"
+      },
+      "recommend": {
+        "label": "推荐一个动作",
+        "prompt": "看看你了解的工作区情况，推荐一个值得先做的动作。"
+      }
     }
   },
   "message_list": {

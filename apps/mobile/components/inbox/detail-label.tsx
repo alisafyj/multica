@@ -15,7 +15,6 @@ import { useTranslation } from "react-i18next";
 import type {
   InboxItem,
   InboxItemType,
-  IssueStatus,
   IssuePriority,
 } from "@multica/core/types";
 import { formatDateOnly } from "@multica/core/issues/date";
@@ -24,8 +23,41 @@ import { StatusIcon } from "@/components/ui/status-icon";
 import { PriorityIcon } from "@/components/ui/priority-icon";
 import { useActorLookup } from "@/data/use-actor-name";
 import { useIssueLabels } from "@/lib/use-issue-labels";
+import { useIssueStatuses } from "@/lib/use-issue-statuses";
 import { cn } from "@/lib/utils";
 
+// Mirrors PRIORITY_CONFIG.label in packages/core/issues/config/priority.ts
+const PRIORITY_LABEL: Record<IssuePriority, string> = {
+  urgent: "Urgent",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+  none: "No priority",
+};
+
+// Mirrors useTypeLabels in packages/views/inbox/components/inbox-detail-label.tsx
+const TYPE_LABEL: Record<InboxItemType, string> = {
+  issue_assigned: "Assigned",
+  issue_subscribed: "Subscribed",
+  unassigned: "Unassigned",
+  assignee_changed: "Reassigned",
+  status_changed: "Status changed",
+  priority_changed: "Priority changed",
+  start_date_changed: "Start date changed",
+  due_date_changed: "Due date changed",
+  new_comment: "New comment",
+  mentioned: "Mentioned",
+  review_requested: "Review requested",
+  task_completed: "Task completed",
+  task_failed: "Task failed",
+  agent_blocked: "Agent blocked",
+  agent_completed: "Agent completed",
+  reaction_added: "Reaction added",
+  design_ready: "Design ready",
+  quick_create_done: "Quick-create done",
+  quick_create_failed: "Quick-create failed",
+  quick_create_unconfirmed: "Quick-create needs a check",
+};
 // due_date is a calendar day — format timezone-safely (no offset day shift).
 function shortDate(dateStr: string): string {
   return formatDateOnly(dateStr, { month: "short", day: "numeric" }, "en-US");
@@ -44,9 +76,10 @@ export function InboxDetailLabel({
 }) {
   const { getName } = useActorLookup();
   const { t } = useTranslation("inbox");
-  // Status / priority labels come from the shared "issues" namespace so the
-  // inbox row and the issue screens can never drift apart.
   const { statusLabel, priorityLabel } = useIssueLabels();
+  // `details.to` is a status KEY and may be a custom one, so its colour and
+  // glyph resolve through the workspace catalog. (MUL-6243)
+  const { categoryOf, colorOf } = useIssueStatuses();
   const details = item.details ?? {};
 
   const typeLabel = (type: InboxItemType) =>
@@ -54,13 +87,18 @@ export function InboxDetailLabel({
 
   // Cases with inline icons → Row layout.
   if (item.type === "status_changed" && details.to) {
-    const status = details.to as IssueStatus;
+    const status = details.to;
     return (
       <View className={cn("flex-row items-center gap-1", className)}>
         <Text className="text-xs text-muted-foreground">
           {t("detail.set_status_to")}
         </Text>
-        <StatusIcon status={status} size={12} />
+        <StatusIcon
+          status={status}
+          category={categoryOf(status)}
+          color={colorOf(status)}
+          size={12}
+        />
         <Text className="text-xs text-muted-foreground" numberOfLines={1}>
           {statusLabel(status)}
         </Text>

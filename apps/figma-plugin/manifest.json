@@ -4,5 +4,9 @@
   "api": "1.0.0",
   "main": "code.js",
   "ui": "ui.html",
-  "editorType": ["figma", "figjam"]
+  "editorType": ["figma", "figjam"],
+  "networkAccess": {
+    "allowedDomains": ["https://iworker.soyoung.com"],
+    "devAllowedDomains": ["http://localhost:18850"]
+  }
 }

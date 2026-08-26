@@ -173,12 +173,12 @@ func (h *Handler) CreateDesignDelivery(w http.ResponseWriter, r *http.Request) {
 	deliveryUUID := pgtype.UUID{Bytes: deliveryID, Valid: true}
 	qtx := h.Queries.WithTx(tx)
 	if err := qtx.SupersedeActiveDesignDeliveries(r.Context(), db.SupersedeActiveDesignDeliveriesParams{
-		WorkspaceID:                wsUUID,
-		SourceIssueID:              sourceIssue.ID,
-		SupersededByDeliveryID:     deliveryUUID,
-		SupersededByTargetIssueID:  targetIssue.ID,
-		SupersededByFileID:         file.ID,
-		SupersededByRevisionID:     revision.ID,
+		WorkspaceID:               wsUUID,
+		SourceIssueID:             sourceIssue.ID,
+		SupersededByDeliveryID:    deliveryUUID,
+		SupersededByTargetIssueID: targetIssue.ID,
+		SupersededByFileID:        file.ID,
+		SupersededByRevisionID:    revision.ID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update existing design delivery")
 		return

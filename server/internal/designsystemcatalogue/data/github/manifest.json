@@ -1,0 +1,8 @@
+{
+  "id": "github",
+  "name": "GitHub",
+  "category": "Developer Tools",
+  "category_zh": "开发者工具",
+  "description": "Bundled Open Design package for GitHub, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "代码优先平台。功能密度，蓝白精准，Primer 设计基础。"
+}

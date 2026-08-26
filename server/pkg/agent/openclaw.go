@@ -64,7 +64,7 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		return nil, fmt.Errorf("openclaw executable not found at %q: %w", execPath, err)
 	}
 
-	if err := checkOpenclawVersion(ctx, execPath); err != nil {
+	if err := checkOpenclawVersion(ctx, b.cfg.commandAt(execPath)); err != nil {
 		return nil, err
 	}
 
@@ -83,14 +83,14 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	transcriptOffset := openclawSessionSize(stateDir, agentID, sessionID)
 	args := buildOpenclawArgs(prompt, sessionID, opts, b.cfg.Logger)
 
-	cmd := exec.CommandContext(runCtx, execPath, args...)
+	cmd := b.cfg.commandAt(execPath).exec(runCtx, args...)
 	hideAgentWindow(cmd)
 	configureProcessGroup(cmd)
 	cmd.Cancel = func() error {
 		signalProcessGroup(cmd, syscall.SIGKILL)
 		return nil
 	}
-	b.cfg.Logger.Info("agent command", "exec", execPath, "args", args)
+	b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(args, trustAgentCommandPositional(0, "agent")))
 	// 500ms, matching cursor-agent — the other backend whose CLI can deliver a
 	// terminal result while keeping a process alive.
 	//
@@ -336,10 +336,10 @@ func ResolveOpenclawAgentID(model string, customArgs []string) string {
 // minOpenclawVersion. The returned error becomes the task's failure
 // comment, so the message intentionally names the detected version
 // and the upgrade command.
-func checkOpenclawVersion(ctx context.Context, execPath string) error {
-	cmd := exec.CommandContext(ctx, execPath, "--version")
+func checkOpenclawVersion(ctx context.Context, runtimeCmd Command) error {
+	cmd := runtimeCmd.exec(ctx, "--version")
 	hideAgentWindow(cmd)
-	out, err := cmd.CombinedOutput()
+	out, err := combinedOutputOwned(cmd, runtimeCmd.logger)
 	if err != nil {
 		return fmt.Errorf("openclaw --version failed: %w", err)
 	}

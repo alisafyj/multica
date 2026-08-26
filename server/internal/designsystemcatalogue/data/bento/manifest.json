@@ -1,0 +1,8 @@
+{
+  "id": "bento",
+  "name": "Bento",
+  "category": "Layout & Structure",
+  "category_zh": "布局与结构",
+  "description": "Bundled Open Design package for Bento, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "模块化网格布局，卡片式块状，清晰层级，柔和间距，微妙视觉对比，界面有序可扫。"
+}

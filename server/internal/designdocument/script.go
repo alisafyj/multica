@@ -1,0 +1,445 @@
+package designdocument
+
+import (
+	"io"
+	"net/url"
+	"path"
+	"strings"
+
+	parse "github.com/tdewolff/parse/v2"
+	"github.com/tdewolff/parse/v2/js"
+)
+
+// The design document prototype deliberately allows package-local JavaScript
+// and localStorage so page switching, tabs, filters, sorting, overlays, form
+// validation and mock data transitions can be demonstrated for real. What it
+// must never do is need the network.
+//
+// The audit therefore runs two passes over every script:
+//
+//  1. A token pass over the real JavaScript lexer. It rejects the identifiers
+//     that have no innocent meaning in an offline prototype, and it rejects
+//     remote URL strings. Working on lexer tokens rather than raw text means a
+//     comment or an unrelated word can never trip it, and a string cannot hide
+//     a forbidden identifier from it.
+//  2. An AST pass over the real JavaScript parser. It applies the rules that
+//     need context, such as navigation members that are only forbidden on the
+//     window or document object, and it rejects the constructs that would make
+//     static analysis meaningless: eval, the Function constructor, dynamic
+//     import, and computed lookups on a global object.
+//
+// Static analysis cannot decide every dynamically composed expression. That is
+// why the constructs which enable dynamic composition are rejected outright,
+// and why the browser Preview gate still runs the prototype with the network
+// unavailable and reports any outbound request. This audit is the static half
+// of that pair, never a replacement for it.
+
+// forbiddenScriptGlobals are identifiers a prototype has no reason to mention.
+// Every one of them is either a way to reach the network, a way to install
+// background code, or a way to build code at runtime.
+var forbiddenScriptGlobals = map[string]string{
+	"fetch":             "network requests are not allowed in a prototype",
+	"XMLHttpRequest":    "network requests are not allowed in a prototype",
+	"WebSocket":         "WebSocket connections are not allowed in a prototype",
+	"EventSource":       "server sent events are not allowed in a prototype",
+	"sendBeacon":        "beacon requests are not allowed in a prototype",
+	"serviceWorker":     "Service Worker registration is not allowed in a prototype",
+	"importScripts":     "remote script loading is not allowed in a prototype",
+	"SharedWorker":      "shared workers are not allowed in a prototype",
+	"RTCPeerConnection": "peer connections are not allowed in a prototype",
+	"WebTransport":      "transport connections are not allowed in a prototype",
+	"eval":              "runtime code evaluation is not allowed in a prototype",
+}
+
+// globalAliases are the identifiers that reach the host window or document.
+// Navigation members are only forbidden when they hang off one of these, so a
+// mock data field such as row.location stays perfectly legal.
+var globalAliases = map[string]struct{}{
+	"window": {}, "self": {}, "globalThis": {}, "document": {},
+	"top": {}, "parent": {}, "frames": {},
+}
+
+// navigationMembers navigate the Preview away from the package, open a new
+// browsing context, or rewrite the document from a string.
+var navigationMembers = map[string]struct{}{
+	"location": {}, "open": {}, "opener": {}, "write": {}, "writeln": {},
+	"top": {}, "parent": {}, "frames": {},
+}
+
+// freeNavigationIdentifiers are the bare globals that navigate or reach out of
+// the prototype frame without needing a window prefix.
+var freeNavigationIdentifiers = map[string]struct{}{
+	"location": {}, "opener": {}, "top": {}, "parent": {}, "frames": {},
+}
+
+// constructedGlobals may not be constructed. Worker and Function are ordinary
+// words that a prototype could legitimately use as a data field name, so they
+// are rejected only in `new` position where the meaning is unambiguous.
+var constructedGlobals = map[string]string{
+	"Worker":   "web workers are not allowed in a prototype",
+	"Function": "runtime code construction is not allowed in a prototype",
+}
+
+// activeElementTags may not be created from script. Creating one of these is
+// the standard way to pull remote code or a remote document into the page.
+var activeElementTags = map[string]struct{}{
+	"script": {}, "link": {}, "iframe": {}, "embed": {}, "object": {},
+	"frame": {}, "frameset": {}, "base": {}, "meta": {}, "portal": {},
+}
+
+// forbiddenURLSchemes are the schemes that mean network access or code
+// execution. Other schemes, including data: images, are left alone because a
+// prototype has no API left with which to fetch them.
+var forbiddenURLSchemes = map[string]struct{}{
+	"http": {}, "https": {}, "ws": {}, "wss": {}, "ftp": {}, "ftps": {},
+	"file": {}, "javascript": {}, "vbscript": {}, "blob": {},
+}
+
+type scriptAudit struct {
+	path        string
+	artifacts   map[string]ArtifactIndexEntry
+	diagnostics []Diagnostic
+}
+
+// auditScript parses one prototype script and applies the token and AST passes.
+func auditScript(source []byte, basePath string, artifacts map[string]ArtifactIndexEntry) []Diagnostic {
+	ast, err := js.Parse(parse.NewInputBytes(source), js.Options{})
+	if err != nil {
+		return []Diagnostic{errorDiagnostic("prototype_script_invalid", basePath, "prototype JavaScript is invalid: "+err.Error())}
+	}
+	audit := &scriptAudit{path: basePath, artifacts: artifacts, diagnostics: make([]Diagnostic, 0)}
+	audit.scanTokens(source)
+	js.Walk(audit, ast)
+	return audit.diagnostics
+}
+
+// scanTokens is the lexer pass. It never sees comments as code and never sees
+// string contents as identifiers.
+func (audit *scriptAudit) scanTokens(source []byte) {
+	lexer := js.NewLexer(parse.NewInputBytes(source))
+	for {
+		tokenType, data := lexer.Next()
+		if tokenType == js.ErrorToken {
+			if err := lexer.Err(); err != nil && err != io.EOF {
+				audit.report("prototype_script_invalid", "prototype JavaScript cannot be tokenized")
+			}
+			return
+		}
+		switch tokenType {
+		case js.IdentifierToken:
+			if message, forbidden := forbiddenScriptGlobals[string(data)]; forbidden {
+				audit.report("prototype_script_forbidden_api", message)
+			}
+		case js.StringToken:
+			audit.checkURLString(decodeJSString(data))
+		case js.TemplateToken, js.TemplateStartToken, js.TemplateMiddleToken, js.TemplateEndToken:
+			audit.checkURLString(decodeJSString(trimTemplateDelimiters(data)))
+		}
+	}
+}
+
+func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
+	switch value := node.(type) {
+	case *js.Var:
+		name, declaration := resolveVar(value)
+		if declaration != js.NoDecl {
+			return nil
+		}
+		if _, forbidden := freeNavigationIdentifiers[name]; forbidden {
+			audit.report("prototype_script_navigation_forbidden", "prototype scripts cannot reference "+name)
+		}
+		return nil
+	case *js.DotExpr:
+		if name, ok := memberName(value.Y); ok {
+			audit.checkMember(value.X, name)
+		}
+		js.Walk(audit, value.X)
+		return nil
+	case *js.IndexExpr:
+		if name, ok := stringLiteralValue(value.Y); ok {
+			audit.checkMember(value.X, name)
+			audit.checkComputedName(name)
+		} else if isGlobalAlias(value.X) {
+			audit.report("prototype_script_dynamic_global", "computed lookups on a global object are not allowed")
+		}
+		js.Walk(audit, value.X)
+		js.Walk(audit, value.Y)
+		return nil
+	case *js.CallExpr:
+		audit.checkCall(value.X, value.Args)
+	case *js.NewExpr:
+		if name, ok := freeIdentifierName(value.X); ok {
+			if message, forbidden := constructedGlobals[name]; forbidden {
+				audit.report("prototype_script_forbidden_api", message)
+			}
+		}
+	case *js.ImportStmt:
+		audit.checkModuleSpecifier(decodeJSString(value.Module))
+	}
+	return audit
+}
+
+func (audit *scriptAudit) Exit(js.INode) {}
+
+func (audit *scriptAudit) checkCall(callee js.IExpr, args js.Args) {
+	if literal, ok := callee.(*js.LiteralExpr); ok && literal.TokenType == js.ImportToken {
+		audit.report("prototype_script_dynamic_import", "dynamic import is not allowed in a prototype")
+		return
+	}
+	if name, ok := freeIdentifierName(callee); ok {
+		if message, forbidden := constructedGlobals[name]; forbidden && name == "Function" {
+			audit.report("prototype_script_forbidden_api", message)
+		}
+	}
+	dot, ok := callee.(*js.DotExpr)
+	if !ok {
+		return
+	}
+	property, ok := memberName(dot.Y)
+	if !ok || (property != "createElement" && property != "createElementNS") {
+		return
+	}
+	for _, argument := range args.List {
+		tag, ok := stringLiteralValue(argument.Value)
+		if !ok {
+			continue
+		}
+		if _, forbidden := activeElementTags[strings.ToLower(strings.TrimSpace(tag))]; forbidden {
+			audit.report("prototype_script_active_element", "creating <"+tag+"> from script is not allowed")
+		}
+	}
+}
+
+func (audit *scriptAudit) checkMember(object js.IExpr, property string) {
+	if message, forbidden := forbiddenScriptGlobals[property]; forbidden {
+		audit.report("prototype_script_forbidden_api", message)
+		return
+	}
+	if !isGlobalAlias(object) {
+		return
+	}
+	if _, forbidden := navigationMembers[property]; forbidden {
+		audit.report("prototype_script_navigation_forbidden", "prototype scripts cannot use this navigation member: "+property)
+	}
+}
+
+func (audit *scriptAudit) checkComputedName(name string) {
+	if message, forbidden := forbiddenScriptGlobals[name]; forbidden {
+		audit.report("prototype_script_forbidden_api", message)
+		return
+	}
+	if _, forbidden := constructedGlobals[name]; forbidden {
+		audit.report("prototype_script_forbidden_api", "runtime lookup of "+name+" is not allowed")
+	}
+}
+
+// checkModuleSpecifier requires an ES module import to stay inside the package.
+func (audit *scriptAudit) checkModuleSpecifier(specifier string) {
+	resolved, ok := resolveLocalResource(specifier, audit.path)
+	if !ok || strings.HasPrefix(resolved, "#") {
+		audit.report("prototype_script_module_external", "module imports must resolve inside the package")
+		return
+	}
+	entry, exists := audit.artifacts[resolved]
+	if !exists || entry.Role != "prototype_script" {
+		audit.report("prototype_script_module_external", "module imports must resolve to a package-local prototype script")
+	}
+}
+
+func (audit *scriptAudit) checkURLString(value string) {
+	if scriptStringIsRemoteURL(value) {
+		audit.report("prototype_script_remote_url", "prototype scripts cannot contain remote or executable URLs")
+	}
+}
+
+func (audit *scriptAudit) report(code, message string) {
+	audit.diagnostics = append(audit.diagnostics, errorDiagnostic(code, audit.path, message))
+}
+
+// scriptStringIsRemoteURL reports whether a decoded string is an absolute
+// remote URL or a protocol-relative one.
+func scriptStringIsRemoteURL(value string) bool {
+	normalized := normalizeForURLPolicy(value)
+	if normalized == "" {
+		return false
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil {
+		return false
+	}
+	if strings.HasPrefix(normalized, "//") {
+		return parsed.Host != ""
+	}
+	_, forbidden := forbiddenURLSchemes[strings.ToLower(parsed.Scheme)]
+	return forbidden
+}
+
+func resolveVar(variable *js.Var) (string, js.DeclType) {
+	for variable.Link != nil {
+		variable = variable.Link
+	}
+	return string(variable.Data), variable.Decl
+}
+
+func freeIdentifierName(expr js.IExpr) (string, bool) {
+	variable, ok := expr.(*js.Var)
+	if !ok {
+		return "", false
+	}
+	name, declaration := resolveVar(variable)
+	if declaration != js.NoDecl {
+		return "", false
+	}
+	return name, true
+}
+
+func isGlobalAlias(expr js.IExpr) bool {
+	name, ok := freeIdentifierName(expr)
+	if !ok {
+		return false
+	}
+	_, alias := globalAliases[name]
+	return alias
+}
+
+// memberName reads the property name of a dot expression. The parser stores it
+// as a literal value, or as a variable for a private class field.
+func memberName(expr js.IExpr) (string, bool) {
+	switch value := expr.(type) {
+	case js.LiteralExpr:
+		return string(value.Data), true
+	case *js.LiteralExpr:
+		return string(value.Data), true
+	case *js.Var:
+		name, _ := resolveVar(value)
+		return name, true
+	}
+	return "", false
+}
+
+func stringLiteralValue(expr js.IExpr) (string, bool) {
+	literal, ok := expr.(*js.LiteralExpr)
+	if !ok || literal.TokenType != js.StringToken {
+		return "", false
+	}
+	return decodeJSString(literal.Data), true
+}
+
+func trimTemplateDelimiters(data []byte) []byte {
+	value := data
+	if len(value) > 0 && (value[0] == '`' || value[0] == '}') {
+		value = value[1:]
+	}
+	if len(value) > 0 && value[len(value)-1] == '`' {
+		value = value[:len(value)-1]
+	} else if len(value) >= 2 && value[len(value)-2] == '$' && value[len(value)-1] == '{' {
+		value = value[:len(value)-2]
+	}
+	return value
+}
+
+// decodeJSString unquotes and unescapes a JavaScript string literal so an
+// escaped scheme cannot hide a remote URL from the policy check.
+func decodeJSString(data []byte) string {
+	value := string(data)
+	if len(value) >= 2 {
+		first := value[0]
+		last := value[len(value)-1]
+		if (first == '"' && last == '"') || (first == '\'' && last == '\'') || (first == '`' && last == '`') {
+			value = value[1 : len(value)-1]
+		}
+	}
+	var decoded strings.Builder
+	decoded.Grow(len(value))
+	for index := 0; index < len(value); {
+		if value[index] != '\\' {
+			decoded.WriteByte(value[index])
+			index++
+			continue
+		}
+		index++
+		if index == len(value) {
+			break
+		}
+		switch value[index] {
+		case 'n':
+			decoded.WriteByte('\n')
+			index++
+		case 't':
+			decoded.WriteByte('\t')
+			index++
+		case 'r':
+			decoded.WriteByte('\r')
+			index++
+		case 'b', 'f', 'v', '0':
+			decoded.WriteByte(' ')
+			index++
+		case '\n':
+			index++
+		case '\r':
+			index++
+			if index < len(value) && value[index] == '\n' {
+				index++
+			}
+		case 'x':
+			index++
+			decoded.WriteRune(readHexCodePoint(value, &index, 2))
+		case 'u':
+			index++
+			if index < len(value) && value[index] == '{' {
+				index++
+				start := index
+				for index < len(value) && value[index] != '}' {
+					index++
+				}
+				decoded.WriteRune(parseCodePoint(value[start:index]))
+				if index < len(value) {
+					index++
+				}
+				continue
+			}
+			decoded.WriteRune(readHexCodePoint(value, &index, 4))
+		default:
+			decoded.WriteByte(value[index])
+			index++
+		}
+	}
+	return decoded.String()
+}
+
+func readHexCodePoint(value string, index *int, width int) rune {
+	start := *index
+	end := start + width
+	if end > len(value) {
+		end = len(value)
+	}
+	*index = end
+	return parseCodePoint(value[start:end])
+}
+
+func parseCodePoint(digits string) rune {
+	if digits == "" {
+		return '�'
+	}
+	var codePoint uint32
+	for index := 0; index < len(digits); index++ {
+		digit, ok := hexDigit(digits[index])
+		if !ok {
+			return '�'
+		}
+		codePoint = codePoint*16 + uint32(digit)
+		if codePoint > 0x10ffff {
+			return '�'
+		}
+	}
+	if 0xd800 <= codePoint && codePoint <= 0xdfff {
+		return '�'
+	}
+	return rune(codePoint)
+}
+
+// prototypeScriptPath reports whether a resolved package path is a prototype
+// script, which is the only thing a <script src> or a module import may name.
+func prototypeScriptPath(name string) bool {
+	return strings.HasPrefix(name, prototypeRoot+"/") && strings.ToLower(path.Ext(name)) == ".js"
+}

@@ -1072,10 +1072,70 @@ ORDER BY analysis_version DESC
 LIMIT 1;
 -- Project design systems
 
+-- Project-level system: the one used across repositories and whenever a
+-- design task runs without a repository (DC-052 / DC-053).
 -- name: GetProjectDesignSystemByProject :one
 SELECT * FROM project_design_system
 WHERE workspace_id = sqlc.arg('workspace_id')
-  AND project_id = sqlc.arg('project_id');
+  AND project_id = sqlc.arg('project_id')
+  AND project_resource_id IS NULL;
+
+-- The system owned by one repository. Callers fall back to
+-- GetProjectDesignSystemByProject when this returns no rows.
+-- name: GetProjectDesignSystemByResource :one
+SELECT * FROM project_design_system
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND project_id = sqlc.arg('project_id')
+  AND project_resource_id = sqlc.arg('project_resource_id');
+
+-- Every system under a project, project-level row first so the scope
+-- switcher can render it as the default entry.
+-- name: ListProjectDesignSystemsByProject :many
+SELECT * FROM project_design_system
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND project_id = sqlc.arg('project_id')
+ORDER BY (project_resource_id IS NOT NULL), created_at;
+
+-- The workspace-level catalogue (DC-054 / B1). Only systems that have
+-- actually been saved are listed: a draft is not something another project
+-- should be copying from, since nobody has accepted it yet (DC-034).
+-- name: ListSavedProjectDesignSystemsInWorkspace :many
+-- LEFT JOIN: a standalone system (project_id NULL) belongs to the workspace
+-- itself and has no project title; it must still be listed, with the title
+-- reading as absent rather than the row dropping out.
+-- has_draft_package: a draft slot beside the saved one means the system is
+-- being adjusted — the library row shows it as OD shows a draft system.
+SELECT project_design_system.*, project.title AS project_title,
+       EXISTS (
+           SELECT 1 FROM project_design_system_package
+           WHERE project_design_system_package.design_system_id = project_design_system.id
+             AND project_design_system_package.slot = 'draft'
+       ) AS has_draft_package
+FROM project_design_system
+LEFT JOIN project ON project.id = project_design_system.project_id
+WHERE project_design_system.workspace_id = sqlc.arg('workspace_id')
+  AND project_design_system.saved_at IS NOT NULL
+ORDER BY project_design_system.saved_at DESC;
+
+-- Repository deletion clears the system it owns, packages first. The column
+-- carries no foreign key per repository policy, so the caller runs this in
+-- the same transaction as the project_resource delete. Mirrors the CTE shape
+-- the project-delete path already uses.
+-- name: DeleteProjectDesignSystemsByResource :exec
+WITH deleted_packages AS (
+    DELETE FROM project_design_system_package
+    WHERE project_design_system_package.design_system_id IN (
+        SELECT project_design_system.id
+        FROM project_design_system
+        WHERE project_design_system.workspace_id = sqlc.arg('workspace_id')
+          AND project_design_system.project_resource_id = sqlc.arg('project_resource_id')
+    )
+    RETURNING project_design_system_package.id
+)
+DELETE FROM project_design_system
+WHERE project_design_system.workspace_id = sqlc.arg('workspace_id')
+  AND project_design_system.project_resource_id = sqlc.arg('project_resource_id')
+  AND (SELECT count(*) FROM deleted_packages) >= 0;
 
 -- name: GetProjectDesignSystemInWorkspace :one
 SELECT * FROM project_design_system
@@ -1092,6 +1152,7 @@ FOR UPDATE;
 INSERT INTO project_design_system (
     workspace_id,
     project_id,
+    project_resource_id,
     name,
     platform,
     current_agent_id,
@@ -1104,6 +1165,7 @@ INSERT INTO project_design_system (
 SELECT
     sqlc.arg('workspace_id'),
     sqlc.arg('project_id'),
+    sqlc.narg('project_resource_id'),
     sqlc.arg('name'),
     sqlc.arg('platform'),
     sqlc.narg('current_agent_id'),
@@ -1115,6 +1177,37 @@ SELECT
 FROM project
 WHERE project.id = sqlc.arg('project_id')
   AND project.workspace_id = sqlc.arg('workspace_id')
+RETURNING *;
+
+-- The standalone twin of CreateProjectDesignSystem: the row belongs to the
+-- workspace itself (project_id NULL), so there is no project row to gate the
+-- insert on and the name comes from the requester.
+-- name: CreateStandaloneDesignSystem :one
+INSERT INTO project_design_system (
+    workspace_id,
+    project_id,
+    project_resource_id,
+    name,
+    platform,
+    current_agent_id,
+    active_task_id,
+    active_operation,
+    input_snapshot,
+    last_error,
+    created_by
+)
+SELECT
+    sqlc.arg('workspace_id'),
+    NULL,
+    NULL,
+    sqlc.arg('name'),
+    sqlc.arg('platform'),
+    sqlc.narg('current_agent_id'),
+    sqlc.narg('active_task_id'),
+    sqlc.narg('active_operation'),
+    sqlc.arg('input_snapshot'),
+    sqlc.narg('last_error'),
+    sqlc.narg('created_by')
 RETURNING *;
 
 -- name: UpdateProjectDesignSystemInputAndTask :one

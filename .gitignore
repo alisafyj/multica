@@ -73,6 +73,11 @@ _features/
 *.app
 server/server
 data/
+# ...but the bundled design system catalogue is source, not runtime data:
+# it is go:embed-ed into the binary, and go:embed fails the build when its
+# pattern matches nothing.
+!server/internal/designsystemcatalogue/data/
+!server/internal/designrecipepreview/data/
 .kilo
 .idea
 

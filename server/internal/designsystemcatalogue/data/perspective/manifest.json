@@ -1,0 +1,8 @@
+{
+  "id": "perspective",
+  "name": "Perspective",
+  "category": "Layout & Structure",
+  "category_zh": "布局与结构",
+  "description": "Bundled Open Design package for Perspective, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "空间深度设计，等轴视图，消失点，分层元素，通过 3D 真实感引导视线。"
+}

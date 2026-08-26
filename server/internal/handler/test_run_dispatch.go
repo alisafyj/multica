@@ -12,6 +12,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -165,6 +166,7 @@ func (h *Handler) DispatchTestRun(w http.ResponseWriter, r *http.Request) {
 	// binding has to be attached here, not at claim time.
 	ctx := testcapability.WithResolvedCapabilities(r.Context(), capabilityEntriesForOverlay(binding, requirements))
 	agentTask, err := h.Queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{
+		ID:                dbid.NewV7(),
 		AgentID:           agent.ID,
 		RuntimeID:         agent.RuntimeID,
 		Priority:          0,

@@ -1,340 +1,761 @@
 package designdocument
 
 import (
+	"archive/zip"
+	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
+	"io"
+	"io/fs"
+	"os"
 	"path"
+	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
-
-	"github.com/multica-ai/multica/server/internal/designpackage"
+	"time"
 )
 
-func CollectDirectory(root string, expected Binding) (CollectedPackage, error) {
-	if err := validateBinding(expected); err != nil {
-		return invalidCollected(err.code, err.path, err.message, "")
+type archiveError struct {
+	code    string
+	path    string
+	message string
+}
+
+func (err *archiveError) Error() string {
+	return err.code + ": " + err.message
+}
+
+// SnapshotDigest canonicalises the frozen task input and digests it, so the
+// same logical input always produces the same binding digest.
+func SnapshotDigest(raw json.RawMessage) (string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return "", fmt.Errorf("decode input snapshot: %w", err)
 	}
-	files, err := designpackage.ReadDirectory(root, directoryLimits(), packagePolicy(false))
+	if err := requireJSONEOF(decoder); err != nil {
+		return "", err
+	}
+	canonical, err := json.Marshal(value)
 	if err != nil {
-		return invalidCollectedFromError(mapSharedError(err))
+		return "", fmt.Errorf("encode input snapshot: %w", err)
 	}
-	index, err := buildIndex(files)
+	return sha256String(canonical), nil
+}
+
+// ValidateStagingDirectory checks that an agent output directory carries the
+// required page-design artifacts, without a binding, a manifest or an
+// archive — callers that need the full audited package use CollectDirectory
+// instead. It exists for gates that only need to know the agent produced
+// something before a binding is available to check it against.
+func ValidateStagingDirectory(root string) ([]ArtifactIndexEntry, error) {
+	rootInfo, err := os.Lstat(root)
 	if err != nil {
-		return invalidCollectedFromError(err)
+		return nil, fmt.Errorf("inspect design document staging directory: %w", err)
 	}
-	targets, err := previewTargets(index)
+	if rootInfo.Mode()&fs.ModeSymlink != 0 || !rootInfo.IsDir() {
+		return nil, errors.New("design document staging root must be a real directory")
+	}
+	index := make([]ArtifactIndexEntry, 0)
+	err = filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if filePath == root || entry.IsDir() {
+			return nil
+		}
+		relative, err := filepath.Rel(root, filePath)
+		if err != nil {
+			return err
+		}
+		name := filepath.ToSlash(relative)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		role, mediaType, limit, err := classifyArtifact(name)
+		if err != nil {
+			return err
+		}
+		if info.Size() > limit {
+			return newArchiveError("archive_file_too_large", name, "file exceeds its size limit")
+		}
+		contents, err := readBoundedFile(filePath, limit)
+		if err != nil {
+			return err
+		}
+		index = append(index, ArtifactIndexEntry{
+			Path:      name,
+			Role:      role,
+			MediaType: mediaType,
+			SizeBytes: int64(len(contents)),
+			SHA256:    sha256Hex(contents),
+		})
+		return nil
+	})
 	if err != nil {
-		return invalidCollectedFromError(err)
+		return nil, err
 	}
-	digest := digestIndex(index)
-	report := auditPackage(files, index, targets, digest)
-	manifest := Manifest{SchemaVersion: SchemaVersion, Binding: expected, Files: index, ContentDigest: digest, PrototypeEntry: "prototype/index.html", PreviewTargets: targets}
-	collected := CollectedPackage{Manifest: manifest, Audit: report}
-	if !report.Passed {
-		return collected, auditError(report)
+	present := make(map[string]bool, len(index))
+	for _, entry := range index {
+		present[entry.Path] = true
 	}
-	if err := decodeStrict(files["coverage.json"], &collected.Coverage); err != nil {
-		return CollectedPackage{}, fmt.Errorf("decode audited design document coverage: %w", err)
+	for _, required := range []string{briefPath, coveragePath, prototypeEntryPath} {
+		if !present[required] {
+			return nil, newArchiveError("staging_file_missing", required, "required design document file "+required+" is missing")
+		}
 	}
-	raw, err := json.Marshal(manifest)
+	return index, nil
+}
+
+// CollectDirectory reads an agent output directory, audits it, and builds the
+// deterministic package archive. manifest.json is generated here; an agent
+// written manifest.json is rejected as an undeclared path like any other file
+// outside the contract.
+func CollectDirectory(root string, binding PackageBinding) (CollectedPackage, error) {
+	if err := validateBinding(binding); err != nil {
+		return CollectedPackage{}, err
+	}
+	rootInfo, err := os.Lstat(root)
 	if err != nil {
-		return CollectedPackage{}, fmt.Errorf("encode design document manifest: %w", err)
+		return CollectedPackage{}, fmt.Errorf("inspect design document package root: %w", err)
 	}
-	files["manifest.json"] = raw
-	archive, err := designpackage.BuildDeterministicArchive(files, archiveLimits(), packagePolicy(true))
-	if err != nil {
-		return invalidCollectedFromError(mapSharedError(err))
+	if rootInfo.Mode()&fs.ModeSymlink != 0 || !rootInfo.IsDir() {
+		return CollectedPackage{}, errors.New("design document package root must be a real directory")
 	}
-	validated, err := ValidateArchive(archive, expected)
+
+	files := make(map[string][]byte)
+	index := make([]ArtifactIndexEntry, 0)
+	seenFileInfo := make([]fs.FileInfo, 0)
+	var totalBytes int64
+	err = filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if filePath == root {
+			return nil
+		}
+		relative, err := filepath.Rel(root, filePath)
+		if err != nil {
+			return err
+		}
+		name := filepath.ToSlash(relative)
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return newArchiveError("archive_link_forbidden", name, "links are not allowed in a design document package")
+		}
+		if entry.IsDir() {
+			return validateDirectoryPath(name)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return newArchiveError("archive_type_forbidden", name, "only regular files are allowed")
+		}
+		if hasMultipleHardlinks(info) {
+			return newArchiveError("archive_hardlink_forbidden", name, "hardlinks are not allowed")
+		}
+		for _, previous := range seenFileInfo {
+			if os.SameFile(previous, info) {
+				return newArchiveError("archive_hardlink_forbidden", name, "hardlinks are not allowed")
+			}
+		}
+		seenFileInfo = append(seenFileInfo, info)
+
+		role, mediaType, limit, err := classifyArtifact(name)
+		if err != nil {
+			return err
+		}
+		if info.Size() > limit {
+			return newArchiveError("archive_file_too_large", name, "file exceeds its size limit")
+		}
+		contents, err := readBoundedFile(filePath, limit)
+		if err != nil {
+			return err
+		}
+		totalBytes += int64(len(contents))
+		if totalBytes > maxTotalBytes {
+			return newArchiveError("archive_total_too_large", name, "package exceeds its uncompressed size limit")
+		}
+		files[name] = contents
+		index = append(index, ArtifactIndexEntry{
+			Path:      name,
+			Role:      role,
+			MediaType: mediaType,
+			SizeBytes: int64(len(contents)),
+			SHA256:    sha256Hex(contents),
+		})
+		if len(index)+1 > maxFiles {
+			return newArchiveError("archive_file_count_exceeded", name, "package contains too many files")
+		}
+		return nil
+	})
 	if err != nil {
 		return CollectedPackage{}, err
 	}
-	return CollectedPackage{Archive: archive, Manifest: validated.Manifest, Audit: validated.Audit, Coverage: validated.Coverage}, nil
-}
-
-// ValidateStagingDirectory checks the complete agent-authored package surface
-// without generating manifest.json or running the A4 Audit/Preview gates.
-func ValidateStagingDirectory(root string) ([]FileEntry, error) {
-	files, err := designpackage.ReadDirectory(root, directoryLimits(), packagePolicy(false))
+	sort.Slice(index, func(left, right int) bool { return index[left].Path < index[right].Path })
+	previewTargets, err := DiscoverPreviewTargets(index)
 	if err != nil {
-		return nil, mapSharedError(err)
+		return CollectedPackage{}, err
 	}
-	for _, required := range []string{"brief.json", "coverage.json", "prototype/index.html", "prototype/styles.css", "prototype/app.js"} {
-		if _, ok := files[required]; !ok {
-			return nil, newError("staging_file_missing", required, "required agent-authored package file "+required+" is missing")
-		}
+	contentDigest := digestArtifactIndex(index)
+	audit := auditPackage(files, index, binding, contentDigest, previewTargets)
+	manifest := Manifest{
+		SchemaVersion:  PackageSchemaV1,
+		Binding:        binding,
+		ContentDigest:  contentDigest,
+		Files:          nonNilFiles(index),
+		PrototypeEntry: prototypeEntryPath,
+		PreviewTargets: nonNilPreviewTargets(previewTargets),
+		Pages:          nonNilPages(audit.pages),
+		Flows:          nonNilFlows(audit.flows),
 	}
-	return buildIndex(files)
+	collected := CollectedPackage{Manifest: manifest, Audit: audit.report}
+	if !audit.report.Passed {
+		return collected, auditFailure(audit.report)
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		return CollectedPackage{}, fmt.Errorf("encode design document manifest: %w", err)
+	}
+	files[manifestPath] = manifestJSON
+	archive, err := buildDeterministicArchive(files)
+	if err != nil {
+		return CollectedPackage{}, err
+	}
+	if len(archive) > maxArchiveBytes {
+		return CollectedPackage{}, newArchiveError("archive_compressed_too_large", "", "archive exceeds its compressed size limit")
+	}
+	validated, err := ValidateArchive(archive, binding)
+	if err != nil {
+		return CollectedPackage{}, err
+	}
+	return CollectedPackage{Archive: archive, Manifest: validated.Manifest, Audit: validated.Audit}, nil
 }
 
-func ValidateArchive(archive []byte, expected Binding) (ValidatedPackage, error) {
+// ValidateArchive re-derives every digest and re-runs the audit from the
+// archive bytes alone, so a stored package can never be trusted on the strength
+// of the manifest it carries.
+func ValidateArchive(archive []byte, expected PackageBinding) (ValidatedPackage, error) {
 	if err := validateBinding(expected); err != nil {
-		return invalidValidated(err.code, err.path, err.message, "")
+		return invalidPackage("binding_invalid", manifestPath, err.Error(), "")
 	}
-	all, err := designpackage.ReadArchive(archive, archiveLimits(), packagePolicy(true))
+	if len(archive) == 0 || len(archive) > maxArchiveBytes {
+		return invalidPackage("archive_compressed_too_large", "", "archive is empty or exceeds its compressed size limit", "")
+	}
+	files, index, manifestJSON, err := readAndIndexArchive(archive)
 	if err != nil {
-		return invalidValidatedFromError(mapSharedError(err))
-	}
-	manifestRaw, ok := all["manifest.json"]
-	if !ok {
-		return invalidValidated("manifest_missing", "manifest.json", "archive has no generated manifest", "")
-	}
-	delete(all, "manifest.json")
-	index, err := buildIndex(all)
-	if err != nil {
-		return invalidValidatedFromError(err)
+		var structural *archiveError
+		if errors.As(err, &structural) {
+			return invalidPackage(structural.code, structural.path, structural.message, "")
+		}
+		return ValidatedPackage{}, err
 	}
 	var manifest Manifest
-	if err := decodeStrict(manifestRaw, &manifest); err != nil {
-		return invalidValidated("manifest_invalid", "manifest.json", err.Error(), "")
+	if err := decodeStrictJSON(manifestJSON, &manifest); err != nil {
+		return invalidPackage("manifest_invalid", manifestPath, err.Error(), "")
 	}
-	if manifest.SchemaVersion != SchemaVersion {
-		return invalidValidated("manifest_schema_invalid", "manifest.json", "manifest schema version is invalid", manifest.ContentDigest)
+	result := ValidatedPackage{Manifest: manifest}
+	if manifest.SchemaVersion != PackageSchemaV1 {
+		return invalidPackage("manifest_schema_invalid", manifestPath, "manifest schema is not design document v1", manifest.ContentDigest)
 	}
-	if mismatch := bindingMismatch(manifest.Binding, expected); mismatch != "" {
-		return invalidValidated(mismatch, "manifest.json", "manifest binding does not match expected binding", manifest.ContentDigest)
+	if manifest.Binding != expected {
+		return invalidPackage("manifest_binding_mismatch", manifestPath, "manifest does not match the expected task binding", manifest.ContentDigest)
 	}
 	if err := validateBinding(manifest.Binding); err != nil {
-		return invalidValidated("manifest_binding_invalid", "manifest.json", err.message, manifest.ContentDigest)
+		return invalidPackage("manifest_binding_invalid", manifestPath, err.Error(), manifest.ContentDigest)
 	}
 	if !reflect.DeepEqual(manifest.Files, index) {
-		return invalidValidated("manifest_index_mismatch", "manifest.json", "manifest file index does not exactly match archive contents", manifest.ContentDigest)
+		return invalidPackage("manifest_index_mismatch", manifestPath, "manifest file index does not exactly match archive contents", manifest.ContentDigest)
 	}
-	digest := digestIndex(index)
-	if manifest.ContentDigest != digest {
-		return invalidValidated("content_digest_mismatch", "manifest.json", "content digest does not match archive contents", digest)
+	contentDigest := digestArtifactIndex(index)
+	if manifest.ContentDigest != contentDigest {
+		return invalidPackage("content_digest_mismatch", manifestPath, "manifest content digest does not match the recomputed index", contentDigest)
 	}
-	if manifest.PrototypeEntry != "prototype/index.html" {
-		return invalidValidated("manifest_prototype_entry_mismatch", "manifest.json", "prototype entry must be prototype/index.html", digest)
+	if manifest.PrototypeEntry != prototypeEntryPath {
+		return invalidPackage("manifest_prototype_entry_invalid", manifestPath, "manifest prototype entry is invalid", contentDigest)
 	}
-	targets, targetErr := previewTargets(index)
-	if targetErr != nil {
-		return invalidValidatedFromError(targetErr)
+	previewTargets, err := DiscoverPreviewTargets(index)
+	if err != nil {
+		return invalidPackage("preview_targets_invalid", manifestPath, err.Error(), contentDigest)
 	}
-	if !reflect.DeepEqual(manifest.PreviewTargets, targets) {
-		return invalidValidated("manifest_preview_targets_mismatch", "manifest.json", "preview targets do not match declared HTML entries", digest)
+	if !reflect.DeepEqual(manifest.PreviewTargets, previewTargets) {
+		return invalidPackage("manifest_preview_targets_mismatch", manifestPath, "manifest Preview targets do not match archive contents", contentDigest)
 	}
-	report := auditPackage(all, index, targets, digest)
-	result := ValidatedPackage{Manifest: manifest, Audit: report}
-	if !report.Passed {
-		return result, auditError(report)
+	audit := auditPackage(files, index, manifest.Binding, contentDigest, previewTargets)
+	result.Audit = audit.report
+	if !audit.report.Passed {
+		return result, auditFailure(audit.report)
 	}
-	if err := decodeStrict(all["coverage.json"], &result.Coverage); err != nil {
-		return ValidatedPackage{}, fmt.Errorf("decode audited design document coverage: %w", err)
+	if !reflect.DeepEqual(manifest.Pages, nonNilPages(audit.pages)) ||
+		!reflect.DeepEqual(manifest.Flows, nonNilFlows(audit.flows)) {
+		return invalidPackage("manifest_audit_index_mismatch", manifestPath, "manifest derived indexes do not match audited artifacts", contentDigest)
 	}
 	return result, nil
 }
 
-func ReadArchiveFile(archive []byte, expected Binding, name string) ([]byte, FileEntry, error) {
-	validated, err := ValidateArchive(archive, expected)
+// ReadArtifact returns one package file after re-validating the whole archive
+// against the index the caller believes in.
+func ReadArtifact(archive []byte, index []ArtifactIndexEntry, name string) ([]byte, error) {
+	if _, _, _, err := classifyArtifact(name); err != nil {
+		return nil, err
+	}
+	files, actualIndex, manifestJSON, err := readAndIndexArchive(archive)
 	if err != nil {
-		return nil, FileEntry{}, err
+		return nil, err
 	}
-	var entry FileEntry
-	found := false
-	for _, candidate := range validated.Manifest.Files {
-		if candidate.Path == name {
-			entry, found = candidate, true
-			break
-		}
+	var manifest Manifest
+	if err := decodeStrictJSON(manifestJSON, &manifest); err != nil {
+		return nil, err
 	}
-	if !found {
-		return nil, FileEntry{}, errors.New("design document archive file is not declared")
-	}
-	files, err := designpackage.ReadArchive(archive, archiveLimits(), packagePolicy(true))
+	validated, err := ValidateArchive(archive, manifest.Binding)
 	if err != nil {
-		return nil, FileEntry{}, mapSharedError(err)
+		return nil, err
 	}
-	contents, ok := files[name]
-	if !ok || name == "manifest.json" {
-		return nil, FileEntry{}, errors.New("design document archive file is unavailable")
+	if !reflect.DeepEqual(index, actualIndex) || !reflect.DeepEqual(index, validated.Manifest.Files) {
+		return nil, errors.New("design document artifact index does not match the archive")
 	}
-	return contents, entry, nil
+	contents, exists := files[name]
+	if !exists {
+		return nil, fs.ErrNotExist
+	}
+	return append([]byte(nil), contents...), nil
 }
 
-func buildIndex(files map[string][]byte) ([]FileEntry, error) {
-	index := make([]FileEntry, 0, len(files))
-	for name, raw := range files {
-		role, media, _, err := classifyFile(name, false)
+func readAndIndexArchive(archive []byte) (map[string][]byte, []ArtifactIndexEntry, []byte, error) {
+	if err := preflightArchiveEOCD(archive); err != nil {
+		return nil, nil, nil, err
+	}
+	reader, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
+	if err != nil {
+		return nil, nil, nil, newArchiveError("archive_invalid", "", "archive is not a valid ZIP")
+	}
+	if len(reader.File) > maxFiles {
+		return nil, nil, nil, newArchiveError("archive_file_count_exceeded", "", "archive contains too many entries")
+	}
+	artifactCapacity := len(reader.File)
+	if artifactCapacity > 0 {
+		artifactCapacity--
+	}
+	files := make(map[string][]byte, artifactCapacity)
+	index := make([]ArtifactIndexEntry, 0, artifactCapacity)
+	seen := make(map[string]struct{}, len(reader.File))
+	var manifestJSON []byte
+	var totalBytes int64
+	for _, entry := range reader.File {
+		name, err := validateArchivePath(entry.Name)
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
-		index = append(index, FileEntry{Path: name, Role: role, MediaType: media, SizeBytes: int64(len(raw)), SHA256: designpackage.SHA256Hex(raw)})
-	}
-	sort.Slice(index, func(i, j int) bool { return index[i].Path < index[j].Path })
-	return index, nil
-}
-
-func digestIndex(index []FileEntry) string {
-	shared := make([]designpackage.IndexEntry, len(index))
-	for i, e := range index {
-		shared[i] = designpackage.IndexEntry{Path: e.Path, MediaType: e.MediaType, SizeBytes: e.SizeBytes, SHA256: e.SHA256}
-	}
-	return designpackage.DigestIndex(shared)
-}
-
-func previewTargets(index []FileEntry) ([]PreviewTarget, error) {
-	targets := make([]PreviewTarget, 0)
-	seen := make(map[string]struct{})
-	hasMain := false
-	for _, entry := range index {
-		if entry.MediaType != "text/html; charset=utf-8" {
+		if _, exists := seen[name]; exists {
+			return nil, nil, nil, newArchiveError("archive_duplicate_path", name, "archive contains a duplicate path")
+		}
+		seen[name] = struct{}{}
+		mode := entry.Mode()
+		if entry.FileInfo().IsDir() || mode&fs.ModeSymlink != 0 || !mode.IsRegular() {
+			return nil, nil, nil, newArchiveError("archive_type_forbidden", name, "archive entries must be regular files")
+		}
+		limit := maxDocumentBytes
+		role := "manifest"
+		mediaType := "application/json"
+		if name != manifestPath {
+			role, mediaType, limit, err = classifyArtifact(name)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+		}
+		if entry.UncompressedSize64 > uint64(limit) {
+			return nil, nil, nil, newArchiveError("archive_file_too_large", name, "archive entry exceeds its size limit")
+		}
+		stream, err := entry.Open()
+		if err != nil {
+			return nil, nil, nil, newArchiveError("archive_entry_unreadable", name, "archive entry cannot be opened")
+		}
+		contents, readErr := io.ReadAll(io.LimitReader(stream, limit+1))
+		closeErr := stream.Close()
+		if readErr != nil || closeErr != nil {
+			return nil, nil, nil, newArchiveError("archive_entry_unreadable", name, "archive entry cannot be read")
+		}
+		if int64(len(contents)) > limit || uint64(len(contents)) != entry.UncompressedSize64 {
+			return nil, nil, nil, newArchiveError("archive_file_too_large", name, "archive entry has an invalid expanded size")
+		}
+		totalBytes += int64(len(contents))
+		if totalBytes > maxTotalBytes {
+			return nil, nil, nil, newArchiveError("archive_total_too_large", name, "archive exceeds its uncompressed size limit")
+		}
+		if name == manifestPath {
+			manifestJSON = contents
 			continue
 		}
-		id := strings.TrimSuffix(strings.TrimPrefix(entry.Path, "prototype/"), ".html")
-		if entry.Path == "prototype/index.html" {
-			id = "main"
-			hasMain = true
-		}
-		id = strings.NewReplacer("/", "-", "_", "-").Replace(id)
-		if _, exists := seen[id]; exists {
-			return nil, newError("preview_target_duplicate", entry.Path, "preview target IDs must be unique")
-		}
-		seen[id] = struct{}{}
-		targets = append(targets, PreviewTarget{ID: id, Kind: "page", Path: entry.Path})
+		files[name] = contents
+		index = append(index, ArtifactIndexEntry{
+			Path:      name,
+			Role:      role,
+			MediaType: mediaType,
+			SizeBytes: int64(len(contents)),
+			SHA256:    sha256Hex(contents),
+		})
 	}
-	if !hasMain {
-		return nil, newError("preview_main_missing", "prototype/index.html", "main prototype HTML is required")
+	if manifestJSON == nil {
+		return nil, nil, nil, newArchiveError("manifest_missing", manifestPath, "archive has no generated manifest")
 	}
-	return targets, nil
+	sort.Slice(index, func(left, right int) bool { return index[left].Path < index[right].Path })
+	return files, index, manifestJSON, nil
 }
 
-func classifyFile(name string, allowManifest bool) (string, string, int64, error) {
-	if _, err := designpackage.ValidateArchivePath(name); err != nil {
-		return "", "", 0, newError("archive_path_invalid", name, "path must be normalized and package-relative")
+// preflightArchiveEOCD rejects multi-disk, ZIP64 and inconsistent central
+// directory metadata before the standard reader ever touches the bytes.
+func preflightArchiveEOCD(archive []byte) error {
+	const (
+		eocdSignature         = 0x06054b50
+		centralFileSignature  = 0x02014b50
+		zip64Locator          = 0x07064b50
+		zip64ExtraTag         = 0x0001
+		eocdSize              = 22
+		centralFileHeaderSize = 46
+		maximumCommentBytes   = 65535
+	)
+	if len(archive) < eocdSize {
+		return newArchiveError("archive_invalid", "", "archive is not a valid ZIP")
 	}
-	if allowManifest && name == "manifest.json" {
-		return "manifest", "application/json", maxJSONBytes, nil
+	searchStart := len(archive) - (eocdSize + maximumCommentBytes)
+	if searchStart < 0 {
+		searchStart = 0
+	}
+	eocdOffset := -1
+	for offset := len(archive) - eocdSize; offset >= searchStart; offset-- {
+		if binary.LittleEndian.Uint32(archive[offset:offset+4]) != eocdSignature {
+			continue
+		}
+		commentLength := int(binary.LittleEndian.Uint16(archive[offset+20 : offset+22]))
+		commentEnd := offset + eocdSize + commentLength
+		if eocdOffset < 0 {
+			if commentEnd != len(archive) {
+				return newArchiveError("archive_invalid", "", "archive has an invalid end record")
+			}
+			eocdOffset = offset
+			continue
+		}
+		if commentEnd == len(archive) {
+			return newArchiveError("archive_invalid", "", "archive has ambiguous end records")
+		}
+	}
+	if eocdOffset < 0 {
+		return newArchiveError("archive_invalid", "", "archive is not a valid ZIP")
+	}
+	eocd := archive[eocdOffset : eocdOffset+eocdSize]
+	diskNumber := binary.LittleEndian.Uint16(eocd[4:6])
+	centralDirectoryDisk := binary.LittleEndian.Uint16(eocd[6:8])
+	entriesOnDisk := binary.LittleEndian.Uint16(eocd[8:10])
+	totalEntries := binary.LittleEndian.Uint16(eocd[10:12])
+	centralDirectorySize := binary.LittleEndian.Uint32(eocd[12:16])
+	centralDirectoryOffset := binary.LittleEndian.Uint32(eocd[16:20])
+	if diskNumber == ^uint16(0) || centralDirectoryDisk == ^uint16(0) ||
+		entriesOnDisk == ^uint16(0) || totalEntries == ^uint16(0) ||
+		centralDirectorySize == ^uint32(0) || centralDirectoryOffset == ^uint32(0) ||
+		(eocdOffset >= 20 && binary.LittleEndian.Uint32(archive[eocdOffset-20:eocdOffset-16]) == zip64Locator) {
+		return newArchiveError("archive_invalid", "", "ZIP64 archives are not supported")
+	}
+	if diskNumber != 0 || centralDirectoryDisk != 0 || entriesOnDisk != totalEntries {
+		return newArchiveError("archive_invalid", "", "multi-disk ZIP archives are not supported")
+	}
+	if totalEntries > maxFiles {
+		return newArchiveError("archive_file_count_exceeded", "", "archive contains too many entries")
+	}
+	if uint64(centralDirectoryOffset)+uint64(centralDirectorySize) != uint64(eocdOffset) {
+		return newArchiveError("archive_invalid", "", "archive central directory is out of bounds")
+	}
+
+	cursor := int(centralDirectoryOffset)
+	centralEnd := eocdOffset
+	actualEntries := 0
+	for cursor < centralEnd {
+		if centralEnd-cursor < centralFileHeaderSize || binary.LittleEndian.Uint32(archive[cursor:cursor+4]) != centralFileSignature {
+			return newArchiveError("archive_invalid", "", "archive central directory is malformed")
+		}
+		compressedSize := binary.LittleEndian.Uint32(archive[cursor+20 : cursor+24])
+		uncompressedSize := binary.LittleEndian.Uint32(archive[cursor+24 : cursor+28])
+		nameLength := int(binary.LittleEndian.Uint16(archive[cursor+28 : cursor+30]))
+		extraLength := int(binary.LittleEndian.Uint16(archive[cursor+30 : cursor+32]))
+		commentLength := int(binary.LittleEndian.Uint16(archive[cursor+32 : cursor+34]))
+		startingDisk := binary.LittleEndian.Uint16(archive[cursor+34 : cursor+36])
+		localHeaderOffset := binary.LittleEndian.Uint32(archive[cursor+42 : cursor+46])
+		recordEnd := cursor + centralFileHeaderSize + nameLength + extraLength + commentLength
+		if recordEnd > centralEnd || startingDisk != 0 {
+			return newArchiveError("archive_invalid", "", "archive central directory is malformed")
+		}
+		if compressedSize == ^uint32(0) || uncompressedSize == ^uint32(0) || localHeaderOffset == ^uint32(0) {
+			return newArchiveError("archive_invalid", "", "ZIP64 archives are not supported")
+		}
+		extraOffset := cursor + centralFileHeaderSize + nameLength
+		extraEnd := extraOffset + extraLength
+		for extraOffset < extraEnd {
+			if extraEnd-extraOffset < 4 {
+				return newArchiveError("archive_invalid", "", "archive central directory extra data is malformed")
+			}
+			tag := binary.LittleEndian.Uint16(archive[extraOffset : extraOffset+2])
+			fieldLength := int(binary.LittleEndian.Uint16(archive[extraOffset+2 : extraOffset+4]))
+			extraOffset += 4
+			if fieldLength > extraEnd-extraOffset {
+				return newArchiveError("archive_invalid", "", "archive central directory extra data is malformed")
+			}
+			if tag == zip64ExtraTag {
+				return newArchiveError("archive_invalid", "", "ZIP64 archives are not supported")
+			}
+			extraOffset += fieldLength
+		}
+		actualEntries++
+		if actualEntries > maxFiles {
+			return newArchiveError("archive_file_count_exceeded", "", "archive contains too many entries")
+		}
+		cursor = recordEnd
+	}
+	if cursor != centralEnd || actualEntries != int(totalEntries) {
+		return newArchiveError("archive_invalid", "", "archive central directory metadata is inconsistent")
+	}
+	return nil
+}
+
+const (
+	manifestPath       = "manifest.json"
+	prototypeRoot      = "prototype"
+	prototypeEntryPath = "prototype/index.html"
+	assetRoot          = "assets"
+)
+
+// classifyArtifact maps an accepted package path onto its role, media type and
+// size limit. Anything outside the contract, including an agent written
+// manifest.json, is an undeclared path.
+func classifyArtifact(name string) (string, string, int64, error) {
+	if _, err := validateArchivePath(name); err != nil {
+		return "", "", 0, err
 	}
 	switch name {
-	case "brief.json":
-		return "brief", "application/json", maxJSONBytes, nil
-	case "coverage.json":
-		return "coverage", "application/json", maxJSONBytes, nil
-	case "prototype/index.html":
-		return "prototype", "text/html; charset=utf-8", maxFileBytes, nil
-	case "prototype/styles.css":
-		return "prototype", "text/css; charset=utf-8", maxScriptBytes, nil
-	case "prototype/app.js":
-		return "prototype", "text/javascript; charset=utf-8", maxScriptBytes, nil
+	case briefPath:
+		return "brief", "application/json", maxDocumentBytes, nil
+	case coveragePath:
+		return "coverage", "application/json", maxDocumentBytes, nil
+	case critiquePath:
+		return "critique", "application/json", maxDocumentBytes, nil
+	case prototypeEntryPath:
+		return "prototype_entry", "text/html; charset=utf-8", maxSourceBytes, nil
 	}
-	ext := strings.ToLower(path.Ext(name))
-	if strings.HasPrefix(name, "prototype/") {
-		switch ext {
+	if strings.HasPrefix(name, prototypeRoot+"/") {
+		switch strings.ToLower(path.Ext(name)) {
 		case ".html":
-			return "prototype", "text/html; charset=utf-8", maxFileBytes, nil
+			return "prototype_page", "text/html; charset=utf-8", maxSourceBytes, nil
 		case ".css":
-			return "prototype", "text/css; charset=utf-8", maxScriptBytes, nil
+			return "prototype_style", "text/css; charset=utf-8", maxSourceBytes, nil
 		case ".js":
-			return "prototype", "text/javascript; charset=utf-8", maxScriptBytes, nil
-		case ".json":
-			return "prototype", "application/json", maxJSONBytes, nil
+			return "prototype_script", "text/javascript; charset=utf-8", maxSourceBytes, nil
 		}
+		return "", "", 0, newArchiveError("archive_path_undeclared", name, "prototype files must be .html, .css or .js")
 	}
-	if strings.HasPrefix(name, "assets/") && path.Dir(name) != "." {
-		media := map[string]string{".avif": "image/avif", ".gif": "image/gif", ".ico": "image/x-icon", ".jpeg": "image/jpeg", ".jpg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}[ext]
-		if media != "" {
-			return "asset", media, maxFileBytes, nil
+	if strings.HasPrefix(name, assetRoot+"/") {
+		extension := strings.ToLower(path.Ext(name))
+		if mediaType, ok := assetMediaTypes[extension]; ok {
+			return "asset", mediaType, maxAssetBytes, nil
 		}
+		if mediaType, ok := fontMediaTypes[extension]; ok {
+			return "font", mediaType, maxAssetBytes, nil
+		}
+		return "", "", 0, newArchiveError("archive_path_undeclared", name, "asset media type is outside the design document contract")
 	}
-	return "", "", 0, newError("archive_path_undeclared", name, "file is outside the design document package contract")
+	return "", "", 0, newArchiveError("archive_path_undeclared", name, "file is outside the design document package contract")
 }
 
-func packagePolicy(allowManifest bool) designpackage.Policy {
-	return designpackage.Policy{
-		Path: func(name string) (string, error) {
-			if _, err := designpackage.ValidateArchivePath(name); err != nil {
-				return "", err
-			}
-			return name, nil
-		},
-		Directory: func(name string) error {
-			if name == "prototype" || name == "assets" || strings.HasPrefix(name, "prototype/") || strings.HasPrefix(name, "assets/") {
-				return nil
-			}
-			return newError("archive_path_undeclared", name, "directory is outside the design document package contract")
-		},
-		File: func(name string) (int64, error) {
-			_, _, limit, err := classifyFile(name, allowManifest)
-			return limit, err
-		},
+var assetMediaTypes = map[string]string{
+	".avif": "image/avif", ".gif": "image/gif", ".ico": "image/x-icon",
+	".jpeg": "image/jpeg", ".jpg": "image/jpeg", ".png": "image/png",
+	".svg": "image/svg+xml", ".webp": "image/webp",
+}
+
+var fontMediaTypes = map[string]string{
+	".otf": "font/otf", ".ttf": "font/ttf", ".woff": "font/woff", ".woff2": "font/woff2",
+}
+
+func validateArchivePath(value string) (string, error) {
+	if value == "" || value != strings.TrimSpace(value) || strings.Contains(value, "\\") ||
+		strings.HasPrefix(value, "/") || !fs.ValidPath(value) || path.Clean(value) != value || value == "." {
+		return "", newArchiveError("archive_path_invalid", value, "path must be a normalized relative slash path")
 	}
+	return value, nil
 }
 
-func directoryLimits() designpackage.Limits {
-	return designpackage.Limits{MaxFiles: maxFiles - 1, MaxFileBytes: maxFileBytes, MaxTotalBytes: maxTotalBytes}
-}
-func archiveLimits() designpackage.Limits {
-	return designpackage.Limits{MaxArchiveBytes: maxArchiveBytes, MaxFiles: maxFiles, MaxFileBytes: maxFileBytes, MaxTotalBytes: maxTotalBytes}
-}
-
-func bindingMismatch(a, b Binding) string {
-	switch {
-	case a.WorkspaceID != b.WorkspaceID:
-		return "binding_workspace_mismatch"
-	case a.ProjectID != b.ProjectID:
-		return "binding_project_mismatch"
-	case a.DocumentID != b.DocumentID:
-		return "binding_document_mismatch"
-	case a.RevisionID != b.RevisionID:
-		return "binding_revision_mismatch"
-	case a.TaskID != b.TaskID:
-		return "binding_task_mismatch"
-	case a.AgentID != b.AgentID:
-		return "binding_agent_mismatch"
-	case a.IssueID != b.IssueID:
-		return "binding_issue_mismatch"
-	case a.TargetPlatform != b.TargetPlatform:
-		return "binding_target_platform_mismatch"
-	case a.InputSnapshotSHA256 != b.InputSnapshotSHA256:
-		return "binding_input_snapshot_mismatch"
-	case a.BaseRevisionID != b.BaseRevisionID:
-		return "binding_base_revision_mismatch"
-	case a.BaseContentDigest != b.BaseContentDigest:
-		return "binding_base_content_digest_mismatch"
-	case a.DesignSystemID != b.DesignSystemID:
-		return "binding_design_system_id_mismatch"
-	case a.DesignSystemSourceTaskID != b.DesignSystemSourceTaskID:
-		return "binding_design_system_source_task_mismatch"
-	case a.DesignSystemContentDigest != b.DesignSystemContentDigest:
-		return "binding_design_system_content_digest_mismatch"
-	}
-	return ""
-}
-
-func mapSharedError(err error) error {
-	var p *designpackage.PackageError
-	if !errors.As(err, &p) {
+func validateDirectoryPath(name string) error {
+	if _, err := validateArchivePath(name); err != nil {
 		return err
 	}
-	code := map[designpackage.ErrorCategory]string{designpackage.ErrorCompressedTooLarge: "archive_compressed_too_large", designpackage.ErrorArchiveInvalid: "archive_invalid", designpackage.ErrorDuplicatePath: "archive_duplicate_path", designpackage.ErrorFileCount: "archive_file_count_exceeded", designpackage.ErrorFileTooLarge: "archive_file_too_large", designpackage.ErrorHardlink: "archive_hardlink_forbidden", designpackage.ErrorLink: "archive_link_forbidden", designpackage.ErrorPath: "archive_path_invalid", designpackage.ErrorTotalTooLarge: "archive_total_too_large", designpackage.ErrorType: "archive_type_forbidden", designpackage.ErrorExpandedSize: "archive_file_too_large", designpackage.ErrorUnreadable: "archive_entry_unreadable", designpackage.ErrorOpen: "archive_entry_unreadable"}[p.Category]
-	if code == "" {
-		return err
+	if name == prototypeRoot || name == assetRoot ||
+		strings.HasPrefix(name, prototypeRoot+"/") || strings.HasPrefix(name, assetRoot+"/") {
+		return nil
 	}
-	return newError(code, p.Path, string(p.Category))
+	return newArchiveError("archive_path_undeclared", name, "directory is outside the design document package contract")
 }
 
-func invalidCollected(code, path, message, digest string) (CollectedPackage, error) {
-	r := errorReport(code, path, message, digest)
-	return CollectedPackage{Audit: r}, auditError(r)
-}
-func invalidCollectedFromError(err error) (CollectedPackage, error) {
-	var p *packageError
-	if errors.As(err, &p) {
-		return invalidCollected(p.code, p.path, p.message, "")
+// isPrototypeDocumentPath reports whether a brief page entry points at a
+// prototype HTML document.
+func isPrototypeDocumentPath(name string) bool {
+	if _, err := validateArchivePath(name); err != nil {
+		return false
 	}
-	return CollectedPackage{}, err
+	return strings.HasPrefix(name, prototypeRoot+"/") && strings.ToLower(path.Ext(name)) == ".html"
 }
-func invalidValidated(code, path, message, digest string) (ValidatedPackage, error) {
-	r := errorReport(code, path, message, digest)
-	return ValidatedPackage{Audit: r}, auditError(r)
+
+// bindingPlatforms mirrors the platforms a design document can be created for
+// (handler validProjectDesignSystemPlatform): web, mobile and cross_platform.
+// desktop stays accepted for packages that already declared it.
+var bindingPlatforms = map[string]struct{}{
+	"web": {}, "desktop": {}, "mobile": {}, "cross_platform": {},
 }
-func invalidValidatedFromError(err error) (ValidatedPackage, error) {
-	var p *packageError
-	if errors.As(err, &p) {
-		return invalidValidated(p.code, p.path, p.message, "")
+
+func validateBinding(binding PackageBinding) error {
+	required := []string{
+		binding.WorkspaceID, binding.ProjectID, binding.DesignDocumentID,
+		binding.RevisionID, binding.TaskID, binding.AgentID,
 	}
-	return ValidatedPackage{}, err
+	for _, value := range required {
+		if !validBindingIdentity(value) {
+			return errors.New("design document package binding contains an invalid identity")
+		}
+	}
+	for _, value := range []string{binding.ProjectResourceID, binding.IssueID} {
+		if value != "" && !validBindingIdentity(value) {
+			return errors.New("design document package binding contains an invalid optional identity")
+		}
+	}
+	if _, ok := bindingPlatforms[binding.Platform]; !ok {
+		return errors.New("design document package binding has an invalid platform")
+	}
+	if !validSHA256Reference(binding.InputSnapshotSHA256) {
+		return errors.New("design document package binding has an invalid input snapshot digest")
+	}
+	// An empty design system digest is a run with nothing pinned — the
+	// composer's default, and the state of every project that has not built a
+	// design system yet. The digest binds the prototype to the system it had to
+	// stay consistent with; when there was no system there is nothing to bind
+	// to, and requiring one here rejected the finished package of every
+	// unpinned run. Same rule as the base revision digest below.
+	if binding.DesignSystemSHA256 != "" && !validSHA256Reference(binding.DesignSystemSHA256) {
+		return errors.New("design document package binding has an invalid project design system digest")
+	}
+	// An empty base revision digest is the first generation of a document.
+	if binding.BaseRevisionSHA256 != "" && !validSHA256Reference(binding.BaseRevisionSHA256) {
+		return errors.New("design document package binding has an invalid base revision digest")
+	}
+	return nil
+}
+
+func validBindingIdentity(value string) bool {
+	return value != "" && value == strings.TrimSpace(value) &&
+		strings.IndexFunc(value, func(character rune) bool { return character < 0x20 }) < 0
+}
+
+func digestArtifactIndex(index []ArtifactIndexEntry) string {
+	hasher := sha256.New()
+	for _, entry := range index {
+		writeDigestField(hasher, entry.Path)
+		writeDigestField(hasher, entry.MediaType)
+		writeDigestField(hasher, strconv.FormatInt(entry.SizeBytes, 10))
+		writeDigestField(hasher, entry.SHA256)
+	}
+	return "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+}
+
+func writeDigestField(hasher hash.Hash, value string) {
+	var length [8]byte
+	binary.BigEndian.PutUint64(length[:], uint64(len(value)))
+	_, _ = hasher.Write(length[:])
+	_, _ = io.WriteString(hasher, value)
+}
+
+// buildDeterministicArchive writes entries in sorted order with a fixed
+// modification time so the same package content always produces the same bytes.
+func buildDeterministicArchive(files map[string][]byte) ([]byte, error) {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var output bytes.Buffer
+	writer := zip.NewWriter(&output)
+	fixedTime := time.Date(1980, time.January, 1, 0, 0, 0, 0, time.UTC)
+	for _, name := range names {
+		header := &zip.FileHeader{Name: name, Method: zip.Deflate}
+		header.SetMode(0o644)
+		header.SetModTime(fixedTime)
+		entry, err := writer.CreateHeader(header)
+		if err != nil {
+			return nil, fmt.Errorf("create design document archive entry %q: %w", name, err)
+		}
+		if _, err := entry.Write(files[name]); err != nil {
+			return nil, fmt.Errorf("write design document archive entry %q: %w", name, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close design document archive: %w", err)
+	}
+	return output.Bytes(), nil
+}
+
+func readBoundedFile(name string, limit int64) ([]byte, error) {
+	file, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	contents, readErr := io.ReadAll(io.LimitReader(file, limit+1))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil {
+		return nil, errors.Join(readErr, closeErr)
+	}
+	if int64(len(contents)) > limit {
+		return nil, newArchiveError("archive_file_too_large", name, "file exceeds its size limit")
+	}
+	return contents, nil
+}
+
+func hasMultipleHardlinks(info fs.FileInfo) bool {
+	value := reflect.ValueOf(info.Sys())
+	if !value.IsValid() {
+		return false
+	}
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	if !value.IsValid() || value.Kind() != reflect.Struct {
+		return false
+	}
+	field := value.FieldByName("Nlink")
+	return field.IsValid() && field.CanUint() && field.Uint() > 1
+}
+
+func newArchiveError(code, filePath, message string) error {
+	return &archiveError{code: code, path: filePath, message: message}
+}
+
+func invalidPackage(code, filePath, message, digest string) (ValidatedPackage, error) {
+	report := AuditReport{
+		SchemaVersion: AuditSchemaV1,
+		Passed:        false,
+		ContentDigest: digest,
+		Diagnostics:   []Diagnostic{errorDiagnostic(code, filePath, message)},
+	}
+	return ValidatedPackage{Audit: report}, fmt.Errorf("%w: %s", ErrInvalidPackage, code)
+}
+
+func auditFailure(report AuditReport) error {
+	code := "audit_failed"
+	if len(report.Diagnostics) > 0 {
+		code = report.Diagnostics[0].Code
+	}
+	return fmt.Errorf("%w: %s", ErrInvalidPackage, code)
 }

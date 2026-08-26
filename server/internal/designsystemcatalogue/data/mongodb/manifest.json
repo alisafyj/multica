@@ -1,0 +1,8 @@
+{
+  "id": "mongodb",
+  "name": "MongoDB",
+  "category": "Backend & Data",
+  "category_zh": "后端与数据",
+  "description": "Bundled Open Design package for MongoDB, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "文档数据库。绿叶品牌，以开发者文档为核心。"
+}

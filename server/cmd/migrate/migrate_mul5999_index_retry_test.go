@@ -71,12 +71,29 @@ func TestConcurrentIndexCleanupsMatchTheirMigrations(t *testing.T) {
 // that builds an index concurrently must be registered. This prevents a new or
 // historical down migration from silently missing retry cleanup.
 func TestEveryConcurrentDownBuildHasCleanup(t *testing.T) {
-	paths, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.down.sql"))
+	assertEveryConcurrentBuildHasCleanup(t, "down", concurrentDownIndexCleanups)
+}
+
+// TestEveryConcurrentUpBuildHasCleanup is the up-direction counterpart, added
+// for MUL-6288. Only the down direction was covered before, so registration for
+// up migrations was effectively opt-in: 316, 317, 326, 328, 330 and 331 all
+// shipped without a hook and nothing failed. An unregistered build is invisible
+// until a real interrupted migration turns into either a permanently INVALID
+// index recorded as success (`IF NOT EXISTS`) or a wedged migrator (bare
+// `CREATE`), so the check belongs here rather than in review.
+func TestEveryConcurrentUpBuildHasCleanup(t *testing.T) {
+	assertEveryConcurrentBuildHasCleanup(t, "up", concurrentIndexCleanups)
+}
+
+func assertEveryConcurrentBuildHasCleanup(t *testing.T, direction string, cleanups map[string]string) {
+	t.Helper()
+	suffix := "." + direction + ".sql"
+	paths, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*"+suffix))
 	if err != nil {
-		t.Fatalf("glob down migrations: %v", err)
+		t.Fatalf("glob %s migrations: %v", direction, err)
 	}
 	if len(paths) == 0 {
-		t.Fatal("no down migrations found")
+		t.Fatalf("no %s migrations found", direction)
 	}
 
 	for _, path := range paths {
@@ -89,19 +106,19 @@ func TestEveryConcurrentDownBuildHasCleanup(t *testing.T) {
 		if len(matches) == 0 {
 			continue
 		}
-		version := strings.TrimSuffix(filepath.Base(path), ".down.sql")
+		version := strings.TrimSuffix(filepath.Base(path), suffix)
 		if len(matches) != 1 {
 			t.Errorf("%s: has %d concurrent index builds; cleanup registration supports exactly one", version, len(matches))
 			continue
 		}
 		indexName := string(matches[0][1])
-		registered, ok := concurrentDownIndexCleanups[version]
+		registered, ok := cleanups[version]
 		if !ok {
-			t.Errorf("%s: builds %q concurrently on rollback but has no down cleanup", version, indexName)
+			t.Errorf("%s: builds %q concurrently on %s but has no %s cleanup", version, indexName, direction, direction)
 			continue
 		}
 		if registered != indexName {
-			t.Errorf("%s: down cleanup registers %q, migration builds %q", version, registered, indexName)
+			t.Errorf("%s: %s cleanup registers %q, migration builds %q", version, direction, registered, indexName)
 		}
 	}
 }
@@ -137,16 +154,13 @@ func assertConcurrentIndexCleanupsMatchTheirMigrations(
 	// The A1 Design Document batch specifically: every one of these builds an
 	// index that must retain its invalid-index cleanup hook.
 	for version, indexName := range map[string]string{
-		"879_idx_design_document_project":                    "idx_design_document_project",
-		"880_idx_design_document_issue":                      "idx_design_document_issue",
-		"881_idx_design_document_revision_document":          "idx_design_document_revision_document",
-		"882_idx_design_document_snapshot_project":           "idx_design_document_snapshot_project",
-		"883_idx_design_document_id":                         "idx_design_document_id",
-		"884_idx_design_document_input_snapshot_id":          "idx_design_document_input_snapshot_id",
-		"885_idx_design_document_revision_id":                "idx_design_document_revision_id",
-		"886_idx_design_document_input_snapshot_task_id":     "idx_design_document_input_snapshot_task_id",
-		"887_idx_design_document_revision_source_task_id":    "idx_design_document_revision_source_task_id",
-		"888_idx_design_document_revision_input_snapshot_id": "idx_design_document_revision_input_snapshot_id",
+		"881_idx_design_document_revision_number":       "idx_design_document_revision_number",
+		"882_idx_design_document_project":               "idx_design_document_project",
+		"883_idx_design_document_issue":                 "idx_design_document_issue",
+		"884_idx_design_document_active_task":           "idx_design_document_active_task",
+		"886_idx_design_scenario_recipe_builtin_slug":   "idx_design_scenario_recipe_builtin_slug",
+		"887_idx_design_scenario_recipe_workspace_slug": "idx_design_scenario_recipe_workspace_slug",
+		"888_idx_design_scenario_recipe_gallery":        "idx_design_scenario_recipe_gallery",
 	} {
 		if got := concurrentIndexCleanups[version]; got != indexName {
 			t.Errorf("%s: cleanup index = %q, want %q", version, got, indexName)

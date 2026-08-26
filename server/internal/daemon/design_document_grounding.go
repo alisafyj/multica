@@ -60,13 +60,17 @@ type designDocumentCheckoutRepository struct {
 	TreeSHA256   string `json:"tree_sha256"`
 }
 
+// designDocumentInputAttachment is one pinned reference file: the id it is
+// stored and served under, and the exact bytes the daemon must receive.
+type designDocumentInputAttachment struct {
+	ID        string `json:"id"`
+	SizeBytes int64  `json:"size_bytes"`
+	SHA256    string `json:"sha256"`
+}
+
 type designDocumentInputEnvelope struct {
-	Repository  json.RawMessage `json:"repository,omitempty"`
-	Attachments []struct {
-		ID        string `json:"id"`
-		SizeBytes int64  `json:"size_bytes"`
-		SHA256    string `json:"sha256"`
-	} `json:"attachments"`
+	Repository   json.RawMessage                 `json:"repository,omitempty"`
+	Attachments  []designDocumentInputAttachment `json:"attachments"`
 	DesignSystem *struct {
 		ContentDigest string `json:"content_digest"`
 	} `json:"design_system"`
@@ -78,7 +82,7 @@ func isDesignDocumentAdjustment(raw json.RawMessage) bool {
 		Operation      string `json:"operation"`
 		ExecutionReady bool   `json:"execution_ready"`
 	}
-	return json.Unmarshal(raw, &contextValue) == nil && contextValue.Type == "design_document_task" && contextValue.Operation == "adjust" && contextValue.ExecutionReady
+	return json.Unmarshal(raw, &contextValue) == nil && contextValue.Type == "design_document_task" && designDocumentOperationUsesBase(contextValue.Operation) && contextValue.ExecutionReady
 }
 
 func materializeDesignDocumentInputs(ctx context.Context, task Task, workDir string, client *Client) error {
@@ -94,25 +98,20 @@ func materializeDesignDocumentInputs(ctx context.Context, task Task, workDir str
 		return errors.New("invalid Design Document input context")
 	}
 	root := filepath.Join(workDir, ".agent_context", "design_document")
-	if envelope.Operation == "adjust" {
-		baseDir := filepath.Join(root, "context", "base")
-		if err := os.Mkdir(baseDir, 0o755); err != nil && !os.IsExist(err) {
-			return err
-		}
-		if !isRealGroundingDirectory(baseDir) || os.Chmod(baseDir, 0o755) != nil {
-			return errors.New("Design Document base directory is unsafe")
-		}
-		archive, headers, err := client.DownloadDesignDocumentInput(ctx, task.ID, "base", "", 32<<20)
-		if err != nil {
-			return fmt.Errorf("download Design Document base: %w", err)
-		}
-		if headers.Get("X-Multica-Design-Package-Digest") != envelope.BaseContentDigest {
-			return errors.New("Design Document base digest does not match its pinned reference")
-		}
-		if err := os.WriteFile(filepath.Join(baseDir, "package.zip"), archive, 0o444); err != nil {
-			return err
-		}
-		return os.Chmod(baseDir, 0o555)
+	// Attachments are staged for every operation, base ones included. An
+	// adjustment carries the document's own references plus whatever the user
+	// attached to this turn, and the prompt sends the agent to
+	// reference/attachments for both — so returning early here listed files in
+	// task.json that were not on disk, which is worse than not offering them.
+	if err := stageDesignDocumentAttachments(ctx, task, filepath.Join(root, "reference"), envelope.Input.Attachments, client); err != nil {
+		return err
+	}
+	if designDocumentOperationUsesBase(envelope.Operation) {
+		// The base revision itself is restored separately by
+		// restoreDesignDocumentBaseArchive + execenv.ExtractDesignDocumentBase,
+		// which own the real base/ directory execenv reserved. There is
+		// nothing left for this function to materialize for an adjustment.
+		return nil
 	}
 	referenceDir := filepath.Join(root, "reference")
 	designSystemDir := filepath.Join(root, "context", "design-system")
@@ -121,28 +120,6 @@ func materializeDesignDocumentInputs(ctx context.Context, task Task, workDir str
 			return errors.New("Design Document input directory is missing or unsafe")
 		}
 		defer func(path string) { _ = os.Chmod(path, 0o555) }(dir)
-	}
-	if len(envelope.Input.Attachments) > 0 {
-		attachmentsDir := filepath.Join(referenceDir, "attachments")
-		if err := os.Mkdir(attachmentsDir, 0o755); err != nil && !os.IsExist(err) {
-			return err
-		}
-		if !isRealGroundingDirectory(attachmentsDir) || os.Chmod(attachmentsDir, 0o755) != nil {
-			return errors.New("Design Document attachment directory is unsafe")
-		}
-		defer func() { _ = os.Chmod(attachmentsDir, 0o555) }()
-		for _, attachment := range envelope.Input.Attachments {
-			if !safeDesignDocumentInputID(attachment.ID) || attachment.SizeBytes < 0 || attachment.SizeBytes > maxDesignDocumentInputBytes {
-				return errors.New("Design Document attachment metadata is invalid")
-			}
-			content, _, err := client.DownloadDesignDocumentInput(ctx, task.ID, "attachments/"+attachment.ID, attachment.SHA256, attachment.SizeBytes)
-			if err != nil {
-				return fmt.Errorf("download Design Document attachment: %w", err)
-			}
-			if err := os.WriteFile(filepath.Join(attachmentsDir, attachment.ID), content, 0o444); err != nil {
-				return err
-			}
-		}
 	}
 	if envelope.Input.DesignSystem != nil {
 		archive, headers, err := client.DownloadDesignDocumentInput(ctx, task.ID, "design-system", "", 64<<20)
@@ -153,6 +130,55 @@ func materializeDesignDocumentInputs(ctx context.Context, task Task, workDir str
 			return errors.New("Design Document design system digest does not match its pinned reference")
 		}
 		if err := os.WriteFile(filepath.Join(designSystemDir, "package.zip"), archive, 0o444); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// stageDesignDocumentAttachments writes the run's reference files into
+// reference/attachments, read-only, one file per attachment id.
+//
+// Split out of materializeDesignDocumentInputs so it can run for a base
+// operation too: an adjustment restores its base revision by a different path
+// and used to skip this entirely, which left the agent reading a directory the
+// prompt promised and the daemon never wrote.
+func stageDesignDocumentAttachments(
+	ctx context.Context,
+	task Task,
+	referenceDir string,
+	attachments []designDocumentInputAttachment,
+	client *Client,
+) error {
+	if len(attachments) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(referenceDir, 0o755); err != nil {
+		return err
+	}
+	if !isRealGroundingDirectory(referenceDir) || os.Chmod(referenceDir, 0o755) != nil {
+		return errors.New("Design Document input directory is missing or unsafe")
+	}
+	defer func() { _ = os.Chmod(referenceDir, 0o555) }()
+
+	attachmentsDir := filepath.Join(referenceDir, "attachments")
+	if err := os.Mkdir(attachmentsDir, 0o755); err != nil && !os.IsExist(err) {
+		return err
+	}
+	if !isRealGroundingDirectory(attachmentsDir) || os.Chmod(attachmentsDir, 0o755) != nil {
+		return errors.New("Design Document attachment directory is unsafe")
+	}
+	defer func() { _ = os.Chmod(attachmentsDir, 0o555) }()
+
+	for _, attachment := range attachments {
+		if !safeDesignDocumentInputID(attachment.ID) || attachment.SizeBytes < 0 || attachment.SizeBytes > maxDesignDocumentInputBytes {
+			return errors.New("Design Document attachment metadata is invalid")
+		}
+		content, _, err := client.DownloadDesignDocumentInput(ctx, task.ID, "attachments/"+attachment.ID, attachment.SHA256, attachment.SizeBytes)
+		if err != nil {
+			return fmt.Errorf("download Design Document attachment: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(attachmentsDir, attachment.ID), content, 0o444); err != nil {
 			return err
 		}
 	}
@@ -178,10 +204,10 @@ func prepareDesignDocumentGrounding(ctx context.Context, task Task, workDir, dae
 			Repository          json.RawMessage `json:"repository"`
 		} `json:"input"`
 	}
-	if json.Unmarshal(task.DesignDocumentContext, &envelope) != nil || envelope.Type != "design_document_task" || (envelope.Operation != "first_generation" && envelope.Operation != "adjust") || !envelope.ExecutionReady {
+	if json.Unmarshal(task.DesignDocumentContext, &envelope) != nil || envelope.Type != "design_document_task" || (envelope.Operation != "generate" && !designDocumentOperationUsesBase(envelope.Operation)) || !envelope.ExecutionReady {
 		return nil, errors.New("invalid Design Document grounding context")
 	}
-	if envelope.Operation == "adjust" {
+	if designDocumentOperationUsesBase(envelope.Operation) {
 		if envelope.Input.RepositoryGrounding != "pinned" {
 			return nil, errors.New("invalid pinned Design Document grounding context")
 		}

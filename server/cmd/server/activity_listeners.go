@@ -8,6 +8,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -30,6 +31,7 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 		}
 
 		activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
+			ID:          dbid.NewV7(),
 			WorkspaceID: parseUUID(issue.WorkspaceID),
 			IssueID:     parseUUID(issue.ID),
 			ActorType:   util.StrToText(e.ActorType),
@@ -69,6 +71,7 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 				"to":   issue.Status,
 			})
 			activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
+				ID:          dbid.NewV7(),
 				WorkspaceID: parseUUID(issue.WorkspaceID),
 				IssueID:     parseUUID(issue.ID),
 				ActorType:   util.StrToText(e.ActorType),
@@ -91,6 +94,7 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 				"to":   issue.Priority,
 			})
 			activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
+				ID:          dbid.NewV7(),
 				WorkspaceID: parseUUID(issue.WorkspaceID),
 				IssueID:     parseUUID(issue.ID),
 				ActorType:   util.StrToText(e.ActorType),
@@ -126,6 +130,7 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 
 			details, _ := json.Marshal(detailsMap)
 			activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
+				ID:          dbid.NewV7(),
 				WorkspaceID: parseUUID(issue.WorkspaceID),
 				IssueID:     parseUUID(issue.ID),
 				ActorType:   util.StrToText(e.ActorType),
@@ -155,6 +160,7 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 				"to":   newStartDate,
 			})
 			activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
+				ID:          dbid.NewV7(),
 				WorkspaceID: parseUUID(issue.WorkspaceID),
 				IssueID:     parseUUID(issue.ID),
 				ActorType:   util.StrToText(e.ActorType),
@@ -184,6 +190,7 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 				"to":   newDueDate,
 			})
 			activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
+				ID:          dbid.NewV7(),
 				WorkspaceID: parseUUID(issue.WorkspaceID),
 				IssueID:     parseUUID(issue.ID),
 				ActorType:   util.StrToText(e.ActorType),
@@ -206,6 +213,7 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 				"to":   issue.Title,
 			})
 			activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
+				ID:          dbid.NewV7(),
 				WorkspaceID: parseUUID(issue.WorkspaceID),
 				IssueID:     parseUUID(issue.ID),
 				ActorType:   util.StrToText(e.ActorType),
@@ -223,6 +231,7 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 
 		if descriptionChanged {
 			activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
+				ID:          dbid.NewV7(),
 				WorkspaceID: parseUUID(issue.WorkspaceID),
 				IssueID:     parseUUID(issue.ID),
 				ActorType:   util.StrToText(e.ActorType),
@@ -271,6 +280,7 @@ func handleTaskActivity(ctx context.Context, bus *events.Bus, queries *db.Querie
 	}
 
 	activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
+		ID:          dbid.NewV7(),
 		WorkspaceID: issue.WorkspaceID,
 		IssueID:     parseUUID(issueID),
 		ActorType:   util.StrToText("agent"),

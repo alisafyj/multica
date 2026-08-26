@@ -247,10 +247,6 @@ func validGroundingText(value string, limit int) bool {
 	return true
 }
 
-func validSHA256Reference(value string) bool {
-	return strings.HasPrefix(value, "sha256:") && validHex(strings.TrimPrefix(value, "sha256:"), 64)
-}
-
 func validHex(value string, sizes ...int) bool {
 	validSize := false
 	for _, size := range sizes {

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Agent, Project, ProjectDesignSystem } from "@multica/core/types";
+import type { Agent, Project, ProjectDesignSystem, ProjectResource } from "@multica/core/types";
 
 const apiMocks = vi.hoisted(() => ({
   cancelTaskById: vi.fn(),
@@ -53,6 +53,7 @@ function makeSystem(overrides: Partial<ProjectDesignSystem> = {}): ProjectDesign
     id: "",
     workspace_id: "ws-1",
     project_id: "project-1",
+    project_resource_id: "",
     name: "",
     platform: "",
     current_agent_id: null,
@@ -82,9 +83,30 @@ function makeSystem(overrides: Partial<ProjectDesignSystem> = {}): ProjectDesign
   };
 }
 
+function makeRepository(overrides: Partial<ProjectResource> = {}): ProjectResource {
+  return {
+    id: "resource-h5",
+    project_id: "project-1",
+    workspace_id: "ws-1",
+    resource_type: "github_repo",
+    resource_ref: { url: "https://github.com/acme/crm-h5.git" },
+    label: null,
+    position: 0,
+    created_at: "2026-08-16T00:00:00Z",
+    created_by: null,
+    ...overrides,
+  };
+}
+
 function renderWorkspace(
   system: ProjectDesignSystem,
-  options: { isLoading?: boolean; taskMessages?: unknown[] } = {},
+  options: {
+    isLoading?: boolean;
+    taskMessages?: unknown[];
+    repositories?: ProjectResource[];
+    selectedRepositoryId?: string;
+    onSelectRepository?: (projectResourceId: string) => void;
+  } = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -103,6 +125,9 @@ function renderWorkspace(
           legacyProfiles={[]}
           system={system}
           isLoading={options.isLoading ?? false}
+          repositories={options.repositories ?? []}
+          selectedRepositoryId={options.selectedRepositoryId ?? ""}
+          onSelectRepository={options.onSelectRepository ?? (() => {})}
         />
       </QueryClientProvider>,
     ),
@@ -139,6 +164,66 @@ describe("ProjectDesignSystemWorkspace", () => {
     expect(screen.getByRole("button", { name: "生成设计体系" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "创建设计体系" })).not.toBeInTheDocument();
     expect(screen.queryByText("尚未建立设计体系")).not.toBeInTheDocument();
+  });
+
+  it("keeps the content main view directly rendered next to the repository switcher", () => {
+    renderWorkspace(makeSystem({
+      id: "system-1",
+      name: "CRM 设计体系",
+      platform: "web",
+      status: "saved",
+    }), {
+      repositories: [
+        makeRepository(),
+        makeRepository({ id: "resource-admin", label: "后台管理", resource_ref: { url: "https://github.com/acme/crm-admin" } }),
+      ],
+    });
+
+    // Repository names come from the label, or the repository name in the URL.
+    expect(screen.getByRole("button", { name: "项目通用" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "crm-h5" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "后台管理" })).toHaveAttribute("aria-pressed", "false");
+    // Scope switch, not a summary list with a secondary entry (DC-031).
+    expect(screen.getByRole("heading", { name: "品牌原则" })).toBeInTheDocument();
+  });
+
+  it("hides the switcher when the project has no repository", () => {
+    renderWorkspace(makeSystem(), { repositories: [] });
+
+    expect(screen.queryByRole("button", { name: "项目通用" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "生成设计体系" })).toBeInTheDocument();
+  });
+
+  it("reports the picked repository and marks the selected scope", () => {
+    const onSelectRepository = vi.fn();
+    renderWorkspace(makeSystem(), {
+      repositories: [makeRepository()],
+      selectedRepositoryId: "resource-h5",
+      onSelectRepository,
+    });
+
+    expect(screen.getByRole("button", { name: "crm-h5" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "项目通用" }));
+    expect(onSelectRepository).toHaveBeenCalledWith("");
+  });
+
+  it("says so when a repository falls back to the project-level system", () => {
+    renderWorkspace(makeSystem({ id: "system-1", status: "saved", project_resource_id: "" }), {
+      repositories: [makeRepository()],
+      selectedRepositoryId: "resource-h5",
+    });
+
+    expect(screen.getByText("该仓库还没有自己的设计体系，当前显示项目通用体系。")).toBeInTheDocument();
+  });
+
+  it("stays silent when the repository has its own system", () => {
+    renderWorkspace(
+      makeSystem({ id: "system-2", status: "saved", project_resource_id: "resource-h5" }),
+      { repositories: [makeRepository()], selectedRepositoryId: "resource-h5" },
+    );
+
+    expect(screen.queryByText("该仓库还没有自己的设计体系，当前显示项目通用体系。")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "品牌原则" })).toBeInTheDocument();
   });
 
   it("renders saved content directly without a detail link", () => {
@@ -188,9 +273,10 @@ describe("ProjectDesignSystemWorkspace", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "停止任务" }));
     await waitFor(() => expect(apiMocks.cancelTaskById).toHaveBeenCalledWith(activeTask?.id));
+    // Every repository scope of the project, since a repository without its
+    // own system reads the project-level one (DC-052).
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["designs", "ws-1", "project-design-systems", "project", "project-1"],
-      exact: true,
     });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["designs", "ws-1", "project-design-systems", "system", "system-1"],

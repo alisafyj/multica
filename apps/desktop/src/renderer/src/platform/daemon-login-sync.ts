@@ -14,7 +14,7 @@
  */
 export interface DaemonLoginSyncAPI {
   setTargetApiUrl: (url: string) => Promise<void>;
-  syncToken: (token: string, userId: string) => Promise<void>;
+  syncToken: (token: string, userId: string, useSySso: boolean) => Promise<void>;
   autoStart: () => Promise<unknown>;
 }
 
@@ -23,8 +23,9 @@ export async function syncDaemonOnLogin(
   apiUrl: string,
   token: string,
   userId: string,
+  useSySso: boolean,
 ): Promise<void> {
   await api.setTargetApiUrl(apiUrl);
-  await api.syncToken(token, userId);
+  await api.syncToken(token, userId, useSySso);
   await api.autoStart();
 }
