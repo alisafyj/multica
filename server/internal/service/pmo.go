@@ -118,6 +118,9 @@ type PMOService struct {
 	// with identical numbering / duplicate-guard / position semantics, inside
 	// the apply transaction. Wired post-construction to break the init cycle.
 	IssueSvc *IssueService
+	// NotifyParentsOfBatchChildDone runs after PMO status writes commit. The
+	// handler wires its shared staged-parent barrier implementation here.
+	NotifyParentsOfBatchChildDone func(context.Context, []db.Issue)
 
 	// applyTestHook lets tests inject a failure inside the apply transaction
 	// to prove rollback semantics. Never set outside tests.

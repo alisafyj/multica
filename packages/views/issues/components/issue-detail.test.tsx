@@ -414,6 +414,8 @@ vi.mock("@multica/core/issues/stores", async () => ({
         failUpload: () => {},
         removeUpload: () => {},
         clearDraft: () => {},
+        draftInjections: {} as Record<string, number>,
+        injectDraft: () => {},
       };
       return selector ? selector(state) : state;
     },
@@ -430,6 +432,8 @@ vi.mock("@multica/core/issues/stores", async () => ({
         failUpload: () => {},
         removeUpload: () => {},
         clearDraft: () => {},
+        draftInjections: {} as Record<string, number>,
+        injectDraft: () => {},
       }),
     },
   ),

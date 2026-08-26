@@ -159,9 +159,7 @@ const personalNav: { key: NavKey; labelKey: NavLabelKey }[] = [
 
 const workspaceNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "issues", labelKey: "issues" },
-  { key: "products", labelKey: "products" },
   { key: "projects", labelKey: "projects" },
-  { key: "pmo", labelKey: "pmo" },
   { key: "designs", labelKey: "designs" },
   { key: "tests", labelKey: "tests" },
   { key: "autopilots", labelKey: "autopilots" },

@@ -419,6 +419,12 @@ SET status = 'completed', completed_at = now(), result = sqlc.narg('result')
 WHERE id = $1
 RETURNING *;
 
+-- name: CompleteAutopilotRunIfActive :one
+UPDATE autopilot_run
+SET status = 'completed', completed_at = now(), result = sqlc.narg('result')
+WHERE id = $1 AND status NOT IN ('completed', 'failed', 'skipped')
+RETURNING *;
+
 -- name: UpdateAutopilotRunFailed :one
 -- Quota safety: only use for a run known to have no reservation. Normal
 -- terminal paths must call UpdateAutopilotRunTerminalWithQuota instead.
@@ -426,6 +432,12 @@ UPDATE autopilot_run
 SET status = 'failed', completed_at = now(), failure_reason = $2,
     reason_code = sqlc.narg('reason_code')
 WHERE id = $1
+RETURNING *;
+
+-- name: FailAutopilotRunIfActive :one
+UPDATE autopilot_run
+SET status = 'failed', completed_at = now(), failure_reason = $2
+WHERE id = $1 AND status NOT IN ('completed', 'failed', 'skipped')
 RETURNING *;
 
 -- name: UpdateAutopilotRunSkipped :one
@@ -469,6 +481,7 @@ WITH updated_run AS (
             ELSE ar.reason_code
         END
     WHERE ar.id = @run_id
+      AND ar.status NOT IN ('completed', 'failed', 'skipped')
     RETURNING ar.*
 ), locked_reservation AS MATERIALIZED (
     SELECT qr.*

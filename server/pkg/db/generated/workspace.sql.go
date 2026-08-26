@@ -450,6 +450,33 @@ func (q *Queries) LockWorkspaceForDelete(ctx context.Context, id pgtype.UUID) (p
 	return id_2, err
 }
 
+const lockWorkspaceForIssueCounterWrite = `-- name: LockWorkspaceForIssueCounterWrite :one
+SELECT id FROM workspace WHERE id = $1 FOR UPDATE
+`
+
+// PMO holds project locks while creating issues, so it must take the same
+// strong workspace lock as IncrementIssueCounter before touching a project.
+func (q *Queries) LockWorkspaceForIssueCounterWrite(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockWorkspaceForIssueCounterWrite, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const lockWorkspaceForIssueWrite = `-- name: LockWorkspaceForIssueWrite :one
+SELECT id FROM workspace WHERE id = $1 FOR KEY SHARE
+`
+
+// Issue/project writes take the workspace row first, matching DeleteWorkspace's
+// workspace -> project lock order and preventing a cross-order deadlock. KEY
+// SHARE permits concurrent issue writes while still blocking workspace delete.
+func (q *Queries) LockWorkspaceForIssueWrite(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockWorkspaceForIssueWrite, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const updateWorkspace = `-- name: UpdateWorkspace :one
 UPDATE workspace SET
     name = COALESCE($2, name),

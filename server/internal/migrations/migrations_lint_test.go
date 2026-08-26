@@ -130,6 +130,13 @@ var legacyDuplicateMigrationStems = map[string][]string{
 // by the rest of the filename, which is alphabetical accident rather than
 // intent.
 var mergedDuplicateMigrationStems = map[string][]string{
+	// Fork-vs-fork rather than upstream-vs-fork: this branch and the fork's own
+	// main both picked 892 inside the reserved range, independently, and both
+	// have been applied. Renumbering either is the one thing CLAUDE.md forbids
+	// outright — 892_seed_open_design_scenario_recipes is a plain INSERT with
+	// no ON CONFLICT, so a changed stem re-runs it and duplicates every seeded
+	// recipe. The runner keys on the full stem, so the two coexist correctly.
+	"892": {"892_runnable_issue_task_fence", "892_seed_open_design_scenario_recipes"},
 	"255": {"255_agent_task_queue_chat_pending_deferred_v3", "255_service_account_token_primary_key"},
 	"256": {"256_drop_agent_task_queue_chat_pending_v2", "256_service_account_token_hash_index"},
 	"257": {"257_agent_task_queue_channel_media_pending_unique_v2", "257_service_account_token_active_index"},

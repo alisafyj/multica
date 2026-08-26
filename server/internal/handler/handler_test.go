@@ -1151,6 +1151,107 @@ func TestAutopilotCreatedIssueCreatorIsAssigneeAgent(t *testing.T) {
 	}
 }
 
+func TestAutopilotDispatchWaitsForCompletedProjectAndSkips(t *testing.T) {
+	ctx := context.Background()
+	title := fmt.Sprintf("Autopilot project issue %d", time.Now().UnixNano())
+	var autopilotID, issueID, projectID string
+	defer func() {
+		if issueID != "" {
+			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+		}
+		if autopilotID != "" {
+			testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
+		}
+		if projectID != "" {
+			testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID)
+		}
+	}()
+
+	dbfx.QueryRow(t, `
+		INSERT INTO project (workspace_id, title, created_by)
+		VALUES ($1, $2, $3)
+		RETURNING id::text
+	`, testWorkspaceID, "Autopilot project target", testUserID).Scan(&projectID)
+
+	var agentID string
+	dbfx.QueryRow(t, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID)
+
+	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
+		"title":                "Project-linked autopilot",
+		"assignee_id":          agentID,
+		"execution_mode":       "create_issue",
+		"issue_title_template": title,
+		"project_id":           projectID,
+	})
+	w := testutil.Call(t, testHandler.CreateAutopilot, req).Want(http.StatusCreated)
+	var autopilot AutopilotResponse
+	w.JSON(&autopilot)
+	autopilotID = autopilot.ID
+	if autopilot.ProjectID == nil || *autopilot.ProjectID != projectID {
+		t.Fatalf("autopilot project_id = %v, want %q", autopilot.ProjectID, projectID)
+	}
+
+	queries := db.New(testPool)
+	ap, err := queries.GetAutopilot(ctx, parseUUID(autopilotID))
+	if err != nil {
+		t.Fatalf("GetAutopilot: %v", err)
+	}
+	if !ap.ProjectID.Valid || uuidToString(ap.ProjectID) != projectID {
+		t.Fatalf("stored autopilot project_id = %q, want %q", uuidToString(ap.ProjectID), projectID)
+	}
+	completionTx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin project completion: %v", err)
+	}
+	defer completionTx.Rollback(ctx)
+	tag, err := completionTx.Exec(ctx, `UPDATE project SET status = 'completed' WHERE id = $1`, projectID)
+	if err != nil {
+		t.Fatalf("stage project completion: %v", err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("stage project completion affected %d rows, want 1", tag.RowsAffected())
+	}
+	type dispatchResult struct {
+		run *db.AutopilotRun
+		err error
+	}
+	dispatched := make(chan dispatchResult, 1)
+	go func() {
+		run, err := testHandler.AutopilotService.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
+		dispatched <- dispatchResult{run: run, err: err}
+	}()
+	select {
+	case result := <-dispatched:
+		t.Fatalf("autopilot dispatch did not wait for project completion lock: %v", result.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := completionTx.Commit(ctx); err != nil {
+		t.Fatalf("commit project completion: %v", err)
+	}
+	var result dispatchResult
+	select {
+	case result = <-dispatched:
+	case <-time.After(3 * time.Second):
+		t.Fatal("autopilot dispatch remained blocked after project completion")
+	}
+	if result.err != nil {
+		t.Fatalf("DispatchAutopilot: %v", result.err)
+	}
+	run := result.run
+	if run == nil || run.Status != "skipped" || run.IssueID.Valid {
+		t.Fatalf("dispatch run = %+v, want skipped without issue", run)
+	}
+	var created int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM issue WHERE workspace_id = $1 AND title = $2
+	`, testWorkspaceID, title).Scan(&created); err != nil {
+		t.Fatalf("count created issues: %v", err)
+	}
+	if created != 0 {
+		t.Fatalf("issues created for completed project = %d, want 0", created)
+	}
+}
+
 func TestAutopilotCreateIssueAssociatesConfiguredProject(t *testing.T) {
 	ctx := context.Background()
 	title := fmt.Sprintf("Autopilot project issue %d", time.Now().UnixNano())

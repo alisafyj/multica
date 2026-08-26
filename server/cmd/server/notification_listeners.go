@@ -639,7 +639,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 		if !ok {
 			return
 		}
-		issue, ok := payload["issue"].(handler.IssueResponse)
+		issue, ok := extractIssueFields(payload["issue"])
 		if !ok {
 			return
 		}
@@ -674,7 +674,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 		if !ok {
 			return
 		}
-		issue, ok := payload["issue"].(handler.IssueResponse)
+		issue, ok := extractIssueDomainUpdate(payload)
 		if !ok {
 			return
 		}

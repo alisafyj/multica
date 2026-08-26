@@ -1,13 +1,68 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/events"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestDispatchFailureDoesNotOverwriteOrCountCompletedRun(t *testing.T) {
+	pool := newResolveOriginatorPool(t)
+	ctx := context.Background()
+	q := db.New(pool)
+	workspaceID, userID, agentID, _ := seedAttributionFixture(t, pool)
+	var autopilotID, runID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO autopilot (workspace_id, title, assignee_id, execution_mode, created_by_type, created_by_id)
+		VALUES ($1, 'terminal failure race', $2, 'create_issue', 'member', $3) RETURNING id
+	`, workspaceID, agentID, userID).Scan(&autopilotID); err != nil {
+		t.Fatalf("create autopilot: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO autopilot_run (autopilot_id, source, status, completed_at)
+		VALUES ($1, 'manual', 'completed', now()) RETURNING id
+	`, autopilotID).Scan(&runID); err != nil {
+		t.Fatalf("create completed run: %v", err)
+	}
+
+	ap, err := q.GetAutopilot(ctx, util.MustParseUUID(autopilotID))
+	if err != nil {
+		t.Fatalf("load autopilot: %v", err)
+	}
+	ap.AssigneeID = util.MustParseUUID("ffffffff-ffff-4fff-8fff-ffffffffffff")
+	run, err := q.GetAutopilotRun(ctx, util.MustParseUUID(runID))
+	if err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	metricSet := obsmetrics.NewBusinessMetrics()
+	svc := &AutopilotService{
+		Queries: q,
+		Bus:     events.New(),
+		TaskSvc: &TaskService{Analytics: analytics.NoopClient{}, Metrics: metricSet},
+	}
+	before := obsmetrics.SumAllCounters(metricSet)
+	if _, _, err := svc.dispatchAutopilotRun(ctx, ap, pgtype.UUID{}, "manual", &run, pgtype.UUID{}); err == nil {
+		t.Fatal("dispatchAutopilotRun succeeded, want missing leader error")
+	}
+	run, err = q.GetAutopilotRun(ctx, util.MustParseUUID(runID))
+	if err != nil {
+		t.Fatalf("reload run: %v", err)
+	}
+	if run.Status != "completed" || run.FailureReason.Valid {
+		t.Fatalf("run = status %q failure_reason %#v, want completed without failure", run.Status, run.FailureReason)
+	}
+	if after := obsmetrics.SumAllCounters(metricSet); after != before {
+		t.Fatalf("business counter sum = %v after late failure, want unchanged %v", after, before)
+	}
+}
 
 func TestAutopilotErrorType(t *testing.T) {
 	cases := map[string]string{

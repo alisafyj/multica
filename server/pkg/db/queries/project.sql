@@ -14,6 +14,14 @@ SELECT id FROM project
 WHERE id = $1 AND workspace_id = $2
 FOR UPDATE;
 
+-- name: LockProjectInWorkspaceForIssueWrite :one
+-- Serializes issue creation with project completion. A create that owns this
+-- share lock commits before the completion sweep; one that waits behind a
+-- project FOR UPDATE re-reads the completed status and creates a terminal issue.
+SELECT * FROM project
+WHERE id = $1 AND workspace_id = $2
+FOR SHARE;
+
 -- name: LockProjectForChatSessionCreate :one
 -- Conflicts with project deletion so a chat session cannot commit a soft
 -- project reference after the delete transaction has swept existing sessions.

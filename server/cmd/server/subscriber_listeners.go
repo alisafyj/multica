@@ -73,7 +73,7 @@ func registerSubscriberListeners(bus *events.Bus, pool *pgxpool.Pool) {
 		if !ok {
 			return
 		}
-		issue, ok := extractIssueFields(payload["issue"])
+		issue, ok := extractIssueDomainUpdate(payload)
 		if !ok {
 			return
 		}
@@ -262,15 +262,45 @@ func extractIssueFields(v any) (handler.IssueResponse, bool) {
 	issue := handler.IssueResponse{}
 	issue.ID, _ = m["id"].(string)
 	issue.WorkspaceID, _ = m["workspace_id"].(string)
+	issue.Number, _ = m["number"].(int32)
+	issue.Identifier, _ = m["identifier"].(string)
+	issue.Title, _ = m["title"].(string)
+	issue.Status, _ = m["status"].(string)
+	issue.Priority, _ = m["priority"].(string)
 	issue.CreatorType, _ = m["creator_type"].(string)
 	issue.CreatorID, _ = m["creator_id"].(string)
 	issue.AssigneeType, _ = m["assignee_type"].(*string)
 	issue.AssigneeID, _ = m["assignee_id"].(*string)
 	issue.Description, _ = m["description"].(*string)
+	issue.ParentIssueID, _ = m["parent_issue_id"].(*string)
+	issue.ProjectID, _ = m["project_id"].(*string)
+	issue.Position, _ = m["position"].(float64)
+	issue.Stage, _ = m["stage"].(*int32)
+	issue.StartDate, _ = m["start_date"].(*string)
+	issue.DueDate, _ = m["due_date"].(*string)
+	issue.CreatedAt, _ = m["created_at"].(string)
+	issue.UpdatedAt, _ = m["updated_at"].(string)
+	issue.Metadata, _ = m["metadata"].(map[string]any)
+	issue.Properties, _ = m["properties"].(map[string]any)
 	if issue.ID == "" || issue.CreatorID == "" {
 		return handler.IssueResponse{}, false
 	}
 	return issue, true
+}
+
+// extractIssueDomainUpdate keeps realtime-only service maps from triggering
+// activity, notification, or autopilot lifecycle side effects.
+func extractIssueDomainUpdate(payload map[string]any) (handler.IssueResponse, bool) {
+	if realtimeOnly, _ := payload["realtime_only"].(bool); realtimeOnly {
+		return handler.IssueResponse{}, false
+	}
+	if issue, ok := payload["issue"].(handler.IssueResponse); ok {
+		return issue, true
+	}
+	if enabled, _ := payload["domain_side_effects"].(bool); !enabled {
+		return handler.IssueResponse{}, false
+	}
+	return extractIssueFields(payload["issue"])
 }
 
 // addSubscriber adds a user as an issue subscriber and publishes a

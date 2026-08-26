@@ -79,11 +79,17 @@ type pmoCreatedIssue struct {
 	params IssueCreateParams
 }
 
+type pmoIssueStatusChange struct {
+	issue          db.Issue
+	previousStatus string
+}
+
 type pmoApplyResult struct {
 	reviewItems   bool
 	diffJSON      []byte
 	summary       pmoRunApplySummary
 	createdIssues []pmoCreatedIssue
+	statusChanges []pmoIssueStatusChange
 }
 
 // ApplyRun applies a preview_ready run in one transaction. It re-reads the
@@ -110,6 +116,9 @@ func (s *PMOService) ApplyRun(ctx context.Context, workspaceID, runID pgtype.UUI
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
+	if _, err := qtx.LockWorkspaceForIssueCounterWrite(ctx, workspaceID); err != nil {
+		return db.PmoSyncRun{}, fmt.Errorf("pmo apply: lock workspace: %w", err)
+	}
 
 	run, err := qtx.GetPMOSyncRunForUpdate(ctx, db.GetPMOSyncRunForUpdateParams{ID: runID, WorkspaceID: workspaceID})
 	if err != nil {
@@ -174,10 +183,31 @@ func (s *PMOService) ApplyRun(ctx context.Context, workspaceID, runID pgtype.UUI
 		return db.PmoSyncRun{}, err
 	}
 
-	// Post-commit create effects only; updates and removals never publish
-	// create events. Nothing about snapshot content is logged here.
+	workspace, workspaceErr := s.Queries.GetWorkspace(ctx, workspaceID)
+	issuePrefix := ""
+	if workspaceErr == nil {
+		issuePrefix = workspace.IssuePrefix
+	}
+	// Post-commit effects use the shared issue event shape so every listener
+	// observes PMO writes exactly as it observes HTTP writes.
 	for _, created := range result.createdIssues {
-		s.IssueSvc.afterCreate(ctx, IssueCreateResult{Issue: created.issue}, created.params, IssueCreateOpts{})
+		s.IssueSvc.afterCreate(ctx, IssueCreateResult{Issue: created.issue}, created.params, IssueCreateOpts{
+			BroadcastPayload: func(issue db.Issue, _ []db.Attachment, _ []db.IssueLabel) map[string]any {
+				return map[string]any{"issue": IssueToMap(issue, issuePrefix)}
+			},
+		})
+	}
+	s.IssueSvc.publishStatusChanges(ctx, result.statusChanges, "member", util.UUIDToString(run.RequestedBy), issuePrefix)
+	if s.NotifyParentsOfBatchChildDone != nil {
+		terminal := make([]db.Issue, 0, len(result.statusChanges))
+		for _, change := range result.statusChanges {
+			previousTerminal := change.previousStatus == "done" || change.previousStatus == "cancelled"
+			currentTerminal := change.issue.Status == "done" || change.issue.Status == "cancelled"
+			if !previousTerminal && currentTerminal {
+				terminal = append(terminal, change.issue)
+			}
+		}
+		s.NotifyParentsOfBatchChildDone(ctx, terminal)
 	}
 	return run, nil
 }
@@ -205,6 +235,15 @@ func (s *PMOService) applySnapshotInTx(
 	byIdentity := map[string]db.PmoSyncLink{}
 	for _, link := range linkRows {
 		byIdentity[link.ExternalType+"\x00"+link.ExternalKey] = link
+	}
+	projectIdentity := "requirement\x00" + snapshot.Parent.Key
+	if projectLink := byIdentity[projectIdentity]; projectLink.LocalID.Valid {
+		_, err := qtx.LockProjectInWorkspaceForUpdate(ctx, db.LockProjectInWorkspaceForUpdateParams{
+			ID: projectLink.LocalID, WorkspaceID: workspaceID,
+		})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return result, fmt.Errorf("pmo apply: lock project: %w", err)
+		}
 	}
 
 	assigneeMappings, err := resolvePMOAssigneeMappingsFromLinks(ctx, qtx, workspaceID, snapshot, linkRows)
@@ -241,6 +280,9 @@ func (s *PMOService) applySnapshotInTx(
 	}
 	createdIDs := map[string]pgtype.UUID{}
 	seen := map[string]struct{}{}
+	var localProjectID pgtype.UUID
+	var completedProjectID pgtype.UUID
+	projectCompleted := false
 
 	for _, entity := range diff.Entities {
 		identity := entity.ExternalType + "\x00" + entity.ExternalKey
@@ -251,13 +293,14 @@ func (s *PMOService) applySnapshotInTx(
 			oldBaselineExt = decodeBaseline(link.BaselineExternal)
 		}
 
+		var entityLocalID pgtype.UUID
 		switch entity.Action {
 		case PMOCreate:
-			localID, issueRow, createParams, createErr := s.createEntityInTx(ctx, tx, qtx, workspaceID, run, entity, createdIDs, workloadPropertyID)
+			localID, issueRow, createParams, createErr := s.createEntityInTx(ctx, tx, qtx, workspaceID, run, entity, createdIDs, workloadPropertyID, projectCompleted)
 			if createErr != nil {
 				return result, createErr
 			}
-			createdIDs[identity] = localID
+			entityLocalID = localID
 			result.summary.Created++
 			if issueRow != nil {
 				result.createdIssues = append(result.createdIssues, pmoCreatedIssue{issue: *issueRow, params: *createParams})
@@ -272,9 +315,13 @@ func (s *PMOService) applySnapshotInTx(
 			}
 		case PMOUpdate, PMOEntityUnchanged:
 			if link.ID.Valid && link.LocalID.Valid {
-				pending, applyErr := s.applyEntityFields(ctx, qtx, workspaceID, workloadPropertyID, entity, link, resolutionByKey)
+				entityLocalID = link.LocalID
+				pending, statusChange, applyErr := s.applyEntityFields(ctx, qtx, workspaceID, workloadPropertyID, entity, link, resolutionByKey, completedProjectID)
 				if applyErr != nil {
 					return result, applyErr
+				}
+				if statusChange != nil {
+					result.statusChanges = append(result.statusChanges, *statusChange)
 				}
 				result.summary.IncomingFields += countDecisions(entity, PMOIncoming)
 				result.summary.ConvergedFields += countDecisions(entity, PMOConverged)
@@ -308,6 +355,52 @@ func (s *PMOService) applySnapshotInTx(
 			}
 			result.summary.ExternalRemoved++
 			result.reviewItems = true
+		}
+		if entityLocalID.Valid {
+			createdIDs[identity] = entityLocalID
+		}
+
+		if entity.LocalType == PMOLocalProject && entityLocalID.Valid {
+			project, err := qtx.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
+				ID: entityLocalID, WorkspaceID: workspaceID,
+			})
+			if err != nil {
+				return result, fmt.Errorf("pmo apply: reload applied project: %w", err)
+			}
+			localProjectID = project.ID
+			projectCompleted = project.Status == "completed"
+			if projectCompleted {
+				completedProjectID = project.ID
+			} else {
+				completedProjectID = pgtype.UUID{}
+			}
+		}
+	}
+
+	// The project entity is applied first, but issue entities follow it. Close
+	// once more after the full ordered batch so unlinked/local-only issues and
+	// any future PMO entity shape cannot escape a completed project.
+	if projectCompleted && localProjectID.Valid {
+		previous, err := qtx.ListOpenProjectIssueStatusesForUpdate(ctx, db.ListOpenProjectIssueStatusesForUpdateParams{
+			ProjectID: localProjectID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			return result, fmt.Errorf("pmo apply: lock project issues: %w", err)
+		}
+		previousByID := make(map[string]string, len(previous))
+		for _, issue := range previous {
+			previousByID[util.UUIDToString(issue.ID)] = issue.Status
+		}
+		completed, err := qtx.CompleteProjectIssues(ctx, db.CompleteProjectIssuesParams{
+			ProjectID: localProjectID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			return result, fmt.Errorf("pmo apply: complete project issues: %w", err)
+		}
+		for _, issue := range completed {
+			result.statusChanges = append(result.statusChanges, pmoIssueStatusChange{
+				issue: issue, previousStatus: previousByID[util.UUIDToString(issue.ID)],
+			})
 		}
 	}
 
@@ -510,6 +603,7 @@ func (s *PMOService) createEntityInTx(
 	entity PMOEntityDiff,
 	createdIDs map[string]pgtype.UUID,
 	workloadPropertyID pgtype.UUID,
+	projectCompleted bool,
 ) (pgtype.UUID, *db.Issue, *IssueCreateParams, error) {
 	nothing := pgtype.UUID{}
 	// Flatten the diff's external values into plain values for creation.
@@ -570,11 +664,15 @@ func (s *PMOService) createEntityInTx(
 			assigneeID = parsed
 		}
 	}
+	issueStatus := pmoAnyToString(values["status"])
+	if projectCompleted && issueStatus != "done" && issueStatus != "cancelled" {
+		issueStatus = "done"
+	}
 	params := IssueCreateParams{
 		WorkspaceID:    workspaceID,
 		Title:          pmoAnyToString(values["title"]),
 		Description:    pgtype.Text{String: pmoAnyToString(values["description"]), Valid: true},
-		Status:         pmoAnyToString(values["status"]),
+		Status:         issueStatus,
 		Priority:       pmoPriorityDefault,
 		CreatorType:    "member",
 		CreatorID:      run.RequestedBy,
@@ -621,7 +719,8 @@ func (s *PMOService) applyEntityFields(
 	entity PMOEntityDiff,
 	link db.PmoSyncLink,
 	resolutions map[string]PMOConflictResolution,
-) (int, error) {
+	completedProjectID pgtype.UUID,
+) (int, *pmoIssueStatusChange, error) {
 	pending := 0
 	writes := map[string]any{}
 	for field, fieldDiff := range entity.Fields {
@@ -641,21 +740,23 @@ func (s *PMOService) applyEntityFields(
 			}
 		}
 	}
-	if len(writes) == 0 {
-		return pending, nil
+	if len(writes) == 0 && !(completedProjectID.Valid && entity.LocalType == PMOLocalIssue) {
+		return pending, nil, nil
 	}
 
 	switch entity.LocalType {
 	case PMOLocalProject:
 		if err := s.applyProjectFields(ctx, qtx, workspaceID, link.LocalID, writes); err != nil {
-			return pending, err
+			return pending, nil, err
 		}
 	case PMOLocalIssue:
-		if err := s.applyIssueFields(ctx, qtx, workspaceID, link.LocalID, workloadPropertyID, writes); err != nil {
-			return pending, err
+		statusChange, err := s.applyIssueFields(ctx, qtx, workspaceID, link.LocalID, workloadPropertyID, writes, completedProjectID)
+		if err != nil {
+			return pending, nil, err
 		}
+		return pending, statusChange, nil
 	}
-	return pending, nil
+	return pending, nil, nil
 }
 
 // applyProjectFields writes one UpdateProject carrying the unchanged current
@@ -708,10 +809,10 @@ func (s *PMOService) applyProjectFields(ctx context.Context, qtx *db.Queries, wo
 
 // applyIssueFields mirrors applyProjectFields for issue rows, writing the
 // workload property separately when it is among the changed fields.
-func (s *PMOService) applyIssueFields(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, issueID pgtype.UUID, workloadPropertyID pgtype.UUID, writes map[string]any) error {
+func (s *PMOService) applyIssueFields(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, issueID pgtype.UUID, workloadPropertyID pgtype.UUID, writes map[string]any, completedProjectID pgtype.UUID) (*pmoIssueStatusChange, error) {
 	current, err := qtx.GetIssue(ctx, issueID)
 	if err != nil {
-		return fmt.Errorf("pmo apply: reload issue: %w", err)
+		return nil, fmt.Errorf("pmo apply: reload issue: %w", err)
 	}
 	params := db.UpdateIssueParams{
 		ID:            issueID,
@@ -760,8 +861,16 @@ func (s *PMOService) applyIssueFields(ctx context.Context, qtx *db.Queries, work
 		parentID, _ := pmoAnyToUUID(v)
 		params.ParentIssueID = parentID
 	}
-	if _, err := qtx.UpdateIssue(ctx, params); err != nil {
-		return err
+	if completedProjectID.Valid && params.ProjectID == completedProjectID {
+		if current.Status == "done" || current.Status == "cancelled" {
+			params.Status = pgtype.Text{String: current.Status, Valid: true}
+		} else if params.Status.String != "done" && params.Status.String != "cancelled" {
+			params.Status = pgtype.Text{String: "done", Valid: true}
+		}
+	}
+	updated, err := qtx.UpdateIssue(ctx, params)
+	if err != nil {
+		return nil, err
 	}
 	if v, ok := writes["workload"]; ok && workloadPropertyID.Valid {
 		if _, err := qtx.SetIssuePropertyValue(ctx, db.SetIssuePropertyValueParams{
@@ -770,10 +879,13 @@ func (s *PMOService) applyIssueFields(ctx context.Context, qtx *db.Queries, work
 			Key:         util.UUIDToString(workloadPropertyID),
 			Value:       pmoJSONNumber(pmoAnyToFloat(v)),
 		}); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	if updated.Status != current.Status {
+		return &pmoIssueStatusChange{issue: updated, previousStatus: current.Status}, nil
+	}
+	return nil, nil
 }
 
 func pmoAnyToString(v any) string {
@@ -895,8 +1007,8 @@ func (s *PMOService) upsertAssigneeLinks(ctx context.Context, qtx *db.Queries, w
 			BaselineLocal:    localJSON,
 			ExternalMetadata: []byte(`{}`),
 		}
-		// Explicit Agent mappings win. Legacy member links are upgraded only
-		// when assigneeMappings contains a unique eligible Agent.
+		// Explicit Agent mappings win. Legacy member links are upgraded when
+		// assigneeMappings contains an eligible Agent.
 		if existing.ID.Valid && existing.LocalID.Valid && existing.LocalType.String == pmoLocalTypeAgent {
 			params.LocalType = existing.LocalType
 			params.LocalID = existing.LocalID

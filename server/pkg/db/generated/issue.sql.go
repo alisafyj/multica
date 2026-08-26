@@ -47,6 +47,72 @@ func (q *Queries) ChildIssueProgress(ctx context.Context, workspaceID pgtype.UUI
 	return items, nil
 }
 
+const completeProjectIssues = `-- name: CompleteProjectIssues :many
+UPDATE issue SET
+    status = 'done',
+    updated_at = now()
+WHERE project_id = $1
+  AND workspace_id = $2
+  AND status NOT IN ('done', 'cancelled')
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at
+`
+
+type CompleteProjectIssuesParams struct {
+	ProjectID   pgtype.UUID `json:"project_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Project completion is an explicit bulk close: all open states become done,
+// while the two terminal states retain their existing meaning.
+func (q *Queries) CompleteProjectIssues(ctx context.Context, arg CompleteProjectIssuesParams) ([]Issue, error) {
+	rows, err := q.db.Query(ctx, completeProjectIssues, arg.ProjectID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Issue{}
+	for rows.Next() {
+		var i Issue
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.Priority,
+			&i.AssigneeType,
+			&i.AssigneeID,
+			&i.CreatorType,
+			&i.CreatorID,
+			&i.ParentIssueID,
+			&i.AcceptanceCriteria,
+			&i.ContextRefs,
+			&i.Position,
+			&i.DueDate,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Number,
+			&i.ProjectID,
+			&i.OriginType,
+			&i.OriginID,
+			&i.FirstExecutedAt,
+			&i.StartDate,
+			&i.Metadata,
+			&i.Stage,
+			&i.Properties,
+			&i.Revision,
+			&i.LastActivityAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countCreatedIssueAssignees = `-- name: CountCreatedIssueAssignees :many
 SELECT
   assignee_type,
@@ -1358,6 +1424,45 @@ func (q *Queries) ListOpenIssues(ctx context.Context, arg ListOpenIssuesParams) 
 			&i.Properties,
 			&i.Revision,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOpenProjectIssueStatusesForUpdate = `-- name: ListOpenProjectIssueStatusesForUpdate :many
+SELECT id, status FROM issue
+WHERE project_id = $1
+  AND workspace_id = $2
+  AND status NOT IN ('done', 'cancelled')
+ORDER BY id
+FOR UPDATE
+`
+
+type ListOpenProjectIssueStatusesForUpdateParams struct {
+	ProjectID   pgtype.UUID `json:"project_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type ListOpenProjectIssueStatusesForUpdateRow struct {
+	ID     pgtype.UUID `json:"id"`
+	Status string      `json:"status"`
+}
+
+func (q *Queries) ListOpenProjectIssueStatusesForUpdate(ctx context.Context, arg ListOpenProjectIssueStatusesForUpdateParams) ([]ListOpenProjectIssueStatusesForUpdateRow, error) {
+	rows, err := q.db.Query(ctx, listOpenProjectIssueStatusesForUpdate, arg.ProjectID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOpenProjectIssueStatusesForUpdateRow{}
+	for rows.Next() {
+		var i ListOpenProjectIssueStatusesForUpdateRow
+		if err := rows.Scan(&i.ID, &i.Status); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

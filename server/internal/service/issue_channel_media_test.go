@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 type afterCommitTxStarter struct {
 	pool        *pgxpool.Pool
 	afterCommit func()
+	once        sync.Once
 }
 
 func (s *afterCommitTxStarter) Begin(ctx context.Context) (pgx.Tx, error) {
@@ -27,7 +29,7 @@ func (s *afterCommitTxStarter) Begin(ctx context.Context) (pgx.Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &afterCommitTx{Tx: tx, afterCommit: s.afterCommit}, nil
+	return &afterCommitTx{Tx: tx, afterCommit: func() { s.once.Do(s.afterCommit) }}, nil
 }
 
 type afterCommitTx struct {
@@ -124,6 +126,244 @@ func TestPublishAttachmentsChangedAlsoBroadcastsUpdatedDescription(t *testing.T)
 	attachmentPayload, ok := ordered[1].Payload.(map[string]any)
 	if !ok || attachmentPayload["issue_revision"] != issue.Revision {
 		t.Fatalf("attachment event payload = %#v, want revision %d", ordered[1].Payload, issue.Revision)
+	}
+}
+
+func TestCreateReloadsProjectIssueBeforePostCommitEffects(t *testing.T) {
+	pool := newResolveOriginatorPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	workspaceID, userID, agentID, _ := seedAttributionFixture(t, pool)
+	workspaceUUID := util.MustParseUUID(workspaceID)
+	userUUID := util.MustParseUUID(userID)
+	agentUUID := util.MustParseUUID(agentID)
+	var projectID pgtype.UUID
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title, status, created_by)
+		VALUES ($1, 'post-commit project', 'planned', $2) RETURNING id
+	`, workspaceUUID, userUUID).Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	config := pool.Config()
+	config.MaxConns = 1
+	servicePool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("create single-connection pool: %v", err)
+	}
+	t.Cleanup(servicePool.Close)
+	q := db.New(servicePool)
+
+	bus := events.New()
+	taskService := &TaskService{Queries: q, TxStarter: servicePool, Bus: bus}
+	txStarter := &afterCommitTxStarter{pool: servicePool, afterCommit: func() {
+		if _, err := pool.Exec(ctx, `UPDATE project SET status = 'completed' WHERE id = $1`, projectID); err != nil {
+			t.Errorf("complete project after issue commit: %v", err)
+			return
+		}
+		if _, err := pool.Exec(ctx, `UPDATE issue SET status = 'done' WHERE project_id = $1`, projectID); err != nil {
+			t.Errorf("complete issue after issue commit: %v", err)
+		}
+	}}
+	issueService := NewIssueService(q, txStarter, bus, nil, taskService)
+	createdStatus := ""
+	bus.Subscribe(protocol.EventIssueCreated, func(event events.Event) {
+		payload, _ := event.Payload.(map[string]any)
+		issue, _ := payload["issue"].(map[string]any)
+		createdStatus, _ = issue["status"].(string)
+		issueID, _ := issue["id"].(string)
+		if _, err := q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: util.MustParseUUID(issueID), WorkspaceID: workspaceUUID}); err != nil {
+			t.Errorf("created listener database query: %v", err)
+		}
+	})
+
+	res, err := issueService.Create(ctx, IssueCreateParams{
+		WorkspaceID: workspaceUUID,
+		Title:       "post-commit status refresh",
+		Status:      "todo",
+		Priority:    "none",
+		AssigneeType: pgtype.Text{
+			String: "agent", Valid: true,
+		},
+		AssigneeID:  agentUUID,
+		CreatorType: "member",
+		CreatorID:   userUUID,
+		ProjectID:   projectID,
+	}, IssueCreateOpts{
+		AssignedAgentRunFireAt: time.Now().Add(time.Minute),
+		BroadcastPayload: func(issue db.Issue, _ []db.Attachment, _ []db.IssueLabel) map[string]any {
+			return map[string]any{"issue": IssueToMap(issue, "TST")}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if res.Issue.Status != "done" || createdStatus != "done" {
+		t.Fatalf("post-commit state = result %q event %q, want done/done", res.Issue.Status, createdStatus)
+	}
+	if res.AssignedTaskID.Valid {
+		t.Fatalf("terminal create returned deferred task %s", util.UUIDToString(res.AssignedTaskID))
+	}
+	var active, cancelled int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE status IN ('deferred', 'queued', 'dispatched', 'running')),
+		       count(*) FILTER (WHERE status = 'cancelled')
+		FROM agent_task_queue WHERE issue_id = $1`, res.Issue.ID).Scan(&active, &cancelled); err != nil {
+		t.Fatalf("count deferred task states: %v", err)
+	}
+	if active != 0 || cancelled != 1 {
+		t.Fatalf("terminal deferred tasks = active %d cancelled %d, want 0/1", active, cancelled)
+	}
+}
+
+func TestCreateReconcilesProjectMoveDuringCreatedEvent(t *testing.T) {
+	pool := newResolveOriginatorPool(t)
+	ctx := context.Background()
+	q := db.New(pool)
+	workspaceID, userID, agentID, _ := seedAttributionFixture(t, pool)
+	workspaceUUID := util.MustParseUUID(workspaceID)
+	userUUID := util.MustParseUUID(userID)
+	agentUUID := util.MustParseUUID(agentID)
+	var openProjectID, completedProjectID pgtype.UUID
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title, status, created_by)
+		VALUES ($1, 'created-event source', 'planned', $2) RETURNING id
+	`, workspaceUUID, userUUID).Scan(&openProjectID); err != nil {
+		t.Fatalf("create source project: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title, status, created_by)
+		VALUES ($1, 'created-event target', 'completed', $2) RETURNING id
+	`, workspaceUUID, userUUID).Scan(&completedProjectID); err != nil {
+		t.Fatalf("create target project: %v", err)
+	}
+
+	bus := events.New()
+	createdStatus := ""
+	reconciledStatus := ""
+	reconciledPriority := ""
+	reconciliations := 0
+	bus.Subscribe(protocol.EventIssueCreated, func(event events.Event) {
+		payload, _ := event.Payload.(map[string]any)
+		issue, _ := payload["issue"].(map[string]any)
+		createdStatus, _ = issue["status"].(string)
+		issueID, _ := issue["id"].(string)
+		if _, err := pool.Exec(ctx, `
+			UPDATE issue SET project_id = $1, status = 'done', updated_at = now()
+			WHERE id = $2 AND workspace_id = $3
+		`, completedProjectID, util.MustParseUUID(issueID), workspaceUUID); err != nil {
+			t.Errorf("move issue during created event: %v", err)
+		}
+	})
+	bus.Subscribe(protocol.EventIssueUpdated, func(event events.Event) {
+		payload, _ := event.Payload.(map[string]any)
+		if realtimeOnly, _ := payload["realtime_only"].(bool); !realtimeOnly {
+			t.Errorf("reconciliation missing realtime_only marker: %#v", payload)
+		}
+		issue, _ := payload["issue"].(map[string]any)
+		reconciledStatus, _ = issue["status"].(string)
+		reconciledPriority, _ = issue["priority"].(string)
+		reconciliations++
+		if reconciliations == 1 {
+			issueID, _ := issue["id"].(string)
+			if _, err := pool.Exec(ctx, `UPDATE issue SET priority = 'high', updated_at = now() WHERE id = $1`, util.MustParseUUID(issueID)); err != nil {
+				t.Errorf("second update during reconciliation: %v", err)
+			}
+		}
+	})
+	taskService := &TaskService{Queries: q, TxStarter: pool, Bus: bus}
+	issueService := NewIssueService(q, pool, bus, nil, taskService)
+	res, err := issueService.Create(ctx, IssueCreateParams{
+		WorkspaceID:  workspaceUUID,
+		Title:        "move during created event",
+		Status:       "todo",
+		Priority:     "none",
+		AssigneeType: pgtype.Text{String: "agent", Valid: true},
+		AssigneeID:   agentUUID,
+		CreatorType:  "member",
+		CreatorID:    userUUID,
+		ProjectID:    openProjectID,
+	}, IssueCreateOpts{BroadcastPayload: func(issue db.Issue, _ []db.Attachment, _ []db.IssueLabel) map[string]any {
+		return map[string]any{"issue": IssueToMap(issue, "TST")}
+	}})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if createdStatus != "todo" || reconciledStatus != "done" || reconciledPriority != "high" || reconciliations != 2 {
+		t.Fatalf("events = created %q reconciled %q/%q count %d, want todo/done/high/2",
+			createdStatus, reconciledStatus, reconciledPriority, reconciliations)
+	}
+	if res.Issue.Status != "done" || res.Issue.Priority != "high" || res.Issue.ProjectID != completedProjectID {
+		t.Fatalf("final issue = status %q priority %q project %s, want done/high/%s",
+			res.Issue.Status, res.Issue.Priority, util.UUIDToString(res.Issue.ProjectID), util.UUIDToString(completedProjectID))
+	}
+	var tasks int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE issue_id = $1`, res.Issue.ID).Scan(&tasks); err != nil {
+		t.Fatalf("count guarded tasks: %v", err)
+	}
+	if tasks != 0 {
+		t.Fatalf("create-time runnable guard inserted %d tasks for terminal issue", tasks)
+	}
+}
+
+func TestCreateLocksWorkspaceBeforeProject(t *testing.T) {
+	pool := newResolveOriginatorPool(t)
+	ctx := context.Background()
+	q := db.New(pool)
+	workspaceID, userID, _, _ := seedAttributionFixture(t, pool)
+	workspaceUUID := util.MustParseUUID(workspaceID)
+	userUUID := util.MustParseUUID(userID)
+	var projectID pgtype.UUID
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title, status, created_by)
+		VALUES ($1, 'lock-order project', 'planned', $2) RETURNING id
+	`, workspaceUUID, userUUID).Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	workspaceTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin workspace lock: %v", err)
+	}
+	if _, err := workspaceTx.Exec(ctx, `SELECT id FROM workspace WHERE id = $1 FOR UPDATE`, workspaceUUID); err != nil {
+		t.Fatalf("lock workspace: %v", err)
+	}
+	issueService := NewIssueService(q, pool, events.New(), nil, nil)
+	type createResult struct {
+		result IssueCreateResult
+		err    error
+	}
+	created := make(chan createResult, 1)
+	go func() {
+		result, err := issueService.Create(ctx, IssueCreateParams{
+			WorkspaceID: workspaceUUID, Title: "lock-order issue", Status: "todo", Priority: "none",
+			CreatorType: "member", CreatorID: userUUID, ProjectID: projectID,
+		}, IssueCreateOpts{})
+		created <- createResult{result: result, err: err}
+	}()
+	select {
+	case result := <-created:
+		t.Fatalf("create did not wait for workspace lock: %v", result.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	probe, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin project probe: %v", err)
+	}
+	_, projectLockErr := probe.Exec(ctx, `SELECT id FROM project WHERE id = $1 FOR UPDATE NOWAIT`, projectID)
+	_ = probe.Rollback(ctx)
+	_ = workspaceTx.Rollback(ctx)
+	var result createResult
+	select {
+	case result = <-created:
+	case <-time.After(3 * time.Second):
+		t.Fatal("create remained blocked after workspace lock release")
+	}
+	if projectLockErr != nil {
+		t.Fatalf("create locked project before workspace: %v", projectLockErr)
+	}
+	if result.err != nil {
+		t.Fatalf("Create: %v", result.err)
 	}
 }
 

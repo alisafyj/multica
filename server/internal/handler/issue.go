@@ -3321,6 +3321,15 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
 		return db.Issue{}, db.Issue{}, false, err
 	}
+	// The workspace row is the root lock for workspace-scoped writes, taken
+	// before any project row so workspace deletion (workspace -> project)
+	// cannot deadlock against this path. Every other writer that locks a
+	// project — issue create, autopilot dispatch — takes this same root first,
+	// which is what lets the project lock below come AFTER the issue row
+	// instead of before it, and so needs no retry when they disagree.
+	if _, err := qtx.LockWorkspaceForIssueWrite(ctx, workspaceID); err != nil {
+		return db.Issue{}, db.Issue{}, false, fmt.Errorf("lock issue workspace: %w", err)
+	}
 	if len(attachmentIDs) > 0 {
 		if _, err := qtx.LockAttachmentsForIssueLink(ctx, db.LockAttachmentsForIssueLinkParams{
 			WorkspaceID:   workspaceID,
@@ -3335,6 +3344,22 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 	})
 	if err != nil {
 		return db.Issue{}, db.Issue{}, false, fmt.Errorf("lock issue for update: %w", err)
+	}
+	// Which project this issue will belong to once the update lands: the one
+	// being set, or the one it already has. Locked so its completion state
+	// cannot change under the decision below.
+	targetProjectID := current.ProjectID
+	if _, projectTouched := rawFields["project_id"]; projectTouched {
+		targetProjectID = params.ProjectID
+	}
+	var targetProject db.Project
+	if targetProjectID.Valid {
+		targetProject, err = qtx.LockProjectInWorkspaceForIssueWrite(ctx, db.LockProjectInWorkspaceForIssueWriteParams{
+			ID: targetProjectID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			return db.Issue{}, current, false, fmt.Errorf("lock issue project: %w", err)
+		}
 	}
 
 	if params.Title.Valid && titleBase != nil && current.Title != *titleBase && current.Title != params.Title.String {
@@ -3366,6 +3391,15 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 		}
 	}
 	refreshUntouchedNullableIssueParams(&params, current, rawFields)
+	if targetProject.ID.Valid && targetProject.Status == "completed" {
+		targetStatus := current.Status
+		if params.Status.Valid {
+			targetStatus = params.Status.String
+		}
+		if targetStatus != "done" && targetStatus != "cancelled" {
+			params.Status = pgtype.Text{String: "done", Valid: true}
+		}
+	}
 
 	issue, err := qtx.UpdateIssue(ctx, params)
 	if err != nil {
@@ -3625,20 +3659,12 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 
 	var issue db.Issue
 	attachmentsChanged := false
-	if req.Description != nil || req.TitleBase != nil || req.DescriptionBase != nil || len(attachmentIDs) > 0 {
-		var lockedPrev db.Issue
-		issue, lockedPrev, attachmentsChanged, err = h.updateIssueAtomically(
-			r.Context(), prevIssue.WorkspaceID, params, rawFields, req.TitleBase, req.DescriptionBase, attachmentIDs, statusKeyForGuard,
-		)
-		if lockedPrev.ID.Valid {
-			prevIssue = lockedPrev
-		}
-	} else {
-		err = h.runWithIssueStatusGuard(r.Context(), prevIssue.WorkspaceID, statusKeyForGuard, func(q *db.Queries) error {
-			var innerErr error
-			issue, innerErr = q.UpdateIssue(r.Context(), params)
-			return innerErr
-		})
+	var lockedPrev db.Issue
+	issue, lockedPrev, attachmentsChanged, err = h.updateIssueAtomically(
+		r.Context(), prevIssue.WorkspaceID, params, rawFields, req.TitleBase, req.DescriptionBase, attachmentIDs, statusKeyForGuard,
+	)
+	if lockedPrev.ID.Valid {
+		prevIssue = lockedPrev
 	}
 	if err != nil {
 		if writeIssueStatusRaceError(w, err) {
@@ -3670,7 +3696,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	h.fillStatusCategory(r.Context(), issue.WorkspaceID, &resp)
 	assigneeChanged := (req.AssigneeType != nil || req.AssigneeID != nil) &&
 		(prevIssue.AssigneeType.String != issue.AssigneeType.String || uuidToString(prevIssue.AssigneeID) != uuidToString(issue.AssigneeID))
-	statusChanged := req.Status != nil && prevIssue.Status != issue.Status
+	statusChanged := prevIssue.Status != issue.Status
 	priorityChanged := req.Priority != nil && prevIssue.Priority != issue.Priority
 	// project_changed gates the client's per-project issue-list refetch the way
 	// status/assignee flags gate theirs. Without it the client must diff
@@ -4381,23 +4407,12 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var issue db.Issue
-		if req.Updates.Description != nil {
-			// One batch-level base cannot describe multiple issue documents.
-			// Preserve every marked channel-media block conservatively, matching
-			// legacy single-update clients that omit description_base.
-			var lockedPrev db.Issue
-			issue, lockedPrev, _, err = h.updateIssueAtomically(
-				r.Context(), prevIssue.WorkspaceID, params, rawUpdates, nil, nil, nil, batchStatusKey,
-			)
-			if err == nil {
-				prevIssue = lockedPrev
-			}
-		} else {
-			err = h.runWithIssueStatusGuard(r.Context(), wsUUID, batchStatusKey, func(q *db.Queries) error {
-				var innerErr error
-				issue, innerErr = q.UpdateIssue(r.Context(), params)
-				return innerErr
-			})
+		var lockedPrev db.Issue
+		issue, lockedPrev, _, err = h.updateIssueAtomically(
+			r.Context(), prevIssue.WorkspaceID, params, rawUpdates, nil, nil, nil, batchStatusKey,
+		)
+		if err == nil {
+			prevIssue = lockedPrev
 		}
 		if err != nil {
 			// The archive race is a property of the batch's shared target
@@ -4417,7 +4432,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		fillBatch(&resp)
 		assigneeChanged := (req.Updates.AssigneeType != nil || req.Updates.AssigneeID != nil) &&
 			(prevIssue.AssigneeType.String != issue.AssigneeType.String || uuidToString(prevIssue.AssigneeID) != uuidToString(issue.AssigneeID))
-		statusChanged := req.Updates.Status != nil && prevIssue.Status != issue.Status
+		statusChanged := prevIssue.Status != issue.Status
 		priorityChanged := req.Updates.Priority != nil && prevIssue.Priority != issue.Priority
 		projectChanged := req.Updates.ProjectID != nil && uuidToString(prevIssue.ProjectID) != uuidToString(issue.ProjectID)
 
