@@ -25,12 +25,6 @@ import type {
 } from "@multica/core/types";
 
 /**
- * The 7 categories in canonical display order. Mirrors `ALL_STATUSES` in
- * packages/core/issues/config/status.ts.
- */
-import type { IssueStatus } from "@multica/core/types";
-
-/**
  * Built-in statuses surfaced in list/board views (matches web — `cancelled`
  * excluded). Retained through the MUL-6243 catalog migration because the
  * board, task list and filter sheet still key their built-in columns off it;
@@ -45,6 +39,10 @@ export const BOARD_STATUSES: IssueStatus[] = [
   "blocked",
 ];
 
+/**
+ * The 7 categories in canonical display order. Mirrors `ALL_STATUSES` in
+ * packages/core/issues/config/status.ts.
+ */
 export const STATUS_CATEGORIES: IssueStatusCategory[] = [
   "backlog",
   "todo",

@@ -53,6 +53,7 @@ const TYPE_LABEL: Record<InboxItemType, string> = {
   agent_blocked: "Agent blocked",
   agent_completed: "Agent completed",
   reaction_added: "Reaction added",
+  design_ready: "Design ready",
   quick_create_done: "Quick-create done",
   quick_create_failed: "Quick-create failed",
   quick_create_unconfirmed: "Quick-create needs a check",

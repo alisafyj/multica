@@ -20,7 +20,7 @@ import { View } from "react-native";
 import { router } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { Issue } from "@multica/core/types";
+import type { Issue, IssuePriority } from "@multica/core/types";
 import { formatDateOnly } from "@multica/core/issues/date";
 import { Text } from "@/components/ui/text";
 import { StatusIcon } from "@/components/ui/status-icon";

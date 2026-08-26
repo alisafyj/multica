@@ -21,45 +21,25 @@ import { Header } from "@/components/ui/header";
 import { IconButton } from "@/components/ui/icon-button";
 import { ActorAvatar } from "@/components/ui/actor-avatar";
 import { AgentPickerSheet } from "@/components/chat/agent-picker-sheet";
-import { chatSessionsOptions } from "@/data/queries/chat";
+import { chatSessionsOptions, chatKeys, chatMessagesOptions, pendingChatTaskOptions, taskMessagesOptions } from "@/data/queries/chat";
 import { agentListOptions } from "@/data/queries/agents";
 import { memberListOptions } from "@/data/queries/members";
-import { useDeleteChatSession } from "@/data/mutations/chat";
+import { useDeleteChatSession, useCreateChatSession, useMarkChatSessionRead } from "@/data/mutations/chat";
 import { useAuthStore } from "@/data/auth-store";
 import { useWorkspaceStore } from "@/data/workspace-store";
 import { canAssignAgent } from "@/lib/can-assign-agent";
 import { cn } from "@/lib/utils";
-import {
-  chatKeys,
-  chatMessagesOptions,
-  chatSessionsOptions,
-  pendingChatTaskOptions,
-  taskMessagesOptions,
-} from "@/data/queries/chat";
-import {
-  useCreateChatSession,
-  useDeleteChatSession,
-  useMarkChatSessionRead,
-} from "@/data/mutations/chat";
-import {
-  DRAFT_NEW_SESSION,
-  useChatDraftsStore,
-} from "@/data/stores/chat-drafts-store";
+import { DRAFT_NEW_SESSION, useChatDraftsStore } from "@/data/stores/chat-drafts-store";
 import { useChatSessionPickerStore } from "@/data/stores/chat-session-picker-store";
 import { useChatSessionRealtime } from "@/data/realtime/use-chat-session-realtime";
-import {
-  invalidatePendingTask,
-  seedAcceptedPendingTask,
-} from "@/data/realtime/chat-ws-updaters";
+import { invalidatePendingTask, seedAcceptedPendingTask } from "@/data/realtime/chat-ws-updaters";
 import { useWorkspaceAgentAvailability } from "@/lib/workspace-agent-availability";
 import { sendFailureMessage } from "@/lib/dispatch-reason";
 import { useAgentPresence } from "@/lib/use-agent-presence";
-import { Header } from "@/components/ui/header";
 import { ChatTitleButton } from "@/components/chat/chat-title-button";
 import { ChatSessionActions } from "@/components/chat/chat-session-actions";
 import { ChatMessageList } from "@/components/chat/chat-message-list";
 import { ChatComposer } from "@/components/chat/chat-composer";
-import { AgentPickerSheet } from "@/components/chat/agent-picker-sheet";
 import { NoAgentBanner } from "@/components/chat/no-agent-banner";
 import { OfflineBanner } from "@/components/chat/offline-banner";
 import { RuntimeRequiredBanner } from "@/components/chat/runtime-required-banner";

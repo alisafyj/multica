@@ -1,8 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import type { Issue, IssueStatusEntry } from "@multica/core/types";
+import type { Issue, IssuePriority, IssueStatus, IssueStatusEntry } from "@multica/core/types";
+import { RESOURCES } from "../locales";
 import {
   BOARD_CATEGORIES,
+  BOARD_STATUSES,
   CLOSED_CATEGORIES,
   buildIssueStatusCatalog,
   isCustomStatus,
@@ -13,6 +15,7 @@ import {
   statusOptions,
   issuePriorityLabel,
   issueStatusLabel,
+  type IssueTranslate,
 } from "./issue-status";
 
 function entry(
@@ -249,6 +252,41 @@ describe("isCustomStatus", () => {
     expect(isCustomStatus(buildIssueStatusCatalog([]), "qa")).toBe(false);
   });
 });
+
+/**
+ * Enum coverage guard. Replaces the exhaustiveness that the old
+ * `Record<IssueStatus, string>` maps gave TypeScript: now that labels resolve
+ * by string key, only a test can catch "web added a status and mobile's
+ * locale JSON never got it". Stronger than the type check ever was — it
+ * also holds zh-Hans to the same bar.
+ *
+ * lib/i18n/parity.test.ts is the complementary half: it proves en and
+ * zh-Hans agree with each other, but not that either covers the enum.
+ */
+const ALL_STATUSES: IssueStatus[] = [...BOARD_STATUSES, "cancelled"];
+
+/** Minimal stand-in for i18next: dictionary hit, else `defaultValue`. */
+function makeT(dict: Record<string, string> = {}): IssueTranslate {
+  return (key, opts) =>
+    dict[key] ?? ((opts?.defaultValue as string | undefined) ?? key);
+}
+
+const ALL_PRIORITIES: IssuePriority[] = [
+  "urgent",
+  "high",
+  "medium",
+  "low",
+  "none",
+];
+
+const LOCALES = ["en", "zh-Hans"] as const;
+
+function issuesBundle(locale: (typeof LOCALES)[number]) {
+  return RESOURCES[locale].issues as unknown as {
+    status?: Record<string, string>;
+    priority?: Record<string, string>;
+  };
+}
 
 describe("issue status / priority label coverage", () => {
   for (const locale of LOCALES) {

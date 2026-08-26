@@ -123,7 +123,7 @@ export default function EditIssue() {
         );
       },
     });
-  }, [canSave, title, currentDescription, descriptionBase, update, t]);
+  }, [canSave, title, currentDescription, update, t]);
 
   const headerLeft = useCallback(
     () => (
