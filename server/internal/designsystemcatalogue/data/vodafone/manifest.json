@@ -1,0 +1,8 @@
+{
+  "id": "vodafone",
+  "name": "Vodafone",
+  "category": "Media & Consumer",
+  "category_zh": "媒体与消费",
+  "description": "Bundled Open Design package for Vodafone, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "全球电信品牌。大写展示字体，Vodafone 红色章节色带。"
+}

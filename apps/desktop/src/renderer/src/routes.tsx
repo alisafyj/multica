@@ -26,7 +26,7 @@ import { DashboardPage } from "@multica/views/dashboard";
 import { AutopilotsPage } from "@multica/views/autopilots/components";
 import { MyIssuesPage } from "@multica/views/my-issues";
 import { SkillsPage } from "@multica/views/skills";
-import { DesignDraftPage, DesignFilePage, DesignFramePage, DesignRestoreTaskPage, DesignsPage, ProjectDesignSystemPage } from "@multica/views/designs";
+import { DesignDocumentPage, DesignDraftPage, DesignFilePage, DesignFramePage, DesignRestoreTaskPage, DesignsPage, ProjectDesignSystemPage, WorkspaceDesignSystemCreate } from "@multica/views/designs";
 import {
   TestCaseDetail,
   TestCasesPage,
@@ -115,6 +115,11 @@ function DesktopDesignDraftRoute() {
   return <DesignDraftPage draftId={draftId} />;
 }
 
+function DesktopDesignDocumentRoute() {
+  const { documentId = "" } = useParams();
+  return <DesignDocumentPage documentId={documentId} />;
+}
+
 function DesktopDesignRestoreTaskRoute() {
   const { taskId = "" } = useParams();
   return <DesignRestoreTaskPage taskId={taskId} />;
@@ -123,6 +128,10 @@ function DesktopDesignRestoreTaskRoute() {
 function DesktopProjectDesignSystemRoute() {
   const { id = "" } = useParams();
   return <ProjectDesignSystemPage designSystemId={id} />;
+}
+
+function DesktopWorkspaceDesignSystemCreateRoute() {
+  return <WorkspaceDesignSystemCreate />;
 }
 
 /**
@@ -256,9 +265,19 @@ export const appRoutes: RouteObject[] = [
             handle: { title: "Design Draft" },
           },
           {
+            path: "designs/documents/:documentId",
+            element: <DesktopDesignDocumentRoute />,
+            handle: { title: "Design Document" },
+          },
+          {
             path: "designs/restore-tasks/:taskId",
             element: <DesktopDesignRestoreTaskRoute />,
             handle: { title: "Design Restore Task" },
+          },
+          {
+            path: "designs/systems/new",
+            element: <DesktopWorkspaceDesignSystemCreateRoute />,
+            handle: { title: "New Design System" },
           },
           {
             path: "designs/systems/:id",

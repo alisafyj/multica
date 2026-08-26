@@ -1,0 +1,59 @@
+{
+  "schema_version": "multica.design-document-coverage/v1",
+  "requirement_coverage": [
+    {
+      "requirement_id": "req.order-scan",
+      "status": "covered",
+      "page_ids": ["page.orders"],
+      "state_ids": ["state.orders.loading", "state.orders.default", "state.orders.empty"],
+      "notes": "Filtering and sorting run against the mock order set."
+    }
+  ],
+  "issue_requirement_coverage": [
+    {
+      "requirement_id": "req.order-approval",
+      "status": "covered",
+      "page_ids": ["page.order-detail"],
+      "state_ids": ["state.order-detail.default", "state.order-detail.approved"]
+    }
+  ],
+  "page_coverage": [
+    { "ref_id": "page.orders", "status": "covered" },
+    { "ref_id": "page.order-detail", "status": "covered" }
+  ],
+  "state_coverage": [
+    { "ref_id": "state.orders.loading", "status": "covered" },
+    { "ref_id": "state.orders.default", "status": "covered" },
+    { "ref_id": "state.orders.empty", "status": "covered" },
+    { "ref_id": "state.order-detail.default", "status": "covered" },
+    { "ref_id": "state.order-detail.approved", "status": "covered" }
+  ],
+  "overlay_coverage": [
+    { "ref_id": "overlay.orders.filters", "status": "covered" },
+    { "ref_id": "overlay.order-detail.confirm", "status": "covered" }
+  ],
+  "flow_coverage": [
+    { "ref_id": "flow.approve-order", "status": "covered" }
+  ],
+  "interaction_coverage": [
+    { "ref_id": "interaction.filter-orders", "status": "covered" },
+    { "ref_id": "interaction.sort-orders", "status": "covered" }
+  ],
+  "design_system_consistency": {
+    "design_system_sha256": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "checked": true,
+    "findings": []
+  },
+  "template_residue": {
+    "checked": true,
+    "findings": []
+  },
+  "uncovered": [],
+  "agent_checks": [
+    {
+      "id": "check.offline-run",
+      "claim": "The prototype was opened with the network disabled.",
+      "result": "pass"
+    }
+  ]
+}

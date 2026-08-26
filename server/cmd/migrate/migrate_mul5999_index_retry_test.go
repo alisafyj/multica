@@ -154,16 +154,13 @@ func assertConcurrentIndexCleanupsMatchTheirMigrations(
 	// The A1 Design Document batch specifically: every one of these builds an
 	// index that must retain its invalid-index cleanup hook.
 	for version, indexName := range map[string]string{
-		"879_idx_design_document_project":                    "idx_design_document_project",
-		"880_idx_design_document_issue":                      "idx_design_document_issue",
-		"881_idx_design_document_revision_document":          "idx_design_document_revision_document",
-		"882_idx_design_document_snapshot_project":           "idx_design_document_snapshot_project",
-		"883_idx_design_document_id":                         "idx_design_document_id",
-		"884_idx_design_document_input_snapshot_id":          "idx_design_document_input_snapshot_id",
-		"885_idx_design_document_revision_id":                "idx_design_document_revision_id",
-		"886_idx_design_document_input_snapshot_task_id":     "idx_design_document_input_snapshot_task_id",
-		"887_idx_design_document_revision_source_task_id":    "idx_design_document_revision_source_task_id",
-		"888_idx_design_document_revision_input_snapshot_id": "idx_design_document_revision_input_snapshot_id",
+		"881_idx_design_document_revision_number":       "idx_design_document_revision_number",
+		"882_idx_design_document_project":               "idx_design_document_project",
+		"883_idx_design_document_issue":                 "idx_design_document_issue",
+		"884_idx_design_document_active_task":           "idx_design_document_active_task",
+		"886_idx_design_scenario_recipe_builtin_slug":   "idx_design_scenario_recipe_builtin_slug",
+		"887_idx_design_scenario_recipe_workspace_slug": "idx_design_scenario_recipe_workspace_slug",
+		"888_idx_design_scenario_recipe_gallery":        "idx_design_scenario_recipe_gallery",
 	} {
 		if got := concurrentIndexCleanups[version]; got != indexName {
 			t.Errorf("%s: cleanup index = %q, want %q", version, got, indexName)

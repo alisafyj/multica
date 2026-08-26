@@ -1,0 +1,8 @@
+{
+  "id": "tesla",
+  "name": "Tesla",
+  "category": "Automotive",
+  "category_zh": "汽车",
+  "description": "Bundled Open Design package for Tesla, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "电动汽车。极致减法，全视口摄影，近乎零 UI。"
+}

@@ -16,6 +16,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -781,6 +782,7 @@ func (h *Handler) DispatchTestGenerationJob(w http.ResponseWriter, r *http.Reque
 	}
 
 	agentTask, err := h.Queries.CreateQuickCreateTask(r.Context(), db.CreateQuickCreateTaskParams{
+		ID:        dbid.NewV7(),
 		AgentID:   agent.ID,
 		RuntimeID: agent.RuntimeID,
 		Priority:  0,

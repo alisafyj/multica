@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Order detail</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="workspace" data-page="page.order-detail">
+    <nav><a href="index.html">Back to the order workspace</a></nav>
+    <section data-block="block.order-detail.summary" data-state="state.order-detail.default">
+      <h1>Order CRM-2048</h1>
+      <p>Customer Lin, pending review, submitted on 2026-08-11.</p>
+      <button id="approve" type="button">Approve order</button>
+    </section>
+    <div id="confirm-dialog" data-overlay="overlay.order-detail.confirm" hidden>
+      <p>Approve order CRM-2048?</p>
+      <button id="confirm" type="button">Confirm</button>
+      <button id="cancel" type="button">Cancel</button>
+    </div>
+    <p id="approved" data-state="state.order-detail.approved" hidden>Order CRM-2048 is approved.</p>
+  </main>
+  <script>
+    const dialog = document.getElementById("confirm-dialog");
+
+    document.getElementById("approve").addEventListener("click", () => {
+      dialog.hidden = false;
+    });
+
+    document.getElementById("cancel").addEventListener("click", () => {
+      dialog.hidden = true;
+    });
+
+    document.getElementById("confirm").addEventListener("click", () => {
+      dialog.hidden = true;
+      document.getElementById("approved").hidden = false;
+      try {
+        window.localStorage.setItem("multica.design-document.orders.approved", "CRM-2048");
+      } catch (error) {
+        // Local storage is optional for this prototype.
+      }
+    });
+  </script>
+</body>
+</html>

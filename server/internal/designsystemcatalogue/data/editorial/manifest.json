@@ -1,0 +1,8 @@
+{
+  "id": "editorial",
+  "name": "Editorial",
+  "category": "Creative & Artistic",
+  "category_zh": "创意艺术",
+  "description": "Bundled Open Design package for Editorial, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "杂志风编辑布局，精致衬线排版，结构化网格，优雅的阅读体验。"
+}

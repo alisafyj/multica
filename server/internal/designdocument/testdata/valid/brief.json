@@ -1,0 +1,78 @@
+{
+  "schema_version": "multica.design-document-brief/v1",
+  "goal": "Give order operators a dense workspace for scanning, filtering and approving CRM orders.",
+  "requirement_summary": "Operators scan the order list, narrow it with a saved keyword filter, and approve one order from its detail page.",
+  "requirements": [
+    {
+      "id": "req.order-scan",
+      "summary": "An operator can scan, filter and sort the order list without leaving the workspace.",
+      "origin": "user_input"
+    },
+    {
+      "id": "req.order-approval",
+      "summary": "An operator can approve one order and see the result confirmed.",
+      "origin": "issue"
+    }
+  ],
+  "pages": [
+    {
+      "id": "page.orders",
+      "title": "Order workspace",
+      "entry": "prototype/index.html",
+      "states": [
+        { "id": "state.orders.loading", "label": "Loading orders", "kind": "loading" },
+        { "id": "state.orders.default", "label": "Orders listed", "kind": "default" },
+        { "id": "state.orders.empty", "label": "No matching order", "kind": "empty" }
+      ],
+      "overlays": [
+        { "id": "overlay.orders.filters", "kind": "drawer", "label": "Saved filters drawer" }
+      ],
+      "blocks": [
+        { "id": "block.orders.toolbar", "label": "Workspace toolbar" },
+        { "id": "block.orders.table", "label": "Order table" }
+      ]
+    },
+    {
+      "id": "page.order-detail",
+      "title": "Order detail",
+      "parent_id": "page.orders",
+      "entry": "prototype/orders.html",
+      "states": [
+        { "id": "state.order-detail.default", "label": "Order summary", "kind": "default" },
+        { "id": "state.order-detail.approved", "label": "Order approved", "kind": "success" }
+      ],
+      "overlays": [
+        { "id": "overlay.order-detail.confirm", "kind": "dialog", "label": "Approval confirmation" }
+      ],
+      "blocks": [
+        { "id": "block.order-detail.summary", "label": "Order summary block" }
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow.approve-order",
+      "title": "Approve one order",
+      "steps": [
+        { "page_id": "page.orders", "state_id": "state.orders.default", "action": "Scan the order list" },
+        { "page_id": "page.order-detail", "state_id": "state.order-detail.default", "action": "Open the order detail" },
+        { "page_id": "page.order-detail", "state_id": "state.order-detail.approved", "action": "Confirm the approval" }
+      ]
+    }
+  ],
+  "mock_data_scenarios": [
+    { "id": "mock.orders-populated", "summary": "Three orders across pending, approved and shipped statuses." },
+    { "id": "mock.orders-empty", "summary": "A keyword that matches no order." }
+  ],
+  "accessibility": [
+    { "id": "a11y.drawer-keyboard", "summary": "The filter drawer opens and closes from the keyboard." }
+  ],
+  "interactions": [
+    { "id": "interaction.filter-orders", "summary": "Filtering the order list keeps the keyword between visits." },
+    { "id": "interaction.sort-orders", "summary": "The order column toggles between ascending and descending." }
+  ],
+  "non_goals": [
+    "Production frontend code",
+    "Real customer data"
+  ]
+}

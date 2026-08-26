@@ -115,6 +115,13 @@ export const issueKeys = {
       projectId,
       assigneeTypes ?? null,
     ] as const,
+  /**
+   * Every open issue of one project, unbucketed and unpaginated. Backs
+   * "link this to a task" pickers, where a partial first page would silently
+   * hide the task the user is looking for.
+   */
+  projectOpen: (wsId: string, projectId: string) =>
+    [...issueKeys.all(wsId), "project-open", projectId] as const,
   detail: (wsId: string, id: string) =>
     [...issueKeys.all(wsId), "detail", id] as const,
   /** Resolve a bare issue identifier (e.g. "MUL-123") to an issue. */
@@ -177,7 +184,21 @@ export const issueKeys = {
   tasksAll: () => ["issues", "tasks"] as const,
   /** Per-issue task list (issue-detail Execution log section). */
   tasks: (issueId: string) => [...issueKeys.tasksAll(), issueId] as const,
+  sourceContextPreview: (wsId: string, anchorCommentId: string) =>
+    ["source-context", "preview", wsId, anchorCommentId] as const,
 };
+
+export function sourceContextPreviewOptions(
+  wsId: string,
+  anchorCommentId: string | null | undefined,
+) {
+  return queryOptions({
+    queryKey: issueKeys.sourceContextPreview(wsId, anchorCommentId ?? ""),
+    queryFn: () => api.getCommentSubIssuePreview(anchorCommentId!),
+    enabled: !!anchorCommentId,
+    staleTime: 0,
+  });
+}
 
 export type MyIssuesFilter = Pick<
   ListIssuesParams,
@@ -409,6 +430,23 @@ export function projectGanttIssuesOptions(
   });
 }
 
+/**
+ * Every open (non-done, non-cancelled) issue in a project.
+ *
+ * Backed by `GET /api/issues?open_only=true&project_id=…`, which the server
+ * answers without a page limit. Pickers that let a user attach work to an
+ * issue need the whole set: a truncated list looks identical to "that task
+ * does not exist" once the client filters it.
+ */
+export function projectOpenIssuesOptions(wsId: string, projectId: string) {
+  return queryOptions({
+    queryKey: issueKeys.projectOpen(wsId, projectId),
+    queryFn: () => api.listIssues({ project_id: projectId, open_only: true }),
+    select: (data) => data.issues,
+    enabled: !!projectId,
+  });
+}
+
 export function issueDetailOptions(wsId: string, id: string) {
   return queryOptions({
     queryKey: issueKeys.detail(wsId, id),
@@ -461,9 +499,21 @@ export function childIssueProgressOptions(wsId: string) {
     queryKey: issueKeys.childProgress(wsId),
     queryFn: () => api.getChildIssueProgress(),
     select: (data) => {
-      const map = new Map<string, { done: number; total: number }>();
+      const map = new Map<string, {
+        done: number;
+        total: number;
+        visibleDone: number;
+        visibleTotal: number;
+        hiddenTotal: number;
+      }>();
       for (const entry of data.progress) {
-        map.set(entry.parent_issue_id, { done: entry.done, total: entry.total });
+        map.set(entry.parent_issue_id, {
+          done: entry.done,
+          total: entry.total,
+          visibleDone: entry.visible_done ?? entry.done,
+          visibleTotal: entry.visible_total ?? entry.total,
+          hiddenTotal: entry.hidden_total ?? 0,
+        });
       }
       return map;
     },

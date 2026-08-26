@@ -1,4 +1,4 @@
-export type { Issue, IssueStatus, IssuePriority, IssueAssigneeType, IssueMetadata, IssueMetadataValue, IssueReaction } from "./issue";
+export type { Issue, IssueStatus, IssuePriority, IssueAssigneeType, IssueMetadata, IssueMetadataValue, IssueReaction, SourceContextAttachment, SourceContextAuthor, SourceContextIssueSnapshot, SourceContextCommentSnapshot, SourceContextSnapshot, SourceContextLimitUsage, SourceContextPreview, SourceContextAuthorState, IssueSourceContext } from "./issue";
 export type {
   IssueStatusCategory,
   IssueStatusEntry,
@@ -8,6 +8,7 @@ export type {
 } from "./issue-status";
 export type {
   Agent,
+  AgentStarterPrompt,
   AgentStatus,
   AgentRuntimeMode,
   AgentVisibility,
@@ -85,21 +86,28 @@ export type {
 export { RUNTIME_PROFILE_PROTOCOL_FAMILIES } from "./agent";
 export type { Workspace, WorkspaceRepo, WorkspaceMcpServer, Member, MemberRole, User, MemberWithUser, Invitation, ShareLink, ShareLinkInfo } from "./workspace";
 export type {
-  PluginBinding,
   PluginInstallation,
-  PluginCatalogContribution,
-  PluginCatalogRelease,
-  PluginCatalogDiagnostic,
-  PluginCatalogResponse,
+  PluginConfigField,
+  PluginConfigFieldType,
+  PluginSurface,
+  PluginSurfaceType,
+  PluginHook,
+  PluginHookTrigger,
+  PluginResource,
   PluginInstallationListResponse,
-  PluginReleaseRequest,
-  PluginBindingRequest,
-  PluginRemoteMCPConfig,
-  RemoteMCPConfigRequest,
-  RemoteMCPDiscoveryResponse,
-  RemoteMCPOAuthStartRequest,
-  RemoteMCPOAuthStartResponse,
-  RemoteMCPTool,
+  PluginManifestSummary,
+  PluginPackage,
+  PluginPackageVersion,
+  PluginPackageListResponse,
+  PluginSurfaceLaunch,
+  PluginPreview,
+  PluginPreviewRequest,
+  PluginInstallRequest,
+  PluginConfigRequest,
+  PluginHookResult,
+  PluginInvocation,
+  PluginMCPTool,
+  PluginTokenIssue,
 } from "./plugin";
 export type { InboxItem, InboxSeverity, InboxItemType, InboxWorkspaceUnread } from "./inbox";
 export type { NotificationGroupKey, NotificationGroupValue, NotificationPreferences, NotificationPreferenceResponse } from "./notification-preference";
@@ -286,12 +294,13 @@ export type {
 } from "./slack";
 export type {
   DingTalkInstallation,
-  DingTalkGroupRoute,
   ListDingTalkInstallationsResponse,
-  ListDingTalkGroupRoutesResponse,
+  DingTalkGroupBot,
+  DingTalkGroup,
+  ListDingTalkGroupsResponse,
+  ListDingTalkGroupsParams,
   RegisterDingTalkBYORequest,
   RedeemDingTalkBindingTokenResponse,
-  UpdateDingTalkGroupRouteRequest,
 } from "./dingtalk";
 export type {
   WecomInstallation,
@@ -299,6 +308,12 @@ export type {
   RegisterWecomBYORequest,
   RedeemWecomBindingTokenResponse,
 } from "./wecom";
+export type {
+  TelegramInstallation,
+  ListTelegramInstallationsResponse,
+  RegisterTelegramRequest,
+  RedeemTelegramBindingTokenResponse,
+} from "./telegram";
 export type {
   Autopilot,
   AutopilotStatus,
@@ -313,6 +328,7 @@ export type {
   AutopilotRun,
   AutopilotRunStatus,
   AutopilotRunSource,
+  AutopilotQuotaUsage,
   WebhookEventFilter,
   CreateAutopilotRequest,
   UpdateAutopilotRequest,
@@ -365,10 +381,16 @@ export type {
   WorkspaceSubscriptionInterval,
   WorkspaceSubscriptionEntitlements,
   WorkspaceSubscriptionSummary,
+  WorkspaceSeatCapacity,
+  WorkspaceSeatPurchaseSummary,
   WorkspaceSubscriptionPrice,
   WorkspaceSubscriptionPrices,
   CreateWorkspaceSubscriptionCheckoutRequest,
   CreateWorkspaceSubscriptionCheckoutResponse,
+  PreviewWorkspaceSeatPurchaseRequest,
+  WorkspaceSeatPurchasePreview,
+  PurchaseWorkspaceSeatsRequest,
+  PurchaseWorkspaceSeatsResponse,
   WorkspaceSubscriptionSeatReconcileResult,
   CreateWorkspaceSubscriptionPortalResponse,
 } from "./billing";

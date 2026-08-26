@@ -1,1 +1,0 @@
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_design_document_revision_source_task_id ON design_document_revision(source_task_id);

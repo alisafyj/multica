@@ -1,85 +1,228 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiClient, ApiError, CHAT_DRAFT_RESTORE_CAPABILITY } from "./client";
+import { configStore } from "../config";
+import { ApiClient, ApiError, CHAT_DRAFT_RESTORE_CAPABILITY, clientErrorMessage } from "./client";
+import { EMPTY_PLUGIN_PACKAGE_LIST, EMPTY_PLUGIN_PREVIEW, EMPTY_PLUGIN_SURFACE_LAUNCH } from "./schemas";
 
 afterEach(() => {
+  configStore.getState().setAgentStarterPromptsSupported(false);
   vi.unstubAllGlobals();
 });
 
-describe("ApiClient design document tasks", () => {
-  it("creates and lists tasks through the dedicated API", async () => {
-    const task = {
-      id: "task-1",
-      project_id: "project-1",
-      status: "deferred",
-    };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(task), { status: 202, headers: { "Content-Type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ tasks: [task] }), { status: 200, headers: { "Content-Type": "application/json" } }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const client = new ApiClient("https://api.example.test");
-    await expect(client.createDesignDocumentAgentTask({
-      project_id: "project-1",
-      agent_id: "agent-1",
-      requirement: "Customer detail page",
-    })).resolves.toMatchObject(task);
-    await expect(client.listDesignDocumentAgentTasks({ project_id: "project-1" })).resolves.toEqual({ tasks: [expect.objectContaining(task)] });
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "https://api.example.test/api/design-documents/agent-tasks",
-      "https://api.example.test/api/design-documents/agent-tasks?project_id=project-1",
-    ]);
-    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "POST", body: expect.stringContaining("Customer detail page") });
-  });
-
-  it("falls back safely for malformed task responses", async () => {
-    vi.stubGlobal("fetch", vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 1 }), { status: 202, headers: { "Content-Type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ tasks: "invalid" }), { status: 200, headers: { "Content-Type": "application/json" } })));
-
-    const client = new ApiClient("https://api.example.test");
-    await expect(client.createDesignDocumentAgentTask({ project_id: "project-1", agent_id: "agent-1", requirement: "Page" })).resolves.toMatchObject({ id: "", status: "failed" });
-    await expect(client.listDesignDocumentAgentTasks()).resolves.toEqual({ tasks: [] });
-  });
-
-  it("lists Design Documents and loads a digest-bound preview", async () => {
+describe("ApiClient design documents", () => {
+  it("lists Design Documents for a project", async () => {
     const document = { id: "document-1", project_id: "project-1", title: "Checkout", draft_revision_id: "revision-1", created_at: "2026-08-14T00:00:00Z", updated_at: "2026-08-14T00:00:00Z" };
-    const preview = { schema: "multica.design-document-preview/v1", document_id: "document-1", revision_id: "revision-1", content_digest: `sha256:${"a".repeat(64)}`, resource_base_url: "/api/design-document-previews/files/", resource_access_token: "token", resource_access_expires_at: "2026-08-14T01:00:00Z", targets: [{ id: "main", kind: "page", path: "prototype/index.html" }], preview: { schema_version: "multica.design-preview-receipt/v1", content_digest: `sha256:${"a".repeat(64)}`, verification: { passed: true, browser: { name: "Chromium", version: "1" } } } };
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ documents: [document] }), { status: 200, headers: { "Content-Type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(preview), { status: 200, headers: { "Content-Type": "application/json" } }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ documents: [document] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
     const client = new ApiClient("https://api.example.test");
     await expect(client.listDesignDocuments("project-1")).resolves.toEqual({ documents: [expect.objectContaining(document)] });
-    await expect(client.getDesignDocumentPreview("document-1", "project-1")).resolves.toMatchObject(preview);
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "https://api.example.test/api/design-documents?project_id=project-1",
-      "https://api.example.test/api/design-documents/document-1/preview?project_id=project-1",
     ]);
   });
 
-  it("adjusts, saves, and discards a Design Document through base-bound lifecycle routes", async () => {
-	const digest = `sha256:${"a".repeat(64)}`;
-	const task = { id: "task-2", operation: "adjust", document_id: "document-1", base_revision_id: "revision-1", base_content_digest: digest, project_id: "project-1", status: "queued" };
-	const document = { id: "document-1", project_id: "project-1", title: "Checkout", draft_revision_id: "revision-1", saved_revision_id: "revision-1", created_at: "2026-08-14T00:00:00Z", updated_at: "2026-08-14T00:00:00Z" };
-	const fetchMock = vi.fn()
-	  .mockResolvedValueOnce(new Response(JSON.stringify(task), { status: 202, headers: { "Content-Type": "application/json" } }))
-	  .mockResolvedValueOnce(new Response(JSON.stringify(document), { status: 200, headers: { "Content-Type": "application/json" } }))
-	  .mockResolvedValueOnce(new Response(JSON.stringify({ ...document, draft_revision_id: undefined }), { status: 200, headers: { "Content-Type": "application/json" } }));
-	vi.stubGlobal("fetch", fetchMock);
-	const client = new ApiClient("https://api.example.test");
-	await expect(client.adjustDesignDocument("document-1", {
-	  project_id: "project-1", agent_id: "agent-1", instruction: "Tighten header",
-	  scope: { kind: "page", id: "page-checkout" }, base_revision_id: "revision-1", base_content_digest: digest,
-	})).resolves.toMatchObject(task);
-	await expect(client.saveDesignDocument("document-1", { project_id: "project-1", expected_draft_revision_id: "revision-1", expected_draft_content_digest: digest })).resolves.toMatchObject(document);
-	await expect(client.discardDesignDocumentDraft("document-1", { project_id: "project-1", expected_draft_revision_id: "revision-1", expected_draft_content_digest: digest })).resolves.toMatchObject({ id: "document-1" });
-	expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-	  "https://api.example.test/api/design-documents/document-1/adjust",
-	  "https://api.example.test/api/design-documents/document-1/save",
-	  "https://api.example.test/api/design-documents/document-1/draft",
-	]);
-	expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "POST", "DELETE"]);
+  it("adjusts, saves, discards and restores a Design Document through its lifecycle routes", async () => {
+    const document = { id: "document-1", project_id: "project-1", title: "Checkout", draft_revision_id: "revision-1", saved_revision_id: "revision-1", created_at: "2026-08-14T00:00:00Z", updated_at: "2026-08-14T00:00:00Z" };
+    const ok = () => new Response(JSON.stringify(document), { status: 200, headers: { "Content-Type": "application/json" } });
+    const fetchMock = vi.fn().mockResolvedValueOnce(ok()).mockResolvedValueOnce(ok()).mockResolvedValueOnce(ok()).mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.adjustDesignDocument("document-1", {
+      agent_id: "agent-1", instruction: "Tighten header", scope: { kind: "page", id: "page-checkout" }, base_revision_id: "revision-1",
+    })).resolves.toMatchObject({ id: "document-1" });
+    await expect(client.saveDesignDocument("document-1", { draft_revision_id: "revision-1" })).resolves.toMatchObject(document);
+    await expect(client.discardDesignDocumentDraft("document-1")).resolves.toMatchObject({ id: "document-1" });
+    await expect(client.restoreDesignDocumentRevision("document-1", "revision-0")).resolves.toMatchObject({ id: "document-1" });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.example.test/api/design-documents/document-1/adjust",
+      "https://api.example.test/api/design-documents/document-1/save",
+      "https://api.example.test/api/design-documents/document-1/discard",
+      "https://api.example.test/api/design-documents/document-1/revisions/revision-0/restore",
+    ]);
+    expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "POST", "POST", "POST"]);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      agent_id: "agent-1", instruction: "Tighten header", scope: { kind: "page", id: "page-checkout" }, base_revision_id: "revision-1",
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ draft_revision_id: "revision-1" });
+  });
+
+  it("reads a document, its revision timeline and one revision with the preview capability", async () => {
+    const document = { id: "document-1", project_id: "project-1", title: "Checkout", status: "draft", draft_revision_id: "revision-1", created_at: "2026-08-14T00:00:00Z", updated_at: "2026-08-14T00:00:00Z" };
+    const summary = { id: "revision-1", revision_number: 1, content_digest: `sha256:${"a".repeat(64)}`, source_task_id: "task-1", agent_id: "agent-1", instruction: "", scope: null, is_draft: true, is_saved: false, page_count: 2, flow_count: 0, created_at: "2026-08-14T00:00:00Z" };
+    const revision = {
+      ...summary,
+      brief: { title: "Checkout" }, coverage: {}, audit: { passed: true }, preview_receipt: {},
+      prototype_entry: "prototype/index.html",
+      pages: [{ id: "home", title: "Home", entry: "prototype/index.html", state_ids: [] }],
+      flows: [],
+      preview_targets: [{ id: "prototype-index", kind: "prototype_entry", path: "prototype/index.html" }],
+      resource_base_path: "/api/design-document-previews/ws-1/revision-1/aa/token/files",
+      resource_access_token: "token",
+      resource_access_expires_at: "2026-08-14T00:30:00Z",
+    };
+    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json(document))
+      .mockResolvedValueOnce(json({ revisions: [summary, "garbage"] }))
+      .mockResolvedValueOnce(json(revision));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.getDesignDocument("document-1")).resolves.toMatchObject({ id: "document-1", status: "draft" });
+    await expect(client.listDesignDocumentRevisions("document-1")).resolves.toEqual({ revisions: [expect.objectContaining(summary)] });
+    const detail = await client.getDesignDocumentRevision("document-1", "revision-1");
+    expect(detail.pages[0]?.entry).toBe("prototype/index.html");
+    expect(client.getDesignDocumentPreviewFileURL(detail.resource_base_path, "prototype/orders page.html")).toBe(
+      "https://api.example.test/api/design-document-previews/ws-1/revision-1/aa/token/files/prototype/orders%20page.html",
+    );
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.example.test/api/design-documents/document-1",
+      "https://api.example.test/api/design-documents/document-1/revisions",
+      "https://api.example.test/api/design-documents/document-1/revisions/revision-1",
+    ]);
+  });
+
+  it("falls back to an empty revision when the detail response is malformed", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(["not", "an", "object"]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    const detail = await client.getDesignDocumentRevision("document-1", "revision-1");
+    expect(detail.id).toBe("revision-1");
+    expect(detail.pages).toEqual([]);
+    expect(detail.resource_base_path).toBe("");
+  });
+});
+
+describe("ApiClient agent starter-prompt compatibility", () => {
+  const prompt = {
+    label: "Review a PR",
+    prompt: "Review the open pull request.",
+  };
+
+  it("rejects create writes before an older backend can drop them", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(
+      client.createAgent({
+        name: "Reviewer",
+        runtime_id: "runtime-1",
+        starter_prompts: [prompt],
+      }),
+    ).rejects.toThrow(/server version does not support agent starter prompts/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects update writes before an older backend can drop them", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(
+      client.updateAgent("agent-1", { starter_prompts: [prompt] }),
+    ).rejects.toThrow(/server version does not support agent starter prompts/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("allows declared-capability create and update writes through", async () => {
+    configStore.getState().setAgentStarterPromptsSupported(true);
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ id: "agent-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await client.createAgent({
+      name: "Reviewer",
+      runtime_id: "runtime-1",
+      starter_prompts: [prompt],
+    });
+    await client.updateAgent("agent-1", {
+      starter_prompts: [prompt],
+    });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      name: "Reviewer",
+      runtime_id: "runtime-1",
+      starter_prompts: [prompt],
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      starter_prompts: [prompt],
+    });
+  });
+});
+
+describe("ApiClient edit guards", () => {
+  it("serializes field baselines for issue and comment writes", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+      new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await client.updateIssue("issue-1", { title: "Latest", title_base: "Original" });
+    await client.updateComment("comment-1", "Latest", [], undefined, "Original");
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      title: "Latest",
+      title_base: "Original",
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      content: "Latest",
+      content_base: "Original",
+    });
+  });
+
+  it("accepts an older issue response without revision and rejects a malformed revision", async () => {
+    const legacyIssue = {
+      id: "issue-1",
+      workspace_id: "ws-1",
+      number: 1,
+      identifier: "MUL-1",
+      title: "Legacy issue",
+      description: null,
+      status: "todo",
+      priority: "none",
+      assignee_type: null,
+      assignee_id: null,
+      creator_type: "member",
+      creator_id: "user-1",
+      parent_issue_id: null,
+      project_id: null,
+      position: 0,
+      start_date: null,
+      due_date: null,
+      created_at: "2026-08-16T00:00:00Z",
+      updated_at: "2026-08-16T00:00:00Z",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ issues: [legacyIssue], total: 1 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        issues: [{ ...legacyIssue, revision: "invalid" }],
+        total: 1,
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    const parsedLegacy = await client.listIssues();
+    expect(parsedLegacy).toMatchObject({ issues: [{ id: "issue-1" }], total: 1 });
+    expect(parsedLegacy.issues[0]).not.toHaveProperty("revision");
+    await expect(client.listIssues()).resolves.toEqual({ issues: [], total: 0 });
   });
 });
 
@@ -147,24 +290,103 @@ describe("ApiClient pull-request response schema", () => {
   });
 });
 
-describe("ApiClient Remote MCP OAuth response schema", () => {
-  it("degrades a malformed start response without inventing a navigation URL", async () => {
+describe("ApiClient Plugin preview response schema", () => {
+  it("degrades a malformed preview so a blank scope list is never shown as approval", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ authorization_url: 42 }), {
+        new Response(JSON.stringify({ scopes: "issues:read" }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         }),
       ),
     );
 
-    await expect(new ApiClient("https://api.example.test").startPluginRemoteMCPOAuth(
+    await expect(new ApiClient("https://api.example.test").previewPlugin(
+      "workspace-1",
+      { version_id: "version-1" },
+    )).resolves.toEqual(EMPTY_PLUGIN_PREVIEW);
+  });
+
+  // A malformed launch must not become a partly trusted frame URL.
+  it("falls back to an empty surface launch when the response is malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ url: 42, bridge_token: "proof" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(new ApiClient("https://api.example.test").getPluginSurfaceLaunch(
       "workspace-1",
       "installation-1",
-      "search",
-      { public_config: {}, failure_policy: "required" },
-    )).resolves.toEqual({ authorization_url: "" });
+      "hello",
+    )).resolves.toEqual(EMPTY_PLUGIN_SURFACE_LAUNCH);
+  });
+
+  it("falls back to an empty package list when the response is malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ packages: "nope" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(new ApiClient("https://api.example.test").listPluginPackages("workspace-1"))
+      .resolves.toEqual(EMPTY_PLUGIN_PACKAGE_LIST);
+  });
+});
+
+describe("ApiClient Plugin surface bridge routes", () => {
+  it("relays Action API calls through the session-only bridge prefix", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new ApiClient("https://api.example.test").callPluginAction(
+      "installation-1",
+      { method: "GET", path: "/context", issueId: "MUL-42" },
+    );
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://api.example.test/api/plugin-bridge/v1/context?issue_id=MUL-42",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: "GET",
+      headers: expect.objectContaining({
+        "X-Multica-Plugin-Installation": "installation-1",
+      }),
+    });
+  });
+
+  it("invokes UI hooks through the session-only bridge prefix", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        status: "ok",
+        hook_key: "summarize",
+        trigger: "ui",
+        latency_ms: 1,
+        attempts: 1,
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new ApiClient("https://api.example.test").invokePluginHook(
+      "installation-1",
+      "summarize",
+      { trigger: "ui", issueId: "issue-1" },
+    );
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://api.example.test/api/plugin-bridge/v1/hooks/summarize",
+    );
   });
 });
 
@@ -702,6 +924,60 @@ describe("ApiClient notification preferences", () => {
   });
 });
 
+describe("ApiClient Inbox response schemas", () => {
+  const legacyRow = {
+    id: "inbox-1",
+    workspace_id: "ws-1",
+    recipient_type: "member",
+    recipient_id: "member-1",
+    type: "new_comment",
+    severity: "info",
+    issue_id: "issue-1",
+    title: "Legacy Inbox row",
+    body: null,
+    read: false,
+    archived: false,
+    created_at: "2026-08-24T00:00:00Z",
+  };
+
+  it("schema-parses the main Inbox and preserves omitted legacy projections", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify([legacyRow]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    const result = await new ApiClient("https://api.example.test").listInbox();
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).not.toHaveProperty("issue_status");
+    expect(result[0]).not.toHaveProperty("issue_priority");
+  });
+
+  it("falls back safely when the main Inbox projection is wrong-typed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify([{ ...legacyRow, issue_priority: 3 }]),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").listInbox(),
+    ).resolves.toEqual([]);
+  });
+});
+
 describe("ApiClient", () => {
   describe("project design systems", () => {
     it("uses the project design system HTTP contract", async () => {
@@ -850,6 +1126,42 @@ describe("ApiClient", () => {
       expect(detail).toMatchObject({ id: "system-1", status: "unestablished" });
       expect(byProject.content.sections).toEqual([]);
       expect(detail.activity).toEqual([]);
+      // Malformed responses still resolve to the project-level scope rather
+      // than leaking a repository id the server never confirmed (DC-052).
+      expect(byProject.project_resource_id).toBe("");
+    });
+
+    it("asks for one repository's design system and survives a malformed scope", async () => {
+      const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: "system-1",
+            workspace_id: "ws-1",
+            project_id: "project-1",
+            project_resource_id: 42,
+            status: "saved",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      const scoped = await client.getProjectDesignSystemForProject("project /1", {
+        project_resource_id: "resource /1",
+      });
+
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        "https://api.example.test/api/project-design-systems?project_id=project%20%2F1&project_resource_id=resource%20%2F1",
+      );
+      expect(scoped.project_resource_id).toBe("");
+      expect(scoped.status).toBe("saved");
+
+      // An empty scope means the project-level system, so it is not sent.
+      await client.getProjectDesignSystemForProject("project-1", { project_resource_id: "" });
+      expect(fetchMock.mock.calls[1]?.[0]).toBe(
+        "https://api.example.test/api/project-design-systems?project_id=project-1",
+      );
     });
 
     it("posts repository analysis requests with a safe response fallback", async () => {
@@ -885,6 +1197,84 @@ describe("ApiClient", () => {
       );
       expect(result).toMatchObject({
         project_id: "project /1",
+        platform: "web",
+        current_agent_id: "agent-1",
+        status: "unestablished",
+      });
+    });
+
+    it("parses the copy-source catalogue and degrades a malformed one to empty", async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          design_systems: [{
+            id: "system-1",
+            project_id: "project-1",
+            project_title: "CRM",
+            project_resource_id: "resource-h5",
+            name: "CRM",
+            platform: "web",
+            saved_at: "2026-08-16T00:00:00Z",
+          }],
+        }), { status: 200, headers: { "Content-Type": "application/json" } }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ design_systems: { id: "system-1" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      const catalogue = await client.listProjectDesignSystemCatalogue();
+      const malformed = await client.listProjectDesignSystemCatalogue();
+
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        "https://api.example.test/api/project-design-systems/catalogue",
+      );
+      expect(catalogue.design_systems).toHaveLength(1);
+      expect(catalogue.design_systems[0]).toMatchObject({
+        id: "system-1",
+        project_title: "CRM",
+        project_resource_id: "resource-h5",
+        platform: "web",
+      });
+      expect(malformed.design_systems).toEqual([]);
+    });
+
+    it("posts copy requests and keeps the target scope in the fallback", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ project_id: 42 }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      const result = await client.copyProjectDesignSystem({
+        source_design_system_id: "system-1",
+        project_id: "project-2",
+        project_resource_id: "resource-admin",
+        agent_id: "agent-1",
+        platform: "web",
+        instruction: "同一品牌，后台管理更紧凑",
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.example.test/api/project-design-systems/copy",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            source_design_system_id: "system-1",
+            project_id: "project-2",
+            project_resource_id: "resource-admin",
+            agent_id: "agent-1",
+            platform: "web",
+            instruction: "同一品牌，后台管理更紧凑",
+          }),
+        }),
+      );
+      expect(result).toMatchObject({
+        project_id: "project-2",
+        project_resource_id: "resource-admin",
         platform: "web",
         current_agent_id: "agent-1",
         status: "unestablished",
@@ -1198,6 +1588,7 @@ describe("ApiClient", () => {
     await client.updateAutopilot("ap-1", { status: "paused", project_id: null });
     await client.deleteAutopilot("ap-1");
     await client.triggerAutopilot("ap-1");
+    await client.getAutopilotQuotaUsage();
     await client.listAutopilotRuns("ap-1", { limit: 10, offset: 20 });
     await client.createAutopilotTrigger("ap-1", {
       kind: "schedule",
@@ -1212,6 +1603,7 @@ describe("ApiClient", () => {
       url,
       method: init?.method ?? "GET",
       body: init?.body,
+      idempotencyKey: (init?.headers as Record<string, string> | undefined)?.["Idempotency-Key"],
     }));
 
     expect(calls).toMatchObject([
@@ -1233,7 +1625,12 @@ describe("ApiClient", () => {
         body: JSON.stringify({ status: "paused", project_id: null }),
       },
       { url: "https://api.example.test/api/autopilots/ap-1", method: "DELETE" },
-      { url: "https://api.example.test/api/autopilots/ap-1/trigger", method: "POST" },
+      {
+        url: "https://api.example.test/api/autopilots/ap-1/trigger",
+        method: "POST",
+        idempotencyKey: expect.any(String),
+      },
+      { url: "https://api.example.test/api/autopilots/usage", method: "GET" },
       { url: "https://api.example.test/api/autopilots/ap-1/runs?limit=10&offset=20", method: "GET" },
       {
         url: "https://api.example.test/api/autopilots/ap-1/triggers",
@@ -2826,5 +3223,82 @@ describe("ApiClient workspace MCP servers", () => {
     [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/api/agents/agent-1/mcp-servers/srv-1");
     expect(init.method).toBe("DELETE");
+  });
+});
+
+describe("ApiClient built-in design systems", () => {
+  it("lists the bundled catalogue", async () => {
+    const entry = { slug: "apple", name: "Apple", category: "Media & Consumer", description: "Bundled package." };
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ design_systems: [entry] }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new ApiClient("https://api.example.test").listBuiltinDesignSystems())
+      .resolves.toEqual({ design_systems: [expect.objectContaining(entry)] });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.example.test/api/design-systems/builtin");
+  });
+
+  // A card without a slug cannot be opened, so it is dropped rather than
+  // rendered; everything else degrades to a string.
+  it("drops slugless rows and degrades the rest", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        design_systems: [
+          { name: "No slug" },
+          { slug: "ok", name: 42, category: null },
+        ],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    ));
+    const result = await new ApiClient("https://api.example.test").listBuiltinDesignSystems();
+    expect(result.design_systems).toEqual([
+      expect.objectContaining({ slug: "ok", name: "", category: "" }),
+    ]);
+  });
+
+  it("falls back to an empty catalogue when the payload is not a list", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ design_systems: "nope" }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }),
+    ));
+    await expect(new ApiClient("https://api.example.test").listBuiltinDesignSystems())
+      .resolves.toEqual({ design_systems: [] });
+  });
+
+  it("keeps the requested slug when a detail response is malformed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ tokens_css: 7 }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }),
+    ));
+    await expect(new ApiClient("https://api.example.test").getBuiltinDesignSystem("apple"))
+      .resolves.toMatchObject({ slug: "apple", tokens_css: "", design_markdown: "" });
+    });
+  });
+
+describe("clientErrorMessage", () => {
+  it("returns a 4xx message, which handlers write for the user", () => {
+    expect(clientErrorMessage(new ApiError("autopilot is not active", 400, "Bad Request")))
+      .toBe("autopilot is not active");
+    expect(clientErrorMessage(new ApiError("forbidden", 403, "Forbidden"))).toBe("forbidden");
+  });
+
+  it("withholds a 5xx message, which carries internal server detail", () => {
+    // MUL-6472: the pre-fix body for a failed autopilot trigger looked like
+    // this, and it was rendered verbatim in the run-now toast.
+    const leaky = new ApiError(
+      'failed to trigger autopilot: create run: ERROR: duplicate key value violates unique constraint "autopilot_run_pkey" (SQLSTATE 23505)',
+      500,
+      "Internal Server Error",
+    );
+    expect(clientErrorMessage(leaky)).toBeUndefined();
+    expect(clientErrorMessage(new ApiError("internal error", 503, "Service Unavailable"))).toBeUndefined();
+  });
+
+  it("withholds a transport failure, whose message says nothing actionable", () => {
+    expect(clientErrorMessage(new TypeError("Failed to fetch"))).toBeUndefined();
+    expect(clientErrorMessage(undefined)).toBeUndefined();
   });
 });

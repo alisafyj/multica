@@ -431,7 +431,7 @@ func startLoopbackPreviewServer(archive []byte, manifest []byte, previewTargets 
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Content-Security-Policy", cspHeader)
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(injectBridgeAndTokens(contents))
+			_, _ = w.Write(injectBridgeAndTokens(contents, prefix))
 			return
 		}
 		w.Header().Set("Content-Type", contentTypeForPath(relative))
@@ -509,8 +509,16 @@ func buildPreviewCSP(bridgeScriptHash string) string {
 // the only allowed script origin, so even an inline `<script>evil()</script>`
 // the agent left in the fragment will not execute — the verifier
 // receives a CSP-locked page that only runs the trusted bridge.
-func injectBridgeAndTokens(html []byte) []byte {
-	const linkTag = `<link rel="stylesheet" href="tokens.css">`
+//
+// The stylesheet href is absolute (/<prefix>/tokens.css), NOT relative.
+// Every preview target lives one directory down — classifyV2Artifact only
+// admits `ui-kit/index.html` and `preview/*.html` — so a bare `tokens.css`
+// href resolves to `<dir>/tokens.css` and 404s, and the verifier renders
+// and screenshots a page with no design tokens applied while both the
+// audit (a static token-reference check) and the preview (a visibility
+// check) still pass.
+func injectBridgeAndTokens(html []byte, prefix string) []byte {
+	linkTag := `<link rel="stylesheet" href="/` + prefix + `/tokens.css">`
 	scriptTag := "<script>" + selectionBridgeScript + "</script>"
 	body := string(html)
 	if idx := strings.Index(body, "</head>"); idx >= 0 {

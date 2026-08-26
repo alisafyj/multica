@@ -1,0 +1,8 @@
+{
+  "id": "corporate",
+  "name": "Corporate",
+  "category": "Professional & Corporate",
+  "category_zh": "专业与企业",
+  "description": "Bundled Open Design package for Corporate, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "专业、品牌对齐的设计，结构化网格、极简布局，企业级视觉规范。"
+}

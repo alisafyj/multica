@@ -5,10 +5,6 @@ WHERE workspace_id = $1
   AND (sqlc.narg('priority')::text IS NULL OR priority = sqlc.narg('priority'))
 ORDER BY created_at DESC;
 
--- name: GetProject :one
-SELECT * FROM project
-WHERE id = $1;
-
 -- name: GetProjectInWorkspace :one
 SELECT * FROM project
 WHERE id = $1 AND workspace_id = $2;
@@ -101,27 +97,6 @@ cancelled_design_document_tasks AS (
       AND task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
     RETURNING task.id
 ),
-deleted_design_document_revisions AS (
-    DELETE FROM design_document_revision
-    WHERE design_document_revision.workspace_id = $2
-      AND design_document_revision.project_id = $1
-    RETURNING design_document_revision.id
-),
-deleted_design_document_snapshots AS (
-    DELETE FROM design_document_input_snapshot
-    WHERE design_document_input_snapshot.workspace_id = $2
-      AND design_document_input_snapshot.project_id = $1
-      AND (SELECT count(*) FROM deleted_design_document_revisions) >= 0
-      AND (SELECT count(*) FROM cancelled_design_document_tasks) >= 0
-    RETURNING design_document_input_snapshot.id
-),
-deleted_design_documents AS (
-    DELETE FROM design_document
-    WHERE design_document.workspace_id = $2
-      AND design_document.project_id = $1
-      AND (SELECT count(*) FROM deleted_design_document_snapshots) >= 0
-    RETURNING design_document.id
-),
 cleared_design_deliveries AS (
     UPDATE design_delivery
     SET project_id = NULL
@@ -141,6 +116,24 @@ deleted_open_design_runs AS (
     WHERE open_design_run.workspace_id = $2
       AND open_design_run.project_id = $1
     RETURNING open_design_run.id
+),
+deleted_design_document_revisions AS (
+    DELETE FROM design_document_revision
+    WHERE design_document_revision.workspace_id = $2
+      AND design_document_revision.design_document_id IN (
+        SELECT design_document.id
+        FROM design_document
+        WHERE design_document.workspace_id = $2
+          AND design_document.project_id = $1
+    )
+    RETURNING design_document_revision.id
+),
+deleted_design_documents AS (
+    DELETE FROM design_document
+    WHERE design_document.workspace_id = $2
+      AND design_document.project_id = $1
+      AND (SELECT count(*) FROM deleted_design_document_revisions) >= 0
+    RETURNING design_document.id
 ),
 deleted_design_system_packages AS (
     DELETE FROM project_design_system_package

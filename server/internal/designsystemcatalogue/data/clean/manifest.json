@@ -1,0 +1,8 @@
+{
+  "id": "clean",
+  "name": "Clean",
+  "category": "Modern & Minimal",
+  "category_zh": "现代极简",
+  "description": "Bundled Open Design package for Clean, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "专注简洁，充足留白，易读排版，有限配色，减少视觉杂乱。"
+}

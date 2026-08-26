@@ -60,6 +60,41 @@ export function AuthInitializer({
       .getState()
       .loadConfig(() => getApi().getConfig())
       .then((cfg) => {
+        if (cfg.cdn_domain) {
+          configStore.getState().setCdnConfig({
+            cdnDomain: cfg.cdn_domain,
+            // Old servers omit this — false keeps the previous behavior.
+            cdnSigned: cfg.cdn_signed === true,
+          });
+        }
+        configStore.getState().setAuthConfig({
+          allowSignup: cfg.allow_signup,
+          googleClientId: cfg.google_client_id,
+          // Old servers omit this field — treat that as "creation allowed"
+          // (the managed-cloud default) rather than blocking the UI.
+          workspaceCreationDisabled: cfg.workspace_creation_disabled === true,
+          // Absent/false on the managed cloud and older servers → section hidden.
+          vcsIntegrationAvailable: cfg.vcs_integration_available === true,
+        });
+        configStore.getState().setDaemonConfig({
+          daemonServerUrl: cfg.daemon_server_url,
+          daemonAppUrl: cfg.daemon_app_url,
+        });
+        configStore.getState().setFeatureFlags(cfg.feature_flags);
+        configStore.getState().setServerVersion(cfg.server_version);
+        // Absent on every server that predates the worktree save gate, which
+        // is exactly when the client must not offer the mode (#7113).
+        configStore
+          .getState()
+          .setLocalWorktreeSupported(cfg.local_worktree_supported === true);
+        // Older agent handlers returned success while silently dropping this
+        // additive field, so writes stay disabled unless the server declares
+        // the persistence contract explicitly.
+        configStore
+          .getState()
+          .setAgentStarterPromptsSupported(
+            cfg.agent_starter_prompts_supported === true,
+          );
         if (cfg.posthog_key) {
           initAnalytics({
             key: cfg.posthog_key,

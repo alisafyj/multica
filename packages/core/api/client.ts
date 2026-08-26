@@ -1,3 +1,4 @@
+import { configStore } from "../config";
 import type {
   Issue,
   IssuePriority,
@@ -119,6 +120,7 @@ import type {
   UpdateLabelRequest,
   ListLabelsResponse,
   ListIssueStatusesResponse,
+  IssueStatusCategory,
   IssueStatusEntry,
   CreateIssueStatusRequest,
   UpdateIssueStatusRequest,
@@ -137,6 +139,7 @@ import type {
   Autopilot,
   AutopilotTrigger,
   AutopilotRun,
+  AutopilotQuotaUsage,
   CreateAutopilotRequest,
   UpdateAutopilotRequest,
   CreateAutopilotTriggerRequest,
@@ -150,15 +153,19 @@ import type {
   WebhookDelivery,
   NotificationPreferenceResponse,
   NotificationPreferences,
-  PluginBindingRequest,
-  PluginCatalogResponse,
+  PluginHookResult,
   PluginInstallation,
   PluginInstallationListResponse,
-  PluginReleaseRequest,
-  RemoteMCPConfigRequest,
-  RemoteMCPDiscoveryResponse,
-  RemoteMCPOAuthStartRequest,
-  RemoteMCPOAuthStartResponse,
+  PluginPackage,
+  PluginPackageListResponse,
+  PluginSurfaceLaunch,
+  PluginInvocation,
+  PluginMCPTool,
+  PluginPreview,
+  PluginTokenIssue,
+  PluginPreviewRequest,
+  PluginInstallRequest,
+  PluginConfigRequest,
   GitHubPullRequest,
   ListGitHubInstallationsResponse,
   ListGitHubRepositoriesResponse,
@@ -177,17 +184,20 @@ import type {
   ListSlackInstallationsResponse,
   RegisterSlackBYORequest,
   RedeemSlackBindingTokenResponse,
-  DingTalkGroupRoute,
   DingTalkInstallation,
-  ListDingTalkGroupRoutesResponse,
   ListDingTalkInstallationsResponse,
+  ListDingTalkGroupsResponse,
+  ListDingTalkGroupsParams,
   RegisterDingTalkBYORequest,
   RedeemDingTalkBindingTokenResponse,
-  UpdateDingTalkGroupRouteRequest,
   WecomInstallation,
   ListWecomInstallationsResponse,
   RegisterWecomBYORequest,
   RedeemWecomBindingTokenResponse,
+  TelegramInstallation,
+  ListTelegramInstallationsResponse,
+  RegisterTelegramRequest,
+  RedeemTelegramBindingTokenResponse,
   Squad,
   SquadMember,
   SquadMemberStatusListResponse,
@@ -201,16 +211,21 @@ import type {
   BillingCheckoutSessionStatus,
   CreateBillingPortalSessionResponse,
   CancelDesignDeliveryRequest,
+  CreateDesignDocumentRequest,
   CreateDesignDraftAgentTaskRequest,
   CreateDesignDraftAgentTaskResponse,
-  CreateDesignDocumentAgentTaskRequest,
   AdjustDesignDocumentRequest,
-  DesignDocumentPointerRequest,
+  DeliverDesignDocumentRequest,
+  ManualEditDesignDocumentRequest,
+  RegenerateDesignDocumentRequest,
+  SaveDesignDocumentRequest,
   DesignDocument,
-  DesignDocumentAgentTask,
-  DesignDocumentPreview,
-  ListDesignDocumentAgentTasksResponse,
+  DesignDocumentRevision,
+  ListDesignDocumentRevisionsResponse,
   ListDesignDocumentsResponse,
+  DesignDocumentShare,
+  ListDesignDocumentSharesResponse,
+  DesignDocumentShareExchange,
   CreateDesignDraftRequest,
   CreateDesignDeliveryRequest,
   CreateDesignFileRequest,
@@ -218,6 +233,8 @@ import type {
   CreateDesignRestoreTaskRequest,
   CreateDesignSystemProfileRequest,
   CreateProjectDesignSystemRequest,
+  CopyProjectDesignSystemRequest,
+  ListProjectDesignSystemCatalogueResponse,
   AnalyzeProjectDesignSystemRepositoryRequest,
   AdjustProjectDesignSystemRequest,
   RegenerateProjectDesignSystemRequest,
@@ -255,6 +272,9 @@ import type {
   ListDesignRepoAnalysesResponse,
   ListDesignRestoreMappingsResponse,
   ListDesignRestoreTasksResponse,
+  BuiltinDesignSystemDetail,
+  ListBuiltinDesignSystemsResponse,
+  ListDesignScenarioRecipesResponse,
   ListDesignSystemProfilesResponse,
   ListDesignTemplatesResponse,
   PublishDesignTemplateRequest,
@@ -307,7 +327,15 @@ import type {
   CreateWorkspaceSubscriptionCheckoutRequest,
   CreateWorkspaceSubscriptionCheckoutResponse,
   WorkspaceSubscriptionSeatReconcileResult,
+  PreviewWorkspaceSeatPurchaseRequest,
+  WorkspaceSeatPurchasePreview,
+  PurchaseWorkspaceSeatsRequest,
+  PurchaseWorkspaceSeatsResponse,
   CreateWorkspaceSubscriptionPortalResponse,
+  SourceContextPreview,
+  CreateCommentSubIssueManualRequest,
+  CreateCommentSubIssueAgentRequest,
+  CreateCommentSubIssueRequest,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type {
@@ -321,7 +349,7 @@ import type {
   ListCloudRuntimeNodesParams,
 } from "../runtimes/cloud-runtime";
 import { type Logger, noopLogger } from "../logger";
-import { createRequestId } from "../utils";
+import { createRequestId, createSafeId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
 import {
@@ -344,10 +372,13 @@ import {
   ChatMessageListSchema,
   ChatMessagesPageSchema,
   ChatPendingTaskSchema,
+  ChatSessionListSchema,
+  ChatSessionSchema,
   PrioritizeQueuedChatTaskResponseSchema,
   SendChatMessageResponseSchema,
   StartMikaOnboardingResponseSchema,
   ChildIssuesResponseSchema,
+  ChildIssueProgressResponseSchema,
   CommentsListSchema,
   CommentTriggerPreviewSchema,
   IssueTriggerPreviewSchema,
@@ -370,6 +401,8 @@ import {
   EMPTY_BATCH_UPDATE_ISSUES_RESPONSE,
   EMPTY_CHAT_MESSAGE_LIST,
   EMPTY_CHAT_PENDING_TASK,
+  EMPTY_CHAT_SESSION,
+  EMPTY_CHAT_SESSION_LIST,
   EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE,
   EMPTY_CLOUD_RUNTIME_NODE,
   EMPTY_CLOUD_RUNTIME_NODE_LIST,
@@ -397,12 +430,16 @@ import {
   ListAutopilotsResponseSchema,
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
   AutopilotRunSchema,
+  AutopilotQuotaUsageSchema,
   FALLBACK_AUTOPILOT_RUN,
   CronPreviewResponseSchema,
   UNREADABLE_CRON_PREVIEW_RESPONSE,
   ListIssuesResponseSchema,
   CreateIssueResponseSchema,
   IssueSchema,
+  AgentTaskSchema,
+  SourceContextPreviewSchema,
+  CommentSubIssueTaskResponseSchema,
   ListWebhookDeliveriesResponseSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
@@ -430,16 +467,16 @@ import {
   WorkspaceSubscriptionPricesSchema,
   CreateWorkspaceSubscriptionCheckoutResponseSchema,
   WorkspaceSubscriptionSeatReconcileResultSchema,
+  WorkspaceSeatPurchasePreviewSchema,
+  PurchaseWorkspaceSeatsResponseSchema,
   CreateWorkspaceSubscriptionPortalResponseSchema,
   DingTalkInstallationSchema,
-  DingTalkGroupRouteSchema,
-  ListDingTalkGroupRoutesResponseSchema,
   ListDingTalkInstallationsResponseSchema,
+  ListDingTalkGroupsResponseSchema,
   RedeemDingTalkBindingTokenResponseSchema,
   EMPTY_DINGTALK_INSTALLATION,
-  EMPTY_DINGTALK_GROUP_ROUTE,
-  EMPTY_LIST_DINGTALK_GROUP_ROUTES_RESPONSE,
   EMPTY_LIST_DINGTALK_INSTALLATIONS_RESPONSE,
+  EMPTY_LIST_DINGTALK_GROUPS_RESPONSE,
   EMPTY_REDEEM_DINGTALK_BINDING_TOKEN_RESPONSE,
   WecomInstallationSchema,
   ListWecomInstallationsResponseSchema,
@@ -447,6 +484,12 @@ import {
   EMPTY_WECOM_INSTALLATION,
   EMPTY_LIST_WECOM_INSTALLATIONS_RESPONSE,
   EMPTY_REDEEM_WECOM_BINDING_TOKEN_RESPONSE,
+  TelegramInstallationSchema,
+  ListTelegramInstallationsResponseSchema,
+  RedeemTelegramBindingTokenResponseSchema,
+  EMPTY_TELEGRAM_INSTALLATION,
+  EMPTY_LIST_TELEGRAM_INSTALLATIONS_RESPONSE,
+  EMPTY_REDEEM_TELEGRAM_BINDING_TOKEN_RESPONSE,
   EMPTY_BILLING_BALANCE,
   EMPTY_BILLING_TRANSACTIONS_PAGE,
   EMPTY_BILLING_BATCHES_PAGE,
@@ -491,38 +534,50 @@ import {
   EMPTY_ISSUE_STATUS_ENTRY,
   EMPTY_RESOURCE_LABELS_RESPONSE,
   DesignDeliverySchema,
+  DesignDocumentSchema,
+  DesignDocumentRevisionSchema,
+  EMPTY_DESIGN_DOCUMENT_REVISION,
+  ListDesignDocumentRevisionsResponseSchema,
+  EMPTY_LIST_DESIGN_DOCUMENT_REVISIONS_RESPONSE,
+  DesignDocumentShareSchema,
+  EMPTY_DESIGN_DOCUMENT_SHARE,
+  ListDesignDocumentSharesResponseSchema,
+  EMPTY_LIST_DESIGN_DOCUMENT_SHARES_RESPONSE,
+  DesignDocumentShareExchangeSchema,
+  EMPTY_DESIGN_DOCUMENT_SHARE_EXCHANGE,
   DesignDraftMaterializeResponseSchema,
   DesignDraftSchema,
   DesignSystemProfileSchema,
   CreateDesignDraftAgentTaskResponseSchema,
-  DesignDocumentAgentTaskSchema,
-  DesignDocumentSchema,
-  DesignDocumentPreviewSchema,
-  ListDesignDocumentAgentTasksResponseSchema,
-  ListDesignDocumentsResponseSchema,
   ProjectDesignSystemSchema,
   ProjectDesignSystemPackagePreviewSchema,
+  ListProjectDesignSystemCatalogueResponseSchema,
+  EMPTY_LIST_PROJECT_DESIGN_SYSTEM_CATALOGUE_RESPONSE,
   DesignRestoreTaskSchema,
   DispatchDesignRestoreTaskResponseSchema,
   EMPTY_DESIGN_DELIVERY,
+  EMPTY_DESIGN_DOCUMENT,
   EMPTY_DESIGN_DRAFT,
   EMPTY_DESIGN_DRAFT_MATERIALIZE_RESPONSE,
   EMPTY_DESIGN_SYSTEM_PROFILE,
   EMPTY_CREATE_DESIGN_DRAFT_AGENT_TASK_RESPONSE,
-  EMPTY_DESIGN_DOCUMENT_AGENT_TASK,
-  EMPTY_DESIGN_DOCUMENT,
-  EMPTY_DESIGN_DOCUMENT_PREVIEW,
-  EMPTY_LIST_DESIGN_DOCUMENT_AGENT_TASKS_RESPONSE,
-  EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE,
   EMPTY_PROJECT_DESIGN_SYSTEM,
   EMPTY_PROJECT_DESIGN_SYSTEM_PACKAGE_PREVIEW,
   EMPTY_DESIGN_RESTORE_TASK,
   EMPTY_DISPATCH_DESIGN_RESTORE_TASK_RESPONSE,
   ListDesignDeliveriesResponseSchema,
+  ListDesignDocumentsResponseSchema,
   ListDesignDraftsResponseSchema,
+  BuiltinDesignSystemDetailSchema,
+  ListBuiltinDesignSystemsResponseSchema,
+  EMPTY_BUILTIN_DESIGN_SYSTEM_DETAIL,
+  EMPTY_LIST_BUILTIN_DESIGN_SYSTEMS_RESPONSE,
+  ListDesignScenarioRecipesResponseSchema,
   ListDesignSystemProfilesResponseSchema,
   ListDesignRestoreTasksResponseSchema,
+  EMPTY_LIST_DESIGN_SCENARIO_RECIPES_RESPONSE,
   EMPTY_LIST_DESIGN_DELIVERIES_RESPONSE,
+  EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE,
   EMPTY_LIST_DESIGN_DRAFTS_RESPONSE,
   EMPTY_LIST_DESIGN_SYSTEM_PROFILES_RESPONSE,
   EMPTY_LIST_DESIGN_RESTORE_TASKS_RESPONSE,
@@ -580,16 +635,23 @@ import {
   IssueViewListSchema,
   IssueViewPreferenceSchema,
   EMPTY_ISSUE_VIEW_PREFERENCE,
-  EMPTY_PLUGIN_CATALOG,
   EMPTY_PLUGIN_INSTALLATION,
   EMPTY_WORKSPACE_MCP_SERVER,
   EMPTY_PLUGIN_INSTALLATION_LIST,
-  PluginCatalogResponseSchema,
+  EMPTY_PLUGIN_PREVIEW,
+  EMPTY_PLUGIN_PACKAGE,
+  EMPTY_PLUGIN_PACKAGE_LIST,
+  EMPTY_PLUGIN_SURFACE_LAUNCH,
+  PluginHookResultSchema,
   PluginInstallationListResponseSchema,
+  PluginPackageListResponseSchema,
+  PluginPackageSchema,
+  PluginSurfaceLaunchSchema,
+  PluginInvocationListSchema,
+  PluginMCPToolListSchema,
+  PluginTokenIssueSchema,
   PluginInstallationSchema,
-  RemoteMCPDiscoveryResponseSchema,
-  RemoteMCPOAuthStartResponseSchema,
-  EMPTY_REMOTE_MCP_OAUTH_START_RESPONSE,
+  PluginPreviewSchema,
   WorkspaceMcpServerListSchema,
   WorkspaceMcpServerSchema,
   ShareLinkSchema,
@@ -663,6 +725,19 @@ export class ApiError extends Error {
   }
 }
 
+function assertAgentStarterPromptsWriteSupported(data: {
+  starter_prompts?: unknown;
+}): void {
+  if (
+    Object.prototype.hasOwnProperty.call(data, "starter_prompts") &&
+    !configStore.getState().agentStarterPromptsSupported
+  ) {
+    throw new Error(
+      "This server version does not support agent starter prompts. Update the server before saving them.",
+    );
+  }
+}
+
 // errorCode extracts the stable `code` a handler attaches to a failure
 // (writeErrorCode), so a caller can render its own localized sentence instead
 // of toasting the server's English one. Returns undefined for a non-ApiError,
@@ -687,6 +762,20 @@ export function dispatchReasonCode(err: unknown): string | undefined {
   if (err instanceof ApiError && err.body && typeof err.body === "object") {
     const code = (err.body as { reason_code?: unknown }).reason_code;
     if (typeof code === "string" && code.length > 0) return code;
+  }
+  return undefined;
+}
+
+// clientErrorMessage returns the server's message only when it is a CLIENT
+// error (4xx). Handlers write those for the user — "autopilot is not active",
+// "Idempotency-Key is too long" — so they are worth rendering. A 5xx message is
+// internal detail (Go error chains, pgx table/constraint names, internal ids)
+// that must never reach a toast (MUL-6472), and a non-ApiError is a transport
+// failure whose message ("Failed to fetch") says nothing a user can act on.
+// Both return undefined so the caller falls back to its own localized sentence.
+export function clientErrorMessage(err: unknown): string | undefined {
+  if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
+    return err.message || undefined;
   }
   return undefined;
 }
@@ -748,6 +837,16 @@ function workspaceHeader(
   slug?: string,
 ): Record<string, string> | undefined {
   return slug ? { "X-Workspace-Slug": slug } : undefined;
+}
+
+function dingTalkGroupSearch(params: ListDingTalkGroupsParams): string {
+  const search = new URLSearchParams();
+  if (params.activity) search.set("activity", params.activity);
+  if (params.installationId) search.set("installation_id", params.installationId);
+  if (params.offset !== undefined) search.set("offset", String(params.offset));
+  if (params.limit !== undefined) search.set("limit", String(params.limit));
+  const encoded = search.toString();
+  return encoded ? `?${encoded}` : "";
 }
 
 export class ApiClient {
@@ -1210,6 +1309,63 @@ export class ApiClient {
     });
   }
 
+  async getCommentSubIssuePreview(anchorCommentId: string): Promise<SourceContextPreview> {
+    const raw = await this.fetch<unknown>(`/api/comments/${anchorCommentId}/sub-issue-preview`);
+    const preview = parseWithFallback<SourceContextPreview | null>(
+      raw,
+      SourceContextPreviewSchema,
+      null,
+      { endpoint: "GET /api/comments/:id/sub-issue-preview" },
+    );
+    if (!preview) throw new Error("Invalid source context preview response");
+    return preview;
+  }
+
+  async createCommentSubIssue(
+    anchorCommentId: string,
+    data: CreateCommentSubIssueManualRequest,
+  ): Promise<Issue>;
+  async createCommentSubIssue(
+    anchorCommentId: string,
+    data: CreateCommentSubIssueAgentRequest,
+  ): Promise<{ task_id: string }>;
+  async createCommentSubIssue(
+    anchorCommentId: string,
+    data: CreateCommentSubIssueRequest,
+  ): Promise<Issue | { task_id: string }> {
+    try {
+      const raw = await this.fetch<unknown>(`/api/comments/${anchorCommentId}/sub-issues`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+      if (data.mode === "manual") {
+        const issue = parseWithFallback<Issue | null>(raw, CreateIssueResponseSchema, null, {
+          endpoint: "POST /api/comments/:id/sub-issues (manual)",
+        });
+        if (!issue) throw new Error("Invalid sub-issue response");
+        return issue;
+      }
+      const task = parseWithFallback<{ task_id: string } | null>(
+        raw,
+        CommentSubIssueTaskResponseSchema,
+        null,
+        { endpoint: "POST /api/comments/:id/sub-issues (agent)" },
+      );
+      if (!task) throw new Error("Invalid quick-create response");
+      return task;
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 405)) {
+        throw new ApiError(
+          "Source-context sub-issues require a newer server",
+          error.status,
+          error.statusText,
+          { code: "source_context_server_unsupported" },
+        );
+      }
+      throw error;
+    }
+  }
+
   async createFeedback(data: {
     message: string;
     url?: string;
@@ -1274,8 +1430,20 @@ export class ApiClient {
     });
   }
 
-  async getChildIssueProgress(): Promise<{ progress: { parent_issue_id: string; total: number; done: number }[] }> {
-    return this.fetch("/api/issues/child-progress");
+  async getChildIssueProgress(): Promise<{
+    progress: {
+      parent_issue_id: string;
+      total: number;
+      done: number;
+      visible_total?: number;
+      visible_done?: number;
+      hidden_total?: number;
+    }[];
+  }> {
+    const raw = await this.fetch<unknown>("/api/issues/child-progress");
+    return parseWithFallback(raw, ChildIssueProgressResponseSchema, { progress: [] }, {
+      endpoint: "GET /api/issues/child-progress",
+    });
   }
 
   async deleteIssue(id: string): Promise<void> {
@@ -1377,13 +1545,15 @@ export class ApiClient {
     return this.fetch("/api/assignee-frequency");
   }
 
-  async updateComment(commentId: string, content: string, attachmentIds?: string[], suppressAgentIds?: string[]): Promise<Comment> {
+  async updateComment(commentId: string, content: string, attachmentIds?: string[], suppressAgentIds?: string[], contentBase?: string, expectedRevision?: number): Promise<Comment> {
     return this.fetch(`/api/comments/${commentId}`, {
       method: "PUT",
       body: JSON.stringify({
         content,
         attachment_ids: attachmentIds,
         ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
+        ...(contentBase !== undefined ? { content_base: contentBase } : {}),
+        ...(expectedRevision !== undefined ? { expected_revision: expectedRevision } : {}),
       }),
     });
   }
@@ -1493,6 +1663,7 @@ export class ApiClient {
   }
 
   async createAgent(data: CreateAgentRequest): Promise<Agent> {
+    assertAgentStarterPromptsWriteSupported(data);
     return this.fetch("/api/agents", {
       method: "POST",
       body: JSON.stringify(data),
@@ -1608,6 +1779,7 @@ export class ApiClient {
   }
 
   async updateAgent(id: string, data: UpdateAgentRequest): Promise<Agent> {
+    assertAgentStarterPromptsWriteSupported(data);
     return this.fetch(`/api/agents/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
@@ -1896,9 +2068,6 @@ export class ApiClient {
         body: JSON.stringify({
           interval: data.interval,
           idempotency_key: data.idempotencyKey,
-          ...(data.customerEmail
-            ? { customer_email: data.customerEmail }
-            : {}),
         }),
         extraHeaders: {
           "Content-Type": "application/json",
@@ -1927,6 +2096,56 @@ export class ApiClient {
       WorkspaceSubscriptionSeatReconcileResultSchema,
       null,
       { endpoint: "POST /api/cloud-subscriptions/seats/reconcile" },
+    );
+  }
+
+  async previewWorkspaceSeatPurchase(
+    data: PreviewWorkspaceSeatPurchaseRequest,
+  ): Promise<WorkspaceSeatPurchasePreview | null> {
+    const res = await this.fetchRaw(
+      "/api/cloud-subscriptions/seats/purchase-preview",
+      {
+        method: "POST",
+        body: JSON.stringify({ additional_seats: data.additionalSeats }),
+        extraHeaders: { "Content-Type": "application/json" },
+      },
+    );
+    const raw = (await res.json()) as unknown;
+    return parseWithFallback<WorkspaceSeatPurchasePreview | null>(
+      raw,
+      WorkspaceSeatPurchasePreviewSchema,
+      null,
+      { endpoint: "POST /api/cloud-subscriptions/seats/purchase-preview" },
+    );
+  }
+
+  async purchaseWorkspaceSeats(
+    data: PurchaseWorkspaceSeatsRequest,
+  ): Promise<PurchaseWorkspaceSeatsResponse | null> {
+    const res = await this.fetchRaw(
+      "/api/cloud-subscriptions/seats/purchases",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          additional_seats: data.additionalSeats,
+          expected_current_seats: data.expectedCurrentSeats,
+          expected_purchase_version: data.expectedPurchaseVersion,
+          accepted_proration_amount: data.acceptedProrationAmount,
+          currency: data.currency,
+          idempotency_key: data.idempotencyKey,
+        }),
+        extraHeaders: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": data.idempotencyKey,
+        },
+      },
+    );
+    const raw = (await res.json()) as unknown;
+    return parseWithFallback<PurchaseWorkspaceSeatsResponse | null>(
+      raw,
+      PurchaseWorkspaceSeatsResponseSchema,
+      null,
+      { endpoint: "POST /api/cloud-subscriptions/seats/purchases" },
     );
   }
 
@@ -2404,9 +2623,23 @@ export class ApiClient {
     });
   }
 
+  async retrySourceContextQuickCreate(taskId: string): Promise<AgentTask> {
+    const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/retry-source-context`, {
+      method: "POST",
+    });
+    const task = parseWithFallback<AgentTask | null>(raw, AgentTaskSchema, null, {
+      endpoint: "POST /api/tasks/:id/retry-source-context",
+    });
+    if (!task) throw new Error("Invalid source-context retry response");
+    return task;
+  }
+
   // Inbox
   async listInbox(): Promise<InboxItem[]> {
-    return this.fetch("/api/inbox");
+    const raw = await this.fetch<unknown>("/api/inbox");
+    return parseWithFallback(raw, InboxItemListSchema, EMPTY_INBOX_ITEMS, {
+      endpoint: "GET /api/inbox",
+    });
   }
 
   async markInboxRead(id: string): Promise<InboxItem> {
@@ -2533,19 +2766,6 @@ export class ApiClient {
     });
   }
 
-  async listPluginCatalog(workspaceId: string): Promise<PluginCatalogResponse> {
-    let raw: unknown;
-    try {
-      raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/catalog`);
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 404) return EMPTY_PLUGIN_CATALOG;
-      throw error;
-    }
-    return parseWithFallback(raw, PluginCatalogResponseSchema, EMPTY_PLUGIN_CATALOG, {
-      endpoint: "GET /api/workspaces/{id}/plugins/catalog",
-    });
-  }
-
   async listPluginInstallations(workspaceId: string): Promise<PluginInstallationListResponse> {
     let raw: unknown;
     try {
@@ -2661,97 +2881,226 @@ export class ApiClient {
     });
   }
 
-  async installPlugin(workspaceId: string, request: PluginReleaseRequest): Promise<PluginInstallation> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/install`, {
+  /** Everything published into this workspace, with its versions. */
+  async listPluginPackages(workspaceId: string): Promise<PluginPackageListResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/packages`);
+    return parseWithFallback(raw, PluginPackageListResponseSchema, EMPTY_PLUGIN_PACKAGE_LIST, {
+      endpoint: "GET /api/workspaces/{id}/plugins/packages",
+    });
+  }
+
+  /**
+   * Publishes an artifact bundle: a zip holding the manifest and every file it
+   * names. This is the whole publishing path — a plugin author needs no server
+   * of their own, and nothing about a published version changes afterwards.
+   *
+   * Not routed through `this.fetch`, for the same reason uploadFile is not: the
+   * browser has to set the multipart boundary itself.
+   */
+  async publishPluginPackage(workspaceId: string, bundle: File): Promise<PluginPackage> {
+    const formData = new FormData();
+    formData.append("bundle", bundle);
+
+    const res = await fetch(`${this.baseUrl}/api/workspaces/${workspaceId}/plugins/packages`, {
+      method: "POST",
+      headers: this.authHeaders(),
+      body: formData,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      if (res.status === 401) this.handleUnauthorized();
+      throw new Error(await this.parseErrorMessage(res, `Publishing failed: ${res.status}`));
+    }
+    const raw = (await res.json()) as unknown;
+    return parseWithFallback(raw, PluginPackageSchema, EMPTY_PLUGIN_PACKAGE, {
+      endpoint: "POST /api/workspaces/{id}/plugins/packages",
+    });
+  }
+
+  /**
+   * Publishes from a directory the operator hosts (MULTICA_PLUGIN_DIR) — the
+   * development channel, so iterating on a surface does not mean zipping and
+   * uploading after every edit. It still produces an immutable version.
+   */
+  async publishLocalPluginPackage(workspaceId: string, name: string): Promise<PluginPackage> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/packages/local`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    return parseWithFallback(raw, PluginPackageSchema, EMPTY_PLUGIN_PACKAGE, {
+      endpoint: "POST /api/workspaces/{id}/plugins/packages/local",
+    });
+  }
+
+  async deletePluginPackage(workspaceId: string, packageId: string): Promise<void> {
+    await this.fetch<void>(`/api/workspaces/${workspaceId}/plugins/packages/${packageId}`, { method: "DELETE" });
+  }
+
+  /** Mint one hosted document URL and its single-use bridge proof. */
+  async getPluginSurfaceLaunch(workspaceId: string, installationId: string, surfaceKey: string): Promise<PluginSurfaceLaunch> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/plugins/${installationId}/surfaces/${encodeURIComponent(surfaceKey)}/launch`,
+    );
+    return parseWithFallback(raw, PluginSurfaceLaunchSchema, EMPTY_PLUGIN_SURFACE_LAUNCH, {
+      endpoint: "GET /api/workspaces/{id}/plugins/{installationId}/surfaces/{surfaceKey}/launch",
+    });
+  }
+
+  /**
+   * Step one of the two-step install. Nothing is written: the response is what
+   * the consent screen shows before an installation exists.
+   */
+  async previewPlugin(workspaceId: string, request: PluginPreviewRequest): Promise<PluginPreview> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/preview`, {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+    return parseWithFallback(raw, PluginPreviewSchema, EMPTY_PLUGIN_PREVIEW, {
+      endpoint: "POST /api/workspaces/{id}/plugins/preview",
+    });
+  }
+
+  async installPlugin(workspaceId: string, request: PluginInstallRequest): Promise<PluginInstallation> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins`, {
       method: "POST",
       body: JSON.stringify(request),
     });
     return parseWithFallback(raw, PluginInstallationSchema, EMPTY_PLUGIN_INSTALLATION, {
-      endpoint: "POST /api/workspaces/{id}/plugins/install",
+      endpoint: "POST /api/workspaces/{id}/plugins",
     });
   }
 
-  async upgradePlugin(workspaceId: string, installationId: string, request: PluginReleaseRequest): Promise<PluginInstallation> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/${installationId}/upgrade`, {
-      method: "POST",
+  async configurePlugin(workspaceId: string, installationId: string, request: PluginConfigRequest): Promise<PluginInstallation> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/${installationId}/config`, {
+      method: "PUT",
       body: JSON.stringify(request),
     });
     return parseWithFallback(raw, PluginInstallationSchema, EMPTY_PLUGIN_INSTALLATION, {
-      endpoint: "POST /api/workspaces/{id}/plugins/{installationId}/upgrade",
+      endpoint: "PUT /api/workspaces/{id}/plugins/{installationId}/config",
     });
   }
 
-  async setPluginEnabled(
-    workspaceId: string,
-    installationId: string,
-    enabled: boolean,
-    binding: PluginBindingRequest,
-  ): Promise<PluginInstallation> {
+  async setPluginEnabled(workspaceId: string, installationId: string, enabled: boolean): Promise<PluginInstallation> {
     const action = enabled ? "enable" : "disable";
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/${installationId}/${action}`, {
       method: "POST",
-      body: JSON.stringify(binding),
     });
     return parseWithFallback(raw, PluginInstallationSchema, EMPTY_PLUGIN_INSTALLATION, {
       endpoint: `POST /api/workspaces/{id}/plugins/{installationId}/${action}`,
     });
   }
 
-  async rollbackPlugin(workspaceId: string, installationId: string, version: string): Promise<PluginInstallation> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/${installationId}/rollback`, {
-      method: "POST",
-      body: JSON.stringify({ version }),
+  /**
+   * Performs one Action API call on behalf of a plugin surface.
+   *
+   * The surface has no credential — it asked the host over postMessage, and
+   * this re-issues the call on the signed-in user's session. The installation
+   * travels in a header the iframe cannot set for itself; the server derives
+   * the workspace from it rather than trusting anything the client sends.
+   */
+  async callPluginAction(
+    installationId: string,
+    request: { method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE"; path: string; body?: unknown; issueId?: string },
+  ): Promise<unknown> {
+    const query = request.path === "/context" && request.issueId
+      ? `?issue_id=${encodeURIComponent(request.issueId)}`
+      : "";
+    return this.fetch<unknown>(`/api/plugin-bridge/v1${request.path}${query}`, {
+      method: request.method,
+      headers: { "X-Multica-Plugin-Installation": installationId },
+      body: request.body === undefined ? undefined : JSON.stringify(request.body),
     });
+  }
+
+  /**
+   * Invokes one hook on behalf of a person.
+   *
+   * `ui` comes from a button inside a surface, `manual` from the issue actions
+   * menu or the command palette. Both block this request and only this request:
+   * somebody is waiting for the answer. The `event` trigger never comes through
+   * here — the host dispatches it, so no client can ask for one and inherit an
+   * identity that is supposed to be the plugin's.
+   */
+  async invokePluginHook(
+    installationId: string,
+    hookKey: string,
+    request: { trigger: "ui" | "manual"; issueId?: string; input?: unknown },
+  ): Promise<PluginHookResult> {
+    const raw = await this.fetch<unknown>(`/api/plugin-bridge/v1/hooks/${encodeURIComponent(hookKey)}`, {
+      method: "POST",
+      headers: { "X-Multica-Plugin-Installation": installationId },
+      body: JSON.stringify({ trigger: request.trigger, issue_id: request.issueId, input: request.input }),
+    });
+    return parseWithFallback(raw, PluginHookResultSchema, {
+      status: "ok",
+      hook_key: hookKey,
+      trigger: request.trigger,
+      latency_ms: 0,
+      attempts: 1,
+    }, { endpoint: "POST /api/plugin-bridge/v1/hooks/{key}" });
+  }
+
+  async listPluginInvocations(workspaceId: string, installationId: string): Promise<PluginInvocation[]> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/${installationId}/invocations`);
+    return parseWithFallback(raw, PluginInvocationListSchema, { invocations: [] }, {
+      endpoint: "GET /api/workspaces/{id}/plugins/{installationId}/invocations",
+    }).invocations;
+  }
+
+  async rotatePluginToken(workspaceId: string, installationId: string): Promise<PluginTokenIssue> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/${installationId}/token`, {
+      method: "POST",
+    });
+    return parseWithFallback(raw, PluginTokenIssueSchema, { token: "", signing_secret: "" }, {
+      endpoint: "POST /api/workspaces/{id}/plugins/{installationId}/token",
+    });
+  }
+
+  async revokePluginToken(workspaceId: string, installationId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/plugins/${installationId}/token`, { method: "DELETE" });
+  }
+
+  /**
+   * Lists what an `mcp`-transport hook's server currently offers.
+   *
+   * Read-only: discovering a tool adopts nothing. approvePluginMCPTools is the
+   * grant, which is the difference from an `http` hook — that one declares a
+   * single endpoint in a manifest an administrator already read, while an MCP
+   * server decides its own tool list at runtime and can change it later.
+   */
+  async listPluginMCPTools(workspaceId: string, installationId: string, hookKey: string): Promise<PluginMCPTool[]> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/plugins/${installationId}/mcp/${encodeURIComponent(hookKey)}/tools`,
+    );
+    return parseWithFallback(raw, PluginMCPToolListSchema, { tools: [] }, {
+      endpoint: "GET /api/workspaces/{id}/plugins/{installationId}/mcp/{hookKey}/tools",
+    }).tools;
+  }
+
+  /**
+   * Pins the approved tool set for one hook.
+   *
+   * `tools` is the COMPLETE set, not a delta — removing one is the same request
+   * shape as adding one, so there is no way to think you revoked something and
+   * have it stay. An empty array withdraws the hook entirely.
+   */
+  async approvePluginMCPTools(
+    workspaceId: string,
+    installationId: string,
+    hookKey: string,
+    tools: string[],
+  ): Promise<PluginInstallation> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/plugins/${installationId}/mcp/${encodeURIComponent(hookKey)}/tools`,
+      { method: "PUT", body: JSON.stringify({ tools }) },
+    );
     return parseWithFallback(raw, PluginInstallationSchema, EMPTY_PLUGIN_INSTALLATION, {
-      endpoint: "POST /api/workspaces/{id}/plugins/{installationId}/rollback",
+      endpoint: "PUT /api/workspaces/{id}/plugins/{installationId}/mcp/{hookKey}/tools",
     });
   }
 
   async uninstallPlugin(workspaceId: string, installationId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/plugins/${installationId}`, {
-      method: "DELETE",
-    });
-  }
-
-  async configurePluginRemoteMCP(workspaceId: string, installationId: string, contributionKey: string, request: RemoteMCPConfigRequest): Promise<RemoteMCPDiscoveryResponse> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/${installationId}/remote-mcp/${encodeURIComponent(contributionKey)}/config`, {
-      method: "PUT",
-      body: JSON.stringify(request),
-    });
-    return parseWithFallback(raw, RemoteMCPDiscoveryResponseSchema, { config_revision: 0, discovered_tools: [], discovered_schema_digest: "" }, {
-      endpoint: "PUT /api/workspaces/{id}/plugins/{installationId}/remote-mcp/{contributionKey}/config",
-    });
-  }
-
-  async testPluginRemoteMCP(workspaceId: string, installationId: string, contributionKey: string): Promise<RemoteMCPDiscoveryResponse> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/${installationId}/remote-mcp/${encodeURIComponent(contributionKey)}/test`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-    return parseWithFallback(raw, RemoteMCPDiscoveryResponseSchema, { config_revision: 0, discovered_tools: [], discovered_schema_digest: "" }, {
-      endpoint: "POST /api/workspaces/{id}/plugins/{installationId}/remote-mcp/{contributionKey}/test",
-    });
-  }
-
-  async startPluginRemoteMCPOAuth(workspaceId: string, installationId: string, contributionKey: string, request: RemoteMCPOAuthStartRequest): Promise<RemoteMCPOAuthStartResponse> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/plugins/${installationId}/remote-mcp/${encodeURIComponent(contributionKey)}/oauth/start`, {
-      method: "POST",
-      body: JSON.stringify(request),
-    });
-    return parseWithFallback(raw, RemoteMCPOAuthStartResponseSchema, EMPTY_REMOTE_MCP_OAUTH_START_RESPONSE, {
-      endpoint: "POST /api/workspaces/{id}/plugins/{installationId}/remote-mcp/{contributionKey}/oauth/start",
-    });
-  }
-
-  async approvePluginRemoteMCPTools(workspaceId: string, installationId: string, contributionKey: string, tools: string[]): Promise<void> {
-    await this.fetch(`/api/workspaces/${workspaceId}/plugins/${installationId}/remote-mcp/${encodeURIComponent(contributionKey)}/approve`, {
-      method: "POST",
-      body: JSON.stringify({ tools }),
-    });
-  }
-
-  async revokePluginRemoteMCPCredential(workspaceId: string, installationId: string, contributionKey: string): Promise<void> {
-    await this.fetch(`/api/workspaces/${workspaceId}/plugins/${installationId}/remote-mcp/${encodeURIComponent(contributionKey)}/credential`, {
       method: "DELETE",
     });
   }
@@ -3020,13 +3369,19 @@ export class ApiClient {
     workspaceSlug?: string,
   ): Promise<ChatSession[]> {
     const query = params?.status ? `?status=${params.status}` : "";
-    return this.fetch(`/api/chat/sessions${query}`, {
+    const raw: unknown = await this.fetch(`/api/chat/sessions${query}`, {
       headers: workspaceHeader(workspaceSlug),
+    });
+    return parseWithFallback(raw, ChatSessionListSchema, EMPTY_CHAT_SESSION_LIST, {
+      endpoint: "GET /api/chat/sessions",
     });
   }
 
   async getChatSession(id: string): Promise<ChatSession> {
-    return this.fetch(`/api/chat/sessions/${id}`);
+    const raw: unknown = await this.fetch(`/api/chat/sessions/${id}`);
+    return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, {
+      endpoint: "GET /api/chat/sessions/:id",
+    });
   }
 
   async createChatSession(
@@ -3806,10 +4161,18 @@ export class ApiClient {
     });
   }
 
-  async getProjectDesignSystemForProject(projectId: string): Promise<ProjectDesignSystem> {
-    const raw = await this.fetch<unknown>(
-      `/api/project-design-systems?project_id=${encodeURIComponent(projectId)}`,
-    );
+  // `project_resource_id` selects one repository's own design system (DC-052).
+  // Omitting it asks for the project-level system, which is also what the
+  // server falls back to when the repository has no system of its own.
+  async getProjectDesignSystemForProject(
+    projectId: string,
+    params: { project_resource_id?: string } = {},
+  ): Promise<ProjectDesignSystem> {
+    const scope = params.project_resource_id?.trim() ?? "";
+    const query = `project_id=${encodeURIComponent(projectId)}${
+      scope ? `&project_resource_id=${encodeURIComponent(scope)}` : ""
+    }`;
+    const raw = await this.fetch<unknown>(`/api/project-design-systems?${query}`);
     return parseWithFallback(
       raw,
       ProjectDesignSystemSchema,
@@ -3871,6 +4234,43 @@ export class ApiClient {
         current_agent_id: data.agent_id,
       },
       { endpoint: "POST /api/project-design-systems" },
+    );
+  }
+
+  // Every saved design system in the workspace, offered as a copy source (B1).
+  // Drafts are excluded server-side: an unaccepted system is not a basis for
+  // another surface.
+  async listProjectDesignSystemCatalogue(): Promise<ListProjectDesignSystemCatalogueResponse> {
+    const raw = await this.fetch<unknown>("/api/project-design-systems/catalogue");
+    return parseWithFallback(
+      raw,
+      ListProjectDesignSystemCatalogueResponseSchema,
+      EMPTY_LIST_PROJECT_DESIGN_SYSTEM_CATALOGUE_RESPONSE,
+      { endpoint: "GET /api/project-design-systems/catalogue" },
+    );
+  }
+
+  // Adapting an existing system into an empty scope enqueues a generation task
+  // rather than duplicating bytes, so the response is a generating system just
+  // like `createProjectDesignSystem`.
+  async copyProjectDesignSystem(
+    data: CopyProjectDesignSystemRequest,
+  ): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>("/api/project-design-systems/copy", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      {
+        ...EMPTY_PROJECT_DESIGN_SYSTEM,
+        project_id: data.project_id,
+        project_resource_id: data.project_resource_id ?? "",
+        platform: data.platform,
+        current_agent_id: data.agent_id,
+      },
+      { endpoint: "POST /api/project-design-systems/copy" },
     );
   }
 
@@ -3968,6 +4368,88 @@ export class ApiClient {
     );
   }
 
+  // Design documents are the page-design artifact the design centre home
+  // composer produces (DC-042). Creating one also enqueues its first
+  // generation task server-side.
+  async listDesignDocuments(projectId: string): Promise<ListDesignDocumentsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/design-documents?project_id=${encodeURIComponent(projectId)}`,
+    );
+    return parseWithFallback(raw, ListDesignDocumentsResponseSchema, EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE, {
+      endpoint: "GET /api/design-documents",
+    });
+  }
+
+  /**
+   * Design documents pointing at one issue — the companion the launcher opened
+   * beside a run, or a document the user linked to this task. Same endpoint and
+   * same shape as the project listing; the issue form is what lets a task card
+   * show the design being made for it.
+   */
+  async listDesignDocumentsForIssue(issueId: string): Promise<ListDesignDocumentsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/design-documents?issue_id=${encodeURIComponent(issueId)}`,
+    );
+    return parseWithFallback(raw, ListDesignDocumentsResponseSchema, EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE, {
+      endpoint: "GET /api/design-documents?issue_id",
+    });
+  }
+
+  async createDesignDocument(data: CreateDesignDocumentRequest): Promise<DesignDocument> {
+    const raw = await this.fetch<unknown>("/api/design-documents", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(
+      raw,
+      DesignDocumentSchema,
+      {
+        ...EMPTY_DESIGN_DOCUMENT,
+        project_id: data.project_id,
+        project_resource_id: data.project_resource_id ?? "",
+        issue_id: data.issue_id ?? "",
+        platform: data.platform,
+        recipe: data.recipe ?? "default",
+      },
+      { endpoint: "POST /api/design-documents" },
+    );
+  }
+
+  // Community catalogue behind the design centre's 社区 tab (DC-041 / DC-048).
+  // Published recipes visible to this workspace: everything built in, plus the
+  // workspace's own, which already shadow same-slug built-ins server-side.
+  // Built-in design systems (the library's 官方 scope). Bundled with the
+  // server and identical for every workspace, so neither call is scoped.
+  async listBuiltinDesignSystems(): Promise<ListBuiltinDesignSystemsResponse> {
+    const raw = await this.fetch<unknown>("/api/design-systems/builtin");
+    return parseWithFallback(
+      raw,
+      ListBuiltinDesignSystemsResponseSchema,
+      EMPTY_LIST_BUILTIN_DESIGN_SYSTEMS_RESPONSE,
+      { endpoint: "GET /api/design-systems/builtin" },
+    );
+  }
+
+  async getBuiltinDesignSystem(slug: string): Promise<BuiltinDesignSystemDetail> {
+    const raw = await this.fetch<unknown>(`/api/design-systems/builtin/${encodeURIComponent(slug)}`);
+    return parseWithFallback(
+      raw,
+      BuiltinDesignSystemDetailSchema,
+      { ...EMPTY_BUILTIN_DESIGN_SYSTEM_DETAIL, slug },
+      { endpoint: "GET /api/design-systems/builtin/{slug}" },
+    );
+  }
+
+  async listDesignScenarioRecipes(): Promise<ListDesignScenarioRecipesResponse> {
+    const raw = await this.fetch<unknown>("/api/design-recipes");
+    return parseWithFallback(
+      raw,
+      ListDesignScenarioRecipesResponseSchema,
+      EMPTY_LIST_DESIGN_SCENARIO_RECIPES_RESPONSE,
+      { endpoint: "GET /api/design-recipes" },
+    );
+  }
+
   async listDesignDrafts(): Promise<ListDesignDraftsResponse> {
     const raw = await this.fetch<unknown>("/api/design-drafts");
     return parseWithFallback(raw, ListDesignDraftsResponseSchema, EMPTY_LIST_DESIGN_DRAFTS_RESPONSE, {
@@ -3998,56 +4480,117 @@ export class ApiClient {
     );
   }
 
-  async createDesignDocumentAgentTask(data: CreateDesignDocumentAgentTaskRequest): Promise<DesignDocumentAgentTask> {
-    const raw = await this.fetch<unknown>("/api/design-documents/agent-tasks", {
-      method: "POST",
-      body: JSON.stringify(data),
+  async getDesignDocument(documentId: string): Promise<DesignDocument> {
+    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}`);
+    return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
+      endpoint: "GET /api/design-documents/{id}",
     });
-    return parseWithFallback(
-      raw,
-      DesignDocumentAgentTaskSchema,
-      EMPTY_DESIGN_DOCUMENT_AGENT_TASK,
-      { endpoint: "POST /api/design-documents/agent-tasks" },
+  }
+
+  async listDesignDocumentRevisions(documentId: string): Promise<ListDesignDocumentRevisionsResponse> {
+    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/revisions`);
+    return parseWithFallback(raw, ListDesignDocumentRevisionsResponseSchema, EMPTY_LIST_DESIGN_DOCUMENT_REVISIONS_RESPONSE, {
+      endpoint: "GET /api/design-documents/{id}/revisions",
+    });
+  }
+
+  async getDesignDocumentRevision(documentId: string, revisionId: string): Promise<DesignDocumentRevision> {
+    const raw = await this.fetch<unknown>(
+      `/api/design-documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}`,
     );
+    return parseWithFallback(raw, DesignDocumentRevisionSchema, { ...EMPTY_DESIGN_DOCUMENT_REVISION, id: revisionId }, {
+      endpoint: "GET /api/design-documents/{id}/revisions/{revisionId}",
+    });
   }
 
-  async listDesignDocumentAgentTasks(params: { project_id?: string } = {}): Promise<ListDesignDocumentAgentTasksResponse> {
-    const search = new URLSearchParams();
-    if (params.project_id) search.set("project_id", params.project_id);
-    const raw = await this.fetch<unknown>(`/api/design-documents/agent-tasks${search.size ? `?${search}` : ""}`);
-    return parseWithFallback(
-      raw,
-      ListDesignDocumentAgentTasksResponseSchema,
-      EMPTY_LIST_DESIGN_DOCUMENT_AGENT_TASKS_RESPONSE,
-      { endpoint: "GET /api/design-documents/agent-tasks" },
+  /**
+   * Absolute URL of one file inside a revision's prototype archive. The base
+   * path already carries the revision-bound capability the server issued with
+   * the revision, so this only joins it with the package path.
+   */
+  getDesignDocumentPreviewFileURL(resourceBasePath: string, artifactPath: string): string {
+    const encodedPath = artifactPath.replace(/^\/+/, "").split("/").map(encodeURIComponent).join("/");
+    return `${this.baseUrl}${resourceBasePath.replace(/\/+$/, "")}/${encodedPath}`;
+  }
+
+  /**
+   * The revision's package as the ZIP the daemon uploaded. Routed through
+   * `fetchRaw` so it carries auth like every other call; the caller saves the
+   * blob (an <a download> cannot send the Bearer header).
+   */
+  async downloadDesignDocumentRevisionArchive(documentId: string, revisionId: string): Promise<Blob> {
+    const res = await this.fetchRaw(
+      `/api/design-documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/archive`,
     );
+    return res.blob();
   }
 
-  async listDesignDocuments(projectId: string): Promise<ListDesignDocumentsResponse> {
-    const raw = await this.fetch<unknown>(`/api/design-documents?project_id=${encodeURIComponent(projectId)}`);
-    return parseWithFallback(raw, ListDesignDocumentsResponseSchema, EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE, {
-      endpoint: "GET /api/design-documents",
+  async restoreDesignDocumentRevision(documentId: string, revisionId: string): Promise<DesignDocument> {
+    const raw = await this.fetch<unknown>(
+      `/api/design-documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/restore`,
+      { method: "POST" },
+    );
+    return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
+      endpoint: "POST /api/design-documents/{id}/revisions/{revisionId}/restore",
     });
   }
 
-  async getDesignDocumentPreview(documentId: string, projectId: string): Promise<DesignDocumentPreview> {
-    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/preview?project_id=${encodeURIComponent(projectId)}`);
-    return parseWithFallback(raw, DesignDocumentPreviewSchema, { ...EMPTY_DESIGN_DOCUMENT_PREVIEW, document_id: documentId }, {
-      endpoint: "GET /api/design-documents/{id}/preview",
-    });
-  }
-
-  async adjustDesignDocument(documentId: string, data: AdjustDesignDocumentRequest): Promise<DesignDocumentAgentTask> {
+  async adjustDesignDocument(documentId: string, data: AdjustDesignDocumentRequest): Promise<DesignDocument> {
     const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/adjust`, {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, DesignDocumentAgentTaskSchema, EMPTY_DESIGN_DOCUMENT_AGENT_TASK, {
+    return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
       endpoint: "POST /api/design-documents/{id}/adjust",
     });
   }
 
-  async saveDesignDocument(documentId: string, data: DesignDocumentPointerRequest): Promise<DesignDocument> {
+  /**
+   * Reruns a generation that never produced a revision (failed or stopped),
+   * from the document's frozen input snapshot. The server refuses once a
+   * revision exists — that state is adjusted, not regenerated over.
+   */
+  async regenerateDesignDocument(documentId: string, data: RegenerateDesignDocumentRequest = {}): Promise<DesignDocument> {
+    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/regenerate`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
+      endpoint: "POST /api/design-documents/{id}/regenerate",
+    });
+  }
+
+  /**
+   * Hands a saved design to the issue whose implementation it governs, so the
+   * agent working that issue receives the package (DC-062). The server refuses
+   * a document with no saved revision.
+   */
+  async deliverDesignDocument(documentId: string, data: DeliverDesignDocumentRequest): Promise<DesignDocument> {
+    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/deliver`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
+      endpoint: "POST /api/design-documents/{id}/deliver",
+    });
+  }
+
+  /**
+   * Applies the designer's own style overrides. No agent authors the change —
+   * the daemon rewrites the package deterministically — but it still passes
+   * the same Audit and browser gate before it becomes a revision (DC-062).
+   */
+  async manualEditDesignDocument(documentId: string, data: ManualEditDesignDocumentRequest): Promise<DesignDocument> {
+    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/manual-edit`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
+      endpoint: "POST /api/design-documents/{id}/manual-edit",
+    });
+  }
+
+  async saveDesignDocument(documentId: string, data: SaveDesignDocumentRequest): Promise<DesignDocument> {
     const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/save`, {
       method: "POST",
       body: JSON.stringify(data),
@@ -4057,14 +4600,61 @@ export class ApiClient {
     });
   }
 
-  async discardDesignDocumentDraft(documentId: string, data: DesignDocumentPointerRequest): Promise<DesignDocument> {
-    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/draft`, {
-      method: "DELETE",
-      body: JSON.stringify(data),
+  async discardDesignDocumentDraft(documentId: string): Promise<DesignDocument> {
+    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/discard`, {
+      method: "POST",
     });
     return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
-      endpoint: "DELETE /api/design-documents/{id}/draft",
+      endpoint: "POST /api/design-documents/{id}/discard",
     });
+  }
+
+  /**
+   * Deletes a document and every revision it owns. 204 with no body — there
+   * is nothing left to parse, and nothing to fall back to.
+   */
+  async deleteDesignDocument(documentId: string): Promise<void> {
+    await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  /**
+   * Mints the document's live link for one revision, or hands back the one
+   * that already exists — a revision keeps at most one live link, so creating
+   * twice returns the same URL the creator already holds (201 the first time,
+   * 200 after).
+   */
+  async createDesignDocumentRevisionShare(documentId: string, revisionId: string): Promise<DesignDocumentShare> {
+    const raw = await this.fetch<unknown>(
+      `/api/design-documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/share`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      DesignDocumentShareSchema,
+      { ...EMPTY_DESIGN_DOCUMENT_SHARE, document_id: documentId, revision_id: revisionId },
+      { endpoint: "POST /api/design-documents/{id}/revisions/{revisionId}/share" },
+    );
+  }
+
+  /** The document's live links, newest first; revoked links are absent. */
+  async listDesignDocumentShares(documentId: string): Promise<ListDesignDocumentSharesResponse> {
+    const raw = await this.fetch<unknown>(`/api/design-documents/${encodeURIComponent(documentId)}/shares`);
+    return parseWithFallback(raw, ListDesignDocumentSharesResponseSchema, EMPTY_LIST_DESIGN_DOCUMENT_SHARES_RESPONSE, {
+      endpoint: "GET /api/design-documents/{id}/shares",
+    });
+  }
+
+  /**
+   * Revokes a share link — the only way one dies. 204 with no body; a missing
+   * or already-revoked id reads as 404 before there is anything to parse.
+   */
+  async revokeDesignDocumentShare(documentId: string, shareId: string): Promise<void> {
+    await this.fetch<unknown>(
+      `/api/design-documents/${encodeURIComponent(documentId)}/shares/${encodeURIComponent(shareId)}`,
+      { method: "DELETE" },
+    );
   }
 
   async getDesignDraft(id: string): Promise<DesignDraft> {
@@ -4272,6 +4862,25 @@ export class ApiClient {
     });
     return parseWithFallback(raw, IssueStatusEntrySchema, EMPTY_ISSUE_STATUS_ENTRY, {
       endpoint: "PATCH /api/issue-statuses/{id}",
+    });
+  }
+
+  /**
+   * Rewrites one category's custom-status order in a single server-side
+   * statement. Not expressible as a sequence of `updateIssueStatus` calls: a
+   * row rejected mid-sequence would leave the earlier rows already reordered
+   * while the caller sees a failure. (MUL-6243)
+   */
+  async reorderIssueStatuses(
+    category: IssueStatusCategory,
+    ids: string[],
+  ): Promise<ListIssueStatusesResponse> {
+    const raw = await this.fetch<unknown>(`/api/issue-statuses/reorder`, {
+      method: "PATCH",
+      body: JSON.stringify({ category, ids }),
+    });
+    return parseWithFallback(raw, ListIssueStatusesResponseSchema, EMPTY_LIST_ISSUE_STATUSES_RESPONSE, {
+      endpoint: "PATCH /api/issue-statuses/reorder",
     });
   }
 
@@ -4725,13 +5334,35 @@ export class ApiClient {
   }
 
   async triggerAutopilot(id: string): Promise<AutopilotRun> {
-    // Manual "run now" returns 200 even when admission blocks the run (status
-    // skipped/failed). The UI branches on status/reason_code to avoid a
-    // false-success toast (MUL-4525), so parse defensively rather than casting.
-    const raw = await this.fetch<unknown>(`/api/autopilots/${id}/trigger`, { method: "POST" });
+    // Manual "run now" usually returns a run, including downstream admission
+    // failures. Quota rejection is the exception and returns 429. The UI
+    // handles both paths without presenting a false-success toast.
+    const raw = await this.fetch<unknown>(`/api/autopilots/${id}/trigger`, {
+      method: "POST",
+      headers: { "Idempotency-Key": createSafeId() },
+    });
     return parseWithFallback(raw, AutopilotRunSchema, FALLBACK_AUTOPILOT_RUN, {
       endpoint: "POST /api/autopilots/:id/trigger",
     });
+  }
+
+  async getAutopilotQuotaUsage(): Promise<AutopilotQuotaUsage> {
+    const raw = await this.fetch<unknown>("/api/autopilots/usage");
+    return parseWithFallback(
+      raw,
+      AutopilotQuotaUsageSchema,
+      {
+        action: "off",
+        used: null,
+        reserved: null,
+        limit: null,
+        period_start: null,
+        period_end: null,
+        reset_at: null,
+        blocked_counts: null,
+      },
+      { endpoint: "GET /api/autopilots/usage" },
+    );
   }
 
   async listAutopilotRuns(id: string, params?: { limit?: number; offset?: number }): Promise<ListAutopilotRunsResponse> {
@@ -4837,7 +5468,7 @@ export class ApiClient {
   ): Promise<WebhookDelivery> {
     const raw = await this.fetch<unknown>(
       `/api/autopilots/${autopilotId}/deliveries/${deliveryId}/replay`,
-      { method: "POST" },
+      { method: "POST", headers: { "Idempotency-Key": createSafeId() } },
     );
     return parseWithFallback(
       raw,
@@ -5383,36 +6014,74 @@ export class ApiClient {
     );
   }
 
-  async listDingTalkGroupRoutes(
+  async listDingTalkGroups(
     workspaceId: string,
-  ): Promise<ListDingTalkGroupRoutesResponse> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/dingtalk/group-routes`);
+    params: ListDingTalkGroupsParams = {},
+  ): Promise<ListDingTalkGroupsResponse> {
+    let raw: unknown;
+    try {
+      const search = dingTalkGroupSearch(params);
+      raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/dingtalk/groups${search}`);
+    } catch (error) {
+      // Installed clients can be newer than the server they reconnect to. A
+      // backend predating group discovery 404s this additive endpoint. The
+      // first admin-only version returns 403 to members; both mean this client
+      // cannot use the workspace inventory, while real failures stay visible.
+      if (
+        error instanceof ApiError &&
+        (error.status === 404 || error.status === 403)
+      ) {
+        return EMPTY_LIST_DINGTALK_GROUPS_RESPONSE;
+      }
+      throw error;
+    }
     return parseWithFallback(
       raw,
-      ListDingTalkGroupRoutesResponseSchema,
-      EMPTY_LIST_DINGTALK_GROUP_ROUTES_RESPONSE,
-      { endpoint: "GET /api/workspaces/:id/dingtalk/group-routes" },
+      ListDingTalkGroupsResponseSchema,
+      EMPTY_LIST_DINGTALK_GROUPS_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/dingtalk/groups" },
     );
   }
 
-  async updateDingTalkGroupRoute(
+  async listAgentDingTalkGroups(
+    agentId: string,
+    params: ListDingTalkGroupsParams = {},
+  ): Promise<ListDingTalkGroupsResponse> {
+    let raw: unknown;
+    try {
+      const search = dingTalkGroupSearch(params);
+      raw = await this.fetch<unknown>(`/api/agents/${agentId}/dingtalk/groups${search}`);
+    } catch (error) {
+      // Keep installed clients compatible with servers that predate agent-
+      // scoped group discovery. Authorization failures must remain visible.
+      if (error instanceof ApiError && error.status === 404) {
+        return EMPTY_LIST_DINGTALK_GROUPS_RESPONSE;
+      }
+      throw error;
+    }
+    return parseWithFallback(
+      raw,
+      ListDingTalkGroupsResponseSchema,
+      EMPTY_LIST_DINGTALK_GROUPS_RESPONSE,
+      { endpoint: "GET /api/agents/:id/dingtalk/groups" },
+    );
+  }
+
+  async forgetDingTalkGroup(
     workspaceId: string,
-    routeId: string,
-    body: UpdateDingTalkGroupRouteRequest,
-  ): Promise<DingTalkGroupRoute> {
-    const raw = await this.fetch<unknown>(
-      `/api/workspaces/${workspaceId}/dingtalk/group-routes/${routeId}`,
-      { method: "PATCH", body: JSON.stringify(body) },
+    installationId: string,
+    conversationId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/dingtalk/installations/${installationId}/groups/${encodeURIComponent(conversationId)}`,
+      { method: "DELETE" },
     );
-    return parseWithFallback(raw, DingTalkGroupRouteSchema, EMPTY_DINGTALK_GROUP_ROUTE, {
-      endpoint: "PATCH /api/workspaces/:id/dingtalk/group-routes/:routeId",
-    });
   }
 
-  // registerDingTalkBYO performs a bring-your-own-app install: the admin pastes
-  // the AppKey (client id) + AppSecret (client secret) of the DingTalk
-  // Stream-mode robot they created, and the backend validates + persists it,
-  // returning the new installation.
+  // registerDingTalkBYO performs a bring-your-own-app install: the agent owner
+  // or a workspace owner/admin pastes the AppKey (client id) + AppSecret
+  // (client secret) of the DingTalk Stream-mode robot they created, and the
+  // backend validates + persists it, returning the new installation.
   async registerDingTalkBYO(
     workspaceId: string,
     agentId: string,
@@ -5512,5 +6181,97 @@ export class ApiClient {
       EMPTY_REDEEM_WECOM_BINDING_TOKEN_RESPONSE,
       { endpoint: "POST /api/wecom/binding/redeem" },
     );
+  }
+
+  async listTelegramInstallations(
+    workspaceId: string,
+  ): Promise<ListTelegramInstallationsResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/telegram/installations`);
+    return parseWithFallback(
+      raw,
+      ListTelegramInstallationsResponseSchema,
+      EMPTY_LIST_TELEGRAM_INSTALLATIONS_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/telegram/installations" },
+    );
+  }
+
+  async registerTelegramBot(
+    workspaceId: string,
+    agentId: string,
+    body: RegisterTelegramRequest,
+  ): Promise<TelegramInstallation> {
+    const search = new URLSearchParams({ agent_id: agentId });
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/telegram/install?${search.toString()}`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    );
+    return parseWithFallback(raw, TelegramInstallationSchema, EMPTY_TELEGRAM_INSTALLATION, {
+      endpoint: "POST /api/workspaces/:id/telegram/install",
+    });
+  }
+
+  async deleteTelegramInstallation(workspaceId: string, installationId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/telegram/installations/${installationId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async redeemTelegramBindingToken(token: string): Promise<RedeemTelegramBindingTokenResponse> {
+    const raw = await this.fetch<unknown>(`/api/telegram/binding/redeem`, {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    });
+    return parseWithFallback(
+      raw,
+      RedeemTelegramBindingTokenResponseSchema,
+      EMPTY_REDEEM_TELEGRAM_BINDING_TOKEN_RESPONSE,
+      { endpoint: "POST /api/telegram/binding/redeem" },
+    );
+  }
+}
+
+/** What the public share page learned about a link. */
+export type DesignDocumentShareExchangeResult =
+  | { status: "live"; exchange: DesignDocumentShareExchange }
+  /** Unknown, revoked, orphaned or invalid-manifest link — the uniform 404. */
+  | { status: "dead" }
+  /** Network or server failure, or an unparsable exchange body. */
+  | { status: "error" };
+
+/**
+ * Fetches the public exchange for a share token. Deliberately NOT an ApiClient
+ * method: the share page is for anonymous visitors, and this client's requests
+ * carry auth headers and session credentials plus a 401 logout hook — none of
+ * which belong on a public link. A 404 here is expected UX (链接已失效), not an
+ * exception, so it comes back as a value.
+ */
+export async function fetchDesignDocumentShareExchange(token: string): Promise<DesignDocumentShareExchangeResult> {
+  try {
+    const response = await fetch(`/api/design-shares/${encodeURIComponent(token)}`, {
+      // No credentials: the token alone decides access, and a session cookie
+      // would only risk tying the anonymous visit to a logged-in account.
+      credentials: "omit",
+    });
+    if (response.status === 404) {
+      return { status: "dead" };
+    }
+    if (!response.ok) {
+      return { status: "error" };
+    }
+    const raw: unknown = await response.json();
+    const exchange = parseWithFallback(raw, DesignDocumentShareExchangeSchema, EMPTY_DESIGN_DOCUMENT_SHARE_EXCHANGE, {
+      endpoint: "GET /api/design-shares/{token}",
+    });
+    // A body that parsed to the empty fallback carries no capability, so the
+    // frame cannot boot; treat it as a failed load the visitor can retry.
+    if (!exchange.resource_base_path || !exchange.resource_access_token) {
+      return { status: "error" };
+    }
+    return { status: "live", exchange };
+  } catch {
+    return { status: "error" };
   }
 }

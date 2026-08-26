@@ -1,0 +1,8 @@
+{
+  "id": "openai",
+  "name": "OpenAI",
+  "category": "AI & LLM",
+  "category_zh": "AI 与大模型",
+  "description": "Bundled Open Design package for OpenAI, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "平静的近单色系统，以深青黑为基底，充足留白，编辑感排版。"
+}

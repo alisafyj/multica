@@ -117,27 +117,6 @@ cancelled_design_document_tasks AS (
       AND task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
     RETURNING task.id
 ),
-deleted_design_document_revisions AS (
-    DELETE FROM design_document_revision
-    WHERE design_document_revision.workspace_id = $2
-      AND design_document_revision.project_id = $1
-    RETURNING design_document_revision.id
-),
-deleted_design_document_snapshots AS (
-    DELETE FROM design_document_input_snapshot
-    WHERE design_document_input_snapshot.workspace_id = $2
-      AND design_document_input_snapshot.project_id = $1
-      AND (SELECT count(*) FROM deleted_design_document_revisions) >= 0
-      AND (SELECT count(*) FROM cancelled_design_document_tasks) >= 0
-    RETURNING design_document_input_snapshot.id
-),
-deleted_design_documents AS (
-    DELETE FROM design_document
-    WHERE design_document.workspace_id = $2
-      AND design_document.project_id = $1
-      AND (SELECT count(*) FROM deleted_design_document_snapshots) >= 0
-    RETURNING design_document.id
-),
 cleared_design_deliveries AS (
     UPDATE design_delivery
     SET project_id = NULL
@@ -157,6 +136,24 @@ deleted_open_design_runs AS (
     WHERE open_design_run.workspace_id = $2
       AND open_design_run.project_id = $1
     RETURNING open_design_run.id
+),
+deleted_design_document_revisions AS (
+    DELETE FROM design_document_revision
+    WHERE design_document_revision.workspace_id = $2
+      AND design_document_revision.design_document_id IN (
+        SELECT design_document.id
+        FROM design_document
+        WHERE design_document.workspace_id = $2
+          AND design_document.project_id = $1
+    )
+    RETURNING design_document_revision.id
+),
+deleted_design_documents AS (
+    DELETE FROM design_document
+    WHERE design_document.workspace_id = $2
+      AND design_document.project_id = $1
+      AND (SELECT count(*) FROM deleted_design_document_revisions) >= 0
+    RETURNING design_document.id
 ),
 deleted_design_system_packages AS (
     DELETE FROM project_design_system_package
@@ -210,33 +207,6 @@ type DeleteProjectParams struct {
 func (q *Queries) DeleteProject(ctx context.Context, arg DeleteProjectParams) error {
 	_, err := q.db.Exec(ctx, deleteProject, arg.ID, arg.WorkspaceID)
 	return err
-}
-
-const getProject = `-- name: GetProject :one
-SELECT id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, created_by FROM project
-WHERE id = $1
-`
-
-func (q *Queries) GetProject(ctx context.Context, id pgtype.UUID) (Project, error) {
-	row := q.db.QueryRow(ctx, getProject, id)
-	var i Project
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Title,
-		&i.Description,
-		&i.Icon,
-		&i.Status,
-		&i.LeadType,
-		&i.LeadID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Priority,
-		&i.StartDate,
-		&i.DueDate,
-		&i.CreatedBy,
-	)
-	return i, err
 }
 
 const getProjectInWorkspace = `-- name: GetProjectInWorkspace :one

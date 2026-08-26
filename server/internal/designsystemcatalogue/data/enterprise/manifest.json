@@ -1,0 +1,8 @@
+{
+  "id": "enterprise",
+  "name": "Enterprise",
+  "category": "Professional & Corporate",
+  "category_zh": "专业与企业",
+  "description": "Bundled Open Design package for Enterprise, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "简洁、高对比度的企业设计，适用于数据驱动工作流，支持拖拽交互与结构化布局。"
+}

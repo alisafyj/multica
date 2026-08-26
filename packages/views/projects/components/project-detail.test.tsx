@@ -35,10 +35,6 @@ vi.mock("@tanstack/react-query", () => ({
   },
 }));
 
-vi.mock("../../designs/design-document-task-panel", () => ({
-  DesignDocumentTaskPanel: () => <div>Project design task panel</div>,
-}));
-
 vi.mock("@multica/core/projects/queries", () => ({
   projectDetailOptions: () => ({ queryKey: ["project-detail"] }),
 }));
@@ -245,6 +241,7 @@ vi.mock("../../layout/animated-right-sidebar", () => ({
   ),
   getAnimatedRightSidebarInitialOpen: () => true,
   rightSidebarPanelMotionProps: {},
+  useRightSidebarShortcut: vi.fn(),
   useAnimatedRightSidebarState: () => ({
     open: true,
     visualOpen: true,
@@ -355,18 +352,5 @@ describe("ProjectDetail created-by row", () => {
     const row = screen.getByText("Created by").closest("div");
     expect(row).not.toBeNull();
     expect(row).toHaveTextContent("Unknown");
-  });
-});
-
-describe("ProjectDetail design drafts", () => {
-  it("opens the project-scoped design task area", async () => {
-    const user = userEvent.setup();
-    renderProjectDetail();
-
-    expect(screen.getByText("Project issues surface")).toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: "Design drafts" }));
-
-    expect(screen.getByText("Project design task panel")).toBeInTheDocument();
-    expect(screen.queryByText("Project issues surface")).not.toBeInTheDocument();
   });
 });

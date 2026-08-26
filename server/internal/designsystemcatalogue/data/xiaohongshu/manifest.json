@@ -1,0 +1,8 @@
+{
+  "id": "xiaohongshu",
+  "name": "Xiaohongshu",
+  "category": "Media & Consumer",
+  "category_zh": "媒体与消费",
+  "description": "Bundled Open Design package for Xiaohongshu, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "生活方式 UGC 社交平台。品牌红，大圆角，内容优先。"
+}

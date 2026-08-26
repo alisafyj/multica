@@ -1,0 +1,8 @@
+{
+  "id": "cisco",
+  "name": "Cisco",
+  "category": "Backend & Data",
+  "category_zh": "后端与数据",
+  "description": "Bundled Open Design package for Cisco, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "企业基础设施品牌。深色信任界面，Cisco 蓝色信号，技术清晰感。"
+}

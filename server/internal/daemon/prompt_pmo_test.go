@@ -155,7 +155,7 @@ func TestBuildPromptPMOSyncOpenClawProviderIsolation(t *testing.T) {
 // context cannot be parsed still renders a strict JSON-only instruction
 // instead of falling through to the issue prompt.
 func TestBuildPromptPMOSyncFallback(t *testing.T) {
-	out := buildPromptBody(Task{PMOSyncContext: json.RawMessage("not-json")}, "claude")
+	out := buildPromptBody(Task{PMOSyncContext: json.RawMessage("not-json")}, "claude", "")
 	if !strings.Contains(out, "PMO requirement sync agent") {
 		t.Fatalf("fallback prompt missing framing:\n%s", out)
 	}
@@ -166,7 +166,7 @@ func TestBuildPromptPMOSyncFallback(t *testing.T) {
 		t.Fatalf("PMO fallback fell through to issue prompt:\n%s", out)
 	}
 
-	openClawOut := buildPromptBody(Task{PMOSyncContext: json.RawMessage("not-json")}, "openclaw")
+	openClawOut := buildPromptBody(Task{PMOSyncContext: json.RawMessage("not-json")}, "openclaw", "")
 	if strings.Contains(openClawOut, "/skill:sy-pmo-data-query") {
 		t.Fatalf("malformed OpenClaw PMO context must not invoke the data skill:\n%s", openClawOut)
 	}

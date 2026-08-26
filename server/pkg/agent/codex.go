@@ -959,10 +959,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	// `mcp_servers.<id>.env` is allowed to carry secrets (Codex docs:
 	// https://developers.openai.com/codex/mcp#configure-with-configtoml)
 	// and our UI already treats mcp_config as a redacted-for-non-admins
-	// field. Process argv ends up in OS-level `ps` listings and is also
-	// echoed into the daemon's `agent command` log line below, so any
-	// inline env-bearing TOML would defeat the redaction. Writing through
-	// config.toml at 0o600 keeps the secret values out of argv and logs.
+	// field. Process argv ends up in OS-level `ps` listings; daemon command
+	// logs redact values, but log redaction cannot protect the process list.
+	// Writing through config.toml at 0o600 keeps the secret values out of argv
+	// entirely.
 	codexHome := strings.TrimSpace(b.cfg.Env["CODEX_HOME"])
 	if codexHome != "" {
 		if err := ensureCodexMcpConfig(filepath.Join(codexHome, "config.toml"), opts.McpConfig, b.cfg.Logger); err != nil {
@@ -1026,7 +1026,6 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	// scanner overflow during thread/resume otherwise leaked Codex
 	// processes indefinitely. configureProcessGroup is a no-op on
 	// Windows.
-	configureProcessGroup(cmd)
 	// Override the default exec.CommandContext cancel behaviour. The
 	// default sends SIGKILL only to cmd.Process (the leader); we instead
 	// signal the whole process group so descendants die too. Returning
@@ -1042,7 +1041,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	// open pipe held by a grandchild) can't hang cmd.Wait() forever. Matches
 	// the other long-lived backends (claude, copilot, cursor, …).
 	cmd.WaitDelay = codexProcessWaitDelay()
-	b.cfg.Logger.Info("agent command", "exec", execPath, "args", codexArgs)
+	b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(codexArgs, trustAgentCommandPositional(0, "app-server")))
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
@@ -1552,9 +1551,27 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			case aborted := <-turnDone:
 				finishTurn(aborted)
 			case activity := <-semanticActivityCh:
-				lastSemanticActivity = time.Now()
 				lastSemanticActivityDescription = activity
-				resetTimer(semanticTimer, semanticInactivityTimeout)
+				// A provider retry is not progress. Codex emits error:retry
+				// every time it reconnects a dropped model stream, so a run
+				// whose stream keeps failing produces a steady beat of
+				// activity while accomplishing nothing — and a watchdog that
+				// accepts it never fires. Observed: a run held open for ~30
+				// minutes on a dead stream, three times the 10 minute
+				// watchdog, ending only when Codex itself gave up.
+				//
+				// The description is still recorded even when the clock is
+				// not reset, so the timeout diagnostic names the retry storm
+				// that held the run open and idle_for measures from the last
+				// real progress rather than the last reconnect.
+				//
+				// isCodexFirstTurnProgressActivity already refuses error:retry
+				// for the first-turn timer; this is the same rule applied to
+				// the timer that governs the rest of the run.
+				if activity != codexRetryActivity {
+					lastSemanticActivity = time.Now()
+					resetTimer(semanticTimer, semanticInactivityTimeout)
+				}
 				if activity == "status:running" && !firstTurnStarted {
 					firstTurnStarted = true
 					firstItemWait.start(time.Now())
@@ -2004,8 +2021,13 @@ func codexFirstTurnNoProgressTimeout(semanticInactivityTimeout, configured time.
 	return scaled
 }
 
+// codexRetryActivity is the semantic activity Codex reports when it reconnects
+// a dropped model stream. It is the one activity that proves the opposite of
+// progress, so both inactivity timers refuse it.
+const codexRetryActivity = "error:retry"
+
 func isCodexFirstTurnProgressActivity(activity string) bool {
-	return activity != "" && activity != "status:running" && activity != "error:retry"
+	return activity != "" && activity != "status:running" && activity != codexRetryActivity
 }
 
 func buildCodexTimeoutDiagnosticError(diag codexTimeoutDiagnostic, stderrTail string) string {
@@ -2068,7 +2090,7 @@ func detectCodexVersionForDiagnostics(ctx context.Context, runtimeCmd Command, e
 
 	cmd := runtimeCmd.exec(versionCtx, "--version")
 	cmd.Env = env
-	data, err := cmd.Output()
+	data, err := outputOwned(cmd, logger)
 	if err != nil {
 		if logger != nil {
 			logger.Debug("codex version diagnostic failed", "error", err)
@@ -3187,6 +3209,22 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: c.threadID})
 		}
 
+	// The plan is a TURN notification, not a tool call — which is why looking
+	// for an `update_plan` tool found nothing. Normalised to the `todo_write`
+	// name the other backends already use so one renderer serves them all.
+	case "turn/plan/updated":
+		if steps := codexPlanSteps(params); len(steps) > 0 && c.onMessage != nil {
+			input := map[string]any{"todos": steps}
+			if explanation := strings.TrimSpace(stringOrEmpty(params["explanation"])); explanation != "" {
+				input["explanation"] = explanation
+			}
+			c.onMessage(Message{
+				Type:  MessageToolUse,
+				Tool:  "todo_write",
+				Input: input,
+			})
+		}
+
 	case "turn/completed":
 		turnID := extractNestedString(params, "turn", "id")
 		status := extractNestedString(params, "turn", "status")
@@ -3346,6 +3384,18 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 				Output: codexMCPToolResultOutput(item),
 				Status: codexNormalizePatchStatus(status),
 			})
+		}
+
+	// Codex reports its thinking as `reasoning` items — 597 of them in one
+	// day of real runs here, every one of them dropped before this case
+	// existed. Without them a turn that spends minutes reasoning looks
+	// identical to a stalled agent, which is exactly how a provider retry
+	// storm came to read as "stuck in a queue". Only the completed item is
+	// forwarded: the textDelta / summaryTextDelta notifications carry the
+	// same content token by token and would flood the transcript.
+	case method == "item/completed" && itemType == "reasoning":
+		if text := codexReasoningText(item); text != "" && c.onMessage != nil {
+			c.onMessage(Message{Type: MessageThinking, Content: text})
 		}
 
 	case method == "item/completed" && itemType == "agentMessage":
@@ -3800,4 +3850,82 @@ func nilIfEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+// codexReasoningText pulls the readable body out of a reasoning item.
+//
+// The protocol carries reasoning two ways (`item/reasoning/textDelta` and
+// `item/reasoning/summaryTextDelta`), so the completed item may hold either a
+// flat `text` or a `summary` built from parts. Unknown shapes yield "" and the
+// caller drops the item rather than rendering a placeholder.
+func codexReasoningText(item map[string]any) string {
+	if text, ok := item["text"].(string); ok && strings.TrimSpace(text) != "" {
+		return strings.TrimSpace(text)
+	}
+	switch summary := item["summary"].(type) {
+	case string:
+		return strings.TrimSpace(summary)
+	case []any:
+		parts := make([]string, 0, len(summary))
+		for _, raw := range summary {
+			switch part := raw.(type) {
+			case string:
+				if trimmed := strings.TrimSpace(part); trimmed != "" {
+					parts = append(parts, trimmed)
+				}
+			case map[string]any:
+				if text, ok := part["text"].(string); ok {
+					if trimmed := strings.TrimSpace(text); trimmed != "" {
+						parts = append(parts, trimmed)
+					}
+				}
+			}
+		}
+		return strings.Join(parts, "\n\n")
+	}
+	return ""
+}
+
+// codexPlanSteps normalises a `turn/plan/updated` payload into the
+// `{content, status}` rows every backend's todo list uses.
+//
+// The steps arrive as `plan: [{step, status}]` (UpdatePlanArgs). A row without
+// a step is dropped rather than rendered blank, and an unknown status is kept
+// verbatim so a protocol addition shows up as itself instead of silently
+// reading as "pending".
+func codexPlanSteps(params map[string]any) []map[string]any {
+	raw, ok := params["plan"].([]any)
+	if !ok {
+		// Some revisions nest the turn payload; accept both shapes.
+		if turn, nested := params["turn"].(map[string]any); nested {
+			raw, ok = turn["plan"].([]any)
+		}
+		if !ok {
+			return nil
+		}
+	}
+	steps := make([]map[string]any, 0, len(raw))
+	for _, entry := range raw {
+		item, isMap := entry.(map[string]any)
+		if !isMap {
+			continue
+		}
+		content := strings.TrimSpace(stringOrEmpty(item["step"]))
+		if content == "" {
+			continue
+		}
+		status := strings.TrimSpace(stringOrEmpty(item["status"]))
+		if status == "" {
+			status = "pending"
+		}
+		steps = append(steps, map[string]any{"content": content, "status": status})
+	}
+	return steps
+}
+
+// stringOrEmpty reads a JSON value that should be a string, and yields "" for
+// anything else so a protocol change cannot panic a live run.
+func stringOrEmpty(value any) string {
+	text, _ := value.(string)
+	return text
 }

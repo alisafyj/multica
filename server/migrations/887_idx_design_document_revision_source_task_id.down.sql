@@ -1,1 +1,0 @@
-DROP INDEX CONCURRENTLY IF EXISTS idx_design_document_revision_source_task_id;

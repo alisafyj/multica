@@ -1,0 +1,8 @@
+{
+  "id": "kami",
+  "name": "kami (紙 / 纸)",
+  "category": "Editorial & Print",
+  "category_zh": "编辑与印刷",
+  "description": "Bundled Open Design package for kami (紙 / 纸), derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "编辑纸张系统：暖羊皮纸底色，墨蓝色点缀，衬线主导的层级结构。专为简历、单页稿、白皮书、作品集、幻灯片设计——让一切呈现出高质量印刷品的质感而非 UI 界面。原生支持多语言（EN · zh-CN · ja）。"
+}

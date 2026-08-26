@@ -1,7 +1,7 @@
 # Multica 设计中心长期产品记忆
 
 > 状态：持续维护
-> 最后更新：2026-08-14
+> 最后更新：2026-08-19
 > 适用范围：设计中心、设计体系、UI 规范、设计任务、UI Agent、设计稿生成、设计还原、设计 MCP、Open Design 能力接入
 
 ## 1. 这份模块解决什么问题
@@ -35,6 +35,7 @@
 - [open-design-evidence.md](./open-design-evidence.md)：凡涉及 Open Design 的判断，必须回到对应版本和源码证据；
 - [open-design-engine-integration.md](./open-design-engine-integration.md)：已被替代的 Open Design 固定版本、headless worker 和 Runtime 接入实验，只用于保留技术证据；
 - [2026-08-05-multica-native-design-engine-design.md](../../superpowers/specs/2026-08-05-multica-native-design-engine-design.md)：以 Open Design 为核心参照、但不依赖 Worker/Runtime 的 Multica 原生设计引擎方案；
+- [2026-08-16-design-center-three-tab-migration-design.md](../../superpowers/specs/2026-08-16-design-center-three-tab-migration-design.md)：当前迁移范围（Open Design 首页 / 社区 / 设计体系三个 tab）、设计体系仓库化、tweaks 与 critique 边界，以及生产端契约对齐；
 - [open-design-multica-mapping.md](./open-design-multica-mapping.md)：已被替代的早期云端实体映射，只用于理解历史；
 - [project-design-system-validation.md](./project-design-system-validation.md)：项目设计体系第一阶段的真实链路、持久化与失败保护证据，以及尚未完成的验收项；
 - [project-design-system-workspace-validation.md](./project-design-system-workspace-validation.md)：项目设计体系工作区的创建、渲染校验、保存、调整隔离和放弃恢复证据；
@@ -202,6 +203,8 @@ Agent 每次直接生成一套内部一致的设计体系草稿，不先生成�
 
 第一阶段每个项目只维护一套当前设计体系。Agent 生成和调整的内容自动保留为草稿，用户点击“保存为项目设计体系”后进入已保存状态；后续继续调整同一套体系。第一阶段不提供多体系选择、主体系/参考体系绑定或历史版本，彻底重做时必须明确提示将替换当前体系。
 
+> 本段“每个项目只维护一套”已于 2026-08-16 由 DC-052 替代：设计体系改为按仓库划分，`project_design_system.project_resource_id` 为 `NULL` 表示项目级体系、非 `NULL` 表示仓库专属体系。草稿/已保存语义、保存即成为当前有效体系、彻底重做需提示替换等规则继续有效。P-008 的其余内容未被替代。
+
 项目的“设计体系” Tab 直接承载完整内容主视图，不再使用摘要列表和“打开设计体系”的二级入口。页面参考 Open Design 的内容优先结构，但不复制其多体系列表：项目 Tab 已经确定当前项目，左侧只展示由真实体系内容生成的动态章节目录，中间连续展示设计规则、视觉 Tokens、组件状态和在线 UI Kit。智能体调整面板按需打开，并在用户定位组件或区块后自动带入调整范围。
 
 未建立体系时，同一个 Tab 直接展示单屏创建工作台，不增加空状态中转、步骤条或多页向导。主区使用自然语言收集产品定位、目标用户、核心场景和期望风格，并接收可选参考资料；紧凑设置区只要求用户选择目标平台和执行智能体。系统自动带入项目名称与描述，用户不需要预先选择 Token 分类、组件范围或固定章节。提交后原地展示真实执行状态，完成后直接切换为草稿主视图，失败时保留全部输入。
@@ -218,12 +221,12 @@ Agent 每次直接生成一套内部一致的设计体系草稿，不先生成�
 
 ## 5. 当前讨论范围
 
-以下内容来自 2026-07-28 至 2026-08-12 的讨论：
+以下内容来自 2026-07-28 至 2026-08-16 的讨论：
 
 1. **项目设计体系**，`confirmed`：项目拥有可生成、预览、调整和保存的云端设计体系；在线 UI Kit 是它的派生视图，Figma UI 规范是可选输入。
 2. **设计体系规则基线**，`confirmed`：第一版参照采用 Open Design 的包结构、Token 分层和可选扩展，不再扩展一套平行模型；不照搬其修订审核工作流。
 3. **第一阶段产品闭环**，`confirmed`：用户在项目设计模块主动创建或生成设计体系，在线查看设计规则、Tokens、组件与 UI Kit，预览调整后保存为项目长期资产。
-4. **设计任务发起器**，`confirmed`：首页第一版是跨项目页面设计 task 发起器，用户输入自然语言页面需求并选择项目和智能体；任务创建成功后进入目标项目“设计草稿”，首页与项目 Tab 读取同一服务端 task/document 状态。项目和智能体必选，任务（Issue）可选，不自动创建或推进任务。
+4. **设计任务发起器**，`confirmed`：首页第一版是跨项目页面设计 task 发起器，用户输入自然语言页面需求并选择项目和智能体；任务创建成功后进入目标项目“设计草稿”，首页与项目 Tab 读取同一服务端 task/document 状态。项目和智能体必选；任务（Issue）默认同步创建、可在发起器中关闭（2026-08-24 由用户确认，取代原「不自动创建」）。创建出的 Issue 只是可追溯的伴生卡片，负责人是所选智能体；设计任务**不推进也不改变**它的状态（DC-045 不变）。已在发起器中指定 Issue 时不再新建，避免把追溯链拆成两条。
 5. **页面 Design Document**，`confirmed`：正式产物为 `multica.design-document/v1`，由语义 brief、离线可运行 prototype、assets 和 coverage 组成。一份文档可包含完整页面流程；项目允许多份文档，文档以不可变 revisions 演进并维护 draft/saved 指针。每次调整创建独立 task，在持续工作空间中基于固定 base revision 输出完整 package。
 6. **页面仓库 Grounding**，`confirmed`：页面设计 task 内由所选智能体自动执行有界只读仓库取证，固定 commit、相对来源、摘要、结构化事实和不确定性；不增加首页前置扫描步骤。该规则不改变设计体系创建中由用户主动发起仓库分析并冻结参考资料的 DC-018/DC-036。
 7. **页面 Audit/Preview 门禁**，`confirmed`：Design Document 直接复用员工本地守护进程现有 `designpreview` 强制门禁，并叠加页面/状态/流程和关键交互检查。浏览器不可用时 task 失败，不跳过 Preview、不形成或覆盖 draft；能够渲染不等于视觉质量通过。
@@ -239,6 +242,23 @@ Agent 每次直接生成一套内部一致的设计体系草稿，不先生成�
 17. **仓库分析后的参考资料快照**，`confirmed`：分析成功后只展示已使用资料摘要并自动沿用到生成；用户重新选择参考资料后必须重新分析，旧分析不能继续驱动生成。
 18. **Open Design 核心参照边界**，`confirmed`：产品流程、能力语义、分层包、Agent 深化、Package Audit、Preview/UI Kit 和模板机制以 Open Design 为行为基线，但由 Multica 使用现有 Agent 与基础设施原生实现。
 19. **不采用专用 Worker/Runtime**，`confirmed`：不运行、分发或托管 Open Design Worker、Daemon 和 Runtime；固定版本实验只保留为源码证据、行为对照和质量门禁依据。
+
+2026-08-16 新增确认（详见 DC-047 至 DC-055）：
+
+20. **Open Design 证据基线**，`confirmed`：基线从 `open-design-v0.16.1` 改为 `open-design-v0.19.2`；`OD-021` 至 `OD-044` 降级为经验来源，不再是行为基线。
+21. **迁移范围收窄为三个 tab**，`confirmed`：只迁 Open Design 的首页、社区和设计体系；Studio 的替代物是 Multica 项目内的 Design Document 工作区。Brands 已在上游并入设计体系，Multica 不建独立品牌套件实体。
+22. **首页场景 chip**，`confirmed`：复刻 Open Design 首页的视觉与信息架构，只复刻不搬代码；第一版放五个有真实产物支撑的 chip，发起 API 预留 `recipe` 字段。
+23. **tweaks 与 critique 进入产品**，`confirmed`：落在 Design Document 工作区。tweaks 只进 `prototype/`，不进设计体系包；critique 分数不构成 draft 形成条件，`fallbackPolicy` 只取 `fail`。
+24. **设计体系按仓库划分**，`confirmed`：替代 P-008 的“每个项目一套”，`project_resource_id` 为 `NULL` 表示项目级；不引入工作区默认体系。
+25. **仓库可选**，`confirmed`：选中仓库才做有界只读取证，未选时跳过并在文档中显式标注。
+26. **先窄后宽**，`confirmed`：工作区级体系目录与社区模板排在 Phase A 之后，A2 只留灰态位置。
+27. **生产端契约先对齐**，`confirmed`：原生 V2 的 prompt 与包契约此前从未接通，必须先对齐并补跨边界测试，随后重算 Phase A 基线。
+
+2026-08-19 新增确认（详见 DC-057）：
+
+28. **Design Document 工作区页面**，`confirmed`：生成后的预览、版本、调整、保存与放弃在 `/{slug}/designs/documents/{id}` 完成，对应 Open Design Studio 的生成后页面；修订通过独立读取契约与能力令牌预览路由提供，服务端与守护进程的包绑定已对齐并有跨边界测试。
+29. **三 tab 补齐与 tweaks / critique 落地**，`confirmed`（详见 DC-058）：官方设计体系详情以 Open Design 自带 showcase 为封面并逐章节展示 DESIGN.md，官方体系可作为项目体系创建的参考风格；社区卡片可打开实时示例与提示词的详情弹层；tweaks 以 prompt 约定加工作区预设指令落地，critique 以任务内五视角循环加 `critique.json` 报告与工作区“设计评审”面板落地，两者都不影响 draft 的形成条件。
+30. **设计文档任务上下文可领取并声明取证模式**，`confirmed`（详见 DC-059）：服务端上下文写 `execution_ready` 与 `input.repository_grounding`，claim 只交付文档绑定的那一个仓库，prompt 按取证模式说明 checkout 与 `work/repository-grounding.json` 的写回义务；在此之前每个设计文档任务都在 claim 被拒，真实生成从未跑通。
 
 当前尚未确认的细节只保留后续落地与独立切片问题：
 

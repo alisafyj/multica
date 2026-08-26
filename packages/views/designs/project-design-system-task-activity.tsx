@@ -7,9 +7,12 @@ import { api } from "@multica/core/api";
 import { taskMessagesOptions } from "@multica/core/chat/queries";
 import { designKeys } from "@multica/core/designs/keys";
 import { useWorkspaceId } from "@multica/core/hooks";
-import type { Agent, ProjectDesignSystem, TaskMessagePayload } from "@multica/core/types";
+import type { Agent, ProjectDesignSystem, ProjectDesignSystemTask, TaskMessagePayload } from "@multica/core/types";
+import type { AgentTask } from "@multica/core/types/agent";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { TranscriptButton } from "../common/task-transcript";
+import { DesignRunConversation } from "./design-run-conversation";
 
 const STALE_AFTER_MS = 3 * 60_000;
 const ACTIVE_TASK_STATUSES = new Set(["queued", "dispatched", "running", "waiting_local_directory"]);
@@ -29,6 +32,7 @@ export function taskOperationLabel(operation: string): string {
   if (operation === "repository_analysis") return "仓库分析";
   if (operation === "adjust") return "调整";
   if (operation === "regenerate") return "重新生成";
+  if (operation === "manual_edit") return "手动修改";
   return "生成";
 }
 
@@ -50,7 +54,7 @@ function formatTime(value: string | null | undefined): string {
   }).format(parsed);
 }
 
-function formatDuration(milliseconds: number): string {
+export function formatDuration(milliseconds: number): string {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -58,6 +62,44 @@ function formatDuration(milliseconds: number): string {
   if (hours > 0) return `${hours} 小时 ${minutes} 分`;
   if (minutes > 0) return `${minutes} 分 ${seconds} 秒`;
   return `${seconds} 秒`;
+}
+
+const AGENT_TASK_STATUSES = new Set<AgentTask["status"]>([
+  "queued",
+  "dispatched",
+  "waiting_local_directory",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+/**
+ * The transcript dialog speaks AgentTask; a design task carries the same run
+ * identity minus queue plumbing it never had (runtime, issue, priority). The
+ * dialog optional-chains everything this fills with blanks.
+ *
+ * Status is checked rather than cast: an installed client can meet a status
+ * its build predates, and the dialog branches on the value.
+ */
+function transcriptTask(task: ProjectDesignSystemTask): AgentTask {
+  return {
+    id: task.id,
+    agent_id: task.agent_id,
+    runtime_id: "",
+    issue_id: "",
+    status: AGENT_TASK_STATUSES.has(task.status as AgentTask["status"])
+      ? (task.status as AgentTask["status"])
+      : "running",
+    priority: 0,
+    dispatched_at: task.dispatched_at ?? null,
+    started_at: task.started_at,
+    completed_at: task.completed_at,
+    result: null,
+    error: task.error,
+    failure_reason: task.failure_reason ?? "",
+    created_at: task.created_at,
+  };
 }
 
 function newestActivityAt(
@@ -74,18 +116,41 @@ function newestActivityAt(
   ));
 }
 
-export function ProjectDesignSystemTaskActivity({
-  system,
+/**
+ * Live evidence of one design task: status, agent, start time, elapsed time,
+ * last activity and a stop control. Shared by the project design system and
+ * the design document workspaces — both run the same kind of task and both
+ * must show only what real execution events prove (no invented progress).
+ *
+ * `onStopped` runs after a stop request settles so the owner can refresh the
+ * entity the task belongs to.
+ */
+export function DesignTaskActivity({
+  task,
   agents,
   compact = false,
+  onStopped,
+  onAnswerForm,
+  showConversation = true,
 }: {
-  system: ProjectDesignSystem;
+  task: ProjectDesignSystemTask | null | undefined;
+  /**
+   * Render the run's messages inline. The document workspace turns this off:
+   * there the whole thread — this task and every finished one — is rendered by
+   * DesignDocumentConversation, and a second copy here would duplicate the
+   * live turn.
+   */
+  showConversation?: boolean;
   agents: Agent[];
   compact?: boolean;
+  onStopped?: () => Promise<unknown> | void;
+  /**
+   * Receives the answer text when the user submits a question form the agent
+   * emitted. Absent renders any form read-only, which is the honest state on
+   * a surface with nowhere to send a reply.
+   */
+  onAnswerForm?: (text: string) => void;
 }) {
-  const task = system.active_task;
-  const wsId = useWorkspaceId();
-  const queryClient = useQueryClient();
   const [now, setNow] = useState(() => Date.now());
   const [cancelError, setCancelError] = useState<string | null>(null);
   const { data: messages = [] } = useQuery(taskMessagesOptions(task?.id ?? ""));
@@ -104,16 +169,7 @@ export function ProjectDesignSystemTaskActivity({
       setCancelError(error instanceof Error ? error.message : "停止任务失败，请稍后重试。");
     },
     onSettled: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: designKeys.projectDesignSystemByProject(wsId, system.project_id),
-          exact: true,
-        }),
-        queryClient.invalidateQueries({
-          queryKey: designKeys.projectDesignSystem(wsId, system.id),
-          exact: true,
-        }),
-      ]);
+      await onStopped?.();
     },
   });
 
@@ -147,8 +203,28 @@ export function ProjectDesignSystemTaskActivity({
           {canStop ? <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : null}
           <span>{taskStatusLabel(task.status)}</span>
         </div>
-        <Badge variant="secondary">{taskOperationLabel(task.operation)}</Badge>
+        <div className="flex shrink-0 items-center gap-1">
+          <TranscriptButton
+            task={transcriptTask(task)}
+            agentName={agent?.name ?? "智能体"}
+            isLive={canStop}
+            title="查看执行过程"
+          />
+          <Badge variant="secondary">{taskOperationLabel(task.operation)}</Badge>
+        </div>
       </div>
+      {/* The run itself, inline — Open Design keeps the agent's work in the
+          column rather than behind a button. This replaces the single
+          truncated ambient line: same messages, but readable in order. The
+          transcript dialog above stays for the full, filterable record. */}
+      {showConversation ? (
+        <DesignRunConversation
+          messages={messages}
+          live={canStop}
+          className="mt-3"
+          {...(onAnswerForm ? { onAnswerForm } : {})}
+        />
+      ) : null}
 
       <dl className={`mt-4 grid gap-4 ${compact ? "grid-cols-2" : "sm:grid-cols-4"}`}>
         <div className="min-w-0">
@@ -202,5 +278,37 @@ export function ProjectDesignSystemTaskActivity({
         </Button>
       ) : null}
     </section>
+  );
+}
+
+/** The project design system's task, refreshing every scope of its project on stop (DC-052). */
+export function ProjectDesignSystemTaskActivity({
+  system,
+  agents,
+  compact = false,
+}: {
+  system: ProjectDesignSystem;
+  agents: Agent[];
+  compact?: boolean;
+}) {
+  const wsId = useWorkspaceId();
+  const queryClient = useQueryClient();
+  return (
+    <DesignTaskActivity
+      task={system.active_task}
+      agents={agents}
+      compact={compact}
+      onStopped={() => Promise.all([
+        queryClient.invalidateQueries({
+          // Every repository scope of this project, because a repository
+          // without its own system reads the project-level one (DC-052).
+          queryKey: designKeys.projectDesignSystemProjectScopes(wsId, system.project_id),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: designKeys.projectDesignSystem(wsId, system.id),
+          exact: true,
+        }),
+      ])}
+    />
   );
 }

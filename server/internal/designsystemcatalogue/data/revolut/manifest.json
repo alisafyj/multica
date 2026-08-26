@@ -1,0 +1,8 @@
+{
+  "id": "revolut",
+  "name": "Revolut",
+  "category": "Fintech & Crypto",
+  "category_zh": "金融科技与加密",
+  "description": "Bundled Open Design package for Revolut, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "数字银行。简洁深色界面，渐变卡片，金融科技精准感。"
+}

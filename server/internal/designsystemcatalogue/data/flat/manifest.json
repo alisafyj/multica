@@ -1,0 +1,8 @@
+{
+  "id": "flat",
+  "name": "Flat",
+  "category": "Modern & Minimal",
+  "category_zh": "现代极简",
+  "description": "Bundled Open Design package for Flat, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "二维极简风格，色彩鲜明，排版干净，无 3D 效果，界面快速友好。"
+}

@@ -1,0 +1,8 @@
+{
+  "id": "kraken",
+  "name": "Kraken",
+  "category": "Fintech & Crypto",
+  "category_zh": "金融科技与加密",
+  "description": "Bundled Open Design package for Kraken, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "加密货币交易。紫色点缀深色 UI，数据密集仪表盘。"
+}

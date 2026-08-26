@@ -1,0 +1,8 @@
+{
+  "id": "simple",
+  "name": "Simple",
+  "category": "Modern & Minimal",
+  "category_zh": "现代极简",
+  "description": "Bundled Open Design package for Simple, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "直截了当，无多余装饰，干净排版，中性色彩，直观布局，界面不喧宾夺主。"
+}

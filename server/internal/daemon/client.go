@@ -20,6 +20,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/opendesign"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
 
 // requestError is returned by postJSON/getJSON when the server responds with an error status.
@@ -205,6 +206,7 @@ func daemonClientCapabilities() string {
 		protocol.DaemonCapabilityRemoteMCPV1,
 		protocol.DaemonCapabilityProjectDesignSystemV1,
 		protocol.DaemonCapabilityLocalWorktreeV1,
+		protocol.DaemonCapabilitySourceContextQuickCreateV1,
 		protocol.DaemonCapabilityRPCV1,
 	}, ",")
 }
@@ -251,7 +253,15 @@ func (c *Client) ResolveRemoteMCPCredential(ctx context.Context, daemonToken, ta
 		CredentialHeader string `json:"credential_header"`
 		Credential       string `json:"credential"`
 	}
-	path := fmt.Sprintf("/api/daemon/tasks/%s/remote-mcp/%s/credential", url.PathEscape(taskID), url.PathEscape(contributionID))
+	// A Plugin-contributed connection keeps its credential in the Plugin's own
+	// secret storage, which a different route serves. The marker travels on the
+	// contribution id because that is all the broker hands back at dial time.
+	route := "remote-mcp"
+	if strings.HasPrefix(contributionID, remotemcp.PluginContributionPrefix) {
+		route = "plugin-mcp"
+	}
+	path := fmt.Sprintf("/api/daemon/tasks/%s/%s/%s/credential",
+		url.PathEscape(taskID), route, url.PathEscape(contributionID))
 	if err := c.getJSONWithToken(ctx, path, daemonToken, &response); err != nil {
 		return nil, err
 	}
@@ -342,6 +352,60 @@ func (c *Client) claimTasksLegacy(ctx context.Context, runtimeIDs []string, maxT
 	return out, nil
 }
 
+// TransferStats records successful HTTP response-body bytes read by a logical
+// call. For a skill-bundle download it separates "the link never produced a
+// successful response" from "a 2xx body arrived but did not finish" — a
+// distinction the failure text could not previously express, so a connectivity
+// fault read as a broken skill and sent reporters chasing the wrong thing
+// (GitHub #7386).
+//
+// Across retries the fields keep the high-water mark rather than the last
+// attempt: the question they answer is "did this link ever get anywhere", and
+// one attempt that reached the body says more than a later one that did not.
+// The zero value is usable, and every method is nil-safe so callers that do
+// not want the accounting can pass nil.
+type TransferStats struct {
+	// ResponseStarted reports whether 2xx response headers ever arrived. Error
+	// response bodies are deliberately excluded: their bytes describe a server
+	// business error, not progress downloading a skill bundle.
+	ResponseStarted bool
+	// BytesRead is the most response-body bytes any single attempt read.
+	BytesRead int64
+}
+
+func (t *TransferStats) observeResponseStarted() {
+	if t != nil {
+		t.ResponseStarted = true
+	}
+}
+
+// wrap returns r instrumented to feed this attempt's byte count back into t.
+func (t *TransferStats) wrap(r io.Reader) io.Reader {
+	if t == nil {
+		return r
+	}
+	return &countingReader{inner: r, stats: t}
+}
+
+// countingReader tallies one attempt and raises the parent high-water mark as
+// it goes, so a failure mid-body still reports how far that attempt got.
+type countingReader struct {
+	inner   io.Reader
+	stats   *TransferStats
+	attempt int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.inner.Read(p)
+	if n > 0 {
+		c.attempt += int64(n)
+		if c.attempt > c.stats.BytesRead {
+			c.stats.BytesRead = c.attempt
+		}
+	}
+	return n, err
+}
+
 // ResolveSkillBundle downloads a single skill bundle. It uses bundleClient (no
 // fixed timeout) so the deadline is governed entirely by ctx, which the daemon
 // scales to the bundle's size, and retries transient transport blips within
@@ -349,20 +413,21 @@ func (c *Client) claimTasksLegacy(ctx context.Context, runtimeIDs []string, maxT
 // agent's whole bundle in one atomic body read — lets each download fit its own
 // deadline and be cached independently, so a slow link makes incremental
 // progress instead of failing the entire set on every dispatch. (GitHub #4505)
-func (c *Client) ResolveSkillBundle(ctx context.Context, runtimeID, taskID string, ref SkillRefData) (SkillData, error) {
+func (c *Client) ResolveSkillBundle(ctx context.Context, runtimeID, taskID string, ref SkillRefData) (SkillData, TransferStats, error) {
 	var resp struct {
 		Bundles []SkillData `json:"bundles"`
 	}
+	var stats TransferStats
 	path := fmt.Sprintf("/api/daemon/runtimes/%s/tasks/%s/skill-bundles/resolve", runtimeID, taskID)
 	if err := c.postJSONViaWithRetry(ctx, c.bundleClient, path, map[string]any{
 		"skills": []SkillRefData{ref},
-	}, &resp, skillBundleResolveRetrySchedule); err != nil {
-		return SkillData{}, err
+	}, &resp, skillBundleResolveRetrySchedule, &stats); err != nil {
+		return SkillData{}, stats, err
 	}
 	if len(resp.Bundles) != 1 {
-		return SkillData{}, fmt.Errorf("resolve skill bundle: expected 1 bundle, got %d", len(resp.Bundles))
+		return SkillData{}, stats, fmt.Errorf("resolve skill bundle: expected 1 bundle, got %d", len(resp.Bundles))
 	}
-	return resp.Bundles[0], nil
+	return resp.Bundles[0], stats, nil
 }
 
 func (c *Client) ExtendTaskPrepareLease(ctx context.Context, runtimeID, taskID string) error {
@@ -449,56 +514,6 @@ func (c *Client) UploadProjectDesignSystemPackage(
 	}
 }
 
-func (c *Client) UploadDesignDocumentPackage(ctx context.Context, taskID string, binding designdocument.Binding, contentDigest string, archive []byte) (DesignDocumentPackageUpload, error) {
-	if taskID == "" || binding.TaskID != taskID || binding.DocumentID == "" || binding.RevisionID == "" || !validProjectDesignSystemPackageDigest(binding.InputSnapshotSHA256) {
-		return DesignDocumentPackageUpload{}, errors.New("design document package binding is invalid")
-	}
-	if !validProjectDesignSystemPackageDigest(contentDigest) || len(archive) == 0 || len(archive) > 32<<20 {
-		return DesignDocumentPackageUpload{}, errors.New("design document package archive is invalid")
-	}
-	requestPath := fmt.Sprintf("/api/daemon/tasks/%s/design-document/package", taskID)
-	var lastErr error
-	for attempt := 0; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+requestPath, bytes.NewReader(archive))
-		if err != nil {
-			return DesignDocumentPackageUpload{}, err
-		}
-		req.Header.Set("Content-Type", "application/zip")
-		req.Header.Set("X-Multica-Design-Package-Digest", contentDigest)
-		req.Header.Set("X-Multica-Design-Document-ID", binding.DocumentID)
-		req.Header.Set("X-Multica-Design-Revision-ID", binding.RevisionID)
-		req.Header.Set("X-Multica-Design-Input-Snapshot-Digest", binding.InputSnapshotSHA256)
-		if c.token != "" {
-			req.Header.Set("Authorization", "Bearer "+c.token)
-		}
-		c.setIdentityHeaders(req)
-		resp, err := c.client.Do(req)
-		if err == nil {
-			var result DesignDocumentPackageUpload
-			if resp.StatusCode >= 400 {
-				data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-				err = &requestError{Method: http.MethodPost, Path: requestPath, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
-			} else {
-				err = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&result)
-				if err == nil && (strings.TrimSpace(result.ObjectKey) == "" || result.ContentDigest != contentDigest) {
-					err = errors.New("design document package response is invalid")
-				}
-			}
-			_ = resp.Body.Close()
-			if err == nil {
-				return result, nil
-			}
-		}
-		lastErr = err
-		if ctx.Err() != nil || !isTransientError(err) || attempt >= len(defaultTerminalRetrySchedule) {
-			return DesignDocumentPackageUpload{}, lastErr
-		}
-		if sleepErr := retrySleep(ctx, defaultTerminalRetrySchedule[attempt]); sleepErr != nil {
-			return DesignDocumentPackageUpload{}, lastErr
-		}
-	}
-}
-
 func (c *Client) DownloadOpenDesignBaseArchive(ctx context.Context, taskID string, reference opendesign.BasePackageReference) ([]byte, error) {
 	if strings.TrimSpace(taskID) == "" {
 		return nil, errors.New("Open Design base archive task ID is required")
@@ -523,6 +538,39 @@ func (c *Client) DownloadOpenDesignBaseArchive(ctx context.Context, taskID strin
 	}
 }
 
+// DownloadDesignDocumentBaseArchive fetches the prototype package a page-design
+// adjustment starts from. It is the design-document sibling of
+// DownloadOpenDesignBaseArchive and shares its retry window: the base is
+// required before the agent can start, so a transient blip must not fail the
+// whole task.
+func (c *Client) DownloadDesignDocumentBaseArchive(ctx context.Context, taskID string, reference designdocument.BasePackageReference) ([]byte, error) {
+	if strings.TrimSpace(taskID) == "" {
+		return nil, errors.New("design document base archive task ID is required")
+	}
+	if err := designdocument.ValidateBasePackageReference(reference); err != nil {
+		return nil, err
+	}
+	requestPath := fmt.Sprintf("/api/daemon/tasks/%s/design-document/base-archive", taskID)
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		archive, err := c.downloadDesignDocumentBaseArchive(ctx, requestPath, reference)
+		if err == nil {
+			return archive, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil || !isTransientError(err) || attempt >= len(openDesignArchiveRetrySchedule) {
+			return nil, lastErr
+		}
+		if sleepErr := retrySleep(ctx, openDesignArchiveRetrySchedule[attempt]); sleepErr != nil {
+			return nil, lastErr
+		}
+	}
+}
+
+// DownloadDesignDocumentInput fetches an A3 grounding input (the base
+// archive, a reference attachment, or the bound design system) that the
+// server prepared for this task. Used by the daemon's repository-grounding
+// pass before the agent starts.
 func (c *Client) DownloadDesignDocumentInput(ctx context.Context, taskID, inputPath, expectedDigest string, maxBytes int64) ([]byte, http.Header, error) {
 	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(inputPath) == "" || maxBytes < 0 || maxBytes > 100<<20 {
 		return nil, nil, errors.New("Design Document input request is invalid")
@@ -558,6 +606,47 @@ func (c *Client) DownloadDesignDocumentInput(ctx context.Context, taskID, inputP
 		}
 	}
 	return content, resp.Header.Clone(), nil
+}
+
+// DownloadDesignDeliveryArchive fetches the design package delivered to this
+// task's issue (DC-062). Nothing about the revision is sent: the server
+// resolves it from the issue's own delivery link, so this daemon can only ever
+// receive the design that was actually promised to the work it is doing.
+func (c *Client) DownloadDesignDeliveryArchive(ctx context.Context, taskID, expectedDigest string) ([]byte, error) {
+	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(expectedDigest) == "" {
+		return nil, errors.New("design delivery archive request is invalid")
+	}
+	path := fmt.Sprintf("/api/daemon/tasks/%s/design-delivery/archive", taskID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	c.setIdentityHeaders(req)
+	archiveClient := *c.client
+	archiveClient.Timeout = openDesignArchiveDownloadTimeout
+	resp, err := archiveClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+	}
+	const maxDeliveryArchiveBytes = 100 << 20
+	archive, err := io.ReadAll(io.LimitReader(resp.Body, maxDeliveryArchiveBytes+1))
+	if err != nil || len(archive) > maxDeliveryArchiveBytes {
+		return nil, errors.New("design delivery archive exceeds its bounded size")
+	}
+	// The digest the claim pinned must match the one the archive route reports,
+	// or the package on disk would not be the design the task was given.
+	if resp.Header.Get(designdocument.DeliveryArchiveDigestHeader) != expectedDigest {
+		return nil, errors.New("design delivery archive digest does not match the delivered revision")
+	}
+	return archive, nil
 }
 
 func (c *Client) ReportOpenDesignRunResult(ctx context.Context, taskID, openDesignRunID string, result opendesign.CollectedRunResult) error {
@@ -614,6 +703,9 @@ type TaskCancelAck struct {
 	// path discards the rest of the result, so this ack is the only channel
 	// left to report where that work went.
 	BranchName string
+	// DurableWorkDir is the configured local_directory path that became
+	// authoritative after the disposable task worktree was removed.
+	DurableWorkDir string
 	// ErrorMessage / FailureReason: set when the cancelled run additionally
 	// FAILED to persist its work (worktree Finalize abort). There is no branch
 	// then; the error text carrying the preserved-worktree path is the only
@@ -637,6 +729,9 @@ func (c *Client) AckTaskCancelled(ctx context.Context, taskID string, ack TaskCa
 	body := map[string]any{}
 	if ack.BranchName != "" {
 		body["branch_name"] = ack.BranchName
+	}
+	if ack.DurableWorkDir != "" {
+		body["durable_work_dir"] = ack.DurableWorkDir
 	}
 	if ack.ErrorMessage != "" {
 		body["error_message"] = ack.ErrorMessage
@@ -671,7 +766,7 @@ func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages
 	}, nil)
 }
 
-func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, optional ...any) error {
+func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, optional ...any) error {
 	body := map[string]any{"output": output}
 	if branchName != "" {
 		body["branch_name"] = branchName
@@ -681,6 +776,15 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 	}
 	if workDir != "" {
 		body["work_dir"] = workDir
+	}
+	if durableWorkDir != "" {
+		body["durable_work_dir"] = durableWorkDir
+	}
+	if sessionRolloutMissing {
+		body["session_rollout_missing"] = true
+	}
+	if retiredSessionID != "" {
+		body["retired_session_id"] = retiredSessionID
 	}
 	for _, value := range optional {
 		switch value := value.(type) {
@@ -700,14 +804,6 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 			if value != nil {
 				body["design_document_package"] = value
 			}
-		case bool:
-			if value {
-				body["session_rollout_missing"] = true
-			}
-		case string:
-			if value != "" {
-				body["retired_session_id"] = value
-			}
 		case nil:
 		default:
 			return fmt.Errorf("unsupported CompleteTask option type %T", value)
@@ -725,13 +821,16 @@ func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []Tas
 	}, nil)
 }
 
-func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID string) error {
+func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) error {
 	body := map[string]any{"error": errMsg}
 	if sessionID != "" {
 		body["session_id"] = sessionID
 	}
 	if workDir != "" {
 		body["work_dir"] = workDir
+	}
+	if durableWorkDir != "" {
+		body["durable_work_dir"] = durableWorkDir
 	}
 	// A failed run can still have delivered a branch: worktree mode commits
 	// whatever the agent left before removing the worktree, so partial work
@@ -1261,13 +1360,13 @@ func isTransientError(err error) bool {
 // idempotent success (see service/task.go), so a duplicate replay from a
 // retry is safe even if the server's prior response was lost in transit.
 func (c *Client) postJSONWithRetry(ctx context.Context, path string, reqBody any, respBody any, schedule []time.Duration) error {
-	return c.postJSONViaWithRetry(ctx, c.client, path, reqBody, respBody, schedule)
+	return c.postJSONViaWithRetry(ctx, c.client, path, reqBody, respBody, schedule, nil)
 }
 
 // postJSONViaWithRetry is postJSONWithRetry over an explicit http.Client, so
 // large-body endpoints can run on bundleClient (deadline from ctx) while the
 // control-plane keeps its fixed 30s client.
-func (c *Client) postJSONViaWithRetry(ctx context.Context, httpClient *http.Client, path string, reqBody any, respBody any, schedule []time.Duration) error {
+func (c *Client) postJSONViaWithRetry(ctx context.Context, httpClient *http.Client, path string, reqBody any, respBody any, schedule []time.Duration, stats *TransferStats) error {
 	var lastErr error
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -1276,7 +1375,7 @@ func (c *Client) postJSONViaWithRetry(ctx context.Context, httpClient *http.Clie
 			}
 			return err
 		}
-		err := c.postJSONVia(ctx, httpClient, path, reqBody, respBody)
+		err := c.postJSONViaObserved(ctx, httpClient, path, reqBody, respBody, stats)
 		if err == nil {
 			return nil
 		}
@@ -1301,6 +1400,14 @@ func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBod
 // to control the timeout regime: c.client (fixed 30s) for control-plane calls,
 // c.bundleClient (deadline from ctx) for large skill-bundle downloads.
 func (c *Client) postJSONVia(ctx context.Context, httpClient *http.Client, path string, reqBody any, respBody any) error {
+	return c.postJSONViaObserved(ctx, httpClient, path, reqBody, respBody, nil)
+}
+
+// postJSONViaObserved is postJSONVia that additionally records what the attempt
+// moved into stats (nil to skip). Callers use it to tell "the link never
+// produced a response" apart from "the body arrived too slowly to finish" —
+// see TransferStats.
+func (c *Client) postJSONViaObserved(ctx context.Context, httpClient *http.Client, path string, reqBody any, respBody any, stats *TransferStats) error {
 	var body io.Reader
 	if reqBody != nil {
 		data, err := json.Marshal(reqBody)
@@ -1327,15 +1434,17 @@ func (c *Client) postJSONVia(ctx context.Context, httpClient *http.Client, path 
 	defer resp.Body.Close()
 	c.captureAuthExpiry(resp.Header)
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return &requestError{Method: http.MethodPost, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
 	}
+	stats.observeResponseStarted()
+	respReader := stats.wrap(resp.Body)
 	if respBody == nil {
-		io.Copy(io.Discard, resp.Body)
+		io.Copy(io.Discard, respReader)
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(respBody)
+	return json.NewDecoder(respReader).Decode(respBody)
 }
 
 func (c *Client) uploadOpenDesignRunArchive(ctx context.Context, path, openDesignRunID, contentDigest string, archive []byte) (string, error) {
@@ -1467,6 +1576,52 @@ func (c *Client) downloadOpenDesignBaseArchive(ctx context.Context, path string,
 	return archive, nil
 }
 
+func (c *Client) downloadDesignDocumentBaseArchive(ctx context.Context, path string, reference designdocument.BasePackageReference) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	c.setIdentityHeaders(req)
+
+	archiveClient := *c.client
+	if archiveClient.Timeout == 0 || archiveClient.Timeout < openDesignArchiveDownloadTimeout {
+		archiveClient.Timeout = openDesignArchiveDownloadTimeout
+	}
+	resp, err := archiveClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+	}
+	// The headers are checked before the body is read so a server that answers
+	// with a different revision costs nothing to reject. They are a
+	// cheap cross-check, not the guarantee: ReadBaseArchive re-derives the
+	// digest from the bytes themselves.
+	if contentType := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]); contentType != designdocument.BaseArchiveContentType {
+		return nil, fmt.Errorf("design document base archive has unexpected content type %q", contentType)
+	}
+	if digest := resp.Header.Get(designdocument.BaseArchiveContentDigestHeader); digest != reference.ContentDigest {
+		return nil, errors.New("design document base archive digest header does not match the pinned reference")
+	}
+	if revisionID := resp.Header.Get(designdocument.BaseArchiveRevisionIDHeader); revisionID != reference.RevisionID {
+		return nil, errors.New("design document base archive revision header does not match the pinned reference")
+	}
+	archive, err := io.ReadAll(io.LimitReader(resp.Body, designdocument.BaseArchiveMaxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read design document base archive: %w", err)
+	}
+	if len(archive) == 0 || int64(len(archive)) > designdocument.BaseArchiveMaxBytes {
+		return nil, errors.New("design document base archive has an invalid size")
+	}
+	return archive, nil
+}
+
 func (c *Client) getJSON(ctx context.Context, path string, respBody any) error {
 	return c.getJSONWithToken(ctx, path, c.token, respBody)
 }
@@ -1500,4 +1655,103 @@ func (c *Client) getJSONWithToken(ctx context.Context, path, token string, respB
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(respBody)
+}
+
+// UploadDesignDocumentPackage uploads a collected page-design package to
+// object storage. Same transport and retry shape as the design-system upload
+// — the difference is only which endpoint owns the object key namespace, so
+// one kind's package can never land under the other's prefix.
+func (c *Client) UploadDesignDocumentPackage(
+	ctx context.Context,
+	taskID string,
+	contentDigest string,
+	archive []byte,
+) (DesignDocumentPackageUpload, error) {
+	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(taskID) != taskID {
+		return DesignDocumentPackageUpload{}, errors.New("design document package task ID is required")
+	}
+	if !validProjectDesignSystemPackageDigest(contentDigest) {
+		return DesignDocumentPackageUpload{}, errors.New("design document package digest is invalid")
+	}
+	if len(archive) == 0 || len(archive) > 64<<20 {
+		return DesignDocumentPackageUpload{}, errors.New("design document package archive has an invalid size")
+	}
+	requestPath := fmt.Sprintf("/api/daemon/tasks/%s/design-document/package", taskID)
+	upload, err := c.uploadProjectDesignSystemPackage(ctx, requestPath, contentDigest, archive)
+	if err != nil {
+		return DesignDocumentPackageUpload{}, err
+	}
+	if upload.ObjectKey == "" {
+		return DesignDocumentPackageUpload{}, errors.New("design document package response has no object key")
+	}
+	if upload.ContentDigest != contentDigest {
+		return DesignDocumentPackageUpload{}, errors.New("design document package response digest does not match request")
+	}
+	return DesignDocumentPackageUpload{ObjectKey: upload.ObjectKey, ContentDigest: upload.ContentDigest}, nil
+}
+
+// postJSONWithToken is getJSONWithToken's write counterpart, for the daemon's
+// task-scoped calls that carry a body.
+func (c *Client) postJSONWithToken(ctx context.Context, path, token string, reqBody, respBody any) error {
+	encoded, err := json.Marshal(reqBody)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(encoded))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	c.setIdentityHeaders(req)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return &requestError{Method: http.MethodPost, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+	}
+	if respBody == nil {
+		io.Copy(io.Discard, resp.Body)
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(respBody)
+}
+
+// InvokeAgentPluginHook asks the server to make one agent-triggered hook call.
+//
+// The daemon deliberately does not call the plugin itself: the signing secret
+// is derived from the deployment key and stays on the server, and routing
+// through it keeps the rate limit, circuit breaker, `net:` destination check
+// and invocation record on one code path for every trigger.
+func (c *Client) InvokeAgentPluginHook(ctx context.Context, daemonToken, taskID, installationID, hookKey string, input json.RawMessage) (json.RawMessage, error) {
+	var response struct {
+		Status string          `json:"status"`
+		Output json.RawMessage `json:"output,omitempty"`
+		Error  string          `json:"error,omitempty"`
+	}
+	path := fmt.Sprintf("/api/daemon/tasks/%s/plugin-hooks", url.PathEscape(taskID))
+	body := map[string]any{"installation_id": installationID, "hook_key": hookKey}
+	if len(input) > 0 {
+		body["input"] = input
+	}
+	if err := c.postJSONWithToken(ctx, path, daemonToken, body, &response); err != nil {
+		return nil, err
+	}
+	// A refused or failed hook comes back as a 200 with a status, so that the
+	// caller can render it as a TOOL error rather than a broken transport —
+	// an unreachable plugin endpoint must not fail the agent's task.
+	if response.Status != "ok" {
+		if response.Error != "" {
+			return nil, errors.New(response.Error)
+		}
+		return nil, errors.New("the plugin hook did not succeed")
+	}
+	return response.Output, nil
 }

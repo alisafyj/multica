@@ -1,0 +1,8 @@
+{
+  "id": "ant",
+  "name": "Ant",
+  "category": "Professional & Corporate",
+  "category_zh": "专业与企业",
+  "description": "Bundled Open Design package for Ant, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "结构化的企业级设计系统，强调清晰、一致与高效，适用于数据密集型 Web 应用。"
+}

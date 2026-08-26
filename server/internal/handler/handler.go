@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composio "github.com/multica-ai/multica/server/internal/integrations/composio"
@@ -29,10 +30,13 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/ghsnapshot"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
+	"github.com/multica-ai/multica/server/internal/integrations/telegram"
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
+	"github.com/multica-ai/multica/server/internal/issuestatus"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -96,6 +100,10 @@ type Config struct {
 	// the server into minting webhook URLs pointing at an attacker-controlled
 	// host.
 	PublicURL string
+	// AppURL is the browser application's canonical origin, resolved from
+	// MULTICA_APP_URL (falling back to FRONTEND_ORIGIN). It is kept separate
+	// from PublicURL because split app/API deployments use different origins.
+	AppURL string
 	// TrustedProxies are CIDRs whose source IP we trust to set
 	// X-Forwarded-For / X-Real-IP. Empty means "trust nothing": the rate
 	// limiter uses r.RemoteAddr exclusively. Populated via the
@@ -116,6 +124,10 @@ type Config struct {
 	// frontend/CORS origin allowlist so split app/api self-hosted deployments
 	// can frame API-hosted PDFs without allowing arbitrary third-party frames.
 	AttachmentFrameAncestors []string
+	// PluginSurfaceOrigin is the dedicated, cookie-free browser origin that
+	// routes /plugin-surfaces/* back to this server. It must not be the app/API
+	// origin: the route serves stored third-party JavaScript as HTML.
+	PluginSurfaceOrigin string
 	// LLM* configure the basic LLM API layer (MUL-4238). They back the
 	// server-internal LLM helpers in pkg/llm (e.g. chat title generation).
 	// The generic OpenAI-compatible passthrough endpoints were removed in
@@ -125,9 +137,16 @@ type Config struct {
 	//   - LLMAPIKey       -> MULTICA_LLM_API_KEY
 	//   - LLMBaseURL       -> MULTICA_LLM_BASE_URL (OpenAI or any compatible gateway)
 	//   - LLMDefaultModel  -> MULTICA_LLM_DEFAULT_MODEL (used when a request omits `model`)
+	//   - LLMMaxRetries    -> MULTICA_LLM_MAX_RETRIES (transport retry budget)
 	LLMAPIKey       string
 	LLMBaseURL      string
 	LLMDefaultModel string
+	// LLMMaxRetries is the parsed MULTICA_LLM_MAX_RETRIES budget. nil means
+	// unset (llm.DefaultMaxRetries applies); llm.Retries(0) disables retries.
+	// The type carries the validation: it can only be built through llm.Retries,
+	// and cmd/server additionally fails the boot on an out-of-range value before
+	// one reaches this struct. See llm.Config.MaxRetries for the full semantics.
+	LLMMaxRetries *llm.RetryOverride
 	// ServerVersion is the build version of the running API binary (the same
 	// value main.go stamps via -X main.version and reports on /metrics).
 	// Surfaced through /api/config so self-hosted operators can confirm which
@@ -161,9 +180,13 @@ type DaemonPendingWorkNotifier interface {
 }
 
 type Handler struct {
-	Queries                *db.Queries
-	DB                     dbExecutor
-	TxStarter              txStarter
+	Queries   *db.Queries
+	DB        dbExecutor
+	TxStarter txStarter
+	// issueTableWindowCache is initialized only on the request-local Handler
+	// copy used by a repeatable-read table request. It lets facets reuse one
+	// visible-id snapshot without adding mutable state to the shared Handler.
+	issueTableWindowCache  *issueTableWindowCache
 	Hub                    *realtime.Hub
 	DaemonHub              *daemonws.Hub
 	DaemonProfileRefresh   RuntimeProfileRefreshNotifier
@@ -186,6 +209,20 @@ type Handler struct {
 	Storage                storage.Storage
 	CFSigner               *auth.CloudFrontSigner
 	Analytics              analytics.Client
+	// Entitlements supplies workspace-scoped commercial gates. A nil provider
+	// preserves the self-hosted and pre-rollout behavior without extra reads.
+	Entitlements entitlement.Provider
+	// SeatCapacity executes Cloud's pre-purchased human-seat protocol. Nil or
+	// disabled preserves self-hosted behavior.
+	SeatCapacity       seatcapacity.Executor
+	SeatCapacityLocker seatcapacity.WorkspaceLocker
+	SeatCapacityWorker *seatcapacity.Worker
+	// IssueStatusCatalog reads the workspace status catalog. Defaults to
+	// Queries; a test can substitute a counting wrapper to assert HOW MANY
+	// catalog reads a request performs, which is the only property that
+	// distinguishes the current one-read derivation from the N+1 it replaced.
+	// (MUL-6243)
+	IssueStatusCatalog issuestatus.Querier
 	// DaemonPendingWork pushes "heartbeat now" hints for queued
 	// heartbeat-carried requests (MUL-5444). Optional: when nil,
 	// requestDaemonPendingWork falls back to the local DaemonHub, which is the
@@ -299,6 +336,18 @@ type Handler struct {
 	// the install path runs without a socket.
 	WecomCredentialProbe wecom.CredentialProbe
 
+	// TelegramInstall owns the Telegram bot install lifecycle (register a
+	// pasted BotFather token / list / revoke) and the at-rest encryption of
+	// each bot's token. Nil unless MULTICA_TELEGRAM_SECRET_KEY is set.
+	TelegramInstall *telegram.InstallService
+	// TelegramBindingTokens mints/redeems the user-binding tokens behind the
+	// "link your Telegram account" prompt. Nil unless Telegram is configured.
+	TelegramBindingTokens *telegram.BindingTokenService
+	// TelegramOutbound owns the asynchronous terminal-delivery worker pool.
+	// The process owner starts and joins it; the synchronous event bus only
+	// enqueues EventChatDone work.
+	TelegramOutbound *telegram.Outbound
+
 	// channelFileDelivery names the channel types that can, IN THIS
 	// DEPLOYMENT, carry a file the agent produced the last hop into the
 	// conversation. It answers the claim response's
@@ -335,6 +384,9 @@ type Handler struct {
 	// error rather than silently storing plaintext. Wired in
 	// cmd/server/router.go after New.
 	VCSSecretBox *secretbox.Box
+	// PluginSurfaceTokens seal short-lived launch claims. Nil disables surface
+	// launches; wired from a domain-separated MULTICA_PLUGIN_SECRET_KEY at boot.
+	PluginSurfaceTokens *secretbox.Box
 	// PRRefresh drives the GitHub API snapshot pipeline for PR cards (MUL-5265):
 	// webhook / page-visit / TTL triggers → authenticated GraphQL fetch →
 	// head-SHA-guarded atomic snapshot write. Always non-nil, but inert (every
@@ -380,10 +432,25 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		APIKey:       cfg.LLMAPIKey,
 		BaseURL:      cfg.LLMBaseURL,
 		DefaultModel: cfg.LLMDefaultModel,
+		MaxRetries:   cfg.LLMMaxRetries,
 	})
+	// Report the effective retry policy so an operator can confirm from the
+	// boot log alone what a misbehaving upstream will cost, instead of inferring
+	// it from an env var whose semantics used to be unguessable (MUL-6364).
+	// Read off the client, not off cfg, so the line cannot drift from what the
+	// SDK actually enforces. Counts and an enum only — never the key or the base
+	// URL, since a self-hosted gateway URL routinely embeds a token.
+	llmRetry := llmClient.RetryBudget()
+	slog.Info("llm retry policy",
+		"max_retries", llmRetry.MaxRetries,
+		"source", llmRetry.Source,
+		"request_timeout", llmRetry.RequestTimeout,
+		"enabled", llmClient.Enabled(),
+	)
 
 	taskSvc := service.NewTaskService(queries, txStarter, hub, bus, daemonHub)
 	taskSvc.Analytics = analyticsClient
+	taskSvc.SourceContextStorage = store
 	// Chat follow-up suggestions run through the same internal LLM layer that
 	// backs auto-titling. A deployment with no MULTICA_LLM_* configuration gets
 	// a disabled client, which turns the feature off rather than failing.
@@ -495,6 +562,26 @@ func writeErrorCode(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg, "code": code})
 }
 
+func writeRevisionConflict(w http.ResponseWriter, resourceType string, resourceID pgtype.UUID, expected, actual int64) {
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":             "resource changed since it was loaded",
+		"code":              "revision_conflict",
+		"resource_type":     resourceType,
+		"resource_id":       uuidToString(resourceID),
+		"expected_revision": expected,
+		"actual_revision":   actual,
+	})
+}
+
+func writeEditConflict(w http.ResponseWriter, resourceType string, resourceID pgtype.UUID) {
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":         "resource field changed since it was loaded",
+		"code":          "revision_conflict",
+		"resource_type": resourceType,
+		"resource_id":   uuidToString(resourceID),
+	})
+}
+
 // Thin wrappers around util functions.
 //
 // parseUUID is intentionally the panicking variant: any handler call site
@@ -514,8 +601,11 @@ func ptrToText(s *string) pgtype.Text               { return util.PtrToText(s) }
 func strToText(s string) pgtype.Text                { return util.StrToText(s) }
 func timestampToString(t pgtype.Timestamptz) string { return util.TimestampToString(t) }
 func timestampToPtr(t pgtype.Timestamptz) *string   { return util.TimestampToPtr(t) }
-func dateToPtr(d pgtype.Date) *string               { return util.DateToPtr(d) }
-func uuidToPtr(u pgtype.UUID) *string               { return util.UUIDToPtr(u) }
+func timestampToNanoPtr(t pgtype.Timestamptz) *string {
+	return util.TimestampToNanoPtr(t)
+}
+func dateToPtr(d pgtype.Date) *string { return util.DateToPtr(d) }
+func uuidToPtr(u pgtype.UUID) *string { return util.UUIDToPtr(u) }
 
 // uuidsToStrings maps a UUID array column to string ids, skipping NULL/invalid
 // entries. Returns nil (not an empty slice) when there is nothing to emit so
@@ -910,6 +1000,9 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	// silently returns false for non-identifier strings, falling through to
 	// the UUID path below.
 	if issue, ok := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); ok {
+		if !h.authorizeIssueWindow(w, r, issue.ID, issue.WorkspaceID, "direct") {
+			return db.Issue{}, false
+		}
 		return issue, true
 	}
 
@@ -931,6 +1024,9 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "issue not found")
+		return db.Issue{}, false
+	}
+	if !h.authorizeIssueWindow(w, r, issue.ID, issue.WorkspaceID, "direct") {
 		return db.Issue{}, false
 	}
 	return issue, true
@@ -1102,6 +1198,9 @@ func (h *Handler) loadInboxItemForUser(w http.ResponseWriter, r *http.Request, i
 
 	if item.RecipientType != "member" || uuidToString(item.RecipientID) != userID {
 		writeError(w, http.StatusNotFound, "inbox item not found")
+		return db.InboxItem{}, false
+	}
+	if item.IssueID.Valid && !h.authorizeIssueWindow(w, r, item.IssueID, item.WorkspaceID, "inbox") {
 		return db.InboxItem{}, false
 	}
 	return item, true

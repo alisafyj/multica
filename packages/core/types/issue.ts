@@ -19,16 +19,16 @@ export type IssueStatusCategory =
   | "cancelled";
 
 /**
- * A status KEY as stored on the issue.
+ * A status KEY as stored on the issue: one of the 7 built-ins, or a custom key
+ * an admin defined for this workspace.
  *
- * STILL the closed 7-value union. Widening it to `string` — so a workspace's
- * CUSTOM statuses are representable — is the first task of the follow-up PR,
- * because it forces every `Record<IssueStatus, …>` presentation lookup in
- * `packages/views` to resolve a key to its category first. The catalog module
- * and the category type below exist so that change is mechanical rather than
- * exploratory. (MUL-6243)
+ * OPEN by design. `(string & {})` keeps editor autocomplete for the 7 built-ins
+ * while accepting any catalog key, which is what the server has always been
+ * able to send. Anything that needs presentation (label, colour, board column)
+ * must resolve the key to its CATEGORY first — `useIssueStatuses(wsId)` in a
+ * component, `statusCategoryOfKey` in a pure path. (MUL-6243)
  */
-export type IssueStatus = IssueStatusCategory;
+export type IssueStatus = IssueStatusCategory | (string & {});
 
 export type IssuePriority = "urgent" | "high" | "medium" | "low" | "none";
 
@@ -41,6 +41,7 @@ export interface IssueReaction {
   actor_id: string;
   emoji: string;
   created_at: string;
+  issue_revision?: number;
 }
 
 /**
@@ -52,6 +53,109 @@ export interface IssueReaction {
  */
 export type IssueMetadataValue = string | number | boolean;
 export type IssueMetadata = Record<string, IssueMetadataValue>;
+
+export interface SourceContextAttachment {
+  id: string;
+  source_attachment_id?: string;
+  owner_type: "issue" | "comment" | (string & {});
+  owner_id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+export interface SourceContextAuthor {
+  type: "member" | "agent" | (string & {});
+  id: string;
+  name: string;
+}
+
+export interface SourceContextIssueSnapshot {
+  id: string;
+  identifier: string;
+  number: number;
+  title: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  revision: number;
+  attachments: SourceContextAttachment[];
+}
+
+export interface SourceContextCommentSnapshot {
+  id: string;
+  parent_id: string | null;
+  type: string;
+  content: string;
+  author: SourceContextAuthor;
+  created_at: string;
+  updated_at: string;
+  revision: number;
+  attachments: SourceContextAttachment[];
+}
+
+export interface SourceContextSnapshot {
+  /** Capture metadata is present on a persisted detail snapshot and omitted
+   * from the pre-submit preview payload. */
+  version?: number;
+  captured_by_user_id?: string;
+  captured_at?: string;
+  source_issue: SourceContextIssueSnapshot;
+  comment_thread: SourceContextCommentSnapshot[];
+  anchor_comment_id: string;
+}
+
+export interface SourceContextLimitUsage {
+  comment_count: number;
+  text_bytes: number;
+  attachment_count: number;
+  attachment_bytes: number;
+}
+
+export interface SourceContextPreview extends SourceContextSnapshot {
+  capture_token: string;
+  limits: SourceContextLimitUsage;
+}
+
+export interface SourceContextAuthorState {
+  type: string;
+  id: string;
+  captured_name: string;
+  current_name?: string;
+  state: string;
+}
+
+export interface SourceContextDescriptionAttachmentChange {
+  kind: "added" | "removed" | "replaced" | (string & {});
+  attachment_id: string;
+  filename: string;
+  previous_filename?: string;
+}
+
+export interface SourceContextChangeDetails {
+  changed_comment_ids: string[];
+  added_comments?: SourceContextCommentSnapshot[];
+  removed_comment_ids?: string[];
+  description_attachment_changes: SourceContextDescriptionAttachmentChange[];
+}
+
+export interface IssueSourceContext {
+  id: string;
+  version: number;
+  usage: "read_only_historical_background" | (string & {});
+  captured_at: string;
+  display_state: "unchanged" | "changed" | "deleted" | "unavailable" | (string & {});
+  source_issue_state: "unchanged" | "changed" | "deleted" | "unavailable" | (string & {});
+  comment_thread_state: "unchanged" | "changed" | "unavailable" | (string & {});
+  anchor_comment_state: "available" | "deleted" | "unavailable" | (string & {});
+  can_open_current_source: boolean;
+  change_reasons?: string[];
+  change_details?: SourceContextChangeDetails;
+  current_source?: { issue_id: string; identifier: string; anchor_comment_id: string };
+  source_author_state?: SourceContextAuthorState[];
+  snapshot: SourceContextSnapshot;
+}
 
 export interface Issue {
   id: string;
@@ -93,4 +197,14 @@ export interface Issue {
   labels?: Label[];
   created_at: string;
   updated_at: string;
+  /** Monotonic server revision; absent when connected to an older backend. */
+  revision?: number;
+  /**
+   * Null until the server's historical activity backfill reaches this row.
+   * This RFC3339 timestamp may include sub-second precision while legacy
+   * created_at/updated_at values are second-precision; parse before comparing.
+   */
+  last_activity_at?: string | null;
+  /** Present only on issue detail responses for issues created from a comment. */
+  source_context?: IssueSourceContext;
 }

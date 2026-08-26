@@ -1,0 +1,8 @@
+{
+  "id": "publication",
+  "name": "Publication",
+  "category": "Creative & Artistic",
+  "category_zh": "创意艺术",
+  "description": "Bundled Open Design package for Publication, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "印刷风视觉语言，适用于书籍、杂志和报告，编辑网格与富有表现力的排版。"
+}

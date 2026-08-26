@@ -33,7 +33,8 @@ const forkMigrationPrefixStart = 800
 // numbering gap would pass this check; the uniqueness test still catches it
 // once upstream owns that number. The realistic violation (anything between
 // lastUpstreamMigrationPrefix and 800) is rejected below.
-const lastUpstreamMigrationPrefix = 341
+// Bumped from 397 with the upstream/main sync that brought 399–431.
+const lastUpstreamMigrationPrefix = 431
 
 // existingForkMigrationPrefixes are fork-local migrations that were applied to
 // production before the 800+ rule; they keep their numbers forever because the
@@ -76,6 +77,11 @@ var existingForkMigrationPrefixes = map[string]bool{
 	"317": true, // 317_product_map
 }
 
+// legacyDuplicateMigrationStems lists prefixes that were already duplicated
+// before this lint existed. It is a frozen historical record, not an escape
+// hatch: a new collision must be renumbered instead of added here. Prefix 362
+// was briefly listed and is deliberately absent again — the later of the two
+// migrations was renumbered to 376, which its idempotent DDL made safe.
 var legacyDuplicateMigrationStems = map[string][]string{
 	"020": {"020_issue_number", "020_task_session"},
 	"026": {"026_comment_reactions", "026_task_messages"},
@@ -450,7 +456,7 @@ func TestNoForeignKeysOutsideLegacySet(t *testing.T) {
 		if legacyFKMigrations[stem] {
 			continue
 		}
-		upper := strings.ToUpper(stripSQLComments(readMigrationForLint(t, filepath.Base(file))))
+		upper := strings.ToUpper(stripSQLStringLiterals(stripSQLComments(readMigrationForLint(t, filepath.Base(file)))))
 		if fkKeywordPattern.MatchString(upper) {
 			t.Errorf("%s must not create foreign keys (REFERENCES/FOREIGN KEY); resolve relationships in application code. If this is an already-applied legacy migration, record it in legacyFKMigrations", stem)
 		}
@@ -504,6 +510,44 @@ func stripSQLComments(sql string) string {
 		}
 		b.WriteByte(sql[i])
 		i++
+	}
+	return b.String()
+}
+
+// stripSQLStringLiterals blanks the contents of single-quoted literals,
+// keeping the quotes so statement structure is unchanged.
+//
+// Structural lints must read DDL, not data. A seed migration inserts arbitrary
+// prose — one Open Design template's description cites `references/layouts.md`
+// — and matching keywords inside that text reports a foreign key in a file
+// that only ever runs INSERT. A real REFERENCES clause is never inside a
+// literal, so removing literal contents cannot hide one.
+func stripSQLStringLiterals(sql string) string {
+	var b strings.Builder
+	b.Grow(len(sql))
+	for i := 0; i < len(sql); {
+		if sql[i] != '\'' {
+			b.WriteByte(sql[i])
+			i++
+			continue
+		}
+		b.WriteByte('\'')
+		i++
+		for i < len(sql) {
+			// '' is an escaped quote inside the literal, not the end of it.
+			if sql[i] == '\'' && i+1 < len(sql) && sql[i+1] == '\'' {
+				i += 2
+				continue
+			}
+			if sql[i] == '\'' {
+				break
+			}
+			i++
+		}
+		if i < len(sql) {
+			b.WriteByte('\'')
+			i++
+		}
 	}
 	return b.String()
 }
@@ -602,5 +646,29 @@ func isKnownLegacyPrefix(prefix string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// The literal stripper exists so seed prose cannot trip the FK lint. It must
+// not become a way to smuggle a real foreign key past it.
+func TestStripSQLStringLiteralsKeepsDDLVisible(t *testing.T) {
+	cases := []struct {
+		name    string
+		sql     string
+		wantHit bool
+	}{
+		{"real FK stays visible", "ALTER TABLE a ADD CONSTRAINT c FOREIGN KEY (b) REFERENCES t(id);", true},
+		{"real REFERENCES stays visible", "CREATE TABLE a (b UUID REFERENCES t(id));", true},
+		{"keyword inside prose is ignored", "INSERT INTO t (s) VALUES ('see references/layouts.md');", false},
+		{"escaped quote does not end the literal", "INSERT INTO t (s) VALUES ('it''s references/x.md');", false},
+		{"prose literal does not hide a following FK", "INSERT INTO t (s) VALUES ('references/x.md');\nCREATE TABLE a (b UUID REFERENCES t(id));", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			upper := strings.ToUpper(stripSQLStringLiterals(stripSQLComments(tc.sql)))
+			if got := fkKeywordPattern.MatchString(upper); got != tc.wantHit {
+				t.Fatalf("FK detection = %v, want %v (stripped: %q)", got, tc.wantHit, upper)
+			}
+		})
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -130,7 +131,7 @@ func TestNewFiltersLaunchPrefixOnce(t *testing.T) {
 func TestLaunchPrefixReachesACPFamilies(t *testing.T) {
 	t.Parallel()
 
-	for _, family := range []string{"kimi", "hermes", "kiro", "reasonix", "qwenpaw"} {
+	for _, family := range []string{"kimi", "hermes", "kiro", "reasonix", "qwenpaw", "dim", "zeroclaw"} {
 		t.Run(family, func(t *testing.T) {
 			t.Parallel()
 			cfg := Config{LaunchPrefix: []string{"start", "q36"}, Logger: slog.Default()}
@@ -177,6 +178,141 @@ func TestCommandArgvNeverAliasesItsInputs(t *testing.T) {
 	}
 	if prefixIndex(second, []string{"mutated"}) >= 0 {
 		t.Fatalf("a later Argv saw an earlier call's append: %v", second)
+	}
+}
+
+func TestRedactAgentCommandArgsPreservesOnlySafeFlagNames(t *testing.T) {
+	t.Parallel()
+
+	overlongFlag := "--" + strings.Repeat("a", maxLoggedAgentCommandFlagLen)
+	args := []string{
+		"--api-key", "api-key-secret",
+		"--dash-prefixed-secret", "-sTk9xQZ-secretvalue",
+		"--token=token-secret",
+		"--header", "Authorization: Bearer header-secret",
+		"-c", `model_providers.example.api_key="config-secret"`,
+		"--future-secret", "future-value-secret",
+		"prompt-secret",
+		"--verbose",
+		"-not-a-short-flag",
+		overlongFlag,
+	}
+	want := []string{
+		"--api-key", redactedAgentCommandArg,
+		"--dash-prefixed-secret", redactedAgentCommandArg,
+		"--token",
+		"--header", redactedAgentCommandArg,
+		"-c", redactedAgentCommandArg,
+		"--future-secret", redactedAgentCommandArg,
+		redactedAgentCommandArg,
+		"--verbose",
+		redactedAgentCommandArg,
+		redactedAgentCommandArg,
+	}
+
+	got := redactAgentCommandArgs(args, nil)
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("redactAgentCommandArgs = %v, want %v", got, want)
+	}
+}
+
+func TestTrustedAgentCommandPositionalsFollowSourceIndexes(t *testing.T) {
+	t.Parallel()
+
+	invocationArgs := []string{"acp", "--api-key", "-sTk9xQZ-secretvalue", "acp"}
+	finalArgs := []string{
+		"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "wrapper.ps1",
+		"start", "q36",
+		"acp", "--api-key", "-sTk9xQZ-secretvalue", "acp",
+	}
+	cfg := Config{LaunchPrefix: []string{"start", "q36"}}
+	trusted := cfg.trustedAgentCommandPositionals(finalArgs,
+		newAgentCommandLogArgs(invocationArgs, trustAgentCommandPositional(0, "acp")))
+
+	got := redactAgentCommandArgs(finalArgs, trusted)
+	want := []string{
+		redactedAgentCommandArg, redactedAgentCommandArg, redactedAgentCommandArg, redactedAgentCommandArg, redactedAgentCommandArg,
+		redactedAgentCommandArg, redactedAgentCommandArg,
+		"acp", "--api-key", redactedAgentCommandArg, redactedAgentCommandArg,
+	}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("source-aware redaction = %v, want %v", got, want)
+	}
+}
+
+func TestLogAgentCommandRedactsTextAndJSON(t *testing.T) {
+	t.Parallel()
+
+	args := []string{
+		"--api-key", "api-key-secret",
+		"--dash-prefixed-secret", "-sTk9xQZ-secretvalue",
+		"--token=token-secret",
+		"--header", "Authorization: Bearer header-secret",
+		"-c", `model_providers.example.api_key="config-secret"`,
+		"--future-secret", "future-value-secret",
+		"prompt-secret",
+	}
+	secrets := []string{
+		"api-key-secret",
+		"-sTk9xQZ-secretvalue",
+		"token-secret",
+		"Authorization: Bearer header-secret",
+		"config-secret",
+		"future-value-secret",
+		"prompt-secret",
+	}
+
+	for _, tc := range []struct {
+		name    string
+		handler func(*bytes.Buffer) slog.Handler
+	}{
+		{"text", func(buf *bytes.Buffer) slog.Handler { return slog.NewTextHandler(buf, nil) }},
+		{"json", func(buf *bytes.Buffer) slog.Handler { return slog.NewJSONHandler(buf, nil) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+			cfg := Config{Logger: slog.New(tc.handler(&buf)), provider: "codex"}
+			cmd := &exec.Cmd{Path: "/opt/multica/bin/codex", Args: append([]string{"codex"}, args...)}
+			cfg.logAgentCommandWithPrompt(cmd, newAgentCommandLogArgs(args), 123)
+
+			output := buf.String()
+			for _, secret := range secrets {
+				if strings.Contains(output, secret) {
+					t.Errorf("%s log exposed %q: %s", tc.name, secret, output)
+				}
+			}
+			for _, diagnostic := range []string{
+				"agent command", "provider", "codex", "/opt/multica/bin/codex",
+				"--api-key", "--token", "--header", "-c", "--future-secret",
+				redactedAgentCommandArg, "arg_count", "prompt_bytes",
+			} {
+				if !strings.Contains(output, diagnostic) {
+					t.Errorf("%s log omitted diagnostic %q: %s", tc.name, diagnostic, output)
+				}
+			}
+		})
+	}
+}
+
+func TestBackendFactoriesSetCommandLogProvider(t *testing.T) {
+	t.Parallel()
+
+	claude, err := New("claude", Config{Logger: slog.Default()})
+	if err != nil {
+		t.Fatalf("New(claude): %v", err)
+	}
+	if got := claude.(*claudeBackend).cfg.provider; got != "claude" {
+		t.Fatalf("claude log provider = %q, want claude", got)
+	}
+
+	omp, err := NewRuntime("omp", Config{Logger: slog.Default()})
+	if err != nil {
+		t.Fatalf("NewRuntime(omp): %v", err)
+	}
+	if got := omp.(*piBackend).cfg.provider; got != "omp" {
+		t.Fatalf("omp log provider = %q, want omp", got)
 	}
 }
 
@@ -244,6 +380,345 @@ func TestOnlyLaunchGoSpawnsRuntimeProcesses(t *testing.T) {
 	if len(offenders) > 0 {
 		t.Fatalf("runtime processes must be built through Command.exec / Command.execVia in launch.go, "+
 			"otherwise a custom runtime's fixed_args are dropped (GH #7046). Offending sites:\n%s",
+			strings.Join(offenders, "\n"))
+	}
+}
+
+// bareProcessStartCalls reports every os/exec call in file that starts a
+// process without going through startOwnedProcessTree.
+//
+// Run, Output and CombinedOutput are on the list because they call Start
+// themselves: a probe written with cmd.Output() never reaches the ownership
+// boundary at all, which is how the `--version` and model-discovery probes
+// stayed unowned on Windows after the first pass at GH #7522.
+func bareProcessStartCalls(fset *token.FileSet, file *ast.File) []string {
+	unowned := map[string]bool{"Start": true, "Run": true, "Output": true, "CombinedOutput": true}
+	var offenders []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || len(call.Args) != 0 || !unowned[sel.Sel.Name] {
+			return true
+		}
+		offenders = append(offenders, fset.Position(call.Pos()).String()+": ."+sel.Sel.Name+"()")
+		return true
+	})
+	return offenders
+}
+
+// unreleasedProcessTrees reports every function in file that takes ownership of
+// a process tree without dropping it.
+//
+// The rule is one owned start per function, paired with at least one release in
+// the same function. Equal counts would be the obvious rule and is the wrong
+// one: dsh's Execute has one start and two releases because it has two exit
+// paths, and both have to release. Capping starts at one is what makes the
+// "at least one release" side meaningful — without it, a function could add a
+// second, unreleased start and still pass on the strength of the first one's
+// release.
+func unreleasedProcessTrees(fset *token.FileSet, file *ast.File) []string {
+	var offenders []string
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		starts, releases := 0, 0
+		ast.Inspect(fn, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			ident, ok := call.Fun.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			switch ident.Name {
+			case "startOwnedProcessTree":
+				starts++
+			case "releaseProcessGroup":
+				releases++
+			}
+			return true
+		})
+		where := fset.Position(fn.Pos()).String() + ": " + fn.Name.Name
+		switch {
+		case starts > 1:
+			offenders = append(offenders, where+" starts more than one owned process tree; "+
+				"split it so each start has a checkable release")
+		case starts == 1 && releases == 0:
+			offenders = append(offenders, where+" takes ownership of a process tree and never releases it")
+		}
+	}
+	return offenders
+}
+
+// TestOnlyOwnedProcessTreesAreStarted is the structural half of GH #7522.
+//
+// Whole-tree ownership shipped as an opt-in each backend had to remember, and
+// it rotted exactly the way distributed opt-in always does here: of the 23
+// backends in this package, 3 called startOwnedProcessTree and 20 called
+// cmd.Start. On Windows those 20 own nothing, so cancelling a task kills the
+// direct child — often a cmd.exe shim — and leaves the real CLI running. One of
+// them kept working for forty minutes after it was cancelled.
+//
+// Fixing the reported backend alone would have left 19. So the rule is
+// mechanical instead: startOwnedProcessTree is the only way this package starts
+// a runtime process, and a new backend that reaches for cmd.Start — or for the
+// Run/Output/CombinedOutput that call it — fails here.
+//
+// The exemptions are the two platform implementations of that function, which
+// is where the real Start lives.
+func TestOnlyOwnedProcessTreesAreStarted(t *testing.T) {
+	t.Parallel()
+
+	var offenders []string
+	forEachPackageFile(t, func(name string, fset *token.FileSet, file *ast.File) {
+		if strings.HasPrefix(name, "proc_") {
+			return
+		}
+		offenders = append(offenders, bareProcessStartCalls(fset, file)...)
+	})
+
+	if len(offenders) > 0 {
+		t.Fatalf("runtime processes must be started through startOwnedProcessTree (use runOwned / "+
+			"outputOwned / combinedOutputOwned for synchronous probes), otherwise cancelling or timing "+
+			"out leaves the CLI's descendants running (GH #7522). Offending sites:\n%s",
+			strings.Join(offenders, "\n"))
+	}
+}
+
+// TestBareProcessStartCallsAreDetected proves the guard above fails closed,
+// without needing a real regression committed to a backend to find out.
+func TestBareProcessStartCallsAreDetected(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"start", "cmd.Start()", true},
+		{"run", "cmd.Run()", true},
+		{"output", "_, _ = cmd.Output()", true},
+		{"combined output", "_, _ = cmd.CombinedOutput()", true},
+		{"owned start", "_ = startOwnedProcessTree(cmd, nil)", false},
+		{"owned output", "_, _ = outputOwned(cmd, nil)", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			src := "package agent\nfunc f(cmd *exec.Cmd) {\n" + tc.body + "\n}\n"
+			file, err := parser.ParseFile(fset, "synthetic.go", src, 0)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got := len(bareProcessStartCalls(fset, file)) > 0; got != tc.want {
+				t.Errorf("bareProcessStartCalls(%q) flagged = %v, want %v", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEveryOwnedProcessTreeIsReleased is the other half of the same invariant.
+// Taking ownership without dropping it leaks a Job Object handle per task on
+// Windows, and the release is also what kills whatever outlived the reap — so a
+// backend that starts an owned tree and never releases it is worse off than one
+// that owns nothing.
+func TestEveryOwnedProcessTreeIsReleased(t *testing.T) {
+	t.Parallel()
+
+	var offenders []string
+	forEachPackageFile(t, func(name string, fset *token.FileSet, file *ast.File) {
+		if strings.HasPrefix(name, "proc_") {
+			return
+		}
+		offenders = append(offenders, unreleasedProcessTrees(fset, file)...)
+	})
+
+	if len(offenders) > 0 {
+		t.Fatalf("an owned process tree must be released after the reap, which drops the Windows Job "+
+			"Object handle and kills anything that outlived it:\n%s", strings.Join(offenders, "\n"))
+	}
+}
+
+// TestUnreleasedProcessTreesAreDetected covers the case a per-file counter
+// misses, and which the first version of this guard did miss: a file that
+// already contains a correctly paired start and release, plus a second start
+// that releases nothing. models.go is exactly that shape today — two starts in
+// two functions — so the guard has to reason per function, not per file.
+func TestUnreleasedProcessTreesAreDetected(t *testing.T) {
+	t.Parallel()
+
+	const paired = `package agent
+func good(cmd *exec.Cmd) {
+	_ = startOwnedProcessTree(cmd, nil)
+	defer releaseProcessGroup(cmd)
+}
+`
+	for _, tc := range []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{"paired start and release", paired, false},
+		{"second unreleased start in a file that already pairs one", paired + `
+func added(cmd *exec.Cmd) {
+	_ = startOwnedProcessTree(cmd, nil)
+}
+`, true},
+		{"second unreleased start in the same function", `package agent
+func two(a, b *exec.Cmd) {
+	_ = startOwnedProcessTree(a, nil)
+	_ = startOwnedProcessTree(b, nil)
+	defer releaseProcessGroup(a)
+}
+`, true},
+		{"release from a nested closure counts", `package agent
+func closure(cmd *exec.Cmd) {
+	_ = startOwnedProcessTree(cmd, nil)
+	go func() {
+		_ = cmdWait()
+		releaseProcessGroup(cmd)
+	}()
+}
+`, false},
+		{"two exit paths may release twice", `package agent
+func twoPaths(cmd *exec.Cmd) error {
+	_ = startOwnedProcessTree(cmd, nil)
+	if err := send(); err != nil {
+		releaseProcessGroup(cmd)
+		return err
+	}
+	releaseProcessGroup(cmd)
+	return nil
+}
+`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "synthetic.go", tc.src, 0)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got := len(unreleasedProcessTrees(fset, file)) > 0; got != tc.want {
+				t.Errorf("unreleasedProcessTrees flagged = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// forEachPackageFile parses every non-test source file in this package and
+// hands it to fn.
+func forEachPackageFile(t *testing.T, fn func(name string, fset *token.FileSet, file *ast.File)) {
+	t.Helper()
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	fset := token.NewFileSet()
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		file, err := parser.ParseFile(fset, name, src, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		fn(name, fset, file)
+	}
+}
+
+func containsRuntimeArgReference(expr ast.Expr) bool {
+	found := false
+	ast.Inspect(expr, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.SelectorExpr:
+			if node.Sel.Name == "Args" {
+				found = true
+				return false
+			}
+		case *ast.Ident:
+			switch strings.ToLower(node.Name) {
+			case "args", "cmdargs", "argv":
+				found = true
+				return false
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// TestOnlyLaunchGoLogsAgentCommandArgs keeps raw argv out of adapter-local log
+// calls. Every runtime process log must flow through Config.logAgentCommand in
+// launch.go, where values are redacted consistently for text and JSON handlers.
+// The guard checks both common field labels and the expressions themselves, so
+// renaming an "args" field to "argv" cannot bypass it while still passing
+// cmd.Args, args, cmdArgs, or argv to a logger.
+func TestOnlyLaunchGoLogsAgentCommandArgs(t *testing.T) {
+	t.Parallel()
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	var offenders []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "launch.go" {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		file, err := parser.ParseFile(fset, name, src, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			switch sel.Sel.Name {
+			case "Debug", "Info", "Warn", "Error", "Log", "LogAttrs":
+			default:
+				return true
+			}
+			for _, arg := range call.Args {
+				literal, ok := arg.(*ast.BasicLit)
+				if ok && literal.Kind == token.STRING &&
+					(literal.Value == `"args"` || literal.Value == `"argv"` || literal.Value == `"agent command"`) {
+					offenders = append(offenders, fset.Position(call.Pos()).String())
+					break
+				}
+				if containsRuntimeArgReference(arg) {
+					offenders = append(offenders, fset.Position(call.Pos()).String())
+					break
+				}
+			}
+			return true
+		})
+	}
+
+	if len(offenders) > 0 {
+		t.Fatalf("runtime argv logs must use Config.logAgentCommand in launch.go so values are redacted. Offending sites:\n%s",
 			strings.Join(offenders, "\n"))
 	}
 }
@@ -411,6 +886,55 @@ func TestFilterLaunchPrefixConsumesBlockedFlagValue(t *testing.T) {
 	want := []string{"start", "q36"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("filterLaunchPrefix = %v, want %v", got, want)
+	}
+}
+
+// TestDimLaunchPrefixFiltersBlockedFlags proves the Dim launch-prefix safety
+// policy: allowed positional tokens reach the command ahead of the hardcoded
+// `acp` subcommand, while protocol-breaking flags (--help, --auth-setup,
+// --remote, -h, acp) are stripped. Without this the fixed_args regression
+// this round fixed could return silently.
+func TestDimLaunchPrefixFiltersBlockedFlags(t *testing.T) {
+	t.Parallel()
+
+	// Allowed positional prefix tokens survive and precede `acp`.
+	cfg := Config{LaunchPrefix: []string{"start", "q36"}, Logger: slog.Default()}
+	argv := cfg.commandAt("wrapper").Argv("acp")
+	if idx := prefixIndex(argv, []string{"start", "q36", "acp"}); idx != 0 {
+		t.Fatalf("dim: allowed prefix must precede the acp subcommand, got %v", argv)
+	}
+
+	// Protocol-breaking flags are removed from the prefix.
+	got := filterLaunchPrefix(
+		[]string{"start", "--help", "--auth-setup", "--remote", "-h", "q36"},
+		"dim", slog.Default())
+	want := []string{"start", "q36"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("dim: blocked flags must be stripped, got %v, want %v", got, want)
+	}
+}
+
+// TestZeroclawLaunchPrefixFiltersBlockedFlags proves the ZeroClaw
+// launch-prefix safety policy: allowed positional tokens reach the command
+// ahead of the hardcoded `acp` subcommand, while protocol-breaking flags
+// (--help, -h, login, --login, --auth, acp) are stripped.
+func TestZeroclawLaunchPrefixFiltersBlockedFlags(t *testing.T) {
+	t.Parallel()
+
+	// Allowed positional prefix tokens survive and precede `acp`.
+	cfg := Config{LaunchPrefix: []string{"start", "q36"}, Logger: slog.Default()}
+	argv := cfg.commandAt("wrapper").Argv("acp")
+	if idx := prefixIndex(argv, []string{"start", "q36", "acp"}); idx != 0 {
+		t.Fatalf("zeroclaw: allowed prefix must precede the acp subcommand, got %v", argv)
+	}
+
+	// Protocol-breaking flags are removed from the prefix.
+	got := filterLaunchPrefix(
+		[]string{"start", "--help", "--login", "--auth", "-h", "q36"},
+		"zeroclaw", slog.Default())
+	want := []string{"start", "q36"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("zeroclaw: blocked flags must be stripped, got %v, want %v", got, want)
 	}
 }
 

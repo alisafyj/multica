@@ -48,7 +48,7 @@ func TestPrepareAndFinalizeDesignDocumentGrounding(t *testing.T) {
 	task := Task{
 		ID: "task-1", WorkspaceID: "workspace-1", AgentID: "agent-1",
 		Agent:                 &AgentData{Name: "designer"},
-		DesignDocumentContext: json.RawMessage(`{"type":"design_document_task","operation":"first_generation","execution_ready":true,"input":{"repository_grounding":"pending"}}`),
+		DesignDocumentContext: json.RawMessage(`{"type":"design_document_task","operation":"generate","execution_ready":true,"input":{"repository_grounding":"pending"}}`),
 		ProjectResources:      []ProjectResourceData{{ID: "local-1", ResourceType: "local_directory", ResourceRef: json.RawMessage(`{"local_path":` + quoteJSON(t, source) + `,"daemon_id":"daemon-1"}`)}},
 	}
 	env, err := execenv.Prepare(execenv.PrepareParams{
@@ -134,7 +134,7 @@ func TestPrepareAndFinalizeDesignDocumentGrounding(t *testing.T) {
 }
 
 func TestPrepareDesignDocumentGroundingRequiresExplicitUnavailableMode(t *testing.T) {
-	task := Task{DesignDocumentContext: json.RawMessage(`{"type":"design_document_task","operation":"first_generation","execution_ready":true,"input":{"repository_grounding":"pending"}}`)}
+	task := Task{DesignDocumentContext: json.RawMessage(`{"type":"design_document_task","operation":"generate","execution_ready":true,"input":{"repository_grounding":"pending"}}`)}
 	prepare := func(raw json.RawMessage) *execenv.Environment {
 		t.Helper()
 		env, err := execenv.Prepare(execenv.PrepareParams{
@@ -151,7 +151,7 @@ func TestPrepareDesignDocumentGroundingRequiresExplicitUnavailableMode(t *testin
 	if _, err := prepareDesignDocumentGrounding(context.Background(), task, env.WorkDir, "daemon-1", nil, slog.Default()); err == nil || !strings.Contains(err.Error(), "repository unavailable") {
 		t.Fatalf("required grounding error = %v", err)
 	}
-	task.DesignDocumentContext = json.RawMessage(`{"type":"design_document_task","operation":"first_generation","execution_ready":true,"input":{"repository_grounding":"unavailable"}}`)
+	task.DesignDocumentContext = json.RawMessage(`{"type":"design_document_task","operation":"generate","execution_ready":true,"input":{"repository_grounding":"unavailable"}}`)
 	env = prepare(task.DesignDocumentContext)
 	state, err := prepareDesignDocumentGrounding(context.Background(), task, env.WorkDir, "daemon-1", nil, slog.Default())
 	if err != nil || state.Mode != "unavailable" {
@@ -177,7 +177,7 @@ func TestMaterializeDesignDocumentInputsCreatesReadOnlyPinnedFiles(t *testing.T)
 		}
 	}))
 	t.Cleanup(server.Close)
-	task := Task{ID: "task-1", DesignDocumentContext: json.RawMessage(`{"type":"design_document_task","operation":"first_generation","execution_ready":true,"input":{"attachments":[{"id":"attachment-1","size_bytes":15,"sha256":"` + attachmentDigest + `"}],"design_system":{"content_digest":"` + designDigest + `"},"repository_grounding":"unavailable"}}`)}
+	task := Task{ID: "task-1", DesignDocumentContext: json.RawMessage(`{"type":"design_document_task","operation":"generate","execution_ready":true,"input":{"attachments":[{"id":"attachment-1","size_bytes":15,"sha256":"` + attachmentDigest + `"}],"design_system":{"content_digest":"` + designDigest + `"},"repository_grounding":"unavailable"}}`)}
 	env, err := execenv.Prepare(execenv.PrepareParams{WorkspacesRoot: t.TempDir(), WorkspaceID: "workspace-1", TaskID: task.ID, Provider: "opencode", Task: execenv.TaskContextForEnv{DesignDocumentContext: string(task.DesignDocumentContext)}}, slog.Default())
 	if err != nil {
 		t.Fatal(err)
@@ -205,33 +205,47 @@ func TestMaterializeDesignDocumentInputsCreatesReadOnlyPinnedFiles(t *testing.T)
 	}
 }
 
-func TestDesignDocumentAdjustmentReusesPinnedGroundingAndBasePackage(t *testing.T) {
-	base := []byte("immutable base package")
+// TestDesignDocumentAdjustmentReusesPinnedGrounding verifies that an
+// adjustment task reuses its pinned grounding facts rather than re-deriving
+// them. The base revision itself is restored separately by
+// restoreDesignDocumentBaseArchive (see design_document_base_test.go), so
+// materializeDesignDocumentInputs has no repository work to do here.
+//
+// It is NOT a no-op any more: an adjustment carries reference attachments —
+// the document's own plus whatever was attached to this turn — and used to
+// skip staging them, which left task.json listing files the agent could not
+// open. See TestDesignDocumentAdjustmentStagesItsAttachments.
+func TestDesignDocumentAdjustmentReusesPinnedGrounding(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		if r.URL.Path != "/api/daemon/tasks/task-adjust/design-document/base" {
-			t.Fatalf("unexpected adjustment input request %s", r.URL.Path)
-		}
-		w.Header().Set("X-Multica-Design-Package-Digest", digest)
-		_, _ = w.Write(base)
-	}))
-	t.Cleanup(server.Close)
 	grounding := `{"schema_version":"multica.design-document-grounding/v1","status":"unavailable","repositories":[],"facts":[],"conflicts":[],"missing":[],"warnings":["Pinned unavailable grounding."]}`
-	contextJSON := `{"type":"design_document_task","operation":"adjust","execution_ready":true,"document_id":"11111111-1111-1111-1111-111111111111","base_revision_id":"22222222-2222-2222-2222-222222222222","base_content_digest":"` + digest + `","input":{"repository_grounding":"pinned","repository":` + grounding + `,"attachments":[{"id":"attachment-1","size_bytes":10,"sha256":"` + digest + `"}],"design_system":{"content_digest":"` + digest + `"}}}`
+	contextJSON := `{"type":"design_document_task","operation":"adjust","execution_ready":true,"document_id":"11111111-1111-1111-1111-111111111111","base_revision_id":"22222222-2222-2222-2222-222222222222","base_content_digest":"` + digest + `","input":{"repository_grounding":"pinned","repository":` + grounding + `,"attachments":[{"id":"attachment-1","size_bytes":20,"sha256":"` + sha256Reference([]byte("adjustment reference")) + `"}],"design_system":{"content_digest":"` + digest + `"}}}`
 	task := Task{ID: "task-adjust", WorkspaceID: "workspace-1", DesignDocumentContext: json.RawMessage(contextJSON)}
 	env, err := execenv.Prepare(execenv.PrepareParams{WorkspacesRoot: t.TempDir(), WorkspaceID: task.WorkspaceID, TaskID: task.ID, Provider: "opencode", Task: execenv.TaskContextForEnv{DesignDocumentContext: contextJSON}}, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer env.Cleanup(true)
-	if err := materializeDesignDocumentInputs(context.Background(), task, env.WorkDir, NewClient(server.URL)); err != nil {
+	reference := []byte("adjustment reference")
+	attachmentServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/daemon/tasks/task-adjust/design-document/attachments/attachment-1" {
+			w.Header().Set("X-Multica-Content-SHA256", sha256Reference(reference))
+			_, _ = w.Write(reference)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer attachmentServer.Close()
+	if err := materializeDesignDocumentInputs(context.Background(), task, env.WorkDir, NewClient(attachmentServer.URL)); err != nil {
 		t.Fatal(err)
 	}
-	got, err := os.ReadFile(filepath.Join(env.WorkDir, ".agent_context", "design_document", "context", "base", "package.zip"))
-	if err != nil || string(got) != string(base) || requests != 1 {
-		t.Fatalf("base=%q requests=%d err=%v", got, requests, err)
+	// The reference the prompt promises is on disk, read-only, under the id
+	// the context named.
+	staged := filepath.Join(env.WorkDir, ".agent_context", "design_document", "reference", "attachments", "attachment-1")
+	if got, err := os.ReadFile(staged); err != nil || string(got) != string(reference) {
+		t.Fatalf("staged adjustment attachment = %q, err=%v", got, err)
+	}
+	if info, err := os.Stat(staged); err != nil || info.Mode().Perm() != 0o444 {
+		t.Fatalf("staged adjustment attachment mode = %v, err=%v", info, err)
 	}
 	state, err := prepareDesignDocumentGrounding(context.Background(), task, env.WorkDir, "daemon-1", nil, slog.Default())
 	if err != nil || state.pinned == nil || state.pinned.Status != "unavailable" || len(state.Repositories) != 0 {
@@ -273,3 +287,34 @@ func quoteJSON(t *testing.T, value string) string {
 }
 
 var _ = execenv.WriteDesignDocumentRepositoryFacts
+
+// copyDesignDocumentFixture copies the shared valid-package fixture (used by
+// designdocument's own archive tests) into a scratch directory so a grounding
+// finalize test has a real staging directory to validate.
+func copyDesignDocumentFixture(t *testing.T) string {
+	t.Helper()
+	source := filepath.Join("..", "designdocument", "testdata", "v1-valid")
+	destination := t.TempDir()
+	err := filepath.WalkDir(source, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(source, current)
+		if err != nil || relative == "." {
+			return err
+		}
+		target := filepath.Join(destination, relative)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		contents, err := os.ReadFile(current)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, contents, 0o644)
+	})
+	if err != nil {
+		t.Fatalf("copy design document fixture: %v", err)
+	}
+	return destination
+}

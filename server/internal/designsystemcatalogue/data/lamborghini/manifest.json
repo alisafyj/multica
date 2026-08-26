@@ -1,0 +1,8 @@
+{
+  "id": "lamborghini",
+  "name": "Lamborghini",
+  "category": "Automotive",
+  "category_zh": "汽车",
+  "description": "Bundled Open Design package for Lamborghini, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "超跑品牌。纯黑界面，金色点缀，戏剧性大写字体。"
+}

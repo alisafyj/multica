@@ -1,0 +1,8 @@
+{
+  "id": "application",
+  "name": "Application",
+  "category": "Professional & Corporate",
+  "category_zh": "专业与企业",
+  "description": "Bundled Open Design package for Application, derived from curated DESIGN.md, tokens.css, and components.html fixtures.",
+  "description_zh": "应用仪表盘，紫色主题美学，顶栏导航，卡片式布局，开发者优先工作流。"
+}

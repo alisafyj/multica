@@ -351,10 +351,7 @@ func persistProjectDesignSystemCompletion(
 	completedTask db.AgentTaskQueue,
 	prepared preparedProjectDesignSystemCompletion,
 ) (db.ProjectDesignSystem, error) {
-	if _, err := queries.LockProjectInWorkspaceForUpdate(ctx, db.LockProjectInWorkspaceForUpdateParams{
-		ID:          prepared.ProjectID,
-		WorkspaceID: prepared.WorkspaceID,
-	}); err != nil {
+	if err := lockDesignSystemProject(ctx, queries, prepared.WorkspaceID, prepared.ProjectID); err != nil {
 		return db.ProjectDesignSystem{}, err
 	}
 	system, err := queries.GetProjectDesignSystemInWorkspace(ctx, db.GetProjectDesignSystemInWorkspaceParams{
@@ -518,7 +515,7 @@ func nativeReceiptReport(receipt designpreview.Receipt) ([]byte, error) {
 }
 
 func (h *Handler) failInvalidProjectDesignSystemCompletion(ctx context.Context, task db.AgentTaskQueue, req TaskCompleteRequest, cause error) {
-	failedTask, err := h.TaskService.FailTask(ctx, task.ID, cause.Error(), req.SessionID, req.WorkDir, req.BranchName, "project_design_system_invalid_artifacts", req.SessionRolloutMissing, req.RetiredSessionID)
+	failedTask, err := h.TaskService.FailTask(ctx, task.ID, cause.Error(), req.SessionID, req.WorkDir, req.BranchName, "project_design_system_invalid_artifacts", req.SessionRolloutMissing, req.RetiredSessionID, req.DurableWorkDir)
 	if err != nil || failedTask == nil {
 		return
 	}

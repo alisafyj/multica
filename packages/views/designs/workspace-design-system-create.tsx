@@ -1,0 +1,1158 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ArrowLeft,
+  ArrowRight,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  FolderOpen,
+  Globe,
+  LoaderCircle,
+  Paintbrush,
+  Paperclip,
+  Search,
+  Sparkles,
+  UploadCloud,
+  X,
+} from "lucide-react";
+import { toast } from "sonner";
+import { api } from "@multica/core/api";
+import { designKeys } from "@multica/core/designs/keys";
+import { builtinDesignSystemListOptions, projectDesignSystemCatalogueOptions } from "@multica/core/designs/queries";
+import { useFileUpload } from "@multica/core/hooks/use-file-upload";
+import { agentListOptions } from "@multica/core/workspace/queries";
+import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspacePaths } from "@multica/core/paths";
+import type { Agent, ProjectDesignSystemReferenceInput } from "@multica/core/types";
+import { Button } from "@multica/ui/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@multica/ui/components/ui/dialog";
+import { Input } from "@multica/ui/components/ui/input";
+import { Textarea } from "@multica/ui/components/ui/textarea";
+import { cn } from "@multica/ui/lib/utils";
+import { ReadonlyContent } from "../editor";
+import { useNavigation } from "../navigation";
+import { isDesktopShell, pickDirectory, validateLocalDirectory } from "../platform";
+import {
+  BRAND_CATEGORIES,
+  BRAND_REFERENCES,
+  QUICK_PICK_BRANDS,
+  brandCategoryLabel,
+  brandFaviconUrl,
+  type BrandReference,
+} from "./brand-references";
+import { PLATFORM_OPTIONS, isAgentAvailable } from "./project-design-system-create";
+
+const MAX_LINKS = 8;
+const MAX_FILES = 20;
+/** Open Design's per-file cap on the asset dropzone. */
+const MAX_FILE_BYTES = 12 << 20;
+
+/**
+ * Open Design's sourceUrlLabel: protocol and www stripped, trailing slash
+ * trimmed, GitHub repositories shortened to owner/repo.
+ */
+export function sourceLinkLabel(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, "");
+    const path = parsed.pathname.replace(/\/+$/, "");
+    if (host === "github.com") {
+      const segments = path.split("/").filter(Boolean);
+      if (segments.length >= 2) return `${segments[0]}/${segments[1]}`;
+    }
+    return `${host}${path}`;
+  } catch {
+    return url;
+  }
+}
+
+/** A Figma design/file URL — the only shape the Figma URL row accepts. */
+export function isFigmaLink(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return false;
+    if (parsed.hostname.replace(/^www\./, "") !== "figma.com") return false;
+    return /^\/(design|file)\//.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
+interface StagedFile {
+  id: string;
+  name: string;
+  contentType: string;
+  previewUrl: string;
+}
+
+/**
+ * The standalone design-system creation page, replicating Open Design's
+ * creation flow: a sticky top bar whose primary action is 继续生成, a sticky
+ * hero column on the left, and on the right one bordered card whose
+ * hairline-separated rows collect the sources — links and brands, files, the
+ * brand description, a pasted DESIGN.md — followed by Multica's own required
+ * settings.
+ *
+ * Deliberate differences from upstream, all grounded in this product:
+ * an executing agent and a target platform are required here (P-008), the
+ * system needs a name because it is a long-lived library entity, and the
+ * repository / local code / Figma advanced sources stay in the project
+ * workbench — a standalone system has no project to resolve them against.
+ */
+export function WorkspaceDesignSystemCreate() {
+  const wsId = useWorkspaceId();
+  const navigation = useNavigation();
+  const paths = useWorkspacePaths();
+  const queryClient = useQueryClient();
+  const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  // Copy sources for 粘贴 DESIGN.md: the official catalogue plus the
+  // workspace's own saved systems (their V2 packages carry DESIGN.md at root).
+  const { data: builtinSystems = [] } = useQuery(builtinDesignSystemListOptions(wsId));
+  const { data: teamSystems = [] } = useQuery(projectDesignSystemCatalogueOptions(wsId));
+  const { upload, uploadWithToast, uploading } = useFileUpload(api, (error, file) =>
+    toast.error(`${file.name}：${error.message}`),
+  );
+
+  const [name, setName] = useState("");
+  const [sourceInput, setSourceInput] = useState("");
+  const [links, setLinks] = useState<string[]>([]);
+  const [files, setFiles] = useState<StagedFile[]>([]);
+  const [figs, setFigs] = useState<StagedFile[]>([]);
+  const [brief, setBrief] = useState("");
+  const [designMd, setDesignMd] = useState("");
+  const [designMdMode, setDesignMdMode] = useState<"edit" | "preview">("edit");
+  const [copySourceKey, setCopySourceKey] = useState("");
+  const [notes, setNotes] = useState("");
+  const [figmaInput, setFigmaInput] = useState("");
+  const [localPaths, setLocalPaths] = useState<Array<{ path: string; name: string }>>([]);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [brandPickerOpen, setBrandPickerOpen] = useState(false);
+  const [agentId, setAgentId] = useState("");
+  const [platform, setPlatform] = useState("web");
+  const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const figInputRef = useRef<HTMLInputElement>(null);
+  // What the user typed by hand, restored when a copy source is deselected —
+  // upstream's manualDesignMdRef.
+  const manualDesignMdRef = useRef("");
+  // Guards the copy load against out-of-order responses when the user
+  // switches sources quickly.
+  const copyRequestRef = useRef(0);
+
+  const currentAgent = agents.find((agent) => agent.id === agentId);
+  const agentAvailable = isAgentAvailable(currentAgent);
+  const trimmedInput = sourceInput.trim();
+  const validLink = /^https:\/\/[^\s.]+\.[^\s]+$/.test(trimmedInput);
+  const duplicate = links.some((link) => link === trimmedInput);
+
+  const missingRequirement = !name.trim()
+    ? "先为这套体系起个名字"
+    : !brief.trim()
+      ? "描述一下品牌或产品"
+      : !agentId
+        ? "选择一个智能体"
+        : !agentAvailable
+          ? "当前智能体不可用，请选择其他智能体"
+          : uploading
+            ? "素材上传中"
+            : "";
+
+  const createSystem = useMutation({
+    mutationFn: async () => {
+      const references: ProjectDesignSystemReferenceInput[] = [
+        ...links.map((link) => ({
+          kind: "link" as const,
+          value: link,
+          label: isFigmaLink(link) ? "Figma 设计来源" : "来源链接",
+        })),
+        ...files.map((file) => ({ kind: "attachment" as const, attachment_id: file.id, label: file.name })),
+        ...figs.map((file) => ({ kind: "attachment" as const, attachment_id: file.id, label: file.name })),
+        ...localPaths.map((folder) => ({ kind: "local_path" as const, value: folder.path, label: folder.name })),
+      ];
+      // A pasted DESIGN.md becomes an attachment at submit time: the server's
+      // frozen input then carries the exact bytes the user pasted.
+      if (designMd.trim()) {
+        const pasted = await upload(new File([designMd], "DESIGN.md", { type: "text/markdown" }));
+        if (!pasted) throw new Error("DESIGN.md 上传失败，请重试");
+        references.push({ kind: "attachment", attachment_id: pasted.id, label: "粘贴的 DESIGN.md" });
+      }
+      const composedBrief = notes.trim() ? `${brief.trim()}\n\n备注：${notes.trim()}` : brief.trim();
+      return api.createProjectDesignSystem({
+        project_id: "",
+        name: name.trim(),
+        agent_id: agentId,
+        platform: platform as "web" | "mobile" | "cross_platform",
+        brief: composedBrief,
+        references,
+      });
+    },
+    onSuccess: (created) => {
+      // The catalogue and the system's own cache: the new row belongs to both
+      // the moment it exists, even before generation finishes.
+      queryClient.invalidateQueries({ queryKey: designKeys.projectDesignSystemCatalogue(wsId) });
+      queryClient.setQueryData(designKeys.projectDesignSystem(wsId, created.id), created);
+      navigation.push(paths.projectDesignSystemDetail(created.id));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const addLink = () => {
+    if (!validLink || duplicate || links.length >= MAX_LINKS) return;
+    setLinks((current) => [...current, trimmedInput]);
+    setSourceInput("");
+  };
+
+  const stageInto = async (
+    incoming: FileList | File[],
+    set: React.Dispatch<React.SetStateAction<StagedFile[]>>,
+    extension?: string,
+  ) => {
+    for (const file of Array.from(incoming)) {
+      if (extension && !file.name.toLowerCase().endsWith(extension)) {
+        toast.error(`${file.name} 不是 ${extension} 文件`);
+        continue;
+      }
+      if (file.size > MAX_FILE_BYTES) {
+        toast.error(`${file.name} 超过 12 MB 上限`);
+        continue;
+      }
+      const result = await uploadWithToast(file);
+      if (!result) continue;
+      const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : "";
+      set((current) => (
+        current.some((item) => item.id === result.id) || current.length >= MAX_FILES
+          ? current
+          : [...current, { id: result.id, name: result.filename || file.name, contentType: file.type, previewUrl }]
+      ));
+    }
+  };
+
+  const stageFiles = (incoming: FileList | File[]) => stageInto(incoming, setFiles);
+  const stageFigs = (incoming: FileList | File[]) => stageInto(incoming, setFigs, ".fig");
+
+  // 从现有设计系统复制 — upstream's semantics: the pick fills the paste box
+  // with that system's DESIGN.md; deselecting restores the hand-typed text.
+  const loadCopySource = async (key: string): Promise<string> => {
+    if (key.startsWith("builtin:")) {
+      const detail = await api.getBuiltinDesignSystem(key.slice("builtin:".length));
+      if (!detail.design_markdown) throw new Error("empty DESIGN.md");
+      return detail.design_markdown;
+    }
+    const id = key.slice("team:".length);
+    const preview = await api.getProjectDesignSystemPackagePreview(id);
+    const url = api.getProjectDesignSystemPackagePreviewFileURL(
+      id,
+      wsId,
+      preview.content_digest,
+      preview.resource_access_token,
+      "DESIGN.md",
+    );
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`load DESIGN.md (${resp.status})`);
+    return resp.text();
+  };
+
+  const copySource = useMutation({
+    mutationFn: async ({ key, requestId }: { key: string; requestId: number }) => {
+      const text = await loadCopySource(key);
+      return { text, requestId };
+    },
+    onSuccess: ({ text, requestId }) => {
+      if (requestId !== copyRequestRef.current) return;
+      setDesignMd(text);
+      setDesignMdMode("edit");
+    },
+  });
+
+  const handleCopySourceChange = (key: string) => {
+    const requestId = ++copyRequestRef.current;
+    setCopySourceKey(key);
+    copySource.reset();
+    if (!key) {
+      setDesignMd(manualDesignMdRef.current);
+      setDesignMdMode("edit");
+      return;
+    }
+    copySource.mutate({ key, requestId });
+  };
+
+  // Desktop only: the Electron shell's native folder picker. The picked path
+  // becomes a local_path reference — a directory the executing agent reads
+  // directly on this machine.
+  const addLocalFolder = async () => {
+    const picked = await pickDirectory();
+    if (!picked.ok || !picked.path) return;
+    const validated = await validateLocalDirectory(picked.path);
+    // The shared validator also demands write access (it serves project
+    // resources); a read-only folder is fine for reading as code evidence.
+    if (!(validated.ok === true || validated.reason === "not_writable")) {
+      toast.error("这个文件夹不可读，请换一个位置");
+      return;
+    }
+    const path = picked.path;
+    const name = picked.basename || path;
+    setLocalPaths((current) => (current.some((item) => item.path === path) ? current : [...current, { path, name }]));
+  };
+
+  const trimmedFigma = figmaInput.trim();
+  const validFigma = isFigmaLink(trimmedFigma);
+  const addFigmaLink = () => {
+    if (!validFigma) return;
+    setFigmaInput("");
+    setLinks((current) => {
+      if (current.includes(trimmedFigma)) return current;
+      if (current.length >= MAX_LINKS) {
+        toast.error(`最多 ${MAX_LINKS} 个来源链接`);
+        return current;
+      }
+      return [...current, trimmedFigma];
+    });
+  };
+
+  // Open Design's pick semantics: the brand's website joins the source links,
+  // de-duplicated, and the picker closes.
+  const addBrandLink = (brand: BrandReference) => {
+    const link = `https://${brand.domain}`;
+    setBrandPickerOpen(false);
+    setLinks((current) => {
+      if (current.includes(link)) return current;
+      if (current.length >= MAX_LINKS) {
+        toast.error(`最多 ${MAX_LINKS} 个来源链接`);
+        return current;
+      }
+      return [...current, link];
+    });
+  };
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      {/* Open Design's sticky top bar: back on the left, the generate action
+          as the page's primary on the right. */}
+      <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between gap-4 border-b bg-background/90 px-4 backdrop-blur sm:px-7">
+        <Button type="button" variant="ghost" size="sm" onClick={() => navigation.push(paths.designs())}>
+          <ArrowLeft className="size-3.5" />
+          返回
+        </Button>
+        <div className="flex min-w-0 items-center gap-3">
+          <p role="status" className="hidden truncate text-caption text-muted-foreground sm:block">
+            {createSystem.isPending ? "" : missingRequirement}
+          </p>
+          <Button
+            type="button"
+            disabled={!!missingRequirement || createSystem.isPending}
+            onClick={() => createSystem.mutate()}
+          >
+            {createSystem.isPending ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+            {createSystem.isPending ? "正在发起生成…" : "继续生成"}
+            {createSystem.isPending ? null : <ChevronRight className="size-3.5" />}
+          </Button>
+        </div>
+      </header>
+
+      <main className="mx-auto grid w-full max-w-[1280px] gap-6 px-4 py-9 sm:px-7 lg:grid-cols-[minmax(320px,420px)_minmax(0,1fr)] lg:gap-12">
+        <aside className="self-start lg:sticky lg:top-[84px]">
+          <CreateHero />
+        </aside>
+
+        <div className="min-w-0">
+          <section aria-label="从 GitHub、网站或源素材提取">
+            <h2 className="text-title-lg font-bold leading-tight">从 GitHub、网站或源素材提取</h2>
+            <p className="mt-2 text-body text-muted-foreground">
+              从 GitHub 仓库、网站、DESIGN.md 或能体现风格的文件开始。所选智能体会据此生成一套可用体系，之后可在库中继续调整。
+            </p>
+
+            <div className="mt-3 overflow-hidden rounded-lg border bg-card shadow-sm">
+              {/* 名称 — Multica's own row: a standalone system is a long-lived
+                  library entity and needs an identity upstream does not ask for. */}
+              <FormRow label="名称" required>
+                <Input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  aria-label="设计体系名称"
+                  placeholder="例如 · 品牌视觉基线"
+                  className="h-9 max-w-sm text-body"
+                />
+              </FormRow>
+
+              <FormRow label="GitHub 或网站">
+                <div className="space-y-2.5">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <Input
+                      value={sourceInput}
+                      onChange={(event) => setSourceInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                          event.preventDefault();
+                          addLink();
+                        }
+                      }}
+                      aria-label="GitHub 或网站"
+                      placeholder="https://github.com/org/repo"
+                      className="h-9 min-w-0 flex-1 basis-56 text-body"
+                    />
+                    <Button type="button" size="sm" variant="outline" className="h-9" disabled={!validLink || duplicate || links.length >= MAX_LINKS} onClick={addLink}>
+                      添加
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" className="h-9 whitespace-nowrap text-muted-foreground" aria-haspopup="dialog" onClick={() => setBrandPickerOpen(true)}>
+                      <Sparkles className="size-3.5 text-primary" />
+                      从品牌开始
+                    </Button>
+                  </div>
+                  {trimmedInput && !validLink ? <p className="text-caption text-destructive">请输入 https:// 开头的完整链接。</p> : null}
+                  {duplicate ? <p className="text-caption text-muted-foreground">这个链接已经添加过了。</p> : null}
+                  {links.length > 0 ? (
+                    <div aria-label="已添加的来源链接" className="flex flex-wrap gap-2">
+                      {links.map((link) => (
+                        <span key={link} className="inline-flex h-7 max-w-72 items-center gap-1.5 rounded-full border bg-muted/40 py-0.5 pl-2 pr-1 text-caption">
+                          <SourceLinkFavicon url={link} />
+                          <a href={link} target="_blank" rel="noreferrer" title={`打开 ${sourceLinkLabel(link)}`} className="truncate hover:underline">
+                            {sourceLinkLabel(link)}
+                          </a>
+                          <button
+                            type="button"
+                            aria-label={`移除 ${sourceLinkLabel(link)}`}
+                            className="rounded-full p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => setLinks((current) => current.filter((item) => item !== link))}
+                          >
+                            <X className="size-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </FormRow>
+
+              <FormRow label="添加文件" alignTop>
+                <div className="space-y-3">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept="image/*,.pdf,.txt,.md,.json,.html,.woff,.woff2,.ttf,.otf"
+                    className="hidden"
+                    aria-label="上传素材文件"
+                    onChange={(event) => {
+                      if (event.target.files) void stageFiles(event.target.files);
+                      event.target.value = "";
+                    }}
+                  />
+                  <button
+                    type="button"
+                    aria-label="添加文件 — 拖放或点击浏览"
+                    className={cn(
+                      "flex min-h-[104px] w-full flex-col items-center justify-center gap-1.5 rounded-xl border-[1.5px] border-dashed px-4 py-4 text-center transition-colors",
+                      dragActive ? "border-primary bg-primary/10" : "border-border hover:border-primary/50",
+                    )}
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setDragActive(true);
+                    }}
+                    onDragLeave={() => setDragActive(false)}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      setDragActive(false);
+                      if (event.dataTransfer.files.length) void stageFiles(event.dataTransfer.files);
+                    }}
+                  >
+                    <span className="flex size-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                      {uploading ? <LoaderCircle className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}
+                    </span>
+                    <span className="text-caption font-semibold">拖放，或<span className="text-primary">点击浏览</span></span>
+                    <span className="text-micro text-muted-foreground">图片、字体、Logo、PDF、HTML — 单个不超过 12 MB</span>
+                  </button>
+                  {files.length > 0 ? (
+                    <div aria-label="已暂存的素材" className="grid grid-cols-[repeat(auto-fill,minmax(84px,1fr))] gap-3">
+                      {files.map((file) => (
+                        <figure key={file.id} className="min-w-0">
+                          <span className="relative block aspect-square overflow-hidden rounded-lg border bg-muted/30">
+                            {file.previewUrl ? (
+                              <img src={file.previewUrl} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <span className="flex h-full w-full items-center justify-center text-muted-foreground">
+                                <Paperclip className="size-4" />
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              aria-label={`移除 ${file.name}`}
+                              className="absolute right-1 top-1 rounded-full border bg-background/90 p-0.5 text-muted-foreground hover:text-destructive"
+                              onClick={() => setFiles((current) => current.filter((item) => item.id !== file.id))}
+                            >
+                              <X className="size-3" />
+                            </button>
+                          </span>
+                          <figcaption className="mt-1 truncate text-micro text-muted-foreground">{file.name}</figcaption>
+                        </figure>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </FormRow>
+
+              {/* Upstream marks this 可选; here the brief is what the agent
+                  generates from, so it is required (P-008). */}
+              <FormRow label="描述品牌" required hint="品牌语气、简介和产品上下文。会用于生成和后续调整。" alignTop>
+                <Textarea
+                  value={brief}
+                  onChange={(event) => setBrief(event.target.value)}
+                  aria-label="品牌描述"
+                  rows={3}
+                  placeholder="例如：Mission Impastabowl，一个支持自助点餐、移动应用和网站的快休闲意面餐厅"
+                  className="min-h-[86px] resize-none text-body"
+                />
+              </FormRow>
+
+              <FormRow
+                label="粘贴 DESIGN.md"
+                hint="粘贴 DESIGN.md，即可直接从 token、设计理由和组件指南创建设计体系。"
+                hintAction={
+                  <a
+                    href="https://github.com/VoltAgent/awesome-design-md/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-0.5 text-primary hover:underline"
+                  >
+                    参考
+                    <ExternalLink className="size-3" />
+                  </a>
+                }
+                alignTop
+              >
+                <div className="space-y-2.5">
+                  <div role="group" aria-label="DESIGN.md 查看模式" className="inline-flex gap-0.5 rounded-lg border bg-muted/40 p-0.5">
+                    <button
+                      type="button"
+                      aria-pressed={designMdMode === "edit"}
+                      className={cn("rounded-md px-2.5 py-0.5 text-micro font-semibold", designMdMode === "edit" ? "bg-background text-primary shadow-sm" : "text-muted-foreground")}
+                      onClick={() => setDesignMdMode("edit")}
+                    >
+                      编辑
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={designMdMode === "preview"}
+                      disabled={!designMd.trim()}
+                      className={cn("rounded-md px-2.5 py-0.5 text-micro font-semibold disabled:opacity-50", designMdMode === "preview" ? "bg-background text-primary shadow-sm" : "text-muted-foreground")}
+                      onClick={() => setDesignMdMode("preview")}
+                    >
+                      预览
+                    </button>
+                  </div>
+                  {builtinSystems.length > 0 || teamSystems.length > 0 ? (
+                    <div className="flex flex-wrap items-center gap-2.5 rounded-lg bg-muted/40 px-3.5 py-2.5">
+                      <span className="text-caption font-medium">从现有设计系统复制</span>
+                      <span className="relative inline-flex items-center">
+                        <Paintbrush aria-hidden="true" className="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground" />
+                        <select
+                          aria-label="选择设计系统"
+                          value={copySourceKey}
+                          onChange={(event) => handleCopySourceChange(event.target.value)}
+                          className="h-8 max-w-56 rounded-md border bg-background pl-8 pr-2 text-caption"
+                        >
+                          <option value="">选择设计系统</option>
+                          {teamSystems.length > 0 ? (
+                            <optgroup label="团队">
+                              {teamSystems.map((system) => (
+                                <option key={system.id} value={`team:${system.id}`}>{system.name}</option>
+                              ))}
+                            </optgroup>
+                          ) : null}
+                          <optgroup label="官方">
+                            {builtinSystems.map((system) => (
+                              <option key={system.slug} value={`builtin:${system.slug}`}>{system.name}</option>
+                            ))}
+                          </optgroup>
+                        </select>
+                      </span>
+                      {copySource.isPending ? (
+                        <span role="status" className="text-caption text-muted-foreground">正在加载 DESIGN.md…</span>
+                      ) : null}
+                      {copySource.isError ? (
+                        <span role="alert" className="text-caption text-destructive">无法加载该设计系统。</span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {designMdMode === "edit" ? (
+                    <Textarea
+                      value={designMd}
+                      onChange={(event) => {
+                        setDesignMd(event.target.value);
+                        // Typing detaches the copy source and becomes the text
+                        // a later deselect restores.
+                        manualDesignMdRef.current = event.target.value;
+                        if (copySourceKey) setCopySourceKey("");
+                      }}
+                      aria-label="粘贴 DESIGN.md"
+                      rows={5}
+                      placeholder={'---\nname: Heritage\ncolors:\n  primary: "#1A1C1E"\n  tertiary: "#B8422E"\n---\n\n## Overview\n...'}
+                      className="min-h-[150px] resize-y font-mono text-caption leading-relaxed"
+                    />
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto rounded-lg border bg-muted/20 p-3">
+                      <ReadonlyContent content={designMd} className="max-w-none text-body" />
+                    </div>
+                  )}
+                </div>
+              </FormRow>
+
+              {/* Open Design's 高级 disclosure. Its repository-access panel
+                  and local-folder picker belong to upstream's own daemon; here
+                  those rows explain how the same needs are met in this
+                  product, and the working rows (.fig, Figma URL, 备注) stay. */}
+              <div className="border-t">
+                <button
+                  type="button"
+                  aria-expanded={advancedOpen}
+                  onClick={() => setAdvancedOpen((open) => !open)}
+                  className="flex w-full items-center gap-2 px-4 py-3.5 text-caption font-semibold hover:bg-muted/30 sm:px-[18px]"
+                >
+                  {advancedOpen ? <ChevronDown className="size-3.5 text-muted-foreground" /> : <ChevronRight className="size-3.5 text-muted-foreground" />}
+                  高级 · 仓库、本地代码、Figma
+                </button>
+                {advancedOpen ? (
+                  <>
+                    <FormRow label="GitHub 仓库" alignTop>
+                      <p className="text-caption leading-5 text-muted-foreground">
+                        仓库链接直接加到上方「GitHub 或网站」即可。生成任务在你的机器上由守护进程执行，能否克隆取决于所选智能体自身的 GitHub 凭据。
+                      </p>
+                    </FormRow>
+                    <FormRow
+                      label="关联本地代码"
+                      hint={isDesktopShell() ? "用这台电脑上的文件夹作为代码证据；任务在你的机器上执行，智能体直接读取该目录。" : undefined}
+                      alignTop
+                    >
+                      {isDesktopShell() ? (
+                        <div className="space-y-2.5">
+                          <Button type="button" size="sm" variant="outline" onClick={() => void addLocalFolder()}>
+                            <FolderOpen className="size-3.5" />
+                            浏览文件夹
+                          </Button>
+                          {localPaths.length > 0 ? (
+                            <div aria-label="已关联的本地代码" className="flex flex-wrap gap-2">
+                              {localPaths.map((folder) => (
+                                <span key={folder.path} title={folder.path} className="inline-flex h-7 max-w-72 items-center gap-1.5 rounded-full border bg-muted/40 py-0.5 pl-2.5 pr-1 text-caption">
+                                  <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+                                  <span className="truncate font-mono text-micro">{folder.name}</span>
+                                  <button
+                                    type="button"
+                                    aria-label={`移除 ${folder.name}`}
+                                    className="rounded-full p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                    onClick={() => setLocalPaths((current) => current.filter((item) => item.path !== folder.path))}
+                                  >
+                                    <X className="size-3" />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <p className="text-caption leading-5 text-muted-foreground">
+                          浏览器拿不到本地文件夹的真实路径——桌面应用里这一行可以直接选择文件夹。在浏览器里请把绝对路径写进下方备注：任务在你的机器上执行，智能体可以直接读取该目录。
+                        </p>
+                      )}
+                    </FormRow>
+                    <FormRow label="上传 .fig" hint="原样随任务提供给智能体；Multica 不在本地解码。" alignTop>
+                      <div className="space-y-2.5">
+                        <input
+                          ref={figInputRef}
+                          type="file"
+                          multiple
+                          accept=".fig"
+                          className="hidden"
+                          aria-label="上传 .fig 文件"
+                          onChange={(event) => {
+                            if (event.target.files) void stageFigs(event.target.files);
+                            event.target.value = "";
+                          }}
+                        />
+                        <button
+                          type="button"
+                          aria-label="上传 .fig — 拖放或点击浏览"
+                          className="flex min-h-[56px] w-full items-center justify-center rounded-xl border-[1.5px] border-dashed px-4 py-3 text-caption text-muted-foreground transition-colors hover:border-primary/50"
+                          onClick={() => figInputRef.current?.click()}
+                          onDragOver={(event) => event.preventDefault()}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            if (event.dataTransfer.files.length) void stageFigs(event.dataTransfer.files);
+                          }}
+                        >
+                          拖入 .fig 或<span className="text-primary">点击浏览</span>
+                        </button>
+                        {figs.length > 0 ? (
+                          <div aria-label="已暂存的 .fig" className="flex flex-wrap gap-2">
+                            {figs.map((file) => (
+                              <span key={file.id} className="inline-flex h-7 max-w-72 items-center gap-1.5 rounded-full border bg-muted/40 py-0.5 pl-2.5 pr-1 text-caption">
+                                <Paperclip className="size-3.5 shrink-0 text-muted-foreground" />
+                                <span className="truncate">{file.name}</span>
+                                <button
+                                  type="button"
+                                  aria-label={`移除 ${file.name}`}
+                                  className="rounded-full p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                  onClick={() => setFigs((current) => current.filter((item) => item.id !== file.id))}
+                                >
+                                  <X className="size-3" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </FormRow>
+                    <FormRow label="Figma URL" hint="保存为 Figma 设计来源，智能体把它作为标准参考。" alignTop>
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          <Input
+                            value={figmaInput}
+                            onChange={(event) => setFigmaInput(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                                event.preventDefault();
+                                addFigmaLink();
+                              }
+                            }}
+                            aria-label="Figma URL"
+                            placeholder="https://figma.com/design/… 或 /file/…"
+                            className="h-9 min-w-0 flex-1 basis-56 text-body"
+                          />
+                          <Button type="button" size="sm" variant="outline" className="h-9" disabled={!validFigma} onClick={addFigmaLink}>
+                            添加
+                          </Button>
+                        </div>
+                        {trimmedFigma && !validFigma ? (
+                          <p className="text-caption text-destructive">请输入 figma.com/design/… 或 figma.com/file/… 链接。</p>
+                        ) : null}
+                      </div>
+                    </FormRow>
+                    <FormRow label="备注" alignTop>
+                      <Textarea
+                        value={notes}
+                        onChange={(event) => setNotes(event.target.value)}
+                        aria-label="备注"
+                        rows={3}
+                        placeholder="例如：我们使用温暖自然的配色和圆角。品牌语气有趣但专业..."
+                        className="min-h-[86px] resize-none text-body"
+                      />
+                    </FormRow>
+                  </>
+                ) : null}
+              </div>
+
+              {/* Multica's own rows: generation runs as the picked agent's
+                  task (P-008), and the platform shapes the component forms. */}
+              <FormRow label="智能体" required>
+                <select
+                  aria-label="智能体"
+                  value={agentId}
+                  onChange={(event) => setAgentId(event.target.value)}
+                  className="h-9 w-full max-w-sm rounded-md border bg-background px-3 text-body"
+                >
+                  <option value="">选择智能体</option>
+                  {agents
+                    .filter((agent: Agent) => !agent.archived_at || agent.id === agentId)
+                    .map((agent: Agent) => (
+                      <option key={agent.id} value={agent.id} disabled={!isAgentAvailable(agent)}>
+                        {agent.name} · {isAgentAvailable(agent) ? agent.status : "不可用"}
+                      </option>
+                    ))}
+                </select>
+              </FormRow>
+
+              <FormRow label="平台">
+                <div role="radiogroup" aria-label="平台" className="inline-flex max-w-full overflow-hidden rounded-md border bg-muted/30 p-0.5">
+                  {PLATFORM_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={platform === option.value}
+                      onClick={() => setPlatform(option.value)}
+                      className={
+                        platform === option.value
+                          ? "rounded-[5px] bg-background px-3 py-1 text-caption font-medium text-foreground shadow-sm"
+                          : "rounded-[5px] px-3 py-1 text-caption text-muted-foreground hover:text-foreground"
+                      }
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </FormRow>
+            </div>
+
+            <p role="status" className="mt-3 text-caption text-muted-foreground sm:hidden">
+              {createSystem.isPending ? "" : missingRequirement}
+            </p>
+          </section>
+        </div>
+      </main>
+
+      {brandPickerOpen ? <BrandPickerDialog onClose={() => setBrandPickerOpen(false)} onPick={addBrandLink} /> : null}
+    </div>
+  );
+}
+
+/** Favicon for a source-link chip, with the globe as the offline fallback. */
+function SourceLinkFavicon({ url }: { url: string }) {
+  const [failed, setFailed] = useState(false);
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    // Not a parseable URL — keep the globe.
+  }
+  if (!host || failed) return <Globe className="size-3.5 shrink-0 text-muted-foreground" />;
+  return (
+    <img
+      src={brandFaviconUrl(host, 32)}
+      alt=""
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      className="size-4 shrink-0 rounded-[3px] object-contain"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function FormRow({
+  label,
+  required,
+  hint,
+  hintAction,
+  alignTop,
+  children,
+}: {
+  label: string;
+  /** Marks a field the submit gate demands; optional rows carry no marker. */
+  required?: boolean;
+  hint?: string;
+  hintAction?: React.ReactNode;
+  alignTop?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid grid-cols-1 gap-2 border-t px-4 py-4 first:border-t-0 sm:px-[18px] md:grid-cols-[220px_minmax(0,1fr)] md:gap-4",
+        alignTop ? "md:items-start" : "md:items-center",
+      )}
+    >
+      <div className="min-w-0">
+        <strong className="block text-caption font-semibold leading-tight">
+          <span>{label}</span>
+          {required ? <span aria-hidden="true" className="ml-0.5 text-destructive">*</span> : null}
+        </strong>
+        {hint ? (
+          <span className="mt-1 block text-micro leading-4 text-muted-foreground">
+            {hint}
+            {hintAction ? <span className="ml-1 inline-flex">{hintAction}</span> : null}
+          </span>
+        ) : null}
+      </div>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Open Design's create hero, in this product's voice: eyebrow, headline,
+ * lede, the three steps with the time estimate and deliverables, and the
+ * brand-agnostic preview card of what a generated system holds.
+ */
+function CreateHero() {
+  return (
+    <section className="flex flex-col gap-5">
+      <div>
+        <span className="inline-flex items-center gap-1.5 text-caption font-semibold text-primary">
+          <Sparkles className="size-3.5" />
+          设计体系
+        </span>
+        <h1 className="mt-2 font-serif text-display font-semibold leading-[1.04]">几分钟，生成一套设计体系</h1>
+        <p className="mt-3 text-body leading-6 text-muted-foreground">
+          把一个网站或 DESIGN.md——连同你手头已有的上下文——变成一套完整、贴合品牌、马上可用的设计体系。
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted-foreground">
+          <span><strong className="text-foreground">3</strong> 步</span>
+          <span aria-hidden="true" className="size-[3px] rounded-full bg-border" />
+          <span>约 3 分钟</span>
+          <span aria-hidden="true" className="size-[3px] rounded-full bg-border" />
+          <span>DESIGN.md · tokens · UI Kit · 预览</span>
+        </div>
+        <ol className="mt-4 flex flex-col gap-2.5">
+          {[
+            { n: 1, title: "网站或 DESIGN.md", desc: "粘贴链接、挑一个品牌，或直接贴入 token" },
+            { n: 2, title: "补充素材", desc: "图片、字体、参考链接——都可选" },
+            { n: 3, title: "生成", desc: "所选智能体生成草稿，之后可继续调整" },
+          ].map((step) => (
+            <li key={step.n} className="flex items-start gap-2.5">
+              <span className="flex size-5 shrink-0 items-center justify-center rounded-full border bg-card text-micro font-semibold">{step.n}</span>
+              <span className="min-w-0 text-caption leading-5">
+                <strong className="font-semibold">{step.title}</strong>
+                <em className="ml-1.5 not-italic text-muted-foreground">{step.desc}</em>
+              </span>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      {/* Decorative: the outcome, made tangible. Brand-agnostic values only. */}
+      <div aria-hidden="true" className="rounded-xl border bg-card p-4 shadow-sm">
+        <div className="flex items-center gap-1.5 border-b pb-3">
+          <span className="size-2 rounded-full bg-border" />
+          <span className="size-2 rounded-full bg-border" />
+          <span className="size-2 rounded-full bg-border" />
+          <span className="ml-1 text-micro font-medium text-muted-foreground">你的设计体系</span>
+        </div>
+        <div className="mt-3">
+          <span className="text-micro uppercase tracking-wide text-muted-foreground">Palette</span>
+          <div className="mt-1.5 flex gap-1.5">
+            {["#4f46e5", "#0ea5e9", "#14b8a6", "#f59e0b", "#f43f5e"].map((color) => (
+              <span key={color} className="h-6 flex-1 rounded-md" style={{ background: color }} />
+            ))}
+          </div>
+        </div>
+        <div className="mt-3">
+          <span className="text-micro uppercase tracking-wide text-muted-foreground">Type scale</span>
+          <div className="mt-1 flex items-baseline gap-3">
+            <span className="text-display leading-none">Aa</span>
+            <span className="text-title leading-none">Aa</span>
+            <span className="text-body leading-none">Aa</span>
+          </div>
+        </div>
+        <div className="mt-3">
+          <span className="text-micro uppercase tracking-wide text-muted-foreground">Components</span>
+          <div className="mt-1.5 flex items-center gap-2">
+            <span className="rounded-full bg-primary px-3 py-1 text-caption font-medium text-primary-foreground">Primary</span>
+            <span className="rounded-full border px-3 py-1 text-caption text-muted-foreground">Ghost</span>
+            <span className="flex min-w-0 flex-1 flex-col gap-1 rounded-md border p-2">
+              <span className="h-1.5 w-3/4 rounded-full bg-muted" />
+              <span className="h-1.5 w-1/2 rounded-full bg-muted" />
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const BRAND_PAGE_SIZE = 24;
+const ALL_BRAND_CATEGORIES = "all";
+
+/** Favicon tile with a monogram fallback, as upstream's BrandFavicon. */
+function BrandFavicon({ domain, name, className }: { domain: string; name: string; className?: string }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+  }, [domain]);
+  if (failed) {
+    return (
+      <span
+        aria-hidden="true"
+        className={cn("flex items-center justify-center rounded-md bg-muted font-semibold text-muted-foreground", className)}
+      >
+        {name.slice(0, 1).toUpperCase()}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={brandFaviconUrl(domain, 64)}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      className={cn("object-contain", className)}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+/**
+ * 从品牌开始 — Open Design's brand reference picker in its compact modal
+ * form: search and a vertical category nav on the left, the quick-pick row
+ * and the two-up brand wall on the right. Picking a brand hands it to the
+ * host, which adds `https://<domain>` to the source links.
+ *
+ * The host mounts this only while open, so every open starts back at the
+ * all-categories first page, matching upstream's unmount-on-close behaviour.
+ */
+function BrandPickerDialog({ onClose, onPick }: { onClose: () => void; onPick: (brand: BrandReference) => void }) {
+  const [category, setCategory] = useState(ALL_BRAND_CATEGORIES);
+  const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState(BRAND_PAGE_SIZE);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return BRAND_REFERENCES.filter((brand) => {
+      if (category !== ALL_BRAND_CATEGORIES && brand.category !== category) return false;
+      if (!q) return true;
+      // Match the raw bucket AND its zh label, so typing 汽车 finds Porsche.
+      return (
+        brand.name.toLowerCase().includes(q) ||
+        brand.domain.toLowerCase().includes(q) ||
+        brand.category.toLowerCase().includes(q) ||
+        brandCategoryLabel(brand.category).toLowerCase().includes(q)
+      );
+    });
+  }, [category, query]);
+
+  // Narrowing the wall (new filter / search) starts over from the top.
+  useEffect(() => {
+    setLimit(BRAND_PAGE_SIZE);
+  }, [category, query]);
+
+  // Infinite scroll with the modal body as the observer root; runtimes
+  // without IntersectionObserver (jsdom) keep the 显示更多 button instead.
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setLimit((current) => Math.min(current + BRAND_PAGE_SIZE, filtered.length));
+        }
+      },
+      { root: scrollRef.current, rootMargin: "600px 0px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [filtered.length]);
+
+  const visible = filtered.slice(0, limit);
+  const showQuickPicks = category === ALL_BRAND_CATEGORIES && query.trim() === "";
+
+  return (
+    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent className="flex h-[min(680px,84vh)] w-[calc(100%-2rem)] flex-col gap-0 p-0 sm:max-w-[920px]">
+        <DialogHeader className="shrink-0 gap-1.5 px-6 pb-3.5 pt-5 text-left">
+          <DialogTitle className="text-title-lg font-bold">从品牌开始</DialogTitle>
+          <DialogDescription className="text-caption">
+            搜索数百个品牌，选择一个后我们会把它的网站作为风格参考加入。
+          </DialogDescription>
+        </DialogHeader>
+        {/* One scrolling surface under the pinned header, as upstream. */}
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden border-t px-6 pb-5 pt-4">
+          <div className="flex flex-col items-stretch gap-5 sm:flex-row sm:items-start">
+            <aside className="flex shrink-0 flex-col gap-3 sm:sticky sm:top-0 sm:w-[200px]">
+              <div className="relative flex items-center">
+                <Search aria-hidden="true" className="pointer-events-none absolute left-3 size-3.5 text-muted-foreground" />
+                <Input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  aria-label="搜索品牌"
+                  placeholder="搜索品牌…"
+                  className="h-[38px] rounded-full bg-muted/40 pl-9 text-caption"
+                />
+              </div>
+              <nav aria-label="品牌分类" className="flex flex-row flex-wrap gap-0.5 sm:flex-col sm:flex-nowrap">
+                {[ALL_BRAND_CATEGORIES, ...BRAND_CATEGORIES].map((value) => {
+                  const active = category === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setCategory(value)}
+                      className={cn(
+                        "rounded-md px-2.5 py-[7px] text-left text-caption",
+                        active
+                          ? "bg-primary/10 font-medium text-primary"
+                          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                      )}
+                    >
+                      {value === ALL_BRAND_CATEGORIES ? "全部" : brandCategoryLabel(value)}
+                    </button>
+                  );
+                })}
+              </nav>
+            </aside>
+
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
+              {showQuickPicks ? (
+                <div role="group" aria-label="热门品牌 · 点击添加" className="flex flex-col gap-2">
+                  <span className="text-micro font-semibold uppercase tracking-wider text-muted-foreground">
+                    热门品牌 · 点击添加
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {QUICK_PICK_BRANDS.map((brand) => (
+                      <button
+                        key={`quick-${brand.domain}`}
+                        type="button"
+                        onClick={() => onPick(brand)}
+                        className="inline-flex items-center gap-2 rounded-full border bg-card py-1.5 pl-2 pr-3 text-caption font-medium transition-colors hover:border-primary hover:bg-primary/10"
+                      >
+                        <BrandFavicon domain={brand.domain} name={brand.name} className="size-[22px] rounded-[4px]" />
+                        <span className="whitespace-nowrap">{brand.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
+                {visible.map((brand) => (
+                  <button
+                    key={brand.domain}
+                    type="button"
+                    onClick={() => onPick(brand)}
+                    className="group relative -mx-2 flex min-w-0 items-center gap-3 rounded-lg px-2 py-4 text-left transition-colors hover:bg-muted/50"
+                  >
+                    <span className="flex size-[46px] shrink-0 items-center justify-center overflow-hidden">
+                      <BrandFavicon domain={brand.domain} name={brand.name} className="size-full rounded-md text-title" />
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="truncate text-caption font-semibold" title={brand.name}>{brand.name}</span>
+                      <span className="truncate text-micro text-muted-foreground">{brandCategoryLabel(brand.category)}</span>
+                    </span>
+                    {/* Hover affordance: the 添加 pill slides in from the trailing edge. */}
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute right-2 inline-flex translate-y-1.5 items-center gap-1 rounded-full bg-primary px-3.5 py-2 text-micro font-semibold text-primary-foreground opacity-0 transition-all group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100"
+                    >
+                      添加
+                      <ArrowRight className="size-3" />
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {visible.length === 0 ? (
+                <p className="py-2 text-caption text-muted-foreground">没有匹配的品牌。</p>
+              ) : null}
+
+              {limit < filtered.length ? (
+                <>
+                  <div ref={sentinelRef} aria-hidden="true" className="h-px" />
+                  <div className="flex justify-center">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="rounded-full"
+                      onClick={() => setLimit((current) => Math.min(current + BRAND_PAGE_SIZE, filtered.length))}
+                    >
+                      显示更多
+                    </Button>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

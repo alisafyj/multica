@@ -22,8 +22,37 @@ export interface CreateIssueRequest {
   label_ids?: string[];
 }
 
+export interface CreateCommentSubIssueManualRequest {
+  mode: "manual";
+  capture_token: string;
+  issue: CreateIssueRequest;
+}
+
+export interface CreateCommentSubIssueAgentRequest {
+  mode: "agent";
+  capture_token: string;
+  quick_create: {
+    agent_id?: string;
+    squad_id?: string;
+    prompt: string;
+    priority?: IssuePriority;
+    due_date?: string;
+    project_id?: string | null;
+    attachment_ids?: string[];
+  };
+}
+
+export type CreateCommentSubIssueRequest =
+  | CreateCommentSubIssueManualRequest
+  | CreateCommentSubIssueAgentRequest;
+
 export interface UpdateIssueRequest {
+  /** Legacy aggregate compare-and-swap token. New text editors use field
+   * baselines so unrelated issue activity does not reject their edits. */
+  expected_revision?: number;
   title?: string;
+  /** Authoritative title the editor adopted before producing this update. */
+  title_base?: string;
   description?: string;
   /** Authoritative description the editor had adopted before producing this
    * update. The server uses it to merge channel media that landed meanwhile. */
@@ -188,6 +217,7 @@ export interface ListIssuesParams {
     | "title"
     | "created_at"
     | "updated_at"
+    | "last_activity"
     | "start_date"
     | "due_date"
     | `property:${string}`;
@@ -236,6 +266,7 @@ export interface ListGroupedIssuesParams {
     | "title"
     | "created_at"
     | "updated_at"
+    | "last_activity"
     | "start_date"
     | "due_date"
     | `property:${string}`;
@@ -300,6 +331,7 @@ export type IssueTableSortField =
   | "title"
   | "created_at"
   | "updated_at"
+  | "last_activity"
   | "start_date"
   | "due_date"
   | `property:${string}`;
@@ -317,17 +349,30 @@ export interface IssueTableQuerySpec {
 export type IssueTableGroupSpec =
   | { kind: "none" }
   | { kind: "status" }
+  /**
+   * Group by the CATEGORY a status behaves as, not by the status key.
+   *
+   * Board columns, list sections and swimlane cells are categories, so a custom
+   * status folds into the column it behaves as instead of getting one of its
+   * own — which is what keeps the surface's fan-out pinned at 7 no matter how
+   * many statuses a workspace defines. The descriptor still reports
+   * `value.kind === "status"` because a category's value IS its canonical
+   * status key; the group KEY is what distinguishes the two contracts.
+   * (MUL-6243)
+   */
+  | { kind: "status_category" }
   | { kind: "assignee" }
   | { kind: "project" }
   | { kind: "parent" }
   | {
       kind: "compound";
       primary: "assignee" | "project" | "parent";
-      secondary: "status";
+      /** `status_category` folds custom statuses into their category's cell. */
+      secondary: "status" | "status_category";
       /** Optional visible secondary buckets. When present, the server pages
        * only primary groups that contain at least one matching card and
        * returns `total` for that complete visible result set. */
-      secondary_values?: IssueStatus[];
+      secondary_values?: IssueStatus[] | IssueStatusCategory[];
     }
   | { kind: "property"; property_id: string; include_empty?: boolean };
 

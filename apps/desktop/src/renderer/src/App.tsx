@@ -20,6 +20,7 @@ import { UpdateNotification } from "./components/update-notification";
 import { IssueWindow } from "./components/issue-window";
 import { useTabStore } from "./stores/tab-store";
 import { useWindowOverlayStore } from "./stores/window-overlay-store";
+import { useOpenSettingsShortcut } from "./hooks/use-open-settings-shortcut";
 import { useDaemonIPCBridge } from "./platform/daemon-ipc-bridge";
 import { syncDaemonOnLogin } from "./platform/daemon-login-sync";
 import { createDesktopLocaleAdapter } from "./platform/i18n-adapter";
@@ -28,8 +29,8 @@ import { RESOURCES } from "@multica/views/locales";
 import { DesktopClientUsageReporter } from "./platform/client-usage-reporter";
 import { DiagnosticRouteReporter } from "./platform/diagnostic-route-reporter";
 import { flushFreezeBreadcrumb } from "./freeze-flush";
-import type { StorageAdapter } from "@multica/core/types";
 import { DesktopAuthSessionBridge } from "./platform/auth-session-bridge";
+import { desktopAuthStorage } from "./platform/desktop-auth-storage";
 
 // BCP-47 region tags for the <html lang> attribute, mirroring
 // apps/web/app/layout.tsx HTML_LANG. index.html ships a static lang="en";
@@ -42,36 +43,6 @@ const HTML_LANG: Record<SupportedLocale, string> = {
   ko: "ko-KR",
   ja: "ja-JP",
 };
-
-const desktopStorage: StorageAdapter = {
-  getItem: (key) => {
-    if (key !== "multica_token") return window.localStorage.getItem(key);
-    const useSySso = configStore.getState().useSySso;
-    if (useSySso === null) return null;
-    return useSySso
-      ? window.desktopAPI.getAuthToken()
-      : window.localStorage.getItem(key);
-  },
-  setItem: (key, value) => {
-    if (
-      key !== "multica_token" ||
-      configStore.getState().useSySso === false
-    ) {
-      window.localStorage.setItem(key, value);
-    }
-  },
-  removeItem: (key) => {
-    if (
-      key === "multica_token" &&
-      configStore.getState().useSySso === true
-    ) {
-      void window.desktopAPI.clearAuthToken();
-    } else {
-      window.localStorage.removeItem(key);
-    }
-  },
-};
-
 
 /**
  * Cmd/Ctrl+W: close the active tab. When the last real tab is closed
@@ -206,7 +177,7 @@ function AppContent() {
   // API URL is known, since syncDaemonOnLogin pushes that URL itself.
   useEffect(() => {
     if (!user || useSySso === null || !runtimeConfig) return;
-    const token = desktopStorage.getItem("multica_token");
+    const token = desktopAuthStorage.getItem("multica_token");
     if (!token) return;
     const userId = user.id;
     (async () => {
@@ -430,6 +401,9 @@ export default function App() {
   const windowContext =
     window.desktopAPI.windowContext ?? { kind: "main" as const };
   useCmdWCloseTab();
+  // Mounted at the App root for the same reason as Cmd+W: the chord has to
+  // work in every renderer state, not only inside the tab shell.
+  useOpenSettingsShortcut();
 
   // Flush a freeze/crash breadcrumb the main process parked from a previous
   // session. A true hang or process death can't report itself when it happens
@@ -500,7 +474,7 @@ export default function App() {
           onLogout={
             windowContext.kind === "main" ? handleDaemonLogout : undefined
           }
-          storage={desktopStorage}
+          storage={desktopAuthStorage}
           identity={identity}
           locale={locale}
           resources={resources}
