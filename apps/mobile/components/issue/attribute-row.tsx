@@ -31,8 +31,7 @@ import { AttributeChip } from "./attribute-chip";
 import { useActorLookup } from "@/data/use-actor-name";
 import { findProject, projectListOptions } from "@/data/queries/projects";
 import { useWorkspaceStore } from "@/data/workspace-store";
-import { issuePriorityLabel, issueStatusLabel } from "@/lib/issue-status";
-import { PRIORITY_LABEL as PRIORITY_FULL_LABEL } from "@/lib/issue-status";
+import { issuePriorityLabel, issueStatusLabel, PRIORITY_LABEL as PRIORITY_FULL_LABEL } from "@/lib/issue-status";
 import { useIssueStatuses } from "@/lib/use-issue-statuses";
 
 // Chip placeholder shortens `none` from "No priority" → "Priority" so the

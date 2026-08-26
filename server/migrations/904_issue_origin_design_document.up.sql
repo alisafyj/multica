@@ -8,8 +8,9 @@
 -- the implementation work the design feeds into, and moving it would claim
 -- that implementation had started.
 --
--- origin_id carries the design_document.id, which also gives the issue side a
--- way back to the document without a second column.
+-- origin_id stays NULL: design_document already indexes (workspace_id,
+-- issue_id), so the issue side reaches its document through that index rather
+-- than through a second pointer that would have to be kept in step with it.
 ALTER TABLE issue DROP CONSTRAINT IF EXISTS issue_origin_type_check;
 ALTER TABLE issue ADD CONSTRAINT issue_origin_type_check
     CHECK (origin_type IN ('autopilot', 'quick_create', 'lark_chat', 'slack_chat', 'agent_create', 'dingtalk_chat', 'wecom_chat', 'telegram_chat', 'design_document'));
