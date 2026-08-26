@@ -13,6 +13,45 @@
 -- No foreign keys per repository policy: the pointers below are resolved and
 -- cleaned up in application code, inside a transaction where atomicity
 -- matters.
+
+-- Before any of that: fork main shipped a DIFFERENT design_document under the
+-- stem 878_design_document (released in v0.4.23-sso.7), developed in parallel
+-- with this one. The runner keys schema_migrations on the full stem, so on a
+-- database that ran fork main both stems are independent and this file still
+-- executes — straight into "relation design_document already exists", which
+-- stops the whole deployment.
+--
+-- Two of this branch's own indexes make it worse quietly: 882 and 883 create
+-- idx_design_document_project and idx_design_document_issue, names fork main's
+-- 879 and 880 already took on the old tables. Both use IF NOT EXISTS, so they
+-- would report success and leave the new design_document with no index behind
+-- the project list or the issue lookup.
+--
+-- The predecessor is not data this build can read: its Go code, its queries and
+-- its design_document_input_snapshot table are gone from this branch, and the
+-- redesign is not expressible as ALTERs (the snapshot table folds into a JSONB
+-- column). So it is removed, and only when the old shape is what is actually
+-- there — the branch's own design_document has a platform column and the
+-- predecessor's does not. On a fresh database, and on one that already ran this
+-- file, the block is a no-op.
+DO $$
+BEGIN
+    IF to_regclass('public.design_document') IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'design_document'
+              AND column_name = 'platform'
+        )
+    THEN
+        DROP TABLE IF EXISTS design_document_input_snapshot;
+        DROP TABLE IF EXISTS design_document_revision;
+        DROP TABLE IF EXISTS design_document;
+    END IF;
+END
+$$;
+
 CREATE TABLE design_document (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL,
