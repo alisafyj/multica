@@ -250,6 +250,26 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 		title = designDocumentTitleFromBrief(req.Brief, project.Title)
 	}
 
+	// Reference attachments are pinned once: the frozen input records what they
+	// are and the exact bytes they were, so the run (and any later adjustment
+	// carrying them forward) cannot see a different file under the same id.
+	//
+	// This runs before the companion issue is created, not after. Attachments
+	// are the part of the request most likely to be rejected — an id from
+	// another workspace, a file deleted between picking it and sending — and
+	// rejecting them once the card is already in the project would leave the
+	// user an orphan task for a design that never ran.
+	attachments, attachmentErr := h.resolveDesignDocumentAttachments(r.Context(), workspaceUUID, req.Attachments)
+	if attachmentErr != nil {
+		writeProjectDesignSystemRequestError(w, attachmentErr)
+		return
+	}
+	attachmentsJSON, err := json.Marshal(attachments)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "context_failed", "failed to encode attachments")
+		return
+	}
+
 	// The launcher can open a task card next to the design run. The issue is a
 	// traceable companion, never a driver: nothing in the design task moves it
 	// (DC-045). It is created before the document so the document row can carry
@@ -301,19 +321,20 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 		createdIssueID = created.Issue.ID
 	}
 
-	// Reference attachments are resolved and pinned here, once: the frozen
-	// input records what they are and the exact bytes they were, so the run
-	// (and any later adjustment carrying them forward) cannot see a different
-	// file under the same id.
-	attachments, attachmentErr := h.resolveDesignDocumentAttachments(r.Context(), workspaceUUID, req.Attachments)
-	if attachmentErr != nil {
-		writeProjectDesignSystemRequestError(w, attachmentErr)
-		return
-	}
-	attachmentsJSON, err := json.Marshal(attachments)
-	if err != nil {
-		writeProjectDesignSystemError(w, http.StatusInternalServerError, "context_failed", "failed to encode attachments")
-		return
+	// From here on the companion issue exists, so every failing path owes the
+	// project a cleanup. The document is what the card is a companion to; if
+	// there is no document there is nothing for it to be beside.
+	deleteCompanionIssue := func() {
+		if !createdIssueID.Valid {
+			return
+		}
+		if deleteErr := h.Queries.DeleteIssue(r.Context(), db.DeleteIssueParams{
+			ID:          createdIssueID,
+			WorkspaceID: workspaceUUID,
+		}); deleteErr != nil {
+			slog.Error("design document: companion issue left behind after a failed create",
+				"issue_id", uuidToString(createdIssueID), "error", deleteErr)
+		}
 	}
 
 	input := designDocumentInputSnapshot{
@@ -329,6 +350,7 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	inputJSON, err := json.Marshal(input)
 	if err != nil || len(inputJSON) > designDocumentMaxSnapshotBytes {
+		deleteCompanionIssue()
 		writeProjectDesignSystemError(w, http.StatusRequestEntityTooLarge, "input_snapshot_too_large", "design inputs exceed the size limit")
 		return
 	}
@@ -337,16 +359,7 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 		r.Context(), workspaceUUID, requesterUUID, projectUUID, scope, issueUUID, agentUUID, title, input, inputJSON, attachments,
 	)
 	if err != nil {
-		if createdIssueID.Valid {
-			// The companion issue only exists for a document that was created.
-			if deleteErr := h.Queries.DeleteIssue(r.Context(), db.DeleteIssueParams{
-				ID:          createdIssueID,
-				WorkspaceID: workspaceUUID,
-			}); deleteErr != nil {
-				slog.Error("design document: companion issue left behind after a failed create",
-					"issue_id", uuidToString(createdIssueID), "error", deleteErr)
-			}
-		}
+		deleteCompanionIssue()
 		writeProjectDesignSystemRequestError(w, err)
 		return
 	}

@@ -70,7 +70,7 @@ func designDocumentShareResponse(document db.DesignDocument, share db.DesignDocu
 
 // loadShareableRevision resolves the revision in the path and applies the two
 // gates every shareable revision must pass: it belongs to the document in the
-// path, and it is not the document's current draft. A draft is not a promise
+// path, and it is the revision the document has saved. A draft is not a promise
 // (P-011 / DC-034), so it can never be handed to an outside visitor.
 func (h *Handler) loadShareableRevision(w http.ResponseWriter, r *http.Request, document db.DesignDocument, workspaceUUID pgtype.UUID) (db.DesignDocumentRevision, bool) {
 	revisionUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "revisionId"), "revision_id")
@@ -88,13 +88,18 @@ func (h *Handler) loadShareableRevision(w http.ResponseWriter, r *http.Request, 
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "revision_lookup_failed", "failed to load the design document revision")
 		return db.DesignDocumentRevision{}, false
 	}
-	// Saving keeps the draft pointer (the draft becomes the saved revision), so
-	// a revision is only unshareable while it is the draft and has never been
-	// saved. Historical revisions past the current draft stay shareable.
-	unsavedDraft := document.DraftRevisionID.Valid && document.DraftRevisionID == revisionUUID &&
-		(!document.SavedRevisionID.Valid || document.SavedRevisionID != revisionUUID)
-	if unsavedDraft {
-		writeProjectDesignSystemError(w, http.StatusConflict, "share_draft_revision", "a draft revision cannot be shared; save it first")
+	// The question is whether this revision was saved, not whether it is the
+	// current draft — those come apart the moment an unsaved draft is adjusted.
+	// The adjustment becomes the draft, the old revision drops into history
+	// with saved_revision_id still null, and asking "is this the draft?" then
+	// answers no and hands unpublished work a permanent anonymous link.
+	//
+	// Saving keeps the pointer (the draft becomes the saved revision), and
+	// nothing records which revisions were saved in the past, so
+	// saved_revision_id is the whole answer: the document promises exactly one
+	// revision at a time, and that is the one a visitor may see.
+	if !document.SavedRevisionID.Valid || document.SavedRevisionID != revisionUUID {
+		writeProjectDesignSystemError(w, http.StatusConflict, "share_draft_revision", "only a saved revision can be shared; save it first")
 		return db.DesignDocumentRevision{}, false
 	}
 	var manifest designdocument.Manifest

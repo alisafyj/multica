@@ -132,6 +132,25 @@ func TestDesignDocumentShareLifecycleIsCreateOrReturnAndRevokeOnce(t *testing.T)
 	}
 }
 
+// A revision that was never saved stays unshareable once the draft moves past
+// it. Adjusting an unsaved draft leaves the old revision sitting in history
+// with saved_revision_id still null; the gate used to ask "is this the current
+// draft?", which answers no here and minted a permanent anonymous link for
+// work the user never published.
+func TestDesignDocumentShareRefusesSupersededUnsavedRevision(t *testing.T) {
+	fixture := createDesignDocumentRevisionFixture(t)
+	if _, err := testPool.Exec(context.Background(),
+		"UPDATE design_document SET draft_revision_id = gen_random_uuid() WHERE id = $1",
+		fixture.Document.ID,
+	); err != nil {
+		t.Fatalf("move the draft past the revision: %v", err)
+	}
+	recorder := performDesignDocumentShareCreate(t, fixture, uuidToString(fixture.Revision.ID))
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "share_draft_revision") {
+		t.Fatalf("superseded unsaved revision: status = %d, want 409; body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 // A draft revision is refused, malformed ids are bad requests, and revisions
 // and shares of other documents are not found rather than cross-reads.
 func TestDesignDocumentShareRefusesDraftsStrangersAndBadIds(t *testing.T) {
