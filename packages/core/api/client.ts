@@ -1,3 +1,4 @@
+import { configStore } from "../config";
 import type {
   Issue,
   IssuePriority,
@@ -721,6 +722,19 @@ export class ApiError extends Error {
     this.status = status;
     this.statusText = statusText;
     this.body = body;
+  }
+}
+
+function assertAgentStarterPromptsWriteSupported(data: {
+  starter_prompts?: unknown;
+}): void {
+  if (
+    Object.prototype.hasOwnProperty.call(data, "starter_prompts") &&
+    !configStore.getState().agentStarterPromptsSupported
+  ) {
+    throw new Error(
+      "This server version does not support agent starter prompts. Update the server before saving them.",
+    );
   }
 }
 
@@ -1649,6 +1663,7 @@ export class ApiClient {
   }
 
   async createAgent(data: CreateAgentRequest): Promise<Agent> {
+    assertAgentStarterPromptsWriteSupported(data);
     return this.fetch("/api/agents", {
       method: "POST",
       body: JSON.stringify(data),
@@ -1764,6 +1779,7 @@ export class ApiClient {
   }
 
   async updateAgent(id: string, data: UpdateAgentRequest): Promise<Agent> {
+    assertAgentStarterPromptsWriteSupported(data);
     return this.fetch(`/api/agents/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),

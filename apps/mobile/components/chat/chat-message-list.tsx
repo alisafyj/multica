@@ -47,6 +47,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type {
+  Agent,
   ChatMessage,
   ChatPendingTask,
   ChatQuickAction,
@@ -80,8 +81,8 @@ interface Props {
   loading: boolean;
   /** Has the workspace ever started a chat? Drives empty-state copy. */
   hasSessions: boolean;
-  /** Currently picked / inherited agent's display name. */
-  agentName?: string;
+  /** Currently picked / inherited agent. */
+  agent: Agent | null;
   /** Receive a starter-prompt tap. Caller writes into the draft store
    *  (or focuses the composer with the text) — empty state stays neutral
    *  about send vs. preview. */
@@ -106,7 +107,7 @@ export function ChatMessageList({
   messages,
   loading,
   hasSessions,
-  agentName,
+  agent,
   onPickPrompt,
   onQuickAction,
   quickActionsDisabled = false,
@@ -152,7 +153,7 @@ export function ChatMessageList({
     return (
       <ChatEmptyState
         hasSessions={hasSessions}
-        agentName={agentName}
+        agent={agent}
         onPickPrompt={onPickPrompt}
       />
     );

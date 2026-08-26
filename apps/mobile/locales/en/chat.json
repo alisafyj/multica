@@ -41,21 +41,27 @@
   },
   "empty_state": {
     "first_time": {
-      "title": "Chat with your agents",
-      "subtitle_prefix": "✨ They know your workspace — ",
-      "subtitle_highlight": "issues, projects, skills",
-      "subtitle_suffix": ".",
-      "description": "Ask for a summary, plan your day, or hand off a small task."
+      "title": "Chat with your agents"
     },
     "returning": {
       "title_named": "Hi, I'm {{name}}",
       "title_default": "Welcome back to Multica",
       "subtitle": "Try asking"
     },
-    "starter_prompts": {
-      "list_issues": "List my open issues by priority",
-      "summarize_today": "Summarize what I did today",
-      "plan_next": "Help me plan what to do next"
+    "pick_example": "Pick an example to start, then edit it before sending.",
+    "fallback_prompts": {
+      "capabilities": {
+        "label": "What can you help with?",
+        "prompt": "What are you best at helping with? Give me a concise overview."
+      },
+      "first_task": {
+        "label": "Suggest a first task",
+        "prompt": "Suggest three useful tasks I could delegate to you."
+      },
+      "recommend": {
+        "label": "Recommend an action",
+        "prompt": "Review what you know about my workspace and recommend a useful first action."
+      }
     }
   },
   "message_list": {

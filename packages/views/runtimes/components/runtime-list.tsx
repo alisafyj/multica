@@ -29,6 +29,7 @@ import {
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import {
   deriveRuntimeHealth,
+  isRuntimeUsableForUser,
   runtimeProfileListOptions,
   latestCliVersionOptions,
   runtimeUsageOptions,
@@ -376,13 +377,27 @@ function HealthCell({
 // page are large.
 const COST_CELL_DAYS = 14;
 
-export function CostCell({ runtimeId }: { runtimeId: string }) {
+export function canReadRuntimeUsage(
+  runtime: AgentRuntime,
+  currentUserId: string | null,
+): boolean {
+  return isRuntimeUsableForUser(runtime, currentUserId);
+}
+
+export function CostCell({
+  runtimeId,
+  enabled,
+}: {
+  runtimeId: string;
+  enabled: boolean;
+}) {
   const { t, i18n } = useT("runtimes");
   const tz = useViewingTimezone();
   const locales = i18n.resolvedLanguage ?? i18n.language;
-  const { data: usage = [] } = useQuery(
-    runtimeUsageOptions(runtimeId, COST_CELL_DAYS, tz),
-  );
+  const { data: usage = [] } = useQuery({
+    ...runtimeUsageOptions(runtimeId, COST_CELL_DAYS, tz),
+    enabled,
+  });
   const cost7d = useMemo(() => computeCostInWindow(usage, 7, tz), [usage, tz]);
   const costPrev7d = useMemo(
     () => computeCostInWindow(usage, 7, tz, 7),
@@ -821,7 +836,10 @@ export function RuntimeList({
                     <span className="text-caption text-faint-foreground">—</span>
                   </div>
                 ) : (
-                  <CostCell runtimeId={row.runtime.id} />
+                  <CostCell
+                    runtimeId={row.runtime.id}
+                    enabled={canReadRuntimeUsage(row.runtime, user?.id ?? null)}
+                  />
                 )}
               </ListGridCell>
               <ListGridCell className="hidden @2xl:flex">

@@ -35,6 +35,10 @@ interface ConfigState {
   // predate this signal are caught by the same net — indistinguishable from
   // here, and only one of the two answers is safe to guess.
   localWorktreeSupported: boolean;
+  // Whether this server persists starter_prompts on agent create/update.
+  // Older handlers accepted the unknown field and returned success while
+  // dropping it, so absent must fail closed.
+  agentStarterPromptsSupported: boolean;
   setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
   setAuthConfig: (config: {
     allowSignup: boolean;
@@ -51,6 +55,7 @@ interface ConfigState {
   setServerVersion: (version?: string) => void;
   loadConfig: (request: () => Promise<AppConfigResponse>) => Promise<AppConfigResponse>;
   setLocalWorktreeSupported: (supported?: boolean) => void;
+  setAgentStarterPromptsSupported: (supported?: boolean) => void;
 }
 
 export const configStore = createStore<ConfigState>((set) => ({
@@ -67,6 +72,7 @@ export const configStore = createStore<ConfigState>((set) => ({
   featureFlags: {},
   serverVersion: "",
   localWorktreeSupported: false,
+  agentStarterPromptsSupported: false,
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
   setAuthConfig: ({
     allowSignup,
@@ -116,6 +122,8 @@ export const configStore = createStore<ConfigState>((set) => ({
   },
   setLocalWorktreeSupported: (supported = false) =>
     set({ localWorktreeSupported: supported === true }),
+  setAgentStarterPromptsSupported: (supported = false) =>
+    set({ agentStarterPromptsSupported: supported === true }),
 }));
 
 export function useConfigStore(): ConfigState;

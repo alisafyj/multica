@@ -4,97 +4,77 @@
  * Two modes mirror web (packages/views/chat/components/chat-window.tsx
  * `EmptyState`):
  *
- *   - first-time (the workspace has never started a chat) → educate. Tell
- *     the user what chat is for; don't surface starter prompts yet, they
- *     presume context the user doesn't have.
- *   - returning (at least one prior session exists) → starter prompts.
- *     Three taps, three common workflows; tapping prefills the composer
- *     draft so the user can edit before sending.
+ *   - first-time (the workspace has never started a chat) → educate and
+ *     offer starter prompts so the composer is not a blank dead end.
+ *   - returning (at least one prior session exists) → lead with starter
+ *     prompts. Tapping prefills the draft so the user can edit before sending.
  *
- * Copy mirrors the web `chat.json` namespace 1:1. Mobile doesn't have
- * i18n yet so the strings are inlined in English — when mobile adopts
- * i18n the lookup keys (`empty_state.first_time_title` etc.) are already
- * established on the web side, so the migration is a literal
- * key-by-key swap.
+ * Copy mirrors the web `chat.json` namespace 1:1, and goes through mobile's
+ * own i18n — the swap upstream's version anticipated. The fallback prompts
+ * are built inside the component because they need `t`.
  */
 import { View } from "react-native";
 import { useTranslation } from "react-i18next";
+import type { Agent, AgentStarterPrompt } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 
+
 interface Props {
   hasSessions: boolean;
-  agentName?: string;
+  agent: Agent | null;
   onPickPrompt: (text: string) => void;
 }
 
-export function ChatEmptyState({ hasSessions, agentName, onPickPrompt }: Props) {
+export function ChatEmptyState({ hasSessions, agent, onPickPrompt }: Props) {
   const { t } = useTranslation("chat");
-
-  const STARTER_PROMPTS: { icon: string; text: string }[] = [
-    { icon: "📋", text: t("empty_state.starter_prompts.list_issues") },
-    { icon: "📝", text: t("empty_state.starter_prompts.summarize_today") },
-    { icon: "💡", text: t("empty_state.starter_prompts.plan_next") },
-  ];
-
-  // First-time experience: educate before suggesting actions. Starter
-  // prompts here would presume the user already knows what chat is for.
-  if (!hasSessions) {
-    return (
-      <View className="flex-1 items-center justify-center px-6 py-8">
-        <View className="max-w-xs items-center gap-3">
-          <Text className="text-base font-semibold text-foreground text-center">
-            {t("empty_state.first_time.title")}
-          </Text>
-          <Text className="text-sm text-muted-foreground text-center">
-            <Text className="text-sm text-muted-foreground">
-              {t("empty_state.first_time.subtitle_prefix")}
-            </Text>
-            <Text className="text-sm font-medium text-foreground">
-              {t("empty_state.first_time.subtitle_highlight")}
-            </Text>
-            <Text className="text-sm text-muted-foreground">
-              {t("empty_state.first_time.subtitle_suffix")}
-            </Text>
-          </Text>
-          <Text className="text-sm text-muted-foreground text-center">
-            {t("empty_state.first_time.description")}
-          </Text>
-        </View>
-      </View>
-    );
-  }
-
-  // Returning user: starter prompts are the fastest path back to action.
-  const title = agentName
-    ? t("empty_state.returning.title_named", { name: agentName })
-    : t("empty_state.returning.title_default");
+  const fallbackPrompts: AgentStarterPrompt[] = [
+    "capabilities",
+    "first_task",
+    "recommend",
+  ].map((id) => ({
+    label: t(`empty_state.fallback_prompts.${id}.label`),
+    prompt: t(`empty_state.fallback_prompts.${id}.prompt`),
+  }));
+  const title = agent
+    ? t("empty_state.returning.title_named", { name: agent.name })
+    : t("empty_state.first_time.title");
+  const configured = (agent?.starter_prompts ?? []).filter(
+    (item) => item.label.trim() && item.prompt.trim(),
+  );
+  const prompts = configured.length > 0 ? configured : fallbackPrompts;
   return (
     <View className="flex-1 items-center justify-center px-6 py-8 gap-5">
       <View className="items-center gap-1">
         <Text className="text-base font-semibold text-foreground text-center">
           {title}
         </Text>
-        <Text className="text-sm text-muted-foreground text-center">
-          {t("empty_state.returning.subtitle")}
-        </Text>
+        {agent?.description ? (
+          <Text className="text-sm text-muted-foreground text-center">
+            {agent.description}
+          </Text>
+        ) : null}
+        {!hasSessions ? (
+          <Text className="text-sm text-muted-foreground text-center">
+            {t("empty_state.pick_example")}
+          </Text>
+        ) : null}
       </View>
-      <View className="w-full max-w-xs gap-2">
-        {STARTER_PROMPTS.map((p) => (
-          <Button
-            key={p.text}
-            variant="outline"
-            onPress={() => onPickPrompt(p.text)}
-            className="h-auto justify-start px-3 py-2.5"
-            accessibilityLabel={p.text}
-          >
-            <Text className="text-sm text-foreground">
-              <Text className="text-sm">{p.icon}  </Text>
-              {p.text}
-            </Text>
-          </Button>
-        ))}
-      </View>
+      {agent ? (
+        <View className="w-full max-w-xs gap-2">
+          {prompts.map((item, index) => (
+            <Button
+              key={index}
+              variant="outline"
+              onPress={() => onPickPrompt(item.prompt)}
+              className="h-auto justify-start px-3 py-2.5"
+              accessibilityLabel={item.label}
+            >
+              <Text className="text-sm text-foreground">{item.label}</Text>
+            </Button>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
