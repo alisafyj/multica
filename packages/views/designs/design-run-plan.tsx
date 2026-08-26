@@ -119,5 +119,5 @@ function TodoIcon({ status }: { status: string }) {
   if (status === "in_progress") {
     return <LoaderCircle className="size-3 shrink-0 translate-y-0.5 animate-spin text-muted-foreground" />;
   }
-  return <Circle className="size-3 shrink-0 translate-y-0.5 text-muted-foreground/50" />;
+  return <Circle className="size-3 shrink-0 translate-y-0.5 text-faint-foreground" />;
 }
