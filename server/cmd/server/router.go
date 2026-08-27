@@ -1990,6 +1990,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/labels", h.ListLabelsForIssue)
 					r.Post("/labels", h.AttachLabel)
 					r.Delete("/labels/{labelId}", h.DetachLabel)
+					// Test coverage: the cases that claim to verify this issue,
+					// each with its latest recorded outcome.
+					r.Get("/test-cases", h.ListIssueTestCases)
 					r.Get("/metadata", h.ListIssueMetadata)
 					r.Put("/metadata/{key}", h.SetIssueMetadataKey)
 					r.Delete("/metadata/{key}", h.DeleteIssueMetadataKey)
@@ -2094,6 +2097,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// Regression history for one case, across every round it
 					// appeared in.
 					r.Get("/results", h.ListTestCaseResultTimeline)
+					// Which requirements this case covers.
+					r.Get("/issues", h.ListTestCaseIssues)
+					r.Post("/issues", h.LinkTestCaseIssues)
+					r.Delete("/issues/{issueId}", h.UnlinkTestCaseIssue)
 				})
 			})
 
