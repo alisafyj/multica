@@ -238,7 +238,11 @@ func (h *Handler) requireDesignDocumentRefTarget(w http.ResponseWriter, r *http.
 	if _, err := h.Queries.GetDesignDocumentInWorkspace(r.Context(), db.GetDesignDocumentInWorkspaceParams{
 		ID: documentUUID, WorkspaceID: workspaceID,
 	}); err != nil {
-		writeError(w, http.StatusBadRequest, "design_document: no design document with this id in the workspace")
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusBadRequest, "design_document: no design document with this id in the workspace")
+			return false
+		}
+		writeError(w, http.StatusInternalServerError, "failed to look up design document")
 		return false
 	}
 	return true

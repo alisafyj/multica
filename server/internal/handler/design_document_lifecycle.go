@@ -132,31 +132,24 @@ func (h *Handler) DeleteDesignDocument(w http.ResponseWriter, r *http.Request) {
 		writeProjectDesignSystemError(w, http.StatusConflict, "operation_in_progress", "a design task is still running for this document")
 		return
 	}
-	// The delete query also removes project_resource rows of type
-	// design_document pointing at this document — the reference has no foreign
-	// key, so the statement is where the cleanup lives. Read them first so the
-	// WS events below can name every project whose resource list changed.
-	// References live in ANY project (the create modal attaches other
-	// projects' documents), so the read is workspace-scoped, not per-project.
-	refs, refErr := h.Queries.ListProjectResourcesForDesignDocument(r.Context(), db.ListProjectResourcesForDesignDocumentParams{
-		WorkspaceID:      workspaceUUID,
-		DesignDocumentID: uuidToString(document.ID),
-	})
-	if refErr != nil {
-		writeProjectDesignSystemError(w, http.StatusInternalServerError, "delete_failed", "failed to delete the design document")
-		return
-	}
-	if err := h.Queries.DeleteDesignDocument(r.Context(), db.DeleteDesignDocumentParams{
+	// The delete is one atomic statement that also removes referencing
+	// project_resource rows and returns the ones it actually removed. The
+	// per-project WS events below come from those returned rows, so there is no
+	// read-then-delete window where a concurrently-attached reference is
+	// deleted but its project never hears about it.
+	deletedRefs, err := h.Queries.DeleteDesignDocument(r.Context(), db.DeleteDesignDocumentParams{
 		ID:          document.ID,
 		WorkspaceID: workspaceUUID,
-	}); err != nil {
+	})
+	if err != nil {
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "delete_failed", "failed to delete the design document")
 		return
 	}
-	// Publish only after the delete succeeds. Otherwise a fast refetch can race
-	// the DELETE and re-cache the row the event was meant to remove.
-	projectsSeen := make(map[string]struct{}, len(refs))
-	for _, row := range refs {
+	// Publish after the delete succeeds; a fast refetch otherwise races the
+	// DELETE and re-caches the row the event was meant to remove. One event per
+	// owning project — the same document may be referenced by several projects.
+	projectsSeen := make(map[string]struct{}, len(deletedRefs))
+	for _, row := range deletedRefs {
 		projectID := uuidToString(row.ProjectID)
 		if _, dup := projectsSeen[projectID]; dup {
 			continue
