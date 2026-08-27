@@ -310,3 +310,15 @@ RETURNING *;
 SELECT * FROM design_document_share
 WHERE token = sqlc.arg('token')
   AND revoked_at IS NULL;
+
+-- Repository scope is an intentional, human-managed link (DC-052). It may
+-- change only while no generation/adjust/regenerate task is running: a live
+-- run has already pinned its own repository input.
+-- name: SetDesignDocumentRepository :one
+UPDATE design_document SET
+    project_resource_id = sqlc.narg('project_resource_id'),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND active_task_id IS NULL
+RETURNING *;
