@@ -1140,6 +1140,52 @@ func (q *Queries) SetDesignDocumentIssue(ctx context.Context, arg SetDesignDocum
 	return i, err
 }
 
+const setDesignDocumentRepository = `-- name: SetDesignDocumentRepository :one
+UPDATE design_document SET
+    project_resource_id = $1,
+    updated_at = now()
+WHERE id = $2
+  AND workspace_id = $3
+  AND active_task_id IS NULL
+RETURNING id, workspace_id, project_id, project_resource_id, issue_id, title, platform, recipe, draft_revision_id, saved_revision_id, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at
+`
+
+type SetDesignDocumentRepositoryParams struct {
+	ProjectResourceID pgtype.UUID `json:"project_resource_id"`
+	ID                pgtype.UUID `json:"id"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+}
+
+// Repository scope is an intentional, human-managed link (DC-052). It may
+// change only while no generation/adjust/regenerate task is running: a live
+// run has already pinned its own repository input.
+func (q *Queries) SetDesignDocumentRepository(ctx context.Context, arg SetDesignDocumentRepositoryParams) (DesignDocument, error) {
+	row := q.db.QueryRow(ctx, setDesignDocumentRepository, arg.ProjectResourceID, arg.ID, arg.WorkspaceID)
+	var i DesignDocument
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.ProjectResourceID,
+		&i.IssueID,
+		&i.Title,
+		&i.Platform,
+		&i.Recipe,
+		&i.DraftRevisionID,
+		&i.SavedRevisionID,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+	)
+	return i, err
+}
+
 const updateDesignDocumentActiveTask = `-- name: UpdateDesignDocumentActiveTask :one
 UPDATE design_document SET
     current_agent_id = $1,
