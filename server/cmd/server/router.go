@@ -2100,6 +2100,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/test-capabilities", h.ListTestCapabilities)
 			r.Post("/api/runtimes/{id}/capabilities", h.RequestRuntimeCapabilityScan)
 
+			r.Put("/api/design-assets/repository-association", h.SetDesignAssetRepositoryAssociation)
 			// Gallery Native design files
 			r.Get("/api/design-folders", h.ListDesignFolders)
 			r.Post("/api/design-folders", h.CreateDesignFolder)
