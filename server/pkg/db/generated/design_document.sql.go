@@ -336,6 +336,21 @@ func (q *Queries) DeleteDesignDocument(ctx context.Context, arg DeleteDesignDocu
 	return err
 }
 
+const detachDesignDocumentsFromProjectResource = `-- name: DetachDesignDocumentsFromProjectResource :exec
+UPDATE design_document SET project_resource_id = NULL
+WHERE workspace_id = $1 AND project_resource_id = $2
+`
+
+type DetachDesignDocumentsFromProjectResourceParams struct {
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	ProjectResourceID pgtype.UUID `json:"project_resource_id"`
+}
+
+func (q *Queries) DetachDesignDocumentsFromProjectResource(ctx context.Context, arg DetachDesignDocumentsFromProjectResourceParams) error {
+	_, err := q.db.Exec(ctx, detachDesignDocumentsFromProjectResource, arg.WorkspaceID, arg.ProjectResourceID)
+	return err
+}
+
 const discardDesignDocumentDraft = `-- name: DiscardDesignDocumentDraft :one
 UPDATE design_document SET
     draft_revision_id = NULL,

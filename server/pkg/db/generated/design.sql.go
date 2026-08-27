@@ -1846,6 +1846,21 @@ func (q *Queries) DetachDesignDraftRevisionReferences(ctx context.Context, arg D
 	return err
 }
 
+const detachDesignFilesFromProjectResource = `-- name: DetachDesignFilesFromProjectResource :exec
+UPDATE design_file SET project_resource_id = NULL
+WHERE workspace_id = $1 AND project_resource_id = $2
+`
+
+type DetachDesignFilesFromProjectResourceParams struct {
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	ProjectResourceID pgtype.UUID `json:"project_resource_id"`
+}
+
+func (q *Queries) DetachDesignFilesFromProjectResource(ctx context.Context, arg DetachDesignFilesFromProjectResourceParams) error {
+	_, err := q.db.Exec(ctx, detachDesignFilesFromProjectResource, arg.WorkspaceID, arg.ProjectResourceID)
+	return err
+}
+
 const ensureDesignTemplateLibrary = `-- name: EnsureDesignTemplateLibrary :one
 INSERT INTO design_template_library (workspace_id, key, name, description, metadata, created_by)
 VALUES ($1, $2, $3, $4, $5, $6)
