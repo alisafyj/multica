@@ -1,7 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useWorkspaceId } from "../hooks";
-import { testCaseKeys, testGenerationJobKeys, testPlanKeys, testRunKeys } from "./keys";
+import {
+  testCaseKeys,
+  testGenerationJobKeys,
+  testPlanKeys,
+  testRunKeys,
+  issueTestCaseKeys,
+} from "./keys";
 import type {
   CreateTestCaseRequest,
   TestCase,
@@ -566,6 +572,48 @@ export function useOpenTestRunCaseDefect() {
       api.openTestRunCaseDefect(id, data),
     onSettled: (_data, _error, { runId }) => {
       qc.invalidateQueries({ queryKey: testRunKeys.cases(wsId, runId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Coverage links — which requirements a case verifies
+// ---------------------------------------------------------------------------
+
+/**
+ * Link one or more issues to a case.
+ *
+ * Not optimistic: the server resolves each issue's identifier, title and status
+ * for display, so there is nothing correct to render from the ids the caller
+ * holds. It also rejects an id that does not exist in the workspace, which is
+ * exactly the case a rolled-back optimistic row would have shown as linked.
+ */
+export function useLinkTestCaseIssues() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ ref, issueIds }: { ref: string; issueIds: string[] }) =>
+      api.linkTestCaseIssues(ref, issueIds),
+    onSettled: (_data, _error, { ref, issueIds }) => {
+      qc.invalidateQueries({ queryKey: testCaseKeys.issues(wsId, ref) });
+      // Each newly covered issue's own coverage list is now stale too.
+      for (const issueId of issueIds) {
+        qc.invalidateQueries({ queryKey: issueTestCaseKeys.forIssue(wsId, issueId) });
+      }
+    },
+  });
+}
+
+/** Detach one issue from a case. Same non-optimistic rationale as linking. */
+export function useUnlinkTestCaseIssue() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ ref, issueId }: { ref: string; issueId: string }) =>
+      api.unlinkTestCaseIssue(ref, issueId),
+    onSettled: (_data, _error, { ref, issueId }) => {
+      qc.invalidateQueries({ queryKey: testCaseKeys.issues(wsId, ref) });
+      qc.invalidateQueries({ queryKey: issueTestCaseKeys.forIssue(wsId, issueId) });
     },
   });
 }

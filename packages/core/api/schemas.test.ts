@@ -114,6 +114,10 @@ import {
   ListTestRunCasesResponseSchema,
   TestCaseResultTimelineResponseSchema,
   ListTestCapabilitiesResponseSchema,
+  ListTestCaseIssuesResponseSchema,
+  ListIssueTestCasesResponseSchema,
+  EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE,
+  EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE,
   EMPTY_TEST_PLAN,
   EMPTY_TEST_RUN,
   EMPTY_TEST_RUN_CASE,
@@ -3499,5 +3503,76 @@ describe("issue status catalog schemas", () => {
       { endpoint: "POST /api/issue-statuses" },
     );
     expect(parsed).toEqual(EMPTY_ISSUE_STATUS_ENTRY);
+  });
+});
+
+describe("test coverage link schemas", () => {
+  it("fills defaults when the backend omits fields on a covered issue", () => {
+    const parsed = parseWithFallback(
+      { issues: [{ issue_id: "i1", issue_title: "下单流程" }] },
+      ListTestCaseIssuesResponseSchema,
+      EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.issues[0]!.issue_id).toBe("i1");
+    expect(parsed.issues[0]!.issue_title).toBe("下单流程");
+    expect(parsed.issues[0]!.issue_identifier).toBe("");
+    expect(parsed.issues[0]!.origin).toBe("human");
+    expect(parsed.total).toBe(0);
+  });
+
+  it("falls back when the covered-issue payload is not an object", () => {
+    const parsed = parseWithFallback(
+      "nope",
+      ListTestCaseIssuesResponseSchema,
+      EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed).toBe(EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE);
+  });
+
+  // "Never executed" has to survive parsing as null. Defaulting it to a result
+  // value would make the issue's coverage block claim an outcome the case does
+  // not have.
+  it("keeps a never-executed case's result null rather than defaulting it", () => {
+    const parsed = parseWithFallback(
+      { cases: [{ test_case_id: "c1", case_key: "TC-1", case_title: "登录" }] },
+      ListIssueTestCasesResponseSchema,
+      EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.cases[0]!.latest_result).toBeNull();
+    expect(parsed.cases[0]!.latest_executed_at).toBeNull();
+    expect(parsed.cases[0]!.case_status).toBe("draft");
+  });
+
+  it("preserves a recorded result", () => {
+    const parsed = parseWithFallback(
+      {
+        cases: [
+          {
+            test_case_id: "c1",
+            case_key: "TC-1",
+            latest_result: "failed",
+            latest_executed_at: "2024-05-06T00:00:00Z",
+          },
+        ],
+      },
+      ListIssueTestCasesResponseSchema,
+      EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.cases[0]!.latest_result).toBe("failed");
+    expect(parsed.cases[0]!.latest_executed_at).toBe("2024-05-06T00:00:00Z");
+  });
+
+  it("falls back when the coverage payload is not an object", () => {
+    const parsed = parseWithFallback(
+      42,
+      ListIssueTestCasesResponseSchema,
+      EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed).toBe(EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE);
   });
 });
