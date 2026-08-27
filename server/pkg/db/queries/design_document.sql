@@ -322,3 +322,7 @@ WHERE id = sqlc.arg('id')
   AND workspace_id = sqlc.arg('workspace_id')
   AND active_task_id IS NULL
 RETURNING *;
+
+-- name: DetachDesignDocumentsFromProjectResource :exec
+UPDATE design_document SET project_resource_id = NULL
+WHERE workspace_id = $1 AND project_resource_id = $2;

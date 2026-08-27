@@ -130,6 +130,10 @@ WHERE id = sqlc.arg('id')
   AND workspace_id = sqlc.arg('workspace_id')
 RETURNING *;
 
+-- name: DetachDesignFilesFromProjectResource :exec
+UPDATE design_file SET project_resource_id = NULL
+WHERE workspace_id = $1 AND project_resource_id = $2;
+
 -- name: ListDesignFilesByRepository :many
 SELECT df.* FROM design_file df
 WHERE df.workspace_id = $1
