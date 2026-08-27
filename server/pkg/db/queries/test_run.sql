@@ -71,6 +71,8 @@ RETURNING *;
 UPDATE test_run SET
     status             = COALESCE(sqlc.narg('status'), status),
     agent_task_id      = COALESCE(sqlc.narg('agent_task_id'), agent_task_id),
+    executor_type      = COALESCE(sqlc.narg('executor_type'), executor_type),
+    executor_id        = COALESCE(sqlc.narg('executor_id'), executor_id),
     capability_binding = COALESCE(sqlc.narg('capability_binding'), capability_binding),
     environment        = COALESCE(sqlc.narg('environment'), environment),
     build_ref          = COALESCE(sqlc.narg('build_ref'), build_ref),
