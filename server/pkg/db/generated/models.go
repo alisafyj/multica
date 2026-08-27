@@ -763,6 +763,7 @@ type DesignFile struct {
 	CreatedBy         pgtype.UUID        `json:"created_by"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
 }
 
 type DesignFolder struct {

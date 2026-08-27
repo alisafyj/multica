@@ -486,7 +486,7 @@ func (q *Queries) CreateDesignDraft(ctx context.Context, arg CreateDesignDraftPa
 const createDesignFile = `-- name: CreateDesignFile :one
 INSERT INTO design_file (workspace_id, project_id, folder_id, title, description, source_type, source_ref, created_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at
+RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id
 `
 
 type CreateDesignFileParams struct {
@@ -525,6 +525,7 @@ func (q *Queries) CreateDesignFile(ctx context.Context, arg CreateDesignFilePara
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
@@ -2157,7 +2158,7 @@ func (q *Queries) GetDesignDraftInWorkspace(ctx context.Context, arg GetDesignDr
 }
 
 const getDesignFile = `-- name: GetDesignFile :one
-SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at FROM design_file
+SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id FROM design_file
 WHERE id = $1
 `
 
@@ -2177,12 +2178,13 @@ func (q *Queries) GetDesignFile(ctx context.Context, id pgtype.UUID) (DesignFile
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
 
 const getDesignFileBySourceKeyForUpdate = `-- name: GetDesignFileBySourceKeyForUpdate :one
-SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at FROM design_file
+SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id FROM design_file
 WHERE workspace_id = $1
   AND project_id = $2
   AND folder_id IS NOT DISTINCT FROM $4::uuid
@@ -2221,12 +2223,13 @@ func (q *Queries) GetDesignFileBySourceKeyForUpdate(ctx context.Context, arg Get
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
 
 const getDesignFileInWorkspace = `-- name: GetDesignFileInWorkspace :one
-SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at FROM design_file
+SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id FROM design_file
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -2251,12 +2254,13 @@ func (q *Queries) GetDesignFileInWorkspace(ctx context.Context, arg GetDesignFil
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
 
 const getDesignFileInWorkspaceForUpdate = `-- name: GetDesignFileInWorkspaceForUpdate :one
-SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at FROM design_file
+SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id FROM design_file
 WHERE id = $1 AND workspace_id = $2
 FOR UPDATE
 `
@@ -2282,6 +2286,7 @@ func (q *Queries) GetDesignFileInWorkspaceForUpdate(ctx context.Context, arg Get
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
@@ -3581,7 +3586,7 @@ func (q *Queries) ListDesignDrafts(ctx context.Context, workspaceID pgtype.UUID)
 }
 
 const listDesignFiles = `-- name: ListDesignFiles :many
-SELECT df.id, df.workspace_id, df.project_id, df.folder_id, df.title, df.description, df.source_type, df.source_ref, df.current_revision_id, df.created_by, df.created_at, df.updated_at FROM design_file df
+SELECT df.id, df.workspace_id, df.project_id, df.folder_id, df.title, df.description, df.source_type, df.source_ref, df.current_revision_id, df.created_by, df.created_at, df.updated_at, df.project_resource_id FROM design_file df
 WHERE df.workspace_id = $1
   AND COALESCE(df.source_ref->>'asset_type', '') NOT IN ('template', 'design_system')
   AND NOT EXISTS (
@@ -3625,6 +3630,7 @@ func (q *Queries) ListDesignFiles(ctx context.Context, workspaceID pgtype.UUID) 
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ProjectResourceID,
 		); err != nil {
 			return nil, err
 		}
@@ -3637,7 +3643,7 @@ func (q *Queries) ListDesignFiles(ctx context.Context, workspaceID pgtype.UUID) 
 }
 
 const listDesignFilesByProject = `-- name: ListDesignFilesByProject :many
-SELECT df.id, df.workspace_id, df.project_id, df.folder_id, df.title, df.description, df.source_type, df.source_ref, df.current_revision_id, df.created_by, df.created_at, df.updated_at FROM design_file df
+SELECT df.id, df.workspace_id, df.project_id, df.folder_id, df.title, df.description, df.source_type, df.source_ref, df.current_revision_id, df.created_by, df.created_at, df.updated_at, df.project_resource_id FROM design_file df
 WHERE df.workspace_id = $1
   AND df.project_id = $2
   AND ($3::uuid IS NULL OR df.folder_id = $3)
@@ -3689,6 +3695,67 @@ func (q *Queries) ListDesignFilesByProject(ctx context.Context, arg ListDesignFi
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ProjectResourceID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDesignFilesByRepository = `-- name: ListDesignFilesByRepository :many
+SELECT df.id, df.workspace_id, df.project_id, df.folder_id, df.title, df.description, df.source_type, df.source_ref, df.current_revision_id, df.created_by, df.created_at, df.updated_at, df.project_resource_id FROM design_file df
+WHERE df.workspace_id = $1
+  AND df.project_id = $2
+  AND df.project_resource_id = $3
+  AND COALESCE(df.source_ref->>'asset_type', '') NOT IN ('template', 'design_system')
+  AND NOT EXISTS (
+    SELECT 1 FROM design_system_profile dsp
+    WHERE dsp.source_file_id = df.id AND dsp.status <> 'archived'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM design_template_revision dtr
+    WHERE EXISTS (
+      SELECT 1 FROM design_revision dr
+      WHERE dr.id = dtr.design_revision_id AND dr.file_id = df.id
+    )
+  )
+ORDER BY df.updated_at DESC, df.created_at DESC
+`
+
+type ListDesignFilesByRepositoryParams struct {
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	ProjectID         pgtype.UUID `json:"project_id"`
+	ProjectResourceID pgtype.UUID `json:"project_resource_id"`
+}
+
+func (q *Queries) ListDesignFilesByRepository(ctx context.Context, arg ListDesignFilesByRepositoryParams) ([]DesignFile, error) {
+	rows, err := q.db.Query(ctx, listDesignFilesByRepository, arg.WorkspaceID, arg.ProjectID, arg.ProjectResourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DesignFile{}
+	for rows.Next() {
+		var i DesignFile
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.FolderID,
+			&i.Title,
+			&i.Description,
+			&i.SourceType,
+			&i.SourceRef,
+			&i.CurrentRevisionID,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ProjectResourceID,
 		); err != nil {
 			return nil, err
 		}
@@ -3701,7 +3768,7 @@ func (q *Queries) ListDesignFilesByProject(ctx context.Context, arg ListDesignFi
 }
 
 const listDesignFilesInFolderForUpdate = `-- name: ListDesignFilesInFolderForUpdate :many
-SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at FROM design_file
+SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id FROM design_file
 WHERE workspace_id = $1 AND folder_id = $2
 ORDER BY id
 FOR UPDATE
@@ -3734,6 +3801,7 @@ func (q *Queries) ListDesignFilesInFolderForUpdate(ctx context.Context, arg List
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ProjectResourceID,
 		); err != nil {
 			return nil, err
 		}
@@ -4641,7 +4709,7 @@ UPDATE design_file SET
     current_revision_id = $3,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at
+RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id
 `
 
 type SetDesignFileCurrentRevisionParams struct {
@@ -4666,6 +4734,43 @@ func (q *Queries) SetDesignFileCurrentRevision(ctx context.Context, arg SetDesig
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ProjectResourceID,
+	)
+	return i, err
+}
+
+const setDesignFileRepository = `-- name: SetDesignFileRepository :one
+UPDATE design_file SET
+    project_resource_id = $1,
+    updated_at = now()
+WHERE id = $2
+  AND workspace_id = $3
+RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id
+`
+
+type SetDesignFileRepositoryParams struct {
+	ProjectResourceID pgtype.UUID `json:"project_resource_id"`
+	ID                pgtype.UUID `json:"id"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) SetDesignFileRepository(ctx context.Context, arg SetDesignFileRepositoryParams) (DesignFile, error) {
+	row := q.db.QueryRow(ctx, setDesignFileRepository, arg.ProjectResourceID, arg.ID, arg.WorkspaceID)
+	var i DesignFile
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.FolderID,
+		&i.Title,
+		&i.Description,
+		&i.SourceType,
+		&i.SourceRef,
+		&i.CurrentRevisionID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
@@ -4932,7 +5037,7 @@ UPDATE design_file SET
     current_revision_id = $8,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at
+RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id
 `
 
 type UpdateDesignFileParams struct {
@@ -4971,6 +5076,7 @@ func (q *Queries) UpdateDesignFile(ctx context.Context, arg UpdateDesignFilePara
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ProjectResourceID,
 	)
 	return i, err
 }
