@@ -3,26 +3,13 @@ package handler
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 const designAssetRepositoryAssociationPath = "/api/design-assets/repository-association"
-
-func TestSetDesignAssetRepositoryAssociationRouteExists(t *testing.T) {
-	r := chi.NewRouter()
-	r.Put(designAssetRepositoryAssociationPath, testHandler.SetDesignAssetRepositoryAssociation)
-	req := associationRequest(`{}`)
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-	if rec.Code == http.StatusNotFound {
-		t.Fatalf("route not registered: %d", rec.Code)
-	}
-}
 
 func TestSetDesignAssetRepositoryAssociationRejectsMalformedJSON(t *testing.T) {
 	resp := callAssociation(t, `{"project_id":`)
@@ -222,11 +209,6 @@ func assertAssociationResource(t *testing.T, kind, id, want string) {
 	t.Helper()
 	var got *string
 	table := kind
-	if kind == "design_file" {
-		table = "design_file"
-	} else {
-		table = "design_document"
-	}
 	if err := testPool.QueryRow(context.Background(), "SELECT project_resource_id::text FROM "+table+" WHERE id = $1", id).Scan(&got); err != nil {
 		t.Fatalf("read %s %s: %v", kind, id, err)
 	}

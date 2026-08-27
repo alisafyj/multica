@@ -52,8 +52,11 @@ func (h *Handler) SetDesignAssetRepositoryAssociation(w http.ResponseWriter, r *
 	}
 	if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
 		ID: projectID, WorkspaceID: workspaceID,
-	}); err != nil {
+	}); errors.Is(err, pgx.ErrNoRows) {
 		writeProjectDesignSystemError(w, http.StatusNotFound, "project_not_found", "project not found")
+		return
+	} else if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "repository_association_failed", "failed to load project")
 		return
 	}
 	if len(req.Items) == 0 {
