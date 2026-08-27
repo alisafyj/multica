@@ -122,6 +122,32 @@ UPDATE design_file SET
 WHERE id = $1 AND workspace_id = $2
 RETURNING *;
 
+-- name: SetDesignFileRepository :one
+UPDATE design_file SET
+    project_resource_id = sqlc.narg('project_resource_id'),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND workspace_id = sqlc.arg('workspace_id')
+RETURNING *;
+
+-- name: ListDesignFilesByRepository :many
+SELECT df.* FROM design_file df
+WHERE df.workspace_id = $1
+  AND df.project_id = $2
+  AND df.project_resource_id = $3
+  AND COALESCE(df.source_ref->>'asset_type', '') NOT IN ('template', 'design_system')
+  AND NOT EXISTS (
+    SELECT 1 FROM design_system_profile dsp
+    WHERE dsp.source_file_id = df.id AND dsp.status <> 'archived'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM design_template_revision dtr
+    WHERE EXISTS (
+      SELECT 1 FROM design_revision dr
+      WHERE dr.id = dtr.design_revision_id AND dr.file_id = df.id
+    )
+  )
+ORDER BY df.updated_at DESC, df.created_at DESC;
 -- name: DeleteDesignFile :exec
 DELETE FROM design_file WHERE id = $1 AND workspace_id = $2;
 
