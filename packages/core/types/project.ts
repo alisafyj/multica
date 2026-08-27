@@ -71,7 +71,13 @@ export interface ListProjectsResponse {
 //     ref = { local_path, daemon_id, label?, execution_mode? }
 //   - document: external specification or business-rule page,
 //     ref = { url, title, summary? }
-export type ProjectResourceType = "github_repo" | "local_directory" | "document";
+//   - design_document: reference to a design-centre DesignDocument row,
+//     ref = { design_document_id } — title/status live on that row
+export type ProjectResourceType =
+  | "github_repo"
+  | "local_directory"
+  | "document"
+  | "design_document";
 
 export interface GithubRepoResourceRef {
   url: string;
@@ -107,10 +113,15 @@ export interface DocumentResourceRef {
   summary?: string;
 }
 
+export interface DesignDocumentResourceRef {
+  design_document_id: string;
+}
+
 export type ProjectResourceRef =
   | GithubRepoResourceRef
   | LocalDirectoryResourceRef
   | DocumentResourceRef
+  | DesignDocumentResourceRef
   | Record<string, unknown>;
 
 export interface ProjectResource {

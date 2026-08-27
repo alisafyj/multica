@@ -319,6 +319,13 @@ deleted_revisions AS (
     WHERE design_document_revision.workspace_id = $2
       AND design_document_revision.design_document_id = $1
     RETURNING design_document_revision.id
+),
+deleted_references AS (
+    DELETE FROM project_resource
+    WHERE project_resource.workspace_id = $2
+      AND project_resource.resource_type = 'design_document'
+      AND project_resource.resource_ref->>'design_document_id' = $1::text
+    RETURNING project_resource.id
 )
 DELETE FROM design_document
 WHERE design_document.id = $1
@@ -331,6 +338,9 @@ type DeleteDesignDocumentParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
+// project_resource rows of type design_document point here by id with no
+// foreign key, so the delete takes them with the document — a project left
+// holding one would render a card pointing at a gone row.
 func (q *Queries) DeleteDesignDocument(ctx context.Context, arg DeleteDesignDocumentParams) error {
 	_, err := q.db.Exec(ctx, deleteDesignDocument, arg.ID, arg.WorkspaceID)
 	return err
@@ -900,6 +910,105 @@ func (q *Queries) ListDesignDocumentsByProject(ctx context.Context, arg ListDesi
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.SavedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDesignDocumentsInWorkspace = `-- name: ListDesignDocumentsInWorkspace :many
+SELECT id, workspace_id, project_id, project_resource_id, issue_id, title, platform, recipe, draft_revision_id, saved_revision_id, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at FROM design_document
+WHERE workspace_id = $1
+ORDER BY updated_at DESC
+`
+
+// The workspace-wide list, most recently touched first. The project create
+// modal's design picker is the one caller: it must offer documents from every
+// project, because the project being created does not own any yet. Backed by
+// idx_design_document_workspace — add an index migration if that ever changes.
+func (q *Queries) ListDesignDocumentsInWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]DesignDocument, error) {
+	rows, err := q.db.Query(ctx, listDesignDocumentsInWorkspace, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DesignDocument{}
+	for rows.Next() {
+		var i DesignDocument
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.ProjectResourceID,
+			&i.IssueID,
+			&i.Title,
+			&i.Platform,
+			&i.Recipe,
+			&i.DraftRevisionID,
+			&i.SavedRevisionID,
+			&i.CurrentAgentID,
+			&i.ActiveTaskID,
+			&i.ActiveOperation,
+			&i.InputSnapshot,
+			&i.LastError,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SavedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectResourcesForDesignDocument = `-- name: ListProjectResourcesForDesignDocument :many
+SELECT id, project_id, workspace_id, resource_type, resource_ref, label, position, created_at, created_by FROM project_resource
+WHERE workspace_id = $1
+  AND resource_type = 'design_document'
+  AND resource_ref->>'design_document_id' = $2::text
+ORDER BY project_id, position ASC, created_at ASC
+`
+
+type ListProjectResourcesForDesignDocumentParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	DesignDocumentID string      `json:"design_document_id"`
+}
+
+// Every project_resource of type design_document pointing at one document.
+// References live in ANY project of the workspace (the create modal attaches
+// other projects' documents), so the delete path must read them workspace-wide
+// both to clean up and to publish per-project events. ref ids are stored in
+// canonical dashed form (the validator normalizes client input), so a text
+// compare against the document id is exact.
+func (q *Queries) ListProjectResourcesForDesignDocument(ctx context.Context, arg ListProjectResourcesForDesignDocumentParams) ([]ProjectResource, error) {
+	rows, err := q.db.Query(ctx, listProjectResourcesForDesignDocument, arg.WorkspaceID, arg.DesignDocumentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectResource{}
+	for rows.Next() {
+		var i ProjectResource
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.WorkspaceID,
+			&i.ResourceType,
+			&i.ResourceRef,
+			&i.Label,
+			&i.Position,
+			&i.CreatedAt,
+			&i.CreatedBy,
 		); err != nil {
 			return nil, err
 		}

@@ -76,6 +76,13 @@ type UpdateProjectResourceRequest struct {
 // validator cannot drift apart.
 const projectResourceTypeGitHubRepo = "github_repo"
 
+// projectResourceTypeDesignDocument references an existing design_document row
+// (a design-centre document) by id. Unlike document, which carries its content
+// inline in the ref, the ref here is only a pointer — the row it names is the
+// source of truth, so the validator requires a UUID and the create/update
+// paths require the row to exist in the same workspace.
+const projectResourceTypeDesignDocument = "design_document"
+
 func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (json.RawMessage, error) {
 	if len(ref) == 0 {
 		return nil, errors.New("resource_ref is required")
@@ -87,6 +94,8 @@ func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (
 		return validateLocalDirectoryRef(ref)
 	case "document":
 		return validateDocumentRef(ref)
+	case projectResourceTypeDesignDocument:
+		return validateDesignDocumentRef(ref)
 	default:
 		return nil, fmt.Errorf("unknown resource_type %q", resourceType)
 	}
@@ -204,6 +213,35 @@ func (h *Handler) requireWorktreeCapableDaemon(w http.ResponseWriter, r *http.Re
 		"daemon_id":       ref.DaemonID,
 	})
 	return false
+}
+
+// requireDesignDocumentRefTarget rejects a design_document resource whose id
+// does not resolve to a design_document row in the workspace. The format check
+// lives in the validator; this is the existence check, kept separate because
+// it needs a query. Writing a reference to a missing (or foreign-workspace)
+// document would render as a permanently dead card on the project. Returns
+// true to proceed; on false the response has already been written.
+func (h *Handler) requireDesignDocumentRefTarget(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, resourceType string, normalizedRef json.RawMessage) bool {
+	if resourceType != projectResourceTypeDesignDocument {
+		return true
+	}
+	var ref designDocumentResourceRef
+	if err := json.Unmarshal(normalizedRef, &ref); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	documentUUID, err := parseUUIDLoose(ref.DesignDocumentID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	if _, err := h.Queries.GetDesignDocumentInWorkspace(r.Context(), db.GetDesignDocumentInWorkspaceParams{
+		ID: documentUUID, WorkspaceID: workspaceID,
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, "design_document: no design document with this id in the workspace")
+		return false
+	}
+	return true
 }
 
 // daemonAdvertisesWorktree reports whether the daemon's MOST RECENTLY SEEN
@@ -342,6 +380,35 @@ func validateDocumentRef(ref json.RawMessage) (json.RawMessage, error) {
 	if len(payload.Summary) > maxDocumentSummaryLen {
 		return nil, fmt.Errorf("document: summary must not exceed %d characters", maxDocumentSummaryLen)
 	}
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// designDocumentResourceRef is the JSONB shape stored for
+// resource_type=design_document. It points at a design-centre document row;
+// title/status live on that row, so the ref stays a bare id and every read
+// resolves the row fresh instead of trusting a frozen copy.
+type designDocumentResourceRef struct {
+	DesignDocumentID string `json:"design_document_id"`
+}
+
+func validateDesignDocumentRef(ref json.RawMessage) (json.RawMessage, error) {
+	var payload designDocumentResourceRef
+	if err := json.Unmarshal(ref, &payload); err != nil {
+		return nil, fmt.Errorf("invalid design_document payload: %w", err)
+	}
+	payload.DesignDocumentID = strings.TrimSpace(payload.DesignDocumentID)
+	// Scan accepts the undashed 32-hex form alongside the canonical dashed
+	// one. Store one canonical spelling so JSONB uniqueness and the cleanup
+	// query cannot treat two spellings of the same document as different refs.
+	documentID, err := parseUUIDLoose(payload.DesignDocumentID)
+	if err != nil {
+		return nil, errors.New("design_document: design_document_id must be a UUID")
+	}
+	payload.DesignDocumentID = uuidToString(documentID)
 	out, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -561,6 +628,9 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !h.requireDesignDocumentRefTarget(w, r, project.WorkspaceID, req.ResourceType, normalizedRef) {
+		return
+	}
 
 	if conflict, err := h.findLocalDirectoryConflict(r.Context(), project.ID, req.ResourceType, normalizedRef, pgtype.UUID{}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to check existing resources")
@@ -664,6 +734,9 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 		normalized, err := validateAndNormalizeResourceRef(existing.ResourceType, rawRef)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if !h.requireDesignDocumentRefTarget(w, r, project.WorkspaceID, existing.ResourceType, normalized) {
 			return
 		}
 		nextRef = normalized

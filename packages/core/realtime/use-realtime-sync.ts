@@ -799,6 +799,13 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
       },
+      project_resource: () => {
+        // Resource lists live under the project detail query tree. This covers
+        // explicit attach/update/delete calls and application-side cleanup
+        // such as deleting a design document referenced by other projects.
+        const wsId = getCurrentWsId();
+        if (wsId) qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
+      },
       test_case: () => {
         const wsId = getCurrentWsId();
         if (wsId) qc.invalidateQueries({ queryKey: testCaseKeys.all(wsId) });

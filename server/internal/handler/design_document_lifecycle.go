@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // Saving and discarding a design document draft (DC-034 / DC-042).
@@ -121,12 +122,28 @@ func (h *Handler) DiscardDesignDocument(w http.ResponseWriter, r *http.Request) 
 // pointer would make exactly the documents a user most wants to clean up the
 // only ones that can never be deleted.
 func (h *Handler) DeleteDesignDocument(w http.ResponseWriter, r *http.Request) {
-	document, workspaceUUID, ok := h.loadDesignDocumentForRequest(w, r)
+	// The requester is needed below: the reference-cleanup events attribute the
+	// removal to whoever deleted the document.
+	document, workspaceUUID, requesterUUID, ok := h.loadDesignDocumentForRequester(w, r)
 	if !ok {
 		return
 	}
 	if h.designDocumentRunIsLive(r.Context(), h.Queries, document) {
 		writeProjectDesignSystemError(w, http.StatusConflict, "operation_in_progress", "a design task is still running for this document")
+		return
+	}
+	// The delete query also removes project_resource rows of type
+	// design_document pointing at this document — the reference has no foreign
+	// key, so the statement is where the cleanup lives. Read them first so the
+	// WS events below can name every project whose resource list changed.
+	// References live in ANY project (the create modal attaches other
+	// projects' documents), so the read is workspace-scoped, not per-project.
+	refs, refErr := h.Queries.ListProjectResourcesForDesignDocument(r.Context(), db.ListProjectResourcesForDesignDocumentParams{
+		WorkspaceID:      workspaceUUID,
+		DesignDocumentID: uuidToString(document.ID),
+	})
+	if refErr != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "delete_failed", "failed to delete the design document")
 		return
 	}
 	if err := h.Queries.DeleteDesignDocument(r.Context(), db.DeleteDesignDocumentParams{
@@ -135,6 +152,26 @@ func (h *Handler) DeleteDesignDocument(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "delete_failed", "failed to delete the design document")
 		return
+	}
+	// Publish only after the delete succeeds. Otherwise a fast refetch can race
+	// the DELETE and re-cache the row the event was meant to remove.
+	projectsSeen := make(map[string]struct{}, len(refs))
+	for _, row := range refs {
+		projectID := uuidToString(row.ProjectID)
+		if _, dup := projectsSeen[projectID]; dup {
+			continue
+		}
+		projectsSeen[projectID] = struct{}{}
+		h.publish(
+			protocol.EventProjectResourceDeleted,
+			uuidToString(workspaceUUID),
+			"member",
+			uuidToString(requesterUUID),
+			map[string]any{
+				"project_id":  projectID,
+				"resource_id": uuidToString(row.ID),
+			},
+		)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

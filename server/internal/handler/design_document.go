@@ -409,9 +409,11 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Two ways to ask: a project lists its design library, an issue lists the
-	// designs pointing at it. The issue form is what lets a task card say a
-	// design exists for it instead of looking untouched.
+	// Three ways to ask: a project lists its design library, an issue lists
+	// the designs pointing at it, and — with neither — the whole workspace.
+	// The workspace form is what the create-project modal's design picker
+	// reads: the project being created owns no documents yet, so a project-
+	// or issue-scoped list has nothing to offer it.
 	var documents []db.DesignDocument
 	var err error
 	if raw := strings.TrimSpace(r.URL.Query().Get("issue_id")); raw != "" {
@@ -423,8 +425,8 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: workspaceUUID,
 			IssueID:     issueUUID,
 		})
-	} else {
-		projectUUID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("project_id")), "project_id")
+	} else if raw := strings.TrimSpace(r.URL.Query().Get("project_id")); raw != "" {
+		projectUUID, ok := parseUUIDOrBadRequest(w, raw, "project_id")
 		if !ok {
 			return
 		}
@@ -438,6 +440,8 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: workspaceUUID,
 			ProjectID:   projectUUID,
 		})
+	} else {
+		documents, err = h.Queries.ListDesignDocumentsInWorkspace(r.Context(), workspaceUUID)
 	}
 	if err != nil {
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "lookup_failed", "failed to load design documents")

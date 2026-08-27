@@ -69,6 +69,28 @@ WHERE workspace_id = sqlc.arg('workspace_id')
   AND issue_id = sqlc.arg('issue_id')
 ORDER BY updated_at DESC;
 
+-- The workspace-wide list, most recently touched first. The project create
+-- modal's design picker is the one caller: it must offer documents from every
+-- project, because the project being created does not own any yet. Backed by
+-- idx_design_document_workspace — add an index migration if that ever changes.
+-- name: ListDesignDocumentsInWorkspace :many
+SELECT * FROM design_document
+WHERE workspace_id = sqlc.arg('workspace_id')
+ORDER BY updated_at DESC;
+
+-- Every project_resource of type design_document pointing at one document.
+-- References live in ANY project of the workspace (the create modal attaches
+-- other projects' documents), so the delete path must read them workspace-wide
+-- both to clean up and to publish per-project events. ref ids are stored in
+-- canonical dashed form (the validator normalizes client input), so a text
+-- compare against the document id is exact.
+-- name: ListProjectResourcesForDesignDocument :many
+SELECT * FROM project_resource
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND resource_type = 'design_document'
+  AND resource_ref->>'design_document_id' = sqlc.arg('design_document_id')::text
+ORDER BY project_id, position ASC, created_at ASC;
+
 -- name: GetDesignDocumentByActiveTask :one
 SELECT * FROM design_document
 WHERE workspace_id = sqlc.arg('workspace_id')
@@ -228,6 +250,16 @@ deleted_revisions AS (
     WHERE design_document_revision.workspace_id = sqlc.arg('workspace_id')
       AND design_document_revision.design_document_id = sqlc.arg('id')
     RETURNING design_document_revision.id
+),
+-- project_resource rows of type design_document point here by id with no
+-- foreign key, so the delete takes them with the document — a project left
+-- holding one would render a card pointing at a gone row.
+deleted_references AS (
+    DELETE FROM project_resource
+    WHERE project_resource.workspace_id = sqlc.arg('workspace_id')
+      AND project_resource.resource_type = 'design_document'
+      AND project_resource.resource_ref->>'design_document_id' = sqlc.arg('id')::text
+    RETURNING project_resource.id
 )
 DELETE FROM design_document
 WHERE design_document.id = sqlc.arg('id')

@@ -4395,6 +4395,18 @@ export class ApiClient {
     });
   }
 
+  /**
+   * Every design document in the workspace, most recently touched first. The
+   * create-project modal's design picker reads this: the project being created
+   * owns no documents yet, so a per-project list has nothing to offer it.
+   */
+  async listDesignDocumentsInWorkspace(): Promise<ListDesignDocumentsResponse> {
+    const raw = await this.fetch<unknown>("/api/design-documents");
+    return parseWithFallback(raw, ListDesignDocumentsResponseSchema, EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE, {
+      endpoint: "GET /api/design-documents",
+    });
+  }
+
   async createDesignDocument(data: CreateDesignDocumentRequest): Promise<DesignDocument> {
     const raw = await this.fetch<unknown>("/api/design-documents", {
       method: "POST",

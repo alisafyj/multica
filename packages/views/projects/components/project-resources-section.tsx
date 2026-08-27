@@ -8,6 +8,7 @@ import {
   FolderGit,
   FolderOpen,
   GitBranch,
+  Palette,
   Pencil,
   Plus,
   Search,
@@ -22,8 +23,10 @@ import {
   useUpdateProjectResource,
 } from "@multica/core/projects";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useCurrentWorkspace } from "@multica/core/paths";
+import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
+import { designDocumentDetailOptions } from "@multica/core/designs/queries";
 import type {
+  DesignDocumentResourceRef,
   DocumentResourceRef,
   GithubRepoResourceRef,
   LocalDirectoryExecutionMode,
@@ -61,6 +64,8 @@ import {
 import { localDirectoryLabel } from "./local-directory-label";
 import { useT } from "../../i18n";
 import { githubShortLabel } from "../../common/github-url";
+import { AppLink } from "../../navigation";
+import { designDocumentStatusLabel } from "../../designs/design-document-card";
 
 // Project Resources sidebar section.
 //
@@ -84,6 +89,12 @@ function isDocumentRef(r: ProjectResource): r is ProjectResource & {
   resource_ref: DocumentResourceRef;
 } {
   return r.resource_type === "document";
+}
+
+function isDesignDocumentRef(r: ProjectResource): r is ProjectResource & {
+  resource_ref: DesignDocumentResourceRef;
+} {
+  return r.resource_type === "design_document";
 }
 
 /**
@@ -722,6 +733,10 @@ function ResourceRow({
     );
   }
 
+  if (isDesignDocumentRef(resource)) {
+    return <DesignDocumentRow resource={resource} onRemove={onRemove} />;
+  }
+
   // The guards above exhaust every resource_type this build knows, so TS
   // narrows `resource` to never here. resource_type is a free TEXT column on
   // the server precisely so new types can ship without a client release, and
@@ -739,6 +754,72 @@ function ResourceRow({
         title={t(($) => $.resources.remove_tooltip)}
       >
         <Trash2 className="size-3" />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * A reference to a design-centre document. The ref is only an id — the title
+ * and status live on the document row and are fetched fresh, so a renamed or
+ * re-generated document reads correctly here without touching the resource.
+ * A deleted document (its fetch 404s) shows a stale marker rather than
+ * disappearing silently; the reference itself is cleaned up server-side when
+ * the document is deleted.
+ */
+function DesignDocumentRow({
+  resource,
+  onRemove,
+}: {
+  resource: ProjectResource & { resource_ref: DesignDocumentResourceRef };
+  onRemove: () => void;
+}) {
+  const { t } = useT("projects");
+  const wsId = useWorkspaceId();
+  const paths = useWorkspacePaths();
+  const documentId = resource.resource_ref.design_document_id;
+  const { data: document, isPending } = useQuery(
+    designDocumentDetailOptions(wsId, documentId),
+  );
+
+  const title = document?.title.trim();
+  // The fetch starts async, so while it is in flight `document` is undefined.
+  // Falling through to the "missing" label there would flash a false "this
+  // reference is dead" for a moment on every row — reserve that label for the
+  // settled-empty state and show the raw id while pending instead.
+  const missing = !isPending && !document;
+  const display =
+    resource.label || title || (missing ? t(($) => $.resources.design_document_missing) : documentId);
+  const status = document ? designDocumentStatusLabel(document.status) : null;
+
+  return (
+    <div className="flex items-center gap-2 text-caption group">
+      <Palette className="size-3.5 shrink-0 text-muted-foreground" />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <AppLink
+              href={paths.designDocumentDetail(documentId)}
+              className="truncate flex-1 hover:underline"
+            >
+              {display}
+            </AppLink>
+          }
+        />
+        <TooltipContent side="top">
+          {t(($) => $.resources.design_document_tooltip)}
+        </TooltipContent>
+      </Tooltip>
+      {status && (
+        <span className="shrink-0 text-muted-foreground">{status}</span>
+      )}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
+        title={t(($) => $.resources.remove_tooltip)}
+      >
+        <Trash2 className="size-3 text-muted-foreground" />
       </button>
     </div>
   );
