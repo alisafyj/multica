@@ -133,8 +133,10 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 			// Multica Cloud Fleet service — Cloud (not us) is the
 			// authoritative owner of the token's status and owner_id
 			// binding. We never look at the local
-			// local database for this prefix. When the verifier
-			// is unconfigured (no MULTICA_CLOUD_FLEET_URL) we reject
+			// personal_access_tokens table for this prefix; an mcn_
+			// string is not a valid mul_ value, so falling through
+			// would just be a redundant DB miss. When the verifier
+			// is unconfigured (no MULTICA_CLOUD_URL) we reject
 			// at this branch rather than treating the token as a
 			// JWT/PAT — failing closed avoids a misconfigured prod
 			// silently downgrading auth.

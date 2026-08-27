@@ -34,7 +34,7 @@ const forkMigrationPrefixStart = 800
 // once upstream owns that number. The realistic violation (anything between
 // lastUpstreamMigrationPrefix and 800) is rejected below.
 // Bumped from 397 with the upstream/main sync that brought 399–431.
-const lastUpstreamMigrationPrefix = 431
+const lastUpstreamMigrationPrefix = 439
 
 // existingForkMigrationPrefixes are fork-local migrations that were applied to
 // production before the 800+ rule; they keep their numbers forever because the

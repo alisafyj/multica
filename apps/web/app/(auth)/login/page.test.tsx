@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 const state = vi.hoisted(() => ({
@@ -14,8 +13,7 @@ const state = vi.hoisted(() => ({
   auth: {
     user: null as null | { id: string; email: string; onboarded_at: string | null },
     isLoading: false,
-    loginWithSSO: vi.fn(),
-  },
+    loginWithSSO: vi.fn(),  },
 }));
 const mockPush = vi.hoisted(() => vi.fn());
 const mockReplace = vi.hoisted(() => vi.fn());
@@ -37,8 +35,7 @@ vi.mock("@multica/core/config", () => ({
 
 vi.mock("@multica/core/auth", async () => {
   const actual = await vi.importActual<typeof import("@multica/core/auth")>(
-    "@multica/core/auth",
-  );
+    "@multica/core/auth",  );
   return {
     ...actual,
     useAuthStore: Object.assign(
@@ -103,6 +100,10 @@ describe("Web login auth mode", () => {
     state.config.loadConfig.mockImplementation((request) => request());
   });
 
+
+  // Shared LoginPage behavior is canonical in
+  // packages/views/auth/login-page.test.tsx. This wrapper suite owns web
+  // platform handoff and redirect behavior.
   it("shows a stable loading state until config resolves", () => {
     render(<LoginPage />, { wrapper });
 
@@ -161,8 +162,7 @@ describe("Web login auth mode", () => {
       email: "alice@example.com",
       onboarded_at: "2026-01-01T00:00:00Z",
     };
-    mockIssueCliToken.mockResolvedValue({ token: "desktop-token" });
-    const hrefSetter = vi.fn();
+    mockIssueCliToken.mockResolvedValue({ token: "desktop-token" });    const hrefSetter = vi.fn();
     const originalLocation = window.location;
     Object.defineProperty(window, "location", {
       configurable: true,

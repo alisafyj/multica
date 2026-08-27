@@ -97,7 +97,11 @@ func (d *Daemon) handleOpenDesignTask(ctx context.Context, task Task, provider s
 		return true
 	}
 
-	envRoot := execenv.PredictRootDir(d.cfg.WorkspacesRoot, task.WorkspaceID, task.ID)
+	envRoot := execenv.PredictRootDir(execenv.RootDirParams{
+		WorkspacesRoot: d.cfg.WorkspacesRoot,
+		WorkspaceID:    task.WorkspaceID,
+		TaskID:         task.ID,
+	})
 	d.markActiveEnvRoot(envRoot)
 	defer d.unmarkActiveEnvRoot(envRoot)
 
