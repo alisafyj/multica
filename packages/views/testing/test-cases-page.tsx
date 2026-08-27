@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ClipboardList, FlaskConical, Plus, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -43,6 +43,9 @@ import { PageHeader } from "../layout/page-header";
 import { AppLink, useNavigation } from "../navigation";
 import { useT } from "../i18n";
 import { formatRepoSummary, knownEnumKey } from "./case-summary";
+import { AddToPlanDialog } from "./components/add-to-plan-dialog";
+import { TestsTabs } from "./components/tests-tabs";
+import { resolveSelectedProjectId } from "./project-selection";
 
 /**
  * Test case library for one project. The project is the unit of generation and
@@ -67,7 +70,7 @@ export function TestCasesPage() {
   const clearFilters = useTestCaseViewStore((state) => state.clearFilters);
 
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
-  const selectedProjectId = projectId ?? projects[0]?.id ?? "";
+  const selectedProjectId = resolveSelectedProjectId(projects, projectId);
 
   const { data: modules = [] } = useQuery(testCaseModulesOptions(wsId, selectedProjectId));
   const { data: cases = [], isLoading } = useQuery({
@@ -86,6 +89,14 @@ export function TestCasesPage() {
     () => Object.values(filters).some((values) => values.length > 0) || activeModule !== null,
     [filters, activeModule],
   );
+
+  // Selection is a claim about rows the user can see. Changing the project or
+  // the filters replaces that set, so carrying ids across would let a batch
+  // action fire at cases that are off-screen — or, after a project switch, at
+  // cases in a project the user has already left.
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [selectedProjectId, activeModule, filters]);
 
   const allVisibleSelected =
     cases.length > 0 && cases.every((c) => selectedIds.has(c.id));
@@ -116,6 +127,7 @@ export function TestCasesPage() {
   const deleteCase = useDeleteTestCase();
   const [isStartingGeneration, setIsStartingGeneration] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TestCase | null>(null);
+  const [addToPlanOpen, setAddToPlanOpen] = useState(false);
 
   async function confirmDelete() {
     if (!deleteTarget) return;
@@ -167,22 +179,27 @@ export function TestCasesPage() {
     }
   }
 
+  // Approvals are independent of each other, so they go out together rather
+  // than in a serial chain: twenty selected cases used to mean twenty
+  // round-trips end to end. Concurrent invalidations of the same key are
+  // deduplicated by the query client, so the list still refetches once.
   async function batchApprove() {
     setIsBatchApproving(true);
     const ids = [...selectedIds];
-    let count = 0;
-    for (const id of ids) {
-      try {
-        await approveCase.mutateAsync(id);
-        count++;
-      } catch {
-        // individual failures are silent here; the cache rolls back per case
-      }
-    }
+    const settled = await Promise.allSettled(
+      ids.map((id) => approveCase.mutateAsync(id)),
+    );
     setIsBatchApproving(false);
+    const count = settled.filter((result) => result.status === "fulfilled").length;
+    const failed = settled.length - count;
     if (count > 0) {
       toast.success(t(($) => $.toast.batchApproved, { count }));
       setSelectedIds(new Set());
+    }
+    // A partial failure used to leave no trace at all: the toast counted the
+    // successes and the rest simply did not happen.
+    if (failed > 0) {
+      toast.error(t(($) => $.toast.batchApproveFailed, { count: failed }));
     }
   }
 
@@ -196,13 +213,6 @@ export function TestCasesPage() {
         {/* PageHeader lays children out without a gap; the action cluster
             spaces itself. */}
         <div className="flex shrink-0 items-center gap-2">
-          {/* The plans surface is otherwise unreachable: its own breadcrumbs
-              are the only thing that links to it, which only helps someone
-              already there. */}
-          <Button size="sm" variant="ghost" onClick={() => navigation.push(paths.testPlans())}>
-            <ClipboardList className="size-4" />
-            {t(($) => $.plans.title)}
-          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -222,6 +232,8 @@ export function TestCasesPage() {
           </Button>
         </div>
       </PageHeader>
+
+      <TestsTabs active="cases" />
 
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-56 shrink-0 flex-col gap-3 border-r border-border p-3">
@@ -309,13 +321,23 @@ export function TestCasesPage() {
               {t(($) => $.filters.aiReviewQueue)}
             </Button>
             {selectedIds.size > 0 ? (
-              <Button
-                size="sm"
-                disabled={isBatchApproving}
-                onClick={() => void batchApprove()}
-              >
-                {t(($) => $.actions.batchApprove)} ({selectedIds.size})
-              </Button>
+              <>
+                <Button
+                  size="sm"
+                  disabled={isBatchApproving}
+                  onClick={() => void batchApprove()}
+                >
+                  {t(($) => $.actions.batchApprove)} ({selectedIds.size})
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setAddToPlanOpen(true)}
+                >
+                  <ClipboardList className="size-4" />
+                  {t(($) => $.actions.addToPlan)} ({selectedIds.size})
+                </Button>
+              </>
             ) : null}
             {hasFilters ? (
               <Button
@@ -379,6 +401,15 @@ export function TestCasesPage() {
           </div>
         </section>
       </div>
+
+      <AddToPlanDialog
+        open={addToPlanOpen}
+        onOpenChange={setAddToPlanOpen}
+        wsId={wsId}
+        projectId={selectedProjectId}
+        caseIds={[...selectedIds]}
+        onAdded={() => setSelectedIds(new Set())}
+      />
 
       <AlertDialog
         open={!!deleteTarget}

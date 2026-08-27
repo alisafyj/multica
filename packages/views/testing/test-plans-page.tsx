@@ -20,6 +20,8 @@ import { NativeSelect } from "@multica/ui/components/ui/native-select";
 import { PageHeader } from "../layout/page-header";
 import { AppLink, useNavigation } from "../navigation";
 import { useT } from "../i18n";
+import { TestsTabs } from "./components/tests-tabs";
+import { resolveSelectedProjectId } from "./project-selection";
 
 export function TestPlansPage() {
   const { t } = useT("testing");
@@ -30,15 +32,19 @@ export function TestPlansPage() {
   const [newTitle, setNewTitle] = useState("");
   const [isCreating, setIsCreating] = useState(false);
 
-  const { data: plans = [], isLoading } = useQuery(testPlanListOptions(wsId));
-
-  // A plan belongs to one project (the server rejects an empty project_id),
-  // so creation shares the library's project selection instead of asking
-  // again — and still shows the picker here for the direct-entry case.
+  // A plan belongs to one project (the server rejects an empty project_id), so
+  // creation shares the library's project selection instead of asking again.
   const projectId = useTestCaseViewStore((state) => state.projectId);
   const setProjectId = useTestCaseViewStore((state) => state.setProjectId);
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
-  const selectedProjectId = projectId ?? projects[0]?.id ?? "";
+  const selectedProjectId = resolveSelectedProjectId(projects, projectId);
+
+  // The list is scoped to the same project the picker names. An unfiltered list
+  // under a project picker reads as a filter that does not work.
+  const { data: plans = [], isLoading } = useQuery({
+    ...testPlanListOptions(wsId, { projectId: selectedProjectId }),
+    enabled: selectedProjectId.length > 0,
+  });
 
   const createPlan = useCreateTestPlan();
 
@@ -108,6 +114,8 @@ export function TestPlansPage() {
         </div>
       </PageHeader>
 
+      <TestsTabs active="plans" />
+
       <div className="min-h-0 flex-1 overflow-auto">
         {isLoading ? null : plans.length === 0 ? (
           <div className="flex flex-col items-center gap-1 p-12 text-center">
@@ -153,13 +161,12 @@ function planStatusVariant(status: string): "secondary" | "outline" | "destructi
 
 function PlanRow({ plan, href }: { plan: TestPlan; href: string }) {
   const { t } = useT("testing");
-  const navigation = useNavigation();
 
+  // The row itself is not clickable: a row handler wrapping a link fired twice
+  // on the link and was unreachable by keyboard. The link is the affordance,
+  // matching the case rows on the neighbouring tab.
   return (
-    <tr
-      className="cursor-pointer border-b border-border hover:bg-accent"
-      onClick={() => navigation.push(href)}
-    >
+    <tr className="border-b border-border hover:bg-accent">
       <td className="px-3 py-2">
         <AppLink href={href} className="font-medium">
           {plan.title}

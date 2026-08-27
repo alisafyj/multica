@@ -1,4 +1,10 @@
 {
+  "tabs": {
+    "cases": "用例",
+    "plans": "计划",
+    "runs": "轮次",
+    "jobs": "生成任务"
+  },
   "page": {
     "title": "测试用例",
     "empty": "还没有测试用例",
@@ -135,7 +141,8 @@
     "edit": "编辑",
     "confirmDelete": "确定删除这条用例吗？",
     "batchApprove": "批量通过审查",
-    "selectAll": "全选"
+    "selectAll": "全选",
+    "addToPlan": "加入计划"
   },
   "toast": {
     "created": "用例已创建",
@@ -175,7 +182,14 @@
     "runResultSaved": "结果已保存",
     "runResultFailed": "无法保存结果",
     "defectOpened": "已创建缺陷 issue",
-    "defectFailed": "创建缺陷失败"
+    "defectFailed": "创建缺陷失败",
+    "batchApproveFailed": "{{count}} 条用例未能通过审查",
+    "planCasesAdded": "已加入 {{count}} 条用例",
+    "planCasesAlreadyAdded": "选中的用例已在该计划中",
+    "planCasesAddFailed": "加入计划失败",
+    "planCaseRemoveFailed": "移除用例失败",
+    "planUpdated": "计划已更新",
+    "planUpdateFailed": "更新计划失败"
   },
   "job": {
     "title": "生成任务",
@@ -237,7 +251,12 @@
       "issuesLabel": "聚焦 issue",
       "issuesPlaceholder": "例如 MUL-123, MUL-456（逗号分隔）",
       "instructionsLabel": "补充说明",
-      "instructionsPlaceholder": "要覆盖的路径、要聚焦的行为，以及智能体需要知道的信息。"
+      "instructionsPlaceholder": "要覆盖的路径、要聚焦的行为，以及智能体需要知道的信息。",
+      "issuesEmpty": "未圈定需求（不限定范围）",
+      "issuesAdd": "添加需求",
+      "issuesRemove": "移除",
+      "issuesPickerTitle": "圈定需求范围",
+      "issuesPickerDescription": "选择本次生成要覆盖的需求。"
     },
     "dispatch": {
       "title": "派发给 Agent",
@@ -305,7 +324,12 @@
       "environment": "环境",
       "buildRef": "构建版本",
       "remove": "移除",
-      "caseCount_other": "{{count}} 条用例"
+      "caseCount_other": "{{count}} 条用例",
+      "settings": "计划设置",
+      "description": "描述",
+      "deletePlan": "删除计划",
+      "confirmDelete": "确定删除这个测试计划吗？",
+      "unknownCase": "用例已不存在"
     }
   },
   "run": {
@@ -357,7 +381,9 @@
       "button": "派发",
       "dispatching": "派发中…",
       "running": "执行中…",
-      "blocked": "缺少能力：{{kind}}"
+      "blocked": "缺少能力：{{kind}}",
+      "prompt": "补充指令",
+      "promptPlaceholder": "可选：给智能体的额外说明"
     }
   },
   "runCase": {
@@ -375,7 +401,9 @@
       "executor": "执行人",
       "duration": "用时",
       "defect": "缺陷"
-    }
+    },
+    "saveNotes": "保存备注",
+    "notesNeedResult": "备注会随结果一起保存，请先选择结果。"
   },
   "timeline": {
     "title": "历史执行记录",
@@ -385,5 +413,54 @@
     "environment": "环境",
     "buildRef": "构建版本",
     "executedAt": "执行时间"
+  },
+  "runs": {
+    "title": "执行轮次",
+    "empty": "还没有执行轮次",
+    "emptyHint": "从测试计划创建一轮执行。",
+    "columns": {
+      "title": "名称",
+      "status": "状态",
+      "executor": "执行方",
+      "environment": "环境",
+      "buildRef": "构建版本",
+      "created": "创建时间"
+    },
+    "executor": {
+      "member": "人工",
+      "agent": "智能体"
+    }
+  },
+  "jobs": {
+    "title": "生成任务",
+    "empty": "还没有生成任务",
+    "emptyHint": "发起一次 AI 生成，覆盖范围确认后再派发。",
+    "columns": {
+      "job": "任务",
+      "status": "状态",
+      "created": "创建时间"
+    }
+  },
+  "addToPlan": {
+    "title": "加入测试计划",
+    "description": "将选中的 {{count}} 条用例加入计划。",
+    "plan": "目标计划",
+    "newPlan": "新建计划…",
+    "confirm": "加入"
+  },
+  "coverage": {
+    "caseSection": "关联需求",
+    "caseEmpty": "还没有关联需求",
+    "issueSection": "测试覆盖",
+    "linkIssue": "关联需求",
+    "unlink": "取消关联",
+    "linked": "已关联需求",
+    "linkFailed": "关联需求失败",
+    "unlinkFailed": "取消关联失败",
+    "pickerTitle": "关联需求",
+    "pickerDescription": "选择这条用例所验证的需求。",
+    "neverRun": "未执行",
+    "failingCount": "{{count}} 条失败",
+    "untestedCount": "{{count}} 条未执行"
   }
 }

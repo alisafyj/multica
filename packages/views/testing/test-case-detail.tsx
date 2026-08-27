@@ -45,6 +45,7 @@ import { useT } from "../i18n";
 import { crossRepoWarning, repoAliases, knownEnumKey } from "./case-summary";
 import { TestCaseStepsEditor } from "./components/test-case-steps-editor";
 import { TestCaseReposField } from "./components/test-case-repos-field";
+import { CaseIssueLinks } from "./components/case-issue-links";
 
 interface TestCaseDetailProps {
   /** A TC-<n> key or a UUID; the server resolves both. */
@@ -131,24 +132,45 @@ export function TestCaseDetail({ refId }: TestCaseDetailProps) {
     setDraft((previous) => (previous ? { ...previous, ...next } : previous));
   }
 
+  // Every write here reports its outcome. They used to be fire-and-forget: a
+  // rejected save rolled the cache back but left the edited draft on screen,
+  // which reads exactly like a save that worked.
   function save() {
-    updateCase.mutate({
-      ref: refId,
-      title: current.title,
-      module: current.module,
-      preconditions: current.preconditions,
-      expected_result: current.expectedResult,
-      steps: current.steps,
-      repos: current.repos.map((repo) => ({
-        project_resource_id: repo.project_resource_id,
-        alias: repo.alias,
-        role: repo.role,
-        path_globs: repo.path_globs,
-      })),
-      priority: current.priority as TestCasePriority,
-      case_type: current.caseType as TestCaseType,
-      scope: current.scope as TestCaseScope,
-      execution_mode: current.executionMode as TestCaseExecutionMode,
+    updateCase.mutate(
+      {
+        ref: refId,
+        title: current.title,
+        module: current.module,
+        preconditions: current.preconditions,
+        expected_result: current.expectedResult,
+        steps: current.steps,
+        repos: current.repos.map((repo) => ({
+          project_resource_id: repo.project_resource_id,
+          alias: repo.alias,
+          role: repo.role,
+          path_globs: repo.path_globs,
+        })),
+        priority: current.priority as TestCasePriority,
+        case_type: current.caseType as TestCaseType,
+        scope: current.scope as TestCaseScope,
+        execution_mode: current.executionMode as TestCaseExecutionMode,
+      },
+      {
+        onSuccess: () => toast.success(t(($) => $.toast.saved)),
+        onError: (err) =>
+          toast.error(
+            err instanceof Error && err.message
+              ? err.message
+              : t(($) => $.toast.saveFailed),
+          ),
+      },
+    );
+  }
+
+  function approve() {
+    approveCase.mutate(refId, {
+      onSuccess: () => toast.success(t(($) => $.toast.approved)),
+      onError: () => toast.error(t(($) => $.toast.saveFailed)),
     });
   }
 
@@ -156,7 +178,11 @@ export function TestCaseDetail({ refId }: TestCaseDetailProps) {
   // leave the user on a page whose case still exists.
   function remove() {
     deleteCase.mutate(refId, {
-      onSuccess: () => navigation.push(paths.tests()),
+      onSuccess: () => {
+        toast.success(t(($) => $.toast.deleted));
+        navigation.push(paths.tests());
+      },
+      onError: () => toast.error(t(($) => $.toast.deleteFailed)),
     });
   }
 
@@ -170,7 +196,7 @@ export function TestCaseDetail({ refId }: TestCaseDetailProps) {
           <span className="truncate text-body font-medium">{testCase.title}</span>
         </div>
         {testCase.status === "draft" ? (
-          <Button size="sm" disabled={busy} onClick={() => approveCase.mutate(refId)}>
+          <Button size="sm" disabled={busy} onClick={approve}>
             {t(($) => $.actions.approve)}
           </Button>
         ) : null}
@@ -283,6 +309,12 @@ export function TestCaseDetail({ refId }: TestCaseDetailProps) {
               disabled={busy}
               onChange={(repos) => patch({ repos })}
             />
+          </Field>
+
+          {/* What this case was written for. Sits above the revision log
+              because it is the question a reviewer asks first. */}
+          <Field label={t(($) => $.coverage.caseSection)}>
+            <CaseIssueLinks wsId={wsId} caseRef={refId} />
           </Field>
 
           <Field label={t(($) => $.detail.revisions)}>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, ArrowLeft, Bot, Play, RotateCcw, Square } from "lucide-react";
 import { toast } from "sonner";
@@ -163,12 +163,16 @@ export function TestRunDetail({ runId }: { runId: string }) {
   const canStart = run?.status === "pending";
   const canAbort = run?.status === "running";
   const canRetry = run?.status === "completed" || run?.status === "aborted";
-  const canDispatch = run?.status === "pending" && run?.executor_type === "agent";
+  // Any pending round can be handed to an agent. This used to also require
+  // `executor_type === "agent"`, which nothing ever sets before dispatch —
+  // dispatch is what makes the agent the executor — so the panel was
+  // unreachable and the endpoint had no caller.
+  const canDispatch = run?.status === "pending";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-muted/20">
       <BreadcrumbHeader
-        segments={[{ href: paths.testPlans(), label: t(($) => $.plans.title) }]}
+        segments={[{ href: paths.testRuns(), label: t(($) => $.runs.title) }]}
         leaf={
           <span className="truncate font-medium">
             {run?.title ?? t(($) => $.run.title)}
@@ -228,7 +232,7 @@ export function TestRunDetail({ runId }: { runId: string }) {
             className="mr-1 shrink-0"
             aria-label={t(($) => $.run.back)}
             title={t(($) => $.run.back)}
-            onClick={() => navigation.push(paths.testPlans())}
+            onClick={() => navigation.push(paths.testRuns())}
           >
             <ArrowLeft className="size-4" />
           </Button>
@@ -346,8 +350,31 @@ export function TestRunDetail({ runId }: { runId: string }) {
                             expandedCaseId === runCase.id ? null : runCase.id,
                           )
                         }
-                        onSetResult={(result) =>
-                          updateCaseResult.mutate({ id: runCase.id, runId, data: { result } })
+                        onSetResult={(result, notes) =>
+                          updateCaseResult.mutate(
+                            { id: runCase.id, runId, data: { result, notes } },
+                            {
+                              onError: () =>
+                                toast.error(t(($) => $.toast.runResultFailed)),
+                            },
+                          )
+                        }
+                        onSaveNotes={(notes) =>
+                          new Promise<void>((resolve, reject) => {
+                            updateCaseResult.mutate(
+                              { id: runCase.id, runId, data: { result: runCase.result, notes } },
+                              {
+                                onSuccess: () => {
+                                  toast.success(t(($) => $.toast.runResultSaved));
+                                  resolve();
+                                },
+                                onError: () => {
+                                  toast.error(t(($) => $.toast.runResultFailed));
+                                  reject(new Error("save notes failed"));
+                                },
+                              },
+                            );
+                          })
                         }
                         onOpenDefect={async (title) => {
                           try {
@@ -403,12 +430,12 @@ export function TestRunDetail({ runId }: { runId: string }) {
 
                     <div>
                       <label className="mb-1 block text-caption font-medium text-muted-foreground">
-                        {t(($) => $.plans.detail.environment)}
+                        {t(($) => $.run.dispatch.prompt)}
                       </label>
                       <Input
                         value={dispatchPrompt}
                         onChange={(e) => setDispatchPrompt(e.target.value)}
-                        placeholder=""
+                        placeholder={t(($) => $.run.dispatch.promptPlaceholder)}
                         className="h-8 text-caption"
                       />
                     </div>
@@ -443,12 +470,14 @@ function RunCaseRow({
   expanded,
   onToggleExpand,
   onSetResult,
+  onSaveNotes,
   onOpenDefect,
 }: {
   runCase: TestRunCase;
   expanded: boolean;
   onToggleExpand: () => void;
-  onSetResult: (result: TestRunCaseResult) => void;
+  onSetResult: (result: TestRunCaseResult, notes: string) => void;
+  onSaveNotes: (notes: string) => Promise<void>;
   onOpenDefect: (title: string) => Promise<void>;
 }) {
   const { t } = useT("testing");
@@ -456,7 +485,36 @@ function RunCaseRow({
   const [defectTitle, setDefectTitle] = useState("");
   const [openingDefect, setOpeningDefect] = useState(false);
   const [showDefect, setShowDefect] = useState(false);
+  const [savingNotes, setSavingNotes] = useState(false);
   const [notes, setNotes] = useState(runCase.notes);
+  // The draft used to be seeded once and never again, so a note written by
+  // whoever else is executing this round never arrived. Follow the server on
+  // its own change marker rather than on the cached object's identity, which
+  // changes on every invalidation — but only when the user has no unsaved edit
+  // of their own, or a co-tester's write would delete what they are typing.
+  const syncedNotes = useRef(runCase.notes);
+  useEffect(() => {
+    if (notes === syncedNotes.current) setNotes(runCase.notes);
+    syncedNotes.current = runCase.notes;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runCase.id, runCase.updated_at]);
+
+  const notesDirty = notes !== runCase.notes;
+  // A result write is what stamps execution on the row, so a note is saved
+  // with one. Until the case has a result, the note rides along with whichever
+  // result button the tester presses.
+  const canSaveNotesAlone = runCase.result !== "pending" && runCase.result !== "running";
+
+  async function saveNotes() {
+    setSavingNotes(true);
+    try {
+      await onSaveNotes(notes);
+    } catch {
+      // the toast is raised by the caller; the draft stays for a retry
+    } finally {
+      setSavingNotes(false);
+    }
+  }
 
   const snapshot = runCase.case_snapshot as Record<string, unknown>;
   const caseTitle = typeof snapshot.title === "string" ? snapshot.title : runCase.test_case_id;
@@ -504,7 +562,7 @@ function RunCaseRow({
               type="button"
               aria-label={t(($) => $.run.result[result as keyof typeof $.run.result])}
               data-active={runCase.result === result || undefined}
-              onClick={() => onSetResult(result)}
+              onClick={() => onSetResult(result, notes)}
               className={`rounded px-2 py-0.5 text-caption transition-colors data-active:font-medium
                 ${result === "passed"
                   ? "text-success hover:bg-success/10 data-active:bg-success/20"
@@ -539,6 +597,27 @@ function RunCaseRow({
               placeholder={t(($) => $.runCase.notesPlaceholder)}
               className="min-h-20 text-caption"
             />
+            {notesDirty ? (
+              <div className="mt-1.5 flex items-center gap-2">
+                {canSaveNotesAlone ? (
+                  <Button size="sm" disabled={savingNotes} onClick={() => void saveNotes()}>
+                    {t(($) => $.runCase.saveNotes)}
+                  </Button>
+                ) : (
+                  <p className="text-caption text-muted-foreground">
+                    {t(($) => $.runCase.notesNeedResult)}
+                  </p>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={savingNotes}
+                  onClick={() => setNotes(runCase.notes)}
+                >
+                  {t(($) => $.actions.cancel)}
+                </Button>
+              </div>
+            ) : null}
           </div>
 
           {/* Defect link or open form */}
