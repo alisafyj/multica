@@ -318,6 +318,8 @@ var concurrentIndexCleanups = map[string]string{
 	"888_idx_design_scenario_recipe_gallery":               "idx_design_scenario_recipe_gallery",
 	"902_idx_design_document_share_token":                  "idx_design_document_share_token",
 	"903_idx_design_document_share_live_revision":          "idx_design_document_share_live_revision",
+	"907_idx_design_file_repository_scope":                  "idx_design_file_repository_scope",
+	"908_idx_design_document_repository_scope":              "idx_design_document_repository_scope",
 	"398_issue_workspace_status_position_index":            "idx_issue_workspace_status_position",
 	"400_plugin_hook_schedule_installation_key_index":      "idx_plugin_hook_schedule_installation_key",
 	"401_plugin_hook_schedule_enabled_index":               "idx_plugin_hook_schedule_enabled",
