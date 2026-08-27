@@ -1176,7 +1176,7 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
                       <span
                         style={cover.style}
                         aria-hidden
-                        className="flex size-7 shrink-0 items-center justify-center rounded-md text-[11px] font-medium text-faint-foreground"
+                        className="flex size-7 shrink-0 items-center justify-center rounded-md text-micro font-medium text-faint-foreground"
                       >
                         {cover.initial}
                       </span>
