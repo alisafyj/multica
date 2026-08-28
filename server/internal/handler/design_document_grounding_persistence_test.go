@@ -3,9 +3,11 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/designdocument"
+	"github.com/multica-ai/multica/server/internal/designpreview"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -53,6 +55,7 @@ func TestValidateDesignDocumentCompletionGrounding(t *testing.T) {
 		{name: "pending rejects unavailable receipt", mode: service.DesignDocumentGroundingPending, raw: unavailableDesignDocumentGrounding, wantErr: true},
 		{name: "unavailable rejects available receipt", mode: service.DesignDocumentGroundingUnavailable, raw: availableDesignDocumentGrounding, wantErr: true},
 		{name: "pinned ignores caller evidence", mode: service.DesignDocumentGroundingPinned, raw: availableDesignDocumentGrounding},
+		{name: "pinned ignores malformed caller evidence", mode: service.DesignDocumentGroundingPinned, raw: json.RawMessage(`{invalid`)},
 		{name: "unknown mode is rejected", mode: "unexpected", raw: unavailableDesignDocumentGrounding, wantErr: true},
 	}
 
@@ -84,10 +87,18 @@ func TestTaskCompleteRequestDecodesDesignDocumentGrounding(t *testing.T) {
 }
 
 func TestPendingDesignDocumentCompletionRejectsMissingGrounding(t *testing.T) {
-	_, err := validateDesignDocumentCompletionGrounding(service.DesignDocumentGroundingPending, nil)
-	if err == nil {
-		t.Fatal("pending completion accepted missing repository grounding")
+	fixture := createDesignDocumentRevisionFixture(t)
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `UPDATE design_document SET active_task_id = $1 WHERE id = $2`, fixture.Revision.SourceTaskID, fixture.Document.ID); err != nil {
+		t.Fatalf("activate fixture task: %v", err)
 	}
+	contextJSON := designDocumentGroundingPrepareContext(t, fixture, service.DesignDocumentGroundingPending)
+	task := db.AgentTaskQueue{ID: fixture.Revision.SourceTaskID, AgentID: fixture.Revision.AgentID, Context: contextJSON}
+	_, err := testHandler.prepareDesignDocumentCompletion(ctx, task, testWorkspaceID, designDocumentGroundingReceipt(t, fixture), nil)
+	if err == nil || !strings.Contains(err.Error(), "repository grounding is required") {
+		t.Fatalf("prepare error = %v, want missing repository grounding", err)
+	}
+	assertDesignDocumentCompletionUnchanged(t, fixture)
 }
 
 func TestDesignDocumentRevisionStoresValidatedRepositoryGrounding(t *testing.T) {
@@ -109,6 +120,42 @@ func TestPinnedDesignDocumentRevisionInheritsBaseGrounding(t *testing.T) {
 	assertDesignDocumentRevisionGrounding(t, revision, availableDesignDocumentGrounding)
 }
 
+func TestPinnedDesignDocumentRevisionRejectsForeignDocumentGrounding(t *testing.T) {
+	foreign := createDesignDocumentRevisionFixture(t)
+	if _, err := testPool.Exec(context.Background(), `UPDATE design_document_revision SET repository_grounding = $1 WHERE id = $2`, availableDesignDocumentGrounding, foreign.Revision.ID); err != nil {
+		t.Fatalf("seed foreign grounding: %v", err)
+	}
+	fixture := createDesignDocumentRevisionFixture(t)
+	err := attemptPersistDesignDocumentCompletion(t, fixture, nil, uuidToString(foreign.Revision.ID))
+	if err == nil || !strings.Contains(err.Error(), "base revision does not belong to this document") {
+		t.Fatalf("persist error = %v, want foreign-document rejection", err)
+	}
+	assertDesignDocumentCompletionUnchanged(t, fixture)
+}
+
+func TestUnavailableDesignDocumentRevisionStoresExplicitGrounding(t *testing.T) {
+	fixture := createDesignDocumentRevisionFixture(t)
+	grounding, err := validateDesignDocumentCompletionGrounding(service.DesignDocumentGroundingUnavailable, unavailableDesignDocumentGrounding)
+	if err != nil {
+		t.Fatalf("validate grounding: %v", err)
+	}
+	revision := persistDesignDocumentCompletionForTest(t, fixture, grounding, "")
+	assertDesignDocumentRevisionGrounding(t, revision, unavailableDesignDocumentGrounding)
+}
+
+func attemptPersistDesignDocumentCompletion(t *testing.T, fixture designDocumentRevisionFixture, grounding json.RawMessage, baseRevisionID string) error {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	queries := db.New(tx)
+	_, err = persistDesignDocumentCompletion(ctx, queries, db.AgentTaskQueue{ID: fixture.Revision.SourceTaskID}, preparedDesignDocumentCompletionForTest(fixture, grounding, baseRevisionID))
+	return err
+}
+
 func persistDesignDocumentCompletionForTest(t *testing.T, fixture designDocumentRevisionFixture, grounding json.RawMessage, baseRevisionID string) db.DesignDocumentRevision {
 	t.Helper()
 	ctx := context.Background()
@@ -118,6 +165,20 @@ func persistDesignDocumentCompletionForTest(t *testing.T, fixture designDocument
 	}
 	defer tx.Rollback(ctx)
 	queries := db.New(tx)
+	document, err := persistDesignDocumentCompletion(ctx, queries, db.AgentTaskQueue{ID: fixture.Revision.SourceTaskID}, preparedDesignDocumentCompletionForTest(fixture, grounding, baseRevisionID))
+	if err != nil {
+		t.Fatalf("persist design document completion: %v", err)
+	}
+	revision, err := queries.GetDesignDocumentRevisionInWorkspace(ctx, db.GetDesignDocumentRevisionInWorkspaceParams{
+		ID: document.DraftRevisionID, WorkspaceID: fixture.Document.WorkspaceID,
+	})
+	if err != nil {
+		t.Fatalf("load created revision: %v", err)
+	}
+	return revision
+}
+
+func preparedDesignDocumentCompletionForTest(fixture designDocumentRevisionFixture, grounding json.RawMessage, baseRevisionID string) preparedDesignDocumentCompletion {
 	prepared := preparedDesignDocumentCompletion{
 		TaskContext: service.DesignDocumentTaskContext{
 			WorkspaceID:         testWorkspaceID,
@@ -138,18 +199,106 @@ func persistDesignDocumentCompletionForTest(t *testing.T, fixture designDocument
 		Coverage:            fixture.Revision.Coverage,
 		RepositoryGrounding: grounding,
 	}
-	taskID := fixture.Revision.SourceTaskID
-	document, err := persistDesignDocumentCompletion(ctx, queries, db.AgentTaskQueue{ID: taskID}, prepared)
-	if err != nil {
-		t.Fatalf("persist design document completion: %v", err)
+	return prepared
+}
+
+func designDocumentGroundingPrepareContext(t *testing.T, fixture designDocumentRevisionFixture, groundingMode string) json.RawMessage {
+	t.Helper()
+	contextValue := service.DesignDocumentTaskContext{
+		Type:                service.DesignDocumentTaskContextType,
+		WorkspaceID:         testWorkspaceID,
+		DesignDocumentID:    uuidToString(fixture.Document.ID),
+		AgentID:             uuidToString(fixture.Revision.AgentID),
+		Platform:            "web",
+		InputSnapshotSHA256: fixture.Revision.InputSnapshotSha256,
+		Input: service.DesignDocumentTaskInput{
+			SchemaVersion:       service.DesignDocumentInputSchema,
+			RepositoryGrounding: groundingMode,
+		},
 	}
-	revision, err := queries.GetDesignDocumentRevisionInWorkspace(ctx, db.GetDesignDocumentRevisionInWorkspaceParams{
-		ID: document.DraftRevisionID, WorkspaceID: fixture.Document.WorkspaceID,
+	encoded, err := json.Marshal(contextValue)
+	if err != nil {
+		t.Fatalf("marshal design document context: %v", err)
+	}
+	return encoded
+}
+
+func designDocumentGroundingReceipt(t *testing.T, fixture designDocumentRevisionFixture) *DesignDocumentPackageReceipt {
+	t.Helper()
+	var audit designdocument.AuditReport
+	if err := json.Unmarshal(fixture.Revision.Audit, &audit); err != nil {
+		t.Fatalf("unmarshal audit receipt: %v", err)
+	}
+	var preview designpreview.Receipt
+	if err := json.Unmarshal(fixture.Revision.Preview, &preview); err != nil {
+		t.Fatalf("unmarshal preview receipt: %v", err)
+	}
+	// The fixture's seeded preview JSON is intentionally minimal; complete its
+	// visual evidence for every target in the real archive.
+	preview.SchemaVersion = designpreview.ReceiptSchemaV1
+	preview.ContentDigest = fixture.Revision.ContentDigest
+	preview.Verification = designDocumentGroundingVerification(fixture.Package.Manifest.PreviewTargets)
+	return &DesignDocumentPackageReceipt{
+		SchemaVersion: designdocument.PackageSchemaV1,
+		ObjectKey:     fixture.Revision.ArchiveObjectKey,
+		ContentDigest: fixture.Revision.ContentDigest,
+		ArtifactIndex: fixture.Package.Manifest.Files,
+		Audit:         audit,
+		Preview:       preview,
+	}
+}
+
+func designDocumentGroundingVerification(targets []designdocument.PreviewTarget) designpreview.Verification {
+	verifications := make([]designpreview.TargetVerification, 0, len(targets))
+	for _, target := range targets {
+		verifications = append(verifications, designpreview.TargetVerification{
+			Target: designpreview.Target{
+				Kind: "preview", ID: target.ID, Path: target.Path,
+			},
+			Passed:                    true,
+			DocumentLoaded:            true,
+			DOMPresent:                true,
+			ComputedVisibilityVisible: true,
+			RenderedElementCount:      1,
+			VisibleTextLength:         1,
+			BodyWidth:                 800,
+			BodyHeight:                600,
+			Screenshot: designpreview.Screenshot{
+				SHA256:           "sha256:" + strings.Repeat("a", 64),
+				Bytes:            1024,
+				Width:            800,
+				Height:           600,
+				Entropy:          4,
+				MaxChannelStddev: 32,
+			},
+		})
+	}
+	return designpreview.Verification{
+		Browser: designpreview.BrowserIdentity{Name: "test-chromium", Version: "0.0.0"},
+		Policy:  designpreview.DefaultPolicy(),
+		Targets: verifications,
+		Passed:  true,
+	}
+}
+
+func assertDesignDocumentCompletionUnchanged(t *testing.T, fixture designDocumentRevisionFixture) {
+	t.Helper()
+	document, err := db.New(testPool).GetDesignDocumentInWorkspace(context.Background(), db.GetDesignDocumentInWorkspaceParams{
+		ID: fixture.Document.ID, WorkspaceID: fixture.Document.WorkspaceID,
 	})
 	if err != nil {
-		t.Fatalf("load created revision: %v", err)
+		t.Fatalf("load fixture document: %v", err)
 	}
-	return revision
+	if uuidToString(document.DraftRevisionID) != uuidToString(fixture.Document.DraftRevisionID) {
+		t.Fatalf("draft moved from %s to %s", fixture.Document.DraftRevisionID, document.DraftRevisionID)
+	}
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM design_document_revision WHERE design_document_id = $1`, fixture.Document.ID).Scan(&count); err != nil {
+		t.Fatalf("count design document revisions: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("design document revision count = %d, want 1", count)
+	}
 }
 
 func assertJSONValueEqual(t *testing.T, got, want any) {

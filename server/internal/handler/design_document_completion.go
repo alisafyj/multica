@@ -229,6 +229,9 @@ func designDocumentPreviewTargets(targets []designdocument.PreviewTarget) ([]des
 // applies the task's grounding mode. Pinned runs always discard a caller
 // receipt; persistence copies the immutable base revision's evidence instead.
 func validateDesignDocumentCompletionGrounding(mode string, raw json.RawMessage) (json.RawMessage, error) {
+	if mode == service.DesignDocumentGroundingPinned {
+		return nil, nil
+	}
 	if len(raw) == 0 {
 		if mode == service.DesignDocumentGroundingPending {
 			return nil, errors.New("design document repository grounding is required")
@@ -254,8 +257,6 @@ func validateDesignDocumentCompletionGrounding(mode string, raw json.RawMessage)
 		if grounding.Status != designdocument.GroundingUnavailable {
 			return nil, errors.New("unavailable repository grounding must remain unavailable")
 		}
-	case service.DesignDocumentGroundingPinned:
-		return nil, nil
 	default:
 		return nil, errors.New("unknown design document grounding mode")
 	}
@@ -275,9 +276,6 @@ func validateDesignDocumentCompletionGrounding(mode string, raw json.RawMessage)
 // task produces exactly one revision, so the task identity is the deterministic
 // revision identity — the same rule the daemon applies when the context carries
 // no explicit revision_id.
-// validateDesignDocumentCompletionGrounding normalizes the daemon receipt and
-// applies the task's grounding mode. Pinned runs always discard a caller
-// receipt; persistence copies the immutable base revision's evidence instead.
 func designDocumentBindingFromContext(taskContext service.DesignDocumentTaskContext, task db.AgentTaskQueue) designdocument.PackageBinding {
 	taskID := uuidToString(task.ID)
 	return designdocument.PackageBinding{
@@ -367,6 +365,9 @@ func persistDesignDocumentCompletion(
 		})
 		if err != nil {
 			return db.DesignDocument{}, fmt.Errorf("load design document base revision grounding: %w", err)
+		}
+		if baseRevision.DesignDocumentID != prepared.DocumentID {
+			return db.DesignDocument{}, errors.New("design document base revision does not belong to this document")
 		}
 		repositoryGrounding = baseRevision.RepositoryGrounding
 	}
