@@ -68,19 +68,64 @@ describe("ApiClient repository design asset contracts", () => {
     });
   });
 
-  it("rejects a malformed repository association success response", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      project_id: "project-1",
-      project_resource_id: "repo-1",
-      count: -1,
-    })));
+  it.each([
+    {
+      name: "missing project_id",
+      body: { project_resource_id: "repo-1", count: 1 },
+      expectedPath: "project_id",
+    },
+    {
+      name: "non-string project_id",
+      body: { project_id: 7, project_resource_id: "repo-1", count: 1 },
+      expectedPath: "project_id",
+    },
+    {
+      name: "missing project_resource_id",
+      body: { project_id: "project-1", count: 1 },
+      expectedPath: "project_resource_id",
+    },
+    {
+      name: "non-string project_resource_id",
+      body: { project_id: "project-1", project_resource_id: 7, count: 1 },
+      expectedPath: "project_resource_id",
+    },
+    {
+      name: "negative count",
+      body: { project_id: "project-1", project_resource_id: "repo-1", count: -1 },
+      expectedPath: "count",
+    },
+    {
+      name: "non-integer count",
+      body: { project_id: "project-1", project_resource_id: "repo-1", count: 1.5 },
+      expectedPath: "count",
+    },
+  ])("rejects a malformed success response with $name", async ({ body, expectedPath }) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const client = new ApiClient("https://api.example.test");
+    const malformedResponsePrefix =
+      "PUT /api/design-assets/repository-association returned a malformed response: ";
 
-    await expect(client.setDesignAssetRepositoryAssociation({
-      project_id: "project-1",
-      project_resource_id: "repo-1",
-      items: [{ kind: "design_file", id: "file-1" }],
-    })).rejects.toThrow();
+    let rejection: unknown;
+    try {
+      await client.setDesignAssetRepositoryAssociation({
+        project_id: "project-1",
+        project_resource_id: "repo-1",
+        items: [{ kind: "design_file", id: "file-1" }],
+      });
+    } catch (error) {
+      rejection = error;
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(rejection).toBeInstanceOf(Error);
+    const message = (rejection as Error).message;
+    expect(message).toContain(malformedResponsePrefix);
+    const issues = JSON.parse(message.slice(malformedResponsePrefix.length)) as Array<{
+      path: string[];
+    }>;
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: [expectedPath] }),
+    ]));
   });
 });
