@@ -1589,10 +1589,17 @@ export const EMPTY_LIST_DESIGN_DELIVERIES_RESPONSE: ListDesignDeliveriesResponse
   deliveries: [],
 };
 
-const DesignFileSchema = z.object({
+export const SetDesignAssetRepositoryAssociationResponseSchema = z.object({
+  project_id: z.string(),
+  project_resource_id: z.string(),
+  count: z.number().int().nonnegative(),
+});
+
+export const DesignFileSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
   project_id: z.string().nullable().optional(),
+  project_resource_id: z.string().nullable().catch(null).default(null),
   folder_id: z.string().nullable().optional(),
   title: z.string(),
   description: z.string().nullable().default(null),
@@ -1617,11 +1624,12 @@ const DesignRevisionSchema = z.object({
   created_at: z.string(),
 }).loose();
 
-const EMPTY_DESIGN_FILE_DETAIL_RESPONSE: DesignFileDetailResponse = {
+export const EMPTY_DESIGN_FILE_DETAIL_RESPONSE: DesignFileDetailResponse = {
   file: {
     id: "",
     workspace_id: "",
     project_id: null,
+    project_resource_id: null,
     folder_id: null,
     title: "",
     description: null,
