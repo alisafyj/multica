@@ -219,6 +219,8 @@ import type {
   ManualEditDesignDocumentRequest,
   RegenerateDesignDocumentRequest,
   SaveDesignDocumentRequest,
+  SetDesignAssetRepositoryAssociationRequest,
+  SetDesignAssetRepositoryAssociationResponse,
   DesignDocument,
   DesignDocumentRevision,
   ListDesignDocumentRevisionsResponse,
@@ -567,6 +569,7 @@ import {
   EMPTY_DISPATCH_DESIGN_RESTORE_TASK_RESPONSE,
   ListDesignDeliveriesResponseSchema,
   ListDesignDocumentsResponseSchema,
+  SetDesignAssetRepositoryAssociationResponseSchema,
   ListDesignDraftsResponseSchema,
   BuiltinDesignSystemDetailSchema,
   ListBuiltinDesignSystemsResponseSchema,
@@ -4024,8 +4027,34 @@ export class ApiClient {
   }
 
   // Gallery Native design files
-  async listDesignFiles(): Promise<ListDesignFilesResponse> {
-    return this.fetch("/api/design-files");
+  async listDesignFiles(params?: {
+    projectId?: string;
+    projectResourceId?: string;
+  }): Promise<ListDesignFilesResponse> {
+    const search = new URLSearchParams();
+    if (params?.projectId) search.set("project_id", params.projectId);
+    if (params?.projectResourceId) search.set("project_resource_id", params.projectResourceId);
+    const suffix = search.toString();
+    return this.fetch(`/api/design-files${suffix ? `?${suffix}` : ""}`);
+  }
+
+  /**
+   * Set the repository link for a mixed batch of Design Files and Design
+   * Documents. The success response is intentionally strict: a malformed
+   * server acknowledgement must fail the mutation rather than look successful.
+   */
+  async setDesignAssetRepositoryAssociation(
+    data: SetDesignAssetRepositoryAssociationRequest,
+  ): Promise<SetDesignAssetRepositoryAssociationResponse> {
+    const raw = await this.fetch<unknown>("/api/design-assets/repository-association", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    const parsed = SetDesignAssetRepositoryAssociationResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error(`PUT /api/design-assets/repository-association returned a malformed response: ${parsed.error.message}`);
+    }
+    return parsed.data;
   }
 
   async listDesignFolders(projectId?: string): Promise<ListDesignFoldersResponse> {
@@ -4371,9 +4400,14 @@ export class ApiClient {
   // Design documents are the page-design artifact the design centre home
   // composer produces (DC-042). Creating one also enqueues its first
   // generation task server-side.
-  async listDesignDocuments(projectId: string): Promise<ListDesignDocumentsResponse> {
+  async listDesignDocuments(
+    projectId: string,
+    projectResourceId?: string,
+  ): Promise<ListDesignDocumentsResponse> {
+    const search = new URLSearchParams({ project_id: projectId });
+    if (projectResourceId) search.set("project_resource_id", projectResourceId);
     const raw = await this.fetch<unknown>(
-      `/api/design-documents?project_id=${encodeURIComponent(projectId)}`,
+      `/api/design-documents?${search.toString()}`,
     );
     return parseWithFallback(raw, ListDesignDocumentsResponseSchema, EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE, {
       endpoint: "GET /api/design-documents",

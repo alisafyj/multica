@@ -146,10 +146,14 @@ export interface GalleryNativeJson {
   source?: Record<string, unknown>;
 }
 
+export type DesignAssetAssociationKind = "design_file" | "design_document";
+
 export interface DesignFile {
   id: string;
   workspace_id: string;
   project_id?: string | null;
+  /** Backend repository identity; null means the Design File is project-level. */
+  project_resource_id?: string | null;
   folder_id?: string | null;
   title: string;
   description: string | null;
@@ -1406,6 +1410,18 @@ export interface DesignDraftMaterializeResponse {
 export interface ListDesignFilesResponse {
   design_files: DesignFile[];
   total: number;
+}
+
+export interface SetDesignAssetRepositoryAssociationRequest {
+  project_id: string;
+  project_resource_id: string;
+  items: Array<{ kind: DesignAssetAssociationKind; id: string }>;
+}
+
+export interface SetDesignAssetRepositoryAssociationResponse {
+  project_id: string;
+  project_resource_id: string;
+  count: number;
 }
 
 export interface ListDesignFoldersResponse {
