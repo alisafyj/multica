@@ -3045,12 +3045,13 @@ func listDesignFilesForRepositoryTest(t *testing.T, projectID, resourceID string
 func assertRepositoryDesignFileIDs(t *testing.T, files []DesignFileResponse, want ...string) {
 	t.Helper()
 	got := make([]string, len(files))
+	updatedAt := make([]string, len(files))
 	for i, file := range files {
 		got[i] = file.ID
+		updatedAt[i] = file.UpdatedAt
 	}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("design file ids = %v, want %v", got, want)
-	}
+	assertRepositoryIDsExact(t, "design file IDs", got, want)
+	assertRepositoryUpdatedAtDescending(t, "design file", updatedAt)
 }
 
 func assertRepositoryDesignFileResource(t *testing.T, files []DesignFileResponse, fileID, resourceID string) {

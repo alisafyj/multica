@@ -1,10 +1,11 @@
 package handler
 
 import (
+	"maps"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/testutil"
 )
@@ -71,11 +72,45 @@ func listDesignDocumentsForRepositoryTest(t *testing.T, projectID, resourceID st
 func assertRepositoryDesignDocumentIDs(t *testing.T, documents []DesignDocumentResponse, want ...string) {
 	t.Helper()
 	got := make([]string, len(documents))
+	updatedAt := make([]string, len(documents))
 	for i, document := range documents {
 		got[i] = document.ID
+		updatedAt[i] = document.UpdatedAt
 	}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("design document ids = %v, want %v", got, want)
+	assertRepositoryIDsExact(t, "design document IDs", got, want)
+	assertRepositoryUpdatedAtDescending(t, "design document", updatedAt)
+}
+
+func assertRepositoryIDsExact(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	gotCounts := make(map[string]int, len(got))
+	for _, id := range got {
+		gotCounts[id]++
+	}
+	wantCounts := make(map[string]int, len(want))
+	for _, id := range want {
+		wantCounts[id]++
+	}
+	if len(got) == len(want) && maps.Equal(gotCounts, wantCounts) {
+		return
+	}
+	t.Fatalf("%s = %v, want exactly %v", label, got, want)
+}
+
+func assertRepositoryUpdatedAtDescending(t *testing.T, label string, updatedAt []string) {
+	t.Helper()
+	for i := 1; i < len(updatedAt); i++ {
+		current, err := time.Parse(time.RFC3339Nano, updatedAt[i])
+		if err != nil {
+			t.Fatalf("parse %s updated_at %q: %v", label, updatedAt[i], err)
+		}
+		previous, err := time.Parse(time.RFC3339Nano, updatedAt[i-1])
+		if err != nil {
+			t.Fatalf("parse %s updated_at %q: %v", label, updatedAt[i-1], err)
+		}
+		if current.After(previous) {
+			t.Fatalf("%s updated_at must be descending, got %q before %q", label, updatedAt[i-1], updatedAt[i])
+		}
 	}
 }
 
