@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/designdocument"
@@ -137,12 +138,74 @@ func TestDesignDocumentDeliveryContextUsesSavedRevisionGrounding(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("clear draft for fallback: %v", err)
 	}
-	// Invalid scope IDs fail before the saved-revision lookup and therefore
-	// cannot accidentally infer grounding from the manual repository link.
-	if delivery := testHandler.designDeliveryContextForIssue(context.Background(), pgtype.UUID{}, parseUUID(issueID)); delivery != nil {
+}
+
+func TestDesignDocumentDeliveryContextMissingSavedRevisionIsNotGrounded(t *testing.T) {
+	fixture := createDesignDocumentRevisionFixture(t)
+	queries := db.New(testPool)
+	ctx := context.Background()
+	attachDesignDocumentRepositoryLink(t, fixture)
+	issueID := setDesignDocumentIssueForGrounding(t, fixture.Document.ID)
+
+	if err := updateDesignDocumentRevisionGrounding(ctx, fixture.Revision.ID, fixture.Document.WorkspaceID, availableDesignDocumentGrounding); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := queries.SaveDesignDocumentDraft(ctx, db.SaveDesignDocumentDraftParams{
+		ID: fixture.Document.ID, WorkspaceID: fixture.Document.WorkspaceID, ExpectedDraftRevisionID: fixture.Revision.ID,
+	})
+	if err != nil {
+		t.Fatalf("save grounded revision: %v", err)
+	}
+	placeholder, err := createDesignDocumentGroundingRevision(t, fixture, 2, unavailableDesignDocumentGrounding)
+	if err != nil {
+		t.Fatalf("create retained draft revision: %v", err)
+	}
+	if _, err := queries.SetDesignDocumentDraftRevision(ctx, db.SetDesignDocumentDraftRevisionParams{
+		ID: fixture.Document.ID, WorkspaceID: fixture.Document.WorkspaceID, DraftRevisionID: placeholder.ID,
+	}); err != nil {
+		t.Fatalf("move draft off saved revision: %v", err)
+	}
+
+	originalQueries := testHandler.Queries
+	testHandler.Queries = db.New(missingDesignDocumentRevisionDB{
+		DBTX: testPool, RevisionID: saved.SavedRevisionID, WorkspaceID: saved.WorkspaceID,
+	})
+	t.Cleanup(func() { testHandler.Queries = originalQueries })
+
+	// ListDeliveredDesignDocumentsByIssue reads through Query and retains the
+	// fetched delivery row. The first revision QueryRow then deletes that row
+	// before returning ErrNoRows, reproducing the FK-free missing-revision gap
+	// between the delivery projection and its evidence getter.
+	delivery := testHandler.designDeliveryContextForIssue(ctx, saved.WorkspaceID, parseUUID(issueID))
+	testHandler.Queries = originalQueries
+	if delivery == nil {
+		t.Fatal("delivery disappeared when its saved revision row was missing")
+	}
+	if delivery.RepositoryGrounded {
+		t.Fatal("delivery inferred grounding when the saved revision row was missing")
+	}
+}
+
+type missingDesignDocumentRevisionDB struct {
+	db.DBTX
+	RevisionID  pgtype.UUID
+	WorkspaceID pgtype.UUID
+}
+
+func (d missingDesignDocumentRevisionDB) QueryRow(context.Context, string, ...any) pgx.Row {
+	_, _ = d.DBTX.Exec(context.Background(), `DELETE FROM design_document_revision WHERE id = $1 AND workspace_id = $2`, d.RevisionID, d.WorkspaceID)
+	return missingDesignDocumentRevisionRow{}
+}
+
+type missingDesignDocumentRevisionRow struct{}
+
+func (missingDesignDocumentRevisionRow) Scan(...any) error { return pgx.ErrNoRows }
+
+func TestDesignDocumentDeliveryContextRejectsInvalidScopeIDs(t *testing.T) {
+	if delivery := testHandler.designDeliveryContextForIssue(context.Background(), pgtype.UUID{}, ddUUID()); delivery != nil {
 		t.Fatal("delivery returned context without a workspace")
 	}
-	if delivery := testHandler.designDeliveryContextForIssue(context.Background(), saved.WorkspaceID, pgtype.UUID{}); delivery != nil {
+	if delivery := testHandler.designDeliveryContextForIssue(context.Background(), ddUUID(), pgtype.UUID{}); delivery != nil {
 		t.Fatal("delivery returned context without an issue")
 	}
 }
