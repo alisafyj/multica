@@ -6,10 +6,22 @@
  */
 export const PROJECT_LEVEL_DESIGN_SCOPE = "project-level";
 
+import type { DesignAssetScope } from "../types/design";
+
 export const designKeys = {
   all: (wsId: string) => ["designs", wsId] as const,
   folders: (wsId: string) => ["designs", wsId, "folders"] as const,
-  files: (wsId: string) => ["designs", wsId, "files"] as const,
+  files: (wsId: string, scope?: DesignAssetScope) =>
+    scope
+      ? [
+          "designs",
+          wsId,
+          "files",
+          scope.kind,
+          scope.projectId,
+          scope.kind === "repository" ? scope.projectResourceId : "",
+        ] as const
+      : ["designs", wsId, "files"] as const,
   file: (wsId: string, id: string) => ["designs", wsId, "files", id] as const,
   fileContext: (wsId: string, id: string, revisionId?: string) => ["designs", wsId, "files", id, "context", revisionId ?? "current"] as const,
   frameContext: (wsId: string, fileId: string, frameId: string, revisionId?: string) => ["designs", wsId, "files", fileId, "frames", frameId, "context", revisionId ?? "current"] as const,
@@ -34,6 +46,10 @@ export const designKeys = {
   // issue's view of it along with the project's.
   documentsByIssue: (wsId: string, issueId: string) =>
     ["designs", wsId, "documents", "issue", issueId] as const,
+  documentsByRepository: (wsId: string, projectId: string, projectResourceId: string) =>
+    ["designs", wsId, "documents", "repository", projectId, projectResourceId] as const,
+  assetsByRepository: (wsId: string, projectId: string, projectResourceId: string) =>
+    ["designs", wsId, "assets", "repository", projectId, projectResourceId] as const,
   // One document and its revisions live under the same "documents" prefix so
   // the task-lifecycle invalidation of that prefix refreshes them too. The
   // literal "document" segment cannot collide with a project id.
