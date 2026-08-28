@@ -33,12 +33,15 @@ class NoopIntersectionObserver {
 vi.stubGlobal("IntersectionObserver", NoopIntersectionObserver);
 
 vi.mock("@tanstack/react-query", () => ({
-  // Query-aware: the modal issues several. Only the runtime list matters here;
-  // returning runtimes for all of them would feed them to the member/agent
-  // pickers, which expect a different shape.
+  // Query-aware: the modal issues several. The runtime list is the only one
+  // this suite cares about; members/agents get empty lists, and the project
+  // list + workspace design picker (both added with the resources pills) get
+  // empty lists so their rows never render here.
   useQuery: (options: { queryKey?: unknown[] }) => {
     const key = options?.queryKey?.[0];
-    if (key === "members" || key === "agents") return { data: [] };
+    if (key === "members" || key === "agents" || key === "projects" || key === "designs") {
+      return { data: [] };
+    }
     return {
       data: [
         {

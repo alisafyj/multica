@@ -179,6 +179,7 @@ export type {
   GithubRepoResourceRef,
   LocalDirectoryResourceRef,
   DocumentResourceRef,
+  DesignDocumentResourceRef,
   LocalDirectoryExecutionMode,
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,

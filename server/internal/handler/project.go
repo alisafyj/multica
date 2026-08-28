@@ -343,6 +343,9 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "resources["+strconv.Itoa(i)+"]: "+err.Error())
 			return
 		}
+		if !h.requireDesignDocumentRefTarget(w, r, wsUUID, res.ResourceType, ref) {
+			return
+		}
 		normalizedRefs[i] = ref
 		if res.ResourceType == "local_directory" {
 			var ld localDirectoryRef
