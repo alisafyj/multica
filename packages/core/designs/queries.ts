@@ -1,12 +1,21 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
-import type { DesignSelectionInput } from "../types";
+import type { DesignAssetScope, DesignSelectionInput } from "../types";
 import { designKeys } from "./keys";
 
-export function designFileListOptions(wsId: string) {
+export function designFileListOptions(wsId: string, scope?: DesignAssetScope) {
   return queryOptions({
-    queryKey: designKeys.files(wsId),
-    queryFn: () => api.listDesignFiles(),
+    queryKey: designKeys.files(wsId, scope),
+    queryFn: () =>
+      api.listDesignFiles(
+        scope
+          ? {
+              projectId: scope.projectId,
+              projectResourceId:
+                scope.kind === "repository" ? scope.projectResourceId : undefined,
+            }
+          : undefined,
+      ),
     select: (data) => data.design_files,
   });
 }
@@ -193,6 +202,24 @@ export function designDocumentListOptions(wsId: string, projectId: string) {
     queryFn: () => api.listDesignDocuments(projectId),
     select: (data) => data.documents,
     enabled: !!projectId,
+  });
+}
+
+/**
+ * Design documents associated with one repository. Unlike the project view,
+ * this read is exact server filtering: no workspace fallback and no browser-side
+ * repository inference.
+ */
+export function designDocumentListByRepositoryOptions(
+  wsId: string,
+  projectId: string,
+  projectResourceId: string,
+) {
+  return queryOptions({
+    queryKey: designKeys.documentsByRepository(wsId, projectId, projectResourceId),
+    queryFn: () => api.listDesignDocuments(projectId, projectResourceId),
+    select: (data) => data.documents,
+    enabled: Boolean(wsId && projectId && projectResourceId),
   });
 }
 

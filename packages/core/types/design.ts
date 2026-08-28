@@ -146,6 +146,14 @@ export interface GalleryNativeJson {
   source?: Record<string, unknown>;
 }
 
+/**
+ * The read scope for the unified Design Center asset projection. Project scope
+ * reads all assets in a project; repository scope reads one explicit repository.
+ */
+export type DesignAssetScope =
+  | { kind: "project"; projectId: string }
+  | { kind: "repository"; projectId: string; projectResourceId: string };
+
 export type DesignAssetAssociationKind = "design_file" | "design_document";
 
 export interface DesignFile {
