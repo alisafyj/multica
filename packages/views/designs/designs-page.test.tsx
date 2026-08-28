@@ -304,6 +304,40 @@ describe("DesignsPage", () => {
     expect(within(homePanel).getByRole("button", { name: "不使用该社区配方" })).toBeInTheDocument();
   });
 
+  it("keeps project Designs content on the unchanged default query path", async () => {
+    const user = userEvent.setup();
+    listDesignFiles.mockResolvedValue({
+      design_files: [{
+        id: "file-1",
+        workspace_id: "ws-1",
+        project_id: "project-1",
+        project_resource_id: null,
+        title: "CRM 首页设计稿",
+        description: null,
+        source_type: "figma",
+        source_ref: {},
+        thumbnail_url: null,
+        current_revision_id: null,
+        created_by: null,
+        created_at: "2026-08-27T00:00:00Z",
+        updated_at: "2026-08-27T00:00:00Z",
+      }],
+      total: 1,
+    });
+    renderWithClient(<DesignsPage />);
+    await user.click(await screen.findByRole("button", { name: "打开项目" }));
+    await user.click(screen.getByRole("menuitem", { name: "CRM" }));
+
+    expect(await screen.findByRole("tab", { name: /设计稿.*1/ })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("CRM 首页设计稿")).toBeInTheDocument();
+    expect(listDesignFiles).toHaveBeenCalledWith(undefined);
+    // Slice 2A is read-model only: the current project panel does not add a
+    // repository Finder or repository scope controls.
+    expect(screen.queryByRole("searchbox", { name: /仓库/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /仓库/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /仓库/ })).not.toBeInTheDocument();
+  });
+
   it("opens the composer from a project's 新建设计稿 and filters its artifacts", async () => {
     const user = userEvent.setup();
     renderWithClient(<DesignsPage />);
