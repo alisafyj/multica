@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 import type { DesignAssetScope, DesignSelectionInput } from "../types";
+import { toDesignAssetItems } from "./asset-projection";
 import { designKeys } from "./keys";
 
 export function designFileListOptions(wsId: string, scope?: DesignAssetScope) {
@@ -219,6 +220,28 @@ export function designDocumentListByRepositoryOptions(
     queryKey: designKeys.documentsByRepository(wsId, projectId, projectResourceId),
     queryFn: () => api.listDesignDocuments(projectId, projectResourceId),
     select: (data) => data.documents,
+    enabled: Boolean(wsId && projectId && projectResourceId),
+  });
+}
+
+/**
+ * Unified read model for repository-scoped Design Files and Design Documents.
+ * The server performs exact repository filtering; Core only projects and mixes.
+ */
+export function repositoryDesignAssetListOptions(
+  wsId: string,
+  projectId: string,
+  projectResourceId: string,
+) {
+  return queryOptions({
+    queryKey: designKeys.assetsByRepository(wsId, projectId, projectResourceId),
+    queryFn: async () => {
+      const [files, documents] = await Promise.all([
+        api.listDesignFiles({ projectId, projectResourceId }),
+        api.listDesignDocuments(projectId, projectResourceId),
+      ]);
+      return toDesignAssetItems(files.design_files, documents.documents);
+    },
     enabled: Boolean(wsId && projectId && projectResourceId),
   });
 }
