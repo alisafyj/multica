@@ -135,7 +135,8 @@ INSERT INTO design_document_revision (
     source_task_id,
     agent_id,
     instruction,
-    scope
+    scope,
+    repository_grounding
 ) VALUES (
     sqlc.arg('workspace_id'),
     sqlc.arg('design_document_id'),
@@ -155,7 +156,8 @@ INSERT INTO design_document_revision (
     sqlc.narg('source_task_id'),
     sqlc.narg('agent_id'),
     sqlc.narg('instruction'),
-    sqlc.narg('scope')
+    sqlc.narg('scope'),
+    sqlc.narg('repository_grounding')
 )
 RETURNING *;
 

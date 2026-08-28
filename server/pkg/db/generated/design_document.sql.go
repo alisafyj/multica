@@ -171,7 +171,8 @@ INSERT INTO design_document_revision (
     source_task_id,
     agent_id,
     instruction,
-    scope
+    scope,
+    repository_grounding
 ) VALUES (
     $1,
     $2,
@@ -191,9 +192,10 @@ INSERT INTO design_document_revision (
     $16,
     $17,
     $18,
-    $19
+    $19,
+    $20
 )
-RETURNING id, workspace_id, design_document_id, revision_number, package_schema, content_digest, archive_object_key, artifact_index, manifest, brief, coverage, audit, preview, input_snapshot_sha256, base_revision_id, design_system_digest, source_task_id, agent_id, instruction, scope, created_at
+RETURNING id, workspace_id, design_document_id, revision_number, package_schema, content_digest, archive_object_key, artifact_index, manifest, brief, coverage, audit, preview, input_snapshot_sha256, base_revision_id, design_system_digest, source_task_id, agent_id, instruction, scope, created_at, repository_grounding
 `
 
 type CreateDesignDocumentRevisionParams struct {
@@ -216,6 +218,7 @@ type CreateDesignDocumentRevisionParams struct {
 	AgentID             pgtype.UUID `json:"agent_id"`
 	Instruction         pgtype.Text `json:"instruction"`
 	Scope               []byte      `json:"scope"`
+	RepositoryGrounding []byte      `json:"repository_grounding"`
 }
 
 func (q *Queries) CreateDesignDocumentRevision(ctx context.Context, arg CreateDesignDocumentRevisionParams) (DesignDocumentRevision, error) {
@@ -239,6 +242,7 @@ func (q *Queries) CreateDesignDocumentRevision(ctx context.Context, arg CreateDe
 		arg.AgentID,
 		arg.Instruction,
 		arg.Scope,
+		arg.RepositoryGrounding,
 	)
 	var i DesignDocumentRevision
 	err := row.Scan(
@@ -263,6 +267,7 @@ func (q *Queries) CreateDesignDocumentRevision(ctx context.Context, arg CreateDe
 		&i.Instruction,
 		&i.Scope,
 		&i.CreatedAt,
+		&i.RepositoryGrounding,
 	)
 	return i, err
 }
@@ -511,7 +516,7 @@ func (q *Queries) GetDesignDocumentInWorkspaceForUpdate(ctx context.Context, arg
 }
 
 const getDesignDocumentRevisionInWorkspace = `-- name: GetDesignDocumentRevisionInWorkspace :one
-SELECT id, workspace_id, design_document_id, revision_number, package_schema, content_digest, archive_object_key, artifact_index, manifest, brief, coverage, audit, preview, input_snapshot_sha256, base_revision_id, design_system_digest, source_task_id, agent_id, instruction, scope, created_at FROM design_document_revision
+SELECT id, workspace_id, design_document_id, revision_number, package_schema, content_digest, archive_object_key, artifact_index, manifest, brief, coverage, audit, preview, input_snapshot_sha256, base_revision_id, design_system_digest, source_task_id, agent_id, instruction, scope, created_at, repository_grounding FROM design_document_revision
 WHERE id = $1
   AND workspace_id = $2
 `
@@ -546,6 +551,7 @@ func (q *Queries) GetDesignDocumentRevisionInWorkspace(ctx context.Context, arg 
 		&i.Instruction,
 		&i.Scope,
 		&i.CreatedAt,
+		&i.RepositoryGrounding,
 	)
 	return i, err
 }
@@ -721,7 +727,7 @@ func (q *Queries) ListDeliveredDesignDocumentsByIssue(ctx context.Context, arg L
 }
 
 const listDesignDocumentRevisions = `-- name: ListDesignDocumentRevisions :many
-SELECT id, workspace_id, design_document_id, revision_number, package_schema, content_digest, archive_object_key, artifact_index, manifest, brief, coverage, audit, preview, input_snapshot_sha256, base_revision_id, design_system_digest, source_task_id, agent_id, instruction, scope, created_at FROM design_document_revision
+SELECT id, workspace_id, design_document_id, revision_number, package_schema, content_digest, archive_object_key, artifact_index, manifest, brief, coverage, audit, preview, input_snapshot_sha256, base_revision_id, design_system_digest, source_task_id, agent_id, instruction, scope, created_at, repository_grounding FROM design_document_revision
 WHERE workspace_id = $1
   AND design_document_id = $2
 ORDER BY revision_number DESC
@@ -763,6 +769,7 @@ func (q *Queries) ListDesignDocumentRevisions(ctx context.Context, arg ListDesig
 			&i.Instruction,
 			&i.Scope,
 			&i.CreatedAt,
+			&i.RepositoryGrounding,
 		); err != nil {
 			return nil, err
 		}
