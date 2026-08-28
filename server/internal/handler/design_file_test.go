@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -2976,6 +2977,94 @@ func TestListAndGetDesignFiles(t *testing.T) {
 	if getW.Code != http.StatusOK {
 		t.Fatalf("GetDesignFile: expected 200, got %d: %s", getW.Code, getW.Body.String())
 	}
+}
+
+func TestListDesignFilesProjectScopeIncludesUnlinked(t *testing.T) {
+	projectID := dbfx.Project(t, "design-file-project-scope")
+	resourceID := repositoryListResource(t, projectID, "github_repo", "repository project scope")
+	linked := repositoryListDesignFile(t, projectID, resourceID, "project scope linked")
+	unlinked := repositoryListDesignFile(t, projectID, nil, "project scope unlinked")
+
+	payload := listDesignFilesForRepositoryTest(t, projectID, "")
+	assertRepositoryDesignFileIDs(t, payload.DesignFiles, linked, unlinked)
+}
+
+func TestListDesignFilesByRepositoryIsExact(t *testing.T) {
+	projectID := dbfx.Project(t, "design-file-repository-list")
+	otherProjectID := dbfx.Project(t, "design-file-repository-list-other")
+	resourceA := repositoryListResource(t, projectID, "github_repo", "repository list A")
+	resourceB := repositoryListResource(t, projectID, "github_repo", "repository list B")
+	foreignResource := repositoryListResource(t, otherProjectID, "github_repo", "repository list foreign")
+	nonRepository := repositoryListResource(t, projectID, "notion_page", "repository list non-repository")
+	fileA := repositoryListDesignFile(t, projectID, resourceA, "repository file A")
+	fileB := repositoryListDesignFile(t, projectID, resourceB, "repository file B")
+	unlinked := repositoryListDesignFile(t, projectID, nil, "repository file unlinked")
+
+	projectPayload := listDesignFilesForRepositoryTest(t, projectID, "")
+	assertRepositoryDesignFileIDs(t, projectPayload.DesignFiles, fileA, fileB, unlinked)
+
+	payloadA := listDesignFilesForRepositoryTest(t, projectID, resourceA)
+	assertRepositoryDesignFileIDs(t, payloadA.DesignFiles, fileA)
+	assertRepositoryDesignFileResource(t, payloadA.DesignFiles, fileA, resourceA)
+
+	payloadB := listDesignFilesForRepositoryTest(t, projectID, resourceB)
+	assertRepositoryDesignFileIDs(t, payloadB.DesignFiles, fileB)
+
+	foreign := testutil.Call(t, testHandler.ListDesignFiles, listDesignFilesRequest(projectID, foreignResource))
+	assertProjectDesignSystemErrorCode(t, foreign.ResponseRecorder, http.StatusConflict, "project_resource_project_mismatch")
+
+	nonRepo := testutil.Call(t, testHandler.ListDesignFiles, listDesignFilesRequest(projectID, nonRepository))
+	assertProjectDesignSystemErrorCode(t, nonRepo.ResponseRecorder, http.StatusBadRequest, "project_resource_not_repository")
+}
+
+func TestListDesignFilesRejectsRepositoryWithoutProject(t *testing.T) {
+	projectID := dbfx.Project(t, "design-file-repository-without-project")
+	resourceID := repositoryListResource(t, projectID, "github_repo", "repository without project")
+	resp := testutil.Call(t, testHandler.ListDesignFiles, listDesignFilesRequest("", resourceID))
+	assertProjectDesignSystemErrorCode(t, resp.ResponseRecorder, http.StatusBadRequest, "invalid_request")
+}
+
+func listDesignFilesRequest(projectID, resourceID string) *http.Request {
+	return repositoryListRequest("/api/design-files", projectID, resourceID)
+}
+
+func listDesignFilesForRepositoryTest(t *testing.T, projectID, resourceID string) struct {
+	DesignFiles []DesignFileResponse `json:"design_files"`
+	Total       int                  `json:"total"`
+} {
+	t.Helper()
+	var payload struct {
+		DesignFiles []DesignFileResponse `json:"design_files"`
+		Total       int                  `json:"total"`
+	}
+	testutil.Call(t, testHandler.ListDesignFiles, listDesignFilesRequest(projectID, resourceID)).
+		Want(http.StatusOK).JSON(&payload)
+	return payload
+}
+
+func assertRepositoryDesignFileIDs(t *testing.T, files []DesignFileResponse, want ...string) {
+	t.Helper()
+	got := make([]string, len(files))
+	for i, file := range files {
+		got[i] = file.ID
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("design file ids = %v, want %v", got, want)
+	}
+}
+
+func assertRepositoryDesignFileResource(t *testing.T, files []DesignFileResponse, fileID, resourceID string) {
+	t.Helper()
+	for _, file := range files {
+		if file.ID != fileID {
+			continue
+		}
+		if file.ProjectResourceID == nil || *file.ProjectResourceID != resourceID {
+			t.Fatalf("design file %s resource = %v, want %q", fileID, file.ProjectResourceID, resourceID)
+		}
+		return
+	}
+	t.Fatalf("design file %s missing from response", fileID)
 }
 
 func TestGetDesignFileContextReturnsSummaryWithoutNativeJSON(t *testing.T) {

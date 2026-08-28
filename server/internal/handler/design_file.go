@@ -488,6 +488,7 @@ type DesignFileResponse struct {
 	SourceRef         json.RawMessage `json:"source_ref"`
 	ThumbnailURL      *string         `json:"thumbnail_url,omitempty"`
 	CurrentRevisionID *string         `json:"current_revision_id"`
+	ProjectResourceID *string         `json:"project_resource_id"`
 	CreatedBy         *string         `json:"created_by"`
 	CreatedAt         string          `json:"created_at"`
 	UpdatedAt         string          `json:"updated_at"`
@@ -1035,6 +1036,7 @@ func designFileToResponse(file db.DesignFile) DesignFileResponse {
 		SourceType:        file.SourceType,
 		SourceRef:         json.RawMessage(file.SourceRef),
 		CurrentRevisionID: uuidToPtr(file.CurrentRevisionID),
+		ProjectResourceID: uuidToPtr(file.ProjectResourceID),
 		CreatedBy:         uuidToPtr(file.CreatedBy),
 		CreatedAt:         timestampToString(file.CreatedAt),
 		UpdatedAt:         timestampToString(file.UpdatedAt),
@@ -1047,6 +1049,45 @@ func parseOptionalUUIDOrBadRequest(w http.ResponseWriter, raw string, field stri
 		return pgtype.UUID{}, true
 	}
 	return parseUUIDOrBadRequest(w, raw, field)
+}
+
+// validateDesignRepositoryScope proves the repository selected by a read
+// projection belongs to the same workspace and project, and really is a code
+// repository. The associated sqlc query still applies all three ids, so this
+// validation never substitutes for exact filtering.
+func (h *Handler) validateDesignRepositoryScope(
+	w http.ResponseWriter,
+	r *http.Request,
+	workspaceID pgtype.UUID,
+	projectID pgtype.UUID,
+	resourceID pgtype.UUID,
+) bool {
+	if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
+		ID: projectID, WorkspaceID: workspaceID,
+	}); err != nil {
+		writeProjectDesignSystemError(w, http.StatusNotFound, "project_not_found", "project not found")
+		return false
+	}
+	resource, err := h.Queries.GetProjectResourceInWorkspace(r.Context(), db.GetProjectResourceInWorkspaceParams{
+		ID: resourceID, WorkspaceID: workspaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeProjectDesignSystemError(w, http.StatusNotFound, "project_resource_not_found", "repository not found")
+		return false
+	}
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "project_resource_lookup_failed", "failed to load repository")
+		return false
+	}
+	if resource.ProjectID != projectID {
+		writeProjectDesignSystemError(w, http.StatusConflict, "project_resource_project_mismatch", "repository does not belong to project")
+		return false
+	}
+	if resource.ResourceType != projectResourceTypeGitHubRepo {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "project_resource_not_repository", "resource is not a code repository")
+		return false
+	}
+	return true
 }
 
 func (h *Handler) validateDesignProjectFolder(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, projectID pgtype.UUID, folderID pgtype.UUID, requireProject bool) bool {
@@ -2080,7 +2121,46 @@ func (h *Handler) ListDesignFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	files, err := h.Queries.ListDesignFiles(r.Context(), wsUUID)
+	query := r.URL.Query()
+	rawProjectID := strings.TrimSpace(query.Get("project_id"))
+	rawResourceID := strings.TrimSpace(query.Get("project_resource_id"))
+	if rawResourceID != "" && rawProjectID == "" {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "invalid_request", "project_id is required with project_resource_id")
+		return
+	}
+
+	var files []db.DesignFile
+	var err error
+	switch {
+	case rawProjectID == "":
+		files, err = h.Queries.ListDesignFiles(r.Context(), wsUUID)
+	case rawResourceID != "":
+		projectUUID, ok := parseUUIDOrBadRequest(w, rawProjectID, "project_id")
+		if !ok {
+			return
+		}
+		resourceUUID, ok := parseUUIDOrBadRequest(w, rawResourceID, "project_resource_id")
+		if !ok {
+			return
+		}
+		if !h.validateDesignRepositoryScope(w, r, wsUUID, projectUUID, resourceUUID) {
+			return
+		}
+		files, err = h.Queries.ListDesignFilesByRepository(r.Context(), db.ListDesignFilesByRepositoryParams{
+			WorkspaceID: wsUUID, ProjectID: projectUUID, ProjectResourceID: resourceUUID,
+		})
+	default:
+		projectUUID, ok := parseUUIDOrBadRequest(w, rawProjectID, "project_id")
+		if !ok {
+			return
+		}
+		if !h.validateDesignProjectFolder(w, r, wsUUID, projectUUID, pgtype.UUID{}, true) {
+			return
+		}
+		files, err = h.Queries.ListDesignFilesByProject(r.Context(), db.ListDesignFilesByProjectParams{
+			WorkspaceID: wsUUID, ProjectID: projectUUID, FolderID: pgtype.UUID{},
+		})
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list design files")
 		return

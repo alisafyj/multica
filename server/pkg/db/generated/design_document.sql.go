@@ -933,6 +933,63 @@ func (q *Queries) ListDesignDocumentsByProject(ctx context.Context, arg ListDesi
 	return items, nil
 }
 
+const listDesignDocumentsByRepository = `-- name: ListDesignDocumentsByRepository :many
+SELECT id, workspace_id, project_id, project_resource_id, issue_id, title, platform, recipe, draft_revision_id, saved_revision_id, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at FROM design_document
+WHERE workspace_id = $1
+  AND project_id = $2
+  AND project_resource_id = $3
+ORDER BY updated_at DESC
+`
+
+type ListDesignDocumentsByRepositoryParams struct {
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	ProjectID         pgtype.UUID `json:"project_id"`
+	ProjectResourceID pgtype.UUID `json:"project_resource_id"`
+}
+
+// A repository owns only the documents explicitly linked to it (DC-053).
+// Most recently touched first; unlinked project documents stay in the
+// project-scope list and are deliberately absent here.
+func (q *Queries) ListDesignDocumentsByRepository(ctx context.Context, arg ListDesignDocumentsByRepositoryParams) ([]DesignDocument, error) {
+	rows, err := q.db.Query(ctx, listDesignDocumentsByRepository, arg.WorkspaceID, arg.ProjectID, arg.ProjectResourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DesignDocument{}
+	for rows.Next() {
+		var i DesignDocument
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.ProjectResourceID,
+			&i.IssueID,
+			&i.Title,
+			&i.Platform,
+			&i.Recipe,
+			&i.DraftRevisionID,
+			&i.SavedRevisionID,
+			&i.CurrentAgentID,
+			&i.ActiveTaskID,
+			&i.ActiveOperation,
+			&i.InputSnapshot,
+			&i.LastError,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SavedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeDesignDocumentShare = `-- name: RevokeDesignDocumentShare :one
 UPDATE design_document_share SET
     revoked_at = now()
