@@ -706,6 +706,7 @@ type DesignDocumentRevision struct {
 	Instruction         pgtype.Text        `json:"instruction"`
 	Scope               []byte             `json:"scope"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	RepositoryGrounding []byte             `json:"repository_grounding"`
 }
 
 type DesignDocumentShare struct {

@@ -3984,6 +3984,9 @@ type TaskCompleteRequest struct {
 	// collect -> audit -> preview -> upload gate. The handler re-reads the
 	// archive and re-derives every field before it becomes a draft.
 	DesignDocumentPackage *DesignDocumentPackageReceipt `json:"design_document_package,omitempty"`
+	// DesignDocumentGrounding is raw JSON, not caller-supplied text: it is
+	// strictly decoded and normalized before persistence below.
+	DesignDocumentGrounding json.RawMessage `json:"design_document_grounding,omitempty"`
 	// SessionRolloutMissing: the daemon withheld this task's Codex session
 	// because its rollout was missing (MUL-5305). Clear the resume pointer and
 	// flag the continuity gap for the next claim.
@@ -4013,10 +4016,10 @@ type ProjectDesignSystemPackageReceipt struct {
 const taskCompleteRequestMaxBytes int64 = 2 << 20
 
 // sanitizeTaskCompleteRequest / sanitizeTaskFailRequest scrub every
-// caller-supplied string on a terminal task callback. Both request types are
-// flat bags of strings, so this is exhaustive by construction — but that also
-// means a NEW string field must be added here, or it reopens GH #7098 through a
-// fresh door. The task-row columns these feed (error, work_dir,
+// caller-supplied string field on a terminal task callback; they are exhaustive
+// for those fields. Raw JSON receipts such as DesignDocumentGrounding are not
+// text-sanitized here and must pass strict schema validation instead. The
+// task-row columns these feed (error, work_dir,
 // durable_work_dir, branch_name, session_id) are all TEXT, and result is
 // JSONB; neither tolerates a NUL.
 func sanitizeTaskCompleteRequest(req *TaskCompleteRequest) {
@@ -4149,7 +4152,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		}
 		preparedProjectDesignSystem = &prepared
 	} else if existingTask.Status == "running" && isDesignDocumentTaskContext(existingTask) {
-		prepared, prepareErr := h.prepareDesignDocumentCompletion(r.Context(), existingTask, workspaceID, req.DesignDocumentPackage)
+		prepared, prepareErr := h.prepareDesignDocumentCompletion(r.Context(), existingTask, workspaceID, req.DesignDocumentPackage, req.DesignDocumentGrounding)
 		if prepareErr != nil {
 			failedTask, failErr := h.TaskService.FailTask(r.Context(), existingTask.ID, prepareErr.Error(), req.SessionID, req.WorkDir, req.BranchName, "design_document_invalid_package", req.SessionRolloutMissing, req.RetiredSessionID, req.DurableWorkDir)
 			if failErr != nil {
