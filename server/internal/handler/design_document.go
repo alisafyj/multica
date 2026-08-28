@@ -409,13 +409,24 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Two ways to ask: a project lists its design library, an issue lists the
-	// designs pointing at it. The issue form is what lets a task card say a
-	// design exists for it instead of looking untouched.
+	// Three ways to ask: a project lists its design library, an issue lists the
+	// designs pointing at it, and a selected repository lists only the documents
+	// explicitly linked to it. Repository and issue scope are deliberately
+	// incompatible: combining them would force one of them to become a fallback.
+	query := r.URL.Query()
+	rawProjectID := strings.TrimSpace(query.Get("project_id"))
+	rawIssueID := strings.TrimSpace(query.Get("issue_id"))
+	rawResourceID := strings.TrimSpace(query.Get("project_resource_id"))
+	if rawResourceID != "" && (rawProjectID == "" || rawIssueID != "") {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "invalid_request", "project_resource_id requires project scope without issue scope")
+		return
+	}
+
 	var documents []db.DesignDocument
 	var err error
-	if raw := strings.TrimSpace(r.URL.Query().Get("issue_id")); raw != "" {
-		issueUUID, ok := parseUUIDOrBadRequest(w, raw, "issue_id")
+	switch {
+	case rawIssueID != "":
+		issueUUID, ok := parseUUIDOrBadRequest(w, rawIssueID, "issue_id")
 		if !ok {
 			return
 		}
@@ -423,8 +434,25 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: workspaceUUID,
 			IssueID:     issueUUID,
 		})
-	} else {
-		projectUUID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("project_id")), "project_id")
+	case rawResourceID != "":
+		projectUUID, ok := parseUUIDOrBadRequest(w, rawProjectID, "project_id")
+		if !ok {
+			return
+		}
+		resourceUUID, ok := parseUUIDOrBadRequest(w, rawResourceID, "project_resource_id")
+		if !ok {
+			return
+		}
+		if !h.validateDesignRepositoryScope(w, r, workspaceUUID, projectUUID, resourceUUID) {
+			return
+		}
+		documents, err = h.Queries.ListDesignDocumentsByRepository(r.Context(), db.ListDesignDocumentsByRepositoryParams{
+			WorkspaceID:       workspaceUUID,
+			ProjectID:         projectUUID,
+			ProjectResourceID: resourceUUID,
+		})
+	default:
+		projectUUID, ok := parseUUIDOrBadRequest(w, rawProjectID, "project_id")
 		if !ok {
 			return
 		}

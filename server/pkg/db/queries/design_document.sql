@@ -69,6 +69,16 @@ WHERE workspace_id = sqlc.arg('workspace_id')
   AND issue_id = sqlc.arg('issue_id')
 ORDER BY updated_at DESC;
 
+-- A repository owns only the documents explicitly linked to it (DC-053).
+-- Most recently touched first; unlinked project documents stay in the
+-- project-scope list and are deliberately absent here.
+-- name: ListDesignDocumentsByRepository :many
+SELECT * FROM design_document
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND project_id = sqlc.arg('project_id')
+  AND project_resource_id = sqlc.arg('project_resource_id')
+ORDER BY updated_at DESC;
+
 -- name: GetDesignDocumentByActiveTask :one
 SELECT * FROM design_document
 WHERE workspace_id = sqlc.arg('workspace_id')
