@@ -364,7 +364,7 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.TaskService.NotifyTaskEnqueued(r.Context(), task)
-	writeJSON(w, http.StatusCreated, designDocumentResponse(document, &task))
+	writeJSON(w, http.StatusCreated, designDocumentResponse(document, &task, h.designDocumentRepositoryGrounded(r.Context(), document)))
 }
 
 // resolveOptionalDesignDocumentIssue accepts an empty issue, and otherwise
@@ -459,7 +459,8 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		responses = append(responses, designDocumentResponse(document, activeTask))
+		repositoryGrounded := h.designDocumentRepositoryGrounded(r.Context(), document)
+		responses = append(responses, designDocumentResponse(document, activeTask, repositoryGrounded))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"documents": responses})
 }
@@ -555,7 +556,33 @@ func designDocumentStatus(document db.DesignDocument, task *db.AgentTaskQueue) s
 	}
 }
 
-func designDocumentResponse(document db.DesignDocument, task *db.AgentTaskQueue) DesignDocumentResponse {
+func repositoryGroundingAvailable(raw []byte) bool {
+	grounding, err := designdocument.ValidateRepositoryGrounding(raw)
+	return err == nil && grounding.Status == designdocument.GroundingAvailable
+}
+
+func designDocumentDisplayRevisionID(document db.DesignDocument) pgtype.UUID {
+	if document.DraftRevisionID.Valid {
+		return document.DraftRevisionID
+	}
+	return document.SavedRevisionID
+}
+
+// The evidence flag fails closed: unreadable, missing, or unavailable revision
+// evidence must never be promoted to grounded. The workspace scope keeps the
+// revision read tied to the document that selected it.
+func (h *Handler) designDocumentRepositoryGrounded(ctx context.Context, document db.DesignDocument) bool {
+	revisionID := designDocumentDisplayRevisionID(document)
+	if !revisionID.Valid {
+		return false
+	}
+	revision, err := h.Queries.GetDesignDocumentRevisionInWorkspace(ctx, db.GetDesignDocumentRevisionInWorkspaceParams{
+		ID: revisionID, WorkspaceID: document.WorkspaceID,
+	})
+	return err == nil && repositoryGroundingAvailable(revision.RepositoryGrounding)
+}
+
+func designDocumentResponse(document db.DesignDocument, task *db.AgentTaskQueue, repositoryGrounded bool) DesignDocumentResponse {
 	response := DesignDocumentResponse{
 		ID:                 uuidToString(document.ID),
 		WorkspaceID:        uuidToString(document.WorkspaceID),
@@ -570,7 +597,7 @@ func designDocumentResponse(document db.DesignDocument, task *db.AgentTaskQueue)
 		SavedRevisionID:    uuidToString(document.SavedRevisionID),
 		InputSnapshot:      jsonOrDefault(document.InputSnapshot, `{}`),
 		LastError:          jsonOrDefault(document.LastError, `null`),
-		RepositoryGrounded: document.ProjectResourceID.Valid,
+		RepositoryGrounded: repositoryGrounded,
 	}
 	if document.CreatedAt.Valid {
 		response.CreatedAt = document.CreatedAt.Time.UTC().Format(time.RFC3339Nano)

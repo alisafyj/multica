@@ -74,7 +74,7 @@ func (h *Handler) SaveDesignDocument(w http.ResponseWriter, r *http.Request) {
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "save_failed", "failed to save the design document")
 		return
 	}
-	writeJSON(w, http.StatusOK, designDocumentResponse(saved, nil))
+	writeJSON(w, http.StatusOK, designDocumentResponse(saved, nil, h.designDocumentRepositoryGrounded(r.Context(), saved)))
 }
 
 // DiscardDesignDocument drops the draft pointer. The revision row stays: it is
@@ -102,7 +102,7 @@ func (h *Handler) DiscardDesignDocument(w http.ResponseWriter, r *http.Request) 
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "discard_failed", "failed to discard the draft")
 		return
 	}
-	writeJSON(w, http.StatusOK, designDocumentResponse(discarded, nil))
+	writeJSON(w, http.StatusOK, designDocumentResponse(discarded, nil, h.designDocumentRepositoryGrounded(r.Context(), discarded)))
 }
 
 // DeleteDesignDocument removes a document and every revision it owns.
@@ -154,7 +154,7 @@ func (h *Handler) GetDesignDocument(w http.ResponseWriter, r *http.Request) {
 			task = &loaded
 		}
 	}
-	writeJSON(w, http.StatusOK, designDocumentResponse(document, task))
+	writeJSON(w, http.StatusOK, designDocumentResponse(document, task, h.designDocumentRepositoryGrounded(r.Context(), document)))
 }
 
 func (h *Handler) loadDesignDocumentForRequest(w http.ResponseWriter, r *http.Request) (db.DesignDocument, pgtype.UUID, bool) {
