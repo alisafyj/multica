@@ -144,7 +144,7 @@ func (h *Handler) AdjustDesignDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.TaskService.NotifyTaskEnqueued(r.Context(), task)
-	writeJSON(w, http.StatusAccepted, designDocumentResponse(updated, &task))
+	writeJSON(w, http.StatusAccepted, designDocumentResponse(updated, &task, h.designDocumentRepositoryGrounded(r.Context(), updated)))
 }
 
 // createDesignDocumentAdjustTask enqueues the adjustment and attaches it to the
