@@ -12,7 +12,8 @@ const { listDesignFiles, listDesignDocuments, listDesignRepositories, listProjec
   setDesignAssetRepositoryAssociation: vi.fn(),
 }));
 
-vi.mock("@multica/core/api", () => ({
+vi.mock("@multica/core/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/api")>()),
   api: { listDesignFiles, listDesignDocuments, listDesignRepositories, listProjects, setDesignAssetRepositoryAssociation },
 }));
 
@@ -27,6 +28,7 @@ vi.mock("./design-document-card", () => ({
   DesignDocumentCard: ({ document }: { document: { title: string } }) => <article>{document.title}</article>,
 }));
 
+import { ApiError } from "@multica/core/api";
 import { DesignMvpWorkspace, type DesignMvpRepository } from "./design-mvp-workspace";
 
 const repositories: DesignMvpRepository[] = [
@@ -36,7 +38,12 @@ const repositories: DesignMvpRepository[] = [
 
 function renderWithClient(ui: ReactNode) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+  const view = render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+  return { ...view, queryClient };
+}
+
+function apiError(code: string) {
+  return new ApiError("request failed", 409, "Conflict", { code });
 }
 
 describe("DesignMvpWorkspace", () => {
@@ -94,7 +101,7 @@ describe("DesignMvpWorkspace", () => {
     const user = userEvent.setup();
     listDesignFiles.mockResolvedValue({ design_files: [{ id: "file-1", workspace_id: "ws-1", title: "Associable file", project_id: "project-1", project_resource_id: null, source_type: "upload", source_ref: {}, created_at: "", updated_at: "2026-08-20T00:00:00Z" }], total: 1 });
     listDesignDocuments.mockResolvedValue({ documents: [] });
-    setDesignAssetRepositoryAssociation.mockRejectedValueOnce(new Error("design_document_task_active"));
+    setDesignAssetRepositoryAssociation.mockRejectedValueOnce(apiError("design_document_task_active"));
     renderWithClient(<StrictMode><DesignMvpWorkspace /></StrictMode>);
     await user.click(await screen.findByRole("button", { name: "项目视角" }));
     await screen.findByLabelText("选择项目");
@@ -111,5 +118,43 @@ describe("DesignMvpWorkspace", () => {
     }));
     expect(within(dialog).getByText("Figma · Associable file")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("选择目标仓库")).toHaveValue("repo-1");
+  });
+
+  it("invalidates the project combined asset cache after a successful association", async () => {
+    const user = userEvent.setup();
+    listDesignFiles.mockResolvedValue({ design_files: [{ id: "file-1", workspace_id: "ws-1", title: "Associable file", project_id: "project-1", project_resource_id: null, source_type: "upload", source_ref: {}, created_at: "", updated_at: "2026-08-20T00:00:00Z" }], total: 1 });
+    listDesignDocuments.mockResolvedValue({ documents: [] });
+    setDesignAssetRepositoryAssociation.mockResolvedValueOnce({ project_id: "project-1", project_resource_id: "repo-1", count: 1 });
+    const view = renderWithClient(<StrictMode><DesignMvpWorkspace /></StrictMode>);
+    const invalidations: Array<readonly unknown[]> = [];
+    const invalidateSpy = vi.spyOn(view.queryClient, "invalidateQueries");
+    invalidateSpy.mockImplementation((filters) => {
+      invalidations.push(filters?.queryKey ?? []);
+      return Promise.resolve();
+    });
+    await screen.findByLabelText("选择项目");
+    await waitFor(() => expect(screen.getByRole("option", { name: "CRM" })).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText("选择项目"), "project-1");
+    await screen.findByText("Associable file");
+    await user.click(screen.getByRole("button", { name: "关联仓库：Associable file" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText("选择目标仓库"), "repo-1");
+    await user.click(within(dialog).getByRole("button", { name: "确认关联" }));
+    await waitFor(() => expect(within(document.body).queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(invalidations).toContainEqual(["designs", "ws-1", "assets", "project", "project-1"]));
+  });
+
+  it("does not let a repository from another project overwrite the project-mode selection", async () => {
+    const user = userEvent.setup();
+    renderWithClient(<StrictMode><DesignMvpWorkspace /></StrictMode>);
+    await screen.findByLabelText("选择项目");
+    await waitFor(() => expect(screen.getByRole("option", { name: "CRM" })).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText("选择项目"), "project-1");
+    await user.click(screen.getByRole("button", { name: "仓库视角" }));
+    await user.selectOptions(await screen.findByLabelText("选择仓库"), "repo-2");
+    await waitFor(() => expect(listDesignFiles).toHaveBeenLastCalledWith({ projectId: "project-2", projectResourceId: "repo-2" }));
+    await user.click(screen.getByRole("button", { name: "项目视角" }));
+    expect(screen.getByLabelText("选择项目")).toHaveValue("project-1");
+    await waitFor(() => expect(listDesignFiles).toHaveBeenLastCalledWith({ projectId: "project-1" }));
   });
 });

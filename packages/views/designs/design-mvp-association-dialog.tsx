@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
+import { errorCode } from "@multica/core/api";
 import type { DesignAssetAssociationKind } from "@multica/core/types/design";
 import type { DesignMvpRepository } from "./design-mvp-workspace";
 
@@ -26,14 +27,16 @@ const repositoryLabel = (repository: DesignMvpRepository) =>
   `${repository.projectTitle} · ${repository.label} · ${repository.repositoryUrl}`;
 
 function actionableAssociationError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  if (message.includes("design_document_task_active")) {
-    return "当前设计文档任务运行中，请稍后重试。";
+  switch (errorCode(error)) {
+    case "design_document_task_active":
+      return "当前设计文档任务运行中，请稍后重试。";
+    case "project_resource_project_mismatch":
+      return "目标仓库与设计资产不属于同一项目，请重新选择。";
+    case "project_resource_not_repository":
+      return "目标不是可用仓库，请重新选择。";
+    default:
+      return "仓库关联失败，请稍后重试。";
   }
-  if (message.includes("project_resource_not_repository")) {
-    return "目标不是可用仓库，请重新选择。";
-  }
-  return "仓库关联失败，请稍后重试。";
 }
 
 export function DesignMvpAssociationDialog({
@@ -60,6 +63,11 @@ export function DesignMvpAssociationDialog({
   }, [item?.projectResourceId, open]);
 
   const action = item?.projectResourceId ? (targetId ? "更换" : "取消关联") : "关联";
+  const submit = (nextRepositoryId: string) => {
+    if (!item) return;
+    setMutationError(null);
+    Promise.resolve(onConfirm(nextRepositoryId)).catch((nextError: unknown) => setMutationError(nextError));
+  };
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next && !pending) onClose(); }}>
       <DialogContent>
@@ -99,18 +107,14 @@ export function DesignMvpAssociationDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" disabled={pending} onClick={onClose}>取消</Button>
-          <Button disabled={!item || pending || (!targetId && !item?.projectResourceId)} onClick={() => {
-              if (!item) return;
-              setMutationError(null);
-              Promise.resolve(onConfirm(targetId)).catch((nextError: unknown) => setMutationError(nextError));
-            }}>
+          <Button disabled={!item || pending || (!targetId && !item?.projectResourceId)} onClick={() => submit(targetId)}>
             {pending ? "提交中…" : `确认${action}`}
           </Button>
           {item?.projectResourceId ? (
             <Button
               variant="ghost"
               disabled={pending || targetId !== item.projectResourceId}
-              onClick={() => void onConfirm("")}
+              onClick={() => submit("")}
             >
               取消关联
             </Button>

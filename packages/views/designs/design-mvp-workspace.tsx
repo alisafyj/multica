@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -111,17 +111,15 @@ export function DesignMvpWorkspace() {
     selectedRepository?.id ?? "",
   ));
 
-  useEffect(() => {
-    if (mode === "repository" && selectedRepository) setProjectId(selectedRepository.projectId);
-  }, [mode, selectedRepository]);
-
   const items = mode === "project" ? projectAssets.data ?? [] : repositoryAssets.data ?? [];
   const savedItems = items.filter((item) => item.hasSavedVersion);
   const draftItems = items.filter((item) => item.hasDraftVersion);
   const loading = mode === "project" ? projectAssets.isLoading : repositoryAssets.isLoading;
+  const associatedProjectIdRef = useRef<string | null>(null);
   const associationMutation = useMutation({
     mutationFn: async (targetRepositoryId: string) => {
       if (!associationItem) throw new Error("association item missing");
+      associatedProjectIdRef.current = associationItem.projectId;
       await api.setDesignAssetRepositoryAssociation({
         project_id: associationItem.projectId,
         project_resource_id: targetRepositoryId,
@@ -129,8 +127,14 @@ export function DesignMvpWorkspace() {
       });
     },
     onSuccess: async () => {
+      const associatedProjectId = associatedProjectIdRef.current;
       await queryClient.invalidateQueries({ queryKey: designKeys.files(wsId) });
       await queryClient.invalidateQueries({ queryKey: designKeys.documents(wsId, projectId) });
+      if (associatedProjectId) {
+        await queryClient.invalidateQueries({
+          queryKey: designKeys.assetsByProject(wsId, associatedProjectId),
+        });
+      }
       if (selectedRepository) {
         await queryClient.invalidateQueries({
           queryKey: designKeys.assetsByRepository(wsId, selectedRepository.projectId, selectedRepository.id),
