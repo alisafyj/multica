@@ -5,16 +5,21 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
+  designFileListOptions,
   designRepositoryCatalogueOptions,
   projectDesignAssetListOptions,
+  designSystemListOptions,
+  projectDesignSystemByProjectOptions,
   repositoryDesignAssetListOptions,
 } from "@multica/core/designs/queries";
 import { designKeys } from "@multica/core/designs/keys";
 import type { DesignAssetListItem } from "@multica/core/designs";
+import { agentListOptions } from "@multica/core/workspace/queries";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { DesignMvpAssociationDialog } from "./design-mvp-association-dialog";
 import { DesignMvpViewSwitcher, type DesignMvpViewMode } from "./design-mvp-view-switcher";
+import { ProjectDesignSystemContent } from "./project-design-system-workspace";
 
 export interface DesignMvpRepository {
   id: string;
@@ -104,11 +109,33 @@ export function DesignMvpWorkspace() {
     designRepositoryCatalogueOptions(wsId),
   );
   const selectedRepository = repositories.find((repository) => repository.id === repositoryId);
-  const projectAssets = useQuery(projectDesignAssetListOptions(wsId, mode === "project" ? projectId : ""));
-  const repositoryAssets = useQuery(repositoryDesignAssetListOptions(
+  const projectAssets = useQuery({
+    ...projectDesignAssetListOptions(wsId, projectId),
+    enabled: mode === "project" && Boolean(projectId),
+  });
+  const repositoryAssets = useQuery({
+    ...repositoryDesignAssetListOptions(
+      wsId,
+      selectedRepository?.projectId ?? "",
+      selectedRepository?.id ?? "",
+    ),
+    enabled: mode === "repository" && Boolean(selectedRepository),
+  });
+  const agents = useQuery(agentListOptions(wsId));
+  const designFiles = useQuery(designFileListOptions(
     wsId,
-    selectedRepository?.projectId ?? "",
-    selectedRepository?.id ?? "",
+    mode === "repository" && selectedRepository
+      ? { kind: "repository", projectId: selectedRepository.projectId, projectResourceId: selectedRepository.id }
+      : undefined,
+  ));
+  const legacyProfiles = useQuery(designSystemListOptions(
+    wsId,
+    mode === "repository" ? selectedRepository?.projectId : undefined,
+  ));
+  const repositoryDesignSystem = useQuery(projectDesignSystemByProjectOptions(
+    wsId,
+    mode === "repository" ? selectedRepository?.projectId ?? "" : "",
+    selectedRepository?.id,
   ));
 
   const items = mode === "project" ? projectAssets.data ?? [] : repositoryAssets.data ?? [];
@@ -156,7 +183,13 @@ export function DesignMvpWorkspace() {
     <div className="flex min-h-0 flex-col">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/20 px-4 py-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <DesignMvpViewSwitcher mode={mode} onModeChange={setMode} />
+          <DesignMvpViewSwitcher
+            key={mode}
+            mode={mode}
+            onModeChange={(nextMode) => {
+              setMode(nextMode);
+            }}
+          />
           <select
             aria-label={mode === "project" ? "选择项目" : "选择仓库"}
             value={mode === "project" ? projectId : repositoryId}
@@ -179,6 +212,41 @@ export function DesignMvpWorkspace() {
       <div className="min-h-0 space-y-6 overflow-auto p-4">
         <DesignMvpPanel title="设计稿" items={savedItems} loading={loading} onAssociate={setAssociationItem} />
         <DesignMvpPanel title="设计草稿" items={draftItems} loading={loading} onAssociate={setAssociationItem} />
+        {mode === "repository" && selectedRepository ? (
+          <section aria-label="设计体系" className="rounded-lg border">
+            <div className="border-b px-4 py-3">
+              <h3 className="text-label font-medium text-foreground">设计体系</h3>
+              <p className="mt-1 truncate text-caption text-muted-foreground" title={selectedRepository.repositoryUrl}>
+                {selectedRepository.projectTitle} · {selectedRepository.label} · {selectedRepository.repositoryUrl}
+              </p>
+            </div>
+            <ProjectDesignSystemContent
+              key={selectedRepository.id}
+              project={{
+                id: selectedRepository.projectId,
+                workspace_id: wsId,
+                title: selectedRepository.projectTitle,
+              } as never}
+              agents={agents.data ?? []}
+              designFiles={designFiles.data ?? []}
+              legacyProfiles={legacyProfiles.data ?? []}
+              system={repositoryDesignSystem.data ?? undefined}
+              isLoading={repositoryDesignSystem.isLoading}
+              repositories={[{
+                id: selectedRepository.id,
+                project_id: selectedRepository.projectId,
+                workspace_id: wsId,
+                resource_type: "github_repo",
+                resource_ref: { url: selectedRepository.repositoryUrl },
+                label: selectedRepository.label,
+                position: 0,
+                created_at: "",
+                created_by: null,
+              }]}
+              selectedRepositoryId={selectedRepository.id}
+            />
+          </section>
+        ) : null}
       </div>
       <DesignMvpAssociationDialog
         open={associationItem !== null}
