@@ -207,13 +207,15 @@ describe("ProjectDesignSystemWorkspace", () => {
     expect(onSelectRepository).toHaveBeenCalledWith("");
   });
 
-  it("says so when a repository falls back to the project-level system", () => {
+  it("does not label or render a project-level system as the repository system", () => {
     renderWorkspace(makeSystem({ id: "system-1", status: "saved", project_resource_id: "" }), {
       repositories: [makeRepository()],
       selectedRepositoryId: "resource-h5",
     });
 
-    expect(screen.getByText("该仓库还没有自己的设计体系，当前显示项目通用体系。")).toBeInTheDocument();
+    expect(screen.queryByText("该仓库还没有自己的设计体系，当前显示项目通用体系。")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "品牌原则" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "生成设计体系" })).toBeInTheDocument();
   });
 
   it("stays silent when the repository has its own system", () => {

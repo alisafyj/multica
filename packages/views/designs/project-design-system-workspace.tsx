@@ -32,12 +32,10 @@ function ProjectDesignSystemScopeSwitcher({
   repositories,
   selectedRepositoryId,
   onSelectRepository,
-  fallbackNotice,
 }: {
   repositories: ProjectResource[];
   selectedRepositoryId: string;
   onSelectRepository: (projectResourceId: string) => void;
-  fallbackNotice: boolean;
 }) {
   if (repositories.length === 0) return null;
   const activeValue = selectedRepositoryId || PROJECT_SCOPE_VALUE;
@@ -82,11 +80,6 @@ function ProjectDesignSystemScopeSwitcher({
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-        {fallbackNotice ? (
-          <p className="text-caption text-muted-foreground">
-            该仓库还没有自己的设计体系，当前显示项目通用体系。
-          </p>
-        ) : null}
       </div>
     </div>
   );
@@ -183,6 +176,50 @@ function ProjectDesignSystemContent({
   );
 }
 
+const emptyProjectDesignSystemContent = {
+  sections: [],
+  token_groups: [],
+  locators: [],
+  preview_html: "",
+  integrity_sha256: "",
+} satisfies ProjectDesignSystem["content"];
+
+const emptyProjectDesignSystemPreviewValidation = {
+  status: "none",
+  integrity_sha256: "",
+  report: {},
+  verified_at: null,
+} satisfies ProjectDesignSystem["preview_validation"];
+
+function unestablishedRepositorySystem(): Pick<
+  ProjectDesignSystem,
+  | "id"
+  | "project_resource_id"
+  | "status"
+  | "active_task"
+  | "input_snapshot"
+  | "content"
+  | "preview_validation"
+  | "has_unsaved_changes"
+  | "last_error"
+  | "activity"
+  | "saved_at"
+> {
+  return {
+    id: "",
+    project_resource_id: "",
+    status: "unestablished",
+    active_task: null,
+    input_snapshot: {},
+    content: emptyProjectDesignSystemContent,
+    preview_validation: emptyProjectDesignSystemPreviewValidation,
+    has_unsaved_changes: false,
+    last_error: null,
+    activity: [],
+    saved_at: null,
+  };
+}
+
 export function ProjectDesignSystemWorkspace({
   project,
   agents,
@@ -204,18 +241,19 @@ export function ProjectDesignSystemWorkspace({
   selectedRepositoryId: string;
   onSelectRepository: (projectResourceId: string) => void;
 }) {
-  // A repository without its own system resolves to the project-level one, so
-  // say so instead of letting it read as this repository's design system.
-  const showsProjectFallback = Boolean(
-    selectedRepositoryId && system?.id && !system.project_resource_id,
-  );
+  // A repository scope must render only its own system. The API returns an
+  // unestablished response when that repository has no system, and a cached
+  // project-level response must never masquerade as the repository's system.
+  const repositoryHasNoSystem = Boolean(selectedRepositoryId && (!system?.id || !system.project_resource_id));
+  const scopedSystem = repositoryHasNoSystem && system
+    ? { ...system, ...unestablishedRepositorySystem() }
+    : system;
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ProjectDesignSystemScopeSwitcher
         repositories={repositories}
         selectedRepositoryId={selectedRepositoryId}
         onSelectRepository={onSelectRepository}
-        fallbackNotice={showsProjectFallback}
       />
       <div className="flex min-h-0 flex-1 flex-col">
         <ProjectDesignSystemContent
@@ -226,7 +264,7 @@ export function ProjectDesignSystemWorkspace({
           agents={agents}
           designFiles={designFiles}
           legacyProfiles={legacyProfiles}
-          system={system}
+          system={scopedSystem}
           isLoading={isLoading}
           repositories={repositories}
           selectedRepositoryId={selectedRepositoryId}

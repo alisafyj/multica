@@ -433,20 +433,19 @@ func TestProjectDesignContextResolverPrefersRepositoryScopedSystem(t *testing.T)
 	}
 }
 
-// A repository without its own system falls back to the project-level one
-// rather than leaving the agent with no design constraint at all.
-func TestProjectDesignContextResolverFallsBackToProjectScope(t *testing.T) {
+// DC-052 exact-scope semantics: naming a repository makes the repository's
+// own saved system the only implicit cloud scope. It cannot borrow the
+// project-level system, and a repository draft is likewise not a saved system.
+func TestProjectDesignContextResolverDoesNotFallBackToProjectScope(t *testing.T) {
 	workspaceID := mustDesignContextUUID(t, "e2f576ee-5a61-4844-8dee-719996169571")
 	projectID := mustDesignContextUUID(t, "79560402-5bd7-420a-9e16-79e06557507a")
 	projectSystemID := mustDesignContextUUID(t, "317ac5d7-00b8-4abd-b4ce-df2ed9f695de")
+	repoSystemID := mustDesignContextUUID(t, "b1d0a4c2-3f77-4f1e-9f6a-5c2f0a7e11aa")
 	resourceID := mustDesignContextUUID(t, "cc2f9a10-64f1-4a1d-9b4e-0f4a4a2f9c31")
 	sourceTaskID := mustDesignContextUUID(t, "57ec9b56-6fac-4799-a438-e4926443c94e")
 	projectSystem, projectSaved := validSavedDesignContextFixture(t, workspaceID, projectID, projectSystemID, sourceTaskID)
 
-	// The repository has a system but no saved package yet — an in-progress
-	// draft must not become the constraint (DC-034), so this also falls back.
-	repoOnlyDraft, _ := validSavedDesignContextFixture(t, workspaceID, projectID,
-		mustDesignContextUUID(t, "b1d0a4c2-3f77-4f1e-9f6a-5c2f0a7e11aa"), sourceTaskID)
+	repoOnlyDraft, _ := validSavedDesignContextFixture(t, workspaceID, projectID, repoSystemID, sourceTaskID)
 	repoOnlyDraft.ProjectResourceID = resourceID
 
 	tests := []struct {
@@ -475,14 +474,14 @@ func TestProjectDesignContextResolverFallsBackToProjectScope(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Resolve() error = %v", err)
 			}
-			if resolved.Source != DesignContextSourceCloudSaved {
-				t.Fatalf("source = %q, want project scope", resolved.Source)
+			if resolved.Source != DesignContextSourceNone || resolved.Digest != "" || resolved.Package != nil {
+				t.Fatalf("resolved = %#v, want none with no package", resolved)
 			}
-			if resolved.Package == nil || resolved.Package.Scope != DesignContextScopeProject {
-				t.Fatalf("package scope = %#v", resolved.Package)
-			}
-			if resolved.Package.ProjectResourceID != "" {
-				t.Fatalf("project-level package must not claim a repository: %#v", resolved.Package)
+			// The project-level system must not even be consulted.
+			for _, queriedSystemID := range test.store.packageSystemIDs {
+				if queriedSystemID != repoSystemID {
+					t.Fatalf("package lookup for %v; only the repository system is allowed", queriedSystemID)
+				}
 			}
 		})
 	}
