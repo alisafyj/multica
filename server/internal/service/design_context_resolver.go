@@ -159,11 +159,10 @@ func (r ProjectDesignContextResolver) Resolve(
 		return resolved, nil
 	}
 
-	// Repository scope first when the caller named one. A repository whose
-	// own system exists but has no saved package yet still falls through to
-	// the project-level system: an in-progress draft must never become the
-	// constraint (DC-034), and leaving the agent with nothing would be worse
-	// than the project's shared system.
+	// A named repository is an exact scope, not the first step of a cloud
+	// fallback. Its own saved system is the only implicit project-design
+	// system that may constrain the run; a missing row or draft leaves none so
+	// the caller can require explicit resolution (DC-052 / DC-034).
 	if params.ProjectResourceID.Valid {
 		found, err := r.resolveScope(ctx, params, DesignContextScopeRepository)
 		if err != nil {
@@ -172,6 +171,7 @@ func (r ProjectDesignContextResolver) Resolve(
 		if found != nil {
 			return *found, nil
 		}
+		return resolved, nil
 	}
 
 	found, err := r.resolveScope(ctx, params, DesignContextScopeProject)
