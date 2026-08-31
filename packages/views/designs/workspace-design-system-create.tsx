@@ -21,12 +21,20 @@ import {
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
-import { builtinDesignSystemListOptions, projectDesignSystemCatalogueOptions } from "@multica/core/designs/queries";
+import {
+  builtinDesignSystemListOptions,
+  designFileListOptions,
+  designRepositoryCatalogueOptions,
+  designSystemListOptions,
+  projectDesignSystemByProjectOptions,
+  projectDesignSystemCatalogueOptions,
+} from "@multica/core/designs/queries";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { projectListOptions, projectResourcesOptions } from "@multica/core/projects";
 import { useWorkspacePaths } from "@multica/core/paths";
-import type { Agent, ProjectDesignSystemReferenceInput } from "@multica/core/types";
+import type { Agent, Project, ProjectDesignSystemReferenceInput } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   Dialog,
@@ -50,6 +58,7 @@ import {
   type BrandReference,
 } from "./brand-references";
 import { PLATFORM_OPTIONS, isAgentAvailable } from "./project-design-system-create";
+import { ProjectDesignSystemContent } from "./project-design-system-workspace";
 
 const MAX_LINKS = 8;
 const MAX_FILES = 20;
@@ -94,6 +103,8 @@ interface StagedFile {
   previewUrl: string;
 }
 
+type WorkspaceDesignSystemScope = "standalone" | "project" | "repository";
+
 /**
  * The standalone design-system creation page, replicating Open Design's
  * creation flow: a sticky top bar whose primary action is 继续生成, a sticky
@@ -118,6 +129,34 @@ export function WorkspaceDesignSystemCreate() {
   // workspace's own saved systems (their V2 packages carry DESIGN.md at root).
   const { data: builtinSystems = [] } = useQuery(builtinDesignSystemListOptions(wsId));
   const { data: teamSystems = [] } = useQuery(projectDesignSystemCatalogueOptions(wsId));
+  const { data: projects = [] } = useQuery(projectListOptions(wsId));
+  const { data: repositories = [] } = useQuery(designRepositoryCatalogueOptions(wsId));
+  const [scope, setScope] = useState<WorkspaceDesignSystemScope>("standalone");
+  const [projectId, setProjectId] = useState("");
+  const [repositoryId, setRepositoryId] = useState("");
+  const selectedProject = projects.find((project) => project.id === projectId);
+  const selectedRepository = repositories.find((repository) => repository.id === repositoryId);
+  const scopedProjectId = scope === "repository" ? selectedRepository?.projectId ?? "" : projectId;
+  const { data: projectResources = [] } = useQuery({
+    ...projectResourcesOptions(wsId, scopedProjectId),
+    enabled: scope !== "standalone" && Boolean(scopedProjectId),
+  });
+  const scopedDesignFiles = useQuery({
+    ...designFileListOptions(wsId, scopedProjectId ? { kind: "project", projectId: scopedProjectId } : undefined),
+    enabled: scope !== "standalone" && Boolean(scopedProjectId),
+  });
+  const scopedProfiles = useQuery({
+    ...designSystemListOptions(wsId, scopedProjectId || undefined),
+    enabled: scope !== "standalone" && Boolean(scopedProjectId),
+  });
+  const scopedSystem = useQuery({
+    ...projectDesignSystemByProjectOptions(
+      wsId,
+      scopedProjectId,
+      scope === "repository" ? selectedRepository?.id : undefined,
+    ),
+    enabled: scope !== "standalone" && Boolean(scopedProjectId) && (scope === "project" || Boolean(selectedRepository)),
+  });
   const { upload, uploadWithToast, uploading } = useFileUpload(api, (error, file) =>
     toast.error(`${file.name}：${error.message}`),
   );
@@ -333,8 +372,79 @@ export function WorkspaceDesignSystemCreate() {
     });
   };
 
+  if (scope !== "standalone") {
+    const project = scope === "repository"
+      ? projects.find((project) => project.id === selectedRepository?.projectId)
+      : selectedProject;
+    const projectRepository = scope === "repository"
+      ? projectResources.find((resource) => resource.id === selectedRepository?.id)
+      : undefined;
+    if (!project || (scope === "repository" && !projectRepository)) {
+      return (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <ScopeChooser
+            scope={scope}
+            projects={projects}
+            repositories={repositories}
+            projectId={projectId}
+            repositoryId={repositoryId}
+            onScopeChange={(next) => {
+              setScope(next);
+              setProjectId("");
+              setRepositoryId("");
+            }}
+            onProjectChange={setProjectId}
+            onRepositoryChange={setRepositoryId}
+          />
+        </div>
+      );
+    }
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <ScopeChooser
+          scope={scope}
+          projects={projects}
+          repositories={repositories}
+          projectId={projectId}
+          repositoryId={repositoryId}
+          onScopeChange={(next) => {
+            setScope(next);
+            setProjectId("");
+            setRepositoryId("");
+          }}
+          onProjectChange={setProjectId}
+          onRepositoryChange={setRepositoryId}
+        />
+        <ProjectDesignSystemContent
+          key={`${scope}:${repositoryId || projectId}`}
+          project={project}
+          agents={agents}
+          designFiles={scopedDesignFiles.data ?? []}
+          legacyProfiles={scopedProfiles.data ?? []}
+          system={scopedSystem.data ?? undefined}
+          isLoading={scopedSystem.isLoading}
+          repositories={projectRepository ? [projectRepository] : []}
+          selectedRepositoryId={projectRepository?.id ?? ""}
+        />
+      </div>
+    );
+  }
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <ScopeChooser
+        scope={scope}
+        projects={projects}
+        repositories={repositories}
+        projectId={projectId}
+        repositoryId={repositoryId}
+        onScopeChange={(next) => {
+          setScope(next);
+          setProjectId("");
+          setRepositoryId("");
+        }}
+        onProjectChange={setProjectId}
+        onRepositoryChange={setRepositoryId}
+      />
       {/* Open Design's sticky top bar: back on the left, the generate action
           as the page's primary on the right. */}
       <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between gap-4 border-b bg-background/90 px-4 backdrop-blur sm:px-7">
@@ -822,6 +932,67 @@ function SourceLinkFavicon({ url }: { url: string }) {
       className="size-4 shrink-0 rounded-[3px] object-contain"
       onError={() => setFailed(true)}
     />
+  );
+}
+
+function ScopeChooser({
+  scope,
+  projects,
+  repositories,
+  projectId,
+  repositoryId,
+  onScopeChange,
+  onProjectChange,
+  onRepositoryChange,
+}: {
+  scope: WorkspaceDesignSystemScope;
+  projects: Project[];
+  repositories: Array<{
+    id: string;
+    projectId: string;
+    projectTitle: string;
+    label: string;
+    repositoryUrl: string;
+  }>;
+  projectId: string;
+  repositoryId: string;
+  onScopeChange: (scope: WorkspaceDesignSystemScope) => void;
+  onProjectChange: (projectId: string) => void;
+  onRepositoryChange: (repositoryId: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-4 py-3">
+      <div role="group" aria-label="设计体系范围" className="inline-flex rounded-lg border bg-muted/30 p-1">
+        {([
+          { value: "standalone", label: "独立体系" },
+          { value: "project", label: "项目级" },
+          { value: "repository", label: "仓库绑定" },
+        ] as const).map((option) => (
+          <Button
+            key={option.value}
+            type="button"
+            size="sm"
+            variant={scope === option.value ? "brand" : "ghost"}
+            aria-pressed={scope === option.value}
+            onClick={() => onScopeChange(option.value)}
+          >
+            {option.label}
+          </Button>
+        ))}
+      </div>
+      {scope === "project" ? (
+        <select aria-label="选择项目" value={projectId} onChange={(event) => onProjectChange(event.target.value)} className="h-8 rounded-lg border bg-background px-2 text-body">
+          <option value="">选择项目</option>
+          {projects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}
+        </select>
+      ) : null}
+      {scope === "repository" ? (
+        <select aria-label="选择仓库" value={repositoryId} onChange={(event) => onRepositoryChange(event.target.value)} className="h-8 max-w-md rounded-lg border bg-background px-2 text-body">
+          <option value="">选择仓库</option>
+          {repositories.map((repository) => <option key={repository.id} value={repository.id}>{repository.projectTitle} · {repository.label} · {repository.repositoryUrl}</option>)}
+        </select>
+      ) : null}
+    </div>
   );
 }
 
