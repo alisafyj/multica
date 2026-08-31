@@ -207,9 +207,11 @@ func designDocumentGroundingPrepareContext(t *testing.T, fixture designDocumentR
 	contextValue := service.DesignDocumentTaskContext{
 		Type:                service.DesignDocumentTaskContextType,
 		WorkspaceID:         testWorkspaceID,
+		ProjectID:           uuidToString(fixture.Document.ProjectID),
 		DesignDocumentID:    uuidToString(fixture.Document.ID),
 		AgentID:             uuidToString(fixture.Revision.AgentID),
 		Platform:            "web",
+		DesignSystemDigest:  fixture.Revision.DesignSystemDigest.String,
 		InputSnapshotSHA256: fixture.Revision.InputSnapshotSha256,
 		Input: service.DesignDocumentTaskInput{
 			SchemaVersion:       service.DesignDocumentInputSchema,

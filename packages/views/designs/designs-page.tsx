@@ -40,6 +40,7 @@ import { DesignTaskComposer, type DesignRecipeSelection } from "./design-task-co
 import { FigmaPluginDownload } from "./figma-plugin-download";
 import { FigmaMCPGuide } from "./figma-mcp-guide";
 import { ProjectDesignSystemWorkspace } from "./project-design-system-workspace";
+import { DesignMvpWorkspace } from "./design-mvp-workspace";
 import "./design-wash.css";
 
 type ToolMenuState = { x: number; y: number; file: DesignFile } | null;
@@ -671,6 +672,8 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
             <FigmaMCPGuide />
           </div>
         </div>
+
+        <DesignMvpWorkspace />
 
         {activeWorkspaceTabId === DESIGN_HOME_TAB_ID ? (
           <div role="tabpanel" aria-label="首页" className="flex min-h-0 flex-1 flex-col">

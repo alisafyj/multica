@@ -8,7 +8,10 @@ import {
   designFileToAssetItem,
   toDesignAssetItems,
 } from "./asset-projection";
-import { repositoryDesignAssetListOptions } from "./queries";
+import {
+  projectDesignAssetListOptions,
+  repositoryDesignAssetListOptions,
+} from "./queries";
 
 vi.mock("../api", () => ({
   api: {
@@ -199,5 +202,36 @@ describe("repository design asset list query", () => {
     expect(repositoryDesignAssetListOptions("", "project-1", "repository-1").enabled).toBe(false);
     expect(repositoryDesignAssetListOptions("ws-1", "", "repository-1").enabled).toBe(false);
     expect(repositoryDesignAssetListOptions("ws-1", "project-1", "").enabled).toBe(false);
+  });
+});
+
+describe("project design asset list query", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("loads the exact project contracts and projects one mixed recency-sorted list", async () => {
+    vi.mocked(api.listDesignFiles).mockResolvedValue({
+      design_files: [{ ...fileFixture, project_id: "project-1", updated_at: "2026-08-22T00:00:00Z" }],
+      total: 1,
+    } as never);
+    vi.mocked(api.listDesignDocuments).mockResolvedValue({
+      documents: [{ ...documentFixture, project_id: "project-1", project_resource_id: "repository-1", updated_at: "2026-08-23T00:00:00Z" }],
+    } as never);
+
+    const options = projectDesignAssetListOptions("ws-1", "project-1");
+    const items = await options.queryFn?.(undefined as never);
+
+    expect(api.listDesignFiles).toHaveBeenCalledWith({ projectId: "project-1" });
+    expect(api.listDesignDocuments).toHaveBeenCalledWith("project-1");
+    expect(items).toEqual([
+      expect.objectContaining({ kind: "design_document", projectId: "project-1", projectResourceId: "repository-1" }),
+      expect.objectContaining({ kind: "figma_file", projectId: "project-1", projectResourceId: null }),
+    ]);
+  });
+
+  it("stays idle until workspace and project are present", () => {
+    expect(projectDesignAssetListOptions("", "project-1").enabled).toBe(false);
+    expect(projectDesignAssetListOptions("ws-1", "").enabled).toBe(false);
   });
 });

@@ -436,6 +436,60 @@ func TestGetProjectDesignSystemReturnsUnestablishedAfterFailedFirstRun(t *testin
 	}
 }
 
+func insertRepositoryForProjectDesignSystemTest(t *testing.T, projectID string) string {
+	t.Helper()
+	resourceRef, err := json.Marshal(map[string]string{"url": "https://github.com/acme/crm-admin.git"})
+	if err != nil {
+		t.Fatalf("marshal repository ref: %v", err)
+	}
+	var resourceID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, label, position, created_by)
+		VALUES ($1, $2, 'github_repo', $3::jsonb, 'crm-admin', 0, $4)
+		RETURNING id
+	`, projectID, testWorkspaceID, resourceRef, testUserID).Scan(&resourceID); err != nil {
+		t.Fatalf("insert project_resource: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM project_design_system WHERE project_resource_id = $1`, resourceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM project_resource WHERE id = $1`, resourceID)
+	})
+	return resourceID
+}
+
+func TestGetProjectDesignSystemDoesNotReturnProjectSystemForRepository(t *testing.T) {
+	projectID := createProjectForDesignTest(t, "Exact repository lookup project")
+	resourceID := insertRepositoryForProjectDesignSystemTest(t, projectID)
+	agentID, _ := createProjectDesignSystemAgent(t, "online")
+	input := projectDesignSystemInputSnapshot{
+		AgentID:    agentID,
+		Platform:   "web",
+		Brief:      "The shared project system.",
+		References: []projectDesignSystemReferenceSnapshot{},
+	}
+	projectSystem := createProjectDesignSystemIdentityForTest(t, projectID, agentID, input)
+	pkg := validProjectDesignSystemPackageForTest(t)
+	upsertValidatedProjectDesignSystemPackageForTest(t, projectSystem.ID, "saved", pkg)
+
+	response := performProjectDesignSystemRequest(
+		t,
+		testHandler.GetProjectDesignSystemByProject,
+		http.MethodGet,
+		"/api/project-design-systems?project_id="+projectID+"&project_resource_id="+resourceID,
+		nil,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("GetProjectDesignSystemByProject: status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var got ProjectDesignSystemResponse
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatalf("decode repository response: %v", err)
+	}
+	if got.ID != "" || got.ProjectResourceID != resourceID || got.Status != "unestablished" || got.ActiveTask != nil {
+		t.Fatalf("repository response = %+v, want explicit unestablished state", got)
+	}
+}
+
 func TestAdjustHistoricalV1PackageUsesLegacyReadOnlyBase(t *testing.T) {
 	projectID := createProjectForDesignTest(t, "Scoped adjustment project")
 	agentID, _ := createProjectDesignSystemAgent(t, "online")
