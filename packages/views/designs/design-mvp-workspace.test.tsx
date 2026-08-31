@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { analyzeProjectDesignSystemRepository, createProjectDesignSystem, getProjectDesignSystemForProject, listAgents, listCatalogue, listDesignFiles, listDesignDocuments, listDesignRepositories, listProjects, setDesignAssetRepositoryAssociation } = vi.hoisted(() => ({
+const { analyzeProjectDesignSystemRepository, createProjectDesignSystem, getProjectDesignSystemForProject, listAgents, listCatalogue, listDesignFiles, listDesignSystemProfiles, listProjectResources, listDesignDocuments, listDesignRepositories, listProjects, setDesignAssetRepositoryAssociation } = vi.hoisted(() => ({
   listDesignFiles: vi.fn(),
   listDesignDocuments: vi.fn(),
   listDesignRepositories: vi.fn(),
@@ -12,6 +12,8 @@ const { analyzeProjectDesignSystemRepository, createProjectDesignSystem, getProj
   createProjectDesignSystem: vi.fn(),
   getProjectDesignSystemForProject: vi.fn(),
   listAgents: vi.fn(),
+  listDesignSystemProfiles: vi.fn(),
+  listProjectResources: vi.fn(),
   listProjects: vi.fn(),
   listCatalogue: vi.fn(),
   setDesignAssetRepositoryAssociation: vi.fn(),
@@ -20,7 +22,7 @@ const { analyzeProjectDesignSystemRepository, createProjectDesignSystem, getProj
 vi.mock("@multica/core/api", () => ({
   ApiError: class ApiError extends Error { constructor(message: string, public status: number, public statusText: string, public body?: unknown) { super(message); } },
   errorCode: (error: unknown) => error && typeof error === "object" ? (error as { body?: { code?: string } }).body?.code : undefined,
-  api: { analyzeProjectDesignSystemRepository, createProjectDesignSystem, getProjectDesignSystemForProject, listAgents, listCatalogue, listDesignFiles, listDesignDocuments, listDesignRepositories, listProjects, setDesignAssetRepositoryAssociation },
+  api: { analyzeProjectDesignSystemRepository, createProjectDesignSystem, getProjectDesignSystemForProject, listAgents, listCatalogue, listDesignFiles, listDesignSystemProfiles, listProjectResources, listDesignDocuments, listDesignRepositories, listProjects, setDesignAssetRepositoryAssociation },
 }));
 
 vi.mock("@multica/core/hooks/use-file-upload", () => ({
@@ -28,7 +30,7 @@ vi.mock("@multica/core/hooks/use-file-upload", () => ({
 }));
 
 vi.mock("@multica/core/designs/queries", () => ({
-  designFileListOptions: () => ({ queryKey: ["design-files"], queryFn: listDesignFiles, select: (data: { design_files: unknown[] }) => data.design_files }),
+  designFileListOptions: (wsId: string, scope?: { kind: "project" | "repository"; projectId: string; projectResourceId?: string }) => ({ queryKey: ["design-files", wsId, scope], queryFn: () => listDesignFiles({ projectId: scope?.projectId, projectResourceId: scope?.projectResourceId }), select: (data: { design_files: unknown[] }) => data.design_files, enabled: Boolean(scope?.projectId) }),
   designRepositoryCatalogueOptions: () => ({
     queryKey: ["design-repositories"],
     queryFn: listDesignRepositories,
@@ -52,7 +54,7 @@ vi.mock("@multica/core/designs/queries", () => ({
   }),
   builtinDesignSystemListOptions: () => ({ queryKey: ["builtin-systems"], queryFn: async () => [] }),
   projectDesignSystemCatalogueOptions: () => ({ queryKey: ["project-system-catalogue"], queryFn: listCatalogue, select: (data: unknown[]) => data }),
-  designSystemListOptions: () => ({ queryKey: ["legacy-systems"], queryFn: listCatalogue }),
+  designSystemListOptions: (wsId: string, projectId?: string) => ({ queryKey: ["legacy-profiles", wsId, projectId ?? ""], queryFn: () => listDesignSystemProfiles({ project_id: projectId }), select: (data: { design_systems: unknown[] }) => data.design_systems, enabled: Boolean(projectId) }),
   projectDesignAssetListOptions: (wsId: string, projectId: string) => ({
     queryKey: ["assets", wsId, projectId, "project"],
     enabled: Boolean(projectId),
@@ -142,6 +144,10 @@ vi.mock("@multica/core/designs/queries", () => ({
     },
   }),
 }));
+vi.mock("@multica/core/projects", () => ({
+  projectResourcesOptions: (wsId: string, projectId: string) => ({ queryKey: ["project-resources", wsId, projectId], queryFn: () => listProjectResources(projectId), select: (data: { resources: unknown[] }) => data.resources, enabled: Boolean(projectId) }),
+}));
+
 vi.mock("@multica/core/workspace/queries", () => ({
   agentListOptions: () => ({ queryKey: ["agents"], queryFn: listAgents, select: (data: { agents: unknown[] }) => data.agents }),
 }));
@@ -178,7 +184,10 @@ function apiError(code: string) {
 describe("DesignMvpWorkspace", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    listProjects.mockResolvedValue({ projects: [{ id: "project-1", title: "CRM" }, { id: "project-2", title: "App" }], total: 2 });
+    listProjects.mockResolvedValue({ projects: [
+      { id: "project-1", workspace_id: "ws-1", title: "CRM", description: "客户管理项目", icon: null, status: "in_progress", priority: "medium", lead_type: null, lead_id: null, created_by: null, start_date: null, due_date: null, created_at: "", updated_at: "", issue_count: 0, done_count: 0, resource_count: 1 },
+      { id: "project-2", workspace_id: "ws-1", title: "App", description: null, icon: null, status: "in_progress", priority: "medium", lead_type: null, lead_id: null, created_by: null, start_date: null, due_date: null, created_at: "", updated_at: "", issue_count: 0, done_count: 0, resource_count: 0 },
+    ], total: 2 });
     listDesignRepositories.mockResolvedValue({ repositories: repositories.map((repository) => ({
       id: repository.id,
       project_id: repository.projectId,
@@ -198,6 +207,18 @@ describe("DesignMvpWorkspace", () => {
     });
     listAgents.mockResolvedValue({ agents: [{ id: "agent-1", name: "UI Agent", status: "idle", runtime_id: "runtime-1", archived_at: null }] });
     listCatalogue.mockResolvedValue([]);
+    listProjectResources.mockResolvedValue({ resources: [{
+      id: "repo-1",
+      project_id: "project-1",
+      workspace_id: "ws-1",
+      resource_type: "github_repo",
+      resource_ref: { url: "https://github.com/example/web", default_branch_hint: "main" },
+      label: "Custom web repo",
+      position: 2,
+      created_at: "",
+      created_by: null,
+    }], total: 1 });
+    listDesignSystemProfiles.mockResolvedValue({ design_systems: [] });
     analyzeProjectDesignSystemRepository.mockResolvedValue({ id: "system-analysis", project_id: "project-1", project_resource_id: "repo-1", status: "generating" });
     createProjectDesignSystem.mockResolvedValue({ id: "system-created", project_id: "project-1", project_resource_id: "repo-1", status: "generating" });
   });
@@ -237,10 +258,10 @@ describe("DesignMvpWorkspace", () => {
     expect(screen.getByRole("button", { name: "生成设计体系" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "分析项目仓库" })).toBeInTheDocument();
     expect(screen.getByLabelText("所属项目")).toHaveValue("CRM");
-    expect(screen.getByLabelText("所属仓库")).toHaveValue("web");
+    expect(screen.getByLabelText("所属仓库")).toHaveValue("Custom web repo");
     expect(screen.getByLabelText("所属项目")).toBeDisabled();
     expect(screen.getByLabelText("所属仓库")).toBeDisabled();
-    expect(screen.getByLabelText("设计目标")).toHaveValue("为 CRM 建立清晰、克制的设计体系，重点覆盖 web 仓库。");
+    expect(screen.getByLabelText("设计目标")).toHaveValue("为 CRM 建立清晰、克制的设计体系，重点覆盖 Custom web repo 仓库。");
   });
 
   it("sends and preserves the exact repository-scoped create and analysis requests", async () => {
@@ -256,7 +277,7 @@ describe("DesignMvpWorkspace", () => {
       project_resource_id: "repo-1",
       agent_id: "agent-1",
       platform: "web",
-      brief: "为 CRM 建立清晰、克制的设计体系，重点覆盖 web 仓库。",
+      brief: "为 CRM 建立清晰、克制的设计体系，重点覆盖 Custom web repo 仓库。",
       references: [],
     }));
     await user.click(screen.getByRole("button", { name: "生成设计体系" }));
@@ -265,7 +286,7 @@ describe("DesignMvpWorkspace", () => {
       project_resource_id: "repo-1",
       agent_id: "agent-1",
       platform: "web",
-      brief: "为 CRM 建立清晰、克制的设计体系，重点覆盖 web 仓库。",
+      brief: "为 CRM 建立清晰、克制的设计体系，重点覆盖 Custom web repo 仓库。",
       references: [],
     }));
   });
@@ -298,7 +319,7 @@ describe("DesignMvpWorkspace", () => {
     await user.selectOptions(screen.getByLabelText("选择仓库"), "repo-1");
     expect((await screen.findAllByText("Repository file")).length).toBeGreaterThan(0);
     expect(screen.getByText("Repository draft")).toBeInTheDocument();
-    await waitFor(() => expect(listDesignFiles).toHaveBeenLastCalledWith({ projectId: "project-1", projectResourceId: "repo-1" }));
+    await waitFor(() => expect(listDesignFiles).toHaveBeenCalledWith({ projectId: "project-1", projectResourceId: undefined }));
     await waitFor(() => expect(listDesignDocuments).toHaveBeenLastCalledWith("project-1", "repo-1"));
     expect(screen.getAllByText("CRM · web · https://github.com/example/web").length).toBeGreaterThan(0);
   });
@@ -358,7 +379,7 @@ describe("DesignMvpWorkspace", () => {
     await user.selectOptions(screen.getByLabelText("选择项目"), "project-1");
     await user.click(screen.getByRole("button", { name: "仓库视角" }));
     await user.selectOptions(await screen.findByLabelText("选择仓库"), "repo-2");
-    await waitFor(() => expect(listDesignFiles).toHaveBeenLastCalledWith({ projectId: "project-2", projectResourceId: "repo-2" }));
+    await waitFor(() => expect(listDesignFiles).toHaveBeenCalledWith({ projectId: "project-2", projectResourceId: undefined }));
     await user.click(screen.getByRole("button", { name: "项目视角" }));
     expect(screen.getByLabelText("选择项目")).toHaveValue("project-1");
     await waitFor(() => expect(listDesignFiles).toHaveBeenLastCalledWith({ projectId: "project-1" }));

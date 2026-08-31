@@ -23,15 +23,18 @@ import { api } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
 import {
   builtinDesignSystemListOptions,
+  designFileListOptions,
   designRepositoryCatalogueOptions,
+  designSystemListOptions,
+  projectDesignSystemByProjectOptions,
   projectDesignSystemCatalogueOptions,
 } from "@multica/core/designs/queries";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { projectListOptions } from "@multica/core/projects/queries";
+import { projectListOptions, projectResourcesOptions } from "@multica/core/projects";
 import { useWorkspacePaths } from "@multica/core/paths";
-import type { Agent, Project, ProjectDesignSystemReferenceInput, ProjectResource } from "@multica/core/types";
+import type { Agent, Project, ProjectDesignSystemReferenceInput } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   Dialog,
@@ -133,6 +136,27 @@ export function WorkspaceDesignSystemCreate() {
   const [repositoryId, setRepositoryId] = useState("");
   const selectedProject = projects.find((project) => project.id === projectId);
   const selectedRepository = repositories.find((repository) => repository.id === repositoryId);
+  const scopedProjectId = scope === "repository" ? selectedRepository?.projectId ?? "" : projectId;
+  const { data: projectResources = [] } = useQuery({
+    ...projectResourcesOptions(wsId, scopedProjectId),
+    enabled: scope !== "standalone" && Boolean(scopedProjectId),
+  });
+  const scopedDesignFiles = useQuery({
+    ...designFileListOptions(wsId, scopedProjectId ? { kind: "project", projectId: scopedProjectId } : undefined),
+    enabled: scope !== "standalone" && Boolean(scopedProjectId),
+  });
+  const scopedProfiles = useQuery({
+    ...designSystemListOptions(wsId, scopedProjectId || undefined),
+    enabled: scope !== "standalone" && Boolean(scopedProjectId),
+  });
+  const scopedSystem = useQuery({
+    ...projectDesignSystemByProjectOptions(
+      wsId,
+      scopedProjectId,
+      scope === "repository" ? selectedRepository?.id : undefined,
+    ),
+    enabled: scope !== "standalone" && Boolean(scopedProjectId) && (scope === "project" || Boolean(selectedRepository)),
+  });
   const { upload, uploadWithToast, uploading } = useFileUpload(api, (error, file) =>
     toast.error(`${file.name}：${error.message}`),
   );
@@ -352,17 +376,9 @@ export function WorkspaceDesignSystemCreate() {
     const project = scope === "repository"
       ? projects.find((project) => project.id === selectedRepository?.projectId)
       : selectedProject;
-    const projectRepository = selectedRepository ? ({
-      id: selectedRepository.id,
-      project_id: selectedRepository.projectId,
-      workspace_id: wsId,
-      resource_type: "github_repo",
-      resource_ref: { url: selectedRepository.repositoryUrl },
-      label: selectedRepository.label,
-      position: 0,
-      created_at: "",
-      created_by: null,
-    } satisfies ProjectResource) : undefined;
+    const projectRepository = scope === "repository"
+      ? projectResources.find((resource) => resource.id === selectedRepository?.id)
+      : undefined;
     if (!project || (scope === "repository" && !projectRepository)) {
       return (
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -401,38 +417,18 @@ export function WorkspaceDesignSystemCreate() {
         />
         <ProjectDesignSystemContent
           key={`${scope}:${repositoryId || projectId}`}
-          project={project satisfies Project}
+          project={project}
           agents={agents}
-          designFiles={[]}
-          legacyProfiles={teamSystems as never}
-          system={{
-            id: "",
-            workspace_id: wsId,
-            project_id: project.id,
-            project_resource_id: projectRepository?.id ?? "",
-            name: "",
-            platform: "",
-            current_agent_id: null,
-            status: "unestablished",
-            active_task: null,
-            input_snapshot: {},
-            content: { sections: [], token_groups: [], locators: [], preview_html: "", integrity_sha256: "" },
-            preview_validation: { status: "none", integrity_sha256: "", report: {}, verified_at: null },
-            has_unsaved_changes: false,
-            last_error: null,
-            activity: [],
-            created_at: "",
-            updated_at: "",
-            saved_at: null,
-          }}
-          isLoading={false}
+          designFiles={scopedDesignFiles.data ?? []}
+          legacyProfiles={scopedProfiles.data ?? []}
+          system={scopedSystem.data ?? undefined}
+          isLoading={scopedSystem.isLoading}
           repositories={projectRepository ? [projectRepository] : []}
           selectedRepositoryId={projectRepository?.id ?? ""}
         />
       </div>
     );
   }
-
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <ScopeChooser

@@ -436,6 +436,7 @@ export function ProjectDesignSystemCreate({
     form.agentId
       && agentAvailable
       && form.platform
+      && form.brief.trim()
       && validLink
       && validColor
       && !uploading,
