@@ -1420,6 +1420,19 @@ export interface ListDesignFilesResponse {
   total: number;
 }
 
+export interface DesignRepositoryListItem {
+  id: string;
+  project_id: string;
+  project_title: string;
+  label: string;
+  repository_url: string;
+  default_branch_hint: string;
+}
+
+export interface ListDesignRepositoriesResponse {
+  repositories: DesignRepositoryListItem[];
+}
+
 export interface SetDesignAssetRepositoryAssociationRequest {
   project_id: string;
   project_resource_id: string;

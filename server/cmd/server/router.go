@@ -2163,6 +2163,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/api/project-design-systems/{id}/save", h.SaveProjectDesignSystem)
 			r.Delete("/api/project-design-systems/{id}/draft", h.DiscardProjectDesignSystemDraft)
 			r.Get("/api/project-design-systems/{id}/open-design-runs/{runId}/evidence", h.DownloadOpenDesignRunEvidence)
+			r.Get("/api/design-repositories", h.ListDesignRepositories)
 			r.Post("/api/design-repo-analysis", h.CreateDesignRepoAnalysis)
 			r.Get("/api/design-repo-analysis", h.ListDesignRepoAnalyses)
 			r.Get("/api/design-repo-analysis/{id}", h.GetDesignRepoAnalysis)

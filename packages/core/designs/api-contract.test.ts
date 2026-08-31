@@ -129,3 +129,24 @@ describe("ApiClient repository design asset contracts", () => {
     ]));
   });
 });
+
+describe("ApiClient design repository catalogue", () => {
+  it("requests the workspace catalogue and returns the strict snake_case response", async () => {
+    const body = { repositories: [{ id: "repo-1", project_id: "project-1", project_title: "CRM", label: "web", repository_url: "https://github.com/example/web", default_branch_hint: "main" }] };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(body)));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listDesignRepositories()).resolves.toEqual(body);
+    expect(fetchMock).toHaveBeenCalledWith("https://api.example.test/api/design-repositories", expect.anything());
+  });
+
+  it("falls back to an empty catalogue without accepting malformed rows", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ repositories: [{ id: "repo-1" }] })));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listDesignRepositories()).resolves.toEqual({ repositories: [] });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});

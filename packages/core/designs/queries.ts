@@ -247,6 +247,41 @@ export function repositoryDesignAssetListOptions(
 }
 
 /**
+ * Unified read model for all project Design Files and Design Documents. The
+ * server owns project filtering; Core only projects and mixes the two sources.
+ */
+export function projectDesignAssetListOptions(wsId: string, projectId: string) {
+  return queryOptions({
+    queryKey: designKeys.assetsByProject(wsId, projectId),
+    queryFn: async () => {
+      const [files, documents] = await Promise.all([
+        api.listDesignFiles({ projectId }),
+        api.listDesignDocuments(projectId),
+      ]);
+      return toDesignAssetItems(files.design_files, documents.documents);
+    },
+    enabled: Boolean(wsId && projectId),
+  });
+}
+
+/** Workspace catalogue of GitHub repositories usable as design targets. */
+export function designRepositoryCatalogueOptions(wsId: string) {
+  return queryOptions({
+    queryKey: designKeys.designRepositories(wsId),
+    queryFn: () => api.listDesignRepositories(),
+    select: (data) => data.repositories.map((repository) => ({
+      id: repository.id,
+      projectId: repository.project_id,
+      projectTitle: repository.project_title,
+      label: repository.label,
+      repositoryUrl: repository.repository_url,
+      defaultBranchHint: repository.default_branch_hint,
+    })),
+    enabled: Boolean(wsId),
+  });
+}
+
+/**
  * Design documents pointing at one issue, for the issue's own view of them. An
  * empty `issueId` stays idle: there is no workspace-wide listing to fall back
  * on, and asking for one would 400.
