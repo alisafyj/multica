@@ -225,6 +225,7 @@ import type {
   DesignDocumentRevision,
   ListDesignDocumentRevisionsResponse,
   ListDesignDocumentsResponse,
+  ListDesignRepositoriesResponse,
   DesignDocumentShare,
   ListDesignDocumentSharesResponse,
   DesignDocumentShareExchange,
@@ -569,6 +570,8 @@ import {
   EMPTY_DISPATCH_DESIGN_RESTORE_TASK_RESPONSE,
   ListDesignDeliveriesResponseSchema,
   ListDesignDocumentsResponseSchema,
+  ListDesignRepositoriesResponseSchema,
+  EMPTY_LIST_DESIGN_REPOSITORIES_RESPONSE,
   SetDesignAssetRepositoryAssociationResponseSchema,
   ListDesignDraftsResponseSchema,
   BuiltinDesignSystemDetailSchema,
@@ -4036,6 +4039,16 @@ export class ApiClient {
     if (params?.projectResourceId) search.set("project_resource_id", params.projectResourceId);
     const suffix = search.toString();
     return this.fetch(`/api/design-files${suffix ? `?${suffix}` : ""}`);
+  }
+
+  async listDesignRepositories(): Promise<ListDesignRepositoriesResponse> {
+    const raw = await this.fetch<unknown>("/api/design-repositories");
+    return parseWithFallback(
+      raw,
+      ListDesignRepositoriesResponseSchema,
+      EMPTY_LIST_DESIGN_REPOSITORIES_RESPONSE,
+      { endpoint: "GET /api/design-repositories" },
+    );
   }
 
   /**

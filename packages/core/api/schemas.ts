@@ -98,6 +98,7 @@ import type {
   DesignDocumentRevision,
   ListDesignDocumentRevisionsResponse,
   ListDesignDocumentsResponse,
+  ListDesignRepositoriesResponse,
   DesignDocumentShare,
   ListDesignDocumentSharesResponse,
   DesignDocumentShareExchange,
@@ -2370,6 +2371,26 @@ export const ListDesignDocumentsResponseSchema = z.object({
 
 export const EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE: ListDesignDocumentsResponse = {
   documents: [],
+};
+
+export const DesignRepositoryListItemSchema = z.object({
+  id: z.string(),
+  project_id: z.string(),
+  project_title: z.string(),
+  label: z.string(),
+  repository_url: z.string(),
+  default_branch_hint: z.string(),
+});
+
+export const ListDesignRepositoriesResponseSchema = z.object({
+  repositories: z.preprocess(
+    (value) => Array.isArray(value) ? value : [],
+    z.array(DesignRepositoryListItemSchema).catch([]),
+  ),
+});
+
+export const EMPTY_LIST_DESIGN_REPOSITORIES_RESPONSE: ListDesignRepositoriesResponse = {
+  repositories: [],
 };
 
 /**
