@@ -12,7 +12,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -301,6 +300,10 @@ func (h *Handler) resolveFigmaDesignAssetFrames(r *http.Request, claim designAss
 	if err != nil {
 		return nil, designAssetResolveFailure(http.StatusConflict, "revision_not_restorable", "design revision content is invalid")
 	}
+	var rawDocument map[string]any
+	if json.Unmarshal(revision.NativeJson, &rawDocument) != nil {
+		return nil, designAssetResolveFailure(http.StatusConflict, "revision_not_restorable", "design revision content is invalid")
+	}
 	frames := make([]DesignAssetFrameResponse, 0, len(document.Frames))
 	for _, frame := range document.Frames {
 		frameRef, err := issueDesignAssetFrameRef(claim, "frame", frame.ID)
@@ -311,7 +314,7 @@ func (h *Handler) resolveFigmaDesignAssetFrames(r *http.Request, claim designAss
 			FrameRef: frameRef, Title: frame.Name, ThumbnailURL: designAssetFrameThumbnail(document, frame),
 		})
 	}
-	groups, err := figmaGroupDesignAssetFrames(document, claim)
+	groups, err := figmaGroupDesignAssetFrames(document, rawDocument, claim)
 	if err != nil {
 		return nil, err
 	}
@@ -319,46 +322,26 @@ func (h *Handler) resolveFigmaDesignAssetFrames(r *http.Request, claim designAss
 	return frames, nil
 }
 
-func figmaGroupDesignAssetFrames(document designcore.NativeJSON, claim designAssetRefClaim) ([]DesignAssetFrameResponse, error) {
-	rawGroups, ok := document.RestoreHints["figmaGroups"].(map[string]any)
-	if !ok || len(rawGroups) == 0 {
-		return []DesignAssetFrameResponse{}, nil
-	}
-	keys := make([]string, 0, len(rawGroups))
-	for key := range rawGroups {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
+func figmaGroupDesignAssetFrames(document designcore.NativeJSON, rawDocument map[string]any, claim designAssetRefClaim) ([]DesignAssetFrameResponse, error) {
 	framesByID := make(map[string]designcore.Frame, len(document.Frames))
 	for _, frame := range document.Frames {
 		framesByID[frame.ID] = frame
 	}
-	groups := make([]DesignAssetFrameResponse, 0, len(keys))
-	for _, key := range keys {
-		group, ok := rawGroups[key].(map[string]any)
-		if !ok {
-			continue
-		}
-		groupID := firstString(group, "id", "groupId", "sourceNodeId")
-		if groupID == "" {
-			groupID = key
-		}
-		frameIDs := stringsFromAnySlice(group["frameIds"])
-		if groupID == "" || len(frameIDs) == 0 {
-			continue
-		}
-		title := firstString(group, "name", "groupName")
+	discovered := discoverDesignRestorePackGroups(rawDocument)
+	groups := make([]DesignAssetFrameResponse, 0, len(discovered))
+	for _, group := range discovered {
+		title := group.Name
 		if title == "" {
-			title = groupID
+			title = group.ID
 		}
 		thumbnail := ""
-		for _, frameID := range frameIDs {
+		for _, frameID := range group.FrameIDs {
 			if frame, exists := framesByID[frameID]; exists {
 				thumbnail = designAssetFrameThumbnail(document, frame)
 				break
 			}
 		}
-		frameRef, err := issueDesignAssetFrameRef(claim, "figma_group", groupID)
+		frameRef, err := issueDesignAssetFrameRef(claim, "figma_group", group.ID)
 		if err != nil {
 			return nil, err
 		}

@@ -186,6 +186,43 @@ func TestGetDesignAssetFramesIncludesFigmaGroupsWithoutLeakingSelectionInternals
 	}
 }
 
+func TestGetDesignAssetFramesDiscoversFigmaGroupFromFrameSources(t *testing.T) {
+	projectID := dbfx.Project(t, "unified-design-source-group-frames")
+	design := createDesignFileForTest(t, "Source Grouped Figma Design")
+	grouped := restorePackGroupedNativeJSONForTest("Source Grouped Figma Design")
+	delete(grouped, "restoreHints")
+	updateDesignRevisionNativeJSONForTest(t, design.CurrentRevision.ID, grouped)
+	if _, err := testPool.Exec(context.Background(), `UPDATE design_file SET project_id = $1 WHERE id = $2`, projectID, design.File.ID); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := testHandler.Queries.GetDesignRevisionInWorkspace(context.Background(), db.GetDesignRevisionInWorkspaceParams{
+		ID: parseUUID(design.CurrentRevision.ID), WorkspaceID: parseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	designRef := mustIssueDesignAssetRef(t, designAssetRefClaim{
+		Kind: "figma", WorkspaceID: testWorkspaceID, ProjectID: projectID, UserID: testUserID,
+		AssetID: design.File.ID, RevisionID: design.CurrentRevision.ID, ContentDigest: digestDesignAssetBytes(revision.NativeJson),
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	})
+	var body DesignAssetFramesResponse
+	callDesignAssetFrames(t, designRef, testWorkspaceID, testUserID).Want(http.StatusOK).JSON(&body)
+	if len(body.Frames) != 3 {
+		t.Fatalf("frames = %+v, want two frames plus one source-discovered group", body.Frames)
+	}
+	var group DesignAssetFrameResponse
+	for _, frame := range body.Frames {
+		if frame.Title == "钱包首页" {
+			group = frame
+		}
+	}
+	claim, err := parseDesignAssetFrameRef(group.FrameRef, time.Now())
+	if err != nil || claim.SelectionKind != "figma_group" || claim.SelectionID != "group-wallet" {
+		t.Fatalf("source-discovered group claim = (%+v, %v)", claim, err)
+	}
+}
+
 func TestGetDesignAssetFramesAcceptsExplicitDocumentRevisionBinding(t *testing.T) {
 	const explicitRevisionID = "explicit-revision-42"
 	document := createDesignDocumentRevisionFixtureWithBinding(t, nil, func(binding *designdocument.PackageBinding) {

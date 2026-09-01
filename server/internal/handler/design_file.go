@@ -8023,17 +8023,101 @@ func resolveDesignRestorePackGroupFrameIDs(doc map[string]any, scope DesignResto
 	return uniqueOrderedStrings(out), meta
 }
 
+type designRestorePackGroup struct {
+	ID       string
+	Name     string
+	FrameIDs []string
+}
+
+func discoverDesignRestorePackGroups(doc map[string]any) []designRestorePackGroup {
+	candidates := make([]DesignRestoreScopeV1, 0)
+	seenCandidates := map[string]struct{}{}
+	addCandidate := func(scope DesignRestoreScopeV1) {
+		var key string
+		switch {
+		case scope.GroupID != "":
+			key = "id:" + scope.GroupID
+		case scope.GroupName != "":
+			key = "name:" + scope.GroupName
+		case len(scope.GroupPath) > 0:
+			key = "path:" + strings.Join(scope.GroupPath, "\x00")
+		default:
+			return
+		}
+		if _, exists := seenCandidates[key]; exists {
+			return
+		}
+		seenCandidates[key] = struct{}{}
+		candidates = append(candidates, scope)
+	}
+
+	restoreHints, _ := doc["restoreHints"].(map[string]any)
+	hints, _ := restoreHints["figmaGroups"].(map[string]any)
+	hintKeys := make([]string, 0, len(hints))
+	for key := range hints {
+		hintKeys = append(hintKeys, key)
+	}
+	sort.Strings(hintKeys)
+	for _, key := range hintKeys {
+		group, ok := hints[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		groupID := firstString(group, "id", "groupId", "sourceNodeId")
+		if groupID == "" {
+			groupID = key
+		}
+		addCandidate(DesignRestoreScopeV1{
+			Kind: "figma_group", GroupID: groupID, GroupName: firstString(group, "name", "groupName"),
+			GroupPath: stringsFromAnySlice(group["groupPath"]),
+		})
+	}
+	for _, frame := range asObjectSlice(doc["frames"]) {
+		source, _ := frame["source"].(map[string]any)
+		addCandidate(DesignRestoreScopeV1{
+			Kind: "figma_group", GroupID: firstString(source, "groupId", "id", "sourceNodeId"),
+			GroupName: stringField(source, "groupName"), GroupPath: stringsFromAnySlice(source["groupPath"]),
+		})
+	}
+
+	groups := make([]designRestorePackGroup, 0, len(candidates))
+	seenGroups := map[string]struct{}{}
+	for _, candidate := range candidates {
+		frameIDs, meta := resolveDesignRestorePackGroupFrameIDs(doc, candidate)
+		groupID := firstString(meta, "id", "groupId", "sourceNodeId")
+		if groupID == "" {
+			groupID = candidate.GroupID
+		}
+		if groupID == "" || len(frameIDs) == 0 {
+			continue
+		}
+		if _, exists := seenGroups[groupID]; exists {
+			continue
+		}
+		seenGroups[groupID] = struct{}{}
+		name := firstString(meta, "name", "groupName")
+		if name == "" {
+			name = candidate.GroupName
+		}
+		groups = append(groups, designRestorePackGroup{ID: groupID, Name: name, FrameIDs: frameIDs})
+	}
+	return groups
+}
+
 func findDesignRestorePackGroupHint(doc map[string]any, scope DesignRestoreScopeV1) map[string]any {
 	restoreHints, _ := doc["restoreHints"].(map[string]any)
 	groups, _ := restoreHints["figmaGroups"].(map[string]any)
-	for _, raw := range groups {
+	for key, raw := range groups {
 		group, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
 		if scope.GroupID != "" {
-			for _, key := range []string{"id", "groupId", "sourceNodeId"} {
-				if stringField(group, key) == scope.GroupID {
+			if key == scope.GroupID {
+				return group
+			}
+			for _, field := range []string{"id", "groupId", "sourceNodeId"} {
+				if stringField(group, field) == scope.GroupID {
 					return group
 				}
 			}
