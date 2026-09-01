@@ -199,6 +199,7 @@ export function TestPlanDetail({ planId }: { planId: string }) {
                     <Input
                       value={environment}
                       onChange={(e) => setEnvironment(e.target.value)}
+                      // eslint-disable-next-line no-restricted-syntax -- an environment name, not copy: it shows the shape of the value
                       placeholder="staging"
                       className="h-8 text-caption"
                     />
@@ -211,6 +212,7 @@ export function TestPlanDetail({ planId }: { planId: string }) {
                     <Input
                       value={buildRef}
                       onChange={(e) => setBuildRef(e.target.value)}
+                      // eslint-disable-next-line no-restricted-syntax -- a build ref format example, not copy
                       placeholder="v1.2.3"
                       className="h-8 text-caption"
                     />
