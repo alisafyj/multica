@@ -180,8 +180,17 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 	case *js.CallExpr:
 		audit.checkCall(value.X, value.Args)
 	case *js.BinaryExpr:
-		if value.Op == js.EqToken && expressionContainsGlobalAlias(value.Y, audit.globalBindings) {
-			audit.checkGlobalAssignment(value.X)
+		if value.Op == js.EqToken {
+			switch value.X.(type) {
+			case *js.DotExpr, *js.IndexExpr:
+				if audit.isGlobalAlias(value.Y) {
+					audit.checkGlobalAssignment(value.X)
+				}
+			default:
+				if expressionContainsGlobalAlias(value.Y, audit.globalBindings) {
+					audit.checkGlobalAssignment(value.X)
+				}
+			}
 		}
 	case *js.NewExpr:
 		if name, ok := freeIdentifierName(value.X); ok {
@@ -356,6 +365,8 @@ func (audit *scriptAudit) checkGlobalAssignment(expr js.IExpr) {
 		audit.globalBindings[resolveVarRoot(value)] = struct{}{}
 	case *js.GroupExpr:
 		audit.checkGlobalAssignment(value.X)
+	case *js.DotExpr, *js.IndexExpr:
+		audit.report("prototype_script_dynamic_global", "assigning a global object through a property is not allowed")
 	case *js.ArrayExpr:
 		for _, item := range value.List {
 			audit.checkGlobalAssignment(item.Value)
