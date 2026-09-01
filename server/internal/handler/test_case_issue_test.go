@@ -261,3 +261,21 @@ func TestIssueCoverageCarriesTheLatestRecordedResult(t *testing.T) {
 		t.Fatalf("latest_result after rerun = %v, want passed", cases[0].LatestResult)
 	}
 }
+
+// A batch that fails validation must write nothing. The loop used to validate
+// and insert one id at a time, so a good id ahead of a bad one was committed
+// while the caller got a 400 — and a caller retrying the corrected batch had no
+// way to know what had already landed.
+func TestLinkTestCaseIssuesWritesNothingWhenOneIDIsBad(t *testing.T) {
+	projectID := newTestRunProject(t)
+	tc := createTestCaseForRun(t, projectID)
+	good := dbfx.Issue(t, "valid requirement ahead of a bad one")
+
+	w := linkCaseIssues(t, tc.Key, []string{good, "00000000-0000-0000-0000-0000000000ff"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("batch with a bad id: got %d, want 400: %s", w.Code, w.Body.String())
+	}
+	if issues := listCaseIssues(t, tc.Key); len(issues) != 0 {
+		t.Fatalf("a rejected batch committed %d link(s); the good id ahead of the bad one leaked", len(issues))
+	}
+}

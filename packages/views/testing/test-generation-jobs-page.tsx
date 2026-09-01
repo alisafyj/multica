@@ -22,6 +22,9 @@ import { useT } from "../i18n";
 import { TestsTabs } from "./components/tests-tabs";
 import { resolveSelectedProjectId } from "./project-selection";
 
+/** The list endpoint's own ceiling; it has no cursor to page past it. */
+const JOB_PAGE_LIMIT = 200;
+
 /**
  * Past and in-flight AI generation runs for the selected project.
  *
@@ -40,10 +43,17 @@ export function TestGenerationJobsPage() {
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const selectedProjectId = resolveSelectedProjectId(projects, projectId);
 
+  // Same ceiling as the runs index: request the endpoint's cap and admit it
+  // when the answer is truncated, rather than letting the newest 50 look like
+  // the whole history.
   const { data: jobs = [], isLoading } = useQuery({
-    ...testGenerationJobListOptions(wsId, { projectId: selectedProjectId }),
+    ...testGenerationJobListOptions(wsId, {
+      projectId: selectedProjectId,
+      limit: JOB_PAGE_LIMIT,
+    }),
     enabled: selectedProjectId.length > 0,
   });
+  const truncated = jobs.length >= JOB_PAGE_LIMIT;
 
   const createGenerationJob = useCreateTestGenerationJob();
   const [isStarting, setIsStarting] = useState(false);
@@ -121,6 +131,11 @@ export function TestGenerationJobsPage() {
             </tbody>
           </table>
         )}
+        {truncated ? (
+          <p className="px-3 py-2 text-caption text-muted-foreground">
+            {t(($) => $.jobs.truncated, { count: JOB_PAGE_LIMIT })}
+          </p>
+        ) : null}
       </div>
     </div>
   );

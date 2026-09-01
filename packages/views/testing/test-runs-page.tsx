@@ -15,6 +15,9 @@ import { useT } from "../i18n";
 import { TestsTabs } from "./components/tests-tabs";
 import { resolveSelectedProjectId } from "./project-selection";
 
+/** The list endpoint's own ceiling; it has no cursor to page past it. */
+const RUN_PAGE_LIMIT = 200;
+
 /**
  * Every execution round of the selected project.
  *
@@ -32,10 +35,15 @@ export function TestRunsPage() {
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const selectedProjectId = resolveSelectedProjectId(projects, projectId);
 
+  // The endpoint defaults to 50 and caps at 200, with no cursor. Ask for the
+  // cap rather than the default, and tell the user when the answer is truncated
+  // — an index that silently stops at the newest N reads as "this is all of
+  // them", which is the one thing a history surface must not imply.
   const { data: runs = [], isLoading } = useQuery({
-    ...testRunListOptions(wsId, { projectId: selectedProjectId }),
+    ...testRunListOptions(wsId, { projectId: selectedProjectId, limit: RUN_PAGE_LIMIT }),
     enabled: selectedProjectId.length > 0,
   });
+  const truncated = runs.length >= RUN_PAGE_LIMIT;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -85,6 +93,11 @@ export function TestRunsPage() {
             </tbody>
           </table>
         )}
+        {truncated ? (
+          <p className="px-3 py-2 text-caption text-muted-foreground">
+            {t(($) => $.runs.truncated, { count: RUN_PAGE_LIMIT })}
+          </p>
+        ) : null}
       </div>
     </div>
   );

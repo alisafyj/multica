@@ -429,7 +429,8 @@
     "executor": {
       "member": "人工",
       "agent": "智能体"
-    }
+    },
+    "truncated": "仅显示最近 {{count}} 轮，更早的轮次暂不可浏览。"
   },
   "jobs": {
     "title": "生成任务",
@@ -439,7 +440,8 @@
       "job": "任务",
       "status": "状态",
       "created": "创建时间"
-    }
+    },
+    "truncated": "仅显示最近 {{count}} 个任务，更早的任务暂不可浏览。"
   },
   "addToPlan": {
     "title": "加入测试计划",

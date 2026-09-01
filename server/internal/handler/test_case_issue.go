@@ -129,10 +129,14 @@ func (h *Handler) ListTestCaseIssues(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"issues": resp, "total": len(resp)})
 }
 
-// LinkTestCaseIssues attaches one or more issues to a case. Every id is
-// verified to exist in this workspace before anything is written: without a
-// foreign key, an unchecked id would create a link to nothing that only reveals
-// itself as a missing row at read time.
+// LinkTestCaseIssues attaches one or more issues to a case.
+//
+// Every id is resolved before anything is written, and the writes then commit
+// together. Both halves matter: without a foreign key an unchecked id would
+// create a link to nothing that only surfaces as a missing row at read time,
+// and a per-item validate-then-insert loop would leave the earlier links
+// committed while answering 400 for a later one — a caller that retries the
+// same batch after fixing the bad id cannot tell what already landed.
 func (h *Handler) LinkTestCaseIssues(w http.ResponseWriter, r *http.Request) {
 	testCase, ok := h.loadTestCaseForUser(w, r, chi.URLParam(r, "ref"))
 	if !ok {
@@ -158,6 +162,9 @@ func (h *Handler) LinkTestCaseIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Pass one: resolve every id. A bad entry rejects the whole batch with
+	// nothing written.
+	issueUUIDs := make([]pgtype.UUID, 0, len(req.IssueIDs))
 	for i, raw := range req.IssueIDs {
 		issueUUID, ok := parseUUIDOrBadRequest(w, raw, "issue_ids["+strconv.Itoa(i)+"]")
 		if !ok {
@@ -170,7 +177,19 @@ func (h *Handler) LinkTestCaseIssues(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "issue not found: "+raw)
 			return
 		}
-		if _, err := h.Queries.LinkTestCaseIssue(r.Context(), db.LinkTestCaseIssueParams{
+		issueUUIDs = append(issueUUIDs, issueUUID)
+	}
+
+	// Pass two: one transaction, so a failure part-way leaves no links behind.
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	for _, issueUUID := range issueUUIDs {
+		if _, err := qtx.LinkTestCaseIssue(r.Context(), db.LinkTestCaseIssueParams{
 			TestCaseID:  testCase.ID,
 			IssueID:     issueUUID,
 			WorkspaceID: testCase.WorkspaceID,
@@ -183,6 +202,11 @@ func (h *Handler) LinkTestCaseIssues(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to link the issue")
 			return
 		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("commit test case issue links failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to link the issue")
+		return
 	}
 
 	h.publish(protocol.EventTestCaseUpdated, workspaceID, "member", userID,

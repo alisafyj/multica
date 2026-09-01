@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ClipboardList, Play, Settings2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -80,10 +80,17 @@ export function TestPlanDetail({ planId }: { planId: string }) {
   // Re-seed on the server's own change marker, not on the cached object's
   // identity: an invalidation hands back a new object with the same content,
   // and re-seeding on that would wipe whatever the user is typing.
+  //
+  // And only when the field is not dirty. Changing the status is itself a write
+  // that bumps updated_at and refetches, so without this guard picking a status
+  // while an unsaved title sits in the box would silently restore the old title
+  // — the user's edit destroyed by their own next click.
+  const syncedSettings = useRef({ title: "", description: "" });
   useEffect(() => {
     if (!plan) return;
-    setTitle(plan.title);
-    setDescription(plan.description);
+    if (title === syncedSettings.current.title) setTitle(plan.title);
+    if (description === syncedSettings.current.description) setDescription(plan.description);
+    syncedSettings.current = { title: plan.title, description: plan.description };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan?.id, plan?.updated_at]);
 

@@ -430,7 +430,8 @@
     "executor": {
       "member": "Member",
       "agent": "Agent"
-    }
+    },
+    "truncated": "Showing the {{count}} most recent rounds; older ones are not listed."
   },
   "jobs": {
     "title": "Generation jobs",
@@ -440,7 +441,8 @@
       "job": "Job",
       "status": "Status",
       "created": "Created"
-    }
+    },
+    "truncated": "Showing the {{count}} most recent jobs; older ones are not listed."
   },
   "addToPlan": {
     "title": "Add to test plan",

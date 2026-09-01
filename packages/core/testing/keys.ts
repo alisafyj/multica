@@ -110,6 +110,7 @@ export const issueTestCaseKeys = {
 export interface TestGenerationJobListFilters {
   projectId?: string;
   status?: string;
+  limit?: number;
 }
 
 /**

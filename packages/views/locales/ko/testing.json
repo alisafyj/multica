@@ -429,7 +429,8 @@
     "executor": {
       "member": "멤버",
       "agent": "에이전트"
-    }
+    },
+    "truncated": "최근 {{count}}개만 표시합니다. 이전 실행은 목록에 없습니다."
   },
   "jobs": {
     "title": "생성 작업",
@@ -439,7 +440,8 @@
       "job": "작업",
       "status": "상태",
       "created": "생성 시간"
-    }
+    },
+    "truncated": "최근 {{count}}개만 표시합니다. 이전 작업은 목록에 없습니다."
   },
   "addToPlan": {
     "title": "테스트 계획에 추가",
