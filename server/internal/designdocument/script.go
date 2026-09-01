@@ -99,6 +99,11 @@ type globalBindingCollector struct {
 	changed  bool
 }
 
+type globalAliasFinder struct {
+	bindings map[*js.Var]struct{}
+	found    bool
+}
+
 // auditScript parses one prototype script and applies the AST audit.
 func auditScript(source []byte, basePath string, artifacts map[string]ArtifactIndexEntry) []Diagnostic {
 	ast, err := js.Parse(parse.NewInputBytes(source), js.Options{})
@@ -128,7 +133,7 @@ func auditScript(source []byte, basePath string, artifacts map[string]ArtifactIn
 func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 	switch value := node.(type) {
 	case *js.BindingElement:
-		if value.Default != nil && audit.isGlobalAlias(value.Default) {
+		if value.Default != nil && expressionContainsGlobalAlias(value.Default, audit.globalBindings) {
 			audit.checkGlobalBinding(value.Binding)
 		}
 	case *js.Var:
@@ -175,7 +180,7 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 	case *js.CallExpr:
 		audit.checkCall(value.X, value.Args)
 	case *js.BinaryExpr:
-		if value.Op == js.EqToken && audit.isGlobalAlias(value.Y) {
+		if value.Op == js.EqToken && expressionContainsGlobalAlias(value.Y, audit.globalBindings) {
 			audit.checkGlobalAssignment(value.X)
 		}
 	case *js.NewExpr:
@@ -201,11 +206,11 @@ func (audit *scriptAudit) Exit(js.INode) {}
 func (collector *globalBindingCollector) Enter(node js.INode) js.IVisitor {
 	switch value := node.(type) {
 	case *js.BindingElement:
-		if value.Default != nil && expressionIsGlobalAlias(value.Default, collector.bindings) {
+		if value.Default != nil && expressionContainsGlobalAlias(value.Default, collector.bindings) {
 			collector.collectBinding(value.Binding)
 		}
 	case *js.BinaryExpr:
-		if value.Op == js.EqToken && expressionIsGlobalAlias(value.Y, collector.bindings) {
+		if value.Op == js.EqToken && expressionContainsGlobalAlias(value.Y, collector.bindings) {
 			collector.collectAssignment(value.X)
 		}
 	}
@@ -213,6 +218,19 @@ func (collector *globalBindingCollector) Enter(node js.INode) js.IVisitor {
 }
 
 func (collector *globalBindingCollector) Exit(js.INode) {}
+
+func (finder *globalAliasFinder) Enter(node js.INode) js.IVisitor {
+	if finder.found {
+		return nil
+	}
+	if expr, ok := node.(js.IExpr); ok && expressionIsGlobalAlias(expr, finder.bindings) {
+		finder.found = true
+		return nil
+	}
+	return finder
+}
+
+func (finder *globalAliasFinder) Exit(js.INode) {}
 
 func (collector *globalBindingCollector) collectBinding(binding js.IBinding) {
 	switch value := binding.(type) {
@@ -377,6 +395,12 @@ func (audit *scriptAudit) checkExtractedMember(property string) {
 
 func (audit *scriptAudit) isGlobalAlias(expr js.IExpr) bool {
 	return expressionIsGlobalAlias(expr, audit.globalBindings)
+}
+
+func expressionContainsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{}) bool {
+	finder := &globalAliasFinder{bindings: bindings}
+	js.Walk(finder, expr)
+	return finder.found
 }
 
 func expressionIsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{}) bool {

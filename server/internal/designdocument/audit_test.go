@@ -156,6 +156,9 @@ func TestAuditRejectsDestructuredGlobalCapabilities(t *testing.T) {
 		{name: "destructuring assignment", script: `let request; ({fetch: request} = window); request("/api/orders");`, code: "prototype_script_forbidden_api"},
 		{name: "member-derived alias", script: `const host = window.window; const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
 		{name: "forward closure alias", script: `function run() { const {open} = host; open("orders.html"); } const host = window; run();`, code: "prototype_script_navigation_forbidden"},
+		{name: "logical expression alias", script: `const host = window || window; const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
+		{name: "conditional expression alias", script: `const host = true ? window : window; const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
+		{name: "comma expression alias", script: `const host = (0, window); const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
 	}
 
 	for _, tt := range tests {
