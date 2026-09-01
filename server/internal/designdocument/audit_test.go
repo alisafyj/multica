@@ -167,11 +167,17 @@ func TestAuditRejectsDestructuredGlobalCapabilities(t *testing.T) {
 		{name: "global target aliases local object", script: `const box = {}; window.box = box; window.box.host = window; const {fetch} = box.host; fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 		{name: "arrow parameter", script: `const run = ({fetch}) => fetch("/api/orders"); run(window);`, code: "prototype_script_forbidden_api"},
 		{name: "function parameter", script: `function run({open}) { open("orders.html"); } run(window);`, code: "prototype_script_navigation_forbidden"},
+		{name: "arrow IIFE parameter", script: `(({fetch}) => fetch("/api/orders"))(window);`, code: "prototype_script_forbidden_api"},
+		{name: "function IIFE parameter", script: `(function ({open}) { open("orders.html"); })(window);`, code: "prototype_script_navigation_forbidden"},
+		{name: "callable alias parameter", script: `const run = ({fetch}) => fetch("/api/orders"); const alias = run; alias(window);`, code: "prototype_script_forbidden_api"},
+		{name: "assigned callable alias parameter", script: `const run = ({fetch}) => fetch("/api/orders"); let alias; alias = run; alias(window);`, code: "prototype_script_forbidden_api"},
 		{name: "navigator binding", script: `const {sendBeacon} = navigator; sendBeacon("/telemetry", "{}");`, code: "prototype_script_forbidden_api"},
 		{name: "logical and assignment", script: `let host = {}; host &&= window; const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
 		{name: "logical or assignment", script: `let host = {}; host ||= window; const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
 		{name: "nullish assignment", script: `let host = {}; host ??= window; const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
 		{name: "function return", script: `function host() { return window; } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "wrapped function return", script: `function host() { return Object(window); } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "receiver-carried function return", script: `function host() { return [window].pop(); } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 		{name: "arrow return", script: `const host = () => window; const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 	}
 
