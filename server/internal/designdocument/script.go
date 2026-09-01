@@ -184,12 +184,12 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 			switch target := value.X.(type) {
 			case *js.DotExpr:
 				if expressionContainsGlobalAlias(value.Y, audit.globalBindings) &&
-					!expressionContainsGlobalAlias(target.X, audit.globalBindings) {
+					!expressionRootedAtGlobal(target.X, audit.globalBindings) {
 					audit.checkGlobalAssignment(value.X)
 				}
 			case *js.IndexExpr:
 				if expressionContainsGlobalAlias(value.Y, audit.globalBindings) &&
-					!expressionContainsGlobalAlias(target.X, audit.globalBindings) {
+					!expressionRootedAtGlobal(target.X, audit.globalBindings) {
 					audit.checkGlobalAssignment(value.X)
 				}
 			default:
@@ -418,6 +418,23 @@ func expressionContainsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{})
 	finder := &globalAliasFinder{bindings: bindings}
 	js.Walk(finder, expr)
 	return finder.found
+}
+
+func expressionRootedAtGlobal(expr js.IExpr, bindings map[*js.Var]struct{}) bool {
+	switch value := expr.(type) {
+	case *js.Var:
+		return expressionIsGlobalAlias(value, bindings)
+	case *js.GroupExpr:
+		return expressionRootedAtGlobal(value.X, bindings)
+	case *js.DotExpr:
+		return expressionRootedAtGlobal(value.X, bindings)
+	case *js.IndexExpr:
+		return expressionRootedAtGlobal(value.X, bindings)
+	case *js.CallExpr:
+		return expressionRootedAtGlobal(value.X, bindings)
+	default:
+		return false
+	}
 }
 
 func expressionIsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{}) bool {

@@ -163,6 +163,7 @@ func TestAuditRejectsDestructuredGlobalCapabilities(t *testing.T) {
 		{name: "computed property assignment", script: `const box = {}; const key = "host"; box[key] = window; const {fetch} = box[key]; fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 		{name: "dot composite property assignment", script: `const box = {}; box.host = window || window; const {fetch} = box.host; fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 		{name: "computed composite property assignment", script: `const box = {}; const key = "host"; box[key] = true ? window : window; const {fetch} = box[key]; fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "conditional target is not globally rooted", script: `const box = {}; (window ? box : box).host = window; const {fetch} = box.host; fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 	}
 
 	for _, tt := range tests {
