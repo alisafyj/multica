@@ -94,16 +94,31 @@ type scriptAudit struct {
 	diagnostics    []Diagnostic
 }
 
+type globalBindingCollector struct {
+	bindings map[*js.Var]struct{}
+	changed  bool
+}
+
 // auditScript parses one prototype script and applies the AST audit.
 func auditScript(source []byte, basePath string, artifacts map[string]ArtifactIndexEntry) []Diagnostic {
 	ast, err := js.Parse(parse.NewInputBytes(source), js.Options{})
 	if err != nil {
 		return []Diagnostic{errorDiagnostic("prototype_script_invalid", basePath, "prototype JavaScript is invalid: "+err.Error())}
 	}
+	globalBindings := make(map[*js.Var]struct{})
+	// Resolve alias chains to a fixed point before policy checks so source order
+	// and function placement cannot hide a global-derived binding.
+	for {
+		collector := &globalBindingCollector{bindings: globalBindings}
+		js.Walk(collector, ast)
+		if !collector.changed {
+			break
+		}
+	}
 	audit := &scriptAudit{
 		path:           basePath,
 		artifacts:      artifacts,
-		globalBindings: make(map[*js.Var]struct{}),
+		globalBindings: globalBindings,
 		diagnostics:    make([]Diagnostic, 0),
 	}
 	js.Walk(audit, ast)
@@ -159,6 +174,10 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 		return nil
 	case *js.CallExpr:
 		audit.checkCall(value.X, value.Args)
+	case *js.BinaryExpr:
+		if value.Op == js.EqToken && audit.isGlobalAlias(value.Y) {
+			audit.checkGlobalAssignment(value.X)
+		}
 	case *js.NewExpr:
 		if name, ok := freeIdentifierName(value.X); ok {
 			if message, forbidden := constructedGlobals[name]; forbidden {
@@ -178,6 +197,71 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 }
 
 func (audit *scriptAudit) Exit(js.INode) {}
+
+func (collector *globalBindingCollector) Enter(node js.INode) js.IVisitor {
+	switch value := node.(type) {
+	case *js.BindingElement:
+		if value.Default != nil && expressionIsGlobalAlias(value.Default, collector.bindings) {
+			collector.collectBinding(value.Binding)
+		}
+	case *js.BinaryExpr:
+		if value.Op == js.EqToken && expressionIsGlobalAlias(value.Y, collector.bindings) {
+			collector.collectAssignment(value.X)
+		}
+	}
+	return collector
+}
+
+func (collector *globalBindingCollector) Exit(js.INode) {}
+
+func (collector *globalBindingCollector) collectBinding(binding js.IBinding) {
+	switch value := binding.(type) {
+	case *js.Var:
+		collector.add(value)
+	case *js.BindingArray:
+		for _, item := range value.List {
+			collector.collectBinding(item.Binding)
+		}
+		collector.collectBinding(value.Rest)
+	case *js.BindingObject:
+		for _, item := range value.List {
+			collector.collectBinding(item.Value.Binding)
+		}
+		if value.Rest != nil {
+			collector.add(value.Rest)
+		}
+	}
+}
+
+func (collector *globalBindingCollector) collectAssignment(expr js.IExpr) {
+	switch value := expr.(type) {
+	case *js.Var:
+		collector.add(value)
+	case *js.GroupExpr:
+		collector.collectAssignment(value.X)
+	case *js.ArrayExpr:
+		for _, item := range value.List {
+			collector.collectAssignment(item.Value)
+		}
+	case *js.ObjectExpr:
+		for _, item := range value.List {
+			collector.collectAssignment(item.Value)
+		}
+	case *js.BinaryExpr:
+		if value.Op == js.EqToken {
+			collector.collectAssignment(value.X)
+		}
+	}
+}
+
+func (collector *globalBindingCollector) add(variable *js.Var) {
+	root := resolveVarRoot(variable)
+	if _, exists := collector.bindings[root]; exists {
+		return
+	}
+	collector.bindings[root] = struct{}{}
+	collector.changed = true
+}
 
 func (audit *scriptAudit) checkCall(callee js.IExpr, args js.Args) {
 	if literal, ok := callee.(*js.LiteralExpr); ok && literal.TokenType == js.ImportToken {
@@ -248,6 +332,35 @@ func (audit *scriptAudit) checkGlobalBinding(binding js.IBinding) {
 	}
 }
 
+func (audit *scriptAudit) checkGlobalAssignment(expr js.IExpr) {
+	switch value := expr.(type) {
+	case *js.Var:
+		audit.globalBindings[resolveVarRoot(value)] = struct{}{}
+	case *js.GroupExpr:
+		audit.checkGlobalAssignment(value.X)
+	case *js.ArrayExpr:
+		for _, item := range value.List {
+			audit.checkGlobalAssignment(item.Value)
+		}
+	case *js.ObjectExpr:
+		for _, item := range value.List {
+			if item.Name != nil {
+				name, ok := bindingPropertyName(item.Name)
+				if !ok {
+					audit.report("prototype_script_dynamic_global", "computed destructuring on a global object is not allowed")
+					continue
+				}
+				audit.checkExtractedMember(name)
+			}
+			audit.checkGlobalAssignment(item.Value)
+		}
+	case *js.BinaryExpr:
+		if value.Op == js.EqToken {
+			audit.checkGlobalAssignment(value.X)
+		}
+	}
+}
+
 func (audit *scriptAudit) checkExtractedMember(property string) {
 	if message, forbidden := forbiddenScriptGlobals[property]; forbidden {
 		audit.report("prototype_script_forbidden_api", message)
@@ -263,6 +376,28 @@ func (audit *scriptAudit) checkExtractedMember(property string) {
 }
 
 func (audit *scriptAudit) isGlobalAlias(expr js.IExpr) bool {
+	return expressionIsGlobalAlias(expr, audit.globalBindings)
+}
+
+func expressionIsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{}) bool {
+	switch value := expr.(type) {
+	case *js.GroupExpr:
+		return expressionIsGlobalAlias(value.X, bindings)
+	case *js.DotExpr:
+		name, ok := memberName(value.Y)
+		if !ok {
+			return false
+		}
+		_, alias := globalAliases[name]
+		return alias && expressionIsGlobalAlias(value.X, bindings)
+	case *js.IndexExpr:
+		name, ok := stringLiteralValue(value.Y)
+		if !ok {
+			return false
+		}
+		_, alias := globalAliases[name]
+		return alias && expressionIsGlobalAlias(value.X, bindings)
+	}
 	variable, ok := expr.(*js.Var)
 	if !ok {
 		return false
@@ -273,7 +408,7 @@ func (audit *scriptAudit) isGlobalAlias(expr js.IExpr) bool {
 		_, alias := globalAliases[name]
 		return alias
 	}
-	_, alias := audit.globalBindings[root]
+	_, alias := bindings[root]
 	return alias
 }
 
