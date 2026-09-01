@@ -795,9 +795,16 @@ func (h *Handler) resolveInitialDesignDocumentContext(
 		}
 		builtinContext = &service.BuiltinDesignContext{Slug: detail.Slug, Name: detail.Name, Category: detail.Category, DesignMarkdown: detail.DesignMarkdown, TokensCSS: detail.TokensCSS}
 	}
+	// Repository runs always resolve their repository-scoped saved package. An
+	// explicit selection is a confirmation of that package, not a request to
+	// reinterpret it as a workspace-wide system.
+	resolvedSystemID := designSystemUUID
+	if projectResourceID.Valid {
+		resolvedSystemID = pgtype.UUID{}
+	}
 	resolved, err := (service.ProjectDesignContextResolver{Store: queries, AllowedHosts: h.projectDesignSystemAllowedHosts()}).Resolve(ctx, service.ResolveProjectDesignContextParams{
 		WorkspaceID: workspaceID, ProjectID: projectID, ProjectResourceID: projectResourceID,
-		DesignSystemID: designSystemUUID, Builtin: builtinContext,
+		DesignSystemID: resolvedSystemID, Builtin: builtinContext,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrSavedDesignContextInvalid) {
@@ -811,6 +818,9 @@ func (h *Handler) resolveInitialDesignDocumentContext(
 		}
 		if resolved.Package == nil || resolved.Package.ProjectResourceID != uuidToString(projectResourceID) || resolved.Package.ProjectID != uuidToString(projectID) {
 			return nil, &projectDesignSystemRequestError{status: http.StatusUnprocessableEntity, code: "repository_design_system_required", message: "the repository's exact saved design system is required"}
+		}
+		if designSystemID != "" && resolved.Package.DesignSystemID != designSystemID {
+			return nil, &projectDesignSystemRequestError{status: http.StatusUnprocessableEntity, code: "repository_design_system_required", message: "the selected design system is not this repository's saved design system"}
 		}
 	}
 	if !projectResourceID.Valid && designSystemID != "" && resolved.Package != nil && resolved.Package.ProjectID != uuidToString(projectID) {
