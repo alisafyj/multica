@@ -479,6 +479,8 @@ func (h *Handler) replaceDesignRestoreMappingsFromSummary(ctx context.Context, t
 
 type DesignFileResponse struct {
 	ID                string          `json:"id"`
+	DesignRef         string          `json:"design_ref,omitempty"`
+	Source            string          `json:"source"`
 	WorkspaceID       string          `json:"workspace_id"`
 	ProjectID         *string         `json:"project_id,omitempty"`
 	FolderID          *string         `json:"folder_id,omitempty"`
@@ -1028,6 +1030,7 @@ func generateFigmaImportCode() (string, error) {
 func designFileToResponse(file db.DesignFile) DesignFileResponse {
 	return DesignFileResponse{
 		ID:                uuidToString(file.ID),
+		Source:            "figma",
 		WorkspaceID:       uuidToString(file.WorkspaceID),
 		ProjectID:         uuidToPtr(file.ProjectID),
 		FolderID:          uuidToPtr(file.FolderID),
@@ -2172,6 +2175,10 @@ func (h *Handler) ListDesignFiles(w http.ResponseWriter, r *http.Request) {
 		if file.CurrentRevisionID.Valid {
 			if revision, err := h.Queries.GetDesignRevisionInWorkspace(r.Context(), db.GetDesignRevisionInWorkspaceParams{ID: file.CurrentRevisionID, WorkspaceID: wsUUID}); err == nil {
 				resp[i].ThumbnailURL = thumbnailFromNativeJSON(revision.NativeJson)
+				if err := attachFigmaDesignAssetRef(&resp[i], file, revision, requestUserID(r), time.Now()); err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to create design reference")
+					return
+				}
 			}
 		}
 	}
@@ -2556,6 +2563,10 @@ func (h *Handler) GetDesignFile(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			revisionResp := designRevisionToResponse(revision)
 			resp.CurrentRevision = &revisionResp
+			if err := attachFigmaDesignAssetRef(&resp.File, file, revision, requestUserID(r), time.Now()); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to create design reference")
+				return
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
