@@ -181,15 +181,9 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 		audit.checkCall(value.X, value.Args)
 	case *js.BinaryExpr:
 		if value.Op == js.EqToken {
-			switch target := value.X.(type) {
-			case *js.DotExpr:
-				if expressionContainsGlobalAlias(value.Y, audit.globalBindings) &&
-					!expressionRootedAtGlobal(target.X, audit.globalBindings) {
-					audit.checkGlobalAssignment(value.X)
-				}
-			case *js.IndexExpr:
-				if expressionContainsGlobalAlias(value.Y, audit.globalBindings) &&
-					!expressionRootedAtGlobal(target.X, audit.globalBindings) {
+			switch value.X.(type) {
+			case *js.DotExpr, *js.IndexExpr:
+				if expressionContainsGlobalAlias(value.Y, audit.globalBindings) && !definitelyPrimitiveResult(value.Y) {
 					audit.checkGlobalAssignment(value.X)
 				}
 			default:
@@ -420,21 +414,9 @@ func expressionContainsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{})
 	return finder.found
 }
 
-func expressionRootedAtGlobal(expr js.IExpr, bindings map[*js.Var]struct{}) bool {
-	switch value := expr.(type) {
-	case *js.Var:
-		return expressionIsGlobalAlias(value, bindings)
-	case *js.GroupExpr:
-		return expressionRootedAtGlobal(value.X, bindings)
-	case *js.DotExpr:
-		return expressionRootedAtGlobal(value.X, bindings)
-	case *js.IndexExpr:
-		return expressionRootedAtGlobal(value.X, bindings)
-	case *js.CallExpr:
-		return expressionRootedAtGlobal(value.X, bindings)
-	default:
-		return false
-	}
+func definitelyPrimitiveResult(expr js.IExpr) bool {
+	unary, ok := expr.(*js.UnaryExpr)
+	return ok && unary.Op == js.NotToken
 }
 
 func expressionIsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{}) bool {
