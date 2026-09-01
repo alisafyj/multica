@@ -236,6 +236,115 @@ func TestDesignMCPGetImplementationContextRejectsSymlinkParentEscape(t *testing.
 	}
 }
 
+func TestMaterializeDesignImplementationContextRejectsInRepositoryFinalSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "src", "app.ts")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("keep me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	implementationDir := filepath.Join(root, ".agent_context", "design_implementation")
+	if err := os.MkdirAll(implementationDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../src/app.ts", filepath.Join(implementationDir, "context.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := materializeDesignImplementationContext(root, designImplementationContextWire{SchemaVersion: "multica.design-implementation-context/v1"})
+	if err == nil {
+		t.Fatal("in-repository final symlink was accepted")
+	}
+	got, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != "keep me" {
+		t.Fatalf("symlink target changed to %q", got)
+	}
+}
+
+func TestMaterializeDesignImplementationContextRejectsInRepositoryAgentContextSymlink(t *testing.T) {
+	root := t.TempDir()
+	targetDir := filepath.Join(root, "src")
+	if err := os.MkdirAll(filepath.Join(targetDir, "design_implementation"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(targetDir, "design_implementation", "context.json")
+	if err := os.WriteFile(target, []byte("keep me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("src", filepath.Join(root, ".agent_context")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := materializeDesignImplementationContext(root, designImplementationContextWire{SchemaVersion: "multica.design-implementation-context/v1"})
+	if err == nil {
+		t.Fatal("in-repository .agent_context symlink was accepted")
+	}
+	got, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != "keep me" {
+		t.Fatalf("symlink target changed to %q", got)
+	}
+}
+
+func TestMaterializeDesignImplementationContextReplacesOwnedSubtreeAndPreservesSiblings(t *testing.T) {
+	root := t.TempDir()
+	for relative, content := range map[string]string{
+		".agent_context/design_implementation/design/package/stale.bin":          "stale package",
+		".agent_context/design_implementation/repository/stale.json":             "stale repository",
+		".agent_context/design_implementation/result/implementation-result.json": "stale result",
+		".agent_context/design_delivery/package/restore-pack.json":               "keep sibling",
+	} {
+		full := filepath.Join(root, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	contextValue := designImplementationContextWire{
+		SchemaVersion: "multica.design-implementation-context/v1", DesignRef: "design_v1_new",
+		RevisionID: "revision-new", FrameRefs: []string{"frame_v1_new"},
+	}
+	if err := materializeDesignImplementationContext(root, contextValue); err != nil {
+		t.Fatal(err)
+	}
+	for _, relative := range []string{
+		".agent_context/design_implementation/design/package/stale.bin",
+		".agent_context/design_implementation/repository/stale.json",
+		".agent_context/design_implementation/result/implementation-result.json",
+	} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(relative))); !os.IsNotExist(err) {
+			t.Fatalf("stale artifact %s remains: %v", relative, err)
+		}
+	}
+	sibling, err := os.ReadFile(filepath.Join(root, ".agent_context", "design_delivery", "package", "restore-pack.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(sibling) != "keep sibling" {
+		t.Fatalf("unrelated sibling changed to %q", sibling)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(designImplementationContextPath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got designImplementationContextWire
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.DesignRef != "design_v1_new" || got.RevisionID != "revision-new" {
+		t.Fatalf("new identity was not materialized: %+v", got)
+	}
+}
+
 func TestDesignMCPGetImplementationContextPreservesSavedMulticaIdentity(t *testing.T) {
 	want := designImplementationContextWire{
 		SchemaVersion: "multica.design-implementation-context/v1", DesignRef: "design_v1_multica",
