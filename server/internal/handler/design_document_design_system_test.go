@@ -321,13 +321,14 @@ func TestCreateDesignDocumentFreezesExactRepositorySavedProvenance(t *testing.T)
 	ctx := context.Background()
 	projectID := createProjectDesignSystemProject(t, testWorkspaceID, "Exact repository generation")
 	resourceID := insertRepositoryForProjectDesignSystemTest(t, uuidToString(projectID))
-	_, saved, _, _ := seedValidatedRepositoryDesignSystemArchiveForTest(t, uuidToString(projectID), resourceID)
+	system, saved, _, _ := seedValidatedRepositoryDesignSystemArchiveForTest(t, uuidToString(projectID), resourceID)
 	agentID, _ := createProjectDesignSystemAgent(t, "online")
 
 	created := performProjectDesignSystemRequest(t, testHandler.CreateDesignDocument, http.MethodPost, "/api/design-documents", map[string]any{
 		"project_id": uuidToString(projectID), "agent_id": agentID,
 		"project_resource_id": resourceID, "platform": "web",
-		"brief": "客户列表页，支持筛选与批量操作。",
+		"design_system_id": uuidToString(system.ID),
+		"brief":            "客户列表页，支持筛选与批量操作。",
 	})
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create: status=%d body=%s", created.Code, created.Body.String())
@@ -375,6 +376,23 @@ func TestCreateDesignDocumentFreezesExactRepositorySavedProvenance(t *testing.T)
 		task.DesignContext.Package.ArchiveObjectKey != saved.ArchiveObjectKey.String ||
 		task.DesignContext.Digest != "sha256:"+saved.IntegritySha256 {
 		t.Fatalf("task provenance = %+v", task)
+	}
+}
+
+func TestCreateDesignDocumentRejectsDifferentExplicitRepositorySystem(t *testing.T) {
+	projectID := createProjectDesignSystemProject(t, testWorkspaceID, "Repository system mismatch")
+	resourceID := insertRepositoryForProjectDesignSystemTest(t, uuidToString(projectID))
+	_, _, _, _ = seedValidatedRepositoryDesignSystemArchiveForTest(t, uuidToString(projectID), resourceID)
+	otherSystem := createProjectDesignSystemForTest(t, db.New(testPool), parseUUID(testWorkspaceID), projectID, "Other project system")
+	agentID, _ := createProjectDesignSystemAgent(t, "online")
+
+	response := performProjectDesignSystemRequest(t, testHandler.CreateDesignDocument, http.MethodPost, "/api/design-documents", map[string]any{
+		"project_id": uuidToString(projectID), "agent_id": agentID,
+		"project_resource_id": resourceID, "design_system_id": uuidToString(otherSystem.ID),
+		"platform": "web", "brief": "客户列表页。",
+	})
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), "repository_design_system_required") {
+		t.Fatalf("different repository system: status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

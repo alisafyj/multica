@@ -1,7 +1,6 @@
 package designdocument
 
 import (
-	"io"
 	"net/url"
 	"path"
 	"strings"
@@ -15,18 +14,11 @@ import (
 // validation and mock data transitions can be demonstrated for real. What it
 // must never do is need the network.
 //
-// The audit therefore runs two passes over every script:
-//
-//  1. A token pass over the real JavaScript lexer. It rejects the identifiers
-//     that have no innocent meaning in an offline prototype, and it rejects
-//     remote URL strings. Working on lexer tokens rather than raw text means a
-//     comment or an unrelated word can never trip it, and a string cannot hide
-//     a forbidden identifier from it.
-//  2. An AST pass over the real JavaScript parser. It applies the rules that
-//     need context, such as navigation members that are only forbidden on the
-//     window or document object, and it rejects the constructs that would make
-//     static analysis meaningless: eval, the Function constructor, dynamic
-//     import, and computed lookups on a global object.
+// The audit parses every script and walks the grammar-aware AST. It rejects
+// forbidden free globals and remote URL strings, applies contextual member
+// rules, and rejects constructs that would make static analysis meaningless:
+// eval, the Function constructor, dynamic import, and computed lookups on a
+// global object.
 //
 // Static analysis cannot decide every dynamically composed expression. That is
 // why the constructs which enable dynamic composition are rejected outright,
@@ -101,41 +93,15 @@ type scriptAudit struct {
 	diagnostics []Diagnostic
 }
 
-// auditScript parses one prototype script and applies the token and AST passes.
+// auditScript parses one prototype script and applies the AST audit.
 func auditScript(source []byte, basePath string, artifacts map[string]ArtifactIndexEntry) []Diagnostic {
 	ast, err := js.Parse(parse.NewInputBytes(source), js.Options{})
 	if err != nil {
 		return []Diagnostic{errorDiagnostic("prototype_script_invalid", basePath, "prototype JavaScript is invalid: "+err.Error())}
 	}
 	audit := &scriptAudit{path: basePath, artifacts: artifacts, diagnostics: make([]Diagnostic, 0)}
-	audit.scanTokens(source)
 	js.Walk(audit, ast)
 	return audit.diagnostics
-}
-
-// scanTokens is the lexer pass. It never sees comments as code and never sees
-// string contents as identifiers.
-func (audit *scriptAudit) scanTokens(source []byte) {
-	lexer := js.NewLexer(parse.NewInputBytes(source))
-	for {
-		tokenType, data := lexer.Next()
-		if tokenType == js.ErrorToken {
-			if err := lexer.Err(); err != nil && err != io.EOF {
-				audit.report("prototype_script_invalid", "prototype JavaScript cannot be tokenized")
-			}
-			return
-		}
-		switch tokenType {
-		case js.IdentifierToken:
-			if message, forbidden := forbiddenScriptGlobals[string(data)]; forbidden {
-				audit.report("prototype_script_forbidden_api", message)
-			}
-		case js.StringToken:
-			audit.checkURLString(decodeJSString(data))
-		case js.TemplateToken, js.TemplateStartToken, js.TemplateMiddleToken, js.TemplateEndToken:
-			audit.checkURLString(decodeJSString(trimTemplateDelimiters(data)))
-		}
-	}
 }
 
 func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
@@ -145,9 +111,25 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 		if declaration != js.NoDecl {
 			return nil
 		}
+		if message, forbidden := forbiddenScriptGlobals[name]; forbidden {
+			audit.report("prototype_script_forbidden_api", message)
+		}
 		if _, forbidden := freeNavigationIdentifiers[name]; forbidden {
 			audit.report("prototype_script_navigation_forbidden", "prototype scripts cannot reference "+name)
 		}
+		return nil
+	case *js.LiteralExpr:
+		if value.TokenType == js.StringToken {
+			audit.checkURLString(decodeJSString(value.Data))
+		}
+		return nil
+	case *js.TemplateExpr:
+		for _, part := range value.List {
+			audit.checkURLString(decodeJSString(trimTemplateDelimiters(part.Value)))
+		}
+		audit.checkURLString(decodeJSString(trimTemplateDelimiters(value.Tail)))
+	case *js.DirectivePrologueStmt:
+		audit.checkURLString(decodeJSString(value.Value))
 		return nil
 	case *js.DotExpr:
 		if name, ok := memberName(value.Y); ok {
@@ -174,7 +156,13 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 			}
 		}
 	case *js.ImportStmt:
-		audit.checkModuleSpecifier(decodeJSString(value.Module))
+		module := decodeJSString(value.Module)
+		audit.checkURLString(module)
+		audit.checkModuleSpecifier(module)
+	case *js.ExportStmt:
+		if value.Module != nil {
+			audit.checkURLString(decodeJSString(value.Module))
+		}
 	}
 	return audit
 }

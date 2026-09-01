@@ -108,6 +108,39 @@ history.replaceState({}, "", "#orders");
 	}
 }
 
+func TestAuditAcceptsRegexLiteralsAndDivision(t *testing.T) {
+	root := copyFixture(t)
+	writeFixtureFile(t, root, "prototype/app.js", []byte(`
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ratio = 8 / 2;
+document.body.dataset.valid = String(emailPattern.test("person@example.com") && ratio === 4);
+`))
+	collected, err := CollectDirectory(root, validBinding())
+	if err != nil {
+		t.Fatalf("CollectDirectory() rejected valid regex and division: %v (%#v)", err, collected.Audit.Diagnostics)
+	}
+}
+
+func TestAuditAcceptsRegexLiteralAfterControlHeader(t *testing.T) {
+	root := copyFixture(t)
+	writeFixtureFile(t, root, "prototype/app.js", []byte(`
+const ready = true;
+const value = "a/";
+if (ready) /a\//.test(value);
+`))
+	collected, err := CollectDirectory(root, validBinding())
+	if err != nil {
+		t.Fatalf("CollectDirectory() rejected valid statement-position regex: %v (%#v)", err, collected.Audit.Diagnostics)
+	}
+}
+
+func TestAuditRejectsForbiddenCallAfterObjectDivision(t *testing.T) {
+	root := copyFixture(t)
+	writeFixtureFile(t, root, "prototype/app.js", []byte(`const y = {} / fetch("api") / 2;`))
+	collected, err := CollectDirectory(root, validBinding())
+	assertAuditCode(t, collected.Audit, err, "prototype_script_forbidden_api")
+}
+
 func TestAuditRejectsExternalMarkupResources(t *testing.T) {
 	tests := []struct {
 		name string
