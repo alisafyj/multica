@@ -47,7 +47,7 @@ var forbiddenScriptGlobals = map[string]string{
 // Navigation members are only forbidden when they hang off one of these, so a
 // mock data field such as row.location stays perfectly legal.
 var globalAliases = map[string]struct{}{
-	"window": {}, "self": {}, "globalThis": {}, "document": {},
+	"window": {}, "self": {}, "globalThis": {}, "document": {}, "navigator": {},
 	"top": {}, "parent": {}, "frames": {},
 }
 
@@ -91,17 +91,26 @@ type scriptAudit struct {
 	path           string
 	artifacts      map[string]ArtifactIndexEntry
 	globalBindings map[*js.Var]struct{}
+	functions      map[*js.Var][]*js.Params
 	diagnostics    []Diagnostic
 }
 
 type globalBindingCollector struct {
-	bindings map[*js.Var]struct{}
-	changed  bool
+	bindings  map[*js.Var]struct{}
+	functions map[*js.Var][]*js.Params
+	changed   bool
+}
+
+type declaredFunctionCollector struct {
+	functions map[*js.Var][]*js.Params
+	changed   bool
 }
 
 type globalAliasFinder struct {
-	bindings map[*js.Var]struct{}
-	found    bool
+	bindings                map[*js.Var]struct{}
+	functions               map[*js.Var][]*js.Params
+	skipKnownPrimitiveCalls bool
+	found                   bool
 }
 
 // auditScript parses one prototype script and applies the AST audit.
@@ -110,11 +119,19 @@ func auditScript(source []byte, basePath string, artifacts map[string]ArtifactIn
 	if err != nil {
 		return []Diagnostic{errorDiagnostic("prototype_script_invalid", basePath, "prototype JavaScript is invalid: "+err.Error())}
 	}
+	functions := make(map[*js.Var][]*js.Params)
+	for {
+		collector := &declaredFunctionCollector{functions: functions}
+		js.Walk(collector, ast)
+		if !collector.changed {
+			break
+		}
+	}
 	globalBindings := make(map[*js.Var]struct{})
 	// Resolve alias chains to a fixed point before policy checks so source order
 	// and function placement cannot hide a global-derived binding.
 	for {
-		collector := &globalBindingCollector{bindings: globalBindings}
+		collector := &globalBindingCollector{bindings: globalBindings, functions: functions}
 		js.Walk(collector, ast)
 		if !collector.changed {
 			break
@@ -124,6 +141,7 @@ func auditScript(source []byte, basePath string, artifacts map[string]ArtifactIn
 		path:           basePath,
 		artifacts:      artifacts,
 		globalBindings: globalBindings,
+		functions:      functions,
 		diagnostics:    make([]Diagnostic, 0),
 	}
 	js.Walk(audit, ast)
@@ -179,8 +197,13 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 		return nil
 	case *js.CallExpr:
 		audit.checkCall(value.X, value.Args)
+	case *js.ReturnStmt:
+		if value.Value != nil && expressionReturnContainsGlobalAlias(value.Value, audit.globalBindings, audit.functions) &&
+			!definitelyPrimitiveResult(value.Value) {
+			audit.report("prototype_script_dynamic_global", "returning a global capability from a prototype function is not allowed")
+		}
 	case *js.BinaryExpr:
-		if value.Op == js.EqToken {
+		if isGlobalAssignmentToken(value.Op) {
 			switch value.X.(type) {
 			case *js.DotExpr, *js.IndexExpr:
 				if expressionContainsGlobalAlias(value.Y, audit.globalBindings) && !definitelyPrimitiveResult(value.Y) {
@@ -215,12 +238,22 @@ func (audit *scriptAudit) Exit(js.INode) {}
 func (collector *globalBindingCollector) Enter(node js.INode) js.IVisitor {
 	switch value := node.(type) {
 	case *js.BindingElement:
-		if value.Default != nil && expressionContainsGlobalAlias(value.Default, collector.bindings) {
+		if value.Default != nil && expressionContainsGlobalAlias(value.Default, collector.bindings) &&
+			!definitelyPrimitiveResult(value.Default) {
 			collector.collectBinding(value.Binding)
 		}
 	case *js.BinaryExpr:
-		if value.Op == js.EqToken && expressionContainsGlobalAlias(value.Y, collector.bindings) {
+		if isGlobalAssignmentToken(value.Op) && expressionContainsGlobalAlias(value.Y, collector.bindings) &&
+			!definitelyPrimitiveResult(value.Y) {
 			collector.collectAssignment(value.X)
+		}
+	case *js.CallExpr:
+		for _, params := range declaredFunctionParams(value.X, collector.functions) {
+			for index, argument := range value.Args.List {
+				if expressionContainsGlobalAlias(argument.Value, collector.bindings) && !definitelyPrimitiveResult(argument.Value) {
+					collector.collectBinding(parameterBinding(params, index))
+				}
+			}
 		}
 	}
 	return collector
@@ -228,9 +261,60 @@ func (collector *globalBindingCollector) Enter(node js.INode) js.IVisitor {
 
 func (collector *globalBindingCollector) Exit(js.INode) {}
 
+func (collector *declaredFunctionCollector) Enter(node js.INode) js.IVisitor {
+	switch value := node.(type) {
+	case *js.FuncDecl:
+		if value.Name != nil {
+			collector.add(value.Name, &value.Params)
+		}
+	case *js.BindingElement:
+		variable, ok := value.Binding.(*js.Var)
+		if ok && value.Default != nil {
+			collector.addAll(variable, declaredFunctionParams(value.Default, collector.functions))
+		}
+	case *js.BinaryExpr:
+		variable, ok := value.X.(*js.Var)
+		if ok && value.Op == js.EqToken {
+			collector.addAll(variable, declaredFunctionParams(value.Y, collector.functions))
+		}
+	}
+	return collector
+}
+
+func (collector *declaredFunctionCollector) Exit(js.INode) {}
+
+func (collector *declaredFunctionCollector) addAll(variable *js.Var, candidates []*js.Params) {
+	for _, params := range candidates {
+		collector.add(variable, params)
+	}
+}
+
+func (collector *declaredFunctionCollector) add(variable *js.Var, params *js.Params) {
+	if params == nil {
+		return
+	}
+	root := resolveVarRoot(variable)
+	for _, existing := range collector.functions[root] {
+		if existing == params {
+			return
+		}
+	}
+	collector.functions[root] = append(collector.functions[root], params)
+	collector.changed = true
+}
+
 func (finder *globalAliasFinder) Enter(node js.INode) js.IVisitor {
 	if finder.found {
 		return nil
+	}
+	if call, ok := node.(*js.CallExpr); ok && finder.skipKnownPrimitiveCalls {
+		if len(declaredFunctionParams(call.X, finder.functions)) != 0 {
+			finder.found = expressionContainsGlobalAlias(call.X, finder.bindings)
+			return nil
+		}
+		if knownPrimitiveReturnCall(call) {
+			return nil
+		}
 	}
 	if expr, ok := node.(js.IExpr); ok && expressionIsGlobalAlias(expr, finder.bindings) {
 		finder.found = true
@@ -291,6 +375,13 @@ func (collector *globalBindingCollector) add(variable *js.Var) {
 }
 
 func (audit *scriptAudit) checkCall(callee js.IExpr, args js.Args) {
+	for _, params := range declaredFunctionParams(callee, audit.functions) {
+		for index, argument := range args.List {
+			if expressionContainsGlobalAlias(argument.Value, audit.globalBindings) && !definitelyPrimitiveResult(argument.Value) {
+				audit.checkGlobalBinding(parameterBinding(params, index))
+			}
+		}
+	}
 	if literal, ok := callee.(*js.LiteralExpr); ok && literal.TokenType == js.ImportToken {
 		audit.report("prototype_script_dynamic_import", "dynamic import is not allowed in a prototype")
 		return
@@ -414,9 +505,105 @@ func expressionContainsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{})
 	return finder.found
 }
 
+func expressionReturnContainsGlobalAlias(
+	expr js.IExpr,
+	bindings map[*js.Var]struct{},
+	functions map[*js.Var][]*js.Params,
+) bool {
+	finder := &globalAliasFinder{bindings: bindings, functions: functions, skipKnownPrimitiveCalls: true}
+	js.Walk(finder, expr)
+	return finder.found
+}
+
+func isGlobalAssignmentToken(token js.TokenType) bool {
+	return token == js.EqToken || token == js.AndEqToken || token == js.OrEqToken || token == js.NullishEqToken
+}
+
+func declaredFunctionParams(callee js.IExpr, functions map[*js.Var][]*js.Params) []*js.Params {
+	switch value := callee.(type) {
+	case *js.GroupExpr:
+		return declaredFunctionParams(value.X, functions)
+	case *js.ArrowFunc:
+		return []*js.Params{&value.Params}
+	case *js.FuncDecl:
+		return []*js.Params{&value.Params}
+	}
+	variable, ok := callee.(*js.Var)
+	if !ok {
+		return nil
+	}
+	return functions[resolveVarRoot(variable)]
+}
+
+func knownPrimitiveReturnCall(call *js.CallExpr) bool {
+	callee, ok := call.X.(*js.DotExpr)
+	if !ok {
+		return false
+	}
+	member, ok := memberName(callee.Y)
+	if !ok {
+		return false
+	}
+	if member != "getItem" {
+		return false
+	}
+	storage, ok := callee.X.(*js.DotExpr)
+	if !ok {
+		return false
+	}
+	name, named := memberName(storage.Y)
+	root, rooted := freeIdentifierName(storage.X)
+	return named && name == "localStorage" && rooted && root == "window"
+}
+
+func parameterBinding(params *js.Params, index int) js.IBinding {
+	if index < len(params.List) {
+		return params.List[index].Binding
+	}
+	return params.Rest
+}
+
 func definitelyPrimitiveResult(expr js.IExpr) bool {
-	unary, ok := expr.(*js.UnaryExpr)
-	return ok && unary.Op == js.NotToken
+	switch value := expr.(type) {
+	case *js.UnaryExpr:
+		return value.Op == js.NotToken
+	case *js.BinaryExpr:
+		return value.Op == js.EqEqEqToken || value.Op == js.NotEqEqToken
+	case *js.CallExpr:
+		return knownPrimitiveDOMValueCall(value)
+	default:
+		return false
+	}
+}
+
+func knownPrimitiveDOMValueCall(call *js.CallExpr) bool {
+	trim, ok := call.X.(*js.DotExpr)
+	if !ok {
+		return false
+	}
+	name, named := memberName(trim.Y)
+	if !named || name != "trim" {
+		return false
+	}
+	value, ok := trim.X.(*js.DotExpr)
+	if !ok {
+		return false
+	}
+	name, named = memberName(value.Y)
+	if !named || name != "value" {
+		return false
+	}
+	lookup, ok := value.X.(*js.CallExpr)
+	if !ok {
+		return false
+	}
+	getElement, ok := lookup.X.(*js.DotExpr)
+	if !ok {
+		return false
+	}
+	name, named = memberName(getElement.Y)
+	root, rooted := freeIdentifierName(getElement.X)
+	return named && name == "getElementById" && rooted && root == "document"
 }
 
 func expressionIsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{}) bool {
