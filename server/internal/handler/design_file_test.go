@@ -407,6 +407,29 @@ func restorePackGroupedNativeJSONForTest(title string) map[string]any {
 	return nativeJSON
 }
 
+func TestDiscoverDesignRestorePackGroupsKeepsExactHintFrameIDs(t *testing.T) {
+	document := restorePackGroupedNativeJSONForTest("Exact Hint Group")
+	hints := document["restoreHints"].(map[string]any)["figmaGroups"].(map[string]any)
+	group := hints["group-wallet"].(map[string]any)
+	delete(group, "id")
+	delete(group, "sourceNodeId")
+	delete(group, "name")
+	group["frameIds"] = []string{"frame-secondary"}
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+
+	groups := discoverDesignRestorePackGroups(decoded)
+	if len(groups) != 1 || groups[0].ID != "group-wallet" || !stringSlicesEqual(groups[0].FrameIDs, []string{"frame-secondary"}) {
+		t.Fatalf("groups = %+v, want map-key identity and exact hinted frame IDs", groups)
+	}
+}
+
 func nativeJSONWithFrameNamesForTest(names []string) map[string]any {
 	frames := make([]map[string]any, 0, len(names))
 	layers := make(map[string]any, len(names)*2)

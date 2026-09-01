@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -154,7 +155,12 @@ func (h *Handler) GetDesignDocument(w http.ResponseWriter, r *http.Request) {
 			task = &loaded
 		}
 	}
-	writeJSON(w, http.StatusOK, designDocumentResponse(document, task, h.designDocumentRepositoryGrounded(r.Context(), document)))
+	response := designDocumentResponse(document, task, h.designDocumentRepositoryGrounded(r.Context(), document))
+	if err := h.attachMulticaDesignAssetRef(r.Context(), &response, document, requestUserID(r), time.Now()); err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "design_ref_failed", "failed to create design reference")
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) loadDesignDocumentForRequest(w http.ResponseWriter, r *http.Request) (db.DesignDocument, pgtype.UUID, bool) {
