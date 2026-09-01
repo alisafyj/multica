@@ -43,6 +43,8 @@ import {
   designDocumentDetailOptions,
   designDocumentRevisionListOptions,
   designDocumentRevisionOptions,
+  designRepositoryCatalogueOptions,
+  projectDesignSystemByProjectOptions,
 } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -52,6 +54,7 @@ import { agentListOptions } from "@multica/core/workspace/queries";
 import type {
   Agent,
   DesignDocument,
+  ProjectDesignSystemPlatform,
   DesignDocumentAdjustmentScope,
   DesignDocumentPage as DesignDocumentPageEntry,
   DesignDocumentRevision,
@@ -95,6 +98,8 @@ import {
 } from "./manual-edit-model";
 import { ManualEditPanel } from "./manual-edit-panel";
 import { designDocumentStatusLabel } from "./design-document-card";
+import { parseDesignDocumentProvenance } from "./design-document-provenance";
+import { DesignDocumentRunStatus } from "./design-document-run-status";
 import { DesignDocumentCritique, parseCritique } from "./design-document-critique";
 import { DesignDocumentSourceView } from "./design-document-source-view";
 import { DesignDocumentStaticView } from "./design-document-static-view";
@@ -345,6 +350,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
   const [instruction, setInstruction] = useState("");
   const [agentOverride, setAgentOverride] = useState("");
   const [discardOpen, setDiscardOpen] = useState(false);
+  const [latestSystemOpen, setLatestSystemOpen] = useState(false);
 
   const status = document?.status ?? "empty";
   const activeTask = document?.active_task ?? null;
@@ -375,6 +381,28 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
     return [{ id: linked, identifier: "当前任务", title: "文档关联的任务", status: "in_progress" } as (typeof projectIssues)[number], ...projectIssues];
   }, [document?.issue_id, projectIssues]);
   const errorMessage = status === "failed" ? documentErrorMessage(document?.last_error) : null;
+  const provenance = useMemo(
+    () => parseDesignDocumentProvenance({
+      inputSnapshot: document?.input_snapshot,
+      repositoryGrounded: document?.repository_grounded === true,
+    }),
+    [document?.input_snapshot, document?.repository_grounded],
+  );
+  const { data: designRepositories = [] } = useQuery(designRepositoryCatalogueOptions(wsId));
+  const repositoryEntry = provenance.associatedRepositoryId
+    ? designRepositories.find((repository) => repository.id === provenance.associatedRepositoryId && repository.projectId === document?.project_id)
+    : undefined;
+  const canCompareLatestSystem = !!document
+    && !!repositoryEntry
+    && !!provenance.request
+    && !!provenance.request.repositoryId
+    && !!provenance.request.agentId
+    && !!provenance.request.brief
+    && !!latestAgentId;
+  const latestSystemQuery = useQuery({
+    ...projectDesignSystemByProjectOptions(wsId, document?.project_id ?? "", repositoryEntry?.id),
+    enabled: canCompareLatestSystem,
+  });
   const previewUrl = revision && shownEntry ? api.getDesignDocumentPreviewFileURL(revision.resource_base_path, shownEntry) : "";
 
   const refresh = async () => {
@@ -641,7 +669,44 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
     mutationFn: (taskId: string) => api.cancelTaskById(taskId),
     onSettled: () => refresh(),
   });
-  const busy = adjust.isPending || save.isPending || discard.isPending || restore.isPending || regenerate.isPending || manualEdit.isPending;
+  const normalizeDigest = (value: string) => value.trim().replace(/^sha256:/, "").toLowerCase();
+  const latestSystem = latestSystemQuery.data;
+  const latestSystemDigest = normalizeDigest(latestSystem?.content.integrity_sha256 ?? "");
+  const frozenSystemDigest = normalizeDigest(provenance.system?.digest ?? "");
+  const latestSystemDiffers = !!document?.project_id
+    && !!repositoryEntry?.id
+    && !!provenance.request
+    && !!latestAgentId
+    && !!latestSystem?.id
+    && latestSystem.status === "saved"
+    && !!latestSystemDigest
+    && !!frozenSystemDigest
+    && latestSystemDigest !== frozenSystemDigest;
+  const createFromLatestSystem = useMutation({
+    mutationFn: () => {
+      const request = provenance.request;
+      if (!request || !latestSystem?.id || !document?.project_id) throw new Error("无法安全复用这份设计稿的冻结请求");
+      if (request.platform !== "web" && request.platform !== "mobile" && request.platform !== "cross_platform") throw new Error("无法安全复用这份设计稿的平台设置");
+      return api.createDesignDocument({
+        project_id: document.project_id,
+        agent_id: agentOverride || request.agentId,
+        project_resource_id: request.repositoryId,
+        issue_id: request.issueId,
+        design_system_id: latestSystem.id,
+        platform: request.platform as ProjectDesignSystemPlatform,
+        recipe: request.recipe,
+        brief: request.brief,
+        ...(request.attachments.length ? { attachments: request.attachments.map((item) => ({ attachment_id: item.attachmentId })) } : {}),
+      });
+    },
+    onSuccess: async (created) => {
+      setLatestSystemOpen(false);
+      await queryClient.invalidateQueries({ queryKey: designKeys.documents(wsId, document?.project_id ?? "") });
+      navigation.push(paths.designDocumentDetail(created.id));
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "无法使用最新设计体系新建设计稿"),
+  });
+  const busy = adjust.isPending || save.isPending || discard.isPending || restore.isPending || regenerate.isPending || manualEdit.isPending || createFromLatestSystem.isPending;
   // While a run is active the composer stays open: the submission queues and
   // fires when the run lands. Only a document with nothing to adjust and
   // nothing on the way keeps it closed.
@@ -1057,6 +1122,26 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                   ) : null}
                 </div>
 
+                <div className="border-b px-4 py-3">
+                  <DesignDocumentRunStatus
+                    status={status}
+                    task={activeTask}
+                    provenance={provenance}
+                    audit={revision?.audit ?? null}
+                    previewReceipt={revision?.preview_receipt ?? null}
+                  />
+                </div>
+
+                {latestSystemDiffers ? (
+                  <div className="border-b px-4 py-3">
+                    <Button type="button" size="sm" disabled={running || createFromLatestSystem.isPending} onClick={() => setLatestSystemOpen(true)}>
+                      {createFromLatestSystem.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
+                      使用最新设计体系新建设计稿
+                    </Button>
+                    <p className="mt-2 text-caption leading-5 text-muted-foreground">当前设计稿仍保持原设计体系，不会自动切换。</p>
+                  </div>
+                ) : null}
+
                 {errorMessage ? (
                   <div role="alert" className="flex items-start gap-2 border-b border-destructive/40 bg-destructive/5 px-4 py-3 text-caption leading-5">
                     <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
@@ -1077,7 +1162,7 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                       重新生成
                     </Button>
                     <p className="mt-2 text-caption leading-5 text-muted-foreground">
-                      沿用首次提交的需求与设置重新运行。也可以先在下方更换执行智能体。
+                      沿用首次提交的需求、参考文件与冻结设计体系重新运行。也可以先在下方更换执行智能体。
                     </p>
                   </div>
                 ) : null}
@@ -1263,6 +1348,9 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
                       }
                     }}
                   />
+                  {canAdjust || running ? (
+                    <p className="border-t px-4 py-2 text-caption leading-5 text-muted-foreground">调整会继续使用当前固定设计体系。</p>
+                  ) : null}
                   {annotations.length > 0 ? (
                     // Each mark keeps its own note, so one send can carry several
                     // separate asks that the agent can locate individually.
@@ -1458,6 +1546,23 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
           </ResizablePanelGroup>
         );
       })()}
+
+      <AlertDialog open={latestSystemOpen} onOpenChange={setLatestSystemOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>新建设计稿前确认</AlertDialogTitle>
+            <AlertDialogDescription>
+              将复用这份设计稿冻结的需求与参考文件，并按当前仓库保存的最新设计体系创建一份新的设计稿。当前设计稿不会被修改。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={createFromLatestSystem.isPending}>取消</AlertDialogCancel>
+            <AlertDialogAction disabled={createFromLatestSystem.isPending} onClick={(event) => { event.preventDefault(); createFromLatestSystem.mutate(); }}>
+              {createFromLatestSystem.isPending ? "正在创建…" : "确认新建设计稿"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
         <AlertDialogContent>
