@@ -2103,6 +2103,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			r.Put("/api/design-assets/repository-association", h.SetDesignAssetRepositoryAssociation)
 			r.Get("/api/design-assets/{designRef}/frames", h.GetDesignAssetFrames)
+			r.Post("/api/design-assets/{designRef}/implementation-prompt", h.BuildDesignImplementationPrompt)
+			r.Post("/api/design-assets/{designRef}/implementation-context", h.GetDesignImplementationContext)
 			// Gallery Native design files
 			r.Get("/api/design-folders", h.ListDesignFolders)
 			r.Post("/api/design-folders", h.CreateDesignFolder)
