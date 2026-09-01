@@ -154,7 +154,12 @@ func (a *designMCPAdapter) getImplementationContext(ctx context.Context, argumen
 	}
 	var packageFiles map[string][]byte
 	if contextValue.Package != nil {
-		if contextValue.Package.Source == "" || contextValue.Package.ArchivePath == "" || contextValue.Package.ContentDigest != contextValue.ContentDigest {
+		switch contextValue.Package.Source {
+		case "multica":
+		default:
+			return nil, fmt.Errorf("design_package_invalid: unsupported implementation package source %q", contextValue.Package.Source)
+		}
+		if contextValue.Package.ArchivePath == "" || contextValue.Package.ContentDigest != contextValue.ContentDigest {
 			return nil, fmt.Errorf("design_package_invalid: implementation package descriptor is invalid")
 		}
 		archive, err := a.client.DownloadFile(ctx, contextValue.Package.ArchivePath)

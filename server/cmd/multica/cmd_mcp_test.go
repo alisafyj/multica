@@ -526,6 +526,48 @@ func TestDesignMCPGetImplementationContextRejectsInvalidPackageAndPreservesConte
 	}
 }
 
+func TestDesignMCPGetImplementationContextRejectsUnknownPackageSourceBeforeDownload(t *testing.T) {
+	root := t.TempDir()
+	previous := designImplementationContextWire{SchemaVersion: "multica.design-implementation-context/v1", DesignRef: "previous"}
+	if err := materializeDesignImplementationContext(root, previous); err != nil {
+		t.Fatal(err)
+	}
+	archiveRequests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/design-assets/design_v1_multica/implementation-context" {
+			writeMCPTestJSON(w, map[string]any{
+				"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_multica", "revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("a", 64),
+				"frame_refs": []string{"frame_v1_page"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1",
+				"package":             map[string]any{"source": "unknown", "archive_path": "/api/design-documents/document-1/revisions/revision-1/archive", "content_digest": "sha256:" + strings.Repeat("a", 64)},
+				"source_capabilities": map[string]any{"has_prototype": true},
+			})
+			return
+		}
+		if r.URL.Path == "/api/design-documents/document-1/revisions/revision-1/archive" {
+			archiveRequests++
+			_, _ = w.Write([]byte("unexpected archive request"))
+			return
+		}
+		t.Fatalf("unexpected path %s", r.URL.Path)
+	}))
+	defer srv.Close()
+
+	adapter := &designMCPAdapter{client: cli.NewAPIClient(srv.URL, "ws-1", "mul_secret"), rootDir: root}
+	_, err := adapter.getImplementationContext(context.Background(), map[string]any{
+		"designRef": "design_v1_multica", "revisionId": "revision-1", "frameRefs": []any{"frame_v1_page"}, "targetRepositoryId": "repository-1", "issueId": "issue-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "design_package_invalid") {
+		t.Fatalf("unknown source error = %v", err)
+	}
+	if archiveRequests != 0 {
+		t.Fatalf("archive requests = %d, want 0", archiveRequests)
+	}
+	raw, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(designImplementationContextPath)))
+	if readErr != nil || !strings.Contains(string(raw), `"design_ref": "previous"`) {
+		t.Fatalf("previous context was not preserved: %q, %v", raw, readErr)
+	}
+}
+
 func TestMaterializeDesignImplementationContextWritesResultContractToScope(t *testing.T) {
 	root := t.TempDir()
 	if err := materializeDesignImplementationContext(root, designImplementationContextWire{SchemaVersion: "multica.design-implementation-context/v1"}); err != nil {
