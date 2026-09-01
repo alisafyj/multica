@@ -12,6 +12,7 @@ import { chatKeys } from "../chat/queries";
 import { workspaceWorkingAgentsKeys } from "../agents/queries";
 import { workspaceKeys } from "../workspace/queries";
 import { issueStatusKeys } from "../issue-statuses/queries";
+import { projectKeys } from "../projects/queries";
 import {
   markWorkspaceDeletePending,
   unmarkWorkspaceDeletePending,
@@ -601,5 +602,23 @@ describe("useRealtimeSync — workspace:deleted self-initiated suppression", () 
 
     expect(() => anyHandlers[0]?.({ payload: {} })).not.toThrow();
     expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+
+  it("invalidates the project tree when a project resource is deleted", async () => {
+    const { ws, anyHandlers } = createAnyEventMockWs();
+    renderHook(() => useRealtimeSync(ws, stores), {
+      wrapper: createWrapper(qc),
+    });
+
+    invalidateSpy.mockClear();
+    anyHandlers[0]?.({
+      type: "project_resource:deleted",
+      payload: { project_id: "project-1", resource_id: "resource-1" },
+    } as never);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: projectKeys.all("ws-1"),
+    });
   });
 });

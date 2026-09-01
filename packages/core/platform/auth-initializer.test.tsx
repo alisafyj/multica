@@ -11,6 +11,7 @@ import {
   registerAuthStore,
   useAuthStore,
 } from "../auth";
+import { configStore } from "../config";
 import type { StorageAdapter, User, Workspace } from "../types";
 import { workspaceKeys } from "../workspace/queries";
 import { AuthInitializer } from "./auth-initializer";
@@ -113,6 +114,24 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  configStore.setState({ useSySso: null, authConfigError: null });
+});
+
+describe("AuthInitializer config", () => {
+  it("preserves the server-selected SSO mode", async () => {
+    const api = makeApi({
+      getConfig: vi.fn().mockResolvedValue({
+        allow_signup: false,
+        use_sy_sso: true,
+      }),
+    });
+
+    renderInitializer({ api });
+
+    await waitFor(() => {
+      expect(configStore.getState().useSySso).toBe(true);
+    });
+  });
 });
 
 describe("AuthInitializer recovery", () => {
