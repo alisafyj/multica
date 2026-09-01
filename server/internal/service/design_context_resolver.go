@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -118,15 +119,21 @@ type BuiltinDesignContext struct {
 }
 
 type SavedProjectDesignContext struct {
-	Scope             DesignContextScope                `json:"scope"`
-	ProjectResourceID string                            `json:"project_resource_id,omitempty"`
-	DesignSystemID    string                            `json:"design_system_id"`
-	Name              string                            `json:"name"`
-	Platform          string                            `json:"platform"`
-	SourceTaskID      string                            `json:"source_task_id,omitempty"`
-	SavedAt           string                            `json:"saved_at"`
-	Manifest          projectdesignsystem.Manifest      `json:"manifest"`
-	Artifacts         projectdesignsystem.ArtifactInput `json:"artifacts"`
+	Scope             DesignContextScope                       `json:"scope"`
+	ProjectID         string                                   `json:"project_id"`
+	ProjectResourceID string                                   `json:"project_resource_id,omitempty"`
+	DesignSystemID    string                                   `json:"design_system_id"`
+	SavedPackageID    string                                   `json:"saved_package_id"`
+	ArchiveObjectKey  string                                   `json:"archive_object_key,omitempty"`
+	PackageSchema     string                                   `json:"package_schema,omitempty"`
+	V2Manifest        json.RawMessage                          `json:"v2_manifest,omitempty"`
+	V2ArtifactIndex   []projectdesignsystem.ArtifactIndexEntry `json:"v2_artifact_index,omitempty"`
+	Name              string                                   `json:"name"`
+	Platform          string                                   `json:"platform"`
+	SourceTaskID      string                                   `json:"source_task_id,omitempty"`
+	SavedAt           string                                   `json:"saved_at"`
+	Manifest          projectdesignsystem.Manifest             `json:"manifest"`
+	Artifacts         projectdesignsystem.ArtifactInput        `json:"artifacts"`
 }
 
 func (r ProjectDesignContextResolver) Resolve(
@@ -227,8 +234,14 @@ func (r ProjectDesignContextResolver) resolveExplicit(
 	resolved.Digest = validated.Manifest.Digest
 	resolved.Package = &SavedProjectDesignContext{
 		Scope:             DesignContextScopeWorkspace,
+		ProjectID:         util.UUIDToString(system.ProjectID),
 		ProjectResourceID: util.UUIDToString(system.ProjectResourceID),
 		DesignSystemID:    util.UUIDToString(system.ID),
+		SavedPackageID:    util.UUIDToString(saved.ID),
+		ArchiveObjectKey:  saved.ArchiveObjectKey.String,
+		PackageSchema:     saved.PackageSchema,
+		V2Manifest:        append(json.RawMessage(nil), saved.Manifest...),
+		V2ArtifactIndex:   artifactIndexFromRaw(saved.ArtifactIndex),
 		Name:              system.Name,
 		Platform:          system.Platform,
 		SourceTaskID:      util.UUIDToString(saved.SourceTaskID),
@@ -295,6 +308,11 @@ func (r ProjectDesignContextResolver) resolveScope(
 	if err != nil {
 		return nil, err
 	}
+	if scope == DesignContextScopeRepository {
+		if err := validateFrozenArchiveProvenance(saved); err != nil {
+			return nil, err
+		}
+	}
 
 	resolved := emptyProjectDesignContext(params.ProjectID)
 	resolved.Source = DesignContextSourceCloudSaved
@@ -304,8 +322,14 @@ func (r ProjectDesignContextResolver) resolveScope(
 	resolved.Digest = validated.Manifest.Digest
 	resolved.Package = &SavedProjectDesignContext{
 		Scope:             scope,
+		ProjectID:         util.UUIDToString(system.ProjectID),
 		ProjectResourceID: util.UUIDToString(system.ProjectResourceID),
 		DesignSystemID:    util.UUIDToString(system.ID),
+		SavedPackageID:    util.UUIDToString(saved.ID),
+		ArchiveObjectKey:  saved.ArchiveObjectKey.String,
+		PackageSchema:     saved.PackageSchema,
+		V2Manifest:        append(json.RawMessage(nil), saved.Manifest...),
+		V2ArtifactIndex:   artifactIndexFromRaw(saved.ArtifactIndex),
 		Name:              system.Name,
 		Platform:          system.Platform,
 		SourceTaskID:      util.UUIDToString(saved.SourceTaskID),
@@ -380,4 +404,30 @@ func validateSavedDesignContextArtifacts(
 		return invalid("saved package digest does not match its artifacts")
 	}
 	return validated, nil
+}
+
+func artifactIndexFromRaw(raw []byte) []projectdesignsystem.ArtifactIndexEntry {
+	if len(raw) == 0 {
+		return nil
+	}
+	var index []projectdesignsystem.ArtifactIndexEntry
+	_ = json.Unmarshal(raw, &index)
+	return index
+}
+
+func validateFrozenArchiveProvenance(saved db.ProjectDesignSystemPackage) error {
+	if saved.PackageSchema != projectdesignsystem.PackageSchemaV2 ||
+		!saved.ArchiveObjectKey.Valid || saved.ArchiveObjectKey.String == "" ||
+		len(saved.Manifest) == 0 || len(saved.ArtifactIndex) == 0 {
+		return fmt.Errorf("%w: repository saved package lacks V2 archive provenance", ErrSavedDesignContextInvalid)
+	}
+	var manifest projectdesignsystem.ManifestV2
+	var index []projectdesignsystem.ArtifactIndexEntry
+	if json.Unmarshal(saved.Manifest, &manifest) != nil || json.Unmarshal(saved.ArtifactIndex, &index) != nil ||
+		manifest.SchemaVersion != projectdesignsystem.PackageSchemaV2 ||
+		manifest.ContentDigest != "sha256:"+saved.IntegritySha256 ||
+		!reflect.DeepEqual(manifest.Files, index) {
+		return fmt.Errorf("%w: repository saved package archive provenance is inconsistent", ErrSavedDesignContextInvalid)
+	}
+	return nil
 }
