@@ -278,13 +278,17 @@ func validateDesignDocumentCompletionGrounding(mode string, raw json.RawMessage)
 // no explicit revision_id.
 func designDocumentBindingFromContext(taskContext service.DesignDocumentTaskContext, task db.AgentTaskQueue) designdocument.PackageBinding {
 	taskID := uuidToString(task.ID)
+	revisionID := taskContext.RevisionID
+	if revisionID == "" {
+		revisionID = taskID
+	}
 	return designdocument.PackageBinding{
 		WorkspaceID:         taskContext.WorkspaceID,
 		ProjectID:           taskContext.ProjectID,
 		ProjectResourceID:   taskContext.ProjectResourceID,
 		IssueID:             taskContext.IssueID,
 		DesignDocumentID:    taskContext.DesignDocumentID,
-		RevisionID:          taskID,
+		RevisionID:          revisionID,
 		TaskID:              taskID,
 		AgentID:             taskContext.AgentID,
 		Platform:            taskContext.Platform,
