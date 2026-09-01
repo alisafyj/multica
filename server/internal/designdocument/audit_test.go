@@ -108,6 +108,19 @@ history.replaceState({}, "", "#orders");
 	}
 }
 
+func TestAuditAcceptsRegexLiteralsAndDivision(t *testing.T) {
+	root := copyFixture(t)
+	writeFixtureFile(t, root, "prototype/app.js", []byte(`
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ratio = 8 / 2;
+document.body.dataset.valid = String(emailPattern.test("person@example.com") && ratio === 4);
+`))
+	collected, err := CollectDirectory(root, validBinding())
+	if err != nil {
+		t.Fatalf("CollectDirectory() rejected valid regex and division: %v (%#v)", err, collected.Audit.Diagnostics)
+	}
+}
+
 func TestAuditRejectsExternalMarkupResources(t *testing.T) {
 	tests := []struct {
 		name string

@@ -117,8 +117,12 @@ func auditScript(source []byte, basePath string, artifacts map[string]ArtifactIn
 // string contents as identifiers.
 func (audit *scriptAudit) scanTokens(source []byte) {
 	lexer := js.NewLexer(parse.NewInputBytes(source))
+	expectsExpression := true
 	for {
 		tokenType, data := lexer.Next()
+		if expectsExpression && (tokenType == js.DivToken || tokenType == js.DivEqToken) {
+			tokenType, data = lexer.RegExp()
+		}
 		if tokenType == js.ErrorToken {
 			if err := lexer.Err(); err != nil && err != io.EOF {
 				audit.report("prototype_script_invalid", "prototype JavaScript cannot be tokenized")
@@ -135,6 +139,25 @@ func (audit *scriptAudit) scanTokens(source []byte) {
 		case js.TemplateToken, js.TemplateStartToken, js.TemplateMiddleToken, js.TemplateEndToken:
 			audit.checkURLString(decodeJSString(trimTemplateDelimiters(data)))
 		}
+		if tokenType != js.WhitespaceToken && tokenType != js.LineTerminatorToken && tokenType != js.CommentToken && tokenType != js.CommentLineTerminatorToken {
+			expectsExpression = !tokenEndsExpression(tokenType)
+		}
+	}
+}
+
+// tokenEndsExpression identifies the tokens after which a slash is division,
+// rather than the start of a regular expression literal.
+func tokenEndsExpression(tokenType js.TokenType) bool {
+	if js.IsIdentifier(tokenType) || js.IsNumeric(tokenType) {
+		return true
+	}
+	switch tokenType {
+	case js.StringToken, js.TemplateToken, js.TemplateEndToken, js.RegExpToken,
+		js.CloseParenToken, js.CloseBracketToken, js.ThisToken, js.TrueToken,
+		js.FalseToken, js.NullToken, js.IncrToken, js.DecrToken:
+		return true
+	default:
+		return false
 	}
 }
 
