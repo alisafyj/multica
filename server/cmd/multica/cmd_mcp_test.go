@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/designdocument"
 	"github.com/spf13/cobra"
 )
 
@@ -427,5 +428,46 @@ func TestDesignMCPGetImplementationContextPreservesSavedMulticaIdentity(t *testi
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("saved Multica context identity changed:\n got: %+v\nwant: %+v", got, want)
+	}
+}
+
+func TestDesignMCPGetImplementationContextMaterializesSavedMulticaPackage(t *testing.T) {
+	packageRoot := filepath.Join("..", "..", "internal", "designdocument", "testdata", "valid")
+	collected, err := designdocument.CollectDirectory(packageRoot, designdocument.PackageBinding{
+		WorkspaceID: "workspace-1", ProjectID: "project-1", ProjectResourceID: "repository-1", IssueID: "issue-1",
+		DesignDocumentID: "document-1", RevisionID: "revision-1", TaskID: "task-1", AgentID: "agent-1", Platform: "web",
+		InputSnapshotSHA256: "sha256:" + strings.Repeat("a", 64), DesignSystemSHA256: "sha256:" + strings.Repeat("e", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/design-assets/design_v1_multica/implementation-context":
+			writeMCPTestJSON(w, map[string]any{
+				"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_multica", "revision_id": "revision-1", "content_digest": collected.Manifest.ContentDigest,
+				"frame_refs": []string{"frame_v1_page"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1", "design_title": "Saved document",
+				"source_document_id": "document-1", "source_capabilities": map[string]any{"has_prototype": true, "has_assets": true, "has_interactions": true},
+			})
+		case "/api/design-documents/document-1/revisions/revision-1/archive":
+			_, _ = w.Write(collected.Archive)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	root := t.TempDir()
+	adapter := &designMCPAdapter{client: cli.NewAPIClient(srv.URL, "ws-1", "mul_secret"), rootDir: root}
+	_, err = adapter.getImplementationContext(context.Background(), map[string]any{
+		"designRef": "design_v1_multica", "revisionId": "revision-1", "frameRefs": []any{"frame_v1_page"}, "targetRepositoryId": "repository-1", "issueId": "issue-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, relative := range []string{"brief.json", "coverage.json", "prototype/index.html", "assets/crm-mark.svg"} {
+		if _, err := os.Stat(filepath.Join(root, ".agent_context", "design_implementation", "design", "package", filepath.FromSlash(relative))); err != nil {
+			t.Fatalf("saved package artifact %s was not materialized: %v", relative, err)
+		}
 	}
 }

@@ -49,6 +49,9 @@ type DesignImplementationContextResponse struct {
 	IssueID                  string                                 `json:"issue_id"`
 	ProjectResourceID        string                                 `json:"project_resource_id"`
 	DesignTitle              string                                 `json:"design_title"`
+	SourceDocumentID         string                                 `json:"source_document_id,omitempty"`
+	SourceInstructions       []string                               `json:"source_instructions,omitempty"`
+	VerificationTargets      []string                               `json:"verification_targets,omitempty"`
 	DesignSystemDigest       string                                 `json:"design_system_digest,omitempty"`
 	AllowedWritePaths        []string                               `json:"allowed_write_paths"`
 	VerificationRequirements []string                               `json:"verification_requirements"`
@@ -156,7 +159,7 @@ func (h *Handler) resolveDesignImplementationRequest(w http.ResponseWriter, r *h
 		writeDesignAssetResolveError(w, err)
 		return DesignImplementationContextResponse{}, DesignImplementationRequest{}, db.ProjectResource{}, false
 	}
-	title, designSystemDigest, capabilities, err := h.designImplementationMetadata(r, claim)
+	title, designSystemDigest, sourceDocumentID, capabilities, err := h.designImplementationMetadata(r, claim)
 	if err != nil {
 		writeDesignAssetResolveError(w, err)
 		return DesignImplementationContextResponse{}, DesignImplementationRequest{}, db.ProjectResource{}, false
@@ -165,8 +168,10 @@ func (h *Handler) resolveDesignImplementationRequest(w http.ResponseWriter, r *h
 		SchemaVersion: designImplementationContextSchemaV1, DesignRef: chi.URLParam(r, "designRef"),
 		RevisionID: claim.RevisionID, ContentDigest: claim.ContentDigest, FrameRefs: append([]string(nil), request.FrameRefs...),
 		ProjectID: claim.ProjectID, IssueID: request.IssueID, ProjectResourceID: request.ProjectResourceID,
-		DesignTitle: title, DesignSystemDigest: designSystemDigest, AllowedWritePaths: []string{"."},
+		DesignTitle: title, DesignSystemDigest: designSystemDigest, SourceDocumentID: sourceDocumentID, AllowedWritePaths: []string{"."},
 		VerificationRequirements: []string{"repository typecheck/tests/build as applicable", "real rendered preview for changed UI"},
+		SourceInstructions:       designImplementationSourceInstructions(claim.Kind),
+		VerificationTargets:      designImplementationVerificationTargets(claim.Kind),
 		Paths: DesignImplementationPaths{
 			Context:           ".agent_context/design_implementation/context.json",
 			DesignManifest:    ".agent_context/design_implementation/design/manifest.json",
@@ -222,33 +227,47 @@ func validateDesignImplementationFrameRefs(design designAssetRefClaim, refs []st
 	return nil
 }
 
-func (h *Handler) designImplementationMetadata(r *http.Request, claim designAssetRefClaim) (string, string, DesignImplementationSourceCapabilities, error) {
+func (h *Handler) designImplementationMetadata(r *http.Request, claim designAssetRefClaim) (string, string, string, DesignImplementationSourceCapabilities, error) {
 	workspaceID, err := parseDesignAssetClaimUUID(claim.WorkspaceID)
 	if err != nil {
-		return "", "", DesignImplementationSourceCapabilities{}, err
+		return "", "", "", DesignImplementationSourceCapabilities{}, err
 	}
 	assetID, err := parseDesignAssetClaimUUID(claim.AssetID)
 	if err != nil {
-		return "", "", DesignImplementationSourceCapabilities{}, err
+		return "", "", "", DesignImplementationSourceCapabilities{}, err
 	}
 	switch claim.Kind {
 	case "figma":
 		file, err := h.Queries.GetDesignFileInWorkspace(r.Context(), db.GetDesignFileInWorkspaceParams{ID: assetID, WorkspaceID: workspaceID})
-		return file.Title, "", DesignImplementationSourceCapabilities{HasLayers: true, HasAssets: true, HasInteractions: true}, err
+		return file.Title, "", "", DesignImplementationSourceCapabilities{HasLayers: true, HasAssets: true, HasInteractions: true}, err
 	case "multica":
 		document, err := h.Queries.GetDesignDocumentInWorkspace(r.Context(), db.GetDesignDocumentInWorkspaceParams{ID: assetID, WorkspaceID: workspaceID})
 		if err != nil {
-			return "", "", DesignImplementationSourceCapabilities{}, err
+			return "", "", "", DesignImplementationSourceCapabilities{}, err
 		}
 		revisionID, err := parseDesignAssetClaimUUID(claim.RevisionID)
 		if err != nil {
-			return "", "", DesignImplementationSourceCapabilities{}, err
+			return "", "", "", DesignImplementationSourceCapabilities{}, err
 		}
 		revision, err := h.Queries.GetDesignDocumentRevisionInWorkspace(r.Context(), db.GetDesignDocumentRevisionInWorkspaceParams{ID: revisionID, WorkspaceID: workspaceID})
-		return document.Title, textToString(revision.DesignSystemDigest), DesignImplementationSourceCapabilities{HasPrototype: true, HasAssets: true, HasInteractions: true}, err
+		return document.Title, textToString(revision.DesignSystemDigest), uuidToString(document.ID), DesignImplementationSourceCapabilities{HasPrototype: true, HasAssets: true, HasInteractions: true}, err
 	default:
-		return "", "", DesignImplementationSourceCapabilities{}, designAssetResolveFailure(http.StatusBadRequest, "design_ref_invalid", "design reference is invalid")
+		return "", "", "", DesignImplementationSourceCapabilities{}, designAssetResolveFailure(http.StatusBadRequest, "design_ref_invalid", "design reference is invalid")
 	}
+}
+
+func designImplementationSourceInstructions(kind string) []string {
+	if kind != "multica" {
+		return nil
+	}
+	return []string{"Treat the Prototype as a structure, state, and interaction specification.", "Do not copy the Prototype HTML/CSS wholesale or embed it with an iframe or dangerouslySetInnerHTML.", "Implement selected page states, dialogs, and interactions in the target repository stack."}
+}
+
+func designImplementationVerificationTargets(kind string) []string {
+	if kind != "multica" {
+		return nil
+	}
+	return []string{"verify selected page coverage against brief.json and coverage.json", "report a package gap when required coverage has no Prototype evidence"}
 }
 
 func designImplementationRepositoryName(repository db.ProjectResource) string {

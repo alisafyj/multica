@@ -9,8 +9,10 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
+	"path/filepath"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/designdocument"
 )
 
 type designMCPAdapter struct {
@@ -75,19 +77,22 @@ const (
 )
 
 type designImplementationContextWire struct {
-	SchemaVersion      string         `json:"schema_version"`
-	DesignRef          string         `json:"design_ref"`
-	RevisionID         string         `json:"revision_id"`
-	ContentDigest      string         `json:"content_digest"`
-	FrameRefs          []string       `json:"frame_refs"`
-	ProjectID          string         `json:"project_id"`
-	IssueID            string         `json:"issue_id"`
-	ProjectResourceID  string         `json:"project_resource_id"`
-	DesignTitle        string         `json:"design_title"`
-	DesignSystemDigest string         `json:"design_system_digest,omitempty"`
-	AllowedWritePaths  []string       `json:"allowed_write_paths"`
-	Verification       []string       `json:"verification_requirements"`
-	Capabilities       map[string]any `json:"source_capabilities"`
+	SchemaVersion       string         `json:"schema_version"`
+	DesignRef           string         `json:"design_ref"`
+	RevisionID          string         `json:"revision_id"`
+	ContentDigest       string         `json:"content_digest"`
+	FrameRefs           []string       `json:"frame_refs"`
+	ProjectID           string         `json:"project_id"`
+	IssueID             string         `json:"issue_id"`
+	ProjectResourceID   string         `json:"project_resource_id"`
+	DesignTitle         string         `json:"design_title"`
+	SourceDocumentID    string         `json:"source_document_id,omitempty"`
+	SourceInstructions  []string       `json:"source_instructions,omitempty"`
+	VerificationTargets []string       `json:"verification_targets,omitempty"`
+	DesignSystemDigest  string         `json:"design_system_digest,omitempty"`
+	AllowedWritePaths   []string       `json:"allowed_write_paths"`
+	Verification        []string       `json:"verification_requirements"`
+	Capabilities        map[string]any `json:"source_capabilities"`
 }
 
 func (a *designMCPAdapter) getImplementationContext(ctx context.Context, arguments map[string]any) (any, error) {
@@ -113,7 +118,18 @@ func (a *designMCPAdapter) getImplementationContext(ctx context.Context, argumen
 		!equalStrings(contextValue.FrameRefs, frameRefs) {
 		return nil, fmt.Errorf("design context response does not match the requested frozen identity")
 	}
-	if err := materializeDesignImplementationContext(a.rootDir, contextValue); err != nil {
+	var packageFiles map[string][]byte
+	if contextValue.SourceDocumentID != "" {
+		archive, err := a.client.DownloadFile(ctx, "/api/design-documents/"+url.PathEscape(contextValue.SourceDocumentID)+"/revisions/"+url.PathEscape(revisionID)+"/archive")
+		if err != nil {
+			return nil, fmt.Errorf("context_materialization_failed: download saved Multica design package: %w", err)
+		}
+		_, packageFiles, err = designdocument.ReadBaseArchive(archive, contextValue.ContentDigest)
+		if err != nil {
+			return nil, fmt.Errorf("context_materialization_failed: validate saved Multica design package: %w", err)
+		}
+	}
+	if err := materializeDesignImplementationContext(a.rootDir, contextValue, packageFiles); err != nil {
 		return nil, fmt.Errorf("context_materialization_failed: %w", err)
 	}
 	return map[string]any{
@@ -128,7 +144,7 @@ func (a *designMCPAdapter) getImplementationContext(ctx context.Context, argumen
 	}, nil
 }
 
-func materializeDesignImplementationContext(rootDir string, contextValue designImplementationContextWire) error {
+func materializeDesignImplementationContext(rootDir string, contextValue designImplementationContextWire, packageFiles ...map[string][]byte) error {
 	if rootDir == "" {
 		rootDir = "."
 	}
@@ -202,6 +218,18 @@ func materializeDesignImplementationContext(rootDir string, contextValue designI
 			return err
 		}
 	}
+	if len(packageFiles) > 0 {
+		for relative, contents := range packageFiles[0] {
+			if !filepath.IsLocal(relative) {
+				_ = temporaryRoot.Close()
+				return fmt.Errorf("design package path %q is not local", relative)
+			}
+			if err := writeExclusiveRootFile(temporaryRoot, filepath.ToSlash(filepath.Join("design", "package", relative)), contents); err != nil {
+				_ = temporaryRoot.Close()
+				return err
+			}
+		}
+	}
 	if err := temporaryRoot.Close(); err != nil {
 		return err
 	}
@@ -210,6 +238,21 @@ func materializeDesignImplementationContext(rootDir string, contextValue designI
 	}
 	temporaryOwned = false
 	return nil
+}
+
+func writeExclusiveRootFile(root *os.Root, relative string, contents []byte) error {
+	if err := root.MkdirAll(filepath.ToSlash(filepath.Dir(relative)), 0o755); err != nil {
+		return err
+	}
+	file, err := root.OpenFile(relative, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o444)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(contents); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 func ensureRootDirectory(root *os.Root, name string) error {

@@ -137,7 +137,8 @@ func TestDesignImplementationPromptAndContextShareSavedMulticaIdentity(t *testin
 	callDesignImplementation(t, testHandler.BuildDesignImplementationPrompt, designRef, body).Want(http.StatusOK).JSON(&prompt)
 	var contextValue DesignImplementationContextResponse
 	callDesignImplementation(t, testHandler.GetDesignImplementationContext, designRef, body).Want(http.StatusOK).JSON(&contextValue)
-	if !reflect.DeepEqual(prompt.Context, contextValue) || !contextValue.SourceCapabilities.HasPrototype || contextValue.DesignSystemDigest != textToString(document.Revision.DesignSystemDigest) {
+	if !reflect.DeepEqual(prompt.Context, contextValue) || !contextValue.SourceCapabilities.HasPrototype || contextValue.DesignSystemDigest != textToString(document.Revision.DesignSystemDigest) ||
+		contextValue.SourceDocumentID != uuidToString(document.Document.ID) || len(contextValue.SourceInstructions) == 0 || len(contextValue.VerificationTargets) == 0 {
 		t.Fatalf("saved Multica identity mismatch: prompt=%+v context=%+v", prompt.Context, contextValue)
 	}
 }
