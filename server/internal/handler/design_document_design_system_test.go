@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
@@ -197,6 +198,7 @@ func seedSavedRepositoryDesignSystemForTest(t *testing.T, projectID string, reso
 
 func seedValidatedRepositoryDesignSystemArchiveForTest(t *testing.T, projectID string, resourceID string) (db.ProjectDesignSystem, db.ProjectDesignSystemPackage, []byte, string) {
 	t.Helper()
+	storage := newIsolatedMockStorageForDesignSystemTest(t)
 	queries := db.New(testPool)
 	system, err := queries.CreateProjectDesignSystem(context.Background(), db.CreateProjectDesignSystemParams{
 		WorkspaceID: parseUUID(testWorkspaceID), ProjectID: parseUUID(projectID), ProjectResourceID: parseUUID(resourceID),
@@ -223,18 +225,31 @@ func seedValidatedRepositoryDesignSystemArchiveForTest(t *testing.T, projectID s
 	}
 	collected := collectNativePackageArchive(t, binding)
 	key := "project-design-systems/" + testWorkspaceID + "/" + uuidToString(system.ID) + "/" + binding.TaskID + "/" + strings.TrimPrefix(collected.Manifest.ContentDigest, "sha256:") + ".zip"
-	storage, ok := testHandler.Storage.(*mockStorage)
-	if !ok {
-		t.Fatalf("test storage type %T does not support direct archive seeding", testHandler.Storage)
-	}
 	if _, err := storage.Upload(context.Background(), key, collected.Archive, nativePackageArchiveContentType, "package.zip"); err != nil {
 		t.Fatal(err)
 	}
-	manifest, _ := json.Marshal(collected.Manifest)
-	audit, _ := json.Marshal(collected.Audit)
-	index, _ := json.Marshal(collected.Manifest.Files)
+	designMD, err := projectdesignsystem.ReadV2Artifact(collected.Archive, collected.Manifest.Files, "DESIGN.md")
+	if err != nil {
+		t.Fatalf("read fixture DESIGN.md: %v", err)
+	}
+	tokensCSS, err := projectdesignsystem.ReadV2Artifact(collected.Archive, collected.Manifest.Files, "tokens.css")
+	if err != nil {
+		t.Fatalf("read fixture tokens.css: %v", err)
+	}
+	manifest, err := json.Marshal(collected.Manifest)
+	if err != nil {
+		t.Fatalf("marshal fixture V2 manifest: %v", err)
+	}
+	audit, err := json.Marshal(collected.Audit)
+	if err != nil {
+		t.Fatalf("marshal fixture V2 audit: %v", err)
+	}
+	index, err := json.Marshal(collected.Manifest.Files)
+	if err != nil {
+		t.Fatalf("marshal fixture V2 artifact index: %v", err)
+	}
 	saved, err := queries.UpsertProjectDesignSystemPackage(context.Background(), db.UpsertProjectDesignSystemPackageParams{
-		DesignSystemID: system.ID, Slot: "saved", DesignMd: "validated fixture", TokensCss: ":root{}", ComponentsHtml: "<div></div>",
+		DesignSystemID: system.ID, Slot: "saved", DesignMd: string(designMD), TokensCss: string(tokensCSS),
 		Manifest: manifest, Validation: audit, IntegritySha256: strings.TrimPrefix(collected.Manifest.ContentDigest, "sha256:"),
 		SourceTaskID: parseUUID(binding.TaskID), AgentID: parseUUID(agentID), PackageSchema: projectdesignsystem.PackageSchemaV2,
 		ArchiveObjectKey: pgtype.Text{String: key, Valid: true}, ArtifactIndex: index, InputSnapshotSha256: pgtype.Text{String: inputDigest, Valid: true},
@@ -243,10 +258,24 @@ func seedValidatedRepositoryDesignSystemArchiveForTest(t *testing.T, projectID s
 	if err != nil {
 		t.Fatalf("seed saved package: %v", err)
 	}
-	if _, err := testPool.Exec(context.Background(), `UPDATE project_design_system_package SET render_status='passed', rendered_at=now() WHERE id=$1`, saved.ID); err != nil {
-		t.Fatal(err)
+	if err := testPool.QueryRow(context.Background(), `
+		UPDATE project_design_system_package
+		SET render_status='passed', rendered_at=now()
+		WHERE id=$1
+		RETURNING render_status, validation, manifest, artifact_index, integrity_sha256
+	`, saved.ID).Scan(&saved.RenderStatus, &saved.Validation, &saved.Manifest, &saved.ArtifactIndex, &saved.IntegritySha256); err != nil {
+		t.Fatalf("mark seeded package rendered: %v", err)
 	}
 	return system, saved, collected.Archive, collected.Manifest.ContentDigest
+}
+
+func newIsolatedMockStorageForDesignSystemTest(t *testing.T) *mockStorage {
+	t.Helper()
+	storage := &mockStorage{}
+	previous := testHandler.Storage
+	testHandler.Storage = storage
+	t.Cleanup(func() { testHandler.Storage = previous })
+	return storage
 }
 
 // mutateSavedRepositoryDesignSystemForTest replaces the validated saved slot
@@ -292,7 +321,7 @@ func TestCreateDesignDocumentFreezesExactRepositorySavedProvenance(t *testing.T)
 	ctx := context.Background()
 	projectID := createProjectDesignSystemProject(t, testWorkspaceID, "Exact repository generation")
 	resourceID := insertRepositoryForProjectDesignSystemTest(t, uuidToString(projectID))
-	saved := seedSavedRepositoryDesignSystemForTest(t, uuidToString(projectID), resourceID)
+	_, saved, _, _ := seedValidatedRepositoryDesignSystemArchiveForTest(t, uuidToString(projectID), resourceID)
 	agentID, _ := createProjectDesignSystemAgent(t, "online")
 
 	created := performProjectDesignSystemRequest(t, testHandler.CreateDesignDocument, http.MethodPost, "/api/design-documents", map[string]any{
@@ -332,7 +361,7 @@ func TestCreateDesignDocumentFreezesExactRepositorySavedProvenance(t *testing.T)
 	if input.ResolvedDesignContext.ProjectID != uuidToString(projectID) ||
 		input.ResolvedDesignContext.Package.SavedPackageID != uuidToString(saved.ID) ||
 		input.ResolvedDesignContext.Package.ArchiveObjectKey != saved.ArchiveObjectKey.String ||
-		input.ResolvedDesignContext.Digest != saved.IntegritySha256 {
+		input.ResolvedDesignContext.Digest != "sha256:"+saved.IntegritySha256 {
 		t.Fatalf("input provenance = %+v; saved=%+v", input, saved)
 	}
 	var task struct {
@@ -344,7 +373,7 @@ func TestCreateDesignDocumentFreezesExactRepositorySavedProvenance(t *testing.T)
 	if task.DesignContext.Source != service.DesignContextSourceCloudSavedRepository ||
 		task.DesignContext.Package == nil || task.DesignContext.Package.SavedPackageID != uuidToString(saved.ID) ||
 		task.DesignContext.Package.ArchiveObjectKey != saved.ArchiveObjectKey.String ||
-		task.DesignContext.Digest != saved.IntegritySha256 {
+		task.DesignContext.Digest != "sha256:"+saved.IntegritySha256 {
 		t.Fatalf("task provenance = %+v", task)
 	}
 }
@@ -355,7 +384,7 @@ func TestRegenerateDesignDocumentKeepsTheInitialSavedProvenance(t *testing.T) {
 	ctx := context.Background()
 	projectID := createProjectDesignSystemProject(t, testWorkspaceID, "Pinned regenerate")
 	resourceID := insertRepositoryForProjectDesignSystemTest(t, uuidToString(projectID))
-	original := seedSavedRepositoryDesignSystemForTest(t, uuidToString(projectID), resourceID)
+	_, original, _, _ := seedValidatedRepositoryDesignSystemArchiveForTest(t, uuidToString(projectID), resourceID)
 	agentID, _ := createProjectDesignSystemAgent(t, "online")
 
 	created := performProjectDesignSystemRequest(t, testHandler.CreateDesignDocument, http.MethodPost, "/api/design-documents", map[string]any{
@@ -409,7 +438,7 @@ func TestRegenerateDesignDocumentKeepsTheInitialSavedProvenance(t *testing.T) {
 		pinned.Package.DesignSystemID != uuidToString(original.DesignSystemID) ||
 		pinned.Package.SavedPackageID != uuidToString(original.ID) ||
 		pinned.Package.ArchiveObjectKey != original.ArchiveObjectKey.String ||
-		pinned.Digest != original.IntegritySha256 {
+		pinned.Digest != "sha256:"+original.IntegritySha256 {
 		t.Fatalf("regenerate provenance = %+v; want original=%+v", pinned, original)
 	}
 	var taskContext []byte
@@ -427,7 +456,7 @@ func TestAdjustDesignDocumentKeepsTheInitialSavedProvenance(t *testing.T) {
 	ctx := context.Background()
 	projectID := createProjectDesignSystemProject(t, testWorkspaceID, "Pinned adjust")
 	resourceID := insertRepositoryForProjectDesignSystemTest(t, uuidToString(projectID))
-	original := seedSavedRepositoryDesignSystemForTest(t, uuidToString(projectID), resourceID)
+	_, original, _, _ := seedValidatedRepositoryDesignSystemArchiveForTest(t, uuidToString(projectID), resourceID)
 	agentID, _ := createProjectDesignSystemAgent(t, "online")
 
 	created := performProjectDesignSystemRequest(t, testHandler.CreateDesignDocument, http.MethodPost, "/api/design-documents", map[string]any{
@@ -506,7 +535,7 @@ func TestAdjustDesignDocumentKeepsTheInitialSavedProvenance(t *testing.T) {
 		pinned.Package.DesignSystemID != uuidToString(original.DesignSystemID) ||
 		pinned.Package.SavedPackageID != uuidToString(original.ID) ||
 		pinned.Package.ArchiveObjectKey != original.ArchiveObjectKey.String ||
-		pinned.Digest != original.IntegritySha256 {
+		pinned.Digest != "sha256:"+original.IntegritySha256 {
 		t.Fatalf("adjust provenance = %+v; want original=%+v", pinned, original)
 	}
 	var taskContext []byte
@@ -524,7 +553,7 @@ func TestAdjustDesignDocumentFailsClosedWhenRepositoryProvenanceIsMissing(t *tes
 	ctx := context.Background()
 	projectID := createProjectDesignSystemProject(t, testWorkspaceID, "Missing repository provenance")
 	resourceID := insertRepositoryForProjectDesignSystemTest(t, uuidToString(projectID))
-	seedSavedRepositoryDesignSystemForTest(t, uuidToString(projectID), resourceID)
+	_, _, _, _ = seedValidatedRepositoryDesignSystemArchiveForTest(t, uuidToString(projectID), resourceID)
 	agentID, _ := createProjectDesignSystemAgent(t, "online")
 
 	created := performProjectDesignSystemRequest(t, testHandler.CreateDesignDocument, http.MethodPost, "/api/design-documents", map[string]any{
@@ -572,9 +601,9 @@ func TestAdjustDesignDocumentFailsClosedWhenRepositoryProvenanceIsTampered(t *te
 	ctx := context.Background()
 	projectID := createProjectDesignSystemProject(t, testWorkspaceID, "Tampered repository provenance")
 	resourceID := insertRepositoryForProjectDesignSystemTest(t, uuidToString(projectID))
-	saved := seedSavedRepositoryDesignSystemForTest(t, uuidToString(projectID), resourceID)
+	_, saved, _, _ := seedValidatedRepositoryDesignSystemArchiveForTest(t, uuidToString(projectID), resourceID)
 	agentID, _ := createProjectDesignSystemAgent(t, "online")
-	otherResourceID := insertRepositoryForProjectDesignSystemTest(t, uuidToString(projectID))
+	otherResourceID := insertUniqueRepositoryForTamperedProvenanceTest(t, uuidToString(projectID))
 
 	created := performProjectDesignSystemRequest(t, testHandler.CreateDesignDocument, http.MethodPost, "/api/design-documents", map[string]any{
 		"project_id": uuidToString(projectID), "agent_id": agentID,
@@ -622,6 +651,27 @@ func TestAdjustDesignDocumentFailsClosedWhenRepositoryProvenanceIsTampered(t *te
 	if activeTaskID.Valid {
 		t.Fatalf("tampered provenance enqueued task=%s", activeTaskID)
 	}
+}
+
+func insertUniqueRepositoryForTamperedProvenanceTest(t *testing.T, projectID string) string {
+	t.Helper()
+	resourceRef, err := json.Marshal(map[string]string{"url": "https://github.com/acme/crm-admin-" + uuid.NewString() + ".git"})
+	if err != nil {
+		t.Fatalf("marshal repository ref: %v", err)
+	}
+	var resourceID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, label, position, created_by)
+		VALUES ($1, $2, 'github_repo', $3::jsonb, 'crm-admin-tampered', 1, $4)
+		RETURNING id
+	`, projectID, testWorkspaceID, resourceRef, testUserID).Scan(&resourceID); err != nil {
+		t.Fatalf("insert project resource: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM project_design_system WHERE project_resource_id = $1`, resourceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM project_resource WHERE id = $1`, resourceID)
+	})
+	return resourceID
 }
 
 func seedDesignDocumentRevisionForProvenanceTest(t *testing.T, documentID string, agentID string) db.DesignDocumentRevision {
