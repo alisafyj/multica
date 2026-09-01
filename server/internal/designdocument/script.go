@@ -47,7 +47,7 @@ var forbiddenScriptGlobals = map[string]string{
 // Navigation members are only forbidden when they hang off one of these, so a
 // mock data field such as row.location stays perfectly legal.
 var globalAliases = map[string]struct{}{
-	"window": {}, "self": {}, "globalThis": {}, "document": {},
+	"window": {}, "self": {}, "globalThis": {}, "document": {}, "navigator": {},
 	"top": {}, "parent": {}, "frames": {},
 }
 
@@ -91,17 +91,24 @@ type scriptAudit struct {
 	path           string
 	artifacts      map[string]ArtifactIndexEntry
 	globalBindings map[*js.Var]struct{}
+	functions      map[*js.Var]*js.Params
 	diagnostics    []Diagnostic
 }
 
 type globalBindingCollector struct {
-	bindings map[*js.Var]struct{}
-	changed  bool
+	bindings  map[*js.Var]struct{}
+	functions map[*js.Var]*js.Params
+	changed   bool
+}
+
+type declaredFunctionCollector struct {
+	functions map[*js.Var]*js.Params
 }
 
 type globalAliasFinder struct {
-	bindings map[*js.Var]struct{}
-	found    bool
+	bindings       map[*js.Var]struct{}
+	skipCallResult bool
+	found          bool
 }
 
 // auditScript parses one prototype script and applies the AST audit.
@@ -110,11 +117,13 @@ func auditScript(source []byte, basePath string, artifacts map[string]ArtifactIn
 	if err != nil {
 		return []Diagnostic{errorDiagnostic("prototype_script_invalid", basePath, "prototype JavaScript is invalid: "+err.Error())}
 	}
+	functions := make(map[*js.Var]*js.Params)
+	js.Walk(&declaredFunctionCollector{functions: functions}, ast)
 	globalBindings := make(map[*js.Var]struct{})
 	// Resolve alias chains to a fixed point before policy checks so source order
 	// and function placement cannot hide a global-derived binding.
 	for {
-		collector := &globalBindingCollector{bindings: globalBindings}
+		collector := &globalBindingCollector{bindings: globalBindings, functions: functions}
 		js.Walk(collector, ast)
 		if !collector.changed {
 			break
@@ -124,6 +133,7 @@ func auditScript(source []byte, basePath string, artifacts map[string]ArtifactIn
 		path:           basePath,
 		artifacts:      artifacts,
 		globalBindings: globalBindings,
+		functions:      functions,
 		diagnostics:    make([]Diagnostic, 0),
 	}
 	js.Walk(audit, ast)
@@ -179,8 +189,13 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 		return nil
 	case *js.CallExpr:
 		audit.checkCall(value.X, value.Args)
+	case *js.ReturnStmt:
+		if value.Value != nil && expressionReturnContainsGlobalAlias(value.Value, audit.globalBindings) &&
+			!definitelyPrimitiveResult(value.Value) {
+			audit.report("prototype_script_dynamic_global", "returning a global capability from a prototype function is not allowed")
+		}
 	case *js.BinaryExpr:
-		if value.Op == js.EqToken {
+		if isGlobalAssignmentToken(value.Op) {
 			switch value.X.(type) {
 			case *js.DotExpr, *js.IndexExpr:
 				if expressionContainsGlobalAlias(value.Y, audit.globalBindings) && !definitelyPrimitiveResult(value.Y) {
@@ -219,8 +234,16 @@ func (collector *globalBindingCollector) Enter(node js.INode) js.IVisitor {
 			collector.collectBinding(value.Binding)
 		}
 	case *js.BinaryExpr:
-		if value.Op == js.EqToken && expressionContainsGlobalAlias(value.Y, collector.bindings) {
+		if isGlobalAssignmentToken(value.Op) && expressionContainsGlobalAlias(value.Y, collector.bindings) {
 			collector.collectAssignment(value.X)
+		}
+	case *js.CallExpr:
+		if params := declaredFunctionParams(value.X, collector.functions); params != nil {
+			for index, argument := range value.Args.List {
+				if expressionContainsGlobalAlias(argument.Value, collector.bindings) && !definitelyPrimitiveResult(argument.Value) {
+					collector.collectBinding(parameterBinding(params, index))
+				}
+			}
 		}
 	}
 	return collector
@@ -228,8 +251,34 @@ func (collector *globalBindingCollector) Enter(node js.INode) js.IVisitor {
 
 func (collector *globalBindingCollector) Exit(js.INode) {}
 
+func (collector *declaredFunctionCollector) Enter(node js.INode) js.IVisitor {
+	switch value := node.(type) {
+	case *js.FuncDecl:
+		if value.Name != nil {
+			collector.functions[resolveVarRoot(value.Name)] = &value.Params
+		}
+	case *js.BindingElement:
+		variable, ok := value.Binding.(*js.Var)
+		if !ok {
+			break
+		}
+		switch function := value.Default.(type) {
+		case *js.FuncDecl:
+			collector.functions[resolveVarRoot(variable)] = &function.Params
+		case *js.ArrowFunc:
+			collector.functions[resolveVarRoot(variable)] = &function.Params
+		}
+	}
+	return collector
+}
+
+func (collector *declaredFunctionCollector) Exit(js.INode) {}
+
 func (finder *globalAliasFinder) Enter(node js.INode) js.IVisitor {
 	if finder.found {
+		return nil
+	}
+	if _, call := node.(*js.CallExpr); call && finder.skipCallResult {
 		return nil
 	}
 	if expr, ok := node.(js.IExpr); ok && expressionIsGlobalAlias(expr, finder.bindings) {
@@ -291,6 +340,13 @@ func (collector *globalBindingCollector) add(variable *js.Var) {
 }
 
 func (audit *scriptAudit) checkCall(callee js.IExpr, args js.Args) {
+	if params := declaredFunctionParams(callee, audit.functions); params != nil {
+		for index, argument := range args.List {
+			if expressionContainsGlobalAlias(argument.Value, audit.globalBindings) && !definitelyPrimitiveResult(argument.Value) {
+				audit.checkGlobalBinding(parameterBinding(params, index))
+			}
+		}
+	}
 	if literal, ok := callee.(*js.LiteralExpr); ok && literal.TokenType == js.ImportToken {
 		audit.report("prototype_script_dynamic_import", "dynamic import is not allowed in a prototype")
 		return
@@ -414,9 +470,43 @@ func expressionContainsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{})
 	return finder.found
 }
 
+func expressionReturnContainsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{}) bool {
+	finder := &globalAliasFinder{bindings: bindings, skipCallResult: true}
+	js.Walk(finder, expr)
+	return finder.found
+}
+
+func isGlobalAssignmentToken(token js.TokenType) bool {
+	return token == js.EqToken || token == js.AndEqToken || token == js.OrEqToken || token == js.NullishEqToken
+}
+
+func declaredFunctionParams(callee js.IExpr, functions map[*js.Var]*js.Params) *js.Params {
+	if group, ok := callee.(*js.GroupExpr); ok {
+		return declaredFunctionParams(group.X, functions)
+	}
+	variable, ok := callee.(*js.Var)
+	if !ok {
+		return nil
+	}
+	return functions[resolveVarRoot(variable)]
+}
+
+func parameterBinding(params *js.Params, index int) js.IBinding {
+	if index < len(params.List) {
+		return params.List[index].Binding
+	}
+	return params.Rest
+}
+
 func definitelyPrimitiveResult(expr js.IExpr) bool {
-	unary, ok := expr.(*js.UnaryExpr)
-	return ok && unary.Op == js.NotToken
+	switch value := expr.(type) {
+	case *js.UnaryExpr:
+		return value.Op == js.NotToken
+	case *js.BinaryExpr:
+		return value.Op == js.EqEqEqToken || value.Op == js.NotEqEqToken
+	default:
+		return false
+	}
 }
 
 func expressionIsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{}) bool {

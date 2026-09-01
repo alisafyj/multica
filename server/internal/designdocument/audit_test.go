@@ -165,6 +165,14 @@ func TestAuditRejectsDestructuredGlobalCapabilities(t *testing.T) {
 		{name: "computed composite property assignment", script: `const box = {}; const key = "host"; box[key] = true ? window : window; const {fetch} = box[key]; fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 		{name: "conditional target is not globally rooted", script: `const box = {}; (window ? box : box).host = window; const {fetch} = box.host; fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 		{name: "global target aliases local object", script: `const box = {}; window.box = box; window.box.host = window; const {fetch} = box.host; fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "arrow parameter", script: `const run = ({fetch}) => fetch("/api/orders"); run(window);`, code: "prototype_script_forbidden_api"},
+		{name: "function parameter", script: `function run({open}) { open("orders.html"); } run(window);`, code: "prototype_script_navigation_forbidden"},
+		{name: "navigator binding", script: `const {sendBeacon} = navigator; sendBeacon("/telemetry", "{}");`, code: "prototype_script_forbidden_api"},
+		{name: "logical and assignment", script: `let host = {}; host &&= window; const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
+		{name: "logical or assignment", script: `let host = {}; host ||= window; const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
+		{name: "nullish assignment", script: `let host = {}; host ??= window; const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
+		{name: "function return", script: `function host() { return window; } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "arrow return", script: `const host = () => window; const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 	}
 
 	for _, tt := range tests {
