@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -345,33 +347,47 @@ func validSavedDesignContextFixture(
 	if err != nil {
 		t.Fatalf("validate fixture: %v", err)
 	}
-	manifest, err := json.Marshal(validated.Manifest)
-	if err != nil {
-		t.Fatalf("marshal fixture manifest: %v", err)
-	}
-	validation, err := json.Marshal(validated.Validation)
+	validationJSON, err := json.Marshal(validated.Validation)
 	if err != nil {
 		t.Fatalf("marshal fixture validation: %v", err)
 	}
+	files := []projectdesignsystem.ArtifactIndexEntry{{
+		Path: "DESIGN.md", Role: "design", MediaType: "text/markdown; charset=utf-8",
+		SizeBytes: int64(len(artifacts.DesignMD)), SHA256: "sha256:" + sha256HexForTest(artifacts.DesignMD),
+	}}
+	v2Manifest := projectdesignsystem.ManifestV2{
+		SchemaVersion: projectdesignsystem.PackageSchemaV2,
+		Binding: projectdesignsystem.PackageBinding{
+			WorkspaceID: util.UUIDToString(workspaceID), ProjectID: util.UUIDToString(projectID),
+			DesignSystemID: util.UUIDToString(systemID), TaskID: util.UUIDToString(sourceTaskID),
+			AgentID: "agent-1", Operation: "generate", InputSnapshotSHA256: "sha256:" + strings.Repeat("a", 64),
+		},
+		ContentDigest: "sha256:" + validated.Manifest.Digest,
+		Files:         files,
+	}
+	manifestJSON, err := json.Marshal(v2Manifest)
+	if err != nil {
+		t.Fatalf("marshal fixture V2 manifest: %v", err)
+	}
+	indexJSON, err := json.Marshal(files)
+	if err != nil {
+		t.Fatalf("marshal fixture artifact index: %v", err)
+	}
 	savedAt := time.Date(2026, time.July, 30, 3, 58, 25, 0, time.UTC)
 	return db.ProjectDesignSystem{
-			ID:          systemID,
-			WorkspaceID: workspaceID,
-			ProjectID:   projectID,
-			Name:        "Atlas",
-			Platform:    "web",
-			SavedAt:     pgtype.Timestamptz{Time: savedAt, Valid: true},
+			ID: systemID, WorkspaceID: workspaceID, ProjectID: projectID,
+			Name: "Atlas", Platform: "web",
+			SavedAt: pgtype.Timestamptz{Time: savedAt, Valid: true},
 		}, db.ProjectDesignSystemPackage{
-			DesignSystemID:  systemID,
-			Slot:            "saved",
-			DesignMd:        artifacts.DesignMD,
-			TokensCss:       artifacts.TokensCSS,
-			ComponentsHtml:  artifacts.ComponentsHTML,
-			Manifest:        manifest,
-			Validation:      validation,
-			IntegritySha256: validated.Manifest.Digest,
-			SourceTaskID:    sourceTaskID,
-			RenderStatus:    "passed",
+			DesignSystemID: systemID, Slot: "saved",
+			DesignMd: artifacts.DesignMD, TokensCss: artifacts.TokensCSS, ComponentsHtml: artifacts.ComponentsHTML,
+			Manifest: manifestJSON, Validation: validationJSON, IntegritySha256: validated.Manifest.Digest,
+			SourceTaskID: sourceTaskID, RenderStatus: "passed",
+			PackageSchema: projectdesignsystem.PackageSchemaV2,
+			ArchiveObjectKey: pgtype.Text{
+				String: "project-design-systems/" + util.UUIDToString(systemID) + "/archive.zip", Valid: true,
+			},
+			ArtifactIndex: indexJSON,
 		}
 }
 
@@ -423,6 +439,12 @@ func TestProjectDesignContextResolverPrefersRepositoryScopedSystem(t *testing.T)
 	}
 	if resolved.Package.DesignSystemID != util.UUIDToString(repoSystemID) {
 		t.Fatalf("resolved the wrong system: %q", resolved.Package.DesignSystemID)
+	}
+	if resolved.Package.ProjectID != util.UUIDToString(projectID) ||
+		resolved.Package.SavedPackageID != repoSaved.ID.String() ||
+		resolved.Package.ArchiveObjectKey != repoSaved.ArchiveObjectKey.String {
+		t.Fatalf("package provenance = %#v; want project=%s package=%s archive=%s",
+			resolved.Package, projectID, repoSaved.ID, repoSaved.ArchiveObjectKey.String)
 	}
 	if resolved.Package.ProjectResourceID != util.UUIDToString(resourceID) {
 		t.Fatalf("package does not carry its repository: %#v", resolved.Package)
@@ -545,4 +567,9 @@ func TestProjectDesignContextResolverDoesNotFallBackOnInvalidRepositoryPackage(t
 	if !errors.Is(err, ErrSavedDesignContextInvalid) {
 		t.Fatalf("Resolve() error = %v, want ErrSavedDesignContextInvalid", err)
 	}
+}
+
+func sha256HexForTest(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }

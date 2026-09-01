@@ -8211,6 +8211,14 @@ type DesignDocumentTaskInput struct {
 	// agent's reference/attachments directory before the session starts,
 	// each pinned by size and digest so a swapped object cannot be served.
 	Attachments []DesignDocumentTaskAttachment `json:"attachments,omitempty"`
+	// DesignSystem is the server-derived saved package reference for an
+	// initial generation. Only the daemon-facing digest is needed; ownership and
+	// storage location remain in the authenticated task context.
+	DesignSystem *DesignDocumentDesignSystemReference `json:"design_system,omitempty"`
+}
+
+type DesignDocumentDesignSystemReference struct {
+	ContentDigest string `json:"content_digest"`
 }
 
 // DesignDocumentTaskAttachment pins one reference attachment for the daemon.
