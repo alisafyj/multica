@@ -11,5 +11,5 @@ export const HEALTH_DOT_CLASS: Record<RuntimeHealth, string> = {
   online: "bg-success",
   recently_lost: "bg-warning",
   offline: "bg-muted-foreground/40",
-  about_to_gc: "bg-destructive",
+  long_offline: "bg-destructive",
 };
