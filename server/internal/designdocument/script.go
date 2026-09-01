@@ -181,9 +181,15 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 		audit.checkCall(value.X, value.Args)
 	case *js.BinaryExpr:
 		if value.Op == js.EqToken {
-			switch value.X.(type) {
-			case *js.DotExpr, *js.IndexExpr:
-				if audit.isGlobalAlias(value.Y) {
+			switch target := value.X.(type) {
+			case *js.DotExpr:
+				if expressionContainsGlobalAlias(value.Y, audit.globalBindings) &&
+					!expressionContainsGlobalAlias(target.X, audit.globalBindings) {
+					audit.checkGlobalAssignment(value.X)
+				}
+			case *js.IndexExpr:
+				if expressionContainsGlobalAlias(value.Y, audit.globalBindings) &&
+					!expressionContainsGlobalAlias(target.X, audit.globalBindings) {
 					audit.checkGlobalAssignment(value.X)
 				}
 			default:
