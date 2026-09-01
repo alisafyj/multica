@@ -1394,6 +1394,7 @@ func designDocumentPackageContract(outputDir string) string {
 	if outputDir != "" {
 		b.WriteString("On this run `$MULTICA_OUTPUT_DIR` is `" + outputDir + "`. Write there, at exactly the paths below.\n")
 	}
+	b.WriteString("Never create or write a relative `output/design-document` path under the current work directory; it is not collected.\n")
 	b.WriteString("`.agent_context/design_document/work/` is NOT that directory. It holds one grounding receipt and nothing else; a package written there is a package the platform never sees, and the run fails reporting that you produced no files at all.\n\n")
 	b.WriteString("Required:\n")
 	b.WriteString("- `brief.json` — the semantic layer described above.\n")
