@@ -313,6 +313,7 @@ func TestDesignDocumentPromptDeclaresTheAcceptedFileSet(t *testing.T) {
 	for _, required := range []string{
 		"`brief.json`", "`prototype/index.html`", "`coverage.json`",
 		"`assets/<file>`", "Any other path is rejected before the audit runs",
+		"every `pages[].entry` must be a package-relative `prototype/*.html` path",
 		"Do NOT write `manifest.json`",
 	} {
 		if !strings.Contains(prompt, required) {

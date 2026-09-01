@@ -1397,6 +1397,7 @@ func designDocumentPackageContract(outputDir string) string {
 	b.WriteString("`.agent_context/design_document/work/` is NOT that directory. It holds one grounding receipt and nothing else; a package written there is a package the platform never sees, and the run fails reporting that you produced no files at all.\n\n")
 	b.WriteString("Required:\n")
 	b.WriteString("- `brief.json` — the semantic layer described above.\n")
+	b.WriteString("- In `brief.json`, every `pages[].entry` must be a package-relative `prototype/*.html` path (for example `prototype/index.html`), never a page ID, route, or filename outside `prototype/`.\n")
 	b.WriteString("- `prototype/index.html` — the prototype entry point, a complete HTML document.\n")
 	b.WriteString("- `coverage.json` — requirement coverage and honest gaps.\n\n")
 	b.WriteString("Optional:\n")
