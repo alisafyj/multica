@@ -182,6 +182,7 @@ describe("Web login auth mode", () => {
           "multica://auth/callback?token=desktop-token",
         ),
       );
+      expect(screen.getByRole("button", { name: "translated" })).toBeInTheDocument();
     } finally {
       Object.defineProperty(window, "location", {
         configurable: true,

@@ -31,7 +31,6 @@ func TestReasonStringWireValues(t *testing.T) {
 		{ReasonAuthenticationExpired, "authentication_expired"},
 		{ReasonRuntimeCLITimeout, "runtime_cli_timeout"},
 		{ReasonInvalidTaskIdentity, "invalid_task_identity"},
-		{ReasonIssueWindowRestricted, "issue_window_restricted"},
 		// Agent-side.
 		{ReasonAgentProviderAuthOrAccess, "agent_error.provider_auth_or_access"},
 		{ReasonAgentProviderQuotaLimit, "agent_error.provider_quota_limit"},
@@ -49,7 +48,7 @@ func TestReasonStringWireValues(t *testing.T) {
 		{ReasonAgentUnknown, "agent_error.unknown"},
 	}
 
-	if got, want := len(cases), 27; got != want {
+	if got, want := len(cases), 26; got != want {
 		t.Fatalf("constant count = %d, want %d (canonical taxonomy size)", got, want)
 	}
 
@@ -81,7 +80,6 @@ func TestIsAgentError(t *testing.T) {
 		ReasonAuthenticationExpired,
 		ReasonRuntimeCLITimeout,
 		ReasonInvalidTaskIdentity,
-		ReasonIssueWindowRestricted,
 	}
 	for _, r := range platformSide {
 		if r.IsAgentError() {
@@ -122,7 +120,7 @@ func TestAllReasonsContents(t *testing.T) {
 	t.Parallel()
 
 	got := AllReasons()
-	if len(got) != 27 {
+	if len(got) != 26 {
 		t.Fatalf("AllReasons() returned %d entries, want 26", len(got))
 	}
 
@@ -140,7 +138,7 @@ func TestAllReasonsContents(t *testing.T) {
 		}
 	}
 
-	if platformCount != 13 {
+	if platformCount != 12 {
 		t.Errorf("AllReasons(): platform-side count = %d, want 12", platformCount)
 	}
 	if agentCount != 14 {
@@ -157,7 +155,7 @@ func TestAllReasonsContents(t *testing.T) {
 		ReasonTimeout, ReasonIterationLimit, ReasonAgentBlocked,
 		ReasonAPIInvalidRequest, ReasonSkillBundleUnavailable,
 		ReasonAuthenticationExpired,
-		ReasonRuntimeCLITimeout, ReasonInvalidTaskIdentity, ReasonIssueWindowRestricted,
+		ReasonRuntimeCLITimeout, ReasonInvalidTaskIdentity,
 		ReasonAgentProviderAuthOrAccess, ReasonAgentProviderQuotaLimit,
 		ReasonAgentProviderCapacityOrRateLimit, ReasonAgentProviderServerError,
 		ReasonAgentProviderNetwork, ReasonAgentProcessFailure,

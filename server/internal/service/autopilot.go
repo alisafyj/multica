@@ -652,6 +652,7 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	if err != nil {
 		return fmt.Errorf("resolve leader: %w", err)
 	}
+	issueCountPolicy := ResolveIssueCountPolicy(ctx, s.Entitlements, ap.WorkspaceID)
 
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
@@ -660,11 +661,6 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	defer tx.Rollback(ctx)
 
 	qtx := s.Queries.WithTx(tx)
-	issueNumber, err := qtx.IncrementIssueCounter(ctx, ap.WorkspaceID)
-	if err != nil {
-		return fmt.Errorf("increment issue counter: %w", err)
-	}
-
 	title := s.interpolateTemplate(ap, *run, triggerTimezone)
 	description := s.buildIssueDescription(ap, *run, triggerTimezone)
 
@@ -696,6 +692,18 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 		return fmt.Errorf("recent duplicate guard: %w", err)
 	} else if found {
 		return &errDispatchSkipped{reason: "recent duplicate autopilot issue: " + util.UUIDToString(duplicate.ID), code: dispatch.ReasonAlreadyActive}
+	}
+
+	issueNumber, err := AllocateIssueNumber(ctx, qtx, ap.WorkspaceID, issueCountPolicy)
+	if err != nil {
+		var limitErr *IssueLimitReachedError
+		if errors.As(err, &limitErr) {
+			return &errDispatchSkipped{
+				reason: "workspace has reached its issue limit",
+				code:   dispatch.ReasonIssueLimitReached,
+			}
+		}
+		return fmt.Errorf("allocate issue number: %w", err)
 	}
 
 	newPosition, err := issueposition.NextTopPosition(ctx, tx, ap.WorkspaceID, "todo")
@@ -783,7 +791,7 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 		ActorType:   "agent",
 		ActorID:     util.UUIDToString(leader.ID),
 		Payload: map[string]any{
-			"issue": IssueToMapWithCategory(ctx, s.Queries, issue, prefix),
+			"issue": IssueToMapResolved(ctx, s.Queries, issue, prefix),
 		},
 	})
 	issue = reconcileIssueAfterCreated(ctx, s.Queries, issue, func(previous, current db.Issue) {
@@ -1006,7 +1014,7 @@ func (s *AutopilotService) dispatchRunOnly(ctx context.Context, ap db.Autopilot,
 		}
 		return fmt.Errorf("resolve leader: %w", err)
 	}
-	verdict, err := AgentReadiness(ctx, s.Queries, agent)
+	verdict, err := AgentReadiness(ctx, s.runtimeLookup(), agent)
 	if err != nil {
 		return fmt.Errorf("check agent readiness: %w", err)
 	}
@@ -1389,7 +1397,7 @@ func (s *AutopilotService) shouldSkipDispatch(ctx context.Context, ap db.Autopil
 		// chance to succeed.
 		return "", "", false
 	}
-	verdict, err := AgentReadiness(ctx, s.Queries, agent)
+	verdict, err := AgentReadiness(ctx, s.runtimeLookup(), agent)
 	if err != nil {
 		slog.Warn("autopilot admission: failed to load runtime",
 			"autopilot_id", util.UUIDToString(ap.ID),
