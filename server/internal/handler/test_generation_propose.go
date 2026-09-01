@@ -424,7 +424,40 @@ func (h *Handler) insertProposedTestCase(
 		}
 		repos = append(repos, repo)
 	}
+	// Carry the approved plan's issue scope onto the case. Without this the
+	// provenance dies with the job and the generated case can never say what it
+	// was written for.
+	if err := h.linkGeneratedCaseIssues(
+		r, qtx, testCase.ID, wsUUID, uuidToString(wsUUID), job.CreatedBy,
+		h.testGenerationScopeIssueRefs(r, job, wsUUID),
+	); err != nil {
+		return db.TestCase{}, nil, err
+	}
 	return testCase, repos, nil
+}
+
+// testGenerationScopeIssueRefs reads the issue scope the agent actually worked
+// under. The approved plan wins because a reviewer can edit the scope there
+// before approving; the job's original input is only the fallback for a job
+// whose plan row is missing.
+func (h *Handler) testGenerationScopeIssueRefs(
+	r *http.Request,
+	job db.TestGenerationJob,
+	wsUUID pgtype.UUID,
+) []string {
+	plan, err := h.Queries.GetTestGenerationPlanByJob(r.Context(), db.GetTestGenerationPlanByJobParams{
+		JobID:       job.ID,
+		WorkspaceID: wsUUID,
+	})
+	if err == nil {
+		if payload := unmarshalJSONObject(plan.Plan); payload != nil {
+			return stringsFromAny(payload["issues"])
+		}
+	}
+	if input := unmarshalJSONObject(job.Input); input != nil {
+		return stringsFromAny(input["issue_ids"])
+	}
+	return nil
 }
 
 // rewriteDraftTestCase applies a later run's refinement straight onto an

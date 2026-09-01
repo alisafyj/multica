@@ -483,3 +483,58 @@ export interface DispatchTestGenerationJobResponse {
   job: TestGenerationJob;
   agent_task_id: string;
 }
+
+// ---------------------------------------------------------------------------
+// Coverage links between a test case and the issues it verifies
+// ---------------------------------------------------------------------------
+
+/** Who drew the link: `ai` means a generation job asserted it under a plan
+ *  scoped to that issue, `human` means someone linked it by hand. */
+export type TestCaseIssueOrigin = "ai" | "human";
+
+/** One issue a case claims to cover, resolved for display. */
+export interface TestCaseIssueLink {
+  test_case_id: string;
+  issue_id: string;
+  issue_number: number;
+  issue_identifier: string;
+  issue_title: string;
+  issue_status: string;
+  issue_priority: string;
+  origin: TestCaseIssueOrigin;
+  created_at: string;
+}
+
+/**
+ * One case covering an issue. `latest_result` is null when the case has never
+ * been executed — deliberately distinct from `"pending"`, which claims the case
+ * is queued in a round.
+ */
+export interface IssueTestCaseLink {
+  test_case_id: string;
+  issue_id: string;
+  case_number: number;
+  case_key: string;
+  case_title: string;
+  case_status: string;
+  case_priority: string;
+  case_type: string;
+  latest_result: TestRunCaseResult | null;
+  latest_executed_at: string | null;
+  origin: TestCaseIssueOrigin;
+  created_at: string;
+}
+
+export interface ListTestCaseIssuesResponse {
+  issues: TestCaseIssueLink[];
+  total: number;
+}
+
+export interface ListIssueTestCasesResponse {
+  cases: IssueTestCaseLink[];
+  total: number;
+}
+
+export interface LinkTestCaseIssuesRequest {
+  issue_ids: string[];
+}

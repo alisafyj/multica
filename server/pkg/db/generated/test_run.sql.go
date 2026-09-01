@@ -815,12 +815,14 @@ const updateTestRun = `-- name: UpdateTestRun :one
 UPDATE test_run SET
     status             = COALESCE($3, status),
     agent_task_id      = COALESCE($4, agent_task_id),
-    capability_binding = COALESCE($5, capability_binding),
-    environment        = COALESCE($6, environment),
-    build_ref          = COALESCE($7, build_ref),
-    error              = COALESCE($8, error),
-    started_at         = COALESCE($9, started_at),
-    completed_at       = COALESCE($10, completed_at),
+    executor_type      = COALESCE($5, executor_type),
+    executor_id        = COALESCE($6, executor_id),
+    capability_binding = COALESCE($7, capability_binding),
+    environment        = COALESCE($8, environment),
+    build_ref          = COALESCE($9, build_ref),
+    error              = COALESCE($10, error),
+    started_at         = COALESCE($11, started_at),
+    completed_at       = COALESCE($12, completed_at),
     updated_at         = now()
 WHERE id = $1 AND workspace_id = $2
 RETURNING id, workspace_id, project_id, plan_id, title, executor_type, executor_id, agent_task_id, environment, build_ref, capability_binding, status, source_run_id, retry_scope, error, started_at, completed_at, created_by, created_at, updated_at
@@ -831,6 +833,8 @@ type UpdateTestRunParams struct {
 	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
 	Status            pgtype.Text        `json:"status"`
 	AgentTaskID       pgtype.UUID        `json:"agent_task_id"`
+	ExecutorType      pgtype.Text        `json:"executor_type"`
+	ExecutorID        pgtype.UUID        `json:"executor_id"`
 	CapabilityBinding []byte             `json:"capability_binding"`
 	Environment       pgtype.Text        `json:"environment"`
 	BuildRef          pgtype.Text        `json:"build_ref"`
@@ -847,6 +851,8 @@ func (q *Queries) UpdateTestRun(ctx context.Context, arg UpdateTestRunParams) (T
 		arg.WorkspaceID,
 		arg.Status,
 		arg.AgentTaskID,
+		arg.ExecutorType,
+		arg.ExecutorID,
 		arg.CapabilityBinding,
 		arg.Environment,
 		arg.BuildRef,

@@ -1,4 +1,10 @@
 {
+  "tabs": {
+    "cases": "ケース",
+    "plans": "計画",
+    "runs": "実行",
+    "jobs": "生成ジョブ"
+  },
   "page": {
     "title": "テストケース",
     "empty": "テストケースがありません",
@@ -135,7 +141,8 @@
     "edit": "編集",
     "confirmDelete": "このテストケースを削除しますか？",
     "batchApprove": "選択したケースを承認",
-    "selectAll": "すべて選択"
+    "selectAll": "すべて選択",
+    "addToPlan": "計画に追加"
   },
   "toast": {
     "created": "テストケースを作成しました",
@@ -175,7 +182,14 @@
     "runResultSaved": "結果を保存しました",
     "runResultFailed": "結果を保存できませんでした",
     "defectOpened": "不具合issueを作成しました",
-    "defectFailed": "不具合を開けませんでした"
+    "defectFailed": "不具合を開けませんでした",
+    "batchApproveFailed": "{{count}} 件のケースを承認できませんでした",
+    "planCasesAdded": "{{count}} 件のケースを追加しました",
+    "planCasesAlreadyAdded": "選択したケースはすでにこの計画にあります",
+    "planCasesAddFailed": "計画への追加に失敗しました",
+    "planCaseRemoveFailed": "ケースの削除に失敗しました",
+    "planUpdated": "計画を更新しました",
+    "planUpdateFailed": "計画の更新に失敗しました"
   },
   "job": {
     "title": "生成ジョブ",
@@ -237,7 +251,12 @@
       "issuesLabel": "対象 issue",
       "issuesPlaceholder": "例: MUL-123, MUL-456（カンマ区切り）",
       "instructionsLabel": "補足指示",
-      "instructionsPlaceholder": "対象パス、重点的に見る挙動、エージェントが知るべき情報。"
+      "instructionsPlaceholder": "対象パス、重点的に見る挙動、エージェントが知るべき情報。",
+      "issuesEmpty": "要件の指定なし（範囲を限定しません）",
+      "issuesAdd": "要件を追加",
+      "issuesRemove": "削除",
+      "issuesPickerTitle": "要件で範囲を指定",
+      "issuesPickerDescription": "この生成でカバーする要件を選んでください。"
     },
     "dispatch": {
       "title": "エージェントに派遣",
@@ -305,7 +324,12 @@
       "environment": "環境",
       "buildRef": "ビルドRef",
       "remove": "削除",
-      "caseCount_other": "{{count}}件のケース"
+      "caseCount_other": "{{count}}件のケース",
+      "settings": "計画設定",
+      "description": "説明",
+      "deletePlan": "計画を削除",
+      "confirmDelete": "このテスト計画を削除しますか？",
+      "unknownCase": "ケースは存在しません"
     }
   },
   "run": {
@@ -357,7 +381,9 @@
       "button": "派遣",
       "dispatching": "派遣中...",
       "running": "実行中...",
-      "blocked": "不足している能力: {{kind}}"
+      "blocked": "不足している能力: {{kind}}",
+      "prompt": "追加指示",
+      "promptPlaceholder": "任意: エージェントへの補足"
     }
   },
   "runCase": {
@@ -375,7 +401,9 @@
       "executor": "実行者",
       "duration": "所要時間",
       "defect": "不具合"
-    }
+    },
+    "saveNotes": "メモを保存",
+    "notesNeedResult": "メモは結果と一緒に保存されます。先に結果を選んでください。"
   },
   "timeline": {
     "title": "実行履歴",
@@ -385,5 +413,56 @@
     "environment": "環境",
     "buildRef": "ビルド",
     "executedAt": "実行日時"
+  },
+  "runs": {
+    "title": "テスト実行",
+    "empty": "テスト実行がまだありません",
+    "emptyHint": "テスト計画から実行を作成してください。",
+    "columns": {
+      "title": "名称",
+      "status": "ステータス",
+      "executor": "実行者",
+      "environment": "環境",
+      "buildRef": "ビルド",
+      "created": "作成日時"
+    },
+    "executor": {
+      "member": "メンバー",
+      "agent": "エージェント"
+    },
+    "truncated": "最新の {{count}} 件のみ表示しています。それ以前の実行は一覧にありません。"
+  },
+  "jobs": {
+    "title": "生成ジョブ",
+    "empty": "生成ジョブがまだありません",
+    "emptyHint": "AI 生成を開始し、範囲を確認してから割り当ててください。",
+    "columns": {
+      "job": "ジョブ",
+      "status": "ステータス",
+      "created": "作成日時"
+    },
+    "truncated": "最新の {{count}} 件のみ表示しています。それ以前のジョブは一覧にありません。"
+  },
+  "addToPlan": {
+    "title": "テスト計画に追加",
+    "description": "選択した {{count}} 件のケースを計画に追加します。",
+    "plan": "対象の計画",
+    "newPlan": "新しい計画…",
+    "confirm": "追加"
+  },
+  "coverage": {
+    "caseSection": "対象の要件",
+    "caseEmpty": "まだ要件に紐づいていません",
+    "issueSection": "テストカバレッジ",
+    "linkIssue": "要件を紐づける",
+    "unlink": "紐づけを解除",
+    "linked": "要件を紐づけました",
+    "linkFailed": "要件の紐づけに失敗しました",
+    "unlinkFailed": "紐づけの解除に失敗しました",
+    "pickerTitle": "要件を紐づける",
+    "pickerDescription": "このケースが検証する要件を選んでください。",
+    "neverRun": "未実行",
+    "failingCount": "失敗 {{count}} 件",
+    "untestedCount": "未実行 {{count}} 件"
   }
 }

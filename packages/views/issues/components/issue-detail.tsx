@@ -92,6 +92,7 @@ import { ThreadNavPanel, mentionsUser, type ThreadNavThread } from "./thread-nav
 import { collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
+import { IssueTestCoverage } from "../../testing/components/issue-test-coverage";
 import { IssueDesignDocumentsSection } from "./issue-design-documents-section";
 import { IssueDesignRestoreSection, isRawDesignFallbackDelivery } from "./issue-design-restore-section";
 import { QuickActionsSection } from "./quick-actions-section";
@@ -2623,6 +2624,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           {pullRequestsOpen && <div className="pl-2"><PullRequestList issueId={id} /></div>}
         </div>
       )}
+
+      {/* Test coverage — the cases that claim to verify this issue, each with
+          its latest recorded outcome. Self-contained and hides itself when the
+          issue has no linked cases, so workspaces that do not use the testing
+          surface see nothing. */}
+      <IssueTestCoverage issueId={id} />
 
       {/* Execution log — active runs + collapsed past runs, each carrying its
           own token spend, with the issue total on the section header.

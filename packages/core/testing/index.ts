@@ -5,6 +5,7 @@ export {
   testRunKeys,
   testCapabilityKeys,
   testCaseTimelineKeys,
+  issueTestCaseKeys,
   type TestCaseListFilters,
   type TestGenerationJobListFilters,
   type TestPlanListFilters,
@@ -28,6 +29,8 @@ export {
   testRunCasesOptions,
   testCapabilityListOptions,
   testCaseResultTimelineOptions,
+  testCaseIssuesOptions,
+  issueTestCasesOptions,
 } from "./queries";
 export {
   useCreateTestCase,
@@ -53,6 +56,8 @@ export {
   useDispatchTestRun,
   useUpdateTestRunCaseResult,
   useOpenTestRunCaseDefect,
+  useLinkTestCaseIssues,
+  useUnlinkTestCaseIssue,
 } from "./mutations";
 export * from "./config";
 export {

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     projectId: null as string | null,
     setProjectId: vi.fn(),
   },
+  planListFilters: [] as unknown[],
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -32,9 +33,12 @@ vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
+    tests: () => "/acme/tests",
     testPlans: () => "/acme/tests/plans",
     testPlanDetail: (id: string) => `/acme/tests/plans/${id}`,
+    testRuns: () => "/acme/tests/runs",
     testRunDetail: (id: string) => `/acme/tests/runs/${id}`,
+    testGenerationJobs: () => "/acme/tests/jobs",
   }),
 }));
 
@@ -43,7 +47,10 @@ vi.mock("@multica/core/testing", () => {
     selector ? selector(mocks.viewState) : mocks.viewState;
   store.getState = () => mocks.viewState;
   return {
-    testPlanListOptions: () => ({ queryKey: ["test-plans", "ws-1", "list"] }),
+    testPlanListOptions: (_wsId: string, filters?: unknown) => {
+      mocks.planListFilters.push(filters);
+      return { queryKey: ["test-plans", "ws-1", "list"] };
+    },
     useCreateTestPlan: () => ({ mutateAsync: mocks.createPlan, isPending: false }),
     useTestCaseViewStore: store,
   };
@@ -76,6 +83,7 @@ function renderPage(adapter = makeAdapter()) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.plans = [];
+  mocks.planListFilters = [];
 });
 
 describe("TestPlansPage entry points", () => {
@@ -111,6 +119,16 @@ describe("TestPlansPage entry points", () => {
     await userEvent.click(create!);
 
     expect(adapter.push).not.toHaveBeenCalled();
+  });
+
+  // The page shows a project picker; the list underneath used to ignore it and
+  // return every plan in the workspace, which reads as a filter that is broken.
+  it("scopes the list to the selected project", async () => {
+    renderPage();
+    await screen.findAllByRole("button");
+    expect(mocks.planListFilters).toContainEqual(
+      expect.objectContaining({ projectId: "p-1" }),
+    );
   });
 
   it("shows existing plans and navigates to plan detail on click", async () => {

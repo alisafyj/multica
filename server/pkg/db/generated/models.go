@@ -2029,6 +2029,15 @@ type TestCase struct {
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
+type TestCaseIssue struct {
+	TestCaseID  pgtype.UUID        `json:"test_case_id"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Origin      string             `json:"origin"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type TestCaseProposal struct {
 	ID           pgtype.UUID        `json:"id"`
 	WorkspaceID  pgtype.UUID        `json:"workspace_id"`

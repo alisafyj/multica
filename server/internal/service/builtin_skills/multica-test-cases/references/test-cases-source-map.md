@@ -118,3 +118,18 @@ rg -n 'buildProposeBody|proposalListPath|testGenerationJobPath|proposalActionPat
 rg -n 'ProposeTestCases|ListTestCaseProposals|AcceptTestCaseProposal|RejectTestCaseProposal|maxTestCaseProposalItems|validTestCaseProposalKinds' \
   internal/handler/test_generation_propose.go
 ```
+
+## Coverage links (case <-> issue)
+
+| Fact | Source |
+| --- | --- |
+| `test_case_issue` join table, primary key `(test_case_id, issue_id)`, no foreign key | `server/migrations/907_test_case_issue.up.sql` |
+| `origin` is constrained to `ai` / `human` and defaults to `human` | `server/migrations/907_test_case_issue.up.sql` |
+| Reverse lookup is indexed on `(workspace_id, issue_id)` | `server/migrations/908_test_case_issue_issue_index.up.sql` |
+| Linking is idempotent: `ON CONFLICT DO NOTHING` keeps the first link's origin and author | `server/pkg/db/queries/test_case.sql` (`LinkTestCaseIssue`) |
+| An unknown `issue_id` is rejected with 400 before any write, because no foreign key backs the table | `server/internal/handler/test_case_issue.go` (`LinkTestCaseIssues`) |
+| `latest_result` is the most recent outcome with a non-null `executed_at`, COALESCEd to `''` and mapped to JSON null | `server/pkg/db/queries/test_case.sql` (`ListTestCasesForIssue`), `server/internal/handler/test_case_issue.go` (`issueTestCaseLinkToResponse`) |
+| Deleting a case sweeps its links inside the delete transaction | `server/internal/handler/test_case.go` (`DeleteTestCase`) |
+| Deleting an issue sweeps its links inside the delete transaction | `server/internal/handler/issue.go` (`deleteIssuesAndCollectAttachmentURLs`) |
+| A generated case inherits the APPROVED plan's `issues` scope, falling back to the job's `input.issue_ids` only when the plan row is missing | `server/internal/handler/test_generation_propose.go` (`testGenerationScopeIssueRefs`) |
+| A scope entry resolves as a UUID or a `MUL-123` identifier; unresolvable entries are skipped | `server/internal/handler/test_case_issue.go` (`resolveGeneratedIssueRef`) |

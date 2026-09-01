@@ -312,6 +312,8 @@ import type {
   ListTestRunCasesResponse,
   TestCaseResultTimelineResponse,
   ListTestCapabilitiesResponse,
+  ListTestCaseIssuesResponse,
+  ListIssueTestCasesResponse,
   DispatchTestRunResponse,
   CreateTestPlanRequest,
   UpdateTestPlanRequest,
@@ -619,6 +621,8 @@ import {
   ListTestRunCasesResponseSchema,
   TestCaseResultTimelineResponseSchema,
   ListTestCapabilitiesResponseSchema,
+  ListTestCaseIssuesResponseSchema,
+  ListIssueTestCasesResponseSchema,
   DispatchTestRunResponseSchema,
   EMPTY_TEST_PLAN,
   EMPTY_TEST_RUN,
@@ -629,6 +633,8 @@ import {
   EMPTY_LIST_TEST_RUN_CASES_RESPONSE,
   EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE,
   EMPTY_LIST_TEST_CAPABILITIES_RESPONSE,
+  EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE,
+  EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE,
   SkillSchema,
   EMPTY_SKILL,
   SkillImportResultSchema,
@@ -6050,6 +6056,46 @@ export class ApiClient {
     );
     return parseWithFallback(raw, TestCaseResultTimelineResponseSchema, EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE, {
       endpoint: "GET /api/test-cases/:ref/results",
+    });
+  }
+
+  // Coverage links: which requirements a case verifies, and the reverse.
+
+  async listTestCaseIssues(ref: string): Promise<ListTestCaseIssuesResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-cases/${encodeURIComponent(ref)}/issues`,
+    );
+    return parseWithFallback(raw, ListTestCaseIssuesResponseSchema, EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE, {
+      endpoint: "GET /api/test-cases/:ref/issues",
+    });
+  }
+
+  async linkTestCaseIssues(
+    ref: string,
+    issueIds: string[],
+  ): Promise<ListTestCaseIssuesResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-cases/${encodeURIComponent(ref)}/issues`,
+      { method: "POST", body: JSON.stringify({ issue_ids: issueIds }) },
+    );
+    return parseWithFallback(raw, ListTestCaseIssuesResponseSchema, EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE, {
+      endpoint: "POST /api/test-cases/:ref/issues",
+    });
+  }
+
+  async unlinkTestCaseIssue(ref: string, issueId: string): Promise<void> {
+    await this.fetch<unknown>(
+      `/api/test-cases/${encodeURIComponent(ref)}/issues/${encodeURIComponent(issueId)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  async listIssueTestCases(issueId: string): Promise<ListIssueTestCasesResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/test-cases`,
+    );
+    return parseWithFallback(raw, ListIssueTestCasesResponseSchema, EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE, {
+      endpoint: "GET /api/issues/:id/test-cases",
     });
   }
 

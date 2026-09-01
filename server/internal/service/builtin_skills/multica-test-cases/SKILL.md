@@ -181,8 +181,50 @@ approved cases land in the review queue:
     multica testcase proposal accept <proposal-id>
     multica testcase proposal reject <proposal-id>
 
+Every case a run creates is linked to the issues in its APPROVED plan's
+`issues` scope, with `origin: "ai"`. The approved plan wins over the job's
+original `issue_ids` because a reviewer can edit the scope before approving,
+and links that disagreed with what the agent was given would be worse than
+none. Entries resolve as either a UUID or a `MUL-123` identifier; one that
+resolves to nothing is skipped rather than failing the proposal.
+
 `new` cases land directly in the library as `draft`; they do not go through the
 proposal queue. Review them with `multica testcase list --status draft`.
+
+## Coverage: which requirements a case verifies
+
+A case can be linked to the issues it verifies. This is a real relation, not a
+free-text note: it is queryable from both sides, and the issue detail surface
+reads it to show whether a requirement is tested and whether its coverage
+passes.
+
+    GET    /api/test-cases/<ref>/issues        # the issues this case covers
+    POST   /api/test-cases/<ref>/issues        # {"issue_ids": [...]}
+    DELETE /api/test-cases/<ref>/issues/<id>
+    GET    /api/issues/<id>/test-cases         # the reverse: coverage of one issue
+
+Each link carries an `origin`:
+
+| origin | meaning |
+| --- | --- |
+| `human` | someone linked it by hand |
+| `ai` | a generation run asserted it, because its approved plan was scoped to that issue |
+
+The distinction is what a reviewer needs: an `ai` link is a claim the run made,
+not a fact a person checked.
+
+Linking is idempotent — re-sending an existing pair keeps the first link's
+origin and author, so a later AI run cannot silently relabel a human's link.
+An `issue_id` that does not exist in the workspace is rejected with 400 rather
+than stored: the table has no foreign key, so an unchecked id would become a
+link to nothing.
+
+The reverse direction carries `latest_result`, the most recent recorded outcome
+across every round the case appeared in. It is `null` when the case has never
+been executed — deliberately distinct from `"pending"`, which would claim the
+case is queued in a round it was never added to.
+
+Deleting either side sweeps the links in the same transaction as the delete.
 
 ## What does not exist yet
 

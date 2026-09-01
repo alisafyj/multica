@@ -31,8 +31,10 @@ import {
   TestCaseDetail,
   TestCasesPage,
   TestGenerationJobPage,
+  TestGenerationJobsPage,
   TestPlansPage,
   TestPlanDetail,
+  TestRunsPage,
   TestRunDetail,
 } from "@multica/views/testing";
 import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
@@ -240,6 +242,11 @@ export const appRoutes: RouteObject[] = [
             handle: { title: "Test Case" },
           },
           {
+            path: "tests/jobs",
+            element: <TestGenerationJobsPage />,
+            handle: { title: "Generation Jobs" },
+          },
+          {
             path: "tests/jobs/:jobId",
             element: <DesktopTestGenerationJobRoute />,
             handle: { title: "Generation Job" },
@@ -253,6 +260,11 @@ export const appRoutes: RouteObject[] = [
             path: "tests/plans/:planId",
             element: <DesktopTestPlanDetailRoute />,
             handle: { title: "Test Plan" },
+          },
+          {
+            path: "tests/runs",
+            element: <TestRunsPage />,
+            handle: { title: "Test Runs" },
           },
           {
             path: "tests/runs/:runId",

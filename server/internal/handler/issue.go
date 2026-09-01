@@ -4034,6 +4034,14 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issu
 		} else if !errors.Is(contextErr, pgx.ErrNoRows) {
 			return issueDeleteResult{}, fmt.Errorf("load issue source context for delete: %w", contextErr)
 		}
+		// Test coverage links have no foreign key, so they are swept here.
+		// Leaving them would make a deleted issue keep showing up on the cases
+		// that covered it, as a row the join can no longer resolve.
+		if err := qtx.DeleteTestCaseIssueLinksForIssue(ctx, db.DeleteTestCaseIssueLinksForIssueParams{
+			IssueID: issue.ID, WorkspaceID: issue.WorkspaceID,
+		}); err != nil {
+			return issueDeleteResult{}, fmt.Errorf("delete test coverage links: %w", err)
+		}
 		if err := qtx.DeleteIssue(ctx, db.DeleteIssueParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID}); err != nil {
 			return issueDeleteResult{}, fmt.Errorf("delete issue: %w", err)
 		}
