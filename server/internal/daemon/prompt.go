@@ -1400,6 +1400,7 @@ func designDocumentPackageContract(outputDir string) string {
 	b.WriteString("- In `brief.json`, every `pages[].entry` must be a package-relative `prototype/*.html` path (for example `prototype/index.html`), never a page ID, route, or filename outside `prototype/`.\n")
 	b.WriteString("- `prototype/index.html` — the prototype entry point, a complete HTML document.\n")
 	b.WriteString("- `coverage.json` — requirement coverage and honest gaps.\n\n")
+	b.WriteString("- every `coverage.json` reference or gap `ref_id` must name an ID declared in `brief.json`; describe external facts in reason or notes instead of using them as `ref_id` values.\n\n")
 	b.WriteString("Optional:\n")
 	b.WriteString("- `prototype/<path>.html`, `prototype/<path>.css`, `prototype/<path>.js` — split the prototype as its real complexity requires.\n")
 	b.WriteString("- `assets/<file>` — images and fonts the prototype references.\n")

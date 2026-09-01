@@ -314,6 +314,7 @@ func TestDesignDocumentPromptDeclaresTheAcceptedFileSet(t *testing.T) {
 		"`brief.json`", "`prototype/index.html`", "`coverage.json`",
 		"`assets/<file>`", "Any other path is rejected before the audit runs",
 		"every `pages[].entry` must be a package-relative `prototype/*.html` path",
+		"every `coverage.json` reference or gap `ref_id` must name an ID declared in `brief.json`",
 		"Do NOT write `manifest.json`",
 	} {
 		if !strings.Contains(prompt, required) {
