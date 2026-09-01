@@ -205,7 +205,7 @@ func materializeDesignImplementationContext(rootDir string, contextValue designI
 	if err := temporaryRoot.Close(); err != nil {
 		return err
 	}
-	if err := replaceImplementationRoot(agentRoot, temporaryName); err != nil {
+	if err := replaceImplementationRoot(agentRoot, temporaryName, agentRoot.RemoveAll); err != nil {
 		return err
 	}
 	temporaryOwned = false
@@ -279,7 +279,7 @@ func writeExclusiveRootJSON(root *os.Root, relative string, value any) error {
 	return file.Close()
 }
 
-func replaceImplementationRoot(agentRoot *os.Root, temporaryName string) error {
+func replaceImplementationRoot(agentRoot *os.Root, temporaryName string, removeAll func(string) error) error {
 	if err := requireRootDirectory(agentRoot, "design_implementation"); errors.Is(err, fs.ErrNotExist) {
 		return agentRoot.Rename(temporaryName, "design_implementation")
 	} else if err != nil {
@@ -293,10 +293,31 @@ func replaceImplementationRoot(agentRoot *os.Root, temporaryName string) error {
 		restoreErr := agentRoot.Rename(backupName, "design_implementation")
 		return errors.Join(err, restoreErr)
 	}
-	if err := agentRoot.RemoveAll(backupName); err != nil {
-		return err
+	if err := removeAll(backupName); err != nil {
+		cleanupErr := fmt.Errorf("remove previous implementation context: %w", err)
+		failedNewName := ".design_implementation-failed-" + rand.Text()
+		if moveErr := agentRoot.Rename("design_implementation", failedNewName); moveErr != nil {
+			return errors.Join(cleanupErr, fmt.Errorf("move activated implementation context for rollback: %w", moveErr))
+		}
+		if restoreErr := agentRoot.Rename(backupName, "design_implementation"); restoreErr != nil {
+			reinstateErr := agentRoot.Rename(failedNewName, "design_implementation")
+			return errors.Join(
+				cleanupErr,
+				fmt.Errorf("restore previous implementation context: %w", restoreErr),
+				wrapOptionalError("reinstate activated implementation context", reinstateErr),
+			)
+		}
+		removeFailedNewErr := removeAll(failedNewName)
+		return errors.Join(cleanupErr, wrapOptionalError("remove rolled-back implementation context", removeFailedNewErr))
 	}
 	return nil
+}
+
+func wrapOptionalError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", operation, err)
 }
 
 func stringSliceArgument(arguments map[string]any, key string) ([]string, error) {

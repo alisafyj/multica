@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -342,6 +343,54 @@ func TestMaterializeDesignImplementationContextReplacesOwnedSubtreeAndPreservesS
 	}
 	if got.DesignRef != "design_v1_new" || got.RevisionID != "revision-new" {
 		t.Fatalf("new identity was not materialized: %+v", got)
+	}
+}
+
+func TestReplaceImplementationRootRestoresOldContextWhenBackupCleanupFails(t *testing.T) {
+	root := t.TempDir()
+	agentContext := filepath.Join(root, ".agent_context")
+	for relative, content := range map[string]string{
+		"design_implementation/context.json":      "old identity",
+		".design_implementation-new/context.json": "new identity",
+	} {
+		full := filepath.Join(agentContext, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agentRoot, err := os.OpenRoot(agentContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agentRoot.Close()
+	cleanupFailure := errors.New("forced backup cleanup failure")
+	cleanup := func(relative string) error {
+		if strings.HasPrefix(relative, ".design_implementation-old-") {
+			return cleanupFailure
+		}
+		return agentRoot.RemoveAll(relative)
+	}
+
+	err = replaceImplementationRoot(agentRoot, ".design_implementation-new", cleanup)
+	if !errors.Is(err, cleanupFailure) {
+		t.Fatalf("replacement error = %v, want cleanup failure", err)
+	}
+	got, readErr := os.ReadFile(filepath.Join(agentContext, "design_implementation", "context.json"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != "old identity" {
+		t.Fatalf("canonical context = %q, want complete old identity", got)
+	}
+	entries, readErr := os.ReadDir(agentContext)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 1 || entries[0].Name() != "design_implementation" {
+		t.Fatalf("replacement left non-canonical trees: %+v", entries)
 	}
 }
 
