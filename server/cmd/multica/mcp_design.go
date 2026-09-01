@@ -13,6 +13,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/designdocument"
+	"github.com/multica-ai/multica/server/internal/designimplementation"
 )
 
 type designMCPAdapter struct {
@@ -29,6 +30,7 @@ func designMCPToolDescriptors() []map[string]any {
 		designMCPToolDescriptor("multica_design_get_selection_context", "Get selected layer or bounds context for one design frame."),
 		designMCPToolDescriptor("multica_design_get_ui_restore_artifact", "Return UI restore artifact path metadata for frontend implementation."),
 		designMCPToolDescriptor("multica_design_get_implementation_context", "Materialize the frozen design implementation context using bounded repository-relative paths."),
+		designMCPToolDescriptor("multica_design_validate_implementation_result", "Validate the ordinary Agent's implementation-result/v1 against the frozen implementation context."),
 	}
 }
 
@@ -62,14 +64,40 @@ func (a *designMCPAdapter) callTool(ctx context.Context, name string, arguments 
 		return a.getUIRestoreArtifact(arguments), nil
 	case "multica_design_get_implementation_context":
 		return a.getImplementationContext(ctx, arguments)
+	case "multica_design_validate_implementation_result":
+		return a.validateImplementationResult()
 	default:
 		return nil, fmt.Errorf("unknown design MCP tool %q", name)
 	}
 }
 
+func (a *designMCPAdapter) validateImplementationResult() (any, error) {
+	root := a.rootDir
+	if root == "" {
+		root = "."
+	}
+	contextRaw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(designImplementationContextPath)))
+	if err != nil {
+		return nil, fmt.Errorf("implementation_result_invalid: read implementation context: %w", err)
+	}
+	var contextValue designImplementationContextWire
+	if err := json.Unmarshal(contextRaw, &contextValue); err != nil {
+		return nil, fmt.Errorf("implementation_result_invalid: decode implementation context: %w", err)
+	}
+	resultRaw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(designImplementationResultPath)))
+	if err != nil {
+		return nil, fmt.Errorf("implementation_result_invalid: read implementation result: %w", err)
+	}
+	result, err := designimplementation.ValidateJSONForContext(resultRaw, designimplementation.ExpectedIdentity{DesignRef: contextValue.DesignRef, RevisionID: contextValue.RevisionID, FrameRefs: contextValue.FrameRefs})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"schema_version": result.SchemaVersion, "status": result.Status, "result_path": designImplementationResultPath}, nil
+}
+
 const (
 	designImplementationContextPath    = ".agent_context/design_implementation/context.json"
-	designImplementationManifestPath   = ".agent_context/design_implementation/design/manifest.json"
+	designImplementationManifestPath   = ".agent_context/design_implementation/design/package/manifest.json"
 	designImplementationPackagePath    = ".agent_context/design_implementation/design/package"
 	designImplementationScopePath      = ".agent_context/design_implementation/design/scope.json"
 	designImplementationRepositoryPath = ".agent_context/design_implementation/repository"
@@ -77,22 +105,28 @@ const (
 )
 
 type designImplementationContextWire struct {
-	SchemaVersion       string         `json:"schema_version"`
-	DesignRef           string         `json:"design_ref"`
-	RevisionID          string         `json:"revision_id"`
-	ContentDigest       string         `json:"content_digest"`
-	FrameRefs           []string       `json:"frame_refs"`
-	ProjectID           string         `json:"project_id"`
-	IssueID             string         `json:"issue_id"`
-	ProjectResourceID   string         `json:"project_resource_id"`
-	DesignTitle         string         `json:"design_title"`
-	SourceDocumentID    string         `json:"source_document_id,omitempty"`
-	SourceInstructions  []string       `json:"source_instructions,omitempty"`
-	VerificationTargets []string       `json:"verification_targets,omitempty"`
-	DesignSystemDigest  string         `json:"design_system_digest,omitempty"`
-	AllowedWritePaths   []string       `json:"allowed_write_paths"`
-	Verification        []string       `json:"verification_requirements"`
-	Capabilities        map[string]any `json:"source_capabilities"`
+	SchemaVersion       string                                     `json:"schema_version"`
+	DesignRef           string                                     `json:"design_ref"`
+	RevisionID          string                                     `json:"revision_id"`
+	ContentDigest       string                                     `json:"content_digest"`
+	FrameRefs           []string                                   `json:"frame_refs"`
+	ProjectID           string                                     `json:"project_id"`
+	IssueID             string                                     `json:"issue_id"`
+	ProjectResourceID   string                                     `json:"project_resource_id"`
+	DesignTitle         string                                     `json:"design_title"`
+	Package             *designImplementationPackageDescriptorWire `json:"package,omitempty"`
+	SourceInstructions  []string                                   `json:"source_instructions,omitempty"`
+	VerificationTargets []string                                   `json:"verification_targets,omitempty"`
+	DesignSystemDigest  string                                     `json:"design_system_digest,omitempty"`
+	AllowedWritePaths   []string                                   `json:"allowed_write_paths"`
+	Verification        []string                                   `json:"verification_requirements"`
+	Capabilities        map[string]any                             `json:"source_capabilities"`
+}
+
+type designImplementationPackageDescriptorWire struct {
+	Source        string `json:"source"`
+	ArchivePath   string `json:"archive_path"`
+	ContentDigest string `json:"content_digest"`
 }
 
 func (a *designMCPAdapter) getImplementationContext(ctx context.Context, arguments map[string]any) (any, error) {
@@ -119,15 +153,26 @@ func (a *designMCPAdapter) getImplementationContext(ctx context.Context, argumen
 		return nil, fmt.Errorf("design context response does not match the requested frozen identity")
 	}
 	var packageFiles map[string][]byte
-	if contextValue.SourceDocumentID != "" {
-		archive, err := a.client.DownloadFile(ctx, "/api/design-documents/"+url.PathEscape(contextValue.SourceDocumentID)+"/revisions/"+url.PathEscape(revisionID)+"/archive")
+	if contextValue.Package != nil {
+		if contextValue.Package.Source == "" || contextValue.Package.ArchivePath == "" || contextValue.Package.ContentDigest != contextValue.ContentDigest {
+			return nil, fmt.Errorf("design_package_invalid: implementation package descriptor is invalid")
+		}
+		archive, err := a.client.DownloadFile(ctx, contextValue.Package.ArchivePath)
 		if err != nil {
 			return nil, fmt.Errorf("context_materialization_failed: download saved Multica design package: %w", err)
 		}
-		_, packageFiles, err = designdocument.ReadBaseArchive(archive, contextValue.ContentDigest)
+		validated, files, err := designdocument.ReadBaseArchive(archive, contextValue.ContentDigest)
 		if err != nil {
-			return nil, fmt.Errorf("context_materialization_failed: validate saved Multica design package: %w", err)
+			return nil, fmt.Errorf("design_package_invalid: validate saved Multica design package: %w", err)
 		}
+		manifest, err := json.Marshal(validated.Manifest)
+		if err != nil {
+			return nil, fmt.Errorf("context_materialization_failed: encode saved Multica manifest: %w", err)
+		}
+		packageFiles = files
+		packageFiles["manifest.json"] = append(manifest, '\n')
+	} else if hasPrototype(contextValue.Capabilities) {
+		return nil, fmt.Errorf("design_package_invalid: implementation context requires a package descriptor")
 	}
 	if err := materializeDesignImplementationContext(a.rootDir, contextValue, packageFiles); err != nil {
 		return nil, fmt.Errorf("context_materialization_failed: %w", err)
@@ -196,7 +241,7 @@ func materializeDesignImplementationContext(rootDir string, contextValue designI
 			return err
 		}
 	}
-	manifest := map[string]any{
+	projection := map[string]any{
 		"schema_version": contextValue.SchemaVersion,
 		"design_ref":     contextValue.DesignRef, "revision_id": contextValue.RevisionID,
 		"content_digest": contextValue.ContentDigest, "title": contextValue.DesignTitle,
@@ -209,9 +254,9 @@ func materializeDesignImplementationContext(rootDir string, contextValue designI
 		"allowed_write_paths": contextValue.AllowedWritePaths, "verification_requirements": contextValue.Verification,
 	}
 	for relative, value := range map[string]any{
-		"context.json":         contextValue,
-		"design/manifest.json": manifest,
-		"design/scope.json":    scope,
+		"context.json":                   contextValue,
+		"design/context-projection.json": projection,
+		"design/scope.json":              scope,
 	} {
 		if err := writeExclusiveRootJSON(temporaryRoot, relative, value); err != nil {
 			_ = temporaryRoot.Close()
@@ -238,6 +283,11 @@ func materializeDesignImplementationContext(rootDir string, contextValue designI
 	}
 	temporaryOwned = false
 	return nil
+}
+
+func hasPrototype(capabilities map[string]any) bool {
+	value, _ := capabilities["has_prototype"].(bool)
+	return value
 }
 
 func writeExclusiveRootFile(root *os.Root, relative string, contents []byte) error {

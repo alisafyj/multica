@@ -39,6 +39,12 @@ type DesignImplementationSourceCapabilities struct {
 	HasInteractions bool `json:"has_interactions"`
 }
 
+type DesignImplementationPackageDescriptor struct {
+	Source        string `json:"source"`
+	ArchivePath   string `json:"archive_path"`
+	ContentDigest string `json:"content_digest"`
+}
+
 type DesignImplementationContextResponse struct {
 	SchemaVersion            string                                 `json:"schema_version"`
 	DesignRef                string                                 `json:"design_ref"`
@@ -49,7 +55,7 @@ type DesignImplementationContextResponse struct {
 	IssueID                  string                                 `json:"issue_id"`
 	ProjectResourceID        string                                 `json:"project_resource_id"`
 	DesignTitle              string                                 `json:"design_title"`
-	SourceDocumentID         string                                 `json:"source_document_id,omitempty"`
+	Package                  *DesignImplementationPackageDescriptor `json:"package,omitempty"`
 	SourceInstructions       []string                               `json:"source_instructions,omitempty"`
 	VerificationTargets      []string                               `json:"verification_targets,omitempty"`
 	DesignSystemDigest       string                                 `json:"design_system_digest,omitempty"`
@@ -74,7 +80,7 @@ func (h *Handler) BuildDesignImplementationPrompt(w http.ResponseWriter, r *http
 	for i, frameRef := range contextValue.FrameRefs {
 		frameLines[i] = "- " + frameRef
 	}
-	prompt := fmt.Sprintf("【任务】\n根据关联设计稿实现当前任务，优先复用目标仓库已有组件和页面结构。\n\n【设计稿】\n标题：%s\n固定版本：%s\n所选 Frame：\n%s\n目标仓库：%s\n\n【执行步骤】\n1. 调用 multica_design_get_implementation_context。\n2. 读取目标仓库路由、组件、状态管理和样式规范。\n3. 根据 Implementation Context 完成实现。\n4. 运行约定验证。\n5. 输出 Frame 到代码文件映射。\n\n【约束】\n禁止整图替代；禁止直接复制 Prototype；保留无关 dirty worktree。\n\n【输出】\n修改文件、复用组件、新增组件、检查结果、视觉验收和阻塞项。",
+	prompt := fmt.Sprintf("【任务】\n根据关联设计稿实现当前任务，优先复用目标仓库已有组件和页面结构。\n\n【设计稿】\n标题：%s\n固定版本：%s\n所选 Frame：\n%s\n目标仓库：%s\n\n【执行步骤】\n1. 调用 multica_design_get_implementation_context。\n2. 读取目标仓库路由、组件、状态管理和样式规范。\n3. 根据 Implementation Context 完成实现。\n4. 运行约定验证。\n5. 写入 `.agent_context/design_implementation/result/implementation-result.json`，schema 必须为 `multica.design-implementation-result/v1`。\n6. 结果必须包含 repository_commit_before、Frame mappings、commands、preview_evidence、blockers 和 rollback_notes；partial/blocked/failed/cancelled 也必须写入结果。\n7. 调用 multica_design_validate_implementation_result 后输出与该结果一致的人类摘要。\n\n【约束】\n禁止整图替代；禁止直接复制 Prototype；保留无关 dirty worktree。\n\n【输出】\n修改文件、复用组件、新增组件、检查结果、视觉验收和阻塞项。",
 		contextValue.DesignTitle, contextValue.RevisionID, strings.Join(frameLines, "\n"), designImplementationRepositoryName(repository))
 	writeJSON(w, http.StatusOK, DesignImplementationPromptResponse{
 		Prompt: prompt,
@@ -168,13 +174,13 @@ func (h *Handler) resolveDesignImplementationRequest(w http.ResponseWriter, r *h
 		SchemaVersion: designImplementationContextSchemaV1, DesignRef: chi.URLParam(r, "designRef"),
 		RevisionID: claim.RevisionID, ContentDigest: claim.ContentDigest, FrameRefs: append([]string(nil), request.FrameRefs...),
 		ProjectID: claim.ProjectID, IssueID: request.IssueID, ProjectResourceID: request.ProjectResourceID,
-		DesignTitle: title, DesignSystemDigest: designSystemDigest, SourceDocumentID: sourceDocumentID, AllowedWritePaths: []string{"."},
+		DesignTitle: title, DesignSystemDigest: designSystemDigest, Package: designImplementationPackageDescriptor(claim.Kind, sourceDocumentID, claim.RevisionID, claim.ContentDigest), AllowedWritePaths: []string{"."},
 		VerificationRequirements: []string{"repository typecheck/tests/build as applicable", "real rendered preview for changed UI"},
 		SourceInstructions:       designImplementationSourceInstructions(claim.Kind),
 		VerificationTargets:      designImplementationVerificationTargets(claim.Kind),
 		Paths: DesignImplementationPaths{
 			Context:           ".agent_context/design_implementation/context.json",
-			DesignManifest:    ".agent_context/design_implementation/design/manifest.json",
+			DesignManifest:    ".agent_context/design_implementation/design/package/manifest.json",
 			DesignPackage:     ".agent_context/design_implementation/design/package",
 			Scope:             ".agent_context/design_implementation/design/scope.json",
 			RepositoryContext: ".agent_context/design_implementation/repository",
@@ -182,6 +188,13 @@ func (h *Handler) resolveDesignImplementationRequest(w http.ResponseWriter, r *h
 		},
 		SourceCapabilities: capabilities,
 	}, request, repository, true
+}
+
+func designImplementationPackageDescriptor(kind, documentID, revisionID, digest string) *DesignImplementationPackageDescriptor {
+	if kind != "multica" || documentID == "" || revisionID == "" || digest == "" {
+		return nil
+	}
+	return &DesignImplementationPackageDescriptor{Source: "multica", ArchivePath: fmt.Sprintf("/api/design-documents/%s/revisions/%s/archive", documentID, revisionID), ContentDigest: digest}
 }
 
 func (h *Handler) resolveDesignImplementationFrames(r *http.Request, claim designAssetRefClaim) ([]DesignAssetFrameResponse, error) {

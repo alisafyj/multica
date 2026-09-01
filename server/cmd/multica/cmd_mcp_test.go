@@ -173,7 +173,7 @@ func TestDesignMCPGetImplementationContextMaterializesBoundedRelativeFiles(t *te
 			"source_capabilities": map[string]any{"has_layers": true, "has_prototype": false, "has_assets": true, "has_interactions": true},
 			"paths": map[string]any{
 				"context_path":            ".agent_context/design_implementation/context.json",
-				"design_manifest_path":    ".agent_context/design_implementation/design/manifest.json",
+				"design_manifest_path":    ".agent_context/design_implementation/design/package/manifest.json",
 				"design_package_path":     ".agent_context/design_implementation/design/package",
 				"scope_path":              ".agent_context/design_implementation/design/scope.json",
 				"repository_context_path": ".agent_context/design_implementation/repository",
@@ -201,7 +201,7 @@ func TestDesignMCPGetImplementationContextMaterializesBoundedRelativeFiles(t *te
 	}
 	for _, relative := range []string{
 		".agent_context/design_implementation/context.json",
-		".agent_context/design_implementation/design/manifest.json",
+		".agent_context/design_implementation/design/context-projection.json",
 		".agent_context/design_implementation/design/scope.json",
 	} {
 		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
@@ -395,42 +395,6 @@ func TestReplaceImplementationRootRestoresOldContextWhenBackupCleanupFails(t *te
 	}
 }
 
-func TestDesignMCPGetImplementationContextPreservesSavedMulticaIdentity(t *testing.T) {
-	want := designImplementationContextWire{
-		SchemaVersion: "multica.design-implementation-context/v1", DesignRef: "design_v1_multica",
-		RevisionID: "saved-revision", ContentDigest: "sha256:" + strings.Repeat("b", 64),
-		FrameRefs: []string{"frame_v1_page"}, ProjectID: "project-1", IssueID: "issue-1",
-		ProjectResourceID: "repository-1", DesignTitle: "Saved document", DesignSystemDigest: "sha256:design-system",
-		AllowedWritePaths: []string{"."}, Verification: []string{"pnpm test"},
-		Capabilities: map[string]any{"has_layers": false, "has_prototype": true, "has_assets": true, "has_interactions": true},
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeMCPTestJSON(w, want)
-	}))
-	defer srv.Close()
-
-	root := t.TempDir()
-	adapter := &designMCPAdapter{client: cli.NewAPIClient(srv.URL, "ws-1", "mul_secret"), rootDir: root}
-	_, err := adapter.getImplementationContext(context.Background(), map[string]any{
-		"designRef": want.DesignRef, "revisionId": want.RevisionID, "frameRefs": []any{want.FrameRefs[0]},
-		"targetRepositoryId": want.ProjectResourceID, "issueId": want.IssueID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(designImplementationContextPath)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got designImplementationContextWire
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("saved Multica context identity changed:\n got: %+v\nwant: %+v", got, want)
-	}
-}
-
 func TestDesignMCPGetImplementationContextMaterializesSavedMulticaPackage(t *testing.T) {
 	packageRoot := filepath.Join("..", "..", "internal", "designdocument", "testdata", "valid")
 	collected, err := designdocument.CollectDirectory(packageRoot, designdocument.PackageBinding{
@@ -447,7 +411,7 @@ func TestDesignMCPGetImplementationContextMaterializesSavedMulticaPackage(t *tes
 			writeMCPTestJSON(w, map[string]any{
 				"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_multica", "revision_id": "revision-1", "content_digest": collected.Manifest.ContentDigest,
 				"frame_refs": []string{"frame_v1_page"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1", "design_title": "Saved document",
-				"source_document_id": "document-1", "source_capabilities": map[string]any{"has_prototype": true, "has_assets": true, "has_interactions": true},
+				"package": map[string]any{"source": "multica", "archive_path": "/api/design-documents/document-1/revisions/revision-1/archive", "content_digest": collected.Manifest.ContentDigest}, "source_capabilities": map[string]any{"has_prototype": true, "has_assets": true, "has_interactions": true},
 			})
 		case "/api/design-documents/document-1/revisions/revision-1/archive":
 			_, _ = w.Write(collected.Archive)
@@ -469,5 +433,45 @@ func TestDesignMCPGetImplementationContextMaterializesSavedMulticaPackage(t *tes
 		if _, err := os.Stat(filepath.Join(root, ".agent_context", "design_implementation", "design", "package", filepath.FromSlash(relative))); err != nil {
 			t.Fatalf("saved package artifact %s was not materialized: %v", relative, err)
 		}
+	}
+	manifestRaw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(designImplementationManifestPath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest designdocument.Manifest
+	if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(manifest.Binding, collected.Manifest.Binding) || manifest.ContentDigest != collected.Manifest.ContentDigest ||
+		!reflect.DeepEqual(manifest.Files, collected.Manifest.Files) || manifest.PrototypeEntry != collected.Manifest.PrototypeEntry ||
+		!reflect.DeepEqual(manifest.PreviewTargets, collected.Manifest.PreviewTargets) || !reflect.DeepEqual(manifest.Pages, collected.Manifest.Pages) || !reflect.DeepEqual(manifest.Flows, collected.Manifest.Flows) {
+		t.Fatalf("materialized manifest lost saved package evidence: %+v", manifest)
+	}
+}
+
+func TestDesignMCPGetImplementationContextRejectsMulticaWithoutPackageDescriptorAndPreservesContext(t *testing.T) {
+	root := t.TempDir()
+	previous := designImplementationContextWire{SchemaVersion: "multica.design-implementation-context/v1", DesignRef: "previous"}
+	if err := materializeDesignImplementationContext(root, previous); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeMCPTestJSON(w, map[string]any{
+			"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_multica", "revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("a", 64),
+			"frame_refs": []string{"frame_v1_page"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1",
+			"source_capabilities": map[string]any{"has_prototype": true},
+		})
+	}))
+	defer srv.Close()
+	adapter := &designMCPAdapter{client: cli.NewAPIClient(srv.URL, "ws-1", "mul_secret"), rootDir: root}
+	_, err := adapter.getImplementationContext(context.Background(), map[string]any{
+		"designRef": "design_v1_multica", "revisionId": "revision-1", "frameRefs": []any{"frame_v1_page"}, "targetRepositoryId": "repository-1", "issueId": "issue-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "design_package_invalid") {
+		t.Fatalf("missing package descriptor error = %v", err)
+	}
+	raw, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(designImplementationContextPath)))
+	if readErr != nil || !strings.Contains(string(raw), `"design_ref": "previous"`) {
+		t.Fatalf("previous context was not preserved: %q, %v", raw, readErr)
 	}
 }
