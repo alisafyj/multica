@@ -330,6 +330,7 @@ function pageElement() {
     replace: vi.fn(),
     back: vi.fn(),
     searchParams: new URLSearchParams(),
+    hash: "",
     getShareableUrl: (path) => path,
   };
   return (

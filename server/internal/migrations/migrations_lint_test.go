@@ -33,8 +33,8 @@ const forkMigrationPrefixStart = 800
 // numbering gap would pass this check; the uniqueness test still catches it
 // once upstream owns that number. The realistic violation (anything between
 // lastUpstreamMigrationPrefix and 800) is rejected below.
-// Bumped from 397 with the upstream/main sync that brought 399–431.
-const lastUpstreamMigrationPrefix = 439
+// Bumped from 439 with the upstream/main sync that brought 440–445.
+const lastUpstreamMigrationPrefix = 445
 
 // existingForkMigrationPrefixes are fork-local migrations that were applied to
 // production before the 800+ rule; they keep their numbers forever because the

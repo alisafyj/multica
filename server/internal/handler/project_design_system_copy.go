@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"net/http"
 	"strings"
@@ -258,7 +259,11 @@ func (h *Handler) createProjectDesignSystemCopyTask(
 			status: http.StatusNotFound, code: "agent_not_found", message: "agent not found",
 		}
 	}
-	verdict, err := service.AgentReadiness(ctx, queries, agent)
+	verdict, err := service.AgentReadiness(ctx, service.RuntimeLookup{
+		Queries: queries,
+		Metrics: h.Metrics,
+		Source:  obsmetrics.RuntimeLookupSourceDesign,
+	}, agent)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
 	}

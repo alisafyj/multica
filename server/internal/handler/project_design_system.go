@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/designsystemcatalogue"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/opendesign"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -778,7 +779,11 @@ func (h *Handler) createProjectDesignSystemTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	verdict, err := service.AgentReadiness(ctx, queries, agent)
+	verdict, err := service.AgentReadiness(ctx, service.RuntimeLookup{
+		Queries: queries,
+		Metrics: h.Metrics,
+		Source:  obsmetrics.RuntimeLookupSourceDesign,
+	}, agent)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
 	}
@@ -872,7 +877,11 @@ func (h *Handler) createStandaloneDesignSystemTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	verdict, err := service.AgentReadiness(ctx, queries, agent)
+	verdict, err := service.AgentReadiness(ctx, service.RuntimeLookup{
+		Queries: queries,
+		Metrics: h.Metrics,
+		Source:  obsmetrics.RuntimeLookupSourceDesign,
+	}, agent)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
 	}
@@ -961,14 +970,22 @@ func (h *Handler) createProjectDesignSystemRepositoryAnalysisTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	verdict, err := service.AgentReadiness(ctx, queries, agent)
+	verdict, err := service.AgentReadiness(ctx, service.RuntimeLookup{
+		Queries: queries,
+		Metrics: h.Metrics,
+		Source:  obsmetrics.RuntimeLookupSourceDesign,
+	}, agent)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
 	}
 	if !verdict.Ready() {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: verdict.Detail}
 	}
-	runtime, err := queries.GetAgentRuntime(ctx, agent.RuntimeID)
+	runtime, err := service.RuntimeLookup{
+		Queries: queries,
+		Metrics: h.Metrics,
+		Source:  obsmetrics.RuntimeLookupSourceDesign,
+	}.Get(ctx, agent.RuntimeID)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_runtime_lookup_failed", "failed to load agent runtime")
 	}
@@ -1099,7 +1116,11 @@ func (h *Handler) enqueueExistingProjectDesignSystemTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	verdict, err := service.AgentReadiness(ctx, queries, agent)
+	verdict, err := service.AgentReadiness(ctx, service.RuntimeLookup{
+		Queries: queries,
+		Metrics: h.Metrics,
+		Source:  obsmetrics.RuntimeLookupSourceDesign,
+	}, agent)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
 	}

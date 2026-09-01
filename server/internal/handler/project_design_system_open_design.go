@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/opendesign"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -37,7 +38,11 @@ func (h *Handler) prepareOpenDesignRun(
 	if !h.cfg.OpenDesignEnabled || operation == service.ProjectDesignSystemRepositoryAnalysis {
 		return nil, nil
 	}
-	runtime, err := queries.GetAgentRuntime(ctx, agent.RuntimeID)
+	runtime, err := service.RuntimeLookup{
+		Queries: queries,
+		Metrics: h.Metrics,
+		Source:  obsmetrics.RuntimeLookupSourceDesign,
+	}.Get(ctx, agent.RuntimeID)
 	if err != nil {
 		return nil, projectDesignSystemInternalError("agent_runtime_lookup_failed", "failed to load agent runtime")
 	}

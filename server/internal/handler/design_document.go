@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"log/slog"
 	"net/http"
@@ -651,7 +652,11 @@ func (h *Handler) createDesignDocumentTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	verdict, err := service.AgentReadiness(ctx, queries, agent)
+	verdict, err := service.AgentReadiness(ctx, service.RuntimeLookup{
+		Queries: queries,
+		Metrics: h.Metrics,
+		Source:  obsmetrics.RuntimeLookupSourceDesign,
+	}, agent)
 	if err != nil {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
 	}
