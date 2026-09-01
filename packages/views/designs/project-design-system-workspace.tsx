@@ -127,7 +127,7 @@ function ProjectDesignSystemTaskStatus({
   );
 }
 
-function ProjectDesignSystemContent({
+export function ProjectDesignSystemContent({
   project,
   agents,
   designFiles,

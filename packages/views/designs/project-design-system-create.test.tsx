@@ -359,6 +359,19 @@ describe("ProjectDesignSystemCreate", () => {
     });
   });
 
+  it("requires a non-empty design goal before repository analysis", async () => {
+    const user = userEvent.setup();
+    renderComponent({ projectResourceId: "resource-h5", repositories: [makeRepository()] });
+
+    await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
+    await user.click(screen.getByRole("radio", { name: "Web" }));
+    await user.clear(screen.getByLabelText("设计目标"));
+    const analyze = screen.getByRole("button", { name: "分析项目仓库" });
+    expect(analyze).toBeDisabled();
+    await user.click(analyze);
+    expect(analyzeProjectDesignSystemRepository).not.toHaveBeenCalled();
+  });
+
   it("creates the system for the picked repository instead of the project-level one", async () => {
     const user = userEvent.setup();
     renderComponent({ projectResourceId: "resource-h5" });

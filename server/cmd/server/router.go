@@ -1467,6 +1467,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/tasks/{taskId}/project-design-system/base-package", h.DownloadProjectDesignSystemBasePackage)
 		r.Get("/tasks/{taskId}/open-design/base-archive", h.DownloadOpenDesignBaseArchive)
 		r.Get("/tasks/{taskId}/design-document/base-archive", h.DownloadDesignDocumentBaseArchive)
+		r.Get("/tasks/{taskId}/design-document/design-system", h.DownloadDesignDocumentDesignSystem)
 		r.Get("/tasks/{taskId}/design-delivery/archive", h.DownloadDesignDeliveryArchive)
 		// Reference attachments the daemon materializes into reference/attachments
 		// before a design document session starts; pinned by digest in the
