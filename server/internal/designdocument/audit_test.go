@@ -171,6 +171,7 @@ func TestAuditRejectsDestructuredGlobalCapabilities(t *testing.T) {
 		{name: "function IIFE parameter", script: `(function ({open}) { open("orders.html"); })(window);`, code: "prototype_script_navigation_forbidden"},
 		{name: "callable alias parameter", script: `const run = ({fetch}) => fetch("/api/orders"); const alias = run; alias(window);`, code: "prototype_script_forbidden_api"},
 		{name: "assigned callable alias parameter", script: `const run = ({fetch}) => fetch("/api/orders"); let alias; alias = run; alias(window);`, code: "prototype_script_forbidden_api"},
+		{name: "overwritten callable alias parameter", script: `const safe = (value) => false; const run = ({fetch}) => fetch("/api/orders"); let alias = safe; alias = run; alias(window);`, code: "prototype_script_forbidden_api"},
 		{name: "navigator binding", script: `const {sendBeacon} = navigator; sendBeacon("/telemetry", "{}");`, code: "prototype_script_forbidden_api"},
 		{name: "logical and assignment", script: `let host = {}; host &&= window; const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
 		{name: "logical or assignment", script: `let host = {}; host ||= window; const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
@@ -178,6 +179,8 @@ func TestAuditRejectsDestructuredGlobalCapabilities(t *testing.T) {
 		{name: "function return", script: `function host() { return window; } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 		{name: "wrapped function return", script: `function host() { return Object(window); } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 		{name: "receiver-carried function return", script: `function host() { return [window].pop(); } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "spoofed includes return", script: `const value = window; function host() { return value.toLowerCase().includes(); } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "spoofed localeCompare return", script: `const value = window; function host() { return value.id.localeCompare(""); } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 		{name: "arrow return", script: `const host = () => window; const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 	}
 
