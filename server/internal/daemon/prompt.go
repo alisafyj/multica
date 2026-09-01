@@ -256,6 +256,7 @@ func buildProjectDesignSystemRepositoryAnalysisPrompt() string {
 	b.WriteString("You are running as a read-only repository design analysis agent for a Multica workspace.\n\n")
 	b.WriteString("Inspect only the provided project repository and resources. Read the available source files and repository evidence to identify the product's existing visual, structural, and workflow context.\n\n")
 	b.WriteString("Rules:\n")
+	b.WriteString("- Read the associated repository URL from the task context, then run `multica repo checkout <repository-url>` before inspecting source files. This checkout is the only allowed Multica command.\n")
 	b.WriteString("- This task is read-only. Do not modify the repository or any provided resource.\n")
 	b.WriteString("- Do not create generated package files or any other output files.\n")
 	b.WriteString("- Do not delegate, spawn sub-agents, or leave follow-up work.\n")
