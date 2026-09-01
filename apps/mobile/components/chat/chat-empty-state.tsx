@@ -5,9 +5,9 @@
  * `EmptyState`):
  *
  *   - first-time (the workspace has never started a chat) → educate and
- *     offer starter prompts so the composer is not a blank dead end.
- *   - returning (at least one prior session exists) → lead with starter
- *     prompts. Tapping prefills the draft so the user can edit before sending.
+ *     offer conversation starters so the composer is not a blank dead end.
+ *   - returning (at least one prior session exists) → lead with conversation
+ *     starters. Tapping prefills the draft so the user can edit before sending.
  *
  * Copy mirrors the web `chat.json` namespace 1:1, and goes through mobile's
  * own i18n — the swap upstream's version anticipated. The fallback prompts
@@ -15,10 +15,9 @@
  */
 import { View } from "react-native";
 import { useTranslation } from "react-i18next";
-import type { Agent, AgentStarterPrompt } from "@multica/core/types";
+import type { Agent, AgentConversationStarter } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
-
 
 interface Props {
   hasSessions: boolean;
@@ -28,7 +27,7 @@ interface Props {
 
 export function ChatEmptyState({ hasSessions, agent, onPickPrompt }: Props) {
   const { t } = useTranslation("chat");
-  const fallbackPrompts: AgentStarterPrompt[] = [
+  const fallbackStarters: AgentConversationStarter[] = [
     "capabilities",
     "first_task",
     "recommend",
@@ -39,10 +38,10 @@ export function ChatEmptyState({ hasSessions, agent, onPickPrompt }: Props) {
   const title = agent
     ? t("empty_state.returning.title_named", { name: agent.name })
     : t("empty_state.first_time.title");
-  const configured = (agent?.starter_prompts ?? []).filter(
+  const configured = (agent?.conversation_starters ?? []).filter(
     (item) => item.label.trim() && item.prompt.trim(),
   );
-  const prompts = configured.length > 0 ? configured : fallbackPrompts;
+  const starters = configured.length > 0 ? configured : fallbackStarters;
   return (
     <View className="flex-1 items-center justify-center px-6 py-8 gap-5">
       <View className="items-center gap-1">
@@ -62,7 +61,7 @@ export function ChatEmptyState({ hasSessions, agent, onPickPrompt }: Props) {
       </View>
       {agent ? (
         <View className="w-full max-w-xs gap-2">
-          {prompts.map((item, index) => (
+          {starters.map((item, index) => (
             <Button
               key={index}
               variant="outline"

@@ -4,7 +4,7 @@ import { ApiClient, ApiError, CHAT_DRAFT_RESTORE_CAPABILITY, clientErrorMessage 
 import { EMPTY_PLUGIN_PACKAGE_LIST, EMPTY_PLUGIN_PREVIEW, EMPTY_PLUGIN_SURFACE_LAUNCH } from "./schemas";
 
 afterEach(() => {
-  configStore.getState().setAgentStarterPromptsSupported(false);
+  configStore.getState().setAgentConversationStartersSupported(false);
   vi.unstubAllGlobals();
 });
 
@@ -92,7 +92,7 @@ describe("ApiClient design documents", () => {
   });
 });
 
-describe("ApiClient agent starter-prompt compatibility", () => {
+describe("ApiClient agent conversation-starter compatibility", () => {
   const prompt = {
     label: "Review a PR",
     prompt: "Review the open pull request.",
@@ -107,9 +107,9 @@ describe("ApiClient agent starter-prompt compatibility", () => {
       client.createAgent({
         name: "Reviewer",
         runtime_id: "runtime-1",
-        starter_prompts: [prompt],
+        conversation_starters: [prompt],
       }),
-    ).rejects.toThrow(/server version does not support agent starter prompts/i);
+    ).rejects.toThrow(/server version does not support agent conversation starters/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -119,13 +119,13 @@ describe("ApiClient agent starter-prompt compatibility", () => {
     const client = new ApiClient("https://api.example.test");
 
     await expect(
-      client.updateAgent("agent-1", { starter_prompts: [prompt] }),
-    ).rejects.toThrow(/server version does not support agent starter prompts/i);
+      client.updateAgent("agent-1", { conversation_starters: [prompt] }),
+    ).rejects.toThrow(/server version does not support agent conversation starters/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("allows declared-capability create and update writes through", async () => {
-    configStore.getState().setAgentStarterPromptsSupported(true);
+    configStore.getState().setAgentConversationStartersSupported(true);
     const fetchMock = vi.fn().mockImplementation(() =>
       Promise.resolve(
         new Response(JSON.stringify({ id: "agent-1" }), {
@@ -140,19 +140,19 @@ describe("ApiClient agent starter-prompt compatibility", () => {
     await client.createAgent({
       name: "Reviewer",
       runtime_id: "runtime-1",
-      starter_prompts: [prompt],
+      conversation_starters: [prompt],
     });
     await client.updateAgent("agent-1", {
-      starter_prompts: [prompt],
+      conversation_starters: [prompt],
     });
 
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       name: "Reviewer",
       runtime_id: "runtime-1",
-      starter_prompts: [prompt],
+      conversation_starters: [prompt],
     });
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
-      starter_prompts: [prompt],
+      conversation_starters: [prompt],
     });
   });
 });

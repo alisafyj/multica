@@ -276,7 +276,6 @@ func main() {
 		slog.Error("invalid USE_SY_SSO configuration", "error", err)
 		os.Exit(1)
 	}
-
 	// Warn about missing configuration
 	if err := jwtSecretBootError(os.Getenv("JWT_SECRET"), os.Getenv("APP_ENV")); err != nil {
 		slog.Error(
