@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/multica-ai/multica/server/internal/designdocument"
 	"github.com/multica-ai/multica/server/internal/testutil"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestDesignAssetRefFailsClosed(t *testing.T) {
@@ -33,7 +35,7 @@ func TestDesignAssetRefFailsClosed(t *testing.T) {
 		ref  string
 		now  time.Time
 	}{
-		{name: "tampered", ref: ref[:len(ref)-1] + "A", now: now},
+		{name: "tampered", ref: tamperOpaqueRef(ref, designAssetRefPrefix), now: now},
 		{name: "expired", ref: ref, now: now.Add(2 * time.Hour)},
 		{name: "malformed", ref: "design_v1_not-a-token", now: now},
 	} {
@@ -49,16 +51,45 @@ func TestDesignAssetRefFailsClosed(t *testing.T) {
 	}
 }
 
+func TestDesignAssetFrameRefFailsClosedAndBindsSelection(t *testing.T) {
+	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	design := designAssetRefClaim{
+		Kind: "figma", WorkspaceID: testWorkspaceID, ProjectID: "project-1", UserID: testUserID,
+		AssetID: "asset-1", RevisionID: "revision-1", ContentDigest: "sha256:" + strings.Repeat("a", 64),
+		ExpiresAt: now.Add(time.Hour).Unix(),
+	}
+	frameRef, err := issueDesignAssetFrameRef(design, "figma_group", "group-wallet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := parseDesignAssetFrameRef(frameRef, now)
+	if err != nil || claim.SelectionKind != "figma_group" || claim.SelectionID != "group-wallet" {
+		t.Fatalf("frame claim = (%+v, %v)", claim, err)
+	}
+	if _, err := parseDesignAssetFrameRef(tamperOpaqueRef(frameRef, designAssetFramePrefix), now); err == nil {
+		t.Fatal("tampered frame ref was accepted")
+	}
+	if _, err := parseDesignAssetFrameRef(frameRef, now.Add(2*time.Hour)); err == nil {
+		t.Fatal("expired frame ref was accepted")
+	}
+}
+
 func TestGetDesignAssetFramesUsesOneContractForBothSources(t *testing.T) {
 	projectID := dbfx.Project(t, "unified-design-frames")
 	figma := createDesignFileForTest(t, "Unified Figma Design")
 	if _, err := testPool.Exec(context.Background(), `UPDATE design_file SET project_id = $1 WHERE id = $2`, projectID, figma.File.ID); err != nil {
 		t.Fatal(err)
 	}
+	figmaRevision, err := testHandler.Queries.GetDesignRevisionInWorkspace(context.Background(), db.GetDesignRevisionInWorkspaceParams{
+		ID: parseUUID(figma.CurrentRevision.ID), WorkspaceID: parseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	figmaRef := mustIssueDesignAssetRef(t, designAssetRefClaim{
 		Kind: "figma", WorkspaceID: testWorkspaceID, ProjectID: projectID, UserID: testUserID,
 		AssetID: figma.File.ID, RevisionID: figma.CurrentRevision.ID,
-		ContentDigest: digestDesignAssetBytes(figma.CurrentRevision.NativeJSON), ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		ContentDigest: digestDesignAssetBytes(figmaRevision.NativeJson), ExpiresAt: time.Now().Add(time.Hour).Unix(),
 	})
 
 	document := createDesignDocumentRevisionFixture(t)
@@ -102,12 +133,73 @@ func TestGetDesignAssetFramesUsesOneContractForBothSources(t *testing.T) {
 					}
 				}
 				frameClaim, err := parseDesignAssetFrameRef(frame.FrameRef, time.Now())
-				if err != nil || frameClaim.RevisionID != body.RevisionID || frameClaim.ContentDigest != body.ContentDigest {
+				if err != nil || frameClaim.RevisionID != body.RevisionID || frameClaim.ContentDigest != body.ContentDigest || frameClaim.SelectionID == "" {
 					t.Fatalf("frame ref does not freeze response identity: claim=%+v err=%v", frameClaim, err)
 				}
 			}
 		})
 	}
+}
+
+func TestGetDesignAssetFramesIncludesFigmaGroupsWithoutLeakingSelectionInternals(t *testing.T) {
+	projectID := dbfx.Project(t, "unified-design-group-frames")
+	design := createDesignFileForTest(t, "Grouped Figma Design")
+	grouped := restorePackGroupedNativeJSONForTest("Grouped Figma Design")
+	updateDesignRevisionNativeJSONForTest(t, design.CurrentRevision.ID, grouped)
+	if _, err := testPool.Exec(context.Background(), `UPDATE design_file SET project_id = $1 WHERE id = $2`, projectID, design.File.ID); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := testHandler.Queries.GetDesignRevisionInWorkspace(context.Background(), db.GetDesignRevisionInWorkspaceParams{
+		ID: parseUUID(design.CurrentRevision.ID), WorkspaceID: parseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	designRef := mustIssueDesignAssetRef(t, designAssetRefClaim{
+		Kind: "figma", WorkspaceID: testWorkspaceID, ProjectID: projectID, UserID: testUserID,
+		AssetID: design.File.ID, RevisionID: design.CurrentRevision.ID, ContentDigest: digestDesignAssetBytes(revision.NativeJson),
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	})
+	var body DesignAssetFramesResponse
+	callDesignAssetFrames(t, designRef, testWorkspaceID, testUserID).Want(http.StatusOK).JSON(&body)
+	if len(body.Frames) != 3 {
+		t.Fatalf("frames = %+v, want two frames plus one group", body.Frames)
+	}
+	var group DesignAssetFrameResponse
+	for _, frame := range body.Frames {
+		if frame.Title == "钱包首页" {
+			group = frame
+		}
+	}
+	if group.FrameRef == "" {
+		t.Fatalf("group selection missing: %+v", body.Frames)
+	}
+	claim, err := parseDesignAssetFrameRef(group.FrameRef, time.Now())
+	if err != nil || claim.SelectionKind != "figma_group" || claim.SelectionID != "group-wallet" {
+		t.Fatalf("group claim = (%+v, %v)", claim, err)
+	}
+	encoded, _ := json.Marshal(group)
+	for _, forbidden := range []string{"selection_kind", "selection_id", "group_id", "frame_id", "source_kind"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("group response leaks %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestGetDesignAssetFramesAcceptsExplicitDocumentRevisionBinding(t *testing.T) {
+	const explicitRevisionID = "explicit-revision-42"
+	document := createDesignDocumentRevisionFixtureWithBinding(t, nil, func(binding *designdocument.PackageBinding) {
+		binding.RevisionID = explicitRevisionID
+	})
+	if _, err := testPool.Exec(context.Background(), `UPDATE design_document SET saved_revision_id = $1, saved_at = now() WHERE id = $2`, document.Revision.ID, document.Document.ID); err != nil {
+		t.Fatal(err)
+	}
+	designRef := mustIssueDesignAssetRef(t, designAssetRefClaim{
+		Kind: "multica", WorkspaceID: testWorkspaceID, ProjectID: uuidToString(document.Document.ProjectID), UserID: testUserID,
+		AssetID: uuidToString(document.Document.ID), RevisionID: uuidToString(document.Revision.ID),
+		ContentDigest: document.Revision.ContentDigest, ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	})
+	callDesignAssetFrames(t, designRef, testWorkspaceID, testUserID).Want(http.StatusOK)
 }
 
 func TestDesignAssetListAndDetailMintRestorableRefs(t *testing.T) {
@@ -213,8 +305,17 @@ func TestGetDesignAssetFramesRejectsScopeStaleDraftAndTampering(t *testing.T) {
 	}
 	assertDesignAssetError(t, callDesignAssetFrames(t, savedRef, testWorkspaceID, testUserID).ResponseRecorder, "revision_not_restorable")
 
-	tampered := stale[:len(stale)-1] + "A"
+	tampered := tamperOpaqueRef(stale, designAssetRefPrefix)
 	assertDesignAssetError(t, callDesignAssetFrames(t, tampered, testWorkspaceID, testUserID).ResponseRecorder, "design_ref_invalid")
+}
+
+func tamperOpaqueRef(ref, prefix string) string {
+	encoded := strings.TrimPrefix(ref, prefix)
+	replacement := byte('A')
+	if encoded[0] == replacement {
+		replacement = 'B'
+	}
+	return prefix + string(replacement) + encoded[1:]
 }
 
 func callDesignAssetFrames(t *testing.T, designRef, workspaceID, userID string) *testutil.Response {

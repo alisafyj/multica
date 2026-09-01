@@ -12,6 +12,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -52,7 +53,8 @@ type designAssetFrameClaim struct {
 	AssetID       string `json:"a"`
 	RevisionID    string `json:"r"`
 	ContentDigest string `json:"d"`
-	FrameID       string `json:"f"`
+	SelectionKind string `json:"s"`
+	SelectionID   string `json:"i"`
 	ExpiresAt     int64  `json:"e"`
 }
 
@@ -131,11 +133,11 @@ func parseDesignAssetRef(raw string, now time.Time) (designAssetRefClaim, error)
 	return claim, nil
 }
 
-func issueDesignAssetFrameRef(design designAssetRefClaim, frameID string) (string, error) {
+func issueDesignAssetFrameRef(design designAssetRefClaim, selectionKind, selectionID string) (string, error) {
 	return sealDesignAssetRef(designAssetFramePrefix, "design-asset-frame-reference/v1", designAssetFrameClaim{
 		WorkspaceID: design.WorkspaceID, ProjectID: design.ProjectID, UserID: design.UserID,
 		AssetID: design.AssetID, RevisionID: design.RevisionID, ContentDigest: design.ContentDigest,
-		FrameID: frameID, ExpiresAt: design.ExpiresAt,
+		SelectionKind: selectionKind, SelectionID: selectionID, ExpiresAt: design.ExpiresAt,
 	})
 }
 
@@ -143,11 +145,21 @@ func parseDesignAssetFrameRef(raw string, now time.Time) (designAssetFrameClaim,
 	var claim designAssetFrameClaim
 	if err := openDesignAssetRef(raw, designAssetFramePrefix, "design-asset-frame-reference/v1", &claim); err != nil ||
 		claim.WorkspaceID == "" || claim.ProjectID == "" || claim.UserID == "" || claim.AssetID == "" ||
-		claim.RevisionID == "" || claim.FrameID == "" || !validNativePackageDigest(claim.ContentDigest) ||
+		claim.RevisionID == "" || !validDesignAssetSelectionKind(claim.SelectionKind) || claim.SelectionID == "" ||
+		!validNativePackageDigest(claim.ContentDigest) ||
 		claim.ExpiresAt <= now.Unix() {
 		return designAssetFrameClaim{}, errDesignAssetRefInvalid
 	}
 	return claim, nil
+}
+
+func validDesignAssetSelectionKind(kind string) bool {
+	switch kind {
+	case "frame", "figma_group", "page":
+		return true
+	default:
+		return false
+	}
 }
 
 func digestDesignAssetBytes(raw []byte) string {
@@ -291,7 +303,7 @@ func (h *Handler) resolveFigmaDesignAssetFrames(r *http.Request, claim designAss
 	}
 	frames := make([]DesignAssetFrameResponse, 0, len(document.Frames))
 	for _, frame := range document.Frames {
-		frameRef, err := issueDesignAssetFrameRef(claim, frame.ID)
+		frameRef, err := issueDesignAssetFrameRef(claim, "frame", frame.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -299,7 +311,60 @@ func (h *Handler) resolveFigmaDesignAssetFrames(r *http.Request, claim designAss
 			FrameRef: frameRef, Title: frame.Name, ThumbnailURL: designAssetFrameThumbnail(document, frame),
 		})
 	}
+	groups, err := figmaGroupDesignAssetFrames(document, claim)
+	if err != nil {
+		return nil, err
+	}
+	frames = append(frames, groups...)
 	return frames, nil
+}
+
+func figmaGroupDesignAssetFrames(document designcore.NativeJSON, claim designAssetRefClaim) ([]DesignAssetFrameResponse, error) {
+	rawGroups, ok := document.RestoreHints["figmaGroups"].(map[string]any)
+	if !ok || len(rawGroups) == 0 {
+		return []DesignAssetFrameResponse{}, nil
+	}
+	keys := make([]string, 0, len(rawGroups))
+	for key := range rawGroups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	framesByID := make(map[string]designcore.Frame, len(document.Frames))
+	for _, frame := range document.Frames {
+		framesByID[frame.ID] = frame
+	}
+	groups := make([]DesignAssetFrameResponse, 0, len(keys))
+	for _, key := range keys {
+		group, ok := rawGroups[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		groupID := firstString(group, "id", "groupId", "sourceNodeId")
+		if groupID == "" {
+			groupID = key
+		}
+		frameIDs := stringsFromAnySlice(group["frameIds"])
+		if groupID == "" || len(frameIDs) == 0 {
+			continue
+		}
+		title := firstString(group, "name", "groupName")
+		if title == "" {
+			title = groupID
+		}
+		thumbnail := ""
+		for _, frameID := range frameIDs {
+			if frame, exists := framesByID[frameID]; exists {
+				thumbnail = designAssetFrameThumbnail(document, frame)
+				break
+			}
+		}
+		frameRef, err := issueDesignAssetFrameRef(claim, "figma_group", groupID)
+		if err != nil {
+			return nil, err
+		}
+		groups = append(groups, DesignAssetFrameResponse{FrameRef: frameRef, Title: title, ThumbnailURL: thumbnail})
+	}
+	return groups, nil
 }
 
 func designAssetFrameThumbnail(document designcore.NativeJSON, frame designcore.Frame) string {
@@ -348,12 +413,12 @@ func (h *Handler) resolveMulticaDesignAssetFrames(r *http.Request, claim designA
 	if json.Unmarshal(revision.Manifest, &manifest) != nil || manifest.SchemaVersion != designdocument.PackageSchemaV1 ||
 		manifest.ContentDigest != claim.ContentDigest || manifest.Binding.WorkspaceID != claim.WorkspaceID ||
 		manifest.Binding.ProjectID != claim.ProjectID || manifest.Binding.DesignDocumentID != claim.AssetID ||
-		!revision.SourceTaskID.Valid || manifest.Binding.RevisionID != uuidToString(revision.SourceTaskID) {
+		!revision.SourceTaskID.Valid || manifest.Binding.TaskID != uuidToString(revision.SourceTaskID) {
 		return nil, designAssetResolveFailure(http.StatusConflict, "design_package_invalid", "saved design package is invalid; save a valid revision and retry")
 	}
 	frames := make([]DesignAssetFrameResponse, 0, len(manifest.Pages))
 	for _, page := range manifest.Pages {
-		frameRef, err := issueDesignAssetFrameRef(claim, page.ID)
+		frameRef, err := issueDesignAssetFrameRef(claim, "page", page.ID)
 		if err != nil {
 			return nil, err
 		}
