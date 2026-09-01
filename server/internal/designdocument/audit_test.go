@@ -141,6 +141,55 @@ func TestAuditRejectsForbiddenCallAfterObjectDivision(t *testing.T) {
 	assertAuditCode(t, collected.Audit, err, "prototype_script_forbidden_api")
 }
 
+func TestAuditRejectsDestructuredGlobalCapabilities(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+		code   string
+	}{
+		{name: "direct forbidden API", script: `const {fetch} = window; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
+		{name: "renamed forbidden API", script: `const {fetch: request} = window; request("/api/orders");`, code: "prototype_script_forbidden_api"},
+		{name: "nested forbidden API", script: `const {navigator: {sendBeacon}} = window; sendBeacon("/telemetry", "{}");`, code: "prototype_script_forbidden_api"},
+		{name: "navigation", script: `const {open} = window; open("orders.html");`, code: "prototype_script_navigation_forbidden"},
+		{name: "Function constructor", script: `const {Function: Build} = globalThis; Build("return 1")();`, code: "prototype_script_forbidden_api"},
+		{name: "global alias", script: `const host = window; const {open} = host; open("orders.html");`, code: "prototype_script_navigation_forbidden"},
+		{name: "destructuring assignment", script: `let request; ({fetch: request} = window); request("/api/orders");`, code: "prototype_script_forbidden_api"},
+		{name: "member-derived alias", script: `const host = window.window; const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
+		{name: "forward closure alias", script: `function run() { const {open} = host; open("orders.html"); } const host = window; run();`, code: "prototype_script_navigation_forbidden"},
+		{name: "logical expression alias", script: `const host = window || window; const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
+		{name: "conditional expression alias", script: `const host = true ? window : window; const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
+		{name: "comma expression alias", script: `const host = (0, window); const {fetch} = host; fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
+		{name: "dot property assignment", script: `const box = {}; box.host = window; const {fetch} = box.host; fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "computed property assignment", script: `const box = {}; const key = "host"; box[key] = window; const {fetch} = box[key]; fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "dot composite property assignment", script: `const box = {}; box.host = window || window; const {fetch} = box.host; fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "computed composite property assignment", script: `const box = {}; const key = "host"; box[key] = true ? window : window; const {fetch} = box[key]; fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "conditional target is not globally rooted", script: `const box = {}; (window ? box : box).host = window; const {fetch} = box.host; fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "global target aliases local object", script: `const box = {}; window.box = box; window.box.host = window; const {fetch} = box.host; fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := copyFixture(t)
+			writeFixtureFile(t, root, "prototype/app.js", []byte(tt.script+"\n"))
+			collected, err := CollectDirectory(root, validBinding())
+			assertAuditCode(t, collected.Audit, err, tt.code)
+		})
+	}
+}
+
+func TestAuditAcceptsDestructuringFromLocalObjects(t *testing.T) {
+	root := copyFixture(t)
+	writeFixtureFile(t, root, "prototype/app.js", []byte(`
+const source = {fetch: "mock", open: true, Function: "label", navigator: {sendBeacon: false}};
+const {fetch, open, Function: Kind, navigator: {sendBeacon}} = source;
+document.body.dataset.summary = [fetch, open, Kind, sendBeacon].join(":");
+`))
+	collected, err := CollectDirectory(root, validBinding())
+	if err != nil {
+		t.Fatalf("CollectDirectory() rejected local object destructuring: %v (%#v)", err, collected.Audit.Diagnostics)
+	}
+}
+
 func TestAuditRejectsExternalMarkupResources(t *testing.T) {
 	tests := []struct {
 		name string

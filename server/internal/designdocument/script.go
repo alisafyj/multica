@@ -88,9 +88,20 @@ var forbiddenURLSchemes = map[string]struct{}{
 }
 
 type scriptAudit struct {
-	path        string
-	artifacts   map[string]ArtifactIndexEntry
-	diagnostics []Diagnostic
+	path           string
+	artifacts      map[string]ArtifactIndexEntry
+	globalBindings map[*js.Var]struct{}
+	diagnostics    []Diagnostic
+}
+
+type globalBindingCollector struct {
+	bindings map[*js.Var]struct{}
+	changed  bool
+}
+
+type globalAliasFinder struct {
+	bindings map[*js.Var]struct{}
+	found    bool
 }
 
 // auditScript parses one prototype script and applies the AST audit.
@@ -99,13 +110,32 @@ func auditScript(source []byte, basePath string, artifacts map[string]ArtifactIn
 	if err != nil {
 		return []Diagnostic{errorDiagnostic("prototype_script_invalid", basePath, "prototype JavaScript is invalid: "+err.Error())}
 	}
-	audit := &scriptAudit{path: basePath, artifacts: artifacts, diagnostics: make([]Diagnostic, 0)}
+	globalBindings := make(map[*js.Var]struct{})
+	// Resolve alias chains to a fixed point before policy checks so source order
+	// and function placement cannot hide a global-derived binding.
+	for {
+		collector := &globalBindingCollector{bindings: globalBindings}
+		js.Walk(collector, ast)
+		if !collector.changed {
+			break
+		}
+	}
+	audit := &scriptAudit{
+		path:           basePath,
+		artifacts:      artifacts,
+		globalBindings: globalBindings,
+		diagnostics:    make([]Diagnostic, 0),
+	}
 	js.Walk(audit, ast)
 	return audit.diagnostics
 }
 
 func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 	switch value := node.(type) {
+	case *js.BindingElement:
+		if value.Default != nil && expressionContainsGlobalAlias(value.Default, audit.globalBindings) {
+			audit.checkGlobalBinding(value.Binding)
+		}
 	case *js.Var:
 		name, declaration := resolveVar(value)
 		if declaration != js.NoDecl {
@@ -141,7 +171,7 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 		if name, ok := stringLiteralValue(value.Y); ok {
 			audit.checkMember(value.X, name)
 			audit.checkComputedName(name)
-		} else if isGlobalAlias(value.X) {
+		} else if audit.isGlobalAlias(value.X) {
 			audit.report("prototype_script_dynamic_global", "computed lookups on a global object are not allowed")
 		}
 		js.Walk(audit, value.X)
@@ -149,6 +179,19 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 		return nil
 	case *js.CallExpr:
 		audit.checkCall(value.X, value.Args)
+	case *js.BinaryExpr:
+		if value.Op == js.EqToken {
+			switch value.X.(type) {
+			case *js.DotExpr, *js.IndexExpr:
+				if expressionContainsGlobalAlias(value.Y, audit.globalBindings) && !definitelyPrimitiveResult(value.Y) {
+					audit.checkGlobalAssignment(value.X)
+				}
+			default:
+				if expressionContainsGlobalAlias(value.Y, audit.globalBindings) {
+					audit.checkGlobalAssignment(value.X)
+				}
+			}
+		}
 	case *js.NewExpr:
 		if name, ok := freeIdentifierName(value.X); ok {
 			if message, forbidden := constructedGlobals[name]; forbidden {
@@ -168,6 +211,84 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 }
 
 func (audit *scriptAudit) Exit(js.INode) {}
+
+func (collector *globalBindingCollector) Enter(node js.INode) js.IVisitor {
+	switch value := node.(type) {
+	case *js.BindingElement:
+		if value.Default != nil && expressionContainsGlobalAlias(value.Default, collector.bindings) {
+			collector.collectBinding(value.Binding)
+		}
+	case *js.BinaryExpr:
+		if value.Op == js.EqToken && expressionContainsGlobalAlias(value.Y, collector.bindings) {
+			collector.collectAssignment(value.X)
+		}
+	}
+	return collector
+}
+
+func (collector *globalBindingCollector) Exit(js.INode) {}
+
+func (finder *globalAliasFinder) Enter(node js.INode) js.IVisitor {
+	if finder.found {
+		return nil
+	}
+	if expr, ok := node.(js.IExpr); ok && expressionIsGlobalAlias(expr, finder.bindings) {
+		finder.found = true
+		return nil
+	}
+	return finder
+}
+
+func (finder *globalAliasFinder) Exit(js.INode) {}
+
+func (collector *globalBindingCollector) collectBinding(binding js.IBinding) {
+	switch value := binding.(type) {
+	case *js.Var:
+		collector.add(value)
+	case *js.BindingArray:
+		for _, item := range value.List {
+			collector.collectBinding(item.Binding)
+		}
+		collector.collectBinding(value.Rest)
+	case *js.BindingObject:
+		for _, item := range value.List {
+			collector.collectBinding(item.Value.Binding)
+		}
+		if value.Rest != nil {
+			collector.add(value.Rest)
+		}
+	}
+}
+
+func (collector *globalBindingCollector) collectAssignment(expr js.IExpr) {
+	switch value := expr.(type) {
+	case *js.Var:
+		collector.add(value)
+	case *js.GroupExpr:
+		collector.collectAssignment(value.X)
+	case *js.ArrayExpr:
+		for _, item := range value.List {
+			collector.collectAssignment(item.Value)
+		}
+	case *js.ObjectExpr:
+		for _, item := range value.List {
+			collector.collectAssignment(item.Value)
+		}
+	case *js.BinaryExpr:
+		if value.Op == js.EqToken {
+			collector.collectAssignment(value.X)
+		}
+	}
+}
+
+func (collector *globalBindingCollector) add(variable *js.Var) {
+	root := resolveVarRoot(variable)
+	if _, exists := collector.bindings[root]; exists {
+		return
+	}
+	collector.bindings[root] = struct{}{}
+	collector.changed = true
+}
 
 func (audit *scriptAudit) checkCall(callee js.IExpr, args js.Args) {
 	if literal, ok := callee.(*js.LiteralExpr); ok && literal.TokenType == js.ImportToken {
@@ -203,12 +324,132 @@ func (audit *scriptAudit) checkMember(object js.IExpr, property string) {
 		audit.report("prototype_script_forbidden_api", message)
 		return
 	}
-	if !isGlobalAlias(object) {
+	if !audit.isGlobalAlias(object) {
 		return
 	}
 	if _, forbidden := navigationMembers[property]; forbidden {
 		audit.report("prototype_script_navigation_forbidden", "prototype scripts cannot use this navigation member: "+property)
 	}
+}
+
+func (audit *scriptAudit) checkGlobalBinding(binding js.IBinding) {
+	switch value := binding.(type) {
+	case *js.Var:
+		audit.globalBindings[resolveVarRoot(value)] = struct{}{}
+	case *js.BindingArray:
+		for _, item := range value.List {
+			audit.checkGlobalBinding(item.Binding)
+		}
+		if value.Rest != nil {
+			audit.checkGlobalBinding(value.Rest)
+		}
+	case *js.BindingObject:
+		for _, item := range value.List {
+			name, ok := bindingPropertyName(item.Key)
+			if !ok {
+				audit.report("prototype_script_dynamic_global", "computed destructuring on a global object is not allowed")
+				continue
+			}
+			audit.checkExtractedMember(name)
+			audit.checkGlobalBinding(item.Value.Binding)
+		}
+		if value.Rest != nil {
+			audit.checkGlobalBinding(value.Rest)
+		}
+	}
+}
+
+func (audit *scriptAudit) checkGlobalAssignment(expr js.IExpr) {
+	switch value := expr.(type) {
+	case *js.Var:
+		audit.globalBindings[resolveVarRoot(value)] = struct{}{}
+	case *js.GroupExpr:
+		audit.checkGlobalAssignment(value.X)
+	case *js.DotExpr, *js.IndexExpr:
+		audit.report("prototype_script_dynamic_global", "assigning a global object through a property is not allowed")
+	case *js.ArrayExpr:
+		for _, item := range value.List {
+			audit.checkGlobalAssignment(item.Value)
+		}
+	case *js.ObjectExpr:
+		for _, item := range value.List {
+			if item.Name != nil {
+				name, ok := bindingPropertyName(item.Name)
+				if !ok {
+					audit.report("prototype_script_dynamic_global", "computed destructuring on a global object is not allowed")
+					continue
+				}
+				audit.checkExtractedMember(name)
+			}
+			audit.checkGlobalAssignment(item.Value)
+		}
+	case *js.BinaryExpr:
+		if value.Op == js.EqToken {
+			audit.checkGlobalAssignment(value.X)
+		}
+	}
+}
+
+func (audit *scriptAudit) checkExtractedMember(property string) {
+	if message, forbidden := forbiddenScriptGlobals[property]; forbidden {
+		audit.report("prototype_script_forbidden_api", message)
+		return
+	}
+	if message, forbidden := constructedGlobals[property]; forbidden {
+		audit.report("prototype_script_forbidden_api", message)
+		return
+	}
+	if _, forbidden := navigationMembers[property]; forbidden {
+		audit.report("prototype_script_navigation_forbidden", "prototype scripts cannot extract this navigation member: "+property)
+	}
+}
+
+func (audit *scriptAudit) isGlobalAlias(expr js.IExpr) bool {
+	return expressionIsGlobalAlias(expr, audit.globalBindings)
+}
+
+func expressionContainsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{}) bool {
+	finder := &globalAliasFinder{bindings: bindings}
+	js.Walk(finder, expr)
+	return finder.found
+}
+
+func definitelyPrimitiveResult(expr js.IExpr) bool {
+	unary, ok := expr.(*js.UnaryExpr)
+	return ok && unary.Op == js.NotToken
+}
+
+func expressionIsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{}) bool {
+	switch value := expr.(type) {
+	case *js.GroupExpr:
+		return expressionIsGlobalAlias(value.X, bindings)
+	case *js.DotExpr:
+		name, ok := memberName(value.Y)
+		if !ok {
+			return false
+		}
+		_, alias := globalAliases[name]
+		return alias && expressionIsGlobalAlias(value.X, bindings)
+	case *js.IndexExpr:
+		name, ok := stringLiteralValue(value.Y)
+		if !ok {
+			return false
+		}
+		_, alias := globalAliases[name]
+		return alias && expressionIsGlobalAlias(value.X, bindings)
+	}
+	variable, ok := expr.(*js.Var)
+	if !ok {
+		return false
+	}
+	root := resolveVarRoot(variable)
+	name, declaration := resolveVar(root)
+	if declaration == js.NoDecl {
+		_, alias := globalAliases[name]
+		return alias
+	}
+	_, alias := bindings[root]
+	return alias
 }
 
 func (audit *scriptAudit) checkComputedName(name string) {
@@ -263,10 +504,15 @@ func scriptStringIsRemoteURL(value string) bool {
 }
 
 func resolveVar(variable *js.Var) (string, js.DeclType) {
+	variable = resolveVarRoot(variable)
+	return string(variable.Data), variable.Decl
+}
+
+func resolveVarRoot(variable *js.Var) *js.Var {
 	for variable.Link != nil {
 		variable = variable.Link
 	}
-	return string(variable.Data), variable.Decl
+	return variable
 }
 
 func freeIdentifierName(expr js.IExpr) (string, bool) {
@@ -279,15 +525,6 @@ func freeIdentifierName(expr js.IExpr) (string, bool) {
 		return "", false
 	}
 	return name, true
-}
-
-func isGlobalAlias(expr js.IExpr) bool {
-	name, ok := freeIdentifierName(expr)
-	if !ok {
-		return false
-	}
-	_, alias := globalAliases[name]
-	return alias
 }
 
 // memberName reads the property name of a dot expression. The parser stores it
@@ -303,6 +540,19 @@ func memberName(expr js.IExpr) (string, bool) {
 		return name, true
 	}
 	return "", false
+}
+
+func bindingPropertyName(property *js.PropertyName) (string, bool) {
+	if property == nil {
+		return "", false
+	}
+	if property.Computed != nil {
+		return stringLiteralValue(property.Computed)
+	}
+	if property.Literal.TokenType == js.StringToken {
+		return decodeJSString(property.Literal.Data), true
+	}
+	return string(property.Literal.Data), true
 }
 
 func stringLiteralValue(expr js.IExpr) (string, bool) {
