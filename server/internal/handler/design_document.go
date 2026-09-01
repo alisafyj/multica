@@ -81,6 +81,8 @@ type CreateDesignDocumentRequest struct {
 
 type DesignDocumentResponse struct {
 	ID                string                           `json:"id"`
+	DesignRef         string                           `json:"design_ref,omitempty"`
+	Source            string                           `json:"source"`
 	WorkspaceID       string                           `json:"workspace_id"`
 	ProjectID         string                           `json:"project_id"`
 	ProjectResourceID string                           `json:"project_resource_id,omitempty"`
@@ -500,7 +502,12 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		repositoryGrounded := h.designDocumentRepositoryGrounded(r.Context(), document)
-		responses = append(responses, designDocumentResponse(document, activeTask, repositoryGrounded))
+		response := designDocumentResponse(document, activeTask, repositoryGrounded)
+		if err := h.attachMulticaDesignAssetRef(r.Context(), &response, document, requestUserID(r), time.Now()); err != nil {
+			writeProjectDesignSystemError(w, http.StatusInternalServerError, "design_ref_failed", "failed to create design reference")
+			return
+		}
+		responses = append(responses, response)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"documents": responses})
 }
@@ -625,6 +632,7 @@ func (h *Handler) designDocumentRepositoryGrounded(ctx context.Context, document
 func designDocumentResponse(document db.DesignDocument, task *db.AgentTaskQueue, repositoryGrounded bool) DesignDocumentResponse {
 	response := DesignDocumentResponse{
 		ID:                 uuidToString(document.ID),
+		Source:             "multica",
 		WorkspaceID:        uuidToString(document.WorkspaceID),
 		ProjectID:          uuidToString(document.ProjectID),
 		ProjectResourceID:  uuidToString(document.ProjectResourceID),
@@ -795,9 +803,16 @@ func (h *Handler) resolveInitialDesignDocumentContext(
 		}
 		builtinContext = &service.BuiltinDesignContext{Slug: detail.Slug, Name: detail.Name, Category: detail.Category, DesignMarkdown: detail.DesignMarkdown, TokensCSS: detail.TokensCSS}
 	}
+	// Repository runs always resolve their repository-scoped saved package. An
+	// explicit selection is a confirmation of that package, not a request to
+	// reinterpret it as a workspace-wide system.
+	resolvedSystemID := designSystemUUID
+	if projectResourceID.Valid {
+		resolvedSystemID = pgtype.UUID{}
+	}
 	resolved, err := (service.ProjectDesignContextResolver{Store: queries, AllowedHosts: h.projectDesignSystemAllowedHosts()}).Resolve(ctx, service.ResolveProjectDesignContextParams{
 		WorkspaceID: workspaceID, ProjectID: projectID, ProjectResourceID: projectResourceID,
-		DesignSystemID: designSystemUUID, Builtin: builtinContext,
+		DesignSystemID: resolvedSystemID, Builtin: builtinContext,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrSavedDesignContextInvalid) {
@@ -811,6 +826,9 @@ func (h *Handler) resolveInitialDesignDocumentContext(
 		}
 		if resolved.Package == nil || resolved.Package.ProjectResourceID != uuidToString(projectResourceID) || resolved.Package.ProjectID != uuidToString(projectID) {
 			return nil, &projectDesignSystemRequestError{status: http.StatusUnprocessableEntity, code: "repository_design_system_required", message: "the repository's exact saved design system is required"}
+		}
+		if designSystemID != "" && resolved.Package.DesignSystemID != designSystemID {
+			return nil, &projectDesignSystemRequestError{status: http.StatusUnprocessableEntity, code: "repository_design_system_required", message: "the selected design system is not this repository's saved design system"}
 		}
 	}
 	if !projectResourceID.Valid && designSystemID != "" && resolved.Package != nil && resolved.Package.ProjectID != uuidToString(projectID) {

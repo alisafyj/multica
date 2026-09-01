@@ -35,6 +35,7 @@ func TestDesignDocumentBindingMatchesTheDaemonBinding(t *testing.T) {
 				WorkspaceID:         "2b2b2b2b-2b2b-4b2b-8b2b-2b2b2b2b2b2b",
 				ProjectID:           "3c3c3c3c-3c3c-4c3c-8c3c-3c3c3c3c3c3c",
 				DesignDocumentID:    "4d4d4d4d-4d4d-4d4d-8d4d-4d4d4d4d4d4d",
+				RevisionID:          "9d9d9d9d-9d9d-4d9d-8d9d-9d9d9d9d9d9d",
 				AgentID:             agentID,
 				Platform:            "web",
 				DesignSystemDigest:  "sha256:" + strings.Repeat("e", 64),

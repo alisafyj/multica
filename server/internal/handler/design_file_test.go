@@ -407,6 +407,95 @@ func restorePackGroupedNativeJSONForTest(title string) map[string]any {
 	return nativeJSON
 }
 
+func TestDiscoverDesignRestorePackGroupsKeepsExactHintFrameIDs(t *testing.T) {
+	document := restorePackGroupedNativeJSONForTest("Exact Hint Group")
+	hints := document["restoreHints"].(map[string]any)["figmaGroups"].(map[string]any)
+	group := hints["group-wallet"].(map[string]any)
+	delete(group, "id")
+	delete(group, "sourceNodeId")
+	delete(group, "name")
+	group["frameIds"] = []string{"frame-secondary"}
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+
+	groups := discoverDesignRestorePackGroups(decoded)
+	if len(groups) != 1 || groups[0].ID != "group-wallet" || !stringSlicesEqual(groups[0].FrameIDs, []string{"frame-secondary"}) {
+		t.Fatalf("groups = %+v, want map-key identity and exact hinted frame IDs", groups)
+	}
+}
+
+func TestResolveDesignRestorePackGroupFrameIDsFiltersUnknownFrames(t *testing.T) {
+	document := restorePackGroupedNativeJSONForTest("Stale Hint Group")
+	hints := document["restoreHints"].(map[string]any)["figmaGroups"].(map[string]any)
+	group := hints["group-wallet"].(map[string]any)
+	group["frameIds"] = []string{"frame-stale", "frame-secondary", "frame-main", "frame-secondary"}
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name  string
+		scope DesignRestoreScopeV1
+		want  []string
+	}{
+		{
+			name:  "hint",
+			scope: DesignRestoreScopeV1{Kind: "figma_group", GroupID: "group-wallet"},
+			want:  []string{"frame-secondary", "frame-main"},
+		},
+		{
+			name: "scope",
+			scope: DesignRestoreScopeV1{
+				Kind: "figma_group", GroupID: "group-wallet",
+				FrameIDs: []string{"frame-stale", "frame-main", "frame-main", "frame-secondary"},
+			},
+			want: []string{"frame-main", "frame-secondary"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _ := resolveDesignRestorePackGroupFrameIDs(document, tt.scope)
+			if !stringSlicesEqual(got, tt.want) {
+				t.Fatalf("frame IDs = %v, want authoritative intersection %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveDesignRestorePackFramesRejectsAllStaleGroup(t *testing.T) {
+	document := restorePackGroupedNativeJSONForTest("Stale Group")
+	hints := document["restoreHints"].(map[string]any)["figmaGroups"].(map[string]any)
+	hints["group-wallet"].(map[string]any)["frameIds"] = []string{"frame-stale"}
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+
+	frameIDs, _, err := resolveDesignRestorePackFrames(document, DesignRestoreScopeV1{
+		Kind: "figma_group", GroupID: "group-wallet",
+	})
+	if err == nil || len(frameIDs) != 0 {
+		t.Fatalf("resolve stale group = (%v, %v), want not found", frameIDs, err)
+	}
+	if discovered := discoverDesignRestorePackGroups(document); len(discovered) != 0 {
+		t.Fatalf("discovered stale groups = %+v, want none", discovered)
+	}
+}
+
 func nativeJSONWithFrameNamesForTest(names []string) map[string]any {
 	frames := make([]map[string]any, 0, len(names))
 	layers := make(map[string]any, len(names)*2)

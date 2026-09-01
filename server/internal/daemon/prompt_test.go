@@ -1751,6 +1751,7 @@ func TestBuildPromptProjectDesignSystemRepositoryAnalysisUsesMarkerContract(t *t
 	prompt := BuildPrompt(projectDesignSystemPromptTask(t, "repository_analysis"), "opencode")
 	for _, want := range []string{
 		"provided project repository and resources",
+		"multica repo checkout <repository-url>",
 		"read-only",
 		"Do not modify the repository",
 		"Do not create generated package files",

@@ -479,6 +479,8 @@ func (h *Handler) replaceDesignRestoreMappingsFromSummary(ctx context.Context, t
 
 type DesignFileResponse struct {
 	ID                string          `json:"id"`
+	DesignRef         string          `json:"design_ref,omitempty"`
+	Source            string          `json:"source"`
 	WorkspaceID       string          `json:"workspace_id"`
 	ProjectID         *string         `json:"project_id,omitempty"`
 	FolderID          *string         `json:"folder_id,omitempty"`
@@ -1028,6 +1030,7 @@ func generateFigmaImportCode() (string, error) {
 func designFileToResponse(file db.DesignFile) DesignFileResponse {
 	return DesignFileResponse{
 		ID:                uuidToString(file.ID),
+		Source:            "figma",
 		WorkspaceID:       uuidToString(file.WorkspaceID),
 		ProjectID:         uuidToPtr(file.ProjectID),
 		FolderID:          uuidToPtr(file.FolderID),
@@ -2172,6 +2175,10 @@ func (h *Handler) ListDesignFiles(w http.ResponseWriter, r *http.Request) {
 		if file.CurrentRevisionID.Valid {
 			if revision, err := h.Queries.GetDesignRevisionInWorkspace(r.Context(), db.GetDesignRevisionInWorkspaceParams{ID: file.CurrentRevisionID, WorkspaceID: wsUUID}); err == nil {
 				resp[i].ThumbnailURL = thumbnailFromNativeJSON(revision.NativeJson)
+				if err := attachFigmaDesignAssetRef(&resp[i], file, revision, requestUserID(r), time.Now()); err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to create design reference")
+					return
+				}
 			}
 		}
 	}
@@ -2556,6 +2563,10 @@ func (h *Handler) GetDesignFile(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			revisionResp := designRevisionToResponse(revision)
 			resp.CurrentRevision = &revisionResp
+			if err := attachFigmaDesignAssetRef(&resp.File, file, revision, requestUserID(r), time.Now()); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to create design reference")
+				return
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -7989,11 +8000,26 @@ func resolveDesignRestorePackFrames(doc map[string]any, scope DesignRestoreScope
 }
 
 func resolveDesignRestorePackGroupFrameIDs(doc map[string]any, scope DesignRestoreScopeV1) ([]string, map[string]any) {
+	knownFrameIDs := map[string]struct{}{}
+	for _, frame := range asObjectSlice(doc["frames"]) {
+		if frameID := strings.TrimSpace(stringField(frame, "id")); frameID != "" {
+			knownFrameIDs[frameID] = struct{}{}
+		}
+	}
+	filterKnownFrameIDs := func(frameIDs []string) []string {
+		out := make([]string, 0, len(frameIDs))
+		for _, frameID := range uniqueOrderedStrings(frameIDs) {
+			if _, ok := knownFrameIDs[frameID]; ok {
+				out = append(out, frameID)
+			}
+		}
+		return out
+	}
 	if len(scope.FrameIDs) > 0 {
-		return uniqueOrderedStrings(scope.FrameIDs), map[string]any{"id": scope.GroupID, "name": scope.GroupName}
+		return filterKnownFrameIDs(scope.FrameIDs), map[string]any{"id": scope.GroupID, "name": scope.GroupName}
 	}
 	if group := findDesignRestorePackGroupHint(doc, scope); group != nil {
-		return stringsFromAnySlice(group["frameIds"]), group
+		return filterKnownFrameIDs(stringsFromAnySlice(group["frameIds"])), group
 	}
 	out := []string{}
 	meta := map[string]any{}
@@ -8009,20 +8035,104 @@ func resolveDesignRestorePackGroupFrameIDs(doc map[string]any, scope DesignResto
 			out = append(out, frameID)
 		}
 	}
-	return uniqueOrderedStrings(out), meta
+	return filterKnownFrameIDs(out), meta
+}
+
+type designRestorePackGroup struct {
+	ID       string
+	Name     string
+	FrameIDs []string
+}
+
+func discoverDesignRestorePackGroups(doc map[string]any) []designRestorePackGroup {
+	candidates := make([]DesignRestoreScopeV1, 0)
+	seenCandidates := map[string]struct{}{}
+	addCandidate := func(scope DesignRestoreScopeV1) {
+		var key string
+		switch {
+		case scope.GroupID != "":
+			key = "id:" + scope.GroupID
+		case scope.GroupName != "":
+			key = "name:" + scope.GroupName
+		case len(scope.GroupPath) > 0:
+			key = "path:" + strings.Join(scope.GroupPath, "\x00")
+		default:
+			return
+		}
+		if _, exists := seenCandidates[key]; exists {
+			return
+		}
+		seenCandidates[key] = struct{}{}
+		candidates = append(candidates, scope)
+	}
+
+	restoreHints, _ := doc["restoreHints"].(map[string]any)
+	hints, _ := restoreHints["figmaGroups"].(map[string]any)
+	hintKeys := make([]string, 0, len(hints))
+	for key := range hints {
+		hintKeys = append(hintKeys, key)
+	}
+	sort.Strings(hintKeys)
+	for _, key := range hintKeys {
+		group, ok := hints[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		groupID := firstString(group, "id", "groupId", "sourceNodeId")
+		if groupID == "" {
+			groupID = key
+		}
+		addCandidate(DesignRestoreScopeV1{
+			Kind: "figma_group", GroupID: groupID, GroupName: firstString(group, "name", "groupName"),
+			GroupPath: stringsFromAnySlice(group["groupPath"]),
+		})
+	}
+	for _, frame := range asObjectSlice(doc["frames"]) {
+		source, _ := frame["source"].(map[string]any)
+		addCandidate(DesignRestoreScopeV1{
+			Kind: "figma_group", GroupID: firstString(source, "groupId", "id", "sourceNodeId"),
+			GroupName: stringField(source, "groupName"), GroupPath: stringsFromAnySlice(source["groupPath"]),
+		})
+	}
+
+	groups := make([]designRestorePackGroup, 0, len(candidates))
+	seenGroups := map[string]struct{}{}
+	for _, candidate := range candidates {
+		frameIDs, meta := resolveDesignRestorePackGroupFrameIDs(doc, candidate)
+		groupID := firstString(meta, "id", "groupId", "sourceNodeId")
+		if groupID == "" {
+			groupID = candidate.GroupID
+		}
+		if groupID == "" || len(frameIDs) == 0 {
+			continue
+		}
+		if _, exists := seenGroups[groupID]; exists {
+			continue
+		}
+		seenGroups[groupID] = struct{}{}
+		name := firstString(meta, "name", "groupName")
+		if name == "" {
+			name = candidate.GroupName
+		}
+		groups = append(groups, designRestorePackGroup{ID: groupID, Name: name, FrameIDs: frameIDs})
+	}
+	return groups
 }
 
 func findDesignRestorePackGroupHint(doc map[string]any, scope DesignRestoreScopeV1) map[string]any {
 	restoreHints, _ := doc["restoreHints"].(map[string]any)
 	groups, _ := restoreHints["figmaGroups"].(map[string]any)
-	for _, raw := range groups {
+	for key, raw := range groups {
 		group, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
 		if scope.GroupID != "" {
-			for _, key := range []string{"id", "groupId", "sourceNodeId"} {
-				if stringField(group, key) == scope.GroupID {
+			if key == scope.GroupID {
+				return group
+			}
+			for _, field := range []string{"id", "groupId", "sourceNodeId"} {
+				if stringField(group, field) == scope.GroupID {
 					return group
 				}
 			}

@@ -8256,6 +8256,7 @@ type DesignDocumentTaskContext struct {
 	// Optional traceable link. Saving never changes issue state (DC-045).
 	IssueID          string          `json:"issue_id,omitempty"`
 	DesignDocumentID string          `json:"design_document_id"`
+	RevisionID       string          `json:"revision_id,omitempty"`
 	AgentID          string          `json:"agent_id"`
 	Project          json.RawMessage `json:"project"`
 	Platform         string          `json:"platform"`

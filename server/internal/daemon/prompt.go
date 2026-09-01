@@ -256,6 +256,7 @@ func buildProjectDesignSystemRepositoryAnalysisPrompt() string {
 	b.WriteString("You are running as a read-only repository design analysis agent for a Multica workspace.\n\n")
 	b.WriteString("Inspect only the provided project repository and resources. Read the available source files and repository evidence to identify the product's existing visual, structural, and workflow context.\n\n")
 	b.WriteString("Rules:\n")
+	b.WriteString("- Read the associated repository URL from the task context, then run `multica repo checkout <repository-url>` before inspecting source files. This checkout is the only allowed Multica command.\n")
 	b.WriteString("- This task is read-only. Do not modify the repository or any provided resource.\n")
 	b.WriteString("- Do not create generated package files or any other output files.\n")
 	b.WriteString("- Do not delegate, spawn sub-agents, or leave follow-up work.\n")
@@ -1393,11 +1394,14 @@ func designDocumentPackageContract(outputDir string) string {
 	if outputDir != "" {
 		b.WriteString("On this run `$MULTICA_OUTPUT_DIR` is `" + outputDir + "`. Write there, at exactly the paths below.\n")
 	}
+	b.WriteString("Never create or write a relative `output/design-document` path under the current work directory; it is not collected.\n")
 	b.WriteString("`.agent_context/design_document/work/` is NOT that directory. It holds one grounding receipt and nothing else; a package written there is a package the platform never sees, and the run fails reporting that you produced no files at all.\n\n")
 	b.WriteString("Required:\n")
 	b.WriteString("- `brief.json` — the semantic layer described above.\n")
+	b.WriteString("- In `brief.json`, every `pages[].entry` must be a package-relative `prototype/*.html` path (for example `prototype/index.html`), never a page ID, route, or filename outside `prototype/`.\n")
 	b.WriteString("- `prototype/index.html` — the prototype entry point, a complete HTML document.\n")
 	b.WriteString("- `coverage.json` — requirement coverage and honest gaps.\n\n")
+	b.WriteString("- every `coverage.json` reference or gap `ref_id` must name an ID declared in `brief.json`; describe external facts in reason or notes instead of using them as `ref_id` values.\n\n")
 	b.WriteString("Optional:\n")
 	b.WriteString("- `prototype/<path>.html`, `prototype/<path>.css`, `prototype/<path>.js` — split the prototype as its real complexity requires.\n")
 	b.WriteString("- `assets/<file>` — images and fonts the prototype references.\n")
