@@ -8000,11 +8000,26 @@ func resolveDesignRestorePackFrames(doc map[string]any, scope DesignRestoreScope
 }
 
 func resolveDesignRestorePackGroupFrameIDs(doc map[string]any, scope DesignRestoreScopeV1) ([]string, map[string]any) {
+	knownFrameIDs := map[string]struct{}{}
+	for _, frame := range asObjectSlice(doc["frames"]) {
+		if frameID := strings.TrimSpace(stringField(frame, "id")); frameID != "" {
+			knownFrameIDs[frameID] = struct{}{}
+		}
+	}
+	filterKnownFrameIDs := func(frameIDs []string) []string {
+		out := make([]string, 0, len(frameIDs))
+		for _, frameID := range uniqueOrderedStrings(frameIDs) {
+			if _, ok := knownFrameIDs[frameID]; ok {
+				out = append(out, frameID)
+			}
+		}
+		return out
+	}
 	if len(scope.FrameIDs) > 0 {
-		return uniqueOrderedStrings(scope.FrameIDs), map[string]any{"id": scope.GroupID, "name": scope.GroupName}
+		return filterKnownFrameIDs(scope.FrameIDs), map[string]any{"id": scope.GroupID, "name": scope.GroupName}
 	}
 	if group := findDesignRestorePackGroupHint(doc, scope); group != nil {
-		return stringsFromAnySlice(group["frameIds"]), group
+		return filterKnownFrameIDs(stringsFromAnySlice(group["frameIds"])), group
 	}
 	out := []string{}
 	meta := map[string]any{}
@@ -8020,7 +8035,7 @@ func resolveDesignRestorePackGroupFrameIDs(doc map[string]any, scope DesignResto
 			out = append(out, frameID)
 		}
 	}
-	return uniqueOrderedStrings(out), meta
+	return filterKnownFrameIDs(out), meta
 }
 
 type designRestorePackGroup struct {
