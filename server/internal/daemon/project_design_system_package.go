@@ -323,7 +323,7 @@ func decodeV2TaskBinding(task Task) (projectdesignsystem.PackageBinding, error) 
 	var envelope struct {
 		WorkspaceID         string `json:"workspace_id"`
 		ProjectID           string `json:"project_id"`
-		DesignSystemID      string `json:"design_system_id"`
+		DesignSystemID      string `json:"project_design_system_id"`
 		TaskID              string `json:"task_id"`
 		AgentID             string `json:"agent_id"`
 		Operation           string `json:"operation"`

@@ -108,21 +108,44 @@ func decodeV2PackageArchive(t *testing.T, archive []byte) map[string][]byte {
 func stageProjectDesignSystemV2TaskContext(t *testing.T, taskID string) json.RawMessage {
 	t.Helper()
 	ctx := map[string]any{
-		"type":                  "project_design_system_task",
-		"operation":             "generate",
-		"package_schema":        projectdesignsystem.PackageSchemaV2,
-		"input_snapshot_sha256": "sha256:" + strings.Repeat("a", 64),
-		"design_system_id":      "11111111-1111-1111-1111-111111111111",
-		"project_id":            "22222222-2222-2222-2222-222222222222",
-		"workspace_id":          "33333333-3333-3333-3333-333333333333",
-		"task_id":               taskID,
-		"agent_id":              "44444444-4444-4444-4444-444444444444",
+		"type":                     "project_design_system_task",
+		"operation":                "generate",
+		"package_schema":           projectdesignsystem.PackageSchemaV2,
+		"input_snapshot_sha256":    "sha256:" + strings.Repeat("a", 64),
+		"project_design_system_id": "11111111-1111-1111-1111-111111111111",
+		"project_id":               "22222222-2222-2222-2222-222222222222",
+		"workspace_id":             "33333333-3333-3333-3333-333333333333",
+		"task_id":                  taskID,
+		"agent_id":                 "44444444-4444-4444-4444-444444444444",
 	}
 	raw, err := json.Marshal(ctx)
 	if err != nil {
 		t.Fatalf("marshal task context: %v", err)
 	}
 	return raw
+}
+
+func TestDecodeV2TaskBindingUsesProjectDesignSystemID(t *testing.T) {
+	task := Task{
+		ID: "task-1",
+		ProjectDesignSystemContext: json.RawMessage(`{
+			"workspace_id":"workspace-1",
+			"project_id":"project-1",
+			"project_design_system_id":"system-1",
+			"task_id":"task-1",
+			"agent_id":"agent-1",
+			"operation":"generate",
+			"input_snapshot_sha256":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		}`),
+	}
+
+	binding, err := decodeV2TaskBinding(task)
+	if err != nil {
+		t.Fatalf("decode V2 task binding: %v", err)
+	}
+	if binding.DesignSystemID != "system-1" {
+		t.Fatalf("design system ID = %q, want project design system ID", binding.DesignSystemID)
+	}
 }
 
 // finalizingClient is a stand-in for the daemon's API client. It records the
