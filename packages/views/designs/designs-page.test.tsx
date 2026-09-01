@@ -215,7 +215,7 @@ describe("DesignsPage", () => {
     await screen.findByRole("menuitem", { name: "staffrnapp" });
     expect(screen.queryByRole("tab", { name: "CRM" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "staffrnapp" })).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "选择项目" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "设计中心视角" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "打开项目" }));
     await user.click(screen.getByRole("menuitem", { name: "CRM" }));
@@ -339,7 +339,7 @@ describe("DesignsPage", () => {
     // repository Finder or repository scope controls.
     expect(screen.queryByRole("searchbox", { name: /仓库/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: /仓库/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "仓库视角" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "设计中心视角" })).not.toBeInTheDocument();
   });
 
   it("opens the composer from a project's 新建设计稿 and filters its artifacts", async () => {
@@ -533,16 +533,5 @@ describe("DesignsPage", () => {
     }));
     expect(screen.getByRole("button", { name: "crm-h5" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "项目通用" })).toHaveAttribute("aria-pressed", "false");
-  });
-});
-
-describe("DesignsPage MVP object workspace", () => {
-  it("keeps Home available and opens the bounded project/repository workspace", async () => {
-    renderWithClient(<StrictMode><DesignsPage /></StrictMode>);
-    const home = await screen.findByRole("tab", { name: "首页" });
-    const workspace = await screen.findByRole("group", { name: "设计中心视角" });
-    expect(home).toHaveAttribute("aria-selected", "true");
-    expect(within(workspace).getByRole("button", { name: "项目视角" })).toBeInTheDocument();
-    expect(within(workspace).getByRole("button", { name: "仓库视角" })).toBeInTheDocument();
   });
 });
