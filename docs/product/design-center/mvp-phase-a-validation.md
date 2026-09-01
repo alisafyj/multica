@@ -11,6 +11,17 @@
 - 基于该分析生成并保存仓库专属设计体系。Design A（CRM 客户列表）和 Design B（CRM 客户详情/商机流程）均从该已保存仓库体系冻结上下文创建。B 的一次真实调整以已保存基线为起点完成并再次保存。
 - A、B 和 B 调整后版本均通过 Audit、可见 Preview 和保存验收。
 
+## 固定锚点与任务耗时
+
+- Workspace `8b6efa4b-6d23-4a2e-b3dd-8b07c26d2a8c`；Project `bed12d68-a044-408b-9b94-0b746fad423e`；Repository association `d9a0a1c7-5df9-4466-85a4-ee0c01960cf7`；Agent `51248c1f-b7cf-4837-9c44-a96055d1a579`。
+- repository analysis task `01a05cd2-08b0-700f-95ce-ae786742aed8`：`completed`，19:54:23 至 19:58:39，实际运行 255 秒；固定 checkout commit `a7606af71f98`。
+- repository design system `edf027ca-4385-4109-a044-042505f02de9`；saved package `71ceba5f-ff03-40ae-a126-bf931dc454fc`；生成 task `01a05ce1-9b08-7ca6-abc6-51f64bb8de99` 运行 300 秒；saved digest `sha256:5fa50a865277c5405c89f9d2023398f88489b267591518d6961230041ddc4811`。
+- Design A document `f2a055e5-ef1d-473c-bf4c-ae43aeaf851c`；v1 revision `e9703f6d-8edf-4015-8c07-f0a877c4f8c1`；task `01a05d3c-efbc-7226-b8c8-0e005b1f9078` 运行 716 秒；22:09:29 保存。
+- Design B document `14f2fbb0-c448-46d3-82d5-f38d6497a0b9`；v1 revision `354fbb9b-e637-469d-9c15-0c70489768dd`；task `01a05d4e-3b6a-7e25-97d1-60fc584e54bc` 运行 849 秒。
+- Design B 调整 task `01a05d5c-9f87-78cd-9cdd-9648f1e74e27` 运行 300 秒；v2 revision `e8160d12-081d-4e38-b6c3-3ad7dd879ff7` 以 v1 为 base，22:31:33 保存。总调整次数：1。
+- A v1、B v1、B v2 的持久化 Audit 均为 `passed=true`、0 diagnostics，Preview verification 均为 `passed=true`；三个 revision 的 `design_system_digest` 均精确等于上述 saved design system digest。
+- 用户可见阻塞：无。未发现需要绕过或以 mock 替代的产品阻塞。
+
 ## 补充真实 UI 证据
 
 - **共享仓库体系入口**：Home > 设计体系 > 新建设计体系 > 仓库绑定选择验收仓库后，解析到已保存的 `Multica CRM Design System`，不会伪造第二个创建表单。Project > 设计体系 > 该仓库范围解析到同一体系。两个入口均显示 Web 平台、已保存状态和同一套 Source of truth/Token/Component 内容；未提交任何重新生成。
