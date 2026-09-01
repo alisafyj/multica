@@ -38,6 +38,9 @@ func createDesignDocumentDesignSystemDownloadTask(t *testing.T, agentID, runtime
 				Scope: service.DesignContextScopeRepository, ProjectID: projectID, ProjectResourceID: resourceID,
 				DesignSystemID: uuidToString(system.ID), SavedPackageID: uuidToString(saved.ID),
 				ArchiveObjectKey: saved.ArchiveObjectKey.String,
+				PackageSchema:    saved.PackageSchema,
+				V2Manifest:       append(json.RawMessage(nil), saved.Manifest...),
+				V2ArtifactIndex:  artifactIndexFromRaw(saved.ArtifactIndex),
 			},
 		})),
 	}
@@ -124,9 +127,13 @@ func TestDownloadDesignDocumentDesignSystemRejectsMissingProvenanceAndChangedArc
 		string(afterOverwrite.Body.Bytes()) != string(archive) || strings.Contains(afterOverwrite.Body.String(), saved.ArchiveObjectKey.String) {
 		t.Fatalf("after saved-slot overwrite download=%d body-bytes=%d headers=%v", afterOverwrite.Code, afterOverwrite.Body.Len(), afterOverwrite.Header())
 	}
-	testHandler.Storage.(*mockStorage).mu.Lock()
-	testHandler.Storage.(*mockStorage).files[saved.ArchiveObjectKey.String] = []byte("changed")
-	testHandler.Storage.(*mockStorage).mu.Unlock()
+	storage, ok := testHandler.Storage.(*mockStorage)
+	if !ok {
+		t.Fatalf("test storage type %T does not support archive mutation", testHandler.Storage)
+	}
+	storage.mu.Lock()
+	storage.files[saved.ArchiveObjectKey.String] = []byte("changed")
+	storage.mu.Unlock()
 	if download := performDesignDocumentDesignSystemDownload(t, taskID); download.Code != http.StatusConflict || strings.Contains(download.Body.String(), saved.ArchiveObjectKey.String) {
 		t.Fatalf("changed archive download=%d body=%s", download.Code, download.Body.String())
 	}

@@ -46,7 +46,7 @@ func TestProjectDesignContextResolverUsesOnlyValidatedSavedPackage(t *testing.T)
 	if resolved.ProjectID != util.UUIDToString(projectID) || !reflect.DeepEqual(resolved.Priority, wantPriority) {
 		t.Fatalf("resolved project/priority = project:%q priority:%v", resolved.ProjectID, resolved.Priority)
 	}
-	if resolved.Digest != saved.IntegritySha256 || resolved.Package == nil {
+	if resolved.Digest != "sha256:"+saved.IntegritySha256 || resolved.Package == nil {
 		t.Fatalf("resolved digest/package = digest:%q package:%#v", resolved.Digest, resolved.Package)
 	}
 	if resolved.Package.DesignSystemID != util.UUIDToString(systemID) || resolved.Package.SourceTaskID != util.UUIDToString(sourceTaskID) {
@@ -55,11 +55,7 @@ func TestProjectDesignContextResolverUsesOnlyValidatedSavedPackage(t *testing.T)
 	if resolved.Package.Name != system.Name || resolved.Package.Platform != system.Platform {
 		t.Fatalf("resolved package identity = %#v", resolved.Package)
 	}
-	wantArtifacts := projectdesignsystem.ArtifactInput{
-		DesignMD:       saved.DesignMd,
-		TokensCSS:      saved.TokensCss,
-		ComponentsHTML: saved.ComponentsHtml,
-	}
+	wantArtifacts := projectdesignsystem.ArtifactInput{DesignMD: saved.DesignMd, TokensCSS: saved.TokensCss}
 	if resolved.Package.Artifacts != wantArtifacts {
 		t.Fatalf("resolved artifacts = %#v", resolved.Package.Artifacts)
 	}
@@ -75,7 +71,7 @@ func TestProjectDesignContextResolverUsesOnlyValidatedSavedPackage(t *testing.T)
 	if err := json.Unmarshal(encoded, &payload); err != nil {
 		t.Fatalf("decode resolved context: %v", err)
 	}
-	if payload["source"] != string(DesignContextSourceCloudSaved) || payload["digest"] != saved.IntegritySha256 {
+	if payload["source"] != string(DesignContextSourceCloudSaved) || payload["digest"] != "sha256:"+saved.IntegritySha256 {
 		t.Fatalf("traceable JSON contract = %#v", payload)
 	}
 	pack, ok := payload["package"].(map[string]any)
@@ -209,8 +205,8 @@ func TestProjectDesignContextResolverPinsAnExplicitWorkspaceSystem(t *testing.T)
 	if resolved.Package.Scope != DesignContextScopeWorkspace || resolved.Package.DesignSystemID != util.UUIDToString(systemID) {
 		t.Fatalf("resolved package = %#v", resolved.Package)
 	}
-	if resolved.Digest != saved.IntegritySha256 {
-		t.Fatalf("resolved digest = %q, want the saved package digest", resolved.Digest)
+	if resolved.Digest != "sha256:"+saved.IntegritySha256 {
+		t.Fatalf("resolved digest = %q, want the V2 content digest", resolved.Digest)
 	}
 	// The fallback scopes must not have been consulted at all.
 	if len(store.packageSlots) != 1 {
@@ -347,7 +343,11 @@ func validSavedDesignContextFixture(
 	if err != nil {
 		t.Fatalf("validate fixture: %v", err)
 	}
-	validationJSON, err := json.Marshal(validated.Validation)
+	audit := projectdesignsystem.AuditReport{
+		SchemaVersion: projectdesignsystem.AuditSchemaV1, Passed: true,
+		ContentDigest: "sha256:" + validated.Manifest.Digest,
+	}
+	validationJSON, err := json.Marshal(audit)
 	if err != nil {
 		t.Fatalf("marshal fixture validation: %v", err)
 	}
