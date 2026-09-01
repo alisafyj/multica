@@ -252,6 +252,7 @@ func materializeDesignImplementationContext(rootDir string, contextValue designI
 		"frame_refs": contextValue.FrameRefs, "project_id": contextValue.ProjectID,
 		"issue_id": contextValue.IssueID, "project_resource_id": contextValue.ProjectResourceID,
 		"allowed_write_paths": contextValue.AllowedWritePaths, "verification_requirements": contextValue.Verification,
+		"result_path": designImplementationResultPath, "result_schema": designimplementation.ResultSchemaV1,
 	}
 	for relative, value := range map[string]any{
 		"context.json":                   contextValue,
