@@ -181,6 +181,9 @@ func TestAuditRejectsDestructuredGlobalCapabilities(t *testing.T) {
 		{name: "receiver-carried function return", script: `function host() { return [window].pop(); } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 		{name: "spoofed includes return", script: `const value = window; function host() { return value.toLowerCase().includes(); } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 		{name: "spoofed localeCompare return", script: `const value = window; function host() { return value.id.localeCompare(""); } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "assigned arrow wrapped return", script: `const inner = () => window; function host() { return inner(); } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "arrow IIFE wrapped return", script: `function host() { return (() => window)(); } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
+		{name: "tainted callable wrapped return", script: `const safe = () => false; let inner = safe; function set(value) { inner = value; } set(window); function host() { return inner(); } const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 		{name: "arrow return", script: `const host = () => window; const {fetch} = host(); fetch("/api/orders");`, code: "prototype_script_dynamic_global"},
 	}
 

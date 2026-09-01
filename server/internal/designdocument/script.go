@@ -308,7 +308,11 @@ func (finder *globalAliasFinder) Enter(node js.INode) js.IVisitor {
 		return nil
 	}
 	if call, ok := node.(*js.CallExpr); ok && finder.skipKnownPrimitiveCalls {
-		if len(declaredFunctionParams(call.X, finder.functions)) != 0 || knownPrimitiveReturnCall(call) {
+		if len(declaredFunctionParams(call.X, finder.functions)) != 0 {
+			finder.found = expressionContainsGlobalAlias(call.X, finder.bindings)
+			return nil
+		}
+		if knownPrimitiveReturnCall(call) {
 			return nil
 		}
 	}
