@@ -7930,6 +7930,7 @@ func buildDesignRestorePackFromNativeJSON(file db.DesignFile, revision db.Design
 	hints := designRestoreImplementationHints(packFrames)
 	return map[string]any{
 		"version":             "1.0",
+		"contentDigest":       digestDesignAssetBytes(revision.NativeJson),
 		"designFile":          map[string]any{"id": uuidToString(file.ID), "title": file.Title, "sourceType": file.SourceType},
 		"revision":            map[string]any{"id": uuidToString(revision.ID), "number": revision.RevisionNumber, "status": revision.Status},
 		"scope":               scope,

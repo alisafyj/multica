@@ -145,7 +145,8 @@ func TestDesignImplementationContextBuildsFrozenFigmaGroupRestorePackScope(t *te
 	}
 	var contextValue DesignImplementationContextResponse
 	callDesignImplementation(t, testHandler.GetDesignImplementationContext, groupedRef, fixture.requestBodyWith(fixture.issueID, fixture.repositoryID, groupRef)).Want(http.StatusOK).JSON(&contextValue)
-	if contextValue.Package == nil || contextValue.Package.Source != "figma" || contextValue.Package.RestorePackScope["kind"] != "figma_group" || contextValue.Package.RestorePackScope["groupId"] != "group-wallet" || contextValue.Package.RestorePackScope["revisionId"] != fixture.revisionID {
+	if contextValue.Package == nil || contextValue.Package.Source != "figma" || contextValue.Package.RestorePackScope["kind"] != "figma_group" || contextValue.Package.RestorePackScope["groupId"] != "group-wallet" || contextValue.Package.RestorePackScope["revisionId"] != fixture.revisionID ||
+		contextValue.Package.RestorePackScope["frameCount"] != float64(2) || !reflect.DeepEqual(contextValue.Package.RestorePackScope["frameIds"], []any{"frame-main", "frame-secondary"}) {
 		t.Fatalf("Figma group package descriptor = %+v", contextValue.Package)
 	}
 }

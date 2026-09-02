@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -3357,6 +3358,13 @@ func TestCreateDesignRestorePackFrameScope(t *testing.T) {
 	if resp["version"] != "1.0" {
 		t.Fatalf("version = %#v", resp["version"])
 	}
+	var nativeRaw []byte
+	if err := testPool.QueryRow(context.Background(), `SELECT native_json FROM design_revision WHERE id = $1`, created.CurrentRevision.ID).Scan(&nativeRaw); err != nil {
+		t.Fatal(err)
+	}
+	if resp["contentDigest"] != digestDesignAssetBytes(nativeRaw) {
+		t.Fatalf("contentDigest = %#v, want digest for the exact revision native JSON", resp["contentDigest"])
+	}
 	scope := resp["scope"].(map[string]any)
 	if scope["kind"] != "frame" || scope["frameId"] != "frame-main" {
 		t.Fatalf("scope = %#v", scope)
@@ -3385,7 +3393,8 @@ func TestCreateDesignRestorePackFrameScope(t *testing.T) {
 
 func TestCreateDesignRestorePackFigmaGroupScope(t *testing.T) {
 	created := createDesignFileForTest(t, "Restore Pack Group Design")
-	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, restorePackGroupedNativeJSONForTest("Restore Pack Group Design"))
+	nativeJSON := restorePackGroupedNativeJSONForTest("Restore Pack Group Design")
+	updateDesignRevisionNativeJSONForTest(t, created.CurrentRevision.ID, nativeJSON)
 
 	req := withURLParam(newRequest("POST", "/api/design-files/"+created.File.ID+"/restore-pack?workspace_id="+testWorkspaceID, map[string]any{
 		"scope": map[string]any{
@@ -3413,6 +3422,22 @@ func TestCreateDesignRestorePackFigmaGroupScope(t *testing.T) {
 	structure := resp["designStructure"].(map[string]any)
 	if structure["mode"] != "figma_group" || structure["groupName"] != "钱包首页" {
 		t.Fatalf("designStructure = %#v", structure)
+	}
+	if structure["groupId"] != "group-wallet" || structure["frameCount"] != float64(len(frames)) || !reflect.DeepEqual(structure["frameIds"], []any{"frame-main", "frame-secondary"}) {
+		t.Fatalf("designStructure did not bind exact group membership: %#v", structure)
+	}
+	for _, rawFrame := range frames {
+		frame := rawFrame.(map[string]any)
+		if frame["designFileId"] != created.File.ID || frame["revisionId"] != created.CurrentRevision.ID || frame["frameId"] == "" {
+			t.Fatalf("frame did not bind exact file/revision/frame identity: %#v", frame)
+		}
+	}
+	var nativeRaw []byte
+	if err := testPool.QueryRow(context.Background(), `SELECT native_json FROM design_revision WHERE id = $1`, created.CurrentRevision.ID).Scan(&nativeRaw); err != nil {
+		t.Fatal(err)
+	}
+	if resp["contentDigest"] != digestDesignAssetBytes(nativeRaw) {
+		t.Fatalf("contentDigest = %#v, want digest for the exact revision native JSON", resp["contentDigest"])
 	}
 }
 

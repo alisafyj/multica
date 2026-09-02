@@ -456,7 +456,7 @@ func TestDesignMCPGetImplementationContextMaterializesFrozenFigmaRestorePack(t *
 		scope map[string]any
 	}{
 		{name: "frame", scope: map[string]any{"version": "1.0", "kind": "frame", "designFileId": "file-1", "revisionId": "revision-1", "frameId": "frame-1"}},
-		{name: "group", scope: map[string]any{"version": "1.0", "kind": "figma_group", "designFileId": "file-1", "revisionId": "revision-1", "groupId": "group-1"}},
+		{name: "group", scope: map[string]any{"version": "1.0", "kind": "figma_group", "designFileId": "file-1", "revisionId": "revision-1", "groupId": "group-1", "frameIds": []string{"frame-1", "frame-2"}, "frameCount": 2}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var restoreBody map[string]any
@@ -473,10 +473,7 @@ func TestDesignMCPGetImplementationContextMaterializesFrozenFigmaRestorePack(t *
 					if err := json.NewDecoder(r.Body).Decode(&restoreBody); err != nil {
 						t.Fatal(err)
 					}
-					writeMCPTestJSON(w, map[string]any{
-						"version": "1.0", "designFile": map[string]any{"id": "file-1"}, "revision": map[string]any{"id": "revision-1"},
-						"scope": tt.scope, "frames": []any{map[string]any{"id": "frame-1", "layers": []any{}}}, "assets": map[string]any{}, "warnings": []any{},
-					})
+					writeMCPTestJSON(w, faithfulFigmaRestorePackForMCPTest(tt.scope, "sha256:"+strings.Repeat("f", 64)))
 				default:
 					t.Fatalf("unexpected path %s", r.URL.Path)
 				}
@@ -490,7 +487,7 @@ func TestDesignMCPGetImplementationContextMaterializesFrozenFigmaRestorePack(t *
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(restoreBody["scope"], tt.scope) {
+			if !mcpTestJSONEqual(t, restoreBody["scope"], tt.scope) {
 				t.Fatalf("Restore Pack scope = %#v, want %#v", restoreBody["scope"], tt.scope)
 			}
 			manifestRaw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(designImplementationManifestPath)))
@@ -510,6 +507,137 @@ func TestDesignMCPGetImplementationContextMaterializesFrozenFigmaRestorePack(t *
 			}
 		})
 	}
+}
+
+func TestDesignMCPGetImplementationContextRejectsUnboundFigmaRestorePackAndPreservesContextTree(t *testing.T) {
+	const digest = "sha256:" + "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	for _, tt := range []struct {
+		name   string
+		scope  map[string]any
+		mutate func(map[string]any)
+	}{
+		{
+			name:  "changed native JSON digest with same revision",
+			scope: map[string]any{"version": "1.0", "kind": "frame", "designFileId": "file-1", "revisionId": "revision-1", "frameId": "frame-1"},
+			mutate: func(pack map[string]any) {
+				pack["contentDigest"] = "sha256:" + strings.Repeat("e", 64)
+			},
+		},
+		{
+			name:  "unrelated frame",
+			scope: map[string]any{"version": "1.0", "kind": "frame", "designFileId": "file-1", "revisionId": "revision-1", "frameId": "frame-1"},
+			mutate: func(pack map[string]any) {
+				pack["frames"].([]any)[0].(map[string]any)["frameId"] = "unrelated-frame"
+			},
+		},
+		{
+			name:  "equivocated group membership",
+			scope: map[string]any{"version": "1.0", "kind": "figma_group", "designFileId": "file-1", "revisionId": "revision-1", "groupId": "group-1", "frameIds": []string{"frame-1", "frame-2"}, "frameCount": 2},
+			mutate: func(pack map[string]any) {
+				frames := pack["frames"].([]any)
+				frames[1].(map[string]any)["frameId"] = "unrelated-frame"
+				pack["designStructure"].(map[string]any)["frameIds"] = []string{"frame-1", "unrelated-frame"}
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			previous := designImplementationContextWire{SchemaVersion: "multica.design-implementation-context/v1", DesignRef: "previous"}
+			if err := materializeDesignImplementationContext(root, previous); err != nil {
+				t.Fatal(err)
+			}
+			before := implementationContextTreeForMCPTest(t, root)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				scope := tt.scope
+				switch r.URL.Path {
+				case "/api/design-assets/design_v1_figma/implementation-context":
+					writeMCPTestJSON(w, map[string]any{
+						"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_figma", "revision_id": "revision-1", "content_digest": digest,
+						"frame_refs": []string{"frame_v1_figma"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1",
+						"package":             map[string]any{"source": "figma", "content_digest": digest, "restore_pack_scope": scope},
+						"source_capabilities": map[string]any{"has_layers": true},
+					})
+				case "/api/design-files/file-1/restore-pack":
+					pack := faithfulFigmaRestorePackForMCPTest(scope, digest)
+					tt.mutate(pack)
+					writeMCPTestJSON(w, pack)
+				default:
+					t.Fatalf("unexpected path %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			adapter := &designMCPAdapter{client: cli.NewAPIClient(srv.URL, "ws-1", "mul_secret"), rootDir: root}
+			_, err := adapter.getImplementationContext(context.Background(), map[string]any{
+				"designRef": "design_v1_figma", "revisionId": "revision-1", "frameRefs": []any{"frame_v1_figma"}, "targetRepositoryId": "repository-1", "issueId": "issue-1",
+			})
+			if err == nil || !strings.Contains(err.Error(), "design_package_invalid") {
+				t.Fatalf("unbound Figma Restore Pack error = %v", err)
+			}
+			if after := implementationContextTreeForMCPTest(t, root); !reflect.DeepEqual(after, before) {
+				t.Fatalf("previous implementation context tree changed: before=%q after=%q", before, after)
+			}
+		})
+	}
+}
+
+func faithfulFigmaRestorePackForMCPTest(scope map[string]any, digest string) map[string]any {
+	frame := func(id string) map[string]any {
+		return map[string]any{"designFileId": "file-1", "revisionId": "revision-1", "frameId": id, "layers": map[string]any{}}
+	}
+	pack := map[string]any{
+		"version": "1.0", "contentDigest": digest, "designFile": map[string]any{"id": "file-1"}, "revision": map[string]any{"id": "revision-1"},
+		"scope": scope, "assets": map[string]any{}, "warnings": []any{},
+	}
+	if stringArgument(scope, "kind") == "figma_group" {
+		pack["frames"] = []any{frame("frame-1"), frame("frame-2")}
+		pack["designStructure"] = map[string]any{"mode": "figma_group", "groupId": "group-1", "frameIds": []string{"frame-1", "frame-2"}, "frameCount": 2}
+		return pack
+	}
+	pack["frames"] = []any{frame(stringArgument(scope, "frameId"))}
+	pack["designStructure"] = map[string]any{"mode": "frame", "frameId": stringArgument(scope, "frameId")}
+	return pack
+}
+
+func mcpTestJSONEqual(t *testing.T, left, right any) bool {
+	t.Helper()
+	leftJSON, err := json.Marshal(left)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightJSON, err := json.Marshal(right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bytes.Equal(leftJSON, rightJSON)
+}
+
+func implementationContextTreeForMCPTest(t *testing.T, root string) map[string][]byte {
+	t.Helper()
+	base := filepath.Join(root, ".agent_context", "design_implementation")
+	tree := map[string][]byte{}
+	err := filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(base, path)
+		if err != nil {
+			return err
+		}
+		tree[filepath.ToSlash(relative)] = raw
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tree
 }
 
 func TestDesignMCPGetImplementationContextRejectsInvalidFigmaRestorePackAndPreservesContext(t *testing.T) {

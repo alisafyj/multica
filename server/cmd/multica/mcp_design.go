@@ -311,7 +311,7 @@ func (a *designMCPAdapter) figmaImplementationPackage(ctx context.Context, conte
 	if err := a.client.PostJSON(ctx, path, map[string]any{"scope": scope}, &pack); err != nil {
 		return nil, fmt.Errorf("context_materialization_failed: get frozen Figma Restore Pack: %w", mapDesignMCPAPIError(err))
 	}
-	if err := validateFigmaRestorePack(pack, scope, designFileID, contextValue.RevisionID); err != nil {
+	if err := validateFigmaRestorePack(pack, scope, designFileID, contextValue.RevisionID, contextValue.ContentDigest, contextValue.Package.ContentDigest); err != nil {
 		return nil, err
 	}
 	packJSON, err := json.MarshalIndent(pack, "", "  ")
@@ -345,26 +345,134 @@ func validateFigmaRestorePackScope(scope map[string]any, revisionID string) (map
 	if designFileID == "" || (kind != "frame" && kind != "figma_group") {
 		return nil, "", fmt.Errorf("design_package_invalid: Figma Restore Pack scope is invalid")
 	}
-	if (kind == "frame" && stringArgument(scope, "frameId") == "") || (kind == "figma_group" && stringArgument(scope, "groupId") == "") {
+	if kind == "frame" && stringArgument(scope, "frameId") == "" {
 		return nil, "", fmt.Errorf("design_package_invalid: Figma Restore Pack scope is invalid")
+	}
+	if kind == "figma_group" {
+		frameIDs, ok := uniqueStringArguments(scope, "frameIds")
+		if stringArgument(scope, "groupId") == "" || !ok || integerArgument(scope, "frameCount") != len(frameIDs) {
+			return nil, "", fmt.Errorf("design_package_invalid: Figma Restore Pack scope is invalid")
+		}
 	}
 	return scope, designFileID, nil
 }
 
-func validateFigmaRestorePack(pack, scope map[string]any, designFileID, revisionID string) error {
+func validateFigmaRestorePack(pack, scope map[string]any, designFileID, revisionID, contextDigest, descriptorDigest string) error {
 	returnedScope := mapArgument(pack, "scope")
 	if stringArgument(pack, "version") != "1.0" || stringArgument(mapArgument(pack, "designFile"), "id") != designFileID ||
 		stringArgument(mapArgument(pack, "revision"), "id") != revisionID ||
+		contextDigest == "" || descriptorDigest == "" || contextDigest != descriptorDigest || stringArgument(pack, "contentDigest") != contextDigest || stringArgument(pack, "contentDigest") != descriptorDigest ||
 		stringArgument(returnedScope, "version") != "1.0" || stringArgument(returnedScope, "designFileId") != designFileID ||
 		stringArgument(returnedScope, "revisionId") != revisionID || stringArgument(returnedScope, "kind") != stringArgument(scope, "kind") ||
 		stringArgument(returnedScope, "frameId") != stringArgument(scope, "frameId") || stringArgument(returnedScope, "groupId") != stringArgument(scope, "groupId") {
 		return fmt.Errorf("design_package_invalid: Figma Restore Pack does not match frozen implementation evidence")
 	}
-	frames, ok := pack["frames"].([]any)
-	if !ok || len(frames) == 0 {
-		return fmt.Errorf("design_package_invalid: Figma Restore Pack has no selected frame evidence")
+	frameIDs, err := validatedFigmaRestorePackFrameIDs(pack, designFileID, revisionID)
+	if err != nil {
+		return err
+	}
+	switch stringArgument(scope, "kind") {
+	case "frame":
+		if len(frameIDs) != 1 || frameIDs[0] != stringArgument(scope, "frameId") {
+			return fmt.Errorf("design_package_invalid: Figma Restore Pack does not contain the selected frame")
+		}
+	case "figma_group":
+		structure := mapArgument(pack, "designStructure")
+		scopeFrameIDs, scopeOK := uniqueStringArguments(scope, "frameIds")
+		structureFrameIDs, ok := uniqueStringArguments(structure, "frameIds")
+		if !scopeOK || !ok || stringArgument(structure, "mode") != "figma_group" || stringArgument(structure, "groupId") != stringArgument(scope, "groupId") ||
+			integerArgument(structure, "frameCount") != len(structureFrameIDs) || !sameStringArguments(scopeFrameIDs, structureFrameIDs) || !sameStringArguments(scopeFrameIDs, frameIDs) {
+			return fmt.Errorf("design_package_invalid: Figma Restore Pack does not contain the selected group evidence")
+		}
+	default:
+		return fmt.Errorf("design_package_invalid: Figma Restore Pack scope is invalid")
 	}
 	return nil
+}
+
+func validatedFigmaRestorePackFrameIDs(pack map[string]any, designFileID, revisionID string) ([]string, error) {
+	frames, ok := pack["frames"].([]any)
+	if !ok || len(frames) == 0 {
+		return nil, fmt.Errorf("design_package_invalid: Figma Restore Pack has no selected frame evidence")
+	}
+	frameIDs := make([]string, 0, len(frames))
+	seen := make(map[string]struct{}, len(frames))
+	for _, rawFrame := range frames {
+		frame, ok := rawFrame.(map[string]any)
+		if !ok || stringArgument(frame, "designFileId") != designFileID || stringArgument(frame, "revisionId") != revisionID {
+			return nil, fmt.Errorf("design_package_invalid: Figma Restore Pack frame evidence is invalid")
+		}
+		frameID := stringArgument(frame, "frameId")
+		if frameID == "" {
+			return nil, fmt.Errorf("design_package_invalid: Figma Restore Pack frame evidence is invalid")
+		}
+		if _, exists := seen[frameID]; exists {
+			return nil, fmt.Errorf("design_package_invalid: Figma Restore Pack frame evidence is duplicated")
+		}
+		seen[frameID] = struct{}{}
+		frameIDs = append(frameIDs, frameID)
+	}
+	return frameIDs, nil
+}
+
+func uniqueStringArguments(values map[string]any, key string) ([]string, bool) {
+	raw, ok := values[key]
+	if !ok {
+		return nil, false
+	}
+	var items []any
+	switch raw := raw.(type) {
+	case []any:
+		items = raw
+	case []string:
+		items = make([]any, len(raw))
+		for i := range raw {
+			items[i] = raw[i]
+		}
+	default:
+		return nil, false
+	}
+	if len(items) == 0 {
+		return nil, false
+	}
+	ids := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, rawID := range items {
+		id, ok := rawID.(string)
+		if !ok || id == "" {
+			return nil, false
+		}
+		if _, exists := seen[id]; exists {
+			return nil, false
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids, true
+}
+
+func sameStringArguments(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func integerArgument(values map[string]any, key string) int {
+	switch value := values[key].(type) {
+	case float64:
+		if value == float64(int(value)) {
+			return int(value)
+		}
+	case int:
+		return value
+	}
+	return -1
 }
 
 func mapArgument(value map[string]any, key string) map[string]any {

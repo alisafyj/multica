@@ -175,7 +175,7 @@ func (h *Handler) resolveDesignImplementationRequest(w http.ResponseWriter, r *h
 		SchemaVersion: designImplementationContextSchemaV1, DesignRef: chi.URLParam(r, "designRef"),
 		RevisionID: claim.RevisionID, ContentDigest: claim.ContentDigest, FrameRefs: append([]string(nil), request.FrameRefs...),
 		ProjectID: claim.ProjectID, IssueID: request.IssueID, ProjectResourceID: request.ProjectResourceID,
-		DesignTitle: title, DesignSystemDigest: designSystemDigest, Package: designImplementationPackageDescriptor(claim, sourceDocumentID, request.FrameRefs), AllowedWritePaths: []string{"."},
+		DesignTitle: title, DesignSystemDigest: designSystemDigest, Package: designImplementationPackageDescriptor(claim, sourceDocumentID, request.FrameRefs, frames), AllowedWritePaths: []string{"."},
 		VerificationRequirements: []string{"repository typecheck/tests/build as applicable", "real rendered preview for changed UI"},
 		SourceInstructions:       designImplementationSourceInstructions(claim.Kind),
 		VerificationTargets:      designImplementationVerificationTargets(claim.Kind),
@@ -191,7 +191,7 @@ func (h *Handler) resolveDesignImplementationRequest(w http.ResponseWriter, r *h
 	}, request, repository, true
 }
 
-func designImplementationPackageDescriptor(claim designAssetRefClaim, documentID string, frameRefs []string) *DesignImplementationPackageDescriptor {
+func designImplementationPackageDescriptor(claim designAssetRefClaim, documentID string, frameRefs []string, availableFrames []DesignAssetFrameResponse) *DesignImplementationPackageDescriptor {
 	switch claim.Kind {
 	case "multica":
 		if documentID == "" || claim.RevisionID == "" || claim.ContentDigest == "" {
@@ -210,12 +210,42 @@ func designImplementationPackageDescriptor(claim designAssetRefClaim, documentID
 		if selection.SelectionKind == "frame" {
 			scope["frameId"] = selection.SelectionID
 		} else {
+			var frameIDs []string
+			for _, frame := range availableFrames {
+				available, err := parseDesignAssetFrameRef(frame.FrameRef, time.Now())
+				if err == nil && available.SelectionKind == "figma_group" && available.SelectionID == selection.SelectionID {
+					frameIDs = append([]string(nil), frame.RestorePackGroupFrameIDs...)
+					break
+				}
+			}
+			if !uniqueDesignImplementationFrameIDs(frameIDs) {
+				return nil
+			}
 			scope["groupId"] = selection.SelectionID
+			scope["frameIds"] = frameIDs
+			scope["frameCount"] = len(frameIDs)
 		}
 		return &DesignImplementationPackageDescriptor{Source: "figma", ContentDigest: claim.ContentDigest, RestorePackScope: scope}
 	default:
 		return nil
 	}
+}
+
+func uniqueDesignImplementationFrameIDs(ids []string) bool {
+	if len(ids) == 0 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			return false
+		}
+		if _, exists := seen[id]; exists {
+			return false
+		}
+		seen[id] = struct{}{}
+	}
+	return true
 }
 
 func (h *Handler) resolveDesignImplementationFrames(r *http.Request, claim designAssetRefClaim) ([]DesignAssetFrameResponse, error) {

@@ -58,10 +58,11 @@ type designAssetFrameClaim struct {
 }
 
 type DesignAssetFrameResponse struct {
-	FrameRef     string `json:"frame_ref"`
-	Title        string `json:"title"`
-	ThumbnailURL string `json:"thumbnail_url,omitempty"`
-	Description  string `json:"description,omitempty"`
+	FrameRef                 string   `json:"frame_ref"`
+	Title                    string   `json:"title"`
+	ThumbnailURL             string   `json:"thumbnail_url,omitempty"`
+	Description              string   `json:"description,omitempty"`
+	RestorePackGroupFrameIDs []string `json:"-"`
 }
 
 type DesignAssetFramesResponse struct {
@@ -345,7 +346,7 @@ func figmaGroupDesignAssetFrames(document designcore.NativeJSON, rawDocument map
 		if err != nil {
 			return nil, err
 		}
-		groups = append(groups, DesignAssetFrameResponse{FrameRef: frameRef, Title: title, ThumbnailURL: thumbnail})
+		groups = append(groups, DesignAssetFrameResponse{FrameRef: frameRef, Title: title, ThumbnailURL: thumbnail, RestorePackGroupFrameIDs: append([]string(nil), group.FrameIDs...)})
 	}
 	return groups, nil
 }
