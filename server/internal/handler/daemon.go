@@ -2740,7 +2740,17 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			if task.ChannelContextRevision.Valid {
 				contextRevision = task.ChannelContextRevision
 			}
-			fallbackNeeded := chatSessionResumeFallbackNeeded(resp.PriorSessionID, resp.PriorWorkDir)
+			pointerSessionID, pointerWorkDir := "", ""
+			if cs.SessionID.Valid {
+				pointerSessionID = cs.SessionID.String
+			}
+			if cs.WorkDir.Valid {
+				pointerWorkDir = cs.WorkDir.String
+			}
+			// The legacy pointer is intentionally not a resume source because
+			// it carries no concise-mode metadata. It still tells the metric
+			// whether the authoritative lookup was needed.
+			fallbackNeeded := chatSessionResumeFallbackNeeded(pointerSessionID, pointerWorkDir)
 			if fallbackNeeded {
 				h.Metrics.RecordChatClaimSessionFallbackNeeded()
 			}
