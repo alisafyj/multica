@@ -139,7 +139,7 @@
     "local_clear": "清除",
     "local_pick_failed": "无法打开目录选择器。",
     "local_invalid_dir": "该目录不可用，请重新选择。",
-    "local_hint": "其他机器上的 agent 看不到这个路径，会启动失败。需要协作请用仓库模式。",
+    "local_hint": "其他机器上的智能体看不到这个路径，会启动失败。需要协作请用仓库模式。",
     "docs_pill": "文档",
     "docs_pill_count_other": "{{count}} 个文档",
     "docs_heading": "为此项目关联外部文档",

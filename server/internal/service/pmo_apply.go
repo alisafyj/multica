@@ -686,7 +686,8 @@ func (s *PMOService) createEntityInTx(
 		params.AssigneeType = pgtype.Text{String: pmoLocalTypeAgent, Valid: true}
 		params.AssigneeID = assigneeID
 	}
-	res, err := s.IssueSvc.createInTx(ctx, tx, qtx, params)
+	issueCountPolicy := ResolveIssueCountPolicy(ctx, s.IssueSvc.Entitlements, params.WorkspaceID)
+	res, err := s.IssueSvc.createInTx(ctx, tx, qtx, params, issueCountPolicy)
 	if err != nil {
 		return nothing, nil, nil, fmt.Errorf("pmo apply: create issue: %w", err)
 	}

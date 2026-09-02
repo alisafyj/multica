@@ -269,6 +269,13 @@ const (
 	// RuntimeLookupSourceTask covers task analytics context and the usage
 	// provider backfill.
 	RuntimeLookupSourceTask = "task"
+	// RuntimeLookupSourceDesign covers Design Center readiness checks: design
+	// document create/adjust/regenerate/manual-edit and every project design
+	// system task. Fork-local surface, so it is not in upstream's list.
+	RuntimeLookupSourceDesign = "design"
+	// RuntimeLookupSourceTestCapability covers the test capability endpoints
+	// that resolve a runtime before reading its devices. Fork-local surface.
+	RuntimeLookupSourceTestCapability = "test_capability"
 	// RuntimeLookupSourceOther is the catch-all for an unclassified call site.
 	RuntimeLookupSourceOther = "other"
 )
@@ -302,6 +309,8 @@ func AllRuntimeLookupSources() []string {
 		RuntimeLookupSourceAutopilot,
 		RuntimeLookupSourceSourceContext,
 		RuntimeLookupSourceTask,
+		RuntimeLookupSourceDesign,
+		RuntimeLookupSourceTestCapability,
 		RuntimeLookupSourceOther,
 	}
 }

@@ -1,4 +1,10 @@
 {
+  "tabs": {
+    "cases": "Cases",
+    "plans": "Plans",
+    "runs": "Runs",
+    "jobs": "Generation"
+  },
   "page": {
     "title": "Test Cases",
     "empty": "No test cases yet",
@@ -135,7 +141,8 @@
     "edit": "Edit",
     "confirmDelete": "Delete this test case?",
     "batchApprove": "Approve selected",
-    "selectAll": "Select all"
+    "selectAll": "Select all",
+    "addToPlan": "Add to plan"
   },
   "toast": {
     "created": "Test case created",
@@ -175,7 +182,14 @@
     "runResultSaved": "Result saved",
     "runResultFailed": "Could not save result",
     "defectOpened": "Defect issue created",
-    "defectFailed": "Could not open defect"
+    "defectFailed": "Could not open defect",
+    "batchApproveFailed": "{{count}} cases could not be approved",
+    "planCasesAdded": "Added {{count}} cases",
+    "planCasesAlreadyAdded": "The selected cases are already in this plan",
+    "planCasesAddFailed": "Could not add the cases to the plan",
+    "planCaseRemoveFailed": "Could not remove the case",
+    "planUpdated": "Plan updated",
+    "planUpdateFailed": "Could not update the plan"
   },
   "job": {
     "title": "Generation Job",
@@ -237,7 +251,12 @@
       "issuesLabel": "Focus issues",
       "issuesPlaceholder": "e.g. MUL-123, MUL-456 (comma separated)",
       "instructionsLabel": "Instructions",
-      "instructionsPlaceholder": "Paths to cover, behaviors to focus on, anything the agent must know."
+      "instructionsPlaceholder": "Paths to cover, behaviors to focus on, anything the agent must know.",
+      "issuesEmpty": "No issues scoped (unrestricted)",
+      "issuesAdd": "Add issue",
+      "issuesRemove": "Remove",
+      "issuesPickerTitle": "Scope to an issue",
+      "issuesPickerDescription": "Pick the requirements this run should cover."
     },
     "dispatch": {
       "title": "Dispatch to Agent",
@@ -306,7 +325,12 @@
       "buildRef": "Build ref",
       "remove": "Remove",
       "caseCount_one": "{{count}} case",
-      "caseCount_other": "{{count}} cases"
+      "caseCount_other": "{{count}} cases",
+      "settings": "Plan settings",
+      "description": "Description",
+      "deletePlan": "Delete plan",
+      "confirmDelete": "Delete this test plan?",
+      "unknownCase": "Case no longer exists"
     }
   },
   "run": {
@@ -358,7 +382,9 @@
       "button": "Dispatch",
       "dispatching": "Dispatching...",
       "running": "Running...",
-      "blocked": "Missing capability: {{kind}}"
+      "blocked": "Missing capability: {{kind}}",
+      "prompt": "Instructions",
+      "promptPlaceholder": "Optional: extra context for the agent"
     }
   },
   "runCase": {
@@ -376,7 +402,9 @@
       "executor": "Executor",
       "duration": "Duration",
       "defect": "Defect"
-    }
+    },
+    "saveNotes": "Save notes",
+    "notesNeedResult": "Notes are saved with a result — pick one first."
   },
   "timeline": {
     "title": "Run History",
@@ -386,5 +414,56 @@
     "environment": "Environment",
     "buildRef": "Build",
     "executedAt": "Executed"
+  },
+  "runs": {
+    "title": "Test runs",
+    "empty": "No test runs yet",
+    "emptyHint": "Start a run from a test plan.",
+    "columns": {
+      "title": "Title",
+      "status": "Status",
+      "executor": "Executor",
+      "environment": "Environment",
+      "buildRef": "Build",
+      "created": "Created"
+    },
+    "executor": {
+      "member": "Member",
+      "agent": "Agent"
+    },
+    "truncated": "Showing the {{count}} most recent rounds; older ones are not listed."
+  },
+  "jobs": {
+    "title": "Generation jobs",
+    "empty": "No generation jobs yet",
+    "emptyHint": "Start a generation run, then review its scope before dispatching.",
+    "columns": {
+      "job": "Job",
+      "status": "Status",
+      "created": "Created"
+    },
+    "truncated": "Showing the {{count}} most recent jobs; older ones are not listed."
+  },
+  "addToPlan": {
+    "title": "Add to test plan",
+    "description": "Add the {{count}} selected cases to a plan.",
+    "plan": "Target plan",
+    "newPlan": "New plan…",
+    "confirm": "Add"
+  },
+  "coverage": {
+    "caseSection": "Covers",
+    "caseEmpty": "Not linked to any issue yet",
+    "issueSection": "Test coverage",
+    "linkIssue": "Link issue",
+    "unlink": "Unlink",
+    "linked": "Issue linked",
+    "linkFailed": "Could not link the issue",
+    "unlinkFailed": "Could not unlink the issue",
+    "pickerTitle": "Link an issue",
+    "pickerDescription": "Pick the requirement this case verifies.",
+    "neverRun": "Not run",
+    "failingCount": "{{count}} failing",
+    "untestedCount": "{{count}} not run"
   }
 }

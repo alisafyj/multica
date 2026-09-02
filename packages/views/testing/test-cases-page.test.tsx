@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   createGenerationJob: vi.fn(),
   approveCase: vi.fn(),
   deleteCase: vi.fn(),
+  createPlan: vi.fn(),
+  addPlanCases: vi.fn(),
   viewState: {
     filters: {
       statuses: [] as string[],
@@ -53,9 +55,12 @@ vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
+    tests: () => "/acme/tests",
     testCaseDetail: (ref: string) => `/acme/tests/${ref}`,
+    testGenerationJobs: () => "/acme/tests/jobs",
     testGenerationJobDetail: (id: string) => `/acme/tests/jobs/${id}`,
     testPlans: () => "/acme/tests/plans",
+    testRuns: () => "/acme/tests/runs",
   }),
 }));
 
@@ -71,10 +76,14 @@ vi.mock("@multica/core/testing", () => {
     TEST_CASE_STATUS_TONE: {},
     testCaseListOptions: () => ({ queryKey: ["test-cases", "ws-1", "list"] }),
     testCaseModulesOptions: () => ({ queryKey: ["test-cases", "ws-1", "modules"] }),
+    testPlanListOptions: () => ({ queryKey: ["test-plans", "ws-1", "list"] }),
+    testPlanCasesOptions: () => ({ queryKey: ["test-plans", "ws-1", "cases"] }),
     useApproveTestCase: () => ({ mutateAsync: mocks.approveCase, isPending: false }),
     useCreateTestCase: () => ({ mutateAsync: mocks.createCase, isPending: false }),
     useCreateTestGenerationJob: () => ({ mutateAsync: mocks.createGenerationJob, isPending: false }),
     useDeleteTestCase: () => ({ mutateAsync: mocks.deleteCase, isPending: false }),
+    useCreateTestPlan: () => ({ mutateAsync: mocks.createPlan, isPending: false }),
+    useAddTestPlanCases: () => ({ mutateAsync: mocks.addPlanCases, isPending: false }),
     useTestCaseViewStore: store,
   };
 });
@@ -88,6 +97,7 @@ function makeAdapter(overrides: Partial<NavigationAdapter> = {}): NavigationAdap
     back: vi.fn(),
     pathname: "/acme/tests",
     searchParams: new URLSearchParams(),
+    hash: "",
     getShareableUrl: (p) => p,
     ...overrides,
   };
@@ -152,16 +162,28 @@ describe("TestCasesPage entry points", () => {
   });
 });
 
-// The plans surface shipped with only its own breadcrumbs pointing at it, which
-// helps nobody who is not already there. This asserts the way in.
-it("links to the test plans surface", async () => {
-  const adapter = makeAdapter();
-  renderPage(adapter);
+// Plans, runs and generation jobs each shipped with detail pages and no way in
+// — their own breadcrumbs were the only thing that linked to them, which helps
+// nobody who is not already there. The tab bar is the way in, and it is
+// route-driven so the addresses those breadcrumbs use keep working.
+describe("TestCasesPage tab bar", () => {
+  it("reaches every testing surface", async () => {
+    const adapter = makeAdapter();
+    renderPage(adapter);
 
-  const buttons = await screen.findAllByRole("button");
-  const plans = buttons.find((b) => b.textContent?.match(/计划|Plans|プラン|계획/));
-  expect(plans, "the cases page must offer a way to reach test plans").toBeTruthy();
-  await userEvent.click(plans!);
+    const tabs = await screen.findAllByRole("tab");
+    const byLabel = (pattern: RegExp) =>
+      tabs.find((tab) => tab.textContent?.match(pattern));
 
-  expect(adapter.push).toHaveBeenCalledWith("/acme/tests/plans");
+    for (const [pattern, href] of [
+      [/计划|Plans|計画|계획/, "/acme/tests/plans"],
+      [/轮次|Runs|実行|실행/, "/acme/tests/runs"],
+      [/生成|Generation/, "/acme/tests/jobs"],
+    ] as const) {
+      const tab = byLabel(pattern);
+      expect(tab, `missing tab for ${href}`).toBeTruthy();
+      await userEvent.click(tab!);
+      expect(adapter.push).toHaveBeenCalledWith(href);
+    }
+  });
 });

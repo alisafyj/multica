@@ -203,6 +203,34 @@ func (q *Queries) DeleteTestCase(ctx context.Context, arg DeleteTestCaseParams) 
 	return err
 }
 
+const deleteTestCaseIssueLinksForCase = `-- name: DeleteTestCaseIssueLinksForCase :exec
+DELETE FROM test_case_issue WHERE test_case_id = $1 AND workspace_id = $2
+`
+
+type DeleteTestCaseIssueLinksForCaseParams struct {
+	TestCaseID  pgtype.UUID `json:"test_case_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) DeleteTestCaseIssueLinksForCase(ctx context.Context, arg DeleteTestCaseIssueLinksForCaseParams) error {
+	_, err := q.db.Exec(ctx, deleteTestCaseIssueLinksForCase, arg.TestCaseID, arg.WorkspaceID)
+	return err
+}
+
+const deleteTestCaseIssueLinksForIssue = `-- name: DeleteTestCaseIssueLinksForIssue :exec
+DELETE FROM test_case_issue WHERE issue_id = $1 AND workspace_id = $2
+`
+
+type DeleteTestCaseIssueLinksForIssueParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) DeleteTestCaseIssueLinksForIssue(ctx context.Context, arg DeleteTestCaseIssueLinksForIssueParams) error {
+	_, err := q.db.Exec(ctx, deleteTestCaseIssueLinksForIssue, arg.IssueID, arg.WorkspaceID)
+	return err
+}
+
 const deleteTestCaseRepos = `-- name: DeleteTestCaseRepos :exec
 DELETE FROM test_case_repo WHERE test_case_id = $1 AND workspace_id = $2
 `
@@ -319,6 +347,104 @@ func (q *Queries) GetTestCaseInWorkspace(ctx context.Context, arg GetTestCaseInW
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const linkTestCaseIssue = `-- name: LinkTestCaseIssue :one
+
+INSERT INTO test_case_issue (test_case_id, issue_id, workspace_id, origin, created_by)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (test_case_id, issue_id) DO NOTHING
+RETURNING test_case_id, issue_id, workspace_id, origin, created_by, created_at
+`
+
+type LinkTestCaseIssueParams struct {
+	TestCaseID  pgtype.UUID `json:"test_case_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Origin      string      `json:"origin"`
+	CreatedBy   pgtype.UUID `json:"created_by"`
+}
+
+// ---------------------------------------------------------------------------
+// Test case <-> issue coverage links
+// ---------------------------------------------------------------------------
+// Idempotent: linking the same pair twice keeps the first link's origin and
+// author rather than letting a later AI-asserted link overwrite a human one.
+func (q *Queries) LinkTestCaseIssue(ctx context.Context, arg LinkTestCaseIssueParams) (TestCaseIssue, error) {
+	row := q.db.QueryRow(ctx, linkTestCaseIssue,
+		arg.TestCaseID,
+		arg.IssueID,
+		arg.WorkspaceID,
+		arg.Origin,
+		arg.CreatedBy,
+	)
+	var i TestCaseIssue
+	err := row.Scan(
+		&i.TestCaseID,
+		&i.IssueID,
+		&i.WorkspaceID,
+		&i.Origin,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const listIssuesForTestCase = `-- name: ListIssuesForTestCase :many
+SELECT tci.test_case_id, tci.issue_id, tci.origin, tci.created_at,
+       i.number AS issue_number, i.title AS issue_title, i.status AS issue_status,
+       i.priority AS issue_priority
+FROM test_case_issue tci
+JOIN issue i ON i.id = tci.issue_id
+WHERE tci.test_case_id = $1 AND tci.workspace_id = $2
+ORDER BY i.number ASC
+`
+
+type ListIssuesForTestCaseParams struct {
+	TestCaseID  pgtype.UUID `json:"test_case_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type ListIssuesForTestCaseRow struct {
+	TestCaseID    pgtype.UUID        `json:"test_case_id"`
+	IssueID       pgtype.UUID        `json:"issue_id"`
+	Origin        string             `json:"origin"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	IssueNumber   int32              `json:"issue_number"`
+	IssueTitle    string             `json:"issue_title"`
+	IssueStatus   string             `json:"issue_status"`
+	IssuePriority string             `json:"issue_priority"`
+}
+
+// The issue side of one case's coverage, joined so callers render an
+// identifier and title instead of a bare UUID.
+func (q *Queries) ListIssuesForTestCase(ctx context.Context, arg ListIssuesForTestCaseParams) ([]ListIssuesForTestCaseRow, error) {
+	rows, err := q.db.Query(ctx, listIssuesForTestCase, arg.TestCaseID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListIssuesForTestCaseRow{}
+	for rows.Next() {
+		var i ListIssuesForTestCaseRow
+		if err := rows.Scan(
+			&i.TestCaseID,
+			&i.IssueID,
+			&i.Origin,
+			&i.CreatedAt,
+			&i.IssueNumber,
+			&i.IssueTitle,
+			&i.IssueStatus,
+			&i.IssuePriority,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listTestCaseModules = `-- name: ListTestCaseModules :many
@@ -547,6 +673,108 @@ func (q *Queries) ListTestCases(ctx context.Context, arg ListTestCasesParams) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const listTestCasesForIssue = `-- name: ListTestCasesForIssue :many
+SELECT tci.test_case_id, tci.issue_id, tci.origin, tci.created_at,
+       tc.case_number, tc.title AS case_title, tc.status AS case_status,
+       tc.priority AS case_priority, tc.case_type,
+       -- COALESCE, not a bare subquery: sqlc types a correlated scalar as NOT
+       -- NULL, so a case that has never run would fail to scan. Empty string
+       -- is the "never executed" signal the response layer maps to null.
+       COALESCE((
+           SELECT rc.result
+           FROM test_run_case rc
+           WHERE rc.test_case_id = tci.test_case_id
+             AND rc.workspace_id = tci.workspace_id
+             AND rc.executed_at IS NOT NULL
+           ORDER BY rc.executed_at DESC
+           LIMIT 1
+       ), '')::text AS latest_result,
+       (
+           SELECT rc.executed_at
+           FROM test_run_case rc
+           WHERE rc.test_case_id = tci.test_case_id
+             AND rc.workspace_id = tci.workspace_id
+             AND rc.executed_at IS NOT NULL
+           ORDER BY rc.executed_at DESC
+           LIMIT 1
+       ) AS latest_executed_at
+FROM test_case_issue tci
+JOIN test_case tc ON tc.id = tci.test_case_id
+WHERE tci.issue_id = $1 AND tci.workspace_id = $2
+ORDER BY tc.case_number ASC
+`
+
+type ListTestCasesForIssueParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type ListTestCasesForIssueRow struct {
+	TestCaseID       pgtype.UUID        `json:"test_case_id"`
+	IssueID          pgtype.UUID        `json:"issue_id"`
+	Origin           string             `json:"origin"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	CaseNumber       int32              `json:"case_number"`
+	CaseTitle        string             `json:"case_title"`
+	CaseStatus       string             `json:"case_status"`
+	CasePriority     string             `json:"case_priority"`
+	CaseType         string             `json:"case_type"`
+	LatestResult     string             `json:"latest_result"`
+	LatestExecutedAt pgtype.Timestamptz `json:"latest_executed_at"`
+}
+
+// The case side of one issue's coverage. latest_result is the most recent
+// recorded outcome across every round the case appeared in, so the issue can
+// show whether its coverage actually passes — a linked case that has never run
+// reports NULL rather than a misleading "pending".
+func (q *Queries) ListTestCasesForIssue(ctx context.Context, arg ListTestCasesForIssueParams) ([]ListTestCasesForIssueRow, error) {
+	rows, err := q.db.Query(ctx, listTestCasesForIssue, arg.IssueID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTestCasesForIssueRow{}
+	for rows.Next() {
+		var i ListTestCasesForIssueRow
+		if err := rows.Scan(
+			&i.TestCaseID,
+			&i.IssueID,
+			&i.Origin,
+			&i.CreatedAt,
+			&i.CaseNumber,
+			&i.CaseTitle,
+			&i.CaseStatus,
+			&i.CasePriority,
+			&i.CaseType,
+			&i.LatestResult,
+			&i.LatestExecutedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unlinkTestCaseIssue = `-- name: UnlinkTestCaseIssue :exec
+DELETE FROM test_case_issue
+WHERE test_case_id = $1 AND issue_id = $2 AND workspace_id = $3
+`
+
+type UnlinkTestCaseIssueParams struct {
+	TestCaseID  pgtype.UUID `json:"test_case_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) UnlinkTestCaseIssue(ctx context.Context, arg UnlinkTestCaseIssueParams) error {
+	_, err := q.db.Exec(ctx, unlinkTestCaseIssue, arg.TestCaseID, arg.IssueID, arg.WorkspaceID)
+	return err
 }
 
 const updateTestCase = `-- name: UpdateTestCase :one

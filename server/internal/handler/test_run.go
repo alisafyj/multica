@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -364,7 +365,7 @@ func (h *Handler) buildRunExecutionStatus(ctx context.Context, run db.TestRun) *
 		snapshot.AgentTaskWaitReason = agentTask.WaitReason
 
 		if agentTask.RuntimeID.Valid {
-			runtime, runtimeErr := h.Queries.GetAgentRuntime(ctx, agentTask.RuntimeID)
+			runtime, runtimeErr := h.runtimeLookup(obsmetrics.RuntimeLookupSourceTestCapability).Get(ctx, agentTask.RuntimeID)
 			if runtimeErr != nil && runtimeErr != pgx.ErrNoRows {
 				slog.Warn("test run execution status: failed to load runtime",
 					"run_id", uuidToString(run.ID),

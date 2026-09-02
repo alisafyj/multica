@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/designcore"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -1669,7 +1670,7 @@ func (h *Handler) designRestoreTaskToResponseWithExecution(ctx context.Context, 
 		snapshot.AgentTaskWaitReason = agentTask.WaitReason
 
 		if agentTask.RuntimeID.Valid {
-			runtime, runtimeErr := h.Queries.GetAgentRuntime(ctx, agentTask.RuntimeID)
+			runtime, runtimeErr := h.runtimeLookup(obsmetrics.RuntimeLookupSourceDesign).Get(ctx, agentTask.RuntimeID)
 			if runtimeErr != nil && runtimeErr != pgx.ErrNoRows {
 				slog.Warn("design restore task execution status: failed to load runtime", "restore_task_id", uuidToString(task.ID), "runtime_id", uuidToString(agentTask.RuntimeID), "error", runtimeErr)
 				return resp

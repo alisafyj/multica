@@ -6,6 +6,7 @@ import type {
   TestCaseScope,
   TestCaseStatus,
   TestCaseType,
+  TestPlanStatus,
   TestRunCaseResult,
 } from "../types";
 
@@ -47,6 +48,8 @@ export const TEST_CASE_STATUS_TONE: Record<TestCaseStatus, string> = {
   active: "text-success",
   deprecated: "text-muted-foreground",
 };
+
+export const TEST_PLAN_STATUSES: TestPlanStatus[] = ["draft", "active", "archived"];
 
 export const TEST_RUN_RESULTS: TestRunCaseResult[] = [
   "pending",

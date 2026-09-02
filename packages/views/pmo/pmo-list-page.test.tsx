@@ -195,6 +195,7 @@ function renderPage() {
     replace: vi.fn(),
     back: vi.fn(),
     searchParams: new URLSearchParams(),
+    hash: "",
     getShareableUrl: (path) => path,
   };
   return renderWithI18n(

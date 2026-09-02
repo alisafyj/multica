@@ -298,12 +298,13 @@ func TestPrepareOpenclawConfigWorstCaseCLIBudgets(t *testing.T) {
 
 	// The call graph itself, so a new invocation stays visible here even when it
 	// costs no extra budget.
+	// No trailing `config get --json`: this fork reads the active config file
+	// instead, because OpenClaw 2026.7.1 rejects the pathless form (PR #24).
 	wantInvocations := []string{
 		"config validate --json",
 		"config file",
 		"config get agents.list --json",
 		"agents list --json",
-		"config get --json",
 	}
 	if strings.Join(invocations, " | ") != strings.Join(wantInvocations, " | ") {
 		t.Errorf("worst-case invocations:\n got: %v\nwant: %v", invocations, wantInvocations)

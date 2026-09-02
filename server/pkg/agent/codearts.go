@@ -762,6 +762,16 @@ func buildCodeArtsMCPConfigContent(raw json.RawMessage) (string, error) {
 
 // discoverCodeArtsModels uses the model catalog command exposed by CodeArts.
 // CodeArts does not expose OpenCode variants, so variant metadata is removed.
+// codeArtsDiscoveryEnv is extra environment for the discovery subprocess, and
+// is nil in production. It exists because this fork strips every non-allowlisted
+// variable from an agent child's environment (agentguard.AllowedInheritedEnvKey,
+// applied in mergeEnv): a test cannot signal a self-exec'd helper through the
+// ambient environment the way upstream's does, and widening a privacy allowlist
+// to carry a test flag would be the wrong trade. buildCodeArtsEnv appends
+// `extra` after the filter, so this seam reaches the child while the allowlist
+// stays exactly as tight as it is for real tasks.
+var codeArtsDiscoveryEnv map[string]string
+
 func discoverCodeArtsModels(ctx context.Context, runtimeCmd Command) ([]Model, error) {
 	if runtimeCmd.Path == "" {
 		runtimeCmd.Path = "codearts"
@@ -782,7 +792,7 @@ func discoverCodeArtsModels(ctx context.Context, runtimeCmd Command) ([]Model, e
 	run := func(args ...string) []Model {
 		cmd := runtimeCmd.exec(runCtx, args...)
 		hideAgentWindow(cmd)
-		cmd.Env = buildCodeArtsEnv(nil)
+		cmd.Env = buildCodeArtsEnv(codeArtsDiscoveryEnv)
 		out, _ := outputOwned(cmd, runtimeCmd.logger)
 		models := parseOpenCodeModels(string(out))
 		for i := range models {

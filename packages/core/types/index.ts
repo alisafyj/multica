@@ -250,6 +250,12 @@ export type {
   ListTestRunCasesResponse,
   TestCaseResultTimelineResponse,
   ListTestCapabilitiesResponse,
+  ListTestCaseIssuesResponse,
+  ListIssueTestCasesResponse,
+  TestCaseIssueLink,
+  IssueTestCaseLink,
+  TestCaseIssueOrigin,
+  LinkTestCaseIssuesRequest,
   DispatchTestRunResponse,
   DispatchTestRunBlockedResponse,
 } from "./testing";

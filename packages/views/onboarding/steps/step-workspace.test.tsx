@@ -76,6 +76,7 @@ function makeAdapter(): NavigationAdapter {
     back: vi.fn(),
     pathname: "/onboarding",
     searchParams: new URLSearchParams(),
+    hash: "",
     getShareableUrl: (p) => p,
   };
 }

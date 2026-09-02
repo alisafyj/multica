@@ -137,6 +137,8 @@ import type {
   ListTestRunCasesResponse,
   TestCaseResultTimelineResponse,
   ListTestCapabilitiesResponse,
+  ListTestCaseIssuesResponse,
+  ListIssueTestCasesResponse,
   WorkspaceMcpServer,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
@@ -4680,6 +4682,47 @@ export const DispatchTestRunResponseSchema = z.object({
   agent_task_id: z.string().default(""),
 }).loose();
 
+// Coverage links between a test case and the issues it verifies.
+
+export const TestCaseIssueLinkSchema = z.object({
+  test_case_id: z.string().default(""),
+  issue_id: z.string().default(""),
+  issue_number: z.number().default(0),
+  issue_identifier: z.string().default(""),
+  issue_title: z.string().default(""),
+  issue_status: z.string().default(""),
+  issue_priority: z.string().default("none"),
+  origin: z.string().default("human"),
+  created_at: z.string().default(""),
+}).loose();
+
+export const ListTestCaseIssuesResponseSchema = z.object({
+  issues: z.array(TestCaseIssueLinkSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const IssueTestCaseLinkSchema = z.object({
+  test_case_id: z.string().default(""),
+  issue_id: z.string().default(""),
+  case_number: z.number().default(0),
+  case_key: z.string().default(""),
+  case_title: z.string().default(""),
+  case_status: z.string().default("draft"),
+  case_priority: z.string().default("p2"),
+  case_type: z.string().default("functional"),
+  // Null is "never executed" and must survive parsing as null: defaulting it to
+  // a result value would claim an outcome the case does not have.
+  latest_result: z.string().nullable().default(null),
+  latest_executed_at: z.string().nullable().default(null),
+  origin: z.string().default("human"),
+  created_at: z.string().default(""),
+}).loose();
+
+export const ListIssueTestCasesResponseSchema = z.object({
+  cases: z.array(IssueTestCaseLinkSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
 // EMPTY_* fallbacks
 
 export const EMPTY_TEST_PLAN: TestPlan = {
@@ -4764,6 +4807,16 @@ export const EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE: TestCaseResultTimelineRes
 
 export const EMPTY_LIST_TEST_CAPABILITIES_RESPONSE: ListTestCapabilitiesResponse = {
   capabilities: [],
+};
+
+export const EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE: ListTestCaseIssuesResponse = {
+  issues: [],
+  total: 0,
+};
+
+export const EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE: ListIssueTestCasesResponse = {
+  cases: [],
+  total: 0,
 };
 
 export const ListDingTalkInstallationsResponseSchema = z.object({

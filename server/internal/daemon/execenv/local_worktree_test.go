@@ -2080,7 +2080,7 @@ func TestIsolatedPrepareKeepsTheReadOnlyBranchDrop(t *testing.T) {
 	if err := CleanupRuntimeConfig(env.WorkDir, "claude"); err != nil {
 		t.Fatalf("CleanupRuntimeConfig: %v", err)
 	}
-	if err := CleanupSidecars(env.RootDir); err != nil {
+	if err := CleanupSidecars(env.RootDir, env.WorkDir); err != nil {
 		t.Fatalf("CleanupSidecars: %v", err)
 	}
 

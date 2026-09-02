@@ -1307,16 +1307,17 @@ func TestPrepareOpenclawConfigFailsClosedOnResolvedConfigEnvelopeWithoutExit(t *
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		t.Fatalf("mkdir workdir: %v", err)
 	}
+	// This fork resolves the user config by reading the active file rather than
+	// calling the pathless `openclaw config get --json` (PR #24), so the error
+	// envelope has to arrive there for the fail-closed guard to be exercised.
 	userCfgPath := filepath.Join(t.TempDir(), "openclaw.json")
-	if err := os.WriteFile(userCfgPath, []byte(`{}`), 0o600); err != nil {
+	envelope := `{"error":"schema validation failed","resolved":{"apiKey":"must-not-leak"}}`
+	if err := os.WriteFile(userCfgPath, []byte(envelope), 0o600); err != nil {
 		t.Fatalf("write user cfg: %v", err)
 	}
 	installOpenclawStub(t, map[string]openclawResponse{
 		"config file":                   {stdout: userCfgPath},
 		"config get agents.list --json": {stdout: "null"},
-		"config get --json": {
-			stdout: `{"error":"schema validation failed","resolved":{"apiKey":"must-not-leak"}}`,
-		},
 	})
 
 	_, err := prepareOpenclawConfig(envRoot, workDir, OpenclawConfigPrep{

@@ -27,7 +27,7 @@ interface Props {
 
 export function ChatEmptyState({ hasSessions, agent, onPickPrompt }: Props) {
   const { t } = useTranslation("chat");
-  const fallbackStarters: AgentConversationStarter[] = [
+  const fallbackPrompts: AgentConversationStarter[] = [
     "capabilities",
     "first_task",
     "recommend",
@@ -41,7 +41,7 @@ export function ChatEmptyState({ hasSessions, agent, onPickPrompt }: Props) {
   const configured = (agent?.conversation_starters ?? []).filter(
     (item) => item.label.trim() && item.prompt.trim(),
   );
-  const starters = configured.length > 0 ? configured : fallbackStarters;
+  const starters = configured.length > 0 ? configured : fallbackPrompts;
   return (
     <View className="flex-1 items-center justify-center px-6 py-8 gap-5">
       <View className="items-center gap-1">

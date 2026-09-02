@@ -7,6 +7,7 @@ import {
   testRunKeys,
   testCapabilityKeys,
   testCaseTimelineKeys,
+  issueTestCaseKeys,
   type TestCaseListFilters,
   type TestGenerationJobListFilters,
   type TestPlanListFilters,
@@ -171,5 +172,27 @@ export function testCaseResultTimelineOptions(wsId: string, ref: string) {
     queryFn: () => api.listTestCaseResultTimeline(ref),
     select: (data) => data.timeline,
     enabled: ref.length > 0,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Coverage links — which requirements a case verifies, and the reverse
+// ---------------------------------------------------------------------------
+
+export function testCaseIssuesOptions(wsId: string, ref: string) {
+  return queryOptions({
+    queryKey: testCaseKeys.issues(wsId, ref),
+    queryFn: () => api.listTestCaseIssues(ref),
+    select: (data) => data.issues,
+    enabled: ref.length > 0,
+  });
+}
+
+export function issueTestCasesOptions(wsId: string, issueId: string) {
+  return queryOptions({
+    queryKey: issueTestCaseKeys.forIssue(wsId, issueId),
+    queryFn: () => api.listIssueTestCases(issueId),
+    select: (data) => data.cases,
+    enabled: issueId.length > 0,
   });
 }

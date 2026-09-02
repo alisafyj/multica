@@ -129,7 +129,7 @@ describe("reauthenticateDaemon", () => {
     mockConfigGetState.mockReturnValue({ useSySso: true });
     daemonAPI.reauthenticate.mockResolvedValue({ ok: true });
 
-    await reauthenticateDaemon();
+    await reauthenticateDaemon(t);
 
     expect(daemonAPI.reauthenticate).toHaveBeenCalledWith(
       "sso-jwt",

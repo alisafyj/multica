@@ -147,7 +147,7 @@ func (h *Handler) regenerateDesignDocumentTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	readinessLookup := h.runtimeLookup(obsmetrics.RuntimeLookupSourceOther)
+	readinessLookup := h.runtimeLookup(obsmetrics.RuntimeLookupSourceDesign)
 	readinessLookup.Queries = queries
 	verdict, err := service.AgentReadiness(ctx, readinessLookup, agent)
 	if err != nil {

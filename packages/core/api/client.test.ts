@@ -3371,7 +3371,6 @@ describe("importSkillArchive", () => {
     });
   });
 });
-
 describe("clientErrorMessage", () => {
   it("returns a 4xx message, which handlers write for the user", () => {
     expect(clientErrorMessage(new ApiError("autopilot is not active", 400, "Bad Request")))

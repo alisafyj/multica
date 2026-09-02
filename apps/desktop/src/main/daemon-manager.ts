@@ -699,7 +699,11 @@ async function syncToken(
   tokenFromRenderer: string,
   userId: string,
   useSySso: boolean,
-): Promise<{ active: ActiveProfile; userChanged: boolean }> {
+): Promise<{
+  active: ActiveProfile;
+  userChanged: boolean;
+  credentialChanged: boolean;
+}> {
   const active = await ensureActiveProfile();
   if (!active) {
     // Writing here would land the token and server_url in the user's default
@@ -732,12 +736,13 @@ async function syncToken(
     }
   }
 
+  const credentialChanged = config.token !== finalToken || userChanged;
   config.token = finalToken;
   if (targetApiBaseUrl) config.server_url = targetApiBaseUrl;
   await writeProfileConfig(active.name, config);
   await writeProfileUserId(active.name, userId);
 
-  return { active, userChanged };
+  return { active, userChanged, credentialChanged };
 }
 
 async function restartDaemonAfterUserSwitch(
@@ -764,6 +769,9 @@ async function restartDaemonAfterUserSwitch(
           `[daemon] restart-on-user-switch failed: ${restarted.error ?? "unknown error"}`,
         );
       }
+      console.warn(
+        `[daemon] restart-after-credential-change failed: ${restarted.error ?? "unknown error"}`,
+      );
     }
   } catch (err) {
     console.warn("[daemon] restart-on-user-switch failed:", err);
@@ -1394,7 +1402,7 @@ export function setupDaemonManager(
     "daemon:sync-token",
     async (_event, token: string, userId: string, useSySso: boolean) => {
       const result = await syncToken(token, userId, useSySso);
-      if (result.userChanged) {
+      if (result.credentialChanged) {
         await restartDaemonAfterUserSwitch(result.active);
       }
     },
@@ -1405,7 +1413,12 @@ export function setupDaemonManager(
   });
   ipcMain.handle(
     "daemon:reauthenticate",
-    async (_event, token: string, userId: string, useSySso: boolean): Promise<ReauthResult> => {
+    async (
+      _event,
+      token: string,
+      userId: string,
+      useSySso: boolean,
+    ): Promise<ReauthResult> => {
       setDesiredDaemonRunning(true, true);
       return lifecycleOperations.runForeground(() =>
         reauthenticate(token, userId, useSySso),

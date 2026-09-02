@@ -229,6 +229,7 @@ type IssueCreateResult struct {
 // Caller-owned validation is limited to transport-shaped checks: title
 // required, RFC3339 date format, assignee pair sanity.
 func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts IssueCreateOpts) (IssueCreateResult, error) {
+	issueCountPolicy := ResolveIssueCountPolicy(ctx, s.Entitlements, p.WorkspaceID)
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("begin tx: %w", err)
@@ -236,7 +237,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
 
-	res, err := s.createInTx(ctx, tx, qtx, p)
+	res, err := s.createInTx(ctx, tx, qtx, p, issueCountPolicy)
 	if err != nil {
 		// The duplicate guard aborts before any insert commits; surface the
 		// blocking row so the handler renders a 409 with the existing issue.
@@ -274,7 +275,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 // with the same validation semantics. p.AllowDuplicate lets the caller opt
 // out of the duplicate guard — PMO apply passes true because it owns entity
 // identity through pmo_sync_link.
-func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Queries, p IssueCreateParams) (IssueCreateResult, error) {
+func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Queries, p IssueCreateParams, issueCountPolicy IssueCountPolicy) (IssueCreateResult, error) {
 	// Workspace is the root lock for workspace-scoped writes. Take it before
 	// project rows so workspace deletion (workspace -> project) cannot deadlock
 	// with issue creation (project -> workspace counter).

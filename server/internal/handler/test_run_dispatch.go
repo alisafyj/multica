@@ -181,10 +181,16 @@ func (h *Handler) DispatchTestRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The agent becomes the run's executor here. UpdateTestRunCaseResult reads
+	// run.ExecutorID to attribute an agent-written result, so leaving the
+	// creating member on those columns would file the agent's results under a
+	// human who never ran them.
 	updated, err := h.Queries.UpdateTestRun(r.Context(), db.UpdateTestRunParams{
 		ID:                run.ID,
 		WorkspaceID:       wsUUID,
 		AgentTaskID:       agentTask.ID,
+		ExecutorType:      pgtype.Text{String: "agent", Valid: true},
+		ExecutorID:        agent.ID,
 		CapabilityBinding: bindingJSON,
 	})
 	if err != nil {

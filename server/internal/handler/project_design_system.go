@@ -779,7 +779,7 @@ func (h *Handler) createProjectDesignSystemTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	readinessLookup := h.runtimeLookup(obsmetrics.RuntimeLookupSourceOther)
+	readinessLookup := h.runtimeLookup(obsmetrics.RuntimeLookupSourceDesign)
 	readinessLookup.Queries = queries
 	verdict, err := service.AgentReadiness(ctx, readinessLookup, agent)
 	if err != nil {
@@ -875,7 +875,7 @@ func (h *Handler) createStandaloneDesignSystemTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	readinessLookup := h.runtimeLookup(obsmetrics.RuntimeLookupSourceOther)
+	readinessLookup := h.runtimeLookup(obsmetrics.RuntimeLookupSourceDesign)
 	readinessLookup.Queries = queries
 	verdict, err := service.AgentReadiness(ctx, readinessLookup, agent)
 	if err != nil {
@@ -966,7 +966,7 @@ func (h *Handler) createProjectDesignSystemRepositoryAnalysisTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	readinessLookup := h.runtimeLookup(obsmetrics.RuntimeLookupSourceOther)
+	readinessLookup := h.runtimeLookup(obsmetrics.RuntimeLookupSourceDesign)
 	readinessLookup.Queries = queries
 	verdict, err := service.AgentReadiness(ctx, readinessLookup, agent)
 	if err != nil {
@@ -975,7 +975,11 @@ func (h *Handler) createProjectDesignSystemRepositoryAnalysisTask(
 	if !verdict.Ready() {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: verdict.Detail}
 	}
-	runtime, err := queries.GetAgentRuntime(ctx, agent.RuntimeID)
+	runtime, err := service.RuntimeLookup{
+		Queries: queries,
+		Metrics: h.Metrics,
+		Source:  obsmetrics.RuntimeLookupSourceDesign,
+	}.Get(ctx, agent.RuntimeID)
 	if err != nil {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_runtime_lookup_failed", "failed to load agent runtime")
 	}
@@ -1106,7 +1110,7 @@ func (h *Handler) enqueueExistingProjectDesignSystemTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	readinessLookup := h.runtimeLookup(obsmetrics.RuntimeLookupSourceOther)
+	readinessLookup := h.runtimeLookup(obsmetrics.RuntimeLookupSourceDesign)
 	readinessLookup.Queries = queries
 	verdict, err := service.AgentReadiness(ctx, readinessLookup, agent)
 	if err != nil {

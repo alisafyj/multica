@@ -64,7 +64,7 @@ func TestPrepareOmpMcpConfigCleanupRemovesManagedFiles(t *testing.T) {
 	if err := writeSidecarManifest(envRoot, manifest); err != nil {
 		t.Fatal(err)
 	}
-	if err := CleanupSidecars(envRoot); err != nil {
+	if err := CleanupSidecars(envRoot, workDir); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(workDir, ".omp", "mcp.json")); !errors.Is(err, os.ErrNotExist) {

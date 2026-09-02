@@ -2916,6 +2916,12 @@ func (s *TaskService) cancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 				return err
 			}
 		}
+		// Recovery receipts settle in the same transaction as the cancel, so a
+		// delegated failure cannot stay delivered-but-unsettled if the commit
+		// that cancelled its task succeeds.
+		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, rows...); err != nil {
+			return err
+		}
 		cancelled = rows
 		return SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...)
 	}); err != nil {
@@ -3200,6 +3206,8 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 			if err := s.markDesignDocumentTaskFailed(ctx, qtx, cancelled, "design_document_cancelled", "design document task was cancelled"); err != nil {
 				return fmt.Errorf("mark design document task cancelled: %w", err)
 			}
+			// CancelAgentTaskByUser appends the recovery receipt in the same
+			// statement, so the returned row already carries it.
 			if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled); err != nil {
 				return err
 			}
@@ -3564,6 +3572,7 @@ func (s *TaskService) RebroadcastCancelledTask(ctx context.Context, taskID pgtyp
 // atomic, so concurrent callers cannot finalize the same task twice and a
 // call with no pending marker is a no-op. The settled outcome is broadcast
 // as chat:cancel_finalized since the cancel HTTP response has long returned.
+// Reports whether this call was the one that settled the task.
 func (s *TaskService) FinalizeDeferredCancelledChat(ctx context.Context, taskID pgtype.UUID) bool {
 	var (
 		task    db.AgentTaskQueue

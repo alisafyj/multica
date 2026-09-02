@@ -173,8 +173,15 @@ func TestDiscoverCodeArtsModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(codeartsModelHelperEnv, "1")
+	// The child's environment is filtered down to the agentguard allowlist, so
+	// the helper flag has to travel through the discovery seam.
+	setCodeArtsDiscoveryEnv(t, map[string]string{codeartsModelHelperEnv: "1"})
 	argvPath := filepath.Join(t.TempDir(), "model-argv.txt")
 	t.Setenv(codeartsModelHelperArgvFile, argvPath)
+	setCodeArtsDiscoveryEnv(t, map[string]string{
+		codeartsModelHelperEnv:      "1",
+		codeartsModelHelperArgvFile: argvPath,
+	})
 	models, err := discoverCodeArtsModels(context.Background(), Command{Path: self, Prefix: []string{"wrapper"}})
 	if err != nil {
 		t.Fatal(err)
@@ -200,8 +207,15 @@ func TestDetectVersionUsesCodeArtsCommandPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(codeartsModelHelperEnv, "1")
+	// The child's environment is filtered down to the agentguard allowlist, so
+	// the helper flag has to travel through the discovery seam.
+	setCodeArtsDiscoveryEnv(t, map[string]string{codeartsModelHelperEnv: "1"})
 	argvPath := filepath.Join(t.TempDir(), "version-argv.txt")
 	t.Setenv(codeartsModelHelperArgvFile, argvPath)
+	setCodeArtsDiscoveryEnv(t, map[string]string{
+		codeartsModelHelperEnv:      "1",
+		codeartsModelHelperArgvFile: argvPath,
+	})
 
 	version, err := DetectVersion(context.Background(), Command{Path: self, Prefix: []string{"wrapper"}})
 	if err != nil {
@@ -225,6 +239,9 @@ func TestCodeArtsListModelsCacheSeparatesCommandPrefixes(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(codeartsModelHelperEnv, "1")
+	// The child's environment is filtered down to the agentguard allowlist, so
+	// the helper flag has to travel through the discovery seam.
+	setCodeArtsDiscoveryEnv(t, map[string]string{codeartsModelHelperEnv: "1"})
 	commands := []Command{
 		{Path: self, Prefix: []string{"profile-a"}},
 		{Path: self, Prefix: []string{"profile-b"}},
@@ -274,4 +291,13 @@ func TestResolveCodeArtsNativeFromShim(t *testing.T) {
 	if got := resolveCodeArtsNativeFromShim(filepath.Join(filepath.Dir(shim), "other.cmd"), fakeStat(native)); got != "" {
 		t.Fatalf("non-CodeArts shim resolved to %q", got)
 	}
+}
+
+// setCodeArtsDiscoveryEnv installs extra environment for the discovery
+// subprocess and restores it when the test ends.
+func setCodeArtsDiscoveryEnv(t *testing.T, env map[string]string) {
+	t.Helper()
+	previous := codeArtsDiscoveryEnv
+	codeArtsDiscoveryEnv = env
+	t.Cleanup(func() { codeArtsDiscoveryEnv = previous })
 }
