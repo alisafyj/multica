@@ -124,9 +124,10 @@ type designImplementationContextWire struct {
 }
 
 type designImplementationPackageDescriptorWire struct {
-	Source        string `json:"source"`
-	ArchivePath   string `json:"archive_path"`
-	ContentDigest string `json:"content_digest"`
+	Source           string         `json:"source"`
+	ArchivePath      string         `json:"archive_path"`
+	ContentDigest    string         `json:"content_digest"`
+	RestorePackScope map[string]any `json:"restore_pack_scope,omitempty"`
 }
 
 func (a *designMCPAdapter) getImplementationContext(ctx context.Context, arguments map[string]any) (any, error) {
@@ -156,27 +157,33 @@ func (a *designMCPAdapter) getImplementationContext(ctx context.Context, argumen
 	if contextValue.Package != nil {
 		switch contextValue.Package.Source {
 		case "multica":
+			if contextValue.Package.ArchivePath == "" || contextValue.Package.ContentDigest != contextValue.ContentDigest {
+				return nil, fmt.Errorf("design_package_invalid: implementation package descriptor is invalid")
+			}
+			archive, err := a.client.DownloadFile(ctx, contextValue.Package.ArchivePath)
+			if err != nil {
+				return nil, fmt.Errorf("context_materialization_failed: download saved Multica design package: %w", err)
+			}
+			validated, files, err := designdocument.ReadBaseArchive(archive, contextValue.ContentDigest)
+			if err != nil {
+				return nil, fmt.Errorf("design_package_invalid: validate saved Multica design package: %w", err)
+			}
+			manifest, err := json.Marshal(validated.Manifest)
+			if err != nil {
+				return nil, fmt.Errorf("context_materialization_failed: encode saved Multica manifest: %w", err)
+			}
+			packageFiles = files
+			packageFiles["manifest.json"] = append(manifest, '\n')
+		case "figma":
+			var err error
+			packageFiles, err = a.figmaImplementationPackage(ctx, contextValue)
+			if err != nil {
+				return nil, err
+			}
 		default:
 			return nil, fmt.Errorf("design_package_invalid: unsupported implementation package source %q", contextValue.Package.Source)
 		}
-		if contextValue.Package.ArchivePath == "" || contextValue.Package.ContentDigest != contextValue.ContentDigest {
-			return nil, fmt.Errorf("design_package_invalid: implementation package descriptor is invalid")
-		}
-		archive, err := a.client.DownloadFile(ctx, contextValue.Package.ArchivePath)
-		if err != nil {
-			return nil, fmt.Errorf("context_materialization_failed: download saved Multica design package: %w", err)
-		}
-		validated, files, err := designdocument.ReadBaseArchive(archive, contextValue.ContentDigest)
-		if err != nil {
-			return nil, fmt.Errorf("design_package_invalid: validate saved Multica design package: %w", err)
-		}
-		manifest, err := json.Marshal(validated.Manifest)
-		if err != nil {
-			return nil, fmt.Errorf("context_materialization_failed: encode saved Multica manifest: %w", err)
-		}
-		packageFiles = files
-		packageFiles["manifest.json"] = append(manifest, '\n')
-	} else if hasPrototype(contextValue.Capabilities) {
+	} else if requiresPackageEvidence(contextValue.Capabilities) {
 		return nil, fmt.Errorf("design_package_invalid: implementation context requires a package descriptor")
 	}
 	if err := materializeDesignImplementationContext(a.rootDir, contextValue, packageFiles); err != nil {
@@ -291,8 +298,91 @@ func materializeDesignImplementationContext(rootDir string, contextValue designI
 	return nil
 }
 
+func (a *designMCPAdapter) figmaImplementationPackage(ctx context.Context, contextValue designImplementationContextWire) (map[string][]byte, error) {
+	if contextValue.Package.ContentDigest != contextValue.ContentDigest || contextValue.Package.ArchivePath != "" {
+		return nil, fmt.Errorf("design_package_invalid: implementation package descriptor is invalid")
+	}
+	scope, designFileID, err := validateFigmaRestorePackScope(contextValue.Package.RestorePackScope, contextValue.RevisionID)
+	if err != nil {
+		return nil, err
+	}
+	var pack map[string]any
+	path := "/api/design-files/" + url.PathEscape(designFileID) + "/restore-pack"
+	if err := a.client.PostJSON(ctx, path, map[string]any{"scope": scope}, &pack); err != nil {
+		return nil, fmt.Errorf("context_materialization_failed: get frozen Figma Restore Pack: %w", mapDesignMCPAPIError(err))
+	}
+	if err := validateFigmaRestorePack(pack, scope, designFileID, contextValue.RevisionID); err != nil {
+		return nil, err
+	}
+	packJSON, err := json.MarshalIndent(pack, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("context_materialization_failed: encode Figma Restore Pack: %w", err)
+	}
+	manifestJSON, err := json.MarshalIndent(map[string]any{
+		"schema_version":    "multica.design-implementation-figma-package/v1",
+		"source":            "figma",
+		"content_digest":    contextValue.ContentDigest,
+		"design_ref":        contextValue.DesignRef,
+		"revision_id":       contextValue.RevisionID,
+		"frame_refs":        contextValue.FrameRefs,
+		"restore_pack_path": "figma-restore-pack.json",
+	}, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("context_materialization_failed: encode Figma package manifest: %w", err)
+	}
+	return map[string][]byte{
+		"manifest.json":           append(manifestJSON, '\n'),
+		"figma-restore-pack.json": append(packJSON, '\n'),
+	}, nil
+}
+
+func validateFigmaRestorePackScope(scope map[string]any, revisionID string) (map[string]any, string, error) {
+	if scope == nil || stringArgument(scope, "version") != "1.0" || stringArgument(scope, "revisionId") != revisionID {
+		return nil, "", fmt.Errorf("design_package_invalid: Figma Restore Pack scope is invalid")
+	}
+	designFileID := stringArgument(scope, "designFileId")
+	kind := stringArgument(scope, "kind")
+	if designFileID == "" || (kind != "frame" && kind != "figma_group") {
+		return nil, "", fmt.Errorf("design_package_invalid: Figma Restore Pack scope is invalid")
+	}
+	if (kind == "frame" && stringArgument(scope, "frameId") == "") || (kind == "figma_group" && stringArgument(scope, "groupId") == "") {
+		return nil, "", fmt.Errorf("design_package_invalid: Figma Restore Pack scope is invalid")
+	}
+	return scope, designFileID, nil
+}
+
+func validateFigmaRestorePack(pack, scope map[string]any, designFileID, revisionID string) error {
+	returnedScope := mapArgument(pack, "scope")
+	if stringArgument(pack, "version") != "1.0" || stringArgument(mapArgument(pack, "designFile"), "id") != designFileID ||
+		stringArgument(mapArgument(pack, "revision"), "id") != revisionID ||
+		stringArgument(returnedScope, "version") != "1.0" || stringArgument(returnedScope, "designFileId") != designFileID ||
+		stringArgument(returnedScope, "revisionId") != revisionID || stringArgument(returnedScope, "kind") != stringArgument(scope, "kind") ||
+		stringArgument(returnedScope, "frameId") != stringArgument(scope, "frameId") || stringArgument(returnedScope, "groupId") != stringArgument(scope, "groupId") {
+		return fmt.Errorf("design_package_invalid: Figma Restore Pack does not match frozen implementation evidence")
+	}
+	frames, ok := pack["frames"].([]any)
+	if !ok || len(frames) == 0 {
+		return fmt.Errorf("design_package_invalid: Figma Restore Pack has no selected frame evidence")
+	}
+	return nil
+}
+
+func mapArgument(value map[string]any, key string) map[string]any {
+	entry, _ := value[key].(map[string]any)
+	return entry
+}
+
 func hasPrototype(capabilities map[string]any) bool {
 	value, _ := capabilities["has_prototype"].(bool)
+	return value
+}
+
+func requiresPackageEvidence(capabilities map[string]any) bool {
+	return hasPrototype(capabilities) || hasLayers(capabilities)
+}
+
+func hasLayers(capabilities map[string]any) bool {
+	value, _ := capabilities["has_layers"].(bool)
 	return value
 }
 

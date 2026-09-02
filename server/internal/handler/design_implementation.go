@@ -40,9 +40,10 @@ type DesignImplementationSourceCapabilities struct {
 }
 
 type DesignImplementationPackageDescriptor struct {
-	Source        string `json:"source"`
-	ArchivePath   string `json:"archive_path"`
-	ContentDigest string `json:"content_digest"`
+	Source           string         `json:"source"`
+	ArchivePath      string         `json:"archive_path,omitempty"`
+	ContentDigest    string         `json:"content_digest"`
+	RestorePackScope map[string]any `json:"restore_pack_scope,omitempty"`
 }
 
 type DesignImplementationContextResponse struct {
@@ -174,7 +175,7 @@ func (h *Handler) resolveDesignImplementationRequest(w http.ResponseWriter, r *h
 		SchemaVersion: designImplementationContextSchemaV1, DesignRef: chi.URLParam(r, "designRef"),
 		RevisionID: claim.RevisionID, ContentDigest: claim.ContentDigest, FrameRefs: append([]string(nil), request.FrameRefs...),
 		ProjectID: claim.ProjectID, IssueID: request.IssueID, ProjectResourceID: request.ProjectResourceID,
-		DesignTitle: title, DesignSystemDigest: designSystemDigest, Package: designImplementationPackageDescriptor(claim.Kind, sourceDocumentID, claim.RevisionID, claim.ContentDigest), AllowedWritePaths: []string{"."},
+		DesignTitle: title, DesignSystemDigest: designSystemDigest, Package: designImplementationPackageDescriptor(claim, sourceDocumentID, request.FrameRefs), AllowedWritePaths: []string{"."},
 		VerificationRequirements: []string{"repository typecheck/tests/build as applicable", "real rendered preview for changed UI"},
 		SourceInstructions:       designImplementationSourceInstructions(claim.Kind),
 		VerificationTargets:      designImplementationVerificationTargets(claim.Kind),
@@ -190,11 +191,31 @@ func (h *Handler) resolveDesignImplementationRequest(w http.ResponseWriter, r *h
 	}, request, repository, true
 }
 
-func designImplementationPackageDescriptor(kind, documentID, revisionID, digest string) *DesignImplementationPackageDescriptor {
-	if kind != "multica" || documentID == "" || revisionID == "" || digest == "" {
+func designImplementationPackageDescriptor(claim designAssetRefClaim, documentID string, frameRefs []string) *DesignImplementationPackageDescriptor {
+	switch claim.Kind {
+	case "multica":
+		if documentID == "" || claim.RevisionID == "" || claim.ContentDigest == "" {
+			return nil
+		}
+		return &DesignImplementationPackageDescriptor{Source: "multica", ArchivePath: fmt.Sprintf("/api/design-documents/%s/revisions/%s/archive", documentID, claim.RevisionID), ContentDigest: claim.ContentDigest}
+	case "figma":
+		if len(frameRefs) != 1 || claim.AssetID == "" || claim.RevisionID == "" || claim.ContentDigest == "" {
+			return nil
+		}
+		selection, err := parseDesignAssetFrameRef(frameRefs[0], time.Now())
+		if err != nil || (selection.SelectionKind != "frame" && selection.SelectionKind != "figma_group") || selection.SelectionID == "" {
+			return nil
+		}
+		scope := map[string]any{"version": "1.0", "kind": selection.SelectionKind, "designFileId": claim.AssetID, "revisionId": claim.RevisionID}
+		if selection.SelectionKind == "frame" {
+			scope["frameId"] = selection.SelectionID
+		} else {
+			scope["groupId"] = selection.SelectionID
+		}
+		return &DesignImplementationPackageDescriptor{Source: "figma", ContentDigest: claim.ContentDigest, RestorePackScope: scope}
+	default:
 		return nil
 	}
-	return &DesignImplementationPackageDescriptor{Source: "multica", ArchivePath: fmt.Sprintf("/api/design-documents/%s/revisions/%s/archive", documentID, revisionID), ContentDigest: digest}
 }
 
 func (h *Handler) resolveDesignImplementationFrames(r *http.Request, claim designAssetRefClaim) ([]DesignAssetFrameResponse, error) {
@@ -270,17 +291,25 @@ func (h *Handler) designImplementationMetadata(r *http.Request, claim designAsse
 }
 
 func designImplementationSourceInstructions(kind string) []string {
-	if kind != "multica" {
+	switch kind {
+	case "multica":
+		return []string{"Treat the Prototype as a structure, state, and interaction specification.", "Do not copy the Prototype HTML/CSS wholesale or embed it with an iframe or dangerouslySetInnerHTML.", "Implement selected page states, dialogs, and interactions in the target repository stack."}
+	case "figma":
+		return []string{"Treat the frozen Figma Restore Pack as selected visual, layout, text, asset, and interaction evidence.", "Reuse target repository components and do not infer unrelated frames or groups.", "Implement the selected frame or group in the target repository stack."}
+	default:
 		return nil
 	}
-	return []string{"Treat the Prototype as a structure, state, and interaction specification.", "Do not copy the Prototype HTML/CSS wholesale or embed it with an iframe or dangerouslySetInnerHTML.", "Implement selected page states, dialogs, and interactions in the target repository stack."}
 }
 
 func designImplementationVerificationTargets(kind string) []string {
-	if kind != "multica" {
+	switch kind {
+	case "multica":
+		return []string{"verify selected page coverage against brief.json and coverage.json", "report a package gap when required coverage has no Prototype evidence"}
+	case "figma":
+		return []string{"verify selected Figma frame or group evidence against figma-restore-pack.json", "report missing selected-layer or asset evidence as a Restore Pack gap"}
+	default:
 		return nil
 	}
-	return []string{"verify selected page coverage against brief.json and coverage.json", "report a package gap when required coverage has no Prototype evidence"}
 }
 
 func designImplementationRepositoryName(repository db.ProjectResource) string {

@@ -49,6 +49,12 @@ func TestDesignImplementationPromptAndContextShareFrozenIdentityWithoutSideEffec
 		contextBody.ProjectResourceID != fixture.repositoryID {
 		t.Fatalf("context did not freeze exact identity: %+v", contextBody)
 	}
+	if contextBody.Package == nil || contextBody.Package.Source != "figma" || contextBody.Package.ContentDigest != fixture.digest ||
+		contextBody.Package.RestorePackScope["version"] != "1.0" || contextBody.Package.RestorePackScope["kind"] != "frame" ||
+		contextBody.Package.RestorePackScope["designFileId"] == "" || contextBody.Package.RestorePackScope["revisionId"] != fixture.revisionID ||
+		len(contextBody.SourceInstructions) == 0 || len(contextBody.VerificationTargets) == 0 {
+		t.Fatalf("Figma package descriptor = %+v", contextBody)
+	}
 	if contextBody.Paths.Context != ".agent_context/design_implementation/context.json" ||
 		contextBody.Paths.Scope != ".agent_context/design_implementation/design/scope.json" ||
 		contextBody.Paths.DesignPackage != ".agent_context/design_implementation/design/package" {
@@ -108,6 +114,39 @@ func TestDesignImplementationContextRejectsForeignScopeAndFrames(t *testing.T) {
 			response := callDesignImplementation(t, testHandler.GetDesignImplementationContext, fixture.designRef, tc.body)
 			assertDesignAssetError(t, response.ResponseRecorder, tc.code)
 		})
+	}
+}
+
+func TestDesignImplementationContextBuildsFrozenFigmaGroupRestorePackScope(t *testing.T) {
+	fixture := designImplementationFixture(t)
+	claim, err := parseDesignAssetRef(fixture.designRef, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateDesignRevisionNativeJSONForTest(t, fixture.revisionID, restorePackGroupedNativeJSONForTest("Implementation Figma Group"))
+	revision, err := testHandler.Queries.GetDesignRevisionInWorkspace(context.Background(), db.GetDesignRevisionInWorkspaceParams{ID: parseUUID(fixture.revisionID), WorkspaceID: parseUUID(testWorkspaceID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim.ContentDigest = digestDesignAssetBytes(revision.NativeJson)
+	groupedRef := mustIssueDesignAssetRef(t, claim)
+	var frames DesignAssetFramesResponse
+	callDesignAssetFrames(t, groupedRef, testWorkspaceID, testUserID).Want(http.StatusOK).JSON(&frames)
+	var groupRef string
+	for _, frame := range frames.Frames {
+		selection, err := parseDesignAssetFrameRef(frame.FrameRef, time.Now())
+		if err == nil && selection.SelectionKind == "figma_group" {
+			groupRef = frame.FrameRef
+			break
+		}
+	}
+	if groupRef == "" {
+		t.Fatal("Figma group frame ref was not available")
+	}
+	var contextValue DesignImplementationContextResponse
+	callDesignImplementation(t, testHandler.GetDesignImplementationContext, groupedRef, fixture.requestBodyWith(fixture.issueID, fixture.repositoryID, groupRef)).Want(http.StatusOK).JSON(&contextValue)
+	if contextValue.Package == nil || contextValue.Package.Source != "figma" || contextValue.Package.RestorePackScope["kind"] != "figma_group" || contextValue.Package.RestorePackScope["groupId"] != "group-wallet" || contextValue.Package.RestorePackScope["revisionId"] != fixture.revisionID {
+		t.Fatalf("Figma group package descriptor = %+v", contextValue.Package)
 	}
 }
 

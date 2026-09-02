@@ -171,7 +171,7 @@ func TestDesignMCPGetImplementationContextMaterializesBoundedRelativeFiles(t *te
 			"frame_refs": []string{"frame_v1_example"}, "project_id": "project-1", "issue_id": "issue-1",
 			"project_resource_id": "repository-1", "design_title": "Customers",
 			"allowed_write_paths": []string{"."}, "verification_requirements": []string{"pnpm test"},
-			"source_capabilities": map[string]any{"has_layers": true, "has_prototype": false, "has_assets": true, "has_interactions": true},
+			"source_capabilities": map[string]any{"has_layers": false, "has_prototype": false, "has_assets": true, "has_interactions": true},
 			"paths": map[string]any{
 				"context_path":            ".agent_context/design_implementation/context.json",
 				"design_manifest_path":    ".agent_context/design_implementation/design/package/manifest.json",
@@ -450,6 +450,107 @@ func TestDesignMCPGetImplementationContextMaterializesSavedMulticaPackage(t *tes
 	}
 }
 
+func TestDesignMCPGetImplementationContextMaterializesFrozenFigmaRestorePack(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		scope map[string]any
+	}{
+		{name: "frame", scope: map[string]any{"version": "1.0", "kind": "frame", "designFileId": "file-1", "revisionId": "revision-1", "frameId": "frame-1"}},
+		{name: "group", scope: map[string]any{"version": "1.0", "kind": "figma_group", "designFileId": "file-1", "revisionId": "revision-1", "groupId": "group-1"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var restoreBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/design-assets/design_v1_figma/implementation-context":
+					writeMCPTestJSON(w, map[string]any{
+						"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_figma", "revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("f", 64),
+						"frame_refs": []string{"frame_v1_figma"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1", "design_title": "Figma CRM",
+						"package":             map[string]any{"source": "figma", "content_digest": "sha256:" + strings.Repeat("f", 64), "restore_pack_scope": tt.scope},
+						"source_capabilities": map[string]any{"has_layers": true, "has_assets": true, "has_interactions": true},
+					})
+				case "/api/design-files/file-1/restore-pack":
+					if err := json.NewDecoder(r.Body).Decode(&restoreBody); err != nil {
+						t.Fatal(err)
+					}
+					writeMCPTestJSON(w, map[string]any{
+						"version": "1.0", "designFile": map[string]any{"id": "file-1"}, "revision": map[string]any{"id": "revision-1"},
+						"scope": tt.scope, "frames": []any{map[string]any{"id": "frame-1", "layers": []any{}}}, "assets": map[string]any{}, "warnings": []any{},
+					})
+				default:
+					t.Fatalf("unexpected path %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			root := t.TempDir()
+			adapter := &designMCPAdapter{client: cli.NewAPIClient(srv.URL, "ws-1", "mul_secret"), rootDir: root}
+			if _, err := adapter.getImplementationContext(context.Background(), map[string]any{
+				"designRef": "design_v1_figma", "revisionId": "revision-1", "frameRefs": []any{"frame_v1_figma"}, "targetRepositoryId": "repository-1", "issueId": "issue-1",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(restoreBody["scope"], tt.scope) {
+				t.Fatalf("Restore Pack scope = %#v, want %#v", restoreBody["scope"], tt.scope)
+			}
+			manifestRaw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(designImplementationManifestPath)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var manifest map[string]any
+			if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			if manifest["source"] != "figma" || manifest["restore_pack_path"] != "figma-restore-pack.json" {
+				t.Fatalf("Figma package manifest = %#v", manifest)
+			}
+			packRaw, err := os.ReadFile(filepath.Join(root, ".agent_context", "design_implementation", "design", "package", "figma-restore-pack.json"))
+			if err != nil || !json.Valid(packRaw) || !strings.Contains(string(packRaw), `"revision-1"`) {
+				t.Fatalf("Figma Restore Pack = %q, %v", packRaw, err)
+			}
+		})
+	}
+}
+
+func TestDesignMCPGetImplementationContextRejectsInvalidFigmaRestorePackAndPreservesContext(t *testing.T) {
+	root := t.TempDir()
+	previous := designImplementationContextWire{SchemaVersion: "multica.design-implementation-context/v1", DesignRef: "previous"}
+	if err := materializeDesignImplementationContext(root, previous); err != nil {
+		t.Fatal(err)
+	}
+	scope := map[string]any{"version": "1.0", "kind": "frame", "designFileId": "file-1", "revisionId": "revision-1", "frameId": "frame-1"}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/design-assets/design_v1_figma/implementation-context":
+			writeMCPTestJSON(w, map[string]any{
+				"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_figma", "revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("f", 64),
+				"frame_refs": []string{"frame_v1_figma"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1",
+				"package":             map[string]any{"source": "figma", "content_digest": "sha256:" + strings.Repeat("f", 64), "restore_pack_scope": scope},
+				"source_capabilities": map[string]any{"has_layers": true},
+			})
+		case "/api/design-files/file-1/restore-pack":
+			writeMCPTestJSON(w, map[string]any{
+				"version": "1.0", "designFile": map[string]any{"id": "file-1"}, "revision": map[string]any{"id": "other-revision"}, "scope": scope,
+				"frames": []any{map[string]any{"id": "frame-1"}},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	adapter := &designMCPAdapter{client: cli.NewAPIClient(srv.URL, "ws-1", "mul_secret"), rootDir: root}
+	_, err := adapter.getImplementationContext(context.Background(), map[string]any{
+		"designRef": "design_v1_figma", "revisionId": "revision-1", "frameRefs": []any{"frame_v1_figma"}, "targetRepositoryId": "repository-1", "issueId": "issue-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "design_package_invalid") {
+		t.Fatalf("invalid Figma Restore Pack error = %v", err)
+	}
+	raw, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(designImplementationContextPath)))
+	if readErr != nil || !strings.Contains(string(raw), `"design_ref": "previous"`) {
+		t.Fatalf("previous context was not preserved: %q, %v", raw, readErr)
+	}
+}
+
 func TestDesignMCPGetImplementationContextRejectsMulticaWithoutPackageDescriptorAndPreservesContext(t *testing.T) {
 	root := t.TempDir()
 	previous := designImplementationContextWire{SchemaVersion: "multica.design-implementation-context/v1", DesignRef: "previous"}
@@ -470,6 +571,33 @@ func TestDesignMCPGetImplementationContextRejectsMulticaWithoutPackageDescriptor
 	})
 	if err == nil || !strings.Contains(err.Error(), "design_package_invalid") {
 		t.Fatalf("missing package descriptor error = %v", err)
+	}
+	raw, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(designImplementationContextPath)))
+	if readErr != nil || !strings.Contains(string(raw), `"design_ref": "previous"`) {
+		t.Fatalf("previous context was not preserved: %q, %v", raw, readErr)
+	}
+}
+
+func TestDesignMCPGetImplementationContextRejectsFigmaWithoutPackageDescriptorAndPreservesContext(t *testing.T) {
+	root := t.TempDir()
+	previous := designImplementationContextWire{SchemaVersion: "multica.design-implementation-context/v1", DesignRef: "previous"}
+	if err := materializeDesignImplementationContext(root, previous); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeMCPTestJSON(w, map[string]any{
+			"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_figma", "revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("f", 64),
+			"frame_refs": []string{"frame_v1_figma"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1",
+			"source_capabilities": map[string]any{"has_layers": true},
+		})
+	}))
+	defer srv.Close()
+	adapter := &designMCPAdapter{client: cli.NewAPIClient(srv.URL, "ws-1", "mul_secret"), rootDir: root}
+	_, err := adapter.getImplementationContext(context.Background(), map[string]any{
+		"designRef": "design_v1_figma", "revisionId": "revision-1", "frameRefs": []any{"frame_v1_figma"}, "targetRepositoryId": "repository-1", "issueId": "issue-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "design_package_invalid") {
+		t.Fatalf("missing Figma package descriptor error = %v", err)
 	}
 	raw, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(designImplementationContextPath)))
 	if readErr != nil || !strings.Contains(string(raw), `"design_ref": "previous"`) {
