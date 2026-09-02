@@ -61,6 +61,27 @@ var commentContentBigramIndex = usableIndexRequirement{
 	Extension:     "pg_bigm",
 }
 
+// extensionOperatorClass names an operator class a migration writes literally
+// into a CREATE INDEX, together with the extension that must own it. A
+// migration cannot both build concurrently and swallow a missing extension in a
+// DO ... EXCEPTION block, so the ones that need an optional opclass are gated on
+// this instead.
+type extensionOperatorClass struct {
+	AccessMethod  string
+	OperatorClass string
+	Extension     string
+}
+
+// issuePropertiesBigramOperatorClass gates migration 446. pg_bigm ships with
+// neither core Postgres nor the pgvector image CI and self-hosted deployments
+// run, so the index it builds is best-effort; the contains prefilter it
+// accelerates stays correct without it.
+var issuePropertiesBigramOperatorClass = extensionOperatorClass{
+	AccessMethod:  "gin",
+	OperatorClass: "gin_bigm_ops",
+	Extension:     "pg_bigm",
+}
+
 // preMigrationHooks wires migration version → hook. The version key is
 // the file basename without the `.up.sql` suffix, matching what
 // `migrations.ExtractVersion` returns.
@@ -388,6 +409,58 @@ var concurrentIndexCleanups = map[string]string{
 	"445_comment_delegated_failure_unsettled_index": "idx_comment_delegated_failure_unsettled",
 	"908_test_case_issue_issue_index":               "test_case_issue_issue_idx",
 	"909_test_case_issue_workspace_case_index":      "test_case_issue_workspace_case_idx",
+	"446_issue_properties_bigm_index":               "idx_issue_properties_bigm",
+	/*
+			The upstream entries below are already represented by the fork's
+			duplicate-stem handling above and remain commented out intentionally.
+		"343_comment_delegated_failure_pending_index":               "idx_comment_delegated_failure_pending",
+		"345_plugin_installation_workspace_key_index":               "idx_plugin_installation_workspace_key",
+		"346_plugin_storage_scope_key_index":                        "idx_plugin_storage_scope_key",
+		"347_plugin_secret_installation_key_index":                  "idx_plugin_secret_installation_key",
+		"349_agent_task_queue_chat_terminal_resume_index":           "idx_agent_task_queue_chat_terminal_resume",
+		"350_agent_task_queue_chat_retired_session_index":           "idx_agent_task_queue_chat_retired_session",
+		"353_autopilot_quota_period_scope_index":                    "uq_autopilot_quota_period_scope",
+		"354_autopilot_quota_reservation_id_index":                  "autopilot_quota_reservation_pkey_uidx",
+		"355_autopilot_quota_reservation_key_index":                 "uq_autopilot_quota_reservation_key",
+		"356_autopilot_run_quota_reservation_index":                 "uq_autopilot_run_quota_reservation",
+		"357_webhook_delivery_replay_idempotency_index":             "uq_webhook_delivery_replay_idempotency",
+		"358_autopilot_quota_reservation_state_index":               "idx_autopilot_quota_reservation_state",
+		"361_issue_last_activity_index":                             "idx_issue_workspace_last_activity",
+		"363_plugin_invocation_installation_index":                  "idx_plugin_invocation_installation_created",
+		"364_plugin_invocation_created_at_index":                    "idx_plugin_invocation_created_at",
+		"378_channel_chat_context_generation_key":                   "channel_chat_context_generation_session_revision_idx",
+		"390_agent_task_queue_dispatched_reclaim_v2_index":          "idx_agent_task_queue_dispatched_reclaim_v2",
+		"393_plugin_package_workspace_key_index":                    "idx_plugin_package_workspace_key",
+		"394_plugin_package_version_unique_index":                   "idx_plugin_package_version_unique",
+		"395_plugin_package_version_package_index":                  "idx_plugin_package_version_package",
+		"396_plugin_package_file_path_index":                        "idx_plugin_package_file_path",
+		"397_plugin_installation_package_version_index":             "idx_plugin_installation_package_version",
+		"398_issue_workspace_status_position_index":                 "idx_issue_workspace_status_position",
+		"400_plugin_hook_schedule_installation_key_index":           "idx_plugin_hook_schedule_installation_key",
+		"401_plugin_hook_schedule_enabled_index":                    "idx_plugin_hook_schedule_enabled",
+		"408_issue_source_context_id_index":                         "idx_issue_source_context_id",
+		"409_issue_source_context_issue_index":                      "idx_issue_source_context_issue",
+		"410_issue_source_context_origin_task_index":                "idx_issue_source_context_origin_task",
+		"411_attachment_source_context_index":                       "idx_attachment_source_context",
+		"412_issue_source_context_object_intent_key_index":          "idx_issue_source_context_object_intent_key",
+		"413_issue_source_context_object_intent_due_index":          "idx_issue_source_context_object_intent_due",
+		"414_issue_source_context_object_intent_context_index":      "idx_issue_source_context_object_intent_context",
+		"416_seat_capacity_operation_token_index":                   "idx_seat_capacity_outbox_operation_token",
+		"418_seat_capacity_due_index":                               "idx_seat_capacity_outbox_due",
+		"419_seat_capacity_share_join_index":                        "idx_seat_capacity_outbox_share_join",
+		"421_channel_chat_active_route_index":                       "idx_channel_chat_session_binding_active_route",
+		"423_channel_task_delivery_pkey_index":                      "channel_task_delivery_pkey",
+		"426_channel_outbound_message_id_index":                     "idx_channel_outbound_message_id",
+		"428_channel_task_delivery_binding_index":                   "idx_channel_task_delivery_binding",
+		"429_channel_task_delivery_installation_index":              "idx_channel_task_delivery_installation",
+		"430_channel_outbound_message_binding_index":                "idx_channel_outbound_message_binding_route",
+		"438_agent_runtime_online_last_seen_index":                  "idx_agent_runtime_online_last_seen",
+		"439_agent_runtime_offline_last_seen_index":                 "idx_agent_runtime_offline_last_seen",
+		"440_github_pr_head_sha_index":                              "idx_github_pull_request_head_sha",
+		"443_issue_project_status_index":                            "idx_issue_project_status",
+		"445_comment_delegated_failure_unsettled_index":             "idx_comment_delegated_failure_unsettled",
+		"446_issue_properties_bigm_index":                           "idx_issue_properties_bigm",
+	*/
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction
@@ -491,6 +564,11 @@ var upMigrationConditions = map[string]migrationCondition{
 	// fallback only after proving the preferred index has the exact usable shape;
 	// pg_bigm-less self-hosted databases keep trgm and record 371 as a no-op.
 	"371_comment_content_search_index_strategy": whenIndexUsable(commentContentBigramIndex),
+	// The properties prefilter index is an optimization, not a correctness
+	// requirement: build it where pg_bigm exists and record a no-op everywhere
+	// else, rather than failing the run (and with it backend startup) on every
+	// database without the extension.
+	"446_issue_properties_bigm_index": whenOperatorClassAvailable(issuePropertiesBigramOperatorClass),
 }
 
 func hooksForDirection(direction string) map[string]preMigrationHook {
@@ -549,6 +627,42 @@ func whenIndexNotUsable(requirement usableIndexRequirement) migrationCondition {
 		}
 		if usable {
 			return false, fmt.Sprintf("preferred index %s is ready", requirement.IndexRegclass), nil
+		}
+		return true, "", nil
+	}
+}
+
+// whenOperatorClassAvailable lets a migration's SQL run only where the operator
+// class it names is installed, owned by the expected extension, and visible on
+// the search_path the migration itself will resolve the unqualified name
+// against — the condition runs on the same pinned connection as the SQL.
+//
+// Checking the extension alone would be weaker: an opclass in a schema outside
+// the search_path still fails the CREATE INDEX, which would abort the run.
+func whenOperatorClassAvailable(opclass extensionOperatorClass) migrationCondition {
+	return func(ctx context.Context, conn *pgxpool.Conn) (bool, string, error) {
+		var available bool
+		if err := conn.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_opclass opc
+				JOIN pg_am am ON am.oid = opc.opcmethod
+				JOIN pg_depend dep
+				  ON dep.classid = 'pg_opclass'::regclass
+				 AND dep.objid = opc.oid
+				 AND dep.refclassid = 'pg_extension'::regclass
+				 AND dep.deptype = 'e'
+				JOIN pg_extension ext ON ext.oid = dep.refobjid
+				WHERE opc.opcname = $1
+				  AND am.amname = $2
+				  AND ext.extname = $3
+				  AND pg_opclass_is_visible(opc.oid)
+			)
+		`, opclass.OperatorClass, opclass.AccessMethod, opclass.Extension).Scan(&available); err != nil {
+			return false, "", fmt.Errorf("inspect operator class %q: %w", opclass.OperatorClass, err)
+		}
+		if !available {
+			return false, fmt.Sprintf("operator class %s (%s) is not installed", opclass.OperatorClass, opclass.Extension), nil
 		}
 		return true, "", nil
 	}

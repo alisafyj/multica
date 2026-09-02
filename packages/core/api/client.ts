@@ -323,7 +323,6 @@ import type {
   DispatchTestRunRequest,
   UpdateTestRunCaseResultRequest,
   OpenTestRunCaseDefectRequest,
-  WorkspaceSubscriptionEntitlements,
   WorkspaceSubscriptionSummary,
   IssueLimitUsage,
   WorkspaceSubscriptionPrices,

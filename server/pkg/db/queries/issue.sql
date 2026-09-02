@@ -81,6 +81,29 @@ WHERE workspace_id = sqlc.arg('workspace_id')
 SELECT * FROM issue
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: IsIssueInCreationWindow :one
+-- Returns true for one issue in the newest creation-number window or one of
+-- the ancestors required to render a visible descendant.
+WITH RECURSIVE issue_window_base AS MATERIALIZED (
+    SELECT id, parent_issue_id
+    FROM issue
+    WHERE workspace_id = sqlc.arg('workspace_id')::uuid
+    ORDER BY number DESC
+    LIMIT sqlc.arg('issue_window_limit')::bigint
+), issue_window_visible(id, parent_issue_id) AS (
+    SELECT id, parent_issue_id FROM issue_window_base
+    UNION
+    SELECT parent.id, parent.parent_issue_id
+    FROM issue parent
+    JOIN issue_window_visible child ON child.parent_issue_id = parent.id
+    WHERE parent.workspace_id = sqlc.arg('workspace_id')::uuid
+)
+SELECT EXISTS (
+    SELECT 1
+    FROM issue_window_visible
+    WHERE id = sqlc.arg('issue_id')::uuid
+);
+
 -- name: ListOpenProjectIssueStatusesForUpdate :many
 SELECT id, status FROM issue
 WHERE project_id = sqlc.arg('project_id')
@@ -442,11 +465,14 @@ WHERE i.workspace_id = $1
   --   {"__op__": "<op>", "def": "<id>", "value": "<v>"}       — scalar operator
   -- (contains / gt / gte / lt / lte / before / after), where the contains
   -- value arrives already ILIKE-escaped and the op was validated in Go, so
-  -- the per-op branches below only ever see legal values. The correlated
-  -- form skips the GIN index, which is fine here: open_only is an
-  -- unpaginated workspace scan. The terminal-status predicate intentionally
-  -- remains a filter rather than a positive index narrowing so unknown legacy
-  -- status keys stay visible.
+  -- the per-op branches below only ever see legal values. A contains pattern
+  -- additionally carries "prefilter" when its needle survives jsonb text
+  -- serialization intact; the clause it enables is redundant by construction
+  -- (prefilterableContainsNeedle in property.go) and stays here so both renderings
+  -- of the filter keep matching row for row. The correlated form skips the GIN
+  -- index, which is fine here: open_only is an unpaginated workspace scan. The
+  -- terminal-status predicate intentionally remains a filter rather than a
+  -- positive index narrowing so unknown legacy status keys stay visible.
   AND (
     sqlc.narg('properties_filter')::jsonb IS NULL
     OR NOT EXISTS (
@@ -462,6 +488,8 @@ WHERE i.workspace_id = $1
                AND i.properties ->> (alt.pattern ->> 'def') IS NOT NULL
                AND (
                  (alt.pattern ->> '__op__' = 'contains'
+                  AND (NOT (alt.pattern ? 'prefilter')
+                       OR LOWER(i.properties::text) LIKE LOWER('%' || (alt.pattern ->> 'prefilter') || '%'))
                   AND jsonb_typeof(i.properties -> (alt.pattern ->> 'def')) = 'string'
                   AND (i.properties ->> (alt.pattern ->> 'def')) ILIKE '%' || (alt.pattern ->> 'value') || '%')
                  OR (alt.pattern ->> '__op__' = 'gt'
@@ -573,7 +601,8 @@ WHERE i.workspace_id = $1
 -- unpredictably across batches and statuses; number is a per-workspace
 -- monotonic counter and is sibling-stable.
 SELECT * FROM issue
-WHERE parent_issue_id = $1
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND parent_issue_id = sqlc.arg('parent_issue_id')
 ORDER BY number ASC;
 
 -- name: ListChildrenByParents :many

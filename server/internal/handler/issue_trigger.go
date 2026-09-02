@@ -3,9 +3,11 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -229,11 +231,17 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 			continue // malformed id contributes no trigger; deterministic
 		}
 		loaded, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
-			ID:          issueUUID,
-			WorkspaceID: parseUUID(workspaceID),
+			ID: issueUUID, WorkspaceID: parseUUID(workspaceID),
 		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue // unknown or cross-workspace id contributes no trigger
+		}
 		if err != nil {
-			continue // cross-workspace / unknown id contributes no trigger
+			writeError(w, http.StatusInternalServerError, "failed to load issue")
+			return
+		}
+		if !h.authorizeIssueWindow(w, r, loaded.ID, loaded.WorkspaceID, "trigger_preview") {
+			return
 		}
 
 		post := loaded

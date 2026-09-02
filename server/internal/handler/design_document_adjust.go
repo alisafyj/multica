@@ -131,7 +131,7 @@ func (h *Handler) AdjustDesignDocument(w http.ResponseWriter, r *http.Request) {
 	// Resolved and pinned before the run is created, exactly as creation does:
 	// the frozen input records what the files ARE, so the run cannot later see
 	// different bytes under the same id.
-	turnAttachments, attachmentErr := h.resolveDesignDocumentAttachments(r.Context(), workspaceUUID, req.Attachments)
+	turnAttachments, attachmentErr := h.resolveDesignDocumentAttachments(r.Context(), r, workspaceUUID, req.Attachments)
 	if attachmentErr != nil {
 		writeProjectDesignSystemRequestError(w, attachmentErr)
 		return

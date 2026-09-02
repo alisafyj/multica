@@ -189,6 +189,7 @@ export type TaskFailureReason =
   | "codex_semantic_inactivity"
   | "runtime_offline"
   | "runtime_reconnect_timeout"
+  | "issue_window_restricted"
   | "runtime_recovery"
 	| "authentication_expired"
   | "manual";

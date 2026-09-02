@@ -230,6 +230,7 @@ type IssueCreateResult struct {
 // required, RFC3339 date format, assignee pair sanity.
 func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts IssueCreateOpts) (IssueCreateResult, error) {
 	issueCountPolicy := ResolveIssueCountPolicy(ctx, s.Entitlements, p.WorkspaceID)
+	issueWindowPolicy := ResolveIssueWindowPolicy(ctx, s.Entitlements, p.WorkspaceID)
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("begin tx: %w", err)
@@ -237,7 +238,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
 
-	res, err := s.createInTx(ctx, tx, qtx, p, issueCountPolicy)
+	res, err := s.createInTx(ctx, tx, qtx, p, issueCountPolicy, issueWindowPolicy)
 	if err != nil {
 		// The duplicate guard aborts before any insert commits; surface the
 		// blocking row so the handler renders a 409 with the existing issue.
@@ -275,7 +276,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 // with the same validation semantics. p.AllowDuplicate lets the caller opt
 // out of the duplicate guard — PMO apply passes true because it owns entity
 // identity through pmo_sync_link.
-func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Queries, p IssueCreateParams, issueCountPolicy IssueCountPolicy) (IssueCreateResult, error) {
+func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Queries, p IssueCreateParams, issueCountPolicy IssueCountPolicy, issueWindowPolicy IssueWindowPolicy) (IssueCreateResult, error) {
 	// Workspace is the root lock for workspace-scoped writes. Take it before
 	// project rows so workspace deletion (workspace -> project) cannot deadlock
 	// with issue creation (project -> workspace counter).
@@ -337,6 +338,21 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 		if err != nil || !parent.ID.Valid {
 			return IssueCreateResult{}, ErrParentIssueNotFound
 		}
+		if issueWindowPolicy.Action == entitlement.ActionEnforce {
+			visible, err := qtx.IsIssueInCreationWindow(ctx, db.IsIssueInCreationWindowParams{
+				WorkspaceID:      p.WorkspaceID,
+				IssueWindowLimit: issueWindowPolicy.Limit,
+				IssueID:          p.ParentIssueID,
+			})
+			if err != nil {
+				return IssueCreateResult{}, fmt.Errorf("check parent issue creation window: %w", err)
+			}
+			if !visible {
+				return IssueCreateResult{}, &IssueOutsideCreationWindowError{
+					Limit: issueWindowPolicy.Limit, PolicyRevision: issueWindowPolicy.PolicyRevision,
+				}
+			}
+		}
 		// Back-fill project from parent when the caller did not pin
 		// one explicitly. Matches the long-standing HTTP behavior: a
 		// sub-issue inherits its parent's project unless overridden.
@@ -375,7 +391,6 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 		return IssueCreateResult{DuplicateIssue: &dup}, ErrActiveDuplicate
 	}
 
-	issueCountPolicy := ResolveIssueCountPolicy(ctx, s.Entitlements, p.WorkspaceID)
 	issueNumber, err := AllocateIssueNumber(ctx, qtx, p.WorkspaceID, issueCountPolicy)
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("allocate issue number: %w", err)

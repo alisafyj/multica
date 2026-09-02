@@ -52,7 +52,10 @@ import {
   isAuthStatusError,
   type AuthProbeResult,
 } from "./daemon-auth-probe";
-import { planDaemonToken } from "./daemon-token-sync";
+import {
+  daemonCredentialChanged,
+  planDaemonToken,
+} from "./daemon-token-sync";
 
 const POLL_INTERVAL_MS = 5_000;
 const PREFS_PATH = join(homedir(), ".multica", "desktop_prefs.json");
@@ -736,7 +739,11 @@ async function syncToken(
     }
   }
 
-  const credentialChanged = config.token !== finalToken || userChanged;
+  const credentialChanged = daemonCredentialChanged(
+    config.token,
+    finalToken,
+    userChanged,
+  );
   config.token = finalToken;
   if (targetApiBaseUrl) config.server_url = targetApiBaseUrl;
   await writeProfileConfig(active.name, config);
@@ -769,9 +776,6 @@ async function restartDaemonAfterUserSwitch(
           `[daemon] restart-on-user-switch failed: ${restarted.error ?? "unknown error"}`,
         );
       }
-      console.warn(
-        `[daemon] restart-after-credential-change failed: ${restarted.error ?? "unknown error"}`,
-      );
     }
   } catch (err) {
     console.warn("[daemon] restart-on-user-switch failed:", err);

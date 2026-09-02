@@ -219,11 +219,16 @@ type wirePolicy struct {
 }
 
 type wireGate struct {
-	Action      string     `json:"action"`
-	Limit       *int       `json:"limit"`
-	PeriodStart *time.Time `json:"period_start"`
-	PeriodEnd   *time.Time `json:"period_end"`
-	ResetAt     *time.Time `json:"reset_at"`
+	Action        string                  `json:"action"`
+	Limit         *int                    `json:"limit"`
+	PeriodStart   *time.Time              `json:"period_start"`
+	PeriodEnd     *time.Time              `json:"period_end"`
+	ResetAt       *time.Time              `json:"reset_at"`
+	Notifications *wireNotificationPolicy `json:"notifications"`
+}
+
+type wireNotificationPolicy struct {
+	OnRejection string `json:"on_rejection"`
 }
 
 type fetchedPolicy struct {
@@ -275,7 +280,7 @@ func normalizePolicy(wire wirePolicy) (fetchedPolicy, error) {
 		wire.ValidUntil.IsZero() || wire.ValidForSeconds <= 0 || wire.ValidForSeconds > int64(maxPolicyTTL/time.Second) {
 		return fetchedPolicy{}, ErrInvalidPolicy
 	}
-	gates := make(map[GateName]Gate, 2)
+	gates := make(map[GateName]Gate, 3)
 	for _, name := range []GateName{GateIssueCount, GateAutopilotRuns} {
 		wireGate, ok := wire.Gates[string(name)]
 		if !ok {
@@ -286,6 +291,22 @@ func normalizePolicy(wire wirePolicy) (fetchedPolicy, error) {
 			return fetchedPolicy{}, err
 		}
 		gates[name] = gate
+	}
+	// issue_window predates the community issue_count gate and remains an
+	// optional fork-local read restriction. Its absence must not invalidate a
+	// current Cloud policy or disable issue_count/autopilot consumers.
+	if wireGate, ok := wire.Gates[string(GateIssueWindow)]; ok {
+		gate, err := normalizeGate(GateIssueWindow, wireGate)
+		if err != nil {
+			// This fork-local gate is optional at the Cloud boundary. Keep the
+			// required community gates usable when an older or malformed payload
+			// contains an invalid issue-window instruction.
+			gates[GateIssueWindow] = Gate{Action: ActionOff}
+		} else {
+			gates[GateIssueWindow] = gate
+		}
+	} else {
+		gates[GateIssueWindow] = Gate{Action: ActionOff}
 	}
 	return fetchedPolicy{
 		snapshot: policySnapshot{
@@ -303,6 +324,10 @@ func normalizeGate(name GateName, wire wireGate) (Gate, error) {
 	switch action {
 	case ActionOff:
 		return Gate{Action: ActionOff}, nil
+	case ActionObserve:
+		if name != GateIssueWindow {
+			return Gate{}, ErrInvalidPolicy
+		}
 	case ActionEnforce:
 	default:
 		return Gate{}, ErrInvalidPolicy
@@ -331,7 +356,20 @@ func normalizeGate(name GateName, wire wireGate) (Gate, error) {
 		start, end, reset := *wire.PeriodStart, *wire.PeriodEnd, *wire.ResetAt
 		gate.PeriodStart, gate.PeriodEnd, gate.ResetAt = &start, &end, &reset
 	}
+	gate.Notifications = normalizeNotificationPolicy(wire.Notifications)
 	return gate, nil
+}
+
+// Notification instructions are additive presentation policy. A malformed
+// notification object must never invalidate the enforcement gate and fail open
+// the underlying quota, so it is dropped independently.
+func normalizeNotificationPolicy(wire *wireNotificationPolicy) *NotificationPolicy {
+	if wire == nil || wire.OnRejection != NotificationFirstRejectionPerPeriod {
+		return nil
+	}
+	return &NotificationPolicy{
+		OnRejection: wire.OnRejection,
+	}
 }
 
 func decisionFromEntry(entry cacheEntry, name GateName, reason Reason, stale bool) Decision {

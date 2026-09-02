@@ -121,8 +121,9 @@ const (
 //  2. `config get agents.list --json`   — pre-2026.6 agents schema
 //  3. `agents list --json`              — 2026.6+ registry fallback, only
 //     reached when (2) reports the config path is missing
-//  4. `config get --json`               — full resolved config, only for an
-//     agent with a managed mcp_config
+//  4. `config get skills.load.extraDirs --json` — selected-agent skill roots;
+//     managed-MCP snapshots are read from the active config file and do not
+//     consume another CLI deadline.
 //
 // Adding a fifth deadline-bearing step means re-deriving the ceiling. The
 // worst-case test counts distinct deadlines rather than calls, so a new
