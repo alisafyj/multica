@@ -399,6 +399,19 @@ func (h *Handler) PreviewCommentSubIssue(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	anchor, anchorErr := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{ID: anchorCommentID, WorkspaceID: wsUUID})
+	if errors.Is(anchorErr, pgx.ErrNoRows) {
+		h.writeSourceContextError(w, service.ErrAnchorCommentDeleted, service.SourceContextLimitUsage{})
+		return
+	}
+	if anchorErr != nil {
+		h.writeSourceContextError(w, anchorErr, service.SourceContextLimitUsage{})
+		return
+	}
+	if err := h.checkIssueWindowAuthorization(r, anchor.IssueID, wsUUID, "comment_sub_issue_preview"); err != nil {
+		h.writeSourceContextError(w, err, service.SourceContextLimitUsage{})
+		return
+	}
 	build, err := service.BuildSourceContext(r.Context(), h.Queries, wsUUID, anchorCommentID)
 	if err != nil {
 		h.writeSourceContextError(w, err, build.Limits)
@@ -446,6 +459,9 @@ func (h *Handler) CreateCommentSubIssue(w http.ResponseWriter, r *http.Request) 
 	wantDigest, tokenIssueID, validToken := service.ParseSourceContextToken(strings.TrimSpace(req.CaptureToken))
 	if !validToken {
 		writeJSON(w, http.StatusConflict, map[string]any{"code": "source_context_changed", "error": "source context preview is invalid; refresh and try again"})
+		return
+	}
+	if _, ok := h.loadIssueInWorkspaceAndAuthorize(w, r, tokenIssueID, wsUUID, "comment_sub_issue_create"); !ok {
 		return
 	}
 	build, err := service.BuildSourceContext(r.Context(), h.Queries, wsUUID, anchorCommentID)
@@ -847,6 +863,9 @@ func (h *Handler) createAgentCommentSubIssue(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *Handler) writeSourceContextError(w http.ResponseWriter, err error, limits service.SourceContextLimitUsage) {
+	if writeIssueWindowViolation(w, err) {
+		return
+	}
 	if writeIssueLimitReached(w, err) {
 		return
 	}

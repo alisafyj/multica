@@ -21,8 +21,8 @@ SHORT_NEW=${NEW_SHA:0:9}
 SHORT_OLD=${OLD_SHA:0:9}
 echo "=== old=$OLD_SHA new=$NEW_SHA stamp=$STAMP ==="
 
-echo "--- [1/8] fetch origin main ---"
-timeout 180 env GIT_TERMINAL_PROMPT=0 git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=60 fetch --progress --prune origin main
+echo "--- [1/8] fetch origin main and tags ---"
+timeout 180 env GIT_TERMINAL_PROMPT=0 git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=60 fetch --progress --prune --tags origin main
 echo "fetch_status=$?"
 FOUND=$(git rev-parse origin/main 2>/dev/null || echo "")
 echo "fetched_origin_main=$FOUND"
@@ -53,7 +53,8 @@ echo "--- [6/8] build backend/frontend/docs ---"
 export VERSION="fork-${SHORT_NEW}"
 export COMMIT="$NEW_SHA"
 export DATE=$(date -Iseconds)
-echo "build_version=$VERSION build_commit=$COMMIT build_date=$DATE"
+export UPSTREAM_VERSION=$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude 'v*-sso*' --exclude 'desktop-*' --abbrev=0 "$NEW_SHA" 2>/dev/null || true)
+echo "build_version=$VERSION upstream_version=${UPSTREAM_VERSION:-unknown} build_commit=$COMMIT build_date=$DATE"
 docker compose --env-file .env -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml -f .env.compose.cloud.yml build backend frontend docs
 echo "build_status=$?"
 

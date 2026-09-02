@@ -2964,7 +2964,7 @@ func (s *TaskService) cancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 			return err
 		}
 		cancelled = rows
-		return nil
+		return SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...)
 	}); err != nil {
 		return nil, err
 	}
@@ -5491,6 +5491,9 @@ func (s *TaskService) FailTasksWithProfileSync(ctx context.Context, fail func(*d
 		if err != nil {
 			return err
 		}
+		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, failed...); err != nil {
+			return err
+		}
 		for _, task := range failed {
 			message := ""
 			if task.Error.Valid && strings.TrimSpace(task.Error.String) != "" {
@@ -6463,9 +6466,7 @@ func (s *TaskService) RecoverOrphanedTasksForRuntime(ctx context.Context, runtim
 // agent:archived event the caller publishes already invalidates every client's
 // active-task view, so per-row events would be redundant noise.
 func (s *TaskService) CancelTasksForArchivedAgent(ctx context.Context, agentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
-	return s.terminateTasksInTx(ctx, func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
-		return qtx.CancelAgentTasksByAgent(ctx, agentID)
-	})
+	return s.cancelTasksForAgent(ctx, agentID)
 }
 
 func (s *TaskService) terminateTasksInTx(ctx context.Context, fail func(*db.Queries) ([]db.AgentTaskQueue, error)) ([]db.AgentTaskQueue, error) {
