@@ -227,6 +227,68 @@ func buildActiveSiblingRunsBlock(currentIssueID string, runs []ActiveSiblingRunD
 	return b.String()
 }
 
+// BuildDirectPrompt returns the smallest useful user request for the opt-in
+// direct-agent mode. It deliberately contains no Multica workflow, issue
+// status, comment routing, or tool instructions. Specialized task payloads are
+// passed through as-is; ordinary issue tasks get their issue id so the agent
+// can choose whether to inspect it.
+func BuildDirectPrompt(task Task) string {
+	var input string
+	switch {
+	case task.ChatSessionID != "":
+		input = task.ChatMessage
+	case task.TriggerCommentID != "":
+		input = task.TriggerCommentContent
+		if len(task.CoalescedComments) > 0 {
+			var b strings.Builder
+			b.WriteString(input)
+			for _, comment := range task.CoalescedComments {
+				if strings.TrimSpace(comment.Content) == "" {
+					continue
+				}
+				if b.Len() > 0 {
+					b.WriteString("\n\n")
+				}
+				b.WriteString(comment.Content)
+			}
+			input = b.String()
+		}
+	case task.AutopilotRunID != "":
+		input = task.AutopilotDescription
+	case task.QuickCreatePrompt != "":
+		input = task.QuickCreatePrompt
+	case len(task.UIDraftCreateContext) > 0:
+		input = string(task.UIDraftCreateContext)
+	case len(task.DesignRestoreContext) > 0:
+		input = string(task.DesignRestoreContext)
+	case task.TestGenerationContext != "":
+		input = task.TestGenerationContext
+	case task.TestRunContext != "":
+		input = task.TestRunContext
+	case len(task.DesignSystemProfileAnalyzeContext) > 0:
+		input = string(task.DesignSystemProfileAnalyzeContext)
+	case len(task.TemplateBlueprintAnalyzeContext) > 0:
+		input = string(task.TemplateBlueprintAnalyzeContext)
+	case len(task.ProjectDesignSystemContext) > 0:
+		input = string(task.ProjectDesignSystemContext)
+	case len(task.DesignDocumentContext) > 0:
+		input = string(task.DesignDocumentContext)
+	case len(task.DesignDeliveryContext) > 0:
+		input = string(task.DesignDeliveryContext)
+	case len(task.PMOSyncContext) > 0:
+		input = string(task.PMOSyncContext)
+	case task.HandoffNote != "":
+		input = task.HandoffNote
+	}
+	if strings.TrimSpace(input) != "" {
+		return input
+	}
+	if task.IssueID != "" {
+		return fmt.Sprintf("Work on issue %s.", task.IssueID)
+	}
+	return ""
+}
+
 // BuildPrompt constructs the task prompt for an agent CLI.
 // Keep this minimal — detailed instructions live in CLAUDE.md / AGENTS.md
 // injected by execenv.InjectRuntimeConfig. The provider string is threaded
