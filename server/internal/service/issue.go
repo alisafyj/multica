@@ -256,7 +256,9 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		// task. Inserting both rows through qtx makes the unique-index winner
 		// deterministic: any observer that can discover the committed issue also
 		// sees the inert deferred task and must merge into it.
-		assignedTask, err := s.TaskService.createDeferredChannelIssueTaskWithQueries(ctx, qtx, res.Issue, opts.AssignedAgentRunFireAt)
+		assignedTask, err := s.TaskService.createDeferredChannelIssueTaskWithQueries(
+			ctx, qtx, res.Issue, opts.AssignedAgentRunFireAt, opts.ConciseMode,
+		)
 		if err != nil {
 			return IssueCreateResult{}, fmt.Errorf("create deferred channel issue task: %w", err)
 		}

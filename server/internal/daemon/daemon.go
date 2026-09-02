@@ -8080,7 +8080,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	runtimeBrief := ""
 	if directAgentMode {
 		if cerr := execenv.CleanupRuntimeConfig(env.WorkDir, provider); cerr != nil {
-			d.logger.Warn("execenv: cleanup runtime config for direct mode failed", "error", cerr)
+			return TaskResult{}, fmt.Errorf("cleanup runtime config for direct mode: %w", cerr)
 		}
 	} else {
 		var injectErr error
@@ -8496,7 +8496,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		} else {
 			// Keep a reused workdir free of any normal-mode marker on retry too.
 			if cerr := execenv.CleanupRuntimeConfig(env.WorkDir, provider); cerr != nil {
-				taskLog.Warn("execenv: cleanup runtime config for direct retry failed", "error", cerr)
+				return TaskResult{}, fmt.Errorf("cleanup runtime config for direct retry: %w", cerr)
 			}
 		}
 		var freshPrompt string

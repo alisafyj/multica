@@ -1159,11 +1159,19 @@ WITH retired_sessions AS (
     SELECT DISTINCT r.retired_session_id AS session_id
     FROM agent_task_queue r
     WHERE r.agent_id = $1 AND r.issue_id = $2
+      AND (
+        sqlc.narg('concise_mode')::boolean IS NULL
+        OR r.concise_mode = sqlc.narg('concise_mode')::boolean
+      )
       AND r.retired_session_id IS NOT NULL
 ), resume_overflow_at AS (
     SELECT MAX(COALESCE(t.completed_at, t.started_at, t.dispatched_at, t.created_at)) AS at
     FROM agent_task_queue t
     WHERE t.agent_id = $1 AND t.issue_id = $2
+      AND (
+        sqlc.narg('concise_mode')::boolean IS NULL
+        OR t.concise_mode = sqlc.narg('concise_mode')::boolean
+      )
       AND t.status = 'failed'
       AND (
         COALESCE(t.failure_reason, '') = 'codex_resume_oversized'
@@ -1175,6 +1183,10 @@ WITH retired_sessions AS (
         COALESCE(t.completed_at, t.started_at, t.dispatched_at, t.created_at) AS terminal_at
     FROM agent_task_queue t
     WHERE t.agent_id = $1 AND t.issue_id = $2
+      AND (
+        sqlc.narg('concise_mode')::boolean IS NULL
+        OR t.concise_mode = sqlc.narg('concise_mode')::boolean
+      )
       AND t.session_id IS NOT NULL
       AND t.status IN ('completed', 'failed', 'cancelled')
     ORDER BY t.session_id, COALESCE(t.completed_at, t.started_at, t.dispatched_at, t.created_at) DESC
@@ -1227,6 +1239,10 @@ LIMIT 1;
 -- most-recent row, so the disclosure fires once and then clears.
 SELECT COALESCE(session_rollout_missing, FALSE) FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2
+  AND (
+    sqlc.narg('concise_mode')::boolean IS NULL
+    OR concise_mode = sqlc.narg('concise_mode')::boolean
+  )
   AND status IN ('completed', 'failed')
   AND started_at IS NOT NULL
 ORDER BY COALESCE(completed_at, started_at, dispatched_at, created_at) DESC
@@ -1239,6 +1255,10 @@ LIMIT 1;
 -- an older session (or none), so it must disclose the continuity gap.
 SELECT COALESCE(session_rollout_missing, FALSE) FROM agent_task_queue
 WHERE chat_session_id = sqlc.arg('chat_session_id')
+  AND (
+    sqlc.narg('concise_mode')::boolean IS NULL
+    OR concise_mode = sqlc.narg('concise_mode')::boolean
+  )
   AND (
     sqlc.narg('channel_context_revision')::bigint IS NULL
     OR COALESCE(channel_context_revision, 1) = sqlc.narg('channel_context_revision')::bigint
