@@ -341,7 +341,7 @@ func (finder *globalAliasFinder) Enter(node js.INode) js.IVisitor {
 	if finder.found {
 		return nil
 	}
-	if call, ok := node.(*js.CallExpr); ok && isSafeDOMQueryFunctionCall(call, finder.safeDOMQueryFuncs) {
+	if call, ok := node.(*js.CallExpr); ok && isSafeDOMQueryFunctionCall(call, finder.bindings, finder.safeDOMQueryFuncs) {
 		return nil
 	}
 	if call, ok := node.(*js.CallExpr); ok && finder.skipKnownPrimitiveCalls {
@@ -633,13 +633,20 @@ func safeDOMQueryFunctionReturn(expr js.IExpr) (js.IExpr, bool) {
 	return returned.Value, true
 }
 
-func isSafeDOMQueryFunctionCall(call *js.CallExpr, functions map[*js.Var]struct{}) bool {
+func isSafeDOMQueryFunctionCall(call *js.CallExpr, bindings map[*js.Var]struct{}, functions map[*js.Var]struct{}) bool {
 	variable, ok := call.X.(*js.Var)
 	if !ok {
 		return false
 	}
-	_, ok = functions[resolveVarRoot(variable)]
-	return ok
+	if _, ok = functions[resolveVarRoot(variable)]; !ok {
+		return false
+	}
+	for index, argument := range call.Args.List {
+		if index != 0 && expressionContainsGlobalAlias(argument.Value, bindings, nil) {
+			return false
+		}
+	}
+	return true
 }
 
 func safeDOMQueryResult(expr js.IExpr, root *js.Var) bool {

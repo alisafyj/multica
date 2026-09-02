@@ -169,6 +169,7 @@ func TestAuditRejectsDestructuredGlobalCapabilities(t *testing.T) {
 		{name: "function parameter", script: `function run({open}) { open("orders.html"); } run(window);`, code: "prototype_script_navigation_forbidden"},
 		{name: "arrow IIFE parameter", script: `(({fetch}) => fetch("/api/orders"))(window);`, code: "prototype_script_forbidden_api"},
 		{name: "function IIFE parameter", script: `(function ({open}) { open("orders.html"); })(window);`, code: "prototype_script_navigation_forbidden"},
+		{name: "DOM query helper explicit global root", script: `const $ = (selector, root = document) => root.querySelector(selector); const {fetch} = $("body", window); fetch("/api/orders");`, code: "prototype_script_forbidden_api"},
 		{name: "callable alias parameter", script: `const run = ({fetch}) => fetch("/api/orders"); const alias = run; alias(window);`, code: "prototype_script_forbidden_api"},
 		{name: "assigned callable alias parameter", script: `const run = ({fetch}) => fetch("/api/orders"); let alias; alias = run; alias(window);`, code: "prototype_script_forbidden_api"},
 		{name: "overwritten callable alias parameter", script: `const safe = (value) => false; const run = ({fetch}) => fetch("/api/orders"); let alias = safe; alias = run; alias(window);`, code: "prototype_script_forbidden_api"},
