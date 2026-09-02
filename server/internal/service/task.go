@@ -1148,9 +1148,9 @@ func (s *TaskService) EnqueueDeferredChannelIssueTaskWithMode(ctx context.Contex
 // intentionally absent from the transaction-scoped service: the task cannot be
 // claimed while deferred, so the optional external overlay is hydrated after
 // commit without holding database locks across a network call.
-func (s *TaskService) createDeferredChannelIssueTaskWithQueries(ctx context.Context, q *db.Queries, issue db.Issue, fireAt time.Time) (db.AgentTaskQueue, error) {
+func (s *TaskService) createDeferredChannelIssueTaskWithQueries(ctx context.Context, q *db.Queries, issue db.Issue, fireAt time.Time, conciseMode bool) (db.AgentTaskQueue, error) {
 	txService := &TaskService{Queries: q}
-	return txService.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, "", pgtype.UUID{}, pgtype.UUID{}, pgtype.Timestamptz{Time: fireAt, Valid: true}, false)
+	return txService.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, "", pgtype.UUID{}, pgtype.UUID{}, pgtype.Timestamptz{Time: fireAt, Valid: true}, false, conciseMode)
 }
 
 // hydrateDeferredChannelIssueTaskOverlay fills the optional Composio overlay

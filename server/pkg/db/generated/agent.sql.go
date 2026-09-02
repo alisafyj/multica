@@ -4497,11 +4497,19 @@ WITH retired_sessions AS (
     SELECT DISTINCT r.retired_session_id AS session_id
     FROM agent_task_queue r
     WHERE r.agent_id = $1 AND r.issue_id = $2
+      AND (
+        $3::boolean IS NULL
+        OR r.concise_mode = $3::boolean
+      )
       AND r.retired_session_id IS NOT NULL
 ), resume_overflow_at AS (
     SELECT MAX(COALESCE(t.completed_at, t.started_at, t.dispatched_at, t.created_at)) AS at
     FROM agent_task_queue t
     WHERE t.agent_id = $1 AND t.issue_id = $2
+      AND (
+        $3::boolean IS NULL
+        OR t.concise_mode = $3::boolean
+      )
       AND t.status = 'failed'
       AND (
         COALESCE(t.failure_reason, '') = 'codex_resume_oversized'
@@ -4513,6 +4521,10 @@ WITH retired_sessions AS (
         COALESCE(t.completed_at, t.started_at, t.dispatched_at, t.created_at) AS terminal_at
     FROM agent_task_queue t
     WHERE t.agent_id = $1 AND t.issue_id = $2
+      AND (
+        $3::boolean IS NULL
+        OR t.concise_mode = $3::boolean
+      )
       AND t.session_id IS NOT NULL
       AND t.status IN ('completed', 'failed', 'cancelled')
     ORDER BY t.session_id, COALESCE(t.completed_at, t.started_at, t.dispatched_at, t.created_at) DESC
@@ -4558,8 +4570,9 @@ LIMIT 1
 `
 
 type GetLastTaskSessionParams struct {
-	AgentID pgtype.UUID `json:"agent_id"`
-	IssueID pgtype.UUID `json:"issue_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	ConciseMode pgtype.Bool `json:"concise_mode"`
 }
 
 type GetLastTaskSessionRow struct {
@@ -4670,7 +4683,7 @@ type GetLastTaskSessionRow struct {
 // retiring a session removes it from every later lookup no matter how many
 // clean rows still reference it.
 func (q *Queries) GetLastTaskSession(ctx context.Context, arg GetLastTaskSessionParams) (GetLastTaskSessionRow, error) {
-	row := q.db.QueryRow(ctx, getLastTaskSession, arg.AgentID, arg.IssueID)
+	row := q.db.QueryRow(ctx, getLastTaskSession, arg.AgentID, arg.IssueID, arg.ConciseMode)
 	var i GetLastTaskSessionRow
 	err := row.Scan(&i.SessionID, &i.WorkDir, &i.RuntimeID)
 	return i, err
@@ -4705,8 +4718,12 @@ const getLatestChatTaskRolloutMissing = `-- name: GetLatestChatTaskRolloutMissin
 SELECT COALESCE(session_rollout_missing, FALSE) FROM agent_task_queue
 WHERE chat_session_id = $1
   AND (
-    $2::bigint IS NULL
-    OR COALESCE(channel_context_revision, 1) = $2::bigint
+    $2::boolean IS NULL
+    OR concise_mode = $2::boolean
+  )
+  AND (
+    $3::bigint IS NULL
+    OR COALESCE(channel_context_revision, 1) = $3::bigint
   )
   AND status IN ('completed', 'failed')
   AND started_at IS NOT NULL
@@ -4716,6 +4733,7 @@ LIMIT 1
 
 type GetLatestChatTaskRolloutMissingParams struct {
 	ChatSessionID          pgtype.UUID `json:"chat_session_id"`
+	ConciseMode            pgtype.Bool `json:"concise_mode"`
 	ChannelContextRevision pgtype.Int8 `json:"channel_context_revision"`
 }
 
@@ -4724,7 +4742,7 @@ type GetLatestChatTaskRolloutMissingParams struct {
 // session because the rollout was missing. When true the next chat claim resumed
 // an older session (or none), so it must disclose the continuity gap.
 func (q *Queries) GetLatestChatTaskRolloutMissing(ctx context.Context, arg GetLatestChatTaskRolloutMissingParams) (bool, error) {
-	row := q.db.QueryRow(ctx, getLatestChatTaskRolloutMissing, arg.ChatSessionID, arg.ChannelContextRevision)
+	row := q.db.QueryRow(ctx, getLatestChatTaskRolloutMissing, arg.ChatSessionID, arg.ConciseMode, arg.ChannelContextRevision)
 	var session_rollout_missing bool
 	err := row.Scan(&session_rollout_missing)
 	return session_rollout_missing, err
@@ -4761,6 +4779,10 @@ func (q *Queries) GetLatestTaskRoleForIssueAndAgent(ctx context.Context, arg Get
 const getLatestTaskRolloutMissing = `-- name: GetLatestTaskRolloutMissing :one
 SELECT COALESCE(session_rollout_missing, FALSE) FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2
+  AND (
+    $3::boolean IS NULL
+    OR concise_mode = $3::boolean
+  )
   AND status IN ('completed', 'failed')
   AND started_at IS NOT NULL
 ORDER BY COALESCE(completed_at, started_at, dispatched_at, created_at) DESC
@@ -4768,8 +4790,9 @@ LIMIT 1
 `
 
 type GetLatestTaskRolloutMissingParams struct {
-	AgentID pgtype.UUID `json:"agent_id"`
-	IssueID pgtype.UUID `json:"issue_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	ConciseMode pgtype.Bool `json:"concise_mode"`
 }
 
 // Reports whether the most recent terminal task for (agent_id, issue_id)
@@ -4779,7 +4802,7 @@ type GetLatestTaskRolloutMissingParams struct {
 // later task that records a real session resets this to FALSE by being the new
 // most-recent row, so the disclosure fires once and then clears.
 func (q *Queries) GetLatestTaskRolloutMissing(ctx context.Context, arg GetLatestTaskRolloutMissingParams) (bool, error) {
-	row := q.db.QueryRow(ctx, getLatestTaskRolloutMissing, arg.AgentID, arg.IssueID)
+	row := q.db.QueryRow(ctx, getLatestTaskRolloutMissing, arg.AgentID, arg.IssueID, arg.ConciseMode)
 	var session_rollout_missing bool
 	err := row.Scan(&session_rollout_missing)
 	return session_rollout_missing, err
