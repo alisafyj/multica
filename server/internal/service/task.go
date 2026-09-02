@@ -1123,7 +1123,11 @@ func (s *TaskService) EnqueueTaskForIssue(ctx context.Context, issue db.Issue, t
 // closing the post-create completion gap without holding a DB connection over
 // event listeners or external overlay construction.
 func (s *TaskService) EnqueueTaskForIssueCreate(ctx context.Context, issue db.Issue, actorUserID pgtype.UUID) (db.AgentTaskQueue, error) {
-	return s.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, "", actorUserID, pgtype.UUID{}, pgtype.Timestamptz{}, true)
+	return s.EnqueueTaskForIssueCreateWithMode(ctx, issue, actorUserID, false)
+}
+
+func (s *TaskService) EnqueueTaskForIssueCreateWithMode(ctx context.Context, issue db.Issue, actorUserID pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
+	return s.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, "", actorUserID, pgtype.UUID{}, pgtype.Timestamptz{}, true, conciseMode)
 }
 
 // EnqueueDeferredChannelIssueTask persists the assigned task for a media-backed
@@ -1131,7 +1135,11 @@ func (s *TaskService) EnqueueTaskForIssueCreate(ctx context.Context, issue db.Is
 // crash-safe fallback; the channel router promotes the task as soon as the
 // detached attachment transaction settles.
 func (s *TaskService) EnqueueDeferredChannelIssueTask(ctx context.Context, issue db.Issue, fireAt time.Time) (db.AgentTaskQueue, error) {
-	return s.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, "", pgtype.UUID{}, pgtype.UUID{}, pgtype.Timestamptz{Time: fireAt, Valid: true}, false)
+	return s.EnqueueDeferredChannelIssueTaskWithMode(ctx, issue, fireAt, false)
+}
+
+func (s *TaskService) EnqueueDeferredChannelIssueTaskWithMode(ctx context.Context, issue db.Issue, fireAt time.Time, conciseMode bool) (db.AgentTaskQueue, error) {
+	return s.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, "", pgtype.UUID{}, pgtype.UUID{}, pgtype.Timestamptz{Time: fireAt, Valid: true}, false, conciseMode)
 }
 
 // createDeferredChannelIssueTaskWithQueries inserts the inert media-gated task
@@ -1184,7 +1192,11 @@ func (s *TaskService) hydrateDeferredChannelIssueTaskOverlay(ctx context.Context
 // member who performed the assign/promote and becomes the accountable human for
 // the run (MUL-4302 §4); invalid when the caller has no member actor.
 func (s *TaskService) EnqueueTaskForIssueWithHandoff(ctx context.Context, issue db.Issue, handoffNote string, actorUserID pgtype.UUID) (db.AgentTaskQueue, error) {
-	return s.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, handoffNote, actorUserID, pgtype.UUID{}, pgtype.Timestamptz{}, false)
+	return s.EnqueueTaskForIssueWithHandoffAndMode(ctx, issue, handoffNote, actorUserID, false)
+}
+
+func (s *TaskService) EnqueueTaskForIssueWithHandoffAndMode(ctx context.Context, issue db.Issue, handoffNote string, actorUserID pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
+	return s.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, handoffNote, actorUserID, pgtype.UUID{}, pgtype.Timestamptz{}, false, conciseMode)
 }
 
 // enqueueIssueTask is the shared implementation behind EnqueueTaskForIssue
@@ -1232,11 +1244,12 @@ func (s *TaskService) ResolveIssueReviewSHAParam(ctx context.Context, issueID pg
 	return headShaText(s.ResolveIssueReviewSHA(ctx, issueID))
 }
 
-func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, forceFreshSession bool, handoffNote string, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID, fireAt pgtype.Timestamptz, requireIssueRunnable bool) (db.AgentTaskQueue, error) {
-	return s.enqueueIssueTaskWithCommentPlan(ctx, issue, triggerCommentID, nil, forceFreshSession, handoffNote, actorUserID, rerunOfTaskID, fireAt, requireIssueRunnable)
+func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, forceFreshSession bool, handoffNote string, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID, fireAt pgtype.Timestamptz, requireIssueRunnable bool, conciseMode ...bool) (db.AgentTaskQueue, error) {
+	mode := len(conciseMode) > 0 && conciseMode[0]
+	return s.enqueueIssueTaskWithCommentPlan(ctx, issue, triggerCommentID, nil, forceFreshSession, handoffNote, actorUserID, rerunOfTaskID, fireAt, requireIssueRunnable, mode)
 }
 
-func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, forceFreshSession bool, handoffNote string, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID, fireAt pgtype.Timestamptz, requireIssueRunnable bool) (db.AgentTaskQueue, error) {
+func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, forceFreshSession bool, handoffNote string, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID, fireAt pgtype.Timestamptz, requireIssueRunnable bool, conciseMode bool) (db.AgentTaskQueue, error) {
 	if !issue.AssigneeID.Valid {
 		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", "issue has no assignee")
 		return db.AgentTaskQueue{}, fmt.Errorf("issue has no assignee")
@@ -1283,6 +1296,7 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue
 		TriggerSummary:       s.buildCommentTriggerSummary(ctx, issue.WorkspaceID, triggerCommentID),
 		ForceFreshSession:    pgtype.Bool{Bool: forceFreshSession, Valid: forceFreshSession},
 		HandoffNote:          pgtype.Text{String: handoffNote, Valid: handoffNote != ""},
+		ConciseMode:          pgtype.Bool{Bool: conciseMode, Valid: true},
 		OriginatorUserID:     originatorUserID,
 		AccountableUserID:    attr.AccountableUserID,
 		RuleVersionID:        attr.RuleVersionID,
@@ -1312,6 +1326,7 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue
 			ForceFreshSession:    createParams.ForceFreshSession,
 			IsLeaderTask:         createParams.IsLeaderTask,
 			HandoffNote:          createParams.HandoffNote,
+			ConciseMode:          createParams.ConciseMode,
 			SquadID:              createParams.SquadID,
 			HeadSha:              createParams.HeadSha,
 			OriginatorUserID:     createParams.OriginatorUserID,
@@ -1386,7 +1401,11 @@ func (s *TaskService) EnqueueTaskForSquadLeader(ctx context.Context, issue db.Is
 }
 
 func (s *TaskService) EnqueueTaskForSquadLeaderOnIssueCreate(ctx context.Context, issue db.Issue, leaderID, squadID, actorUserID pgtype.UUID) (db.AgentTaskQueue, error) {
-	return s.enqueueMentionTask(ctx, issue, leaderID, pgtype.UUID{}, true, squadID, false, "", actorUserID, pgtype.UUID{}, true)
+	return s.EnqueueTaskForSquadLeaderOnIssueCreateWithMode(ctx, issue, leaderID, squadID, actorUserID, false)
+}
+
+func (s *TaskService) EnqueueTaskForSquadLeaderOnIssueCreateWithMode(ctx context.Context, issue db.Issue, leaderID, squadID, actorUserID pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
+	return s.enqueueMentionTask(ctx, issue, leaderID, pgtype.UUID{}, true, squadID, false, "", actorUserID, pgtype.UUID{}, true, conciseMode)
 }
 
 // EnqueueTaskForSquadLeaderWithHandoff is the assign/promote variant carrying a
@@ -1395,14 +1414,19 @@ func (s *TaskService) EnqueueTaskForSquadLeaderOnIssueCreate(ctx context.Context
 // performed the assign/promote and becomes the accountable human (MUL-4302 §4);
 // invalid when the caller has no member actor.
 func (s *TaskService) EnqueueTaskForSquadLeaderWithHandoff(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, squadID pgtype.UUID, handoffNote string, actorUserID pgtype.UUID) (db.AgentTaskQueue, error) {
-	return s.enqueueMentionTask(ctx, issue, leaderID, pgtype.UUID{}, true, squadID, false, handoffNote, actorUserID, pgtype.UUID{}, false)
+	return s.EnqueueTaskForSquadLeaderWithHandoffAndMode(ctx, issue, leaderID, squadID, handoffNote, actorUserID, false)
 }
 
-func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, isLeader bool, squadID pgtype.UUID, forceFreshSession bool, handoffNote string, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID, requireIssueRunnable bool) (db.AgentTaskQueue, error) {
-	return s.enqueueMentionTaskWithCommentPlan(ctx, issue, agentID, triggerCommentID, nil, isLeader, squadID, forceFreshSession, handoffNote, actorUserID, rerunOfTaskID, requireIssueRunnable)
+func (s *TaskService) EnqueueTaskForSquadLeaderWithHandoffAndMode(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, squadID pgtype.UUID, handoffNote string, actorUserID pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
+	return s.enqueueMentionTask(ctx, issue, leaderID, pgtype.UUID{}, true, squadID, false, handoffNote, actorUserID, pgtype.UUID{}, false, conciseMode)
 }
 
-func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, isLeader bool, squadID pgtype.UUID, forceFreshSession bool, handoffNote string, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID, requireIssueRunnable bool) (db.AgentTaskQueue, error) {
+func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, isLeader bool, squadID pgtype.UUID, forceFreshSession bool, handoffNote string, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID, requireIssueRunnable bool, conciseMode ...bool) (db.AgentTaskQueue, error) {
+	mode := len(conciseMode) > 0 && conciseMode[0]
+	return s.enqueueMentionTaskWithCommentPlan(ctx, issue, agentID, triggerCommentID, nil, isLeader, squadID, forceFreshSession, handoffNote, actorUserID, rerunOfTaskID, requireIssueRunnable, mode)
+}
+
+func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, isLeader bool, squadID pgtype.UUID, forceFreshSession bool, handoffNote string, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID, requireIssueRunnable bool, conciseMode bool) (db.AgentTaskQueue, error) {
 	agent, err := s.Queries.GetAgent(ctx, agentID)
 	if err != nil {
 		slog.Error("mention task enqueue failed: agent not found", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
@@ -1444,6 +1468,7 @@ func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, iss
 		IsLeaderTask:         pgtype.Bool{Bool: isLeader, Valid: isLeader},
 		ForceFreshSession:    pgtype.Bool{Bool: forceFreshSession, Valid: forceFreshSession},
 		HandoffNote:          pgtype.Text{String: handoffNote, Valid: handoffNote != ""},
+		ConciseMode:          pgtype.Bool{Bool: conciseMode, Valid: true},
 		SquadID:              squadID,
 		OriginatorUserID:     originatorUserID,
 		AccountableUserID:    attr.AccountableUserID,
@@ -1517,6 +1542,12 @@ func (s *TaskService) EnqueueDeferredAssigneeFallback(ctx context.Context, issue
 		return db.AgentTaskQueue{}, err
 	}
 	attrSource, attrDelegatedFrom, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
+	conciseMode := false
+	if escalationForTaskID.Valid {
+		if sourceTask, lookupErr := s.Queries.GetAgentTask(ctx, escalationForTaskID); lookupErr == nil {
+			conciseMode = sourceTask.ConciseMode
+		}
+	}
 	isLeader := squadID.Valid
 	task, err := s.Queries.CreateDeferredAgentTask(ctx, db.CreateDeferredAgentTaskParams{
 		ID:                   dbid.NewV7(),
@@ -1530,6 +1561,7 @@ func (s *TaskService) EnqueueDeferredAssigneeFallback(ctx context.Context, issue
 		SquadID:              squadID,
 		EscalationForTaskID:  escalationForTaskID,
 		FireAt:               pgtype.Timestamptz{Time: fireAt, Valid: true},
+		ConciseMode:          pgtype.Bool{Bool: conciseMode, Valid: true},
 		OriginatorUserID:     attr.UserID,
 		AccountableUserID:    attr.AccountableUserID,
 		OriginatorSource:     attrSource,
@@ -1786,14 +1818,22 @@ type ProjectDesignSystemTaskContext struct {
 // open the modal from "Add sub issue"). The handler is responsible for
 // validating it belongs to the same workspace before passing it in.
 func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt, priority, dueDate string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID) (db.AgentTaskQueue, error) {
-	return s.enqueueQuickCreateTask(ctx, workspaceID, requesterID, agentID, squadID, prompt, priority, dueDate, projectID, parentIssueID, attachmentIDs, nil)
+	return s.EnqueueQuickCreateTaskWithMode(ctx, workspaceID, requesterID, agentID, squadID, prompt, priority, dueDate, projectID, parentIssueID, attachmentIDs, false)
+}
+
+func (s *TaskService) EnqueueQuickCreateTaskWithMode(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt, priority, dueDate string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
+	return s.enqueueQuickCreateTask(ctx, workspaceID, requesterID, agentID, squadID, prompt, priority, dueDate, projectID, parentIssueID, attachmentIDs, nil, conciseMode)
 }
 
 func (s *TaskService) EnqueueQuickCreateTaskWithSourceContext(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt, priority, dueDate string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID, capture SourceContextCapture) (db.AgentTaskQueue, error) {
-	return s.enqueueQuickCreateTask(ctx, workspaceID, requesterID, agentID, squadID, prompt, priority, dueDate, projectID, parentIssueID, attachmentIDs, &capture)
+	return s.EnqueueQuickCreateTaskWithSourceContextAndMode(ctx, workspaceID, requesterID, agentID, squadID, prompt, priority, dueDate, projectID, parentIssueID, attachmentIDs, capture, false)
 }
 
-func (s *TaskService) enqueueQuickCreateTask(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt, priority, dueDate string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID, capture *SourceContextCapture) (db.AgentTaskQueue, error) {
+func (s *TaskService) EnqueueQuickCreateTaskWithSourceContextAndMode(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt, priority, dueDate string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID, capture SourceContextCapture, conciseMode bool) (db.AgentTaskQueue, error) {
+	return s.enqueueQuickCreateTask(ctx, workspaceID, requesterID, agentID, squadID, prompt, priority, dueDate, projectID, parentIssueID, attachmentIDs, &capture, conciseMode)
+}
+
+func (s *TaskService) enqueueQuickCreateTask(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt, priority, dueDate string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID, capture *SourceContextCapture, conciseMode bool) (db.AgentTaskQueue, error) {
 	if err := CheckIssueCreateCapacity(ctx, s.Queries, s.Entitlements, workspaceID); err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("preflight quick-create issue capacity: %w", err)
 	}
@@ -1859,6 +1899,7 @@ func (s *TaskService) enqueueQuickCreateTask(ctx context.Context, workspaceID, r
 	attrSource, _, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
 	runtimeMCPOverlay := s.buildRuntimeMCPOverlay(ctx, requesterID, agent)
 	taskID := dbid.NewV7()
+	var task db.AgentTaskQueue
 	createParams := db.CreateQuickCreateTaskParams{
 		ID:                   taskID,
 		AgentID:              agentID,
@@ -1872,8 +1913,8 @@ func (s *TaskService) enqueueQuickCreateTask(ctx context.Context, workspaceID, r
 		OriginatorSource:     attrSource,
 		TriggerEvidenceKind:  attrEvidenceKind,
 		TriggerEvidenceRefID: attrEvidenceRef,
+		ConciseMode:          pgtype.Bool{Bool: conciseMode, Valid: true},
 	}
-	var task db.AgentTaskQueue
 	if capture == nil {
 		task, err = s.Queries.CreateQuickCreateTask(ctx, createParams)
 	} else {
@@ -6352,11 +6393,17 @@ func (s *TaskService) promoteNewestSurvivingComment(ctx context.Context, ids []p
 // (rerun_of_task_id) to reuse its workdir and, when the failure did not poison
 // the conversation, resume its session (MUL-4869).
 func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, isLeader bool, squadID pgtype.UUID, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID) (db.AgentTaskQueue, error) {
+	conciseMode := false
+	if rerunOfTaskID.Valid {
+		if source, err := s.Queries.GetAgentTask(ctx, rerunOfTaskID); err == nil {
+			conciseMode = source.ConciseMode
+		}
+	}
 	if issue.AssigneeType.String == "agent" && issue.AssigneeID.Valid &&
 		util.UUIDToString(issue.AssigneeID) == util.UUIDToString(agentID) {
-		return s.enqueueIssueTaskWithCommentPlan(ctx, issue, triggerCommentID, coalescedCommentIDs, true, "", actorUserID, rerunOfTaskID, pgtype.Timestamptz{}, false)
+		return s.enqueueIssueTaskWithCommentPlan(ctx, issue, triggerCommentID, coalescedCommentIDs, true, "", actorUserID, rerunOfTaskID, pgtype.Timestamptz{}, false, conciseMode)
 	}
-	return s.enqueueMentionTaskWithCommentPlan(ctx, issue, agentID, triggerCommentID, coalescedCommentIDs, isLeader, squadID, true, "", actorUserID, rerunOfTaskID, false)
+	return s.enqueueMentionTaskWithCommentPlan(ctx, issue, agentID, triggerCommentID, coalescedCommentIDs, isLeader, squadID, true, "", actorUserID, rerunOfTaskID, false, conciseMode)
 }
 
 // The bulk terminal writes below are the sweeper, archive and daemon-recovery
@@ -7104,6 +7151,7 @@ func (s *TaskService) dispatchDelegatedFailureRecovery(ctx context.Context, targ
 			AccountableUserID:    accountable,
 			RuntimeMcpOverlay:    overlay.Overlay,
 			RuntimeConnectedApps: overlay.ConnectedApps,
+			ConciseMode:          pgtype.Bool{Bool: target.failed.ConciseMode || target.source.ConciseMode, Valid: true},
 			OriginatorSource:     pgtype.Text{String: string(source), Valid: true},
 			DelegatedFromTaskID:  target.failed.ID,
 			RuleVersionID:        ruleVersionID,

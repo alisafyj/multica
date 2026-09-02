@@ -142,6 +142,9 @@ type IssueCreateOpts struct {
 	// the same resources (local directory locks, runtime capacity) with
 	// nothing to show for it beyond a stray transcript on the issue.
 	SuppressAssigneeRun bool
+	// ConciseMode selects the task-level lightweight execution path. It is
+	// persisted on the queued task and defaults to normal workflow execution.
+	ConciseMode bool
 }
 
 // ErrActiveDuplicate signals that the duplicate guard found an active
@@ -592,7 +595,7 @@ func (s *IssueService) afterCreate(ctx context.Context, res IssueCreateResult, p
 	}
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
 	if opts.AssignedAgentRunFireAt.IsZero() && !opts.SuppressAssigneeRun {
-		assignedTaskID = s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, opts.AssignedAgentRunFireAt)
+		assignedTaskID = s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, opts.AssignedAgentRunFireAt, opts.ConciseMode)
 	}
 
 	res.AssignedTaskID = assignedTaskID
@@ -916,7 +919,7 @@ func classifyOrigin(issue db.Issue, opts IssueCreateOpts) (source, taskID, autop
 	}
 }
 
-func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue, creatorType, actorID string, agentRunFireAt time.Time) pgtype.UUID {
+func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue, creatorType, actorID string, agentRunFireAt time.Time, conciseMode bool) pgtype.UUID {
 	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
 		return pgtype.UUID{}
 	}
@@ -939,9 +942,9 @@ func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue,
 		var task db.AgentTaskQueue
 		var err error
 		if agentRunFireAt.IsZero() {
-			task, err = s.TaskService.EnqueueTaskForIssueCreate(ctx, issue, pgtype.UUID{})
+			task, err = s.TaskService.EnqueueTaskForIssueCreateWithMode(ctx, issue, pgtype.UUID{}, conciseMode)
 		} else {
-			task, err = s.TaskService.EnqueueDeferredChannelIssueTask(ctx, issue, agentRunFireAt)
+			task, err = s.TaskService.EnqueueDeferredChannelIssueTaskWithMode(ctx, issue, agentRunFireAt, conciseMode)
 		}
 		if err != nil {
 			log := slog.Warn
@@ -956,7 +959,7 @@ func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue,
 		}
 	}
 	if s.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
-		s.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, creatorType, actorID)
+		s.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, creatorType, actorID, conciseMode)
 	}
 	return pgtype.UUID{}
 }
@@ -1038,7 +1041,7 @@ func (s *IssueService) isSquadLeaderReady(ctx context.Context, issue db.Issue) b
 	return verdict.Ready()
 }
 
-func (s *IssueService) enqueueSquadLeaderTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, authorType, authorID string) {
+func (s *IssueService) enqueueSquadLeaderTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, authorType, authorID string, conciseMode ...bool) {
 	squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 		ID:          issue.AssigneeID,
 		WorkspaceID: issue.WorkspaceID,
@@ -1055,7 +1058,7 @@ func (s *IssueService) enqueueSquadLeaderTask(ctx context.Context, issue db.Issu
 	if err != nil || hasPending {
 		return
 	}
-	if _, err := s.TaskService.EnqueueTaskForSquadLeaderOnIssueCreate(ctx, issue, squad.LeaderID, squad.ID, pgtype.UUID{}); err != nil {
+	if _, err := s.TaskService.EnqueueTaskForSquadLeaderOnIssueCreateWithMode(ctx, issue, squad.LeaderID, squad.ID, pgtype.UUID{}, len(conciseMode) > 0 && conciseMode[0]); err != nil {
 		slog.Warn("enqueue squad leader task on create failed",
 			"issue_id", util.UUIDToString(issue.ID),
 			"squad_id", util.UUIDToString(squad.ID),

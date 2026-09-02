@@ -731,6 +731,7 @@ type preparedAgentCommentSubIssue struct {
 	prompt, priority, dueDate   string
 	projectID                   pgtype.UUID
 	attachmentIDs               []pgtype.UUID
+	conciseMode                 bool
 }
 
 func (h *Handler) prepareAgentCommentSubIssue(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, input QuickCreateIssueRequest) (*preparedAgentCommentSubIssue, error) {
@@ -824,6 +825,7 @@ func (h *Handler) prepareAgentCommentSubIssue(w http.ResponseWriter, r *http.Req
 		agentID: agentID, squadID: squadID, runtimeID: agent.RuntimeID,
 		prompt: prompt, priority: priority, dueDate: dueDate,
 		projectID: projectID, attachmentIDs: attachmentIDs,
+		conciseMode: input.ConciseMode,
 	}, nil
 }
 
@@ -835,7 +837,7 @@ func (h *Handler) createAgentCommentSubIssue(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"code": "source_context_quick_create_unsupported", "error": "selected agent runtime must be updated before using captured context"})
 		return errSourceContextResponseWritten
 	}
-	task, err := h.TaskService.EnqueueQuickCreateTaskWithSourceContext(r.Context(), workspaceID, userID, prepared.agentID, prepared.squadID, prepared.prompt, prepared.priority, prepared.dueDate, prepared.projectID, capture.SourceIssueID, prepared.attachmentIDs, capture)
+	task, err := h.TaskService.EnqueueQuickCreateTaskWithSourceContextAndMode(r.Context(), workspaceID, userID, prepared.agentID, prepared.squadID, prepared.prompt, prepared.priority, prepared.dueDate, prepared.projectID, capture.SourceIssueID, prepared.attachmentIDs, capture, prepared.conciseMode)
 	if err != nil {
 		return err
 	}

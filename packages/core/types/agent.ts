@@ -355,6 +355,8 @@ export interface AgentTask {
    * back to the generic "initial run" label.
    */
   handoff_note?: string;
+  /** Whether this task bypasses the generated Multica workflow prompt. */
+  concise_mode?: boolean;
   /**
    * Server-computed source discriminator used by the activity row to label
    * tasks that have no linked issue (so e.g. quick-create tasks render

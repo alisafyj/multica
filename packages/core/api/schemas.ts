@@ -2876,6 +2876,7 @@ export const AgentTaskSchema = z.object({
   delivered_comment_ids: OptionalStringArraySchema,
   trigger_summary: z.string().optional(),
   handoff_note: z.string().optional(),
+  concise_mode: z.boolean().optional(),
   kind: z.string().optional(),
   work_dir: z.string().optional().catch(undefined),
   relative_work_dir: z.string().optional().catch(undefined),
