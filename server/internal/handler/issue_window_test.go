@@ -315,6 +315,7 @@ func TestIssueCreationWindowBatchReparentCannotExposeHiddenParent(t *testing.T) 
 			"parent_issue_id": hiddenParentID,
 		},
 	})
+	req.Header.Set("X-Workspace-ID", workspaceID)
 	h.BatchUpdateIssues(recorder, req)
 	if recorder.Code != http.StatusPaymentRequired {
 		t.Fatalf("batch reparent status = %d, want 402: %s", recorder.Code, recorder.Body.String())
@@ -452,10 +453,16 @@ func TestIssueCreationWindowFiltersArchivedInboxBeforeGroupLimit(t *testing.T) {
 		"number":       1,
 	})
 	for number := 2; number <= 201; number++ {
-		issueID := dbfx.Issue(t, "hidden archived issue", testutil.Cols{
+		cols := testutil.Cols{
 			"workspace_id": workspaceID,
 			"number":       number,
-		})
+		}
+		// Keep the newest issue in the window connected to the visible parent so
+		// the ancestor backfill is exercised by the fixture.
+		if number == 201 {
+			cols["parent_issue_id"] = parentID
+		}
+		issueID := dbfx.Issue(t, "hidden archived issue", cols)
 		dbfx.Insert(t, "inbox_item", testutil.Cols{
 			"workspace_id":   workspaceID,
 			"recipient_type": "member",

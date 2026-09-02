@@ -280,6 +280,9 @@ func (s *IssueService) createInTx(ctx context.Context, tx pgx.Tx, qtx *db.Querie
 	// Workspace is the root lock for workspace-scoped writes. Take it before
 	// project rows so workspace deletion (workspace -> project) cannot deadlock
 	// with issue creation (project -> workspace counter).
+	if _, err := qtx.LockWorkspaceForIssueCounterWrite(ctx, p.WorkspaceID); err != nil {
+		return IssueCreateResult{}, fmt.Errorf("lock workspace: %w", err)
+	}
 	if p.SourceContext != nil {
 		if _, err := qtx.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{
 			ID: p.SourceContext.SourceIssueID, WorkspaceID: p.WorkspaceID,
