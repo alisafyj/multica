@@ -88,17 +88,20 @@ var forbiddenURLSchemes = map[string]struct{}{
 }
 
 type scriptAudit struct {
-	path           string
-	artifacts      map[string]ArtifactIndexEntry
-	globalBindings map[*js.Var]struct{}
-	functions      map[*js.Var][]*js.Params
-	diagnostics    []Diagnostic
+	path                string
+	artifacts           map[string]ArtifactIndexEntry
+	globalBindings      map[*js.Var]struct{}
+	functions           map[*js.Var][]*js.Params
+	safeDOMQueryFuncs   map[*js.Var]struct{}
+	safeDOMQueryReturns map[js.IExpr]struct{}
+	diagnostics         []Diagnostic
 }
 
 type globalBindingCollector struct {
-	bindings  map[*js.Var]struct{}
-	functions map[*js.Var][]*js.Params
-	changed   bool
+	bindings          map[*js.Var]struct{}
+	functions         map[*js.Var][]*js.Params
+	safeDOMQueryFuncs map[*js.Var]struct{}
+	changed           bool
 }
 
 type declaredFunctionCollector struct {
@@ -109,8 +112,14 @@ type declaredFunctionCollector struct {
 type globalAliasFinder struct {
 	bindings                map[*js.Var]struct{}
 	functions               map[*js.Var][]*js.Params
+	safeDOMQueryFuncs       map[*js.Var]struct{}
 	skipKnownPrimitiveCalls bool
 	found                   bool
+}
+
+type safeDOMQueryFunctionCollector struct {
+	functions map[*js.Var]struct{}
+	returns   map[js.IExpr]struct{}
 }
 
 // auditScript parses one prototype script and applies the AST audit.
@@ -127,22 +136,27 @@ func auditScript(source []byte, basePath string, artifacts map[string]ArtifactIn
 			break
 		}
 	}
+	safeDOMQueryFuncs := make(map[*js.Var]struct{})
+	safeDOMQueryReturns := make(map[js.IExpr]struct{})
+	js.Walk(&safeDOMQueryFunctionCollector{functions: safeDOMQueryFuncs, returns: safeDOMQueryReturns}, ast)
 	globalBindings := make(map[*js.Var]struct{})
 	// Resolve alias chains to a fixed point before policy checks so source order
 	// and function placement cannot hide a global-derived binding.
 	for {
-		collector := &globalBindingCollector{bindings: globalBindings, functions: functions}
+		collector := &globalBindingCollector{bindings: globalBindings, functions: functions, safeDOMQueryFuncs: safeDOMQueryFuncs}
 		js.Walk(collector, ast)
 		if !collector.changed {
 			break
 		}
 	}
 	audit := &scriptAudit{
-		path:           basePath,
-		artifacts:      artifacts,
-		globalBindings: globalBindings,
-		functions:      functions,
-		diagnostics:    make([]Diagnostic, 0),
+		path:                basePath,
+		artifacts:           artifacts,
+		globalBindings:      globalBindings,
+		functions:           functions,
+		safeDOMQueryFuncs:   safeDOMQueryFuncs,
+		safeDOMQueryReturns: safeDOMQueryReturns,
+		diagnostics:         make([]Diagnostic, 0),
 	}
 	js.Walk(audit, ast)
 	return audit.diagnostics
@@ -151,7 +165,7 @@ func auditScript(source []byte, basePath string, artifacts map[string]ArtifactIn
 func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 	switch value := node.(type) {
 	case *js.BindingElement:
-		if value.Default != nil && expressionContainsGlobalAlias(value.Default, audit.globalBindings) {
+		if value.Default != nil && expressionContainsGlobalAlias(value.Default, audit.globalBindings, audit.safeDOMQueryFuncs) {
 			audit.checkGlobalBinding(value.Binding)
 		}
 	case *js.Var:
@@ -198,7 +212,7 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 	case *js.CallExpr:
 		audit.checkCall(value.X, value.Args)
 	case *js.ReturnStmt:
-		if value.Value != nil && expressionReturnContainsGlobalAlias(value.Value, audit.globalBindings, audit.functions) &&
+		if value.Value != nil && !audit.isSafeDOMQueryReturn(value.Value) && expressionReturnContainsGlobalAlias(value.Value, audit.globalBindings, audit.functions, audit.safeDOMQueryFuncs) &&
 			!definitelyPrimitiveResult(value.Value) {
 			audit.report("prototype_script_dynamic_global", "returning a global capability from a prototype function is not allowed")
 		}
@@ -206,11 +220,11 @@ func (audit *scriptAudit) Enter(node js.INode) js.IVisitor {
 		if isGlobalAssignmentToken(value.Op) {
 			switch value.X.(type) {
 			case *js.DotExpr, *js.IndexExpr:
-				if expressionContainsGlobalAlias(value.Y, audit.globalBindings) && !definitelyPrimitiveResult(value.Y) {
+				if expressionContainsGlobalAlias(value.Y, audit.globalBindings, audit.safeDOMQueryFuncs) && !definitelyPrimitiveResult(value.Y) {
 					audit.checkGlobalAssignment(value.X)
 				}
 			default:
-				if expressionContainsGlobalAlias(value.Y, audit.globalBindings) {
+				if expressionContainsGlobalAlias(value.Y, audit.globalBindings, audit.safeDOMQueryFuncs) {
 					audit.checkGlobalAssignment(value.X)
 				}
 			}
@@ -238,19 +252,19 @@ func (audit *scriptAudit) Exit(js.INode) {}
 func (collector *globalBindingCollector) Enter(node js.INode) js.IVisitor {
 	switch value := node.(type) {
 	case *js.BindingElement:
-		if value.Default != nil && expressionContainsGlobalAlias(value.Default, collector.bindings) &&
+		if value.Default != nil && expressionContainsGlobalAlias(value.Default, collector.bindings, collector.safeDOMQueryFuncs) &&
 			!definitelyPrimitiveResult(value.Default) {
 			collector.collectBinding(value.Binding)
 		}
 	case *js.BinaryExpr:
-		if isGlobalAssignmentToken(value.Op) && expressionContainsGlobalAlias(value.Y, collector.bindings) &&
+		if isGlobalAssignmentToken(value.Op) && expressionContainsGlobalAlias(value.Y, collector.bindings, collector.safeDOMQueryFuncs) &&
 			!definitelyPrimitiveResult(value.Y) {
 			collector.collectAssignment(value.X)
 		}
 	case *js.CallExpr:
 		for _, params := range declaredFunctionParams(value.X, collector.functions) {
 			for index, argument := range value.Args.List {
-				if expressionContainsGlobalAlias(argument.Value, collector.bindings) && !definitelyPrimitiveResult(argument.Value) {
+				if expressionContainsGlobalAlias(argument.Value, collector.bindings, collector.safeDOMQueryFuncs) && !definitelyPrimitiveResult(argument.Value) {
 					collector.collectBinding(parameterBinding(params, index))
 				}
 			}
@@ -283,6 +297,26 @@ func (collector *declaredFunctionCollector) Enter(node js.INode) js.IVisitor {
 
 func (collector *declaredFunctionCollector) Exit(js.INode) {}
 
+func (collector *safeDOMQueryFunctionCollector) Enter(node js.INode) js.IVisitor {
+	value, ok := node.(*js.BindingElement)
+	if !ok || value.Default == nil {
+		return collector
+	}
+	variable, ok := value.Binding.(*js.Var)
+	if !ok {
+		return collector
+	}
+	returned, ok := safeDOMQueryFunctionReturn(value.Default)
+	if !ok {
+		return collector
+	}
+	collector.functions[resolveVarRoot(variable)] = struct{}{}
+	collector.returns[returned] = struct{}{}
+	return collector
+}
+
+func (collector *safeDOMQueryFunctionCollector) Exit(js.INode) {}
+
 func (collector *declaredFunctionCollector) addAll(variable *js.Var, candidates []*js.Params) {
 	for _, params := range candidates {
 		collector.add(variable, params)
@@ -307,9 +341,12 @@ func (finder *globalAliasFinder) Enter(node js.INode) js.IVisitor {
 	if finder.found {
 		return nil
 	}
+	if call, ok := node.(*js.CallExpr); ok && isSafeDOMQueryFunctionCall(call, finder.safeDOMQueryFuncs) {
+		return nil
+	}
 	if call, ok := node.(*js.CallExpr); ok && finder.skipKnownPrimitiveCalls {
 		if len(declaredFunctionParams(call.X, finder.functions)) != 0 {
-			finder.found = expressionContainsGlobalAlias(call.X, finder.bindings)
+			finder.found = expressionContainsGlobalAlias(call.X, finder.bindings, finder.safeDOMQueryFuncs)
 			return nil
 		}
 		if knownPrimitiveReturnCall(call) {
@@ -377,7 +414,7 @@ func (collector *globalBindingCollector) add(variable *js.Var) {
 func (audit *scriptAudit) checkCall(callee js.IExpr, args js.Args) {
 	for _, params := range declaredFunctionParams(callee, audit.functions) {
 		for index, argument := range args.List {
-			if expressionContainsGlobalAlias(argument.Value, audit.globalBindings) && !definitelyPrimitiveResult(argument.Value) {
+			if expressionContainsGlobalAlias(argument.Value, audit.globalBindings, audit.safeDOMQueryFuncs) && !definitelyPrimitiveResult(argument.Value) {
 				audit.checkGlobalBinding(parameterBinding(params, index))
 			}
 		}
@@ -499,8 +536,8 @@ func (audit *scriptAudit) isGlobalAlias(expr js.IExpr) bool {
 	return expressionIsGlobalAlias(expr, audit.globalBindings)
 }
 
-func expressionContainsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{}) bool {
-	finder := &globalAliasFinder{bindings: bindings}
+func expressionContainsGlobalAlias(expr js.IExpr, bindings map[*js.Var]struct{}, safeDOMQueryFuncs map[*js.Var]struct{}) bool {
+	finder := &globalAliasFinder{bindings: bindings, safeDOMQueryFuncs: safeDOMQueryFuncs}
 	js.Walk(finder, expr)
 	return finder.found
 }
@@ -509,8 +546,9 @@ func expressionReturnContainsGlobalAlias(
 	expr js.IExpr,
 	bindings map[*js.Var]struct{},
 	functions map[*js.Var][]*js.Params,
+	safeDOMQueryFuncs map[*js.Var]struct{},
 ) bool {
-	finder := &globalAliasFinder{bindings: bindings, functions: functions, skipKnownPrimitiveCalls: true}
+	finder := &globalAliasFinder{bindings: bindings, functions: functions, safeDOMQueryFuncs: safeDOMQueryFuncs, skipKnownPrimitiveCalls: true}
 	js.Walk(finder, expr)
 	return finder.found
 }
@@ -561,6 +599,72 @@ func parameterBinding(params *js.Params, index int) js.IBinding {
 		return params.List[index].Binding
 	}
 	return params.Rest
+}
+
+func (audit *scriptAudit) isSafeDOMQueryReturn(expr js.IExpr) bool {
+	_, ok := audit.safeDOMQueryReturns[expr]
+	return ok
+}
+
+func safeDOMQueryFunctionReturn(expr js.IExpr) (js.IExpr, bool) {
+	function, ok := expr.(*js.ArrowFunc)
+	if !ok || function.Async || len(function.Body.List) != 1 {
+		return nil, false
+	}
+	returned, ok := function.Body.List[0].(*js.ReturnStmt)
+	if !ok || returned.Value == nil {
+		return nil, false
+	}
+	var root *js.Var
+	for _, parameter := range function.Params.List {
+		variable, ok := parameter.Binding.(*js.Var)
+		if !ok || parameter.Default == nil {
+			continue
+		}
+		name, isDocument := freeIdentifierName(parameter.Default)
+		if isDocument && name == "document" {
+			root = resolveVarRoot(variable)
+			break
+		}
+	}
+	if root == nil || !safeDOMQueryResult(returned.Value, root) {
+		return nil, false
+	}
+	return returned.Value, true
+}
+
+func isSafeDOMQueryFunctionCall(call *js.CallExpr, functions map[*js.Var]struct{}) bool {
+	variable, ok := call.X.(*js.Var)
+	if !ok {
+		return false
+	}
+	_, ok = functions[resolveVarRoot(variable)]
+	return ok
+}
+
+func safeDOMQueryResult(expr js.IExpr, root *js.Var) bool {
+	if call, ok := expr.(*js.CallExpr); ok {
+		return safeDOMQueryCall(call, root)
+	}
+	array, ok := expr.(*js.ArrayExpr)
+	if !ok || len(array.List) != 1 || !array.List[0].Spread {
+		return false
+	}
+	call, ok := array.List[0].Value.(*js.CallExpr)
+	return ok && safeDOMQueryCall(call, root)
+}
+
+func safeDOMQueryCall(call *js.CallExpr, root *js.Var) bool {
+	member, ok := call.X.(*js.DotExpr)
+	if !ok {
+		return false
+	}
+	name, ok := memberName(member.Y)
+	if !ok || (name != "querySelector" && name != "querySelectorAll") {
+		return false
+	}
+	variable, ok := member.X.(*js.Var)
+	return ok && resolveVarRoot(variable) == root
 }
 
 func definitelyPrimitiveResult(expr js.IExpr) bool {
