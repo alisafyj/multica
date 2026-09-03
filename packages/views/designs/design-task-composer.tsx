@@ -41,7 +41,7 @@ import {
 } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
-import { projectOpenIssuesOptions } from "@multica/core/issues/queries";
+import { issueDetailOptions, projectOpenIssuesOptions } from "@multica/core/issues/queries";
 import { projectResourcesOptions } from "@multica/core/projects";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -188,6 +188,12 @@ export const STATIC_BRIEF_PLACEHOLDER = "例如：做一个 CRM 客户列表页�
 export interface DesignRecipeSelection {
   token: number;
   recipe: DesignScenarioRecipe;
+}
+
+export interface DesignTaskComposerInitialContext {
+  projectId: string;
+  issueId: string;
+  agentId?: string;
 }
 
 function repositoryUrl(resource: ProjectResource): string {
@@ -829,6 +835,7 @@ export function DesignTaskComposer({
   onBrowseRecipes,
   onOpenDocument,
   recipeSelection,
+  initialContext,
 }: {
   /** Called after the server has created the document, never before. */
   onCreated: (document: DesignDocument) => void;
@@ -838,6 +845,8 @@ export function DesignTaskComposer({
   onOpenDocument?: (document: DesignDocument) => void;
   /** A recipe picked in the community gallery, waiting to be applied. */
   recipeSelection?: DesignRecipeSelection | null;
+  /** Issue entry-point context. Project and issue stay fixed for traceability. */
+  initialContext?: DesignTaskComposerInitialContext;
 }) {
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
@@ -849,13 +858,13 @@ export function DesignTaskComposer({
   // its slug here, and the server validates it against the catalogue.
   const [recipe, setRecipe] = useState<DesignDocumentRecipe | string>("default");
   const [appliedRecipe, setAppliedRecipe] = useState<DesignScenarioRecipe | null>(null);
-  const [projectId, setProjectId] = useState("");
-  const [agentId, setAgentId] = useState("");
+  const [projectId, setProjectId] = useState(initialContext?.projectId ?? "");
+  const [agentId, setAgentId] = useState(initialContext?.agentId ?? "");
   const [repositoryId, setRepositoryId] = useState("");
-  const [issueId, setIssueId] = useState("");
+  const [issueId, setIssueId] = useState(initialContext?.issueId ?? "");
   // Default on: a design run that leaves no trace on the tasks page is the
   // exception, not the norm. Turning it off is one click away.
-  const [createIssue, setCreateIssue] = useState(true);
+  const [createIssue, setCreateIssue] = useState(!initialContext?.issueId);
   // Mutually exclusive by construction: the server refuses a request carrying
   // both, and the picker only ever sets one of them.
   const [designSystemId, setDesignSystemId] = useState("");
@@ -915,11 +924,15 @@ export function DesignTaskComposer({
 
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const { data: projectResources = [] } = useQuery({
+  const { data: projectResources = [], isSuccess: projectResourcesLoaded } = useQuery({
     ...projectResourcesOptions(wsId, projectId),
     enabled: !!projectId,
   });
   const { data: issues = [] } = useQuery(projectOpenIssuesOptions(wsId, projectId));
+  const { data: contextIssue } = useQuery({
+    ...issueDetailOptions(wsId, initialContext?.issueId ?? ""),
+    enabled: !!initialContext?.issueId,
+  });
   const { data: workspaceSystems = [] } = useQuery(projectDesignSystemCatalogueOptions(wsId));
   const { data: builtinSystems = [] } = useQuery(builtinDesignSystemListOptions(wsId));
 
@@ -928,12 +941,21 @@ export function DesignTaskComposer({
     () => projectResources.filter((resource) => resource.resource_type === "github_repo"),
     [projectResources],
   );
+  const contextRepositorySeeded = useRef(false);
+  useEffect(() => {
+    if (!initialContext?.issueId || !projectResourcesLoaded || contextRepositorySeeded.current) return;
+    contextRepositorySeeded.current = true;
+    if (repositories.length === 1) setRepositoryId(repositories[0]!.id);
+  }, [initialContext?.issueId, projectResourcesLoaded, repositories]);
+  const issueOptions = contextIssue && !issues.some((issue) => issue.id === contextIssue.id)
+    ? [contextIssue, ...issues]
+    : issues;
   // A repository or issue chosen before the project changed no longer belongs
   // to it; the server would reject them, so drop them for rendering too.
   const activeRepositoryId = repositories.some((repository) => repository.id === repositoryId)
     ? repositoryId
     : "";
-  const activeIssueId = issues.some((issue) => issue.id === issueId) ? issueId : "";
+  const activeIssueId = initialContext?.issueId || (issues.some((issue) => issue.id === issueId) ? issueId : "");
 
   const trimmedBrief = brief.trim();
   const briefTooLong = brief.length > BRIEF_MAX_LENGTH;
@@ -957,6 +979,12 @@ export function DesignTaskComposer({
       await queryClient.invalidateQueries({
         queryKey: designKeys.documents(wsId, created.project_id || projectId),
       });
+      const linkedIssueId = created.issue_id || activeIssueId;
+      if (linkedIssueId) {
+        await queryClient.invalidateQueries({
+          queryKey: designKeys.documentsByIssue(wsId, linkedIssueId),
+        });
+      }
       // DC-053: never let the result read as if the agent inspected code when
       // it did not. The server's own flag decides, not what was submitted.
       toast.success(
@@ -1146,7 +1174,14 @@ export function DesignTaskComposer({
                     projectId={projectId || null}
                     onUpdate={(updates) => setProjectId(updates.project_id ?? "")}
                     align="start"
-                    triggerRender={<SettingTrigger filled={!!selectedProject} aria-label="项目" />}
+                    disabled={!!initialContext?.projectId}
+                    triggerRender={
+                      <SettingTrigger
+                        filled={!!selectedProject}
+                        disabled={!!initialContext?.projectId}
+                        aria-label="项目"
+                      />
+                    }
                   />
                   <RepositorySetting
                     repositories={repositories}
@@ -1155,10 +1190,10 @@ export function DesignTaskComposer({
                     onChange={setRepositoryId}
                   />
                   <IssueDestinationSetting
-                    issues={issues}
+                    issues={issueOptions}
                     issueId={activeIssueId}
                     createIssue={createIssue}
-                    disabled={!projectId}
+                    disabled={!projectId || !!initialContext?.issueId}
                     onChangeIssue={setIssueId}
                     onChangeCreate={setCreateIssue}
                   />

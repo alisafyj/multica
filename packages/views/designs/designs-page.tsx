@@ -292,6 +292,12 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
+  const initialProjectId = navigation.searchParams.get("create_project_id")?.trim() ?? "";
+  const initialIssueId = navigation.searchParams.get("create_issue_id")?.trim() ?? "";
+  const initialAgentId = navigation.searchParams.get("create_agent_id")?.trim() ?? "";
+  const initialContext = initialProjectId && initialIssueId
+    ? { projectId: initialProjectId, issueId: initialIssueId, agentId: initialAgentId || undefined }
+    : undefined;
   const queryClient = useQueryClient();
   const documentActions = useDesignDocumentActions();
   const { data: files = [], isLoading, error, refetch } = useQuery(designFileListOptions(wsId));
@@ -708,6 +714,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                   onBrowseRecipes={() => setHomePanel("community")}
                   onOpenDocument={openDocument}
                   recipeSelection={recipeSelection}
+                  initialContext={initialContext}
                 />
               </TabsContent>
 

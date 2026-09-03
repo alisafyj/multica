@@ -410,6 +410,9 @@ export function DesignDocumentPage({ documentId }: { documentId: string }) {
       queryClient.invalidateQueries({ queryKey: designKeys.document(wsId, documentId) }),
       queryClient.invalidateQueries({ queryKey: designKeys.documentRevisions(wsId, documentId) }),
       document ? queryClient.invalidateQueries({ queryKey: designKeys.documents(wsId, document.project_id) }) : Promise.resolve(),
+      document?.issue_id
+        ? queryClient.invalidateQueries({ queryKey: designKeys.documentsByIssue(wsId, document.issue_id) })
+        : Promise.resolve(),
     ]);
   };
 

@@ -8,6 +8,10 @@
 >
 > Task 12 实现提交：`874df6de0ebefd748748aa2bbe73fa90f70ce858`
 >
+> Task 13 分支：`codex/design-center-end-to-end-mvp-task-13`
+>
+> Task 13 基线：`7aeb433e1d1ea52aef70b6dd2df583f5f11e99ce`
+>
 > 本文件是当前 Design Center End-to-End MVP 的最高优先级交接事实源。
 
 旧聊天、旧机器路径、旧数据库/profile 和此前“Task 12 暂停”的说明均已过期。长期产品事实仍以 `docs/product/design-center/README.md` 中的 confirmed / proposal / superseded 标记为准。
@@ -16,17 +20,19 @@
 
 ## 0. 当前结论
 
-Tasks 10–12 已全部实现、复审并通过真实产品 Gate：
+Tasks 10–13 已完成当前授权范围：
 
 1. Task 10：真实 saved Multica Design 经统一 Implementation Context、普通 Agent 和隔离目标 checkout 完成实现与真实渲染验收；
 2. Task 11：真实上传 Figma 的 exact frame 与 4-frame group 经同一 Context/Result 契约、普通 Agent 和隔离目标 checkout 完成验收；
 3. Task 12：真实 Issue UI 完成设计选择、精确 frame、repository、可编辑 prompt、手动发送、普通 Agent 状态和结构化结果投影，Issue 状态保持不变；
 4. Tasks 10–12 Final Gate：**PASS**；
-5. Task 13、Task 14 没有启动；
-6. 没有 Push、PR、`main` 合并或执行分支回合集成分支；
-7. 所有 Task 12 隔离 API/Web/daemon/PostgreSQL/browser 已停止，临时 profile 已清理。
+5. Tasks 10–12 已通过 `9a6b819e9` 回合到集成分支，远端 `main@394174211` 已通过 `7aeb433e1` 合入；
+6. Task 13：Issue 右侧栏已接入 Multica Design 创建入口，锁定 Project/Issue、按上下文预填 Agent 与单一 GitHub 仓库，并复用现有 Design Document 工作区；
+7. Task 14 没有启动；
+8. 没有 Push、PR 或远端分支更新；
+9. 所有 Task 12 隔离 API/Web/daemon/PostgreSQL/browser 已停止，临时 profile 已清理。
 
-下一位接手者不要重做 Tasks 10–12。先审查本分支和报告，再等待用户明确决定是否合回集成分支或启动 Task 13/14。
+下一位接手者不要重做 Tasks 10–13。先审查 Task 13 分支与本文件，再等待用户明确决定是否合回集成分支或启动 Task 14。
 
 ---
 
@@ -104,7 +110,7 @@ a819e315b fix(designs): reject unknown package sources
 
 Task 12 本地验收辅助 `_task12_auth.Makefile` 与 `server/cmd/task12-local-auth/` 没有进入产品提交。不得把它们当成生产认证实现。
 
-执行分支未推送，未创建 PR，未合入 `origin/codex/design-center-end-to-end-mvp` 或 `main`。不要改写历史或自动合并。
+Tasks 10–12 已本地合入 `codex/design-center-end-to-end-mvp`，并同步 `origin/main@394174211`；当前集成基线为 `7aeb433e1`。Task 13 分支未推送、未创建 PR、未合回集成分支。不要改写历史或自动合并。
 
 ---
 
@@ -175,6 +181,15 @@ Task 8 提供来源无关、版本化、不透明的 `design_ref` / `frame_ref` 
 - 新增稳定、不透明的 `selection_key` 关联刷新后的 signed frame refs；它只用于 UI identity correlation，不参与授权；
 - specialized runtime 明确禁止目标 checkout 本地 commit、Push、PR 和 merge。
 
+### 4.7 Task 13：Issue 发起 Multica Design
+
+- Issue 右侧栏的设计稿区域始终显示“创建 Multica 设计”；无项目任务保持入口可见但禁用，并提示先分配项目；
+- 入口通过现有 Designs 页面进入同一个 `DesignTaskComposer`，不增加第二套生成协议；
+- Project 与 Issue 从路由上下文预填并锁定；Issue 当前受让人为 Agent 时预填 Agent；项目只有一个 GitHub repository 时预填 repository，Agent 与 repository 仍可调整；
+- 创建成功后打开现有 Design Document workspace，继续使用既有 Preview、调整与保存能力，不自动保存、不自动恢复、不启动代码执行，也不修改 Issue 状态；
+- 创建和保存都会失效 Issue 专属 Design Document 缓存，返回 Issue 后可看到实时状态卡，并在保存后使用 Task 12 的统一恢复入口；
+- 单个最小 Mock 样本覆盖锁定上下文、Agent/单仓库预填、真实创建请求载荷和 Issue 缓存刷新；网络与 IO 均未进入测试。
+
 安全边界：服务端验证 workspace/user/project/repository/issue/task/design revision/selection identity；implementation reference 短期、签名、不透明；task-bound MCP 忽略调用者提供的 task identity；daemon 验证 exact checkout root、repository commit、bounded target/evidence paths 和 receipt。
 
 ---
@@ -218,6 +233,8 @@ Task 8 提供来源无关、版本化、不透明的 `design_ref` / `frame_ref` 
 - `git diff --check`：PASS；
 - Task 12 code/security review：APPROVED；
 - Tasks 10–12 Final Gate：PASS。
+- Task 13 Views typecheck：PASS；新增文案定向 lint：0 errors；单个最小 Mock 样本：PASS；
+- Task 13 独立复审：无 Critical 或 Important 遗留项。
 
 全量 daemon/CLI package 测试在当前 Multica-managed worktree 中会被外层 daemon task marker/profile 污染：无关用例显式预期不存在这些状态。不要把这组环境型失败误判为 Task 12 回归；本次改动关联 focused tests 和生产构建均通过。
 
@@ -241,9 +258,9 @@ Task 12 隔离环境已清理：daemon profile 停止并删除，API/Web/browser
 
 明确未做：
 
-- 执行分支合回 `codex/design-center-end-to-end-mvp`；
+- Task 13 分支合回 `codex/design-center-end-to-end-mvp`；
 - Push、PR、`main` merge、发布；
-- Task 13、Task 14；
+- Task 14；
 - Post-MVP Finder、多项目 tabs、视觉精雕。
 
 ---
@@ -255,10 +272,10 @@ Task 12 隔离环境已清理：daemon profile 停止并删除，API/Web/browser
 读取 docs/superpowers/handoffs/2026-09-01-design-center-end-to-end-mvp-handoff.md；这是当前权威事实源。
 
 Tasks 10、11、12 和 Tasks 10–12 Final Gate 已通过，不要重新实现或重跑昂贵的真实 Agent 验收。
-分支：codex/design-center-end-to-end-mvp-tasks-10-12。
-Task 12 提交：874df6de0ebefd748748aa2bbe73fa90f70ce858。
+Tasks 10–12 已本地合入 codex/design-center-end-to-end-mvp，且 origin/main@394174211 已同步；集成基线为 7aeb433e1。
+Task 13 已在 codex/design-center-end-to-end-mvp-task-13 完成，复用现有创建 Server core 与 Design Document workspace；不要重做。
 
-先检查 git status/log 和 Task 12 report/review/gate report，再按用户的新授权继续。
-不得自动 Push、建 PR、合 main、回合集成分支或启动 Task 13/14。
-如果用户要求集成，先比较远端集成分支的新变化并审查冲突；不要 reset/clean/改写历史。
+先检查 Task 13 分支的 git status/log/diff 与本交接，再按用户的新授权继续。
+不得自动 Push、建 PR、合 main、回合集成分支或启动 Task 14。
+如果用户要求集成，先比较集成分支的新变化并审查冲突；不要 reset/clean/改写历史。
 ```
