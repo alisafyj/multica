@@ -29,6 +29,7 @@ const fileFixture: DesignFile = {
 
 const documentFixture: DesignDocument = {
   id: "document-unlinked",
+  design_ref: "design-ref-document-unlinked",
   workspace_id: "ws-1",
   project_id: "project-crm",
   project_resource_id: "",

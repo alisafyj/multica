@@ -22,6 +22,7 @@ vi.mock("../api", () => ({
 
 const fileFixture: DesignFile = {
   id: "file-1",
+  design_ref: "design-ref-file",
   workspace_id: "ws-1",
   project_id: null,
   project_resource_id: null,
@@ -39,6 +40,7 @@ const fileFixture: DesignFile = {
 
 const documentFixture: DesignDocument = {
   id: "document-1",
+  design_ref: "",
   workspace_id: "ws-1",
   project_id: "project-1",
   project_resource_id: "",
@@ -70,6 +72,8 @@ describe("design asset projection", () => {
       title: "Uploaded cover",
       thumbnailUrl: undefined,
       sourceLabel: "Figma",
+      designRef: "design-ref-file",
+      revisionId: "revision-1",
       status: "saved",
       hasSavedVersion: true,
       hasDraftVersion: false,
@@ -83,6 +87,7 @@ describe("design asset projection", () => {
   it("projects a saved document with a newer draft into both version axes", () => {
     const item = designDocumentToAssetItem({
       ...documentFixture,
+      design_ref: "design-ref-document",
       project_resource_id: "repository-1",
       status: "draft_ahead_of_saved",
       saved_revision_id: "saved-1",
@@ -98,6 +103,9 @@ describe("design asset projection", () => {
       title: "Settings page",
       sourceLabel: "Multica Design",
       status: "draft_ahead_of_saved",
+      designRef: "design-ref-document",
+      revisionId: "saved-1",
+
       hasSavedVersion: true,
       hasDraftVersion: true,
       repositoryGrounded: true,

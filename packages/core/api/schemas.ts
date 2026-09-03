@@ -107,6 +107,7 @@ import type {
   DesignDraftMaterializeResponse,
   DesignDocumentStatus,
   DesignFileDetailResponse,
+  DesignAssetFramesResponse,
   DesignSystemProfile,
   DesignRestoreTask,
   DispatchDesignRestoreTaskResponse,
@@ -1596,8 +1597,78 @@ export const SetDesignAssetRepositoryAssociationResponseSchema = z.object({
   count: z.number().int().nonnegative(),
 });
 
+export const DesignAssetFrameSchema = z.object({
+  frame_ref: z.string(),
+  selection_key: z.string(),
+  title: z.string(),
+  thumbnail_url: z.string().optional(),
+  description: z.string().optional(),
+}).loose();
+
+export const DesignAssetFramesResponseSchema = z.object({
+  design_ref: z.string(),
+  revision_id: z.string(),
+  content_digest: z.string(),
+  frames: z.array(DesignAssetFrameSchema),
+}).loose();
+
+export const EMPTY_DESIGN_ASSET_FRAMES_RESPONSE: DesignAssetFramesResponse = {
+  design_ref: "",
+  revision_id: "",
+  content_digest: "",
+  frames: [],
+};
+
+const DesignImplementationContextSchema = z.object({
+  schema_version: z.literal("multica.design-implementation-context/v1"),
+  implementation_ref: z.string(),
+  design_ref: z.string(),
+  revision_id: z.string(),
+  content_digest: z.string(),
+  frame_refs: z.array(z.string()),
+  project_id: z.string(),
+  issue_id: z.string(),
+  task_id: z.string().optional(),
+  project_resource_id: z.string(),
+  design_title: z.string(),
+  package: z.object({
+    source: z.string(),
+    archive_path: z.string().optional(),
+    content_digest: z.string(),
+    restore_pack_scope: z.record(z.string(), z.unknown()).optional(),
+  }).loose().optional(),
+  source_instructions: z.array(z.string()).optional(),
+  verification_targets: z.array(z.string()).optional(),
+  design_system_digest: z.string().optional(),
+  allowed_write_paths: z.array(z.string()),
+  verification_requirements: z.array(z.string()),
+  paths: z.object({
+    context_path: z.string(),
+    design_manifest_path: z.string(),
+    design_package_path: z.string(),
+    scope_path: z.string(),
+    repository_context_path: z.string(),
+    result_path: z.string(),
+  }).loose(),
+  source_capabilities: z.object({
+    has_layers: z.boolean(),
+    has_prototype: z.boolean(),
+    has_assets: z.boolean(),
+    has_interactions: z.boolean(),
+  }).loose(),
+}).loose();
+
+export const BuildDesignImplementationPromptResponseSchema = z.object({
+  prompt: z.string(),
+  mcp_arguments: z.record(z.string(), z.unknown()),
+  context: DesignImplementationContextSchema,
+}).loose();
+
+
 export const DesignFileSchema = z.object({
   id: z.string(),
+  design_ref: z.string().optional(),
+  source: z.string().optional(),
   workspace_id: z.string(),
   project_id: z.string().nullable().optional(),
   project_resource_id: z.string().nullable().catch(null).default(null),
@@ -2317,6 +2388,7 @@ function normalizeDesignDocumentStatus(value: unknown): DesignDocumentStatus {
  */
 export const DesignDocumentSchema = z.object({
   id: z.string().catch("").default(""),
+  design_ref: z.string().catch("").default(""),
   workspace_id: z.string().catch("").default(""),
   project_id: z.string().catch("").default(""),
   project_resource_id: z.string().catch("").default(""),
@@ -2343,6 +2415,7 @@ export const DesignDocumentSchema = z.object({
 
 export const EMPTY_DESIGN_DOCUMENT: DesignDocument = {
   id: "",
+  design_ref: "",
   workspace_id: "",
   project_id: "",
   project_resource_id: "",

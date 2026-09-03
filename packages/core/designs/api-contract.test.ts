@@ -68,6 +68,98 @@ describe("ApiClient repository design asset contracts", () => {
     });
   });
 
+  it("resolves a signed design asset and builds the ordinary Agent prompt", async () => {
+    const frameRef = "frame.ref/with space";
+    const designRef = "signed.ref/with space";
+    const framesResponse = {
+      design_ref: designRef,
+      revision_id: "revision-1",
+      content_digest: "digest-1",
+      frames: [{ frame_ref: frameRef, selection_key: "selection-1", title: "Dashboard" }],
+    };
+    const promptResponse = {
+      prompt: "Implement the selected design",
+      mcp_arguments: { revision_id: "revision-1", frame_id: "frame-1" },
+      context: {
+        schema_version: "multica.design-implementation-context/v1",
+        implementation_ref: "implementation-ref-1",
+        design_ref: designRef,
+        revision_id: "revision-1",
+        content_digest: "digest-1",
+        frame_refs: [frameRef],
+        project_id: "project-1",
+        issue_id: "issue-1",
+        project_resource_id: "repo-1",
+        design_title: "Dashboard",
+        allowed_write_paths: ["."],
+        verification_requirements: ["typecheck"],
+        paths: {
+          context_path: ".agent_context/design_implementation/context.json",
+          design_manifest_path: ".agent_context/design_implementation/design/package/manifest.json",
+          design_package_path: ".agent_context/design_implementation/design/package",
+          scope_path: ".agent_context/design_implementation/design/scope.json",
+          repository_context_path: ".agent_context/design_implementation/repository",
+          result_path: ".agent_context/design_implementation/result/implementation-result.json",
+        },
+        source_capabilities: {
+          has_layers: true,
+          has_prototype: true,
+          has_assets: true,
+          has_interactions: true,
+        },
+      },
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(framesResponse)))
+      .mockResolvedValueOnce(new Response(JSON.stringify(promptResponse)));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.getDesignAssetFrames(designRef)).resolves.toEqual(framesResponse);
+    await expect(client.buildDesignImplementationPrompt(designRef, {
+      revision_id: "revision-1",
+      frame_refs: [frameRef],
+      project_resource_id: "repo-1",
+      issue_id: "issue-1",
+    })).resolves.toEqual(promptResponse);
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/api/design-assets/${encodeURIComponent(designRef)}/frames`,
+    );
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      `https://api.example.test/api/design-assets/${encodeURIComponent(designRef)}/implementation-prompt`,
+    );
+    const [, promptInit] = fetchMock.mock.calls[1] ?? [];
+    expect(promptInit?.method).toBe("POST");
+    expect(JSON.parse(String(promptInit?.body))).toEqual({
+      revision_id: "revision-1",
+      frame_refs: [frameRef],
+      project_resource_id: "repo-1",
+      issue_id: "issue-1",
+    });
+  });
+
+  it("degrades a malformed frame list and rejects a malformed implementation prompt", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ frames: "not-an-array" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ prompt: 42 })));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.getDesignAssetFrames("design-ref")).resolves.toEqual({
+      design_ref: "",
+      revision_id: "",
+      content_digest: "",
+      frames: [],
+    });
+    await expect(client.buildDesignImplementationPrompt("design-ref", {
+      revision_id: "revision-1",
+      frame_refs: ["frame-1"],
+      project_resource_id: "repository-1",
+      issue_id: "issue-1",
+    })).rejects.toThrow("malformed response");
+  });
+
   it.each([
     {
       name: "missing project_id",

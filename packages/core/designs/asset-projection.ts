@@ -4,6 +4,8 @@ export interface DesignAssetListItem {
   id: string;
   kind: "figma_file" | "design_document";
   projectId: string;
+  designRef: string;
+  revisionId: string;
   projectResourceId: string | null;
   title: string;
   thumbnailUrl?: string;
@@ -24,6 +26,8 @@ export function designFileToAssetItem(file: DesignFile): DesignAssetListItem {
     title: file.title,
     thumbnailUrl: file.thumbnail_url ?? undefined,
     sourceLabel: "Figma",
+    designRef: file.design_ref ?? "",
+    revisionId: file.current_revision_id ?? "",
     status: "saved",
     hasSavedVersion: true,
     hasDraftVersion: false,
@@ -45,6 +49,8 @@ export function designDocumentToAssetItem(document: DesignDocument): DesignAsset
     projectResourceId: document.project_resource_id || null,
     title: document.title,
     sourceLabel: "Multica Design",
+    designRef: document.design_ref,
+    revisionId: document.saved_revision_id,
     status: document.status,
     hasSavedVersion,
     hasDraftVersion,

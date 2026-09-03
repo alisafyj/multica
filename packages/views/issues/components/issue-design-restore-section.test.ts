@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createIssueDesignDeliveryScope, createIssueDesignRestoreTaskInput, createRawDesignFallbackScope, defaultDeliveryTargetId, deliveryActorName, deliveryCancelActorName, deliveryFileTitle, deliveryHandoffSource, deliveryScopeItemLabel, deliveryScopeItems, deliveryScopeTitle, deliveryStatusCopy, deliveryTargetCandidates, isRawDesignFallbackDelivery, issueDesignScopeOptions, latestInactiveTargetDelivery, restoreAgentUnavailableCopy, restoreDispatchPrompt, selectDeliveryRestoreTask, selectIssueRestoreTask, sortDesignDeliveryHistory } from "./issue-design-restore-section";
-import type { DesignDelivery, DesignFile, DesignFrame, DesignRestoreTask, Issue, MemberWithUser } from "@multica/core/types";
+import { createIssueDesignDeliveryScope, createIssueDesignRestoreTaskInput, createRawDesignFallbackScope, defaultDeliveryTargetId, deliveryActorName, deliveryCancelActorName, deliveryFileTitle, deliveryHandoffSource, deliveryScopeItemLabel, deliveryScopeItems, deliveryScopeTitle, deliveryStatusCopy, deliveryTargetCandidates, designImplementationSourceLabel, designImplementationStatus, designImplementationTaskMarker, isDesignImplementationTask, isRawDesignFallbackDelivery, isValidImplementationAsset, issueDesignScopeOptions, latestInactiveTargetDelivery, restoreAgentUnavailableCopy, restoreDispatchPrompt, selectDeliveryRestoreTask, selectIssueRestoreTask, sortDesignDeliveryHistory } from "./issue-design-restore-section";
+import type { AgentTask, DesignDelivery, DesignFile, DesignFrame, DesignRestoreTask, Issue, MemberWithUser } from "@multica/core/types";
 
 function task(overrides: Partial<DesignRestoreTask>): DesignRestoreTask {
   return {
@@ -71,6 +71,125 @@ function issue(overrides: Partial<Issue>): Issue {
     properties: overrides.properties ?? {},
   };
 }
+describe("isDesignImplementationTask", () => {
+  const priorTask = {
+    issue_id: "issue-1",
+    trigger_comment_id: "comment-old",
+    coalesced_comment_ids: [],
+    delivered_comment_ids: [],
+    trigger_summary: "【Design Center 设计稿一键还原】",
+  } as unknown as AgentTask;
+
+  it("uses the trigger marker only before a new submission is made", () => {
+    expect(isDesignImplementationTask(priorTask, "issue-1", "")).toBe(true);
+    expect(isDesignImplementationTask(priorTask, "issue-1", "comment-new")).toBe(false);
+  });
+
+  it("tracks the submitted comment through direct, coalesced, or delivered ids", () => {
+    expect(isDesignImplementationTask({ ...priorTask, trigger_comment_id: "comment-new" }, "issue-1", "comment-new")).toBe(true);
+    expect(isDesignImplementationTask({ ...priorTask, coalesced_comment_ids: ["comment-new"] }, "issue-1", "comment-new")).toBe(true);
+    expect(isDesignImplementationTask({ ...priorTask, delivered_comment_ids: ["comment-new"] }, "issue-1", "comment-new")).toBe(true);
+    expect(isDesignImplementationTask(priorTask, "issue-2", "comment-old")).toBe(false);
+  });
+
+  it("matches marker-aware tasks to the selected design version, frame, and repository", () => {
+    const identity = {
+      assetId: "asset-1",
+      designRef: "design-1",
+      revisionId: "revision-1",
+      contentDigest: "sha256:abc",
+      frameRef: "frame-1",
+      selectionKey: "selection-stable-1",
+      projectResourceId: "repository-1",
+    };
+    const markedTask = {
+      ...priorTask,
+      trigger_summary: `${priorTask.trigger_summary}\n${designImplementationTaskMarker(identity)}`,
+    } as AgentTask;
+
+    expect(isDesignImplementationTask(markedTask, "issue-1", "", {
+      ...identity,
+      designRef: "design-ref-rotated",
+      frameRef: "frame-ref-rotated",
+    })).toBe(true);
+    expect(isDesignImplementationTask(markedTask, "issue-1", "", { ...identity, selectionKey: "selection-stable-2" })).toBe(false);
+    expect(isDesignImplementationTask(priorTask, "issue-1", "", identity)).toBe(false);
+  });
+
+  it("recovers the selection identity from the full trigger comment when the task summary is truncated", () => {
+    const identity = {
+      assetId: "asset-1",
+      designRef: "design-1",
+      revisionId: "revision-1",
+      contentDigest: "sha256:abc",
+      frameRef: "frame-1",
+      projectResourceId: "repository-1",
+    };
+    const fullComment = `${priorTask.trigger_summary}\n${designImplementationTaskMarker(identity)}\nImplement this design.`;
+    const truncatedTask = {
+      ...priorTask,
+      trigger_summary: `${priorTask.trigger_summary}\n<!-- multica-design-implementation:%7B%22assetId%22%3A%22asset-1%22…`,
+    } as AgentTask;
+
+    expect(isDesignImplementationTask(truncatedTask, "issue-1", "", identity, fullComment)).toBe(true);
+  });
+});
+
+describe("designImplementationStatus", () => {
+  function receiptResult(status: "blocked" | "partial" | "cancelled" | "completed") {
+    return {
+      design_implementation: {
+        schema_version: "multica.design-implementation-receipt/v1",
+        collected_at: "2026-09-03T00:00:00Z",
+        result_digest: "sha256:abc",
+        identity: { design_ref: "design-1" },
+        target_files: [],
+        preview_paths: [],
+        result: {
+          schema_version: "multica.design-implementation-result/v1",
+          status,
+        },
+      },
+    };
+  }
+
+  it("uses only the daemon-validated receipt outcome after completion", () => {
+    const completedAgentTask = {
+      status: "completed",
+      result: receiptResult("blocked"),
+    } as unknown as AgentTask;
+
+    expect(designImplementationStatus(completedAgentTask)).toBe("blocked");
+  });
+
+  it.each(["partial", "cancelled", "completed"] as const)("preserves a %s receipt outcome", (status) => {
+    const completedAgentTask = {
+      status: "completed",
+      result: receiptResult(status),
+    } as unknown as AgentTask;
+
+    expect(designImplementationStatus(completedAgentTask)).toBe(status);
+  });
+
+  it("rejects a completed task without a canonical receipt", () => {
+    const completedAgentTask = {
+      status: "completed",
+      result: { output: "```json\n{\"status\":\"completed\"}\n```" },
+    } as unknown as AgentTask;
+
+    expect(designImplementationStatus(completedAgentTask)).toBe("failed");
+  });
+
+  it("keeps the live Agent task status until execution is terminal", () => {
+    const runningAgentTask = {
+      status: "running",
+      result: receiptResult("blocked"),
+    } as unknown as AgentTask;
+
+    expect(designImplementationStatus(runningAgentTask)).toBe("running");
+  });
+});
+
 
 describe("selectIssueRestoreTask", () => {
   it("ignores completed restore tasks from stale revisions", () => {
@@ -524,5 +643,34 @@ describe("issue design scope options", () => {
       { id: "frame:frame-3", label: "未分组页面", kind: "frame", count: 1 },
     ]);
     expect(options.find((option) => option.id === "frame:frame-1")?.items[0]?.groupName).toBe("Group 43");
+  });
+});
+
+describe("project design implementation assets", () => {
+  const designFile = (overrides: Partial<DesignFile>): DesignFile => ({
+    id: "file-1",
+    workspace_id: "workspace-1",
+    project_id: "project-1",
+    title: "Dashboard",
+    description: null,
+    source_type: "upload",
+    source_ref: {},
+    current_revision_id: "revision-1",
+    created_by: null,
+    created_at: "2026-09-02T00:00:00Z",
+    updated_at: "2026-09-02T00:00:00Z",
+    ...overrides,
+  });
+
+  it("labels Figma and Multica sources without relying on the upload transport", () => {
+    expect(designImplementationSourceLabel(designFile({ source: "figma" }))).toBe("Figma");
+    expect(designImplementationSourceLabel(designFile({ source: "multica" }))).toBe("Multica Design");
+    expect(designImplementationSourceLabel(designFile({ source_ref: { kind: "figma_import" } }))).toBe("Figma");
+  });
+
+  it("only exposes assets carrying both a pinned revision and signed design reference", () => {
+    expect(isValidImplementationAsset(designFile({ design_ref: "signed-ref" }))).toBe(true);
+    expect(isValidImplementationAsset(designFile({ design_ref: undefined }))).toBe(false);
+    expect(isValidImplementationAsset(designFile({ design_ref: "signed-ref", current_revision_id: null }))).toBe(false);
   });
 });

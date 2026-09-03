@@ -264,6 +264,14 @@ export function projectDesignAssetListOptions(wsId: string, projectId: string) {
   });
 }
 
+export function designAssetFramesOptions(wsId: string, designRef: string) {
+  return queryOptions({
+    queryKey: designKeys.assetFrames(wsId, designRef),
+    queryFn: () => api.getDesignAssetFrames(designRef),
+    enabled: Boolean(wsId && designRef),
+  });
+}
+
 /** Workspace catalogue of GitHub repositories usable as design targets. */
 export function designRepositoryCatalogueOptions(wsId: string) {
   return queryOptions({

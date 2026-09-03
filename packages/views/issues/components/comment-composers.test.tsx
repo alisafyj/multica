@@ -440,6 +440,28 @@ describe("comment composers", () => {
     expect(editorDefaultValues.values.at(-1)).toBe("");
   });
 
+  it("preserves the hidden design implementation identity through the editor roundtrip", async () => {
+    const marker = "<!-- multica-design-implementation:%7B%22assetId%22%3A%22asset-1%22%7D -->";
+    useCommentDraftStore.getState().setDraft(
+      "new:issue-1",
+      `【Design Center 设计稿一键还原】\n${marker}\n[@UI Agent](mention://agent/agent-1)\n\nImplement it.`,
+    );
+    const onSubmit = vi.fn().mockResolvedValue("comment-1");
+    const { container } = renderCommentInput(onSubmit);
+
+    // Tiptap omits HTML comments when it serializes the editable document.
+    fireEvent.change(screen.getByTestId("editor"), {
+      target: { value: "【Design Center 设计稿一键还原】\n[@UI Agent](mention://agent/agent-1)\n\nImplement it." },
+    });
+    fireEvent.click(getSubmitButton(container));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(
+      expect.stringContaining(marker),
+      undefined,
+      undefined,
+    ));
+  });
+
   it("keeps the reply editor's initial draft snapshot after persistence rerenders", () => {
     renderReplyInput({ draftKey: "reply:issue-1:comment-1" });
     activateComposer("reply-composer-shell");

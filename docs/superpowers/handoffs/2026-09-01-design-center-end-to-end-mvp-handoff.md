@@ -1,57 +1,38 @@
 # Design Center End-to-End MVP 权威交接文档
 
-> 更新时间：2026-09-01（Asia/Shanghai）
+> 更新时间：2026-09-03（Asia/Shanghai）
 >
-> 适用仓库：`/Users/fengyujie/Documents/soyoung/multica`
+> 仓库：`https://github.com/alisafyj/multica`
 >
-> 当前集成分支：`codex/design-center-end-to-end-mvp`
+> Tasks 10–12 分支：`codex/design-center-end-to-end-mvp-tasks-10-12`
 >
-> **本文件是本轮 Design Center End-to-End MVP 的最高优先级交接事实源。**
-> 当旧聊天、旧交接、Plan、Spec、活动索引或历史实现说明与本文件冲突时，以本文件为准；产品长期事实仍需结合 `docs/product/design-center/README.md` 判断 confirmed / proposal / superseded，但本轮执行状态、暂停点、分支和下一步以本文为准。
+> Task 12 实现提交：`874df6de0ebefd748748aa2bbe73fa90f70ce858`
+>
+> 本文件是当前 Design Center End-to-End MVP 的最高优先级交接事实源。
+
+旧聊天、旧机器路径、旧数据库/profile 和此前“Task 12 暂停”的说明均已过期。长期产品事实仍以 `docs/product/design-center/README.md` 中的 confirmed / proposal / superseded 标记为准。
 
 ---
 
-## 0. 下一位 Agent 先做什么
+## 0. 当前结论
 
-先保持只读，不要启动服务，不要修改代码，不要恢复自动推进。
+Tasks 10–12 已全部实现、复审并通过真实产品 Gate：
 
-按顺序读取：
+1. Task 10：真实 saved Multica Design 经统一 Implementation Context、普通 Agent 和隔离目标 checkout 完成实现与真实渲染验收；
+2. Task 11：真实上传 Figma 的 exact frame 与 4-frame group 经同一 Context/Result 契约、普通 Agent 和隔离目标 checkout 完成验收；
+3. Task 12：真实 Issue UI 完成设计选择、精确 frame、repository、可编辑 prompt、手动发送、普通 Agent 状态和结构化结果投影，Issue 状态保持不变；
+4. Tasks 10–12 Final Gate：**PASS**；
+5. Task 13、Task 14 没有启动；
+6. 没有 Push、PR、`main` 合并或执行分支回合集成分支；
+7. 所有 Task 12 隔离 API/Web/daemon/PostgreSQL/browser 已停止，临时 profile 已清理。
 
-1. 本文件；
-2. `docs/product/design-center/README.md`；
-3. `docs/superpowers/plans/design-center-active-index.md`；
-4. 只在需要理解 Task 7–9 时读取 `docs/superpowers/plans/2026-08-31-design-center-end-to-end-mvp-roadmap.md` 对应章节；
-5. 当前任务引用的单一 Spec 章节，不扫描整个 Plans/Specs 目录。
-
-随后核验：
-
-```bash
-cd /Users/fengyujie/Documents/soyoung/multica/.worktrees/design-center-end-to-end-mvp-integration
-git status --short --branch
-git log -5 --oneline --decorate
-
-cd /Users/fengyujie/Documents/soyoung/multica/.worktrees/design-center-end-to-end-mvp-task-7
-git status --short --branch
-make status
-```
-
-第一份回复只需要说明：
-
-- 已理解的产品目标；
-- 当前分支和暂停点；
-- 截图中的首页/仓库页面为什么出现、它属于哪个路由或状态；
-- 与用户此前认可的首页设计相比，当前实现发生了什么变化；
-- 下一步准备先查什么。
-
-**不要在第一份回复后自行启动 Task 7。先回答用户的问题并等待用户决定。**
+下一位接手者不要重做 Tasks 10–12。先审查本分支和报告，再等待用户明确决定是否合回集成分支或启动 Task 13/14。
 
 ---
 
-## 1. 用户当前要求
+## 1. 目标与边界
 
-### 1.1 总目标
-
-先跑通一条真实、可验收的 Design Center MVP：
+完整产品链路：
 
 ```text
 真实项目与仓库
@@ -65,389 +46,219 @@ make status
 → 用户验收完整链路
 ```
 
-### 1.2 当前交互方式
+执行边界：
 
-用户已要求暂停自动执行。接下来先“用户问、Agent 答”。
-
-因此当前不是继续跑 Task 7 的状态，而是：
-
-1. 先解释当前页面为什么与此前设计不一致；
-2. 确认正确首页和项目/仓库工作区的信息架构；
-3. 用户确认后，才恢复 Group 3。
-
-### 1.3 执行组织
-
-- Group 3 仍由 Task 7、Task 8、Task 9 组成；恢复后以三个 Task 为一组推进。
-- 执行方式不做模型、实现者或审查角色限定。
-- Agent 可直接完成工作，也可自行选择工具；关键是遵守分支、写集、验证、提交和产品验收边界。
-- 不因环境工具的单一误判重复执行同一失败命令；确认底层身份和安全边界后，应选择替代路径继续。
-- 当前暂停指令优先于自动推进规则。
+- 真实 API、UI、数据库、daemon 和目标 checkout 验收；不使用 mock 或仅以 HTTP 200 代替产品验收；
+- 不截图、不录屏、不采集 trace；UI 验收使用 DOM、accessibility、computed layout 和真实交互；
+- 不自动提交目标用户仓库中的还原产物；
+- 不 Push、不创建 PR、不合 `main`，不自动合回集成分支；
+- Task 13/14 需要用户另行授权。
 
 ---
 
-## 2. 文档权威顺序
+## 2. 文档顺序
 
-### 2.1 第一优先级
+1. 本文件；
+2. `docs/product/design-center/README.md`；
+3. 根 `DESIGN.md`；
+4. `docs/superpowers/plans/design-center-active-index.md`；
+5. `docs/superpowers/plans/2026-08-31-design-center-end-to-end-mvp-roadmap.md`；
+6. `docs/superpowers/specs/2026-08-26-unified-design-asset-implementation-design.md`；
+7. `docs/superpowers/specs/2026-08-27-issue-design-automation-design.md`；
+8. `.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/progress.md` 和各 Task report/review。
 
-1. 本交接文档：当前状态、暂停点、分支、下一步和执行边界；
-2. `docs/product/design-center/README.md`：Design Center 长期 confirmed / proposal / superseded 产品事实。
-
-### 2.2 当前执行文档
-
-- `docs/superpowers/plans/design-center-active-index.md`：文档导航；
-- `docs/superpowers/plans/2026-08-31-design-center-end-to-end-mvp-roadmap.md`：Task 1–14 路线；
-- `docs/superpowers/specs/2026-08-26-unified-design-asset-implementation-design.md`：Task 8–11 的统一设计引用、Prompt、MCP、Context 和 Result 契约。
-
-### 2.3 支撑产品 Spec
-
-- `docs/superpowers/specs/2026-08-26-design-center-project-repository-views-m1-design.md`；
-- `docs/superpowers/specs/2026-08-27-issue-design-automation-design.md`；
-- `docs/superpowers/specs/2026-08-27-multica-design-center-master-plan.md`。
-
-这些文档提供产品和技术背景；若状态描述与本文不一致，以本文为准。
-
-### 2.4 已完成实施计划，仅用于审计
-
-- `docs/superpowers/plans/2026-08-27-design-file-repository-scope.md`；
-- `docs/superpowers/plans/2026-08-27-design-center-repository-read-projection.md`。
-
-它们对应已经完成的仓库关联和读取投影地基，不是当前待执行计划。
-
-### 2.5 延后计划
-
-- `docs/superpowers/plans/2026-08-31-design-center-finder-repository-workspaces.md`。
-
-完整 Finder、多项目 Tab、批量关联、实时精雕等内容继续冻结到 End-to-End MVP 验收之后。不要因为当前首页有问题就直接执行整份 Finder 计划；先查明当前页面与用户已确认设计的偏差。
+`docs/superpowers/plans/2026-08-31-design-center-finder-repository-workspaces.md` 是后续范围，不属于 Tasks 10–12。
 
 ---
 
-## 3. Git 与工作树状态
+## 3. Git 状态与提交链
 
-### 3.1 主 checkout
-
-```text
-路径：/Users/fengyujie/Documents/soyoung/multica
-分支：main
-代码 HEAD：a7606af71
-```
-
-主 checkout 仍有用户保留修改和未跟踪文档。不要清理、重置、提交或覆盖。
-
-本次判断：
-
-- `AGENTS.md`、`CLAUDE.md` 的修改只更新 GitNexus symbol/relationship 数量；这是易漂移的本地索引快照，不属于 Design Center 产品事实，因此没有带入 MVP 集成分支；
-- 9 份 Design Center Plan/Spec 有产品、执行或审计价值，已带入 MVP 集成分支；
-- 原交接文档已重写为本文。
-
-### 3.2 MVP 集成分支
+Group 3 集成基线：
 
 ```text
-路径：/Users/fengyujie/Documents/soyoung/multica/.worktrees/design-center-end-to-end-mvp-integration
-分支：codex/design-center-end-to-end-mvp
-文档归档前代码 HEAD：e06467e5c
+5ba52ff5a12538759f90e3ec12c00e10a322d5b0
+merge(group-3): validate unified design implementation contracts
 ```
 
-`e06467e5c` 已包含 Task 1–6 / Group 1–2 的产品代码和测试。
-
-本文和相关 Plan/Spec 会作为独立文档提交位于该代码基线之上。下一位 Agent 应使用 `git rev-parse HEAD` 获取最新文档提交，不要假定 HEAD 仍是 `e06467e5c`。
-
-### 3.3 Group 3
+Tasks 10–12 分支：
 
 ```text
-路径：/Users/fengyujie/Documents/soyoung/multica/.worktrees/design-center-end-to-end-mvp-group-3
-分支：codex/design-center-end-to-end-mvp-group-3
-HEAD：e06467e5c
-状态：Task 7–9 尚未合入
+codex/design-center-end-to-end-mvp-tasks-10-12
 ```
 
-### 3.4 Task 7
+已完成提交链：
 
 ```text
-路径：/Users/fengyujie/Documents/soyoung/multica/.worktrees/design-center-end-to-end-mvp-task-7
-分支：codex/design-center-end-to-end-mvp-task-7
-HEAD：e06467e5c
-状态：clean，无代码、报告或提交
+7eeeb9950 docs(designs): hand off tasks 10 through 12
+21426e1da feat(designs): restore Multica designs into repository code
+1928183ef fix(designs): preserve implementation package evidence
+cf3a68a20 test(designs): cover implementation result validation
+a819e315b fix(designs): reject unknown package sources
+3537b728b fix(designs): preserve safe prototype archive validation
+60f7930f3 test(designs): preserve DOM query audit boundary
+017946514 fix(designs): constrain DOM query audit helpers
+6061c078c feat(designs): restore Figma through unified implementation context
+761936313 fix(designs): bind Figma restore evidence
+874df6de0 feat(issues): implement tasks from unified design assets
 ```
 
-不要把集成分支的文档提交误当成 Task 7 产品代码。需要继续 Task 7 时，先从集成工作树读取本文，再进入 Task 7 工作树。
+Task 12 本地验收辅助 `_task12_auth.Makefile` 与 `server/cmd/task12-local-auth/` 没有进入产品提交。不得把它们当成生产认证实现。
+
+执行分支未推送，未创建 PR，未合入 `origin/codex/design-center-end-to-end-mvp` 或 `main`。不要改写历史或自动合并。
 
 ---
 
-## 4. 已完成的产品能力：Task 1–6
+## 4. 已完成能力
 
-### 4.1 Group 1 / Task 1–3
+### 4.1 Group 1 / Tasks 1–3
 
-已完成：
+- repository grounding completion 基线；
+- 项目/仓库视角和设计稿仓库关联；
+- “关联仓库”与 `repository_grounded=true` 分离；
+- repository-specific saved design system 精确读取；
+- 跨项目、跨仓库和删除清理边界。
 
-- 修复 repository grounding completion 基线；
-- 建立最小项目/仓库视角和单份设计稿仓库关联；
-- 区分“关联仓库”和“已经通过 grounding”；
-- 仓库工作流读取精确 repository-specific design system；
-- 禁止仓库工作流静默回退到项目通用设计体系；
-- 跨项目、跨仓库和删除清理边界已覆盖。
+### 4.2 Group 2 / Tasks 4–6
 
-Group 1 已合入 MVP 集成分支。
-
-### 4.2 Group 2 / Task 4–6
-
-已完成：
-
-- Home 和 Repository 入口复用同一个设计体系创建表单；
+- Home 和 Repository 入口复用同一创建表单；
 - Repository 入口预填项目、仓库和 GitHub 来源；
-- 创建和生成固定仓库 scope，不允许 repository workflow fallback；
-- Design Document revision 保存 design-system revision provenance；
-- 历史 Design Document 不随设计体系后续修改而漂移；
-- 生成监控、Preview、调整、保存与“基于最新体系分叉”链路已接入；
-- 与 V2 repository provenance 相关的测试修复已完成。
+- 固定 repository scope，禁止 fallback；
+- Design Document revision 保存设计体系 provenance；
+- Preview、调整、保存和基于最新体系分叉。
 
-Group 2 已合入 MVP 集成分支，集成代码基线为 `e06467e5c`。
+### 4.3 Group 3 / Tasks 7–9
 
-### 4.3 重要边界
+Group 3 已合入集成分支并通过最终审查。Task 7 真实验收完成隔离 Workspace、Project、Repository association、Agent、repository analysis、repository-specific design system、Design A、Design B、调整、Audit、Preview 和保存。报告：`docs/product/design-center/mvp-phase-a-validation.md`。
 
-以上表示工程能力已经落地，不表示最终 UI、首页信息架构、真实视觉质量或完整产品链路已经被用户接受。
+Task 8 提供来源无关、版本化、不透明的 `design_ref` / `frame_ref` 和 Frame API。Task 9 提供统一 Implementation Prompt / Context / Result 契约，并明确 Prompt 只供用户审阅/预填，不自动发送、启动 Agent、提交代码或改变 Issue 状态。
 
-特别是：lint、测试、HTTP 200、页面能打开，都不能替代用户可见的 UI 验收。
+### 4.4 Task 10：Multica Source Adapter
 
----
+真实 saved Multica Design A 经统一 MCP Implementation Context 物化，并由普通 Agent 在隔离 `alisafyj/multica` checkout 完成实现。目标 typecheck、lint、生产构建以及桌面/移动 Chromium DOM 交互通过；validator 返回 `multica.design-implementation-result/v1` / `completed`。目标仓库没有 commit 或 Push。
 
-## 5. 当前暂停位置：Task 7
-
-### 5.1 Task 7 原目标
-
-真实执行：
+证据：
 
 ```text
-真实项目/仓库
-→ repository-specific saved design system revision
-→ Design A：列表/表格/表单
-→ Design B：详情/工作流/状态/Overlay
-→ 监控 / Audit / Preview
-→ 至少一次调整
-→ 保存两份 Design Document
-→ 验证 source / status / grounding / provenance
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-10-report.md
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-10-review.md
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-10-real-context.json
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-10-mcp-result.json
 ```
 
-Task 7 最终只应提交真实中文验收报告：
+### 4.5 Task 11：Figma Source Adapter
+
+真实 Figma 文件通过产品上传链路进入 valid frozen revision。exact frame 和 4-frame group 均经同一 Implementation Context/result contract 与普通 Agent 执行；两个隔离目标 checkout 均通过 typecheck、lint、生产构建和桌面/移动 Chromium 交互。validator 均为 `completed`，安全复审为 APPROVED。
+
+证据：
 
 ```text
-docs/product/design-center/mvp-phase-a-validation.md
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-11-report.md
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-11-review.md
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-11-frame-mcp-result.json
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-11-group-mcp-result.json
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-11-frame-validator-result.json
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-11-group-validator-result.json
 ```
 
-如果验收暴露产品或工具缺陷，修复必须是独立聚焦提交，不能把失败包装成 PASS 报告。
+### 4.6 Task 12：Issue 统一设计选择与还原入口
 
-### 5.2 已完成的真实环境恢复
+实现内容：
 
-曾经完成并验证：
+- Issue 右侧栏用同一 selector 展示 saved Multica 与 valid Figma designs，并显示来源 badge；
+- 精确选择 page/frame 和 target repository；association 仅预填，不改写 asset association；
+- 调用统一 API 生成 implementation prompt 并写入现有 Tiptap comment editor；
+- prompt 可编辑且保持未发送，只有用户显式 Send 才走普通 Issue comment/Agent path；
+- 投影 pending/running/completed/blocked/failed 状态；
+- completed 状态只读取 daemon 验证并入库的 `multica.design-implementation-receipt/v1` / `multica.design-implementation-result/v1`，不解析 Agent prose；
+- 设计选择、prompt、发送、执行和结果投影均不修改 Issue status；
+- outer workflow 来源无关，source-specific 逻辑留在 metadata/context resolver；
+- 新增稳定、不透明的 `selection_key` 关联刷新后的 signed frame refs；它只用于 UI identity correlation，不参与授权；
+- specialized runtime 明确禁止目标 checkout 本地 commit、Push、PR 和 merge。
 
-- 隔离 PostgreSQL：宿主端口 `15432`；
-- 数据库：`multica_design_center_end_to_end_mvp_task_7_392`；
-- migrations：576 条，最新 `909_design_document_revision_repository_grounding`；
-- API：`18472`，`/health`、`/readyz` 通过，commit `e06467e5c`；
-- Web：通过单组件替代路径在 `13392` 真实返回页面；
-- daemon profile：`dev-design_center_end_to_end_mvp_task_7-392`；
-- daemon/runtime 曾经真实运行；
-- 未停止、复用或修改 WindRider 占用的 `5432`；
-- Web launcher 的 process-group ownership 检查曾误杀已经返回 200 的 Next 进程，因此继续时不要机械重复相同 `make up`。
-
-### 5.3 已创建的真实数据
-
-Task 7 隔离数据库中已创建：
-
-- Workspace：`Dev`；
-- Project：`真实 CRM 仓库设计体系与双设计稿端到端验收`；
-- Repository：`coder-zkl1988/multica`；
-- Agent：`Design Gate Agent`；
-- 可用 runtime：曾验证存在多个 online runtime，实际选择过 Codex runtime；
-- Repository analysis task：曾启动，后因用户要求暂停而安全取消。
-
-没有完成：
-
-- repository analysis 成功结果；
-- repository-specific design system generation；
-- Audit / Preview；
-- saved design-system revision；
-- Design A / Design B；
-- adjustment；
-- 两份文档保存；
-- Task 7 验收报告或提交。
-
-### 5.4 当前环境已停止
-
-用户要求暂停后已经完成：
-
-- repository analysis task 状态变为 `cancelled`；
-- API、Web、daemon、desktop 均停止；
-- 隔离数据库、环境注册、Workspace、Project、Repository 和 Agent 保留；
-- Task 7 worktree clean；
-- 没有运行中的后台执行任务；
-- Task 8、Task 9 尚未开始。
-
-恢复时优先复用现有隔离数据和 profile，不要重新创建重复 Workspace、Project、Repository 或 Agent。
+安全边界：服务端验证 workspace/user/project/repository/issue/task/design revision/selection identity；implementation reference 短期、签名、不透明；task-bound MCP 忽略调用者提供的 task identity；daemon 验证 exact checkout root、repository commit、bounded target/evidence paths 和 receipt。
 
 ---
 
-## 6. 当前最高优先级未解决问题：首页与页面结构不一致
+## 5. Task 12 真实验收
 
-用户查看 Task 7 截图后明确提出：
+2026-09-03 在全新隔离 PostgreSQL/API/Web/daemon 环境中，通过真实 API/UI 创建 Workspace、Project、`alisafyj/multica` association、Agent 和 Issue `DEV-17`。
 
-- “这个图片是什么？”
-- “为什么还会有这样的一个页面？”
-- “首页为什么不是我之前的设计了？”
+真实路径：
 
-截图中可见：
+1. 在 `DEV-17` Issue UI 选择 Task 11 的真实 Figma upload；
+2. 选择 exact frame `个人主页单排 -官号` 和 `alisafyj/multica`；
+3. 生成 prompt，使用真实键盘编辑，确认数据库仍为 0 comment / 0 task；
+4. 手动 Send 后创建普通 Agent task，UI 显示 running；
+5. Agent 在隔离 checkout 完成实现并返回结构化 receipt；
+6. UI 显示 `验收通过`：1 mapping、3 target files、4 passed commands、1 passed preview、0 blockers；
+7. Issue 始终保持 `todo`；
+8. 目标 checkout HEAD 未变化，没有 commit、Push、PR 或 merge。
 
-- 固定“首页”Tab；
-- 项目/仓库选择条；
-- 空的“设计稿”“设计草稿”区块；
-- 仓库专属“创建设计体系”表单；
-- 侧边栏 Designs 入口。
+独立目标页面验收：
 
-这张图只证明当前 Task 7 分支能够进入某个 Design Center 项目/仓库状态，不证明它是用户此前认可的首页，也不证明当前信息架构正确。
+- Desktop 1440x1000：375px 居中 shell，12/12 图片解码，两篇内容，无横向溢出；
+- Mobile 390x844：375x844 shell，可纵向滚动，12/12 图片解码，两篇内容，无横向溢出；
+- 真实点击关注和首个点赞后，route/title/heading 保持正确；验收页面 0 console errors / 0 warnings。
 
-**目前尚未完成根因诊断。禁止把截图中的页面直接当作已验收 UI。**
-
-下一位 Agent 首先要只读查明：
-
-1. 截图实际 URL、路由和组件；
-2. 它是 Home、项目工作区、仓库工作区，还是路由/状态混合导致的错误页面；
-3. Task 2 / Task 4 的最小 MVP 视图是否覆盖或替换了此前用户认可的首页；
-4. 此前认可的首页设计对应哪个组件、Spec、截图或提交；
-5. 当前差异是有意的 MVP 临时界面、状态选择错误，还是 UI 回归；
-6. 需要恢复原首页、调整路由，还是把仓库创建表单放回正确层级。
-
-完成诊断后先向用户解释，不要立即改代码。用户确认修复方向后再继续。
+没有使用 screenshot、录屏或 trace。
 
 ---
 
-## 7. 恢复 Group 3 的正确顺序
+## 6. 验证结果
 
-用户确认首页/路由处理方向后：
+- Core typecheck/lint：PASS；
+- Views typecheck：PASS；Views lint：0 errors，624 个仓库既有 warnings；
+- Core focused tests：259 PASS；
+- Views focused tests：91 PASS，3 skipped；
+- Comment composer tests：42 PASS；
+- 真实隔离数据库 handler tests：PASS；
+- Go designimplementation、相关 daemon/execenv、CLI MCP focused tests：PASS；
+- `go build ./cmd/server ./cmd/multica`：PASS；
+- `pnpm --filter @multica/web build`：PASS，仅有仓库既有 `::highlight` optimizer warnings；
+- `git diff --check`：PASS；
+- Task 12 code/security review：APPROVED；
+- Tasks 10–12 Final Gate：PASS。
 
-### 7.1 先处理 UI 偏差
+全量 daemon/CLI package 测试在当前 Multica-managed worktree 中会被外层 daemon task marker/profile 污染：无关用例显式预期不存在这些状态。不要把这组环境型失败误判为 Task 12 回归；本次改动关联 focused tests 和生产构建均通过。
 
-- 修改前读取 `docs/product/design-center/README.md`；
-- 复现用户截图和此前认可首页；
-- 修改已有函数/组件前执行 GitNexus upstream impact；
-- HIGH / CRITICAL 风险先告知用户；
-- 使用最小写集修复；
-- 真实浏览器验证，不以测试或 HTTP 200 代替；
-- 修复作为独立提交，不 amend。
+提交前 `gitnexus detect-changes` 已执行，但本地 GitNexus 图谱因 `Binder exception: Cannot find property id for n` 降级，未产生可信影响分析；最终审查依据真实调用链、差异审阅、focused tests 和生产构建，不能引用其 `No changes detected` 文案作为证据。
 
-### 7.2 再恢复 Task 7
-
-- 复用 Task 7 worktree 和已有隔离数据库；
-- 检查 `make status`；
-- 恢复 API、Web、daemon/runtime；
-- Web launcher 若继续误判，不重复同一失败命令，使用已验证的单组件环境执行路径，并记录 listener PID、cwd、端口和 commit identity；
-- 复用现有 Workspace / Project / Repository / Agent；
-- 重新发起 repository analysis；
-- 完成 repository-specific design system、Design A/B、调整、Audit、Preview、保存；
-- 生成中文验收报告；
-- 验证通过后提交 Task 7。
-
-### 7.3 Task 8
-
-目标：统一 `design_ref` / `frame_ref` 和 Frame API。
-
-核心边界：
-
-- `design_ref` 是不透明、版本化、来源无关的外部引用；
-- Multica 只接受 saved revision，draft 拒绝；
-- Figma 固定 valid uploaded revision；
-- `frame_ref` 对应 Figma Frame/Group 或 Design Document Page；
-- `GET /api/design-assets/{design_ref}/frames`；
-- 覆盖 tampering、cross-workspace/project、stale revision、draft rejection 和两种来源；
-- 不提前做多 Frame、多 Layer 或任意区域选择。
-
-提交信息：
+报告：
 
 ```text
-feat(designs): add unified design and frame references
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-12-report.md
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-12-review.md
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/tasks-10-12-gate-report.md
 ```
 
-### 7.4 Task 9
+这些 `.superpowers/sdd` 文件是本地验收证据，受该目录 `.gitignore` 管理，不属于产品提交。
 
-目标：Implementation Prompt / Context / Result 契约。
+---
 
-核心边界：
+## 7. 环境与剩余事项
 
-- `POST /api/design-assets/{design_ref}/implementation-prompt`；
-- MCP `get_implementation_context`；
-- `implementation-result/v1`；
-- 固定 workspace/project/issue、design_ref/frame_ref、target repository、saved/valid evidence、design-system provenance、write boundary 和 verification requirements；
-- Prompt 只返回给用户审阅/预填，不自动发送评论或启动 Agent；
-- 不自动 commit、Push、PR 或改变 Issue 状态；
-- API 和 MCP 必须产生同一个冻结 context identity。
+Task 12 隔离环境已清理：daemon profile 停止并删除，API/Web/browser 已停止，PostgreSQL 已停止。目标 Agent checkout 保留为审计证据；不要把其中的未提交实现误当成产品仓库提交。
 
-提交信息：
+明确未做：
+
+- 执行分支合回 `codex/design-center-end-to-end-mvp`；
+- Push、PR、`main` merge、发布；
+- Task 13、Task 14；
+- Post-MVP Finder、多项目 tabs、视觉精雕。
+
+---
+
+## 8. 下一位 Agent 的无漂移提示
 
 ```text
-feat(designs): define implementation context and result contracts
-```
+仓库只使用 https://github.com/alisafyj/multica。
+读取 docs/superpowers/handoffs/2026-09-01-design-center-end-to-end-mvp-handoff.md；这是当前权威事实源。
 
-### 7.5 Group 3 收口
+Tasks 10、11、12 和 Tasks 10–12 Final Gate 已通过，不要重新实现或重跑昂贵的真实 Agent 验收。
+分支：codex/design-center-end-to-end-mvp-tasks-10-12。
+Task 12 提交：874df6de0ebefd748748aa2bbe73fa90f70ce858。
 
-- 每个 Task 保留聚焦提交；修复使用独立提交，不 amend；
-- Task 7、8、9 分别合入 `codex/design-center-end-to-end-mvp-group-3`；
-- 合并使用 `git merge --no-ff`；
-- 三个 Task 完成后执行一次 changed-surface Group Gate；
-- Gate 通过后 `--no-ff` 合入 `codex/design-center-end-to-end-mvp`；
-- 不 Push、不创建 PR、不合入 `main`，除非用户明确批准；
-- Group 3 完成后停止并做产品视角汇报。
-
----
-
-## 8. 环境与安全边界
-
-- `windrider-postgres` 使用宿主机 `5432`；不得停止、重启、删除、改配或作为 Multica DB；
-- Task 7 Multica DB 使用隔离端口 `15432`；
-- 不删除已有容器、数据库、profile、Workspace、Project、Repository、Agent 或截图证据，除非用户明确要求；
-- 不输出 PAT、JWT、Cookie、验证码、数据库密码、API Key 或内部 object key；
-- 不通过 mock、HTTP 200、typecheck 或单元测试伪装真实产品验收；
-- “页面能渲染”不等于“视觉质量通过”；
-- “关联仓库”不等于“repository_grounded=true”；
-- Design Document draft 不能进入代码还原；
-- 设计创建、保存或还原不能自动改变 Issue 状态；
-- 不自动 commit、Push 或创建 PR。
-
----
-
-## 9. 当前明确的 NOT DONE
-
-- 用户认可的首页与当前截图页面之间的差异尚未诊断；
-- Task 7 真实 Gate 未完成；
-- `mvp-phase-a-validation.md` 不存在；
-- Task 8、Task 9 未开始；
-- Group 3 未合入 MVP 集成分支；
-- Multica/Figma 统一还原未完成；
-- Issue 设计选择/创建/恢复闭环未完成；
-- 最终 Task 14 端到端验收未完成；
-- Post-MVP Finder/视觉精雕不得提前执行。
-
----
-
-## 10. 给下一位 Agent 的启动提示词
-
-```text
-请先保持只读，不要启动服务、不要修改代码。
-
-当前 Design Center End-to-End MVP 的唯一权威交接文档是：
-
-/Users/fengyujie/Documents/soyoung/multica/.worktrees/design-center-end-to-end-mvp-integration/docs/superpowers/handoffs/2026-09-01-design-center-end-to-end-mvp-handoff.md
-
-先完整读取它，再读取：
-
-/Users/fengyujie/Documents/soyoung/multica/.worktrees/design-center-end-to-end-mvp-integration/docs/product/design-center/README.md
-/Users/fengyujie/Documents/soyoung/multica/.worktrees/design-center-end-to-end-mvp-integration/docs/superpowers/plans/design-center-active-index.md
-
-随后只读检查：
-
-1. MVP 集成分支和 Task 7 worktree 的 branch / HEAD / dirty state；
-2. Task 7 的 make status，但不要启动服务；
-3. 用户截图对应的真实 URL、路由、页面组件和状态来源；
-4. 此前用户认可的 Design Center 首页设计对应的代码、文档或提交；
-5. 为什么当前截图出现了项目/仓库选择条、空的设计稿区和仓库创建设计体系表单；
-6. 当前实现是临时 MVP 页面、路由状态错误还是 UI 回归。
-
-第一份回复只向用户说明：截图是什么、为什么出现、首页为什么变化、当前正确修复方向。不要直接修改代码，等待用户确认后再恢复 Group 3。
+先检查 git status/log 和 Task 12 report/review/gate report，再按用户的新授权继续。
+不得自动 Push、建 PR、合 main、回合集成分支或启动 Task 13/14。
+如果用户要求集成，先比较远端集成分支的新变化并审查冲突；不要 reset/clean/改写历史。
 ```

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/multica-ai/multica/server/internal/designimplementation"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -34,12 +36,28 @@ func TestDesignImplementationPromptAndContextShareFrozenIdentityWithoutSideEffec
 	prompt.Want(http.StatusOK)
 	var promptBody DesignImplementationPromptResponse
 	prompt.JSON(&promptBody)
+	if strings.Contains(promptBody.Prompt, fixture.designRef) || !strings.Contains(promptBody.Prompt, "任务身份由运行时绑定") || !strings.Contains(promptBody.Prompt, "```json\n{}\n```") {
+		t.Fatalf("prompt asks the Agent to copy opaque task references: %s", promptBody.Prompt)
+	}
+	if !strings.Contains(promptBody.Prompt, "不要调用 `multica issue status`") {
+		t.Fatalf("prompt does not preserve the Issue status: %s", promptBody.Prompt)
+	}
+	for _, required := range []string{`"target_files"`, `"target_components"`, `"reused_components"`, `"changed_routes"`, `"reused_routes"`, `"status": "passed"`, `"summary"`, `"path"`, `"rollback_notes": []`} {
+		if !strings.Contains(promptBody.Prompt, required) {
+			t.Fatalf("prompt does not document result field %s: %s", required, promptBody.Prompt)
+		}
+	}
+	for _, required := range []string{"`multica issue comment add`", "不得创建本地提交", "不得创建或上传截图、录屏或 trace", "文本或 JSON"} {
+		if !strings.Contains(promptBody.Prompt, required) {
+			t.Fatalf("prompt is missing implementation side-effect guard %q: %s", required, promptBody.Prompt)
+		}
+	}
 	contextResponse := callDesignImplementation(t, testHandler.GetDesignImplementationContext, fixture.designRef, fixture.requestBody())
 	contextResponse.Want(http.StatusOK)
 	var contextBody DesignImplementationContextResponse
 	contextResponse.JSON(&contextBody)
 
-	if promptBody.Prompt == "" || !reflect.DeepEqual(promptBody.Context, contextBody) {
+	if promptBody.Prompt == "" || !sameDesignImplementationContext(t, promptBody.Context, contextBody) {
 		t.Fatalf("prompt/context identity differs: prompt=%+v context=%+v", promptBody, contextBody)
 	}
 	if contextBody.SchemaVersion != "multica.design-implementation-context/v1" ||
@@ -48,6 +66,12 @@ func TestDesignImplementationPromptAndContextShareFrozenIdentityWithoutSideEffec
 		contextBody.ProjectID != fixture.projectID || contextBody.IssueID != fixture.issueID ||
 		contextBody.ProjectResourceID != fixture.repositoryID {
 		t.Fatalf("context did not freeze exact identity: %+v", contextBody)
+	}
+	if contextBody.Package == nil || contextBody.Package.Source != "figma" || contextBody.Package.ContentDigest != fixture.digest ||
+		contextBody.Package.RestorePackScope["version"] != "1.0" || contextBody.Package.RestorePackScope["kind"] != "frame" ||
+		contextBody.Package.RestorePackScope["designFileId"] == "" || contextBody.Package.RestorePackScope["revisionId"] != fixture.revisionID ||
+		len(contextBody.SourceInstructions) == 0 || len(contextBody.VerificationTargets) == 0 {
+		t.Fatalf("Figma package descriptor = %+v", contextBody)
 	}
 	if contextBody.Paths.Context != ".agent_context/design_implementation/context.json" ||
 		contextBody.Paths.Scope != ".agent_context/design_implementation/design/scope.json" ||
@@ -111,6 +135,40 @@ func TestDesignImplementationContextRejectsForeignScopeAndFrames(t *testing.T) {
 	}
 }
 
+func TestDesignImplementationContextBuildsFrozenFigmaGroupRestorePackScope(t *testing.T) {
+	fixture := designImplementationFixture(t)
+	claim, err := parseDesignAssetRef(fixture.designRef, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateDesignRevisionNativeJSONForTest(t, fixture.revisionID, restorePackGroupedNativeJSONForTest("Implementation Figma Group"))
+	revision, err := testHandler.Queries.GetDesignRevisionInWorkspace(context.Background(), db.GetDesignRevisionInWorkspaceParams{ID: parseUUID(fixture.revisionID), WorkspaceID: parseUUID(testWorkspaceID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim.ContentDigest = digestDesignAssetBytes(revision.NativeJson)
+	groupedRef := mustIssueDesignAssetRef(t, claim)
+	var frames DesignAssetFramesResponse
+	callDesignAssetFrames(t, groupedRef, testWorkspaceID, testUserID).Want(http.StatusOK).JSON(&frames)
+	var groupRef string
+	for _, frame := range frames.Frames {
+		selection, err := parseDesignAssetFrameRef(frame.FrameRef, time.Now())
+		if err == nil && selection.SelectionKind == "figma_group" {
+			groupRef = frame.FrameRef
+			break
+		}
+	}
+	if groupRef == "" {
+		t.Fatal("Figma group frame ref was not available")
+	}
+	var contextValue DesignImplementationContextResponse
+	callDesignImplementation(t, testHandler.GetDesignImplementationContext, groupedRef, fixture.requestBodyWith(fixture.issueID, fixture.repositoryID, groupRef)).Want(http.StatusOK).JSON(&contextValue)
+	if contextValue.Package == nil || contextValue.Package.Source != "figma" || contextValue.Package.RestorePackScope["kind"] != "figma_group" || contextValue.Package.RestorePackScope["groupId"] != "group-wallet" || contextValue.Package.RestorePackScope["revisionId"] != fixture.revisionID ||
+		contextValue.Package.RestorePackScope["frameCount"] != float64(2) || !reflect.DeepEqual(contextValue.Package.RestorePackScope["frameIds"], []any{"frame-main", "frame-secondary"}) {
+		t.Fatalf("Figma group package descriptor = %+v", contextValue.Package)
+	}
+}
+
 func TestDesignImplementationPromptAndContextShareSavedMulticaIdentity(t *testing.T) {
 	document := createDesignDocumentRevisionFixture(t)
 	projectID := uuidToString(document.Document.ProjectID)
@@ -137,7 +195,8 @@ func TestDesignImplementationPromptAndContextShareSavedMulticaIdentity(t *testin
 	callDesignImplementation(t, testHandler.BuildDesignImplementationPrompt, designRef, body).Want(http.StatusOK).JSON(&prompt)
 	var contextValue DesignImplementationContextResponse
 	callDesignImplementation(t, testHandler.GetDesignImplementationContext, designRef, body).Want(http.StatusOK).JSON(&contextValue)
-	if !reflect.DeepEqual(prompt.Context, contextValue) || !contextValue.SourceCapabilities.HasPrototype || contextValue.DesignSystemDigest != textToString(document.Revision.DesignSystemDigest) {
+	if !sameDesignImplementationContext(t, prompt.Context, contextValue) || !contextValue.SourceCapabilities.HasPrototype || contextValue.DesignSystemDigest != textToString(document.Revision.DesignSystemDigest) ||
+		contextValue.Package == nil || contextValue.Package.Source != "multica" || contextValue.Package.ContentDigest != document.Revision.ContentDigest || len(contextValue.SourceInstructions) == 0 || len(contextValue.VerificationTargets) == 0 {
 		t.Fatalf("saved Multica identity mismatch: prompt=%+v context=%+v", prompt.Context, contextValue)
 	}
 }
@@ -173,6 +232,83 @@ func TestDesignImplementationContextRejectsStaleAndDraftRevisions(t *testing.T) 
 		"project_resource_id": repositoryID, "issue_id": issueID,
 	}
 	assertDesignAssetError(t, callDesignImplementation(t, testHandler.GetDesignImplementationContext, designRef, body).ResponseRecorder, "revision_not_restorable")
+}
+
+func TestDesignImplementationContextAllowsOnlyBoundAgentTaskToConsumeHumanRef(t *testing.T) {
+	fixture := designImplementationFixture(t)
+	otherUserID := dbfx.User(t, "Implementation Ref Owner", "implementation-ref-owner@example.test")
+	dbfx.Member(t, testWorkspaceID, otherUserID, "member")
+
+	claim, err := parseDesignAssetRef(fixture.designRef, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, err := parseDesignAssetFrameRef(fixture.frameRef, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim.UserID = otherUserID
+	designRef := mustIssueDesignAssetRef(t, claim)
+	frameRef, err := issueDesignAssetFrameRef(claim, selection.SelectionKind, selection.SelectionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := fixture.requestBodyWith(fixture.issueID, fixture.repositoryID, frameRef)
+	agentID := createHandlerTestAgent(t, "implementation-ref-agent", nil)
+	markerJSON, err := json.Marshal(designimplementation.TaskIdentity{
+		AssetID: claim.AssetID, DesignRef: designRef, RevisionID: claim.RevisionID,
+		ContentDigest: claim.ContentDigest, FrameRef: frameRef, ProjectResourceID: fixture.repositoryID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	triggerContent := "【Design Center 设计稿一键还原】\n" + designimplementation.TaskMarkerPrefix + url.PathEscape(string(markerJSON)) + " -->"
+	triggerCommentID := dbfx.Comment(t, fixture.issueID, triggerContent)
+	boundTaskID := dbfx.Task(t, agentID, testutil.Cols{
+		"runtime_id": handlerTestRuntimeID(t), "status": "running", "issue_id": fixture.issueID,
+		"trigger_comment_id": triggerCommentID, "trigger_summary": "【Design Center 设计稿一键还原】 <!-- multica-design-implementation:truncated…",
+		"started_at": testutil.Raw("now()"),
+	})
+
+	var boundContext DesignImplementationContextResponse
+	callDesignImplementationAsTask(t, testHandler.GetDesignImplementationContext, designRef, body, agentID, boundTaskID, true).Want(http.StatusOK).JSON(&boundContext)
+	boundClaim, err := designimplementation.OpenReference(boundContext.ImplementationRef, time.Now())
+	if err != nil || boundContext.TaskID != boundTaskID || boundClaim.TaskID != boundTaskID {
+		t.Fatalf("implementation context task binding = context %q, claim %q, error %v", boundContext.TaskID, boundClaim.TaskID, err)
+	}
+	mismatchedBoundMarkerJSON, err := json.Marshal(designimplementation.TaskIdentity{
+		AssetID: claim.AssetID, DesignRef: designRef, RevisionID: claim.RevisionID,
+		ContentDigest: claim.ContentDigest, FrameRef: "different-frame", ProjectResourceID: fixture.repositoryID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(context.Background(), `UPDATE comment SET content = $1 WHERE id = $2`,
+		"【Design Center 设计稿一键还原】\n"+designimplementation.TaskMarkerPrefix+url.PathEscape(string(mismatchedBoundMarkerJSON))+" -->", triggerCommentID); err != nil {
+		t.Fatal(err)
+	}
+	assertDesignAssetError(t, callDesignImplementationAsTask(t, testHandler.GetDesignImplementationContext, designRef, body, agentID, boundTaskID, true).ResponseRecorder, "forbidden")
+
+	otherIssueID := dbfx.Issue(t, "other implementation issue", testutil.Cols{"project_id": fixture.projectID})
+	otherTaskID := createHandlerTestTaskForAgentOnIssue(t, agentID, otherIssueID)
+	assertDesignAssetError(t, callDesignImplementationAsTask(t, testHandler.GetDesignImplementationContext, designRef, body, agentID, otherTaskID, true).ResponseRecorder, "forbidden")
+	sameIssueUnboundTaskID := createHandlerTestTaskForAgentOnIssue(t, agentID, fixture.issueID)
+	assertDesignAssetError(t, callDesignImplementationAsTask(t, testHandler.GetDesignImplementationContext, designRef, body, agentID, sameIssueUnboundTaskID, true).ResponseRecorder, "forbidden")
+	mismatchedMarkerJSON, err := json.Marshal(designimplementation.TaskIdentity{
+		AssetID: claim.AssetID, DesignRef: designRef, RevisionID: claim.RevisionID,
+		ContentDigest: claim.ContentDigest, FrameRef: "different-frame", ProjectResourceID: fixture.repositoryID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mismatchedCommentID := dbfx.Comment(t, fixture.issueID, "【Design Center 设计稿一键还原】\n"+designimplementation.TaskMarkerPrefix+url.PathEscape(string(mismatchedMarkerJSON))+" -->")
+	mismatchedTaskID := dbfx.Task(t, agentID, testutil.Cols{
+		"runtime_id": handlerTestRuntimeID(t), "status": "running", "issue_id": fixture.issueID,
+		"trigger_comment_id": mismatchedCommentID, "trigger_summary": "【Design Center 设计稿一键还原】",
+		"started_at": testutil.Raw("now()"),
+	})
+	assertDesignAssetError(t, callDesignImplementationAsTask(t, testHandler.GetDesignImplementationContext, designRef, body, agentID, mismatchedTaskID, true).ResponseRecorder, "forbidden")
+	assertDesignAssetError(t, callDesignImplementationAsTask(t, testHandler.GetDesignImplementationContext, designRef, body, agentID, boundTaskID, false).ResponseRecorder, "forbidden")
 }
 
 type designImplementationTestFixture struct {
@@ -229,4 +365,30 @@ func callDesignImplementation(t *testing.T, handler http.HandlerFunc, designRef 
 	rctx.URLParams.Add("designRef", designRef)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	return testutil.Call(t, handler, req)
+}
+
+func callDesignImplementationAsTask(t *testing.T, handler http.HandlerFunc, designRef string, body map[string]any, agentID, taskID string, trustedTaskToken bool) *testutil.Response {
+	t.Helper()
+	req := newRequest(http.MethodPost, "/api/design-assets/"+designRef+"/implementation-context?workspace_id="+testWorkspaceID, body)
+	if trustedTaskToken {
+		req.Header.Set("X-Actor-Source", "task_token")
+	}
+	req.Header.Set("X-Agent-ID", agentID)
+	req.Header.Set("X-Task-ID", taskID)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("designRef", designRef)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	return testutil.Call(t, handler, req)
+}
+
+func sameDesignImplementationContext(t *testing.T, left, right DesignImplementationContextResponse) bool {
+	t.Helper()
+	for _, reference := range []string{left.ImplementationRef, right.ImplementationRef} {
+		if _, err := designimplementation.OpenReference(reference, time.Now()); err != nil {
+			t.Fatalf("implementation reference is invalid: %v", err)
+		}
+	}
+	left.ImplementationRef = ""
+	right.ImplementationRef = ""
+	return reflect.DeepEqual(left, right)
 }

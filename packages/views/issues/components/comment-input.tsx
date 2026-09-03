@@ -25,6 +25,20 @@ interface CommentInputProps {
   onAccepted?: (commentId: string) => void;
 }
 
+const designImplementationTrigger = "【Design Center 设计稿一键还原】";
+const designImplementationMarkerPattern = /<!-- multica-design-implementation:[^\n]*-->/;
+
+function designImplementationMarker(content: string) {
+  return content.match(designImplementationMarkerPattern)?.[0] ?? "";
+}
+
+function restoreDesignImplementationMarker(content: string, marker: string) {
+  if (!marker || !content.includes(designImplementationTrigger) || designImplementationMarkerPattern.test(content)) {
+    return content;
+  }
+  return `${content.trimEnd()}\n${marker}`;
+}
+
 function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
   const { t } = useT("issues");
   const { t: tEditor } = useT("editor");
@@ -44,6 +58,7 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
   const [initialDraft] = useState(() =>
     useCommentDraftStore.getState().getDraft(draftKey),
   );
+  const designImplementationMarkerRef = useRef(designImplementationMarker(initialDraft ?? ""));
   const [content, setContent] = useState(initialDraft ?? "");
   const [editorDefault, setEditorDefault] = useState(initialDraft ?? "");
   const [editorKey, setEditorKey] = useState(0);
@@ -89,6 +104,7 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
   useEffect(() => {
     if (injectedNonce === appliedInjection) return;
     const next = useCommentDraftStore.getState().getDraft(draftKey) ?? "";
+    designImplementationMarkerRef.current = designImplementationMarker(next);
     setEditorDefault(next);
     setContent(next);
     setIsEmpty(!next.trim());
@@ -156,6 +172,7 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
   const { submitting, submit } = useComposerSubmit({
     editorRef,
     uploadGate: gate,
+    normalize: (raw) => restoreDesignImplementationMarker(raw, designImplementationMarkerRef.current),
     // A top-level comment ends a turn: the caret is dropped rather than kept,
     // so the composer stops reading as "still writing" once the comment is
     // posted above it. Thread replies are the opposite — see ReplyInput.
@@ -202,6 +219,7 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
       editorRef.current?.clearContent();
       setContent("");
       setIsEmpty(true);
+      designImplementationMarkerRef.current = "";
       setSuppressedAgentIds(new Set());
       editorScrubbedRef.current = true;
       if (acceptedCommentIdRef.current) onAccepted?.(acceptedCommentIdRef.current);
