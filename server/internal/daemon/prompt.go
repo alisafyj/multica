@@ -1550,6 +1550,7 @@ func buildDesignDocumentPrompt(task Task, outputDir string) string {
 	default:
 		b.WriteString("- This task has NO repository grounding: no repository was attached. Design from the requirement and the design system alone, and do not describe the result as matching existing code — you have not seen any.\n")
 	}
+	b.WriteString("- Before exiting, run `multica design-document validate` from the task work directory. It reuses the platform's authoritative collector and static audit against `$MULTICA_OUTPUT_DIR`. If it exits non-zero with an audit report, fix every diagnostic in the staged package and run it again; do not finish until it exits zero with `passed: true`. The platform still runs the independent browser Preview gate after you exit.\n")
 	b.WriteString("- Before exiting, verify every required artifact is on disk and non-empty. Do not report success otherwise.\n")
 	b.WriteString(designDocumentQuestionForm())
 	return b.String()

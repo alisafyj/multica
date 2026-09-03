@@ -1725,6 +1725,7 @@ func TestBuildPromptDesignDocumentFirstGeneration(t *testing.T) {
 		"coverage.json",
 		"prototype/index.html",
 		"$MULTICA_OUTPUT_DIR",
+		"multica design-document validate",
 		"Do NOT write `manifest.json`",
 	} {
 		if !strings.Contains(prompt, want) {

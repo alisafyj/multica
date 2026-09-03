@@ -229,6 +229,7 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
   return (
     <div
       {...dropZoneProps}
+      data-comment-composer="main"
       className="relative flex flex-col rounded-lg bg-card pb-8 ring-1 ring-border"
     >
       {/* Lock the editor while the send is in flight. ContentEditor can't

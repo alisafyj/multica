@@ -362,6 +362,9 @@ describe("comment composers", () => {
   it("renders the main comment composer without a manual expand control", () => {
     const { container } = renderCommentInput();
 
+    expect(container.querySelector('[data-comment-composer="main"]')).toContainElement(
+      screen.getByRole("button", { name: "Send" }),
+    );
     // Readonly-first: shell shows the placeholder text; clicking mounts the
     // real editor in place.
     expect(screen.getByTestId("comment-composer-shell")).toHaveTextContent("Leave a comment...");

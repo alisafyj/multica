@@ -54,11 +54,14 @@ function shortDigest(value: string): string {
 function gate(value: unknown, kind: "Audit" | "Preview"): { label: string; detail: string | null; passed: boolean | null } {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { label: `${kind} 暂无结果`, detail: null, passed: null };
   const record = value as Record<string, unknown>;
-  if (typeof record.passed !== "boolean") return { label: `${kind} 暂无结果`, detail: null, passed: null };
-  const reason = typeof record.reason === "string" && record.reason.trim() ? record.reason
-    : typeof record.message === "string" && record.message.trim() ? record.message
+  const verification = kind === "Preview" && record.verification && typeof record.verification === "object" && !Array.isArray(record.verification)
+    ? record.verification as Record<string, unknown>
+    : record;
+  if (typeof verification.passed !== "boolean") return { label: `${kind} 暂无结果`, detail: null, passed: null };
+  const reason = typeof verification.reason === "string" && verification.reason.trim() ? verification.reason
+    : typeof verification.message === "string" && verification.message.trim() ? verification.message
       : null;
-  return { label: record.passed ? `${kind} 通过` : `${kind} 未通过`, detail: reason, passed: record.passed };
+  return { label: verification.passed ? `${kind} 通过` : `${kind} 未通过`, detail: reason, passed: verification.passed };
 }
 
 function Metadata({ label, value }: { label: string; value: string }) {

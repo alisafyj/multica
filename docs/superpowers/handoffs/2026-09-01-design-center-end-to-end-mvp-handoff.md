@@ -12,6 +12,10 @@
 >
 > Task 13 基线：`7aeb433e1d1ea52aef70b6dd2df583f5f11e99ce`
 >
+> Task 14 分支：`codex/design-center-end-to-end-mvp-task-14`
+>
+> Task 14 基线：`0f27dfa0f8b2656523c5501eb3ffaba8a675c2ec`
+>
 > 本文件是当前 Design Center End-to-End MVP 的最高优先级交接事实源。
 
 旧聊天、旧机器路径、旧数据库/profile 和此前“Task 12 暂停”的说明均已过期。长期产品事实仍以 `docs/product/design-center/README.md` 中的 confirmed / proposal / superseded 标记为准。
@@ -20,7 +24,7 @@
 
 ## 0. 当前结论
 
-Tasks 10–13 已完成当前授权范围：
+Tasks 10–14 已完成当前授权范围：
 
 1. Task 10：真实 saved Multica Design 经统一 Implementation Context、普通 Agent 和隔离目标 checkout 完成实现与真实渲染验收；
 2. Task 11：真实上传 Figma 的 exact frame 与 4-frame group 经同一 Context/Result 契约、普通 Agent 和隔离目标 checkout 完成验收；
@@ -28,11 +32,12 @@ Tasks 10–13 已完成当前授权范围：
 4. Tasks 10–12 Final Gate：**PASS**；
 5. Tasks 10–12 已通过 `9a6b819e9` 回合到集成分支，远端 `main@394174211` 已通过 `7aeb433e1` 合入；
 6. Task 13：Issue 右侧栏已接入 Multica Design 创建入口，锁定 Project/Issue、按上下文预填 Agent 与单一 GitHub 仓库，并复用现有 Design Document 工作区；
-7. Task 14 没有启动；
-8. 没有 Push、PR 或远端分支更新；
-9. 所有 Task 12 隔离 API/Web/daemon/PostgreSQL/browser 已停止，临时 profile 已清理。
+7. Task 14：两份 Multica Design、真实 Figma frozen revision 和 Issue 发起的 Design Document 均完成真实 UI/Agent/daemon 回执闭环；
+8. Task 14 修复 Preview 回执读取、Agent 全量诊断命令、主评论框稳定作用域、重跑包复用和复用工作区 checkout 解析；
+9. 没有 Push、PR 或远端分支更新；
+10. Post-MVP 1–7 保持冻结。
 
-下一位接手者不要重做 Tasks 10–13。先审查 Task 13 分支与本文件，再等待用户明确决定是否合回集成分支或启动 Task 14。
+下一位接手者不要重做 Tasks 10–14。先审查 Task 14 提交与本文件，再等待用户决定是否集成；不要自行启动 Post-MVP 工作。
 
 ---
 
@@ -58,7 +63,7 @@ Tasks 10–13 已完成当前授权范围：
 - 不截图、不录屏、不采集 trace；UI 验收使用 DOM、accessibility、computed layout 和真实交互；
 - 不自动提交目标用户仓库中的还原产物；
 - 不 Push、不创建 PR、不合 `main`，不自动合回集成分支；
-- Task 13/14 需要用户另行授权。
+- Post-MVP 1–7 需要用户另行授权。
 
 ---
 
@@ -192,6 +197,15 @@ Task 8 提供来源无关、版本化、不透明的 `design_ref` / `frame_ref` 
 
 安全边界：服务端验证 workspace/user/project/repository/issue/task/design revision/selection identity；implementation reference 短期、签名、不透明；task-bound MCP 忽略调用者提供的 task identity；daemon 验证 exact checkout root、repository commit、bounded target/evidence paths 和 receipt。
 
+### 4.8 Task 14：End-to-End MVP Final Gate
+
+- Design A 与 Design B 均使用固定 revision 完成 Audit、Preview、保存与真实恢复；
+- 真实 Figma `task11@30afa5fa` 的 `个人主页单排 -官号` Frame 使用 9 个原始资源完成恢复，daemon 回执为 `completed`、0 blockers；
+- Issue 创建的 Design Document `b83514f0-63e2-4bf7-b205-9c75ec70f5a4@2603f6c0` 完成 Audit、嵌套 Preview 回读和恢复，daemon 回执为 `completed`、0 blockers；
+- UI 生成的 prompt 保留精确 frozen revision、Frame、目标仓库和 MCP 步骤，且只在真实主评论框手动发送后启动 Agent；
+- 目标还原 checkout 全程无 commit、Push、PR、merge、截图、录屏或 trace；
+- Task 14 验收报告：`docs/product/design-center/end-to-end-mvp-validation.md`。
+
 ---
 
 ## 5. Task 12 真实验收
@@ -235,6 +249,7 @@ Task 8 提供来源无关、版本化、不透明的 `design_ref` / `frame_ref` 
 - Tasks 10–12 Final Gate：PASS。
 - Task 13 Views typecheck：PASS；新增文案定向 lint：0 errors；单个最小 Mock 样本：PASS；
 - Task 13 独立复审：无 Critical 或 Important 遗留项。
+- Task 14 focused Go/Views 测试、CLI build、Web production build 与真实浏览器回执均通过；最终扫描的 TypeScript 与隔离运行 Go 全量门禁通过，Playwright 仅余既有认证/页面结构基线阻塞，详见 Task 14 验收报告。
 
 全量 daemon/CLI package 测试在当前 Multica-managed worktree 中会被外层 daemon task marker/profile 污染：无关用例显式预期不存在这些状态。不要把这组环境型失败误判为 Task 12 回归；本次改动关联 focused tests 和生产构建均通过。
 
@@ -254,14 +269,13 @@ Task 8 提供来源无关、版本化、不透明的 `design_ref` / `frame_ref` 
 
 ## 7. 环境与剩余事项
 
-Task 12 隔离环境已清理：daemon profile 停止并删除，API/Web/browser 已停止，PostgreSQL 已停止。目标 Agent checkout 保留为审计证据；不要把其中的未提交实现误当成产品仓库提交。
+Task 14 隔离服务在验收完成后停止。目标 Agent checkout 保留为审计证据；不要把其中的未提交实现误当成产品仓库提交。
 
 明确未做：
 
-- Task 13 分支合回 `codex/design-center-end-to-end-mvp`；
+- Task 14 分支合回 `codex/design-center-end-to-end-mvp`；
 - Push、PR、`main` merge、发布；
-- Task 14；
-- Post-MVP Finder、多项目 tabs、视觉精雕。
+- Post-MVP 1–7（包括 Finder、多项目 tabs、视觉精雕）。
 
 ---
 
@@ -271,11 +285,12 @@ Task 12 隔离环境已清理：daemon profile 停止并删除，API/Web/browser
 仓库只使用 https://github.com/alisafyj/multica。
 读取 docs/superpowers/handoffs/2026-09-01-design-center-end-to-end-mvp-handoff.md；这是当前权威事实源。
 
-Tasks 10、11、12 和 Tasks 10–12 Final Gate 已通过，不要重新实现或重跑昂贵的真实 Agent 验收。
+Tasks 10–14 已通过，不要重新实现或重跑昂贵的真实 Agent 验收。
 Tasks 10–12 已本地合入 codex/design-center-end-to-end-mvp，且 origin/main@394174211 已同步；集成基线为 7aeb433e1。
 Task 13 已在 codex/design-center-end-to-end-mvp-task-13 完成，复用现有创建 Server core 与 Design Document workspace；不要重做。
+Task 14 已在 codex/design-center-end-to-end-mvp-task-14 完成；验收事实见 docs/product/design-center/end-to-end-mvp-validation.md。
 
-先检查 Task 13 分支的 git status/log/diff 与本交接，再按用户的新授权继续。
-不得自动 Push、建 PR、合 main、回合集成分支或启动 Task 14。
+先检查 Task 14 分支的 git status/log/diff 与本交接，再按用户的新授权继续。
+不得自动 Push、建 PR、合 main、回合集成分支或启动 Post-MVP 工作。
 如果用户要求集成，先比较集成分支的新变化并审查冲突；不要 reset/clean/改写历史。
 ```

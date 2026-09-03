@@ -106,7 +106,7 @@ describe("DesignDocumentRunStatus", () => {
   });
 
   it("shows audit and preview gate results truthfully", () => {
-    renderStatus({ audit: { passed: true }, previewReceipt: { passed: false, reason: "DOM 不可见" } });
+    renderStatus({ audit: { passed: true }, previewReceipt: { verification: { passed: false, reason: "DOM 不可见" } } });
     expect(screen.getByText("Audit 通过")).toBeInTheDocument();
     expect(screen.getByText("Preview 未通过")).toBeInTheDocument();
     expect(screen.getByText("DOM 不可见")).toBeInTheDocument();

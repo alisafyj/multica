@@ -56,7 +56,7 @@ export function IssueDesignDocumentsSection({ issue }: { issue: Issue }) {
             type="button"
             disabled
             title={t(($) => $.detail.design_requires_project)}
-            className="-mx-2 flex items-center gap-1.5 px-2 py-1.5 text-caption text-muted-foreground opacity-60"
+            className="-mx-2 flex items-center gap-1.5 px-2 py-1.5 text-caption text-faint-foreground"
           >
             <Plus className="size-3.5 shrink-0" />
             <span>{t(($) => $.detail.create_multica_design)}</span>

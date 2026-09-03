@@ -66,5 +66,14 @@ func designImplementationRepositoryDir(task Task, workDir string, identity desig
 	if len(peerURLs) == 0 {
 		peerURLs = []string{selectedURL}
 	}
-	return filepath.Join(workDir, repocache.CheckoutDirName(selectedURL, peerURLs)), nil
+	checkoutName := repocache.CheckoutDirName(selectedURL, peerURLs)
+	repositoryDir := filepath.Join(workDir, checkoutName)
+	if _, err := os.Stat(filepath.Join(repositoryDir, ".git")); err == nil {
+		return repositoryDir, nil
+	}
+	reusedDesignDocumentDir := filepath.Join(workDir, "repositories", checkoutName)
+	if _, err := os.Stat(filepath.Join(reusedDesignDocumentDir, ".git")); err == nil {
+		return reusedDesignDocumentDir, nil
+	}
+	return repositoryDir, nil
 }
