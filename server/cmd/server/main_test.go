@@ -354,6 +354,26 @@ func TestNormalizeServerVersion(t *testing.T) {
 	}
 }
 
+func TestNormalizeUpstreamVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"unstamped_dev_default_becomes_empty", "dev", ""},
+		{"already_empty_stays_empty", "", ""},
+		{"plain_semver_tag_passes_through", "v0.4.37", "v0.4.37"},
+		{"fork_version_passes_through_without_reinterpretation", "fork-abcdef123", "fork-abcdef123"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeUpstreamVersion(tt.in); got != tt.want {
+				t.Errorf("normalizeUpstreamVersion(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEnvBool(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -511,5 +531,30 @@ func TestJWTSecretBootError(t *testing.T) {
 				t.Fatalf("jwtSecretBootError(%q, %q) = %v, want nil", tt.jwtSecret, tt.appEnv, err)
 			}
 		})
+	}
+}
+
+// TestNewMainHTTPServerTimeouts pins the production timeout defaults on the
+// public HTTP server. These are safety settings, not tuning: removing them,
+// resetting them to zero, or making ReadTimeout/WriteTimeout non-zero would
+// silently reintroduce the Slowloris exposure or start killing uploads and
+// long-lived WebSocket connections mid-stream — none of which the rest of the
+// suite would catch.
+func TestNewMainHTTPServerTimeouts(t *testing.T) {
+	srv := newMainHTTPServer(":8080", nil)
+
+	if got, want := srv.ReadHeaderTimeout, 5*time.Second; got != want {
+		t.Errorf("ReadHeaderTimeout = %v, want %v", got, want)
+	}
+	if got, want := srv.IdleTimeout, 120*time.Second; got != want {
+		t.Errorf("IdleTimeout = %v, want %v", got, want)
+	}
+	// Zero is intentional: WebSocket upgrades and large uploads share this
+	// listener and must not be bounded by a whole-request deadline.
+	if got := srv.ReadTimeout; got != 0 {
+		t.Errorf("ReadTimeout = %v, want 0", got)
+	}
+	if got := srv.WriteTimeout; got != 0 {
+		t.Errorf("WriteTimeout = %v, want 0", got)
 	}
 }

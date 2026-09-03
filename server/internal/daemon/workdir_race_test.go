@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -94,7 +95,7 @@ func TestRunTask_StartTaskCalledAfterWorkdirOnDisk(t *testing.T) {
 	workspacesRoot := t.TempDir()
 	workspaceID := "ws-runtask"
 	taskID := "task-runtask-after-mkdir"
-	expectedEnvRoot := execenv.PredictRootDir(workspacesRoot, workspaceID, taskID)
+	expectedEnvRoot := execenv.PredictRootDir(execenv.RootDirParams{WorkspacesRoot: workspacesRoot, WorkspaceID: workspaceID, TaskID: taskID})
 	expectedWorkDir := filepath.Join(expectedEnvRoot, "workdir")
 
 	var (
@@ -168,7 +169,7 @@ func TestRunTask_InjectsPrivateTaskTempDir(t *testing.T) {
 	workspacesRoot := filepath.Join(t.TempDir(), strings.Repeat("long-workspaces-root-", 3))
 	workspaceID := "ws-private-temp"
 	taskID := "task-private-temp-with-long-id-that-would-overflow-socket-paths"
-	envRoot := execenv.PredictRootDir(workspacesRoot, workspaceID, taskID)
+	envRoot := execenv.PredictRootDir(execenv.RootDirParams{WorkspacesRoot: workspacesRoot, WorkspaceID: workspaceID, TaskID: taskID})
 
 	captureFile := filepath.Join(t.TempDir(), "agent-env.txt")
 	fakeBin := filepath.Join(t.TempDir(), "claude")
@@ -574,6 +575,78 @@ printf 'ran\n' > "$CAPTURE_FILE"
 	}
 }
 
+func TestRunTaskDirectCleanupFailureDoesNotLaunchProvider(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("local-directory cleanup fixture is POSIX-oriented")
+	}
+
+	workspacesRoot := t.TempDir()
+	localDir := t.TempDir()
+	// A directory at the provider config path makes CleanupRuntimeConfig fail
+	// after Prepare has completed. The provider must not be launched with the
+	// stale runtime configuration still present in the workdir.
+	if err := os.Mkdir(filepath.Join(localDir, "CLAUDE.md"), 0o755); err != nil {
+		t.Fatalf("create invalid runtime config path: %v", err)
+	}
+	captureFile := filepath.Join(t.TempDir(), "provider-ran")
+	fakeBin := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(fakeBin, []byte("#!/bin/sh\nprintf 'ran\\n' > \"$CAPTURE_FILE\"\n"), 0o755); err != nil {
+		t.Fatalf("write fake provider: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	d := &Daemon{
+		client:         NewClient(srv.URL),
+		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		workspaces:     make(map[string]*workspaceState),
+		runtimeIndex:   map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
+		activeEnvRoots: make(map[string]int),
+		cfg: Config{
+			DaemonID:       "daemon-cleanup",
+			WorkspacesRoot: workspacesRoot,
+			ServerBaseURL:  srv.URL,
+			Agents: map[string]AgentEntry{
+				"claude": {Path: fakeBin},
+			},
+		},
+	}
+
+	task := Task{
+		ID:          "task-direct-cleanup-failure",
+		WorkspaceID: "ws-direct-cleanup-failure",
+		RuntimeID:   "rt-1",
+		IssueID:     "issue-direct-cleanup-failure",
+		AgentID:     "agent-direct-cleanup-failure",
+		ConciseMode: true,
+		Agent: &AgentData{
+			ID:   "agent-direct-cleanup-failure",
+			Name: "test-agent",
+			CustomEnv: map[string]string{
+				"CAPTURE_FILE": captureFile,
+			},
+		},
+		ProjectResources: []ProjectResourceData{{
+			ResourceType: "local_directory",
+			ResourceRef:  json.RawMessage(`{"local_path":"` + localDir + `","daemon_id":"daemon-cleanup"}`),
+		}},
+	}
+
+	_, err := d.runTask(context.Background(), task, "claude", 0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err == nil {
+		t.Fatal("runTask succeeded despite runtime config cleanup failure")
+	}
+	if !strings.Contains(err.Error(), "cleanup runtime config for direct mode") {
+		t.Fatalf("runTask error = %v, want direct cleanup failure", err)
+	}
+	if _, statErr := os.Stat(captureFile); !os.IsNotExist(statErr) {
+		t.Fatalf("provider launched despite cleanup failure, stat err=%v", statErr)
+	}
+}
+
 func TestRunTask_ExtendsPrepareLeaseDuringStartTask(t *testing.T) {
 	oldRefresh := taskPrepareLeaseRefresh
 	oldTimeout := taskPrepareLeaseTimeout
@@ -788,7 +861,7 @@ func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
 	workspacesRoot := t.TempDir()
 	workspaceID := "ws-active-during-complete"
 	taskID := "task-active-during-complete"
-	expectedEnvRoot := execenv.PredictRootDir(workspacesRoot, workspaceID, taskID)
+	expectedEnvRoot := execenv.PredictRootDir(execenv.RootDirParams{WorkspacesRoot: workspacesRoot, WorkspaceID: workspaceID, TaskID: taskID})
 
 	var (
 		completeCalled   atomic.Bool
@@ -824,7 +897,7 @@ func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
 	// the outer guard added in handleTask, the deferred unmark would bring
 	// isActiveEnvRoot back to false before reportTaskResult fires.
 	d.runner = taskRunnerFunc(func(_ context.Context, tk Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
-		predicted := execenv.PredictRootDir(d.cfg.WorkspacesRoot, tk.WorkspaceID, tk.ID)
+		predicted := execenv.PredictRootDir(taskRootDirParams(d.cfg.WorkspacesRoot, tk))
 		d.markActiveEnvRoot(predicted)
 		defer d.unmarkActiveEnvRoot(predicted)
 		return TaskResult{

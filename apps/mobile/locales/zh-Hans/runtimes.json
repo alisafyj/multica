@@ -12,10 +12,18 @@
     }
   },
   "health": {
-    "online": { "label": "在线" },
-    "recently_lost": { "label": "最近失联" },
-    "offline": { "label": "离线" },
-    "about_to_gc": { "label": "即将清理" }
+    "online": {
+      "label": "在线"
+    },
+    "recently_lost": {
+      "label": "最近失联"
+    },
+    "offline": {
+      "label": "离线"
+    },
+    "long_offline": {
+      "label": "长期离线"
+    }
   },
   "detail": {
     "header_default_title": "运行时",

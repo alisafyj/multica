@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { CalendarClock, CalendarDays, ChevronRight, FolderOpen, GitBranch, Maximize2, Minimize2, MoreHorizontal, Pencil, Search, X as XIcon, UserMinus } from "lucide-react";
+import { CalendarClock, CalendarDays, ChevronRight, FileText, FolderOpen, GitBranch, Maximize2, Minimize2, MoreHorizontal, Palette, Pencil, Search, X as XIcon, UserMinus } from "lucide-react";
 
 /**
  * GitHub mark — lucide-react v1 dropped brand icons, so we inline the
@@ -32,6 +32,7 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
+import { projectListOptions } from "@multica/core/projects/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
 import type { ProjectStatus, ProjectPriority } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
@@ -72,7 +73,9 @@ import {
   runtimeListOptions,
 } from "@multica/core/runtimes";
 import { useConfigStore } from "@multica/core/config";
-import type { LocalDirectoryExecutionMode } from "@multica/core/types";
+import { designDocumentWorkspaceListOptions } from "@multica/core/designs";
+import type { DesignDocument, LocalDirectoryExecutionMode } from "@multica/core/types";
+import { designDocumentCover } from "../designs/design-document-card";
 import { LocalDirectoryModeOptions } from "../projects/components/local-directory-mode-dialog";
 
 /**
@@ -174,6 +177,38 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const filteredWorkspaceRepos = workspaceRepos.filter((repo) =>
     repo.url.toLowerCase().includes(repoQuery),
   );
+
+  // External document links to attach as `document` resources: the ref is the
+  // whole payload, so the entries here are handed to the create call as-is.
+  const [selectedDocs, setSelectedDocs] = useState<Array<{ url: string; title: string }>>([]);
+  const [docsPopoverOpen, setDocsPopoverOpen] = useState(false);
+  const [docUrl, setDocUrl] = useState("");
+  const [docTitle, setDocTitle] = useState("");
+
+  // Design-centre documents picked as `design_document` references. Stored as
+  // the full DesignDocument so the chips can show the title without a re-read;
+  // only the id goes into the ref.
+  const [selectedDesigns, setSelectedDesigns] = useState<DesignDocument[]>([]);
+  const [designsPopoverOpen, setDesignsPopoverOpen] = useState(false);
+  const [designSearch, setDesignSearch] = useState("");
+
+  // The picker lists every design document in the workspace. Fetched only
+  // while the picker is open — the modal must not pay for it otherwise.
+  const { data: workspaceDesigns = [] } = useQuery({
+    ...designDocumentWorkspaceListOptions(wsId),
+    enabled: designsPopoverOpen && !!wsId,
+  });
+  const designQuery = designSearch.trim().toLowerCase();
+  const filteredWorkspaceDesigns = workspaceDesigns.filter((d) =>
+    (d.title ?? "").toLowerCase().includes(designQuery),
+  );
+  // Project titles for the "来源项目" line on each picker row and chip.
+  // Same lazy guard as the design list: only the open picker needs names.
+  const { data: projectsForTitles = [] } = useQuery({
+    ...projectListOptions(wsId),
+    enabled: designsPopoverOpen && !!wsId,
+  });
+  const projectTitleById = new Map(projectsForTitles.map((p) => [p.id, p.title]));
 
   // A project's source is binary: either a set of GitHub repos OR a local
   // working directory — never both. Mode is the source of truth for what
@@ -322,9 +357,13 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
     if (!title.trim() || submitting) return;
     // `sourceMode` decides which side's stash gets persisted — the other
     // side is silently dropped, so repos picked then abandoned for local
-    // mode don't leak into the project.
+    // mode don't leak into the project. Documents and design references are
+    // independent of the source mode and always ride along when non-empty.
     let resources:
-      | Array<{ resource_type: "github_repo" | "local_directory"; resource_ref: Record<string, unknown> }>
+      | Array<{
+          resource_type: "github_repo" | "local_directory" | "document" | "design_document";
+          resource_ref: Record<string, unknown>;
+        }>
       | undefined;
     if (sourceMode === "repos" && selectedRepos.length > 0) {
       resources = selectedRepos.map((url) => ({
@@ -346,6 +385,19 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
             mode: effectiveLocalMode,
           }),
         },
+      ];
+    }
+    if (selectedDocs.length > 0 || selectedDesigns.length > 0) {
+      resources = [
+        ...(resources ?? []),
+        ...selectedDocs.map((doc) => ({
+          resource_type: "document" as const,
+          resource_ref: { url: doc.url, title: doc.title },
+        })),
+        ...selectedDesigns.map((d) => ({
+          resource_type: "design_document" as const,
+          resource_ref: { design_document_id: d.id },
+        })),
       ];
     }
     setSubmitting(true);
@@ -389,6 +441,25 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
     if (!url) return;
     setSelectedRepos((prev) => (prev.includes(url) ? prev : [...prev, url]));
     setCustomRepoUrl("");
+  };
+
+  const toggleDesign = (doc: DesignDocument) => {
+    setSelectedDesigns((prev) =>
+      prev.some((d) => d.id === doc.id)
+        ? prev.filter((d) => d.id !== doc.id)
+        : [...prev, doc],
+    );
+  };
+
+  const addDocument = () => {
+    const url = docUrl.trim();
+    const docTitleTrimmed = docTitle.trim();
+    if (!url || !docTitleTrimmed) return;
+    setSelectedDocs((prev) =>
+      prev.some((d) => d.url === url) ? prev : [...prev, { url, title: docTitleTrimmed }],
+    );
+    setDocUrl("");
+    setDocTitle("");
   };
 
   return (
@@ -948,6 +1019,209 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
             </PopoverContent>
           </Popover>
 
+          {/* Document links — an external reference (Feishu / Notion / any
+              http page), stored as a `document` resource whose ref carries
+              the whole payload. */}
+          <Popover
+            open={docsPopoverOpen}
+            onOpenChange={(v) => {
+              setDocsPopoverOpen(v);
+              if (!v) {
+                setDocUrl("");
+                setDocTitle("");
+              }
+            }}
+          >
+            <PopoverTrigger
+              render={
+                <PillButton>
+                  <FileText className="size-3" />
+                  <span>
+                    {selectedDocs.length === 0
+                      ? t(($) => $.create_project.docs_pill)
+                      : t(($) => $.create_project.docs_pill_count, { count: selectedDocs.length })}
+                  </span>
+                </PillButton>
+              }
+            />
+            <PopoverContent side="top" align="start" className="w-72 p-2 space-y-2">
+              <div className="text-caption font-medium text-muted-foreground">
+                {t(($) => $.create_project.docs_heading)}
+              </div>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  addDocument();
+                }}
+                className="space-y-1.5"
+              >
+                <input
+                  type="url"
+                  value={docUrl}
+                  onChange={(e) => setDocUrl(e.target.value)}
+                  placeholder={t(($) => $.create_project.docs_url_placeholder)}
+                  className="h-8 w-full rounded-md border bg-transparent px-2 text-caption outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                />
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={docTitle}
+                    onChange={(e) => setDocTitle(e.target.value)}
+                    placeholder={t(($) => $.create_project.docs_title_placeholder)}
+                    className="h-8 flex-1 rounded-md border bg-transparent px-2 text-caption outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                  />
+                  <Button
+                    type="submit"
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-caption"
+                    disabled={!docUrl.trim() || !docTitle.trim()}
+                  >
+                    {t(($) => $.create_project.docs_add)}
+                  </Button>
+                </div>
+              </form>
+              {selectedDocs.length > 0 && (
+                <div className="space-y-1 pt-1 border-t">
+                  <div className="text-micro font-medium text-muted-foreground uppercase tracking-wider">
+                    {t(($) => $.create_project.docs_selected)}
+                  </div>
+                  {selectedDocs.map((doc) => (
+                    <div
+                      key={doc.url}
+                      className="flex items-center gap-2 text-caption"
+                    >
+                      <FileText className="size-3 shrink-0 text-muted-foreground" />
+                      <span className="truncate flex-1">{doc.title}</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedDocs((prev) => prev.filter((d) => d.url !== doc.url))
+                        }
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <XIcon className="size-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
+
+          {/* Design references — pick existing design-centre documents;
+              only the id is stored, the row stays the source of truth. */}
+          <Popover
+            open={designsPopoverOpen}
+            onOpenChange={(v) => {
+              setDesignsPopoverOpen(v);
+              if (!v) setDesignSearch("");
+            }}
+          >
+            <PopoverTrigger
+              render={
+                <PillButton>
+                  <Palette className="size-3" />
+                  <span>
+                    {selectedDesigns.length === 0
+                      ? t(($) => $.create_project.designs_pill)
+                      : t(($) => $.create_project.designs_pill_count, { count: selectedDesigns.length })}
+                  </span>
+                </PillButton>
+              }
+            />
+            <PopoverContent side="top" align="start" className="w-80 p-2 space-y-2">
+              <div className="text-caption font-medium text-muted-foreground">
+                {t(($) => $.create_project.designs_heading)}
+              </div>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={designSearch}
+                  onChange={(e) => setDesignSearch(e.target.value)}
+                  aria-label={t(($) => $.create_project.designs_search_placeholder)}
+                  placeholder={t(($) => $.create_project.designs_search_placeholder)}
+                  className="h-8 w-full rounded-md border bg-transparent pl-7 pr-2 text-caption outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                />
+              </div>
+              <div className="max-h-56 space-y-1 overflow-y-auto">
+                {filteredWorkspaceDesigns.length === 0 && (
+                  <p className="py-2 text-center text-caption text-muted-foreground">
+                    {designQuery
+                      ? t(($) => $.create_project.designs_search_empty)
+                      : t(($) => $.create_project.designs_empty)}
+                  </p>
+                )}
+                {filteredWorkspaceDesigns.map((doc) => {
+                  const checked = selectedDesigns.some((d) => d.id === doc.id);
+                  const cover = designDocumentCover(doc);
+                  const sourceProject = projectTitleById.get(doc.project_id) ?? "";
+                  return (
+                    <button
+                      type="button"
+                      key={doc.id}
+                      onClick={() => toggleDesign(doc)}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-caption hover:bg-accent transition-colors",
+                        checked && "bg-accent",
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        readOnly
+                        className="size-3.5"
+                      />
+                      <span
+                        style={cover.style}
+                        aria-hidden
+                        className="flex size-7 shrink-0 items-center justify-center rounded-md text-micro font-medium text-faint-foreground"
+                      >
+                        {cover.initial}
+                      </span>
+                      <span className="min-w-0 flex-1 text-left">
+                        <span className="block truncate font-medium">
+                          {doc.title.trim() || t(($) => $.create_project.designs_untitled)}
+                        </span>
+                        {sourceProject && (
+                          <span className="block truncate text-micro text-muted-foreground">
+                            {sourceProject}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {selectedDesigns.length > 0 && (
+                <div className="space-y-1 pt-1 border-t">
+                  <div className="text-micro font-medium text-muted-foreground uppercase tracking-wider">
+                    {t(($) => $.create_project.designs_selected)}
+                  </div>
+                  {selectedDesigns.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="flex items-center gap-2 text-caption"
+                    >
+                      <Palette className="size-3 shrink-0 text-muted-foreground" />
+                      <span className="truncate flex-1">
+                        {doc.title.trim() || t(($) => $.create_project.designs_untitled)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleDesign(doc)}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <XIcon className="size-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
+
           {/* Overflow — always the last child so it stays at the end of the
               wrap flow. Only rendered while a date is still collapsible; when
               both are set there is nothing left to add. */}
@@ -977,6 +1251,50 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
             </DropdownMenu>
           )}
         </div>
+
+        {(selectedDocs.length > 0 || selectedDesigns.length > 0) && (
+          <div className="flex shrink-0 flex-wrap gap-1.5 px-4 pb-2">
+            {selectedDocs.map((doc) => (
+              <span
+                key={doc.url}
+                className="inline-flex h-6 max-w-56 items-center gap-1.5 rounded-md bg-muted/70 px-2 text-caption"
+              >
+                <FileText className="size-3 shrink-0 text-muted-foreground" />
+                <span className="truncate">{doc.title}</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelectedDocs((prev) => prev.filter((item) => item.url !== doc.url))
+                  }
+                  aria-label={t(($) => $.create_project.remove_resource, { title: doc.title })}
+                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                >
+                  <XIcon className="size-3" />
+                </button>
+              </span>
+            ))}
+            {selectedDesigns.map((doc) => {
+              const display = doc.title.trim() || t(($) => $.create_project.designs_untitled);
+              return (
+                <span
+                  key={doc.id}
+                  className="inline-flex h-6 max-w-56 items-center gap-1.5 rounded-md bg-muted/70 px-2 text-caption"
+                >
+                  <Palette className="size-3 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{display}</span>
+                  <button
+                    type="button"
+                    onClick={() => toggleDesign(doc)}
+                    aria-label={t(($) => $.create_project.remove_resource, { title: display })}
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
+                  >
+                    <XIcon className="size-3" />
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        )}
 
         {/* Footer action bar — primary action in its own strip, matching
             create-issue. */}

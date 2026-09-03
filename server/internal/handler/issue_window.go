@@ -2,14 +2,19 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/entitlement"
+	"github.com/multica-ai/multica/server/internal/service"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	publicapiv1 "github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
 
 const (
@@ -25,6 +30,46 @@ type issueWindowPolicy struct {
 	action         entitlement.Action
 	limit          int64
 	policyRevision int64
+}
+
+func writeIssueWindowViolation(w http.ResponseWriter, err error) bool {
+	var windowErr *service.IssueOutsideCreationWindowError
+	if !errors.As(err, &windowErr) {
+		return false
+	}
+	writeJSON(w, http.StatusPaymentRequired, map[string]any{
+		"code":            issueWindowErrorCode,
+		"error":           "This issue is outside the workspace's recently created issue window.",
+		"limit":           windowErr.Limit,
+		"policy_revision": windowErr.PolicyRevision,
+	})
+	return true
+}
+func writeIssueWindowAuthorizationError(w http.ResponseWriter, err error) {
+	if writeIssueWindowViolation(w, err) {
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to check issue access")
+}
+
+func writeIssueWindowPublicProblem(w http.ResponseWriter, r *http.Request, err error) {
+	var windowErr *service.IssueOutsideCreationWindowError
+	if errors.As(err, &windowErr) {
+		publicapiv1.WriteProblem(w, r, http.StatusPaymentRequired, issueWindowErrorCode,
+			"This issue is outside the workspace's recently created issue window.")
+		return
+	}
+	publicapiv1.WriteProblem(w, r, http.StatusInternalServerError, "internal_error", "failed to check issue access")
+}
+
+func writeProjectDesignSystemIssueWindowError(w http.ResponseWriter, err error) {
+	var windowErr *service.IssueOutsideCreationWindowError
+	if errors.As(err, &windowErr) {
+		writeProjectDesignSystemError(w, http.StatusPaymentRequired, issueWindowErrorCode,
+			"This issue is outside the workspace's recently created issue window.")
+		return
+	}
+	writeProjectDesignSystemError(w, http.StatusInternalServerError, "issue_window_lookup_failed", "failed to check issue access")
 }
 
 type IssueWindowUsageResponse struct {
@@ -187,45 +232,95 @@ func (h *Handler) observeIssueWindow(ctx context.Context, workspaceID pgtype.UUI
 	h.recordIssueWindow(policy.action, surface, "would_block")
 }
 
-// authorizeIssueWindow runs only after the issue was loaded inside the caller's
-// workspace. This preserves cross-workspace 404s while returning a product-
-// actionable response for a same-workspace issue outside an enforced window.
-// Once Cloud has supplied a valid enforce policy, a database error is an
-// authorization uncertainty and therefore fails closed. That is deliberately
-// different from an unavailable or malformed Cloud policy, which fails open
-// before any window query runs.
-func (h *Handler) authorizeIssueWindow(w http.ResponseWriter, r *http.Request, issueID, workspaceID pgtype.UUID, surface string) bool {
+// checkIssueWindowAuthorization returns the transport-neutral authorization
+// result. Callers choose their own error envelope; the ordinary REST wrapper
+// below keeps the legacy response, while Plugin v1 and project-design-system
+// adapters map the same typed result to their stable contracts.
+func (h *Handler) checkIssueWindowAuthorization(r *http.Request, issueID, workspaceID pgtype.UUID, surface string) error {
 	policy, enabled := h.issueWindowPolicy(r.Context(), workspaceID)
 	if !enabled {
-		return true
+		return nil
 	}
 	allVisible, err := h.issueIDsWithinWindow(r.Context(), workspaceID, policy, []pgtype.UUID{issueID})
 	if err != nil {
 		if policy.action == entitlement.ActionObserve {
 			slog.Warn("observe issue creation window failed", "error", err, "surface", surface)
 			h.recordIssueWindow(policy.action, surface, "error")
-			return true
+			return nil
 		}
 		h.recordIssueWindow(policy.action, surface, "error")
-		writeError(w, http.StatusInternalServerError, "failed to check issue access")
-		return false
+		return fmt.Errorf("failed to check issue access: %w", err)
 	}
 	if allVisible {
 		h.recordIssueWindow(policy.action, surface, "allowed")
-		return true
+		return nil
 	}
 	if policy.action == entitlement.ActionObserve {
 		h.recordIssueWindow(policy.action, surface, "would_block")
-		return true
+		return nil
 	}
 	h.recordIssueWindow(policy.action, surface, "blocked")
-	writeJSON(w, http.StatusPaymentRequired, map[string]any{
-		"error":           issueWindowErrorCode,
-		"message":         "This issue is outside the workspace's recently created issue window.",
-		"limit":           policy.limit,
-		"policy_revision": policy.policyRevision,
+	return &service.IssueOutsideCreationWindowError{
+		Limit: policy.limit, PolicyRevision: policy.policyRevision,
+	}
+}
+
+// authorizeIssueWindow runs only after the issue was loaded inside the caller's
+// workspace. This preserves cross-workspace 404s while returning a product-
+// actionable response for a same-workspace issue outside an enforced window.
+func (h *Handler) authorizeIssueWindow(w http.ResponseWriter, r *http.Request, issueID, workspaceID pgtype.UUID, surface string) bool {
+	if err := h.checkIssueWindowAuthorization(r, issueID, workspaceID, surface); err != nil {
+		writeIssueWindowAuthorizationError(w, err)
+		return false
+	}
+	return true
+}
+
+func (h *Handler) loadIssueInWorkspace(ctx context.Context, issueID, workspaceID pgtype.UUID) (db.Issue, error) {
+	return h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+		ID: issueID, WorkspaceID: workspaceID,
 	})
-	return false
+}
+
+// loadIssueInWorkspaceAndAuthorize is the common boundary for handlers that
+// receive an issue reference indirectly (for example a restore task or an
+// attachment). Workspace scoping happens before issue-window authorization so
+// a foreign issue remains a 404 rather than an entitlement oracle.
+func (h *Handler) loadIssueInWorkspaceAndAuthorize(w http.ResponseWriter, r *http.Request, issueID, workspaceID pgtype.UUID, surface string) (db.Issue, bool) {
+	issue, err := h.loadIssueInWorkspace(r.Context(), issueID, workspaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "issue not found")
+		return db.Issue{}, false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load issue")
+		return db.Issue{}, false
+	}
+	if err := h.checkIssueWindowAuthorization(r, issue.ID, issue.WorkspaceID, surface); err != nil {
+		writeIssueWindowAuthorizationError(w, err)
+		return db.Issue{}, false
+	}
+	return issue, true
+}
+
+// loadIssueInWorkspaceAndAuthorizeForProjectDesignSystem keeps the project
+// design-system API's compact {code,error} envelope while sharing the same
+// workspace scoping and issue-window decision as ordinary handlers.
+func (h *Handler) loadIssueInWorkspaceAndAuthorizeForProjectDesignSystem(w http.ResponseWriter, r *http.Request, issueID, workspaceID pgtype.UUID, surface string) (db.Issue, bool) {
+	issue, err := h.loadIssueInWorkspace(r.Context(), issueID, workspaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeProjectDesignSystemError(w, http.StatusNotFound, "issue_not_found", "issue not found")
+		return db.Issue{}, false
+	}
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "issue_lookup_failed", "failed to load issue")
+		return db.Issue{}, false
+	}
+	if err := h.checkIssueWindowAuthorization(r, issue.ID, issue.WorkspaceID, surface); err != nil {
+		writeProjectDesignSystemIssueWindowError(w, err)
+		return db.Issue{}, false
+	}
+	return issue, true
 }
 
 // GetIssueWindowUsage returns a bounded used/limit snapshot for Billing. The

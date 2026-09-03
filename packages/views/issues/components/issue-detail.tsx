@@ -7,6 +7,7 @@ import {
   statusCategoryOfKey,
 } from "@multica/core/issues";
 import { useStatusLabel } from "../utils/status-label";
+import { priorityLabel } from "../utils/priority-label";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment, type ReactNode } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
@@ -62,7 +63,7 @@ import { PropRow } from "../../common/prop-row";
 import { PropertyIcon } from "../../common/property-icon";
 import type { Attachment, Issue, IssueProperty, IssueStatus, IssueStatusCategory, IssuePriority, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
-import { STATUS_CONFIG, PRIORITY_CONFIG } from "@multica/core/issues/config";
+import { STATUS_CONFIG } from "@multica/core/issues/config";
 import { formatDateOnly, isPastDateOnly } from "@multica/core/issues/date";
 import { ISSUE_DESIGN_ROLE_UI, issueDesignRole } from "@multica/core/issues/design-role";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
@@ -91,6 +92,7 @@ import { ThreadNavPanel, mentionsUser, type ThreadNavThread } from "./thread-nav
 import { collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
+import { IssueTestCoverage } from "../../testing/components/issue-test-coverage";
 import { IssueDesignDocumentsSection } from "./issue-design-documents-section";
 import { IssueDesignRestoreSection, isRawDesignFallbackDelivery } from "./issue-design-restore-section";
 import { QuickActionsSection } from "./quick-actions-section";
@@ -127,7 +129,7 @@ import { useIssueTimeline } from "../hooks/use-issue-timeline";
 import { useIssueReactions } from "../hooks/use-issue-reactions";
 import { useIssueSubscribers } from "../hooks/use-issue-subscribers";
 import { ReactionBar } from "@multica/ui/components/common/reaction-bar";
-import { useTimeAgo } from "../../i18n";
+import { useLocale, useTimeAgo } from "../../i18n";
 import {
   useRestoredScrollOffset,
   useRestoredScrollRef,
@@ -264,9 +266,9 @@ function SubscriberPopoverContent({
   );
 }
 
-function shortDate(date: string | null): string {
+function shortDate(date: string | null, locale: string): string {
   if (!date) return "—";
-  return formatDateOnly(date, { month: "short", day: "numeric" }, "en-US");
+  return formatDateOnly(date, { month: "short", day: "numeric" }, locale);
 }
 
 type ActivityT = ReturnType<typeof useT<"issues">>["t"];
@@ -289,16 +291,10 @@ function statusLabel(
   return status;
 }
 
-function priorityLabel(priority: string, t: ActivityT): string {
-  if (priority in PRIORITY_CONFIG) {
-    return t(($) => $.priority[priority as IssuePriority]);
-  }
-  return priority;
-}
-
 function formatActivity(
   entry: TimelineEntry,
   t: ActivityT,
+  locale: string,
   resolveActorName?: (type: string, id: string) => string,
   resolveStatusLabel?: (statusKey: string) => string,
 ): string {
@@ -328,12 +324,12 @@ function formatActivity(
     }
     case "start_date_changed": {
       if (!details.to) return t(($) => $.activity.start_date_removed);
-      const formatted = formatDateOnly(details.to, { month: "short", day: "numeric" }, "en-US");
+      const formatted = formatDateOnly(details.to, { month: "short", day: "numeric" }, locale);
       return t(($) => $.activity.start_date_set, { date: formatted });
     }
     case "due_date_changed": {
       if (!details.to) return t(($) => $.activity.due_date_removed);
-      const formatted = formatDateOnly(details.to, { month: "short", day: "numeric" }, "en-US");
+      const formatted = formatDateOnly(details.to, { month: "short", day: "numeric" }, locale);
       return t(($) => $.activity.due_date_set, { date: formatted });
     }
     case "title_changed":
@@ -542,6 +538,7 @@ function ActivityBlock({
   resolveStatusColor,
   t,
   timeAgo,
+  locale,
 }: {
   entries: TimelineEntry[];
   expanded: boolean;
@@ -559,6 +556,7 @@ function ActivityBlock({
   resolveStatusColor: (statusKey: string) => string | null;
   t: ActivityT;
   timeAgo: (dateStr: string) => string;
+  locale: string;
 }) {
   if (!expanded) {
     const count = entries.length;
@@ -644,7 +642,7 @@ function ActivityBlock({
             </div>
             <div className="flex min-w-0 flex-1 items-center gap-1">
               <span className="shrink-0 font-medium">{getActorName(entry.actor_type, entry.actor_id)}</span>
-              <span className="truncate">{formatActivity(entry, t, getActorName, resolveStatusLabel)}</span>
+              <span className="truncate">{formatActivity(entry, t, locale, getActorName, resolveStatusLabel)}</span>
               {(entry.coalesced_count ?? 1) > 1 &&
                 entry.action !== "task_completed" &&
                 entry.action !== "task_failed" && (
@@ -661,7 +659,7 @@ function ActivityBlock({
                   }
                 />
                 <TooltipContent side="top">
-                  {new Date(entry.created_at).toLocaleString()}
+                  {new Date(entry.created_at).toLocaleString(locale)}
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -692,6 +690,7 @@ function SubIssueRow({
 }) {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
+  const locale = useLocale();
   const paths = useWorkspacePaths();
   const updateIssue = useUpdateIssue();
   const selected = useIssueSelectionStore((s) => s.selectedIds.has(child.id));
@@ -775,7 +774,9 @@ function SubIssueRow({
             type="checkbox"
             checked={selected}
             onChange={() => toggleSelected(child.id)}
-            aria-label={`Select ${child.identifier}`}
+            aria-label={t(($) => $.detail.select_sub_issue_aria, {
+              identifier: child.identifier,
+            })}
             className={cn(
               "absolute inset-0 cursor-pointer accent-primary transition-opacity",
               selected
@@ -875,7 +876,7 @@ function SubIssueRow({
                 )}
               >
                 <CalendarDays className="size-3" />
-                {shortDate(child.due_date)}
+                {shortDate(child.due_date, locale)}
               </span>
             }
           />
@@ -1150,6 +1151,7 @@ export function IssueDetailSkeleton({ leading }: { leading?: ReactNode } = {}) {
 
 export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = true, layoutId = "multica_issue_detail_layout", highlightCommentId, highlightRequestToken, leadingAction }: IssueDetailProps) {
   const { t } = useT("issues");
+  const locale = useLocale();
   const timeAgo = useTimeAgo();
   const id = issueId;
   const user = useAuthStore((s) => s.user);
@@ -2623,6 +2625,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </div>
       )}
 
+      {/* Test coverage — the cases that claim to verify this issue, each with
+          its latest recorded outcome. Self-contained and hides itself when the
+          issue has no linked cases, so workspaces that do not use the testing
+          surface see nothing. */}
+      <IssueTestCoverage issueId={id} />
+
       {/* Execution log — active runs + collapsed past runs, each carrying its
           own token spend, with the issue total on the section header.
           Self-contained; owns its own collapse state and WS subscriptions.
@@ -2648,10 +2656,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             <span className="cursor-pointer truncate">{getActorName(issue.creator_type, issue.creator_id)}</span>
           </PropRow>
           <PropRow label={t(($) => $.detail.prop_created)}>
-            <span className="text-muted-foreground">{shortDate(issue.created_at)}</span>
+            <span className="text-muted-foreground">{shortDate(issue.created_at, locale)}</span>
           </PropRow>
           <PropRow label={t(($) => $.detail.prop_updated)}>
-            <span className="text-muted-foreground">{shortDate(issue.updated_at)}</span>
+            <span className="text-muted-foreground">{shortDate(issue.updated_at, locale)}</span>
           </PropRow>
         </div>}
       </div>
@@ -2755,6 +2763,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         resolveStatusColor={resolveStatusColor}
         t={t}
         timeAgo={timeAgo}
+        locale={locale}
       />
     );
   };
@@ -3003,44 +3012,44 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               localLabel={t(($) => $.revision.local_version)}
               serverValue={issue.title}
               localValue={titleConflictDraft}
-              actions={(
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      const draft = titleConflictDraft.trim();
-                      if (!draft) return;
-                      handleUpdateField(
-                        { title: draft, title_base: issue.title },
-                        {
-                          onSuccess: (serverIssue) => {
-                            setTitleConflictDraft(null);
-                            titleBaseRef.current = serverIssue.title;
-                          },
+              serverAction={(
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    // Local-only: the server already holds this title, so
+                    // discarding writes nothing. The remount is what puts it
+                    // back into the editor (see titleResetToken).
+                    setTitleConflictDraft(null);
+                    titleBaseRef.current = issue.title;
+                    setTitleResetToken((token) => token + 1);
+                  }}
+                >
+                  {t(($) => $.revision.use_server)}
+                </Button>
+              )}
+              localAction={(
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const draft = titleConflictDraft.trim();
+                    if (!draft) return;
+                    handleUpdateField(
+                      { title: draft, title_base: issue.title },
+                      {
+                        onSuccess: (serverIssue) => {
+                          setTitleConflictDraft(null);
+                          titleBaseRef.current = serverIssue.title;
                         },
-                      );
-                    }}
-                  >
-                    {t(($) => $.revision.keep_local)}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      // Local-only: the server already holds this title, so
-                      // discarding writes nothing. The remount is what puts it
-                      // back into the editor (see titleResetToken).
-                      setTitleConflictDraft(null);
-                      titleBaseRef.current = issue.title;
-                      setTitleResetToken((token) => token + 1);
-                    }}
-                  >
-                    {t(($) => $.revision.use_server)}
-                  </Button>
-                </div>
+                      },
+                    );
+                  }}
+                >
+                  {t(($) => $.revision.keep_local)}
+                </Button>
               )}
             />
           ) : null}
@@ -3155,52 +3164,52 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 localLabel={t(($) => $.revision.local_version)}
                 serverValue={issue.description || ""}
                 localValue={descriptionConflictDraft}
-                actions={(
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        handleUpdateField(
-                          {
-                            description: descriptionConflictDraft,
-                            description_base: issue.description || "",
-                            attachment_ids:
-                              descriptionAttachmentIdsRef.current.length > 0
-                                ? descriptionAttachmentIdsRef.current
-                                : undefined,
+                serverAction={(
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      // The editor is dirty — that is why this conflict
+                      // exists — so the `value` prop cannot land: ContentEditor
+                      // deliberately refuses to clobber unsaved bytes.
+                      // adoptContent is the explicit "take this content"
+                      // channel and applies without emitting an update, so
+                      // discarding never writes.
+                      descEditorRef.current?.adoptContent(issue.description || "");
+                      descriptionAttachmentIdsRef.current = [];
+                      pendingDescriptionSaveRef.current = null;
+                      setDescriptionConflictDraft(null);
+                    }}
+                  >
+                    {t(($) => $.revision.use_server)}
+                  </Button>
+                )}
+                localAction={(
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      handleUpdateField(
+                        {
+                          description: descriptionConflictDraft,
+                          description_base: issue.description || "",
+                          attachment_ids:
+                            descriptionAttachmentIdsRef.current.length > 0
+                              ? descriptionAttachmentIdsRef.current
+                              : undefined,
+                        },
+                        {
+                          onSuccess: () => {
+                            setDescriptionConflictDraft(null);
                           },
-                          {
-                            onSuccess: () => {
-                              setDescriptionConflictDraft(null);
-                            },
-                          },
-                        );
-                      }}
-                    >
-                      {t(($) => $.revision.keep_local)}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        // The editor is dirty — that is why this conflict
-                        // exists — so the `value` prop cannot land: ContentEditor
-                        // deliberately refuses to clobber unsaved bytes.
-                        // adoptContent is the explicit "take this content"
-                        // channel and applies without emitting an update, so
-                        // discarding never writes.
-                        descEditorRef.current?.adoptContent(issue.description || "");
-                        descriptionAttachmentIdsRef.current = [];
-                        pendingDescriptionSaveRef.current = null;
-                        setDescriptionConflictDraft(null);
-                      }}
-                    >
-                      {t(($) => $.revision.use_server)}
-                    </Button>
-                  </div>
+                        },
+                      );
+                    }}
+                  >
+                    {t(($) => $.revision.keep_local)}
+                  </Button>
                 )}
               />
             ) : null}
@@ -3272,7 +3281,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                       if (el) el.indeterminate = someChildrenSelected && !allChildrenSelected;
                     }}
                     onChange={handleToggleSelectAllChildren}
-                    aria-label="Select all sub-issues"
+                    aria-label={t(($) => $.detail.select_all_sub_issues_aria)}
                     className={cn(
                       "ml-1 cursor-pointer accent-primary transition-opacity",
                       someChildrenSelected

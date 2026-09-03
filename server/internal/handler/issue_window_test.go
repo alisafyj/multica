@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -220,7 +221,7 @@ func TestIssueCreationWindowEnforcesNewestBaseAndAncestorChain(t *testing.T) {
 	if err := json.NewDecoder(blocked.Body).Decode(&blockedBody); err != nil {
 		t.Fatalf("decode blocked response: %v", err)
 	}
-	if blockedBody["error"] != issueWindowErrorCode || blockedBody["limit"] != float64(1) {
+	if blockedBody["code"] != issueWindowErrorCode || blockedBody["error"] != "This issue is outside the workspace's recently created issue window." || blockedBody["limit"] != float64(1) {
 		t.Fatalf("unexpected blocked response: %#v", blockedBody)
 	}
 
@@ -284,6 +285,47 @@ func TestIssueCreationWindowEnforcesNewestBaseAndAncestorChain(t *testing.T) {
 	cross := httptest.NewRecorder()
 	if _, ok := h.loadIssueForUser(cross, crossReq, hiddenSiblingID); ok || cross.Code != http.StatusNotFound {
 		t.Fatalf("cross-workspace load = ok:%v status:%d body:%s", ok, cross.Code, cross.Body.String())
+	}
+}
+
+func TestIssueCreationWindowBatchReparentCannotExposeHiddenParent(t *testing.T) {
+	workspaceID := dbfx.Workspace(t, "Batch reparent issue window", "batch-reparent-window-"+uuid.NewString(), testutil.Cols{
+		"issue_prefix": "BRW",
+	})
+	dbfx.Member(t, workspaceID, testUserID, "owner")
+	var maxNumber int
+	if err := testPool.QueryRow(context.Background(), `SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id = $1`, workspaceID).Scan(&maxNumber); err != nil {
+		t.Fatalf("load issue number: %v", err)
+	}
+	hiddenParentID := dbfx.Issue(t, "hidden parent", testutil.Cols{
+		"workspace_id": workspaceID,
+		"number":       maxNumber + 1,
+	})
+	targetID := dbfx.Issue(t, "visible target", testutil.Cols{
+		"workspace_id": workspaceID,
+		"number":       maxNumber + 2,
+	})
+
+	h := *testHandler
+	h.Entitlements = issueWindowProvider(entitlement.ActionEnforce, 1)
+	recorder := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues/batch-update?workspace_id="+workspaceID, map[string]any{
+		"issue_ids": []string{targetID},
+		"updates": map[string]any{
+			"parent_issue_id": hiddenParentID,
+		},
+	})
+	req.Header.Set("X-Workspace-ID", workspaceID)
+	h.BatchUpdateIssues(recorder, req)
+	if recorder.Code != http.StatusPaymentRequired {
+		t.Fatalf("batch reparent status = %d, want 402: %s", recorder.Code, recorder.Body.String())
+	}
+	var parentID *string
+	if err := testPool.QueryRow(context.Background(), `SELECT parent_issue_id::text FROM issue WHERE id = $1`, targetID).Scan(&parentID); err != nil {
+		t.Fatalf("reload target: %v", err)
+	}
+	if parentID != nil {
+		t.Fatalf("target was reparented to hidden issue %q after authorization failure", *parentID)
 	}
 }
 
@@ -403,7 +445,67 @@ func TestIssueCreationWindowPreservesUnreadInboxSemantics(t *testing.T) {
 	})
 }
 
-func TestIssueCreationWindowChildProgressKeepsFullTotals(t *testing.T) {
+func TestIssueCreationWindowFiltersArchivedInboxBeforeGroupLimit(t *testing.T) {
+	workspaceID := dbfx.Workspace(t, "Archived inbox issue window", "archived-inbox-window-"+uuid.NewString())
+	dbfx.Member(t, workspaceID, testUserID, "owner")
+	parentID := dbfx.Issue(t, "visible archived parent", testutil.Cols{
+		"workspace_id": workspaceID,
+		"number":       1,
+	})
+	for number := 2; number <= 201; number++ {
+		cols := testutil.Cols{
+			"workspace_id": workspaceID,
+			"number":       number,
+		}
+		// Keep the newest issue in the window connected to the visible parent so
+		// the ancestor backfill is exercised by the fixture.
+		if number == 201 {
+			cols["parent_issue_id"] = parentID
+		}
+		issueID := dbfx.Issue(t, "hidden archived issue", cols)
+		dbfx.Insert(t, "inbox_item", testutil.Cols{
+			"workspace_id":   workspaceID,
+			"recipient_type": "member",
+			"recipient_id":   testUserID,
+			"type":           "status_changed",
+			"severity":       "info",
+			"issue_id":       issueID,
+			"title":          "hidden archived notification",
+			"archived":       true,
+		})
+	}
+	dbfx.Insert(t, "inbox_item", testutil.Cols{
+		"workspace_id":   workspaceID,
+		"recipient_type": "member",
+		"recipient_id":   testUserID,
+		"type":           "status_changed",
+		"severity":       "info",
+		"issue_id":       parentID,
+		"title":          "visible archived notification",
+		"archived":       true,
+	})
+
+	h := *testHandler
+	h.Entitlements = issueWindowProvider(entitlement.ActionEnforce, 1)
+	req := inboxRequest(http.MethodGet, "/api/inbox/archived", workspaceID)
+	recorder := httptest.NewRecorder()
+	middleware.RequireWorkspaceMember(h.Queries)(http.HandlerFunc(h.ListArchivedInbox)).ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("archived inbox status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var items []InboxItemResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&items); err != nil {
+		t.Fatalf("decode archived inbox: %v", err)
+	}
+	for _, item := range items {
+		if item.IssueID != nil && *item.IssueID == parentID {
+			return
+		}
+	}
+	t.Fatalf("visible ancestor archived group missing from response: %#v", items)
+}
+
+func TestIssueCreationWindowChildProgressHidesOutsideWindow(t *testing.T) {
 	workspaceID := dbfx.Workspace(t, "Progress issue window", "progress-window-"+uuid.NewString())
 	dbfx.Member(t, workspaceID, testUserID, "owner")
 	parentID := dbfx.Issue(t, "progress parent", testutil.Cols{"workspace_id": workspaceID, "number": 100})
@@ -416,6 +518,15 @@ func TestIssueCreationWindowChildProgressKeepsFullTotals(t *testing.T) {
 	_ = dbfx.Issue(t, "unrelated recent issue", testutil.Cols{"workspace_id": workspaceID, "number": 200})
 	_ = dbfx.Issue(t, "visible open child", testutil.Cols{
 		"workspace_id": workspaceID, "number": 300, "parent_issue_id": parentID, "status": "todo",
+	})
+	visibleParentOnlyID := dbfx.Issue(t, "visible parent with hidden child", testutil.Cols{
+		"workspace_id": workspaceID,
+		"number":       400,
+	})
+	_ = dbfx.Issue(t, "hidden only child", testutil.Cols{
+		"workspace_id":    workspaceID,
+		"number":          250,
+		"parent_issue_id": visibleParentOnlyID,
 	})
 
 	h := *testHandler
@@ -433,22 +544,174 @@ func TestIssueCreationWindowChildProgressKeepsFullTotals(t *testing.T) {
 			ParentIssueID string `json:"parent_issue_id"`
 			Total         int64  `json:"total"`
 			Done          int64  `json:"done"`
-			VisibleTotal  int64  `json:"visible_total"`
-			VisibleDone   int64  `json:"visible_done"`
-			HiddenTotal   int64  `json:"hidden_total"`
 		} `json:"progress"`
 	}
 	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
 		t.Fatalf("decode child progress: %v", err)
 	}
+	foundVisibleParent := false
 	for _, progress := range body.Progress {
-		if progress.ParentIssueID != parentID {
-			continue
+		switch progress.ParentIssueID {
+		case parentID:
+			if progress.Total != 1 || progress.Done != 0 {
+				t.Fatalf("child progress = %#v, want visible 0/1 without hidden totals", progress)
+			}
+			foundVisibleParent = true
+		case visibleParentOnlyID:
+			t.Fatalf("child progress exposed hidden-only children: %#v", progress)
 		}
-		if progress.Total != 3 || progress.Done != 1 || progress.VisibleTotal != 1 || progress.VisibleDone != 0 || progress.HiddenTotal != 2 {
-			t.Fatalf("child progress = %#v, want full 1/3 and visible 0/1 with 2 hidden", progress)
-		}
-		return
 	}
-	t.Fatalf("visible parent missing from child progress: %#v", body.Progress)
+	if !foundVisibleParent {
+		t.Fatalf("visible parent missing from child progress: %#v", body.Progress)
+	}
+}
+
+func TestIssueCreationWindowProtectsBatchMutationsAndParentedCreates(t *testing.T) {
+	workspaceID := dbfx.Workspace(t, "Issue window mutations", "issue-window-mutations-"+uuid.NewString())
+	dbfx.Member(t, workspaceID, testUserID, "owner")
+	hiddenID := dbfx.Issue(t, "hidden issue", testutil.Cols{
+		"workspace_id": workspaceID,
+		"number":       1,
+	})
+	visibleID := dbfx.Issue(t, "visible issue", testutil.Cols{
+		"workspace_id": workspaceID,
+		"number":       2,
+	})
+
+	h := *testHandler
+	h.Entitlements = issueWindowProvider(entitlement.ActionEnforce, 1)
+	issueService := *h.IssueService
+	issueService.Entitlements = h.Entitlements
+	h.IssueService = &issueService
+	request := func(method, path string, body string) *http.Request {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("X-User-ID", testUserID)
+		req.Header.Set("X-Workspace-ID", workspaceID)
+		return req
+	}
+
+	createRecorder := httptest.NewRecorder()
+	h.CreateIssue(createRecorder, request(http.MethodPost, "/api/issues", fmt.Sprintf(`{"title":"child under hidden","parent_issue_id":%q}`, hiddenID)))
+	if createRecorder.Code != http.StatusPaymentRequired {
+		t.Fatalf("parented create status = %d, want 402: %s", createRecorder.Code, createRecorder.Body.String())
+	}
+	if got := dbfx.Count(t, "SELECT count(*) FROM issue WHERE workspace_id = $1 AND title = $2", workspaceID, "child under hidden"); got != 0 {
+		t.Fatalf("window-blocked child create wrote %d rows", got)
+	}
+
+	updateRecorder := httptest.NewRecorder()
+	h.BatchUpdateIssues(updateRecorder, request(http.MethodPatch, "/api/issues/batch", fmt.Sprintf(`{"issue_ids":[%q],"updates":{"title":"should not update"}}`, hiddenID)))
+	if updateRecorder.Code != http.StatusPaymentRequired {
+		t.Fatalf("batch update status = %d, want 402: %s", updateRecorder.Code, updateRecorder.Body.String())
+	}
+	var title string
+	dbfx.QueryRow(t, "SELECT title FROM issue WHERE id = $1", hiddenID).Scan(&title)
+	if title != "hidden issue" {
+		t.Fatalf("window-blocked batch update changed title to %q", title)
+	}
+
+	deleteRecorder := httptest.NewRecorder()
+	h.BatchDeleteIssues(deleteRecorder, request(http.MethodPost, "/api/issues/batch-delete", fmt.Sprintf(`{"issue_ids":[%q]}`, hiddenID)))
+	if deleteRecorder.Code != http.StatusPaymentRequired {
+		t.Fatalf("batch delete status = %d, want 402: %s", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+	if got := dbfx.Count(t, "SELECT count(*) FROM issue WHERE id = $1", hiddenID); got != 1 {
+		t.Fatalf("window-blocked batch delete removed hidden issue; count=%d", got)
+	}
+	if got := dbfx.Count(t, "SELECT count(*) FROM issue WHERE id = $1", visibleID); got != 1 {
+		t.Fatalf("control visible issue count=%d, want 1", got)
+	}
+}
+
+func TestIssueCreationWindowProtectsInboxBatchMutations(t *testing.T) {
+	workspaceID := dbfx.Workspace(t, "Inbox window mutations", "inbox-window-mutations-"+uuid.NewString())
+	dbfx.Member(t, workspaceID, testUserID, "owner")
+	h := *testHandler
+	h.Entitlements = issueWindowProvider(entitlement.ActionEnforce, 1)
+	request := func(path string) *http.Request {
+		req := inboxRequest(http.MethodPost, path, workspaceID)
+		return req
+	}
+	call := func(fn http.HandlerFunc, path string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		middleware.RequireWorkspaceMember(h.Queries)(fn).ServeHTTP(recorder, request(path))
+		return recorder
+	}
+	insert := func(issueID, title string, read, archived bool) {
+		dbfx.Insert(t, "inbox_item", testutil.Cols{
+			"workspace_id":   workspaceID,
+			"recipient_type": "member",
+			"recipient_id":   testUserID,
+			"type":           "status_changed",
+			"severity":       "info",
+			"issue_id":       issueID,
+			"title":          title,
+			"read":           read,
+			"archived":       archived,
+		})
+	}
+	newIssuePair := func(hiddenNumber, visibleNumber int32) (string, string) {
+		hiddenID := dbfx.Issue(t, "hidden inbox issue", testutil.Cols{
+			"workspace_id": workspaceID,
+			"number":       hiddenNumber,
+		})
+		visibleID := dbfx.Issue(t, "visible inbox issue", testutil.Cols{
+			"workspace_id": workspaceID,
+			"number":       visibleNumber,
+		})
+		return hiddenID, visibleID
+	}
+
+	hiddenID, visibleID := newIssuePair(1, 2)
+	insert(hiddenID, "hidden mark", false, false)
+	insert(visibleID, "visible mark", false, false)
+	if recorder := call(h.MarkAllInboxRead, "/api/inbox/mark-all-read"); recorder.Code != http.StatusOK {
+		t.Fatalf("mark-all status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var hiddenRead, visibleRead bool
+	dbfx.QueryRow(t, "SELECT read FROM inbox_item WHERE issue_id = $1", hiddenID).Scan(&hiddenRead)
+	dbfx.QueryRow(t, "SELECT read FROM inbox_item WHERE issue_id = $1", visibleID).Scan(&visibleRead)
+	if hiddenRead || !visibleRead {
+		t.Fatalf("mark-all read states hidden=%v visible=%v", hiddenRead, visibleRead)
+	}
+
+	hiddenID, visibleID = newIssuePair(3, 4)
+	insert(hiddenID, "hidden archive", false, false)
+	insert(visibleID, "visible archive", false, false)
+	if recorder := call(h.ArchiveAllInbox, "/api/inbox/archive-all"); recorder.Code != http.StatusOK {
+		t.Fatalf("archive-all status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if got := dbfx.Count(t, "SELECT count(*) FROM inbox_item WHERE issue_id = $1 AND archived", hiddenID); got != 0 {
+		t.Fatalf("archive-all archived hidden rows=%d", got)
+	}
+	if got := dbfx.Count(t, "SELECT count(*) FROM inbox_item WHERE issue_id = $1 AND archived", visibleID); got != 1 {
+		t.Fatalf("archive-all archived visible rows=%d, want 1", got)
+	}
+
+	hiddenID, visibleID = newIssuePair(5, 6)
+	insert(hiddenID, "hidden read archive", true, false)
+	insert(visibleID, "visible read archive", true, false)
+	if recorder := call(h.ArchiveAllReadInbox, "/api/inbox/archive-all-read"); recorder.Code != http.StatusOK {
+		t.Fatalf("archive-all-read status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if got := dbfx.Count(t, "SELECT count(*) FROM inbox_item WHERE issue_id = $1 AND archived", hiddenID); got != 0 {
+		t.Fatalf("archive-all-read archived hidden rows=%d", got)
+	}
+	if got := dbfx.Count(t, "SELECT count(*) FROM inbox_item WHERE issue_id = $1 AND archived", visibleID); got != 1 {
+		t.Fatalf("archive-all-read archived visible rows=%d, want 1", got)
+	}
+
+	hiddenID, visibleID = newIssuePair(7, 8)
+	dbfx.Exec(t, "UPDATE issue SET status = 'done' WHERE id = ANY($1::uuid[])", []string{hiddenID, visibleID})
+	insert(hiddenID, "hidden completed", false, false)
+	insert(visibleID, "visible completed", false, false)
+	if recorder := call(h.ArchiveCompletedInbox, "/api/inbox/archive-completed"); recorder.Code != http.StatusOK {
+		t.Fatalf("archive-completed status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if got := dbfx.Count(t, "SELECT count(*) FROM inbox_item WHERE issue_id = $1 AND archived", hiddenID); got != 0 {
+		t.Fatalf("archive-completed archived hidden rows=%d", got)
+	}
+	if got := dbfx.Count(t, "SELECT count(*) FROM inbox_item WHERE issue_id = $1 AND archived", visibleID); got != 1 {
+		t.Fatalf("archive-completed archived visible rows=%d, want 1", got)
+	}
 }

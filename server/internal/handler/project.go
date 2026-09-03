@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -66,12 +67,30 @@ func projectToResponse(p db.Project) ProjectResponse {
 	}
 }
 
-func (h *Handler) loadProjectIssueStats(ctx context.Context, projectID pgtype.UUID) (int64, int64) {
-	stats, err := h.Queries.GetProjectIssueStats(ctx, []pgtype.UUID{projectID})
+func (h *Handler) loadProjectIssueStats(ctx context.Context, workspaceID, projectID pgtype.UUID) (int64, int64) {
+	terminalStatusKeys := h.projectTerminalIssueStatusKeys(ctx, workspaceID)
+	stats, err := h.Queries.GetProjectIssueStats(ctx, db.GetProjectIssueStatsParams{
+		WorkspaceID:        workspaceID,
+		ProjectIds:         []pgtype.UUID{projectID},
+		TerminalStatusKeys: terminalStatusKeys,
+	})
 	if err != nil || len(stats) == 0 {
 		return 0, 0
 	}
 	return stats[0].TotalCount, stats[0].DoneCount
+}
+
+// projectTerminalIssueStatusKeys keeps project responses useful if the custom
+// status catalog cannot be read. Canonical terminal keys are less complete
+// than the workspace catalog, but they avoid rendering every project as 0/0.
+func (h *Handler) projectTerminalIssueStatusKeys(ctx context.Context, workspaceID pgtype.UUID) []string {
+	keys, err := h.terminalIssueStatusKeys(ctx, workspaceID)
+	if err == nil {
+		return keys
+	}
+	slog.Warn("expand project terminal status categories failed; using canonical keys",
+		"workspace_id", uuidToString(workspaceID), "error", err)
+	return []string{issuestatus.Done, issuestatus.Cancelled}
 }
 
 func (h *Handler) loadProjectResourceCount(ctx context.Context, projectID pgtype.UUID) int64 {
@@ -164,8 +183,13 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		for i, p := range projects {
 			projectIDs[i] = p.ID
 		}
-		stats, err := h.Queries.GetProjectIssueStats(r.Context(), projectIDs)
-		if err == nil {
+		terminalStatusKeys := h.projectTerminalIssueStatusKeys(r.Context(), wsUUID)
+		stats, statsErr := h.Queries.GetProjectIssueStats(r.Context(), db.GetProjectIssueStatsParams{
+			WorkspaceID:        wsUUID,
+			ProjectIds:         projectIDs,
+			TerminalStatusKeys: terminalStatusKeys,
+		})
+		if statsErr == nil {
 			for _, s := range stats {
 				statsMap[uuidToString(s.ProjectID)] = s
 			}
@@ -211,7 +235,7 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := projectToResponse(project)
 	_, resp.PMOImported = h.loadPMOImportedProjectIDs(r.Context(), wsUUID)[resp.ID]
-	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), project.ID)
+	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), wsUUID, project.ID)
 	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -341,6 +365,9 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		ref, err := validateAndNormalizeResourceRef(res.ResourceType, res.ResourceRef)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "resources["+strconv.Itoa(i)+"]: "+err.Error())
+			return
+		}
+		if !h.requireDesignDocumentRefTarget(w, r, wsUUID, res.ResourceType, ref) {
 			return
 		}
 		normalizedRefs[i] = ref
@@ -666,7 +693,7 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := projectToResponse(project)
-	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), project.ID)
+	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), wsUUID, project.ID)
 	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
 	if len(completedIssues) > 0 {
 		prefix := h.getIssuePrefix(r.Context(), project.WorkspaceID)
@@ -1006,8 +1033,13 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 		for i, r := range results {
 			projectIDs[i] = r.project.ID
 		}
-		stats, err := h.Queries.GetProjectIssueStats(ctx, projectIDs)
-		if err == nil {
+		terminalStatusKeys := h.projectTerminalIssueStatusKeys(ctx, wsUUID)
+		stats, statsErr := h.Queries.GetProjectIssueStats(ctx, db.GetProjectIssueStatsParams{
+			WorkspaceID:        wsUUID,
+			ProjectIds:         projectIDs,
+			TerminalStatusKeys: terminalStatusKeys,
+		})
+		if statsErr == nil {
 			for _, s := range stats {
 				statsMap[uuidToString(s.ProjectID)] = s
 			}

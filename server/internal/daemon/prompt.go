@@ -3,10 +3,10 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/multica-ai/multica/server/internal/designdocument"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
+	"github.com/multica-ai/multica/server/internal/designdocument"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 )
 
@@ -67,6 +67,7 @@ func perTurnContextBlocks(task Task, opts promptOpts) string {
 	var b strings.Builder
 	b.WriteString(buildActiveSiblingRunsBlock(task.IssueID, task.ActiveSiblingRuns))
 	b.WriteString(buildSharedLocalDirectoryBlock(opts.sharedLocalDirectory))
+	b.WriteString(buildWorktreeReplayConflictBlock(opts.worktreeReplayConflicts))
 	if task.PriorSessionResumeUnavailable {
 		b.WriteString(sessionContinuityNoticeFor(task))
 	}
@@ -79,8 +80,9 @@ func perTurnContextBlocks(task Task, opts promptOpts) string {
 // daemon's own execution context can answer. Kept behind PromptOption so the
 // common BuildPrompt(task, provider) call sites stay unchanged.
 type promptOpts struct {
-	sharedLocalDirectory bool
-	outputDir            string
+	sharedLocalDirectory    bool
+	outputDir               string
+	worktreeReplayConflicts []string
 }
 
 // PromptOption tunes per-turn prompt copy with run-scoped context.
@@ -111,6 +113,16 @@ func WithOutputDir(dir string) PromptOption {
 	return func(o *promptOpts) { o.outputDir = strings.TrimSpace(dir) }
 }
 
+// WithWorktreeReplayConflicts names the files whose merge this turn has to
+// finish. Worktree mode continues one branch per conversation, and when the
+// user edits the same lines in their own directory between two turns, git
+// cannot decide which version wins — so the turn starts on a conflicted tree
+// and the agent, which is the only party that knows what the change was FOR,
+// resolves it (MUL-6881).
+func WithWorktreeReplayConflicts(files []string) PromptOption {
+	return func(o *promptOpts) { o.worktreeReplayConflicts = files }
+}
+
 // buildSharedLocalDirectoryBlock warns an unlocked turn that its working
 // directory is shared live. Deliberately guidance and not a prohibition: the
 // mutex never covered the user's own editor either, so refusing writes here
@@ -125,6 +137,59 @@ func buildSharedLocalDirectoryBlock(shared bool) string {
 	b.WriteString("## Shared working directory\n\n")
 	b.WriteString("Your working directory is the user's own checkout, and another task on this machine may be editing it while you run. This turn deliberately neither holds nor waits for the directory lock — that is what keeps a conversation from queueing behind a long build.\n\n")
 	b.WriteString("Read freely. Treat writing the way the user treats saving a file in their own editor: reasonable for a small change they just asked for, wrong for a broad refactor, a dependency install, or a build that rewrites many files. Work that size belongs in an issue task, which is serialised against the other writers. If you do write, say so in your reply — a sibling task may be looking at the same file.\n\n")
+	return b.String()
+}
+
+// maxConflictListBytes bounds the RENDERED file list, in bytes of the escaped
+// output rather than in entries: a git path can be as long as the filesystem
+// allows, so a per-entry count bounds nothing. 4 KiB is roughly a thousand
+// tokens — small next to any provider's context, large enough for the tens of
+// paths a real merge conflict spans, and the remainder is one `git status` away
+// inside the worktree. It is the whole block's share of the turn: this text is
+// re-sent every turn the merge stays open, and a pathological repository must
+// not be able to spend that turn on filenames.
+const maxConflictListBytes = 4 << 10
+
+// buildWorktreeReplayConflictBlock tells the turn that its own working tree
+// starts out mid-merge, and that finishing that merge comes before the task.
+//
+// Nothing else can say it: `git status` shows the conflict but not where it
+// came from, and the two sides are "what you wrote last turn" and "what the
+// user changed since" — neither of which is visible from inside the worktree.
+// Silence here is what the earlier version of this feature got wrong: it
+// resolved the conflict by discarding the user's edit, which lost that edit
+// from every later turn as well.
+//
+// The names are QUOTED, not wrapped in a code span. They come from the user's
+// repository, and a git path may contain newlines, backticks and quotes — a
+// raw one could close the list item and continue as its own instruction line in
+// the prompt. %q keeps every path on one line with its own delimiters, so a
+// crafted filename can only ever read as a filename.
+func buildWorktreeReplayConflictBlock(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Unresolved merge in your working tree\n\n")
+	b.WriteString("This branch carries your previous turn's work. Since then the user edited the same lines in their own directory, and git could not merge the two (paths are quoted Go string literals — a filename may itself contain quotes or newlines):\n\n")
+	listed, used := 0, 0
+	for _, file := range files {
+		entry := fmt.Sprintf("- %q\n", file)
+		// Budget checked before writing, so a single very long path cannot
+		// overrun it either — in that case the list is empty and the line below
+		// carries the whole count.
+		if used+len(entry) > maxConflictListBytes {
+			break
+		}
+		b.WriteString(entry)
+		used += len(entry)
+		listed++
+	}
+	if listed < len(files) {
+		fmt.Fprintf(&b, "- …and %d more; `git status` in this worktree lists them all\n", len(files)-listed)
+	}
+	b.WriteString("\nResolve it before anything else, with ordinary git commands — `git status` lists the unmerged paths, `git diff` shows both sides, `git add <file>` marks each one done. The \"ours\" side is what you wrote last turn; \"theirs\" is the user's newer edit, and it is the side you have not seen before, so read it before choosing. Keep both intentions where they are compatible; where they are not, prefer the user's and say so in your reply.\n\n")
+	b.WriteString("This run cannot deliver its branch while any file is still unmerged — the task fails and the worktree is kept for a human instead. Do not commit conflict markers.\n\n")
 	return b.String()
 }
 
@@ -159,6 +224,227 @@ func buildActiveSiblingRunsBlock(currentIssueID string, runs []ActiveSiblingRunD
 		fmt.Fprintf(&b, "; inspect: `multica issue run-messages %s`\n", run.TaskID)
 	}
 	b.WriteString("\n")
+	return b.String()
+}
+
+// BuildDirectPrompt returns the smallest flow-specific envelope needed to
+// complete a task without the normal Multica workflow brief. It keeps raw user
+// input intact while retaining only the identifiers and commands required for
+// delivery, issue updates, attachments, or exactly-once creation.
+func BuildDirectPrompt(task Task) string {
+	switch {
+	case task.ChatSessionID != "":
+		return buildDirectChatPrompt(task)
+	case task.TriggerCommentID != "":
+		return buildDirectCommentPrompt(task)
+	case task.AutopilotRunID != "":
+		return buildDirectAutopilotPrompt(task)
+	case task.QuickCreatePrompt != "":
+		return buildDirectQuickCreatePrompt(task)
+	case len(task.UIDraftCreateContext) > 0:
+		return string(task.UIDraftCreateContext)
+	case len(task.DesignRestoreContext) > 0:
+		return string(task.DesignRestoreContext)
+	case task.TestGenerationContext != "":
+		return task.TestGenerationContext
+	case task.TestRunContext != "":
+		return task.TestRunContext
+	case len(task.DesignSystemProfileAnalyzeContext) > 0:
+		return string(task.DesignSystemProfileAnalyzeContext)
+	case len(task.TemplateBlueprintAnalyzeContext) > 0:
+		return string(task.TemplateBlueprintAnalyzeContext)
+	case len(task.ProjectDesignSystemContext) > 0:
+		return string(task.ProjectDesignSystemContext)
+	case len(task.DesignDocumentContext) > 0:
+		return string(task.DesignDocumentContext)
+	case len(task.DesignDeliveryContext) > 0:
+		return string(task.DesignDeliveryContext)
+	case len(task.PMOSyncContext) > 0:
+		return string(task.PMOSyncContext)
+	case task.HandoffNote != "", task.IssueID != "":
+		return buildDirectAssignmentPrompt(task)
+	default:
+		return ""
+	}
+}
+
+func buildDirectChatPrompt(task Task) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Chat session: %s\n", task.ChatSessionID)
+	if task.ChatChannelType != "" {
+		fmt.Fprintf(&b, "Surface: %s", task.ChatChannelType)
+	} else {
+		b.WriteString("Surface: web")
+	}
+	if task.ChatType != "" {
+		fmt.Fprintf(&b, ", %s", task.ChatType)
+	}
+	if task.ChatInThread {
+		b.WriteString(", thread reply")
+	}
+	b.WriteString("\n\nUser message:\n")
+	b.WriteString(task.ChatMessage)
+	b.WriteByte('\n')
+	if len(task.ChatMessageAttachments) > 0 {
+		b.WriteString("\nAttachments:\n")
+		for _, attachment := range task.ChatMessageAttachments {
+			fmt.Fprintf(&b, "- %s", attachment.ID)
+			if attachment.Filename != "" {
+				fmt.Fprintf(&b, " %s", attachment.Filename)
+			}
+			if attachment.ContentType != "" {
+				fmt.Fprintf(&b, " (%s)", attachment.ContentType)
+			}
+			b.WriteByte('\n')
+		}
+		b.WriteString("Download an attachment when needed with `multica attachment download <id>`.\n")
+	}
+	b.WriteString("\nReply with the final answer only; stdout is delivered to this chat.\n")
+	switch {
+	case task.ChatChannelType == "":
+		b.WriteString("To include a produced file or image, run `multica attachment upload <local-path>`.\n")
+	case execenv.ChannelCarriesFiles(task.ChatChannelType, task.ChatChannelDeliversFiles):
+		fmt.Fprintf(&b, "To include a produced file or image, run `multica attachment upload <local-path>`; it is delivered to %s after the text.\n", channelDisplayName(task.ChatChannelType))
+	default:
+		fmt.Fprintf(&b, "This %s reply is text-only; describe any produced file instead of uploading it.\n", channelDisplayName(task.ChatChannelType))
+	}
+	return b.String()
+}
+
+func buildDirectCommentPrompt(task Task) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Issue: %s\nTrigger comment: %s", task.IssueID, task.TriggerCommentID)
+	if task.TriggerThreadID != "" {
+		fmt.Fprintf(&b, " (thread %s)", task.TriggerThreadID)
+	}
+	if task.TriggerAuthorType != "" || task.TriggerAuthorName != "" {
+		fmt.Fprintf(&b, "\nAuthor: %s", task.TriggerAuthorType)
+		if task.TriggerAuthorName != "" {
+			fmt.Fprintf(&b, " (%s)", task.TriggerAuthorName)
+		}
+	}
+	b.WriteString("\n\nTrigger comment content:\n")
+	b.WriteString(task.TriggerCommentContent)
+	b.WriteByte('\n')
+
+	if len(task.CoalescedComments) > 0 {
+		b.WriteString("\nAdditional comments:\n")
+		for _, comment := range task.CoalescedComments {
+			fmt.Fprintf(&b, "- comment %s", comment.ID)
+			if comment.ThreadID != "" {
+				fmt.Fprintf(&b, " [thread %s]", comment.ThreadID)
+			}
+			if comment.AuthorType != "" || comment.AuthorName != "" {
+				fmt.Fprintf(&b, " (%s", comment.AuthorType)
+				if comment.AuthorName != "" {
+					fmt.Fprintf(&b, ": %s", comment.AuthorName)
+				}
+				b.WriteByte(')')
+			}
+			if comment.CreatedAt != "" {
+				fmt.Fprintf(&b, " %s", comment.CreatedAt)
+			}
+			b.WriteString(":\n")
+			b.WriteString(comment.Content)
+			b.WriteString("\n")
+		}
+	} else if len(task.CoalescedCommentIDs) > 0 {
+		fmt.Fprintf(&b, "\nAdditional comment IDs: %s\n", strings.Join(task.CoalescedCommentIDs, ", "))
+	}
+
+	b.WriteString("\nReply to each request when a reply is warranted. Write the final body to ./reply.md, post it, then remove the file:\n")
+	if targets := commentReplyThreads(task); len(targets) >= 2 {
+		for _, target := range targets {
+			fmt.Fprintf(&b, "multica issue comment add %s --parent %s --content-file ./reply.md\n", task.IssueID, target.ParentID)
+		}
+	} else {
+		fmt.Fprintf(&b, "multica issue comment add %s --parent %s --content-file ./reply.md\n", task.IssueID, task.TriggerCommentID)
+	}
+	b.WriteString("rm ./reply.md\n")
+	if taskIsSquadLeader(task) {
+		fmt.Fprintf(&b, "If no action is needed, run `multica squad activity %s no_action --reason \"...\"` and do not post a comment.\n", task.IssueID)
+	}
+	return b.String()
+}
+
+func buildDirectAssignmentPrompt(task Task) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Issue: %s\n", task.IssueID)
+	fmt.Fprintf(&b, "Read it with `multica issue get %s --output json`, perform the requested work, then post the final result with `multica issue comment add %s --content-file ./reply.md` and run `multica issue status %s in_review`. Write the comment body to ./reply.md first and remove the file afterward.\n", task.IssueID, task.IssueID, task.IssueID)
+	if task.HandoffNote != "" {
+		b.WriteString("\nHandoff:\n")
+		b.WriteString(task.HandoffNote)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func buildDirectAutopilotPrompt(task Task) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Autopilot run: %s\n", task.AutopilotRunID)
+	if task.AutopilotID != "" {
+		fmt.Fprintf(&b, "Autopilot: %s\n", task.AutopilotID)
+	}
+	if task.AutopilotTitle != "" {
+		fmt.Fprintf(&b, "Title: %s\n", task.AutopilotTitle)
+	}
+	if task.AutopilotSource != "" {
+		fmt.Fprintf(&b, "Source: %s\n", task.AutopilotSource)
+	}
+	b.WriteString("\nDescription:\n")
+	b.WriteString(task.AutopilotDescription)
+	b.WriteString("\n\nTrigger payload:\n")
+	b.WriteString(string(task.AutopilotTriggerPayload))
+	b.WriteByte('\n')
+	return b.String()
+}
+
+func buildDirectQuickCreatePrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("Create exactly one issue from this request.\n\nUser request:\n")
+	b.WriteString(task.QuickCreatePrompt)
+	b.WriteString("\n\nSelected fields:\n")
+	assigneeID := task.SquadID
+	if assigneeID == "" {
+		if task.Agent != nil {
+			assigneeID = task.Agent.ID
+		}
+		if assigneeID == "" {
+			assigneeID = task.AgentID
+		}
+	}
+	if assigneeID != "" {
+		fmt.Fprintf(&b, "--assignee-id %s\n", assigneeID)
+	}
+	if task.QuickCreatePriority != "" {
+		fmt.Fprintf(&b, "--priority %s\n", task.QuickCreatePriority)
+	}
+	if task.QuickCreateDueDate != "" {
+		fmt.Fprintf(&b, "--due-date %s\n", task.QuickCreateDueDate)
+	}
+	if task.ProjectID != "" {
+		fmt.Fprintf(&b, "--project %s", task.ProjectID)
+		if task.ProjectTitle != "" {
+			fmt.Fprintf(&b, " (%s)", task.ProjectTitle)
+		}
+		b.WriteByte('\n')
+	}
+	if task.ParentIssueID != "" {
+		fmt.Fprintf(&b, "--parent %s", task.ParentIssueID)
+		if task.ParentIssueIdentifier != "" {
+			fmt.Fprintf(&b, " (%s)", task.ParentIssueIdentifier)
+		}
+		b.WriteByte('\n')
+	}
+	for _, attachmentID := range task.QuickCreateAttachmentIDs {
+		fmt.Fprintf(&b, "--attachment-id %s\n", attachmentID)
+	}
+	if len(task.QuickCreateSourceContext) > 0 {
+		b.WriteString("\nSource context (read-only historical context):\n")
+		b.Write(task.QuickCreateSourceContext)
+		b.WriteByte('\n')
+	}
+	b.WriteString("\nRun `multica issue create --output json` exactly once. Use --title and put any multi-line or rich description in ./description.md, passed with --description-file ./description.md. Print only the created identifier or id, then exit.\n")
 	return b.String()
 }
 

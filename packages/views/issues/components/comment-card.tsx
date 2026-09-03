@@ -28,7 +28,7 @@ import { ReactionBar } from "@multica/ui/components/common/reaction-bar";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { useActorName } from "@multica/core/workspace/hooks";
-import { useTimeAgo } from "../../i18n";
+import { useLocale, useTimeAgo } from "../../i18n";
 import { ContentEditor, type ContentEditorRef, ReadonlyContent, useFileDropZone, FileDropOverlay, Attachment as AttachmentRenderer, AttachmentDownloadProvider, useUploadGate, useComposerSubmit } from "../../editor";
 import { useCommentUploads } from "./use-comment-uploads";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
@@ -556,21 +556,26 @@ function CommentRevisionConflict({
       localLabel={t(($) => $.revision.local_version)}
       serverValue={serverContent}
       localValue={localContent}
-      actions={(
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={saving}
-            onClick={onKeepLocal}
-          >
-            {t(($) => $.revision.keep_local)}
-          </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={onUseServer}>
-            {t(($) => $.revision.use_server)}
-          </Button>
-        </div>
+      serverAction={(
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={onUseServer}
+        >
+          {t(($) => $.revision.use_server)}
+        </Button>
+      )}
+      localAction={(
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={saving}
+          onClick={onKeepLocal}
+        >
+          {t(($) => $.revision.keep_local)}
+        </Button>
       )}
     />
   );
@@ -608,6 +613,7 @@ function CommentRow({
   onResolveToggle?: (commentId: string, resolved: boolean) => void;
 }) {
   const { t } = useT("issues");
+  const locale = useLocale();
   const timeAgo = useTimeAgo();
   const { getActorName } = useActorName();
 
@@ -644,7 +650,7 @@ function CommentRow({
             }
           />
           <TooltipContent side="top">
-            {new Date(entry.created_at).toLocaleString()}
+            {new Date(entry.created_at).toLocaleString(locale)}
           </TooltipContent>
         </Tooltip>
 
@@ -861,6 +867,7 @@ function CommentCardImpl({
   highlightedCommentId,
 }: CommentCardProps) {
   const { t } = useT("issues");
+  const locale = useLocale();
   const timeAgo = useTimeAgo();
   const { getActorName } = useActorName();
   const isCollapsed = useCommentCollapseStore((s) => s.isCollapsed(issueId, entry.id));
@@ -966,7 +973,7 @@ function CommentCardImpl({
                   }
                 />
                 <TooltipContent side="top">
-                  {new Date(entry.created_at).toLocaleString()}
+                  {new Date(entry.created_at).toLocaleString(locale)}
                 </TooltipContent>
               </Tooltip>
 

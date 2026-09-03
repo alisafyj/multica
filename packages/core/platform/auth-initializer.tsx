@@ -70,6 +70,7 @@ export function AuthInitializer({
         configStore.getState().setAuthConfig({
           allowSignup: cfg.allow_signup,
           googleClientId: cfg.google_client_id,
+          useSySso: cfg.use_sy_sso,
           // Old servers omit this field — treat that as "creation allowed"
           // (the managed-cloud default) rather than blocking the UI.
           workspaceCreationDisabled: cfg.workspace_creation_disabled === true,
@@ -82,6 +83,7 @@ export function AuthInitializer({
         });
         configStore.getState().setFeatureFlags(cfg.feature_flags);
         configStore.getState().setServerVersion(cfg.server_version);
+        configStore.getState().setUpstreamVersion(cfg.upstream_version);
         // Absent on every server that predates the worktree save gate, which
         // is exactly when the client must not offer the mode (#7113).
         configStore
@@ -92,8 +94,8 @@ export function AuthInitializer({
         // the persistence contract explicitly.
         configStore
           .getState()
-          .setAgentStarterPromptsSupported(
-            cfg.agent_starter_prompts_supported === true,
+          .setAgentConversationStartersSupported(
+            cfg.agent_conversation_starters_supported === true,
           );
         if (cfg.posthog_key) {
           initAnalytics({

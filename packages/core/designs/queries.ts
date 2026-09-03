@@ -290,6 +290,21 @@ export function designRepositoryCatalogueOptions(wsId: string) {
 }
 
 /**
+ * Every design document in the workspace, most recently touched first. The
+ * create-project modal's design picker reads this — the project being created
+ * owns no documents yet, so only a workspace-wide list has anything to offer.
+ * An empty `wsId` stays idle.
+ */
+export function designDocumentWorkspaceListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: designKeys.documentsInWorkspace(wsId),
+    queryFn: () => api.listDesignDocumentsInWorkspace(),
+    select: (data) => data.documents,
+    enabled: !!wsId,
+  });
+}
+
+/**
  * Design documents pointing at one issue, for the issue's own view of them. An
  * empty `issueId` stays idle: there is no workspace-wide listing to fall back
  * on, and asking for one would 400.

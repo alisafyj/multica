@@ -52,7 +52,7 @@ type Agent struct {
 	SystemKey             pgtype.Text `json:"system_key"`
 	DisabledRuntimeSkills []byte      `json:"disabled_runtime_skills"`
 	ServiceTier           pgtype.Text `json:"service_tier"`
-	StarterPrompts        []byte      `json:"starter_prompts"`
+	ConversationStarters  []byte      `json:"conversation_starters"`
 }
 
 type AgentBuilderDraft struct {
@@ -172,6 +172,7 @@ type AgentTaskQueue struct {
 	BranchName                pgtype.Text `json:"branch_name"`
 	DurableWorkDir            pgtype.Text `json:"durable_work_dir"`
 	ChannelContextRevision    pgtype.Int8 `json:"channel_context_revision"`
+	ConciseMode               bool        `json:"concise_mode"`
 }
 
 type AgentToLabel struct {
@@ -227,14 +228,15 @@ type AutopilotCollaborator struct {
 }
 
 type AutopilotQuotaPeriod struct {
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
-	PeriodStart   pgtype.Timestamptz `json:"period_start"`
-	PeriodEnd     pgtype.Timestamptz `json:"period_end"`
-	UsedCount     int64              `json:"used_count"`
-	ReservedCount int64              `json:"reserved_count"`
-	BlockedCounts []byte             `json:"blocked_counts"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	PeriodStart         pgtype.Timestamptz `json:"period_start"`
+	PeriodEnd           pgtype.Timestamptz `json:"period_end"`
+	UsedCount           int64              `json:"used_count"`
+	ReservedCount       int64              `json:"reserved_count"`
+	BlockedCounts       []byte             `json:"blocked_counts"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	RejectionNotifiedAt pgtype.Timestamptz `json:"rejection_notified_at"`
 }
 
 type AutopilotQuotaReservation struct {
@@ -532,23 +534,24 @@ type ClientUsageDaily struct {
 }
 
 type Comment struct {
-	ID             pgtype.UUID        `json:"id"`
-	IssueID        pgtype.UUID        `json:"issue_id"`
-	AuthorType     string             `json:"author_type"`
-	AuthorID       pgtype.UUID        `json:"author_id"`
-	Content        string             `json:"content"`
-	Type           string             `json:"type"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	ParentID       pgtype.UUID        `json:"parent_id"`
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
-	ResolvedByType pgtype.Text        `json:"resolved_by_type"`
-	ResolvedByID   pgtype.UUID        `json:"resolved_by_id"`
-	SourceTaskID   pgtype.UUID        `json:"source_task_id"`
-	QuickActionID  pgtype.UUID        `json:"quick_action_id"`
-	ViaPluginID    pgtype.UUID        `json:"via_plugin_id"`
-	Revision       int64              `json:"revision"`
+	ID                pgtype.UUID        `json:"id"`
+	IssueID           pgtype.UUID        `json:"issue_id"`
+	AuthorType        string             `json:"author_type"`
+	AuthorID          pgtype.UUID        `json:"author_id"`
+	Content           string             `json:"content"`
+	Type              string             `json:"type"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	ParentID          pgtype.UUID        `json:"parent_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ResolvedAt        pgtype.Timestamptz `json:"resolved_at"`
+	ResolvedByType    pgtype.Text        `json:"resolved_by_type"`
+	ResolvedByID      pgtype.UUID        `json:"resolved_by_id"`
+	SourceTaskID      pgtype.UUID        `json:"source_task_id"`
+	QuickActionID     pgtype.UUID        `json:"quick_action_id"`
+	ViaPluginID       pgtype.UUID        `json:"via_plugin_id"`
+	Revision          int64              `json:"revision"`
+	RecoverySettledAt pgtype.Timestamptz `json:"recovery_settled_at"`
 }
 
 type CommentReaction struct {
@@ -2028,6 +2031,15 @@ type TestCase struct {
 	ReviewedAt           pgtype.Timestamptz `json:"reviewed_at"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TestCaseIssue struct {
+	TestCaseID  pgtype.UUID        `json:"test_case_id"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Origin      string             `json:"origin"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 type TestCaseProposal struct {

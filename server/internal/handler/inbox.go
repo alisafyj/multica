@@ -137,6 +137,7 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 	} else if windowEnabled {
 		h.observeIssueWindow(r.Context(), wsUUID, policy, issueIDs, "inbox")
 	}
+
 	resp := make([]InboxItemResponse, 0, len(items))
 	for _, item := range items {
 		if visible != nil && item.IssueID.Valid {
@@ -170,40 +171,33 @@ func (h *Handler) ListArchivedInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := h.Queries.ListArchivedInboxItems(r.Context(), db.ListArchivedInboxItemsParams{
+	policy, windowEnabled := h.issueWindowPolicy(r.Context(), wsUUID)
+	params := db.ListArchivedInboxItemsParams{
 		WorkspaceID:   wsUUID,
 		RecipientType: "member",
 		RecipientID:   parseUUID(userID),
-	})
+	}
+	if windowEnabled && policy.action == entitlement.ActionEnforce {
+		params.IssueWindowLimit = pgtype.Int8{Int64: policy.limit, Valid: true}
+	}
+	items, err := h.Queries.ListArchivedInboxItems(r.Context(), params)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list archived inbox")
 		return
 	}
 
-	policy, windowEnabled := h.issueWindowPolicy(r.Context(), wsUUID)
-	issueIDs := make([]pgtype.UUID, 0, len(items))
-	for _, item := range items {
-		if item.IssueID.Valid {
-			issueIDs = append(issueIDs, item.IssueID)
-		}
-	}
-	var visible map[pgtype.UUID]struct{}
-	if windowEnabled && policy.action == entitlement.ActionEnforce {
-		visible, err = h.visibleIssueIDSet(r.Context(), wsUUID, policy, issueIDs)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to list archived inbox")
-			return
-		}
-	} else if windowEnabled {
-		h.observeIssueWindow(r.Context(), wsUUID, policy, issueIDs, "inbox")
-	}
-	resp := make([]InboxItemResponse, 0, len(items))
-	for _, item := range items {
-		if visible != nil && item.IssueID.Valid {
-			if _, ok := visible[item.IssueID]; !ok {
-				continue
+	if windowEnabled && policy.action == entitlement.ActionObserve {
+		issueIDs := make([]pgtype.UUID, 0, len(items))
+		for _, item := range items {
+			if item.IssueID.Valid {
+				issueIDs = append(issueIDs, item.IssueID)
 			}
 		}
+		h.observeIssueWindow(r.Context(), wsUUID, policy, issueIDs, "inbox")
+	}
+
+	resp := make([]InboxItemResponse, 0, len(items))
+	for _, item := range items {
 		resp = append(resp, archivedInboxRowToResponse(item))
 	}
 
@@ -369,11 +363,11 @@ func (h *Handler) CountUnreadInbox(w http.ResponseWriter, r *http.Request) {
 		windowed, observeErr := h.countUnreadInboxWithinWindow(r.Context(), wsUUID, parseUUID(userID), policy)
 		if observeErr != nil {
 			slog.Warn("observe unread inbox window failed", "error", observeErr)
-			h.recordIssueWindow(policy.action, "inbox_count", "error")
+			h.recordIssueWindow(policy.action, "inbox", "error")
 		} else if windowed == count {
-			h.recordIssueWindow(policy.action, "inbox_count", "allowed")
+			h.recordIssueWindow(policy.action, "inbox", "allowed")
 		} else {
-			h.recordIssueWindow(policy.action, "inbox_count", "would_block")
+			h.recordIssueWindow(policy.action, "inbox", "would_block")
 		}
 	}
 
@@ -428,7 +422,7 @@ func (h *Handler) UnreadInboxSummary(w http.ResponseWriter, r *http.Request) {
 				if item.policy.action == entitlement.ActionEnforce {
 					failClosed = true
 				} else {
-					h.recordIssueWindow(item.policy.action, "inbox_summary", "error")
+					h.recordIssueWindow(item.policy.action, "inbox", "error")
 				}
 			}
 			if failClosed {
@@ -447,9 +441,9 @@ func (h *Handler) UnreadInboxSummary(w http.ResponseWriter, r *http.Request) {
 			if item.policy.action == entitlement.ActionEnforce {
 				count = windowed
 			} else if windowed == item.legacyCount {
-				h.recordIssueWindow(item.policy.action, "inbox_summary", "allowed")
+				h.recordIssueWindow(item.policy.action, "inbox", "allowed")
 			} else {
-				h.recordIssueWindow(item.policy.action, "inbox_summary", "would_block")
+				h.recordIssueWindow(item.policy.action, "inbox", "would_block")
 			}
 		}
 		if count == 0 {
@@ -521,6 +515,85 @@ func (h *Handler) unreadInboxCountsWithinWindows(ctx context.Context, recipientI
 	return counts, rows.Err()
 }
 
+func (h *Handler) markAllInboxReadWithinIssueWindow(ctx context.Context, workspaceID, recipientID pgtype.UUID, policy issueWindowPolicy) (int64, error) {
+	query := fmt.Sprintf(`UPDATE inbox_item i SET read = true
+WHERE i.workspace_id = $1
+  AND i.recipient_type = 'member'
+  AND i.recipient_id = $2
+  AND i.archived = false
+  AND i.read = false
+  AND (i.issue_id IS NULL OR %s)`, issueWindowIDPredicate("i.issue_id", "$1", "$3"))
+	result, err := h.DB.Exec(ctx, query, workspaceID, recipientID, policy.limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+func (h *Handler) archiveAllInboxWithinIssueWindow(ctx context.Context, workspaceID, recipientID pgtype.UUID, policy issueWindowPolicy) (int64, error) {
+	query := fmt.Sprintf(`UPDATE inbox_item i SET archived = true
+WHERE i.workspace_id = $1
+  AND i.recipient_type = 'member'
+  AND i.recipient_id = $2
+  AND i.archived = false
+  AND (i.issue_id IS NULL OR %s)`, issueWindowIDPredicate("i.issue_id", "$1", "$3"))
+	result, err := h.DB.Exec(ctx, query, workspaceID, recipientID, policy.limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+func (h *Handler) archiveAllReadInboxWithinIssueWindow(ctx context.Context, workspaceID, recipientID pgtype.UUID, policy issueWindowPolicy) (int64, error) {
+	query := fmt.Sprintf(`WITH newest_groups AS (
+	SELECT DISTINCT ON (COALESCE(i.issue_id, i.id))
+	       COALESCE(i.issue_id, i.id) AS group_id,
+	       i.read
+	FROM inbox_item i
+	WHERE i.workspace_id = $1
+	  AND i.recipient_type = 'member'
+	  AND i.recipient_id = $2
+	  AND i.archived = false
+	  AND (i.issue_id IS NULL OR %s)
+	ORDER BY COALESCE(i.issue_id, i.id), i.created_at DESC, i.id DESC
+), read_groups AS (
+	SELECT group_id
+	FROM newest_groups
+	WHERE read = true
+)
+UPDATE inbox_item i SET archived = true
+FROM read_groups selected
+WHERE i.workspace_id = $1
+  AND i.recipient_type = 'member'
+  AND i.recipient_id = $2
+  AND i.archived = false
+  AND COALESCE(i.issue_id, i.id) = selected.group_id`, issueWindowIDPredicate("i.issue_id", "$1", "$3"))
+	result, err := h.DB.Exec(ctx, query, workspaceID, recipientID, policy.limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+func (h *Handler) archiveCompletedInboxWithinIssueWindow(ctx context.Context, workspaceID, recipientID pgtype.UUID, terminalStatusKeys []string, policy issueWindowPolicy) (int64, error) {
+	query := fmt.Sprintf(`UPDATE inbox_item i SET archived = true
+WHERE i.workspace_id = $1
+  AND i.recipient_type = 'member'
+  AND i.recipient_id = $2
+  AND i.archived = false
+  AND i.issue_id IN (
+	SELECT id FROM issue
+	WHERE workspace_id = $1
+	  AND status = ANY($4::text[])
+)
+  AND %s`, issueWindowIDPredicate("i.issue_id", "$1", "$3"))
+	result, err := h.DB.Exec(ctx, query, workspaceID, recipientID, policy.limit, terminalStatusKeys)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 func (h *Handler) MarkAllInboxRead(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -532,10 +605,17 @@ func (h *Handler) MarkAllInboxRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, err := h.Queries.MarkAllInboxRead(r.Context(), db.MarkAllInboxReadParams{
-		WorkspaceID: wsUUID,
-		RecipientID: parseUUID(userID),
-	})
+	policy, windowEnabled := h.issueWindowPolicy(r.Context(), wsUUID)
+	var count int64
+	var err error
+	if windowEnabled && policy.action == entitlement.ActionEnforce {
+		count, err = h.markAllInboxReadWithinIssueWindow(r.Context(), wsUUID, parseUUID(userID), policy)
+	} else {
+		count, err = h.Queries.MarkAllInboxRead(r.Context(), db.MarkAllInboxReadParams{
+			WorkspaceID: wsUUID,
+			RecipientID: parseUUID(userID),
+		})
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to mark all inbox read")
 		return
@@ -561,10 +641,17 @@ func (h *Handler) ArchiveAllInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, err := h.Queries.ArchiveAllInbox(r.Context(), db.ArchiveAllInboxParams{
-		WorkspaceID: wsUUID,
-		RecipientID: parseUUID(userID),
-	})
+	policy, windowEnabled := h.issueWindowPolicy(r.Context(), wsUUID)
+	var count int64
+	var err error
+	if windowEnabled && policy.action == entitlement.ActionEnforce {
+		count, err = h.archiveAllInboxWithinIssueWindow(r.Context(), wsUUID, parseUUID(userID), policy)
+	} else {
+		count, err = h.Queries.ArchiveAllInbox(r.Context(), db.ArchiveAllInboxParams{
+			WorkspaceID: wsUUID,
+			RecipientID: parseUUID(userID),
+		})
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to archive all inbox")
 		return
@@ -590,10 +677,17 @@ func (h *Handler) ArchiveAllReadInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, err := h.Queries.ArchiveAllReadInbox(r.Context(), db.ArchiveAllReadInboxParams{
-		WorkspaceID: wsUUID,
-		RecipientID: parseUUID(userID),
-	})
+	policy, windowEnabled := h.issueWindowPolicy(r.Context(), wsUUID)
+	var count int64
+	var err error
+	if windowEnabled && policy.action == entitlement.ActionEnforce {
+		count, err = h.archiveAllReadInboxWithinIssueWindow(r.Context(), wsUUID, parseUUID(userID), policy)
+	} else {
+		count, err = h.Queries.ArchiveAllReadInbox(r.Context(), db.ArchiveAllReadInboxParams{
+			WorkspaceID: wsUUID,
+			RecipientID: parseUUID(userID),
+		})
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to archive all read inbox")
 		return
@@ -619,10 +713,22 @@ func (h *Handler) ArchiveCompletedInbox(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	count, err := h.Queries.ArchiveCompletedInbox(r.Context(), db.ArchiveCompletedInboxParams{
-		WorkspaceID: wsUUID,
-		RecipientID: parseUUID(userID),
-	})
+	terminalStatusKeys, err := h.terminalIssueStatusKeys(r.Context(), wsUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve status categories")
+		return
+	}
+	policy, windowEnabled := h.issueWindowPolicy(r.Context(), wsUUID)
+	var count int64
+	if windowEnabled && policy.action == entitlement.ActionEnforce {
+		count, err = h.archiveCompletedInboxWithinIssueWindow(r.Context(), wsUUID, parseUUID(userID), terminalStatusKeys, policy)
+	} else {
+		count, err = h.Queries.ArchiveCompletedInbox(r.Context(), db.ArchiveCompletedInboxParams{
+			WorkspaceID:        wsUUID,
+			RecipientID:        parseUUID(userID),
+			TerminalStatusKeys: terminalStatusKeys,
+		})
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to archive completed inbox")
 		return

@@ -16,7 +16,7 @@ UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
 WHERE (runtime_id = ANY($1::uuid[]) OR agent_id = ANY($2::uuid[]))
   AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, concise_mode
 `
 
 type CancelAgentTasksByRuntimeOrAgentParams struct {
@@ -110,6 +110,7 @@ func (q *Queries) CancelAgentTasksByRuntimeOrAgent(ctx context.Context, arg Canc
 			&i.BranchName,
 			&i.DurableWorkDir,
 			&i.ChannelContextRevision,
+			&i.ConciseMode,
 		); err != nil {
 			return nil, err
 		}
@@ -127,43 +128,6 @@ SELECT count(*) FROM agent WHERE runtime_id = $1 AND archived_at IS NULL
 
 func (q *Queries) CountActiveAgentsByRuntime(ctx context.Context, runtimeID pgtype.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, countActiveAgentsByRuntime, runtimeID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countStaleOfflineRuntimesBlockedByTasks = `-- name: CountStaleOfflineRuntimesBlockedByTasks :one
-SELECT count(*) FROM (
-  SELECT 1 FROM agent_runtime
-  WHERE status = 'offline'
-    AND last_seen_at < now() - make_interval(secs => $1::double precision)
-    AND NOT EXISTS (
-      SELECT 1
-      FROM agent
-      WHERE agent.runtime_id = agent_runtime.id
-    )
-    AND EXISTS (
-      SELECT 1
-      FROM agent_task_queue
-      WHERE agent_task_queue.runtime_id = agent_runtime.id
-        AND agent_task_queue.completed_at IS NULL
-    )
-  LIMIT $2::int
-) AS blocked_runtimes
-`
-
-type CountStaleOfflineRuntimesBlockedByTasksParams struct {
-	StaleSeconds float64 `json:"stale_seconds"`
-	MaxRows      int32   `json:"max_rows"`
-}
-
-// Bounded observability sample of runtimes that are otherwise GC-eligible but
-// retain a non-terminal task. In particular, deferred tasks have no generic
-// TTL, so silently filtering them from the candidate batch would hide a
-// permanently-starved runtime. The count saturates at max_rows so this
-// recurring safety signal cannot become an unbounded backlog scan.
-func (q *Queries) CountStaleOfflineRuntimesBlockedByTasks(ctx context.Context, arg CountStaleOfflineRuntimesBlockedByTasksParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countStaleOfflineRuntimesBlockedByTasks, arg.StaleSeconds, arg.MaxRows)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -249,7 +213,7 @@ SET status = 'failed', completed_at = now(), error = 'runtime went offline',
 FROM victims
 WHERE task.id = victims.id
   AND task.status IN ('dispatched', 'running', 'waiting_local_directory')
-RETURNING task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.chat_finalize_deferred_at, task.originator_source, task.delegated_from_task_id, task.retry_of_task_id, task.rerun_of_task_id, task.rule_version_id, task.trigger_evidence_kind, task.trigger_evidence_ref_id, task.accountable_user_id, task.session_rollout_missing, task.retired_session_id, task.quick_actions_disabled, task.regenerate_quick_actions_for, task.branch_name, task.durable_work_dir, task.channel_context_revision
+RETURNING task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.chat_finalize_deferred_at, task.originator_source, task.delegated_from_task_id, task.retry_of_task_id, task.rerun_of_task_id, task.rule_version_id, task.trigger_evidence_kind, task.trigger_evidence_ref_id, task.accountable_user_id, task.session_rollout_missing, task.retired_session_id, task.quick_actions_disabled, task.regenerate_quick_actions_for, task.branch_name, task.durable_work_dir, task.channel_context_revision, task.concise_mode
 `
 
 type FailTasksForOfflineRuntimesParams struct {
@@ -329,6 +293,7 @@ func (q *Queries) FailTasksForOfflineRuntimes(ctx context.Context, arg FailTasks
 			&i.BranchName,
 			&i.DurableWorkDir,
 			&i.ChannelContextRevision,
+			&i.ConciseMode,
 		); err != nil {
 			return nil, err
 		}
@@ -576,6 +541,8 @@ SELECT EXISTS (
       SELECT 1
       FROM agent
       WHERE agent.runtime_id = agent_runtime.id
+        AND agent.kind = 'user'
+        AND agent.archived_at IS NULL
     )
 ) AS eligible
 `
@@ -737,6 +704,8 @@ WHERE status = 'offline'
     SELECT 1
     FROM agent
     WHERE agent.runtime_id = agent_runtime.id
+      AND agent.kind = 'user'
+      AND agent.archived_at IS NULL
   )
   AND NOT EXISTS (
     SELECT 1
@@ -1277,7 +1246,7 @@ const unbindUserAgentsFromRuntime = `-- name: UnbindUserAgentsFromRuntime :many
 UPDATE agent
 SET runtime_id = NULL, updated_at = now()
 WHERE runtime_id = $1 AND kind = 'user'
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, starter_prompts
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters
 `
 
 // MUL-5559: the runtime-delete replacement for archive-then-hard-delete. Every
@@ -1328,7 +1297,7 @@ func (q *Queries) UnbindUserAgentsFromRuntime(ctx context.Context, runtimeID pgt
 			&i.SystemKey,
 			&i.DisabledRuntimeSkills,
 			&i.ServiceTier,
-			&i.StarterPrompts,
+			&i.ConversationStarters,
 		); err != nil {
 			return nil, err
 		}

@@ -76,11 +76,11 @@ type AppConfig struct {
 	// them, and only one of the two guesses is safe.
 	LocalWorktreeSupported bool `json:"local_worktree_supported"`
 
-	// AgentStarterPromptsSupported tells independently deployed clients that
-	// agent create/update persists starter_prompts. Older handlers ignored the
-	// unknown JSON field and still returned success, so clients must fail closed
-	// when this declaration is absent.
-	AgentStarterPromptsSupported bool `json:"agent_starter_prompts_supported"`
+	// AgentConversationStartersSupported tells independently deployed clients
+	// that agent create/update persists conversation_starters. Older handlers
+	// ignored the unknown JSON field and still returned success, so clients
+	// must fail closed when this declaration is absent.
+	AgentConversationStartersSupported bool `json:"agent_conversation_starters_supported"`
 
 	// ServerVersion is the running API build version, so self-hosted
 	// operators can confirm what's deployed and include it in bug reports.
@@ -88,6 +88,11 @@ type AppConfig struct {
 	// which is continuously deployed so its users can't act on the version —
 	// and empty for dev builds that aren't stamped via -X main.version.
 	ServerVersion string `json:"server_version,omitempty"`
+
+	// UpstreamVersion identifies the plain-semver community Multica release
+	// this fork is based on. It uses the same self-host-only visibility and
+	// empty-when-unstamped contract as ServerVersion.
+	UpstreamVersion string `json:"upstream_version,omitempty"`
 }
 
 // GetConfig is mounted on the public (unauthenticated) route group because
@@ -99,9 +104,9 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		AllowSignup: !h.cfg.UseSySSO && h.cfg.AllowSignup,
 		// A property of this build, not of the deployment: if this code is
 		// running, the save gate is running with it.
-		LocalWorktreeSupported:       true,
-		AgentStarterPromptsSupported: true,
-		WorkspaceCreationDisabled:    os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
+		LocalWorktreeSupported:             true,
+		AgentConversationStartersSupported: true,
+		WorkspaceCreationDisabled:          os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 	}
 	if !h.cfg.UseSySSO {
 		config.GoogleClientID = os.Getenv("GOOGLE_CLIENT_ID")
@@ -118,6 +123,7 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	// the Help popover's version row would just be noise there (MUL-4108).
 	if !isOfficialCloudDeployment() {
 		config.ServerVersion = h.cfg.ServerVersion
+		config.UpstreamVersion = h.cfg.UpstreamVersion
 	}
 
 	// Re-read from env on every request so operators can rotate keys via

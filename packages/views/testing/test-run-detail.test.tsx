@@ -32,9 +32,13 @@ vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
+    tests: () => "/acme/tests",
     testPlans: () => "/acme/tests/plans",
     testPlanDetail: (id: string) => `/acme/tests/plans/${id}`,
+    testRuns: () => "/acme/tests/runs",
     testRunDetail: (id: string) => `/acme/tests/runs/${id}`,
+    testCaseDetail: (ref: string) => `/acme/tests/${ref}`,
+    testGenerationJobs: () => "/acme/tests/jobs",
     issueDetail: (id: string) => `/acme/issues/${id}`,
   }),
 }));
@@ -90,18 +94,23 @@ function makeAdapter(overrides: Partial<NavigationAdapter> = {}): NavigationAdap
     back: vi.fn(),
     pathname: "/acme/tests/runs/run-1",
     searchParams: new URLSearchParams(),
+    hash: "",
     getShareableUrl: (p) => p,
     ...overrides,
   };
 }
 
 function renderPage(adapter = makeAdapter()) {
-  renderWithI18n(
+  const view = renderWithI18n(
     <NavigationProvider value={adapter}>
       <TestRunDetail runId="run-1" />
     </NavigationProvider>,
   );
-  return adapter;
+  return Object.assign(adapter, { rerenderPage: () => view.rerender(
+    <NavigationProvider value={adapter}>
+      <TestRunDetail runId="run-1" />
+    </NavigationProvider>,
+  ) });
 }
 
 beforeEach(() => {
@@ -142,7 +151,21 @@ describe("TestRunDetail entry points", () => {
     expect(retry, "completed run must have a retry-failed button").toBeTruthy();
   });
 
-  it("shows dispatch section when run is pending (agent executor) and navigates to run after dispatch", async () => {
+  // The regression this guards: the panel used to require
+  // `executor_type === "agent"`, which nothing sets before dispatch — dispatch
+  // is what makes the agent the executor. Every real pending run carries
+  // "member" here, so the panel was unreachable and the endpoint had no caller.
+  it("offers dispatch on a pending run created by a member", async () => {
+    mocks.run = makeRun({ status: "pending", executor_type: "member" });
+    mocks.agents = [{ id: "agent-1", name: "Bot", status: "active", runtime_id: "rt-1", archived_at: null }];
+    renderPage();
+
+    const buttons = await screen.findAllByRole("button");
+    const dispatch = buttons.find((b) => b.textContent?.match(/Dispatch|派发|派遣|전달/));
+    expect(dispatch, "a member-created pending run must still be dispatchable").toBeTruthy();
+  });
+
+  it("shows dispatch section when run is pending and navigates to run after dispatch", async () => {
     mocks.run = makeRun({ status: "pending", executor_type: "agent" });
     mocks.agents = [{ id: "agent-1", name: "Bot", status: "active", runtime_id: "rt-1", archived_at: null }];
     mocks.dispatchRun.mockResolvedValue({ test_run: makeRun({ id: "run-1", status: "running" }) });
@@ -222,6 +245,45 @@ describe("TestRunDetail case result", () => {
     await userEvent.click(passedBtns[0]!);
     expect(mocks.updateCaseResult).toHaveBeenCalledWith(
       expect.objectContaining({ id: "rc-1", data: expect.objectContaining({ result: "passed" }) }),
+      expect.anything(),
     );
+  });
+
+  // The notes box had no save path at all: it wrote to local state and nothing
+  // ever sent it, so a tester's note looked recorded and was gone on reload.
+  it("sends the notes draft with the result", async () => {
+    renderPage();
+    // Notes live in the expanded row.
+    await userEvent.click(await screen.findByText("Login flow"));
+    const notes = await screen.findByRole("textbox");
+    await userEvent.type(notes, "flaky on retry");
+
+    const passedBtns = await screen.findAllByRole("button", { name: /^(Passed|通过|합격|통과)$/ });
+    await userEvent.click(passedBtns[0]!);
+
+    expect(mocks.updateCaseResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "rc-1",
+        data: expect.objectContaining({ result: "passed", notes: "flaky on retry" }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  // Following the server on updated_at is what lets a co-tester's note arrive,
+  // but it must not delete what this tester is in the middle of writing.
+  it("keeps an unsaved notes draft when the row is refetched", async () => {
+    const page = renderPage();
+    await userEvent.click(await screen.findByText("Login flow"));
+    const notes = await screen.findByRole("textbox");
+    await userEvent.type(notes, "my draft");
+
+    // A co-tester's write lands: same row, new updated_at and server notes.
+    mocks.cases = [
+      { ...(mocks.cases[0] as object), notes: "their note", updated_at: "2024-01-02T00:00:00Z" },
+    ];
+    page.rerenderPage();
+
+    expect(await screen.findByRole("textbox")).toHaveValue("my draft");
   });
 });

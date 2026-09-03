@@ -15,9 +15,11 @@ var seatCapacityActions = []string{
 // workspace IDs as labels. Operators can alert on an action becoming old or
 // entering the terminal dead-letter state while preserving tenant privacy.
 type SeatCapacityMetrics struct {
-	Pending          *prometheus.GaugeVec
-	DeadLettered     *prometheus.GaugeVec
-	OldestPendingAge *prometheus.GaugeVec
+	Pending            *prometheus.GaugeVec
+	DeadLettered       *prometheus.GaugeVec
+	OldestPendingAge   *prometheus.GaugeVec
+	RefreshErrors      prometheus.Counter
+	RefreshUnavailable prometheus.Gauge
 }
 
 func NewSeatCapacityMetrics() *SeatCapacityMetrics {
@@ -40,6 +42,18 @@ func NewSeatCapacityMetrics() *SeatCapacityMetrics {
 			Name:      "oldest_pending_age_seconds",
 			Help:      "Age in seconds of the oldest unsettled seat capacity intent by action.",
 		}, []string{"action"}),
+		RefreshErrors: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: "multica",
+			Subsystem: "seat_capacity_outbox",
+			Name:      "refresh_errors_total",
+			Help:      "Total failures while refreshing seat capacity outbox metrics.",
+		}),
+		RefreshUnavailable: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: "multica",
+			Subsystem: "seat_capacity_outbox",
+			Name:      "refresh_unavailable",
+			Help:      "Whether the latest seat capacity outbox metric refresh failed.",
+		}),
 	}
 	m.ResetOutbox()
 	return m
@@ -66,6 +80,27 @@ func (m *SeatCapacityMetrics) SetOutbox(action string, pending, deadLettered int
 	m.OldestPendingAge.WithLabelValues(action).Set(oldestPendingAgeSeconds)
 }
 
+func (m *SeatCapacityMetrics) RecordOutboxRefreshError() {
+	if m == nil {
+		return
+	}
+	m.RefreshErrors.Inc()
+}
+
+func (m *SeatCapacityMetrics) SetOutboxRefreshUnavailable(unavailable bool) {
+	if m == nil {
+		return
+	}
+	value := 0.0
+	if unavailable {
+		value = 1
+	}
+	m.RefreshUnavailable.Set(value)
+}
+
 func (m *SeatCapacityMetrics) Collectors() []prometheus.Collector {
-	return []prometheus.Collector{m.Pending, m.DeadLettered, m.OldestPendingAge}
+	return []prometheus.Collector{
+		m.Pending, m.DeadLettered, m.OldestPendingAge,
+		m.RefreshErrors, m.RefreshUnavailable,
+	}
 }

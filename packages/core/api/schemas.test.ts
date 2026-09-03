@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   AppConfigSchema,
-  ChildIssueProgressResponseSchema,
   WecomInstallationSchema,
   ListWecomInstallationsResponseSchema,
   RedeemWecomBindingTokenResponseSchema,
@@ -115,6 +114,10 @@ import {
   ListTestRunCasesResponseSchema,
   TestCaseResultTimelineResponseSchema,
   ListTestCapabilitiesResponseSchema,
+  ListTestCaseIssuesResponseSchema,
+  ListIssueTestCasesResponseSchema,
+  EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE,
+  EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE,
   EMPTY_TEST_PLAN,
   EMPTY_TEST_RUN,
   EMPTY_TEST_RUN_CASE,
@@ -301,40 +304,6 @@ const baseIssue = {
   updated_at: "2026-01-01T00:00:00Z",
 };
 
-describe("ChildIssueProgressResponseSchema", () => {
-  it("keeps older server responses compatible when visibility fields are absent", () => {
-    const parsed = ChildIssueProgressResponseSchema.parse({
-      progress: [{ parent_issue_id: "parent-1", total: 3, done: 1 }],
-    });
-    expect(parsed.progress[0]).toEqual({ parent_issue_id: "parent-1", total: 3, done: 1 });
-  });
-
-  it("parses full and visible progress independently", () => {
-    const parsed = ChildIssueProgressResponseSchema.parse({
-      progress: [{
-        parent_issue_id: "parent-1",
-        total: 10,
-        done: 3,
-        visible_total: 4,
-        visible_done: 3,
-        hidden_total: 6,
-      }],
-    });
-    expect(parsed.progress[0]?.hidden_total).toBe(6);
-    expect(parsed.progress[0]?.visible_total).toBe(4);
-  });
-
-  it("falls back instead of exposing malformed progress to installed clients", () => {
-    const fallback = { progress: [] };
-    expect(parseWithFallback(
-      { progress: [{ parent_issue_id: "parent-1", total: "many", done: 1 }] },
-      ChildIssueProgressResponseSchema,
-      fallback,
-      { endpoint: "GET /api/issues/child-progress" },
-    )).toEqual(fallback);
-  });
-});
-
 describe("ChatSessionSchema", () => {
   const baseSession = {
     id: "chat-1",
@@ -403,8 +372,36 @@ describe("ChatSessionSchema", () => {
     expect(parsed[1]?.last_message?.message_kind).toBe("onboarding_opening");
   });
 });
-
 describe("IssueSchema (via ListIssuesResponseSchema)", () => {
+  // A custom status key can be derived rather than readable — "客户确认" becomes
+  // `in_review_2` — so the display name travels with it. The field has to
+  // survive a server that predates it, since an issue that fails validation
+  // degrades to a stub rather than losing one field. (MUL-6749)
+  it("carries a custom status's display name", () => {
+    const parsed = ListIssuesResponseSchema.parse({
+      issues: [{ ...baseIssue, status: "in_review_2", status_name: "客户确认" }],
+      total: 1,
+    });
+    expect(parsed.issues[0]?.status_name).toBe("客户确认");
+  });
+  it("drops only a malformed status_name, keeping the issue and the list", () => {
+    for (const bad of [42, { name: "x" }, ["x"], true]) {
+      const parsed = ListIssuesResponseSchema.parse({
+        issues: [{ ...baseIssue, status: "in_review_2", status_name: bad }],
+        total: 1,
+      });
+      expect(parsed.issues).toHaveLength(1);
+      expect(parsed.issues[0]?.id).toBe(baseIssue.id);
+      expect(parsed.issues[0]?.status).toBe("in_review_2");
+      expect(parsed.issues[0]?.status_name).toBeUndefined();
+    }
+  });
+  it("still parses an issue from a server that does not send status_name", () => {
+    const { status_name: _omitted, ...withoutName } = { ...baseIssue, status_name: "x" };
+    const parsed = ListIssuesResponseSchema.parse({ issues: [withoutName], total: 1 });
+    expect(parsed.issues[0]?.id).toBe(baseIssue.id);
+    expect(parsed.issues[0]?.status_name).toBeUndefined();
+  });
   it("keeps the issue while independently dropping a malformed source context", () => {
     const parsed = ListIssuesResponseSchema.parse({
       issues: [{ ...baseIssue, source_context: { snapshot: "bad" } }],
@@ -2005,22 +2002,22 @@ describe("AppConfigSchema local_worktree_supported drift", () => {
   });
 });
 
-describe("AppConfigSchema agent_starter_prompts_supported drift", () => {
+describe("AppConfigSchema agent_conversation_starters_supported drift", () => {
   it("defaults to false when the server predates the persistence contract", () => {
-    expect(AppConfigSchema.parse({}).agent_starter_prompts_supported).toBe(false);
+    expect(AppConfigSchema.parse({}).agent_conversation_starters_supported).toBe(false);
   });
 
   it("coerces a malformed declaration to false", () => {
     expect(
-      AppConfigSchema.parse({ agent_starter_prompts_supported: "yes" })
-        .agent_starter_prompts_supported,
+      AppConfigSchema.parse({ agent_conversation_starters_supported: "yes" })
+        .agent_conversation_starters_supported,
     ).toBe(false);
   });
 
   it("carries a genuine declaration through", () => {
     expect(
-      AppConfigSchema.parse({ agent_starter_prompts_supported: true })
-        .agent_starter_prompts_supported,
+      AppConfigSchema.parse({ agent_conversation_starters_supported: true })
+        .agent_conversation_starters_supported,
     ).toBe(true);
   });
 });
@@ -2063,9 +2060,16 @@ describe("AppConfigSchema cdn_signed drift", () => {
     expect(parsed.feature_flags).toEqual({});
   });
 
-  it("parses server_version and leaves it undefined when the server omits it", () => {
+  it("parses server_version and upstream_version independently", () => {
+    const parsed = AppConfigSchema.parse({
+      server_version: "fork-abcdef123",
+      upstream_version: "v0.4.37",
+    });
+    expect(parsed.server_version).toBe("fork-abcdef123");
+    expect(parsed.upstream_version).toBe("v0.4.37");
     expect(AppConfigSchema.parse({ server_version: "1.2.3" }).server_version).toBe("1.2.3");
     expect(AppConfigSchema.parse({}).server_version).toBeUndefined();
+    expect(AppConfigSchema.parse({}).upstream_version).toBeUndefined();
   });
 });
 
@@ -2398,6 +2402,7 @@ describe("RuntimeModelListRequestSchema", () => {
           default_level: "low",
         },
         service_tiers: [{ id: "fast", name: "Fast" }],
+        supports_explicit_standard_service_tier: true,
       },
     ],
   };
@@ -2416,6 +2421,9 @@ describe("RuntimeModelListRequestSchema", () => {
       { value: "high", label: "High" },
     ]);
     expect(parsed.models?.[0]?.service_tiers).toEqual([{ id: "fast", name: "Fast" }]);
+    expect(
+      parsed.models?.[0]?.supports_explicit_standard_service_tier,
+    ).toBe(true);
     expect(parsed.cached).toBeUndefined();
   });
 
@@ -2445,6 +2453,24 @@ describe("RuntimeModelListRequestSchema", () => {
     expect(parsed.cached).toBeUndefined();
   });
 
+  it("treats an older daemon that omits explicit-standard support as unsupported", () => {
+    const model = completed.models[0]!;
+    const {
+      supports_explicit_standard_service_tier: _omitted,
+      ...oldDaemonModel
+    } = model;
+    const parsed = parseWithFallback(
+      { ...completed, models: [oldDaemonModel] },
+      RuntimeModelListRequestSchema,
+      MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
+      { endpoint: "test" },
+    );
+
+    expect(
+      parsed.models?.[0]?.supports_explicit_standard_service_tier,
+    ).toBeUndefined();
+  });
+
   it("passes an unknown status through instead of failing the whole response", () => {
     const parsed = parseWithFallback(
       { ...completed, status: "superseded" },
@@ -2469,6 +2495,15 @@ describe("RuntimeModelListRequestSchema", () => {
       { ...completed, supported: "yes" },
       { ...completed, models: "nope" },
       { ...completed, models: [{ label: "no id" }] },
+      {
+        ...completed,
+        models: [
+          {
+            ...completed.models[0],
+            supports_explicit_standard_service_tier: "yes",
+          },
+        ],
+      },
     ]) {
       const parsed = parseWithFallback(
         malformed,
@@ -3489,5 +3524,76 @@ describe("issue status catalog schemas", () => {
       { endpoint: "POST /api/issue-statuses" },
     );
     expect(parsed).toEqual(EMPTY_ISSUE_STATUS_ENTRY);
+  });
+});
+
+describe("test coverage link schemas", () => {
+  it("fills defaults when the backend omits fields on a covered issue", () => {
+    const parsed = parseWithFallback(
+      { issues: [{ issue_id: "i1", issue_title: "下单流程" }] },
+      ListTestCaseIssuesResponseSchema,
+      EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.issues[0]!.issue_id).toBe("i1");
+    expect(parsed.issues[0]!.issue_title).toBe("下单流程");
+    expect(parsed.issues[0]!.issue_identifier).toBe("");
+    expect(parsed.issues[0]!.origin).toBe("human");
+    expect(parsed.total).toBe(0);
+  });
+
+  it("falls back when the covered-issue payload is not an object", () => {
+    const parsed = parseWithFallback(
+      "nope",
+      ListTestCaseIssuesResponseSchema,
+      EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed).toBe(EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE);
+  });
+
+  // "Never executed" has to survive parsing as null. Defaulting it to a result
+  // value would make the issue's coverage block claim an outcome the case does
+  // not have.
+  it("keeps a never-executed case's result null rather than defaulting it", () => {
+    const parsed = parseWithFallback(
+      { cases: [{ test_case_id: "c1", case_key: "TC-1", case_title: "登录" }] },
+      ListIssueTestCasesResponseSchema,
+      EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.cases[0]!.latest_result).toBeNull();
+    expect(parsed.cases[0]!.latest_executed_at).toBeNull();
+    expect(parsed.cases[0]!.case_status).toBe("draft");
+  });
+
+  it("preserves a recorded result", () => {
+    const parsed = parseWithFallback(
+      {
+        cases: [
+          {
+            test_case_id: "c1",
+            case_key: "TC-1",
+            latest_result: "failed",
+            latest_executed_at: "2024-05-06T00:00:00Z",
+          },
+        ],
+      },
+      ListIssueTestCasesResponseSchema,
+      EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed.cases[0]!.latest_result).toBe("failed");
+    expect(parsed.cases[0]!.latest_executed_at).toBe("2024-05-06T00:00:00Z");
+  });
+
+  it("falls back when the coverage payload is not an object", () => {
+    const parsed = parseWithFallback(
+      42,
+      ListIssueTestCasesResponseSchema,
+      EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE,
+      { endpoint: "test" },
+    );
+    expect(parsed).toBe(EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE);
   });
 });

@@ -16,6 +16,8 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/designdocument"
 	"github.com/multica-ai/multica/server/internal/designsystemcatalogue"
+	"github.com/multica-ai/multica/server/internal/entitlement"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -265,7 +267,7 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 	// another workspace, a file deleted between picking it and sending — and
 	// rejecting them once the card is already in the project would leave the
 	// user an orphan task for a design that never ran.
-	attachments, attachmentErr := h.resolveDesignDocumentAttachments(r.Context(), workspaceUUID, req.Attachments)
+	attachments, attachmentErr := h.resolveDesignDocumentAttachments(r.Context(), r, workspaceUUID, req.Attachments)
 	if attachmentErr != nil {
 		writeProjectDesignSystemRequestError(w, attachmentErr)
 		return
@@ -319,6 +321,12 @@ func (h *Handler) CreateDesignDocument(w http.ResponseWriter, r *http.Request) {
 			SuppressAssigneeRun: true,
 		})
 		if issueErr != nil {
+			if writeIssueWindowViolation(w, issueErr) {
+				return
+			}
+			if writeIssueLimitReached(w, issueErr) {
+				return
+			}
 			writeProjectDesignSystemError(w, http.StatusInternalServerError, "issue_create_failed",
 				fmt.Sprintf("failed to create the companion task: %v", issueErr))
 			return
@@ -398,15 +406,8 @@ func (h *Handler) resolveOptionalDesignDocumentIssue(
 	if !ok {
 		return pgtype.UUID{}, false
 	}
-	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
-		ID: issueUUID, WorkspaceID: workspaceID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeProjectDesignSystemError(w, http.StatusNotFound, "issue_not_found", "issue not found")
-		return pgtype.UUID{}, false
-	}
-	if err != nil {
-		writeProjectDesignSystemError(w, http.StatusInternalServerError, "issue_lookup_failed", "failed to load issue")
+	issue, ok := h.loadIssueInWorkspaceAndAuthorizeForProjectDesignSystem(w, r, issueUUID, workspaceID, "design_document_issue")
+	if !ok {
 		return pgtype.UUID{}, false
 	}
 	if issue.ProjectID != projectID {
@@ -416,6 +417,38 @@ func (h *Handler) resolveOptionalDesignDocumentIssue(
 	return issueUUID, true
 }
 
+func (h *Handler) filterDesignDocumentsByIssueWindow(ctx context.Context, workspaceID pgtype.UUID, documents []db.DesignDocument, surface string) ([]db.DesignDocument, error) {
+	policy, enabled := h.issueWindowPolicy(ctx, workspaceID)
+	if !enabled {
+		return documents, nil
+	}
+	issueIDs := make([]pgtype.UUID, 0, len(documents))
+	for _, document := range documents {
+		if document.IssueID.Valid {
+			issueIDs = append(issueIDs, document.IssueID)
+		}
+	}
+	if policy.action != entitlement.ActionEnforce {
+		h.observeIssueWindow(ctx, workspaceID, policy, issueIDs, surface)
+		return documents, nil
+	}
+	visible, err := h.visibleIssueIDSet(ctx, workspaceID, policy, issueIDs)
+	if err != nil {
+		return nil, err
+	}
+	filtered := documents[:0]
+	for _, document := range documents {
+		if !document.IssueID.Valid {
+			filtered = append(filtered, document)
+			continue
+		}
+		if _, ok := visible[document.IssueID]; ok {
+			filtered = append(filtered, document)
+		}
+	}
+	return filtered, nil
+}
+
 // ListDesignDocuments returns every document under a project, most recently
 // touched first — the order the project tab lists them in (DC-042).
 func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
@@ -423,10 +456,8 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Three ways to ask: a project lists its design library, an issue lists the
-	// designs pointing at it, and a selected repository lists only the documents
-	// explicitly linked to it. Repository and issue scope are deliberately
-	// incompatible: combining them would force one of them to become a fallback.
+	// Four ways to ask: an issue, a selected repository, a project, or the whole
+	// workspace. Repository and issue scope are deliberately incompatible.
 	query := r.URL.Query()
 	rawProjectID := strings.TrimSpace(query.Get("project_id"))
 	rawIssueID := strings.TrimSpace(query.Get("issue_id"))
@@ -435,13 +466,15 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 		writeProjectDesignSystemError(w, http.StatusBadRequest, "invalid_request", "project_resource_id requires project scope without issue scope")
 		return
 	}
-
 	var documents []db.DesignDocument
 	var err error
 	switch {
 	case rawIssueID != "":
 		issueUUID, ok := parseUUIDOrBadRequest(w, rawIssueID, "issue_id")
 		if !ok {
+			return
+		}
+		if _, ok := h.loadIssueInWorkspaceAndAuthorizeForProjectDesignSystem(w, r, issueUUID, workspaceUUID, "design_document_list"); !ok {
 			return
 		}
 		documents, err = h.Queries.ListDesignDocumentsByIssue(r.Context(), db.ListDesignDocumentsByIssueParams{
@@ -465,7 +498,7 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 			ProjectID:         projectUUID,
 			ProjectResourceID: resourceUUID,
 		})
-	default:
+	case rawProjectID != "":
 		projectUUID, ok := parseUUIDOrBadRequest(w, rawProjectID, "project_id")
 		if !ok {
 			return
@@ -480,7 +513,14 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: workspaceUUID,
 			ProjectID:   projectUUID,
 		})
+	default:
+		documents, err = h.Queries.ListDesignDocumentsInWorkspace(r.Context(), workspaceUUID)
 	}
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "lookup_failed", "failed to load design documents")
+		return
+	}
+	documents, err = h.filterDesignDocumentsByIssueWindow(r.Context(), workspaceUUID, documents, "design_document_list")
 	if err != nil {
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "lookup_failed", "failed to load design documents")
 		return
@@ -722,7 +762,9 @@ func (h *Handler) createDesignDocumentTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	verdict, err := service.AgentReadiness(ctx, queries, agent)
+	readinessLookup := h.runtimeLookup(obsmetrics.RuntimeLookupSourceDesign)
+	readinessLookup.Queries = queries
+	verdict, err := service.AgentReadiness(ctx, readinessLookup, agent)
 	if err != nil {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
 	}

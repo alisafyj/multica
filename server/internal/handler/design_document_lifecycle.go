@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // Saving and discarding a design document draft (DC-034 / DC-042).
@@ -122,7 +123,9 @@ func (h *Handler) DiscardDesignDocument(w http.ResponseWriter, r *http.Request) 
 // pointer would make exactly the documents a user most wants to clean up the
 // only ones that can never be deleted.
 func (h *Handler) DeleteDesignDocument(w http.ResponseWriter, r *http.Request) {
-	document, workspaceUUID, ok := h.loadDesignDocumentForRequest(w, r)
+	// The requester is needed below: the reference-cleanup events attribute the
+	// removal to whoever deleted the document.
+	document, workspaceUUID, requesterUUID, ok := h.loadDesignDocumentForRequester(w, r)
 	if !ok {
 		return
 	}
@@ -130,12 +133,39 @@ func (h *Handler) DeleteDesignDocument(w http.ResponseWriter, r *http.Request) {
 		writeProjectDesignSystemError(w, http.StatusConflict, "operation_in_progress", "a design task is still running for this document")
 		return
 	}
-	if err := h.Queries.DeleteDesignDocument(r.Context(), db.DeleteDesignDocumentParams{
+	// The delete is one atomic statement that also removes referencing
+	// project_resource rows and returns the ones it actually removed. The
+	// per-project WS events below come from those returned rows, so there is no
+	// read-then-delete window where a concurrently-attached reference is
+	// deleted but its project never hears about it.
+	deletedRefs, err := h.Queries.DeleteDesignDocument(r.Context(), db.DeleteDesignDocumentParams{
 		ID:          document.ID,
 		WorkspaceID: workspaceUUID,
-	}); err != nil {
+	})
+	if err != nil {
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "delete_failed", "failed to delete the design document")
 		return
+	}
+	// Publish after the delete succeeds; a fast refetch otherwise races the
+	// DELETE and re-caches the row the event was meant to remove. One event per
+	// owning project — the same document may be referenced by several projects.
+	projectsSeen := make(map[string]struct{}, len(deletedRefs))
+	for _, row := range deletedRefs {
+		projectID := uuidToString(row.ProjectID)
+		if _, dup := projectsSeen[projectID]; dup {
+			continue
+		}
+		projectsSeen[projectID] = struct{}{}
+		h.publish(
+			protocol.EventProjectResourceDeleted,
+			uuidToString(workspaceUUID),
+			"member",
+			uuidToString(requesterUUID),
+			map[string]any{
+				"project_id":  projectID,
+				"resource_id": uuidToString(row.ID),
+			},
+		)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -190,6 +220,11 @@ func (h *Handler) loadDesignDocumentForRequester(w http.ResponseWriter, r *http.
 	if err != nil {
 		writeProjectDesignSystemError(w, http.StatusInternalServerError, "lookup_failed", "failed to load the design document")
 		return db.DesignDocument{}, pgtype.UUID{}, pgtype.UUID{}, false
+	}
+	if document.IssueID.Valid {
+		if _, ok := h.loadIssueInWorkspaceAndAuthorizeForProjectDesignSystem(w, r, document.IssueID, workspaceUUID, "design_document"); !ok {
+			return db.DesignDocument{}, pgtype.UUID{}, pgtype.UUID{}, false
+		}
 	}
 	return document, workspaceUUID, requesterUUID, true
 }

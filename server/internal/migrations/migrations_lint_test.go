@@ -33,8 +33,8 @@ const forkMigrationPrefixStart = 800
 // numbering gap would pass this check; the uniqueness test still catches it
 // once upstream owns that number. The realistic violation (anything between
 // lastUpstreamMigrationPrefix and 800) is rejected below.
-// Bumped from 397 with the upstream/main sync that brought 399–431.
-const lastUpstreamMigrationPrefix = 431
+// Bumped from 445 with the upstream/main sync that brought 446–448.
+const lastUpstreamMigrationPrefix = 448
 
 // existingForkMigrationPrefixes are fork-local migrations that were applied to
 // production before the 800+ rule; they keep their numbers forever because the
@@ -192,6 +192,10 @@ var mergedDuplicateMigrationStems = map[string][]string{
 	"315": {"315_pmo_sync_link_identity_index", "315_workspace_mcp_server"},
 	"316": {"316_project_created_by", "316_workspace_mcp_server_name_unique"},
 	"317": {"317_agent_mcp_server_server_index", "317_product_map"},
+	"906": {"906_design_file_repository_scope", "906_idx_design_document_workspace"},
+	"907": {"907_idx_design_file_repository_scope", "907_test_case_issue"},
+	"908": {"908_idx_design_document_repository_scope", "908_test_case_issue_issue_index"},
+	"909": {"909_design_document_revision_repository_grounding", "909_test_case_issue_workspace_case_index"},
 }
 
 // legacyFKMigrations records already-applied migrations that create database

@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -3135,7 +3136,7 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 				continue
 			}
 			// Same shared verdict as the direct-agent branch below.
-			if verdict, err := service.AgentReadiness(ctx, h.Queries, agent); err == nil && verdict.Blocked() {
+			if verdict, err := service.AgentReadiness(ctx, h.runtimeLookup(obsmetrics.RuntimeLookupSourceComment), agent); err == nil && verdict.Blocked() {
 				blockUnusableTarget("squad", m.ID, agent, verdict)
 				continue
 			}
@@ -3194,7 +3195,7 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 		// will not start doing so on its own (MUL-6164). A merely offline
 		// runtime keeps queueing — that wait ends by itself when the machine
 		// returns, and taking it away would remove a behaviour people rely on.
-		if verdict, err := service.AgentReadiness(ctx, h.Queries, agent); err == nil && verdict.Blocked() {
+		if verdict, err := service.AgentReadiness(ctx, h.runtimeLookup(obsmetrics.RuntimeLookupSourceComment), agent); err == nil && verdict.Blocked() {
 			blockUnusableTarget("agent", m.ID, agent, verdict)
 			continue
 		}
@@ -3233,6 +3234,10 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "comment not found")
+		return
+	}
+	issue, ok := h.loadIssueInWorkspaceAndAuthorize(w, r, existing.IssueID, wsUUID, "comment_update")
+	if !ok {
 		return
 	}
 
@@ -3309,12 +3314,6 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	var triggerIssue *db.Issue
 	var cancelled []db.AgentTaskQueue
 	if oldContent != req.Content {
-		issue, err := h.Queries.GetIssue(r.Context(), existing.IssueID)
-		if err != nil {
-			slog.Warn("load issue for edit post-processing failed", "issue_id", uuidToString(existing.IssueID), "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to load issue")
-			return
-		}
 		triggerIssue = &issue
 		// A content edit is a NEW action, so its delegation lineage must key on THIS
 		// edit. Only the AGENT author re-editing its OWN comment carries the lineage
@@ -3379,6 +3378,9 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil && oldContent != req.Content && strictContentEdit {
 			cancelled, err = qtx.CancelAgentTasksByTriggerComment(r.Context(), existing.ID)
+			if err == nil {
+				err = service.SettleDeliveredDelegatedFailureRecoveries(r.Context(), qtx, cancelled...)
+			}
 		}
 		if err == nil && replaceAttachments {
 			var changed int64
@@ -3515,18 +3517,23 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "only comment author or admin can delete")
 		return
 	}
-	issue, err := h.Queries.GetIssue(r.Context(), comment.IssueID)
-	hasIssue := err == nil
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		slog.Warn("load issue for delete post-processing failed", "issue_id", uuidToString(comment.IssueID), "error", err)
+	issue, issueErr := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+		ID: comment.IssueID, WorkspaceID: wsUUID,
+	})
+	hasIssue := issueErr == nil
+	if issueErr != nil && !errors.Is(issueErr, pgx.ErrNoRows) {
+		slog.Warn("load issue for delete post-processing failed", "issue_id", uuidToString(comment.IssueID), "error", issueErr)
 		writeError(w, http.StatusInternalServerError, "failed to load issue")
 		return
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(issueErr, pgx.ErrNoRows) {
 		// The issue delete may have won the race after GetCommentInWorkspace.
 		// Continue so DeleteComment can report whether the comment itself still
 		// existed; touching issue activity is intentionally best effort.
 		slog.Info("comment parent issue no longer exists", "issue_id", uuidToString(comment.IssueID), "comment_id", commentId)
+	}
+	if hasIssue && !h.authorizeIssueWindow(w, r, issue.ID, issue.WorkspaceID, "comment_delete") {
+		return
 	}
 
 	// Collect attachment URLs before CASCADE delete removes them.
@@ -3712,6 +3719,9 @@ func (h *Handler) loadCommentForActor(w http.ResponseWriter, r *http.Request) (d
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "comment not found")
+		return db.Comment{}, "", "", "", false
+	}
+	if _, ok := h.loadIssueInWorkspaceAndAuthorize(w, r, comment.IssueID, wsUUID, "comment_resolve"); !ok {
 		return db.Comment{}, "", "", "", false
 	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)

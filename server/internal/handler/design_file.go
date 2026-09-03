@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/designcore"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -1713,7 +1714,7 @@ func (h *Handler) designRestoreTaskToResponseWithExecution(ctx context.Context, 
 		snapshot.AgentTaskWaitReason = agentTask.WaitReason
 
 		if agentTask.RuntimeID.Valid {
-			runtime, runtimeErr := h.Queries.GetAgentRuntime(ctx, agentTask.RuntimeID)
+			runtime, runtimeErr := h.runtimeLookup(obsmetrics.RuntimeLookupSourceDesign).Get(ctx, agentTask.RuntimeID)
 			if runtimeErr != nil && runtimeErr != pgx.ErrNoRows {
 				slog.Warn("design restore task execution status: failed to load runtime", "restore_task_id", uuidToString(task.ID), "runtime_id", uuidToString(agentTask.RuntimeID), "error", runtimeErr)
 				return resp
@@ -2991,6 +2992,11 @@ func (h *Handler) CreateDesignRestoreTask(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
+	if issueUUID.Valid {
+		if _, ok := h.loadIssueInWorkspaceAndAuthorize(w, r, issueUUID, wsUUID, "design_restore_create"); !ok {
+			return
+		}
+	}
 	if issueUUID.Valid && !deliveryID.Valid {
 		existing, err := h.Queries.GetReusableDesignRestoreTaskByIssue(r.Context(), db.GetReusableDesignRestoreTaskByIssueParams{WorkspaceID: wsUUID, IssueID: issueUUID, FileID: file.ID, RevisionID: revision.ID})
 		if err == nil {
@@ -3360,9 +3366,8 @@ func (h *Handler) DispatchDesignRestoreTask(w http.ResponseWriter, r *http.Reque
 	}
 	issueProjectID := pgtype.UUID{Valid: false}
 	if issueUUID.Valid {
-		issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: issueUUID, WorkspaceID: wsUUID})
-		if err != nil {
-			writeError(w, http.StatusNotFound, "issue not found")
+		issue, ok := h.loadIssueInWorkspaceAndAuthorize(w, r, issueUUID, wsUUID, "design_restore_dispatch")
+		if !ok {
 			return
 		}
 		issueProjectID = issue.ProjectID

@@ -152,6 +152,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"task_usage_hourly_rollup_state":     workspaceDeleteKeep,
 	"test_capability":                    workspaceDelete,
 	"test_case":                          workspaceDelete,
+	"test_case_issue":                    workspaceDelete,
 	"test_case_proposal":                 workspaceDelete,
 	"test_case_repo":                     workspaceDelete,
 	"test_case_revision":                 workspaceDelete,

@@ -99,3 +99,70 @@ LIMIT $3;
 
 -- name: DeleteTestCaseRevisions :exec
 DELETE FROM test_case_revision WHERE test_case_id = $1 AND workspace_id = $2;
+
+-- ---------------------------------------------------------------------------
+-- Test case <-> issue coverage links
+-- ---------------------------------------------------------------------------
+
+-- name: LinkTestCaseIssue :one
+-- Idempotent: linking the same pair twice keeps the first link's origin and
+-- author rather than letting a later AI-asserted link overwrite a human one.
+INSERT INTO test_case_issue (test_case_id, issue_id, workspace_id, origin, created_by)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (test_case_id, issue_id) DO NOTHING
+RETURNING *;
+
+-- name: UnlinkTestCaseIssue :exec
+DELETE FROM test_case_issue
+WHERE test_case_id = $1 AND issue_id = $2 AND workspace_id = $3;
+
+-- name: ListIssuesForTestCase :many
+-- The issue side of one case's coverage, joined so callers render an
+-- identifier and title instead of a bare UUID.
+SELECT tci.test_case_id, tci.issue_id, tci.origin, tci.created_at,
+       i.number AS issue_number, i.title AS issue_title, i.status AS issue_status,
+       i.priority AS issue_priority
+FROM test_case_issue tci
+JOIN issue i ON i.id = tci.issue_id
+WHERE tci.test_case_id = $1 AND tci.workspace_id = $2
+ORDER BY i.number ASC;
+
+-- name: ListTestCasesForIssue :many
+-- The case side of one issue's coverage. latest_result is the most recent
+-- recorded outcome across every round the case appeared in, so the issue can
+-- show whether its coverage actually passes — a linked case that has never run
+-- reports NULL rather than a misleading "pending".
+SELECT tci.test_case_id, tci.issue_id, tci.origin, tci.created_at,
+       tc.case_number, tc.title AS case_title, tc.status AS case_status,
+       tc.priority AS case_priority, tc.case_type,
+       -- COALESCE, not a bare subquery: sqlc types a correlated scalar as NOT
+       -- NULL, so a case that has never run would fail to scan. Empty string
+       -- is the "never executed" signal the response layer maps to null.
+       COALESCE((
+           SELECT rc.result
+           FROM test_run_case rc
+           WHERE rc.test_case_id = tci.test_case_id
+             AND rc.workspace_id = tci.workspace_id
+             AND rc.executed_at IS NOT NULL
+           ORDER BY rc.executed_at DESC
+           LIMIT 1
+       ), '')::text AS latest_result,
+       (
+           SELECT rc.executed_at
+           FROM test_run_case rc
+           WHERE rc.test_case_id = tci.test_case_id
+             AND rc.workspace_id = tci.workspace_id
+             AND rc.executed_at IS NOT NULL
+           ORDER BY rc.executed_at DESC
+           LIMIT 1
+       ) AS latest_executed_at
+FROM test_case_issue tci
+JOIN test_case tc ON tc.id = tci.test_case_id
+WHERE tci.issue_id = $1 AND tci.workspace_id = $2
+ORDER BY tc.case_number ASC;
+
+-- name: DeleteTestCaseIssueLinksForCase :exec
+DELETE FROM test_case_issue WHERE test_case_id = $1 AND workspace_id = $2;
+
+-- name: DeleteTestCaseIssueLinksForIssue :exec
+DELETE FROM test_case_issue WHERE issue_id = $1 AND workspace_id = $2;

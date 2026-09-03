@@ -31,6 +31,7 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
 import { useT } from "../i18n";
+import { PlanIssueScope } from "./components/plan-issue-scope";
 import {
   parsePlanDraft,
   planInstructions,
@@ -97,11 +98,17 @@ export function TestGenerationJobPage({ jobId }: { jobId: string }) {
   const approvePlanMutation = useApproveTestGenerationPlan();
   const dispatchJob = useDispatchTestGenerationJob();
 
+  // Re-seed on the server's own change marker, never on the cached object's
+  // identity. A realtime `test_generation_job` or `test_case_proposal` event
+  // invalidates this key, and the refetch hands back a new object with
+  // identical content — depending on `plan` meant every such event wiped the
+  // JSON the user was in the middle of editing.
   useEffect(() => {
     if (!plan) return;
     setPlanDraft(JSON.stringify(plan.plan, null, 2));
     setReviewNotes(plan.review_notes ?? "");
-  }, [plan]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan?.id, plan?.updated_at]);
 
   const hasApprovedPlan =
     plan?.status === "approved" || plan?.status === "dispatched";
@@ -134,17 +141,16 @@ export function TestGenerationJobPage({ jobId }: { jobId: string }) {
     new Set([...repoUniverseRef.current.keys(), ...includedRepoAliases]),
   );
 
-  // Comma-list fields keep local text state so a trailing comma survives
-  // typing; the parsed plan is only patched on blur.
+  // The modules field keeps local text state so a trailing comma survives
+  // typing; the parsed plan is only patched on blur. Issues are picked, not
+  // typed, so they write straight through.
   const [modulesText, setModulesText] = useState("");
-  const [issuesText, setIssuesText] = useState("");
   useEffect(() => {
     setModulesText(parsedPlan ? planModules(parsedPlan).join(", ") : "");
-    setIssuesText(parsedPlan ? planIssues(parsedPlan).join(", ") : "");
-    // Re-seed only when a different plan object arrives, not on every
-    // keystroke round-trip through the draft.
+    // Re-seed only when the server's plan actually changed, not on every
+    // keystroke round-trip through the draft and not on a no-op refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan]);
+  }, [plan?.id, plan?.updated_at]);
 
   function applyPlan(next: Record<string, unknown>) {
     setPlanDraft(JSON.stringify(next, null, 2));
@@ -232,7 +238,7 @@ export function TestGenerationJobPage({ jobId }: { jobId: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-muted/20">
       <BreadcrumbHeader
-        segments={[{ href: paths.tests(), label: t(($) => $.page.title) }]}
+        segments={[{ href: paths.testGenerationJobs(), label: t(($) => $.jobs.title) }]}
         leaf={
           <span className="truncate font-medium">
             {t(($) => $.job.title)}
@@ -245,7 +251,7 @@ export function TestGenerationJobPage({ jobId }: { jobId: string }) {
             className="mr-1 shrink-0"
             aria-label={t(($) => $.job.back)}
             title={t(($) => $.job.back)}
-            onClick={() => navigation.push(paths.tests())}
+            onClick={() => navigation.push(paths.testGenerationJobs())}
           >
             <ArrowLeft className="size-4" />
           </Button>
@@ -461,23 +467,19 @@ export function TestGenerationJobPage({ jobId }: { jobId: string }) {
                         </div>
 
                         <div>
-                          <label className="mb-1 block text-caption font-medium text-muted-foreground">
+                          <span className="mb-1 block text-caption font-medium text-muted-foreground">
                             {t(($) => $.job.scopeEdit.issuesLabel)}
-                          </label>
-                          <Input
-                            value={issuesText}
-                            onChange={(event) => setIssuesText(event.target.value)}
-                            onBlur={() =>
-                              applyPlan(
-                                withPlanList(
-                                  parsedPlan,
-                                  "issues",
-                                  splitCommaList(issuesText),
-                                ),
-                              )
+                          </span>
+                          {/* Picked, not typed: an id chosen here resolves to a
+                              real issue, so every case the run produces can be
+                              linked back to it exactly. Hand-typed identifiers
+                              still resolve server-side, which is what keeps an
+                              agent-authored plan working. */}
+                          <PlanIssueScope
+                            refs={planIssues(parsedPlan)}
+                            onChange={(next) =>
+                              applyPlan(withPlanList(parsedPlan, "issues", next))
                             }
-                            className="h-8 text-caption"
-                            placeholder={t(($) => $.job.scopeEdit.issuesPlaceholder)}
                           />
                         </div>
 
@@ -597,7 +599,7 @@ export function TestGenerationJobPage({ jobId }: { jobId: string }) {
                   </div>
 
                   {!hasApprovedPlan ? (
-                    <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-caption text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                    <div className="rounded-md border border-warning/30 bg-warning/10 p-2 text-caption text-warning">
                       {t(($) => $.job.dispatch.needsPlan)}
                     </div>
                   ) : null}

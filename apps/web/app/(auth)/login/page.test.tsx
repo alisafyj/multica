@@ -103,6 +103,10 @@ describe("Web login auth mode", () => {
     state.config.loadConfig.mockImplementation((request) => request());
   });
 
+
+  // Shared LoginPage behavior is canonical in
+  // packages/views/auth/login-page.test.tsx. This wrapper suite owns web
+  // platform handoff and redirect behavior.
   it("shows a stable loading state until config resolves", () => {
     render(<LoginPage />, { wrapper });
 
@@ -182,6 +186,7 @@ describe("Web login auth mode", () => {
           "multica://auth/callback?token=desktop-token",
         ),
       );
+      expect(screen.getByRole("button", { name: "translated" })).toBeInTheDocument();
     } finally {
       Object.defineProperty(window, "location", {
         configurable: true,

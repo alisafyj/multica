@@ -71,6 +71,9 @@ export type WSEventType =
   | "project:created"
   | "project:updated"
   | "project:deleted"
+  | "project_resource:created"
+  | "project_resource:updated"
+  | "project_resource:deleted"
   | "design:ready"
   | "design_template:ready"
   | "design_draft:ready"
@@ -640,6 +643,12 @@ export interface WSEventPayloadMap {
   "project:created": ProjectCreatedPayload;
   "project:updated": ProjectUpdatedPayload;
   "project:deleted": ProjectDeletedPayload;
+  // Resource events are consumed as opaque refetch triggers: the server emits
+  // a resource object (create/update) or { project_id, resource_id } (delete),
+  // but no client yet reads the payload shape.
+  "project_resource:created": unknown;
+  "project_resource:updated": unknown;
+  "project_resource:deleted": unknown;
   "design:ready": DesignReadyPayload;
   "design_template:ready": DesignReadyPayload;
   "design_draft:ready": DesignDraftReadyPayload;

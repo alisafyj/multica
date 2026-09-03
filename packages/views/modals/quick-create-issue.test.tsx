@@ -18,6 +18,7 @@ const mockSetQuickCreateFieldVisible = vi.hoisted(() => vi.fn());
 const mockSetKeepOpen = vi.hoisted(() => vi.fn());
 const mockSetLastMode = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
+const mockShowIssueLimitUpgradePrompt = vi.hoisted(() => vi.fn());
 // Uploads flow through the module-level coordinator, which calls
 // `api.uploadFile(file, ctx, signal)` (MUL-5181 L2).
 const mockApiUploadFile = vi.hoisted(() => vi.fn());
@@ -80,6 +81,7 @@ const emptyIssueDraft = () => ({
     prompt: "",
     actorType: undefined as "agent" | "squad" | undefined,
     actorId: undefined as string | undefined,
+    conciseMode: false,
   },
   activeMode: "agent" as "agent" | "manual",
 });
@@ -154,19 +156,37 @@ vi.mock("@tanstack/react-query", () => ({
   },
 }));
 
+const { ApiError } = vi.hoisted(() => {
+  class ApiErrorImpl extends Error {
+    readonly status: number;
+    readonly statusText: string;
+    readonly body?: unknown;
+    constructor(message: string, status: number, statusText: string, body?: unknown) {
+      super(message);
+      this.name = "ApiError";
+      this.status = status;
+      this.statusText = statusText;
+      this.body = body;
+    }
+  }
+  return { ApiError: ApiErrorImpl };
+});
+
 vi.mock("@multica/core/api", () => ({
   api: {
     createCommentSubIssue: mockCreateCommentSubIssue,
     quickCreateIssue: mockQuickCreateIssue,
     uploadFile: mockApiUploadFile,
   },
-  ApiError: class ApiError extends Error {
-    body?: unknown;
-  },
+  ApiError,
 }));
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-test",
+}));
+
+vi.mock("./use-issue-limit-upgrade-prompt", () => ({
+  useIssueLimitUpgradePrompt: () => mockShowIssueLimitUpgradePrompt,
 }));
 
 vi.mock("@multica/core/paths", () => ({
@@ -271,6 +291,24 @@ vi.mock("@multica/ui/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuTrigger: ({ render }: { render: ReactNode }) => <>{render}</>,
   DropdownMenuContent: ({ children }: { children: ReactNode }) => <>{children}</>,
+  DropdownMenuCheckboxItem: ({
+    children,
+    checked,
+    onCheckedChange,
+  }: {
+    children: ReactNode;
+    checked?: boolean;
+    onCheckedChange?: (checked: boolean) => void;
+  }) => (
+    <button
+      type="button"
+      role="menuitemcheckbox"
+      aria-checked={checked}
+      onClick={() => onCheckedChange?.(!checked)}
+    >
+      {children}
+    </button>
+  ),
   // `render` mirrors Base UI: an item can BE another element (an <AppLink>).
   // The real Item gives that element role="button", which the queries match.
   DropdownMenuItem: ({
@@ -608,6 +646,50 @@ describe("AgentCreatePanel", () => {
     expect(mockClearDraft).toHaveBeenCalled();
     expect(mockSetLastMode).toHaveBeenCalledWith("agent");
     expect(onClose).toHaveBeenCalled();
+  });
+  it("sends concise_mode for a concise quick-create draft", async () => {
+    const user = userEvent.setup();
+    mockIssueDraftStore.draft.agent.conciseMode = true;
+
+    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
+    await user.click(screen.getByRole("button", { name: /^Create$/i }));
+
+    await waitFor(() => {
+      expect(mockQuickCreateIssue).toHaveBeenCalledWith(
+        expect.objectContaining({ concise_mode: true }),
+      );
+    });
+  });
+
+  it("toggles concise mode from the overflow menu", async () => {
+    const user = userEvent.setup();
+    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
+
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Concise agent mode" }));
+
+    expect(mockSetAgent).toHaveBeenCalledWith({ conciseMode: true });
+  });
+
+  it("shows the upgrade recovery immediately when quick create is rejected by the issue preflight", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    mockQuickCreateIssue.mockRejectedValue(
+      new ApiError("workspace has reached its issue limit", 402, "Payment Required", {
+        code: "issue_limit_reached",
+        limit: 1000,
+        policy_revision: 1,
+      }),
+    );
+
+    renderPanel({ onClose, isExpanded: false, setIsExpanded: vi.fn() });
+    await user.click(screen.getByRole("button", { name: /^Create$/i }));
+
+    await waitFor(() => {
+      expect(mockShowIssueLimitUpgradePrompt).toHaveBeenCalledTimes(1);
+    });
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+    expect(mockClearDraft).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("reveals optional fields from the overflow and submits their values", async () => {
@@ -1057,6 +1139,25 @@ describe("AgentCreatePanel", () => {
       },
     ));
     expect(mockQuickCreateIssue).not.toHaveBeenCalled();
+  });
+  it("propagates concise mode through source-context agent create", async () => {
+    const user = userEvent.setup();
+    mockIssueDraftStore.draft.agent.conciseMode = true;
+    renderPanel({
+      onClose: vi.fn(),
+      isExpanded: false,
+      setIsExpanded: vi.fn(),
+      data: sourceContextPanelData,
+    });
+
+    await user.click(screen.getByRole("button", { name: /^Create$/i }));
+
+    await waitFor(() => expect(mockCreateCommentSubIssue).toHaveBeenCalledWith(
+      "comment-source",
+      expect.objectContaining({
+        quick_create: expect.objectContaining({ concise_mode: true }),
+      }),
+    ));
   });
 
   // MUL-4808 — Quick Create already gated Create; these pin the two gaps:

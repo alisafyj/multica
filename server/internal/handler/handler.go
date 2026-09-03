@@ -112,11 +112,11 @@ type Config struct {
 	// webhook limiter from being bypassed by a spoofed XFF on deployments
 	// without a header-stripping reverse proxy in front.
 	TrustedProxies []netip.Prefix
-	// CloudRuntimeFleetURL enables the SaaS-only remote Fleet adapter when set.
-	// Empty keeps self-hosted deployments explicit: cloud runtime endpoints
-	// return 503 instead of attempting to dial a hard-coded private service.
-	CloudRuntimeFleetURL     string
-	CloudRuntimeFleetTimeout time.Duration
+	// CloudURL enables the SaaS-only multica-cloud connection when set. Empty
+	// keeps self-hosted deployments explicit: Cloud endpoints return 503 instead
+	// of attempting to dial a hard-coded private service.
+	CloudURL                 string
+	CloudTimeout             time.Duration
 	AttachmentDownloadMode   string
 	AttachmentDownloadURLTTL time.Duration
 	// AttachmentFrameAncestors are trusted browser origins allowed to embed
@@ -151,7 +151,11 @@ type Config struct {
 	// value main.go stamps via -X main.version and reports on /metrics).
 	// Surfaced through /api/config so self-hosted operators can confirm which
 	// server build is deployed. Empty in dev builds.
-	ServerVersion         string
+	ServerVersion string
+	// UpstreamVersion is the plain-semver community Multica release this fork
+	// was based on. It is stamped separately from ServerVersion because fork
+	// builds use their own version identity.
+	UpstreamVersion       string
 	SSODesktopRedirectURI string
 	SSOMobileRedirectURI  string
 	DevAuthEmail          string
@@ -171,8 +175,9 @@ type WorkspaceSetRefreshNotifier interface {
 }
 
 // DaemonPendingWorkNotifier pushes a runtime-scoped "heartbeat now" hint to the
-// daemon so a queued heartbeat-carried request (model discovery) is picked up
-// immediately instead of on the daemon's next scheduled tick (MUL-5444).
+// daemon so a queued heartbeat-carried request (model discovery, capability
+// discovery, or local-skill import) is picked up immediately instead of on the
+// daemon's next scheduled tick (MUL-5444).
 // Satisfied by both *daemonws.Hub (single-node) and *daemonws.RelayNotifier
 // (multi-node, fans out through Redis).
 type DaemonPendingWorkNotifier interface {
@@ -210,7 +215,7 @@ type Handler struct {
 	CFSigner               *auth.CloudFrontSigner
 	Analytics              analytics.Client
 	// Entitlements supplies workspace-scoped commercial gates. A nil provider
-	// preserves the self-hosted and pre-rollout behavior without extra reads.
+	// preserves self-hosted behavior without extra reads.
 	Entitlements entitlement.Provider
 	// SeatCapacity executes Cloud's pre-purchased human-seat protocol. Nil or
 	// disabled preserves self-hosted behavior.
@@ -485,8 +490,8 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		WebhookAbsoluteIPRateLimiter: NewMemoryWebhookAbsoluteIPRateLimiter(DefaultWebhookAbsoluteIPRateLimit()),
 		InvitationRateLimiters:       NewMemoryInvitationRateLimiters(DefaultInvitationRateLimits()),
 		CloudRuntime: cloudruntime.NewClient(cloudruntime.Config{
-			BaseURL: cfg.CloudRuntimeFleetURL,
-			Timeout: cfg.CloudRuntimeFleetTimeout,
+			BaseURL: cfg.CloudURL,
+			Timeout: cfg.CloudTimeout,
 		}),
 		LLM: llmClient,
 		cfg: cfg,

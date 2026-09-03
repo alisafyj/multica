@@ -18,8 +18,8 @@ export const FAILURE_REASON_I18N_KEYS = {
   api_invalid_request: "api_invalid_request",
   skill_bundle_unavailable: "skill_bundle_unavailable",
   runtime_cli_timeout: "runtime_cli_timeout",
-  invalid_task_identity: "invalid_task_identity",
   issue_window_restricted: "issue_window_restricted",
+  invalid_task_identity: "invalid_task_identity",
 
   // Agent process side — provider.
   "agent_error.provider_auth_or_access":

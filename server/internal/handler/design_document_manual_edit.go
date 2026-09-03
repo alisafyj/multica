@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/designdocument"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -165,7 +166,9 @@ func (h *Handler) createDesignDocumentManualEditTask(
 	if err != nil || agent.WorkspaceID != workspaceID {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "agent_not_found", message: "agent not found"}
 	}
-	verdict, err := service.AgentReadiness(ctx, queries, agent)
+	readinessLookup := h.runtimeLookup(obsmetrics.RuntimeLookupSourceDesign)
+	readinessLookup.Queries = queries
+	verdict, err := service.AgentReadiness(ctx, readinessLookup, agent)
 	if err != nil {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("agent_check_failed", "failed to check agent readiness")
 	}

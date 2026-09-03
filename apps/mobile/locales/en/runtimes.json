@@ -12,10 +12,18 @@
     }
   },
   "health": {
-    "online": { "label": "Online" },
-    "recently_lost": { "label": "Recently lost" },
-    "offline": { "label": "Offline" },
-    "about_to_gc": { "label": "About to GC" }
+    "online": {
+      "label": "Online"
+    },
+    "recently_lost": {
+      "label": "Recently lost"
+    },
+    "offline": {
+      "label": "Offline"
+    },
+    "long_offline": {
+      "label": "Long offline"
+    }
   },
   "detail": {
     "header_default_title": "Runtime",

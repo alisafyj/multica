@@ -79,6 +79,15 @@ WHERE workspace_id = sqlc.arg('workspace_id')
   AND project_resource_id = sqlc.arg('project_resource_id')
 ORDER BY updated_at DESC;
 
+-- The workspace-wide list, most recently touched first. The project create
+-- modal's design picker is the one caller: it must offer documents from every
+-- project, because the project being created does not own any yet. Backed by
+-- idx_design_document_workspace — add an index migration if that ever changes.
+-- name: ListDesignDocumentsInWorkspace :many
+SELECT * FROM design_document
+WHERE workspace_id = sqlc.arg('workspace_id')
+ORDER BY updated_at DESC;
+
 -- name: GetDesignDocumentByActiveTask :one
 SELECT * FROM design_document
 WHERE workspace_id = sqlc.arg('workspace_id')
@@ -228,7 +237,12 @@ WHERE id = sqlc.arg('id')
   AND workspace_id = sqlc.arg('workspace_id')
 RETURNING *;
 
--- name: DeleteDesignDocument :exec
+-- name: DeleteDesignDocument :many
+-- One statement removes the shares, revisions, referencing project_resource
+-- rows and the document itself atomically. It returns the rows actually
+-- deleted from project_resource (id + project_id) so the caller can publish a
+-- per-project event for exactly the references it removed — no separate read
+-- snapshot can race an attach between the read and the delete.
 WITH deleted_shares AS (
     DELETE FROM design_document_share
     WHERE design_document_share.workspace_id = sqlc.arg('workspace_id')
@@ -240,11 +254,24 @@ deleted_revisions AS (
     WHERE design_document_revision.workspace_id = sqlc.arg('workspace_id')
       AND design_document_revision.design_document_id = sqlc.arg('id')
     RETURNING design_document_revision.id
+),
+-- project_resource rows of type design_document point here by id with no
+-- foreign key, so the delete takes them with the document — a project left
+-- holding one would render a card pointing at a gone row.
+deleted_references AS (
+    DELETE FROM project_resource
+    WHERE project_resource.workspace_id = sqlc.arg('workspace_id')
+      AND project_resource.resource_type = 'design_document'
+      AND project_resource.resource_ref->>'design_document_id' = sqlc.arg('id')::text
+    RETURNING project_resource.id, project_resource.project_id
+),
+deleted_document AS (
+    DELETE FROM design_document
+    WHERE design_document.id = sqlc.arg('id')
+      AND design_document.workspace_id = sqlc.arg('workspace_id')
+    RETURNING design_document.id
 )
-DELETE FROM design_document
-WHERE design_document.id = sqlc.arg('id')
-  AND design_document.workspace_id = sqlc.arg('workspace_id')
-  AND (SELECT count(*) FROM deleted_revisions) >= 0;
+SELECT id, project_id FROM deleted_references;
 
 -- Delivery links a design document to the issue whose implementation it
 -- governs (DC-062). Only the link moves: draft/saved pointers, the active

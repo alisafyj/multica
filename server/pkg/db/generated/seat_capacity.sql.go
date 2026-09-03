@@ -16,6 +16,7 @@ WITH due AS (
     SELECT operation_token
     FROM seat_capacity_outbox
     WHERE dead_lettered_at IS NULL
+      AND delivered_at IS NULL
       AND next_attempt_at <= now()
     ORDER BY next_attempt_at, created_at
     FOR UPDATE SKIP LOCKED
@@ -120,6 +121,40 @@ func (q *Queries) CreateOrReactivateShareJoinCapacityIntent(ctx context.Context,
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const deferClaimedSeatCapacityIntent = `-- name: DeferClaimedSeatCapacityIntent :execrows
+UPDATE seat_capacity_outbox
+SET last_error = left($1, 1000),
+    next_attempt_at = $2,
+    lease_token = NULL,
+    updated_at = now()
+WHERE operation_token = $3
+  AND action = $4
+  AND lease_token = $5
+  AND dead_lettered_at IS NULL
+`
+
+type DeferClaimedSeatCapacityIntentParams struct {
+	LastError      string             `json:"last_error"`
+	NextAttemptAt  pgtype.Timestamptz `json:"next_attempt_at"`
+	OperationToken pgtype.UUID        `json:"operation_token"`
+	Action         string             `json:"action"`
+	LeaseToken     pgtype.UUID        `json:"lease_token"`
+}
+
+func (q *Queries) DeferClaimedSeatCapacityIntent(ctx context.Context, arg DeferClaimedSeatCapacityIntentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deferClaimedSeatCapacityIntent,
+		arg.LastError,
+		arg.NextAttemptAt,
+		arg.OperationToken,
+		arg.Action,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteClaimedSeatCapacityIntent = `-- name: DeleteClaimedSeatCapacityIntent :execrows
@@ -543,10 +578,10 @@ func (q *Queries) PrepareSeatCapacityOperationReleasesForWorkspaceDeletion(ctx c
 
 const seatCapacityOutboxStats = `-- name: SeatCapacityOutboxStats :many
 SELECT action,
-       count(*) FILTER (WHERE dead_lettered_at IS NULL)::bigint AS pending_count,
+       count(*) FILTER (WHERE dead_lettered_at IS NULL AND delivered_at IS NULL)::bigint AS pending_count,
        count(*) FILTER (WHERE dead_lettered_at IS NOT NULL)::bigint AS dead_lettered_count,
        COALESCE(
-           EXTRACT(EPOCH FROM now() - min(created_at) FILTER (WHERE dead_lettered_at IS NULL)),
+           EXTRACT(EPOCH FROM now() - min(created_at) FILTER (WHERE dead_lettered_at IS NULL AND delivered_at IS NULL)),
            0
        )::double precision AS oldest_pending_age_seconds
 FROM seat_capacity_outbox

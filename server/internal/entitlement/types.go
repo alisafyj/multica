@@ -12,13 +12,16 @@ const SchemaVersion = 1
 type GateName string
 
 const (
+	// GateIssueWindow is a fork-local read gate. Cloud may omit it while the
+	// community issue-count gate remains enabled; consumers treat omission as off.
 	GateIssueWindow   GateName = "issue_window"
+	GateIssueCount    GateName = "issue_count"
 	GateAutopilotRuns GateName = "autopilot_runs"
 )
 
 func (n GateName) valid() bool {
 	switch n {
-	case GateIssueWindow, GateAutopilotRuns:
+	case GateIssueWindow, GateIssueCount, GateAutopilotRuns:
 		return true
 	default:
 		return false
@@ -31,13 +34,14 @@ const (
 	ActionOff     Action = "off"
 	ActionObserve Action = "observe"
 	ActionEnforce Action = "enforce"
+
+	NotificationFirstRejectionPerPeriod = "first_rejection_per_period"
 )
 
 type Reason string
 
 const (
 	ReasonDisabled          Reason = "disabled"
-	ReasonEmergencyDisabled Reason = "emergency_disabled"
 	ReasonInvalidWorkspace  Reason = "invalid_workspace"
 	ReasonUnknownGate       Reason = "unknown_gate"
 	ReasonCacheFresh        Reason = "cache_fresh"
@@ -52,11 +56,16 @@ const (
 // Gate is the effective instruction for one generic enforcement point. Limits
 // and period boundaries come from Cloud; this package does not derive them.
 type Gate struct {
-	Action      Action
-	Limit       *int
-	PeriodStart *time.Time
-	PeriodEnd   *time.Time
-	ResetAt     *time.Time
+	Action        Action
+	Limit         *int
+	PeriodStart   *time.Time
+	PeriodEnd     *time.Time
+	ResetAt       *time.Time
+	Notifications *NotificationPolicy
+}
+
+type NotificationPolicy struct {
+	OnRejection string
 }
 
 // Decision carries enough source information for consumers to audit why a gate
@@ -69,7 +78,7 @@ type Decision struct {
 	CloudValidUntil     time.Time
 }
 
-// Provider is the only interface future issue-window and autopilot consumers
+// Provider is the only interface issue-count and autopilot consumers
 // need. It deliberately has no error return: every failure is represented by a
 // fail-open Decision with ActionOff (or ActionObserve for a bounded stale
 // snapshot that can no longer enforce).
@@ -83,7 +92,7 @@ type Observer interface {
 	RecordEntitlementCache(outcome string)
 	RecordEntitlementRefresh(outcome string, durationSeconds float64)
 	RecordEntitlementDecision(gate, action, reason string)
-	RecordEntitlementVersionRegression(source string)
+	RecordEntitlementVersionRegression()
 }
 
 func offDecision(reason Reason) Decision {
@@ -112,6 +121,11 @@ func cloneGate(in Gate) Gate {
 	if in.ResetAt != nil {
 		value := *in.ResetAt
 		out.ResetAt = &value
+	}
+	if in.Notifications != nil {
+		out.Notifications = &NotificationPolicy{
+			OnRejection: in.Notifications.OnRejection,
+		}
 	}
 	return out
 }

@@ -88,7 +88,7 @@ func (h *Handler) requireDaemonRuntimeAccess(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return db.AgentRuntime{}, false
 	}
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
+	rt, err := h.getAgentRuntime(r.Context(), obsmetrics.RuntimeLookupSourceDaemonAPI, runtimeUUID)
 	if err != nil {
 		if isNotFound(err) {
 			writeError(w, http.StatusNotFound, "runtime not found")
@@ -941,7 +941,7 @@ func (h *Handler) DaemonDeregister(w http.ResponseWriter, r *http.Request) {
 
 	for i, rid := range req.RuntimeIDs {
 		// Look up the runtime and verify ownership.
-		rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUIDs[i])
+		rt, err := h.getAgentRuntime(r.Context(), obsmetrics.RuntimeLookupSourceDaemonAPI, runtimeUUIDs[i])
 		if err != nil {
 			slog.Warn("deregister: runtime not found", "runtime_id", rid, "error", err)
 			continue
@@ -1086,7 +1086,7 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lookupStart := time.Now()
-	rt, lookupErr := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
+	rt, lookupErr := h.getAgentRuntime(r.Context(), obsmetrics.RuntimeLookupSourceHeartbeatHTTP, runtimeUUID)
 	runtimeLookupMs = time.Since(lookupStart).Milliseconds()
 	if lookupErr != nil {
 		// Only pgx.ErrNoRows means the runtime row is gone. Daemon reads this
@@ -1171,7 +1171,7 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 	if err != nil {
 		return nil, fmt.Errorf("invalid runtime_id: %w", err)
 	}
-	rt, err := h.Queries.GetAgentRuntime(ctx, runtimeUUID)
+	rt, err := h.getAgentRuntime(ctx, obsmetrics.RuntimeLookupSourceHeartbeatWS, runtimeUUID)
 	if err != nil {
 		if isNotFound(err) {
 			return &protocol.DaemonHeartbeatAckPayload{
@@ -1705,8 +1705,8 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 		resp, deliveredCommentIDs, _, _, failure := h.buildClaimedTaskResponse(r, &task, rt, uuidToString(task.RuntimeID), rtWorkspaceID)
 		if failure != nil {
 			// Builder rejected this task (workspace isolation / chat-input);
-			// it has already cancelled the task where the failure requires it.
-			// Skip it — non-cancelling failures leave the task dispatched for
+			// it has already settled the task where the failure requires it.
+			// Skip it — non-settling failures leave the task dispatched for
 			// the reclaim path.
 			continue
 		}
@@ -1836,6 +1836,28 @@ func (h *Handler) rejectClaimSourceLoad(ctx context.Context, task *db.AgentTaskQ
 	}
 }
 
+// rejectClaimSkillLoad settles a claim whose agent skills could not be read.
+// It mirrors rejectClaimSourceLoad's transient branch — preserve the
+// just-dispatched task so the stale-dispatched reclaim redelivers it — because
+// this is the same kind of failure: a transient read on the claim-build path.
+//
+// Dispatching with whatever loaded is not the safer half-measure it looks
+// like. LoadAgentSkills reads the whole skill set in two queries, so a failure
+// means every skill loses its supporting files or the agent loses every skill,
+// and the ref hashes sent to the daemon are computed over that same truncated
+// content — so the daemon validates the bundle, caches it, and the agent runs
+// with rules silently missing. There is no ErrNoRows branch to mirror: an
+// agent with no skills is a legitimate empty result, not a missing row.
+func (h *Handler) rejectClaimSkillLoad(task *db.AgentTaskQueue, err error) *claimBuildFailure {
+	slog.Error("task claim: agent skill load failed; preserving task for redelivery",
+		"task_id", uuidToString(task.ID), "agent_id", uuidToString(task.AgentID), "error", err)
+	return &claimBuildFailure{
+		outcome: "error_skill_load",
+		status:  http.StatusInternalServerError,
+		message: "failed to load agent skills",
+	}
+}
+
 // rejectClaimOnWorkspaceMismatch enforces the claim's tenant boundary against
 // the workspace that OWNS the task's context (issue / chat session / autopilot
 // / quick-create), which is the only authority for MULTICA_WORKSPACE_ID in the
@@ -1948,9 +1970,8 @@ func (h *Handler) failClaimedTaskBeforeLaunch(
 func chatSessionResumeFallbackNeeded(priorSessionID, priorWorkDir string) bool {
 	return priorSessionID == "" || priorWorkDir == ""
 }
-
 func rerunSourceMatchesTaskScope(task, source db.AgentTaskQueue) bool {
-	if task.AgentID != source.AgentID {
+	if task.AgentID != source.AgentID || task.ConciseMode != source.ConciseMode {
 		return false
 	}
 	if task.IssueID.Valid {
@@ -1984,7 +2005,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				h.recordIssueWindow(policy.action, "agent_context", "error")
 				if policy.action == entitlement.ActionEnforce {
 					if _, requeueErr := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); requeueErr != nil {
-						slog.Error("task claim: requeue after issue window failure failed", "task_id", uuidToString(task.ID), "error", requeueErr)
+						slog.Error("daemon claim: requeue after issue window failure failed", "task_id", uuidToString(task.ID), "error", requeueErr)
 					}
 					return resp, nil, 0, 0, &claimBuildFailure{
 						outcome: "error_issue_window_check", status: http.StatusInternalServerError, message: "failed to check issue access",
@@ -2007,6 +2028,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		}
 	}
+	var issueNumber int32
 	// Claim-only capability: this server resolves the squad-leader role on the
 	// wire (is_leader_task / squad_id), so the daemon must not re-derive it
 	// from the briefing text. Set unconditionally — on every claim, leader or
@@ -2069,6 +2091,43 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			status:  http.StatusInternalServerError,
 			message: "failed to load task agent",
 		}
+	}
+	// The SQL claim narrows candidates and repeats the access predicate before
+	// changing task state, but Agent mutations do not stay locked through HTTP
+	// response assembly. Recheck the freshly loaded Agent here so a rebind or
+	// owner change that committed after the claim cannot reach the daemon.
+	if agent.RuntimeID != task.RuntimeID {
+		slog.Warn("daemon claim: agent runtime changed before delivery; refusing dispatch",
+			"task_id", uuidToString(task.ID),
+			"agent_id", uuidToString(task.AgentID),
+			"task_runtime_id", uuidToString(task.RuntimeID),
+			"agent_runtime_id", uuidToString(agent.RuntimeID),
+		)
+		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+			r.Context(), task,
+			"The agent moved to another runtime before this task could start. Retry the task to run it on the agent's current runtime.",
+			taskfailure.ReasonInvalidTaskIdentity,
+			"error_agent_runtime_changed", http.StatusConflict, "agent runtime changed before task delivery",
+		)
+	}
+	if runtime.Visibility == "private" && runtime.OwnerID.Valid &&
+		(!agent.OwnerID.Valid || agent.OwnerID != runtime.OwnerID) {
+		userMessage := "This private runtime cannot run the assigned agent because the agent and runtime have different owners."
+		if !agent.OwnerID.Valid {
+			userMessage = "This private runtime cannot run the assigned agent because the agent has no owner."
+		}
+		slog.Warn("daemon claim: private runtime no longer permits task agent; refusing dispatch",
+			"task_id", uuidToString(task.ID),
+			"agent_id", uuidToString(task.AgentID),
+			"runtime_id", runtimeID,
+			"agent_owner_valid", agent.OwnerID.Valid,
+		)
+		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+			r.Context(), task,
+			userMessage,
+			taskfailure.ReasonInvalidTaskIdentity,
+			"error_runtime_access_denied", http.StatusForbidden, "private runtime does not permit task agent",
+		)
 	}
 	useSkillRefs := requestHasClientCapability(r, protocol.DaemonCapabilitySkillBundlesV1)
 	var customEnv map[string]string
@@ -2157,11 +2216,17 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		resp.Agent.Instructions = service.ComposeMikaInstructions(agent.Name, agent.Instructions)
 	}
 	if useSkillRefs {
-		_, skillRefs := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID)
+		_, skillRefs, err := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID)
+		if err != nil {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSkillLoad(task, err)
+		}
 		agentSkillCount = len(skillRefs)
 		resp.Agent.SkillRefs = skillRefs
 	} else {
-		skills := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
+		skills, err := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
+		if err != nil {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSkillLoad(task, err)
+		}
 		agentSkillCount = len(skills)
 		builtinSkills := h.TaskService.BuiltinSkills()
 		builtinSkillCount = len(builtinSkills)
@@ -2246,6 +2311,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure
 		}
 		resp.ThreadName = issue.Title
+		issueNumber = issue.Number
 
 		// Squad-leader briefing injection: keyed off the task being a
 		// leader-task (is_leader_task) carrying a squad_id — NOT off the
@@ -2554,8 +2620,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			// prompt.go defends against inheriting the prior turn's "Done."
 			// marker, and GetLastTaskSession already excludes poisoned sessions.
 			if prior, err := h.Queries.GetLastTaskSession(r.Context(), db.GetLastTaskSessionParams{
-				AgentID: task.AgentID,
-				IssueID: task.IssueID,
+				AgentID:     task.AgentID,
+				IssueID:     task.IssueID,
+				ConciseMode: pgtype.Bool{Bool: task.ConciseMode, Valid: true},
 			}); err == nil && prior.SessionID.Valid {
 				if prior.RuntimeID == task.RuntimeID {
 					resp.PriorSessionID = prior.SessionID.String
@@ -2571,8 +2638,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			// be carried over — even when that older session resumes cleanly,
 			// which the resume-presence gate would otherwise pass silently.
 			if missing, err := h.Queries.GetLatestTaskRolloutMissing(r.Context(), db.GetLatestTaskRolloutMissingParams{
-				AgentID: task.AgentID,
-				IssueID: task.IssueID,
+				AgentID:     task.AgentID,
+				IssueID:     task.IssueID,
+				ConciseMode: pgtype.Bool{Bool: task.ConciseMode, Valid: true},
 			}); err == nil && missing {
 				resp.PriorSessionResumeUnavailable = true
 			}
@@ -2641,36 +2709,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		}
 		projectCtx.applyTo(&resp)
-		if !task.ForceFreshSession && !task.ChannelContextRevision.Valid {
-			// Resume chat sessions only when the stored pointer was produced
-			// by the same runtime as the claiming task. When the chat_session
-			// pointer is missing (legacy NULL runtime_id), stale (last task
-			// failed before reporting completion), or runtime-mismatched, fall
-			// back to the most recent task row that recorded a session_id —
-			// otherwise a single failed turn would silently drop the entire
-			// conversation memory on the next message. The fallback also
-			// requires runtime to match.
-			if cs.SessionID.Valid && cs.RuntimeID.Valid && cs.RuntimeID == task.RuntimeID {
-				resp.PriorSessionID = cs.SessionID.String
-			}
-			if cs.WorkDir.Valid {
-				resp.PriorWorkDir = cs.WorkDir.String
-			}
-		}
-		// Resolve the user-message input batch for this run. A task-owned
-		// task (chat_input_task_id set) reads exactly the user messages
-		// tagged with its own input owner, so a message that arrived after
-		// this turn was sealed can never be absorbed here. Direct-chat
-		// tasks have owned their single message since MUL-4351; channel
-		// (Slack/Lark) tasks now seal their trailing batch at enqueue too.
-		// Only legacy tasks created before that deploy carry a NULL owner
-		// and keep the trailing-message selector — the run of user messages
-		// after the last assistant row, which also covers a debounced burst
-		// (MUL-2968: "看上海天气" then "还有青岛" must both be delivered) —
-		// so a rolling deploy never replays their history. Attachments are
-		// collected per included message so the agent can
-		// `multica attachment download <id>` (the inline markdown URL is
-		// signed + 30-min expiring on the CDN).
+		// Resolve the user-message input batch before consulting resume
+		// history. A task-owned task reads exactly its sealed input messages;
+		// legacy tasks retain the trailing-history fallback.
 		var unanswered []db.ChatMessage
 		var inputLoadErr error
 		if task.ChatInputTaskID.Valid {
@@ -2680,10 +2721,6 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		} else {
 			inputLoadErr = err
 		}
-		// A read failure must NOT masquerade as "zero input". Preserve the
-		// just-dispatched task (the stale-dispatched reclaim redelivers it)
-		// and reject the claim with 5xx, rather than cancelling a valid direct
-		// task on a transient DB error (MUL-4351 review).
 		if inputLoadErr != nil {
 			slog.Error("chat claim: load chat input messages failed; preserving task for redelivery",
 				"task_id", uuidToString(task.ID),
@@ -2695,55 +2732,71 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				message: "failed to load chat input",
 			}
 		}
-
-		// Input ownership is the claim's fail-closed boundary. Resume-history
-		// reads belong after it: a task that cannot load its input is preserved
-		// for redelivery and must not spend two more queries before returning.
 		if !task.ForceFreshSession {
+			// The chat_session pointer predates task-level concise mode and
+			// cannot identify which prompt mode produced it. Always resolve
+			// the authoritative terminal task row with the current mode so a
+			// normal task never resumes a concise session, or vice versa.
 			contextRevision := pgtype.Int8{}
 			if task.ChannelContextRevision.Valid {
 				contextRevision = task.ChannelContextRevision
 			}
-			// GetLastChatTaskSession currently has exactly two consumers: the
-			// prior session and prior workdir fields. Keep this guard coupled to
-			// both so adding a third consumer cannot silently skip its fallback.
-			// Context-scoped channel tasks always resolve both fields from task
-			// rows in their own generation; the Chat-wide pointer may belong to a
-			// different generation when independent debounce timers race.
-			if task.ChannelContextRevision.Valid || chatSessionResumeFallbackNeeded(resp.PriorSessionID, resp.PriorWorkDir) {
+			pointerSessionID, pointerWorkDir := "", ""
+			if cs.SessionID.Valid {
+				pointerSessionID = cs.SessionID.String
+			}
+			if cs.WorkDir.Valid {
+				pointerWorkDir = cs.WorkDir.String
+			}
+			// The legacy pointer is intentionally not a resume source because
+			// it carries no concise-mode metadata. It still tells the metric
+			// whether the authoritative lookup was needed.
+			fallbackNeeded := chatSessionResumeFallbackNeeded(pointerSessionID, pointerWorkDir)
+			if fallbackNeeded {
 				h.Metrics.RecordChatClaimSessionFallbackNeeded()
-				started := time.Now()
-				prior, err := h.Queries.GetLastChatTaskSession(r.Context(), db.GetLastChatTaskSessionParams{
-					ChatSessionID:          cs.ID,
-					ChannelContextRevision: contextRevision,
-				})
-				h.Metrics.ObserveChatClaimLastSessionQuery(time.Since(started).Seconds())
-				switch {
-				case err == nil && prior.SessionID.Valid:
+			}
+			resp.PriorSessionID = ""
+			resp.PriorWorkDir = ""
+			started := time.Now()
+			prior, err := h.Queries.GetLastChatTaskSession(r.Context(), db.GetLastChatTaskSessionParams{
+				ChatSessionID:          cs.ID,
+				ConciseMode:            pgtype.Bool{Bool: task.ConciseMode, Valid: true},
+				ChannelContextRevision: contextRevision,
+			})
+			h.Metrics.ObserveChatClaimLastSessionQuery(time.Since(started).Seconds())
+			switch {
+			case err == nil && prior.SessionID.Valid:
+				if fallbackNeeded {
 					h.Metrics.RecordChatClaimSessionFallbackHit()
-					if resp.PriorSessionID == "" && prior.RuntimeID == task.RuntimeID {
-						resp.PriorSessionID = prior.SessionID.String
-					}
-					if prior.WorkDir.Valid && resp.PriorWorkDir == "" {
-						resp.PriorWorkDir = prior.WorkDir.String
-					}
-				case errors.Is(err, pgx.ErrNoRows):
+				}
+				if prior.RuntimeID == task.RuntimeID {
+					resp.PriorSessionID = prior.SessionID.String
+				}
+				if prior.WorkDir.Valid {
+					resp.PriorWorkDir = prior.WorkDir.String
+				}
+			case errors.Is(err, pgx.ErrNoRows):
+				if fallbackNeeded {
 					h.Metrics.RecordChatClaimSessionFallbackMiss()
-				case err == nil:
-					// Defensive only: the SQL excludes NULL session ids, but
-					// preserve miss semantics if that contract ever changes.
+				}
+			case err == nil:
+				// Defensive only: the SQL excludes NULL session ids, but
+				// preserve miss semantics if that contract ever changes.
+				if fallbackNeeded {
 					h.Metrics.RecordChatClaimSessionFallbackMiss()
-				default:
+				}
+			default:
+				if fallbackNeeded {
 					h.Metrics.RecordChatClaimSessionFallbackError()
 				}
 			}
 
-			// MUL-5305: continuity-gap disclosure is independent of whether
-			// either pointer field needed fallback, so this query stays
-			// unconditional for non-force-fresh chat claims.
-			started := time.Now()
+			// Continuity-gap disclosure is independent of whether the
+			// mode-filtered session lookup found a resumable row.
+			started = time.Now()
 			missing, err := h.Queries.GetLatestChatTaskRolloutMissing(r.Context(), db.GetLatestChatTaskRolloutMissingParams{
 				ChatSessionID:          cs.ID,
+				ConciseMode:            pgtype.Bool{Bool: task.ConciseMode, Valid: true},
 				ChannelContextRevision: contextRevision,
 			})
 			h.Metrics.ObserveChatClaimRolloutMissingQuery(time.Since(started).Seconds())
@@ -3253,6 +3306,10 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// shared context. Empty string when the owner hasn't set one; the daemon
 	// skips rendering the heading in that case.
 	if ws, err := h.Queries.GetWorkspace(r.Context(), parseUUID(resp.WorkspaceID)); err == nil {
+		resp.WorkspaceSlug = ws.Slug
+		if issueNumber > 0 {
+			resp.IssueIdentifier = service.IssueIdentifier(ws.IssuePrefix, issueNumber)
+		}
 		if ws.Context.Valid {
 			resp.WorkspaceContext = ws.Context.String
 		}
@@ -3720,19 +3777,35 @@ func (h *Handler) ResolveTaskSkillBundles(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	bundles, _ := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID)
-	allowed := make(map[string]service.AgentSkillData, len(bundles))
-	for _, bundle := range bundles {
-		allowed[bundle.Source+"\x00"+bundle.ID] = bundle
-	}
-
-	resolved := make([]service.AgentSkillData, 0, len(req.Skills))
+	// Validate before reading: a malformed ref is rejected the same way it
+	// always was, now without paying for a load first.
+	wanted := make([]service.AgentSkillBundleRef, 0, len(req.Skills))
 	for _, ref := range req.Skills {
 		if ref.ID == "" || ref.Source == "" || ref.Hash == "" {
 			writeError(w, http.StatusBadRequest, "invalid skill ref")
 			return
 		}
-		bundle, ok := allowed[ref.Source+"\x00"+ref.ID]
+		wanted = append(wanted, service.AgentSkillBundleRef{ID: ref.ID, Source: ref.Source})
+	}
+
+	// Load ONLY what was asked for. The daemon resolves one skill per request,
+	// so serving these out of the agent's full bundle set meant reading and
+	// hashing every skill the agent has, once per request, to return one of
+	// them — quadratic in skill count across a cold dispatch.
+	allowed, err := h.TaskService.LoadRequestedAgentSkillBundles(r.Context(), task.AgentID, wanted)
+	if err != nil {
+		// 5xx, not a partial answer: the daemon's resolve retry can recover a
+		// transient read, and a bundle assembled from a failed read would pass
+		// its client-side validation and be cached as if it were complete.
+		slog.Error("resolve skill bundles: load agent skills failed",
+			"task_id", uuidToString(task.ID), "agent_id", uuidToString(task.AgentID), "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to load skill bundles")
+		return
+	}
+
+	resolved := make([]service.AgentSkillData, 0, len(req.Skills))
+	for _, ref := range req.Skills {
+		bundle, ok := allowed[service.AgentSkillBundleKey(ref.Source, ref.ID)]
 		if !ok {
 			writeError(w, http.StatusNotFound, "skill bundle not found")
 			return
@@ -5087,7 +5160,7 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 		provider := normalizeProvider(u.Provider)
 		if provider == "" {
 			if !runtimeProviderLoaded {
-				if rt, err := h.Queries.GetAgentRuntime(r.Context(), task.RuntimeID); err == nil {
+				if rt, err := h.getAgentRuntime(r.Context(), obsmetrics.RuntimeLookupSourceTask, task.RuntimeID); err == nil {
 					runtimeProvider = normalizeProvider(rt.Provider)
 				} else {
 					slog.Warn("load runtime provider for usage backfill failed",

@@ -23,6 +23,17 @@ func TestSeatCapacityMetricsExposePendingAndDeadLettersByAction(t *testing.T) {
 	if got := testutil.ToFloat64(metrics.OldestPendingAge.WithLabelValues("release")); got != 901 {
 		t.Fatalf("oldest release age=%v, want 901", got)
 	}
+	if got := testutil.ToFloat64(metrics.RefreshUnavailable); got != 0 {
+		t.Fatalf("refresh unavailable=%v, want 0", got)
+	}
+	metrics.RecordOutboxRefreshError()
+	metrics.SetOutboxRefreshUnavailable(true)
+	if got := testutil.ToFloat64(metrics.RefreshErrors); got != 1 {
+		t.Fatalf("refresh errors=%v, want 1", got)
+	}
+	if got := testutil.ToFloat64(metrics.RefreshUnavailable); got != 1 {
+		t.Fatalf("refresh unavailable after error=%v, want 1", got)
+	}
 	if _, err := registry.Gather(); err != nil {
 		t.Fatal(err)
 	}
