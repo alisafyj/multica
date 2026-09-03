@@ -1,46 +1,38 @@
 # Design Center End-to-End MVP 权威交接文档
 
-> 更新时间：2026-09-02（Asia/Shanghai）
+> 更新时间：2026-09-03（Asia/Shanghai）
 >
-> 当前仓库：`https://github.com/alisafyj/multica`
+> 仓库：`https://github.com/alisafyj/multica`
 >
-> 当前集成分支：`codex/design-center-end-to-end-mvp`
+> Tasks 10–12 分支：`codex/design-center-end-to-end-mvp-tasks-10-12`
 >
-> Tasks 10–12 执行分支：`codex/design-center-end-to-end-mvp-tasks-10-12`
+> Task 12 实现提交：`874df6de0ebefd748748aa2bbe73fa90f70ce858`
 >
-> **本文件是本轮 Design Center End-to-End MVP 的最高优先级交接事实源。**
+> 本文件是当前 Design Center End-to-End MVP 的最高优先级交接事实源。
 
-旧聊天、旧机器路径、旧数据库/profile、历史执行说明与本文冲突时，以本文为准。产品长期事实仍结合 `docs/product/design-center/README.md` 的 confirmed / proposal / superseded 状态判断。
+旧聊天、旧机器路径、旧数据库/profile 和此前“Task 12 暂停”的说明均已过期。长期产品事实仍以 `docs/product/design-center/README.md` 中的 confirmed / proposal / superseded 标记为准。
 
 ---
 
-## 0. 当前结论与下一步
+## 0. 当前结论
 
-Group 3（Task 7–9）已经完成并通过真实 Gate，当前不再处于 Task 7 暂停点。
+Tasks 10–12 已全部实现、复审并通过真实产品 Gate：
 
-接下来按顺序执行：
+1. Task 10：真实 saved Multica Design 经统一 Implementation Context、普通 Agent 和隔离目标 checkout 完成实现与真实渲染验收；
+2. Task 11：真实上传 Figma 的 exact frame 与 4-frame group 经同一 Context/Result 契约、普通 Agent 和隔离目标 checkout 完成验收；
+3. Task 12：真实 Issue UI 完成设计选择、精确 frame、repository、可编辑 prompt、手动发送、普通 Agent 状态和结构化结果投影，Issue 状态保持不变；
+4. Tasks 10–12 Final Gate：**PASS**；
+5. Task 13、Task 14 没有启动；
+6. 没有 Push、PR、`main` 合并或执行分支回合集成分支；
+7. 所有 Task 12 隔离 API/Web/daemon/PostgreSQL/browser 已停止，临时 profile 已清理。
 
-1. Task 10：Multica Design Source Adapter 与真实仓库还原；
-2. Task 11：Figma Source Adapter 复用同一还原契约；
-3. Task 12：Issue 右侧栏统一设计选择与还原入口；
-4. 每个 Task 保留聚焦提交和独立验证；
-5. Tasks 10–12 完成后停止并汇报，Task 13、14 不在当前授权范围。
-
-执行前按顺序读取：
-
-1. 本文件；
-2. `docs/product/design-center/README.md`；
-3. `DESIGN.md`；
-4. `docs/superpowers/plans/design-center-active-index.md`；
-5. `docs/superpowers/plans/2026-08-31-design-center-end-to-end-mvp-roadmap.md` 的 Task 10–12；
-6. `docs/superpowers/specs/2026-08-26-unified-design-asset-implementation-design.md`；
-7. Task 12 需要的 `docs/superpowers/specs/2026-08-27-issue-design-automation-design.md` 相关章节。
+下一位接手者不要重做 Tasks 10–12。先审查本分支和报告，再等待用户明确决定是否合回集成分支或启动 Task 13/14。
 
 ---
 
-## 1. 用户目标与当前授权
+## 1. 目标与边界
 
-### 1.1 总目标
+完整产品链路：
 
 ```text
 真实项目与仓库
@@ -53,219 +45,220 @@ Group 3（Task 7–9）已经完成并通过真实 Gate，当前不再处于 Tas
 → 测试、构建和真实渲染
 → 用户验收完整链路
 ```
-### 1.2 当前授权边界
 
-- 已确认更新本文后开始 Task 10–12。
-- 允许在当前机器使用 Docker/PostgreSQL 建立隔离验证环境。
-- 原机器 Task 7 数据库和 profile 不迁移、不依赖。
-- 不使用 mock，不以 HTTP 200、typecheck 或单元测试替代真实产品验收。
-- 当前只做到 Task 12；不自动开始 Task 13 或 Task 14。
-- 不 Push、不创建 PR、不合入 `main`。
-- 当前执行分支完成后不自动合并回集成分支；合并需用户再次确认。
+执行边界：
 
----
-
-## 2. 文档权威顺序
-
-1. 本文件：当前完成状态、分支、执行边界和下一步；
-2. `docs/product/design-center/README.md`：Design Center 长期产品事实；
-3. `docs/superpowers/plans/design-center-active-index.md`：文档导航；
-4. `docs/superpowers/plans/2026-08-31-design-center-end-to-end-mvp-roadmap.md`：Task 1–14 路线；
-5. `docs/superpowers/specs/2026-08-26-unified-design-asset-implementation-design.md`：Task 8–11 契约；
-6. `docs/superpowers/specs/2026-08-27-issue-design-automation-design.md`：Task 12 产品入口。
-
-延后文档 `docs/superpowers/plans/2026-08-31-design-center-finder-repository-workspaces.md` 不属于当前任务，不提前实现完整 Finder、多项目 Tab 或视觉精雕。
+- 真实 API、UI、数据库、daemon 和目标 checkout 验收；不使用 mock 或仅以 HTTP 200 代替产品验收；
+- 不截图、不录屏、不采集 trace；UI 验收使用 DOM、accessibility、computed layout 和真实交互；
+- 不自动提交目标用户仓库中的还原产物；
+- 不 Push、不创建 PR、不合 `main`，不自动合回集成分支；
+- Task 13/14 需要用户另行授权。
 
 ---
 
-## 3. Git 与工作树状态
+## 2. 文档顺序
 
-### 3.1 MVP 集成分支
+1. 本文件；
+2. `docs/product/design-center/README.md`；
+3. 根 `DESIGN.md`；
+4. `docs/superpowers/plans/design-center-active-index.md`；
+5. `docs/superpowers/plans/2026-08-31-design-center-end-to-end-mvp-roadmap.md`；
+6. `docs/superpowers/specs/2026-08-26-unified-design-asset-implementation-design.md`；
+7. `docs/superpowers/specs/2026-08-27-issue-design-automation-design.md`；
+8. `.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/progress.md` 和各 Task report/review。
+
+`docs/superpowers/plans/2026-08-31-design-center-finder-repository-workspaces.md` 是后续范围，不属于 Tasks 10–12。
+
+---
+
+## 3. Git 状态与提交链
+
+Group 3 集成基线：
 
 ```text
-分支：codex/design-center-end-to-end-mvp
-HEAD：5ba52ff5a12538759f90e3ec12c00e10a322d5b0
-状态：clean；相对 origin 本地领先 41 个提交
-```
-
-`5ba52ff5a` 是 Group 3 集成提交：
-
-```text
+5ba52ff5a12538759f90e3ec12c00e10a322d5b0
 merge(group-3): validate unified design implementation contracts
 ```
 
-### 3.2 Tasks 10–12 执行分支
+Tasks 10–12 分支：
 
 ```text
-分支：codex/design-center-end-to-end-mvp-tasks-10-12
-基线：5ba52ff5a12538759f90e3ec12c00e10a322d5b0
-状态：从 Group 3 完成基线创建的隔离 worktree
+codex/design-center-end-to-end-mvp-tasks-10-12
 ```
 
-Task 10、11、12 在该分支顺序实施。每项先写失败测试，再写最小实现，执行定向验证并形成聚焦提交。
+已完成提交链：
 
-### 3.3 保留工作树
+```text
+7eeeb9950 docs(designs): hand off tasks 10 through 12
+21426e1da feat(designs): restore Multica designs into repository code
+1928183ef fix(designs): preserve implementation package evidence
+cf3a68a20 test(designs): cover implementation result validation
+a819e315b fix(designs): reject unknown package sources
+3537b728b fix(designs): preserve safe prototype archive validation
+60f7930f3 test(designs): preserve DOM query audit boundary
+017946514 fix(designs): constrain DOM query audit helpers
+6061c078c feat(designs): restore Figma through unified implementation context
+761936313 fix(designs): bind Figma restore evidence
+874df6de0 feat(issues): implement tasks from unified design assets
+```
 
-Group 3、Task 7、Task 8、Task 9 的历史工作树仍保留，只用于审计，不在 Tasks 10–12 中继续写入、清理或复用。
+Task 12 本地验收辅助 `_task12_auth.Makefile` 与 `server/cmd/task12-local-auth/` 没有进入产品提交。不得把它们当成生产认证实现。
+
+执行分支未推送，未创建 PR，未合入 `origin/codex/design-center-end-to-end-mvp` 或 `main`。不要改写历史或自动合并。
 
 ---
 
 ## 4. 已完成能力
 
-### 4.1 Group 1 / Task 1–3
+### 4.1 Group 1 / Tasks 1–3
 
 - repository grounding completion 基线；
-- 最小项目/仓库视角和设计稿仓库关联；
+- 项目/仓库视角和设计稿仓库关联；
 - “关联仓库”与 `repository_grounded=true` 分离；
-- 仓库工作流精确读取 repository-specific saved design system；
-- 跨项目、跨仓库和删除清理边界覆盖。
+- repository-specific saved design system 精确读取；
+- 跨项目、跨仓库和删除清理边界。
 
-### 4.2 Group 2 / Task 4–6
+### 4.2 Group 2 / Tasks 4–6
 
 - Home 和 Repository 入口复用同一创建表单；
 - Repository 入口预填项目、仓库和 GitHub 来源；
-- 固定仓库 scope，禁止 repository workflow fallback；
-- Design Document revision 保存设计体系 revision provenance；
-- Preview、调整、保存和基于最新体系分叉链路接入。
+- 固定 repository scope，禁止 fallback；
+- Design Document revision 保存设计体系 provenance；
+- Preview、调整、保存和基于最新体系分叉。
 
-### 4.3 Group 3 / Task 7–9
+### 4.3 Group 3 / Tasks 7–9
 
-Group 3 已合入集成分支并通过最终审查：`APPROVED · Architecture CLEAR`。
+Group 3 已合入集成分支并通过最终审查。Task 7 真实验收完成隔离 Workspace、Project、Repository association、Agent、repository analysis、repository-specific design system、Design A、Design B、调整、Audit、Preview 和保存。报告：`docs/product/design-center/mvp-phase-a-validation.md`。
 
-关键提交：
+Task 8 提供来源无关、版本化、不透明的 `design_ref` / `frame_ref` 和 Frame API。Task 9 提供统一 Implementation Prompt / Context / Result 契约，并明确 Prompt 只供用户审阅/预填，不自动发送、启动 Agent、提交代码或改变 Issue 状态。
 
-```text
-40edc1e0c merge(task-7): validate repository design production MVP
-0171aaa67 merge(task-8): add unified design and frame references
-2a5624986 merge(task-9): define implementation context and result contracts
-5ba52ff5a merge(group-3): validate unified design implementation contracts
-```
+### 4.4 Task 10：Multica Source Adapter
 
-Task 7 真实验收报告：
+真实 saved Multica Design A 经统一 MCP Implementation Context 物化，并由普通 Agent 在隔离 `alisafyj/multica` checkout 完成实现。目标 typecheck、lint、生产构建以及桌面/移动 Chromium DOM 交互通过；validator 返回 `multica.design-implementation-result/v1` / `completed`。目标仓库没有 commit 或 Push。
+
+证据：
 
 ```text
-docs/product/design-center/mvp-phase-a-validation.md
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-10-report.md
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-10-review.md
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-10-real-context.json
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-10-mcp-result.json
 ```
 
-结论为 PASS，真实完成：
+### 4.5 Task 11：Figma Source Adapter
 
-- 隔离 Workspace、Project、`alisafyj/multica` Repository association 和 Agent；
-- repository analysis；
-- repository-specific saved design system revision；
-- Design A（CRM 客户列表）；
-- Design B（CRM 客户详情/商机流程）；
-- Design B 一次调整；
-- 三个 revision 的 Audit、Preview 和保存；
-- desktop 与受限 viewport 的真实 Chromium DOM、可访问性、布局和交互检查。
+真实 Figma 文件通过产品上传链路进入 valid frozen revision。exact frame 和 4-frame group 均经同一 Implementation Context/result contract 与普通 Agent 执行；两个隔离目标 checkout 均通过 typecheck、lint、生产构建和桌面/移动 Chromium 交互。validator 均为 `completed`，安全复审为 APPROVED。
 
-Task 8 已提供来源无关、版本化、不透明的 `design_ref` / `frame_ref` 与 Frame API，覆盖 saved Multica revision、valid Figma revision、篡改、跨 workspace/project、stale revision 和 draft rejection。
+证据：
 
-Task 9 已提供统一 Implementation Prompt / Context / Result 契约：
+```text
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-11-report.md
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-11-review.md
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-11-frame-mcp-result.json
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-11-group-mcp-result.json
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-11-frame-validator-result.json
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-11-group-validator-result.json
+```
 
-- `POST /api/design-assets/{design_ref}/implementation-prompt`；
-- MCP `get_implementation_context`；
-- `implementation-result/v1`；
-- API 与 MCP 固定同一个 context identity；
-- Prompt 只供用户审阅/预填，不自动发评论、不启动 Agent、不 commit/Push/PR、不改变 Issue 状态。
+### 4.6 Task 12：Issue 统一设计选择与还原入口
+
+实现内容：
+
+- Issue 右侧栏用同一 selector 展示 saved Multica 与 valid Figma designs，并显示来源 badge；
+- 精确选择 page/frame 和 target repository；association 仅预填，不改写 asset association；
+- 调用统一 API 生成 implementation prompt 并写入现有 Tiptap comment editor；
+- prompt 可编辑且保持未发送，只有用户显式 Send 才走普通 Issue comment/Agent path；
+- 投影 pending/running/completed/blocked/failed 状态；
+- completed 状态只读取 daemon 验证并入库的 `multica.design-implementation-receipt/v1` / `multica.design-implementation-result/v1`，不解析 Agent prose；
+- 设计选择、prompt、发送、执行和结果投影均不修改 Issue status；
+- outer workflow 来源无关，source-specific 逻辑留在 metadata/context resolver；
+- 新增稳定、不透明的 `selection_key` 关联刷新后的 signed frame refs；它只用于 UI identity correlation，不参与授权；
+- specialized runtime 明确禁止目标 checkout 本地 commit、Push、PR 和 merge。
+
+安全边界：服务端验证 workspace/user/project/repository/issue/task/design revision/selection identity；implementation reference 短期、签名、不透明；task-bound MCP 忽略调用者提供的 task identity；daemon 验证 exact checkout root、repository commit、bounded target/evidence paths 和 receipt。
 
 ---
 
-## 5. Task 10–12 执行契约
+## 5. Task 12 真实验收
 
-### 5.1 Task 10：Multica Design Source Adapter
+2026-09-03 在全新隔离 PostgreSQL/API/Web/daemon 环境中，通过真实 API/UI 创建 Workspace、Project、`alisafyj/multica` association、Agent 和 Issue `DEV-17`。
 
-- 从 saved Design Document package 确定性提取 Prototype、semantic brief、coverage、assets、pages/states/flows、design-system provenance 和 grounding evidence；
-- 执行前读取目标 checkout 的 framework、routes、components、state、styling 和 commands；
-- 优先复用仓库现有组件与 tokens；
-- 写入只允许发生在用户选择的目标 repository/worktree；
-- 执行仓库专属 typecheck/tests/build 和真实页面渲染检查；
-- 失败保留 dirty worktree 和结构化证据；
-- 返回 `implementation-result/v1` 和人类摘要；
-- 用 Phase A 的真实 Multica design 和真实目标仓库验证。
+真实路径：
 
-预期聚焦提交：
+1. 在 `DEV-17` Issue UI 选择 Task 11 的真实 Figma upload；
+2. 选择 exact frame `个人主页单排 -官号` 和 `alisafyj/multica`；
+3. 生成 prompt，使用真实键盘编辑，确认数据库仍为 0 comment / 0 task；
+4. 手动 Send 后创建普通 Agent task，UI 显示 running；
+5. Agent 在隔离 checkout 完成实现并返回结构化 receipt；
+6. UI 显示 `验收通过`：1 mapping、3 target files、4 passed commands、1 passed preview、0 blockers；
+7. Issue 始终保持 `todo`；
+8. 目标 checkout HEAD 未变化，没有 commit、Push、PR 或 merge。
 
-```text
-feat(designs): restore Multica designs into repository code
-```
+独立目标页面验收：
 
-### 5.2 Task 11：Figma Source Adapter
+- Desktop 1440x1000：375px 居中 shell，12/12 图片解码，两篇内容，无横向溢出；
+- Mobile 390x844：375x844 shell，可纵向滚动，12/12 图片解码，两篇内容，无横向溢出；
+- 真实点击关注和首个点赞后，route/title/heading 保持正确；验收页面 0 console errors / 0 warnings。
 
-- 解析 valid Design File revision 和所选 Frame；
-- 输出与 Task 10 完全相同的 Implementation Context；
-- 复用相同 Agent 执行、结果、验证、失败恢复和目标仓库规则；
-- 外层 selector/workflow 保持来源无关，只显示 source badge/metadata 差异；
-- 不做 Figma 与 Multica 自动内容匹配或合并；
-- 用真实 Figma design、同一目标仓库和同一 result schema 验证。
-
-预期聚焦提交：
-
-```text
-feat(designs): restore Figma through unified implementation context
-```
-
-### 5.3 Task 12：Issue 统一设计选择与还原入口
-
-产品入口：
-
-```text
-Issue 右侧栏 → UI Design → 选择已有设计
-```
-
-- 一个 selector 展示 saved Multica 与 valid Figma designs，带可见来源 badge；
-- 选择一个 page/frame 和 target repository；
-- association 只能预填目标仓库，用户可确认或更换，不静默改变 asset association；
-- 生成 implementation prompt 并预填现有 Issue comment editor；
-- 用户可编辑并手动发送，发送走普通 Agent/comment 路径；
-- 展示 pending/running/completed/blocked 状态和结构化 result card；
-- 设计/还原动作不自动改变 Issue status；
-- 两种来源通过同一组件，外层 Issue workflow 不按来源分叉。
-
-预期聚焦提交：
-
-```text
-feat(issues): implement tasks from unified design assets
-```
+没有使用 screenshot、录屏或 trace。
 
 ---
 
-## 6. 验证与安全边界
+## 6. 验证结果
 
-- 不访问、输出或提交密码、token、Cookie、验证码、私钥、数据库凭据或用户私有数据。
-- 不调用 screenshot、录屏或 trace；真实 UI 验收使用可见 DOM、accessibility、computed layout、`elementFromPoint` 和真实交互状态。
-- 不停止、重启、删除或改配不属于当前隔离 worktree 的服务、容器、数据库或 profile。
-- 新验证环境必须使用隔离端口和数据库，不占用宿主 `5432`。
-- 页面能加载、HTTP 200、typecheck、单元测试均不能单独证明产品验收通过。
-- saved Multica revision 与 valid Figma revision 才能进入还原链路。
-- 设计选择、Prompt 生成、发送或还原均不自动改变 Issue 状态。
-- 失败时保留目标 worktree 的变更和结构化错误证据，不伪造成功结果。
-- 不自动 commit 目标用户仓库中的还原产物；产品仓库自身 Task 提交除外。
+- Core typecheck/lint：PASS；
+- Views typecheck：PASS；Views lint：0 errors，624 个仓库既有 warnings；
+- Core focused tests：259 PASS；
+- Views focused tests：91 PASS，3 skipped；
+- Comment composer tests：42 PASS；
+- 真实隔离数据库 handler tests：PASS；
+- Go designimplementation、相关 daemon/execenv、CLI MCP focused tests：PASS；
+- `go build ./cmd/server ./cmd/multica`：PASS；
+- `pnpm --filter @multica/web build`：PASS，仅有仓库既有 `::highlight` optimizer warnings；
+- `git diff --check`：PASS；
+- Task 12 code/security review：APPROVED；
+- Tasks 10–12 Final Gate：PASS。
 
----
+全量 daemon/CLI package 测试在当前 Multica-managed worktree 中会被外层 daemon task marker/profile 污染：无关用例显式预期不存在这些状态。不要把这组环境型失败误判为 Task 12 回归；本次改动关联 focused tests 和生产构建均通过。
 
-## 7. 当前明确的 NOT DONE
+提交前 `gitnexus detect-changes` 已执行，但本地 GitNexus 图谱因 `Binder exception: Cannot find property id for n` 降级，未产生可信影响分析；最终审查依据真实调用链、差异审阅、focused tests 和生产构建，不能引用其 `No changes detected` 文案作为证据。
 
-- Task 10 Multica Source Adapter 和真实仓库还原；
-- Task 11 Figma Source Adapter 和同契约真实验证；
-- Task 12 Issue 统一设计选择、Prompt 预填、状态与结果卡；
-- Task 13 Issue 发起 Multica Design 创建与恢复；
-- Task 14 全链路最终产品 Gate；
-- Tasks 10–12 合回集成分支；
-- Push、PR、`main` 合并和发布；
-- Post-MVP Finder/视觉精雕。
-
----
-
-## 8. 给下一位 Agent 的恢复提示
+报告：
 
 ```text
-先读取本交接、Design Center README、根 DESIGN.md、active index、roadmap Task 10–12 和统一设计资产 Spec。
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-12-report.md
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/task-12-review.md
+.superpowers/sdd/2026-08-31-design-center-end-to-end-mvp-roadmap/tasks-10-12-gate-report.md
+```
 
-核验：
-- 集成基线为 5ba52ff5a；
-- 执行分支为 codex/design-center-end-to-end-mvp-tasks-10-12；
-- Group 3 与 Task 7–9 历史工作树只读保留；
-- Task 7 报告为 docs/product/design-center/mvp-phase-a-validation.md，结论 PASS。
+这些 `.superpowers/sdd` 文件是本地验收证据，受该目录 `.gitignore` 管理，不属于产品提交。
 
-继续顺序：Task 10 → Task 11 → Task 12。每项使用 TDD、聚焦提交、真实仓库/API/UI 验证。不得使用 mock 或 HTTP 200 代替产品验收。不得自动开始 Task 13/14，不 Push、不建 PR、不合 main；完成后等待用户确认是否合回集成分支。
+---
+
+## 7. 环境与剩余事项
+
+Task 12 隔离环境已清理：daemon profile 停止并删除，API/Web/browser 已停止，PostgreSQL 已停止。目标 Agent checkout 保留为审计证据；不要把其中的未提交实现误当成产品仓库提交。
+
+明确未做：
+
+- 执行分支合回 `codex/design-center-end-to-end-mvp`；
+- Push、PR、`main` merge、发布；
+- Task 13、Task 14；
+- Post-MVP Finder、多项目 tabs、视觉精雕。
+
+---
+
+## 8. 下一位 Agent 的无漂移提示
+
+```text
+仓库只使用 https://github.com/alisafyj/multica。
+读取 docs/superpowers/handoffs/2026-09-01-design-center-end-to-end-mvp-handoff.md；这是当前权威事实源。
+
+Tasks 10、11、12 和 Tasks 10–12 Final Gate 已通过，不要重新实现或重跑昂贵的真实 Agent 验收。
+分支：codex/design-center-end-to-end-mvp-tasks-10-12。
+Task 12 提交：874df6de0ebefd748748aa2bbe73fa90f70ce858。
+
+先检查 git status/log 和 Task 12 report/review/gate report，再按用户的新授权继续。
+不得自动 Push、建 PR、合 main、回合集成分支或启动 Task 13/14。
+如果用户要求集成，先比较远端集成分支的新变化并审查冲突；不要 reset/clean/改写历史。
 ```
