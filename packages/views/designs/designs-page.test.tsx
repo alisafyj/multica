@@ -75,7 +75,7 @@ vi.mock("@multica/core/paths", () => ({
 
 vi.mock("../navigation", () => ({
   AppLink: ({ children, href }: { children: ReactNode; href: string }) => <a href={href}>{children}</a>,
-  useNavigation: () => ({ push: navigate }),
+  useNavigation: () => ({ push: navigate, searchParams: new URLSearchParams() }),
 }));
 
 vi.mock("./project-design-system-canvas", () => ({
