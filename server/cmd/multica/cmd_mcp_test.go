@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/designdocument"
 	"github.com/multica-ai/multica/server/internal/designimplementation"
 	"github.com/spf13/cobra"
@@ -166,8 +167,9 @@ func TestDesignMCPGetImplementationContextMaterializesBoundedRelativeFiles(t *te
 			t.Fatal(err)
 		}
 		writeMCPTestJSON(w, map[string]any{
-			"schema_version": "multica.design-implementation-context/v1",
-			"design_ref":     "design_v1_example", "revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("a", 64),
+			"schema_version":     "multica.design-implementation-context/v1",
+			"implementation_ref": "implementation_v1_example",
+			"design_ref":         "design_v1_example", "revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("a", 64),
 			"frame_refs": []string{"frame_v1_example"}, "project_id": "project-1", "issue_id": "issue-1",
 			"project_resource_id": "repository-1", "design_title": "Customers",
 			"allowed_write_paths": []string{"."}, "verification_requirements": []string{"pnpm test"},
@@ -212,6 +214,58 @@ func TestDesignMCPGetImplementationContextMaterializesBoundedRelativeFiles(t *te
 	}
 }
 
+func TestDesignMCPGetImplementationContextUsesTaskBoundMarkerIdentity(t *testing.T) {
+	t.Setenv("MULTICA_TASK_ID", "task-1")
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/design-assets/design_v1_authoritative/implementation-context" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		writeMCPTestJSON(w, map[string]any{
+			"schema_version": "multica.design-implementation-context/v1", "implementation_ref": "implementation_v1_example",
+			"design_ref": "design_v1_authoritative", "revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("a", 64),
+			"frame_refs": []string{"frame_v1_authoritative"}, "project_id": "project-1", "issue_id": "issue-1",
+			"project_resource_id": "repository-1", "design_title": "Customers",
+			"allowed_write_paths": []string{"."}, "verification_requirements": []string{"pnpm test"},
+		})
+	}))
+	defer srv.Close()
+
+	root := t.TempDir()
+	markerPath := filepath.Join(root, execenv.TaskContextMarkerRelPath)
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := map[string]any{
+		"managed_by": execenv.TaskContextMarkerManagedBy, "task_id": "task-1", "issue_id": "issue-1",
+		"design_implementation": designimplementation.TaskIdentity{
+			AssetID: "asset-1", DesignRef: "design_v1_authoritative", RevisionID: "revision-1",
+			ContentDigest: "sha256:digest", FrameRef: "frame_v1_authoritative", ProjectResourceID: "repository-1",
+		},
+	}
+	raw, err := json.Marshal(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter := &designMCPAdapter{client: cli.NewAPIClient(srv.URL, "ws-1", "mat_task"), rootDir: root}
+	if _, err := adapter.getImplementationContext(context.Background(), map[string]any{
+		"designRef": "design_v1_one-character-wrong", "revisionId": "wrong", "frameRefs": []any{"wrong"},
+		"targetRepositoryId": "wrong", "issueId": "wrong",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["revision_id"] != "revision-1" || gotBody["issue_id"] != "issue-1" || gotBody["project_resource_id"] != "repository-1" {
+		t.Fatalf("API body = %+v", gotBody)
+	}
+}
+
 func TestDesignMCPGetImplementationContextRejectsSymlinkParentEscape(t *testing.T) {
 	outside := t.TempDir()
 	root := t.TempDir()
@@ -221,7 +275,8 @@ func TestDesignMCPGetImplementationContextRejectsSymlinkParentEscape(t *testing.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeMCPTestJSON(w, map[string]any{
 			"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_example",
-			"revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("a", 64),
+			"implementation_ref": "implementation_v1_example",
+			"revision_id":        "revision-1", "content_digest": "sha256:" + strings.Repeat("a", 64),
 			"frame_refs": []string{"frame_v1_example"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1",
 		})
 	}))
@@ -411,7 +466,8 @@ func TestDesignMCPGetImplementationContextMaterializesSavedMulticaPackage(t *tes
 		case "/api/design-assets/design_v1_multica/implementation-context":
 			writeMCPTestJSON(w, map[string]any{
 				"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_multica", "revision_id": "revision-1", "content_digest": collected.Manifest.ContentDigest,
-				"frame_refs": []string{"frame_v1_page"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1", "design_title": "Saved document",
+				"implementation_ref": "implementation_v1_example",
+				"frame_refs":         []string{"frame_v1_page"}, "project_id": "project-1", "issue_id": "issue-1", "task_id": "task-1", "project_resource_id": "repository-1", "design_title": "Saved document",
 				"package": map[string]any{"source": "multica", "archive_path": "/api/design-documents/document-1/revisions/revision-1/archive", "content_digest": collected.Manifest.ContentDigest}, "source_capabilities": map[string]any{"has_prototype": true, "has_assets": true, "has_interactions": true},
 			})
 		case "/api/design-documents/document-1/revisions/revision-1/archive":
@@ -465,7 +521,8 @@ func TestDesignMCPGetImplementationContextMaterializesFrozenFigmaRestorePack(t *
 				case "/api/design-assets/design_v1_figma/implementation-context":
 					writeMCPTestJSON(w, map[string]any{
 						"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_figma", "revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("f", 64),
-						"frame_refs": []string{"frame_v1_figma"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1", "design_title": "Figma CRM",
+						"implementation_ref": "implementation_v1_example",
+						"frame_refs":         []string{"frame_v1_figma"}, "project_id": "project-1", "issue_id": "issue-1", "task_id": "task-1", "project_resource_id": "repository-1", "design_title": "Figma CRM",
 						"package":             map[string]any{"source": "figma", "content_digest": "sha256:" + strings.Repeat("f", 64), "restore_pack_scope": tt.scope},
 						"source_capabilities": map[string]any{"has_layers": true, "has_assets": true, "has_interactions": true},
 					})
@@ -553,7 +610,8 @@ func TestDesignMCPGetImplementationContextRejectsUnboundFigmaRestorePackAndPrese
 				case "/api/design-assets/design_v1_figma/implementation-context":
 					writeMCPTestJSON(w, map[string]any{
 						"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_figma", "revision_id": "revision-1", "content_digest": digest,
-						"frame_refs": []string{"frame_v1_figma"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1",
+						"implementation_ref": "implementation_v1_example",
+						"frame_refs":         []string{"frame_v1_figma"}, "project_id": "project-1", "issue_id": "issue-1", "task_id": "task-1", "project_resource_id": "repository-1",
 						"package":             map[string]any{"source": "figma", "content_digest": digest, "restore_pack_scope": scope},
 						"source_capabilities": map[string]any{"has_layers": true},
 					})
@@ -652,7 +710,8 @@ func TestDesignMCPGetImplementationContextRejectsInvalidFigmaRestorePackAndPrese
 		case "/api/design-assets/design_v1_figma/implementation-context":
 			writeMCPTestJSON(w, map[string]any{
 				"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_figma", "revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("f", 64),
-				"frame_refs": []string{"frame_v1_figma"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1",
+				"implementation_ref": "implementation_v1_example",
+				"frame_refs":         []string{"frame_v1_figma"}, "project_id": "project-1", "issue_id": "issue-1", "task_id": "task-1", "project_resource_id": "repository-1",
 				"package":             map[string]any{"source": "figma", "content_digest": "sha256:" + strings.Repeat("f", 64), "restore_pack_scope": scope},
 				"source_capabilities": map[string]any{"has_layers": true},
 			})
@@ -688,7 +747,8 @@ func TestDesignMCPGetImplementationContextRejectsMulticaWithoutPackageDescriptor
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeMCPTestJSON(w, map[string]any{
 			"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_multica", "revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("a", 64),
-			"frame_refs": []string{"frame_v1_page"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1",
+			"implementation_ref": "implementation_v1_example",
+			"frame_refs":         []string{"frame_v1_page"}, "project_id": "project-1", "issue_id": "issue-1", "task_id": "task-1", "project_resource_id": "repository-1",
 			"source_capabilities": map[string]any{"has_prototype": true},
 		})
 	}))
@@ -715,7 +775,8 @@ func TestDesignMCPGetImplementationContextRejectsFigmaWithoutPackageDescriptorAn
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeMCPTestJSON(w, map[string]any{
 			"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_figma", "revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("f", 64),
-			"frame_refs": []string{"frame_v1_figma"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1",
+			"implementation_ref": "implementation_v1_example",
+			"frame_refs":         []string{"frame_v1_figma"}, "project_id": "project-1", "issue_id": "issue-1", "task_id": "task-1", "project_resource_id": "repository-1",
 			"source_capabilities": map[string]any{"has_layers": true},
 		})
 	}))
@@ -753,7 +814,8 @@ func TestDesignMCPGetImplementationContextRejectsInvalidPackageAndPreservesConte
 				if r.URL.Path == "/api/design-assets/design_v1_multica/implementation-context" {
 					writeMCPTestJSON(w, map[string]any{
 						"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_multica", "revision_id": "revision-1", "content_digest": tt.contentDigest,
-						"frame_refs": []string{"frame_v1_page"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1",
+						"implementation_ref": "implementation_v1_example",
+						"frame_refs":         []string{"frame_v1_page"}, "project_id": "project-1", "issue_id": "issue-1", "task_id": "task-1", "project_resource_id": "repository-1",
 						"package":             map[string]any{"source": "multica", "archive_path": "/api/design-documents/document-1/revisions/revision-1/archive", "content_digest": tt.packageDigest},
 						"source_capabilities": map[string]any{"has_prototype": true},
 					})
@@ -793,7 +855,8 @@ func TestDesignMCPGetImplementationContextRejectsUnknownPackageSourceBeforeDownl
 		if r.URL.Path == "/api/design-assets/design_v1_multica/implementation-context" {
 			writeMCPTestJSON(w, map[string]any{
 				"schema_version": "multica.design-implementation-context/v1", "design_ref": "design_v1_multica", "revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("a", 64),
-				"frame_refs": []string{"frame_v1_page"}, "project_id": "project-1", "issue_id": "issue-1", "project_resource_id": "repository-1",
+				"implementation_ref": "implementation_v1_example",
+				"frame_refs":         []string{"frame_v1_page"}, "project_id": "project-1", "issue_id": "issue-1", "task_id": "task-1", "project_resource_id": "repository-1",
 				"package":             map[string]any{"source": "unknown", "archive_path": "/api/design-documents/document-1/revisions/revision-1/archive", "content_digest": "sha256:" + strings.Repeat("a", 64)},
 				"source_capabilities": map[string]any{"has_prototype": true},
 			})
@@ -826,7 +889,7 @@ func TestDesignMCPGetImplementationContextRejectsUnknownPackageSourceBeforeDownl
 
 func TestMaterializeDesignImplementationContextWritesResultContractToScope(t *testing.T) {
 	root := t.TempDir()
-	if err := materializeDesignImplementationContext(root, designImplementationContextWire{SchemaVersion: "multica.design-implementation-context/v1"}); err != nil {
+	if err := materializeDesignImplementationContext(root, designImplementationContextWire{SchemaVersion: "multica.design-implementation-context/v1", TaskID: "task-1"}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(designImplementationScopePath)))
@@ -837,7 +900,7 @@ func TestMaterializeDesignImplementationContextWritesResultContractToScope(t *te
 	if err := json.Unmarshal(raw, &scope); err != nil {
 		t.Fatal(err)
 	}
-	if scope["result_path"] != designImplementationResultPath || scope["result_schema"] != designimplementation.ResultSchemaV1 {
+	if scope["task_id"] != "task-1" || scope["result_path"] != designImplementationResultPath || scope["result_schema"] != designimplementation.ResultSchemaV1 {
 		t.Fatalf("scope result contract = %+v", scope)
 	}
 }

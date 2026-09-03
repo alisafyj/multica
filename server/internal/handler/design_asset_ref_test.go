@@ -117,12 +117,17 @@ func TestGetDesignAssetFramesUsesOneContractForBothSources(t *testing.T) {
 			response.Want(http.StatusOK)
 			var body DesignAssetFramesResponse
 			response.JSON(&body)
+			var repeated DesignAssetFramesResponse
+			callDesignAssetFrames(t, tc.ref, testWorkspaceID, testUserID).Want(http.StatusOK).JSON(&repeated)
 			if body.DesignRef != tc.ref || len(body.Frames) != tc.want || body.RevisionID == "" || body.ContentDigest == "" {
 				t.Fatalf("response = %+v", body)
 			}
-			for _, frame := range body.Frames {
-				if frame.FrameRef == "" || frame.Title == "" {
+			for index, frame := range body.Frames {
+				if frame.FrameRef == "" || frame.SelectionKey == "" || frame.Title == "" {
 					t.Fatalf("invalid source-neutral frame: %+v", frame)
+				}
+				if repeated.Frames[index].FrameRef == frame.FrameRef || repeated.Frames[index].SelectionKey != frame.SelectionKey {
+					t.Fatalf("selection key is not stable across signed reference rotation: first=%+v repeated=%+v", frame, repeated.Frames[index])
 				}
 				var projected map[string]any
 				raw, _ := json.Marshal(frame)

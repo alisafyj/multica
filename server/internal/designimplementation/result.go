@@ -116,6 +116,13 @@ func ValidateJSONForContext(raw []byte, expected ExpectedIdentity) (Result, erro
 	if err != nil {
 		return Result{}, err
 	}
+	return ValidateForContext(result, expected)
+}
+
+func ValidateForContext(result Result, expected ExpectedIdentity) (Result, error) {
+	if err := Validate(result); err != nil {
+		return Result{}, err
+	}
 	if result.DesignRef != expected.DesignRef || result.RevisionID != expected.RevisionID || len(expected.FrameRefs) == 0 {
 		return Result{}, errors.New("implementation_result_invalid: result does not match the frozen design identity")
 	}

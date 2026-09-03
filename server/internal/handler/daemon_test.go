@@ -104,6 +104,19 @@ func TestParseDesignRestoreResultSummary(t *testing.T) {
 		t.Fatalf("unexpected summary: %+v", summary)
 	}
 }
+func TestDesignRestoreTaskCompletionStatusUsesStructuredResult(t *testing.T) {
+	output := "All blocked paths are cleared; no blockers remain.\nRESTORE_RESULT_JSON:\n```json\n{\"status\":\"completed\"}\n```"
+	summary := parseDesignRestoreResultSummary(output)
+	if got := designRestoreTaskCompletionStatus(summary, ""); got != "completed" {
+		t.Fatalf("completed result containing prose word blocked = %q, want completed", got)
+	}
+	if got := designRestoreTaskCompletionStatus(designRestoreResultSummary{Status: "blocked"}, ""); got != "failed" {
+		t.Fatalf("blocked result status = %q, want failed", got)
+	}
+	if got := designRestoreTaskCompletionStatus(designRestoreResultSummary{Status: "completed"}, "policy_violation"); got != "failed" {
+		t.Fatalf("policy violation status = %q, want failed", got)
+	}
+}
 
 func TestParseDesignRestoreResultSummaryAcceptsStringRestoreMapping(t *testing.T) {
 	output := "done\nRESTORE_RESULT_JSON:\n```json\n{\"status\":\"completed\",\"files\":[\"src/views/wallet.vue\"],\"restoreMapping\":[\"frame-1 -> wallet home\",\"frame-2/frame-3 -> account states\"],\"usedLayerIds\":[\"1-1\"],\"usedFullFramePreview\":false}\n```"

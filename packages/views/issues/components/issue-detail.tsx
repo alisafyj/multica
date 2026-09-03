@@ -2658,7 +2658,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
       <IssueDesignDocumentsSection issue={issue} />
 
-      <IssueDesignRestoreSection issue={issue} agents={agents} />
+      <IssueDesignRestoreSection issue={issue} agents={agents} timeline={timeline} />
 
       {/* Metadata — agent-facing free-form KV bag. The values almost
           never mean anything to humans, so the trigger row matches the

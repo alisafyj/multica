@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/multica-ai/multica/server/internal/designimplementation"
 	"github.com/multica-ai/multica/server/internal/opendesign"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
@@ -28,10 +29,12 @@ const TaskContextMarkerRelPath = ".multica/daemon_task_context.json"
 const TaskContextMarkerManagedBy = "multica-daemon-task"
 
 type taskContextMarkerFile struct {
-	ManagedBy     string `json:"managed_by"`
-	AgentID       string `json:"agent_id,omitempty"`
-	IssueID       string `json:"issue_id,omitempty"`
-	ChatSessionID string `json:"chat_session_id,omitempty"`
+	ManagedBy            string                             `json:"managed_by"`
+	TaskID               string                             `json:"task_id,omitempty"`
+	AgentID              string                             `json:"agent_id,omitempty"`
+	IssueID              string                             `json:"issue_id,omitempty"`
+	ChatSessionID        string                             `json:"chat_session_id,omitempty"`
+	DesignImplementation *designimplementation.TaskIdentity `json:"design_implementation,omitempty"`
 }
 
 // EnsureWorkspacesRootMarker writes a persistent daemon-task marker at
@@ -590,10 +593,12 @@ func writeTaskContextMarker(workDir string, ctx TaskContextForEnv, manifest *sid
 	// cleanup. If a crash leaves it behind, the CLI intentionally treats it
 	// as daemon context and fails closed instead of using a user PAT.
 	payload := taskContextMarkerFile{
-		ManagedBy:     TaskContextMarkerManagedBy,
-		AgentID:       ctx.AgentID,
-		IssueID:       ctx.IssueID,
-		ChatSessionID: ctx.ChatSessionID,
+		ManagedBy:            TaskContextMarkerManagedBy,
+		TaskID:               ctx.TaskID,
+		AgentID:              ctx.AgentID,
+		IssueID:              ctx.IssueID,
+		ChatSessionID:        ctx.ChatSessionID,
+		DesignImplementation: ctx.DesignImplementation,
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {

@@ -59,6 +59,7 @@ type designAssetFrameClaim struct {
 
 type DesignAssetFrameResponse struct {
 	FrameRef                 string   `json:"frame_ref"`
+	SelectionKey             string   `json:"selection_key"`
 	Title                    string   `json:"title"`
 	ThumbnailURL             string   `json:"thumbnail_url,omitempty"`
 	Description              string   `json:"description,omitempty"`
@@ -312,7 +313,7 @@ func (h *Handler) resolveFigmaDesignAssetFrames(r *http.Request, claim designAss
 			return nil, err
 		}
 		frames = append(frames, DesignAssetFrameResponse{
-			FrameRef: frameRef, Title: frame.Name, ThumbnailURL: designAssetFrameThumbnail(document, frame),
+			FrameRef: frameRef, SelectionKey: designAssetSelectionKey(claim, "frame", frame.ID), Title: frame.Name, ThumbnailURL: designAssetFrameThumbnail(document, frame),
 		})
 	}
 	groups, err := figmaGroupDesignAssetFrames(document, rawDocument, claim)
@@ -346,7 +347,7 @@ func figmaGroupDesignAssetFrames(document designcore.NativeJSON, rawDocument map
 		if err != nil {
 			return nil, err
 		}
-		groups = append(groups, DesignAssetFrameResponse{FrameRef: frameRef, Title: title, ThumbnailURL: thumbnail, RestorePackGroupFrameIDs: append([]string(nil), group.FrameIDs...)})
+		groups = append(groups, DesignAssetFrameResponse{FrameRef: frameRef, SelectionKey: designAssetSelectionKey(claim, "figma_group", group.ID), Title: title, ThumbnailURL: thumbnail, RestorePackGroupFrameIDs: append([]string(nil), group.FrameIDs...)})
 	}
 	return groups, nil
 }
@@ -406,9 +407,14 @@ func (h *Handler) resolveMulticaDesignAssetFrames(r *http.Request, claim designA
 		if err != nil {
 			return nil, err
 		}
-		frames = append(frames, DesignAssetFrameResponse{FrameRef: frameRef, Title: page.Title})
+		frames = append(frames, DesignAssetFrameResponse{FrameRef: frameRef, SelectionKey: designAssetSelectionKey(claim, "page", page.ID), Title: page.Title})
 	}
 	return frames, nil
+}
+
+func designAssetSelectionKey(claim designAssetRefClaim, kind, id string) string {
+	digest := sha256.Sum256([]byte(strings.Join([]string{claim.AssetID, claim.RevisionID, claim.ContentDigest, kind, id}, "\x00")))
+	return "selection_v1_" + hex.EncodeToString(digest[:])
 }
 
 func parseDesignAssetClaimUUID(raw string) (pgtype.UUID, error) {

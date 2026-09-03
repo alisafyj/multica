@@ -247,6 +247,9 @@ import type {
   DesignDraft,
   DesignDraftMaterializeResponse,
   DesignFileDetailResponse,
+  DesignAssetFramesResponse,
+  BuildDesignImplementationPromptRequest,
+  BuildDesignImplementationPromptResponse,
   DesignFolder,
   DesignFrameContext,
   DesignLayerLightweightEditRequest,
@@ -573,6 +576,9 @@ import {
   ListDesignRepositoriesResponseSchema,
   EMPTY_LIST_DESIGN_REPOSITORIES_RESPONSE,
   SetDesignAssetRepositoryAssociationResponseSchema,
+  DesignAssetFramesResponseSchema,
+  EMPTY_DESIGN_ASSET_FRAMES_RESPONSE,
+  BuildDesignImplementationPromptResponseSchema,
   ListDesignDraftsResponseSchema,
   BuiltinDesignSystemDetailSchema,
   ListBuiltinDesignSystemsResponseSchema,
@@ -4040,6 +4046,33 @@ export class ApiClient {
     const suffix = search.toString();
     return this.fetch(`/api/design-files${suffix ? `?${suffix}` : ""}`);
   }
+  async getDesignAssetFrames(designRef: string): Promise<DesignAssetFramesResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/design-assets/${encodeURIComponent(designRef)}/frames`,
+    );
+    return parseWithFallback(raw, DesignAssetFramesResponseSchema, EMPTY_DESIGN_ASSET_FRAMES_RESPONSE, {
+      endpoint: "GET /api/design-assets/:designRef/frames",
+    });
+  }
+
+  async buildDesignImplementationPrompt(
+    designRef: string,
+    data: BuildDesignImplementationPromptRequest,
+  ): Promise<BuildDesignImplementationPromptResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/design-assets/${encodeURIComponent(designRef)}/implementation-prompt`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
+    const parsed = BuildDesignImplementationPromptResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error(`POST /api/design-assets/:designRef/implementation-prompt returned a malformed response: ${parsed.error.message}`);
+    }
+    return parsed.data;
+  }
+
 
   async listDesignRepositories(): Promise<ListDesignRepositoriesResponse> {
     const raw = await this.fetch<unknown>("/api/design-repositories");

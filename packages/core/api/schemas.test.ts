@@ -1106,6 +1106,20 @@ describe("DesignDocumentSchema", () => {
     expect(parsed.saved_revision_id).toBe("");
   });
 
+  it("keeps the saved implementation identity returned for a Multica document", () => {
+    const parsed = DesignDocumentSchema.parse({
+      ...EMPTY_DESIGN_DOCUMENT,
+      id: "document-1",
+      design_ref: "design-ref-document",
+      source: "multica",
+      saved_revision_id: "revision-saved",
+    });
+
+    expect(parsed.design_ref).toBe("design-ref-document");
+    expect(parsed.source).toBe("multica");
+  });
+
+
   it("degrades an unknown status to empty instead of trusting it", () => {
     const parsed = DesignDocumentSchema.parse({
       ...EMPTY_DESIGN_DOCUMENT,

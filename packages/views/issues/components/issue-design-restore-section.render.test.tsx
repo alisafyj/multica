@@ -1,19 +1,38 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { api } from "@multica/core/api";
-import type { Agent, DesignDraft, DesignRestoreTask, Issue } from "@multica/core/types";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useCommentDraftStore } from "@multica/core/issues/stores";
+import type { Agent, AgentTask, DesignDocument, DesignDraft, DesignFile, DesignRestoreTask, Issue, TimelineEntry } from "@multica/core/types";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IssueDesignRestoreSection } from "./issue-design-restore-section";
 
 const mockDesignQueries = vi.hoisted(() => ({
   restoreTasks: [] as DesignRestoreTask[],
   designDrafts: [] as DesignDraft[],
+  designFiles: [{ id: "file-1", title: "服务记录设计稿", project_id: "project-1" }] as Array<Partial<DesignFile> & Pick<DesignFile, "id" | "title">>,
+  designDocuments: [] as DesignDocument[],
+  implementationFrames: [] as Array<{ frame_ref: string; selection_key: string; title: string }>,
+  projectResources: [] as Array<{ id: string; resource_type: string; label: string; resource_ref: Record<string, unknown> }>,
+  agentTasks: [] as AgentTask[],
 }));
 
+afterEach(cleanup);
 vi.mock("@multica/core/api", () => ({
   api: {
+    buildDesignImplementationPrompt: vi.fn(),
     createDesignDraftAgentTask: vi.fn(),
+    listTasksByIssue: vi.fn(() => Promise.resolve(mockDesignQueries.agentTasks)),
   },
+}));
+
+
+vi.mock("@multica/core/projects", () => ({
+  projectResourcesOptions: () => ({
+    queryKey: ["project-resources"],
+    queryFn: () => Promise.resolve(mockDesignQueries.projectResources),
+  }),
 }));
 
 vi.mock("@multica/core/hooks", () => ({
@@ -43,17 +62,24 @@ vi.mock("sonner", () => ({
   },
 }));
 
-vi.mock("@multica/core/agents/queries", () => ({
-  agentTasksOptions: () => ({
-    queryKey: ["agent-tasks"],
-    queryFn: () => Promise.resolve([]),
-  }),
-}));
 
 vi.mock("@multica/core/designs/queries", () => ({
   designDeliveriesByIssueOptions: () => ({
     queryKey: ["design-deliveries"],
     queryFn: () => Promise.resolve([]),
+  }),
+  designAssetFramesOptions: (_wsId: string, designRef: string) => ({
+    queryKey: ["design-asset-frames", designRef],
+    queryFn: () => Promise.resolve({
+      design_ref: designRef,
+      revision_id: "revision-1",
+      content_digest: "sha256:digest-1",
+      frames: mockDesignQueries.implementationFrames,
+    }),
+  }),
+  designDocumentListOptions: () => ({
+    queryKey: ["design-documents"],
+    queryFn: () => Promise.resolve(mockDesignQueries.designDocuments),
   }),
   designDraftListOptions: () => ({
     queryKey: ["design-drafts"],
@@ -72,7 +98,7 @@ vi.mock("@multica/core/designs/queries", () => ({
   }),
   designFileListOptions: () => ({
     queryKey: ["design-files"],
-    queryFn: () => Promise.resolve([{ id: "file-1", title: "服务记录设计稿", project_id: "project-1" }]),
+    queryFn: () => Promise.resolve(mockDesignQueries.designFiles),
   }),
   designRestoreMappingsOptions: () => ({
     queryKey: ["design-restore-mappings"],
@@ -102,6 +128,7 @@ vi.mock("@multica/core/issues/queries", () => ({
     detail: (wsId: string, id: string) => ["issues", wsId, "detail", id],
     list: (wsId: string) => ["issues", wsId, "list"],
     myAll: (wsId: string) => ["issues", wsId, "my-all"],
+    tasks: (id: string) => ["issues", "tasks", id],
   },
 }));
 
@@ -112,7 +139,7 @@ vi.mock("@multica/core/workspace/queries", () => ({
   }),
 }));
 
-function renderSection(issue: Issue) {
+function renderSection(issue: Issue, timeline: TimelineEntry[] = []) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -147,7 +174,7 @@ function renderSection(issue: Issue) {
 
   return render(
     <QueryClientProvider client={client}>
-      <IssueDesignRestoreSection issue={issue} agents={agents} />
+      <IssueDesignRestoreSection issue={issue} agents={agents} timeline={timeline} />
     </QueryClientProvider>,
   );
 }
@@ -201,9 +228,34 @@ function restoreTask(overrides: Partial<DesignRestoreTask> = {}): DesignRestoreT
   };
 }
 
+function implementationReceipt(result: Record<string, unknown>) {
+  return {
+    design_implementation: {
+      schema_version: "multica.design-implementation-receipt/v1",
+      collected_at: "2026-07-03T00:01:00Z",
+      result_digest: "sha256:1234567890abcdef",
+      identity: { design_ref: "design-ref-1", revision_id: "revision-1" },
+      result,
+      target_files: ["src/customer-list.tsx"],
+      preview_paths: ["artifacts/customer-list.png"],
+    },
+  };
+}
+
 beforeEach(() => {
   mockDesignQueries.restoreTasks = [];
   mockDesignQueries.designDrafts = [];
+  mockDesignQueries.designFiles = [{ id: "file-1", title: "服务记录设计稿", project_id: "project-1" }];
+  mockDesignQueries.designDocuments = [];
+  mockDesignQueries.implementationFrames = [];
+  mockDesignQueries.projectResources = [];
+  mockDesignQueries.agentTasks = [];
+  useCommentDraftStore.setState({ drafts: {} });
+  vi.mocked(api.buildDesignImplementationPrompt).mockReset();
+  vi.mocked(api.buildDesignImplementationPrompt).mockResolvedValue({
+    prompt: "实现选中的 Design Center 资产",
+    context: { revision_id: "revision-1" },
+  } as never);
   vi.mocked(api.createDesignDraftAgentTask).mockReset();
   vi.mocked(api.createDesignDraftAgentTask).mockResolvedValue({ task_id: "task-12345678", status: "queued" });
 });
@@ -322,5 +374,250 @@ describe("IssueDesignRestoreSection frontend handoff visibility", () => {
 
     expect(await screen.findByText("运行时离线")).toBeInTheDocument();
     expect(screen.getByText("Agent 所在运行时当前离线，任务会继续等待守护进程恢复。")).toBeInTheDocument();
+  });
+});
+
+describe("IssueDesignRestoreSection current project integration", () => {
+  it("prefills an editable mention comment instead of sending it automatically", async () => {
+    mockDesignQueries.designFiles = [{
+      id: "file-figma",
+      title: "Figma 客户列表",
+      project_id: "project-1",
+      project_resource_id: "repo-1",
+      design_ref: "design-ref-1",
+      current_revision_id: "revision-1",
+      source: "figma",
+      source_ref: {},
+      updated_at: "2026-07-03T00:00:00Z",
+    }];
+    mockDesignQueries.implementationFrames = [{ frame_ref: "frame-ref-1", selection_key: "selection-1", title: "客户列表" }];
+    mockDesignQueries.projectResources = [{
+      id: "repo-1",
+      resource_type: "github_repo",
+      label: "multica/web",
+      resource_ref: { url: "https://github.com/multica/web" },
+    }];
+
+    renderSection(issue({ title: "前端开发" }));
+
+    const implementButton = await screen.findByRole("button", { name: "生成实现提示" });
+    await waitFor(() => expect(implementButton).toBeEnabled());
+    fireEvent.click(implementButton);
+
+    await waitFor(() => {
+      expect(api.buildDesignImplementationPrompt).toHaveBeenCalledWith("design-ref-1", {
+        revision_id: "revision-1",
+        frame_refs: ["frame-ref-1"],
+        project_resource_id: "repo-1",
+        issue_id: "issue-1",
+      });
+      const draft = useCommentDraftStore.getState().getDraft("new:issue-1");
+      expect(draft).toContain("【Design Center 设计稿一键还原】\n<!-- multica-design-implementation:");
+      expect(draft).toContain("\n[@UI Agent](mention://agent/agent-1)\n\n实现选中的 Design Center 资产");
+    });
+  });
+
+  it("lets the user change the current project's target repository", async () => {
+    mockDesignQueries.designFiles = [{
+      id: "file-project",
+      title: "Project-level design",
+      project_id: "project-1",
+      design_ref: "design-ref-project",
+      current_revision_id: "revision-1",
+      source: "figma",
+      source_ref: {},
+      updated_at: "2026-07-03T00:00:00Z",
+    }];
+    mockDesignQueries.implementationFrames = [{ frame_ref: "frame-ref-1", selection_key: "selection-1", title: "客户列表" }];
+    mockDesignQueries.projectResources = [
+      { id: "repo-1", resource_type: "github_repo", label: "multica/web", resource_ref: { url: "https://github.com/multica/web" } },
+      { id: "repo-2", resource_type: "github_repo", label: "multica/desktop", resource_ref: { url: "https://github.com/multica/desktop" } },
+    ];
+
+    renderSection(issue({ title: "前端开发" }));
+
+    const repoSelect = await screen.findByRole("combobox", { name: "实现目标仓库" });
+    fireEvent.change(repoSelect, { target: { value: "repo-2" } });
+    fireEvent.click(screen.getByRole("button", { name: "生成实现提示" }));
+
+    await waitFor(() => expect(api.buildDesignImplementationPrompt).toHaveBeenCalledWith("design-ref-project", expect.objectContaining({
+      project_resource_id: "repo-2",
+    })));
+  });
+
+  it("shows every valid project design source and lets the user choose one", async () => {
+    mockDesignQueries.designFiles = [
+      {
+        id: "file-figma",
+        title: "Figma screen",
+        project_id: "project-1",
+        project_resource_id: "repo-1",
+        design_ref: "design-ref-figma",
+        current_revision_id: "revision-figma",
+        source: "figma",
+        source_ref: {},
+        updated_at: "2026-07-03T00:00:00Z",
+      },
+      {
+        id: "file-other-project",
+        title: "Other project Figma screen",
+        project_id: "project-2",
+        project_resource_id: "repo-1",
+        design_ref: "design-ref-other",
+        current_revision_id: "revision-other",
+        source: "figma",
+        source_ref: {},
+        updated_at: "2026-07-05T00:00:00Z",
+      },
+    ];
+    mockDesignQueries.designDocuments = [{
+      id: "design-document-1",
+      design_ref: "design-ref-multica",
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      project_resource_id: "repo-1",
+      issue_id: "issue-ui",
+      title: "Multica Design screen",
+      platform: "web",
+      recipe: "saas-dashboard",
+      status: "saved",
+      draft_revision_id: "",
+      saved_revision_id: "revision-multica",
+      active_task: null,
+      input_snapshot: {},
+      last_error: null,
+      repository_grounded: true,
+      created_at: "2026-07-02T00:00:00Z",
+      updated_at: "2026-07-04T00:00:00Z",
+      saved_at: "2026-07-04T00:00:00Z",
+    }];
+    mockDesignQueries.implementationFrames = [{ frame_ref: "frame-ref-1", selection_key: "selection-1", title: "客户列表" }];
+    mockDesignQueries.projectResources = [
+      { id: "repo-1", resource_type: "github_repo", label: "repo one", resource_ref: { url: "https://github.com/multica/one" } },
+    ];
+
+    renderSection(issue({ title: "前端开发" }));
+
+    const integrationCard = screen.getByText("当前项目集成").closest("div.rounded-md.border") as HTMLElement | null;
+    expect(integrationCard).not.toBeNull();
+    expect(await within(integrationCard!).findByRole("option", { name: /Multica Design screen/ })).toBeInTheDocument();
+    expect(within(integrationCard!).getByRole("option", { name: /Figma screen/ })).toBeInTheDocument();
+    expect(within(integrationCard!).queryByText("Other project Figma screen")).not.toBeInTheDocument();
+    fireEvent.click(within(integrationCard!).getByRole("option", { name: /Figma screen/ }));
+    const implementButton = within(integrationCard!).getByRole("button", { name: "生成实现提示" });
+    await waitFor(() => expect(implementButton).toBeEnabled());
+    fireEvent.click(implementButton);
+
+    await waitFor(() => expect(api.buildDesignImplementationPrompt).toHaveBeenCalledWith("design-ref-figma", expect.objectContaining({
+      revision_id: "revision-figma",
+    })));
+  });
+
+  it("renders the structured implementation result returned by the ordinary Agent", async () => {
+    mockDesignQueries.agentTasks = [{
+      id: "implementation-task-1",
+      agent_id: "agent-1",
+      runtime_id: "runtime-1",
+      issue_id: "issue-1",
+      status: "completed",
+      priority: 0,
+      dispatched_at: "2026-07-03T00:00:00Z",
+      started_at: "2026-07-03T00:00:01Z",
+      completed_at: "2026-07-03T00:01:00Z",
+      created_at: "2026-07-03T00:00:00Z",
+      result: implementationReceipt({
+        schema_version: "multica.design-implementation-result/v1",
+        revision_id: "revision-1",
+        status: "completed",
+        mappings: [{ frame_ref: "frame-ref-1" }],
+        commands: [{ command: "pnpm test", status: "passed" }],
+        preview_evidence: [{ kind: "screenshot" }],
+        blockers: [],
+      }),
+      error: null,
+      trigger_summary: "【Design Center 设计稿一键还原】",
+    } as AgentTask];
+
+    renderSection(issue({ title: "前端开发" }));
+
+    expect(await screen.findByText("验收通过")).toBeInTheDocument();
+    expect(screen.getByText("结果：").parentElement).toHaveTextContent("completed");
+    expect(screen.getByText("映射：").parentElement).toHaveTextContent("1");
+    expect(screen.getByText("预览证据：").parentElement).toHaveTextContent("1");
+  });
+
+  it("renders a blocked implementation outcome instead of the completed Agent lifecycle", async () => {
+    mockDesignQueries.agentTasks = [{
+      id: "implementation-task-blocked",
+      agent_id: "agent-1",
+      runtime_id: "runtime-1",
+      issue_id: "issue-1",
+      status: "completed",
+      priority: 0,
+      dispatched_at: "2026-07-03T00:00:00Z",
+      started_at: "2026-07-03T00:00:01Z",
+      completed_at: "2026-07-03T00:01:00Z",
+      created_at: "2026-07-03T00:00:00Z",
+      result: implementationReceipt({
+        schema_version: "multica.design-implementation-result/v1",
+        revision_id: "revision-1",
+        status: "blocked",
+        mappings: [],
+        commands: [],
+        preview_evidence: [],
+        blockers: ["design asset unavailable"],
+      }),
+      error: null,
+      trigger_summary: "【Design Center 设计稿一键还原】",
+    } as AgentTask];
+
+    renderSection(issue({ title: "前端开发" }));
+
+    expect(await screen.findByText("实现受阻")).toBeInTheDocument();
+    expect(screen.queryByText("已完成")).not.toBeInTheDocument();
+    expect(screen.getByText("结果：").parentElement).toHaveTextContent("blocked");
+    expect(screen.getByText("阻塞：").parentElement).toHaveTextContent("1");
+  });
+
+  it("rejects an unvalidated result copied into the Agent's delivered comment", async () => {
+    mockDesignQueries.agentTasks = [{
+      id: "implementation-task-comment-result",
+      agent_id: "agent-1",
+      runtime_id: "runtime-1",
+      issue_id: "issue-1",
+      status: "completed",
+      priority: 0,
+      dispatched_at: "2026-07-03T00:00:00Z",
+      started_at: "2026-07-03T00:00:01Z",
+      completed_at: "2026-07-03T00:01:00Z",
+      created_at: "2026-07-03T00:00:00Z",
+      result: { output: "Issue remains blocked. Full result was delivered in the issue thread." },
+      error: null,
+      trigger_summary: "【Design Center 设计稿一键还原】",
+    } as AgentTask];
+    const timeline = [{
+      id: "comment-result",
+      actor_type: "agent",
+      actor_id: "agent-1",
+      issue_id: "issue-1",
+      type: "comment",
+      source_task_id: "implementation-task-comment-result",
+      created_at: "2026-07-03T00:01:00Z",
+      content: `Validated result:\n\n\`\`\`json\n${JSON.stringify({
+        schema_version: "multica.design-implementation-result/v1",
+        revision_id: "revision-1",
+        status: "blocked",
+        mappings: [],
+        commands: [{ command: "pnpm test", status: "skipped" }],
+        preview_evidence: [],
+        blockers: ["frame mismatch", "assets unavailable"],
+      })}\n\`\`\``,
+    } as TimelineEntry];
+
+    renderSection(issue({ title: "前端开发" }), timeline);
+
+    expect(await screen.findByText("验收失败")).toBeInTheDocument();
+    expect(screen.queryByText("实现受阻")).not.toBeInTheDocument();
+    expect(screen.queryByText("结果：")).not.toBeInTheDocument();
   });
 });

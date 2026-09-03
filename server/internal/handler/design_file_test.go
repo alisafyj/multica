@@ -431,6 +431,56 @@ func TestDiscoverDesignRestorePackGroupsKeepsExactHintFrameIDs(t *testing.T) {
 	}
 }
 
+func TestDiscoverDesignRestorePackGroupsIncludesExactFigmaPageSelection(t *testing.T) {
+	document := contextDesignNativeJSON("Selected Figma Frames")
+	frames := document["frames"].([]map[string]any)
+	frames[0]["sourceNodeId"] = "0:2"
+	frames[1]["sourceNodeId"] = "0:423"
+	document["source"] = map[string]any{
+		"tool":      "figma",
+		"scope":     "page",
+		"pageId":    "0:1",
+		"pageName":  "页面 1",
+		"nodeIds":   []string{"0:2", "0:423"},
+		"sourceKey": "figma:local-file:page:0:1:scope:page:nodes:0:2,0:423",
+	}
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+
+	groups := discoverDesignRestorePackGroups(document)
+	if len(groups) != 1 {
+		t.Fatalf("groups = %+v, want one exact Figma selection group", groups)
+	}
+	if groups[0].ID != "selection:figma:local-file:page:0:1:scope:page:nodes:0:2,0:423" ||
+		groups[0].Name != "页面 1" ||
+		!stringSlicesEqual(groups[0].FrameIDs, []string{"frame-main", "frame-secondary"}) {
+		t.Fatalf("group = %+v, want stable source identity and ordered selected frames", groups[0])
+	}
+}
+
+func TestDiscoverDesignRestorePackGroupsRejectsPartialFigmaPageSelection(t *testing.T) {
+	document := contextDesignNativeJSON("Partial Figma Selection")
+	frames := document["frames"].([]map[string]any)
+	frames[0]["sourceNodeId"] = "0:2"
+	frames[1]["sourceNodeId"] = "0:423"
+	document["source"] = map[string]any{
+		"tool":      "figma",
+		"scope":     "page",
+		"pageId":    "0:1",
+		"nodeIds":   []string{"0:2", "0:999"},
+		"sourceKey": "figma:local-file:page:0:1:scope:page:nodes:0:2,0:999",
+	}
+
+	if groups := discoverDesignRestorePackGroups(document); len(groups) != 0 {
+		t.Fatalf("groups = %+v, want no group for partially mapped selection", groups)
+	}
+}
+
 func TestResolveDesignRestorePackGroupFrameIDsFiltersUnknownFrames(t *testing.T) {
 	document := restorePackGroupedNativeJSONForTest("Stale Hint Group")
 	hints := document["restoreHints"].(map[string]any)["figmaGroups"].(map[string]any)

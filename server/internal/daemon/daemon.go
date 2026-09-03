@@ -29,6 +29,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/designdocument"
+	"github.com/multica-ai/multica/server/internal/designimplementation"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -221,6 +222,7 @@ type terminalTaskReport struct {
 	projectDesignSystemArtifacts *ProjectDesignSystemArtifacts
 	projectDesignSystemPackage   *ProjectDesignSystemPackageReceipt
 	designDocumentGrounding      *designdocument.RepositoryGrounding
+	designImplementation         *designimplementation.Receipt
 	designDocumentPackage        *DesignDocumentPackageReceipt
 	durableWorkDir               string
 	// sessionRolloutMissing is true when the daemon withheld this task's Codex
@@ -5642,6 +5644,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			projectDesignSystemArtifacts: result.ProjectDesignSystemArtifacts,
 			projectDesignSystemPackage:   result.ProjectDesignSystemPackage,
 			designDocumentGrounding:      result.DesignDocumentGrounding,
+			designImplementation:         result.DesignImplementation,
 			designDocumentPackage:        result.DesignDocumentPackage,
 			sessionRolloutMissing:        result.SessionRolloutMissing,
 			retiredSessionID:             result.RetiredSessionID,
@@ -5752,7 +5755,7 @@ func (d *Daemon) reportTerminalTask(parentCtx context.Context, report terminalTa
 
 	switch report.kind {
 	case terminalTaskReportComplete:
-		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.projectDesignSystemArtifacts, report.projectDesignSystemPackage, report.designDocumentGrounding, report.designDocumentPackage)
+		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.projectDesignSystemArtifacts, report.projectDesignSystemPackage, report.designDocumentGrounding, report.designDocumentPackage, report.designImplementation)
 	case terminalTaskReportFail:
 		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir)
 	default:
@@ -6862,10 +6865,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		instructions = agentguard.PrivacyInstruction()
 	}
 
+	var designImplementationIdentity *designimplementation.TaskIdentity
+	if identity, ok := designimplementation.ParseTaskIdentity(task.TriggerCommentContent); ok {
+		designImplementationIdentity = &identity
+	}
+
 	// Prepare isolated execution environment.
 	// Repos are passed as metadata only — the agent checks them out on demand
 	// via `multica repo checkout <url>`.
 	taskCtx := execenv.TaskContextForEnv{
+		TaskID:              task.ID,
 		IssueID:             task.IssueID,
 		TriggerCommentID:    task.TriggerCommentID,
 		TriggerThreadID:     task.TriggerThreadID,
@@ -6917,6 +6926,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ConnectedApps:                     task.ConnectedApps,
 		IssueStatuses:                     convertIssueStatusesForEnv(task.IssueStatuses),
 		IssueStatusesOmitted:              task.IssueStatusesOmitted,
+		DesignImplementation:              designImplementationIdentity,
 	}
 
 	// Mark candidate env roots as active before any env work so the GC loop
@@ -7579,6 +7589,21 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				return
 			}
 			taskResult = finalized
+		}()
+	}
+	if _, ok := designimplementation.ParseTaskIdentity(task.TriggerCommentContent); ok {
+		defer func() {
+			if returnErr != nil || taskResult.Status != "completed" {
+				return
+			}
+			receipt, err := collectDesignImplementationReceipt(task, env.WorkDir, time.Now())
+			if err != nil {
+				taskResult.Status = "blocked"
+				taskResult.Comment = "Design implementation result invalid: " + err.Error()
+				taskResult.FailureReason = "design_implementation_result_invalid"
+				return
+			}
+			taskResult.DesignImplementation = receipt
 		}()
 	}
 	// A manual edit is the one design-document operation with no agent in it:

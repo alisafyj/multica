@@ -52,6 +52,8 @@ export const designKeys = {
     ["designs", wsId, "assets", "repository", projectId, projectResourceId] as const,
   assetsByProject: (wsId: string, projectId: string) =>
     ["designs", wsId, "assets", "project", projectId] as const,
+  assetFrames: (wsId: string, designRef: string) =>
+    ["designs", wsId, "assets", "frames", designRef] as const,
   designRepositories: (wsId: string) => ["designs", wsId, "repositories"] as const,
   // One document and its revisions live under the same "documents" prefix so
   // the task-lifecycle invalidation of that prefix refreshes them too. The

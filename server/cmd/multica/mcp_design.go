@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/designdocument"
 	"github.com/multica-ai/multica/server/internal/designimplementation"
 )
@@ -106,12 +107,14 @@ const (
 
 type designImplementationContextWire struct {
 	SchemaVersion       string                                     `json:"schema_version"`
+	ImplementationRef   string                                     `json:"implementation_ref"`
 	DesignRef           string                                     `json:"design_ref"`
 	RevisionID          string                                     `json:"revision_id"`
 	ContentDigest       string                                     `json:"content_digest"`
 	FrameRefs           []string                                   `json:"frame_refs"`
 	ProjectID           string                                     `json:"project_id"`
 	IssueID             string                                     `json:"issue_id"`
+	TaskID              string                                     `json:"task_id"`
 	ProjectResourceID   string                                     `json:"project_resource_id"`
 	DesignTitle         string                                     `json:"design_title"`
 	Package             *designImplementationPackageDescriptorWire `json:"package,omitempty"`
@@ -131,6 +134,11 @@ type designImplementationPackageDescriptorWire struct {
 }
 
 func (a *designMCPAdapter) getImplementationContext(ctx context.Context, arguments map[string]any) (any, error) {
+	if bound, ok, err := a.taskBoundImplementationArguments(); err != nil {
+		return nil, err
+	} else if ok {
+		arguments = bound
+	}
 	designRef := stringArgument(arguments, "designRef")
 	revisionID := stringArgument(arguments, "revisionId")
 	repositoryID := stringArgument(arguments, "targetRepositoryId")
@@ -148,10 +156,10 @@ func (a *designMCPAdapter) getImplementationContext(ctx context.Context, argumen
 	if err := a.client.PostJSON(ctx, endpoint, body, &contextValue); err != nil {
 		return nil, mapDesignMCPAPIError(err)
 	}
-	if contextValue.SchemaVersion != "multica.design-implementation-context/v1" || contextValue.DesignRef != designRef ||
+	if contextValue.SchemaVersion != "multica.design-implementation-context/v1" || contextValue.ImplementationRef == "" || contextValue.DesignRef != designRef ||
 		contextValue.RevisionID != revisionID || contextValue.ProjectResourceID != repositoryID || contextValue.IssueID != issueID ||
 		!equalStrings(contextValue.FrameRefs, frameRefs) {
-		return nil, fmt.Errorf("design context response does not match the requested frozen identity")
+		return nil, fmt.Errorf("design context response does not match the requested frozen task identity")
 	}
 	var packageFiles map[string][]byte
 	if contextValue.Package != nil {
@@ -262,7 +270,7 @@ func materializeDesignImplementationContext(rootDir string, contextValue designI
 	scope := map[string]any{
 		"design_ref": contextValue.DesignRef, "revision_id": contextValue.RevisionID,
 		"frame_refs": contextValue.FrameRefs, "project_id": contextValue.ProjectID,
-		"issue_id": contextValue.IssueID, "project_resource_id": contextValue.ProjectResourceID,
+		"issue_id": contextValue.IssueID, "task_id": contextValue.TaskID, "project_resource_id": contextValue.ProjectResourceID,
 		"allowed_write_paths": contextValue.AllowedWritePaths, "verification_requirements": contextValue.Verification,
 		"result_path": designImplementationResultPath, "result_schema": designimplementation.ResultSchemaV1,
 	}
@@ -638,6 +646,42 @@ func stringSliceArgument(arguments map[string]any, key string) ([]string, error)
 	default:
 		return nil, fmt.Errorf("%s must be an array", key)
 	}
+}
+
+func (a *designMCPAdapter) taskBoundImplementationArguments() (map[string]any, bool, error) {
+	root := a.rootDir
+	if root == "" {
+		root = "."
+	}
+	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(execenv.TaskContextMarkerRelPath)))
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("read task context marker: %w", err)
+	}
+	var marker struct {
+		ManagedBy            string                             `json:"managed_by"`
+		TaskID               string                             `json:"task_id"`
+		IssueID              string                             `json:"issue_id"`
+		DesignImplementation *designimplementation.TaskIdentity `json:"design_implementation"`
+	}
+	if json.Unmarshal(raw, &marker) != nil || marker.ManagedBy != execenv.TaskContextMarkerManagedBy {
+		return nil, false, errors.New("task context marker is invalid")
+	}
+	identity := marker.DesignImplementation
+	if identity == nil {
+		return nil, false, nil
+	}
+	if marker.TaskID == "" || marker.TaskID != os.Getenv("MULTICA_TASK_ID") || marker.IssueID == "" ||
+		identity.DesignRef == "" || identity.RevisionID == "" || identity.FrameRef == "" || identity.ProjectResourceID == "" {
+		return nil, false, errors.New("task-bound design implementation identity is invalid")
+	}
+	return map[string]any{
+		"designRef": identity.DesignRef, "revisionId": identity.RevisionID,
+		"frameRefs": []string{identity.FrameRef}, "targetRepositoryId": identity.ProjectResourceID,
+		"issueId": marker.IssueID,
+	}, true, nil
 }
 
 func equalStrings(left, right []string) bool {

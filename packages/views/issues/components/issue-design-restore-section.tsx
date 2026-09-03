@@ -5,19 +5,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, FileJson, History, Send, Undo2, WandSparkles } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
-import { agentTasksOptions } from "@multica/core/agents/queries";
 import { designKeys } from "@multica/core/designs/keys";
-import { designDeliveriesByIssueOptions, designDraftListOptions, designFileDetailOptions, designFileListOptions, designRestoreMappingsOptions, designRestorePlanOptions, designRestoreTaskDetailOptions, designRestoreTaskListOptions } from "@multica/core/designs/queries";
+import { designAssetFramesOptions, designDeliveriesByIssueOptions, designDocumentListOptions, designDraftListOptions, designFileDetailOptions, designFileListOptions, designRestoreMappingsOptions, designRestorePlanOptions, designRestoreTaskDetailOptions, designRestoreTaskListOptions } from "@multica/core/designs/queries";
+import { toDesignAssetItems } from "@multica/core/designs";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { ISSUE_DESIGN_ROLE_FRONTEND, ISSUE_DESIGN_ROLE_KEY, ISSUE_DESIGN_ROLE_UI, explicitIssueDesignRole, issueDesignRole } from "@multica/core/issues/design-role";
-import { childIssuesOptions, issueKeys } from "@multica/core/issues/queries";
 import { useCommentDraftStore } from "@multica/core/issues/stores";
+import { childIssuesOptions, issueKeys } from "@multica/core/issues/queries";
 import { projectResourcesOptions } from "@multica/core/projects";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
-import type { Agent, DesignDelivery, DesignDraft, DesignFile, DesignFrame, DesignRestorePlan, DesignRestoreTask, DesignRestoreTaskInputV1, GalleryNativeJson, Issue, MemberWithUser, ProjectResource } from "@multica/core/types";
+import type { Agent, AgentTask, DesignDelivery, DesignDraft, DesignFile, DesignFrame, DesignRestorePlan, DesignRestoreTask, DesignRestoreTaskInputV1, GalleryNativeJson, Issue, MemberWithUser, ProjectResource, TimelineEntry } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@multica/ui/components/ui/hover-card";
 import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/native-select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@multica/ui/components/ui/sheet";
@@ -25,10 +26,168 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { RestoreExecutionDiagnostic } from "../../designs/design-restore-execution-diagnostic";
 import { groupedFrames } from "../../designs/frame-groups";
 import { useNavigation } from "../../navigation";
+export interface DesignImplementationTaskIdentity {
+  assetId: string;
+  designRef: string;
+  revisionId: string;
+  contentDigest: string;
+  frameRef: string;
+  selectionKey?: string;
+  projectResourceId: string;
+}
+
+type DesignImplementationTaskLookupIdentity = Omit<DesignImplementationTaskIdentity, "contentDigest">;
+
+const DESIGN_IMPLEMENTATION_CONTEXT_PREFIX = "<!-- multica-design-implementation:";
+
+export function designImplementationTaskMarker(identity: DesignImplementationTaskIdentity) {
+  return `${DESIGN_IMPLEMENTATION_CONTEXT_PREFIX}${encodeURIComponent(JSON.stringify(identity))} -->`;
+}
+
+function designImplementationTaskIdentityFromContent(content: string): DesignImplementationTaskIdentity | null {
+  const start = content.indexOf(DESIGN_IMPLEMENTATION_CONTEXT_PREFIX);
+  if (start < 0) return null;
+  const valueStart = start + DESIGN_IMPLEMENTATION_CONTEXT_PREFIX.length;
+  const end = content.indexOf("-->", valueStart);
+  if (end < 0) return null;
+
+  try {
+    const value = JSON.parse(decodeURIComponent(content.slice(valueStart, end).trim())) as Partial<DesignImplementationTaskIdentity>;
+    return typeof value.assetId === "string"
+      && typeof value.designRef === "string"
+      && typeof value.revisionId === "string"
+      && typeof value.contentDigest === "string"
+      && typeof value.frameRef === "string"
+      && (value.selectionKey === undefined || typeof value.selectionKey === "string")
+      && typeof value.projectResourceId === "string"
+      ? value as DesignImplementationTaskIdentity
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function designImplementationTaskIdentity(task: AgentTask, triggerContent = "") {
+  return designImplementationTaskIdentityFromContent(triggerContent)
+    ?? designImplementationTaskIdentityFromContent(task.trigger_summary ?? "");
+}
+
+function sameDesignImplementationTaskIdentity(left: DesignImplementationTaskIdentity, right: DesignImplementationTaskLookupIdentity) {
+  return left.assetId === right.assetId
+    && left.revisionId === right.revisionId
+    && left.projectResourceId === right.projectResourceId
+    && (!left.selectionKey || !right.selectionKey || left.selectionKey === right.selectionKey);
+}
+
+const DESIGN_IMPLEMENTATION_TRIGGER = "【Design Center 设计稿一键还原】";
+
+function implementationTaskCoversComment(task: AgentTask, commentId: string) {
+  if (!commentId) return false;
+  return task.trigger_comment_id === commentId
+    || task.coalesced_comment_ids?.includes(commentId) === true
+    || task.delivered_comment_ids?.includes(commentId) === true;
+}
+
+export function isDesignImplementationTask(
+  task: AgentTask,
+  issueId: string,
+  commentId: string,
+  identity?: DesignImplementationTaskLookupIdentity,
+  triggerContent = "",
+) {
+  if (task.issue_id !== issueId) return false;
+  if (commentId) return implementationTaskCoversComment(task, commentId);
+  if (!(task.trigger_summary ?? "").includes(DESIGN_IMPLEMENTATION_TRIGGER)) return false;
+  if (!identity) return true;
+  const taskIdentity = designImplementationTaskIdentity(task, triggerContent);
+  return taskIdentity ? sameDesignImplementationTaskIdentity(taskIdentity, identity) : false;
+}
+
+function designImplementationTriggerContent(task: AgentTask, timeline: TimelineEntry[]) {
+  return timeline.find((entry) => entry.type === "comment"
+    && implementationTaskCoversComment(task, entry.id)
+    && typeof entry.content === "string")?.content ?? "";
+}
+
+type DesignImplementationStatus = AgentTask["status"] | "blocked" | "partial";
+
+function implementationTaskStatusCopy(status: DesignImplementationStatus) {
+  switch (status) {
+    case "queued": return { label: "等待执行", hint: "已提交，等待 Agent 接收。", active: true };
+    case "dispatched": return { label: "已分发", hint: "Agent 已接收，正在准备执行。", active: true };
+    case "waiting_local_directory": return { label: "等待工作目录", hint: "目标仓库正在被其他任务使用，释放后会继续。", active: true };
+    case "running": return { label: "实现与验证中", hint: "Agent 正在实现，并将由 daemon 校验结构化结果与证据。", active: true };
+    case "completed": return { label: "验收通过", hint: "结构化实现结果与证据已经 daemon 校验并入库。", active: false };
+    case "blocked": return { label: "实现受阻", hint: "Agent 已返回阻塞原因，可查看结果后重新执行。", active: false };
+    case "partial": return { label: "部分完成", hint: "已有可用代码，但仍有未完成的 Frame、状态或检查。", active: false };
+    case "failed": return { label: "验收失败", hint: "执行失败或结构化结果未通过校验，可修正后重新执行。", active: false };
+    case "cancelled": return { label: "已取消", hint: "本次执行已取消，可重新执行。", active: false };
+  }
+}
+
+interface DesignImplementationReceiptRecord {
+  schema_version: "multica.design-implementation-receipt/v1";
+  collected_at: string;
+  result_digest: string;
+  identity: Record<string, unknown>;
+  result: Record<string, unknown>;
+  target_files: string[];
+  preview_paths: string[];
+}
+
+function implementationReceipt(task: AgentTask | null): DesignImplementationReceiptRecord | null {
+  if (!task) return null;
+  let taskResult = task.result;
+  if (typeof taskResult === "string") {
+    try {
+      taskResult = JSON.parse(taskResult) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  if (!taskResult || typeof taskResult !== "object" || Array.isArray(taskResult)) return null;
+  const value = (taskResult as Record<string, unknown>).design_implementation;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const receipt = value as Record<string, unknown>;
+  const result = receipt.result;
+  if (receipt.schema_version !== "multica.design-implementation-receipt/v1"
+    || typeof receipt.collected_at !== "string"
+    || typeof receipt.result_digest !== "string"
+    || !receipt.identity || typeof receipt.identity !== "object" || Array.isArray(receipt.identity)
+    || !result || typeof result !== "object" || Array.isArray(result)
+    || (result as Record<string, unknown>).schema_version !== "multica.design-implementation-result/v1"
+    || !Array.isArray(receipt.target_files)
+    || !Array.isArray(receipt.preview_paths)) return null;
+  return receipt as unknown as DesignImplementationReceiptRecord;
+}
+
+function implementationResultRecord(task: AgentTask | null): Record<string, unknown> | null {
+  return implementationReceipt(task)?.result ?? null;
+}
+
+export function designImplementationStatus(
+  task: AgentTask,
+  result: Record<string, unknown> | null = implementationResultRecord(task),
+): DesignImplementationStatus {
+  if (task.status !== "completed") return task.status;
+  if (!result) return "failed";
+  const resultStatus = result.status;
+  return resultStatus === "blocked" || resultStatus === "failed" || resultStatus === "completed" || resultStatus === "partial" || resultStatus === "cancelled"
+    ? resultStatus
+    : "failed";
+}
+
+function implementationTaskResult(task: AgentTask | null) {
+  if (!task) return "";
+  if (task.error) return task.error;
+  const result = implementationResultRecord(task);
+  return typeof result?.summary === "string" ? result.summary.trim() : "";
+}
 
 interface IssueDesignRestoreSectionProps {
   issue: Issue;
   agents: Agent[];
+  timeline?: TimelineEntry[];
 }
 
 function planNeedsTarget(plan: DesignRestorePlan | undefined) {
@@ -349,6 +508,20 @@ function projectResourceLabel(resource: ProjectResource) {
   const ref = resource.resource_ref as { url?: string };
   const url = typeof ref?.url === "string" ? ref.url : "";
   return resource.label?.trim() || url.replace(/^https?:\/\/(www\.)?github\.com\//i, "").replace(/\.git$/, "") || url || resource.id;
+}
+
+export function designImplementationSourceLabel(file: Pick<DesignFile, "source" | "source_ref">) {
+  const sourceRef = file.source_ref;
+  const sourceHint = [
+    file.source,
+    typeof sourceRef.source === "string" ? sourceRef.source : "",
+    typeof sourceRef.kind === "string" ? sourceRef.kind : "",
+  ].join(" ").toLowerCase();
+  return sourceHint.includes("figma") ? "Figma" : "Multica Design";
+}
+
+export function isValidImplementationAsset(file: DesignFile) {
+  return Boolean(file.design_ref && file.current_revision_id);
 }
 
 function buildRestoreScopeCalls(items: IssueDesignScopeItem[], fileId: string, revisionId: string) {
@@ -690,12 +863,11 @@ function DeliveryHistoryItem({ delivery, issue, siblingIssues, restoreTasks, des
   );
 }
 
-export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreSectionProps) {
+export function IssueDesignRestoreSection({ issue, agents, timeline = [] }: IssueDesignRestoreSectionProps) {
   const role = issueDesignRole(issue);
   const roleIsExplicit = hasExplicitDesignRole(issue);
   const isUiIssue = role === ISSUE_DESIGN_ROLE_UI;
   const isFrontendIssue = role === ISSUE_DESIGN_ROLE_FRONTEND;
-  const showDesignDelivery = isUiIssue || !isFrontendIssue;
   const roleReady = isUiIssue || isFrontendIssue;
   const deliveryLinkageEnabled = false;
   const designDraftGenerationEnabled = false;
@@ -706,6 +878,9 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const [fileId, setFileId] = useState("");
   const [selectedFrameIds, setSelectedFrameIds] = useState<string[]>([]);
   const [targetResourceId, setTargetResourceId] = useState("");
+  const [implementationAssetId, setImplementationAssetId] = useState("");
+  const [implementationFrameRef, setImplementationFrameRef] = useState("");
+  const [implementationTargetResourceId, setImplementationTargetResourceId] = useState("");
   const [agentId, setAgentId] = useState("");
   const [restoreTask, setRestoreTask] = useState<DesignRestoreTask | null>(null);
   const [deliveryHistoryOpen, setDeliveryHistoryOpen] = useState(false);
@@ -740,8 +915,12 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   );
   const selectedDeliveryTargetIssue = selectedDeliveryTarget?.issue ?? null;
   const { data: designFiles = [] } = useQuery({
-    ...designFileListOptions(wsId),
+    ...designFileListOptions(wsId, issue.project_id ? { kind: "project", projectId: issue.project_id } : undefined),
     enabled: roleReady,
+  });
+  const { data: designDocuments = [] } = useQuery({
+    ...designDocumentListOptions(wsId, issue.project_id ?? ""),
+    enabled: roleReady && !!issue.project_id,
   });
   const { data: projectResources = [] } = useQuery({
     ...projectResourcesOptions(wsId, issue.project_id ?? ""),
@@ -759,7 +938,30 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
   const deliveryRestoreTask = useMemo(() => selectDeliveryRestoreTask(restoreTasks, activeDesignDelivery?.id), [restoreTasks, activeDesignDelivery?.id]);
   const issueDesignDraft = useMemo(() => latestIssueDesignDraft(designDrafts, issue.id), [designDrafts, issue.id]);
   const projectDesignFiles = useMemo(() => designFiles.filter((file) => !issue.project_id || file.project_id === issue.project_id), [designFiles, issue.project_id]);
+  const implementationAssets = useMemo(
+    () => toDesignAssetItems(
+      projectDesignFiles.filter((file) => isValidImplementationAsset(file)),
+      designDocuments,
+    ).filter((asset) => asset.projectId === issue.project_id && asset.hasSavedVersion && !!asset.designRef && !!asset.revisionId),
+    [designDocuments, issue.project_id, projectDesignFiles],
+  );
+  const selectedImplementationAsset = implementationAssets.find((asset) => asset.id === implementationAssetId) ?? implementationAssets[0] ?? null;
+  const {
+    data: implementationFramesResponse,
+    isLoading: implementationFramesLoading,
+    error: implementationFramesError,
+  } = useQuery({
+    ...designAssetFramesOptions(wsId, selectedImplementationAsset?.designRef ?? ""),
+    enabled: roleReady && Boolean(selectedImplementationAsset?.designRef),
+  });
+  const implementationFrames = implementationFramesResponse?.frames ?? [];
+  const selectedImplementationFrame = implementationFrames.find((frame) => frame.frame_ref === implementationFrameRef) ?? implementationFrames[0];
+  const selectedImplementationFrameRef = selectedImplementationFrame?.frame_ref ?? "";
   const selectedFileId = fileId || activeDesignDelivery?.file_id || projectDesignFiles[0]?.id || "";
+  const implementationTargetResource = repoResources.find((resource) => resource.id === implementationTargetResourceId)
+    ?? repoResources.find((resource) => resource.id === selectedImplementationAsset?.projectResourceId)
+    ?? repoResources[0]
+    ?? null;
   const { data: selectedFileDetail } = useQuery({
     ...designFileDetailOptions(wsId, selectedFileId),
     enabled: !!selectedFileId,
@@ -814,13 +1016,51 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
     },
   });
   const activeRestoreTask = restoreTaskDetail ?? restoreTask ?? existingIssueRestoreTask;
-  const restoreAgent = availableAgents.find((agent) => agent.id === selectedAgent?.id) ?? selectedAgent;
-  const { data: agentTasks = [] } = useQuery({
-    ...agentTasksOptions(wsId, restoreAgent?.id ?? ""),
-    enabled: !!restoreAgent?.id && !!activeRestoreTask?.agent_task_id,
-    refetchInterval: activeRestoreTask?.agent_task_id ? 3000 : false,
+  const { data: issueTasks = [] } = useQuery({
+    queryKey: issueKeys.tasks(issue.id),
+    queryFn: () => api.listTasksByIssue(issue.id),
+    enabled: roleReady,
+    refetchInterval: (query) => {
+      const tasks = query.state.data ?? [];
+      const restoreTaskActive = !!activeRestoreTask?.agent_task_id
+        && tasks.some((item) => item.id === activeRestoreTask.agent_task_id && !["completed", "failed", "cancelled"].includes(item.status));
+      const implementationTaskActive = tasks.some((item) => isDesignImplementationTask(item, issue.id, "")
+        && !["completed", "failed", "cancelled"].includes(item.status));
+      return restoreTaskActive || implementationTaskActive ? 3000 : false;
+    },
   });
+  const agentTasks = issueTasks;
   const agentTask = agentTasks.find((item) => item.id === activeRestoreTask?.agent_task_id);
+  const implementationTaskIdentity = selectedImplementationAsset && selectedImplementationFrame && implementationTargetResource
+    ? {
+      assetId: selectedImplementationAsset.id,
+      designRef: selectedImplementationAsset.designRef,
+      revisionId: selectedImplementationAsset.revisionId,
+      frameRef: selectedImplementationFrame.frame_ref,
+      selectionKey: selectedImplementationFrame.selection_key,
+      projectResourceId: implementationTargetResource.id,
+    }
+    : null;
+  const implementationTaskCandidates = [...agentTasks]
+    .filter((item) => isDesignImplementationTask(item, issue.id, ""))
+    .sort((a, b) => timestampValue(b.created_at) - timestampValue(a.created_at));
+  const markerAwareImplementationTasks = implementationTaskCandidates.some((item) =>
+    designImplementationTaskIdentity(item, designImplementationTriggerContent(item, timeline)));
+  const implementationAgentTask = (implementationTaskIdentity && markerAwareImplementationTasks
+    ? implementationTaskCandidates.filter((item) => isDesignImplementationTask(
+      item,
+      issue.id,
+      "",
+      implementationTaskIdentity,
+      designImplementationTriggerContent(item, timeline),
+    ))
+    : implementationTaskCandidates)[0] ?? null;
+  const structuredImplementationReceipt = implementationReceipt(implementationAgentTask);
+  const structuredImplementationResult = implementationResultRecord(implementationAgentTask);
+  const implementationStatus = implementationAgentTask
+    ? implementationTaskStatusCopy(designImplementationStatus(implementationAgentTask, structuredImplementationResult))
+    : null;
+  const implementationResult = implementationTaskResult(implementationAgentTask);
   const planCandidates = targetCandidates(restorePlan);
   const planSelectedTarget = selectedTarget(restorePlan);
   const summary = resultSummary(activeRestoreTask);
@@ -979,6 +1219,50 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
     onError: (error) => toast.error(error instanceof Error ? error.message : "提交 UI Agent 设计稿任务失败"),
   });
 
+  const runDesignImplementation = useMutation({
+    mutationFn: async () => {
+      if (!primaryAgent) throw new Error("当前没有可执行的 Agent");
+      if (!selectedImplementationAsset?.revisionId || !selectedImplementationFrame) {
+        throw new Error("当前项目没有可实现的已保存设计稿");
+      }
+      if (!implementationTargetResource) throw new Error("当前项目未关联目标仓库");
+      const response = await api.buildDesignImplementationPrompt(
+        selectedImplementationAsset.designRef,
+        {
+          revision_id: selectedImplementationAsset.revisionId,
+          frame_refs: [selectedImplementationFrameRef],
+          project_resource_id: implementationTargetResource.id,
+          issue_id: issue.id,
+        },
+      );
+      return {
+        response,
+        taskIdentity: {
+          assetId: selectedImplementationAsset.id,
+          designRef: response.context.design_ref,
+          revisionId: response.context.revision_id,
+          contentDigest: response.context.content_digest,
+          frameRef: selectedImplementationFrameRef,
+          selectionKey: selectedImplementationFrame.selection_key,
+          projectResourceId: implementationTargetResource.id,
+        },
+      };
+    },
+    onSuccess: ({ response, taskIdentity }) => {
+      if (!primaryAgent || !selectedImplementationAsset || !selectedImplementationFrame || !implementationTargetResource) return;
+      const mentionLabel = primaryAgent.name.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
+      useCommentDraftStore.getState().injectDraft(`new:${issue.id}`, [
+        DESIGN_IMPLEMENTATION_TRIGGER,
+        designImplementationTaskMarker(taskIdentity),
+        `[@${mentionLabel}](mention://agent/${primaryAgent.id})`,
+        "",
+        response.prompt,
+      ].join("\n"));
+      toast.success("实现提示已填入评论区，请检查后手动发送");
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "生成实现提示失败"),
+  });
+
   const prepareRestoreDraft = () => {
     if (!restoreFileId || !restoreRevisionId || !restoreItems.length) {
       toast.error("请选择有效设计稿和还原范围");
@@ -1036,7 +1320,6 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
     navigation.push(paths.designRestoreTaskDetail(taskId));
   };
 
-  if (!showDesignDelivery) return null;
 
   return (
     <>
@@ -1141,6 +1424,133 @@ export function IssueDesignRestoreSection({ issue, agents }: IssueDesignRestoreS
             ) : null}
           </div>
           ) : null}
+        {roleReady ? (
+          <div className="rounded-md border bg-background p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-medium text-foreground">当前项目集成</div>
+                <div className="mt-1 text-muted-foreground">选择当前项目已保存的设计、页面和目标仓库，生成可编辑的 Agent 实现提示。</div>
+              </div>
+              {selectedImplementationAsset ? <Badge variant="outline">{selectedImplementationAsset.sourceLabel}</Badge> : null}
+            </div>
+            <div className="mt-3 space-y-3">
+              {implementationAssets.length ? (
+                <div>
+                  <div className="mb-1 text-caption font-medium text-muted-foreground">设计稿</div>
+                  <div role="listbox" aria-label="实现设计稿" className="max-h-44 space-y-1 overflow-y-auto rounded-md border p-1">
+                    {implementationAssets.map((asset) => {
+                      const selected = asset.id === selectedImplementationAsset?.id;
+                      return (
+                        <button
+                          key={`${asset.kind}:${asset.id}`}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left ${selected ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
+                          onClick={() => {
+                            setImplementationAssetId(asset.id);
+                            setImplementationFrameRef("");
+                            setImplementationTargetResourceId(asset.projectResourceId ?? "");
+                          }}
+                        >
+                          <Badge variant={selected ? "secondary" : "outline"} className="shrink-0">{asset.sourceLabel}</Badge>
+                          <span className="min-w-0 flex-1 truncate font-medium">{asset.title}</span>
+                          <span className="shrink-0 font-mono text-micro">{shortId(asset.revisionId)}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed px-2 py-3 text-center text-muted-foreground">
+                  当前项目还没有可实现的已保存设计稿
+                </div>
+              )}
+              {selectedImplementationAsset ? (
+                implementationFramesLoading ? (
+                  <div className="rounded-md bg-muted px-2 py-2 text-muted-foreground">正在读取设计内容…</div>
+                ) : implementationFramesError ? (
+                  <div className="rounded-md border border-destructive/40 bg-destructive/5 px-2 py-2 text-destructive">
+                    {implementationFramesError instanceof Error ? implementationFramesError.message : "读取设计内容失败"}
+                  </div>
+                ) : implementationFrames.length ? (
+                  <label className="block space-y-1">
+                    <span className="text-caption font-medium text-muted-foreground">页面 / Frame</span>
+                    <NativeSelect
+                      aria-label="实现页面"
+                      value={selectedImplementationFrameRef}
+                      onChange={(event) => setImplementationFrameRef(event.target.value)}
+                    >
+                      {implementationFrames.map((frame) => (
+                        <NativeSelectOption key={frame.frame_ref} value={frame.frame_ref}>{frame.title}</NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </label>
+                ) : (
+                  <div className="rounded-md border border-dashed px-2 py-3 text-center text-muted-foreground">当前设计稿没有可实现的页面</div>
+                )
+              ) : null}
+              {repoResources.length ? (
+                <label className="block space-y-1">
+                  <span className="text-caption font-medium text-muted-foreground">目标仓库</span>
+                  <NativeSelect
+                    aria-label="实现目标仓库"
+                    value={implementationTargetResource?.id ?? ""}
+                    onChange={(event) => setImplementationTargetResourceId(event.target.value)}
+                  >
+                    {repoResources.map((resource) => (
+                      <NativeSelectOption key={resource.id} value={resource.id}>{projectResourceLabel(resource)}</NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </label>
+              ) : selectedImplementationAsset ? (
+                <div className="rounded-md border border-dashed px-2 py-3 text-center text-muted-foreground">当前项目未关联 GitHub 仓库</div>
+              ) : null}
+              {selectedImplementationAsset && selectedImplementationFrame ? (
+                <div className="rounded-md bg-muted px-2 py-2 text-muted-foreground">
+                  固定版本 <span className="font-mono text-foreground">{shortId(selectedImplementationAsset.revisionId)}</span>
+                  <span> · {selectedImplementationFrame.title}</span>
+                  {selectedImplementationFrame.description ? <div className="mt-1">{selectedImplementationFrame.description}</div> : null}
+                </div>
+              ) : null}
+              {implementationStatus ? (
+                <div className="rounded-md border px-2 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-foreground">{implementationStatus.label}</span>
+                    {implementationAgentTask ? <span className="font-mono text-muted-foreground">{shortId(implementationAgentTask.id)}</span> : null}
+                  </div>
+                  <div className="mt-1 text-muted-foreground">{implementationStatus.hint}</div>
+                  {structuredImplementationResult ? (
+                    <div className="mt-2 grid gap-1 rounded bg-muted p-2 text-muted-foreground sm:grid-cols-2">
+                      <div>结果：<span className="text-foreground">{String(structuredImplementationResult.status ?? "未知")}</span></div>
+                      <div>版本：<span className="font-mono text-foreground">{shortId(String(structuredImplementationResult.revision_id ?? ""))}</span></div>
+                      <div>映射：<span className="text-foreground">{Array.isArray(structuredImplementationResult.mappings) ? structuredImplementationResult.mappings.length : 0}</span></div>
+                      <div>目标文件：<span className="text-foreground">{structuredImplementationReceipt?.target_files.length ?? 0}</span></div>
+                      <div>结果指纹：<span className="font-mono text-foreground">{structuredImplementationReceipt?.result_digest.slice(7, 15) ?? "未入库"}</span></div>
+                      <div>检查：<span className="text-foreground">{Array.isArray(structuredImplementationResult.commands) ? structuredImplementationResult.commands.length : 0}</span></div>
+                      <div>预览证据：<span className="text-foreground">{Array.isArray(structuredImplementationResult.preview_evidence) ? structuredImplementationResult.preview_evidence.length : 0}</span></div>
+                      <div>阻塞：<span className="text-foreground">{Array.isArray(structuredImplementationResult.blockers) ? structuredImplementationResult.blockers.length : 0}</span></div>
+                    </div>
+                  ) : implementationResult ? (
+                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-micro text-foreground">{implementationResult}</pre>
+                  ) : null}
+                </div>
+              ) : null}
+              <Button
+                size="sm"
+                className="w-full"
+                disabled={!primaryAgent || !selectedImplementationFrame || !implementationTargetResource || runDesignImplementation.isPending || !!implementationStatus?.active}
+                onClick={() => runDesignImplementation.mutate()}
+              >
+                <WandSparkles className="size-3.5" />
+                {runDesignImplementation.isPending ? "正在生成提示…" : implementationStatus?.active ? implementationStatus.label : "生成实现提示"}
+              </Button>
+              <div className="text-muted-foreground">
+                {primaryAgent ? `提示会带上 ${primaryAgent.name} 的 @mention 并填入评论区；发送前可编辑，只有手动发送后才会触发 Agent。` : "当前没有可执行的 Agent。"}
+              </div>
+            </div>
+          </div>
+        ) : null}
         {designDraftGenerationEnabled && roleReady && isUiIssue ? (
           <div className="rounded-md border bg-background p-3">
             <div className="flex items-start justify-between gap-3">

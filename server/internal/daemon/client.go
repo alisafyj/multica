@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/designdocument"
+	"github.com/multica-ai/multica/server/internal/designimplementation"
 	"github.com/multica-ai/multica/server/internal/opendesign"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -803,6 +804,10 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 		case *DesignDocumentPackageReceipt:
 			if value != nil {
 				body["design_document_package"] = value
+			}
+		case *designimplementation.Receipt:
+			if value != nil {
+				body["design_implementation"] = value
 			}
 		case nil:
 		default:

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/designimplementation"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -48,12 +50,14 @@ type DesignImplementationPackageDescriptor struct {
 
 type DesignImplementationContextResponse struct {
 	SchemaVersion            string                                 `json:"schema_version"`
+	ImplementationRef        string                                 `json:"implementation_ref"`
 	DesignRef                string                                 `json:"design_ref"`
 	RevisionID               string                                 `json:"revision_id"`
 	ContentDigest            string                                 `json:"content_digest"`
 	FrameRefs                []string                               `json:"frame_refs"`
 	ProjectID                string                                 `json:"project_id"`
 	IssueID                  string                                 `json:"issue_id"`
+	TaskID                   string                                 `json:"task_id,omitempty"`
 	ProjectResourceID        string                                 `json:"project_resource_id"`
 	DesignTitle              string                                 `json:"design_title"`
 	Package                  *DesignImplementationPackageDescriptor `json:"package,omitempty"`
@@ -72,6 +76,26 @@ type DesignImplementationPromptResponse struct {
 	Context      DesignImplementationContextResponse `json:"context"`
 }
 
+const designImplementationResultExample = `{
+  "schema_version": "multica.design-implementation-result/v1",
+  "design_ref": "copy exactly from context.json",
+  "revision_id": "copy exactly from context.json",
+  "repository_commit_before": "full pre-change commit hash",
+  "status": "completed",
+  "mappings": [{
+    "frame_ref": "copy exactly from context.json",
+    "target_files": ["relative/repository/path"],
+    "target_components": [],
+    "reused_components": [],
+    "changed_routes": [],
+    "reused_routes": []
+  }],
+  "commands": [{"command": "exact command", "status": "passed", "summary": "concise result"}],
+  "preview_evidence": [{"frame_ref": "copy exactly from context.json", "status": "passed", "path": "bounded task-workdir preview evidence path", "summary": "rendered DOM and computed-layout checks"}],
+  "blockers": [],
+  "rollback_notes": []
+}`
+
 func (h *Handler) BuildDesignImplementationPrompt(w http.ResponseWriter, r *http.Request) {
 	contextValue, request, repository, ok := h.resolveDesignImplementationRequest(w, r)
 	if !ok {
@@ -81,16 +105,17 @@ func (h *Handler) BuildDesignImplementationPrompt(w http.ResponseWriter, r *http
 	for i, frameRef := range contextValue.FrameRefs {
 		frameLines[i] = "- " + frameRef
 	}
-	prompt := fmt.Sprintf("【任务】\n根据关联设计稿实现当前任务，优先复用目标仓库已有组件和页面结构。\n\n【设计稿】\n标题：%s\n固定版本：%s\n所选 Frame：\n%s\n目标仓库：%s\n\n【执行步骤】\n1. 调用 multica_design_get_implementation_context。\n2. 读取目标仓库路由、组件、状态管理和样式规范。\n3. 根据 Implementation Context 完成实现。\n4. 运行约定验证。\n5. 写入 `.agent_context/design_implementation/result/implementation-result.json`，schema 必须为 `multica.design-implementation-result/v1`。\n6. 结果必须包含 repository_commit_before、Frame mappings、commands、preview_evidence、blockers 和 rollback_notes；partial/blocked/failed/cancelled 也必须写入结果。\n7. 调用 multica_design_validate_implementation_result 后输出与该结果一致的人类摘要。\n\n【约束】\n禁止整图替代；禁止直接复制 Prototype；保留无关 dirty worktree。\n\n【输出】\n修改文件、复用组件、新增组件、检查结果、视觉验收和阻塞项。",
-		contextValue.DesignTitle, contextValue.RevisionID, strings.Join(frameLines, "\n"), designImplementationRepositoryName(repository))
+	mcpArguments := map[string]any{
+		"designRef": contextValue.DesignRef, "revisionId": contextValue.RevisionID,
+		"frameRefs": contextValue.FrameRefs, "targetRepositoryId": contextValue.ProjectResourceID,
+		"issueId": request.IssueID,
+	}
+	prompt := fmt.Sprintf("【任务】\n根据关联设计稿实现当前任务，优先复用目标仓库已有组件和页面结构。\n\n【设计稿】\n标题：%s\n固定版本：%s\n所选 Frame：\n%s\n目标仓库：%s\n\n【执行步骤】\n1. 调用 multica_design_get_implementation_context。任务身份由运行时绑定，不要手抄设计引用，参数使用空对象：\n```json\n{}\n```\n2. 读取目标仓库路由、组件、状态管理和样式规范。\n3. 根据 Implementation Context 完成实现。\n4. 运行约定验证，并把渲染后的 DOM、资源加载和计算布局检查写入任务工作目录中的文本或 JSON 证据文件。\n5. 写入 `.agent_context/design_implementation/result/implementation-result.json`，严格使用以下 `multica.design-implementation-result/v1` 字段，不得添加其他字段：\n```json\n%s\n```\n6. completed 结果的每个 Frame 都必须有 mapping 和 preview_evidence；每个 command 必须有 status 与 summary；preview_evidence 必须有实际存在的 path；partial/blocked/failed/cancelled 也必须写入结果。\n7. 调用 multica_design_validate_implementation_result，验证通过后只返回简短摘要；daemon 会直接收集已验证文件。\n\n【约束】\n禁止整图替代；禁止直接复制 Prototype；保留无关 dirty worktree。\n不要调用 `multica issue status` 或以任何方式修改当前 Issue 状态。\n不要调用 `multica issue get` 或 `multica issue comment add`；daemon 会保存结构化结果。\n不得创建本地提交、推送分支、创建 PR 或合并。\n不得创建或上传截图、录屏或 trace；视觉验收使用文本或 JSON 形式的 DOM 与计算布局证据。\n\n【输出】\n修改文件、复用组件、新增组件、检查结果、视觉验收和阻塞项。",
+		contextValue.DesignTitle, contextValue.RevisionID, strings.Join(frameLines, "\n"), designImplementationRepositoryName(repository), designImplementationResultExample)
 	writeJSON(w, http.StatusOK, DesignImplementationPromptResponse{
-		Prompt: prompt,
-		MCPArguments: map[string]any{
-			"designRef": contextValue.DesignRef, "revisionId": contextValue.RevisionID,
-			"frameRefs": contextValue.FrameRefs, "targetRepositoryId": contextValue.ProjectResourceID,
-			"issueId": request.IssueID,
-		},
-		Context: contextValue,
+		Prompt:       prompt,
+		MCPArguments: mcpArguments,
+		Context:      contextValue,
 	})
 }
 
@@ -118,13 +143,17 @@ func (h *Handler) resolveDesignImplementationRequest(w http.ResponseWriter, r *h
 		writeProjectDesignSystemError(w, http.StatusBadRequest, "invalid_request", "implementation context request must contain one JSON object")
 		return DesignImplementationContextResponse{}, DesignImplementationRequest{}, db.ProjectResource{}, false
 	}
-	claim, err := parseDesignAssetRef(chi.URLParam(r, "designRef"), time.Now())
+	now := time.Now()
+	claim, err := parseDesignAssetRef(chi.URLParam(r, "designRef"), now)
 	if err != nil {
 		writeProjectDesignSystemError(w, http.StatusBadRequest, "design_ref_invalid", "design reference is invalid or expired; select the design again")
 		return DesignImplementationContextResponse{}, DesignImplementationRequest{}, db.ProjectResource{}, false
 	}
-	if claim.WorkspaceID != uuidToString(workspaceID) || claim.UserID != uuidToString(requesterID) {
-		writeProjectDesignSystemError(w, http.StatusForbidden, "forbidden", "design reference is not available to this user or workspace")
+	task, taskIdentity, taskOK := h.designImplementationTaskForIssue(r, request.IssueID, uuidToString(workspaceID))
+	if claim.WorkspaceID != uuidToString(workspaceID) ||
+		(r.Header.Get("X-Actor-Source") == "task_token" && (!taskOK || !designImplementationRequestMatchesTaskIdentity(chi.URLParam(r, "designRef"), claim, request, taskIdentity))) ||
+		(r.Header.Get("X-Actor-Source") != "task_token" && claim.UserID != uuidToString(requesterID)) {
+		writeProjectDesignSystemError(w, http.StatusForbidden, "forbidden", "design reference is not available to this user, workspace, or agent task")
 		return DesignImplementationContextResponse{}, DesignImplementationRequest{}, db.ProjectResource{}, false
 	}
 	if request.RevisionID != claim.RevisionID {
@@ -171,9 +200,24 @@ func (h *Handler) resolveDesignImplementationRequest(w http.ResponseWriter, r *h
 		writeDesignAssetResolveError(w, err)
 		return DesignImplementationContextResponse{}, DesignImplementationRequest{}, db.ProjectResource{}, false
 	}
-	return DesignImplementationContextResponse{
-		SchemaVersion: designImplementationContextSchemaV1, DesignRef: chi.URLParam(r, "designRef"),
+	taskID := ""
+	if taskOK {
+		taskID = uuidToString(task.ID)
+	}
+	implementationRef, err := designimplementation.MintReference(designimplementation.ReferenceClaim{
+		WorkspaceID: uuidToString(workspaceID), ProjectID: claim.ProjectID, IssueID: request.IssueID,
+		TaskID:            taskID,
+		ProjectResourceID: request.ProjectResourceID, DesignRef: chi.URLParam(r, "designRef"),
 		RevisionID: claim.RevisionID, ContentDigest: claim.ContentDigest, FrameRefs: append([]string(nil), request.FrameRefs...),
+	}, now)
+	if err != nil {
+		writeProjectDesignSystemError(w, http.StatusInternalServerError, "implementation_reference_failed", "failed to bind the implementation context")
+		return DesignImplementationContextResponse{}, DesignImplementationRequest{}, db.ProjectResource{}, false
+	}
+	return DesignImplementationContextResponse{
+		SchemaVersion: designImplementationContextSchemaV1, ImplementationRef: implementationRef, DesignRef: chi.URLParam(r, "designRef"),
+		RevisionID: claim.RevisionID, ContentDigest: claim.ContentDigest, FrameRefs: append([]string(nil), request.FrameRefs...),
+		TaskID:    taskID,
 		ProjectID: claim.ProjectID, IssueID: request.IssueID, ProjectResourceID: request.ProjectResourceID,
 		DesignTitle: title, DesignSystemDigest: designSystemDigest, Package: designImplementationPackageDescriptor(claim, sourceDocumentID, request.FrameRefs, frames), AllowedWritePaths: []string{"."},
 		VerificationRequirements: []string{"repository typecheck/tests/build as applicable", "real rendered preview for changed UI"},
@@ -189,6 +233,46 @@ func (h *Handler) resolveDesignImplementationRequest(w http.ResponseWriter, r *h
 		},
 		SourceCapabilities: capabilities,
 	}, request, repository, true
+}
+
+func (h *Handler) designImplementationTaskForIssue(r *http.Request, issueID, workspaceID string) (db.AgentTaskQueue, designimplementation.TaskIdentity, bool) {
+	if r.Header.Get("X-Actor-Source") != "task_token" {
+		return db.AgentTaskQueue{}, designimplementation.TaskIdentity{}, false
+	}
+	task, ok := h.taskFromRequestHeader(r)
+	if !ok || !task.IssueID.Valid {
+		return db.AgentTaskQueue{}, designimplementation.TaskIdentity{}, false
+	}
+	parsedIssueID, err := parseDesignAssetClaimUUID(strings.TrimSpace(issueID))
+	if err != nil || task.IssueID != parsedIssueID {
+		return db.AgentTaskQueue{}, designimplementation.TaskIdentity{}, false
+	}
+	identity, ok := h.designImplementationIdentityForTask(r.Context(), task, workspaceID)
+	return task, identity, ok
+}
+
+func (h *Handler) designImplementationIdentityForTask(ctx context.Context, task db.AgentTaskQueue, workspaceID string) (designimplementation.TaskIdentity, bool) {
+	if !task.TriggerCommentID.Valid {
+		return designimplementation.TaskIdentity{}, false
+	}
+	workspaceUUID, err := parseDesignAssetClaimUUID(workspaceID)
+	if err != nil {
+		return designimplementation.TaskIdentity{}, false
+	}
+	comment, err := h.Queries.GetCommentInWorkspace(ctx, db.GetCommentInWorkspaceParams{
+		ID: task.TriggerCommentID, WorkspaceID: workspaceUUID,
+	})
+	if err != nil || comment.IssueID != task.IssueID || !designimplementation.IsTask(comment.Content) {
+		return designimplementation.TaskIdentity{}, false
+	}
+	return designimplementation.ParseTaskIdentity(comment.Content)
+}
+
+func designImplementationRequestMatchesTaskIdentity(designRef string, claim designAssetRefClaim, request DesignImplementationRequest, identity designimplementation.TaskIdentity) bool {
+	return identity.AssetID == claim.AssetID && identity.DesignRef == designRef &&
+		identity.RevisionID == claim.RevisionID && identity.ContentDigest == claim.ContentDigest &&
+		identity.ProjectResourceID == request.ProjectResourceID && len(request.FrameRefs) == 1 &&
+		identity.FrameRef == request.FrameRefs[0]
 }
 
 func designImplementationPackageDescriptor(claim designAssetRefClaim, documentID string, frameRefs []string, availableFrames []DesignAssetFrameResponse) *DesignImplementationPackageDescriptor {

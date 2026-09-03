@@ -8045,6 +8045,44 @@ type designRestorePackGroup struct {
 	FrameIDs []string
 }
 
+func designRestorePackFigmaSelectionScope(doc map[string]any) (DesignRestoreScopeV1, bool) {
+	source, _ := doc["source"].(map[string]any)
+	if stringField(source, "tool") != "figma" || stringField(source, "scope") != "page" {
+		return DesignRestoreScopeV1{}, false
+	}
+	nodeIDs := uniqueOrderedStrings(stringsFromAnySlice(source["nodeIds"]))
+	sourceKey := strings.TrimSpace(stringField(source, "sourceKey"))
+	if len(nodeIDs) < 2 || sourceKey == "" {
+		return DesignRestoreScopeV1{}, false
+	}
+	frameIDBySourceNodeID := make(map[string]string, len(nodeIDs))
+	for _, frame := range asObjectSlice(doc["frames"]) {
+		sourceNodeID := strings.TrimSpace(stringField(frame, "sourceNodeId"))
+		frameID := strings.TrimSpace(stringField(frame, "id"))
+		if sourceNodeID == "" || frameID == "" {
+			continue
+		}
+		if _, duplicate := frameIDBySourceNodeID[sourceNodeID]; duplicate {
+			return DesignRestoreScopeV1{}, false
+		}
+		frameIDBySourceNodeID[sourceNodeID] = frameID
+	}
+	frameIDs := make([]string, 0, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		frameID, ok := frameIDBySourceNodeID[nodeID]
+		if !ok {
+			return DesignRestoreScopeV1{}, false
+		}
+		frameIDs = append(frameIDs, frameID)
+	}
+	return DesignRestoreScopeV1{
+		Kind:      "figma_group",
+		GroupID:   "selection:" + sourceKey,
+		GroupName: firstString(source, "pageName", "fileName"),
+		FrameIDs:  frameIDs,
+	}, true
+}
+
 func discoverDesignRestorePackGroups(doc map[string]any) []designRestorePackGroup {
 	candidates := make([]DesignRestoreScopeV1, 0)
 	seenCandidates := map[string]struct{}{}
@@ -8094,6 +8132,9 @@ func discoverDesignRestorePackGroups(doc map[string]any) []designRestorePackGrou
 			Kind: "figma_group", GroupID: firstString(source, "groupId", "id", "sourceNodeId"),
 			GroupName: stringField(source, "groupName"), GroupPath: stringsFromAnySlice(source["groupPath"]),
 		})
+	}
+	if selection, ok := designRestorePackFigmaSelectionScope(doc); ok {
+		addCandidate(selection)
 	}
 
 	groups := make([]designRestorePackGroup, 0, len(candidates))

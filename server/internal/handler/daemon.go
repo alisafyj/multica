@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/designimplementation"
 	"github.com/multica-ai/multica/server/internal/designpreview"
 	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
@@ -3963,10 +3964,11 @@ func (h *Handler) ReportTaskProgress(w http.ResponseWriter, r *http.Request) {
 
 // CompleteTask marks a running task as completed.
 type TaskCompleteRequest struct {
-	PRURL     string `json:"pr_url"`
-	Output    string `json:"output"`
-	SessionID string `json:"session_id"` // Claude session ID for future resumption
-	WorkDir   string `json:"work_dir"`   // working directory used during execution
+	PRURL                string                        `json:"pr_url"`
+	Output               string                        `json:"output"`
+	SessionID            string                        `json:"session_id"` // Claude session ID for future resumption
+	DesignImplementation *designimplementation.Receipt `json:"design_implementation,omitempty"`
+	WorkDir              string                        `json:"work_dir"` // working directory used during execution
 	// DurableWorkDir is the configured project directory that replaces a
 	// disposable task worktree after the daemon confirms the worktree is gone.
 	DurableWorkDir string `json:"durable_work_dir,omitempty"`
@@ -4099,6 +4101,23 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 			RetiredSessionID:      req.RetiredSessionID,
 		})
 		return
+	}
+	if designimplementation.IsTask(existingTask.TriggerSummary.String) {
+		identity, ok := h.designImplementationIdentityForTask(r.Context(), existingTask, workspaceID)
+		claim, err := designimplementation.ValidateReceipt(req.DesignImplementation, time.Now(), taskID)
+		if !ok || err != nil || claim.WorkspaceID != workspaceID || claim.IssueID != uuidToString(existingTask.IssueID) ||
+			!designimplementation.ClaimMatchesTaskIdentity(claim, identity) {
+			message := "design implementation result receipt is missing or invalid"
+			if err != nil {
+				message += ": " + err.Error()
+			}
+			h.failTask(w, r, taskID, workspaceID, TaskFailRequest{
+				Error: message, FailureReason: "design_implementation_result_invalid",
+				SessionID: req.SessionID, WorkDir: req.WorkDir, DurableWorkDir: req.DurableWorkDir,
+				BranchName: req.BranchName, SessionRolloutMissing: req.SessionRolloutMissing, RetiredSessionID: req.RetiredSessionID,
+			})
+			return
+		}
 	}
 
 	var createdDraft *db.DesignDraft
@@ -4476,6 +4495,13 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
 }
 
+func designRestoreTaskCompletionStatus(summary designRestoreResultSummary, policyViolation string) string {
+	if summary.Status == "blocked" || summary.Status == "failed" || policyViolation != "" {
+		return "failed"
+	}
+	return "completed"
+}
+
 func (h *Handler) updateDesignRestoreTaskFromAgentCompletion(ctx context.Context, task db.AgentTaskQueue, req TaskCompleteRequest) error {
 	var restoreCtx service.DesignRestoreTaskContext
 	if err := json.Unmarshal(task.Context, &restoreCtx); err != nil || restoreCtx.Type != service.DesignRestoreTaskContextType {
@@ -4486,14 +4512,8 @@ func (h *Handler) updateDesignRestoreTaskFromAgentCompletion(ctx context.Context
 		return err
 	}
 	summary := parseDesignRestoreResultSummary(req.Output)
-	status := "completed"
-	if summary.Status == "blocked" || summary.Status == "failed" || strings.Contains(strings.ToLower(req.Output), "blocked") || strings.Contains(strings.ToLower(req.Output), "阻塞") {
-		status = "failed"
-	}
 	policyViolation := designRestorePolicyViolation(restoreCtx, req.Output, summary)
-	if policyViolation != "" {
-		status = "failed"
-	}
+	status := designRestoreTaskCompletionStatus(summary, policyViolation)
 	policyWarning := designRestorePolicyWarning(restoreCtx, summary)
 	result := map[string]any{
 		"output":           req.Output,

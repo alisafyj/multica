@@ -14,6 +14,79 @@ export type DesignDraftStatus =
   | "archived";
 export type DesignDraftGenerationMode = "legacy_patch" | "semantic_pagespec";
 export type DesignSystemProfileStatus = "draft" | "analyzing" | "analyzed" | "failed" | "archived";
+export interface DesignAssetFrame {
+  frame_ref: string;
+  selection_key: string;
+  title: string;
+  thumbnail_url?: string;
+  description?: string;
+}
+
+export interface DesignAssetFramesResponse {
+  design_ref: string;
+  revision_id: string;
+  content_digest: string;
+  frames: DesignAssetFrame[];
+}
+
+export interface BuildDesignImplementationPromptRequest {
+  revision_id: string;
+  frame_refs: string[];
+  project_resource_id: string;
+  issue_id: string;
+}
+
+export interface DesignImplementationContextPaths {
+  context_path: string;
+  design_manifest_path: string;
+  design_package_path: string;
+  scope_path: string;
+  repository_context_path: string;
+  result_path: string;
+}
+
+export interface DesignImplementationSourceCapabilities {
+  has_layers: boolean;
+  has_prototype: boolean;
+  has_assets: boolean;
+  has_interactions: boolean;
+}
+
+export interface DesignImplementationPackage {
+  source: string;
+  archive_path?: string;
+  content_digest: string;
+  restore_pack_scope?: Record<string, unknown>;
+}
+
+export interface DesignImplementationContextResponse {
+  schema_version: "multica.design-implementation-context/v1";
+  implementation_ref: string;
+  design_ref: string;
+  revision_id: string;
+  content_digest: string;
+  frame_refs: string[];
+  project_id: string;
+  issue_id: string;
+  task_id?: string;
+  project_resource_id: string;
+  design_title: string;
+  package?: DesignImplementationPackage;
+  source_instructions?: string[];
+  verification_targets?: string[];
+  design_system_digest?: string;
+  allowed_write_paths: string[];
+  verification_requirements: string[];
+  paths: DesignImplementationContextPaths;
+  source_capabilities: DesignImplementationSourceCapabilities;
+}
+
+export interface BuildDesignImplementationPromptResponse {
+  prompt: string;
+  mcp_arguments: Record<string, unknown>;
+  context: DesignImplementationContextResponse;
+}
+
 export type DesignRestoreTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type DesignRestoreTargetKind = "component" | "file" | "symbol" | "route" | "unknown";
 export type DesignRestoreTaskPurpose = "frontend_restore" | "ui_generation" | "template_annotation";
@@ -158,6 +231,8 @@ export type DesignAssetAssociationKind = "design_file" | "design_document";
 
 export interface DesignFile {
   id: string;
+  design_ref?: string;
+  source?: string;
   workspace_id: string;
   project_id?: string | null;
   /** Backend repository identity; null means the Design File is project-level. */
@@ -746,6 +821,7 @@ export interface CreateDesignDocumentRequest {
 
 export interface DesignDocument {
   id: string;
+  design_ref: string;
   workspace_id: string;
   project_id: string;
   /** Empty when no repository was attached to this run. */
