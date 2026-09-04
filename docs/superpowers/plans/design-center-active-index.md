@@ -2,31 +2,35 @@
 
 > **Navigation index only.** The authoritative current handoff is `docs/superpowers/handoffs/2026-09-01-design-center-end-to-end-mvp-handoff.md`. Read that handoff first. If this index, a Plan, a Spec, or historical chat conflicts with the handoff, the handoff wins. Do not scan the plans/specs directories broadly.
 >
-> Updated: 2026-09-01
+> Updated: 2026-09-04
 
 ## Active execution priority
 
 0. **Authoritative current state — read first**
    - `docs/superpowers/handoffs/2026-09-01-design-center-end-to-end-mvp-handoff.md`
-   - Current execution is paused. Diagnose the unexpected Home/project-repository page before resuming Task 7.
+   - MVP Task 1–14 已完成并进入 `codex/design-center-end-to-end-mvp@95ad8fd63`。没有 Task 15。
 
-1. **Current MVP roadmap — execute only after the handoff pause is cleared**
+1. **Current completion matrix and m-next acceptance replay**
+   - `docs/superpowers/plans/2026-09-04-design-center-end-to-end-mvp-completion-plan.md`
+   - 记录 Task 1–14 完成对照，并定义新的 `m-next` 真实目标复验；它不解冻 Post-MVP。
+
+2. **Completed MVP roadmap — historical execution plan**
    - `docs/superpowers/plans/2026-08-31-design-center-end-to-end-mvp-roadmap.md`
    - Goal: repository-specific design system → real Multica designs → unified Multica/Figma restore → Issue design/restore loop → one real end-to-end acceptance.
 
 ## Completed foundation
 
-2. **M1 Slice 1 repository association foundation — completed**
+3. **M1 Slice 1 repository association foundation — completed**
    - `docs/superpowers/plans/2026-08-27-design-file-repository-scope.md`
 
-3. **M1 Slice 1 closure + Slice 2A read projection — completed**
+4. **M1 Slice 1 closure + Slice 2A read projection — completed**
    - `docs/superpowers/plans/2026-08-27-design-center-repository-read-projection.md`
    - Validation evidence in the integration branch:
      `docs/product/design-center/m1-slice-2a-validation.md`
 
 ## Deferred until after MVP acceptance
 
-4. **Full Finder / Repository Workspace polish plan — DEFERRED**
+5. **Full Finder / Repository Workspace polish plan — DEFERRED**
    - `docs/superpowers/plans/2026-08-31-design-center-finder-repository-workspaces.md`
    - Do not execute before the end-to-end MVP is accepted by the user.
    - Its full multi-open tabs, isolated searches, batch association, realtime polish, and full workspace migration are Post-MVP refinement work.

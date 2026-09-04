@@ -1,6 +1,6 @@
 # Design Center End-to-End MVP 权威交接文档
 
-> 更新时间：2026-09-03（Asia/Shanghai）
+> 更新时间：2026-09-04（Asia/Shanghai）
 >
 > 仓库：`https://github.com/alisafyj/multica`
 >
@@ -15,6 +15,10 @@
 > Task 14 分支：`codex/design-center-end-to-end-mvp-task-14`
 >
 > Task 14 基线：`0f27dfa0f8b2656523c5501eb3ffaba8a675c2ec`
+>
+> 当前集成提交：`95ad8fd634fbb477a546d24810fe692b2615e8ce`
+>
+> 当前完成矩阵与 `m-next` 复验方案：`docs/superpowers/plans/2026-09-04-design-center-end-to-end-mvp-completion-plan.md`
 >
 > 本文件是当前 Design Center End-to-End MVP 的最高优先级交接事实源。
 
@@ -31,13 +35,13 @@ Tasks 10–14 已完成当前授权范围：
 3. Task 12：真实 Issue UI 完成设计选择、精确 frame、repository、可编辑 prompt、手动发送、普通 Agent 状态和结构化结果投影，Issue 状态保持不变；
 4. Tasks 10–12 Final Gate：**PASS**；
 5. Tasks 10–12 已通过 `9a6b819e9` 回合到集成分支，远端 `main@394174211` 已通过 `7aeb433e1` 合入；
-6. Task 13：Issue 右侧栏已接入 Multica Design 创建入口，锁定 Project/Issue、按上下文预填 Agent 与单一 GitHub 仓库，并复用现有 Design Document 工作区；
-7. Task 14：两份 Multica Design、真实 Figma frozen revision 和 Issue 发起的 Design Document 均完成真实 UI/Agent/daemon 回执闭环；
+6. Task 13 已通过 `0f27dfa0f` 进入集成分支：Issue 右侧栏接入 Multica Design 创建入口，锁定 Project/Issue、按上下文预填 Agent 与单一 GitHub 仓库，并复用现有 Design Document 工作区；
+7. Task 14 已快进进入集成分支，当前 HEAD 为 `95ad8fd63`：两份 Multica Design、真实 Figma frozen revision 和 Issue 发起的 Design Document 均完成真实 UI/Agent/daemon 回执闭环；
 8. Task 14 修复 Preview 回执读取、Agent 全量诊断命令、主评论框稳定作用域、重跑包复用和复用工作区 checkout 解析；
-9. 没有 Push、PR 或远端分支更新；
-10. Post-MVP 1–7 保持冻结。
+9. Task 14 产品 Gate 本身没有 Push、PR 或远端分支更新；2026-09-04 用户另行授权把当前集成分支与完成方案直接 Push 到同名远端分支；
+10. MVP 只有 Task 1–14，没有 Task 15；Post-MVP 1–7 保持冻结。
 
-下一位接手者不要重做 Tasks 10–14。先审查 Task 14 提交与本文件，再等待用户决定是否集成；不要自行启动 Post-MVP 工作。
+下一位接手者不要重做 Tasks 1–14。后续 `m-next` 真实目标复验按 `docs/superpowers/plans/2026-09-04-design-center-end-to-end-mvp-completion-plan.md` 执行；它不是 Task 15，也不解冻 Post-MVP。
 
 ---
 
@@ -115,7 +119,7 @@ a819e315b fix(designs): reject unknown package sources
 
 Task 12 本地验收辅助 `_task12_auth.Makefile` 与 `server/cmd/task12-local-auth/` 没有进入产品提交。不得把它们当成生产认证实现。
 
-Tasks 10–12 已本地合入 `codex/design-center-end-to-end-mvp`，并同步 `origin/main@394174211`；当前集成基线为 `7aeb433e1`。Task 13 分支未推送、未创建 PR、未合回集成分支。不要改写历史或自动合并。
+Tasks 10–12 已通过 `9a6b819e9` 合入 `codex/design-center-end-to-end-mvp`，Task 13 已通过 `0f27dfa0f` 合入，Task 14 已快进到 `95ad8fd63`。当前集成分支包含 Tasks 1–14；不要改写历史或自动合并到 `main`。
 
 ---
 
@@ -273,9 +277,9 @@ Task 14 隔离服务在验收完成后停止。目标 Agent checkout 保留为�
 
 明确未做：
 
-- Task 14 分支合回 `codex/design-center-end-to-end-mvp`；
-- Push、PR、`main` merge、发布；
-- Post-MVP 1–7（包括 Finder、多项目 tabs、视觉精雕）。
+- `main` merge、发布；
+- Post-MVP 1–7（包括 Finder、多项目 tabs、视觉精雕）；
+- 用户对最终 MVP 的产品接受。
 
 ---
 
@@ -285,12 +289,10 @@ Task 14 隔离服务在验收完成后停止。目标 Agent checkout 保留为�
 仓库只使用 https://github.com/alisafyj/multica。
 读取 docs/superpowers/handoffs/2026-09-01-design-center-end-to-end-mvp-handoff.md；这是当前权威事实源。
 
-Tasks 10–14 已通过，不要重新实现或重跑昂贵的真实 Agent 验收。
-Tasks 10–12 已本地合入 codex/design-center-end-to-end-mvp，且 origin/main@394174211 已同步；集成基线为 7aeb433e1。
-Task 13 已在 codex/design-center-end-to-end-mvp-task-13 完成，复用现有创建 Server core 与 Design Document workspace；不要重做。
-Task 14 已在 codex/design-center-end-to-end-mvp-task-14 完成；验收事实见 docs/product/design-center/end-to-end-mvp-validation.md。
+Tasks 1–14 已通过并进入 codex/design-center-end-to-end-mvp@95ad8fd63，不要重新实现或重复昂贵的真实 Agent 验收。
+Task 14 验收事实见 docs/product/design-center/end-to-end-mvp-validation.md。
+MVP 没有 Task 15；Post-MVP 1–7 仍冻结。
 
-先检查 Task 14 分支的 git status/log/diff 与本交接，再按用户的新授权继续。
-不得自动 Push、建 PR、合 main、回合集成分支或启动 Post-MVP 工作。
-如果用户要求集成，先比较集成分支的新变化并审查冲突；不要 reset/clean/改写历史。
+后续 m-next 真实目标复验读取 docs/superpowers/plans/2026-09-04-design-center-end-to-end-mvp-completion-plan.md，并严格保留最终唯一一次完整真实扫描。
+不得自动合 main、发布或启动 Post-MVP 工作；不要 reset/clean/改写历史。
 ```
