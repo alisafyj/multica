@@ -10,10 +10,12 @@ describe("DesignMvpViewSwitcher", () => {
     render(<DesignMvpViewSwitcher mode="project" onModeChange={onModeChange} />);
 
     const group = screen.getByRole("group", { name: "设计中心视角" });
-    expect(within(group).getByRole("button", { name: "项目视角" })).toHaveAttribute("aria-pressed", "true");
-    expect(within(group).getByRole("button", { name: "仓库视角" })).toHaveAttribute("aria-pressed", "false");
+    expect(within(group).getByRole("button", { name: "按项目" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(group).getByRole("button", { name: "按项目" })).toHaveAttribute("title", "项目");
+    expect(within(group).getByRole("button", { name: "按仓库" })).toHaveAttribute("aria-pressed", "false");
+    expect(within(group).getByRole("button", { name: "按仓库" })).toHaveAttribute("title", "仓库");
 
-    await user.click(screen.getByRole("button", { name: "仓库视角" }));
+    await user.click(screen.getByRole("button", { name: "按仓库" }));
     expect(onModeChange).toHaveBeenCalledWith("repository");
   });
 });

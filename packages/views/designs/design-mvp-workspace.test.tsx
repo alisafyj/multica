@@ -229,7 +229,7 @@ describe("DesignMvpWorkspace", () => {
     listDesignDocuments.mockResolvedValue({ documents: [{ id: "doc-1", workspace_id: "ws-1", title: "Multica draft", project_id: "project-1", project_resource_id: null, status: "draft", saved_revision_id: "", draft_revision_id: "draft-1", repository_grounded: false, created_at: "", updated_at: "2026-08-21T00:00:00Z" }] });
     renderWithClient(<StrictMode><DesignMvpWorkspace /></StrictMode>);
 
-    await user.click(await screen.findByRole("button", { name: "项目视角" }));
+    await user.click(await screen.findByRole("button", { name: "按项目" }));
     await screen.findByLabelText("选择项目");
     await user.selectOptions(screen.getByLabelText("选择项目"), "project-1");
 
@@ -246,7 +246,7 @@ describe("DesignMvpWorkspace", () => {
     const user = userEvent.setup();
     renderWithClient(<StrictMode><DesignMvpWorkspace /></StrictMode>);
 
-    await user.click(await screen.findByRole("button", { name: "仓库视角" }));
+    await user.click(await screen.findByRole("button", { name: "按仓库" }));
     expect(screen.queryByRole("heading", { name: "设计体系" })).not.toBeInTheDocument();
 
     await user.selectOptions(await screen.findByLabelText("选择仓库"), "repo-1");
@@ -267,7 +267,7 @@ describe("DesignMvpWorkspace", () => {
   it("sends and preserves the exact repository-scoped create and analysis requests", async () => {
     const user = userEvent.setup();
     renderWithClient(<StrictMode><DesignMvpWorkspace /></StrictMode>);
-    await user.click(await screen.findByRole("button", { name: "仓库视角" }));
+    await user.click(await screen.findByRole("button", { name: "按仓库" }));
     await user.selectOptions(await screen.findByLabelText("选择仓库"), "repo-1");
     await user.selectOptions(await screen.findByLabelText("智能体"), "agent-1");
     await user.click(screen.getByRole("radio", { name: "Web" }));
@@ -295,7 +295,7 @@ describe("DesignMvpWorkspace", () => {
     const user = userEvent.setup();
     createProjectDesignSystem.mockRejectedValueOnce(new Error("生成失败"));
     renderWithClient(<StrictMode><DesignMvpWorkspace /></StrictMode>);
-    await user.click(await screen.findByRole("button", { name: "仓库视角" }));
+    await user.click(await screen.findByRole("button", { name: "按仓库" }));
     await user.selectOptions(await screen.findByLabelText("选择仓库"), "repo-1");
     await user.selectOptions(await screen.findByLabelText("智能体"), "agent-1");
     await user.click(screen.getByRole("radio", { name: "移动端" }));
@@ -314,7 +314,7 @@ describe("DesignMvpWorkspace", () => {
     listDesignDocuments.mockResolvedValue({ documents: [{ id: "doc-repo", workspace_id: "ws-1", title: "Repository draft", project_id: "project-1", project_resource_id: "repo-1", status: "draft", saved_revision_id: "", draft_revision_id: "draft-1", repository_grounded: true, created_at: "", updated_at: "2026-08-21T00:00:00Z" }] });
     renderWithClient(<StrictMode><DesignMvpWorkspace /></StrictMode>);
 
-    await user.click(await screen.findByRole("button", { name: "仓库视角" }));
+    await user.click(await screen.findByRole("button", { name: "按仓库" }));
     await screen.findByLabelText("选择仓库");
     await user.selectOptions(screen.getByLabelText("选择仓库"), "repo-1");
     expect((await screen.findAllByText("Repository file")).length).toBeGreaterThan(0);
@@ -330,7 +330,7 @@ describe("DesignMvpWorkspace", () => {
     listDesignDocuments.mockResolvedValue({ documents: [] });
     setDesignAssetRepositoryAssociation.mockRejectedValueOnce(apiError("design_document_task_active"));
     renderWithClient(<StrictMode><DesignMvpWorkspace /></StrictMode>);
-    await user.click(await screen.findByRole("button", { name: "项目视角" }));
+    await user.click(await screen.findByRole("button", { name: "按项目" }));
     await screen.findByLabelText("选择项目");
     await user.selectOptions(screen.getByLabelText("选择项目"), "project-1");
     await screen.findByText("Associable file");
@@ -377,10 +377,10 @@ describe("DesignMvpWorkspace", () => {
     await screen.findByLabelText("选择项目");
     await waitFor(() => expect(screen.getByRole("option", { name: "CRM" })).toBeInTheDocument());
     await user.selectOptions(screen.getByLabelText("选择项目"), "project-1");
-    await user.click(screen.getByRole("button", { name: "仓库视角" }));
+    await user.click(screen.getByRole("button", { name: "按仓库" }));
     await user.selectOptions(await screen.findByLabelText("选择仓库"), "repo-2");
     await waitFor(() => expect(listDesignFiles).toHaveBeenCalledWith({ projectId: "project-2", projectResourceId: undefined }));
-    await user.click(screen.getByRole("button", { name: "项目视角" }));
+    await user.click(screen.getByRole("button", { name: "按项目" }));
     expect(screen.getByLabelText("选择项目")).toHaveValue("project-1");
     await waitFor(() => expect(listDesignFiles).toHaveBeenLastCalledWith({ projectId: "project-1" }));
   });

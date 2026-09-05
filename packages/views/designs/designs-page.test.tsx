@@ -51,6 +51,7 @@ vi.mock("@multica/core/api", () => ({
     listDesignDrafts,
     listDesignFiles,
     listDesignFolders,
+    listDesignRepositories,
     listDesignScenarioRecipes,
     listDesignSystemProfiles,
     listDesignTemplates,
@@ -80,6 +81,36 @@ vi.mock("../navigation", () => ({
 
 vi.mock("./project-design-system-canvas", () => ({
   ProjectDesignSystemCanvas: () => <h2>品牌原则</h2>,
+}));
+
+vi.mock("./workspace-design-system-create", () => ({
+  WorkspaceDesignSystemCreate: ({
+    embedded,
+    initialProjectId,
+    initialRepositoryId,
+    initialName,
+    initialBrief,
+    initialSourceLinks,
+    repositoryAnalysisReady,
+  }: {
+    embedded?: boolean;
+    initialProjectId?: string;
+    initialRepositoryId?: string;
+    initialName?: string;
+    initialBrief?: string;
+    initialSourceLinks?: string[];
+    repositoryAnalysisReady?: boolean;
+  }) => (
+    <section aria-label="仓库设计体系新建">
+      <span>{embedded ? "嵌入模式" : "独立模式"}</span>
+      <span>{initialProjectId}</span>
+      <span>{initialRepositoryId}</span>
+      <span>{initialName}</span>
+      <span>{initialBrief}</span>
+      <span>{initialSourceLinks?.join(",")}</span>
+      <span>{repositoryAnalysisReady ? "analysis-ready" : "analysis-required"}</span>
+    </section>
+  ),
 }));
 
 vi.mock("sonner", () => ({
@@ -215,7 +246,9 @@ describe("DesignsPage", () => {
     await screen.findByRole("menuitem", { name: "staffrnapp" });
     expect(screen.queryByRole("tab", { name: "CRM" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "staffrnapp" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "设计中心视角" })).not.toBeInTheDocument();
+    const viewSwitcher = screen.getByRole("group", { name: "设计中心视角" });
+    expect(within(viewSwitcher).getByRole("button", { name: "按项目" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(viewSwitcher).getByRole("button", { name: "按仓库" })).toHaveAttribute("aria-pressed", "false");
 
     await user.click(screen.getByRole("button", { name: "打开项目" }));
     await user.click(screen.getByRole("menuitem", { name: "CRM" }));
@@ -308,7 +341,7 @@ describe("DesignsPage", () => {
     expect(within(homePanel).getByRole("button", { name: "不使用该社区配方" })).toBeInTheDocument();
   });
 
-  it("keeps project Designs content on the unchanged default query path", async () => {
+  it("opens project workspaces with exact project data and no template or system tabs", async () => {
     const user = userEvent.setup();
     listDesignFiles.mockResolvedValue({
       design_files: [{
@@ -334,12 +367,10 @@ describe("DesignsPage", () => {
 
     expect(await screen.findByRole("tab", { name: /设计稿.*1/ })).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByText("CRM 首页设计稿")).toBeInTheDocument();
-    expect(listDesignFiles).toHaveBeenCalledWith(undefined);
-    // Slice 2A is read-model only: the current project panel does not add a
-    // repository Finder or repository scope controls.
-    expect(screen.queryByRole("searchbox", { name: /仓库/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("combobox", { name: /仓库/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "设计中心视角" })).not.toBeInTheDocument();
+    expect(listDesignFiles).toHaveBeenCalledWith({ projectId: "project-1", projectResourceId: undefined });
+    expect(screen.getByRole("group", { name: "设计中心视角" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /模版/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /设计体系/ })).not.toBeInTheDocument();
   });
 
   it("opens the composer from a project's 新建设计稿 and filters its artifacts", async () => {
@@ -402,57 +433,89 @@ describe("DesignsPage", () => {
     expect(screen.queryByText(/审核|批准|驳回/)).not.toBeInTheDocument();
   });
 
-  it("uses four compact asset tabs without duplicate panel titles", async () => {
+  it("opens exact repository workspaces with no template tab and the embedded new-system UI", async () => {
     const user = userEvent.setup();
-    listDesignSystemProfiles.mockResolvedValue({
-      design_systems: [{
-        id: "profile-1",
+    listDesignRepositories.mockResolvedValue({
+      repositories: [{
+        id: "resource-h5",
         project_id: "project-1",
-        source_file_id: "file-1",
-        name: "旧 Figma UI 规范",
-        status: "ready",
-        is_default: true,
-        updated_at: "2026-07-29T00:00:00Z",
+        project_title: "CRM",
+        label: "crm-h5",
+        repository_url: "https://github.com/acme/crm-h5",
+        default_branch_hint: "main",
       }],
     });
+    listProjectResources.mockResolvedValue({
+      resources: [{
+        id: "resource-h5",
+        project_id: "project-1",
+        workspace_id: "ws-1",
+        resource_type: "github_repo",
+        resource_ref: { url: "https://github.com/acme/crm-h5" },
+        label: "crm-h5",
+        position: 0,
+        created_at: "2026-09-04T00:00:00Z",
+        created_by: null,
+      }],
+      total: 1,
+    });
     renderWithClient(<DesignsPage />);
-    await user.click(await screen.findByRole("button", { name: "打开项目" }));
-    await user.click(screen.getByRole("menuitem", { name: "CRM" }));
+    await user.click(await screen.findByRole("button", { name: "按仓库" }));
+    await user.click(screen.getByRole("button", { name: "打开仓库" }));
+    await user.click(screen.getByRole("menuitem", { name: /crm-h5/ }));
 
     const designsEntry = await screen.findByRole("tab", { name: /设计稿.*0/ });
     expect(designsEntry).toHaveAttribute("aria-selected", "true");
-    expect(designsEntry.querySelector("[data-slot='badge']")).toHaveTextContent("0");
-    const draftsEntry = screen.getByRole("tab", { name: /设计草稿.*0/ });
-    const templatesEntry = screen.getByRole("tab", { name: /模版.*0/ });
     const systemEntry = screen.getByRole("tab", { name: /设计体系.*0/ });
-    expect([designsEntry, draftsEntry, templatesEntry, systemEntry].map((entry) => entry.textContent)).toEqual([
-      "设计稿0",
-      "设计草稿0",
-      "模版0",
-      "设计体系0",
-    ]);
-    expect(systemEntry).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: /UI 规范/ })).not.toBeInTheDocument();
-    expect(screen.queryByText("CRM / 设计稿")).not.toBeInTheDocument();
-
-    await user.click(templatesEntry);
-    expect(screen.getAllByText("模版")).toHaveLength(1);
+    expect(screen.getByRole("tab", { name: /设计草稿.*0/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /模版/ })).not.toBeInTheDocument();
+    expect(listDesignFiles).toHaveBeenCalledWith({
+      projectId: "project-1",
+      projectResourceId: "resource-h5",
+    });
+    expect(listDesignDocuments).toHaveBeenCalledWith("project-1", "resource-h5");
 
     await user.click(systemEntry);
-    expect(screen.getAllByText("设计体系")).toHaveLength(1);
-    expect(screen.queryByPlaceholderText("搜索设计体系…")).not.toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "生成设计体系" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "创建设计体系" })).not.toBeInTheDocument();
-    expect(screen.queryByText("尚未建立设计体系")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("旧 Figma UI 规范")).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: /设计体系/ })).toHaveClass("flex", "overflow-hidden");
+    const create = await screen.findByRole("region", { name: "仓库设计体系新建" });
+    expect(within(create).getByText("嵌入模式")).toBeInTheDocument();
+    expect(within(create).getByText("project-1")).toBeInTheDocument();
+    expect(within(create).getByText("resource-h5")).toBeInTheDocument();
+    expect(within(create).getByText("crm-h5 设计体系")).toBeInTheDocument();
+    expect(within(create).getByText("https://github.com/acme/crm-h5")).toBeInTheDocument();
   });
 
   it("renders saved design-system content directly without a detail link", async () => {
     const user = userEvent.setup();
+    listDesignRepositories.mockResolvedValue({
+      repositories: [{
+        id: "resource-h5",
+        project_id: "project-1",
+        project_title: "CRM",
+        label: "crm-h5",
+        repository_url: "https://github.com/acme/crm-h5",
+        default_branch_hint: "main",
+      }],
+    });
+    listProjectResources.mockResolvedValue({
+      resources: [{
+        id: "resource-h5",
+        project_id: "project-1",
+        workspace_id: "ws-1",
+        resource_type: "github_repo",
+        resource_ref: { url: "https://github.com/acme/crm-h5" },
+        label: "crm-h5",
+        position: 0,
+        created_at: "2026-09-04T00:00:00Z",
+        created_by: null,
+      }],
+      total: 1,
+    });
     getProjectDesignSystemForProject.mockResolvedValue({
       id: "system-1",
       workspace_id: "ws-1",
       project_id: "project-1",
+      project_resource_id: "resource-h5",
       name: "CRM 设计体系",
       platform: "web",
       current_agent_id: "agent-1",
@@ -475,8 +538,9 @@ describe("DesignsPage", () => {
     });
 
     renderWithClient(<DesignsPage />);
-    await user.click(await screen.findByRole("button", { name: "打开项目" }));
-    await user.click(screen.getByRole("menuitem", { name: "CRM" }));
+    await user.click(await screen.findByRole("button", { name: "按仓库" }));
+    await user.click(screen.getByRole("button", { name: "打开仓库" }));
+    await user.click(screen.getByRole("menuitem", { name: /crm-h5/ }));
     await user.click(await screen.findByRole("tab", { name: /设计体系.*1/ }));
 
     expect(await screen.findByRole("heading", { name: "品牌原则" })).toBeInTheDocument();
@@ -486,6 +550,16 @@ describe("DesignsPage", () => {
 
   it("asks the API for the picked repository's design system", async () => {
     const user = userEvent.setup();
+    listDesignRepositories.mockResolvedValue({
+      repositories: [{
+        id: "resource-h5",
+        project_id: "project-1",
+        project_title: "CRM",
+        label: "crm-h5",
+        repository_url: "https://github.com/acme/crm-h5",
+        default_branch_hint: "main",
+      }],
+    });
     listProjectResources.mockResolvedValue({
       resources: [
         {
@@ -514,24 +588,45 @@ describe("DesignsPage", () => {
       ],
       total: 2,
     });
-
-    renderWithClient(<DesignsPage />);
-    await user.click(await screen.findByRole("button", { name: "打开项目" }));
-    await user.click(screen.getByRole("menuitem", { name: "CRM" }));
-    await user.click(await screen.findByRole("tab", { name: /设计体系.*0/ }));
-
-    expect(await screen.findByRole("button", { name: "crm-h5" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "业务规则" })).not.toBeInTheDocument();
-    expect(getProjectDesignSystemForProject).toHaveBeenLastCalledWith("project-1", {
-      project_resource_id: "",
+    getProjectDesignSystemForProject.mockResolvedValue({
+      id: "system-failed",
+      workspace_id: "ws-1",
+      project_id: "project-1",
+      project_resource_id: "resource-h5",
+      name: "CRM web",
+      platform: "mobile",
+      current_agent_id: "agent-1",
+      status: "unestablished",
+      active_task: null,
+      input_snapshot: {
+        agent_id: "agent-1",
+        platform: "mobile",
+        brief: "保留失败前的仓库设计目标",
+        references: [{ kind: "link", value: "https://github.com/acme/crm-h5" }],
+      },
+      content: { sections: [], token_groups: [], locators: [], preview_html: "", integrity_sha256: "" },
+      preview_validation: { status: "none", integrity_sha256: "", report: {}, verified_at: null },
+      has_unsaved_changes: false,
+      last_error: { code: "agent_error.provider_auth_or_access" },
+      activity: [],
+      created_at: "2026-09-04T00:00:00Z",
+      updated_at: "2026-09-04T00:00:00Z",
+      saved_at: null,
     });
 
-    await user.click(screen.getByRole("button", { name: "crm-h5" }));
+    renderWithClient(<DesignsPage />);
+    await user.click(await screen.findByRole("button", { name: "按仓库" }));
+    await user.click(screen.getByRole("button", { name: "打开仓库" }));
+    await user.click(screen.getByRole("menuitem", { name: /crm-h5/ }));
+    await user.click(await screen.findByRole("tab", { name: /设计体系.*1/ }));
 
     await waitFor(() => expect(getProjectDesignSystemForProject).toHaveBeenLastCalledWith("project-1", {
       project_resource_id: "resource-h5",
     }));
-    expect(screen.getByRole("button", { name: "crm-h5" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "项目通用" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("button", { name: "项目通用" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "设计体系范围" })).not.toBeInTheDocument();
+    const retry = await screen.findByRole("region", { name: "仓库设计体系新建" });
+    expect(within(retry).getByText("保留失败前的仓库设计目标")).toBeInTheDocument();
+    expect(within(retry).getByText("analysis-required")).toBeInTheDocument();
   });
 });

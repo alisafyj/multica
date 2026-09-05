@@ -11,8 +11,8 @@ import {
 export type DesignMvpViewMode = "project" | "repository";
 
 const modes = [
-  { value: "project", label: "项目视角", icon: Folder },
-  { value: "repository", label: "仓库视角", icon: GitBranch },
+  { value: "project", label: "按项目", tooltip: "项目", icon: Folder },
+  { value: "repository", label: "按仓库", tooltip: "仓库", icon: GitBranch },
 ] as const;
 
 export function DesignMvpViewSwitcher({
@@ -26,9 +26,9 @@ export function DesignMvpViewSwitcher({
     <div
       role="group"
       aria-label="设计中心视角"
-      className="inline-flex items-center gap-1 rounded-lg border bg-muted/30 p-1"
+      className="inline-flex items-center gap-0.5 rounded-lg bg-muted p-1"
     >
-      {modes.map(({ value, label, icon: Icon }) => {
+      {modes.map(({ value, label, tooltip, icon: Icon }) => {
         const selected = mode === value;
         return (
           <Tooltip key={value}>
@@ -36,10 +36,12 @@ export function DesignMvpViewSwitcher({
               render={
                 <Button
                   type="button"
-                  variant={selected ? "brand" : "ghost"}
+                  variant="ghost"
                   size="icon-sm"
                   aria-label={label}
                   aria-pressed={selected}
+                  title={tooltip}
+                  className={selected ? "bg-background text-foreground shadow-sm hover:bg-background" : "text-muted-foreground"}
                   onClick={() => onModeChange(value)}
                 >
                   <Icon aria-hidden="true" className="size-4" />
@@ -47,8 +49,7 @@ export function DesignMvpViewSwitcher({
               }
             />
             <TooltipContent>
-              {label}
-              {selected ? "（已选择）" : ""}
+              {tooltip}
             </TooltipContent>
           </Tooltip>
         );

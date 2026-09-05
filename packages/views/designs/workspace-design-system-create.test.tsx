@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const navigate = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
 const {
+  analyzeProjectDesignSystemRepository,
   createProjectDesignSystem,
   getProjectDesignSystemForProject,
   listAgents,
@@ -21,6 +22,7 @@ const {
   getPackagePreview,
   packagePreviewFileURL,
 } = vi.hoisted(() => ({
+  analyzeProjectDesignSystemRepository: vi.fn(),
   createProjectDesignSystem: vi.fn(),
   getProjectDesignSystemForProject: vi.fn(),
   listAgents: vi.fn(),
@@ -40,6 +42,7 @@ const {
 
 vi.mock("@multica/core/api", () => ({
   api: {
+    analyzeProjectDesignSystemRepository,
     createProjectDesignSystem,
     getProjectDesignSystemForProject,
     listDesignFiles,
@@ -115,18 +118,23 @@ vi.mock("sonner", () => ({
   toast: { error: toastError },
 }));
 
-import { WorkspaceDesignSystemCreate, isFigmaLink, sourceLinkLabel } from "./workspace-design-system-create";
+import {
+  WorkspaceDesignSystemCreate,
+  isFigmaLink,
+  sourceLinkLabel,
+  type WorkspaceDesignSystemCreateProps,
+} from "./workspace-design-system-create";
 import { BRAND_CATEGORIES, BRAND_CATEGORY_LABELS, BRAND_REFERENCES, QUICK_PICK_BRANDS } from "./brand-references";
 
 const AGENT = { id: "agent-1", workspace_id: "ws-1", name: "小设计", runtime_id: "runtime-1", runtime_bound: true, archived_at: null, status: "online" };
 
-function renderCreate() {
+function renderCreate(props: WorkspaceDesignSystemCreateProps = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <WorkspaceDesignSystemCreate />
+      <WorkspaceDesignSystemCreate {...props} />
     </QueryClientProvider>,
   );
 }
@@ -286,6 +294,123 @@ describe("WorkspaceDesignSystemCreate", () => {
     expect(pasted.name).toBe("DESIGN.md");
     expect(await pasted.text()).toBe("# Tokens");
     expect(navigate).toHaveBeenCalledWith("/acme/designs/systems/system-9");
+  });
+
+  it("embeds the new-system UI for one fixed repository and preserves its exact identity", async () => {
+    const user = userEvent.setup();
+    createProjectDesignSystem.mockResolvedValue({
+      id: "system-repo",
+      project_id: "project-1",
+      project_resource_id: "repo-1",
+      name: "CRM web",
+    });
+    renderCreate({
+      embedded: true,
+      initialScope: "repository",
+      initialProjectId: "project-1",
+      initialRepositoryId: "repo-1",
+      initialName: "web 设计体系",
+      initialBrief: "客户管理项目",
+      initialAgentId: "agent-1",
+      initialPlatform: "web",
+      initialSourceLinks: ["https://github.com/example/web"],
+      repositoryAnalysisReady: true,
+    });
+
+    expect(screen.queryByRole("button", { name: "返回" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "设计体系范围" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("设计体系名称")).toHaveValue("web 设计体系");
+    expect(screen.getByLabelText("设计体系名称")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("品牌描述")).toHaveValue("客户管理项目");
+    expect(within(screen.getByLabelText("已添加的来源链接")).getByText("example/web")).toBeInTheDocument();
+    await screen.findByRole("option", { name: /小设计/ });
+    expect(screen.getByLabelText("智能体")).toHaveValue("agent-1");
+
+    await user.click(screen.getByRole("button", { name: /继续生成/ }));
+
+    await vi.waitFor(() => expect(createProjectDesignSystem).toHaveBeenCalledWith(expect.objectContaining({
+      project_id: "project-1",
+      project_resource_id: "repo-1",
+      name: undefined,
+      agent_id: "agent-1",
+      platform: "web",
+      brief: "客户管理项目",
+      references: [{ kind: "link", value: "https://github.com/example/web", label: "来源链接" }],
+    })));
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("reuses the first-generation contract to retry an unestablished repository system", async () => {
+    const user = userEvent.setup();
+    createProjectDesignSystem.mockResolvedValue({
+      id: "system-existing",
+      project_id: "project-1",
+      project_resource_id: "repo-1",
+      status: "generating",
+    });
+    renderCreate({
+      embedded: true,
+      initialScope: "repository",
+      initialProjectId: "project-1",
+      initialRepositoryId: "repo-1",
+      initialName: "web 设计体系",
+      initialBrief: "保留上次失败前的输入",
+      initialAgentId: "agent-1",
+      initialPlatform: "mobile",
+      initialSourceLinks: ["https://github.com/example/web"],
+      repositoryAnalysisReady: true,
+    });
+
+    await screen.findByRole("option", { name: /小设计/ });
+    await user.click(screen.getByRole("button", { name: /继续生成/ }));
+
+    await vi.waitFor(() => expect(createProjectDesignSystem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "project-1",
+        project_resource_id: "repo-1",
+        name: undefined,
+        agent_id: "agent-1",
+        platform: "mobile",
+        brief: "保留上次失败前的输入",
+        references: [{ kind: "link", value: "https://github.com/example/web", label: "来源链接" }],
+      }),
+    ));
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("analyzes the existing repository resource before enabling generation", async () => {
+    const user = userEvent.setup();
+    analyzeProjectDesignSystemRepository.mockResolvedValue({
+      id: "system-analysis",
+      project_id: "project-1",
+      project_resource_id: "repo-1",
+      status: "generating",
+    });
+    renderCreate({
+      embedded: true,
+      initialScope: "repository",
+      initialProjectId: "project-1",
+      initialRepositoryId: "repo-1",
+      initialName: "web 设计体系",
+      initialBrief: "先读取仓库再生成",
+      initialAgentId: "agent-1",
+      initialPlatform: "mobile",
+      initialSourceLinks: ["https://github.com/example/web"],
+      repositoryAnalysisReady: false,
+    });
+
+    await screen.findByRole("option", { name: /小设计/ });
+    await user.click(screen.getByRole("button", { name: "分析当前仓库" }));
+
+    await vi.waitFor(() => expect(analyzeProjectDesignSystemRepository).toHaveBeenCalledWith({
+      project_id: "project-1",
+      project_resource_id: "repo-1",
+      agent_id: "agent-1",
+      platform: "mobile",
+      brief: "先读取仓库再生成",
+      references: [{ kind: "link", value: "https://github.com/example/web", label: "来源链接" }],
+    }));
+    expect(createProjectDesignSystem).not.toHaveBeenCalled();
   });
 
   it("supports project and exact repository scopes by reusing ProjectDesignSystemCreate", async () => {
