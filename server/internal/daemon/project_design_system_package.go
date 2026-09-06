@@ -18,7 +18,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -618,13 +617,11 @@ func buildPreviewTargetURLs(targets []projectdesignsystem.PreviewTarget, baseURL
 	if len(targets) == 0 {
 		return nil, errors.New("V2 package has no preview targets")
 	}
-	sorted := make([]projectdesignsystem.PreviewTarget, len(targets))
-	copy(sorted, targets)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].ID < sorted[j].ID
-	})
-	out := make([]designpreview.TargetURL, 0, len(sorted))
-	for _, target := range sorted {
+	// Manifest order is the signed package contract and is also what the server
+	// revalidates on completion. Preserve it through browser verification; sorting
+	// here made otherwise-valid multi-target receipts disagree with the manifest.
+	out := make([]designpreview.TargetURL, 0, len(targets))
+	for _, target := range targets {
 		if target.Kind != "ui_kit" && target.Kind != "preview" {
 			return nil, fmt.Errorf("V2 preview target %q has unsupported kind %q", target.ID, target.Kind)
 		}

@@ -2229,6 +2229,7 @@ const ProjectDesignSystemInputSnapshotSchema = z.preprocess(
   (value) => value == null ? {} : value,
   z.object({
     agent_id: z.string().catch("").optional(),
+    generation_mode: z.enum(["agent", "programmatic_first"]).optional(),
     platform: ProjectDesignSystemPlatformSchema.optional(),
     brief: z.string().catch("").optional(),
     references: z.preprocess(
@@ -2280,6 +2281,7 @@ const ProjectDesignSystemTaskSchema = z.object({
   agent_id: z.string(),
   status: z.string().catch("").default(""),
   operation: z.string().catch("").default(""),
+  execution_mode: z.string().catch("").optional(),
   error: z.string().nullable().catch(null).default(null),
   failure_reason: z.string().nullable().catch(null).default(null),
   wait_reason: z.string().nullable().catch(null).default(null),

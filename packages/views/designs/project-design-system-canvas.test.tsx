@@ -269,6 +269,30 @@ describe("ProjectDesignSystemCanvas", () => {
     expect(screen.getByText("整个设计体系", { selector: "[data-adjustment-scope]" })).toBeInTheDocument();
   });
 
+  it("offers AI deep optimization only after a programmatic quick draft", async () => {
+    const user = userEvent.setup();
+    const system = makeDraftSystem();
+    system.input_snapshot = { generation_mode: "programmatic_first" };
+    apiMocks.adjustProjectDesignSystem.mockResolvedValue({ ...system, status: "generating", active_task: null });
+    renderCanvas(system);
+
+    await user.click(screen.getByRole("button", { name: "AI 深度优化" }));
+
+    expect(screen.getByRole("dialog", { name: "调整设计体系" })).toBeInTheDocument();
+    expect((screen.getByLabelText("调整要求") as HTMLTextAreaElement).value).toContain("程序化快速草稿");
+    await user.click(screen.getByRole("button", { name: "提交调整" }));
+    await waitFor(() => expect(apiMocks.adjustProjectDesignSystem).toHaveBeenCalledWith("system-1", expect.objectContaining({
+      agent_id: "agent-1",
+      scope: { kind: "all" },
+      instruction: expect.stringContaining("深度优化"),
+    })));
+  });
+
+  it("does not show AI deep optimization for an ordinary Agent-created system", () => {
+    renderCanvas();
+    expect(screen.queryByRole("button", { name: "AI 深度优化" })).not.toBeInTheDocument();
+  });
+
   it("keeps rules, tokens, and the UI Kit in one primary content surface", () => {
     renderCanvas();
 
@@ -415,6 +439,24 @@ describe("ProjectDesignSystemCanvas", () => {
 
     expect(token).not.toBeNull();
     expect(within(token as HTMLElement).getByText("var(--sys-cycle-b)")).not.toHaveAttribute("title");
+  });
+
+  it("uses repository save copy and localized programmatic token groups", () => {
+    const system = makeDraftSystem();
+    system.project_resource_id = "repository-1";
+    system.input_snapshot = { generation_mode: "programmatic_first" };
+    system.content.token_groups = [
+      { id: "color", label: "Color", tokens: [{ name: "--color-primary", value: "#2463EB" }] },
+      { id: "font", label: "Typography", tokens: [{ name: "--font-family-body", value: "Inter" }] },
+      { id: "space", label: "Spacing", tokens: [{ name: "--space-2", value: "8px" }] },
+    ];
+    renderCanvas(system);
+
+    expect(screen.getByRole("button", { name: "保存为仓库设计体系" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存为项目设计体系" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择范围：色彩 Token" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择范围：字体 Token" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择范围：间距 Token" })).toBeInTheDocument();
   });
 
   it("hides the save action when the saved design system has no changes", () => {

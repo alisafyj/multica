@@ -1634,6 +1634,8 @@ const DesignTemplateBlueprintAnalyzeContextType = "design_template_blueprint_ana
 
 const ProjectDesignSystemTaskContextType = "project_design_system_task"
 
+const ProjectDesignSystemExecutionModeProgrammaticFirst = "programmatic_first"
+
 type ProjectDesignSystemOperation string
 
 const (
@@ -1772,11 +1774,12 @@ type DesignTemplateBlueprintAnalyzeContext struct {
 }
 
 type ProjectDesignSystemTaskContext struct {
-	Type        string                       `json:"type"`
-	Operation   ProjectDesignSystemOperation `json:"operation"`
-	RequesterID string                       `json:"requester_id"`
-	WorkspaceID string                       `json:"workspace_id"`
-	ProjectID   string                       `json:"project_id"`
+	Type          string                       `json:"type"`
+	Operation     ProjectDesignSystemOperation `json:"operation"`
+	ExecutionMode string                       `json:"execution_mode,omitempty"`
+	RequesterID   string                       `json:"requester_id"`
+	WorkspaceID   string                       `json:"workspace_id"`
+	ProjectID     string                       `json:"project_id"`
 	// Empty means the project-level system. When set, the agent is designing
 	// for one repository and should read the system as specific to that
 	// surface rather than the project's shared language (DC-052).

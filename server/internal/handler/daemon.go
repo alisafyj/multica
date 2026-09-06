@@ -3135,15 +3135,15 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.WorkspaceID = projectDesignSystemCtx.WorkspaceID
 			resp.ProjectID = projectDesignSystemCtx.ProjectID
 			resp.ProjectDesignSystemContext = json.RawMessage(task.Context)
-			// Package generation and adjustment use only the frozen repository
-			// analysis snapshot. The repository-analysis operation itself needs
-			// the live project resources to produce that snapshot.
+			// Agent generation and adjustment use only the frozen repository
+			// analysis snapshot. Repository analysis and the programmatic-first
+			// quick draft need the selected live repository on this runtime.
 			resp.Repos = nil
 			resp.ProjectResources = nil
 			if projectUUID, err := util.ParseUUID(projectDesignSystemCtx.ProjectID); err == nil {
 				if project, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: projectUUID, WorkspaceID: runtime.WorkspaceID}); err == nil {
 					resp.ProjectTitle = project.Title
-					if projectDesignSystemCtx.Operation == service.ProjectDesignSystemRepositoryAnalysis {
+					if projectDesignSystemNeedsLiveRepository(projectDesignSystemCtx) {
 						var projectRepos []RepoData
 						// Upstream retired the project-scoped helper in favour of the
 						// workspace-scoped query; the runtime's workspace is the one
@@ -3167,9 +3167,10 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 								if row.ResourceType == "github_repo" {
 									var payload struct {
 										URL string `json:"url"`
+										Ref string `json:"ref,omitempty"`
 									}
 									if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
-										projectRepos = append(projectRepos, RepoData{URL: payload.URL})
+										projectRepos = append(projectRepos, RepoData{URL: payload.URL, Ref: strings.TrimSpace(payload.Ref)})
 									}
 								}
 							}
@@ -3177,6 +3178,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 						}
 						if len(projectRepos) > 0 {
 							resp.Repos = projectRepos
+						}
+						if projectDesignSystemCtx.ExecutionMode == service.ProjectDesignSystemExecutionModeProgrammaticFirst {
+							scopeDesignDocumentRepositories(&resp, projectDesignSystemCtx.ProjectResourceID)
 						}
 					}
 				}
@@ -3517,6 +3521,11 @@ func (h *Handler) populateContextTaskProject(ctx context.Context, resp *AgentTas
 	if len(repos) > 0 {
 		resp.Repos = repos
 	}
+}
+
+func projectDesignSystemNeedsLiveRepository(taskContext service.ProjectDesignSystemTaskContext) bool {
+	return taskContext.Operation == service.ProjectDesignSystemRepositoryAnalysis ||
+		taskContext.ExecutionMode == service.ProjectDesignSystemExecutionModeProgrammaticFirst
 }
 
 // scopeDesignDocumentRepositories narrows a design document claim to the

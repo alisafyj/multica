@@ -7236,6 +7236,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	d.registerTaskRepos(task.WorkspaceID, task.ID, task.Repos)
 	defer d.clearTaskRepoRefs(task.WorkspaceID, task.ID)
 
+	// Repository-scoped first generation uses the selected runtime only as a
+	// machine/checkout carrier. It must branch before provider discovery, skill
+	// hydration, MCP setup and prompt construction so no model process or Agent
+	// context participates in the quick draft.
+	if isProgrammaticFirstProjectDesignSystemTask(task) {
+		return d.runProgrammaticFirstProjectDesignSystemTask(prepareCtx, task, taskLog)
+	}
+
 	entry, ok := d.agents()[provider]
 	// A custom runtime profile (MUL-3284) overrides the executable path: the
 	// runtime's protocol_family is the provider (so agent.New still selects

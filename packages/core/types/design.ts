@@ -440,6 +440,7 @@ export interface ProjectRepositoryDesignContext {
 
 export interface ProjectDesignSystemInputSnapshot {
   agent_id?: string;
+  generation_mode?: "agent" | "programmatic_first";
   platform?: ProjectDesignSystemPlatform | "";
   brief?: string;
   references?: ProjectDesignSystemReferenceSnapshot[];
@@ -454,6 +455,7 @@ export interface CreateProjectDesignSystemRequest {
   /** Name of a standalone system; ignored (and rejected) for a project system, which takes the project's title. */
   name?: string;
   agent_id: string;
+  generation_mode?: "agent" | "programmatic_first";
   platform: ProjectDesignSystemPlatform;
   brief: string;
   references: ProjectDesignSystemReferenceInput[];
@@ -595,6 +597,7 @@ export interface ProjectDesignSystemTask {
   agent_id: string;
   status: string;
   operation: string;
+  execution_mode?: "programmatic_first" | string;
   error: string | null;
   failure_reason?: string | null;
   wait_reason?: string | null;

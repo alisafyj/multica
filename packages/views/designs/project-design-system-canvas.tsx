@@ -11,6 +11,7 @@ import {
   RefreshCcw,
   Save,
   SlidersHorizontal,
+  Sparkles,
   Target,
   Trash2,
   X,
@@ -59,6 +60,8 @@ import {
   taskStatusLabel,
 } from "./project-design-system-task-activity";
 
+const PROGRAMMATIC_AI_OPTIMIZE_INSTRUCTION = "基于当前程序化快速草稿进行一次深度优化：深入核对仓库中的产品语义、共享组件、页面状态和视觉冲突；保留固定仓库与 Commit 来源，完善设计原则、Tokens、组件状态、页面模式和 UI Kit，不创建重复设计体系。";
+
 const PLATFORM_LABELS: Record<string, string> = {
   web: "Web",
   mobile: "移动端",
@@ -72,6 +75,15 @@ const TOKEN_GROUP_LABELS: Record<string, string> = {
   system: "语义 Token",
   cmp: "组件 Token",
   component: "组件 Token",
+  color: "色彩 Token",
+  font: "字体 Token",
+  typography: "字体 Token",
+  line: "行高 Token",
+  spacing: "间距 Token",
+  space: "间距 Token",
+  radius: "圆角 Token",
+  control: "控件尺寸 Token",
+  shadow: "阴影 Token",
 };
 
 // The standalone detail page reuses these for its generating/failed branches.
@@ -505,6 +517,7 @@ export function ProjectDesignSystemCanvas({
     : system.current_agent_id ?? "";
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const isBusy = Boolean(system.active_task || system.status === "generating");
+  const programmaticFirst = system.input_snapshot.generation_mode === "programmatic_first";
 
   const archivePreview = useQuery({
     queryKey: [
@@ -581,7 +594,7 @@ export function ProjectDesignSystemCanvas({
     onMutate: () => setActionError(null),
     onSuccess: (updated) => {
       updateSystemCache(queryClient, wsId, updated);
-      toast.success("已保存为项目设计体系");
+      toast.success(updated.project_resource_id ? "已保存为仓库设计体系" : "已保存为项目设计体系");
     },
     onError: (mutationError) => {
       const message = mutationError instanceof Error ? mutationError.message : "保存失败，请稍后重试。";
@@ -626,7 +639,11 @@ export function ProjectDesignSystemCanvas({
       && !isBusy
       && !saveSystem.isPending,
   );
-  const saveActionLabel = system.saved_at ? "保存调整" : "保存为项目设计体系";
+  const saveActionLabel = system.saved_at
+    ? "保存调整"
+    : system.project_resource_id
+      ? "保存为仓库设计体系"
+      : "保存为项目设计体系";
   const showSaveAction = !system.saved_at || system.has_unsaved_changes;
   const showSystemTitle = Boolean(project ? system.name.trim() && system.name.trim() !== project.title.trim() : system.name.trim());
   const isDiscardingAdjustment = Boolean(system.saved_at);
@@ -706,6 +723,22 @@ export function ProjectDesignSystemCanvas({
             <span className="text-caption text-muted-foreground">最近更新 {formatDate(system.updated_at)}</span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {programmaticFirst ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={isBusy}
+                onClick={() => {
+                  setSelectedScope({ kind: "all" });
+                  setInstruction(PROGRAMMATIC_AI_OPTIMIZE_INSTRUCTION);
+                  setAdjustmentOpen(true);
+                }}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                AI 深度优化
+              </Button>
+            ) : null}
             <Button
               type="button"
               size="sm"

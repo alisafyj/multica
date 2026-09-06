@@ -643,6 +643,20 @@ func (recordingSupervisor) Run(context.Context, opendesign.SupervisorRunRequest)
 	panic("recordingSupervisor.Run called: V2 task must not invoke the open design supervisor")
 }
 
+func TestBuildPreviewTargetURLsPreservesManifestOrder(t *testing.T) {
+	targets := []projectdesignsystem.PreviewTarget{
+		{ID: "ui-kit", Kind: "ui_kit", Path: "ui-kit/index.html"},
+		{ID: "page-patterns", Kind: "preview", Path: "preview/page-patterns.html"},
+	}
+	urls, err := buildPreviewTargetURLs(targets, "http://127.0.0.1:3000", "prefix")
+	if err != nil {
+		t.Fatalf("buildPreviewTargetURLs() error = %v", err)
+	}
+	if len(urls) != 2 || urls[0].Target.ID != "ui-kit" || urls[1].Target.ID != "page-patterns" {
+		t.Fatalf("target order = %+v, want manifest order", urls)
+	}
+}
+
 // TestLoopbackPreviewServerAppliesCSPAndInjectionToValidatedHTMLTargets asserts
 // that the loopback server sets the brief's CSP header and injects tokens.css
 // + the trusted bridge ONLY for paths in the package's PreviewTargets list.

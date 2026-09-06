@@ -55,6 +55,7 @@ import { FigmaMCPGuide } from "./figma-mcp-guide";
 import { DesignMvpViewSwitcher, type DesignMvpViewMode } from "./design-mvp-view-switcher";
 import { ProjectDesignSystemContent } from "./project-design-system-workspace";
 import { WorkspaceDesignSystemCreate } from "./workspace-design-system-create";
+import { repositoryName } from "./project-repository";
 import "./design-wash.css";
 
 type ToolMenuState = { x: number; y: number; file: DesignFile } | null;
@@ -392,9 +393,15 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   const selectedProjectResource = projectResources.find(
     (resource) => resource.id === selectedRepositoryId && resource.resource_type === "github_repo",
   );
+  const selectedRepositoryName = selectedRepository
+    ? repositoryName(selectedRepository.label, selectedRepository.repositoryUrl, selectedRepository.projectTitle)
+    : "";
   const { data: projectDesignSystem, isLoading: projectDesignSystemLoading } = useQuery({
     ...projectDesignSystemByProjectOptions(wsId, selectedProjectId, selectedRepositoryId),
     enabled: Boolean(selectedRepositoryId),
+    refetchInterval: (query) => (
+      query.state.data?.active_task || query.state.data?.status === "generating" ? 1000 : false
+    ),
   });
   // Counts on the home sub-tabs come from the same caches their panels read,
   // so a badge can never claim a number its panel does not show.
@@ -786,7 +793,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
             })}
             {(viewMode === "repository" ? openRepositories : []).map((repository) => {
               const active = repository.id === activeWorkspaceTabId;
-              const title = `${repository.projectTitle} · ${repository.label}`;
+              const title = `${repository.projectTitle} · ${repositoryName(repository.label, repository.repositoryUrl, repository.projectTitle)}`;
               return (
                 <div
                   key={repository.id}
@@ -841,7 +848,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                     <DropdownMenuItem key={repository.id} onClick={() => openRepositoryTab(repository.id)}>
                       <GitBranch className="h-4 w-4" />
                       <span className="min-w-0">
-                        <span className="block truncate">{repository.label}</span>
+                        <span className="block truncate">{repositoryName(repository.label, repository.repositoryUrl, repository.projectTitle)}</span>
                         <span className="block truncate text-caption text-muted-foreground">
                           {repository.projectTitle} · {repository.repositoryUrl}
                         </span>
@@ -1117,17 +1124,16 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                     initialScope="repository"
                     initialProjectId={selectedProject.id}
                     initialRepositoryId={selectedRepository.id}
-                    initialName={`${selectedRepository.label} 设计体系`}
+                    initialName={`${selectedRepositoryName} 设计体系`}
                     initialBrief={repositorySystemSnapshot?.brief?.trim()
                       || selectedProject.description?.trim()
-                      || `为 ${selectedProject.title} 的 ${selectedRepository.label} 仓库建立设计体系。`}
+                      || `为 ${selectedProject.title} 的 ${selectedRepositoryName} 仓库建立设计体系。`}
                     initialAgentId={repositorySystemSnapshot?.agent_id
                       || (availableAgents.length === 1 ? defaultAgentId : "")}
                     initialPlatform={repositorySystemSnapshot?.platform || "web"}
                     initialSourceLinks={repositorySystemSourceLinks.length
                       ? repositorySystemSourceLinks
                       : [selectedRepository.repositoryUrl]}
-                    repositoryAnalysisReady={Boolean(repositorySystemSnapshot?.repository_analysis)}
                   />
                 )
               ) : null}

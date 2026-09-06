@@ -1,6 +1,6 @@
 "use client";
 
-import { GitBranch, LoaderCircle, Package } from "lucide-react";
+import { GitBranch, LoaderCircle, Package, Palette, ScanSearch } from "lucide-react";
 import type {
   Agent,
   DesignFile,
@@ -97,6 +97,67 @@ function ProjectDesignSystemSkeleton() {
   );
 }
 
+
+function ProgrammaticGenerationPreview() {
+  return (
+    <section aria-label="快速草稿预览" className="min-h-[520px] overflow-hidden rounded-xl border bg-card shadow-sm">
+      <div className="flex items-center justify-between border-b px-5 py-3">
+        <div>
+          <p className="text-caption text-muted-foreground">实时预览</p>
+          <h3 className="mt-0.5 text-body font-medium">设计体系正在逐步生成</h3>
+        </div>
+        <span className="flex items-center gap-1.5 text-caption text-muted-foreground">
+          <LoaderCircle className="size-3.5 animate-spin" />
+          验证前草稿
+        </span>
+      </div>
+      <div className="space-y-7 bg-gradient-to-b from-muted/50 to-background p-6">
+        <div className="rounded-xl border bg-background p-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-2">
+              <Skeleton className="h-3 w-28" />
+              <Skeleton className="h-8 w-56" />
+              <Skeleton className="h-3 w-72 max-w-full" />
+            </div>
+            <div className="flex gap-2">
+              <Skeleton className="h-7 w-24 rounded-full" />
+              <Skeleton className="h-7 w-20 rounded-full" />
+            </div>
+          </div>
+        </div>
+        <div>
+          <div className="mb-3 flex items-center gap-2 text-caption font-medium text-muted-foreground">
+            <Palette className="size-3.5" />
+            色彩与视觉 Tokens
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {["bg-primary/80", "bg-foreground/80", "bg-muted", "bg-background"].map((tone) => (
+              <div key={tone} className="overflow-hidden rounded-lg border bg-background">
+                <div className={`h-20 ${tone}`} />
+                <div className="space-y-1.5 p-2.5"><Skeleton className="h-2.5 w-16" /><Skeleton className="h-2 w-12" /></div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="mb-3 flex items-center gap-2 text-caption font-medium text-muted-foreground">
+            <ScanSearch className="size-3.5" />
+            组件状态与页面模式
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {[0, 1, 2, 3].map((item) => (
+              <div key={item} className="flex items-center gap-3 rounded-lg border bg-background p-3">
+                <Skeleton className="size-9 rounded-md" />
+                <div className="min-w-0 flex-1 space-y-2"><Skeleton className="h-3 w-2/5" /><Skeleton className="h-2.5 w-4/5" /></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ProjectDesignSystemTaskStatus({
   project,
   agents,
@@ -107,6 +168,30 @@ function ProjectDesignSystemTaskStatus({
   system: ProjectDesignSystem;
 }) {
   const isRepositoryAnalysis = system.active_task?.operation === "repository_analysis";
+  const isProgrammaticFirst = system.active_task?.execution_mode === "programmatic_first";
+  if (isProgrammaticFirst) {
+    return (
+      <div className="h-full overflow-auto p-4 lg:p-6">
+        <div className="mx-auto w-full max-w-[1600px] py-2">
+          <div className="mb-5 flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-title-sm font-semibold">正在生成仓库设计体系</h2>
+              <p className="mt-1 text-body text-muted-foreground">{project.title} · 一次点击完成仓库读取、快速草稿和真实验证</p>
+            </div>
+          </div>
+          <div className="grid min-h-0 gap-6 lg:grid-cols-[minmax(300px,380px)_minmax(0,1fr)]">
+            <aside className="self-start rounded-xl border bg-background px-4">
+              <ProjectDesignSystemTaskActivity system={system} agents={agents} />
+            </aside>
+            <ProgrammaticGenerationPreview />
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="h-full overflow-auto p-4">
       <div className="mx-auto w-full max-w-5xl py-2">

@@ -9,6 +9,7 @@ const {
   analyzeProjectDesignSystemRepository,
   createProjectDesignSystem,
   getProjectDesignSystemForProject,
+  listTaskMessages,
   listAgents,
   listCatalogue,
   listDesignFiles,
@@ -25,6 +26,7 @@ const {
   analyzeProjectDesignSystemRepository: vi.fn(),
   createProjectDesignSystem: vi.fn(),
   getProjectDesignSystemForProject: vi.fn(),
+  listTaskMessages: vi.fn(),
   listAgents: vi.fn(),
   listCatalogue: vi.fn(),
   listDesignFiles: vi.fn(),
@@ -45,6 +47,7 @@ vi.mock("@multica/core/api", () => ({
     analyzeProjectDesignSystemRepository,
     createProjectDesignSystem,
     getProjectDesignSystemForProject,
+    listTaskMessages,
     listDesignFiles,
     listDesignSystemProfiles,
     listDesignRepositories,
@@ -151,6 +154,7 @@ describe("WorkspaceDesignSystemCreate", () => {
     // a desktop test's override cannot leak into later tests.
     isDesktopShellMock.mockReturnValue(false);
     listAgents.mockResolvedValue([AGENT]);
+    listTaskMessages.mockResolvedValue([]);
     listBuiltinDesignSystems.mockResolvedValue([{ slug: "apple", name: "Apple", category: "媒体与消费", description: "", swatches: [] }]);
     const project = {
       id: "project-1",
@@ -220,7 +224,7 @@ describe("WorkspaceDesignSystemCreate", () => {
 
     // The generate action lives in the top bar, next to 返回 — not a footer.
     expect(screen.getByRole("button", { name: "返回" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /继续生成/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "生成设计体系" })).toBeDisabled();
     expect(requirementHint()).toContain("名字");
 
     // Hero and the single extraction section.
@@ -272,13 +276,14 @@ describe("WorkspaceDesignSystemCreate", () => {
     await screen.findByRole("option", { name: /小设计/ });
     await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
 
-    await user.click(screen.getByRole("button", { name: /继续生成/ }));
+    await user.click(screen.getByRole("button", { name: "生成设计体系" }));
 
     await vi.waitFor(() =>
       expect(createProjectDesignSystem).toHaveBeenCalledWith(
         expect.objectContaining({
           project_id: "",
           name: "品牌视觉基线",
+          generation_mode: "agent",
           brief: "克制的工具品牌，蓝灰基调。\n\n备注：圆角，语气专业。",
           platform: "mobile",
           references: [
@@ -314,7 +319,6 @@ describe("WorkspaceDesignSystemCreate", () => {
       initialAgentId: "agent-1",
       initialPlatform: "web",
       initialSourceLinks: ["https://github.com/example/web"],
-      repositoryAnalysisReady: true,
     });
 
     expect(screen.queryByRole("button", { name: "返回" })).not.toBeInTheDocument();
@@ -323,16 +327,17 @@ describe("WorkspaceDesignSystemCreate", () => {
     expect(screen.getByLabelText("设计体系名称")).toHaveAttribute("readonly");
     expect(screen.getByLabelText("品牌描述")).toHaveValue("客户管理项目");
     expect(within(screen.getByLabelText("已添加的来源链接")).getByText("example/web")).toBeInTheDocument();
-    await screen.findByRole("option", { name: /小设计/ });
-    expect(screen.getByLabelText("智能体")).toHaveValue("agent-1");
+    expect(screen.getByText("程序化快速生成")).toBeInTheDocument();
+    expect(screen.queryByLabelText("智能体")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /继续生成/ }));
+    await user.click(screen.getByRole("button", { name: "生成设计体系" }));
 
     await vi.waitFor(() => expect(createProjectDesignSystem).toHaveBeenCalledWith(expect.objectContaining({
       project_id: "project-1",
       project_resource_id: "repo-1",
       name: undefined,
       agent_id: "agent-1",
+      generation_mode: "programmatic_first",
       platform: "web",
       brief: "客户管理项目",
       references: [{ kind: "link", value: "https://github.com/example/web", label: "来源链接" }],
@@ -358,11 +363,10 @@ describe("WorkspaceDesignSystemCreate", () => {
       initialAgentId: "agent-1",
       initialPlatform: "mobile",
       initialSourceLinks: ["https://github.com/example/web"],
-      repositoryAnalysisReady: true,
     });
 
-    await screen.findByRole("option", { name: /小设计/ });
-    await user.click(screen.getByRole("button", { name: /继续生成/ }));
+    expect(screen.getByText("程序化快速生成")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "生成设计体系" }));
 
     await vi.waitFor(() => expect(createProjectDesignSystem).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -370,6 +374,7 @@ describe("WorkspaceDesignSystemCreate", () => {
         project_resource_id: "repo-1",
         name: undefined,
         agent_id: "agent-1",
+        generation_mode: "programmatic_first",
         platform: "mobile",
         brief: "保留上次失败前的输入",
         references: [{ kind: "link", value: "https://github.com/example/web", label: "来源链接" }],
@@ -378,10 +383,10 @@ describe("WorkspaceDesignSystemCreate", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it("analyzes the existing repository resource before enabling generation", async () => {
+  it("starts repository quick generation in one click without a separate analysis task", async () => {
     const user = userEvent.setup();
-    analyzeProjectDesignSystemRepository.mockResolvedValue({
-      id: "system-analysis",
+    createProjectDesignSystem.mockResolvedValue({
+      id: "system-quick",
       project_id: "project-1",
       project_resource_id: "repo-1",
       status: "generating",
@@ -392,62 +397,62 @@ describe("WorkspaceDesignSystemCreate", () => {
       initialProjectId: "project-1",
       initialRepositoryId: "repo-1",
       initialName: "web 设计体系",
-      initialBrief: "先读取仓库再生成",
+      initialBrief: "一次点击读取并生成",
       initialAgentId: "agent-1",
       initialPlatform: "mobile",
       initialSourceLinks: ["https://github.com/example/web"],
-      repositoryAnalysisReady: false,
     });
 
-    await screen.findByRole("option", { name: /小设计/ });
-    await user.click(screen.getByRole("button", { name: "分析当前仓库" }));
+    await user.click(screen.getByRole("button", { name: "生成设计体系" }));
 
-    await vi.waitFor(() => expect(analyzeProjectDesignSystemRepository).toHaveBeenCalledWith({
+    await vi.waitFor(() => expect(createProjectDesignSystem).toHaveBeenCalledWith({
       project_id: "project-1",
       project_resource_id: "repo-1",
+      name: undefined,
       agent_id: "agent-1",
+      generation_mode: "programmatic_first",
       platform: "mobile",
-      brief: "先读取仓库再生成",
+      brief: "一次点击读取并生成",
       references: [{ kind: "link", value: "https://github.com/example/web", label: "来源链接" }],
     }));
-    expect(createProjectDesignSystem).not.toHaveBeenCalled();
+    expect(analyzeProjectDesignSystemRepository).not.toHaveBeenCalled();
   });
 
-  it("supports project and exact repository scopes by reusing ProjectDesignSystemCreate", async () => {
+  it("uses the same creation surface for project and repository scopes", async () => {
     const user = userEvent.setup();
+    createProjectDesignSystem.mockResolvedValue({ id: "system-created", project_id: "project-1" });
     renderCreate();
 
     await user.click(await screen.findByRole("button", { name: "项目级" }));
     await user.selectOptions(screen.getByLabelText("选择项目"), "project-1");
-    expect(await screen.findByRole("heading", { name: "创建设计体系" })).toBeInTheDocument();
-    expect(screen.getAllByText("CRM").length).toBeGreaterThan(0);
-    expect(screen.queryByLabelText("选择仓库")).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "几分钟，生成一套设计体系" })).toBeInTheDocument();
+    expect(screen.getByLabelText("设计体系名称")).toHaveValue("CRM 设计体系");
+    expect(screen.getByLabelText("设计体系名称")).toHaveAttribute("readonly");
+    expect(await screen.findByLabelText("品牌描述")).toHaveValue("客户管理项目");
     await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
-    await user.click(screen.getByRole("radio", { name: "Web" }));
     await user.click(screen.getByRole("button", { name: "生成设计体系" }));
     await vi.waitFor(() => expect(createProjectDesignSystem).toHaveBeenCalledWith(expect.objectContaining({
       project_id: "project-1",
-      project_resource_id: "",
+      project_resource_id: undefined,
+      generation_mode: "agent",
     })));
 
     await user.click(screen.getByRole("button", { name: "独立体系" }));
     await user.click(screen.getByRole("button", { name: "仓库绑定" }));
     await user.selectOptions(screen.getByLabelText("选择仓库"), "repo-1");
-    expect(await screen.findByRole("heading", { name: "创建设计体系" })).toBeInTheDocument();
-    expect(screen.getAllByText("CRM").length).toBeGreaterThan(0);
-    expect(screen.getByTitle("https://github.com/example/web")).toBeInTheDocument();
-    expect(screen.getByText("尚未建立仓库专属设计体系；不会回落到项目通用体系。")).toBeInTheDocument();
-    expect(screen.getByLabelText("所属项目")).toBeDisabled();
-    expect(screen.getByLabelText("所属仓库")).toHaveValue("Custom web repo");
-    expect(screen.getByLabelText("所属仓库")).toBeDisabled();
-    expect(screen.getByLabelText("设计目标")).toHaveValue("为 CRM 建立清晰、克制的设计体系，重点覆盖 Custom web repo 仓库。");
-    expect(screen.queryByLabelText("智能体")).toHaveValue("");
-    await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
-    await user.click(screen.getByRole("radio", { name: "Web" }));
+    expect(await screen.findByRole("heading", { name: "一次点击，生成仓库设计体系" })).toBeInTheDocument();
+    expect(screen.getByLabelText("设计体系名称")).toHaveValue("web 设计体系");
+    expect(screen.getByLabelText("设计体系名称")).toHaveAttribute("readonly");
+    expect(await screen.findByLabelText("品牌描述")).toHaveValue("客户管理项目");
+    expect(screen.queryByLabelText("智能体")).not.toBeInTheDocument();
+    expect(screen.getByText("程序化快速生成")).toBeInTheDocument();
+    expect(screen.getByTitle("打开 example/web")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "生成设计体系" }));
     await vi.waitFor(() => expect(createProjectDesignSystem).toHaveBeenLastCalledWith(expect.objectContaining({
       project_id: "project-1",
       project_resource_id: "repo-1",
+      agent_id: "agent-1",
+      generation_mode: "programmatic_first",
     })));
   });
 
@@ -463,10 +468,11 @@ describe("WorkspaceDesignSystemCreate", () => {
       current_agent_id: null,
       status: "generating",
       active_task: {
-        id: "task-1",
+        id: "11111111-1111-7111-8111-111111111111",
         agent_id: "agent-1",
         status: "running",
         operation: "generate",
+        execution_mode: "programmatic_first",
         error: null,
         failure_reason: null,
         wait_reason: null,
@@ -485,12 +491,21 @@ describe("WorkspaceDesignSystemCreate", () => {
       updated_at: "",
       saved_at: null,
     });
+    listTaskMessages.mockResolvedValue([
+      { task_id: "11111111-1111-7111-8111-111111111111", issue_id: "", seq: 1, type: "text", content: "已固定仓库 web 和 Commit abcdef123456。" },
+      { task_id: "11111111-1111-7111-8111-111111111111", issue_id: "", seq: 2, type: "text", content: "已完成有界源码清单，共读取 24 个高信号文件。" },
+    ]);
     renderCreate();
 
     await user.click(await screen.findByRole("button", { name: "仓库绑定" }));
     await user.selectOptions(screen.getByLabelText("选择仓库"), "repo-1");
 
-    expect(await screen.findByRole("heading", { name: "正在生成设计体系" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "正在生成仓库设计体系" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "快速草稿预览" })).toBeInTheDocument();
+    expect(await screen.findByRole("list", { name: "快速生成步骤" })).toBeInTheDocument();
+    expect(screen.getByText("已固定仓库 web 和 Commit abcdef123456。")).toBeInTheDocument();
+    expect(screen.getByText("已完成有界源码清单，共读取 24 个高信号文件。")).toBeInTheDocument();
+    expect(screen.getByText("无模型程序化引擎")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "生成设计体系" })).not.toBeInTheDocument();
     await vi.waitFor(() => expect(getProjectDesignSystemForProject).toHaveBeenCalledWith("project-1", { project_resource_id: "repo-1" }));
     expect(listProjectResources).toHaveBeenCalledWith("project-1");
@@ -599,7 +614,7 @@ describe("WorkspaceDesignSystemCreate", () => {
     await user.type(screen.getByLabelText("品牌描述"), "简介");
     await screen.findByRole("option", { name: /小设计/ });
     await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
-    await user.click(screen.getByRole("button", { name: /继续生成/ }));
+    await user.click(screen.getByRole("button", { name: "生成设计体系" }));
     await vi.waitFor(() =>
       expect(createProjectDesignSystem).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -630,7 +645,7 @@ describe("WorkspaceDesignSystemCreate", () => {
     await user.type(screen.getByLabelText("品牌描述"), "从本地站点提取。");
     await screen.findByRole("option", { name: /小设计/ });
     await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
-    await user.click(screen.getByRole("button", { name: /继续生成/ }));
+    await user.click(screen.getByRole("button", { name: "生成设计体系" }));
 
     await vi.waitFor(() =>
       expect(createProjectDesignSystem).toHaveBeenCalledWith(

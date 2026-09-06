@@ -48,6 +48,93 @@ func TestCreateProjectDesignSystemRequiresExplicitReadyAgent(t *testing.T) {
 	}
 }
 
+func TestCreateProjectDesignSystemProgrammaticFirstPinsExactRepositoryAndMode(t *testing.T) {
+	projectID := createProjectForDesignTest(t, "Programmatic repository project")
+	agentID, runtimeID := createProjectDesignSystemAgent(t, "online")
+	var repositoryID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, position, label)
+		VALUES ($1, $2, 'github_repo', '{"url":"https://github.com/example/programmatic","ref":"release"}'::jsonb, 0, 'programmatic')
+		RETURNING id
+	`, projectID, testWorkspaceID).Scan(&repositoryID); err != nil {
+		t.Fatalf("create programmatic repository resource: %v", err)
+	}
+
+	response := performProjectDesignSystemRequest(t, testHandler.CreateProjectDesignSystem, http.MethodPost, "/api/project-design-systems", map[string]any{
+		"project_id": projectID, "project_resource_id": repositoryID, "agent_id": agentID,
+		"generation_mode": "programmatic_first", "platform": "web",
+		"brief": "Create the first repository quick draft without launching an Agent.",
+	})
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("programmatic create status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var got ProjectDesignSystemResponse
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatalf("decode programmatic create response: %v", err)
+	}
+	if got.ProjectResourceID != repositoryID || got.ActiveTask == nil || got.ActiveTask.ExecutionMode != service.ProjectDesignSystemExecutionModeProgrammaticFirst {
+		t.Fatalf("programmatic create response = %+v", got)
+	}
+	var input projectDesignSystemInputSnapshot
+	if err := json.Unmarshal(got.InputSnapshot, &input); err != nil {
+		t.Fatalf("decode programmatic input snapshot: %v", err)
+	}
+	if input.GenerationMode != service.ProjectDesignSystemExecutionModeProgrammaticFirst {
+		t.Fatalf("generation mode = %q", input.GenerationMode)
+	}
+	var taskContext service.ProjectDesignSystemTaskContext
+	var rawContext []byte
+	if err := testPool.QueryRow(context.Background(), `SELECT context FROM agent_task_queue WHERE id = $1`, got.ActiveTask.ID).Scan(&rawContext); err != nil {
+		t.Fatalf("load programmatic task context: %v", err)
+	}
+	if err := json.Unmarshal(rawContext, &taskContext); err != nil {
+		t.Fatalf("decode programmatic task context: %v", err)
+	}
+	if taskContext.ExecutionMode != service.ProjectDesignSystemExecutionModeProgrammaticFirst || taskContext.ProjectResourceID != repositoryID || taskContext.PackageSchema != projectdesignsystem.PackageSchemaV2 {
+		t.Fatalf("programmatic task context = %+v", taskContext)
+	}
+
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET status = 'running' WHERE id = $1`, got.ActiveTask.ID); err != nil {
+		t.Fatalf("mark programmatic task running: %v", err)
+	}
+	testHandler.TaskService.ReconcileAgentStatus(ctx, parseUUID(agentID))
+	var status string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent WHERE id = $1`, agentID).Scan(&status); err != nil {
+		t.Fatalf("load agent status: %v", err)
+	}
+	if status != "idle" {
+		t.Fatalf("programmatic task made Agent look active: status = %q", status)
+	}
+
+	var ordinaryTaskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, context)
+		VALUES ($1, $2, 'running', '{}'::jsonb) RETURNING id
+	`, agentID, runtimeID).Scan(&ordinaryTaskID); err != nil {
+		t.Fatalf("create ordinary running task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, ordinaryTaskID)
+	})
+	testHandler.TaskService.ReconcileAgentStatus(ctx, parseUUID(agentID))
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent WHERE id = $1`, agentID).Scan(&status); err != nil {
+		t.Fatalf("reload agent status: %v", err)
+	}
+	if status != "working" {
+		t.Fatalf("ordinary task no longer marks Agent working: status = %q", status)
+	}
+}
+
+func TestCreateProjectDesignSystemRejectsProgrammaticFirstWithoutRepositoryScope(t *testing.T) {
+	response := performProjectDesignSystemRequest(t, testHandler.CreateProjectDesignSystem, http.MethodPost, "/api/project-design-systems", map[string]any{
+		"project_id":      "11111111-1111-1111-1111-111111111111",
+		"agent_id":        "22222222-2222-2222-2222-222222222222",
+		"generation_mode": "programmatic_first", "platform": "web", "brief": "Repository required.",
+	})
+	assertProjectDesignSystemErrorCode(t, response, http.StatusBadRequest, "generation_mode_scope_invalid")
+}
+
 func TestCreateProjectDesignSystemRequiresPlatformAndBrief(t *testing.T) {
 	projectID := createProjectForDesignTest(t, "Required input project")
 	agentID, _ := createProjectDesignSystemAgent(t, "online")
@@ -1281,4 +1368,84 @@ func assertNativeV2TaskWithoutOpenDesignRun(t *testing.T, taskID, systemID strin
 		t.Fatalf("open_design_run count = %d, want 0", runCount)
 	}
 	return taskContext
+}
+
+func TestMarshalProgrammaticFirstProjectDesignSystemContextIsolatedToFreshRepositoryGenerate(t *testing.T) {
+	systemID := parseUUID("11111111-1111-1111-1111-111111111111")
+	workspaceID := parseUUID("22222222-2222-2222-2222-222222222222")
+	projectID := parseUUID("33333333-3333-3333-3333-333333333333")
+	repositoryID := parseUUID("66666666-6666-6666-6666-666666666666")
+	agentID := parseUUID("44444444-4444-4444-4444-444444444444")
+	requesterID := parseUUID("55555555-5555-5555-5555-555555555555")
+	system := db.ProjectDesignSystem{
+		ID: systemID, WorkspaceID: workspaceID, ProjectID: projectID, ProjectResourceID: repositoryID,
+	}
+	project := db.Project{ID: projectID, Title: "Repository quick draft"}
+	input := projectDesignSystemInputSnapshot{
+		AgentID: agentID.String(), GenerationMode: service.ProjectDesignSystemExecutionModeProgrammaticFirst,
+		Platform: "web", Brief: "Generate the repository system in one click.", References: []projectDesignSystemReferenceSnapshot{},
+	}
+
+	generateJSON, err := marshalProjectDesignSystemTaskContext(
+		system, &project, requesterID, agentID, input,
+		service.ProjectDesignSystemGenerate, nil, "", nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("marshal programmatic generate context: %v", err)
+	}
+	var generated service.ProjectDesignSystemTaskContext
+	if err := json.Unmarshal(generateJSON, &generated); err != nil {
+		t.Fatalf("decode programmatic generate context: %v", err)
+	}
+	if generated.ExecutionMode != service.ProjectDesignSystemExecutionModeProgrammaticFirst {
+		t.Fatalf("execution mode = %q, want programmatic_first", generated.ExecutionMode)
+	}
+	if generated.PackageSchema != projectdesignsystem.PackageSchemaV2 || generated.InputSnapshotSHA256 == "" {
+		t.Fatalf("programmatic context lost V2 binding: %+v", generated)
+	}
+
+	basePackage := json.RawMessage(`{"design_md":"# base","tokens_css":":root{}","components_html":"<main>x</main>","integrity_sha256":"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}`)
+	adjustJSON, err := marshalProjectDesignSystemTaskContext(
+		system, &project, requesterID, agentID, input,
+		service.ProjectDesignSystemAdjust, basePackage, "Improve the hierarchy.", json.RawMessage(`{"kind":"all"}`), nil,
+	)
+	if err != nil {
+		t.Fatalf("marshal adjustment context: %v", err)
+	}
+	var adjusted service.ProjectDesignSystemTaskContext
+	if err := json.Unmarshal(adjustJSON, &adjusted); err != nil {
+		t.Fatalf("decode adjustment context: %v", err)
+	}
+	if adjusted.ExecutionMode != "" {
+		t.Fatalf("adjustment unexpectedly used programmatic execution: %+v", adjusted)
+	}
+
+	copiedGenerateJSON, err := marshalProjectDesignSystemTaskContext(
+		system, &project, requesterID, agentID, input,
+		service.ProjectDesignSystemGenerate, basePackage, "", nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("marshal copied generate context: %v", err)
+	}
+	var copied service.ProjectDesignSystemTaskContext
+	if err := json.Unmarshal(copiedGenerateJSON, &copied); err != nil {
+		t.Fatalf("decode copied generate context: %v", err)
+	}
+	if copied.ExecutionMode != "" {
+		t.Fatalf("base-backed generate unexpectedly used programmatic execution: %+v", copied)
+	}
+}
+
+func TestProjectDesignSystemTaskResponsePreservesProgrammaticExecutionMode(t *testing.T) {
+	contextJSON, err := json.Marshal(service.ProjectDesignSystemTaskContext{
+		Type: service.ProjectDesignSystemTaskContextType, Operation: service.ProjectDesignSystemGenerate,
+		ExecutionMode: service.ProjectDesignSystemExecutionModeProgrammaticFirst,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := projectDesignSystemTaskResponse(db.AgentTaskQueue{Context: contextJSON})
+	if response.Operation != string(service.ProjectDesignSystemGenerate) || response.ExecutionMode != service.ProjectDesignSystemExecutionModeProgrammaticFirst {
+		t.Fatalf("task response = %+v", response)
+	}
 }

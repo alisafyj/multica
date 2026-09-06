@@ -21,6 +21,7 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { DesignMvpAssociationDialog } from "./design-mvp-association-dialog";
 import { DesignMvpViewSwitcher, type DesignMvpViewMode } from "./design-mvp-view-switcher";
 import { ProjectDesignSystemContent } from "./project-design-system-workspace";
+import { repositoryName } from "./project-repository";
 
 export interface DesignMvpRepository {
   id: string;
@@ -32,7 +33,7 @@ export interface DesignMvpRepository {
 }
 
 const repositoryLabel = (repository: DesignMvpRepository) =>
-  `${repository.projectTitle} · ${repository.label} · ${repository.repositoryUrl}`;
+  `${repository.projectTitle} · ${repositoryName(repository.label, repository.repositoryUrl, repository.projectTitle)} · ${repository.repositoryUrl}`;
 
 function DesignMvpCard({
   item,
@@ -225,7 +226,7 @@ export function DesignMvpWorkspace() {
             <div className="border-b px-4 py-3">
               <h3 className="text-label font-medium text-foreground">设计体系</h3>
               <p className="mt-1 truncate text-caption text-muted-foreground" title={selectedRepository.repositoryUrl}>
-                {selectedRepository.projectTitle} · {selectedRepository.label} · {selectedRepository.repositoryUrl}
+                {selectedRepository.projectTitle} · {repositoryName(selectedRepository.label, selectedRepository.repositoryUrl, selectedRepository.projectTitle)} · {selectedRepository.repositoryUrl}
               </p>
             </div>
             <ProjectDesignSystemContent

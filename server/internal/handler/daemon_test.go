@@ -5262,3 +5262,21 @@ func TestBatchIssueGCCheckReadsNoCatalogForBuiltInStatuses(t *testing.T) {
 			counter.entryReads, counter.keyReads)
 	}
 }
+
+func TestProjectDesignSystemNeedsLiveRepositoryOnlyForAnalysisAndProgrammaticFirst(t *testing.T) {
+	if !projectDesignSystemNeedsLiveRepository(service.ProjectDesignSystemTaskContext{Operation: service.ProjectDesignSystemRepositoryAnalysis}) {
+		t.Fatal("repository analysis did not request live repository context")
+	}
+	if !projectDesignSystemNeedsLiveRepository(service.ProjectDesignSystemTaskContext{
+		Operation: service.ProjectDesignSystemGenerate, ExecutionMode: service.ProjectDesignSystemExecutionModeProgrammaticFirst,
+	}) {
+		t.Fatal("programmatic first generation did not request live repository context")
+	}
+	for _, operation := range []service.ProjectDesignSystemOperation{
+		service.ProjectDesignSystemGenerate, service.ProjectDesignSystemAdjust, service.ProjectDesignSystemRegenerate,
+	} {
+		if projectDesignSystemNeedsLiveRepository(service.ProjectDesignSystemTaskContext{Operation: operation}) {
+			t.Fatalf("ordinary %s unexpectedly requested live repository context", operation)
+		}
+	}
+}

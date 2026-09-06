@@ -53,11 +53,12 @@ type CreateProjectDesignSystemRequest struct {
 	ProjectResourceID string `json:"project_resource_id"`
 	// Name of a standalone system. Ignored for project systems, which take
 	// the project's title.
-	Name       string                              `json:"name"`
-	AgentID    string                              `json:"agent_id"`
-	Platform   string                              `json:"platform"`
-	Brief      string                              `json:"brief"`
-	References []ProjectDesignSystemReferenceInput `json:"references"`
+	Name           string                              `json:"name"`
+	AgentID        string                              `json:"agent_id"`
+	GenerationMode string                              `json:"generation_mode,omitempty"`
+	Platform       string                              `json:"platform"`
+	Brief          string                              `json:"brief"`
+	References     []ProjectDesignSystemReferenceInput `json:"references"`
 }
 
 type AnalyzeProjectDesignSystemRepositoryRequest struct {
@@ -112,6 +113,7 @@ type ProjectDesignSystemTaskResponse struct {
 	AgentID       string  `json:"agent_id"`
 	Status        string  `json:"status"`
 	Operation     string  `json:"operation"`
+	ExecutionMode string  `json:"execution_mode,omitempty"`
 	Error         *string `json:"error,omitempty"`
 	FailureReason *string `json:"failure_reason,omitempty"`
 	WaitReason    *string `json:"wait_reason,omitempty"`
@@ -146,6 +148,7 @@ type ProjectDesignSystemResponse struct {
 
 type projectDesignSystemInputSnapshot struct {
 	AgentID            string                                       `json:"agent_id"`
+	GenerationMode     string                                       `json:"generation_mode,omitempty"`
 	Platform           string                                       `json:"platform"`
 	Brief              string                                       `json:"brief"`
 	References         []projectDesignSystemReferenceSnapshot       `json:"references"`
@@ -191,6 +194,7 @@ func (h *Handler) CreateProjectDesignSystem(w http.ResponseWriter, r *http.Reque
 	}
 	req.ProjectID = strings.TrimSpace(req.ProjectID)
 	req.AgentID = strings.TrimSpace(req.AgentID)
+	req.GenerationMode = strings.TrimSpace(req.GenerationMode)
 	req.Platform = strings.TrimSpace(req.Platform)
 	req.Brief = strings.TrimSpace(req.Brief)
 	standalone := req.ProjectID == ""
@@ -220,6 +224,17 @@ func (h *Handler) CreateProjectDesignSystem(w http.ResponseWriter, r *http.Reque
 		writeProjectDesignSystemError(w, http.StatusBadRequest, "brief_required", "brief is required")
 		return
 	}
+	if req.GenerationMode == "" {
+		req.GenerationMode = "agent"
+	}
+	if req.GenerationMode != "agent" && req.GenerationMode != service.ProjectDesignSystemExecutionModeProgrammaticFirst {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "generation_mode_invalid", "generation_mode must be agent or programmatic_first")
+		return
+	}
+	if req.GenerationMode == service.ProjectDesignSystemExecutionModeProgrammaticFirst && (standalone || strings.TrimSpace(req.ProjectResourceID) == "") {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "generation_mode_scope_invalid", "programmatic_first requires a repository-scoped design system")
+		return
+	}
 
 	workspaceUUID, requesterUUID, ok := h.projectDesignSystemRequestScope(w, r)
 	if !ok {
@@ -243,10 +258,11 @@ func (h *Handler) CreateProjectDesignSystem(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	input := projectDesignSystemInputSnapshot{
-		AgentID:    req.AgentID,
-		Platform:   req.Platform,
-		Brief:      req.Brief,
-		References: references,
+		AgentID:        req.AgentID,
+		GenerationMode: req.GenerationMode,
+		Platform:       req.Platform,
+		Brief:          req.Brief,
+		References:     references,
 	}
 	inputJSON, err := json.Marshal(input)
 	if err != nil || len(inputJSON) > maxProjectDesignSystemSnapshotBytes {
@@ -788,6 +804,11 @@ func (h *Handler) createProjectDesignSystemTask(
 	if !verdict.Ready() {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: verdict.Detail}
 	}
+	if input.GenerationMode == service.ProjectDesignSystemExecutionModeProgrammaticFirst {
+		if err := h.requireProgrammaticProjectDesignSystemResource(ctx, queries, projectID, scope.ProjectResourceID, agent); err != nil {
+			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, err
+		}
+	}
 
 	contextJSON, err := marshalProjectDesignSystemTaskContext(system, &project, requesterID, agentID, input, service.ProjectDesignSystemGenerate, nil, "", nil, nil)
 	if err != nil {
@@ -1026,6 +1047,39 @@ func (h *Handler) createProjectDesignSystemRepositoryAnalysisTask(
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("commit_failed", "failed to commit repository analysis")
 	}
 	return system, task, nil
+}
+
+func (h *Handler) requireProgrammaticProjectDesignSystemResource(
+	ctx context.Context,
+	queries *db.Queries,
+	projectID pgtype.UUID,
+	projectResourceID pgtype.UUID,
+	agent db.Agent,
+) error {
+	if !projectResourceID.Valid {
+		return &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "project_resource_required", message: "programmatic generation requires a repository resource"}
+	}
+	runtime, err := service.RuntimeLookup{
+		Queries: queries,
+		Metrics: h.Metrics,
+		Source:  obsmetrics.RuntimeLookupSourceDesign,
+	}.Get(ctx, agent.RuntimeID)
+	if err != nil {
+		return projectDesignSystemInternalError("agent_runtime_lookup_failed", "failed to load agent runtime")
+	}
+	resources, err := queries.ListProjectResources(ctx, projectID)
+	if err != nil {
+		return projectDesignSystemInternalError("project_resources_lookup_failed", "failed to load project resources")
+	}
+	for _, resource := range projectDesignSystemResourcesForRuntime(resources, runtime.DaemonID.String) {
+		if resource.ID == projectResourceID {
+			return nil
+		}
+	}
+	return &projectDesignSystemRequestError{
+		status: http.StatusConflict, code: "project_resource_unavailable",
+		message: "the selected runtime cannot access this repository resource",
+	}
 }
 
 func projectDesignSystemResourcesForRuntime(resources []db.ProjectResource, daemonID string) []db.ProjectResource {
@@ -1415,6 +1469,11 @@ func marshalProjectDesignSystemTaskContext(
 	// JSON contract and intentionally does not get any V2 markers, and
 	// the legacy Open Design flow is identified by openDesignRun alone
 	// (no package_schema) so historical already-queued tasks still parse.
+	if operation == service.ProjectDesignSystemGenerate &&
+		input.GenerationMode == service.ProjectDesignSystemExecutionModeProgrammaticFirst &&
+		system.ProjectResourceID.Valid && len(basePackage) == 0 {
+		taskContext.ExecutionMode = service.ProjectDesignSystemExecutionModeProgrammaticFirst
+	}
 	if operation != service.ProjectDesignSystemRepositoryAnalysis && len(openDesignRun) == 0 {
 		inputDigest, err := projectdesignsystem.SnapshotDigest(canonicalInput)
 		if err != nil {
@@ -1860,6 +1919,7 @@ func projectDesignSystemTaskResponse(task db.AgentTaskQueue) ProjectDesignSystem
 		AgentID:       uuidToString(task.AgentID),
 		Status:        task.Status,
 		Operation:     operation,
+		ExecutionMode: taskContext.ExecutionMode,
 		Error:         textToPtr(task.Error),
 		FailureReason: textToPtr(task.FailureReason),
 		WaitReason:    textToPtr(task.WaitReason),
