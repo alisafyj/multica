@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +18,37 @@ import (
 	"github.com/multica-ai/multica/server/pkg/skillbundle"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
+
+func TestBuiltinPRDSkillSurvivesRuntimeAdmission(t *testing.T) {
+	root := "../service/builtin_skills/multica-prd"
+	body, err := os.ReadFile(filepath.Join(root, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill := SkillData{Name: "multica-prd", Content: string(body)}
+	err = filepath.WalkDir(filepath.Join(root, "references"), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		skill.Files = append(skill.Files, SkillFileData{Path: rel, Content: string(content)})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted := convertSkillsForEnv([]SkillData{skill})
+	if len(admitted) != 1 || admitted[0].Name != "multica-prd" {
+		t.Fatal("the built-in PRD workflow was removed before reaching the runtime")
+	}
+}
 
 func TestSkillBundleResolveTimeout(t *testing.T) {
 	cases := []struct {

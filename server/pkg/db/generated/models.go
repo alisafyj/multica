@@ -173,6 +173,7 @@ type AgentTaskQueue struct {
 	DurableWorkDir            pgtype.Text `json:"durable_work_dir"`
 	ChannelContextRevision    pgtype.Int8 `json:"channel_context_revision"`
 	ConciseMode               bool        `json:"concise_mode"`
+	ExecutionMetrics          []byte      `json:"execution_metrics"`
 }
 
 type AgentToLabel struct {
@@ -495,6 +496,29 @@ type ChatPinnedAgent struct {
 	AgentID     pgtype.UUID        `json:"agent_id"`
 	Position    float64            `json:"position"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type ChatPrdDraft struct {
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	InstallationID        pgtype.UUID        `json:"installation_id"`
+	ChannelChatID         string             `json:"channel_chat_id"`
+	ChannelThreadID       string             `json:"channel_thread_id"`
+	SourceMessageID       string             `json:"source_message_id"`
+	InitiatorOpenID       string             `json:"initiator_open_id"`
+	Version               int32              `json:"version"`
+	Content               []byte             `json:"content"`
+	VersionCreatedAt      pgtype.Timestamptz `json:"version_created_at"`
+	ConfirmedContent      []byte             `json:"confirmed_content"`
+	ConfirmationMessageID string             `json:"confirmation_message_id"`
+	Status                string             `json:"status"`
+	Phase                 string             `json:"phase"`
+	ClaimToken            pgtype.UUID        `json:"claim_token"`
+	DocumentID            string             `json:"document_id"`
+	DocumentUrl           string             `json:"document_url"`
+	Failure               string             `json:"failure"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ChatSession struct {

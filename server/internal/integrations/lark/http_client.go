@@ -1055,6 +1055,7 @@ func (c *httpAPIClient) BatchGetUsers(ctx context.Context, creds InstallationCre
 // flat `sender.id` / `mentions[].id` string (not a nested id object).
 type larkRESTMessageItem struct {
 	MessageID      string `json:"message_id"`
+	ChatID         string `json:"chat_id"`
 	RootID         string `json:"root_id"`
 	ParentID       string `json:"parent_id"`
 	ThreadID       string `json:"thread_id"`
@@ -1080,6 +1081,7 @@ type larkRESTMessageItem struct {
 func (it larkRESTMessageItem) normalize() LarkMessage {
 	m := LarkMessage{
 		MessageID:      it.MessageID,
+		ChatID:         it.ChatID,
 		MessageType:    it.MsgType,
 		Content:        it.Body.Content,
 		SenderID:       it.Sender.ID,

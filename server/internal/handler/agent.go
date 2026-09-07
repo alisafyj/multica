@@ -27,6 +27,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
+	"github.com/multica-ai/multica/server/pkg/taskexecution"
 )
 
 // Mirrors AGENT_DESCRIPTION_MAX_LENGTH in packages/core/agents/constants.ts
@@ -526,15 +527,18 @@ type AgentTaskResponse struct {
 	Attribution *TaskAttribution `json:"attribution,omitempty"`
 	// Usage is this run's own token consumption, one entry per (provider, model)
 	// it used — the same grain `task_usage` stores and the same grain the client
-	// prices at. Hydrated only on the issue-facing execution-log endpoint
-	// (ListTasksByIssue); the daemon claim path leaves it nil so the claim
-	// payload does not carry accounting the agent has no use for.
+	// prices at. Hydrated on issue and agent history endpoints; the daemon
+	// claim path leaves it nil so the claim payload does not carry accounting
+	// the agent has no use for.
 	//
 	// nil and [] are both "no usage recorded" and the UI renders an em dash for
 	// them — a run that predates usage reporting, or one that died before any
 	// model call, genuinely has no number, and showing 0 would assert it was
 	// free. omitempty keeps both off the wire.
 	Usage []TaskUsageData `json:"usage,omitempty"`
+	// ExecutionMetrics records historical daemon-observed configuration and timings.
+	// Older tasks or unsupported snapshots omit the field rather than inventing zeros.
+	ExecutionMetrics *taskexecution.Snapshot `json:"execution_metrics,omitempty"`
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request
@@ -807,6 +811,7 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		ParentTaskID:           uuidToPtr(t.ParentTaskID),
 		IsLeaderTask:           t.IsLeaderTask,
 		ConciseMode:            t.ConciseMode,
+		ExecutionMetrics:       executionMetricsFromJSON(t.ExecutionMetrics),
 		CreatedAt:              timestampToString(t.CreatedAt),
 		TriggerCommentID:       uuidToPtr(t.TriggerCommentID),
 		CoalescedCommentIDs:    uuidsToStrings(t.CoalescedCommentIds),
@@ -2466,6 +2471,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 		resp[i] = taskToResponse(t, workspaceID)
 	}
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
+	h.hydrateAgentTaskUsage(r.Context(), agent.ID, resp)
 
 	writeJSON(w, http.StatusOK, resp)
 }
