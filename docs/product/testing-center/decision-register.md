@@ -233,7 +233,7 @@
 ### TS-027 并行数放在轮次上
 
 - 状态：`confirmed`（用户“先跑完M3和M4”授权实现；具体位置由实现者定）
-- 决定：`test_run.parallelism`（迁移 913），创建轮次时填写，重试沿用；不放在 runtime 设置上。
+- 决定：`test_run.parallelism`（迁移 916，原 913），创建轮次时填写，重试沿用；不放在 runtime 设置上。
 - 依据：同一台测试机在不同轮次里可用的手机数不同（谁在用、谁在充电），按轮次更贴近“这次想跑几台”；回答 2026-09-06 设计 §9 开放问题 3。
 - 落法：派发只建前 N 条用例任务，用例任务的完成 / 失败钩子“完成一条放行一条”，中止把未派发用例标 `skipped`。
 
@@ -246,7 +246,7 @@
 ### TS-029 测试机开关是服务器侧的派发闸门，上报不受它控制
 
 - 状态：`confirmed`
-- 决定：`agent_runtime.test_host_enabled`（迁移 914）只在派发时校验（需要手机的轮次在非测试机上 `blocked`）；守护进程照常上报中枢与手机，runtime 页因此在打开开关之前就能看到中枢状态与配对二维码。
+- 决定：`agent_runtime.test_host_enabled`（迁移 917，原 914）只在派发时校验（需要手机的轮次在非测试机上 `blocked`）；守护进程照常上报中枢与手机，runtime 页因此在打开开关之前就能看到中枢状态与配对二维码。
 - 未做：09-06 设计 §5.1 的“守护进程托管 `device-mcp hub` 子进程”——中枢的安装与升级方式（开放问题 4）未定，守护进程目前只附着到已运行在 `127.0.0.1:18801` 的中枢。
 
 ## 2026-09-07 落地记录：M5 的取舍
@@ -276,7 +276,7 @@
 ### TS-033 autopilot 回归 = 新执行模式 `test_run`，不是“建 Issue 靠技能跑”
 
 - 状态：`confirmed`（实现者定义，用户可推翻；TS-030 延后的事项）
-- 决定：给 autopilot 加第三种执行模式 `test_run`（迁移 915：放宽 `execution_mode` 约束、`autopilot.test_plan_id` / `test_run_parallelism`、`autopilot_run.test_run_id`；916：`autopilot_run(test_run_id)` 并发索引）。触发时与 `run_only` 共用准入（领导者解析、就绪、私有小队门、归属），然后由 handler 侧的启动器按计划建轮次并走执行页同一套派发核心（能力解析、测试机闸门、并行上限、租约标签）；轮次的用例任务带 autopilot run 的归属（触发者 / 规则版本证据），而不是 `direct_human`。autopilot run 在轮次派发后 `running`（`task_id` = 首个用例任务，老读者仍认得），轮次收敛时 `completed`（结果附各结果计数），中止 / 阻塞时 `failed`（附轮次错误）；派发时被阻塞（无测试机、能力缺失）记为 `skipped` 并挂上被停的轮次。
+- 决定：给 autopilot 加第三种执行模式 `test_run`（迁移 918：放宽 `execution_mode` 约束、`autopilot.test_plan_id` / `test_run_parallelism`、`autopilot_run.test_run_id`；919：`autopilot_run(test_run_id)` 并发索引；原 915/916，因 main 的 913–915 让位而改号）。触发时与 `run_only` 共用准入（领导者解析、就绪、私有小队门、归属），然后由 handler 侧的启动器按计划建轮次并走执行页同一套派发核心（能力解析、测试机闸门、并行上限、租约标签）；轮次的用例任务带 autopilot run 的归属（触发者 / 规则版本证据），而不是 `direct_human`。autopilot run 在轮次派发后 `running`（`task_id` = 首个用例任务，老读者仍认得），轮次收敛时 `completed`（结果附各结果计数），中止 / 阻塞时 `failed`（附轮次错误）；派发时被阻塞（无测试机、能力缺失）记为 `skipped` 并挂上被停的轮次。
 - 校验：`test_run` 必须带工作区内存在的计划；autopilot 的项目为空时采用计划的项目，不一致则 400；离开该模式清空计划与并行数。模式 / 计划变化算实质变更（写规则版本）。
 - 不做：为 autopilot 建 Issue 再靠 `multica test run` 命令组完成——多一层 Issue 与提示词依赖，且看不到轮次。
 
