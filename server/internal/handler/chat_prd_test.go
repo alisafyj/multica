@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -260,6 +261,14 @@ func TestChatPRDConfirmationGate(t *testing.T) {
 		{"revoked", func(m *lark.LarkMessage) { m.Deleted = true }},
 		{"old timestamp", func(m *lark.LarkMessage) { m.CreateTime = "1" }},
 		{"not a real mention", func(m *lark.LarkMessage) { m.Mentions = nil }},
+		{"bare exact phrase", func(m *lark.LarkMessage) {
+			var body map[string]string
+			_ = json.Unmarshal([]byte(m.Content), &body)
+			body["text"] = strings.TrimPrefix(body["text"], "@_user_1 ")
+			raw, _ := json.Marshal(body)
+			m.Content, m.Mentions = string(raw), nil
+		}},
+		{"different bot mention", func(m *lark.LarkMessage) { m.Mentions[0].ID = "ou_other_bot" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newChatPRDFixture(t)

@@ -278,7 +278,7 @@ func validateChatPRDSource(source lark.LarkMessage, scope chatPRDScope) error {
 	return errors.New("the original PRD request must mention this app")
 }
 
-func validateChatPRDConfirmation(message lark.LarkMessage, draft ChatPRDDraft) error {
+func validateChatPRDConfirmation(message lark.LarkMessage, draft ChatPRDDraft, scope chatPRDScope) error {
 	if message.SenderType != "user" || message.SenderID != draft.InitiatorOpenID || message.Deleted ||
 		message.UpperMessageID != "" || message.RootID != draft.SourceMessageID {
 		return errors.New("only the original human requester can confirm in the original topic")
@@ -286,6 +286,16 @@ func validateChatPRDConfirmation(message lark.LarkMessage, draft ChatPRDDraft) e
 	created, err := strconv.ParseInt(message.CreateTime, 10, 64)
 	if err != nil || !time.UnixMilli(created).After(draft.VersionCreatedAt) {
 		return errors.New("confirmation must be newer than this draft version")
+	}
+	mentioned := false
+	for _, mention := range message.Mentions {
+		if mention.ID != "" && mention.ID == scope.botOpenID {
+			mentioned = true
+			break
+		}
+	}
+	if !mentioned {
+		return errors.New("confirmation must genuinely mention this app")
 	}
 	text, err := chatPRDPlainText(message)
 	if err != nil {
@@ -508,7 +518,7 @@ func (h *Handler) PublishChatPRD(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
-	if err := validateChatPRDConfirmation(confirmation, draft); err != nil {
+	if err := validateChatPRDConfirmation(confirmation, draft, scope); err != nil {
 		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
