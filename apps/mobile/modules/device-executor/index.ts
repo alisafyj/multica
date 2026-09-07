@@ -22,6 +22,11 @@ export interface NativePermissionState {
   service_connected: boolean;
   notifications_enabled: boolean;
   ignoring_battery_optimizations: boolean;
+  /** The ADB keyboard is enabled in system settings (the hub switches to it when it types non-ASCII over adb). */
+  ime_enabled: boolean;
+  ime_selected: boolean;
+  ime_id: string;
+  keep_awake: boolean;
 }
 
 export interface NativeStatus {
@@ -71,6 +76,8 @@ export declare class DeviceExecutorNativeModule extends NativeModule<DeviceExecu
   openAccessibilitySettings(): void;
   openBatteryOptimizationSettings(): void;
   openNotificationSettings(): void;
+  openInputMethodSettings(): void;
+  setKeepAwake(on: boolean): void;
   startForegroundService(title: string, text: string): void;
   stopForegroundService(): void;
   screenshot(fullRes: boolean): Promise<NativeScreenshotResult>;

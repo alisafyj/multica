@@ -28,11 +28,14 @@ import { parseHubInput, type DevicePolicy, type LeaseOffer } from "./protocol";
 const HUB_URL_KEY = "device_executor_hub_url";
 const PAIRING_CODE_KEY = "device_executor_pairing_code";
 const AUTO_CONNECT_KEY = "device_executor_auto_connect";
+const KEEP_AWAKE_KEY = "device_executor_keep_awake";
 
 export interface DeviceExecutorConfig {
   hubUrl: string;
   code: string;
   autoConnect: boolean;
+  /** Hold the screen on while connected; an unattended phone that dims hands every frame a lock screen. */
+  keepAwake: boolean;
 }
 
 export interface ActiveLease {
@@ -105,6 +108,9 @@ export const useDeviceExecutorStore = create<DeviceExecutorState>((set, get) => 
         if (state.phase === "idle") {
           set({ activeLease: null, pendingLease: null, policy: null });
           native?.stopForegroundService();
+          native?.setKeepAwake(false);
+        } else if (state.phase === "connected" && get().config.keepAwake) {
+          native?.setKeepAwake(true);
         }
       },
       onHelloAck: ({ policy }) => set({ policy, lastError: null }),
@@ -148,7 +154,7 @@ export const useDeviceExecutorStore = create<DeviceExecutorState>((set, get) => 
 
   return {
     support: supportOf(native),
-    config: { hubUrl: "", code: "", autoConnect: false },
+    config: { hubUrl: "", code: "", autoConnect: false, keepAwake: true },
     configLoaded: false,
     phase: "idle",
     attempt: 0,
@@ -163,13 +169,14 @@ export const useDeviceExecutorStore = create<DeviceExecutorState>((set, get) => 
     loadConfig: async () => {
       if (get().configLoaded) return;
       try {
-        const [hubUrl, code, auto] = await Promise.all([
+        const [hubUrl, code, auto, awake] = await Promise.all([
           SecureStore.getItemAsync(HUB_URL_KEY),
           SecureStore.getItemAsync(PAIRING_CODE_KEY),
           SecureStore.getItemAsync(AUTO_CONNECT_KEY),
+          SecureStore.getItemAsync(KEEP_AWAKE_KEY),
         ]);
         set({
-          config: { hubUrl: hubUrl ?? "", code: code ?? "", autoConnect: auto === "1" },
+          config: { hubUrl: hubUrl ?? "", code: code ?? "", autoConnect: auto === "1", keepAwake: awake !== "0" },
           configLoaded: true,
         });
       } catch {
@@ -180,10 +187,12 @@ export const useDeviceExecutorStore = create<DeviceExecutorState>((set, get) => 
     saveConfig: async (patch) => {
       const next = { ...get().config, ...patch };
       set({ config: next });
+      if (patch.keepAwake !== undefined && get().phase === "connected") native?.setKeepAwake(next.keepAwake);
       await Promise.all([
         SecureStore.setItemAsync(HUB_URL_KEY, next.hubUrl),
         SecureStore.setItemAsync(PAIRING_CODE_KEY, next.code),
         SecureStore.setItemAsync(AUTO_CONNECT_KEY, next.autoConnect ? "1" : "0"),
+        SecureStore.setItemAsync(KEEP_AWAKE_KEY, next.keepAwake ? "1" : "0"),
       ]);
     },
 

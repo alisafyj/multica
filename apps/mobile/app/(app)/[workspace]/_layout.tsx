@@ -381,6 +381,14 @@ export default function WorkspaceLayout() {
           }}
         />
         <Stack.Screen
+          name="more/device-executor/scan"
+          options={{
+            title: tDeviceExecutor("scan.header_title"),
+            presentation: "modal",
+            headerLeft: () => <ModalCloseButton />,
+          }}
+        />
+        <Stack.Screen
           name="more/runtimes/[id]"
           options={{
             title: tRuntimes("detail.header_default_title"),

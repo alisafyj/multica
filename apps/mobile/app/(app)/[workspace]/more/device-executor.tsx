@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, PermissionsAndroid, Platform, ScrollView, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import Constants from "expo-constants";
 import { useTranslation } from "react-i18next";
 import { Text } from "@/components/ui/text";
@@ -25,6 +25,7 @@ import { TextField } from "@/components/ui/text-field";
 import { NavRow, SectionGroup } from "@/components/ui/section-group";
 import { loadNativeDeviceExecutor } from "@/modules/device-executor";
 import { useDeviceExecutorStore } from "@/data/device-executor/store";
+import { useWorkspaceStore } from "@/data/workspace-store";
 import { useColorScheme } from "@/lib/use-color-scheme";
 import { THEME } from "@/lib/theme";
 
@@ -42,6 +43,7 @@ export default function DeviceExecutorPage() {
   const { t: tCommon } = useTranslation("common");
   const { colorScheme } = useColorScheme();
   const mutedFg = THEME[colorScheme].mutedForeground;
+  const slug = useWorkspaceStore((s) => s.currentWorkspaceSlug);
 
   const support = useDeviceExecutorStore((s) => s.support);
   const config = useDeviceExecutorStore((s) => s.config);
@@ -184,6 +186,14 @@ export default function DeviceExecutorPage() {
           />
         </View>
         <Separator />
+        <View className="flex-row items-center px-4 py-3.5 gap-3">
+          <Text className="flex-1 text-base text-foreground">{t("connection.keep_awake")}</Text>
+          <Switch
+            checked={config.keepAwake}
+            onCheckedChange={(value) => void saveConfig({ keepAwake: value })}
+          />
+        </View>
+        <Separator />
         <View className="px-4 py-3.5 gap-3">
           <View className="flex-row items-center gap-3">
             <Text className="flex-1 text-base text-foreground">{t("connection.status_label")}</Text>
@@ -202,9 +212,18 @@ export default function DeviceExecutorPage() {
           </View>
           {errorText ? <Text className="text-sm text-destructive">{errorText}</Text> : null}
           {canEdit ? (
-            <Button onPress={() => void onConnect()}>
-              <Text>{t("connection.connect")}</Text>
-            </Button>
+            <>
+              <Button onPress={() => void onConnect()}>
+                <Text>{t("connection.connect")}</Text>
+              </Button>
+              <Button
+                variant="outline"
+                onPress={() => slug && router.push(`/${slug}/more/device-executor/scan`)}
+              >
+                <Ionicons name="qr-code-outline" size={18} color={mutedFg} />
+                <Text>{t("connection.scan")}</Text>
+              </Button>
+            </>
           ) : (
             <Button variant="outline" onPress={disconnect}>
               <Text>{t("connection.disconnect")}</Text>
@@ -232,6 +251,16 @@ export default function DeviceExecutorPage() {
           missingLabel={t("permissions.missing")}
           chevronColor={mutedFg}
           onPress={() => void onNotificationsRow()}
+        />
+        <Separator />
+        <PermissionRow
+          granted={permissions?.ime_enabled === true}
+          title={t("permissions.ime.title")}
+          subtitle={t("permissions.ime.subtitle")}
+          grantedLabel={t("permissions.granted")}
+          missingLabel={t("permissions.missing")}
+          chevronColor={mutedFg}
+          onPress={() => native?.openInputMethodSettings()}
         />
         <Separator />
         <PermissionRow

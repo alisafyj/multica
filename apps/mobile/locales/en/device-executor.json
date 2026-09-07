@@ -32,7 +32,9 @@
       "missing_code": "Enter the pairing code first.",
       "unsupported": "This phone cannot run the device executor.",
       "unknown": "Connection failed ({{code}})."
-    }
+    },
+    "keep_awake": "Keep the screen on while connected",
+    "scan": "Scan pairing code"
   },
   "permissions": {
     "title": "Permissions",
@@ -49,6 +51,10 @@
     "battery": {
       "title": "Battery optimisation",
       "subtitle": "Keep the executor alive while other apps are in front"
+    },
+    "ime": {
+      "title": "ADB keyboard",
+      "subtitle": "Lets the test host type Chinese and emoji over adb; enable it under system keyboards"
     }
   },
   "session": {
@@ -107,5 +113,12 @@
   "notification": {
     "title": "Multica device executor connected",
     "text": "A test host can drive this phone. Open Multica to stop."
+  },
+  "scan": {
+    "header_title": "Scan pairing code",
+    "hint": "Point the camera at the QR code from `multica-device-mcp pair` or the runtime page.",
+    "invalid": "That code is not a Multica pairing code.",
+    "permission_message": "Camera access is needed to scan the pairing code. You can also paste the pairing URL instead.",
+    "permission_action": "Allow camera"
   }
 }

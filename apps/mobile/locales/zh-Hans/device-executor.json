@@ -32,7 +32,9 @@
       "missing_code": "请先填写配对码。",
       "unsupported": "这台手机无法运行设备执行器。",
       "unknown": "连接失败（{{code}}）。"
-    }
+    },
+    "keep_awake": "连接期间保持亮屏",
+    "scan": "扫码配对"
   },
   "permissions": {
     "title": "权限",
@@ -49,6 +51,10 @@
     "battery": {
       "title": "电池优化",
       "subtitle": "其他应用在前台时保持执行器存活"
+    },
+    "ime": {
+      "title": "ADB 键盘",
+      "subtitle": "让测试主机经 adb 输入中文与 emoji；请在系统键盘设置中启用"
     }
   },
   "session": {
@@ -107,5 +113,12 @@
   "notification": {
     "title": "Multica 设备执行器已连接",
     "text": "测试主机可以操控这台手机。打开 Multica 可停止。"
+  },
+  "scan": {
+    "header_title": "扫码配对",
+    "hint": "将摄像头对准 `multica-device-mcp pair` 或运行时页面显示的二维码。",
+    "invalid": "这不是 Multica 的配对码。",
+    "permission_message": "扫码需要相机权限。你也可以改为粘贴配对 URL。",
+    "permission_action": "允许使用相机"
   }
 }

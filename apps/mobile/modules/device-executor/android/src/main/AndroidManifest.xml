@@ -43,6 +43,22 @@
                 android:resource="@xml/device_executor_accessibility" />
         </service>
 
+        <!-- ADBKeyboard-compatible IME for the adb track's non-ASCII typing.
+             Exported so the system binds it; the BIND_INPUT_METHOD permission
+             keeps any other app from doing so. -->
+        <service
+            android:name="ai.multica.deviceexecutor.DeviceExecutorIme"
+            android:exported="true"
+            android:label="@string/device_executor_ime_label"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/device_executor_ime" />
+        </service>
+
         <!-- Keeps the process (and the JS WebSocket to the hub) alive while
              the agent drives other apps and ours sits in the background. -->
         <service
