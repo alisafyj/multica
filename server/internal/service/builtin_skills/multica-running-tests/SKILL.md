@@ -167,6 +167,17 @@ is not available: record `blocked` with the code and stop.
 Never type into a password field, complete a payment, install from outside
 the store, or change system settings the case does not ask for.
 
+`ios_device` mounts the same connector, leased to an iPhone on the test host
+(driven by PulsePhone on that Mac). Same tools, with these differences:
+`launch_app` needs the bundle id in `package` (`stop_app` and `open_url` are
+unavailable); `press_key` has `home`, `recents` (app switcher), volume,
+`power` (lock) and `enter` but no `back` (use the app's own Back or Close
+control from `a11y_tree`, or `home` to leave an unknown state); `a11y_tree`
+is on-device element recognition of the visible viewport (`cls` `text` or
+`controlCandidate`, possibly `degraded`), not an accessibility tree; touch
+needs iOS 17+. Take a screenshot before the first tap: the frame fixes the
+coordinate space.
+
 ## 9. Test plans (informational)
 
 Test plans group cases into a named release scope. You can read them but you

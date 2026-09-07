@@ -146,7 +146,7 @@ func BuildTaskOverlay(ctx context.Context, originatorUserID pgtype.UUID, agent d
 	}
 
 	if len(servers) == 0 {
-		// All resolved capabilities are device kinds (Phase 5 stubs). Return
+		// Only kinds without a backend (computer_use) were resolved. Return
 		// empty rather than wiring an unusable overlay.
 		return runtimeapps.MCPOverlayResult{}, nil
 	}
@@ -189,16 +189,34 @@ func capabilityMCPServers(kind string, target map[string]json.RawMessage, match 
 		}
 
 	case "android_device":
-		return map[string]capabilityMCPServer{MCPDeviceServerName: deviceConnectorServer(target, match, label, tags)}
+		return map[string]capabilityMCPServer{MCPDeviceServerName: deviceConnectorServer(target, withPlatform(match, "android"), label, tags)}
 
-	case "ios_device", "computer_use":
-		// No hub backend yet: a run bound to one of these kinds is blocked at
-		// dispatch by the resolver rather than launched without its device.
+	case "ios_device":
+		// An iPhone on the same hub (driven by PulsePhone on the test host):
+		// the same connector, pinned to the ios platform so an Android phone
+		// is never leased for an iOS case.
+		return map[string]capabilityMCPServer{MCPDeviceServerName: deviceConnectorServer(target, withPlatform(match, "ios"), label, tags)}
+
+	case "computer_use":
+		// No hub backend yet: a run bound to this kind is blocked at dispatch
+		// by the resolver rather than launched without its device.
 		return nil
 
 	default:
 		return nil
 	}
+}
+
+// withPlatform pins the lease match to the capability kind's platform. The
+// kind is authoritative: a case constraint naming the other platform would
+// bind an android_device round to an iPhone, so it is overwritten, not merged.
+func withPlatform(match map[string]string, platform string) map[string]string {
+	out := make(map[string]string, len(match)+1)
+	for k, v := range match {
+		out[k] = v
+	}
+	out["platform"] = platform
+	return out
 }
 
 // deviceConnectorServer builds the `multica-device` stdio entry.

@@ -775,6 +775,61 @@ func (q *Queries) ListTestCaseReposForCases(ctx context.Context, caseIds []pgtyp
 	return items, nil
 }
 
+const listTestCaseReposForProject = `-- name: ListTestCaseReposForProject :many
+SELECT tcr.test_case_id, tcr.workspace_id, tcr.project_resource_id, tcr.alias, tcr.role, tcr.path_globs, tcr.created_at, tc.status AS case_status
+FROM test_case_repo tcr
+JOIN test_case tc ON tc.id = tcr.test_case_id
+WHERE tc.project_id = $1 AND tc.workspace_id = $2 AND tc.status <> 'obsolete'
+ORDER BY tcr.test_case_id, tcr.alias ASC, tcr.role ASC
+`
+
+type ListTestCaseReposForProjectParams struct {
+	ProjectID   pgtype.UUID `json:"project_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type ListTestCaseReposForProjectRow struct {
+	TestCaseID        pgtype.UUID        `json:"test_case_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
+	Alias             string             `json:"alias"`
+	Role              string             `json:"role"`
+	PathGlobs         []byte             `json:"path_globs"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	CaseStatus        string             `json:"case_status"`
+}
+
+// Every repo binding of a project's live cases, for change-based regression
+// selection: which cases claim the files a commit touched.
+func (q *Queries) ListTestCaseReposForProject(ctx context.Context, arg ListTestCaseReposForProjectParams) ([]ListTestCaseReposForProjectRow, error) {
+	rows, err := q.db.Query(ctx, listTestCaseReposForProject, arg.ProjectID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTestCaseReposForProjectRow{}
+	for rows.Next() {
+		var i ListTestCaseReposForProjectRow
+		if err := rows.Scan(
+			&i.TestCaseID,
+			&i.WorkspaceID,
+			&i.ProjectResourceID,
+			&i.Alias,
+			&i.Role,
+			&i.PathGlobs,
+			&i.CreatedAt,
+			&i.CaseStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTestCaseRevisions = `-- name: ListTestCaseRevisions :many
 SELECT id, workspace_id, test_case_id, version, snapshot, change_kind, changed_by, changed_by_type, note, created_at FROM test_case_revision
 WHERE test_case_id = $1 AND workspace_id = $2

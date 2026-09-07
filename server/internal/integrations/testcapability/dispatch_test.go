@@ -119,17 +119,49 @@ func TestBuildTaskOverlay_AndroidDevice_MountsTheConnector(t *testing.T) {
 	}
 }
 
-// Phase 5 gate: ios_device must NOT receive an MCP overlay in v1.
-func TestBuildTaskOverlay_IOSDevice_ReturnsEmpty(t *testing.T) {
-	ctx := testcapability.WithResolvedCapabilities(context.Background(), []testcapability.TestRunCapabilityEntry{
-		{Kind: "ios_device", Key: "ios:simulator"},
-	})
+// The device kinds share the connector; what tells them apart is the lease
+// match, which the kind pins to its platform even when the case's own
+// constraint says otherwise. computer_use still has no backend.
+func TestBuildTaskOverlay_DeviceKindsPinTheLeasePlatform(t *testing.T) {
+	acquireMatch := func(t *testing.T, kind string, match map[string]string) string {
+		t.Helper()
+		ctx := testcapability.WithResolvedCapabilities(context.Background(), []testcapability.TestRunCapabilityEntry{{
+			Kind: kind, Key: kind + ":x", Target: map[string]json.RawMessage{}, Match: match,
+		}})
+		result, err := testcapability.BuildTaskOverlay(ctx, pgtype.UUID{}, db.Agent{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload struct {
+			Servers map[string]struct {
+				Args []string `json:"args"`
+			} `json:"mcpServers"`
+		}
+		if err := json.Unmarshal(result.MCPOverlay, &payload); err != nil {
+			t.Fatalf("overlay for %s is not JSON: %v (%q)", kind, err, result.MCPOverlay)
+		}
+		args := payload.Servers["multica-device"].Args
+		for i, a := range args {
+			if a == "--acquire" && i+1 < len(args) {
+				return args[i+1]
+			}
+		}
+		t.Fatalf("%s overlay has no --acquire argument: %q", kind, result.MCPOverlay)
+		return ""
+	}
+	if got := acquireMatch(t, "ios_device", nil); got != `{"platform":"ios"}` {
+		t.Errorf("ios_device match = %s, want the ios platform", got)
+	}
+	if got := acquireMatch(t, "android_device", map[string]string{"os_version": ">=13", "platform": "ios"}); got != `{"os_version":">=13","platform":"android"}` {
+		t.Errorf("android_device match = %s, want the case constraint with the platform overridden", got)
+	}
+	ctx := testcapability.WithResolvedCapabilities(context.Background(), []testcapability.TestRunCapabilityEntry{{Kind: "computer_use", Key: "desktop:x"}})
 	result, err := testcapability.BuildTaskOverlay(ctx, pgtype.UUID{}, db.Agent{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(result.MCPOverlay) != 0 {
-		t.Errorf("ios_device must not get a v1 MCP overlay, got %q", result.MCPOverlay)
+		t.Errorf("computer_use has no backend and must not get an overlay, got %q", result.MCPOverlay)
 	}
 }
 
@@ -220,7 +252,7 @@ func TestBuildTaskOverlay_AndroidDeviceMountsTheHubConnector(t *testing.T) {
 	if srv.Command != "/usr/local/bin/node" {
 		t.Errorf("command = %q, want the daemon-reported node", srv.Command)
 	}
-	want := []string{"/opt/device-mcp/dist/cli.js", "connect", "--hub", "http://127.0.0.1:18801", "--acquire", `{"os_version":">=13"}`, "--label", "TC-42"}
+	want := []string{"/opt/device-mcp/dist/cli.js", "connect", "--hub", "http://127.0.0.1:18801", "--acquire", `{"os_version":">=13","platform":"android"}`, "--label", "TC-42"}
 	if strings.Join(srv.Args, " ") != strings.Join(want, " ") {
 		t.Errorf("args = %q, want %q", srv.Args, want)
 	}
@@ -237,7 +269,7 @@ func TestBuildTaskOverlay_AndroidDeviceFallsBackToNpx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(result.MCPOverlay), `"command":"npx"`) || !strings.Contains(string(result.MCPOverlay), `"--acquire","{}"`) {
+	if !strings.Contains(string(result.MCPOverlay), `"command":"npx"`) || !strings.Contains(string(result.MCPOverlay), `"--acquire","{\"platform\":\"android\"}"`) {
 		t.Errorf("fallback overlay = %s", result.MCPOverlay)
 	}
 }

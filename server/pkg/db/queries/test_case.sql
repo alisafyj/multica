@@ -217,3 +217,12 @@ FROM test_run_case rc
 JOIN test_case_issue tci ON tci.test_case_id = rc.test_case_id AND tci.workspace_id = rc.workspace_id
 WHERE rc.run_id = $1 AND tci.issue_id = $2 AND rc.workspace_id = $3
 GROUP BY rc.result;
+
+-- name: ListTestCaseReposForProject :many
+-- Every repo binding of a project's live cases, for change-based regression
+-- selection: which cases claim the files a commit touched.
+SELECT tcr.*, tc.status AS case_status
+FROM test_case_repo tcr
+JOIN test_case tc ON tc.id = tcr.test_case_id
+WHERE tc.project_id = $1 AND tc.workspace_id = $2 AND tc.status <> 'obsolete'
+ORDER BY tcr.test_case_id, tcr.alias ASC, tcr.role ASC;

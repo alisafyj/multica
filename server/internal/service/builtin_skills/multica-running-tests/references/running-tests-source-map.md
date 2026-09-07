@@ -84,6 +84,7 @@ rg -n 'buildTestRunPrompt' internal/daemon/prompt.go
 | The context carries `run_case_id`, `case_key`, `case_snapshot` | `server/internal/service/task.go` (`TestRunContext`) |
 | The MCP overlay is computed at dispatch and stamped on every task | `server/internal/handler/test_run_dispatch.go` (`BuildRuntimeMCPOverlayForMerge`) |
 | `android_device` mounts the `multica-device` connector reported by the daemon (`connector_command`, `connector_cli`, `hub_url` in the capability target) | `server/internal/integrations/testcapability/dispatch.go` (`deviceConnectorServer`), `server/internal/daemon/device_hub.go` |
+| `ios_device` mounts the same connector with the lease match pinned to `platform: ios`; the daemon reports the hub's iPhones (PulsePhone track) as `ios:<hub id>` capabilities | `server/internal/integrations/testcapability/dispatch.go` (`withPlatform`), `server/internal/daemon/device_hub.go` (`probeDeviceHubCapabilities`) |
 | A per-case task marks its case running on start, settles it from the CLI write, the `TEST_RUN_CASE_RESULT_JSON:` marker, or `blocked`; the round completes when no case is pending or running | `server/internal/handler/test_run_daemon.go` (`markTestRunRunning`, `completeTestRunTask`, `convergeTestRun`, `updateTestRunFromAgentFailure`) |
 | Result writes and evidence uploads accept the case's own task token | `server/internal/handler/test_run.go` (`requireTestRunTaskToken`), `server/internal/handler/file.go` (`UploadTestEvidence`) |
 | Per-case prompt | `server/internal/daemon/prompt.go` (`buildTestRunCasePrompt`) |

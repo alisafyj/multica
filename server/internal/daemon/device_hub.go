@@ -179,6 +179,7 @@ func (d *Daemon) deviceHubFrameLoop(ctx context.Context) {
 
 type deviceHubDevice struct {
 	ID           string                       `json:"id"`
+	Platform     string                       `json:"platform,omitempty"`
 	Serial       string                       `json:"serial,omitempty"`
 	Model        string                       `json:"model"`
 	Manufacturer string                       `json:"manufacturer"`
@@ -230,7 +231,18 @@ func probeDeviceHubCapabilities(ctx context.Context, hubURL string) []runtimeCap
 		if d.Status == "offline" || len(d.Tracks) == 0 {
 			continue
 		}
+		// The hub reports both platforms; an iPhone driven through PulsePhone
+		// on the test host is an ios_device capability of the same runtime.
+		platform := "android"
+		kind := "android_device"
+		keyPrefix := "android:"
+		if d.Platform == "ios" {
+			platform = "ios"
+			kind = "ios_device"
+			keyPrefix = "ios:"
+		}
 		target := map[string]string{
+			"platform":     platform,
 			"model":        d.Model,
 			"manufacturer": d.Manufacturer,
 			"os_version":   d.OSVersion,
@@ -255,8 +267,8 @@ func probeDeviceHubCapabilities(ctx context.Context, hubURL string) []runtimeCap
 			target["connector_cli"] = health.Connector.CLI
 		}
 		out = append(out, runtimeCapabilitySummary{
-			Kind:          "android_device",
-			CapabilityKey: "android:" + d.ID,
+			Kind:          kind,
+			CapabilityKey: keyPrefix + strings.TrimPrefix(d.ID, keyPrefix),
 			Target:        target,
 			Status:        "available",
 		})
