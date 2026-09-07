@@ -75,6 +75,16 @@ make check            # Full verification pipeline
    - 后端日志：migration / ERR / FTL / panic / daemon heartbeat
    - caddy 与 multica-iworker.service 状态；20s 后稳定性复检、磁盘、回滚产物清单
 
+### 发布版本与验收硬规则
+
+- **社区基座独立于 fork 版本**：禁止从 `0.x.y-sso.n` 去掉后缀来推断基座。对目标提交执行 `git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude 'v*-sso*' --exclude 'desktop-*' --abbrev=0 <目标sha>`，取其可达社区 tag；无法确定时先补齐 tag/历史，不猜版本。
+- **构建必须写入版本元数据**：显式传入 `VERSION`、`COMMIT`、`DATE`、`UPSTREAM_VERSION`，并确认最终 compose 覆盖配置没有清空构建参数。`UPSTREAM_VERSION` 为空会导致 `/api/config` 不返回 `upstream_version`，帮助菜单的“社区基座版本”随之隐藏；不是前端菜单被删除。
+- **部署后逐项核验**：`/health.commit` 必须匹配目标提交；`/api/config.server_version` 与 `upstream_version` 必须分别匹配发布版本、经 Git 验证的基座。健康接口通过不等于 UI 通过；菜单需实际浏览器验收，无法验收时明确说明。
+- **后端、daemon、桌面版本分别记录**：后端升级不代表 worker/CLI 升级。daemon 更新后检查 `multica version` 的版本与 commit，以及实际 daemon 状态；真实任务必须有最终落库的 `execution_metrics`，不能只凭版本字符串或任务 completed 宣称遥测通过。
+- **归档校验后才能安装**：仅对下载的目标 OS/架构归档匹配官方 `checksums.txt` 对应行，同时核对发布资产字节数与 SHA-256；传到远端后再次校验。超时残留不得解包；用独立临时文件或断点续传，成功退出也不能替代大小/hash 校验。保留旧可执行文件，确认无运行中任务再替换。
+- **协议变更同步切换**：后端与 CLI 契约不兼容时一起升级，保留配套回滚；例如 PRD `draft --generation-task` 不能搭配旧版 `--content-file` CLI。配置的小码智能体 ID 必须明确、同工作区且原发起人有调用权限，不改 Mika 全局 runtime、不代绑身份、不伪造确认。
+- **交付与证据分开**：本地修正不等于远端已交付，提交/PR/合并/发布/部署分别报告。暂存只列业务文件，排除 `.agents/skills/**`、`.superpowers/**` 等本地工具产物。Token 总量注明是否包含缓存读写，费用无账单或可核验单价时不推断；测试通过不替代真实群聊委派、人工确认与文档回链验收。
+
 ### PR 提交流程（fork）
 
 - PR 建到本仓库（`coder-zkl1988/multica`）自己的 `main`，不要建到 `multica-ai/multica`。
