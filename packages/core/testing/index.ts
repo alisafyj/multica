@@ -39,6 +39,7 @@ export {
   useUpdateTestCase,
   useApproveTestCase,
   useDeleteTestCase,
+  useRecommendTestCases,
   useCreateTestGenerationJob,
   useGenerateTestGenerationPlan,
   useUpdateTestGenerationPlan,

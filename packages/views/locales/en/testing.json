@@ -482,6 +482,23 @@
     "newPlan": "New plan…",
     "confirm": "Add"
   },
+  "recommend": {
+    "action": "Recommend by change",
+    "title": "Cases for a change",
+    "description": "Paste the changed paths, one per line. Cases whose repo bindings claim them are listed, most-claimed first.",
+    "paths": "Changed paths",
+    "pathsPlaceholder": "src/order/checkout.ts\napps/web/app/orders/page.tsx",
+    "repo": "Repository alias (optional)",
+    "find": "Find cases",
+    "finding": "Finding…",
+    "empty": "No case claims these paths. Add path globs to the cases' repo bindings.",
+    "claimed": "{{count}} paths claimed",
+    "unmatched": "{{count}} paths claimed by no case",
+    "select": "Select in list",
+    "startRun": "Start run",
+    "runTitle": "Regression for {{count}} changed paths",
+    "runFailed": "Could not start the run"
+  },
   "coverage": {
     "caseSection": "Covers",
     "caseEmpty": "Not linked to any issue yet",

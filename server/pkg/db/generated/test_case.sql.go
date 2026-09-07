@@ -779,7 +779,7 @@ const listTestCaseReposForProject = `-- name: ListTestCaseReposForProject :many
 SELECT tcr.test_case_id, tcr.workspace_id, tcr.project_resource_id, tcr.alias, tcr.role, tcr.path_globs, tcr.created_at, tc.status AS case_status
 FROM test_case_repo tcr
 JOIN test_case tc ON tc.id = tcr.test_case_id
-WHERE tc.project_id = $1 AND tc.workspace_id = $2 AND tc.status <> 'obsolete'
+WHERE tc.project_id = $1 AND tc.workspace_id = $2 AND tc.status <> 'deprecated'
 ORDER BY tcr.test_case_id, tcr.alias ASC, tcr.role ASC
 `
 

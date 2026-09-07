@@ -144,6 +144,7 @@ import type {
   ListTestCaseIssuesResponse,
   ListIssueTestCasesResponse,
   WorkspaceMcpServer,
+  RecommendTestCasesResponse,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
@@ -4228,6 +4229,25 @@ export const ListTestCaseModulesResponseSchema = z.object({
   modules: z.array(TestCaseModuleSchema).default([]),
 }).loose();
 
+const TestCaseRecommendationMatchSchema = z.object({
+  alias: z.string().default(""),
+  role: z.string().default(""),
+  glob: z.string().default(""),
+  paths: z.array(z.string()).default([]),
+}).loose();
+
+export const TestCaseRecommendationSchema = z.object({
+  test_case: TestCaseSchema,
+  matches: z.array(TestCaseRecommendationMatchSchema).default([]),
+  path_count: z.number().default(0),
+}).loose();
+
+export const RecommendTestCasesResponseSchema = z.object({
+  cases: z.array(TestCaseRecommendationSchema).default([]),
+  unmatched_paths: z.array(z.string()).default([]),
+  total: z.number().default(0),
+}).loose();
+
 export const TestCaseRevisionSchema = z.object({
   id: z.string().default(""),
   test_case_id: z.string().default(""),
@@ -4430,6 +4450,12 @@ export const EMPTY_TEST_CASE_REVISION: TestCaseRevision = {
 
 export const EMPTY_LIST_TEST_CASES_RESPONSE: ListTestCasesResponse = {
   test_cases: [],
+  total: 0,
+};
+
+export const EMPTY_RECOMMEND_TEST_CASES_RESPONSE: RecommendTestCasesResponse = {
+  cases: [],
+  unmatched_paths: [],
   total: 0,
 };
 

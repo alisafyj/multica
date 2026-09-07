@@ -152,6 +152,35 @@ export interface ListTestCaseModulesResponse {
   modules: TestCaseModule[];
 }
 
+// Change-based regression selection: which cases claim the changed paths
+// through their repo bindings' `path_globs`.
+export interface RecommendTestCasesRequest {
+  project_id: string;
+  paths: string[];
+  /** Only bindings with this alias, when the paths belong to one repository. */
+  repo?: string;
+}
+
+export interface TestCaseRecommendationMatch {
+  alias: string;
+  role: string;
+  glob: string;
+  paths: string[];
+}
+
+export interface TestCaseRecommendation {
+  test_case: TestCase;
+  matches: TestCaseRecommendationMatch[];
+  /** Distinct changed paths the case claims; the ranking key. */
+  path_count: number;
+}
+
+export interface RecommendTestCasesResponse {
+  cases: TestCaseRecommendation[];
+  unmatched_paths: string[];
+  total: number;
+}
+
 export interface ListTestCaseRevisionsResponse {
   revisions: TestCaseRevision[];
 }

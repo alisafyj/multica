@@ -481,6 +481,23 @@
     "newPlan": "新しい計画…",
     "confirm": "追加"
   },
+  "recommend": {
+    "action": "変更から推薦",
+    "title": "変更に関わるケース",
+    "description": "変更したパスを1行ずつ貼り付けてください。リポジトリ紐付けでそのパスを担当するケースを、該当数の多い順に一覧します。",
+    "paths": "変更パス",
+    "pathsPlaceholder": "src/order/checkout.ts\napps/web/app/orders/page.tsx",
+    "repo": "リポジトリ別名（任意）",
+    "find": "ケースを探す",
+    "finding": "検索中…",
+    "empty": "これらのパスを担当するケースはありません。ケースのリポジトリ紐付けにパスのグロブを追加してください。",
+    "claimed": "{{count}} 件のパスに該当",
+    "unmatched": "{{count}} 件のパスはどのケースも担当していません",
+    "select": "一覧で選択",
+    "startRun": "実行を開始",
+    "runTitle": "変更パス {{count}} 件の回帰",
+    "runFailed": "実行を開始できませんでした"
+  },
   "coverage": {
     "caseSection": "対象の要件",
     "caseEmpty": "まだ要件に紐づいていません",

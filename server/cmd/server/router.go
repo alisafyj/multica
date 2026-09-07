@@ -2113,6 +2113,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Literal sub-paths are registered before {ref}, which accepts
 				// either a TC-<n> key or a UUID.
 				r.Get("/modules", h.ListTestCaseModules)
+				// Which cases claim the files a change touched.
+				r.Post("/recommend", h.RecommendTestCases)
 				r.Get("/", h.ListTestCases)
 				r.Post("/", h.CreateTestCase)
 				r.Route("/{ref}", func(r chi.Router) {

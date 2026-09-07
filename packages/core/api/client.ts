@@ -291,6 +291,8 @@ import type {
   CreateTestCaseRequest,
   UpdateTestCaseRequest,
   ListTestCasesResponse,
+  RecommendTestCasesRequest,
+  RecommendTestCasesResponse,
   ListTestCaseModulesResponse,
   ListTestCaseRevisionsResponse,
   TestGenerationJob,
@@ -362,10 +364,12 @@ import {
   TestCaseSchema,
   ListTestCasesResponseSchema,
   ListTestCaseModulesResponseSchema,
+  RecommendTestCasesResponseSchema,
   ListTestCaseRevisionsResponseSchema,
   EMPTY_TEST_CASE,
   EMPTY_LIST_TEST_CASES_RESPONSE,
   EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
+  EMPTY_RECOMMEND_TEST_CASES_RESPONSE,
   EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE,
 } from "./schemas";
 import {
@@ -3854,6 +3858,16 @@ export class ApiClient {
       EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
       { endpoint: "GET /api/test-cases/modules" },
     );
+  }
+
+  async recommendTestCases(data: RecommendTestCasesRequest): Promise<RecommendTestCasesResponse> {
+    const raw = await this.fetch<unknown>("/api/test-cases/recommend", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, RecommendTestCasesResponseSchema, EMPTY_RECOMMEND_TEST_CASES_RESPONSE, {
+      endpoint: "POST /api/test-cases/recommend",
+    });
   }
 
   async getTestCase(ref: string): Promise<TestCase> {

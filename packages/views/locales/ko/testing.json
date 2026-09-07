@@ -481,6 +481,23 @@
     "newPlan": "새 계획…",
     "confirm": "추가"
   },
+  "recommend": {
+    "action": "변경으로 추천",
+    "title": "변경에 관련된 케이스",
+    "description": "변경된 경로를 한 줄에 하나씩 붙여 넣으세요. 저장소 바인딩이 해당 경로를 담당하는 케이스를 많이 걸린 순으로 보여 줍니다.",
+    "paths": "변경 경로",
+    "pathsPlaceholder": "src/order/checkout.ts\napps/web/app/orders/page.tsx",
+    "repo": "저장소 별칭(선택)",
+    "find": "케이스 찾기",
+    "finding": "찾는 중…",
+    "empty": "이 경로를 담당하는 케이스가 없습니다. 케이스의 저장소 바인딩에 경로 글롭을 추가하세요.",
+    "claimed": "{{count}}개 경로에 해당",
+    "unmatched": "{{count}}개 경로는 담당 케이스가 없습니다",
+    "select": "목록에서 선택",
+    "startRun": "실행 시작",
+    "runTitle": "변경 경로 {{count}}개에 대한 회귀",
+    "runFailed": "실행을 시작할 수 없습니다"
+  },
   "coverage": {
     "caseSection": "관련 요구사항",
     "caseEmpty": "아직 연결된 요구사항이 없습니다",

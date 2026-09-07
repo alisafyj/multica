@@ -481,6 +481,23 @@
     "newPlan": "新建计划…",
     "confirm": "加入"
   },
+  "recommend": {
+    "action": "按改动推荐",
+    "title": "改动涉及的用例",
+    "description": "粘贴改动的文件路径，每行一个。仓库绑定声明了这些路径的用例会列出来，命中越多越靠前。",
+    "paths": "改动路径",
+    "pathsPlaceholder": "src/order/checkout.ts\napps/web/app/orders/page.tsx",
+    "repo": "仓库别名（可选）",
+    "find": "查找用例",
+    "finding": "查找中…",
+    "empty": "没有用例声明这些路径。请在用例的仓库绑定里补充路径通配。",
+    "claimed": "命中 {{count}} 个路径",
+    "unmatched": "{{count}} 个路径没有任何用例声明",
+    "select": "在列表中选中",
+    "startRun": "发起执行",
+    "runTitle": "针对 {{count}} 个改动路径的回归",
+    "runFailed": "无法发起执行"
+  },
   "coverage": {
     "caseSection": "关联需求",
     "caseEmpty": "还没有关联需求",

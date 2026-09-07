@@ -206,6 +206,10 @@ export type {
   UpdateTestCaseRequest,
   ListTestCasesResponse,
   ListTestCaseModulesResponse,
+  RecommendTestCasesRequest,
+  TestCaseRecommendationMatch,
+  TestCaseRecommendation,
+  RecommendTestCasesResponse,
   ListTestCaseRevisionsResponse,
   // Phase 2 — test generation
   TestGenerationJobStatus,
