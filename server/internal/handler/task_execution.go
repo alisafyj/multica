@@ -42,9 +42,11 @@ func (h *Handler) ReportTaskExecution(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, "task runtime belongs to another daemon")
 			return
 		}
-	} else if userID := requestUserID(r); userID == "" || !runtime.OwnerID.Valid || uuidToString(runtime.OwnerID) != userID {
-		writeError(w, http.StatusForbidden, "task runtime belongs to another user")
-		return
+	} else if middleware.DaemonAuthPathFromContext(r.Context()) != middleware.DaemonAuthPathService {
+		if userID := requestUserID(r); userID == "" || !runtime.OwnerID.Valid || uuidToString(runtime.OwnerID) != userID {
+			writeError(w, http.StatusForbidden, "task runtime belongs to another user")
+			return
+		}
 	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, taskexecution.MaxPayloadBytes))

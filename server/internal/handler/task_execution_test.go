@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/taskexecution"
@@ -58,6 +60,46 @@ func TestReportTaskExecutionAuthorizationAndValidation(t *testing.T) {
 	}
 	if len(row.ExecutionMetrics) != 0 {
 		t.Fatal("rejected requests changed execution telemetry")
+	}
+}
+
+func TestReportTaskExecutionServiceAccountWorkspaceScope(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	runtimeID := dbfx.Runtime(t, "Service execution runtime", testutil.Cols{
+		"provider": "hermes", "daemon_id": "service-execution-daemon", "owner_id": testUserID,
+	})
+	agentID := dbfx.Agent(t, "Service execution agent", runtimeID)
+	issueID := dbfx.Issue(t, "Service execution issue")
+	taskID := dbfx.Task(t, agentID, testutil.Cols{"issue_id": issueID, "runtime_id": runtimeID, "status": "running", "concise_mode": false})
+	serviceUserID := dbfx.User(t, "Telemetry service", uuid.NewString()+"@example.invalid", testutil.Cols{"account_kind": "service"})
+	foreignWorkspaceID := dbfx.Workspace(t, "Other telemetry workspace", "telemetry-"+uuid.NewString())
+	handler := middleware.DaemonAuth(testHandler.Queries, nil, nil, nil, true)(http.HandlerFunc(testHandler.ReportTaskExecution))
+	for _, workspaceID := range []string{foreignWorkspaceID, testWorkspaceID} {
+		token := auth.ServiceAccountTokenPrefix + uuid.NewString()
+		dbfx.Insert(t, "service_account_token", testutil.Cols{
+			"user_id": serviceUserID, "workspace_id": workspaceID,
+			"token_hash": auth.HashToken(token), "expires_at": time.Now().Add(time.Hour), "created_by": testUserID,
+		})
+		request := withURLParam(newRequest(http.MethodPost, "/api/daemon/tasks/"+taskID+"/execution", executionHandlerSnapshot()), "taskId", taskID)
+		request.Header.Set("Authorization", "Bearer "+token)
+		// Client headers cannot move a valid service credential to another workspace.
+		request.Header.Set("X-Actor-Source", "service_account")
+		request.Header.Set("X-Service-Workspace-ID", testWorkspaceID)
+		status := http.StatusNotFound
+		if workspaceID == testWorkspaceID {
+			status = http.StatusOK
+		}
+		testutil.Call(t, handler.ServeHTTP, request).Want(status)
+		dbfx.Exec(t, `UPDATE service_account_token SET revoked_at = now() WHERE user_id = $1`, serviceUserID)
+	}
+	row, err := testHandler.Queries.GetAgentTask(t.Context(), parseUUID(taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot, err := taskexecution.Decode(row.ExecutionMetrics); err != nil || snapshot.ConciseMode || row.Status != "running" {
+		t.Fatalf("service telemetry was not persisted without changing task state: snapshot=%+v status=%s error=%v", snapshot, row.Status, err)
 	}
 }
 
