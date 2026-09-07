@@ -303,18 +303,14 @@ func (h *Handler) SaveChatPRDDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		SourceMessageID string         `json:"source_message_id"`
-		Content         ChatPRDContent `json:"content"`
+		SourceMessageID  string `json:"source_message_id"`
+		GenerationTaskID string `json:"generation_task_id"`
 	}
 	if !decodeChatPRDRequest(w, r, &request) {
 		return
 	}
 	if request.SourceMessageID == "" {
 		writeError(w, http.StatusBadRequest, "source_message_id is required")
-		return
-	}
-	if err := validateChatPRDContent(request.Content); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	source, err := h.chatPRDMessage(r.Context(), scope, request.SourceMessageID)
@@ -335,7 +331,11 @@ func (h *Handler) SaveChatPRDDraft(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "source is not the root of this task's triggering topic")
 		return
 	}
-	content, _ := json.Marshal(request.Content)
+	generated, ok := h.chatPRDGenerationContent(w, r, scope, request.GenerationTaskID, request.SourceMessageID)
+	if !ok {
+		return
+	}
+	content, _ := json.Marshal(generated)
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save PRD draft")
@@ -346,6 +346,14 @@ func (h *Handler) SaveChatPRDDraft(w http.ResponseWriter, r *http.Request) {
 	locked, err := h.Queries.WithTx(tx).LockChatSessionForDraftWrite(r.Context(), scope.sessionID)
 	if err != nil || locked.Status != "active" {
 		writeError(w, http.StatusConflict, "chat session is no longer active")
+		return
+	}
+	currentScope, ok := h.chatPRDScope(w, r)
+	if !ok {
+		return
+	}
+	if currentScope.sessionID != scope.sessionID || currentScope.lockKey() != scope.lockKey() {
+		writeError(w, http.StatusConflict, "PRD task scope changed while waiting to save")
 		return
 	}
 	args := append(scope.args(), source.MessageID, source.SenderID, content)
@@ -427,8 +435,8 @@ func (h *Handler) PublishChatPRD(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "PRD document client is not configured")
 		return
 	}
-	// This transaction holds ONLY a topic mutex. Phase writes commit separately:
-	// rolling back the mutex must never roll back knowledge of a remote copy.
+	// Keep the topic mutex and teardown interlocks separate from phase writes:
+	// rolling back these locks must never roll back knowledge of a remote copy.
 	mutex, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to lock PRD publishing")
@@ -444,6 +452,39 @@ func (h *Handler) PublishChatPRD(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "PRD publish is already in progress")
 		return
 	}
+	// Take workspace before session, matching workspace teardown. The topic
+	// try-lock stays first so another publisher fails promptly instead of waiting
+	// for these row locks. Never lock the draft here: its phase ledger commits
+	// independently while these interlocks keep deletion from sweeping it.
+	qtx := h.Queries.WithTx(mutex)
+	if _, err := qtx.LockWorkspaceForChatSessionCreate(r.Context(), scope.workspaceID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusConflict, "workspace is no longer available")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to lock PRD workspace")
+		}
+		return
+	}
+	locked, err := qtx.LockChatSessionForDraftWrite(r.Context(), scope.sessionID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && locked.Status != "active") {
+		writeError(w, http.StatusConflict, "chat session is no longer active")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock PRD chat session")
+		return
+	}
+	// The initial scope may predate a wait for teardown, archive, or rebinding.
+	// Revalidate all task/channel authorization before any remote document call.
+	currentScope, ok := h.chatPRDScope(w, r)
+	if !ok {
+		return
+	}
+	if currentScope.sessionID != scope.sessionID || currentScope.lockKey() != scope.lockKey() {
+		writeError(w, http.StatusConflict, "PRD task scope changed while waiting to publish")
+		return
+	}
+	scope = currentScope
 	draft, err := readChatPRD(r.Context(), h.DB, scope)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "PRD draft not found")

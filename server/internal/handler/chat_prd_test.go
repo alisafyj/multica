@@ -30,6 +30,7 @@ type chatPRDFakeClient struct {
 	copyUnknown    bool
 	copyKnownError bool
 	onCopy         func()
+	onVerify       func()
 }
 
 func (f *chatPRDFakeClient) GetMessage(_ context.Context, _ lark.InstallationCredentials, id string) ([]lark.LarkMessage, error) {
@@ -82,6 +83,9 @@ func (f *chatPRDFakeClient) GetPRDDocumentURL(_ context.Context, _ lark.Installa
 	return "https://example.feishu.cn/docx/" + id, nil
 }
 func (f *chatPRDFakeClient) VerifyPRDDocument(_ context.Context, _ lark.InstallationCredentials, id string, sections []lark.PRDSection, owner string) error {
+	if f.onVerify != nil {
+		f.onVerify()
+	}
 	if f.failPhase == "verify" {
 		return errors.New("verification unavailable")
 	}
@@ -95,6 +99,8 @@ func (f *chatPRDFakeClient) VerifyPRDDocument(_ context.Context, _ lark.Installa
 type chatPRDFixture struct {
 	h              Handler
 	client         *chatPRDFakeClient
+	workspaceID    string
+	sessionID      string
 	taskID         string
 	installationID string
 	bindingID      string
@@ -115,12 +121,15 @@ func newChatPRDFixture(t *testing.T) *chatPRDFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtimeID := handlerTestRuntimeID(t)
+	workspaceID := dbfx.Workspace(t, "PRD fixture", "prd-fixture-"+uuid.NewString())
+	dbfx := testutil.New(testPool, workspaceID, testUserID)
+	dbfx.Member(t, workspaceID, testUserID, "owner")
+	runtimeID := dbfx.Runtime(t, "PRD fixture runtime")
 	agentID := dbfx.Agent(t, "PRD fixture "+uuid.NewString(), runtimeID)
 	sessionID := dbfx.ChatSession(t, agentID)
 	taskID := dbfx.Task(t, agentID, testutil.Cols{"chat_session_id": sessionID, "runtime_id": runtimeID, "status": "running"})
 	inst, err := installations.Upsert(context.Background(), lark.InstallationParams{
-		WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(agentID), AppID: "cli_" + uuid.NewString(),
+		WorkspaceID: parseUUID(workspaceID), AgentID: parseUUID(agentID), AppID: "cli_" + uuid.NewString(),
 		AppSecret: "fake-test-secret", BotOpenID: "ou_fixture_bot", InstallerUserID: parseUUID(testUserID),
 	})
 	if err != nil {
@@ -148,11 +157,12 @@ func newChatPRDFixture(t *testing.T) *chatPRDFixture {
 	client := &chatPRDFakeClient{messages: map[string]lark.LarkMessage{root.MessageID: root}, documents: make(map[string]*chatPRDFakeDocument)}
 	h := *testHandler
 	h.LarkInstallations, h.LarkAPIClient = installations, client
-	return &chatPRDFixture{h: h, client: client, taskID: taskID, installationID: installationID, bindingID: bindingID, root: root}
+	return &chatPRDFixture{h: h, client: client, workspaceID: workspaceID, sessionID: sessionID, taskID: taskID, installationID: installationID, bindingID: bindingID, root: root}
 }
 
 func (f *chatPRDFixture) request(method, path string, body any) *http.Request {
 	request := newRequest(method, path, body)
+	request.Header.Set("X-Workspace-ID", f.workspaceID)
 	request.Header.Set("X-Actor-Source", "task_token")
 	request.Header.Set("X-Task-ID", f.taskID)
 	return request
@@ -166,7 +176,7 @@ func (f *chatPRDFixture) draft(t *testing.T, content ChatPRDContent) ChatPRDDraf
 	t.Helper()
 	var draft ChatPRDDraft
 	testutil.Call(t, f.h.SaveChatPRDDraft, f.request(http.MethodPost, "/api/chat/prd/draft", map[string]any{
-		"source_message_id": f.root.MessageID, "content": content,
+		"source_message_id": f.root.MessageID, "generation_task_id": f.generation(t, content),
 	})).Want(http.StatusOK).JSON(&draft)
 	return draft
 }
@@ -225,7 +235,7 @@ func TestChatPRDRejectsUntrustedSource(t *testing.T) {
 			tc.change(&message)
 			f.client.messages[message.MessageID] = message
 			testutil.Call(t, f.h.SaveChatPRDDraft, f.request(http.MethodPost, "/api/chat/prd/draft", map[string]any{
-				"source_message_id": message.MessageID, "content": prdFixtureContent(),
+				"source_message_id": message.MessageID, "generation_task_id": f.generation(t, prdFixtureContent()),
 			})).Want(http.StatusForbidden)
 			testutil.Call(t, f.h.GetChatPRD, f.request(http.MethodGet, "/api/chat/prd", nil)).Want(http.StatusNotFound)
 			if len(f.client.documents) != 0 {
@@ -282,7 +292,7 @@ func TestChatPRDPublishFrozenSnapshotAndDuplicateConfirmation(t *testing.T) {
 	}
 	content.Sections[0].Body = "attempted post-confirmation edit"
 	testutil.Call(t, f.h.SaveChatPRDDraft, f.request(http.MethodPost, "/api/chat/prd/draft", map[string]any{
-		"source_message_id": f.root.MessageID, "content": content,
+		"source_message_id": f.root.MessageID, "generation_task_id": f.generation(t, content),
 	})).Want(http.StatusConflict)
 	var current ChatPRDDraft
 	testutil.Call(t, f.h.GetChatPRD, f.request(http.MethodGet, "/api/chat/prd", nil)).Want(http.StatusOK).JSON(&current)
@@ -376,5 +386,178 @@ func TestChatPRDTemplateAndScopeCannotBeBypassed(t *testing.T) {
 	testutil.Call(t, f.h.PublishChatPRD, f.publishRequest(draft, confirmation.MessageID)).Want(http.StatusForbidden)
 	if len(f.client.documents) != 0 {
 		t.Fatal("missing config or invalid scope performed a document write")
+	}
+}
+
+func TestChatPRDPublishSerializesWorkspaceDeletion(t *testing.T) {
+	f := newChatPRDFixture(t)
+	draft := f.draft(t, prdFixtureContent())
+	confirmation := f.confirm(draft)
+	ctx := context.Background()
+	publisher, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer publisher.Rollback(ctx)
+	// Keep the real publisher on a known backend so the lock assertion cannot
+	// accidentally observe an unrelated waiter. Begin uses a nested savepoint.
+	f.h.TxStarter = publisher
+	publisherPID := int(publisher.Conn().PgConn().PID())
+	deleted := make(chan *testutil.Response, 1)
+	deleteDone := make(chan struct{})
+	f.client.onCopy = func() {
+		go func() {
+			defer close(deleteDone)
+			request := withURLParam(newRequest(http.MethodDelete, "/api/workspaces/"+f.workspaceID, nil), "id", f.workspaceID)
+			deleted <- testutil.Call(t, testHandler.DeleteWorkspace, request)
+		}()
+		t.Cleanup(func() {
+			waitContextLockSignal(t, deleteDone, "workspace deletion did not finish after publication released its locks")
+		})
+		if !waitForWaiterBlockedBy(t, publisherPID, 5*time.Second) {
+			t.Fatal("workspace deletion did not wait for the publisher while the remote copy was in flight")
+		}
+		var status, phase string
+		dbfx.QueryRow(t, `SELECT status, phase FROM chat_prd_draft WHERE id=$1`, draft.ID).Scan(&status, &phase)
+		if status != "publishing" || phase != "copy" {
+			t.Fatalf("copy intent was not independently committed: status=%s phase=%s", status, phase)
+		}
+	}
+	f.client.onVerify = func() {
+		// A separate connection must see the returned copy ID before the remote
+		// verification completes; rolling back the interlock cannot erase it.
+		var documentID, status, phase string
+		dbfx.QueryRow(t, `SELECT document_id, status, phase FROM chat_prd_draft WHERE id=$1`, draft.ID).Scan(&documentID, &status, &phase)
+		if documentID != "document1" || status != "publishing" || phase != "verify" {
+			t.Fatalf("remote copy identity was not durably recorded: document=%s status=%s phase=%s", documentID, status, phase)
+		}
+		select {
+		case <-deleteDone:
+			t.Fatal("workspace deletion finished before document verification")
+		default:
+		}
+	}
+	var published ChatPRDDraft
+	testutil.Call(t, f.h.PublishChatPRD, f.publishRequest(draft, confirmation.MessageID)).Want(http.StatusOK).JSON(&published)
+	if published.Status != "published" || published.DocumentID != "document1" || len(f.client.documents) != 1 {
+		t.Fatalf("publication did not finish before teardown: %+v", published)
+	}
+	document := f.client.documents[published.DocumentID]
+	if document.owner != f.root.SenderID || !reflect.DeepEqual(document.content, draft.Content.Sections) {
+		t.Fatalf("workspace teardown left an unfinished remote document: %+v", document)
+	}
+	waitContextLockSignal(t, deleteDone, "workspace deletion deadlocked with publication")
+	(<-deleted).Want(http.StatusNoContent)
+	if count := dbfx.Count(t, `SELECT count(*) FROM chat_prd_draft WHERE workspace_id=$1`, f.workspaceID); count != 0 {
+		t.Fatalf("completed workspace teardown retained %d PRD drafts", count)
+	}
+}
+
+func TestChatPRDPublishRejectsWorkspaceDeletionWinningFirst(t *testing.T) {
+	f := newChatPRDFixture(t)
+	draft := f.draft(t, prdFixtureContent())
+	confirmation := f.confirm(draft)
+	ctx := context.Background()
+	deleter, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deleter.Rollback(ctx)
+	deleting := f.h
+	deleting.TxStarter = deleter
+	request := withURLParam(newRequest(http.MethodDelete, "/api/workspaces/"+f.workspaceID, nil), "id", f.workspaceID)
+	// Execute the real teardown, but keep its enclosing transaction uncommitted
+	// so the publisher's initial scope read still sees the old workspace.
+	testutil.Call(t, deleting.DeleteWorkspace, request).Want(http.StatusNoContent)
+	finished := make(chan *testutil.Response, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		finished <- testutil.Call(t, f.h.PublishChatPRD, f.publishRequest(draft, confirmation.MessageID))
+	}()
+	t.Cleanup(func() { waitContextLockSignal(t, done, "publisher did not finish after workspace teardown") })
+	if !waitForWaiterBlockedBy(t, int(deleter.Conn().PgConn().PID()), 5*time.Second) {
+		t.Fatal("publisher did not wait for the in-flight workspace teardown")
+	}
+	if err := deleter.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitContextLockSignal(t, done, "publisher did not reject the deleted workspace")
+	(<-finished).Want(http.StatusConflict)
+	if len(f.client.documents) != 0 {
+		t.Fatal("publisher copied a remote document after workspace teardown won")
+	}
+}
+
+func TestChatPRDPublishRevalidatesScopeAfterSessionLock(t *testing.T) {
+	f := newChatPRDFixture(t)
+	draft := f.draft(t, prdFixtureContent())
+	confirmation := f.confirm(draft)
+	ctx := context.Background()
+	retiring, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retiring.Rollback(ctx)
+	if _, err := f.h.Queries.WithTx(retiring).LockChatSessionForDraftWrite(ctx, parseUUID(f.sessionID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := retiring.Exec(ctx, `UPDATE channel_chat_session_binding SET retired_at=now() WHERE id=$1`, f.bindingID); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan *testutil.Response, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		finished <- testutil.Call(t, f.h.PublishChatPRD, f.publishRequest(draft, confirmation.MessageID))
+	}()
+	t.Cleanup(func() { waitContextLockSignal(t, done, "publisher did not finish after binding retirement") })
+	if !waitForWaiterBlockedBy(t, int(retiring.Conn().PgConn().PID()), 5*time.Second) {
+		t.Fatal("publisher did not wait for the session mutation")
+	}
+	if err := retiring.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitContextLockSignal(t, done, "publisher did not revalidate its retired topic")
+	(<-finished).Want(http.StatusForbidden)
+	if len(f.client.documents) != 0 {
+		t.Fatal("stale pre-lock scope authorized a remote document copy")
+	}
+}
+
+func TestChatPRDDraftRevalidatesScopeAfterSessionLock(t *testing.T) {
+	f := newChatPRDFixture(t)
+	generation := f.generation(t, prdFixtureContent())
+	ctx := context.Background()
+	retiring, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retiring.Rollback(ctx)
+	if _, err := f.h.Queries.WithTx(retiring).LockChatSessionForDraftWrite(ctx, parseUUID(f.sessionID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := retiring.Exec(ctx, `UPDATE channel_chat_session_binding SET retired_at=now() WHERE id=$1`, f.bindingID); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan *testutil.Response, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		finished <- testutil.Call(t, f.h.SaveChatPRDDraft, f.request(http.MethodPost, "/api/chat/prd/draft", map[string]any{
+			"source_message_id": f.root.MessageID, "generation_task_id": generation,
+		}))
+	}()
+	t.Cleanup(func() { waitContextLockSignal(t, done, "draft save did not finish after binding retirement") })
+	if !waitForWaiterBlockedBy(t, int(retiring.Conn().PgConn().PID()), 5*time.Second) {
+		t.Fatal("draft save did not wait for the session mutation")
+	}
+	if err := retiring.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitContextLockSignal(t, done, "draft save did not revalidate its retired topic")
+	(<-finished).Want(http.StatusForbidden)
+	if count := dbfx.Count(t, `SELECT count(*) FROM chat_prd_draft WHERE installation_id=$1`, f.installationID); count != 0 {
+		t.Fatalf("stale pre-lock scope saved %d drafts", count)
 	}
 }
