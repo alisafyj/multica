@@ -367,6 +367,7 @@ var concurrentIndexCleanups = map[string]string{
 	"908_test_case_issue_issue_index":                      "test_case_issue_issue_idx",
 	"909_test_case_issue_workspace_case_index":             "test_case_issue_workspace_case_idx",
 	"912_test_run_case_agent_task_index":                   "test_run_case_agent_task_idx",
+	"915_prd_draft_topic_index":                            "chat_prd_draft_topic_idx",
 	"446_issue_properties_bigm_index":                      "idx_issue_properties_bigm",
 	"916_autopilot_run_test_run_index":                 "idx_autopilot_run_test_run",
 }

@@ -100,6 +100,9 @@ type PrepareParams struct {
 	// is absent — set when an explicit named profile was requested so a typo
 	// doesn't silently seed from an empty home and drop the user's auth/config.
 	HermesSourceMustExist bool
+	// HermesModel is the task's explicit model. The isolated overlay may
+	// preselect it only when its provider already matches the source config.
+	HermesModel string
 	// HermesMemoryStore is the agent's persistent Hermes memory store
 	// (HermesMemoryStorePath) the overlay links memories/ to, so memory outlives
 	// the task. Empty keeps memories/ task-local — no agent to key on, or the
@@ -703,6 +706,9 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		if err != nil {
 			return nil, fmt.Errorf("execenv: prepare hermes-home: %w", err)
 		}
+		if err := pinHermesTaskModel(hermesHome, params.HermesModel); err != nil {
+			return nil, fmt.Errorf("execenv: pin hermes model: %w", err)
+		}
 		env.HermesHome = hermesHome
 		if sessions.Mounted {
 			env.HermesSessionStore = params.HermesSessionStore
@@ -828,6 +834,7 @@ type ReuseParams struct {
 	// conversation session store.
 	HermesSourceHome      string
 	HermesSourceMustExist bool
+	HermesModel           string
 	HermesEnv             map[string]string
 	HermesMemoryStore     string
 	HermesSessionStore    string
@@ -1031,6 +1038,10 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 				// then blocks dispatch rather than silently dropping the bound
 				// skill.
 				logger.Warn("execenv: refresh hermes-home failed; forcing fresh prepare", "error", err)
+				return nil
+			}
+			if err := pinHermesTaskModel(hermesHome, params.HermesModel); err != nil {
+				logger.Warn("execenv: pin hermes model failed; forcing fresh prepare", "error", err)
 				return nil
 			}
 			env.HermesHome = hermesHome

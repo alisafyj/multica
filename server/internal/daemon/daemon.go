@@ -5596,7 +5596,18 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 
-	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
+	execution := d.newTaskExecution(runCtx, task, provider, taskLog)
+	executionCtx := context.WithValue(runCtx, taskExecutionContextKey{}, execution)
+	executionStatus := "failed"
+	defer func() {
+		execution.finish(taskExecutionOutcome(ctx, TaskResult{Status: executionStatus}, nil))
+	}()
+
+	result, err := d.runner.run(executionCtx, task, provider, slot, taskLog)
+	executionStatus = taskExecutionOutcome(runCtx, result, err)
+	// Failed preparation still has real result/failure reporting to measure;
+	// only phases actually entered are present (no synthetic execute phase).
+	execution.beginFinalize(executionStatus)
 	if errors.Is(context.Cause(ctx), errAuthenticationExpired) {
 		d.reportAuthenticationExpired(task.ID, result, taskLog)
 		return
@@ -5620,6 +5631,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// Check if we were cancelled by the polling goroutine.
 	select {
 	case <-cancelledByPoll:
+		executionStatus = "cancelled"
 		taskLog.Info("task cancelled during execution, discarding result",
 			"branch_name", result.BranchName, "error", err)
 		// runner.run has returned, so the transcript flush is complete —
@@ -5697,6 +5709,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		}
 		result = finalized
 	}
+	executionStatus = taskExecutionOutcome(runCtx, result, nil)
 
 	_ = d.client.ReportProgress(ctx, task.ID, "Finishing task", 2, 2)
 
@@ -5706,6 +5719,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// anyway. Reuse shouldInterruptAgent so this guard honors the same
 	// signals as the in-flight watcher.
 	if status, err := d.client.GetTaskStatus(ctx, task.ID); shouldInterruptAgent(status, err) {
+		executionStatus = "cancelled"
 		taskLog.Info("task cancelled during execution, discarding result",
 			"status", status, "error", err, "branch_name", result.BranchName)
 		// Same contract as the poll-cancelled path above: the transcript is
@@ -7358,6 +7372,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.WorkspaceID == "" {
 		return TaskResult{}, fmt.Errorf("refusing to spawn agent: task has no workspace_id (task_id=%s)", task.ID)
 	}
+	execution := taskExecutionFromContext(ctx)
+	execution.start()
 
 	prepareTimeout := d.effectiveTaskPrepareTimeout()
 	prepareCtx, cancelPrepare := context.WithTimeoutCause(ctx, prepareTimeout, errTaskPrepareTimeout)
@@ -7707,6 +7723,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var hermesEnv map[string]string
 	var hermesMemoryStore string
 	var hermesSessionStore string
+	var hermesModel string
+	if task.Agent != nil {
+		hermesModel = task.Agent.Model
+	}
 	if provider == "hermes" {
 		// Resolve from the argv hermes will actually parse — launch prefix,
 		// `acp`, then the filtered custom args — which agent.HermesLaunchArgv
@@ -7818,6 +7838,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			HermesSourceHome:      hermesSourceHome,
 			HermesSourceMustExist: hermesSourceMustExist,
 			HermesEnv:             hermesEnv,
+			HermesModel:           hermesModel,
 			HermesMemoryStore:     hermesMemoryStore,
 			HermesSessionStore:    hermesSessionStore,
 			ReasonixEnv:           reasonixEnv,
@@ -7869,6 +7890,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			HermesSourceHome:      hermesSourceHome,
 			HermesSourceMustExist: hermesSourceMustExist,
 			HermesEnv:             hermesEnv,
+			HermesModel:           hermesModel,
 			HermesMemoryStore:     hermesMemoryStore,
 			HermesSessionStore:    hermesSessionStore,
 			ReasonixEnv:           reasonixEnv,
@@ -8396,6 +8418,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		profileFixedArgs, hermesOverlayCustomArgs = agent.StripHermesProfileSelectors(
 			profileFixedArgs, rawCustomArgs, d.logger)
 	}
+	// Preparation includes environment/prompt/auth assembly. Execute begins
+	// before backend initialization and includes model negotiation, retries,
+	// provider execution, tools, transcript drain, and session flush.
+	execution.beginExecute()
+	defer func() {
+		// On startup/execute errors, enter finalization before registered env
+		// cleanup/worktree defers. Successful drains transition explicitly below.
+		execution.beginFinalize(taskExecutionOutcome(ctx, taskResult, returnErr))
+	}()
+
 	// Resolve the backend through the unified runtime resolver: built-in
 	// runtime identities (e.g. "omp") dispatch through NewRuntime, protocol
 	// families go through New. This is the single production boundary — the
@@ -8684,6 +8716,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// than being relabeled resumable by a benign-looking second error.
 		result, tools = reconcileFreshRetryResult(firstResult, firstUsage, firstTools, retryResult, retryTools, retryErr)
 	}
+	execution.observeToolCalls(tools)
 
 	elapsed := time.Since(taskStart).Round(time.Second)
 	taskLog.Info("agent finished",
@@ -8737,6 +8770,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// returns (SessionID is already blanked above); reportTaskResult forwards it
 	// as session_rollout_missing on the terminal callback (MUL-5305).
 	defer func() { taskResult.SessionRolloutMissing = sessionRolloutMissing }()
+	execution.beginFinalize(taskExecutionOutcome(ctx, TaskResult{Status: result.Status}, nil))
 
 	switch result.Status {
 	case "completed":

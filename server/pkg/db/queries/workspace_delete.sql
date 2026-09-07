@@ -462,6 +462,9 @@ deleted_channel_inbound_audit AS (
     DELETE FROM channel_inbound_audit
     WHERE installation_id IN (SELECT id FROM ws_channel_installations)
 ),
+deleted_chat_prd_drafts AS (
+    DELETE FROM chat_prd_draft WHERE workspace_id = $1
+),
 deleted_channel_user_bindings AS (
     DELETE FROM channel_user_binding WHERE workspace_id = $1
 ),
