@@ -601,6 +601,50 @@ func writeProgrammaticPackage(outputDir string, input ProgrammaticInput, sources
 	return write("USAGE.md", buildProgrammaticUsage(input))
 }
 
+func programmaticPrinciples(analysis *RepositoryDesignContext) []string {
+	principles := make([]string, 0, 8)
+	kinds := make(map[string]struct{})
+	if analysis != nil {
+		for _, fact := range analysis.Facts {
+			kinds[strings.ToLower(strings.TrimSpace(fact.Kind))] = struct{}{}
+		}
+	}
+	has := func(values ...string) bool {
+		for _, value := range values {
+			if _, exists := kinds[value]; exists {
+				return true
+			}
+		}
+		return false
+	}
+	if has("product", "scope") {
+		principles = append(principles, "设计体系只覆盖该仓库真实承担的产品范围，不把仓库之外的界面或一次性活动风格提升为全局规则。")
+	}
+	if has("architecture", "route", "routing") {
+		principles = append(principles, "组件、页面模式和交互必须兼容仓库现有技术架构、路由方式与服务端渲染边界。")
+	}
+	if has("layout", "viewport", "responsive") {
+		principles = append(principles, "布局优先遵守仓库已有画布宽度、响应规则、安全区和固定操作区，不用桌面端模式替代移动端结构。")
+	}
+	if has("typography", "font") {
+		principles = append(principles, "字体家族、字号层级和字重以全局样式与高频真实页面为准，确保中文内容清晰可读。")
+	}
+	if has("color", "surface", "theme") {
+		principles = append(principles, "主色、语义色、页面背景和内容表面从仓库高频证据中提取，局部主题不得破坏核心交互语义。")
+	}
+	if has("component", "control", "navigation", "interaction", "state") {
+		principles = append(principles, "共享组件必须覆盖默认、悬停、禁用、加载、空和失败状态，并保持导航与反馈行为一致。")
+	}
+	for _, fallback := range []string{
+		"以仓库中重复出现的视觉变量和共享组件为基础，不把单个页面的偶然写法当作设计体系。",
+		"快速草稿只陈述可追溯事实；证据不足的部分使用明确默认值，并留给 AI 深度优化继续判断。",
+		"设计规则、Tokens、组件状态、页面模式和 UI Kit 必须同步演进，不能只修改展示表面。",
+	} {
+		principles = appendUniqueString(principles, fallback, 8)
+	}
+	return principles
+}
+
 func buildProgrammaticDesignMarkdown(input ProgrammaticInput, sources []programmaticSource, theme programmaticTheme) string {
 	name := cleanProgrammaticText(firstNonEmpty(input.RepositoryName, input.ProjectName, "Repository"), 120)
 	project := cleanProgrammaticText(input.ProjectName, 120)
@@ -608,24 +652,7 @@ func buildProgrammaticDesignMarkdown(input ProgrammaticInput, sources []programm
 	description := cleanProgrammaticText(input.ProjectDescription, 800)
 	commit := cleanProgrammaticText(input.CommitSHA, 80)
 	platform := cleanProgrammaticText(input.Platform, 40)
-	analysisSummary := ""
-	principles := make([]string, 0, 8)
-	if input.RepositoryAnalysis != nil {
-		analysisSummary = cleanProgrammaticText(input.RepositoryAnalysis.Summary, 1200)
-		for _, fact := range input.RepositoryAnalysis.Facts {
-			value := cleanProgrammaticText(fact.Value, 280)
-			if value != "" {
-				principles = appendUniqueString(principles, value, 8)
-			}
-		}
-	}
-	if len(principles) == 0 {
-		principles = []string{
-			"以仓库中重复出现的视觉变量和共享组件为基础，不把一次性页面样式提升为全局规则。",
-			"快速草稿只陈述可追溯事实；证据不足的部分保持为明确的默认值，等待 AI 深度优化。",
-			"组件和页面模式必须共同使用同一套 Tokens，避免预览与事实源分离。",
-		}
-	}
+	principles := programmaticPrinciples(input.RepositoryAnalysis)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s 设计体系\n\n", markdownProgrammatic(name))
@@ -640,8 +667,8 @@ func buildProgrammaticDesignMarkdown(input ProgrammaticInput, sources []programm
 	if brief != "" {
 		fmt.Fprintf(&b, "- 本次目标：%s\n", markdownProgrammatic(brief))
 	}
-	if analysisSummary != "" {
-		fmt.Fprintf(&b, "\n%s\n", markdownProgrammatic(analysisSummary))
+	if input.RepositoryAnalysis != nil {
+		fmt.Fprintf(&b, "- 仓库证据：已复用 %d 条结构化事实和 %d 个来源文件；原始内容保留在来源索引中。\n", len(input.RepositoryAnalysis.Facts), len(input.RepositoryAnalysis.SourceFiles))
 	}
 
 	b.WriteString("\n## 设计原则\n\n")

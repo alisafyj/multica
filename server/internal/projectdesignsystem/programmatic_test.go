@@ -114,8 +114,8 @@ func TestGenerateProgrammaticFirstPackageCanUseFrozenAnalysisWithoutCheckout(t *
 	if _, err := GenerateProgrammaticFirstPackage(context.Background(), "", output, input, nil); err != nil {
 		t.Fatalf("GenerateProgrammaticFirstPackage() error = %v", err)
 	}
-	if body := string(mustReadProgrammaticFile(t, output, "DESIGN.md")); !strings.Contains(body, "Clinic home") || !strings.Contains(body, "Cards use compact vertical rhythm") {
-		t.Fatalf("DESIGN.md did not preserve frozen analysis:\n%s", body)
+	if body := string(mustReadProgrammaticFile(t, output, "DESIGN.md")); !strings.Contains(body, "Clinic home") || !strings.Contains(body, "仓库证据：已复用") || strings.Contains(body, "Cards use compact vertical rhythm") {
+		t.Fatalf("DESIGN.md did not keep raw analysis out of the user-facing view:\n%s", body)
 	}
 }
 
