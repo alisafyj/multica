@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// PRDTemplateReader supplies authoritative heading labels before delegation;
-// it performs only reads and grants no publication capability to the worker.
+// PRDTemplateReader supplies authoritative heading labels before drafting;
+// it performs only reads and grants no document publication capability.
 type PRDTemplateReader interface {
 	ReadPRDTemplateHeadings(context.Context, InstallationCredentials, string) ([]string, error)
 }

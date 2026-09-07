@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 const maxChatPRDBytes = 128 * 1024
@@ -179,6 +180,33 @@ func (h *Handler) GetChatPRD(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, draft)
 }
 
+func (h *Handler) chatPRDTemplateHeadings(w http.ResponseWriter, r *http.Request, scope chatPRDScope) ([]string, bool) {
+	template, ok := h.LarkAPIClient.(lark.PRDTemplateReader)
+	token := strings.TrimSpace(os.Getenv("MULTICA_PRD_TEMPLATE_WIKI_TOKEN"))
+	if !ok || token == "" {
+		writeError(w, http.StatusServiceUnavailable, "PRD template reading is not configured")
+		return nil, false
+	}
+	headings, err := template.ReadPRDTemplateHeadings(r.Context(), scope.credentials, token)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to read unambiguous PRD template headings: "+err.Error())
+		return nil, false
+	}
+	return headings, true
+}
+
+func (h *Handler) GetChatPRDTemplate(w http.ResponseWriter, r *http.Request) {
+	scope, ok := h.chatPRDScope(w, r)
+	if !ok {
+		return
+	}
+	headings, ok := h.chatPRDTemplateHeadings(w, r, scope)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"template_headings": headings})
+}
+
 func decodeChatPRDRequest(w http.ResponseWriter, r *http.Request, target any) bool {
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxChatPRDBytes))
 	if err != nil || !utf8.Valid(raw) {
@@ -313,14 +341,18 @@ func (h *Handler) SaveChatPRDDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		SourceMessageID  string `json:"source_message_id"`
-		GenerationTaskID string `json:"generation_task_id"`
+		SourceMessageID string         `json:"source_message_id"`
+		Content         ChatPRDContent `json:"content"`
 	}
 	if !decodeChatPRDRequest(w, r, &request) {
 		return
 	}
 	if request.SourceMessageID == "" {
 		writeError(w, http.StatusBadRequest, "source_message_id is required")
+		return
+	}
+	if err := validateChatPRDContent(request.Content); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	source, err := h.chatPRDMessage(r.Context(), scope, request.SourceMessageID)
@@ -341,11 +373,24 @@ func (h *Handler) SaveChatPRDDraft(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "source is not the root of this task's triggering topic")
 		return
 	}
-	generated, ok := h.chatPRDGenerationContent(w, r, scope, request.GenerationTaskID, request.SourceMessageID)
+	headings, ok := h.chatPRDTemplateHeadings(w, r, scope)
 	if !ok {
 		return
 	}
-	content, _ := json.Marshal(generated)
+	for _, section := range request.Content.Sections {
+		found := false
+		for _, heading := range headings {
+			if section.Heading == heading {
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeError(w, http.StatusBadRequest, "PRD heading is not in the current template; read multica chat prd template before drafting")
+			return
+		}
+	}
+	content, _ := json.Marshal(request.Content)
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save PRD draft")
@@ -364,6 +409,30 @@ func (h *Handler) SaveChatPRDDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	if currentScope.sessionID != scope.sessionID || currentScope.lockKey() != scope.lockKey() {
 		writeError(w, http.StatusConflict, "PRD task scope changed while waiting to save")
+		return
+	}
+	// The direct writer must still act for the original root author. Neither
+	// the current operator nor mutable topic context can lend human authority.
+	qtx := h.Queries.WithTx(tx)
+	task, err := qtx.GetAgentTask(r.Context(), parseUUID(r.Header.Get("X-Task-ID")))
+	if err != nil || isTerminalTaskStatus(task.Status) {
+		writeError(w, http.StatusForbidden, "PRD drafting requires an active task")
+		return
+	}
+	identity, err := qtx.GetChannelUserBindingByUserID(r.Context(), db.GetChannelUserBindingByUserIDParams{
+		InstallationID: scope.installationID, ChannelUserID: source.SenderID,
+	})
+	if err != nil || identity.WorkspaceID != scope.workspaceID || !task.OriginatorUserID.Valid || identity.MulticaUserID != task.OriginatorUserID {
+		writeError(w, http.StatusForbidden, "PRD drafting requires the original requester's verified human task identity; no account fallback is allowed")
+		return
+	}
+	if _, err := h.getWorkspaceMember(r.Context(), uuidToString(identity.MulticaUserID), uuidToString(scope.workspaceID)); err != nil {
+		writeError(w, http.StatusForbidden, "the original requester is not a workspace member")
+		return
+	}
+	agent, err := qtx.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: task.AgentID, WorkspaceID: scope.workspaceID})
+	if err != nil || agent.ArchivedAt.Valid || !h.canInvokeAgent(r.Context(), agent, "member", uuidToString(identity.MulticaUserID), "", uuidToString(scope.workspaceID)) {
+		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
 		return
 	}
 	args := append(scope.args(), source.MessageID, source.SenderID, content)

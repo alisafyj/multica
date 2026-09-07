@@ -171,3 +171,38 @@ func TestHTTPClient_ListChatMessagesMissingChatID(t *testing.T) {
 		t.Fatalf("want error for empty chat id")
 	}
 }
+
+func TestHTTPClient_ListChatMessagesPageTraversesTopic(t *testing.T) {
+	fake := newLarkFake(t)
+	fake.stubToken("tok", 7200)
+	fake.mux.HandleFunc("/open-apis/im/v1/messages", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("container_id_type") != "thread" || q.Get("container_id") != "omt_topic" || q.Get("sort_type") != "ByCreateTimeDesc" {
+			t.Errorf("topic pagination changed scope/order: %s", r.URL.RawQuery)
+		}
+		id, ts, next := "om_reply", "2000", "opaque+/cursor="
+		if q.Get("page_token") == next {
+			id, ts, next = "om_root", "1000", ""
+		} else if q.Get("page_token") != "" {
+			t.Errorf("unexpected cursor: %q", q.Get("page_token"))
+		}
+		writeJSON(w, map[string]any{"code": 0, "data": map[string]any{
+			"has_more": next != "", "page_token": next,
+			"items": []any{map[string]any{
+				"message_id": id, "chat_id": "oc_chat", "thread_id": "omt_topic", "msg_type": "text", "create_time": ts,
+				"sender": map[string]any{"id": "ou_author", "sender_type": "user"},
+				"body":   map[string]any{"content": `{"text":"source message"}`},
+			}},
+		}})
+	})
+	c := newTestClient(fake, time.Now)
+	params := ListMessagesParams{ChatID: "oc_chat", ThreadID: "omt_topic", PageSize: 1}
+	first, next, err := c.ListChatMessagesPage(context.Background(), testCreds(), params, "")
+	if err != nil || len(first) != 1 || first[0].MessageID != "om_reply" || next == "" {
+		t.Fatalf("first topic page = %+v cursor=%q err=%v", first, next, err)
+	}
+	older, next, err := c.ListChatMessagesPage(context.Background(), testCreds(), params, next)
+	if err != nil || len(older) != 1 || older[0].MessageID != "om_root" || older[0].ChatID != "oc_chat" || older[0].ThreadID != "omt_topic" || next != "" {
+		t.Fatalf("older source topic page = %+v cursor=%q err=%v", older, next, err)
+	}
+}
