@@ -509,8 +509,9 @@ func writeInstructionPrecedence(b *strings.Builder) {
 //   - Web chat, Feishu, WeCom and DingTalk: the conversation is persisted in
 //     Multica's chat_message table and `multica chat history` reads it back —
 //     see handler/chat_history.go's chat_message fallback for non-Slack
-//     sessions. Recoverable, just from a different place. The readable set is
-//     decided in one place, SurfacePersistsTranscript.
+//     sessions. Feishu topic tasks additionally have a native, bound-topic
+//     `multica chat thread` reader. SurfacePersistsTranscript decides which
+//     surfaces have the stored transcript.
 //
 // Only a surface whose conversation Multica never stored (so there is nothing
 // to read back) warrants telling the user; no current surface is in that
@@ -925,9 +926,8 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 		// Web/mobile chat keeps its own copy: it has no channel and no last hop
 		// to be uncertain about — the browser renders the bound file as a card.
 		//
-		// The orthogonal HISTORY layer (which read commands exist) is
-		// Slack-only and also lives in the per-turn chat prompt — do not
-		// collapse the two.
+		// The orthogonal HISTORY layer (which channel/transcript read commands
+		// exist) also lives in the per-turn chat prompt — do not collapse the two.
 		if ctx.ChatChannelType != "" {
 			fmt.Fprintf(b, "**Delivering files here:** whether Multica can push a file you produce into this %s conversation depends on how this deployment is configured, so it is stated per turn rather than here: the per-turn user message tells you, every turn. Follow what it says about files, and never report a file as delivered unless it told you how to deliver one.\n", ChannelDisplayName(ctx.ChatChannelType))
 		} else {

@@ -1088,9 +1088,10 @@ type larkRESTMessageItem struct {
 		Content string `json:"content"`
 	} `json:"body"`
 	Mentions []struct {
-		Key  string `json:"key"`
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		Key    string `json:"key"`
+		ID     string `json:"id"`
+		IDType string `json:"id_type"`
+		Name   string `json:"name"`
 	} `json:"mentions"`
 }
 
@@ -1110,7 +1111,7 @@ func (it larkRESTMessageItem) normalize() LarkMessage {
 		Deleted:        it.Deleted,
 	}
 	for _, mn := range it.Mentions {
-		m.Mentions = append(m.Mentions, LarkMessageMention{Key: mn.Key, ID: mn.ID, Name: mn.Name})
+		m.Mentions = append(m.Mentions, LarkMessageMention{Key: mn.Key, ID: mn.ID, IDType: mn.IDType, Name: mn.Name})
 	}
 	return m
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strconv"
 	"strings"
@@ -163,7 +164,7 @@ func newChatPRDFixture(t *testing.T) *chatPRDFixture {
 	root := lark.LarkMessage{MessageID: "om_fixture_root", ChatID: "oc_fixture_chat", ThreadID: "omt_fixture_topic",
 		MessageType: "text", Content: `{"text":"@_user_1 请生成订单导出 PRD"}`, SenderType: "user", SenderID: "ou_original_human",
 		CreateTime: strconv.FormatInt(time.Now().Add(-time.Minute).UnixMilli(), 10),
-		Mentions:   []lark.LarkMessageMention{{Key: "@_user_1", ID: "ou_fixture_bot"}},
+		Mentions:   []lark.LarkMessageMention{{Key: "@_user_1", ID: inst.AppID, IDType: "app_id"}},
 	}
 	dbfx.Insert(t, "channel_user_binding", testutil.Cols{
 		"workspace_id": workspaceID, "multica_user_id": testUserID, "installation_id": installationID,
@@ -204,7 +205,7 @@ func (f *chatPRDFixture) confirm(draft ChatPRDDraft) lark.LarkMessage {
 	message := lark.LarkMessage{MessageID: "om_confirmation", ChatID: f.root.ChatID, ThreadID: f.root.ThreadID,
 		RootID: f.root.MessageID, ParentID: "om_mika_draft_reply", MessageType: "text", Content: string(body),
 		SenderType: "user", SenderID: f.root.SenderID, CreateTime: strconv.FormatInt(draft.VersionCreatedAt.Add(time.Second).UnixMilli(), 10),
-		Mentions: []lark.LarkMessageMention{{Key: "@_user_1", ID: "ou_fixture_bot"}},
+		Mentions: []lark.LarkMessageMention{{Key: "@_user_1", ID: f.root.Mentions[0].ID, IDType: f.root.Mentions[0].IDType}},
 	}
 	f.client.messages[message.MessageID] = message
 	return message
@@ -247,6 +248,10 @@ func TestChatPRDRejectsUntrustedSource(t *testing.T) {
 		{"reply instead of root", func(m *lark.LarkMessage) { m.ParentID = "om_other"; m.RootID = "om_other" }},
 		{"not a PRD request", func(m *lark.LarkMessage) { m.Content = `{"text":"@_user_1 晚上好"}` }},
 		{"no genuine mention", func(m *lark.LarkMessage) { m.Mentions = nil }},
+		{"metadata without text mention", func(m *lark.LarkMessage) { m.Content = `{"text":"请生成订单导出 PRD"}` }},
+		{"different app", func(m *lark.LarkMessage) { m.Mentions[0].ID = "cli_other_app" }},
+		{"forged key", func(m *lark.LarkMessage) { m.Mentions[0].Key = "@_user_" }},
+		{"mention prefix collision", func(m *lark.LarkMessage) { m.Content = `{"text":"@_user_10 请生成订单导出 PRD"}` }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newChatPRDFixture(t)
@@ -274,11 +279,23 @@ func TestChatPRDConfirmationGate(t *testing.T) {
 		{"other chat", func(m *lark.LarkMessage) { m.ChatID = "oc_other" }},
 		{"other topic", func(m *lark.LarkMessage) { m.ThreadID = "omt_other" }},
 		{"forwarded approval", func(m *lark.LarkMessage) { m.UpperMessageID = "om_someone_elses_forward" }},
-		{"quoted text", func(m *lark.LarkMessage) { m.Content = `{"text":"> 确认创建 draft v1"}` }},
 		{"rich text", func(m *lark.LarkMessage) { m.MessageType = "post" }},
 		{"revoked", func(m *lark.LarkMessage) { m.Deleted = true }},
 		{"old timestamp", func(m *lark.LarkMessage) { m.CreateTime = "1" }},
 		{"not a real mention", func(m *lark.LarkMessage) { m.Mentions = nil }},
+		{"metadata without text mention", func(m *lark.LarkMessage) {
+			m.Content = strings.ReplaceAll(m.Content, "@_user_1 ", "")
+		}},
+		{"quoted exact confirmation", func(m *lark.LarkMessage) {
+			m.Content = strings.ReplaceAll(m.Content, "@_user_1 ", "> @_user_1 ")
+		}},
+		{"mention prefix collision", func(m *lark.LarkMessage) {
+			m.Content = strings.ReplaceAll(m.Content, "@_user_1", "@_user_10")
+		}},
+		{"forged key erases quotation", func(m *lark.LarkMessage) {
+			m.Mentions[0].Key = "@_user_1 >"
+			m.Content = strings.ReplaceAll(m.Content, "@_user_1 ", "@_user_1 > ")
+		}},
 		{"bare exact phrase", func(m *lark.LarkMessage) {
 			var body map[string]string
 			_ = json.Unmarshal([]byte(m.Content), &body)
@@ -286,7 +303,10 @@ func TestChatPRDConfirmationGate(t *testing.T) {
 			raw, _ := json.Marshal(body)
 			m.Content, m.Mentions = string(raw), nil
 		}},
-		{"different bot mention", func(m *lark.LarkMessage) { m.Mentions[0].ID = "ou_other_bot" }},
+		{"different app mention", func(m *lark.LarkMessage) { m.Mentions[0].ID = "cli_other_app" }},
+		{"ambiguous mention key", func(m *lark.LarkMessage) {
+			m.Mentions = append(m.Mentions, lark.LarkMessageMention{Key: "@_user_1", ID: "cli_other_app", IDType: "app_id"})
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newChatPRDFixture(t)
@@ -297,6 +317,97 @@ func TestChatPRDConfirmationGate(t *testing.T) {
 			testutil.Call(t, f.h.PublishChatPRD, f.publishRequest(draft, message.MessageID)).Want(http.StatusForbidden)
 			if len(f.client.documents) != 0 {
 				t.Fatal("invalid confirmation caused an external write")
+			}
+		})
+	}
+}
+
+// Keep the provider-to-authorization contract executable without a database:
+// Feishu returns bot mentions as app_id even when users were requested as open_id.
+func TestChatPRDNativeMentionAuthorization(t *testing.T) {
+	const appID = "cli_a9493eea23b8dcb0"
+	const botOpenID = "ou_installed_bot"
+	const botUnionID = "on_installed_bot"
+	draft := ChatPRDDraft{
+		ID: "native-draft", Version: 1, SourceMessageID: "om_root", InitiatorOpenID: "ou_original_human",
+		VersionCreatedAt: time.UnixMilli(1000),
+	}
+	for _, tc := range []struct {
+		name        string
+		id          string
+		idType      string
+		key         string
+		textMention string
+		want        bool
+	}{
+		{"installed app", appID, "app_id", "@_user_1", "@_user_1", true},
+		{"installed open ID", botOpenID, "open_id", "@_user_1", "@_user_1", true},
+		{"known union ID", botUnionID, "union_id", "@_user_1", "@_user_1", true},
+		{"omitted type uses requested open ID", botOpenID, "", "@_user_1", "@_user_1", true},
+		{"another app with same name", "cli_another_app", "app_id", "@_user_1", "@_user_1", false},
+		{"unrelated user", "ou_another_user", "open_id", "@_user_1", "@_user_1", false},
+		{"another union ID", "on_another_bot", "union_id", "@_user_1", "@_user_1", false},
+		{"app ID under open ID type", appID, "open_id", "@_user_1", "@_user_1", false},
+		{"open ID under app ID type", botOpenID, "app_id", "@_user_1", "@_user_1", false},
+		{"omitted type cannot guess app ID", appID, "", "@_user_1", "@_user_1", false},
+		{"omitted type cannot guess union ID", botUnionID, "", "@_user_1", "@_user_1", false},
+		{"unknown type", botOpenID, "future_id", "@_user_1", "@_user_1", false},
+		{"unverified user ID namespace", botOpenID, "user_id", "@_user_1", "@_user_1", false},
+		{"missing identity", "", "app_id", "@_user_1", "@_user_1", false},
+		{"metadata without text mention", appID, "app_id", "@_user_1", "", false},
+		{"missing mention key", appID, "app_id", "", "@_user_1", false},
+		{"prefix is not the metadata key", appID, "app_id", "@_user_1", "@_user_10", false},
+		{"forged key prefix", appID, "app_id", "@_user_", "@_user_1", false},
+		{"typed display name", appID, "app_id", "@_user_1", "@Mika", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/open-apis/auth/v3/tenant_access_token/internal", func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(w, http.StatusOK, map[string]any{"code": 0, "tenant_access_token": "native-test-token", "expire": 7200})
+			})
+			mux.HandleFunc("/open-apis/im/v1/messages/", func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("user_id_type") != "open_id" {
+					t.Error("native request must retain the open_id user namespace")
+				}
+				id := strings.TrimPrefix(r.URL.Path, "/open-apis/im/v1/messages/")
+				text := tc.textMention + " 请生成订单导出 PRD"
+				item := map[string]any{
+					"message_id": id, "chat_id": "oc_chat", "thread_id": "omt_topic", "msg_type": "text", "create_time": "500",
+					"sender": map[string]any{"id": draft.InitiatorOpenID, "id_type": "open_id", "sender_type": "user"},
+				}
+				if id == "om_confirmation" {
+					text = tc.textMention + " " + chatPRDConfirmation(draft.ID, draft.Version)
+					item["root_id"], item["parent_id"], item["create_time"] = draft.SourceMessageID, "om_bot_draft", "2000"
+				}
+				content, _ := json.Marshal(map[string]string{"text": text})
+				item["body"] = map[string]any{"content": string(content)}
+				mention := map[string]any{"id": tc.id, "key": tc.key, "name": "Mika"}
+				if tc.idType != "" {
+					mention["id_type"] = tc.idType
+				}
+				item["mentions"] = []any{mention}
+				writeJSON(w, http.StatusOK, map[string]any{"code": 0, "data": map[string]any{"items": []any{item}}})
+			})
+			server := httptest.NewServer(mux)
+			defer server.Close()
+			h := Handler{LarkAPIClient: lark.NewHTTPAPIClient(lark.HTTPClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})}
+			scope := chatPRDScope{
+				chatID: "oc_chat", threadID: "omt_topic", botOpenID: botOpenID, botUnionID: botUnionID,
+				credentials: lark.InstallationCredentials{AppID: appID, AppSecret: "native-test-secret"},
+			}
+			source, err := h.chatPRDMessage(context.Background(), scope, draft.SourceMessageID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateChatPRDSource(source, scope); (err == nil) != tc.want {
+				t.Fatalf("source authorization = %v, want accepted=%v", err, tc.want)
+			}
+			confirmation, err := h.chatPRDMessage(context.Background(), scope, "om_confirmation")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateChatPRDConfirmation(confirmation, draft, scope); (err == nil) != tc.want {
+				t.Fatalf("confirmation authorization = %v, want accepted=%v", err, tc.want)
 			}
 		})
 	}
