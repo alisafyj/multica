@@ -348,7 +348,13 @@
       "confirmDelete": "确定删除这个测试计划吗？",
       "unknownCase": "用例已不存在",
       "parallelism": "并行数",
-      "parallelismPlaceholder": "全部同时"
+      "parallelismPlaceholder": "全部同时",
+      "board": "看板",
+      "boardEmpty": "还没有执行轮次",
+      "passRate": "通过率",
+      "matrixTitle": "最近一轮的模块结果",
+      "moduleColumn": "模块",
+      "moduleUnnamed": "（未分模块）"
     }
   },
   "run": {
@@ -435,7 +441,9 @@
     "result": "结果",
     "environment": "环境",
     "buildRef": "构建版本",
-    "executedAt": "执行时间"
+    "executedAt": "执行时间",
+    "flaky": "不稳定",
+    "flakyHint": "最近 {{count}} 轮的结果在通过与失败之间反复"
   },
   "runs": {
     "title": "执行轮次",
@@ -486,6 +494,17 @@
     "pickerDescription": "选择这条用例所验证的需求。",
     "neverRun": "未执行",
     "failingCount": "{{count}} 条失败",
-    "untestedCount": "{{count}} 条未执行"
+    "untestedCount": "{{count}} 条未执行",
+    "verified": "已验证",
+    "verifiedHint": "所有关联用例在最近一次执行中全部通过",
+    "latestRun": "最近一轮",
+    "defectsSection": "测试发现的缺陷",
+    "foundBySection": "由测试轮次发现",
+    "generateCases": "生成用例",
+    "newCase": "新建用例",
+    "newCaseTitle": "验证：{{title}}",
+    "noCoverage": "暂无测试覆盖",
+    "generateFailed": "无法发起用例生成",
+    "newCaseFailed": "无法创建用例"
   }
 }

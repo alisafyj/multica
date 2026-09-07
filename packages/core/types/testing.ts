@@ -573,6 +573,80 @@ export interface ListIssueTestCasesResponse {
   total: number;
 }
 
+/** GET /api/issues/{id}/test-summary — the requirement loop on a task card. */
+export interface IssueTestRunSummary {
+  id: string;
+  title: string;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+  /** Results of the covering cases inside this round, keyed by result. */
+  results: Record<string, number>;
+}
+
+export interface IssueTestDefect {
+  issue_id: string;
+  issue_number: number;
+  title: string;
+  status: string;
+  run_id: string;
+  run_title: string;
+  run_case_id: string;
+  case_key: string;
+  result: string;
+  opened_at: string | null;
+}
+
+export interface IssueFoundBy {
+  run_id: string;
+  run_title: string;
+  run_status: string;
+  run_case_id: string;
+  test_case_id: string;
+  case_key: string;
+  case_title: string;
+  result: string;
+  environment: string;
+  build_ref: string;
+  executed_at: string | null;
+}
+
+export interface IssueTestSummary {
+  cases: number;
+  /** Every covering case's latest recorded result is passed (and there is at least one). */
+  verified: boolean;
+  latest_run: IssueTestRunSummary | null;
+  /** Defects opened by rounds that executed a covering case, newest first. */
+  defects: IssueTestDefect[];
+  /** For a defect issue: the round and case that opened it. */
+  found_by: IssueFoundBy[];
+}
+
+/** GET /api/test-plans/{id}/stats — the plan's board. */
+export interface TestPlanRunStat {
+  id: string;
+  title: string;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+  results: Record<string, number>;
+  total: number;
+  /** passed / terminal results, 0..1; null while nothing finished. */
+  pass_rate: number | null;
+}
+
+export interface TestPlanModuleStat {
+  module: string;
+  results: Record<string, number>;
+  total: number;
+}
+
+export interface TestPlanStats {
+  runs: TestPlanRunStat[];
+  matrix_run_id: string;
+  matrix: TestPlanModuleStat[];
+}
+
 export interface LinkTestCaseIssuesRequest {
   issue_ids: string[];
 }

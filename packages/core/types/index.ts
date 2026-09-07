@@ -262,6 +262,13 @@ export type {
   TestCapabilityRequirement,
   RuntimeCapabilityScanResponse,
   RuntimeDeviceHub,
+  IssueTestSummary,
+  IssueTestRunSummary,
+  IssueTestDefect,
+  IssueFoundBy,
+  TestPlanStats,
+  TestPlanRunStat,
+  TestPlanModuleStat,
 } from "./testing";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type * from "./product-map";
