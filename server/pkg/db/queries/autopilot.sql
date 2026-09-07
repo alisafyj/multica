@@ -56,11 +56,11 @@ FOR UPDATE;
 INSERT INTO autopilot (
     workspace_id, title, description, assignee_type, assignee_id,
     status, execution_mode, issue_title_template, project_id,
-    created_by_type, created_by_id
+    created_by_type, created_by_id, test_plan_id, test_run_parallelism
 ) VALUES (
     $1, $2, sqlc.narg('description'), $3, $4,
     $5, $6, sqlc.narg('issue_title_template'), sqlc.narg('project_id'),
-    $7, $8
+    $7, $8, sqlc.narg('test_plan_id'), sqlc.narg('test_run_parallelism')
 ) RETURNING *;
 
 -- name: UpdateAutopilot :one
@@ -77,6 +77,8 @@ UPDATE autopilot SET
     execution_mode = COALESCE(sqlc.narg('execution_mode'), execution_mode),
     issue_title_template = sqlc.narg('issue_title_template'),
     project_id = sqlc.narg('project_id'),
+    test_plan_id = sqlc.narg('test_plan_id'),
+    test_run_parallelism = sqlc.narg('test_run_parallelism'),
     updated_at = now()
 WHERE id = $1
 RETURNING *;
@@ -431,6 +433,28 @@ UPDATE autopilot_run
 SET status = 'running', task_id = $2
 WHERE id = $1
 RETURNING *;
+
+-- name: UpdateAutopilotRunTestRunRunning :one
+-- test_run mode: the run is running once its round is dispatched; task_id
+-- keeps the round's first case task so existing readers see the run as
+-- started.
+UPDATE autopilot_run
+SET status = 'running', test_run_id = $2, task_id = $3
+WHERE id = $1
+RETURNING *;
+
+-- name: SetAutopilotRunTestRun :one
+-- A round that was created but parked (blocked) still belongs to the run.
+UPDATE autopilot_run
+SET test_run_id = $2
+WHERE id = $1
+RETURNING *;
+
+-- name: GetAutopilotRunByTestRun :one
+SELECT * FROM autopilot_run
+WHERE test_run_id = $1
+ORDER BY created_at DESC
+LIMIT 1;
 
 -- name: UpdateAutopilotRunCompleted :one
 -- Quota safety: only use for a run known to have no reservation. Normal

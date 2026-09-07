@@ -504,6 +504,9 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		LLM: llmClient,
 		cfg: cfg,
 	}
+	// The test_run execution mode builds and dispatches rounds through the
+	// handler's test-run code; the service only knows the interface.
+	h.AutopilotService.TestRuns = autopilotTestRunLauncher{h: h}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
 	// PMO apply reuses the shared issue-creation pipeline inside its own
 	// transaction (same numbering / duplicate guard / position semantics).

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -124,73 +125,146 @@ func (h *Handler) DispatchTestRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runCases, err := h.Queries.ListTestRunCases(r.Context(), db.ListTestRunCasesParams{
-		RunID:       run.ID,
-		WorkspaceID: wsUUID,
+	outcome, err := h.dispatchTestRunCases(r.Context(), testRunDispatchInput{
+		run:         run,
+		agent:       agent,
+		wsUUID:      wsUUID,
+		workspaceID: workspaceID,
+		originator:  userUUID,
+		accountable: userUUID,
+		source:      pgtype.Text{String: "direct_human", Valid: true},
+		requesterID: userID,
+		prompt:      strings.TrimSpace(req.Prompt),
+		actorType:   "member",
+		actorID:     userID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load the run's cases")
+		var undispatchable *errTestRunUndispatchable
+		if errors.As(err, &undispatchable) {
+			writeError(w, http.StatusBadRequest, undispatchable.reason)
+			return
+		}
+		slog.Error("dispatch test run failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to dispatch the run")
 		return
 	}
-	if len(runCases) == 0 {
-		writeError(w, http.StatusBadRequest, "this run has no cases to execute")
+	if outcome.blocked {
+		// Explicit failure, not a silent downgrade: parking the run tells the
+		// user which capability is missing instead of burning an agent run
+		// that discovers it has no phone.
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"test_run":     testRunToResponse(outcome.run),
+			"missing_kind": outcome.missingKind,
+			"message":      outcome.reason,
+		})
 		return
 	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"test_run":      testRunToResponse(outcome.run),
+		"agent_task_id": uuidToString(outcome.firstTaskID),
+		"case_tasks":    outcome.created,
+		"cases":         outcome.cases,
+	})
+}
 
+// testRunDispatchInput is everything the dispatch core needs besides an HTTP
+// request: the run, the agent, how the per-case tasks are attributed and how
+// the run updates are announced. A human dispatch is direct_human on the
+// member; an autopilot round carries its trigger owner's attribution.
+type testRunDispatchInput struct {
+	run          db.TestRun
+	agent        db.Agent
+	wsUUID       pgtype.UUID
+	workspaceID  string
+	originator   pgtype.UUID
+	accountable  pgtype.UUID
+	source       pgtype.Text
+	evidenceKind pgtype.Text
+	evidenceRef  pgtype.UUID
+	// requesterID travels in the task context and must be a member id string:
+	// the follow-up dispatch of a capped round parses it back.
+	requesterID string
+	prompt      string
+	actorType   string
+	actorID     string
+}
+
+type testRunDispatchOutcome struct {
+	run         db.TestRun
+	firstTaskID pgtype.UUID
+	created     int
+	cases       int
+	// blocked: the round was parked with missingKind / reason recorded on it.
+	blocked     bool
+	missingKind string
+	reason      string
+}
+
+// errTestRunUndispatchable marks a round that cannot be dispatched as asked
+// (no cases, the agent's runtime is gone): the caller's mistake, not a fault.
+type errTestRunUndispatchable struct{ reason string }
+
+func (e *errTestRunUndispatchable) Error() string { return e.reason }
+
+// dispatchTestRunCases is the dispatch core shared by the run page and the
+// autopilot test_run mode: resolve the run's capabilities against the
+// agent's runtime, park the round when they cannot be met, otherwise queue
+// one agent task per case (TS-021) — up to the parallelism cap (M4), the
+// per-case completion hooks release the rest — and make the agent the run's
+// executor.
+func (h *Handler) dispatchTestRunCases(ctx context.Context, in testRunDispatchInput) (testRunDispatchOutcome, error) {
+	run := in.run
 	// The overlay is mounted on the agent's runtime, so that is the only
 	// daemon whose capabilities can serve this run.
-	agentRuntime, err := h.runtimeLookup(obsmetrics.RuntimeLookupSourceTestCapability).Get(r.Context(), agent.RuntimeID)
+	agentRuntime, err := h.runtimeLookup(obsmetrics.RuntimeLookupSourceTestCapability).Get(ctx, in.agent.RuntimeID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "the agent's runtime is gone; bind it to a running daemon first")
-		return
+		return testRunDispatchOutcome{}, &errTestRunUndispatchable{reason: "the agent's runtime is gone; bind it to a running daemon first"}
+	}
+	runCases, err := h.Queries.ListTestRunCases(ctx, db.ListTestRunCasesParams{RunID: run.ID, WorkspaceID: in.wsUUID})
+	if err != nil {
+		return testRunDispatchOutcome{}, fmt.Errorf("load the run's cases: %w", err)
+	}
+	if len(runCases) == 0 {
+		return testRunDispatchOutcome{}, &errTestRunUndispatchable{reason: "this run has no cases to execute"}
 	}
 
 	requirements := runRequiredCapabilities(runCases)
 	if kind, needsPhone := deviceKindRequired(requirements); needsPhone && !agentRuntime.TestHostEnabled {
-		h.parkTestRunBlocked(w, r, run, wsUUID, workspaceID, userID, kind,
+		return h.parkTestRun(ctx, in, kind,
 			"the agent's runtime is not a test host; turn on \"Test host\" on its runtime page before dispatching device cases")
-		return
 	}
-	binding, missingKind, resolved := h.resolveRunCapabilities(r.Context(), wsUUID, requirements, effectiveDaemonIDForRuntime(agentRuntime))
+	binding, missingKind, resolved := h.resolveRunCapabilities(ctx, in.wsUUID, requirements, effectiveDaemonIDForRuntime(agentRuntime))
 	if !resolved {
-		// Explicit failure, not a silent downgrade: parking the run tells the
-		// user which capability is missing instead of burning an agent run that
-		// discovers it has no phone.
-		h.parkTestRunBlocked(w, r, run, wsUUID, workspaceID, userID, missingKind,
-			"no runtime can provide the required capability: "+missingKind)
-		return
+		return h.parkTestRun(ctx, in, missingKind, "no runtime can provide the required capability: "+missingKind)
 	}
 
-	bindingJSON := marshalJSONColumn(binding, "{}")
-
-	// One agent task per case (TS-021): cases run independently, in parallel
-	// across phones, and each records its own result. The overlay (browser
-	// MCP, device connector) is computed per task with the resolved binding on
-	// the context — the queue insert takes it as an argument and nothing
-	// recomputes it at claim time. A parallelism cap (M4) queues only the
-	// first N now; the per-case completion hooks release the rest.
+	// The overlay (browser MCP, device connector) is computed per task with
+	// the resolved binding on the context — the queue insert takes it as an
+	// argument and nothing recomputes it at claim time.
 	limit := len(runCases)
 	if run.Parallelism.Valid && run.Parallelism.Int32 > 0 && int(run.Parallelism.Int32) < limit {
 		limit = int(run.Parallelism.Int32)
 	}
 	input := testRunCaseTaskInput{
 		run:          run,
-		agent:        agent,
-		userUUID:     userUUID,
-		requesterID:  userID,
-		workspaceID:  workspaceID,
-		prompt:       strings.TrimSpace(req.Prompt),
+		agent:        in.agent,
+		originator:   in.originator,
+		accountable:  in.accountable,
+		source:       in.source,
+		evidenceKind: in.evidenceKind,
+		evidenceRef:  in.evidenceRef,
+		requesterID:  in.requesterID,
+		workspaceID:  in.workspaceID,
+		prompt:       in.prompt,
 		binding:      binding,
 		requirements: requirements,
 	}
 	var firstTaskID pgtype.UUID
 	created := 0
 	for _, rc := range runCases[:limit] {
-		agentTask, err := h.createTestRunCaseTask(r.Context(), h.Queries, input, rc)
+		agentTask, err := h.createTestRunCaseTask(ctx, h.Queries, input, rc)
 		if err != nil {
-			slog.Error("dispatch test run failed", append(logger.RequestAttrs(r), "error", err, "created", created, "of", limit)...)
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to dispatch case %d of %d", created+1, limit))
-			return
+			return testRunDispatchOutcome{}, fmt.Errorf("dispatch case %d of %d: %w", created+1, limit, err)
 		}
 		if !firstTaskID.Valid {
 			firstTaskID = agentTask.ID
@@ -204,48 +278,35 @@ func (h *Handler) DispatchTestRun(w http.ResponseWriter, r *http.Request) {
 	// human who never ran them. agent_task_id keeps the first case task so
 	// older readers still see the round as dispatched, and so the follow-up
 	// dispatch of a capped round can read the requester and prompt back.
-	updated, err := h.Queries.UpdateTestRun(r.Context(), db.UpdateTestRunParams{
+	updated, err := h.Queries.UpdateTestRun(ctx, db.UpdateTestRunParams{
 		ID:                run.ID,
-		WorkspaceID:       wsUUID,
+		WorkspaceID:       in.wsUUID,
 		AgentTaskID:       firstTaskID,
 		ExecutorType:      pgtype.Text{String: "agent", Valid: true},
-		ExecutorID:        agent.ID,
-		CapabilityBinding: bindingJSON,
+		ExecutorID:        in.agent.ID,
+		CapabilityBinding: marshalJSONColumn(binding, "{}"),
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to record the dispatch")
-		return
+		return testRunDispatchOutcome{}, fmt.Errorf("record the dispatch: %w", err)
 	}
-	resp := testRunToResponse(updated)
-	h.publish(protocol.EventTestRunUpdated, workspaceID, "member", userID, map[string]any{"test_run": resp})
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"test_run":      resp,
-		"agent_task_id": uuidToString(firstTaskID),
-		"case_tasks":    created,
-		"cases":         len(runCases),
-	})
+	h.publish(protocol.EventTestRunUpdated, in.workspaceID, in.actorType, in.actorID, map[string]any{"test_run": testRunToResponse(updated)})
+	return testRunDispatchOutcome{run: updated, firstTaskID: firstTaskID, created: created, cases: len(runCases)}, nil
 }
 
-// parkTestRunBlocked records why a round could not be dispatched and answers
-// 409 with the missing kind, so the run page can say what to fix.
-func (h *Handler) parkTestRunBlocked(w http.ResponseWriter, r *http.Request, run db.TestRun, wsUUID pgtype.UUID, workspaceID, userID, missingKind, reason string) {
-	blocked, err := h.Queries.UpdateTestRun(r.Context(), db.UpdateTestRunParams{
-		ID:          run.ID,
-		WorkspaceID: wsUUID,
+// parkTestRun records why a round could not be dispatched, so the run page
+// (or the autopilot run) can say what to fix.
+func (h *Handler) parkTestRun(ctx context.Context, in testRunDispatchInput, missingKind, reason string) (testRunDispatchOutcome, error) {
+	blocked, err := h.Queries.UpdateTestRun(ctx, db.UpdateTestRunParams{
+		ID:          in.run.ID,
+		WorkspaceID: in.wsUUID,
 		Status:      pgtype.Text{String: "blocked", Valid: true},
 		Error:       pgtype.Text{String: reason, Valid: true},
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to record the blocked run")
-		return
+		return testRunDispatchOutcome{}, fmt.Errorf("record the blocked run: %w", err)
 	}
-	resp := testRunToResponse(blocked)
-	h.publish(protocol.EventTestRunUpdated, workspaceID, "member", userID, map[string]any{"test_run": resp})
-	writeJSON(w, http.StatusConflict, map[string]any{
-		"test_run":     resp,
-		"missing_kind": missingKind,
-		"message":      reason,
-	})
+	h.publish(protocol.EventTestRunUpdated, in.workspaceID, in.actorType, in.actorID, map[string]any{"test_run": testRunToResponse(blocked)})
+	return testRunDispatchOutcome{run: blocked, blocked: true, missingKind: missingKind, reason: reason}, nil
 }
 
 // testRunCaseTaskInput is everything a per-case task needs besides the case
@@ -254,7 +315,11 @@ func (h *Handler) parkTestRunBlocked(w http.ResponseWriter, r *http.Request, run
 type testRunCaseTaskInput struct {
 	run          db.TestRun
 	agent        db.Agent
-	userUUID     pgtype.UUID
+	originator   pgtype.UUID
+	accountable  pgtype.UUID
+	source       pgtype.Text
+	evidenceKind pgtype.Text
+	evidenceRef  pgtype.UUID
 	requesterID  string
 	workspaceID  string
 	prompt       string
@@ -292,16 +357,18 @@ func (h *Handler) createTestRunCaseTask(ctx context.Context, q *db.Queries, in t
 		"workspace_id": in.workspaceID,
 	}
 	octx := testcapability.WithResolvedCapabilities(ctx, capabilityEntriesForOverlay(in.binding, in.requirements, label, tags))
-	overlay, connectedApps := h.TaskService.BuildRuntimeMCPOverlayForMerge(octx, in.userUUID, in.agent)
+	overlay, connectedApps := h.TaskService.BuildRuntimeMCPOverlayForMerge(octx, in.originator, in.agent)
 	agentTask, err := q.CreateQuickCreateTask(octx, db.CreateQuickCreateTaskParams{
 		ID:                   dbid.NewV7(),
 		AgentID:              in.agent.ID,
 		RuntimeID:            in.agent.RuntimeID,
 		Priority:             0,
 		Context:              contextJSON,
-		OriginatorUserID:     in.userUUID,
-		AccountableUserID:    in.userUUID,
-		OriginatorSource:     pgtype.Text{String: "direct_human", Valid: true},
+		OriginatorUserID:     in.originator,
+		AccountableUserID:    in.accountable,
+		OriginatorSource:     in.source,
+		TriggerEvidenceKind:  in.evidenceKind,
+		TriggerEvidenceRefID: in.evidenceRef,
 		RuntimeMcpOverlay:    overlay,
 		RuntimeConnectedApps: connectedApps,
 	})
@@ -321,7 +388,8 @@ func (h *Handler) createTestRunCaseTask(ctx context.Context, q *db.Queries, in t
 // dispatchNextTestRunCases releases the next cases of a capped round once a
 // case settles ("finish one, release one"). Uncapped rounds queued everything
 // at dispatch and return at once. The requester and prompt come back from the
-// first case task's context; the binding is the frozen one on the run.
+// first case task's context, its attribution from the task row itself; the
+// binding is the frozen one on the run.
 func (h *Handler) dispatchNextTestRunCases(ctx context.Context, q *db.Queries, run db.TestRun) error {
 	if !run.Parallelism.Valid || run.Parallelism.Int32 <= 0 {
 		return nil
@@ -359,9 +427,13 @@ func (h *Handler) dispatchNextTestRunCases(ctx context.Context, q *db.Queries, r
 	if !ok {
 		return fmt.Errorf("the round's first task carries no test run context")
 	}
-	userUUID, err := util.ParseUUID(runCtx.RequesterID)
-	if err != nil {
-		return fmt.Errorf("requester id on the first case task: %w", err)
+	originator := firstTask.OriginatorUserID
+	if !originator.Valid {
+		parsed, err := util.ParseUUID(runCtx.RequesterID)
+		if err != nil {
+			return fmt.Errorf("requester id on the first case task: %w", err)
+		}
+		originator = parsed
 	}
 	agent, err := q.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: run.ExecutorID, WorkspaceID: run.WorkspaceID})
 	if err != nil {
@@ -383,7 +455,11 @@ func (h *Handler) dispatchNextTestRunCases(ctx context.Context, q *db.Queries, r
 	input := testRunCaseTaskInput{
 		run:          run,
 		agent:        agent,
-		userUUID:     userUUID,
+		originator:   originator,
+		accountable:  firstTask.AccountableUserID,
+		source:       firstTask.OriginatorSource,
+		evidenceKind: firstTask.TriggerEvidenceKind,
+		evidenceRef:  firstTask.TriggerEvidenceRefID,
 		requesterID:  runCtx.RequesterID,
 		workspaceID:  runCtx.WorkspaceID,
 		prompt:       runCtx.Prompt,

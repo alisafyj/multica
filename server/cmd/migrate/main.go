@@ -368,6 +368,7 @@ var concurrentIndexCleanups = map[string]string{
 	"909_test_case_issue_workspace_case_index":             "test_case_issue_workspace_case_idx",
 	"912_test_run_case_agent_task_index":                   "test_run_case_agent_task_idx",
 	"446_issue_properties_bigm_index":                      "idx_issue_properties_bigm",
+	"916_autopilot_run_test_run_index":                 "idx_autopilot_run_test_run",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction

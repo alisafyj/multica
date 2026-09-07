@@ -244,13 +244,17 @@ func (h *Handler) convergeTestRun(ctx context.Context, q *db.Queries, run db.Tes
 	if pending > 0 || run.Status == "completed" || run.Status == "aborted" {
 		return nil
 	}
-	_, err = q.UpdateTestRun(ctx, db.UpdateTestRunParams{
+	completed, err := q.UpdateTestRun(ctx, db.UpdateTestRunParams{
 		ID:          run.ID,
 		WorkspaceID: run.WorkspaceID,
 		Status:      pgtype.Text{String: "completed", Valid: true},
 		CompletedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	h.settleAutopilotTestRun(ctx, q, completed)
+	return nil
 }
 
 // updateTestRunFromAgentFailure records an agent task that died. A per-case
@@ -267,14 +271,18 @@ func (h *Handler) updateTestRunFromAgentFailure(ctx context.Context, task db.Age
 		return err
 	}
 	if !isCase {
-		_, err = h.Queries.UpdateTestRun(ctx, db.UpdateTestRunParams{
+		aborted, err := h.Queries.UpdateTestRun(ctx, db.UpdateTestRunParams{
 			ID:          run.ID,
 			WorkspaceID: run.WorkspaceID,
 			Status:      pgtype.Text{String: "aborted", Valid: true},
 			CompletedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			Error:       pgtype.Text{String: req.Error, Valid: req.Error != ""},
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		h.settleAutopilotTestRun(ctx, h.Queries, aborted)
+		return nil
 	}
 	if !isTerminalRunCaseResult(rc.Result) {
 		notes := "the agent task failed before recording a result"

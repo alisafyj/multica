@@ -9,6 +9,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -433,30 +435,53 @@ func (h *Handler) fetchCasesForIDs(
 	wsUUID pgtype.UUID,
 	rawIDs []string,
 ) ([]db.TestCase, map[string][]db.TestCaseRepo, pgtype.UUID, bool) {
-	if len(rawIDs) == 0 {
-		writeError(w, http.StatusBadRequest, "test_case_ids must not be empty")
+	cases, reposByCase, projectUUID, err := h.loadCasesForRun(ctx, wsUUID, rawIDs)
+	if err != nil {
+		var rce *runCasesError
+		if errors.As(err, &rce) {
+			writeError(w, rce.status, rce.msg)
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to load test cases")
+		}
 		return nil, nil, pgtype.UUID{}, false
+	}
+	return cases, reposByCase, projectUUID, true
+}
+
+// runCasesError is a caller's mistake while resolving a run's cases, with
+// the HTTP status the request handlers answer.
+type runCasesError struct {
+	status int
+	msg    string
+}
+
+func (e *runCasesError) Error() string { return e.msg }
+
+// loadCasesForRun resolves the cases a run is built from — every id must be
+// a case of this workspace and all of one project — with their repo
+// bindings batched in one query.
+func (h *Handler) loadCasesForRun(ctx context.Context, wsUUID pgtype.UUID, rawIDs []string) ([]db.TestCase, map[string][]db.TestCaseRepo, pgtype.UUID, error) {
+	if len(rawIDs) == 0 {
+		return nil, nil, pgtype.UUID{}, &runCasesError{status: http.StatusBadRequest, msg: "test_case_ids must not be empty"}
 	}
 	cases := make([]db.TestCase, 0, len(rawIDs))
 	var projectUUID pgtype.UUID
 	for i, raw := range rawIDs {
-		id, ok := parseUUIDOrBadRequest(w, raw, fmt.Sprintf("test_case_ids[%d]", i))
-		if !ok {
-			return nil, nil, pgtype.UUID{}, false
+		id, err := util.ParseUUID(raw)
+		if err != nil {
+			return nil, nil, pgtype.UUID{}, &runCasesError{status: http.StatusBadRequest, msg: fmt.Sprintf("invalid test_case_ids[%d]", i)}
 		}
 		tc, err := h.Queries.GetTestCaseInWorkspace(ctx, db.GetTestCaseInWorkspaceParams{
 			ID:          id,
 			WorkspaceID: wsUUID,
 		})
 		if err != nil {
-			writeError(w, http.StatusNotFound, "test case not found: "+raw)
-			return nil, nil, pgtype.UUID{}, false
+			return nil, nil, pgtype.UUID{}, &runCasesError{status: http.StatusNotFound, msg: "test case not found: " + raw}
 		}
 		if i == 0 {
 			projectUUID = tc.ProjectID
 		} else if tc.ProjectID != projectUUID {
-			writeError(w, http.StatusBadRequest, "all test cases must belong to the same project")
-			return nil, nil, pgtype.UUID{}, false
+			return nil, nil, pgtype.UUID{}, &runCasesError{status: http.StatusBadRequest, msg: "all test cases must belong to the same project"}
 		}
 		cases = append(cases, tc)
 	}
@@ -476,7 +501,40 @@ func (h *Handler) fetchCasesForIDs(
 		key := uuidToString(repo.TestCaseID)
 		reposByCase[key] = append(reposByCase[key], repo)
 	}
-	return cases, reposByCase, projectUUID, true
+	return cases, reposByCase, projectUUID, nil
+}
+
+// createTestRunWithCases inserts the run and one run case per test case, each
+// with a frozen snapshot, in one transaction.
+func (h *Handler) createTestRunWithCases(ctx context.Context, params db.CreateTestRunParams, cases []db.TestCase, reposByCase map[string][]db.TestCaseRepo) (db.TestRun, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.TestRun{}, fmt.Errorf("start transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := h.Queries.WithTx(tx)
+
+	run, err := qtx.CreateTestRun(ctx, params)
+	if err != nil {
+		return db.TestRun{}, fmt.Errorf("create test run: %w", err)
+	}
+	for i, tc := range cases {
+		snapshot := snapshotForCase(tc, reposByCase[uuidToString(tc.ID)])
+		if _, err := qtx.CreateTestRunCase(ctx, db.CreateTestRunCaseParams{
+			WorkspaceID:  params.WorkspaceID,
+			RunID:        run.ID,
+			TestCaseID:   tc.ID,
+			CaseSnapshot: snapshot,
+			Position:     int32(i),
+			Result:       "pending",
+		}); err != nil {
+			return db.TestRun{}, fmt.Errorf("create test run case: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.TestRun{}, fmt.Errorf("commit test run create: %w", err)
+	}
+	return run, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -973,16 +1031,7 @@ func (h *Handler) CreateTestRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create the run and its cases in one transaction.
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start transaction")
-		return
-	}
-	defer tx.Rollback(r.Context())
-	qtx := h.Queries.WithTx(tx)
-
-	run, err := qtx.CreateTestRun(r.Context(), db.CreateTestRunParams{
+	run, err := h.createTestRunWithCases(r.Context(), db.CreateTestRunParams{
 		WorkspaceID:       wsUUID,
 		ProjectID:         projectUUID,
 		PlanID:            planUUID,
@@ -995,32 +1044,9 @@ func (h *Handler) CreateTestRun(w http.ResponseWriter, r *http.Request) {
 		Status:            "pending",
 		CreatedBy:         userUUID,
 		Parallelism:       parallelism,
-	})
+	}, cases, reposByCase)
 	if err != nil {
 		slog.Error("create test run failed", append(logger.RequestAttrs(r), "error", err)...)
-		writeError(w, http.StatusInternalServerError, "failed to create test run")
-		return
-	}
-
-	for i, tc := range cases {
-		repos := reposByCase[uuidToString(tc.ID)]
-		snapshot := snapshotForCase(tc, repos)
-		if _, err := qtx.CreateTestRunCase(r.Context(), db.CreateTestRunCaseParams{
-			WorkspaceID:  wsUUID,
-			RunID:        run.ID,
-			TestCaseID:   tc.ID,
-			CaseSnapshot: snapshot,
-			Position:     int32(i),
-			Result:       "pending",
-		}); err != nil {
-			slog.Error("create test run case failed", append(logger.RequestAttrs(r), "error", err)...)
-			writeError(w, http.StatusInternalServerError, "failed to create test run case")
-			return
-		}
-	}
-
-	if err := tx.Commit(r.Context()); err != nil {
-		slog.Error("commit test run create failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to create test run")
 		return
 	}
@@ -1147,6 +1173,7 @@ func (h *Handler) AbortTestRun(w http.ResponseWriter, r *http.Request) {
 				map[string]any{"test_run_case": testRunCaseToResponse(rc), "run_id": uuidToString(run.ID)})
 		}
 	}
+	h.settleAutopilotTestRun(r.Context(), h.Queries, updated)
 	resp := testRunToResponse(updated)
 	h.publish(protocol.EventTestRunUpdated, workspaceID, "member", userID, map[string]any{"test_run": resp})
 	writeJSON(w, http.StatusOK, resp)

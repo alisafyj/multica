@@ -1,0 +1,199 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+)
+
+// createAutopilotTestPlan builds a project with one active case and a plan
+// holding it — the smallest thing a test_run autopilot can build a round from.
+func createAutopilotTestPlan(t *testing.T) (projectID, planID, caseID string) {
+	t.Helper()
+	projectID = newTestRunProject(t)
+	tc := createTestCaseForRun(t, projectID)
+	plan := createTestPlanForRun(t, projectID)
+	addCaseToPlan(t, plan.ID, tc.ID, 0)
+	return projectID, plan.ID, tc.ID
+}
+
+func createTestRunAutopilot(t *testing.T, body map[string]any) AutopilotResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	testHandler.CreateAutopilot(w, newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, body))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create autopilot: got %d, want 201: %s", w.Code, w.Body.String())
+	}
+	var resp AutopilotResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx := context.Background()
+		testPool.Exec(ctx, "DELETE FROM autopilot_run WHERE autopilot_id = $1", resp.ID)
+		testPool.Exec(ctx, "DELETE FROM autopilot_rule_version WHERE autopilot_id = $1", resp.ID)
+		testPool.Exec(ctx, "DELETE FROM autopilot_trigger WHERE autopilot_id = $1", resp.ID)
+		testPool.Exec(ctx, "DELETE FROM autopilot WHERE id = $1", resp.ID)
+	})
+	return resp
+}
+
+func TestCreateAutopilotTestRunModeNeedsAPlanAndAdoptsItsProject(t *testing.T) {
+	projectID, planID, _ := createAutopilotTestPlan(t)
+	agentID := createHandlerTestAgent(t, "test-run-autopilot-agent", nil)
+
+	w := httptest.NewRecorder()
+	testHandler.CreateAutopilot(w, newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Nightly", "assignee_id": agentID, "execution_mode": "test_run",
+	}))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("test_run without a plan: got %d, want 400: %s", w.Code, w.Body.String())
+	}
+
+	resp := createTestRunAutopilot(t, map[string]any{
+		"title": "Nightly", "assignee_id": agentID, "execution_mode": "test_run",
+		"test_plan_id": planID, "test_run_parallelism": 2,
+	})
+	if resp.TestPlanID == nil || *resp.TestPlanID != planID {
+		t.Errorf("test_plan_id = %v, want %s", resp.TestPlanID, planID)
+	}
+	if resp.ProjectID == nil || *resp.ProjectID != projectID {
+		t.Errorf("project_id = %v, want the plan's project %s", resp.ProjectID, projectID)
+	}
+	if resp.TestRunParallelism == nil || *resp.TestRunParallelism != 2 {
+		t.Errorf("test_run_parallelism = %v, want 2", resp.TestRunParallelism)
+	}
+
+	// Leaving the mode drops the plan; entering it again without one is refused.
+	w = httptest.NewRecorder()
+	testHandler.UpdateAutopilot(w, withURLParam(newRequest("PUT", "/api/autopilots/"+resp.ID+"?workspace_id="+testWorkspaceID, map[string]any{"execution_mode": "run_only"}), "id", resp.ID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("switch to run_only: got %d: %s", w.Code, w.Body.String())
+	}
+	var updated AutopilotResponse
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.TestPlanID != nil {
+		t.Errorf("run_only autopilot keeps a plan: %v", *updated.TestPlanID)
+	}
+	w = httptest.NewRecorder()
+	testHandler.UpdateAutopilot(w, withURLParam(newRequest("PUT", "/api/autopilots/"+resp.ID+"?workspace_id="+testWorkspaceID, map[string]any{"execution_mode": "test_run"}), "id", resp.ID))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("back to test_run without a plan: got %d, want 400: %s", w.Code, w.Body.String())
+	}
+}
+
+// The whole loop of TS-033: a fired test_run autopilot builds a round from
+// its plan, dispatches it to its agent through the same core as the run
+// page, turns running with the round attached, and completes with the
+// round's result counts once the round converges.
+func TestAutopilotTestRunModeLaunchesARoundAndSettlesIt(t *testing.T) {
+	ctx := context.Background()
+	_, planID, _ := createAutopilotTestPlan(t)
+	runtimeID := dbfx.Runtime(t, "autopilot-test-run-runtime")
+	agentID := dbfx.Agent(t, "autopilot-test-run-agent", runtimeID)
+	if _, err := testPool.Exec(ctx, "UPDATE agent_runtime SET status = 'online' WHERE id = $1", runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM agent_task_queue WHERE agent_id = $1", agentID)
+	})
+	ap := createTestRunAutopilot(t, map[string]any{
+		"title": "Nightly regression", "assignee_id": agentID, "execution_mode": "test_run", "test_plan_id": planID,
+	})
+
+	w := httptest.NewRecorder()
+	testHandler.TriggerAutopilot(w, withURLParam(newRequest("POST", "/api/autopilots/"+ap.ID+"/trigger?workspace_id="+testWorkspaceID, map[string]any{}), "id", ap.ID))
+	if w.Code >= 300 {
+		t.Fatalf("trigger: got %d: %s", w.Code, w.Body.String())
+	}
+
+	var apRunID, apStatus string
+	var testRunID *string
+	if err := testPool.QueryRow(ctx, "SELECT id, status, test_run_id FROM autopilot_run WHERE autopilot_id = $1 ORDER BY created_at DESC LIMIT 1", ap.ID).Scan(&apRunID, &apStatus, &testRunID); err != nil {
+		t.Fatalf("read autopilot run: %v", err)
+	}
+	if apStatus != "running" || testRunID == nil {
+		var reason *string
+		testPool.QueryRow(ctx, "SELECT failure_reason FROM autopilot_run WHERE id = $1", apRunID).Scan(&reason)
+		t.Fatalf("autopilot run = %s (test_run_id %v), want running with a round; reason %v", apStatus, testRunID, reason)
+	}
+
+	var runPlan, executorType, executorID, runStatus string
+	var firstTask *string
+	if err := testPool.QueryRow(ctx, "SELECT plan_id, executor_type, executor_id, status, agent_task_id FROM test_run WHERE id = $1", *testRunID).Scan(&runPlan, &executorType, &executorID, &runStatus, &firstTask); err != nil {
+		t.Fatalf("read test run: %v", err)
+	}
+	if runPlan != planID || executorType != "agent" || executorID != agentID || firstTask == nil {
+		t.Errorf("round = plan %s executor %s/%s task %v, want plan %s executed by agent %s", runPlan, executorType, executorID, firstTask, planID, agentID)
+	}
+	var tasks int
+	testPool.QueryRow(ctx, "SELECT count(*) FROM test_run_case WHERE run_id = $1 AND agent_task_id IS NOT NULL", *testRunID).Scan(&tasks)
+	if tasks != 1 {
+		t.Errorf("dispatched case tasks = %d, want 1", tasks)
+	}
+	var source string
+	if err := testPool.QueryRow(ctx, "SELECT coalesce(originator_source, '') FROM agent_task_queue WHERE id = $1", *firstTask).Scan(&source); err == nil && source == "" {
+		t.Errorf("the case task carries no attribution source")
+	}
+
+	// The round converges: every case terminal → the run completes with the counts.
+	if _, err := testPool.Exec(ctx, "UPDATE test_run_case SET result = 'passed' WHERE run_id = $1", *testRunID); err != nil {
+		t.Fatal(err)
+	}
+	run, err := testHandler.Queries.GetTestRunInWorkspace(ctx, db.GetTestRunInWorkspaceParams{ID: parseUUID(*testRunID), WorkspaceID: parseUUID(testWorkspaceID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := testHandler.convergeTestRun(ctx, testHandler.Queries, run); err != nil {
+		t.Fatal(err)
+	}
+	var settled string
+	var result []byte
+	if err := testPool.QueryRow(ctx, "SELECT status, coalesce(result::text, '') FROM autopilot_run WHERE id = $1", apRunID).Scan(&settled, &result); err != nil {
+		t.Fatal(err)
+	}
+	if settled != "completed" || !strings.Contains(string(result), "passed") {
+		t.Errorf("autopilot run after convergence = %s %s, want completed with the result counts", settled, result)
+	}
+}
+
+func TestAbortingAnAutopilotRoundFailsItsRun(t *testing.T) {
+	ctx := context.Background()
+	_, planID, _ := createAutopilotTestPlan(t)
+	runtimeID := dbfx.Runtime(t, "autopilot-abort-runtime")
+	agentID := dbfx.Agent(t, "autopilot-abort-agent", runtimeID)
+	testPool.Exec(ctx, "UPDATE agent_runtime SET status = 'online' WHERE id = $1", runtimeID)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM agent_task_queue WHERE agent_id = $1", agentID)
+	})
+	ap := createTestRunAutopilot(t, map[string]any{
+		"title": "Abortable regression", "assignee_id": agentID, "execution_mode": "test_run", "test_plan_id": planID,
+	})
+	w := httptest.NewRecorder()
+	testHandler.TriggerAutopilot(w, withURLParam(newRequest("POST", "/api/autopilots/"+ap.ID+"/trigger?workspace_id="+testWorkspaceID, map[string]any{}), "id", ap.ID))
+	var apRunID string
+	var testRunID *string
+	if err := testPool.QueryRow(ctx, "SELECT id, test_run_id FROM autopilot_run WHERE autopilot_id = $1 ORDER BY created_at DESC LIMIT 1", ap.ID).Scan(&apRunID, &testRunID); err != nil || testRunID == nil {
+		t.Fatalf("no round launched (err %v): %s", err, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	testHandler.AbortTestRun(w, withURLParam(newRequest("POST", "/api/test-runs/"+*testRunID+"/abort?workspace_id="+testWorkspaceID, map[string]any{"reason": "phone lab closed"}), "id", *testRunID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("abort: got %d: %s", w.Code, w.Body.String())
+	}
+	var status, reason string
+	if err := testPool.QueryRow(ctx, "SELECT status, coalesce(failure_reason, '') FROM autopilot_run WHERE id = $1", apRunID).Scan(&status, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || !strings.Contains(reason, "phone lab closed") {
+		t.Errorf("autopilot run after abort = %s %q, want failed with the abort reason", status, reason)
+	}
+}

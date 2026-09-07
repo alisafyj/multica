@@ -30,6 +30,13 @@ Execution modes:
 - `create_issue` creates a Multica issue, making the run visible as issue state.
 - `run_only` creates an agent task directly. No issue is created; any durable
   report location has to come from other task context or instructions.
+- `test_run` builds a test round from the autopilot's `test_plan_id` and
+  dispatches it to the assignee — one agent task per case, capped by
+  `test_run_parallelism` when set. The run turns `running` with
+  `test_run_id`, completes when the round converges (the run's `result`
+  carries the per-result counts) and fails when the round is aborted or
+  blocked. Requires a plan of the autopilot's project (the plan's project is
+  adopted when the autopilot has none); device cases still need a test host.
 
 `issue-title-template` only supports `{{date}}`. Do not invent `{{trigger_id}}`, `{{branch}}`, or other variables.
 
@@ -39,6 +46,7 @@ Execution modes:
 multica autopilot list --output json
 multica autopilot get <autopilot-id> --output json
 multica autopilot create --title "<title>" --description "<task prompt>" --agent <agent-name-or-id> --mode create_issue|run_only --output json
+multica autopilot create --title "Nightly regression" --agent <agent> --mode test_run --test-plan <plan-id> --test-run-parallelism 2 --output json
 multica autopilot update <autopilot-id> --status active|paused --output json
 multica autopilot runs <autopilot-id> --output json
 multica autopilot trigger-add <autopilot-id> --kind schedule --cron "0 9 * * *" --timezone Asia/Shanghai --output json
@@ -61,6 +69,7 @@ For "why didn't it run":
 4. Inspect the target agent/runtime: `multica agent get <agent-id> --output json` and `multica runtime list --output json`.
 5. For webhooks, inspect delivery status: `queued` means the worker has not completed dispatch; `failed` carries the worker error. A provider retry with the same `X-GitHub-Delivery` / `Idempotency-Key` reuses the original delivery.
 6. For `create_issue`, inspect the created issue if the run records one.
+7. For `test_run`, the run's `test_run_id` is the round: `multica test run get <test_run_id> --output json` shows the per-case results and, for a `blocked` round, which capability or test host was missing.
 
 ## Side effects
 
