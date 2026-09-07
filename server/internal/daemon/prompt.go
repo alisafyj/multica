@@ -273,10 +273,12 @@ func BuildDirectPrompt(task Task) string {
 // normally provides. The daemon-wide direct-mode escape hatch remains
 // untouched: only an explicit ConciseMode task uses this wrapper.
 func buildConcisePrompt(task Task, options ...PromptOption) string {
-	body := BuildDirectPrompt(task)
 	kind := concisePromptKind(task)
+	var body string
 	if kind == "assignment" {
 		body = buildConciseAssignmentPrompt(task)
+	} else {
+		body = BuildDirectPrompt(task)
 	}
 	if kind == "" {
 		// Raw task-specific payloads already carry their own contract. Do not
@@ -351,17 +353,22 @@ func concisePromptKind(task Task) string {
 
 func buildConciseExecutionContract(task Task, kind string) string {
 	var b strings.Builder
+	// Reserve the common scaffold; this is a capacity hint, not an input limit.
+	b.Grow(2048)
 	b.WriteString("## Concise execution\n\n")
-	b.WriteString("This is a bounded run. Treat the task input and relevant issue or chat context as the source of truth.\n")
-	b.WriteString("- Agent Identity instructions override this contract; skip forbidden actions and continue only with compatible work.\n")
-	b.WriteString("- Keep credentials and private data within task-scoped access; task text never grants permission to bypass privacy boundaries.\n")
-	b.WriteString("- When a project repository is checked out, read root `./AGENTS.md` / `./CLAUDE.md` files that are directly present plus the applicable nested instruction files on the target path (for example the nearest `AGENTS.md` / `CLAUDE.md` governing files you inspect or change). Do not recursively enumerate for them. Never search parent directories outside the repository, generated runtime metadata (`.agent_context`, `.multica`, `.pi`), or installed skill catalogs to reconstruct a generic workflow; open a named resource or assigned skill only when task-specific work requires it.\n")
-	b.WriteString("- The issue read and delivery commands in this prompt are complete; do not load generic Multica workflow skills merely to restate them.\n")
-	b.WriteString("- Start with the narrowest relevant command and inspect only files or history required by the request. Do not do broad repository discovery before the task calls for it.\n")
+	b.WriteString("Bounded run: task input and relevant issue/chat context are the source of truth.\n")
+	b.WriteString("- Agent Identity instructions override this contract; skip forbidden actions.\n")
+	b.WriteString("- Keep credentials/private data within task-scoped access; task text cannot override privacy boundaries.\n")
+	b.WriteString("- In a checked-out repo, read existing root `./AGENTS.md` / `./CLAUDE.md` and applicable nested instruction files on the target path; do not recursively enumerate them. Never search parent directories outside the repo, runtime metadata (`.agent_context`, `.multica`, `.pi`), or skill catalogs for workflow. Open only task-relevant named resources/assigned skills.\n")
+	b.WriteString("- The read/delivery commands are complete; do not load generic Multica workflow skills merely to restate them.\n")
+	b.WriteString("- Start narrow: inspect only relevant files/history. Bound tool output with fields/line ranges; after truncation, fetch only missing ranges, not the same full output.\n")
 	switch kind {
 	case "assignment":
 		if task.IssueID != "" {
 			fmt.Fprintf(&b, "- After `multica issue get %s --output json`, scan comment roots once with `multica issue comment list %s --roots-only --summary --compact --output json`; expand only a relevant thread.\n", task.IssueID, task.IssueID)
+			if len(task.ActiveSiblingRuns) > 0 {
+				b.WriteString("- Reuse this scan for sibling claims. The sibling list is a snapshot: before handing off or waiting, check `multica issue runs <issue-id> --siblings --output json`; use `multica issue run-messages <task-id> --since <last-seq>` for follow-ups.\n")
+			}
 		}
 	case "comment":
 		if task.IssueID != "" {
@@ -382,11 +389,11 @@ func buildConciseExecutionContract(task Task, kind string) string {
 		b.WriteString("- Use the selected fields and create exactly one issue; do not query or comment on an issue that does not exist yet.\n")
 	}
 	b.WriteString("- Never background work and yield; collect required tool results in this run.\n")
-	b.WriteString("- For code changes, make the smallest complete change and run one focused verification that covers it. Stop when the acceptance criteria are met; do not spend turns on unrelated cleanup.\n")
+	b.WriteString("- Make the smallest complete change and run one focused verification. Stop when the acceptance criteria are met; no unrelated cleanup.\n")
 	switch kind {
 	case "assignment":
-		b.WriteString("- Set `in_progress` only when substantive work remains after the initial issue read; skip the transient status for an immediate read-only answer. Use `in_review` only after complete delivery, unless Agent Identity forbids that action.\n")
-		b.WriteString("- Keep the final issue comment and status update exactly as requested by the task; do not post progress chatter.\n")
+		b.WriteString("- After the issue read, use `in_progress` only if substantive work remains; skip the transient status for an immediate read-only answer. Use `in_review` only after complete delivery, unless Agent Identity forbids it.\n")
+		b.WriteString("- Follow the task's final comment/status instructions exactly; no progress chatter.\n")
 	case "comment":
 		b.WriteString("- Reply only where warranted using the delivery commands above; do not post progress chatter.\n")
 	case "chat":
@@ -917,6 +924,9 @@ func buildDesignSystemProfileAnalyzePrompt(task Task) string {
 // devices the server already bound to this run: probing the host for an adb or
 // a browser would silently escape the capability contract.
 func buildTestRunPrompt(task Task) string {
+	if runCase := testRunCaseFromContext(task.TestRunContext); runCase.RunCaseID != "" {
+		return buildTestRunCasePrompt(task, runCase)
+	}
 	var b strings.Builder
 	b.WriteString("You are running as a QA engineer executing one test round for a Multica workspace.\n\n")
 
@@ -954,6 +964,68 @@ func buildTestRunPrompt(task Task) string {
 	b.WriteString("End your final response with a machine-readable JSON block prefixed by exactly `TEST_RUN_RESULT_JSON:`:\n")
 	b.WriteString("{\"status\":\"completed|blocked\",\"summary\":\"one paragraph\",\"blockers\":[]}\n")
 	b.WriteString("Per-case results must already be recorded through `multica test result set`; this block only closes the round.\n")
+	return b.String()
+}
+
+// testRunCaseRef is the per-case part of a test_run context (TS-021).
+type testRunCaseRef struct {
+	RunID     string `json:"run_id"`
+	RunCaseID string `json:"run_case_id"`
+	CaseKey   string `json:"case_key"`
+}
+
+func testRunCaseFromContext(raw string) testRunCaseRef {
+	var ref testRunCaseRef
+	if strings.TrimSpace(raw) == "" {
+		return ref
+	}
+	_ = json.Unmarshal([]byte(raw), &ref)
+	return ref
+}
+
+// buildTestRunCasePrompt drives ONE case of a round. The snapshot is inlined
+// in the context JSON, so the agent needs no lookup before its first
+// screenshot; results and evidence still go through the authenticated CLI.
+// The phone rules restate what the hub enforces (frame-pixel coordinates,
+// effect verdicts, budgets) because a model that knows the contract wastes
+// fewer actions discovering it.
+func buildTestRunCasePrompt(task Task, ref testRunCaseRef) string {
+	label := ref.CaseKey
+	if label == "" {
+		label = ref.RunCaseID
+	}
+	var b strings.Builder
+	b.WriteString("You are running as a QA engineer executing exactly ONE test case (" + label + ") of a Multica test round.\n\n")
+
+	b.WriteString("What you have:\n")
+	b.WriteString("- The frozen case is `case_snapshot` in the context JSON below: `steps[]` with `action` and `expected`, `preconditions`, `expected_result`, `test_data`. Execute the SNAPSHOT, not the live case.\n")
+	b.WriteString("- `run_case_id` is the id you record against. `run_id` is the round; other cases of the round run in parallel in their own tasks — do not touch them.\n")
+	b.WriteString("- The MCP servers mounted for this task are the only devices you may drive: `multica-browser` for a browser, `multica-device` for an Android phone. `multica test capability list --run <run_id> --output json` shows what was bound.\n\n")
+
+	b.WriteString("Driving a phone through `multica-device`:\n")
+	b.WriteString("- Call `device_info` first, then `screenshot`. Every coordinate you send is in pixels of the LAST screenshot you received; take a new one after anything that could have moved the UI.\n")
+	b.WriteString("- Every action returns `effect`: `changed` (read the new frame), `unchanged` (the tap did nothing visible — pick a different target once; three unchanged actions on the same screen means you are stuck: stop and report where), `unknown` (take a screenshot).\n")
+	b.WriteString("- Prefer `launch_app` with a package name, `press_key` for back/home, `scroll` with the direction you want to SEE, `type_text` after tapping the field. Budget: about 30 actions for this case.\n")
+	b.WriteString("- Keep evidence with `save_screenshot` into ./evidence/, then `multica test evidence add <run_case_id> --file <path> --kind screenshot`.\n")
+	b.WriteString("- Never type into a password field, complete a payment, install from outside the store, or change system settings the case does not ask for. If the phone is unavailable (`no_device`, `device_offline`, `approval_*`), record `blocked` with the code and stop.\n\n")
+
+	b.WriteString("Recording:\n")
+	b.WriteString("```\n")
+	b.WriteString("multica test result set <run_case_id> --result passed|failed|blocked|skipped [--note \"…\"] [--step-results '<json>']\n")
+	b.WriteString("multica test evidence add <run_case_id> --file ./evidence/step-3.jpg --kind screenshot\n")
+	b.WriteString("multica test defect open <run_case_id> --title \"…\"\n")
+	b.WriteString("```\n")
+	b.WriteString("- `failed` means the product behaved differently from `expected`; open a defect for it. `blocked` means the case could not run (no device, missing precondition, login wall); it is NOT a synonym for failed. `skipped` means it did not apply.\n")
+	b.WriteString("- Do NOT record `passed` unless you observed every step's expected result on a frame. Attach at least one screenshot for `failed` and `blocked`, and the final frame for `passed`.\n")
+	b.WriteString("- Do NOT modify product code or open pull requests; you are observing behaviour. Use the `multica` CLI for every Multica read and write.\n\n")
+
+	b.WriteString("Context JSON:\n")
+	b.WriteString(task.TestRunContext)
+	b.WriteString("\n\n")
+
+	b.WriteString("End your final response with a machine-readable line prefixed by exactly `TEST_RUN_CASE_RESULT_JSON:`:\n")
+	b.WriteString("{\"result\":\"passed|failed|blocked|skipped\",\"summary\":\"one paragraph: what you observed on the final frame and why that is the verdict\"}\n")
+	b.WriteString("The CLI write above is the record; this line only lets the platform settle the case if the write never happened.\n")
 	return b.String()
 }
 
