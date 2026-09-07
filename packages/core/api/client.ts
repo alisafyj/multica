@@ -313,6 +313,7 @@ import type {
   TestCaseResultTimelineResponse,
   ListTestCapabilitiesResponse,
   RuntimeCapabilityScanResponse,
+  RuntimeDeviceHub,
   ListTestCaseIssuesResponse,
   ListIssueTestCasesResponse,
   DispatchTestRunResponse,
@@ -635,7 +636,9 @@ import {
   EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE,
   EMPTY_LIST_TEST_CAPABILITIES_RESPONSE,
   EMPTY_RUNTIME_CAPABILITY_SCAN_RESPONSE,
+  EMPTY_RUNTIME_DEVICE_HUB,
   RuntimeCapabilityScanResponseSchema,
+  RuntimeDeviceHubSchema,
   EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE,
   EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE,
   SkillSchema,
@@ -2240,6 +2243,8 @@ export class ApiClient {
     runtimeId: string,
     patch: {
       visibility?: "private" | "public";
+      /** M4: designate the machine as a test host for device rounds. */
+      test_host_enabled?: boolean;
       /**
        * Custom display name. Pass an empty string to clear it (the server
        * reverts to the default name). Omit to leave it unchanged — a JSON
@@ -6133,6 +6138,26 @@ export class ApiClient {
    * report them. 202: the inventory arrives later through the
    * `test_capability:updated` event, not in this response.
    */
+  async getRuntimeDeviceHub(runtimeId: string): Promise<RuntimeDeviceHub> {
+    const raw = await this.fetch<unknown>(`/api/runtimes/${encodeURIComponent(runtimeId)}/device-hub`);
+    return parseWithFallback(raw, RuntimeDeviceHubSchema, EMPTY_RUNTIME_DEVICE_HUB, {
+      endpoint: "GET /api/runtimes/{id}/device-hub",
+    });
+  }
+
+  /**
+   * Latest live frame of a running case (image/jpeg), or null when the hub
+   * has not relayed one in the last two minutes. Binary, so no schema: the
+   * only thing to validate is that the body is an image.
+   */
+  async getTestRunCaseFrame(runCaseId: string): Promise<Blob | null> {
+    const res = await this.fetchRaw(`/api/test-run-cases/${encodeURIComponent(runCaseId)}/frame`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    const blob = await res.blob();
+    return blob.type.startsWith("image/") ? blob : null;
+  }
+
   async requestRuntimeCapabilityScan(runtimeId: string): Promise<RuntimeCapabilityScanResponse> {
     const raw = await this.fetch<unknown>(`/api/runtimes/${encodeURIComponent(runtimeId)}/capabilities`, {
       method: "POST",

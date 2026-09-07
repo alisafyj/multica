@@ -347,7 +347,9 @@
       "description": "Description",
       "deletePlan": "Delete plan",
       "confirmDelete": "Delete this test plan?",
-      "unknownCase": "Case no longer exists"
+      "unknownCase": "Case no longer exists",
+      "parallelism": "Parallelism",
+      "parallelismPlaceholder": "all at once"
     }
   },
   "run": {
@@ -367,7 +369,8 @@
       "plan": "Plan",
       "executor": "Executor",
       "started": "Started",
-      "completed": "Completed"
+      "completed": "Completed",
+      "parallelism": "Parallelism"
     },
     "counts": {
       "passed": "Passed",
@@ -422,7 +425,9 @@
     },
     "saveNotes": "Save notes",
     "notesNeedResult": "Notes are saved with a result — pick one first.",
-    "task": "task {{id}}"
+    "task": "task {{id}}",
+    "liveFrame": "Live screen",
+    "liveFrameWaiting": "Waiting for the first frame from the device hub…"
   },
   "timeline": {
     "title": "Run History",

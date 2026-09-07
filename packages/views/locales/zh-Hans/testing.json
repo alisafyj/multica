@@ -346,7 +346,9 @@
       "description": "描述",
       "deletePlan": "删除计划",
       "confirmDelete": "确定删除这个测试计划吗？",
-      "unknownCase": "用例已不存在"
+      "unknownCase": "用例已不存在",
+      "parallelism": "并行数",
+      "parallelismPlaceholder": "全部同时"
     }
   },
   "run": {
@@ -366,7 +368,8 @@
       "plan": "关联计划",
       "executor": "执行人",
       "started": "开始时间",
-      "completed": "完成时间"
+      "completed": "完成时间",
+      "parallelism": "并行数"
     },
     "counts": {
       "passed": "通过",
@@ -421,7 +424,9 @@
     },
     "saveNotes": "保存备注",
     "notesNeedResult": "备注会随结果一起保存，请先选择结果。",
-    "task": "任务 {{id}}"
+    "task": "任务 {{id}}",
+    "liveFrame": "实时画面",
+    "liveFrameWaiting": "等待设备中枢传来第一帧…"
   },
   "timeline": {
     "title": "历史执行记录",

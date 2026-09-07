@@ -2075,6 +2075,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.taskWakeupLoop(ctx, taskWakeups)
 	go d.heartbeatLoop(ctx)
 	go d.deviceHubWatchLoop(ctx)
+	go d.deviceHubFrameLoop(ctx)
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
 	if strings.HasPrefix(d.client.Token(), "mul_") {
@@ -4694,7 +4695,10 @@ func (d *Daemon) reportRuntimeCapabilities(ctx context.Context, rt Runtime, requ
 	if caps == nil {
 		caps = []runtimeCapabilitySummary{}
 	}
-	payload := map[string]any{"capabilities": caps}
+	payload := map[string]any{
+		"capabilities": caps,
+		"device_hub":   probeDeviceHubSummary(ctx, deviceHubURL()),
+	}
 	if requestID != "" {
 		payload["request_id"] = requestID
 	}

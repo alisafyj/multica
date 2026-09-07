@@ -291,6 +291,8 @@ export interface TestRun {
   environment: string;
   build_ref: string;
   capability_binding: Record<string, unknown>;
+  /** Cap on concurrently dispatched case tasks; null = every case at once. */
+  parallelism: number | null;
   status: TestRunStatus;
   source_run_id: string | null;
   retry_scope: TestRunRetryScope | null;
@@ -354,6 +356,20 @@ export interface TestCapabilityRequirement {
 }
 
 /** 202 body of `POST /api/runtimes/{id}/capabilities`: the queued scan. */
+export interface RuntimeDeviceHub {
+  reachable: boolean;
+  url: string;
+  version: string;
+  adb: boolean;
+  devices: number;
+  phones: number;
+  leases: number;
+  /** Only for the runtime's owner / workspace admins; null otherwise. */
+  pairing_url: string | null;
+  pairing_code: string | null;
+  reported_at: string | null;
+}
+
 export interface RuntimeCapabilityScanResponse {
   request_id: string;
   runtime_id: string;
@@ -398,6 +414,8 @@ export interface CreateTestRunRequest {
   title: string;
   environment?: string;
   build_ref?: string;
+  /** Cap on concurrently dispatched case tasks; omit for no cap. */
+  parallelism?: number;
 }
 
 export interface RetryTestRunRequest {

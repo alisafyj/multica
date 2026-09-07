@@ -69,3 +69,4 @@ export {
   type TestCaseViewFilters,
   type TestCaseViewState,
 } from "./stores/view-store";
+export { useTestRunCaseLiveFrame } from "./use-live-frame";

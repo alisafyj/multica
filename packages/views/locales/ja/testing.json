@@ -346,7 +346,9 @@
       "description": "説明",
       "deletePlan": "計画を削除",
       "confirmDelete": "このテスト計画を削除しますか？",
-      "unknownCase": "ケースは存在しません"
+      "unknownCase": "ケースは存在しません",
+      "parallelism": "並列数",
+      "parallelismPlaceholder": "すべて同時"
     }
   },
   "run": {
@@ -366,7 +368,8 @@
       "plan": "計画",
       "executor": "実行者",
       "started": "開始日時",
-      "completed": "完了日時"
+      "completed": "完了日時",
+      "parallelism": "並列数"
     },
     "counts": {
       "passed": "合格",
@@ -421,7 +424,9 @@
     },
     "saveNotes": "メモを保存",
     "notesNeedResult": "メモは結果と一緒に保存されます。先に結果を選んでください。",
-    "task": "タスク {{id}}"
+    "task": "タスク {{id}}",
+    "liveFrame": "ライブ画面",
+    "liveFrameWaiting": "デバイスハブからの最初のフレームを待っています…"
   },
   "timeline": {
     "title": "実行履歴",

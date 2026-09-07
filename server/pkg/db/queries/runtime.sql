@@ -112,6 +112,15 @@ DO UPDATE SET
     updated_at = now()
 RETURNING *, (xmax = 0) AS inserted;
 
+-- name: UpdateAgentRuntimeTestHost :one
+-- Marks (or unmarks) a machine as a test host: only then may a device round
+-- be bound to the phones its device hub reports. Owner / admin gated in the
+-- handler, like visibility.
+UPDATE agent_runtime
+SET test_host_enabled = @test_host_enabled, updated_at = now()
+WHERE id = @id
+RETURNING *;
+
 -- name: UpdateAgentRuntimeVisibility :one
 -- Toggles a runtime between 'private' (only owner can bind agents) and
 -- 'public' (any workspace member can). Default for new rows is 'private'

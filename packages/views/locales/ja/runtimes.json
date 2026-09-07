@@ -199,7 +199,19 @@
       "busy": "使用中",
       "offline": "オフライン",
       "unknown": "不明"
-    }
+    },
+    "device_hub_title": "デバイスハブ",
+    "device_hub_test_host": "テストホスト",
+    "device_hub_test_host_hint": "このマシンのデバイスハブが報告する端末をテスト実行で操作できるようにします。",
+    "device_hub_online": "ハブ {{version}} オンライン",
+    "device_hub_offline": "このマシンにデバイスハブはありません",
+    "device_hub_offline_hint": "このマシンで `multica-device-mcp hub` を起動すると、次の報告でデーモンが検出します。",
+    "device_hub_counts": "デバイス {{devices}} · アプリ {{phones}} · リース {{leases}}",
+    "device_hub_show_pairing": "ペアリングコードを表示",
+    "device_hub_hide_pairing": "ペアリングコードを隠す",
+    "device_hub_pairing_hint": "Multica アプリの「その他 → デバイスエグゼキューター」で読み取るか、URL を貼り付けてください。",
+    "device_hub_reported": "{{when}}に報告",
+    "device_hub_toggle_failed": "テストホスト設定を更新できませんでした。"
   },
   "detail_page": {
     "not_found_title": "ランタイムが見つかりません",

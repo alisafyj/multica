@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -79,6 +80,10 @@ type TestRunCapabilityEntry struct {
 	// Match is the case's constraint on the kind (`{"os_version": ">=13"}`);
 	// the device connector leases any hub phone that satisfies it.
 	Match map[string]string
+	// Tags ride on the lease (`--tag k=v`): the daemon finds the lease of a
+	// running case by run_case_id to relay its live frame, and the hub audit
+	// records them next to every action.
+	Tags map[string]string
 	// Label names the lease on the phone owner's prompt and in the hub audit
 	// log: the run case key (TC-42) or id.
 	Label string
@@ -128,7 +133,7 @@ func BuildTaskOverlay(ctx context.Context, originatorUserID pgtype.UUID, agent d
 	var apps []runtimeapps.ConnectedApp
 
 	for _, cap := range caps {
-		entries := capabilityMCPServers(cap.Kind, cap.Target, cap.Match, cap.Label)
+		entries := capabilityMCPServers(cap.Kind, cap.Target, cap.Match, cap.Label, cap.Tags)
 		for name, srv := range entries {
 			servers[name] = srv
 			apps = append(apps, runtimeapps.ConnectedApp{
@@ -161,7 +166,7 @@ func BuildTaskOverlay(ctx context.Context, originatorUserID pgtype.UUID, agent d
 // connector leases a phone matching the case's constraint under the case's
 // label. Without a reported path it falls back to npx, which needs the package
 // published or cached on the host.
-func capabilityMCPServers(kind string, target map[string]json.RawMessage, match map[string]string, label string) map[string]capabilityMCPServer {
+func capabilityMCPServers(kind string, target map[string]json.RawMessage, match map[string]string, label string, tags map[string]string) map[string]capabilityMCPServer {
 	switch kind {
 	case "browser":
 		provider := "playwright"
@@ -184,7 +189,7 @@ func capabilityMCPServers(kind string, target map[string]json.RawMessage, match 
 		}
 
 	case "android_device":
-		return map[string]capabilityMCPServer{MCPDeviceServerName: deviceConnectorServer(target, match, label)}
+		return map[string]capabilityMCPServer{MCPDeviceServerName: deviceConnectorServer(target, match, label, tags)}
 
 	case "ios_device", "computer_use":
 		// No hub backend yet: a run bound to one of these kinds is blocked at
@@ -197,7 +202,7 @@ func capabilityMCPServers(kind string, target map[string]json.RawMessage, match 
 }
 
 // deviceConnectorServer builds the `multica-device` stdio entry.
-func deviceConnectorServer(target map[string]json.RawMessage, match map[string]string, label string) capabilityMCPServer {
+func deviceConnectorServer(target map[string]json.RawMessage, match map[string]string, label string, tags map[string]string) capabilityMCPServer {
 	str := func(key string) string {
 		raw, ok := target[key]
 		if !ok {
@@ -225,6 +230,16 @@ func deviceConnectorServer(target map[string]json.RawMessage, match map[string]s
 	tail := []string{"connect", "--hub", hub, "--acquire", strings.TrimSpace(matchJSON.String())}
 	if label != "" {
 		tail = append(tail, "--label", label)
+	}
+	tagKeys := make([]string, 0, len(tags))
+	for k := range tags {
+		if k != "" && tags[k] != "" {
+			tagKeys = append(tagKeys, k)
+		}
+	}
+	sort.Strings(tagKeys)
+	for _, k := range tagKeys {
+		tail = append(tail, "--tag", k+"="+tags[k])
 	}
 	if command, cli := str("connector_command"), str("connector_cli"); command != "" && cli != "" {
 		return capabilityMCPServer{Command: command, Args: append([]string{cli}, tail...)}

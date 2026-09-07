@@ -527,6 +527,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.LocalSkillListStore = handler.NewRedisLocalSkillListStore(rdb)
 		h.LocalSkillImportStore = handler.NewRedisLocalSkillImportStore(rdb)
 		h.CapabilityScanStore = handler.NewRedisCapabilityScanStore(rdb)
+		h.DeviceHubStore = handler.NewRedisDeviceHubStore(rdb)
+		h.LiveFrameStore = handler.NewRedisLiveFrameStore(rdb)
 		h.LivenessStore = handler.NewRedisLivenessStore(rdb)
 		h.WebhookRateLimiter = handler.NewRedisWebhookRateLimiter(rdb, handler.DefaultWebhookRateLimit())
 		h.WebhookIPRateLimiter = handler.NewRedisWebhookIPRateLimiter(rdb, handler.DefaultWebhookIPRateLimit())
@@ -1531,6 +1533,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// Test-execution capability inventory (browsers, devices). Sent
 		// unsolicited after registration and in answer to a pending scan.
 		r.Post("/runtimes/{runtimeId}/capabilities", h.ReportRuntimeCapabilities)
+		// Live frame of a running case, relayed from the device hub (memory only).
+		r.Post("/runtimes/{runtimeId}/test-run-cases/{runCaseId}/frame", h.ReportTestRunCaseFrame)
 
 		r.Get("/tasks/{taskId}/status", h.GetTaskStatus)
 		r.Post("/tasks/{taskId}/start", h.StartTask)
@@ -2174,11 +2178,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Result write and defect creation are per run-case; both are also
 			// reachable by the run's own agent through its task token.
 			r.Put("/api/test-run-cases/{id}/result", h.UpdateTestRunCaseResult)
+			r.Get("/api/test-run-cases/{id}/frame", h.GetTestRunCaseFrame)
 			r.Post("/api/test-run-cases/{id}/defect", h.OpenTestRunCaseDefect)
 
 			// Execution capabilities
 			r.Get("/api/test-capabilities", h.ListTestCapabilities)
 			r.Post("/api/runtimes/{id}/capabilities", h.RequestRuntimeCapabilityScan)
+			r.Get("/api/runtimes/{id}/device-hub", h.GetRuntimeDeviceHub)
 
 			// Gallery Native design files
 			r.Get("/api/design-folders", h.ListDesignFolders)

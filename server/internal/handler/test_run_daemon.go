@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -224,6 +225,11 @@ func (h *Handler) completeTestRunTask(ctx context.Context, q *db.Queries, task d
 			return err
 		}
 	}
+	if err := h.dispatchNextTestRunCases(ctx, q, run); err != nil {
+		// The settled case must not be lost because the next one could not be
+		// queued; the round stays running and a later hook retries.
+		slog.Warn("dispatch next test run cases failed", "run_id", uuidToString(run.ID), "error", err)
+	}
 	return h.convergeTestRun(ctx, q, run)
 }
 
@@ -286,6 +292,9 @@ func (h *Handler) updateTestRunFromAgentFailure(ctx context.Context, task db.Age
 		}); err != nil {
 			return err
 		}
+	}
+	if err := h.dispatchNextTestRunCases(ctx, h.Queries, run); err != nil {
+		slog.Warn("dispatch next test run cases failed", "run_id", uuidToString(run.ID), "error", err)
 	}
 	return h.convergeTestRun(ctx, h.Queries, run)
 }

@@ -125,6 +125,8 @@ receives a run that has already been dispatched to `running` status; call
 Since per-case dispatch a round is executed as one agent task per case. Your
 task's context JSON names it:
 
+A round may carry a parallelism cap: the server queues only that many case tasks at once and releases the next one when yours settles, so finishing (or blocking) your case promptly is what lets the round advance.
+
 ```json
 {"type": "test_run", "run_id": "…", "run_case_id": "…", "case_key": "TC-42",
  "case_snapshot": {"steps": [...], "preconditions": "…", "expected_result": "…"},

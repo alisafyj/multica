@@ -932,6 +932,12 @@ func (c *Client) ReportRuntimeCapabilities(ctx context.Context, runtimeID string
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/capabilities", runtimeID), payload, nil)
 }
 
+// ReportTestRunCaseFrame relays the device hub's last frame of a running case
+// so the run page can show it; the server keeps it in memory only.
+func (c *Client) ReportTestRunCaseFrame(ctx context.Context, runtimeID, runCaseID string, payload map[string]any) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/test-run-cases/%s/frame", runtimeID, runCaseID), payload, nil)
+}
+
 // ReportLocalSkillImportResult sends a runtime-local-skill bundle back to the server.
 func (c *Client) ReportLocalSkillImportResult(ctx context.Context, runtimeID, requestID string, result map[string]any) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/local-skills/import/%s/result", runtimeID, requestID), result, nil)

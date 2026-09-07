@@ -55,28 +55,31 @@ type TestPlanCaseResponse struct {
 // ExecutionStatus and ResultCounts fields are only populated on the single-item
 // GET — list calls omit them to keep the payload small.
 type TestRunResponse struct {
-	ID                string                                    `json:"id"`
-	WorkspaceID       string                                    `json:"workspace_id"`
-	ProjectID         string                                    `json:"project_id"`
-	PlanID            *string                                   `json:"plan_id"`
-	Title             string                                    `json:"title"`
-	ExecutorType      string                                    `json:"executor_type"`
-	ExecutorID        string                                    `json:"executor_id"`
-	AgentTaskID       *string                                   `json:"agent_task_id"`
-	Environment       string                                    `json:"environment"`
-	BuildRef          string                                    `json:"build_ref"`
-	CapabilityBinding map[string]any                            `json:"capability_binding"`
-	Status            string                                    `json:"status"`
-	SourceRunID       *string                                   `json:"source_run_id"`
-	RetryScope        *string                                   `json:"retry_scope"`
-	Error             *string                                   `json:"error"`
-	StartedAt         *string                                   `json:"started_at"`
-	CompletedAt       *string                                   `json:"completed_at"`
-	CreatedBy         *string                                   `json:"created_by"`
-	CreatedAt         string                                    `json:"created_at"`
-	UpdatedAt         string                                    `json:"updated_at"`
-	ExecutionStatus   *DesignRestoreTaskExecutionStatusResponse `json:"execution_status,omitempty"`
-	ResultCounts      map[string]int64                          `json:"result_counts,omitempty"`
+	ID                string         `json:"id"`
+	WorkspaceID       string         `json:"workspace_id"`
+	ProjectID         string         `json:"project_id"`
+	PlanID            *string        `json:"plan_id"`
+	Title             string         `json:"title"`
+	ExecutorType      string         `json:"executor_type"`
+	ExecutorID        string         `json:"executor_id"`
+	AgentTaskID       *string        `json:"agent_task_id"`
+	Environment       string         `json:"environment"`
+	BuildRef          string         `json:"build_ref"`
+	CapabilityBinding map[string]any `json:"capability_binding"`
+	// Parallelism caps how many case tasks a dispatched round keeps queued or
+	// running at once; nil = every case at once (M4 "release one as one completes").
+	Parallelism     *int32                                    `json:"parallelism"`
+	Status          string                                    `json:"status"`
+	SourceRunID     *string                                   `json:"source_run_id"`
+	RetryScope      *string                                   `json:"retry_scope"`
+	Error           *string                                   `json:"error"`
+	StartedAt       *string                                   `json:"started_at"`
+	CompletedAt     *string                                   `json:"completed_at"`
+	CreatedBy       *string                                   `json:"created_by"`
+	CreatedAt       string                                    `json:"created_at"`
+	UpdatedAt       string                                    `json:"updated_at"`
+	ExecutionStatus *DesignRestoreTaskExecutionStatusResponse `json:"execution_status,omitempty"`
+	ResultCounts    map[string]int64                          `json:"result_counts,omitempty"`
 }
 
 // TestRunCaseResponse is the outbound representation of a test_run_case row.
@@ -171,6 +174,7 @@ func testRunToResponse(run db.TestRun) TestRunResponse {
 		Environment:       run.Environment,
 		BuildRef:          run.BuildRef,
 		CapabilityBinding: binding,
+		Parallelism:       int4ToPtr(run.Parallelism),
 		Status:            run.Status,
 		SourceRunID:       uuidToPtr(run.SourceRunID),
 		RetryScope:        textToPtr(run.RetryScope),
@@ -867,7 +871,14 @@ type CreateTestRunRequest struct {
 	Title       string   `json:"title"`
 	Environment string   `json:"environment"`
 	BuildRef    string   `json:"build_ref"`
+	// Parallelism caps concurrently dispatched case tasks (1..maxTestRunParallelism);
+	// omitted or null means no cap.
+	Parallelism *int32 `json:"parallelism"`
 }
+
+// maxTestRunParallelism bounds the per-round cap: more concurrent phones than
+// this is not a lab, it is a typo.
+const maxTestRunParallelism = 64
 
 // CreateTestRun creates an execution round for a plan or an explicit list of
 // test cases. In one transaction it creates the run row and a test_run_case row
@@ -890,6 +901,14 @@ func (h *Handler) CreateTestRun(w http.ResponseWriter, r *http.Request) {
 	if req.PlanID == "" && len(req.TestCaseIDs) == 0 {
 		writeError(w, http.StatusBadRequest, "either plan_id or test_case_ids is required")
 		return
+	}
+	var parallelism pgtype.Int4
+	if req.Parallelism != nil {
+		if *req.Parallelism < 1 || *req.Parallelism > maxTestRunParallelism {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("parallelism must be between 1 and %d", maxTestRunParallelism))
+			return
+		}
+		parallelism = pgtype.Int4{Int32: *req.Parallelism, Valid: true}
 	}
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -974,6 +993,7 @@ func (h *Handler) CreateTestRun(w http.ResponseWriter, r *http.Request) {
 		CapabilityBinding: []byte("{}"),
 		Status:            "pending",
 		CreatedBy:         userUUID,
+		Parallelism:       parallelism,
 	})
 	if err != nil {
 		slog.Error("create test run failed", append(logger.RequestAttrs(r), "error", err)...)
@@ -1108,6 +1128,24 @@ func (h *Handler) AbortTestRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to abort test run")
 		return
 	}
+	// Cases a parallelism cap was still holding back have no task to fail
+	// them; without this they would sit pending forever under an aborted
+	// round. Only a capped agent round has such cases: a member-executed
+	// round keeps its unresolved cases pending, as it always did.
+	if updated.ExecutorType == "agent" && updated.Parallelism.Valid {
+		skipped, err := h.Queries.SkipUndispatchedTestRunCases(r.Context(), db.SkipUndispatchedTestRunCasesParams{
+			RunID:       run.ID,
+			WorkspaceID: wsUUID,
+			Notes:       "skipped: the round was aborted before this case was dispatched",
+		})
+		if err != nil {
+			slog.Warn("skip undispatched test run cases failed", append(logger.RequestAttrs(r), "error", err)...)
+		}
+		for _, rc := range skipped {
+			h.publish(protocol.EventTestRunCaseUpdated, workspaceID, "member", userID,
+				map[string]any{"test_run_case": testRunCaseToResponse(rc), "run_id": uuidToString(run.ID)})
+		}
+	}
 	resp := testRunToResponse(updated)
 	h.publish(protocol.EventTestRunUpdated, workspaceID, "member", userID, map[string]any{"test_run": resp})
 	writeJSON(w, http.StatusOK, resp)
@@ -1233,6 +1271,8 @@ func (h *Handler) RetryTestRun(w http.ResponseWriter, r *http.Request) {
 		SourceRunID:       sourceRun.ID,
 		RetryScope:        pgtype.Text{String: req.Scope, Valid: true},
 		CreatedBy:         userUUID,
+		// A rerun targets the same lab, so it keeps the cap.
+		Parallelism: sourceRun.Parallelism,
 	})
 	if err != nil {
 		slog.Error("create retry test run failed", append(logger.RequestAttrs(r), "error", err)...)

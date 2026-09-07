@@ -77,6 +77,8 @@ export interface RuntimeDevice {
   owner_id: string | null;
   /** Defaults to "private" when the backend predates the visibility flag. */
   visibility: RuntimeVisibility;
+  /** M4: designated test host; device rounds may bind to its hub's phones. Defaults to false on older backends. */
+  test_host_enabled?: boolean;
   /**
    * The custom runtime profile this registered runtime was launched from,
    * or `null` for a built-in protocol family. The UI uses this to stamp a

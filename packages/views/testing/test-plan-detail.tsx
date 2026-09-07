@@ -45,6 +45,8 @@ export function TestPlanDetail({ planId }: { planId: string }) {
   const [runTitle, setRunTitle] = useState("");
   const [environment, setEnvironment] = useState("");
   const [buildRef, setBuildRef] = useState("");
+  // Empty = no cap: every case is dispatched at once.
+  const [parallelism, setParallelism] = useState("");
   const [isCreatingRun, setIsCreatingRun] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -148,6 +150,11 @@ export function TestPlanDetail({ planId }: { planId: string }) {
     }
   }
 
+  const parsedParallelism = (() => {
+    const n = Number.parseInt(parallelism.trim(), 10);
+    return Number.isFinite(n) && n >= 1 ? n : undefined;
+  })();
+
   async function handleCreateRun() {
     if (!plan) return;
     const title = runTitle.trim() || plan.title;
@@ -158,6 +165,7 @@ export function TestPlanDetail({ planId }: { planId: string }) {
         title,
         environment: environment.trim() || undefined,
         build_ref: buildRef.trim() || undefined,
+        parallelism: parsedParallelism,
       });
       toast.success(t(($) => $.toast.runCreated));
       navigation.push(paths.testRunDetail(run.id));
@@ -344,6 +352,21 @@ export function TestPlanDetail({ planId }: { planId: string }) {
                       onChange={(e) => setBuildRef(e.target.value)}
                       // eslint-disable-next-line no-restricted-syntax -- a build ref format example, not copy
                       placeholder="v1.2.3"
+                      className="h-8 text-caption"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-caption font-medium text-muted-foreground">
+                      {t(($) => $.plans.detail.parallelism)}
+                    </label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={64}
+                      value={parallelism}
+                      onChange={(e) => setParallelism(e.target.value)}
+                      placeholder={t(($) => $.plans.detail.parallelismPlaceholder)}
                       className="h-8 text-caption"
                     />
                   </div>

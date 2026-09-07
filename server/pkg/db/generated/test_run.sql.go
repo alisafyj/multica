@@ -43,6 +43,26 @@ func (q *Queries) AddTestPlanCase(ctx context.Context, arg AddTestPlanCaseParams
 	return i, err
 }
 
+const countDispatchedActiveTestRunCases = `-- name: CountDispatchedActiveTestRunCases :one
+SELECT count(*) FROM test_run_case
+WHERE run_id = $1 AND workspace_id = $2
+  AND agent_task_id IS NOT NULL AND result IN ('pending', 'running')
+`
+
+type CountDispatchedActiveTestRunCasesParams struct {
+	RunID       pgtype.UUID `json:"run_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Cases that hold an agent task and are not yet terminal: what the
+// parallelism cap counts against.
+func (q *Queries) CountDispatchedActiveTestRunCases(ctx context.Context, arg CountDispatchedActiveTestRunCasesParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDispatchedActiveTestRunCases, arg.RunID, arg.WorkspaceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countPendingTestRunCases = `-- name: CountPendingTestRunCases :one
 SELECT count(*) FROM test_run_case
 WHERE run_id = $1 AND workspace_id = $2 AND result IN ('pending', 'running')
@@ -141,9 +161,9 @@ const createTestRun = `-- name: CreateTestRun :one
 INSERT INTO test_run (
     workspace_id, project_id, plan_id, title, executor_type, executor_id,
     environment, build_ref, capability_binding, status, source_run_id,
-    retry_scope, error, created_by
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-RETURNING id, workspace_id, project_id, plan_id, title, executor_type, executor_id, agent_task_id, environment, build_ref, capability_binding, status, source_run_id, retry_scope, error, started_at, completed_at, created_by, created_at, updated_at
+    retry_scope, error, created_by, parallelism
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+RETURNING id, workspace_id, project_id, plan_id, title, executor_type, executor_id, agent_task_id, environment, build_ref, capability_binding, status, source_run_id, retry_scope, error, started_at, completed_at, created_by, created_at, updated_at, parallelism
 `
 
 type CreateTestRunParams struct {
@@ -161,6 +181,7 @@ type CreateTestRunParams struct {
 	RetryScope        pgtype.Text `json:"retry_scope"`
 	Error             pgtype.Text `json:"error"`
 	CreatedBy         pgtype.UUID `json:"created_by"`
+	Parallelism       pgtype.Int4 `json:"parallelism"`
 }
 
 func (q *Queries) CreateTestRun(ctx context.Context, arg CreateTestRunParams) (TestRun, error) {
@@ -179,6 +200,7 @@ func (q *Queries) CreateTestRun(ctx context.Context, arg CreateTestRunParams) (T
 		arg.RetryScope,
 		arg.Error,
 		arg.CreatedBy,
+		arg.Parallelism,
 	)
 	var i TestRun
 	err := row.Scan(
@@ -202,6 +224,7 @@ func (q *Queries) CreateTestRun(ctx context.Context, arg CreateTestRunParams) (T
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Parallelism,
 	)
 	return i, err
 }
@@ -338,7 +361,7 @@ func (q *Queries) GetTestPlanInWorkspace(ctx context.Context, arg GetTestPlanInW
 }
 
 const getTestRunByAgentTask = `-- name: GetTestRunByAgentTask :one
-SELECT id, workspace_id, project_id, plan_id, title, executor_type, executor_id, agent_task_id, environment, build_ref, capability_binding, status, source_run_id, retry_scope, error, started_at, completed_at, created_by, created_at, updated_at FROM test_run WHERE agent_task_id = $1 AND workspace_id = $2
+SELECT id, workspace_id, project_id, plan_id, title, executor_type, executor_id, agent_task_id, environment, build_ref, capability_binding, status, source_run_id, retry_scope, error, started_at, completed_at, created_by, created_at, updated_at, parallelism FROM test_run WHERE agent_task_id = $1 AND workspace_id = $2
 `
 
 type GetTestRunByAgentTaskParams struct {
@@ -370,6 +393,7 @@ func (q *Queries) GetTestRunByAgentTask(ctx context.Context, arg GetTestRunByAge
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Parallelism,
 	)
 	return i, err
 }
@@ -445,7 +469,7 @@ func (q *Queries) GetTestRunCaseInWorkspace(ctx context.Context, arg GetTestRunC
 }
 
 const getTestRunInWorkspace = `-- name: GetTestRunInWorkspace :one
-SELECT id, workspace_id, project_id, plan_id, title, executor_type, executor_id, agent_task_id, environment, build_ref, capability_binding, status, source_run_id, retry_scope, error, started_at, completed_at, created_by, created_at, updated_at FROM test_run WHERE id = $1 AND workspace_id = $2
+SELECT id, workspace_id, project_id, plan_id, title, executor_type, executor_id, agent_task_id, environment, build_ref, capability_binding, status, source_run_id, retry_scope, error, started_at, completed_at, created_by, created_at, updated_at, parallelism FROM test_run WHERE id = $1 AND workspace_id = $2
 `
 
 type GetTestRunInWorkspaceParams struct {
@@ -477,6 +501,7 @@ func (q *Queries) GetTestRunInWorkspace(ctx context.Context, arg GetTestRunInWor
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Parallelism,
 	)
 	return i, err
 }
@@ -730,7 +755,7 @@ func (q *Queries) ListTestRunCasesByResult(ctx context.Context, arg ListTestRunC
 }
 
 const listTestRuns = `-- name: ListTestRuns :many
-SELECT id, workspace_id, project_id, plan_id, title, executor_type, executor_id, agent_task_id, environment, build_ref, capability_binding, status, source_run_id, retry_scope, error, started_at, completed_at, created_by, created_at, updated_at FROM test_run
+SELECT id, workspace_id, project_id, plan_id, title, executor_type, executor_id, agent_task_id, environment, build_ref, capability_binding, status, source_run_id, retry_scope, error, started_at, completed_at, created_by, created_at, updated_at, parallelism FROM test_run
 WHERE workspace_id = $1
   AND ($3::uuid IS NULL OR project_id = $3)
   AND ($4::uuid IS NULL OR plan_id = $4)
@@ -783,6 +808,61 @@ func (q *Queries) ListTestRuns(ctx context.Context, arg ListTestRunsParams) ([]T
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Parallelism,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUndispatchedTestRunCases = `-- name: ListUndispatchedTestRunCases :many
+SELECT id, workspace_id, run_id, test_case_id, case_snapshot, position, result, notes, evidence, step_results, duration_ms, executed_by_type, executed_by_id, executed_at, defect_issue_id, created_at, updated_at, agent_task_id FROM test_run_case
+WHERE run_id = $1 AND workspace_id = $2
+  AND agent_task_id IS NULL AND result = 'pending'
+ORDER BY position ASC
+LIMIT $3
+`
+
+type ListUndispatchedTestRunCasesParams struct {
+	RunID       pgtype.UUID `json:"run_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Limit       int32       `json:"limit"`
+}
+
+// Cases still waiting for their turn under the parallelism cap, in order.
+func (q *Queries) ListUndispatchedTestRunCases(ctx context.Context, arg ListUndispatchedTestRunCasesParams) ([]TestRunCase, error) {
+	rows, err := q.db.Query(ctx, listUndispatchedTestRunCases, arg.RunID, arg.WorkspaceID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TestRunCase{}
+	for rows.Next() {
+		var i TestRunCase
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.RunID,
+			&i.TestCaseID,
+			&i.CaseSnapshot,
+			&i.Position,
+			&i.Result,
+			&i.Notes,
+			&i.Evidence,
+			&i.StepResults,
+			&i.DurationMs,
+			&i.ExecutedByType,
+			&i.ExecutedByID,
+			&i.ExecutedAt,
+			&i.DefectIssueID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AgentTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -807,6 +887,59 @@ type RemoveTestPlanCaseParams struct {
 func (q *Queries) RemoveTestPlanCase(ctx context.Context, arg RemoveTestPlanCaseParams) error {
 	_, err := q.db.Exec(ctx, removeTestPlanCase, arg.PlanID, arg.WorkspaceID, arg.TestCaseID)
 	return err
+}
+
+const skipUndispatchedTestRunCases = `-- name: SkipUndispatchedTestRunCases :many
+UPDATE test_run_case SET result = 'skipped', notes = $3, updated_at = now()
+WHERE run_id = $1 AND workspace_id = $2
+  AND agent_task_id IS NULL AND result = 'pending'
+RETURNING id, workspace_id, run_id, test_case_id, case_snapshot, position, result, notes, evidence, step_results, duration_ms, executed_by_type, executed_by_id, executed_at, defect_issue_id, created_at, updated_at, agent_task_id
+`
+
+type SkipUndispatchedTestRunCasesParams struct {
+	RunID       pgtype.UUID `json:"run_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Notes       string      `json:"notes"`
+}
+
+// An aborted round must not leave never-dispatched cases pending forever.
+func (q *Queries) SkipUndispatchedTestRunCases(ctx context.Context, arg SkipUndispatchedTestRunCasesParams) ([]TestRunCase, error) {
+	rows, err := q.db.Query(ctx, skipUndispatchedTestRunCases, arg.RunID, arg.WorkspaceID, arg.Notes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TestRunCase{}
+	for rows.Next() {
+		var i TestRunCase
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.RunID,
+			&i.TestCaseID,
+			&i.CaseSnapshot,
+			&i.Position,
+			&i.Result,
+			&i.Notes,
+			&i.Evidence,
+			&i.StepResults,
+			&i.DurationMs,
+			&i.ExecutedByType,
+			&i.ExecutedByID,
+			&i.ExecutedAt,
+			&i.DefectIssueID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AgentTaskID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateTestPlan = `-- name: UpdateTestPlan :one
@@ -864,7 +997,7 @@ UPDATE test_run SET
     completed_at       = COALESCE($12, completed_at),
     updated_at         = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, project_id, plan_id, title, executor_type, executor_id, agent_task_id, environment, build_ref, capability_binding, status, source_run_id, retry_scope, error, started_at, completed_at, created_by, created_at, updated_at
+RETURNING id, workspace_id, project_id, plan_id, title, executor_type, executor_id, agent_task_id, environment, build_ref, capability_binding, status, source_run_id, retry_scope, error, started_at, completed_at, created_by, created_at, updated_at, parallelism
 `
 
 type UpdateTestRunParams struct {
@@ -921,6 +1054,7 @@ func (q *Queries) UpdateTestRun(ctx context.Context, arg UpdateTestRunParams) (T
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Parallelism,
 	)
 	return i, err
 }

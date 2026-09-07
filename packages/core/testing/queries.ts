@@ -196,3 +196,7 @@ export function issueTestCasesOptions(wsId: string, issueId: string) {
     enabled: issueId.length > 0,
   });
 }
+
+/** Query key for the live frame of one running case; the value is an object URL the hook owns. */
+export const testRunCaseFrameKey = (wsId: string, runCaseId: string) =>
+  ["testing", wsId, "run-case-frame", runCaseId] as const;

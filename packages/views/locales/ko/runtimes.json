@@ -199,7 +199,19 @@
       "busy": "사용 중",
       "offline": "오프라인",
       "unknown": "알 수 없음"
-    }
+    },
+    "device_hub_title": "디바이스 허브",
+    "device_hub_test_host": "테스트 호스트",
+    "device_hub_test_host_hint": "이 머신의 디바이스 허브가 보고한 기기를 테스트 실행이 조작할 수 있게 합니다.",
+    "device_hub_online": "허브 {{version}} 온라인",
+    "device_hub_offline": "이 머신에 디바이스 허브가 없습니다",
+    "device_hub_offline_hint": "이 머신에서 `multica-device-mcp hub`를 실행하면 데몬이 다음 보고 때 감지합니다.",
+    "device_hub_counts": "기기 {{devices}} · 앱 {{phones}} · 리스 {{leases}}",
+    "device_hub_show_pairing": "페어링 코드 표시",
+    "device_hub_hide_pairing": "페어링 코드 숨기기",
+    "device_hub_pairing_hint": "Multica 앱의 더보기 → 디바이스 실행기에서 스캔하거나 URL을 붙여넣으세요.",
+    "device_hub_reported": "{{when}} 보고됨",
+    "device_hub_toggle_failed": "테스트 호스트 설정을 업데이트하지 못했습니다."
   },
   "detail_page": {
     "not_found_title": "런타임을 찾을 수 없습니다",

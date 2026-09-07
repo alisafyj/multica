@@ -261,6 +261,7 @@ export type {
   DispatchTestRunBlockedResponse,
   TestCapabilityRequirement,
   RuntimeCapabilityScanResponse,
+  RuntimeDeviceHub,
 } from "./testing";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type * from "./product-map";

@@ -138,6 +138,7 @@ import type {
   TestCaseResultTimelineResponse,
   ListTestCapabilitiesResponse,
   RuntimeCapabilityScanResponse,
+  RuntimeDeviceHub,
   ListTestCaseIssuesResponse,
   ListIssueTestCasesResponse,
   WorkspaceMcpServer,
@@ -4619,6 +4620,8 @@ export const TestRunSchema = z.object({
   environment: z.string().default(""),
   build_ref: z.string().default(""),
   capability_binding: z.record(z.string(), z.unknown()).default({}),
+  /** Cap on concurrently dispatched case tasks; null = every case at once. */
+  parallelism: z.number().int().positive().nullable().default(null),
   status: z.string().default("pending"),
   source_run_id: z.string().nullable().default(null),
   retry_scope: z.string().nullable().default(null),
@@ -4697,6 +4700,25 @@ export const TestCapabilitySchema = z.object({
 
 export const ListTestCapabilitiesResponseSchema = z.object({
   capabilities: z.array(TestCapabilitySchema).default([]),
+}).loose();
+
+/**
+ * What the daemon on a test host last reported about its device hub
+ * (multica-device-mcp). Pairing fields come back only for people who may
+ * edit the runtime; kept in memory on the server, so `reported_at` says how
+ * fresh the rest is.
+ */
+export const RuntimeDeviceHubSchema = z.object({
+  reachable: z.boolean().default(false),
+  url: z.string().default(""),
+  version: z.string().default(""),
+  adb: z.boolean().default(false),
+  devices: z.number().int().nonnegative().default(0),
+  phones: z.number().int().nonnegative().default(0),
+  leases: z.number().int().nonnegative().default(0),
+  pairing_url: z.string().nullable().default(null),
+  pairing_code: z.string().nullable().default(null),
+  reported_at: z.string().nullable().default(null),
 }).loose();
 
 export const RuntimeCapabilityScanResponseSchema = z.object({
@@ -4787,6 +4809,7 @@ export const EMPTY_TEST_RUN: TestRun = {
   environment: "",
   build_ref: "",
   capability_binding: {},
+  parallelism: null,
   status: "pending",
   source_run_id: null,
   retry_scope: null,
@@ -4836,6 +4859,19 @@ export const EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE: TestCaseResultTimelineRes
 
 export const EMPTY_LIST_TEST_CAPABILITIES_RESPONSE: ListTestCapabilitiesResponse = {
   capabilities: [],
+};
+
+export const EMPTY_RUNTIME_DEVICE_HUB: RuntimeDeviceHub = {
+  reachable: false,
+  url: "",
+  version: "",
+  adb: false,
+  devices: 0,
+  phones: 0,
+  leases: 0,
+  pairing_url: null,
+  pairing_code: null,
+  reported_at: null,
 };
 
 export const EMPTY_RUNTIME_CAPABILITY_SCAN_RESPONSE: RuntimeCapabilityScanResponse = {
