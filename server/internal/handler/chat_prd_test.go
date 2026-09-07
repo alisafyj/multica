@@ -25,13 +25,14 @@ type chatPRDFakeDocument struct {
 
 type chatPRDFakeClient struct {
 	lark.APIClient
-	messages       map[string]lark.LarkMessage
-	documents      map[string]*chatPRDFakeDocument
-	failPhase      string
-	copyUnknown    bool
-	copyKnownError bool
-	onCopy         func()
-	onVerify       func()
+	messages         map[string]lark.LarkMessage
+	documents        map[string]*chatPRDFakeDocument
+	templateHeadings []string
+	failPhase        string
+	copyUnknown      bool
+	copyKnownError   bool
+	onCopy           func()
+	onVerify         func()
 }
 
 func (f *chatPRDFakeClient) GetMessage(_ context.Context, _ lark.InstallationCredentials, id string) ([]lark.LarkMessage, error) {
@@ -40,6 +41,12 @@ func (f *chatPRDFakeClient) GetMessage(_ context.Context, _ lark.InstallationCre
 		return nil, errors.New("message not found")
 	}
 	return []lark.LarkMessage{message}, nil
+}
+func (f *chatPRDFakeClient) ReadPRDTemplateHeadings(context.Context, lark.InstallationCredentials, string) ([]string, error) {
+	if f.failPhase == "template" {
+		return nil, errors.New("template permission denied")
+	}
+	return f.templateHeadings, nil
 }
 func (f *chatPRDFakeClient) ResolvePRDTemplate(context.Context, lark.InstallationCredentials, string) (string, error) {
 	if f.failPhase == "resolve" {
@@ -128,7 +135,10 @@ func newChatPRDFixture(t *testing.T) *chatPRDFixture {
 	runtimeID := dbfx.Runtime(t, "PRD fixture runtime")
 	agentID := dbfx.Agent(t, "PRD fixture "+uuid.NewString(), runtimeID)
 	sessionID := dbfx.ChatSession(t, agentID)
-	taskID := dbfx.Task(t, agentID, testutil.Cols{"chat_session_id": sessionID, "runtime_id": runtimeID, "status": "running"})
+	taskID := dbfx.Task(t, agentID, testutil.Cols{
+		"chat_session_id": sessionID, "runtime_id": runtimeID, "status": "running",
+		"originator_user_id": testUserID, "accountable_user_id": testUserID,
+	})
 	inst, err := installations.Upsert(context.Background(), lark.InstallationParams{
 		WorkspaceID: parseUUID(workspaceID), AgentID: parseUUID(agentID), AppID: "cli_" + uuid.NewString(),
 		AppSecret: "fake-test-secret", BotOpenID: "ou_fixture_bot", InstallerUserID: parseUUID(testUserID),
@@ -155,7 +165,14 @@ func newChatPRDFixture(t *testing.T) *chatPRDFixture {
 		CreateTime: strconv.FormatInt(time.Now().Add(-time.Minute).UnixMilli(), 10),
 		Mentions:   []lark.LarkMessageMention{{Key: "@_user_1", ID: "ou_fixture_bot"}},
 	}
-	client := &chatPRDFakeClient{messages: map[string]lark.LarkMessage{root.MessageID: root}, documents: make(map[string]*chatPRDFakeDocument)}
+	dbfx.Insert(t, "channel_user_binding", testutil.Cols{
+		"workspace_id": workspaceID, "multica_user_id": testUserID, "installation_id": installationID,
+		"channel_type": "feishu", "channel_user_id": root.SenderID,
+	})
+	client := &chatPRDFakeClient{
+		messages: map[string]lark.LarkMessage{root.MessageID: root}, documents: make(map[string]*chatPRDFakeDocument),
+		templateHeadings: []string{"需求背景", "功能需求"},
+	}
 	h := *testHandler
 	h.LarkInstallations, h.LarkAPIClient = installations, client
 	return &chatPRDFixture{h: h, client: client, workspaceID: workspaceID, sessionID: sessionID, taskID: taskID, installationID: installationID, bindingID: bindingID, root: root}
@@ -177,7 +194,7 @@ func (f *chatPRDFixture) draft(t *testing.T, content ChatPRDContent) ChatPRDDraf
 	t.Helper()
 	var draft ChatPRDDraft
 	testutil.Call(t, f.h.SaveChatPRDDraft, f.request(http.MethodPost, "/api/chat/prd/draft", map[string]any{
-		"source_message_id": f.root.MessageID, "generation_task_id": f.generation(t, content),
+		"source_message_id": f.root.MessageID, "content": content,
 	})).Want(http.StatusOK).JSON(&draft)
 	return draft
 }
@@ -229,6 +246,7 @@ func TestChatPRDRejectsUntrustedSource(t *testing.T) {
 		{"another topic", func(m *lark.LarkMessage) { m.ThreadID = "omt_other" }},
 		{"reply instead of root", func(m *lark.LarkMessage) { m.ParentID = "om_other"; m.RootID = "om_other" }},
 		{"not a PRD request", func(m *lark.LarkMessage) { m.Content = `{"text":"@_user_1 晚上好"}` }},
+		{"no genuine mention", func(m *lark.LarkMessage) { m.Mentions = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newChatPRDFixture(t)
@@ -236,7 +254,7 @@ func TestChatPRDRejectsUntrustedSource(t *testing.T) {
 			tc.change(&message)
 			f.client.messages[message.MessageID] = message
 			testutil.Call(t, f.h.SaveChatPRDDraft, f.request(http.MethodPost, "/api/chat/prd/draft", map[string]any{
-				"source_message_id": message.MessageID, "generation_task_id": f.generation(t, prdFixtureContent()),
+				"source_message_id": message.MessageID, "content": prdFixtureContent(),
 			})).Want(http.StatusForbidden)
 			testutil.Call(t, f.h.GetChatPRD, f.request(http.MethodGet, "/api/chat/prd", nil)).Want(http.StatusNotFound)
 			if len(f.client.documents) != 0 {
@@ -301,7 +319,7 @@ func TestChatPRDPublishFrozenSnapshotAndDuplicateConfirmation(t *testing.T) {
 	}
 	content.Sections[0].Body = "attempted post-confirmation edit"
 	testutil.Call(t, f.h.SaveChatPRDDraft, f.request(http.MethodPost, "/api/chat/prd/draft", map[string]any{
-		"source_message_id": f.root.MessageID, "generation_task_id": f.generation(t, content),
+		"source_message_id": f.root.MessageID, "content": content,
 	})).Want(http.StatusConflict)
 	var current ChatPRDDraft
 	testutil.Call(t, f.h.GetChatPRD, f.request(http.MethodGet, "/api/chat/prd", nil)).Want(http.StatusOK).JSON(&current)
@@ -536,7 +554,6 @@ func TestChatPRDPublishRevalidatesScopeAfterSessionLock(t *testing.T) {
 
 func TestChatPRDDraftRevalidatesScopeAfterSessionLock(t *testing.T) {
 	f := newChatPRDFixture(t)
-	generation := f.generation(t, prdFixtureContent())
 	ctx := context.Background()
 	retiring, err := testPool.Begin(ctx)
 	if err != nil {
@@ -554,7 +571,7 @@ func TestChatPRDDraftRevalidatesScopeAfterSessionLock(t *testing.T) {
 	go func() {
 		defer close(done)
 		finished <- testutil.Call(t, f.h.SaveChatPRDDraft, f.request(http.MethodPost, "/api/chat/prd/draft", map[string]any{
-			"source_message_id": f.root.MessageID, "generation_task_id": generation,
+			"source_message_id": f.root.MessageID, "content": prdFixtureContent(),
 		}))
 	}()
 	t.Cleanup(func() { waitContextLockSignal(t, done, "draft save did not finish after binding retirement") })
@@ -568,5 +585,100 @@ func TestChatPRDDraftRevalidatesScopeAfterSessionLock(t *testing.T) {
 	(<-finished).Want(http.StatusForbidden)
 	if count := dbfx.Count(t, `SELECT count(*) FROM chat_prd_draft WHERE installation_id=$1`, f.installationID); count != 0 {
 		t.Fatalf("stale pre-lock scope saved %d drafts", count)
+	}
+}
+
+func TestChatPRDDraftAuthenticatesOriginalHumanTask(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*testing.T, *chatPRDFixture)
+		status int
+	}{
+		{"unattributed task", func(t *testing.T, f *chatPRDFixture) {
+			dbfx.Exec(t, `UPDATE agent_task_queue SET originator_user_id=NULL WHERE id=$1`, f.taskID)
+		}, http.StatusForbidden},
+		{"borrowed human binding", func(t *testing.T, f *chatPRDFixture) {
+			other := dbfx.User(t, "Other requester", "prd-other-"+uuid.NewString()+"@example.test")
+			dbfx.Exec(t, `UPDATE channel_user_binding SET multica_user_id=$2 WHERE installation_id=$1`, f.installationID, other)
+		}, http.StatusForbidden},
+		{"missing membership", func(t *testing.T, f *chatPRDFixture) {
+			dbfx.Exec(t, `DELETE FROM member WHERE workspace_id=$1 AND user_id=$2`, f.workspaceID, testUserID)
+		}, http.StatusForbidden},
+		{"private agent admin bypass", func(t *testing.T, f *chatPRDFixture) {
+			other := dbfx.User(t, "Private agent owner", "prd-owner-"+uuid.NewString()+"@example.test")
+			dbfx.Exec(t, `UPDATE agent SET owner_id=$2 WHERE id=(SELECT agent_id FROM agent_task_queue WHERE id=$1)`, f.taskID, other)
+		}, http.StatusForbidden},
+		{"completed task replay", func(t *testing.T, f *chatPRDFixture) {
+			dbfx.Exec(t, `UPDATE agent_task_queue SET status='completed' WHERE id=$1`, f.taskID)
+		}, http.StatusForbidden},
+		{"source outside trigger lineage", func(t *testing.T, f *chatPRDFixture) {
+			trigger := f.root
+			trigger.MessageID, trigger.RootID, trigger.ParentID = "om_unrelated_trigger", "om_other_root", "om_other_root"
+			f.client.messages[trigger.MessageID] = trigger
+			dbfx.Exec(t, `UPDATE channel_task_delivery SET channel_message_id=$2 WHERE task_id=$1`, f.taskID, trigger.MessageID)
+		}, http.StatusForbidden},
+		{"unknown context", func(t *testing.T, f *chatPRDFixture) {
+			dbfx.Exec(t, `UPDATE agent_task_queue SET channel_context_revision=99 WHERE id=$1`, f.taskID)
+		}, http.StatusNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newChatPRDFixture(t)
+			tc.change(t, f)
+			testutil.Call(t, f.h.SaveChatPRDDraft, f.request(http.MethodPost, "/api/chat/prd/draft", map[string]any{
+				"source_message_id": f.root.MessageID, "content": prdFixtureContent(),
+			})).Want(tc.status)
+			if count := dbfx.Count(t, `SELECT count(*) FROM chat_prd_draft WHERE installation_id=$1`, f.installationID); count != 0 {
+				t.Fatalf("unauthorized task saved %d drafts", count)
+			}
+		})
+	}
+}
+
+func TestChatPRDTemplateGuidesDirectDraft(t *testing.T) {
+	f := newChatPRDFixture(t)
+	f.client.templateHeadings = []string{"上线范围"}
+	var template struct {
+		Headings []string `json:"template_headings"`
+	}
+	testutil.Call(t, f.h.GetChatPRDTemplate, f.request(http.MethodGet, "/api/chat/prd/template", nil)).Want(http.StatusOK).JSON(&template)
+	if !reflect.DeepEqual(template.Headings, f.client.templateHeadings) {
+		t.Fatalf("template headings do not match configured source: %+v", template)
+	}
+	testutil.Call(t, f.h.SaveChatPRDDraft, f.request(http.MethodPost, "/api/chat/prd/draft", map[string]any{
+		"source_message_id": f.root.MessageID, "content": prdFixtureContent(),
+	})).Want(http.StatusBadRequest)
+	content := prdFixtureContent()
+	content.Sections[0].Heading = template.Headings[0]
+	draft := f.draft(t, content)
+	if !reflect.DeepEqual(draft.Content, content) || draft.InitiatorOpenID != f.root.SenderID || draft.Confirmation == "" || len(f.client.documents) != 0 {
+		t.Fatalf("direct drafting changed content, human authority or created a document: %+v", draft)
+	}
+	f.client.failPhase = "template"
+	testutil.Call(t, f.h.SaveChatPRDDraft, f.request(http.MethodPost, "/api/chat/prd/draft", map[string]any{
+		"source_message_id": f.root.MessageID, "content": content,
+	})).Want(http.StatusBadGateway)
+	request := f.request(http.MethodGet, "/api/chat/prd/template", nil)
+	request.Header.Set("X-Actor-Source", "api_key")
+	testutil.Call(t, f.h.GetChatPRDTemplate, request).Want(http.StatusForbidden)
+}
+
+func TestChatPRDDraftRejectsInvalidCallerContent(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content any
+	}{
+		{"missing content", nil},
+		{"empty title", ChatPRDContent{Sections: prdFixtureContent().Sections}},
+		{"duplicate headings", ChatPRDContent{Title: "PRD", Sections: append(prdFixtureContent().Sections, prdFixtureContent().Sections...)}},
+		{"too many paragraphs", ChatPRDContent{Title: "PRD", Sections: []lark.PRDSection{{Heading: "需求背景", Body: strings.Repeat("line\n", 50)}}}},
+		{"unknown content field", map[string]any{"title": "PRD", "sections": prdFixtureContent().Sections, "owner": "ou_override"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newChatPRDFixture(t)
+			testutil.Call(t, f.h.SaveChatPRDDraft, f.request(http.MethodPost, "/api/chat/prd/draft", map[string]any{
+				"source_message_id": f.root.MessageID, "content": tc.content,
+			})).Want(http.StatusBadRequest)
+			testutil.Call(t, f.h.GetChatPRD, f.request(http.MethodGet, "/api/chat/prd", nil)).Want(http.StatusNotFound)
+		})
 	}
 }

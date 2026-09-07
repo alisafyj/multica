@@ -189,7 +189,6 @@ services:
       MULTICA_LARK_HTTP_BASE_URL: ${MULTICA_LARK_HTTP_BASE_URL:-}
       MULTICA_LARK_CALLBACK_BASE_URL: ${MULTICA_LARK_CALLBACK_BASE_URL:-}
       MULTICA_PRD_TEMPLATE_WIKI_TOKEN: ${MULTICA_PRD_TEMPLATE_WIKI_TOKEN:-}
-      MULTICA_PRD_DELEGATE_AGENT_ID: ${MULTICA_PRD_DELEGATE_AGENT_ID:-}
       # Slack bot integration. MULTICA_SLACK_SECRET_KEY is the opt-in: unset =
       # integration disabled. It decrypts the per-installation bot/app tokens,
       # which are brought by each workspace via OAuth/BYO and stored encrypted

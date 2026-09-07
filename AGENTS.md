@@ -82,8 +82,8 @@ make check            # Full verification pipeline
 - **部署后逐项核验**：`/health.commit` 必须匹配目标提交；`/api/config.server_version` 与 `upstream_version` 必须分别匹配发布版本、经 Git 验证的基座。健康接口通过不等于 UI 通过；菜单需实际浏览器验收，无法验收时明确说明。
 - **后端、daemon、桌面版本分别记录**：后端升级不代表 worker/CLI 升级。daemon 更新后检查 `multica version` 的版本与 commit，以及实际 daemon 状态；真实任务必须有最终落库的 `execution_metrics`，不能只凭版本字符串或任务 completed 宣称遥测通过。
 - **归档校验后才能安装**：仅对下载的目标 OS/架构归档匹配官方 `checksums.txt` 对应行，同时核对发布资产字节数与 SHA-256；传到远端后再次校验。超时残留不得解包；用独立临时文件或断点续传，成功退出也不能替代大小/hash 校验。保留旧可执行文件，确认无运行中任务再替换。
-- **协议变更同步切换**：后端与 CLI 契约不兼容时一起升级，保留配套回滚；例如 PRD `draft --generation-task` 不能搭配旧版 `--content-file` CLI。配置的小码智能体 ID 必须明确、同工作区且原发起人有调用权限，不改 Mika 全局 runtime、不代绑身份、不伪造确认。
-- **交付与证据分开**：本地修正不等于远端已交付，提交/PR/合并/发布/部署分别报告。暂存只列业务文件，排除 `.agents/skills/**`、`.superpowers/**` 等本地工具产物。Token 总量注明是否包含缓存读写，费用无账单或可核验单价时不推断；测试通过不替代真实群聊委派、人工确认与文档回链验收。
+- **协议变更同步切换**：后端与 CLI 契约不兼容时一起升级，保留配套回滚；PRD 草稿统一使用 `draft --source-message --content-file`，不能搭配旧的委派生成接口。Mika 和小码是同一个智能体，直接在当前 task 生成草稿；保留 Hermes 等当前 runtime，不代绑身份、不伪造确认。
+- **交付与证据分开**：本地修正不等于远端已交付，提交/PR/合并/发布/部署分别报告。暂存只列业务文件，排除 `.agents/skills/**`、`.superpowers/**` 等本地工具产物。Token 总量注明是否包含缓存读写，费用无账单或可核验单价时不推断；测试通过不替代真实群聊草稿、人工确认与文档回链验收。
 
 ### PR 提交流程（fork）
 
