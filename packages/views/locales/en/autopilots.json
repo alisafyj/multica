@@ -32,7 +32,8 @@
   },
   "execution_mode": {
     "create_issue": "Create Issue",
-    "run_only": "Run Only"
+    "run_only": "Run Only",
+    "test_run": "Test run"
   },
   "relative_date": {
     "today": "Today",
@@ -111,7 +112,9 @@
       "cancel": "Cancel",
       "confirm": "Delete",
       "deleting": "Deleting..."
-    }
+    },
+    "field_test_plan": "Test plan",
+    "test_plan_unavailable": "Plan unavailable"
   },
   "access": {
     "title": "Manage access",
@@ -146,7 +149,8 @@
     "skipped_group": {
       "label": "Skipped",
       "summary": "{{count}} skipped runs"
-    }
+    },
+    "test_run_linked": "Test round"
   },
   "webhook_payload": {
     "label": "Webhook event:",
@@ -327,8 +331,18 @@
       "run_only": {
         "label": "Run only",
         "description": "Silent run, no issue created"
+      },
+      "test_run": {
+        "label": "Test run",
+        "description": "Each run builds a round from a test plan and dispatches it"
       }
-    }
+    },
+    "section_test_plan": "Test plan",
+    "test_plan_placeholder": "Select a test plan",
+    "no_test_plans": "No test plans yet — create one under Tests",
+    "test_plan_required": "Pick the test plan the runs build their round from",
+    "test_run_parallelism": "Parallel cases",
+    "test_run_parallelism_hint": "Cases dispatched at once; empty means all"
   },
   "schedule_editor": {
     "time_label": "Time",

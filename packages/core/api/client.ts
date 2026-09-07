@@ -291,6 +291,8 @@ import type {
   CreateTestCaseRequest,
   UpdateTestCaseRequest,
   ListTestCasesResponse,
+  RecommendTestCasesRequest,
+  RecommendTestCasesResponse,
   ListTestCaseModulesResponse,
   ListTestCaseRevisionsResponse,
   TestGenerationJob,
@@ -313,6 +315,9 @@ import type {
   TestCaseResultTimelineResponse,
   ListTestCapabilitiesResponse,
   RuntimeCapabilityScanResponse,
+  RuntimeDeviceHub,
+  IssueTestSummary,
+  TestPlanStats,
   ListTestCaseIssuesResponse,
   ListIssueTestCasesResponse,
   DispatchTestRunResponse,
@@ -359,10 +364,12 @@ import {
   TestCaseSchema,
   ListTestCasesResponseSchema,
   ListTestCaseModulesResponseSchema,
+  RecommendTestCasesResponseSchema,
   ListTestCaseRevisionsResponseSchema,
   EMPTY_TEST_CASE,
   EMPTY_LIST_TEST_CASES_RESPONSE,
   EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
+  EMPTY_RECOMMEND_TEST_CASES_RESPONSE,
   EMPTY_LIST_TEST_CASE_REVISIONS_RESPONSE,
 } from "./schemas";
 import {
@@ -635,7 +642,13 @@ import {
   EMPTY_TEST_CASE_RESULT_TIMELINE_RESPONSE,
   EMPTY_LIST_TEST_CAPABILITIES_RESPONSE,
   EMPTY_RUNTIME_CAPABILITY_SCAN_RESPONSE,
+  EMPTY_RUNTIME_DEVICE_HUB,
+  EMPTY_ISSUE_TEST_SUMMARY,
+  EMPTY_TEST_PLAN_STATS,
+  IssueTestSummarySchema,
+  TestPlanStatsSchema,
   RuntimeCapabilityScanResponseSchema,
+  RuntimeDeviceHubSchema,
   EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE,
   EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE,
   SkillSchema,
@@ -2240,6 +2253,8 @@ export class ApiClient {
     runtimeId: string,
     patch: {
       visibility?: "private" | "public";
+      /** M4: designate the machine as a test host for device rounds. */
+      test_host_enabled?: boolean;
       /**
        * Custom display name. Pass an empty string to clear it (the server
        * reverts to the default name). Omit to leave it unchanged — a JSON
@@ -3846,6 +3861,16 @@ export class ApiClient {
       EMPTY_LIST_TEST_CASE_MODULES_RESPONSE,
       { endpoint: "GET /api/test-cases/modules" },
     );
+  }
+
+  async recommendTestCases(data: RecommendTestCasesRequest): Promise<RecommendTestCasesResponse> {
+    const raw = await this.fetch<unknown>("/api/test-cases/recommend", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, RecommendTestCasesResponseSchema, EMPTY_RECOMMEND_TEST_CASES_RESPONSE, {
+      endpoint: "POST /api/test-cases/recommend",
+    });
   }
 
   async getTestCase(ref: string): Promise<TestCase> {
@@ -6102,6 +6127,22 @@ export class ApiClient {
     );
   }
 
+  async getIssueTestSummary(issueId: string): Promise<IssueTestSummary> {
+    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(issueId)}/test-summary`);
+    return parseWithFallback(raw, IssueTestSummarySchema, EMPTY_ISSUE_TEST_SUMMARY, {
+      endpoint: "GET /api/issues/:id/test-summary",
+    });
+  }
+
+  async getTestPlanStats(planId: string, runs = 10): Promise<TestPlanStats> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-plans/${encodeURIComponent(planId)}/stats?runs=${encodeURIComponent(String(runs))}`,
+    );
+    return parseWithFallback(raw, TestPlanStatsSchema, EMPTY_TEST_PLAN_STATS, {
+      endpoint: "GET /api/test-plans/:id/stats",
+    });
+  }
+
   async listIssueTestCases(issueId: string): Promise<ListIssueTestCasesResponse> {
     const raw = await this.fetch<unknown>(
       `/api/issues/${encodeURIComponent(issueId)}/test-cases`,
@@ -6136,6 +6177,26 @@ export class ApiClient {
    * report them. 202: the inventory arrives later through the
    * `test_capability:updated` event, not in this response.
    */
+  async getRuntimeDeviceHub(runtimeId: string): Promise<RuntimeDeviceHub> {
+    const raw = await this.fetch<unknown>(`/api/runtimes/${encodeURIComponent(runtimeId)}/device-hub`);
+    return parseWithFallback(raw, RuntimeDeviceHubSchema, EMPTY_RUNTIME_DEVICE_HUB, {
+      endpoint: "GET /api/runtimes/{id}/device-hub",
+    });
+  }
+
+  /**
+   * Latest live frame of a running case (image/jpeg), or null when the hub
+   * has not relayed one in the last two minutes. Binary, so no schema: the
+   * only thing to validate is that the body is an image.
+   */
+  async getTestRunCaseFrame(runCaseId: string): Promise<Blob | null> {
+    const res = await this.fetchRaw(`/api/test-run-cases/${encodeURIComponent(runCaseId)}/frame`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    const blob = await res.blob();
+    return blob.type.startsWith("image/") ? blob : null;
+  }
+
   async requestRuntimeCapabilityScan(runtimeId: string): Promise<RuntimeCapabilityScanResponse> {
     const raw = await this.fetch<unknown>(`/api/runtimes/${encodeURIComponent(runtimeId)}/capabilities`, {
       method: "POST",

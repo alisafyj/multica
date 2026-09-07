@@ -346,7 +346,15 @@
       "description": "설명",
       "deletePlan": "계획 삭제",
       "confirmDelete": "이 테스트 계획을 삭제할까요?",
-      "unknownCase": "케이스가 더 이상 없습니다"
+      "unknownCase": "케이스가 더 이상 없습니다",
+      "parallelism": "병렬 수",
+      "parallelismPlaceholder": "모두 동시에",
+      "board": "보드",
+      "boardEmpty": "아직 라운드가 없습니다",
+      "passRate": "통과율",
+      "matrixTitle": "최근 라운드의 모듈별 결과",
+      "moduleColumn": "모듈",
+      "moduleUnnamed": "(모듈 없음)"
     }
   },
   "run": {
@@ -366,7 +374,8 @@
       "plan": "계획",
       "executor": "실행자",
       "started": "시작 시간",
-      "completed": "완료 시간"
+      "completed": "완료 시간",
+      "parallelism": "병렬 수"
     },
     "counts": {
       "passed": "통과",
@@ -421,7 +430,9 @@
     },
     "saveNotes": "메모 저장",
     "notesNeedResult": "메모는 결과와 함께 저장됩니다. 결과를 먼저 선택하세요.",
-    "task": "작업 {{id}}"
+    "task": "작업 {{id}}",
+    "liveFrame": "실시간 화면",
+    "liveFrameWaiting": "디바이스 허브의 첫 프레임을 기다리는 중…"
   },
   "timeline": {
     "title": "실행 기록",
@@ -430,7 +441,9 @@
     "result": "결과",
     "environment": "환경",
     "buildRef": "빌드",
-    "executedAt": "실행 시간"
+    "executedAt": "실행 시간",
+    "flaky": "불안정",
+    "flakyHint": "최근 {{count}}회 실행에서 통과와 실패가 번갈아 나타났습니다"
   },
   "runs": {
     "title": "테스트 실행",
@@ -468,6 +481,23 @@
     "newPlan": "새 계획…",
     "confirm": "추가"
   },
+  "recommend": {
+    "action": "변경으로 추천",
+    "title": "변경에 관련된 케이스",
+    "description": "변경된 경로를 한 줄에 하나씩 붙여 넣으세요. 저장소 바인딩이 해당 경로를 담당하는 케이스를 많이 걸린 순으로 보여 줍니다.",
+    "paths": "변경 경로",
+    "pathsPlaceholder": "src/order/checkout.ts\napps/web/app/orders/page.tsx",
+    "repo": "저장소 별칭(선택)",
+    "find": "케이스 찾기",
+    "finding": "찾는 중…",
+    "empty": "이 경로를 담당하는 케이스가 없습니다. 케이스의 저장소 바인딩에 경로 글롭을 추가하세요.",
+    "claimed": "{{count}}개 경로에 해당",
+    "unmatched": "{{count}}개 경로는 담당 케이스가 없습니다",
+    "select": "목록에서 선택",
+    "startRun": "실행 시작",
+    "runTitle": "변경 경로 {{count}}개에 대한 회귀",
+    "runFailed": "실행을 시작할 수 없습니다"
+  },
   "coverage": {
     "caseSection": "관련 요구사항",
     "caseEmpty": "아직 연결된 요구사항이 없습니다",
@@ -481,6 +511,17 @@
     "pickerDescription": "이 케이스가 검증하는 요구사항을 선택하세요.",
     "neverRun": "미실행",
     "failingCount": "실패 {{count}}건",
-    "untestedCount": "미실행 {{count}}건"
+    "untestedCount": "미실행 {{count}}건",
+    "verified": "검증됨",
+    "verifiedHint": "연결된 모든 케이스가 최근 실행에서 통과했습니다",
+    "latestRun": "최근 라운드",
+    "defectsSection": "테스트로 발견한 결함",
+    "foundBySection": "발견한 테스트 실행",
+    "generateCases": "케이스 생성",
+    "newCase": "새 케이스",
+    "newCaseTitle": "검증: {{title}}",
+    "noCoverage": "아직 테스트 커버리지가 없습니다",
+    "generateFailed": "케이스 생성을 시작하지 못했습니다",
+    "newCaseFailed": "케이스를 만들지 못했습니다"
   }
 }

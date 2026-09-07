@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -79,6 +80,10 @@ type TestRunCapabilityEntry struct {
 	// Match is the case's constraint on the kind (`{"os_version": ">=13"}`);
 	// the device connector leases any hub phone that satisfies it.
 	Match map[string]string
+	// Tags ride on the lease (`--tag k=v`): the daemon finds the lease of a
+	// running case by run_case_id to relay its live frame, and the hub audit
+	// records them next to every action.
+	Tags map[string]string
 	// Label names the lease on the phone owner's prompt and in the hub audit
 	// log: the run case key (TC-42) or id.
 	Label string
@@ -128,7 +133,7 @@ func BuildTaskOverlay(ctx context.Context, originatorUserID pgtype.UUID, agent d
 	var apps []runtimeapps.ConnectedApp
 
 	for _, cap := range caps {
-		entries := capabilityMCPServers(cap.Kind, cap.Target, cap.Match, cap.Label)
+		entries := capabilityMCPServers(cap.Kind, cap.Target, cap.Match, cap.Label, cap.Tags)
 		for name, srv := range entries {
 			servers[name] = srv
 			apps = append(apps, runtimeapps.ConnectedApp{
@@ -141,7 +146,7 @@ func BuildTaskOverlay(ctx context.Context, originatorUserID pgtype.UUID, agent d
 	}
 
 	if len(servers) == 0 {
-		// All resolved capabilities are device kinds (Phase 5 stubs). Return
+		// Only kinds without a backend (computer_use) were resolved. Return
 		// empty rather than wiring an unusable overlay.
 		return runtimeapps.MCPOverlayResult{}, nil
 	}
@@ -161,7 +166,7 @@ func BuildTaskOverlay(ctx context.Context, originatorUserID pgtype.UUID, agent d
 // connector leases a phone matching the case's constraint under the case's
 // label. Without a reported path it falls back to npx, which needs the package
 // published or cached on the host.
-func capabilityMCPServers(kind string, target map[string]json.RawMessage, match map[string]string, label string) map[string]capabilityMCPServer {
+func capabilityMCPServers(kind string, target map[string]json.RawMessage, match map[string]string, label string, tags map[string]string) map[string]capabilityMCPServer {
 	switch kind {
 	case "browser":
 		provider := "playwright"
@@ -184,11 +189,17 @@ func capabilityMCPServers(kind string, target map[string]json.RawMessage, match 
 		}
 
 	case "android_device":
-		return map[string]capabilityMCPServer{MCPDeviceServerName: deviceConnectorServer(target, match, label)}
+		return map[string]capabilityMCPServer{MCPDeviceServerName: deviceConnectorServer(target, withPlatform(match, "android"), label, tags)}
 
-	case "ios_device", "computer_use":
-		// No hub backend yet: a run bound to one of these kinds is blocked at
-		// dispatch by the resolver rather than launched without its device.
+	case "ios_device":
+		// An iPhone on the same hub (driven by PulsePhone on the test host):
+		// the same connector, pinned to the ios platform so an Android phone
+		// is never leased for an iOS case.
+		return map[string]capabilityMCPServer{MCPDeviceServerName: deviceConnectorServer(target, withPlatform(match, "ios"), label, tags)}
+
+	case "computer_use":
+		// No hub backend yet: a run bound to this kind is blocked at dispatch
+		// by the resolver rather than launched without its device.
 		return nil
 
 	default:
@@ -196,8 +207,20 @@ func capabilityMCPServers(kind string, target map[string]json.RawMessage, match 
 	}
 }
 
+// withPlatform pins the lease match to the capability kind's platform. The
+// kind is authoritative: a case constraint naming the other platform would
+// bind an android_device round to an iPhone, so it is overwritten, not merged.
+func withPlatform(match map[string]string, platform string) map[string]string {
+	out := make(map[string]string, len(match)+1)
+	for k, v := range match {
+		out[k] = v
+	}
+	out["platform"] = platform
+	return out
+}
+
 // deviceConnectorServer builds the `multica-device` stdio entry.
-func deviceConnectorServer(target map[string]json.RawMessage, match map[string]string, label string) capabilityMCPServer {
+func deviceConnectorServer(target map[string]json.RawMessage, match map[string]string, label string, tags map[string]string) capabilityMCPServer {
 	str := func(key string) string {
 		raw, ok := target[key]
 		if !ok {
@@ -225,6 +248,16 @@ func deviceConnectorServer(target map[string]json.RawMessage, match map[string]s
 	tail := []string{"connect", "--hub", hub, "--acquire", strings.TrimSpace(matchJSON.String())}
 	if label != "" {
 		tail = append(tail, "--label", label)
+	}
+	tagKeys := make([]string, 0, len(tags))
+	for k := range tags {
+		if k != "" && tags[k] != "" {
+			tagKeys = append(tagKeys, k)
+		}
+	}
+	sort.Strings(tagKeys)
+	for _, k := range tagKeys {
+		tail = append(tail, "--tag", k+"="+tags[k])
 	}
 	if command, cli := str("connector_command"), str("connector_cli"); command != "" && cli != "" {
 		return capabilityMCPServer{Command: command, Args: append([]string{cli}, tail...)}

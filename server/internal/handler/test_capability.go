@@ -38,8 +38,10 @@ type TestRunCapabilityBinding struct {
 	Resolved  map[string]string `json:"resolved"` // kind -> capability_key
 	// Targets carries each resolved capability's target JSON (kind -> target)
 	// for the overlay builder: the device connector needs hub_url and the
-	// connector paths the daemon reported. Not persisted on the run.
-	Targets map[string]map[string]json.RawMessage `json:"-"`
+	// connector paths the daemon reported. Persisted with the binding so a
+	// capped round can queue its later cases from the frozen resolution
+	// instead of re-resolving against whatever is online by then.
+	Targets map[string]map[string]json.RawMessage `json:"targets,omitempty"`
 }
 
 // resolveRunCapabilities picks one daemon that can satisfy every required
@@ -560,6 +562,9 @@ func (h *Handler) ReportRuntimeCapabilities(w http.ResponseWriter, r *http.Reque
 	var body struct {
 		RequestID    string                   `json:"request_id,omitempty"`
 		Capabilities []reportedCapabilityBody `json:"capabilities"`
+		// DeviceHub is the daemon's view of the multica-device-mcp hub on its
+		// machine; absent from daemons that predate it.
+		DeviceHub *RuntimeDeviceHubReport `json:"device_hub,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -570,6 +575,14 @@ func (h *Handler) ReportRuntimeCapabilities(w http.ResponseWriter, r *http.Reque
 	wsUUID := rt.WorkspaceID
 
 	effectiveDaemonID := effectiveDaemonIDForRuntime(rt)
+
+	if body.DeviceHub != nil {
+		report := *body.DeviceHub
+		report.ReportedAt = time.Now()
+		if err := h.DeviceHubStore.Set(r.Context(), effectiveDaemonID, report); err != nil {
+			slog.Warn("ReportRuntimeCapabilities: device hub store failed", "daemon_id", effectiveDaemonID, "error", err)
+		}
+	}
 
 	presentKeys := make([]string, 0, len(body.Capabilities))
 	upserted := make([]testCapabilityResponse, 0, len(body.Capabilities))

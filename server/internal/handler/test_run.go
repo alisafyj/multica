@@ -9,6 +9,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -22,7 +23,9 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -55,28 +58,31 @@ type TestPlanCaseResponse struct {
 // ExecutionStatus and ResultCounts fields are only populated on the single-item
 // GET — list calls omit them to keep the payload small.
 type TestRunResponse struct {
-	ID                string                                    `json:"id"`
-	WorkspaceID       string                                    `json:"workspace_id"`
-	ProjectID         string                                    `json:"project_id"`
-	PlanID            *string                                   `json:"plan_id"`
-	Title             string                                    `json:"title"`
-	ExecutorType      string                                    `json:"executor_type"`
-	ExecutorID        string                                    `json:"executor_id"`
-	AgentTaskID       *string                                   `json:"agent_task_id"`
-	Environment       string                                    `json:"environment"`
-	BuildRef          string                                    `json:"build_ref"`
-	CapabilityBinding map[string]any                            `json:"capability_binding"`
-	Status            string                                    `json:"status"`
-	SourceRunID       *string                                   `json:"source_run_id"`
-	RetryScope        *string                                   `json:"retry_scope"`
-	Error             *string                                   `json:"error"`
-	StartedAt         *string                                   `json:"started_at"`
-	CompletedAt       *string                                   `json:"completed_at"`
-	CreatedBy         *string                                   `json:"created_by"`
-	CreatedAt         string                                    `json:"created_at"`
-	UpdatedAt         string                                    `json:"updated_at"`
-	ExecutionStatus   *DesignRestoreTaskExecutionStatusResponse `json:"execution_status,omitempty"`
-	ResultCounts      map[string]int64                          `json:"result_counts,omitempty"`
+	ID                string         `json:"id"`
+	WorkspaceID       string         `json:"workspace_id"`
+	ProjectID         string         `json:"project_id"`
+	PlanID            *string        `json:"plan_id"`
+	Title             string         `json:"title"`
+	ExecutorType      string         `json:"executor_type"`
+	ExecutorID        string         `json:"executor_id"`
+	AgentTaskID       *string        `json:"agent_task_id"`
+	Environment       string         `json:"environment"`
+	BuildRef          string         `json:"build_ref"`
+	CapabilityBinding map[string]any `json:"capability_binding"`
+	// Parallelism caps how many case tasks a dispatched round keeps queued or
+	// running at once; nil = every case at once (M4 "release one as one completes").
+	Parallelism     *int32                                    `json:"parallelism"`
+	Status          string                                    `json:"status"`
+	SourceRunID     *string                                   `json:"source_run_id"`
+	RetryScope      *string                                   `json:"retry_scope"`
+	Error           *string                                   `json:"error"`
+	StartedAt       *string                                   `json:"started_at"`
+	CompletedAt     *string                                   `json:"completed_at"`
+	CreatedBy       *string                                   `json:"created_by"`
+	CreatedAt       string                                    `json:"created_at"`
+	UpdatedAt       string                                    `json:"updated_at"`
+	ExecutionStatus *DesignRestoreTaskExecutionStatusResponse `json:"execution_status,omitempty"`
+	ResultCounts    map[string]int64                          `json:"result_counts,omitempty"`
 }
 
 // TestRunCaseResponse is the outbound representation of a test_run_case row.
@@ -171,6 +177,7 @@ func testRunToResponse(run db.TestRun) TestRunResponse {
 		Environment:       run.Environment,
 		BuildRef:          run.BuildRef,
 		CapabilityBinding: binding,
+		Parallelism:       int4ToPtr(run.Parallelism),
 		Status:            run.Status,
 		SourceRunID:       uuidToPtr(run.SourceRunID),
 		RetryScope:        textToPtr(run.RetryScope),
@@ -428,30 +435,53 @@ func (h *Handler) fetchCasesForIDs(
 	wsUUID pgtype.UUID,
 	rawIDs []string,
 ) ([]db.TestCase, map[string][]db.TestCaseRepo, pgtype.UUID, bool) {
-	if len(rawIDs) == 0 {
-		writeError(w, http.StatusBadRequest, "test_case_ids must not be empty")
+	cases, reposByCase, projectUUID, err := h.loadCasesForRun(ctx, wsUUID, rawIDs)
+	if err != nil {
+		var rce *runCasesError
+		if errors.As(err, &rce) {
+			writeError(w, rce.status, rce.msg)
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to load test cases")
+		}
 		return nil, nil, pgtype.UUID{}, false
+	}
+	return cases, reposByCase, projectUUID, true
+}
+
+// runCasesError is a caller's mistake while resolving a run's cases, with
+// the HTTP status the request handlers answer.
+type runCasesError struct {
+	status int
+	msg    string
+}
+
+func (e *runCasesError) Error() string { return e.msg }
+
+// loadCasesForRun resolves the cases a run is built from — every id must be
+// a case of this workspace and all of one project — with their repo
+// bindings batched in one query.
+func (h *Handler) loadCasesForRun(ctx context.Context, wsUUID pgtype.UUID, rawIDs []string) ([]db.TestCase, map[string][]db.TestCaseRepo, pgtype.UUID, error) {
+	if len(rawIDs) == 0 {
+		return nil, nil, pgtype.UUID{}, &runCasesError{status: http.StatusBadRequest, msg: "test_case_ids must not be empty"}
 	}
 	cases := make([]db.TestCase, 0, len(rawIDs))
 	var projectUUID pgtype.UUID
 	for i, raw := range rawIDs {
-		id, ok := parseUUIDOrBadRequest(w, raw, fmt.Sprintf("test_case_ids[%d]", i))
-		if !ok {
-			return nil, nil, pgtype.UUID{}, false
+		id, err := util.ParseUUID(raw)
+		if err != nil {
+			return nil, nil, pgtype.UUID{}, &runCasesError{status: http.StatusBadRequest, msg: fmt.Sprintf("invalid test_case_ids[%d]", i)}
 		}
 		tc, err := h.Queries.GetTestCaseInWorkspace(ctx, db.GetTestCaseInWorkspaceParams{
 			ID:          id,
 			WorkspaceID: wsUUID,
 		})
 		if err != nil {
-			writeError(w, http.StatusNotFound, "test case not found: "+raw)
-			return nil, nil, pgtype.UUID{}, false
+			return nil, nil, pgtype.UUID{}, &runCasesError{status: http.StatusNotFound, msg: "test case not found: " + raw}
 		}
 		if i == 0 {
 			projectUUID = tc.ProjectID
 		} else if tc.ProjectID != projectUUID {
-			writeError(w, http.StatusBadRequest, "all test cases must belong to the same project")
-			return nil, nil, pgtype.UUID{}, false
+			return nil, nil, pgtype.UUID{}, &runCasesError{status: http.StatusBadRequest, msg: "all test cases must belong to the same project"}
 		}
 		cases = append(cases, tc)
 	}
@@ -471,7 +501,40 @@ func (h *Handler) fetchCasesForIDs(
 		key := uuidToString(repo.TestCaseID)
 		reposByCase[key] = append(reposByCase[key], repo)
 	}
-	return cases, reposByCase, projectUUID, true
+	return cases, reposByCase, projectUUID, nil
+}
+
+// createTestRunWithCases inserts the run and one run case per test case, each
+// with a frozen snapshot, in one transaction.
+func (h *Handler) createTestRunWithCases(ctx context.Context, params db.CreateTestRunParams, cases []db.TestCase, reposByCase map[string][]db.TestCaseRepo) (db.TestRun, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.TestRun{}, fmt.Errorf("start transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := h.Queries.WithTx(tx)
+
+	run, err := qtx.CreateTestRun(ctx, params)
+	if err != nil {
+		return db.TestRun{}, fmt.Errorf("create test run: %w", err)
+	}
+	for i, tc := range cases {
+		snapshot := snapshotForCase(tc, reposByCase[uuidToString(tc.ID)])
+		if _, err := qtx.CreateTestRunCase(ctx, db.CreateTestRunCaseParams{
+			WorkspaceID:  params.WorkspaceID,
+			RunID:        run.ID,
+			TestCaseID:   tc.ID,
+			CaseSnapshot: snapshot,
+			Position:     int32(i),
+			Result:       "pending",
+		}); err != nil {
+			return db.TestRun{}, fmt.Errorf("create test run case: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.TestRun{}, fmt.Errorf("commit test run create: %w", err)
+	}
+	return run, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -867,7 +930,14 @@ type CreateTestRunRequest struct {
 	Title       string   `json:"title"`
 	Environment string   `json:"environment"`
 	BuildRef    string   `json:"build_ref"`
+	// Parallelism caps concurrently dispatched case tasks (1..maxTestRunParallelism);
+	// omitted or null means no cap.
+	Parallelism *int32 `json:"parallelism"`
 }
+
+// maxTestRunParallelism bounds the per-round cap: more concurrent phones than
+// this is not a lab, it is a typo.
+const maxTestRunParallelism = 64
 
 // CreateTestRun creates an execution round for a plan or an explicit list of
 // test cases. In one transaction it creates the run row and a test_run_case row
@@ -890,6 +960,14 @@ func (h *Handler) CreateTestRun(w http.ResponseWriter, r *http.Request) {
 	if req.PlanID == "" && len(req.TestCaseIDs) == 0 {
 		writeError(w, http.StatusBadRequest, "either plan_id or test_case_ids is required")
 		return
+	}
+	var parallelism pgtype.Int4
+	if req.Parallelism != nil {
+		if *req.Parallelism < 1 || *req.Parallelism > maxTestRunParallelism {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("parallelism must be between 1 and %d", maxTestRunParallelism))
+			return
+		}
+		parallelism = pgtype.Int4{Int32: *req.Parallelism, Valid: true}
 	}
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -953,16 +1031,7 @@ func (h *Handler) CreateTestRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create the run and its cases in one transaction.
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start transaction")
-		return
-	}
-	defer tx.Rollback(r.Context())
-	qtx := h.Queries.WithTx(tx)
-
-	run, err := qtx.CreateTestRun(r.Context(), db.CreateTestRunParams{
+	run, err := h.createTestRunWithCases(r.Context(), db.CreateTestRunParams{
 		WorkspaceID:       wsUUID,
 		ProjectID:         projectUUID,
 		PlanID:            planUUID,
@@ -974,32 +1043,10 @@ func (h *Handler) CreateTestRun(w http.ResponseWriter, r *http.Request) {
 		CapabilityBinding: []byte("{}"),
 		Status:            "pending",
 		CreatedBy:         userUUID,
-	})
+		Parallelism:       parallelism,
+	}, cases, reposByCase)
 	if err != nil {
 		slog.Error("create test run failed", append(logger.RequestAttrs(r), "error", err)...)
-		writeError(w, http.StatusInternalServerError, "failed to create test run")
-		return
-	}
-
-	for i, tc := range cases {
-		repos := reposByCase[uuidToString(tc.ID)]
-		snapshot := snapshotForCase(tc, repos)
-		if _, err := qtx.CreateTestRunCase(r.Context(), db.CreateTestRunCaseParams{
-			WorkspaceID:  wsUUID,
-			RunID:        run.ID,
-			TestCaseID:   tc.ID,
-			CaseSnapshot: snapshot,
-			Position:     int32(i),
-			Result:       "pending",
-		}); err != nil {
-			slog.Error("create test run case failed", append(logger.RequestAttrs(r), "error", err)...)
-			writeError(w, http.StatusInternalServerError, "failed to create test run case")
-			return
-		}
-	}
-
-	if err := tx.Commit(r.Context()); err != nil {
-		slog.Error("commit test run create failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to create test run")
 		return
 	}
@@ -1108,6 +1155,25 @@ func (h *Handler) AbortTestRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to abort test run")
 		return
 	}
+	// Cases a parallelism cap was still holding back have no task to fail
+	// them; without this they would sit pending forever under an aborted
+	// round. Only a capped agent round has such cases: a member-executed
+	// round keeps its unresolved cases pending, as it always did.
+	if updated.ExecutorType == "agent" && updated.Parallelism.Valid {
+		skipped, err := h.Queries.SkipUndispatchedTestRunCases(r.Context(), db.SkipUndispatchedTestRunCasesParams{
+			RunID:       run.ID,
+			WorkspaceID: wsUUID,
+			Notes:       "skipped: the round was aborted before this case was dispatched",
+		})
+		if err != nil {
+			slog.Warn("skip undispatched test run cases failed", append(logger.RequestAttrs(r), "error", err)...)
+		}
+		for _, rc := range skipped {
+			h.publish(protocol.EventTestRunCaseUpdated, workspaceID, "member", userID,
+				map[string]any{"test_run_case": testRunCaseToResponse(rc), "run_id": uuidToString(run.ID)})
+		}
+	}
+	h.settleAutopilotTestRun(r.Context(), h.Queries, updated)
 	resp := testRunToResponse(updated)
 	h.publish(protocol.EventTestRunUpdated, workspaceID, "member", userID, map[string]any{"test_run": resp})
 	writeJSON(w, http.StatusOK, resp)
@@ -1233,6 +1299,8 @@ func (h *Handler) RetryTestRun(w http.ResponseWriter, r *http.Request) {
 		SourceRunID:       sourceRun.ID,
 		RetryScope:        pgtype.Text{String: req.Scope, Valid: true},
 		CreatedBy:         userUUID,
+		// A rerun targets the same lab, so it keeps the cap.
+		Parallelism: sourceRun.Parallelism,
 	})
 	if err != nil {
 		slog.Error("create retry test run failed", append(logger.RequestAttrs(r), "error", err)...)
@@ -1528,6 +1596,12 @@ func (h *Handler) OpenTestRunCaseDefect(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The evidence that made the tester open this defect travels with it
+	// (09-02 §7.5): one more attachment row per file, over the same stored
+	// object, filed under the new issue. Best effort — a defect without its
+	// screenshots is still a defect.
+	h.copyRunCaseEvidenceToIssue(r.Context(), rc, result.Issue.ID, userUUID)
+
 	// Write defect_issue_id back to the run case.
 	updated, err := h.Queries.UpdateTestRunCaseResult(r.Context(), db.UpdateTestRunCaseResultParams{
 		ID:            rc.ID,
@@ -1594,4 +1668,34 @@ func (h *Handler) ListTestCaseResultTimeline(w http.ResponseWriter, r *http.Requ
 // test_capability.go still use it.
 func notImplemented(w http.ResponseWriter) {
 	writeError(w, http.StatusNotImplemented, "not implemented yet")
+}
+
+// copyRunCaseEvidenceToIssue files every evidence attachment of a run case
+// under an issue as a second row over the same object. DeleteAttachment keeps
+// the object while any row still references it.
+func (h *Handler) copyRunCaseEvidenceToIssue(ctx context.Context, rc db.TestRunCase, issueID pgtype.UUID, userUUID pgtype.UUID) int {
+	evidence, err := h.Queries.ListAttachmentsByTestRunCase(ctx, db.ListAttachmentsByTestRunCaseParams{
+		TestRunCaseID: rc.ID,
+		WorkspaceID:   rc.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("copy evidence to defect: list failed", "run_case_id", uuidToString(rc.ID), "error", err)
+		return 0
+	}
+	copied := 0
+	for _, att := range evidence {
+		if _, err := h.Queries.CreateAttachmentCopyForIssue(ctx, db.CreateAttachmentCopyForIssueParams{
+			ID:           dbid.NewV7(),
+			IssueID:      issueID,
+			UploaderType: "member",
+			UploaderID:   userUUID,
+			ID_2:         att.ID,
+			WorkspaceID:  rc.WorkspaceID,
+		}); err != nil {
+			slog.Warn("copy evidence to defect: copy failed", "attachment_id", uuidToString(att.ID), "error", err)
+			continue
+		}
+		copied++
+	}
+	return copied
 }

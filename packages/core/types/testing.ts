@@ -152,6 +152,35 @@ export interface ListTestCaseModulesResponse {
   modules: TestCaseModule[];
 }
 
+// Change-based regression selection: which cases claim the changed paths
+// through their repo bindings' `path_globs`.
+export interface RecommendTestCasesRequest {
+  project_id: string;
+  paths: string[];
+  /** Only bindings with this alias, when the paths belong to one repository. */
+  repo?: string;
+}
+
+export interface TestCaseRecommendationMatch {
+  alias: string;
+  role: string;
+  glob: string;
+  paths: string[];
+}
+
+export interface TestCaseRecommendation {
+  test_case: TestCase;
+  matches: TestCaseRecommendationMatch[];
+  /** Distinct changed paths the case claims; the ranking key. */
+  path_count: number;
+}
+
+export interface RecommendTestCasesResponse {
+  cases: TestCaseRecommendation[];
+  unmatched_paths: string[];
+  total: number;
+}
+
 export interface ListTestCaseRevisionsResponse {
   revisions: TestCaseRevision[];
 }
@@ -291,6 +320,8 @@ export interface TestRun {
   environment: string;
   build_ref: string;
   capability_binding: Record<string, unknown>;
+  /** Cap on concurrently dispatched case tasks; null = every case at once. */
+  parallelism: number | null;
   status: TestRunStatus;
   source_run_id: string | null;
   retry_scope: TestRunRetryScope | null;
@@ -354,6 +385,20 @@ export interface TestCapabilityRequirement {
 }
 
 /** 202 body of `POST /api/runtimes/{id}/capabilities`: the queued scan. */
+export interface RuntimeDeviceHub {
+  reachable: boolean;
+  url: string;
+  version: string;
+  adb: boolean;
+  devices: number;
+  phones: number;
+  leases: number;
+  /** Only for the runtime's owner / workspace admins; null otherwise. */
+  pairing_url: string | null;
+  pairing_code: string | null;
+  reported_at: string | null;
+}
+
 export interface RuntimeCapabilityScanResponse {
   request_id: string;
   runtime_id: string;
@@ -398,6 +443,8 @@ export interface CreateTestRunRequest {
   title: string;
   environment?: string;
   build_ref?: string;
+  /** Cap on concurrently dispatched case tasks; omit for no cap. */
+  parallelism?: number;
 }
 
 export interface RetryTestRunRequest {
@@ -553,6 +600,80 @@ export interface ListTestCaseIssuesResponse {
 export interface ListIssueTestCasesResponse {
   cases: IssueTestCaseLink[];
   total: number;
+}
+
+/** GET /api/issues/{id}/test-summary — the requirement loop on a task card. */
+export interface IssueTestRunSummary {
+  id: string;
+  title: string;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+  /** Results of the covering cases inside this round, keyed by result. */
+  results: Record<string, number>;
+}
+
+export interface IssueTestDefect {
+  issue_id: string;
+  issue_number: number;
+  title: string;
+  status: string;
+  run_id: string;
+  run_title: string;
+  run_case_id: string;
+  case_key: string;
+  result: string;
+  opened_at: string | null;
+}
+
+export interface IssueFoundBy {
+  run_id: string;
+  run_title: string;
+  run_status: string;
+  run_case_id: string;
+  test_case_id: string;
+  case_key: string;
+  case_title: string;
+  result: string;
+  environment: string;
+  build_ref: string;
+  executed_at: string | null;
+}
+
+export interface IssueTestSummary {
+  cases: number;
+  /** Every covering case's latest recorded result is passed (and there is at least one). */
+  verified: boolean;
+  latest_run: IssueTestRunSummary | null;
+  /** Defects opened by rounds that executed a covering case, newest first. */
+  defects: IssueTestDefect[];
+  /** For a defect issue: the round and case that opened it. */
+  found_by: IssueFoundBy[];
+}
+
+/** GET /api/test-plans/{id}/stats — the plan's board. */
+export interface TestPlanRunStat {
+  id: string;
+  title: string;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+  results: Record<string, number>;
+  total: number;
+  /** passed / terminal results, 0..1; null while nothing finished. */
+  pass_rate: number | null;
+}
+
+export interface TestPlanModuleStat {
+  module: string;
+  results: Record<string, number>;
+  total: number;
+}
+
+export interface TestPlanStats {
+  runs: TestPlanRunStat[];
+  matrix_run_id: string;
+  matrix: TestPlanModuleStat[];
 }
 
 export interface LinkTestCaseIssuesRequest {

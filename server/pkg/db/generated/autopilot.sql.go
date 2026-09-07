@@ -96,7 +96,7 @@ const completeAutopilotRunIfActive = `-- name: CompleteAutopilotRunIfActive :one
 UPDATE autopilot_run
 SET status = 'completed', completed_at = now(), result = $2
 WHERE id = $1 AND status NOT IN ('completed', 'failed', 'skipped')
-RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code
+RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id
 `
 
 type CompleteAutopilotRunIfActiveParams struct {
@@ -126,6 +126,7 @@ func (q *Queries) CompleteAutopilotRunIfActive(ctx context.Context, arg Complete
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }
@@ -134,12 +135,12 @@ const createAutopilot = `-- name: CreateAutopilot :one
 INSERT INTO autopilot (
     workspace_id, title, description, assignee_type, assignee_id,
     status, execution_mode, issue_title_template, project_id,
-    created_by_type, created_by_id
+    created_by_type, created_by_id, test_plan_id, test_run_parallelism
 ) VALUES (
     $1, $2, $9, $3, $4,
     $5, $6, $10, $11,
-    $7, $8
-) RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason
+    $7, $8, $12, $13
+) RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason, test_plan_id, test_run_parallelism
 `
 
 type CreateAutopilotParams struct {
@@ -154,6 +155,8 @@ type CreateAutopilotParams struct {
 	Description        pgtype.Text `json:"description"`
 	IssueTitleTemplate pgtype.Text `json:"issue_title_template"`
 	ProjectID          pgtype.UUID `json:"project_id"`
+	TestPlanID         pgtype.UUID `json:"test_plan_id"`
+	TestRunParallelism pgtype.Int4 `json:"test_run_parallelism"`
 }
 
 func (q *Queries) CreateAutopilot(ctx context.Context, arg CreateAutopilotParams) (Autopilot, error) {
@@ -169,6 +172,8 @@ func (q *Queries) CreateAutopilot(ctx context.Context, arg CreateAutopilotParams
 		arg.Description,
 		arg.IssueTitleTemplate,
 		arg.ProjectID,
+		arg.TestPlanID,
+		arg.TestRunParallelism,
 	)
 	var i Autopilot
 	err := row.Scan(
@@ -188,6 +193,8 @@ func (q *Queries) CreateAutopilot(ctx context.Context, arg CreateAutopilotParams
 		&i.AssigneeType,
 		&i.ProjectID,
 		&i.PauseReason,
+		&i.TestPlanID,
+		&i.TestRunParallelism,
 	)
 	return i, err
 }
@@ -251,7 +258,7 @@ INSERT INTO autopilot_run (
     $6, $7,
     $8, $9,
     $10, COALESCE($11::uuid, gen_random_uuid())
-) RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code
+) RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id
 `
 
 type CreateAutopilotRunParams struct {
@@ -316,6 +323,7 @@ func (q *Queries) CreateAutopilotRun(ctx context.Context, arg CreateAutopilotRun
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }
@@ -600,7 +608,7 @@ const failAutopilotRunIfActive = `-- name: FailAutopilotRunIfActive :one
 UPDATE autopilot_run
 SET status = 'failed', completed_at = now(), failure_reason = $2
 WHERE id = $1 AND status NOT IN ('completed', 'failed', 'skipped')
-RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code
+RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id
 `
 
 type FailAutopilotRunIfActiveParams struct {
@@ -630,6 +638,7 @@ func (q *Queries) FailAutopilotRunIfActive(ctx context.Context, arg FailAutopilo
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }
@@ -640,7 +649,7 @@ WITH updated_runs AS (
     SET status = 'failed', completed_at = now(), failure_reason = 'linked issue was deleted'
     WHERE issue_id = $1
       AND status IN ('issue_created', 'running')
-    RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code
+    RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id
 ), locked_reservations AS MATERIALIZED (
     SELECT qr.id, qr.workspace_id, qr.period_start, qr.period_end, qr.policy_revision, qr.subscription_version, qr.source, qr.idempotency_key, qr.state, qr.created_at, qr.finalized_at
     FROM autopilot_quota_reservation qr
@@ -673,7 +682,7 @@ WITH updated_runs AS (
       AND p.period_end = released.period_end
     RETURNING p.workspace_id
 )
-SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code FROM updated_runs
+SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id FROM updated_runs
 `
 
 type FailAutopilotRunsByIssueRow struct {
@@ -695,6 +704,7 @@ type FailAutopilotRunsByIssueRow struct {
 	WebhookDeliveryID  pgtype.UUID        `json:"webhook_delivery_id"`
 	QuotaReservationID pgtype.UUID        `json:"quota_reservation_id"`
 	ReasonCode         pgtype.Text        `json:"reason_code"`
+	TestRunID          pgtype.UUID        `json:"test_run_id"`
 }
 
 // Fails active autopilot runs linked to a given issue.
@@ -729,6 +739,7 @@ func (q *Queries) FailAutopilotRunsByIssue(ctx context.Context, issueID pgtype.U
 			&i.WebhookDeliveryID,
 			&i.QuotaReservationID,
 			&i.ReasonCode,
+			&i.TestRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -771,7 +782,7 @@ func (q *Queries) GetActiveAutopilotRuleVersion(ctx context.Context, arg GetActi
 }
 
 const getAutopilot = `-- name: GetAutopilot :one
-SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason FROM autopilot
+SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason, test_plan_id, test_run_parallelism FROM autopilot
 WHERE id = $1
 `
 
@@ -795,12 +806,14 @@ func (q *Queries) GetAutopilot(ctx context.Context, id pgtype.UUID) (Autopilot, 
 		&i.AssigneeType,
 		&i.ProjectID,
 		&i.PauseReason,
+		&i.TestPlanID,
+		&i.TestRunParallelism,
 	)
 	return i, err
 }
 
 const getAutopilotInWorkspace = `-- name: GetAutopilotInWorkspace :one
-SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason FROM autopilot
+SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason, test_plan_id, test_run_parallelism FROM autopilot
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -829,12 +842,14 @@ func (q *Queries) GetAutopilotInWorkspace(ctx context.Context, arg GetAutopilotI
 		&i.AssigneeType,
 		&i.ProjectID,
 		&i.PauseReason,
+		&i.TestPlanID,
+		&i.TestRunParallelism,
 	)
 	return i, err
 }
 
 const getAutopilotRun = `-- name: GetAutopilotRun :one
-SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code FROM autopilot_run
+SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id FROM autopilot_run
 WHERE id = $1
 `
 
@@ -860,13 +875,14 @@ func (q *Queries) GetAutopilotRun(ctx context.Context, id pgtype.UUID) (Autopilo
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }
 
 const getAutopilotRunByIssue = `-- name: GetAutopilotRunByIssue :one
 
-SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code FROM autopilot_run
+SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id FROM autopilot_run
 WHERE issue_id = $1 AND status IN ('issue_created', 'running')
 LIMIT 1
 `
@@ -896,12 +912,13 @@ func (q *Queries) GetAutopilotRunByIssue(ctx context.Context, issueID pgtype.UUI
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }
 
 const getAutopilotRunByQuotaReservation = `-- name: GetAutopilotRunByQuotaReservation :one
-SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code FROM autopilot_run
+SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id FROM autopilot_run
 WHERE quota_reservation_id = $1
 LIMIT 1
 `
@@ -928,12 +945,47 @@ func (q *Queries) GetAutopilotRunByQuotaReservation(ctx context.Context, quotaRe
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
+	)
+	return i, err
+}
+
+const getAutopilotRunByTestRun = `-- name: GetAutopilotRunByTestRun :one
+SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id FROM autopilot_run
+WHERE test_run_id = $1
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetAutopilotRunByTestRun(ctx context.Context, testRunID pgtype.UUID) (AutopilotRun, error) {
+	row := q.db.QueryRow(ctx, getAutopilotRunByTestRun, testRunID)
+	var i AutopilotRun
+	err := row.Scan(
+		&i.ID,
+		&i.AutopilotID,
+		&i.TriggerID,
+		&i.Source,
+		&i.Status,
+		&i.IssueID,
+		&i.TaskID,
+		&i.TriggeredAt,
+		&i.CompletedAt,
+		&i.FailureReason,
+		&i.TriggerPayload,
+		&i.Result,
+		&i.CreatedAt,
+		&i.SquadID,
+		&i.PlannedAt,
+		&i.WebhookDeliveryID,
+		&i.QuotaReservationID,
+		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }
 
 const getAutopilotRunByTriggerAndPlanned = `-- name: GetAutopilotRunByTriggerAndPlanned :one
-SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code FROM autopilot_run
+SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id FROM autopilot_run
 WHERE trigger_id = $1
   AND planned_at = $2
 LIMIT 1
@@ -974,12 +1026,13 @@ func (q *Queries) GetAutopilotRunByTriggerAndPlanned(ctx context.Context, arg Ge
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }
 
 const getAutopilotRunByWebhookDelivery = `-- name: GetAutopilotRunByWebhookDelivery :one
-SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code FROM autopilot_run
+SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id FROM autopilot_run
 WHERE webhook_delivery_id = $1
 LIMIT 1
 `
@@ -1006,6 +1059,7 @@ func (q *Queries) GetAutopilotRunByWebhookDelivery(ctx context.Context, webhookD
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }
@@ -1309,7 +1363,7 @@ func (q *Queries) ListAutopilotIDsForCollaborator(ctx context.Context, userID pg
 }
 
 const listAutopilotRuns = `-- name: ListAutopilotRuns :many
-SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code FROM autopilot_run
+SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id FROM autopilot_run
 WHERE autopilot_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -1349,6 +1403,7 @@ func (q *Queries) ListAutopilotRuns(ctx context.Context, arg ListAutopilotRunsPa
 			&i.WebhookDeliveryID,
 			&i.QuotaReservationID,
 			&i.ReasonCode,
+			&i.TestRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -1500,7 +1555,7 @@ func (q *Queries) ListAutopilotTriggers(ctx context.Context, autopilotID pgtype.
 const listAutopilots = `-- name: ListAutopilots :many
 
 SELECT
-  a.id, a.workspace_id, a.title, a.description, a.assignee_id, a.status, a.execution_mode, a.issue_title_template, a.created_by_type, a.created_by_id, a.last_run_at, a.created_at, a.updated_at, a.assignee_type, a.project_id, a.pause_reason,
+  a.id, a.workspace_id, a.title, a.description, a.assignee_id, a.status, a.execution_mode, a.issue_title_template, a.created_by_type, a.created_by_id, a.last_run_at, a.created_at, a.updated_at, a.assignee_type, a.project_id, a.pause_reason, a.test_plan_id, a.test_run_parallelism,
   (
     SELECT array_agg(DISTINCT t.kind ORDER BY t.kind)
     FROM autopilot_trigger t
@@ -1574,6 +1629,8 @@ func (q *Queries) ListAutopilots(ctx context.Context, arg ListAutopilotsParams) 
 			&i.Autopilot.AssigneeType,
 			&i.Autopilot.ProjectID,
 			&i.Autopilot.PauseReason,
+			&i.Autopilot.TestPlanID,
+			&i.Autopilot.TestRunParallelism,
 			&i.TriggerKinds,
 			&i.NextRunAt,
 			&i.LastRunStatus,
@@ -1661,7 +1718,7 @@ func (q *Queries) ListSchedulableAutopilotTriggers(ctx context.Context) ([]ListS
 }
 
 const lockAutopilotForUpdate = `-- name: LockAutopilotForUpdate :one
-SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason FROM autopilot
+SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason, test_plan_id, test_run_parallelism FROM autopilot
 WHERE id = $1 AND workspace_id = $2
 FOR UPDATE
 `
@@ -1694,6 +1751,8 @@ func (q *Queries) LockAutopilotForUpdate(ctx context.Context, arg LockAutopilotF
 		&i.AssigneeType,
 		&i.ProjectID,
 		&i.PauseReason,
+		&i.TestPlanID,
+		&i.TestRunParallelism,
 	)
 	return i, err
 }
@@ -1716,7 +1775,7 @@ WHERE a.status = 'active'
       )
     )
   )
-RETURNING a.id, a.workspace_id, a.title, a.description, a.assignee_id, a.status, a.execution_mode, a.issue_title_template, a.created_by_type, a.created_by_id, a.last_run_at, a.created_at, a.updated_at, a.assignee_type, a.project_id, a.pause_reason
+RETURNING a.id, a.workspace_id, a.title, a.description, a.assignee_id, a.status, a.execution_mode, a.issue_title_template, a.created_by_type, a.created_by_id, a.last_run_at, a.created_at, a.updated_at, a.assignee_type, a.project_id, a.pause_reason, a.test_plan_id, a.test_run_parallelism
 `
 
 // A runtime delete is a persistent admission failure, not a per-tick event.
@@ -1749,6 +1808,8 @@ func (q *Queries) PauseAutopilotsByUnboundAgents(ctx context.Context, agentIds [
 			&i.AssigneeType,
 			&i.ProjectID,
 			&i.PauseReason,
+			&i.TestPlanID,
+			&i.TestRunParallelism,
 		); err != nil {
 			return nil, err
 		}
@@ -1768,7 +1829,7 @@ SET status = 'paused',
 WHERE status = 'active'
   AND assignee_type = 'squad'
   AND assignee_id = $1
-RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason
+RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason, test_plan_id, test_run_parallelism
 `
 
 // Rotating a squad to an already-unbound leader has the same persistent
@@ -1800,6 +1861,8 @@ func (q *Queries) PauseAutopilotsByUnrunnableSquad(ctx context.Context, squadID 
 			&i.AssigneeType,
 			&i.ProjectID,
 			&i.PauseReason,
+			&i.TestPlanID,
+			&i.TestRunParallelism,
 		); err != nil {
 			return nil, err
 		}
@@ -2005,6 +2068,46 @@ func (q *Queries) SelectAutopilotsExceedingFailureThreshold(ctx context.Context,
 	return items, nil
 }
 
+const setAutopilotRunTestRun = `-- name: SetAutopilotRunTestRun :one
+UPDATE autopilot_run
+SET test_run_id = $2
+WHERE id = $1
+RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id
+`
+
+type SetAutopilotRunTestRunParams struct {
+	ID        pgtype.UUID `json:"id"`
+	TestRunID pgtype.UUID `json:"test_run_id"`
+}
+
+// A round that was created but parked (blocked) still belongs to the run.
+func (q *Queries) SetAutopilotRunTestRun(ctx context.Context, arg SetAutopilotRunTestRunParams) (AutopilotRun, error) {
+	row := q.db.QueryRow(ctx, setAutopilotRunTestRun, arg.ID, arg.TestRunID)
+	var i AutopilotRun
+	err := row.Scan(
+		&i.ID,
+		&i.AutopilotID,
+		&i.TriggerID,
+		&i.Source,
+		&i.Status,
+		&i.IssueID,
+		&i.TaskID,
+		&i.TriggeredAt,
+		&i.CompletedAt,
+		&i.FailureReason,
+		&i.TriggerPayload,
+		&i.Result,
+		&i.CreatedAt,
+		&i.SquadID,
+		&i.PlannedAt,
+		&i.WebhookDeliveryID,
+		&i.QuotaReservationID,
+		&i.ReasonCode,
+		&i.TestRunID,
+	)
+	return i, err
+}
+
 const setAutopilotTriggerPublisher = `-- name: SetAutopilotTriggerPublisher :exec
 UPDATE autopilot_trigger
 SET published_by_type = $2, published_by_id = $3, updated_at = now()
@@ -2148,7 +2251,7 @@ const systemPauseAutopilot = `-- name: SystemPauseAutopilot :one
 UPDATE autopilot
 SET status = 'paused', pause_reason = NULL, updated_at = now()
 WHERE id = $1 AND status = 'active'
-RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason
+RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason, test_plan_id, test_run_parallelism
 `
 
 // Atomically pauses an autopilot only if it is currently active. Returns no
@@ -2175,6 +2278,8 @@ func (q *Queries) SystemPauseAutopilot(ctx context.Context, id pgtype.UUID) (Aut
 		&i.AssigneeType,
 		&i.ProjectID,
 		&i.PauseReason,
+		&i.TestPlanID,
+		&i.TestRunParallelism,
 	)
 	return i, err
 }
@@ -2209,9 +2314,11 @@ UPDATE autopilot SET
     execution_mode = COALESCE($7, execution_mode),
     issue_title_template = $8,
     project_id = $9,
+    test_plan_id = $10,
+    test_run_parallelism = $11,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason
+RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason, test_plan_id, test_run_parallelism
 `
 
 type UpdateAutopilotParams struct {
@@ -2224,6 +2331,8 @@ type UpdateAutopilotParams struct {
 	ExecutionMode      pgtype.Text `json:"execution_mode"`
 	IssueTitleTemplate pgtype.Text `json:"issue_title_template"`
 	ProjectID          pgtype.UUID `json:"project_id"`
+	TestPlanID         pgtype.UUID `json:"test_plan_id"`
+	TestRunParallelism pgtype.Int4 `json:"test_run_parallelism"`
 }
 
 func (q *Queries) UpdateAutopilot(ctx context.Context, arg UpdateAutopilotParams) (Autopilot, error) {
@@ -2237,6 +2346,8 @@ func (q *Queries) UpdateAutopilot(ctx context.Context, arg UpdateAutopilotParams
 		arg.ExecutionMode,
 		arg.IssueTitleTemplate,
 		arg.ProjectID,
+		arg.TestPlanID,
+		arg.TestRunParallelism,
 	)
 	var i Autopilot
 	err := row.Scan(
@@ -2256,6 +2367,8 @@ func (q *Queries) UpdateAutopilot(ctx context.Context, arg UpdateAutopilotParams
 		&i.AssigneeType,
 		&i.ProjectID,
 		&i.PauseReason,
+		&i.TestPlanID,
+		&i.TestRunParallelism,
 	)
 	return i, err
 }
@@ -2274,7 +2387,7 @@ const updateAutopilotRunCompleted = `-- name: UpdateAutopilotRunCompleted :one
 UPDATE autopilot_run
 SET status = 'completed', completed_at = now(), result = $2
 WHERE id = $1
-RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code
+RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id
 `
 
 type UpdateAutopilotRunCompletedParams struct {
@@ -2306,6 +2419,7 @@ func (q *Queries) UpdateAutopilotRunCompleted(ctx context.Context, arg UpdateAut
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }
@@ -2315,7 +2429,7 @@ UPDATE autopilot_run
 SET status = 'failed', completed_at = now(), failure_reason = $2,
     reason_code = $3
 WHERE id = $1
-RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code
+RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id
 `
 
 type UpdateAutopilotRunFailedParams struct {
@@ -2348,6 +2462,7 @@ func (q *Queries) UpdateAutopilotRunFailed(ctx context.Context, arg UpdateAutopi
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }
@@ -2356,7 +2471,7 @@ const updateAutopilotRunIssueCreated = `-- name: UpdateAutopilotRunIssueCreated 
 UPDATE autopilot_run
 SET status = 'issue_created', issue_id = $2
 WHERE id = $1
-RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code
+RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id
 `
 
 type UpdateAutopilotRunIssueCreatedParams struct {
@@ -2386,6 +2501,7 @@ func (q *Queries) UpdateAutopilotRunIssueCreated(ctx context.Context, arg Update
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }
@@ -2394,7 +2510,7 @@ const updateAutopilotRunRunning = `-- name: UpdateAutopilotRunRunning :one
 UPDATE autopilot_run
 SET status = 'running', task_id = $2
 WHERE id = $1
-RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code
+RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id
 `
 
 type UpdateAutopilotRunRunningParams struct {
@@ -2424,6 +2540,7 @@ func (q *Queries) UpdateAutopilotRunRunning(ctx context.Context, arg UpdateAutop
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }
@@ -2433,7 +2550,7 @@ UPDATE autopilot_run
 SET status = 'skipped', completed_at = now(), failure_reason = $2,
     reason_code = $3
 WHERE id = $1
-RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code
+RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id
 `
 
 type UpdateAutopilotRunSkippedParams struct {
@@ -2472,6 +2589,7 @@ func (q *Queries) UpdateAutopilotRunSkipped(ctx context.Context, arg UpdateAutop
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }
@@ -2483,7 +2601,7 @@ SET status = 'skipped',
     failure_reason = $2,
     result = $3
 WHERE id = $1
-RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code
+RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id
 `
 
 type UpdateAutopilotRunSkippedWithResultParams struct {
@@ -2516,6 +2634,7 @@ func (q *Queries) UpdateAutopilotRunSkippedWithResult(ctx context.Context, arg U
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }
@@ -2539,7 +2658,7 @@ WITH updated_run AS (
         END
     WHERE ar.id = $5
       AND ar.status NOT IN ('completed', 'failed', 'skipped')
-    RETURNING ar.id, ar.autopilot_id, ar.trigger_id, ar.source, ar.status, ar.issue_id, ar.task_id, ar.triggered_at, ar.completed_at, ar.failure_reason, ar.trigger_payload, ar.result, ar.created_at, ar.squad_id, ar.planned_at, ar.webhook_delivery_id, ar.quota_reservation_id, ar.reason_code
+    RETURNING ar.id, ar.autopilot_id, ar.trigger_id, ar.source, ar.status, ar.issue_id, ar.task_id, ar.triggered_at, ar.completed_at, ar.failure_reason, ar.trigger_payload, ar.result, ar.created_at, ar.squad_id, ar.planned_at, ar.webhook_delivery_id, ar.quota_reservation_id, ar.reason_code, ar.test_run_id
 ), locked_reservation AS MATERIALIZED (
     SELECT qr.id, qr.workspace_id, qr.period_start, qr.period_end, qr.policy_revision, qr.subscription_version, qr.source, qr.idempotency_key, qr.state, qr.created_at, qr.finalized_at
     FROM autopilot_quota_reservation qr
@@ -2570,7 +2689,7 @@ WITH updated_run AS (
       AND p.period_end = finalized.period_end
     RETURNING p.workspace_id
 )
-SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code FROM updated_run
+SELECT id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id FROM updated_run
 `
 
 type UpdateAutopilotRunTerminalWithQuotaParams struct {
@@ -2601,6 +2720,7 @@ type UpdateAutopilotRunTerminalWithQuotaRow struct {
 	WebhookDeliveryID  pgtype.UUID        `json:"webhook_delivery_id"`
 	QuotaReservationID pgtype.UUID        `json:"quota_reservation_id"`
 	ReasonCode         pgtype.Text        `json:"reason_code"`
+	TestRunID          pgtype.UUID        `json:"test_run_id"`
 }
 
 // Finalizes a run and its still-reserved quota slot in one statement. Runs
@@ -2640,6 +2760,50 @@ func (q *Queries) UpdateAutopilotRunTerminalWithQuota(ctx context.Context, arg U
 		&i.WebhookDeliveryID,
 		&i.QuotaReservationID,
 		&i.ReasonCode,
+		&i.TestRunID,
+	)
+	return i, err
+}
+
+const updateAutopilotRunTestRunRunning = `-- name: UpdateAutopilotRunTestRunRunning :one
+UPDATE autopilot_run
+SET status = 'running', test_run_id = $2, task_id = $3
+WHERE id = $1
+RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, planned_at, webhook_delivery_id, quota_reservation_id, reason_code, test_run_id
+`
+
+type UpdateAutopilotRunTestRunRunningParams struct {
+	ID        pgtype.UUID `json:"id"`
+	TestRunID pgtype.UUID `json:"test_run_id"`
+	TaskID    pgtype.UUID `json:"task_id"`
+}
+
+// test_run mode: the run is running once its round is dispatched; task_id
+// keeps the round's first case task so existing readers see the run as
+// started.
+func (q *Queries) UpdateAutopilotRunTestRunRunning(ctx context.Context, arg UpdateAutopilotRunTestRunRunningParams) (AutopilotRun, error) {
+	row := q.db.QueryRow(ctx, updateAutopilotRunTestRunRunning, arg.ID, arg.TestRunID, arg.TaskID)
+	var i AutopilotRun
+	err := row.Scan(
+		&i.ID,
+		&i.AutopilotID,
+		&i.TriggerID,
+		&i.Source,
+		&i.Status,
+		&i.IssueID,
+		&i.TaskID,
+		&i.TriggeredAt,
+		&i.CompletedAt,
+		&i.FailureReason,
+		&i.TriggerPayload,
+		&i.Result,
+		&i.CreatedAt,
+		&i.SquadID,
+		&i.PlannedAt,
+		&i.WebhookDeliveryID,
+		&i.QuotaReservationID,
+		&i.ReasonCode,
+		&i.TestRunID,
 	)
 	return i, err
 }

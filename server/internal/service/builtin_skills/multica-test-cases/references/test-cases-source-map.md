@@ -134,6 +134,15 @@ rg -n 'ProposeTestCases|ListTestCaseProposals|AcceptTestCaseProposal|RejectTestC
 | A generated case inherits the APPROVED plan's `issues` scope, falling back to the job's `input.issue_ids` only when the plan row is missing | `server/internal/handler/test_generation_propose.go` (`testGenerationScopeIssueRefs`) |
 | A scope entry resolves as a UUID or a `MUL-123` identifier; unresolvable entries are skipped | `server/internal/handler/test_case_issue.go` (`resolveGeneratedIssueRef`) |
 
+## Change-based regression
+
+| Fact | Source |
+| --- | --- |
+| `POST /api/test-cases/recommend` `{project_id, paths, repo?}` matches every changed path against every live case's binding globs; ranked by distinct claimed paths, then case number; `unmatched_paths` lists the rest | `server/internal/handler/test_case_recommend.go` (`RecommendTestCases`, `recommendTestCases`), `server/pkg/db/queries/test_case.sql` (`ListTestCaseReposForProject`) |
+| Glob semantics: `**`, `*`/`?` stop at `/`, `{a,b}`, `[...]`, no-slash patterns match at any depth, a plain directory claims everything under it | `server/internal/handler/test_case_recommend.go` (`matchPathGlob`, `compilePathGlob`) |
+| `multica testcase recommend` takes paths from arguments, `--diff <ref>` or `--stdin`, and `--run <title>` creates the run through `POST /api/test-runs` | `server/cmd/multica/cmd_testcase_recommend.go` |
+| The case library's "Recommend by change" dialog selects the recommended cases in the list or starts a run titled by the change | `packages/views/testing/components/recommend-cases-dialog.tsx`, `packages/views/testing/test-cases-page.tsx` |
+
 ## Required capabilities
 
 | Fact | Source |

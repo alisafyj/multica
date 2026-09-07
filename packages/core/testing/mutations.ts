@@ -11,6 +11,7 @@ import {
 } from "./keys";
 import type {
   CreateTestCaseRequest,
+  RecommendTestCasesRequest,
   TestCase,
   UpdateTestCaseRequest,
   TestGenerationJob,
@@ -139,6 +140,16 @@ export function useDeleteTestCase() {
 // ---------------------------------------------------------------------------
 // Test generation job mutations — Phase 2
 // ---------------------------------------------------------------------------
+
+/**
+ * A recommendation is a function of the caller's paths, not of server state
+ * worth caching: a mutation with nothing to invalidate.
+ */
+export function useRecommendTestCases() {
+  return useMutation({
+    mutationFn: (data: RecommendTestCasesRequest) => api.recommendTestCases(data),
+  });
+}
 
 /**
  * Create must await the server: the server allocates the job id we navigate to,

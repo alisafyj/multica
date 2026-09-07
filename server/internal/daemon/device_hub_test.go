@@ -30,16 +30,26 @@ func fakeDeviceHub(t *testing.T, devices string) *httptest.Server {
 func TestProbeDeviceHubCapabilities_ReportsOnlinePhonesWithConnector(t *testing.T) {
 	hub := fakeDeviceHub(t, `{"devices":[
 		{"id":"android-1","serial":"SER1","model":"Pixel 9","manufacturer":"Google","os_version":"15","sdk":35,"screen":{"width":1080,"height":2400},"tracks":["adb","accessibility"],"has_app":true,"status":"available","labels":["lab-a"]},
-		{"id":"android-2","model":"Old","manufacturer":"X","os_version":"9","tracks":[],"has_app":false,"status":"offline","labels":[]}
+		{"id":"android-2","model":"Old","manufacturer":"X","os_version":"9","tracks":[],"has_app":false,"status":"offline","labels":[]},
+		{"id":"ios:00008120-000A","platform":"ios","serial":"00008120-000A","model":"iPhone 15","manufacturer":"Apple","os_version":"17.5","screen":{"width":1179,"height":2556},"tracks":["pulsephone"],"has_app":false,"status":"available","labels":[]}
 	]}`)
 
 	caps := probeDeviceHubCapabilities(context.Background(), hub.URL)
-	if len(caps) != 1 {
-		t.Fatalf("got %d capabilities, want 1 (offline phone skipped): %+v", len(caps), caps)
+	if len(caps) != 2 {
+		t.Fatalf("got %d capabilities, want 2 (offline phone skipped): %+v", len(caps), caps)
 	}
 	c := caps[0]
-	if c.Kind != "android_device" || c.CapabilityKey != "android:android-1" || c.Status != "available" {
+	if c.Kind != "android_device" || c.CapabilityKey != "android:android-1" || c.Status != "available" || c.Target["platform"] != "android" {
 		t.Errorf("unexpected capability %+v", c)
+	}
+	iphone := caps[1]
+	if iphone.Kind != "ios_device" || iphone.CapabilityKey != "ios:00008120-000A" || iphone.Status != "available" {
+		t.Errorf("unexpected iOS capability %+v", iphone)
+	}
+	for key, want := range map[string]string{"platform": "ios", "model": "iPhone 15", "os_version": "17.5", "tracks": "pulsephone", "serial": "00008120-000A", "screen": "1179x2556", "hub_url": hub.URL} {
+		if iphone.Target[key] != want {
+			t.Errorf("ios target[%s] = %q, want %q", key, iphone.Target[key], want)
+		}
 	}
 	for key, want := range map[string]string{
 		"model":             "Pixel 9",

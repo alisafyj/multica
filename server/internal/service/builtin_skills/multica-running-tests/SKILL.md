@@ -125,6 +125,8 @@ receives a run that has already been dispatched to `running` status; call
 Since per-case dispatch a round is executed as one agent task per case. Your
 task's context JSON names it:
 
+A round may carry a parallelism cap: the server queues only that many case tasks at once and releases the next one when yours settles, so finishing (or blocking) your case promptly is what lets the round advance.
+
 ```json
 {"type": "test_run", "run_id": "…", "run_case_id": "…", "case_key": "TC-42",
  "case_snapshot": {"steps": [...], "preconditions": "…", "expected_result": "…"},
@@ -164,6 +166,17 @@ is not available: record `blocked` with the code and stop.
 
 Never type into a password field, complete a payment, install from outside
 the store, or change system settings the case does not ask for.
+
+`ios_device` mounts the same connector, leased to an iPhone on the test host
+(driven by PulsePhone on that Mac). Same tools, with these differences:
+`launch_app` needs the bundle id in `package` (`stop_app` and `open_url` are
+unavailable); `press_key` has `home`, `recents` (app switcher), volume,
+`power` (lock) and `enter` but no `back` (use the app's own Back or Close
+control from `a11y_tree`, or `home` to leave an unknown state); `a11y_tree`
+is on-device element recognition of the visible viewport (`cls` `text` or
+`controlCandidate`, possibly `degraded`), not an accessibility tree; touch
+needs iOS 17+. Take a screenshot before the first tap: the frame fixes the
+coordinate space.
 
 ## 9. Test plans (informational)
 

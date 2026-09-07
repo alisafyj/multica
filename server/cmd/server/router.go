@@ -527,6 +527,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.LocalSkillListStore = handler.NewRedisLocalSkillListStore(rdb)
 		h.LocalSkillImportStore = handler.NewRedisLocalSkillImportStore(rdb)
 		h.CapabilityScanStore = handler.NewRedisCapabilityScanStore(rdb)
+		h.DeviceHubStore = handler.NewRedisDeviceHubStore(rdb)
+		h.LiveFrameStore = handler.NewRedisLiveFrameStore(rdb)
 		h.LivenessStore = handler.NewRedisLivenessStore(rdb)
 		h.WebhookRateLimiter = handler.NewRedisWebhookRateLimiter(rdb, handler.DefaultWebhookRateLimit())
 		h.WebhookIPRateLimiter = handler.NewRedisWebhookIPRateLimiter(rdb, handler.DefaultWebhookIPRateLimit())
@@ -1531,6 +1533,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// Test-execution capability inventory (browsers, devices). Sent
 		// unsolicited after registration and in answer to a pending scan.
 		r.Post("/runtimes/{runtimeId}/capabilities", h.ReportRuntimeCapabilities)
+		// Live frame of a running case, relayed from the device hub (memory only).
+		r.Post("/runtimes/{runtimeId}/test-run-cases/{runCaseId}/frame", h.ReportTestRunCaseFrame)
 
 		r.Get("/tasks/{taskId}/status", h.GetTaskStatus)
 		r.Post("/tasks/{taskId}/start", h.StartTask)
@@ -2015,6 +2019,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// Test coverage: the cases that claim to verify this issue,
 					// each with its latest recorded outcome.
 					r.Get("/test-cases", h.ListIssueTestCases)
+					// Requirement loop: latest round, verified badge, defects the
+					// covering cases opened, and (for a defect) what found it.
+					r.Get("/test-summary", h.GetIssueTestSummary)
 					r.Get("/metadata", h.ListIssueMetadata)
 					r.Put("/metadata/{key}", h.SetIssueMetadataKey)
 					r.Delete("/metadata/{key}", h.DeleteIssueMetadataKey)
@@ -2107,6 +2114,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Literal sub-paths are registered before {ref}, which accepts
 				// either a TC-<n> key or a UUID.
 				r.Get("/modules", h.ListTestCaseModules)
+				// Which cases claim the files a change touched.
+				r.Post("/recommend", h.RecommendTestCases)
 				r.Get("/", h.ListTestCases)
 				r.Post("/", h.CreateTestCase)
 				r.Route("/{ref}", func(r chi.Router) {
@@ -2153,6 +2162,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/", h.UpdateTestPlan)
 					r.Delete("/", h.DeleteTestPlan)
 					r.Get("/cases", h.ListTestPlanCases)
+					r.Get("/stats", h.GetTestPlanStats)
 					r.Post("/cases", h.AddTestPlanCases)
 					r.Delete("/cases/{caseId}", h.RemoveTestPlanCase)
 				})
@@ -2175,11 +2185,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Result write and defect creation are per run-case; both are also
 			// reachable by the run's own agent through its task token.
 			r.Put("/api/test-run-cases/{id}/result", h.UpdateTestRunCaseResult)
+			r.Get("/api/test-run-cases/{id}/frame", h.GetTestRunCaseFrame)
 			r.Post("/api/test-run-cases/{id}/defect", h.OpenTestRunCaseDefect)
 
 			// Execution capabilities
 			r.Get("/api/test-capabilities", h.ListTestCapabilities)
 			r.Post("/api/runtimes/{id}/capabilities", h.RequestRuntimeCapabilityScan)
+			r.Get("/api/runtimes/{id}/device-hub", h.GetRuntimeDeviceHub)
 
 			// Gallery Native design files
 			r.Get("/api/design-folders", h.ListDesignFolders)

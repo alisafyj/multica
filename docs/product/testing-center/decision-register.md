@@ -144,7 +144,7 @@
 
 ### TS-018 需求闭环补齐
 
-- 状态：`proposal`
+- 状态：`confirmed`（2026-09-07 用户“直接M5吧”）
 - 日期：2026-09-02
 - 建议：能力声明编辑器、需求页“生成用例”入口、“已验证”徽章不自动改 Issue 状态、缺陷回链、技能文档修正。
 - 依据：设计 §8。
@@ -228,6 +228,58 @@
 - 依据：TabbyApp `LadbDeviceController` 与 `AccessibilityDeviceController` 的经验；2026-09-06 设计 §3。
 - 确认：2026-09-06。
 
+## 2026-09-07 落地记录：M4 的三处取舍（由实现者定，用户可推翻）
+
+### TS-027 并行数放在轮次上
+
+- 状态：`confirmed`（用户“先跑完M3和M4”授权实现；具体位置由实现者定）
+- 决定：`test_run.parallelism`（迁移 916，原 913），创建轮次时填写，重试沿用；不放在 runtime 设置上。
+- 依据：同一台测试机在不同轮次里可用的手机数不同（谁在用、谁在充电），按轮次更贴近“这次想跑几台”；回答 2026-09-06 设计 §9 开放问题 3。
+- 落法：派发只建前 N 条用例任务，用例任务的完成 / 失败钩子“完成一条放行一条”，中止把未派发用例标 `skipped`。
+
+### TS-028 中枢限流用延迟而不是报错
+
+- 状态：`confirmed`
+- 决定：`max_actions_per_second`（默认 2）与 `max_frames_per_second`（默认 1）超预算时，动作在设备队列里等窗口滑过再执行；不返回 `budget_exceeded`（09-02 §9.5 原文）。
+- 依据：智能体收到“慢一点”的错误只会重试成循环，被放慢则无感；每租约动作上限（`max_actions_per_lease`）仍然报错，因为那是预算不是速率。
+
+### TS-029 测试机开关是服务器侧的派发闸门，上报不受它控制
+
+- 状态：`confirmed`
+- 决定：`agent_runtime.test_host_enabled`（迁移 917，原 914）只在派发时校验（需要手机的轮次在非测试机上 `blocked`）；守护进程照常上报中枢与手机，runtime 页因此在打开开关之前就能看到中枢状态与配对二维码。
+- 未做：09-06 设计 §5.1 的“守护进程托管 `device-mcp hub` 子进程”——中枢的安装与升级方式（开放问题 4）未定，守护进程目前只附着到已运行在 `127.0.0.1:18801` 的中枢。
+
+## 2026-09-07 落地记录：M5 的取舍
+
+### TS-030 “已验证”的定义与 autopilot 回归模板的延后
+
+- 状态：`confirmed`（实现者定义，用户可推翻）
+- 决定：“已验证”= 至少一条关联用例，且每条关联用例**最近一次执行**的结果都是 passed（与 Issue 覆盖列表已有的 `latest_result` 同一口径），只作徽章不改状态；“最近一轮”= 执行过任一关联用例的最新轮次，展示其中关联用例的结果分布；“测试发现的缺陷”= 关联用例所在轮次通过 `defect open` 开出的 Issue，按缺陷去重取最新一次发现。
+- 证据随缺陷：复制为同一存储对象的第二条附件行（`CreateAttachmentCopyForIssue`），`DeleteAttachment` 在仍有其他行引用同一对象时不删对象；不做存储层拷贝，因为 `Storage` 接口没有 Copy 且同一对象没有理由存两份。
+- 延后：09-02 §7.5 的“autopilot 回归模板（按计划建轮次并派发给 QA 智能体，定时触发）”。autopilot 现有执行模式只有 `create_issue` / `run_only`，没有能调用测试轮次 API 的动作；做法有两种——给 autopilot 加一种 `test_run` 动作，或让它创建一个派给 QA 智能体的 Issue 并靠技能里的 `multica test run` 命令组完成——两者都超出“看板”一行的范围，留到 M6 与“按差异推荐回归”一起定。
+
+## 2026-09-07 落地记录：M6 的取舍
+
+### TS-031 iOS 走 PulsePhone，不做 WebDriverAgent 后端
+
+- 状态：`confirmed`（用户指定：“iPhone 的操控，同事已经完成了，你只需要接入”）
+- 决定：中枢的 iOS 轨道是同事的 [PulsePhone](https://github.com/mengkaka/PulsePhone)（macOS 14+ CLI，USB 直连，无需 Xcode / WDA，每个命令 `--json` 返回一个信封）。中枢在测试机上找 `~/.local/bin/PulsePhone`（或 `--pulsephone <path>` / `--no-pulsephone`），轮询 `devices --json`，每台 iPhone 是 `ios:<udid>` 设备、单一 `pulsephone` 轨道；坐标从帧像素换算为 PulsePhone 的归一化坐标，带停顿的滑动和 scroll 走 `drag`（不惯性），`a11y_tree` 用 `element snapshot`（Vision + 可选 OmniParser，`PulsePhone config set omniparser.endpoint …`）并以共享节点形状返回。iOS 没有的能力（back、stop_app、open_url）回 `track_unavailable` 并附提示；触控 / 输入 / 按键要求 iOS 17+。虚拟 iPhone 用 vphone-cli（Virtualization.framework，需要 Xcode 与放宽的 SIP/AMFI）——只写进文档，未在本机安装。
+- Multica 侧：守护进程把中枢的 iPhone 上报为 `ios_device` 能力（`ios:<hub id>`），派发挂同一个 `multica-device` 接入器并把租约 match 钉在 `platform: ios`（kind 优先于用例约束里写的平台）。`computer_use` 仍无后端。
+- 弃用：之前草拟的 WDA 客户端 / `--ios <url>` 选项已删除；开放问题“iOS 后端（Mac + WebDriverAgent）的时机”就此关闭。
+
+### TS-032 按差异推荐回归 = 仓库绑定的 `path_globs` 声明
+
+- 状态：`confirmed`（实现者定义，用户可推翻）
+- 决定：不引入历史 / 模型，推荐是“绑定声明 × 改动路径”的纯函数：`POST /api/test-cases/recommend` 把每条改动路径与每条在用用例的 `test_case_repo.path_globs` 匹配（gitignore 语义），按声明到的不同路径数排名、再按用例号；同时返回 `unmatched_paths`，把“没人声明的改动文件”当作绑定缺口而不是静默忽略。没有 glob 的绑定不声明任何文件（“用例碰过这个仓库”≠“覆盖仓库里所有文件”）。
+- 入口：CLI `multica testcase recommend`（参数 / `--diff <ref>` / `--stdin`，`--repo` 限定别名，`--run <title>` 直接建轮次）；用例库“按改动推荐”对话框（选中到列表 / 发起执行）。
+
+### TS-033 autopilot 回归 = 新执行模式 `test_run`，不是“建 Issue 靠技能跑”
+
+- 状态：`confirmed`（实现者定义，用户可推翻；TS-030 延后的事项）
+- 决定：给 autopilot 加第三种执行模式 `test_run`（迁移 918：放宽 `execution_mode` 约束、`autopilot.test_plan_id` / `test_run_parallelism`、`autopilot_run.test_run_id`；919：`autopilot_run(test_run_id)` 并发索引；原 915/916，因 main 的 913–915 让位而改号）。触发时与 `run_only` 共用准入（领导者解析、就绪、私有小队门、归属），然后由 handler 侧的启动器按计划建轮次并走执行页同一套派发核心（能力解析、测试机闸门、并行上限、租约标签）；轮次的用例任务带 autopilot run 的归属（触发者 / 规则版本证据），而不是 `direct_human`。autopilot run 在轮次派发后 `running`（`task_id` = 首个用例任务，老读者仍认得），轮次收敛时 `completed`（结果附各结果计数），中止 / 阻塞时 `failed`（附轮次错误）；派发时被阻塞（无测试机、能力缺失）记为 `skipped` 并挂上被停的轮次。
+- 校验：`test_run` 必须带工作区内存在的计划；autopilot 的项目为空时采用计划的项目，不一致则 400；离开该模式清空计划与并行数。模式 / 计划变化算实质变更（写规则版本）。
+- 不做：为 autopilot 建 Issue 再靠 `multica test run` 命令组完成——多一层 Issue 与提示词依赖，且看不到轮次。
+
 ## 明确不采用（2026-09-06 补充）
 
 ### TS-R03 服务器中转设备通道
@@ -244,5 +296,5 @@
 - 并行度上限放在轮次设置还是 runtime 设置；
 - 中枢的安装与升级方式（守护进程托管，还是独立安装）；
 - 单轮次多台手机的分配策略（先到先得，还是按 `match` 固定）；
-- iOS 后端（Mac + WebDriverAgent）的时机；
+- ~~iOS 后端（Mac + WebDriverAgent）的时机~~（已关闭：TS-031，走 PulsePhone）；
 - 云端 runtime 浏览器镜像归属；项目级测试环境实体的引入时机。

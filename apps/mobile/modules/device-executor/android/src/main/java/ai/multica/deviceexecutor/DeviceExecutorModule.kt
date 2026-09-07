@@ -41,6 +41,7 @@ class DeviceExecutorModule : Module() {
 
         OnDestroy {
             DeviceExecutorAccessibilityService.listener = null
+            KeepAwake.set(context, false)
         }
 
         Function("getDeviceInfo") {
@@ -77,6 +78,14 @@ class DeviceExecutorModule : Module() {
                 Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
             }
             launch(intent)
+        }
+
+        Function("openInputMethodSettings") {
+            launch(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+        }
+
+        Function("setKeepAwake") { on: Boolean ->
+            KeepAwake.set(context, on)
         }
 
         Function("startForegroundService") { title: String, text: String ->

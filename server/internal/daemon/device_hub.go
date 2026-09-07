@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sort"
@@ -36,15 +38,148 @@ func deviceHubURL() string {
 var deviceHubClient = &http.Client{Timeout: 3 * time.Second}
 
 type deviceHubHealth struct {
-	OK        bool `json:"ok"`
+	OK        bool     `json:"ok"`
+	Version   string   `json:"version"`
+	Devices   int      `json:"devices"`
+	Leases    int      `json:"leases"`
+	Adb       bool     `json:"adb"`
+	Phones    []string `json:"phones"`
 	Connector *struct {
 		Command string `json:"command"`
 		CLI     string `json:"cli"`
 	} `json:"connector,omitempty"`
 }
 
+// deviceHubSummary is the `device_hub` block of a capability report: enough
+// for the runtime page to show the hub and hand out the pairing QR.
+type deviceHubSummary struct {
+	Reachable   bool   `json:"reachable"`
+	URL         string `json:"url"`
+	Version     string `json:"version,omitempty"`
+	Adb         bool   `json:"adb"`
+	Devices     int    `json:"devices"`
+	Phones      int    `json:"phones"`
+	Leases      int    `json:"leases"`
+	PairingURL  string `json:"pairing_url,omitempty"`
+	PairingCode string `json:"pairing_code,omitempty"`
+}
+
+// probeDeviceHubSummary describes the hub for the runtime page. An
+// unreachable hub is still a summary (reachable=false): "this machine has no
+// hub running" is what the page must say then.
+func probeDeviceHubSummary(ctx context.Context, hubURL string) deviceHubSummary {
+	summary := deviceHubSummary{URL: hubURL}
+	var health deviceHubHealth
+	if err := deviceHubGet(ctx, hubURL+"/health", &health); err != nil || !health.OK {
+		return summary
+	}
+	summary.Reachable = true
+	summary.Version = health.Version
+	summary.Adb = health.Adb
+	summary.Devices = health.Devices
+	summary.Phones = len(health.Phones)
+	summary.Leases = health.Leases
+	var pairing struct {
+		URL  string `json:"url"`
+		Code string `json:"code"`
+	}
+	if err := deviceHubGet(ctx, hubURL+"/api/pair", &pairing); err == nil {
+		summary.PairingURL = pairing.URL
+		summary.PairingCode = pairing.Code
+	}
+	return summary
+}
+
+// deviceHubLease is one row of the hub's GET /api/leases.
+type deviceHubLease struct {
+	ID        string            `json:"id"`
+	DeviceID  string            `json:"device_id"`
+	Label     string            `json:"label"`
+	Tags      map[string]string `json:"tags"`
+	FrameHash string            `json:"frame_hash"`
+	FrameAt   int64             `json:"frame_at"`
+}
+
+// deviceHubFrameInterval is how often the daemon looks for a new frame on a
+// leased phone. Two seconds keeps the run page's live view close to what the
+// agent sees without turning a loopback poll into load.
+const deviceHubFrameInterval = 2 * time.Second
+
+func deviceHubGetBytes(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := deviceHubClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("device hub %s: HTTP %d", url, resp.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+}
+
+// deviceHubFrameLoop relays the last frame of every lease a Multica case task
+// holds (tagged run_case_id / runtime_id by the overlay) to the server, which
+// keeps it in memory for the run page. Only frames whose hash changed are
+// fetched and sent, so a still screen costs one small listing per tick.
+func (d *Daemon) deviceHubFrameLoop(ctx context.Context) {
+	hub := deviceHubURL()
+	ticker := time.NewTicker(deviceHubFrameInterval)
+	defer ticker.Stop()
+	sent := make(map[string]string) // run case id -> last relayed frame hash
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		var listing struct {
+			Leases []deviceHubLease `json:"leases"`
+		}
+		if err := deviceHubGet(ctx, hub+"/api/leases", &listing); err != nil {
+			continue
+		}
+		live := make(map[string]struct{}, len(listing.Leases))
+		for _, lease := range listing.Leases {
+			runCaseID := lease.Tags["run_case_id"]
+			runtimeID := lease.Tags["runtime_id"]
+			if runCaseID == "" || runtimeID == "" || lease.FrameHash == "" {
+				continue
+			}
+			live[runCaseID] = struct{}{}
+			if sent[runCaseID] == lease.FrameHash {
+				continue
+			}
+			jpeg, err := deviceHubGetBytes(ctx, hub+"/api/leases/"+lease.ID+"/frame")
+			if err != nil || len(jpeg) == 0 {
+				continue
+			}
+			payload := map[string]any{
+				"jpeg_base64": base64.StdEncoding.EncodeToString(jpeg),
+				"hash":        lease.FrameHash,
+				"captured_at": lease.FrameAt,
+				"lease_id":    lease.ID,
+			}
+			if err := d.client.ReportTestRunCaseFrame(ctx, runtimeID, runCaseID, payload); err != nil {
+				d.logger.Debug("live frame relay failed", "run_case_id", runCaseID, "error", err)
+				continue
+			}
+			sent[runCaseID] = lease.FrameHash
+		}
+		for id := range sent {
+			if _, still := live[id]; !still {
+				delete(sent, id)
+			}
+		}
+	}
+}
+
 type deviceHubDevice struct {
 	ID           string                       `json:"id"`
+	Platform     string                       `json:"platform,omitempty"`
 	Serial       string                       `json:"serial,omitempty"`
 	Model        string                       `json:"model"`
 	Manufacturer string                       `json:"manufacturer"`
@@ -96,7 +231,18 @@ func probeDeviceHubCapabilities(ctx context.Context, hubURL string) []runtimeCap
 		if d.Status == "offline" || len(d.Tracks) == 0 {
 			continue
 		}
+		// The hub reports both platforms; an iPhone driven through PulsePhone
+		// on the test host is an ios_device capability of the same runtime.
+		platform := "android"
+		kind := "android_device"
+		keyPrefix := "android:"
+		if d.Platform == "ios" {
+			platform = "ios"
+			kind = "ios_device"
+			keyPrefix = "ios:"
+		}
 		target := map[string]string{
+			"platform":     platform,
 			"model":        d.Model,
 			"manufacturer": d.Manufacturer,
 			"os_version":   d.OSVersion,
@@ -121,8 +267,8 @@ func probeDeviceHubCapabilities(ctx context.Context, hubURL string) []runtimeCap
 			target["connector_cli"] = health.Connector.CLI
 		}
 		out = append(out, runtimeCapabilitySummary{
-			Kind:          "android_device",
-			CapabilityKey: "android:" + d.ID,
+			Kind:          kind,
+			CapabilityKey: keyPrefix + strings.TrimPrefix(d.ID, keyPrefix),
 			Target:        target,
 			Status:        "available",
 		})

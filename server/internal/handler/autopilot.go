@@ -47,6 +47,10 @@ type AutopilotResponse struct {
 	PauseReason        *string `json:"pause_reason"`
 	ExecutionMode      string  `json:"execution_mode"`
 	IssueTitleTemplate *string `json:"issue_title_template"`
+	// test_run mode: the plan a fired run builds its round from, and the
+	// round's parallelism cap (null = no cap). Null in the other modes.
+	TestPlanID         *string `json:"test_plan_id"`
+	TestRunParallelism *int32  `json:"test_run_parallelism"`
 	CreatedByType      string  `json:"created_by_type"`
 	CreatedByID        string  `json:"created_by_id"`
 	LastRunAt          *string `json:"last_run_at"`
@@ -160,13 +164,15 @@ type AutopilotTriggerResponse struct {
 }
 
 type AutopilotRunResponse struct {
-	ID            string  `json:"id"`
-	AutopilotID   string  `json:"autopilot_id"`
-	TriggerID     *string `json:"trigger_id"`
-	Source        string  `json:"source"`
-	Status        string  `json:"status"`
-	IssueID       *string `json:"issue_id"`
-	TaskID        *string `json:"task_id"`
+	ID          string  `json:"id"`
+	AutopilotID string  `json:"autopilot_id"`
+	TriggerID   *string `json:"trigger_id"`
+	Source      string  `json:"source"`
+	Status      string  `json:"status"`
+	IssueID     *string `json:"issue_id"`
+	TaskID      *string `json:"task_id"`
+	// TestRunID is the round a test_run-mode run launched; nil otherwise.
+	TestRunID     *string `json:"test_run_id"`
 	TriggeredAt   string  `json:"triggered_at"`
 	CompletedAt   *string `json:"completed_at"`
 	FailureReason *string `json:"failure_reason"`
@@ -210,6 +216,8 @@ func autopilotToResponse(a db.Autopilot, subscribers []db.AutopilotSubscriber) A
 		PauseReason:        textToPtr(a.PauseReason),
 		ExecutionMode:      a.ExecutionMode,
 		IssueTitleTemplate: textToPtr(a.IssueTitleTemplate),
+		TestPlanID:         uuidToPtr(a.TestPlanID),
+		TestRunParallelism: int4ToPtr(a.TestRunParallelism),
 		CreatedByType:      a.CreatedByType,
 		CreatedByID:        uuidToString(a.CreatedByID),
 		LastRunAt:          timestampToPtr(a.LastRunAt),
@@ -300,6 +308,7 @@ func runToResponse(r db.AutopilotRun) AutopilotRunResponse {
 		Status:         r.Status,
 		IssueID:        uuidToPtr(r.IssueID),
 		TaskID:         uuidToPtr(r.TaskID),
+		TestRunID:      uuidToPtr(r.TestRunID),
 		TriggeredAt:    timestampToString(r.TriggeredAt),
 		CompletedAt:    timestampToPtr(r.CompletedAt),
 		FailureReason:  textToPtr(r.FailureReason),
@@ -333,6 +342,8 @@ type CreateAutopilotRequest struct {
 	AssigneeID         string            `json:"assignee_id"`
 	ExecutionMode      string            `json:"execution_mode"`
 	IssueTitleTemplate *string           `json:"issue_title_template"`
+	TestPlanID         *string           `json:"test_plan_id"`
+	TestRunParallelism *int32            `json:"test_run_parallelism"`
 	Subscribers        []SubscriberInput `json:"subscribers"`
 }
 
@@ -345,6 +356,8 @@ type UpdateAutopilotRequest struct {
 	Status             *string `json:"status"`
 	ExecutionMode      *string `json:"execution_mode"`
 	IssueTitleTemplate *string `json:"issue_title_template"`
+	TestPlanID         *string `json:"test_plan_id"`
+	TestRunParallelism *int32  `json:"test_run_parallelism"`
 	// Wholesale replacement when present; omit to leave subscribers untouched.
 	Subscribers []SubscriberInput `json:"subscribers"`
 }
@@ -660,8 +673,8 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "execution_mode is required")
 		return
 	}
-	if req.ExecutionMode != "create_issue" && req.ExecutionMode != "run_only" {
-		writeError(w, http.StatusBadRequest, "execution_mode must be create_issue or run_only")
+	if !isValidAutopilotExecutionMode(req.ExecutionMode) {
+		writeError(w, http.StatusBadRequest, "execution_mode must be create_issue, run_only or test_run")
 		return
 	}
 	if req.IssueTitleTemplate != nil {
@@ -695,6 +708,10 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projectID, ok := h.parseAutopilotProjectID(w, r, req.ProjectID, wsUUID)
+	if !ok {
+		return
+	}
+	testPlanID, testRunParallelism, ok := h.resolveAutopilotTestRunConfig(w, r, wsUUID, req.ExecutionMode, req.TestPlanID, req.TestRunParallelism, &projectID)
 	if !ok {
 		return
 	}
@@ -741,6 +758,8 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		Description:        ptrToText(req.Description),
 		IssueTitleTemplate: ptrToText(req.IssueTitleTemplate),
 		ProjectID:          projectID,
+		TestPlanID:         testPlanID,
+		TestRunParallelism: testRunParallelism,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create autopilot")
@@ -902,6 +921,8 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 		AssigneeID:         prev.AssigneeID,
 		IssueTitleTemplate: prev.IssueTitleTemplate,
 		ProjectID:          prev.ProjectID,
+		TestPlanID:         prev.TestPlanID,
+		TestRunParallelism: prev.TestRunParallelism,
 	}
 	if req.Title != nil {
 		params.Title = pgtype.Text{String: *req.Title, Valid: true}
@@ -909,8 +930,14 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 	if req.Status != nil {
 		params.Status = pgtype.Text{String: *req.Status, Valid: true}
 	}
+	nextMode := prev.ExecutionMode
 	if req.ExecutionMode != nil {
-		params.ExecutionMode = pgtype.Text{String: *req.ExecutionMode, Valid: true}
+		if !isValidAutopilotExecutionMode(*req.ExecutionMode) {
+			writeError(w, http.StatusBadRequest, "execution_mode must be create_issue, run_only or test_run")
+			return
+		}
+		nextMode = *req.ExecutionMode
+		params.ExecutionMode = pgtype.Text{String: nextMode, Valid: true}
 	}
 	if _, ok := rawFields["description"]; ok {
 		params.Description = ptrToText(req.Description)
@@ -930,6 +957,30 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		params.ProjectID = projectID
+	}
+	// The test_run configuration is re-validated whenever anything it
+	// depends on moves: the mode, the plan, the cap, or the project the
+	// plan must belong to. Leaving the mode clears the plan and the cap.
+	_, planSent := rawFields["test_plan_id"]
+	_, capSent := rawFields["test_run_parallelism"]
+	_, projectSent := rawFields["project_id"]
+	if req.ExecutionMode != nil || planSent || capSent || projectSent {
+		planRef := req.TestPlanID
+		if !planSent && prev.TestPlanID.Valid {
+			s := uuidToString(prev.TestPlanID)
+			planRef = &s
+		}
+		capRef := req.TestRunParallelism
+		if !capSent && prev.TestRunParallelism.Valid {
+			v := prev.TestRunParallelism.Int32
+			capRef = &v
+		}
+		testPlanID, testRunParallelism, ok := h.resolveAutopilotTestRunConfig(w, r, prev.WorkspaceID, nextMode, planRef, capRef, &params.ProjectID)
+		if !ok {
+			return
+		}
+		params.TestPlanID = testPlanID
+		params.TestRunParallelism = testRunParallelism
 	}
 	// assignee_type and assignee_id are validated as a pair: switching
 	// between agent and squad without supplying a new id would leave the
@@ -1132,6 +1183,7 @@ func autopilotRuleSubstantiveChange(prev, next db.Autopilot) bool {
 		prev.AssigneeID != next.AssigneeID ||
 		prev.Status != next.Status ||
 		prev.ExecutionMode != next.ExecutionMode ||
+		prev.TestPlanID != next.TestPlanID ||
 		prev.Description != next.Description ||
 		prev.IssueTitleTemplate != next.IssueTitleTemplate
 }

@@ -66,14 +66,30 @@ object DeviceFacts {
         return setting.split(':').any { it.equals(ours, ignoreCase = true) }
     }
 
+    /** Whether the tester enabled the ADB keyboard in system settings, and whether it is the current IME. */
+    fun imeState(context: Context): Pair<Boolean, Boolean> {
+        val ours = DeviceExecutorIme.id(context)
+        val enabled = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_INPUT_METHODS)
+            ?.split(':')
+            ?.any { it.equals(ours, ignoreCase = true) } ?: false
+        val selected = Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+            .equals(ours, ignoreCase = true)
+        return enabled to selected
+    }
+
     fun permissions(context: Context): Map<String, Any?> {
         val nm = context.getSystemService(NotificationManager::class.java)
         val pm = context.getSystemService(PowerManager::class.java)
+        val (imeEnabled, imeSelected) = imeState(context)
         return mapOf(
             "accessibility_enabled" to accessibilityEnabled(context),
             "service_connected" to (DeviceExecutorAccessibilityService.instance != null),
             "notifications_enabled" to (nm?.areNotificationsEnabled() ?: false),
             "ignoring_battery_optimizations" to (pm?.isIgnoringBatteryOptimizations(context.packageName) ?: false),
+            "ime_enabled" to imeEnabled,
+            "ime_selected" to imeSelected,
+            "ime_id" to DeviceExecutorIme.id(context),
+            "keep_awake" to KeepAwake.held(),
         )
     }
 }

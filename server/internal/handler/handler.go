@@ -207,14 +207,18 @@ type Handler struct {
 	ModelListStore         ModelListStore
 	LocalSkillListStore    LocalSkillListStore
 	CapabilityScanStore    CapabilityScanStore
-	LocalSkillImportStore  LocalSkillImportStore
-	DesignAssetStorage     storage.Storage
-	FeatureFlags           *featureflag.Service
-	LivenessStore          LivenessStore
-	HeartbeatScheduler     HeartbeatScheduler
-	Storage                storage.Storage
-	CFSigner               *auth.CloudFrontSigner
-	Analytics              analytics.Client
+	// DeviceHubStore and LiveFrameStore hold the two pieces of test-host
+	// state that are deliberately never persisted (09-02 §9.4).
+	DeviceHubStore        DeviceHubStore
+	LiveFrameStore        LiveFrameStore
+	LocalSkillImportStore LocalSkillImportStore
+	DesignAssetStorage    storage.Storage
+	FeatureFlags          *featureflag.Service
+	LivenessStore         LivenessStore
+	HeartbeatScheduler    HeartbeatScheduler
+	Storage               storage.Storage
+	CFSigner              *auth.CloudFrontSigner
+	Analytics             analytics.Client
 	// Entitlements supplies workspace-scoped commercial gates. A nil provider
 	// preserves self-hosted behavior without extra reads.
 	Entitlements entitlement.Provider
@@ -481,6 +485,8 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		ModelCatalogCache:            NewInMemoryModelCatalogCache(),
 		LocalSkillListStore:          NewInMemoryLocalSkillListStore(),
 		CapabilityScanStore:          NewInMemoryCapabilityScanStore(),
+		DeviceHubStore:               NewInMemoryDeviceHubStore(),
+		LiveFrameStore:               NewInMemoryLiveFrameStore(),
 		LocalSkillImportStore:        NewInMemoryLocalSkillImportStore(),
 		LivenessStore:                NewNoopLivenessStore(),
 		HeartbeatScheduler:           NewPassthroughHeartbeatScheduler(queries),
@@ -498,6 +504,9 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		LLM: llmClient,
 		cfg: cfg,
 	}
+	// The test_run execution mode builds and dispatches rounds through the
+	// handler's test-run code; the service only knows the interface.
+	h.AutopilotService.TestRuns = autopilotTestRunLauncher{h: h}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
 	// PMO apply reuses the shared issue-creation pipeline inside its own
 	// transaction (same numbering / duplicate guard / position semantics).

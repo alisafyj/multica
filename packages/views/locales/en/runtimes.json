@@ -209,7 +209,19 @@
       "busy": "Busy",
       "offline": "Offline",
       "unknown": "Unknown"
-    }
+    },
+    "device_hub_title": "Device hub",
+    "device_hub_test_host": "Test host",
+    "device_hub_test_host_hint": "Let test rounds drive the phones this machine's device hub reports.",
+    "device_hub_online": "Hub {{version}} online",
+    "device_hub_offline": "No device hub on this machine",
+    "device_hub_offline_hint": "Run `multica-device-mcp hub` on this machine; the daemon reports it within a report cycle.",
+    "device_hub_counts": "{{devices}} devices · {{phones}} apps · {{leases}} leases",
+    "device_hub_show_pairing": "Show pairing code",
+    "device_hub_hide_pairing": "Hide pairing code",
+    "device_hub_pairing_hint": "Scan it in the Multica app under More → Device executor, or paste the URL there.",
+    "device_hub_reported": "Reported {{when}}",
+    "device_hub_toggle_failed": "Could not update the test host setting."
   },
   "detail_page": {
     "not_found_title": "Runtime not found",

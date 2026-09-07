@@ -194,6 +194,11 @@ repo `.gitignore` rule `android/` matches at any depth; `!modules/*/android/`
 in `apps/mobile/.gitignore` rescues the module source. Run
 `git check-ignore -v` on any new file under `modules/` (Lesson 2 below).
 
+The same module also declares the ADB keyboard (`DeviceExecutorIme`, an
+`InputMethodService` the hub switches to for non-ASCII typing over adb) and
+the connected-state wake lock (`KeepAwake`); both are plain Android services
+and objects inside the module, not extra packages.
+
 The JS binding is `modules/device-executor/index.ts` and uses
 `requireOptionalNativeModule`, so iOS, tests and builds without the module
 get `null` rather than a crash. After changing Kotlin, rebuild the app

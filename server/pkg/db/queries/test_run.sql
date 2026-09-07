@@ -61,8 +61,8 @@ SELECT * FROM test_run WHERE agent_task_id = $1 AND workspace_id = $2;
 INSERT INTO test_run (
     workspace_id, project_id, plan_id, title, executor_type, executor_id,
     environment, build_ref, capability_binding, status, source_run_id,
-    retry_scope, error, created_by
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    retry_scope, error, created_by, parallelism
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, sqlc.narg('parallelism'))
 RETURNING *;
 
 -- name: UpdateTestRun :one
@@ -137,6 +137,28 @@ GROUP BY result;
 -- name: CountPendingTestRunCases :one
 SELECT count(*) FROM test_run_case
 WHERE run_id = $1 AND workspace_id = $2 AND result IN ('pending', 'running');
+
+-- name: CountDispatchedActiveTestRunCases :one
+-- Cases that hold an agent task and are not yet terminal: what the
+-- parallelism cap counts against.
+SELECT count(*) FROM test_run_case
+WHERE run_id = $1 AND workspace_id = $2
+  AND agent_task_id IS NOT NULL AND result IN ('pending', 'running');
+
+-- name: ListUndispatchedTestRunCases :many
+-- Cases still waiting for their turn under the parallelism cap, in order.
+SELECT * FROM test_run_case
+WHERE run_id = $1 AND workspace_id = $2
+  AND agent_task_id IS NULL AND result = 'pending'
+ORDER BY position ASC
+LIMIT $3;
+
+-- name: SkipUndispatchedTestRunCases :many
+-- An aborted round must not leave never-dispatched cases pending forever.
+UPDATE test_run_case SET result = 'skipped', notes = $3, updated_at = now()
+WHERE run_id = $1 AND workspace_id = $2
+  AND agent_task_id IS NULL AND result = 'pending'
+RETURNING *;
 
 -- name: ListTestCaseResultTimeline :many
 -- One case's outcome across every round it appeared in. This is the view that

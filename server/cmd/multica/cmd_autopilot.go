@@ -129,7 +129,9 @@ func init() {
 	autopilotCreateCmd.Flags().String("title", "", "Autopilot title (required)")
 	autopilotCreateCmd.Flags().String("description", "", "Autopilot description (used as task prompt)")
 	autopilotCreateCmd.Flags().String("agent", "", "Assignee agent (name or ID) — required")
-	autopilotCreateCmd.Flags().String("mode", "", "Execution mode: create_issue or run_only (required)")
+	autopilotCreateCmd.Flags().String("mode", "", "Execution mode: create_issue, run_only or test_run (required)")
+	autopilotCreateCmd.Flags().String("test-plan", "", "test_run mode: the test plan each run builds its round from (required for test_run)")
+	autopilotCreateCmd.Flags().Int("test-run-parallelism", 0, "test_run mode: cap on concurrently dispatched cases (0 = no cap)")
 	autopilotCreateCmd.Flags().String("project", "", "Project ID (optional)")
 	autopilotCreateCmd.Flags().String("issue-title-template", "", "Template for issue titles (create_issue mode). Only {{date}} (UTC, YYYY-MM-DD) is interpolated; any other {{...}} token is rejected at create-time.")
 	autopilotCreateCmd.Flags().StringArray("subscriber", nil, "Member subscriber to notify for issues this autopilot creates (name or user ID; repeatable)")
@@ -141,7 +143,9 @@ func init() {
 	autopilotUpdateCmd.Flags().String("agent", "", "New assignee agent (name or ID)")
 	autopilotUpdateCmd.Flags().String("project", "", "New project ID (use empty string to clear)")
 	autopilotUpdateCmd.Flags().String("status", "", "New status (active, paused)")
-	autopilotUpdateCmd.Flags().String("mode", "", "New execution mode (create_issue or run_only)")
+	autopilotUpdateCmd.Flags().String("mode", "", "New execution mode (create_issue, run_only or test_run)")
+	autopilotUpdateCmd.Flags().String("test-plan", "", "test_run mode: new test plan id")
+	autopilotUpdateCmd.Flags().Int("test-run-parallelism", 0, "test_run mode: new cap on concurrently dispatched cases (0 = no cap)")
 	autopilotUpdateCmd.Flags().String("issue-title-template", "", "New issue title template. Only {{date}} (UTC, YYYY-MM-DD) is interpolated; any other {{...}} token is rejected.")
 	autopilotUpdateCmd.Flags().StringArray("subscriber", nil, "Replace subscribers with this member (name or user ID; repeatable)")
 	autopilotUpdateCmd.Flags().Bool("clear-subscribers", false, "Remove all autopilot subscribers")
@@ -394,10 +398,10 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 	}
 	mode, _ := cmd.Flags().GetString("mode")
 	if mode == "" {
-		return fmt.Errorf("--mode is required (create_issue or run_only)")
+		return fmt.Errorf("--mode is required (create_issue, run_only or test_run)")
 	}
-	if mode != "create_issue" && mode != "run_only" {
-		return fmt.Errorf("--mode must be create_issue or run_only")
+	if mode != "create_issue" && mode != "run_only" && mode != "test_run" {
+		return fmt.Errorf("--mode must be create_issue, run_only or test_run")
 	}
 
 	ctx, cancel := cli.APIContext(context.Background())
@@ -412,6 +416,12 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 		"title":          title,
 		"assignee_id":    agentID,
 		"execution_mode": mode,
+	}
+	if v, _ := cmd.Flags().GetString("test-plan"); v != "" {
+		body["test_plan_id"] = v
+	}
+	if v, _ := cmd.Flags().GetInt("test-run-parallelism"); v > 0 {
+		body["test_run_parallelism"] = v
 	}
 	if v, _ := cmd.Flags().GetString("description"); v != "" {
 		body["description"] = v
@@ -497,10 +507,22 @@ func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 	}
 	if cmd.Flags().Changed("mode") {
 		v, _ := cmd.Flags().GetString("mode")
-		if v != "create_issue" && v != "run_only" {
-			return fmt.Errorf("--mode must be create_issue or run_only")
+		if v != "create_issue" && v != "run_only" && v != "test_run" {
+			return fmt.Errorf("--mode must be create_issue, run_only or test_run")
 		}
 		body["execution_mode"] = v
+	}
+	if cmd.Flags().Changed("test-plan") {
+		v, _ := cmd.Flags().GetString("test-plan")
+		body["test_plan_id"] = v
+	}
+	if cmd.Flags().Changed("test-run-parallelism") {
+		v, _ := cmd.Flags().GetInt("test-run-parallelism")
+		if v > 0 {
+			body["test_run_parallelism"] = v
+		} else {
+			body["test_run_parallelism"] = nil
+		}
 	}
 	if cmd.Flags().Changed("issue-title-template") {
 		v, _ := cmd.Flags().GetString("issue-title-template")

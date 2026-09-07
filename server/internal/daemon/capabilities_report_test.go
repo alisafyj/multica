@@ -17,6 +17,7 @@ import (
 
 func withNoCapabilityTools(t *testing.T) {
 	t.Helper()
+	withoutDeviceHub(t)
 	prev := capabilitiesLookPath
 	capabilitiesLookPath = func(string) (string, error) { return "", errors.New("not found") }
 	t.Cleanup(func() { capabilitiesLookPath = prev })

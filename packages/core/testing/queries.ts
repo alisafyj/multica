@@ -196,3 +196,23 @@ export function issueTestCasesOptions(wsId: string, issueId: string) {
     enabled: issueId.length > 0,
   });
 }
+
+export function issueTestSummaryOptions(wsId: string, issueId: string) {
+  return queryOptions({
+    queryKey: [...issueTestCaseKeys.forIssue(wsId, issueId), "summary"] as const,
+    queryFn: () => api.getIssueTestSummary(issueId),
+    staleTime: 30 * 1000,
+  });
+}
+
+export function testPlanStatsOptions(wsId: string, planId: string, runs = 10) {
+  return queryOptions({
+    queryKey: [...testPlanKeys.detail(wsId, planId), "stats", runs] as const,
+    queryFn: () => api.getTestPlanStats(planId, runs),
+    staleTime: 30 * 1000,
+  });
+}
+
+/** Query key for the live frame of one running case; the value is an object URL the hook owns. */
+export const testRunCaseFrameKey = (wsId: string, runCaseId: string) =>
+  ["testing", wsId, "run-case-frame", runCaseId] as const;
