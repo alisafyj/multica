@@ -1668,7 +1668,16 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.deleteS3Object(r.Context(), att.Url)
+	// A defect's evidence copy shares the stored object with the run case's
+	// original row (CreateAttachmentCopyForIssue); the object goes only when
+	// the last row pointing at it is gone.
+	if shared, err := h.Queries.CountAttachmentsSharingURL(r.Context(), db.CountAttachmentsSharingURLParams{Url: att.Url, WorkspaceID: att.WorkspaceID}); err != nil || shared > 0 {
+		if err != nil {
+			slog.Warn("delete attachment: shared-object check failed; keeping the object", "attachment_id", uuidToString(att.ID), "error", err)
+		}
+	} else {
+		h.deleteS3Object(r.Context(), att.Url)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

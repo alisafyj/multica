@@ -348,7 +348,13 @@
       "confirmDelete": "このテスト計画を削除しますか？",
       "unknownCase": "ケースは存在しません",
       "parallelism": "並列数",
-      "parallelismPlaceholder": "すべて同時"
+      "parallelismPlaceholder": "すべて同時",
+      "board": "ボード",
+      "boardEmpty": "ラウンドはまだありません",
+      "passRate": "合格率",
+      "matrixTitle": "最新ラウンドのモジュール別結果",
+      "moduleColumn": "モジュール",
+      "moduleUnnamed": "（モジュールなし）"
     }
   },
   "run": {
@@ -435,7 +441,9 @@
     "result": "結果",
     "environment": "環境",
     "buildRef": "ビルド",
-    "executedAt": "実行日時"
+    "executedAt": "実行日時",
+    "flaky": "不安定",
+    "flakyHint": "直近 {{count}} 回の実行で合格と失敗が入れ替わっています"
   },
   "runs": {
     "title": "テスト実行",
@@ -486,6 +494,17 @@
     "pickerDescription": "このケースが検証する要件を選んでください。",
     "neverRun": "未実行",
     "failingCount": "失敗 {{count}} 件",
-    "untestedCount": "未実行 {{count}} 件"
+    "untestedCount": "未実行 {{count}} 件",
+    "verified": "検証済み",
+    "verifiedHint": "関連するすべてのケースが最新の実行で合格しました",
+    "latestRun": "最新ラウンド",
+    "defectsSection": "テストで見つかった不具合",
+    "foundBySection": "発見したテスト実行",
+    "generateCases": "ケースを生成",
+    "newCase": "新規ケース",
+    "newCaseTitle": "検証：{{title}}",
+    "noCoverage": "テストカバレッジはまだありません",
+    "generateFailed": "ケース生成を開始できませんでした",
+    "newCaseFailed": "ケースを作成できませんでした"
   }
 }

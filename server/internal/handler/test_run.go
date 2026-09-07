@@ -23,6 +23,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -1568,6 +1569,12 @@ func (h *Handler) OpenTestRunCaseDefect(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The evidence that made the tester open this defect travels with it
+	// (09-02 §7.5): one more attachment row per file, over the same stored
+	// object, filed under the new issue. Best effort — a defect without its
+	// screenshots is still a defect.
+	h.copyRunCaseEvidenceToIssue(r.Context(), rc, result.Issue.ID, userUUID)
+
 	// Write defect_issue_id back to the run case.
 	updated, err := h.Queries.UpdateTestRunCaseResult(r.Context(), db.UpdateTestRunCaseResultParams{
 		ID:            rc.ID,
@@ -1634,4 +1641,34 @@ func (h *Handler) ListTestCaseResultTimeline(w http.ResponseWriter, r *http.Requ
 // test_capability.go still use it.
 func notImplemented(w http.ResponseWriter) {
 	writeError(w, http.StatusNotImplemented, "not implemented yet")
+}
+
+// copyRunCaseEvidenceToIssue files every evidence attachment of a run case
+// under an issue as a second row over the same object. DeleteAttachment keeps
+// the object while any row still references it.
+func (h *Handler) copyRunCaseEvidenceToIssue(ctx context.Context, rc db.TestRunCase, issueID pgtype.UUID, userUUID pgtype.UUID) int {
+	evidence, err := h.Queries.ListAttachmentsByTestRunCase(ctx, db.ListAttachmentsByTestRunCaseParams{
+		TestRunCaseID: rc.ID,
+		WorkspaceID:   rc.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("copy evidence to defect: list failed", "run_case_id", uuidToString(rc.ID), "error", err)
+		return 0
+	}
+	copied := 0
+	for _, att := range evidence {
+		if _, err := h.Queries.CreateAttachmentCopyForIssue(ctx, db.CreateAttachmentCopyForIssueParams{
+			ID:           dbid.NewV7(),
+			IssueID:      issueID,
+			UploaderType: "member",
+			UploaderID:   userUUID,
+			ID_2:         att.ID,
+			WorkspaceID:  rc.WorkspaceID,
+		}); err != nil {
+			slog.Warn("copy evidence to defect: copy failed", "attachment_id", uuidToString(att.ID), "error", err)
+			continue
+		}
+		copied++
+	}
+	return copied
 }

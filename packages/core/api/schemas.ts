@@ -139,6 +139,8 @@ import type {
   ListTestCapabilitiesResponse,
   RuntimeCapabilityScanResponse,
   RuntimeDeviceHub,
+  IssueTestSummary,
+  TestPlanStats,
   ListTestCaseIssuesResponse,
   ListIssueTestCasesResponse,
   WorkspaceMcpServer,
@@ -4768,6 +4770,76 @@ export const IssueTestCaseLinkSchema = z.object({
   created_at: z.string().default(""),
 }).loose();
 
+const ResultCountsSchema = z.record(z.string(), z.number()).default({});
+
+export const IssueTestRunSummarySchema = z.object({
+  id: z.string().default(""),
+  title: z.string().default(""),
+  status: z.string().default("pending"),
+  created_at: z.string().default(""),
+  completed_at: z.string().nullable().default(null),
+  results: ResultCountsSchema,
+}).loose();
+
+export const IssueTestDefectSchema = z.object({
+  issue_id: z.string().default(""),
+  issue_number: z.number().default(0),
+  title: z.string().default(""),
+  status: z.string().default(""),
+  run_id: z.string().default(""),
+  run_title: z.string().default(""),
+  run_case_id: z.string().default(""),
+  case_key: z.string().default(""),
+  result: z.string().default(""),
+  opened_at: z.string().nullable().default(null),
+}).loose();
+
+export const IssueFoundBySchema = z.object({
+  run_id: z.string().default(""),
+  run_title: z.string().default(""),
+  run_status: z.string().default(""),
+  run_case_id: z.string().default(""),
+  test_case_id: z.string().default(""),
+  case_key: z.string().default(""),
+  case_title: z.string().default(""),
+  result: z.string().default(""),
+  environment: z.string().default(""),
+  build_ref: z.string().default(""),
+  executed_at: z.string().nullable().default(null),
+}).loose();
+
+export const IssueTestSummarySchema = z.object({
+  cases: z.number().default(0),
+  // A backend that cannot say must not claim verification.
+  verified: z.boolean().default(false),
+  latest_run: IssueTestRunSummarySchema.nullable().default(null),
+  defects: z.array(IssueTestDefectSchema).default([]),
+  found_by: z.array(IssueFoundBySchema).default([]),
+}).loose();
+
+export const TestPlanRunStatSchema = z.object({
+  id: z.string().default(""),
+  title: z.string().default(""),
+  status: z.string().default("pending"),
+  created_at: z.string().default(""),
+  completed_at: z.string().nullable().default(null),
+  results: ResultCountsSchema,
+  total: z.number().default(0),
+  pass_rate: z.number().min(0).max(1).nullable().default(null),
+}).loose();
+
+export const TestPlanModuleStatSchema = z.object({
+  module: z.string().default(""),
+  results: ResultCountsSchema,
+  total: z.number().default(0),
+}).loose();
+
+export const TestPlanStatsSchema = z.object({
+  runs: z.array(TestPlanRunStatSchema).default([]),
+  matrix_run_id: z.string().default(""),
+  matrix: z.array(TestPlanModuleStatSchema).default([]),
+}).loose();
+
 export const ListIssueTestCasesResponseSchema = z.object({
   cases: z.array(IssueTestCaseLinkSchema).default([]),
   total: z.number().default(0),
@@ -4883,6 +4955,20 @@ export const EMPTY_RUNTIME_CAPABILITY_SCAN_RESPONSE: RuntimeCapabilityScanRespon
 export const EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE: ListTestCaseIssuesResponse = {
   issues: [],
   total: 0,
+};
+
+export const EMPTY_ISSUE_TEST_SUMMARY: IssueTestSummary = {
+  cases: 0,
+  verified: false,
+  latest_run: null,
+  defects: [],
+  found_by: [],
+};
+
+export const EMPTY_TEST_PLAN_STATS: TestPlanStats = {
+  runs: [],
+  matrix_run_id: "",
+  matrix: [],
 };
 
 export const EMPTY_LIST_ISSUE_TEST_CASES_RESPONSE: ListIssueTestCasesResponse = {

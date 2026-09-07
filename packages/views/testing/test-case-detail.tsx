@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Trash2, XCircle, Activity } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -17,6 +17,8 @@ import {
   testCaseProposalsOptions,
   testCaseRevisionsOptions,
   testCaseResultTimelineOptions,
+  FLAKY_WINDOW,
+  isFlakyHistory,
   useAcceptTestCaseProposal,
   useApproveTestCase,
   useDeleteTestCase,
@@ -354,6 +356,15 @@ export function TestCaseDetail({ refId }: TestCaseDetailProps) {
 
           {/* Cross-run result timeline — regression value view */}
           <Field label={t(($) => $.timeline.title)}>
+            {isFlakyHistory(timeline.map((entry) => entry.result)) ? (
+              <span
+                className="mb-1.5 inline-flex items-center gap-1 rounded bg-warning/15 px-1.5 text-micro font-medium text-warning"
+                title={t(($) => $.timeline.flakyHint, { count: FLAKY_WINDOW })}
+              >
+                <Activity className="h-3 w-3" />
+                {t(($) => $.timeline.flaky)}
+              </span>
+            ) : null}
             {timeline.length === 0 ? (
               <p className="text-caption text-muted-foreground">
                 {t(($) => $.timeline.empty)}

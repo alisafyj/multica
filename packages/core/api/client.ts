@@ -314,6 +314,8 @@ import type {
   ListTestCapabilitiesResponse,
   RuntimeCapabilityScanResponse,
   RuntimeDeviceHub,
+  IssueTestSummary,
+  TestPlanStats,
   ListTestCaseIssuesResponse,
   ListIssueTestCasesResponse,
   DispatchTestRunResponse,
@@ -637,6 +639,10 @@ import {
   EMPTY_LIST_TEST_CAPABILITIES_RESPONSE,
   EMPTY_RUNTIME_CAPABILITY_SCAN_RESPONSE,
   EMPTY_RUNTIME_DEVICE_HUB,
+  EMPTY_ISSUE_TEST_SUMMARY,
+  EMPTY_TEST_PLAN_STATS,
+  IssueTestSummarySchema,
+  TestPlanStatsSchema,
   RuntimeCapabilityScanResponseSchema,
   RuntimeDeviceHubSchema,
   EMPTY_LIST_TEST_CASE_ISSUES_RESPONSE,
@@ -6102,6 +6108,22 @@ export class ApiClient {
       `/api/test-cases/${encodeURIComponent(ref)}/issues/${encodeURIComponent(issueId)}`,
       { method: "DELETE" },
     );
+  }
+
+  async getIssueTestSummary(issueId: string): Promise<IssueTestSummary> {
+    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(issueId)}/test-summary`);
+    return parseWithFallback(raw, IssueTestSummarySchema, EMPTY_ISSUE_TEST_SUMMARY, {
+      endpoint: "GET /api/issues/:id/test-summary",
+    });
+  }
+
+  async getTestPlanStats(planId: string, runs = 10): Promise<TestPlanStats> {
+    const raw = await this.fetch<unknown>(
+      `/api/test-plans/${encodeURIComponent(planId)}/stats?runs=${encodeURIComponent(String(runs))}`,
+    );
+    return parseWithFallback(raw, TestPlanStatsSchema, EMPTY_TEST_PLAN_STATS, {
+      endpoint: "GET /api/test-plans/:id/stats",
+    });
   }
 
   async listIssueTestCases(issueId: string): Promise<ListIssueTestCasesResponse> {

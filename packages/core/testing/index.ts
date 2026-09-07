@@ -24,6 +24,7 @@ export {
   testPlanListOptions,
   testPlanDetailOptions,
   testPlanCasesOptions,
+  testPlanStatsOptions,
   testRunListOptions,
   testRunDetailOptions,
   testRunCasesOptions,
@@ -31,6 +32,7 @@ export {
   testCaseResultTimelineOptions,
   testCaseIssuesOptions,
   issueTestCasesOptions,
+  issueTestSummaryOptions,
 } from "./queries";
 export {
   useCreateTestCase,
@@ -70,3 +72,4 @@ export {
   type TestCaseViewState,
 } from "./stores/view-store";
 export { useTestRunCaseLiveFrame } from "./use-live-frame";
+export { FLAKY_WINDOW, isFlakyHistory } from "./flaky";

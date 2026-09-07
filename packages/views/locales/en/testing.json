@@ -349,7 +349,13 @@
       "confirmDelete": "Delete this test plan?",
       "unknownCase": "Case no longer exists",
       "parallelism": "Parallelism",
-      "parallelismPlaceholder": "all at once"
+      "parallelismPlaceholder": "all at once",
+      "board": "Board",
+      "boardEmpty": "No rounds yet",
+      "passRate": "Pass rate",
+      "matrixTitle": "Modules in the latest round",
+      "moduleColumn": "Module",
+      "moduleUnnamed": "(no module)"
     }
   },
   "run": {
@@ -436,7 +442,9 @@
     "result": "Result",
     "environment": "Environment",
     "buildRef": "Build",
-    "executedAt": "Executed"
+    "executedAt": "Executed",
+    "flaky": "Unstable",
+    "flakyHint": "Results flipped between pass and fail within the last {{count}} runs"
   },
   "runs": {
     "title": "Test runs",
@@ -487,6 +495,17 @@
     "pickerDescription": "Pick the requirement this case verifies.",
     "neverRun": "Not run",
     "failingCount": "{{count}} failing",
-    "untestedCount": "{{count}} not run"
+    "untestedCount": "{{count}} not run",
+    "verified": "Verified",
+    "verifiedHint": "Every covering case passed in its latest run",
+    "latestRun": "Latest round",
+    "defectsSection": "Defects found by tests",
+    "foundBySection": "Found by test run",
+    "generateCases": "Generate cases",
+    "newCase": "New case",
+    "newCaseTitle": "Verify: {{title}}",
+    "noCoverage": "No test coverage yet",
+    "generateFailed": "Could not start case generation",
+    "newCaseFailed": "Could not create the case"
   }
 }

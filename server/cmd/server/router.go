@@ -2018,6 +2018,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// Test coverage: the cases that claim to verify this issue,
 					// each with its latest recorded outcome.
 					r.Get("/test-cases", h.ListIssueTestCases)
+					// Requirement loop: latest round, verified badge, defects the
+					// covering cases opened, and (for a defect) what found it.
+					r.Get("/test-summary", h.GetIssueTestSummary)
 					r.Get("/metadata", h.ListIssueMetadata)
 					r.Put("/metadata/{key}", h.SetIssueMetadataKey)
 					r.Delete("/metadata/{key}", h.DeleteIssueMetadataKey)
@@ -2156,6 +2159,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/", h.UpdateTestPlan)
 					r.Delete("/", h.DeleteTestPlan)
 					r.Get("/cases", h.ListTestPlanCases)
+					r.Get("/stats", h.GetTestPlanStats)
 					r.Post("/cases", h.AddTestPlanCases)
 					r.Delete("/cases/{caseId}", h.RemoveTestPlanCase)
 				})
