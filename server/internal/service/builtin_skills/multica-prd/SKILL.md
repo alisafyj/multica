@@ -1,6 +1,6 @@
 ---
 name: multica-prd
-description: Turn a human's @Mika PRD request in a Feishu group topic into a structured local draft, then publish only after the original requester confirms that exact draft version. Use for requirement-document drafting and confirmed PRD creation, not development execution.
+description: Coordinate a human's @Mika PRD request through the configured 小码 draft writer, recover its structured JSON for original-human confirmation, then publish the exact confirmed draft through the server. Never launch development.
 ---
 
 # Controlled topic PRD
@@ -17,38 +17,49 @@ This workflow is deliberately narrower than `sy-prd-create`: reuse its requireme
 - Owner is the original requester's server-verified Feishu identity, not the machine user, installer, current operator or later confirmer.
 - Keep each topic's existing draft and document. Never create a second topic/draft just to bypass a failed or unknown publish.
 
-## Read and draft
+## Mika: read, delegate and recover
 
 1. Run `multica chat thread` to read the current topic. Use actual message `id` values from history, never names or fabricated IDs. If the current server cannot supply the root/confirmation message ID, say the history capability is unavailable and stop; do not treat a local transcript UUID as a Feishu message ID.
 2. Run `multica chat prd get`. A not-found result means no local draft exists; other errors need resolution, not another create path. On an existing draft, preserve its `source_message_id` and version lineage.
 3. Identify the original human root request, confirmed requirements, AI recommendations and open questions separately. Ask one focused business question when missing information materially changes the result. Keep unknowns explicit as `【待确认】`; never invent requirement numbers, metrics, stakeholders or permissions.
-4. Prepare a UTF-8 JSON file **inside this task's working directory**. Do not pass Markdown as an opaque document or put JSON into shell interpolation. Shape:
-
-   ```json
-   {
-     "title": "【待补充需求编号】PRD-订单导出",
-     "sections": [
-       {"heading": "需求背景", "body": "已确认：运营需导出订单。\n待确认：数据范围与使用频率。"},
-       {"heading": "功能需求", "body": "导出按钮：仅具有导出权限的角色可用。\n【待确认】权限角色、时间口径、文件格式及失败行为。"}
-     ]
-   }
-   ```
-
-   `heading` must exactly match a unique heading in the configured source template; use its actual section labels, not invented headings. `body` is plain text with line breaks, not raw Markdown rendering. The source template stays authoritative: native text is inserted under its matching headings while preserving existing template structure. Missing/ambiguous headings fail closed; ask the maintainer to align the configured template instead of making a blank fallback document.
-5. Save locally:
+4. Prepare a UTF-8 requirements brief **inside this task's working directory**, separating the original request, confirmed requirements, recommendations, open questions and any requested revision. Do not generate the PRD yourself. Run:
 
    ```sh
-   multica chat prd draft --source-message <root-feishu-message-id> --content-file ./prd-draft.json
+   multica chat prd delegate --source-message <root-feishu-message-id> --brief-file ./prd-brief.txt
+   multica chat prd generation --task <returned-task-id> --wait 5m
    ```
 
-   The server returns `draft_id`, `version`, `content`, verified `initiator_open_id`, and `confirmation`. Same content retains the version. Changed content produces a new version and invalidates older confirmations. A claimed/confirmed snapshot cannot be edited.
+   The server resolves the intended 小码 using its operator-configured `MULTICA_PRD_DELEGATE_AGENT_ID`, validates the current workspace and original human's invocation rights, and reads the configured template's actual unique heading labels. There is no fuzzy-name selection, live-ID constant, machine-user substitution, or self-generation fallback. Missing configuration, inaccessible/archived/unbound 小码, unresolved human identity or unreadable/ambiguous template is an explicit failure; report it without binding accounts or changing permissions.
 
-   Limits: title up to 256 UTF-8 bytes; 1–50 sections; unique headings up to 500 bytes; each body up to 20,000 bytes and 50 native paragraphs (lines longer than 1,000 Unicode characters split into paragraphs); entire JSON request up to 128 KiB. Put `【待确认】` in nonempty bodies instead of inventing facts.
+   小码 runs through the existing task queue in a separate private draft-generation chat owned by the original human. It receives the verified root text, your brief and frozen template headings, but no channel-delivery route, project repositories or requester credential overlay. It must return only the JSON draft; it cannot use the topic's PRD publication API. Do not create a workspace-visible issue merely to delegate private topic content.
+5. `generation` returns `task_id`, `status`, `source_message_id` and, only when the completed output is valid, `content`. Read the content and surface open questions; never replace it with Mika-authored JSON. `failed`, `cancelled` or `invalid` means stop and report the failure, not silently self-generate. If waiting ends while queued/running, preserve the task ID and state that drafting is pending; on a later @mention use `multica chat prd generation` (without `--task` recovers this topic's latest generation). Never say the draft is complete merely because delegation was accepted. Repeating an identical delegate request recovers the same generation; changed briefs cannot replace a still-running generation.
+
+   After the failure has been addressed, an explicit `delegate --retry` with the same source and brief may start a replacement for a failed/cancelled/invalid generation. It never replaces active work or a valid completed result. Do not automatically loop retries or change the brief just to evade the recorded failure.
+
+   Save the exact server-correlated 小码 result:
+
+   ```sh
+   multica chat prd draft --source-message <root-feishu-message-id> --generation-task <completed-task-id>
+   ```
+
+   Draft accepts no caller-authored content. The server verifies the generation's workspace, installation, source session/context, topic, root request, delegate identity and source-task lineage, then recovers the completed JSON itself. It returns `draft_id`, `version`, `content`, verified `initiator_open_id`, and `confirmation`. Same content retains the version; changed content produces a new version and invalidates older confirmations. A confirmed snapshot cannot be edited. Requested revisions go back to 小码 through a changed brief, never a local rewrite.
 6. Show the returned draft content and open questions **in the same topic**, then quote the server's exact `confirmation` phrase. Ask the original human requester to send it as a new plain-text topic message **with a genuine @mention of Mika** so the current group router starts the follow-up. Replying to Mika's draft in that topic is supported. After removing that mention, the human's own text must be the exact phrase; quotations/forwards of someone else's approval and rich-text messages do not count.
+
+## 小码: delegated draft only
+
+When the server's task prompt says you are the delegated PRD writer, **do not run Mika's coordinator commands above**. Apply the requirement checklist below to the supplied root request and requirements brief. Use only the authoritative `template_headings` supplied in that task, not this document's illustrative team-template list if they differ.
+
+Return exactly one UTF-8 JSON object, no Markdown fences or surrounding commentary:
+
+```json
+{"title":"【待补充需求编号】PRD-订单导出","sections":[{"heading":"需求背景","body":"已确认：运营需导出订单。\n【待确认】数据范围与使用频率。"}]}
+```
+
+`body` is plain text with line breaks. Limits: title up to 256 UTF-8 bytes; 1–50 sections; unique exact template headings up to 500 bytes; each body nonempty, up to 20,000 bytes and 50 native paragraphs (lines longer than 1,000 Unicode characters split); JSON up to 128 KiB. Unknown business decisions remain `【待确认】`. No document creation/editing/publication, onward delegation, engineering tasks, account binding, external credentials, scheduling or development. Mika recovers your output for the original human's review; your output is never authorization.
 
 ## Requirement checklist
 
-The configured team template has these exact heading labels (including punctuation and spaces):
+The team's known template has these labels; the server-read `template_headings` snapshot is authoritative for each generation:
 
 - `需求背景`
 - `项目评估`
@@ -67,7 +78,7 @@ The configured team template has these exact heading labels (including punctuati
 - `附录二 历次沟通意见汇总表`
 - `附录三 Review checklist`
 
-Place acceptance criteria in `项目验证方式`. Put open questions in `项目风险（很重要，切勿忽略）` or the relevant section's body. Do not invent JSON headings such as `背景`, `目标`, `验收标准` or `待确认问题`: they do not exist in this source template. If an operator changes the template, obtain its actual heading labels before drafting; do not assume this list matches a replacement.
+Place acceptance criteria in `项目验证方式` and open questions in `项目风险（很重要，切勿忽略）` or the relevant section when those exact headings exist in the supplied snapshot. Never invent JSON headings such as `背景`, `目标`, `验收标准` or `待确认问题`. A changed template must be read by the server before delegation, not guessed by either agent.
 
 - Features: distinguish 新增 / 迭代 / 删除 / 配置调整 / 实验. Preserve existing buttons, filters, columns, actions, statuses and permissions when iterating.
 - Page/dialog rules: `字段：逻辑`, including source/default, actor, validation, permission, success/failure, empty/loading states and navigation.

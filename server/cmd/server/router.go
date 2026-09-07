@@ -2562,6 +2562,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/chat/history", h.GetChatChannelHistory)
 			r.Get("/api/chat/thread", h.GetChatThread)
 			r.Get("/api/chat/prd", h.GetChatPRD)
+			r.Post("/api/chat/prd/delegate", h.DelegateChatPRD)
+			r.Get("/api/chat/prd/generation", h.GetChatPRDGeneration)
 			r.Post("/api/chat/prd/draft", h.SaveChatPRDDraft)
 			r.Post("/api/chat/prd/publish", h.PublishChatPRD)
 
