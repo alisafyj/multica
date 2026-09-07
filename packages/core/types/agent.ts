@@ -277,6 +277,27 @@ export interface TaskAttribution {
   rerun_of_task_id?: string;
 }
 
+/** Daemon-observed execution snapshot, never reconstructed from current settings. */
+export interface TaskExecutionMetrics {
+  schema_version: 1;
+  provider: string;
+  requested_model: string;
+  daemon_version: string;
+  daemon_commit: string;
+  community_base_version: string;
+  direct_agent_mode: boolean;
+  concise_mode: boolean;
+  started_at: string;
+  finished_at?: string;
+  phases: Array<{
+    name: "prepare" | "execute" | "finalize";
+    started_at: string;
+    duration_ms: number;
+    status: "running" | "completed" | "failed" | "cancelled";
+  }>;
+  tool_calls?: number;
+}
+
 export interface AgentTask {
   id: string;
   agent_id: string;
@@ -427,6 +448,8 @@ export interface AgentTask {
    * reporting was not free, we just don't know what it cost.
    */
   usage?: TaskUsage[];
+  /** Missing on historical runs and when optional telemetry is malformed. */
+  execution_metrics?: TaskExecutionMetrics;
 }
 
 /**

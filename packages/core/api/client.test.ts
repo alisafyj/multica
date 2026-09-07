@@ -1485,6 +1485,19 @@ describe("ApiClient", () => {
     ]);
   });
 
+  it("keeps agent history usable when optional execution telemetry is malformed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      { id: "legacy", status: "completed" },
+      { id: "invalid", status: "failed", execution_metrics: "unavailable" },
+    ]), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    const tasks = await new ApiClient("https://api.example.test").listAgentTasks("agent-1");
+    expect(tasks.map((task) => [task.id, task.status, task.execution_metrics])).toEqual([
+      ["legacy", "completed", undefined],
+      ["invalid", "failed", undefined],
+    ]);
+  });
+
   it("parses per-run token usage on task runs", async () => {
     vi.stubGlobal(
       "fetch",

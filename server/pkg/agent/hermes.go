@@ -1176,7 +1176,7 @@ func (c *hermesClient) handleAgentRequest(raw map[string]json.RawMessage) {
 		// File-access gate: empty WorkDir skips it (fail-open by design for
 		// callers without a workspace); the daemon always sets it.
 		if !denied && c.cfg.WorkDir != "" {
-			denied, rule = agentguard.DeniedFileRequest(raw["params"], c.cfg.WorkDir)
+			denied, rule = agentguard.DeniedFileRequest(acpFileAccessParams(raw["params"]), c.cfg.WorkDir)
 		}
 		if denied {
 			if optionID, ok := selectACPDenyOption(raw["params"]); ok {

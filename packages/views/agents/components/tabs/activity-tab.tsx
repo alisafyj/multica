@@ -38,6 +38,7 @@ import { taskStatusConfig } from "../../config";
 import { cancelReasonLabel, failureReasonLabel } from "./task-failure";
 import { Sparkline } from "../sparkline";
 import { useT, useTimeAgo } from "../../../i18n";
+import { ExecutionComparisonSection } from "./execution-comparison-section";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 // Recent work pagination: small initial cohort to keep the section
@@ -76,7 +77,7 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
   // `isLoading` (pending + fetching, no cached data) is true only on the
   // very first fetch. Once the page has hydrated this cache elsewhere the
   // tab opens straight into data with no skeleton flash.
-  const { data: agentTasks = [], isLoading: isLoadingRecent } = useQuery(
+  const { data: agentTasks = [], isLoading: isLoadingRecent, isError: isHistoryError } = useQuery(
     agentTasksOptions(wsId, agent.id),
   );
   const { byAgent: activityMap } = useWorkspaceActivityMap(wsId);
@@ -177,6 +178,12 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
       {showPerformance && (
         <Last30dSection activity={activity} avgDurationMs={avgDurationMs} />
       )}
+      <ExecutionComparisonSection
+        tasks={agentTasks}
+        agentName={agent.name}
+        loading={isLoadingRecent}
+        error={isHistoryError}
+      />
       <RecentWorkSection
         tasks={recentTasks}
         totalCount={recentTasksAll.length}

@@ -83,6 +83,18 @@ Archiving cancels all of the agent's unfinished tasks, including queued and runn
 
 The agent owner and workspace `owner`s and `admin`s can archive or restore an agent.
 
+## Execution comparison
+
+The agent overview page compares standard and concise workflow runs, filtered by UTC creation dates and task IDs. It shows execution outcomes, observed retries, end-to-end and phase durations, token categories, provider-reported cost, and estimates for known prices. A completed run is not a business acceptance verdict.
+
+Prepare, execute, and finalize are daemon-observed phases. Execute includes runtime initialization, model negotiation, tools, and transcript delivery, not only model generation. Missing historical telemetry stays unknown. Task-level `concise_mode`, daemon-wide `MULTICA_DIRECT_AGENT_MODE`, model, and release versions remain independent dimensions; mixed or missing configurations cannot establish a controlled comparison.
+
+## Feishu topic PRDs
+
+Start a dedicated topic with a human PRD request mentioning Mika. The built-in `multica-prd` skill saves a structured local draft. Only the original requester can authorize its exact version by mentioning Mika in the same topic and sending the returned confirmation phrase. The server verifies the real message before copying the template, writing content, transferring ownership, and returning the link.
+
+Configure `MULTICA_PRD_TEMPLATE_WIKI_TOKEN` and grant the installation template-read, document-copy/edit, and ownership-transfer permissions. The requester must complete account binding first. An unknown copy outcome blocks recreation; failures with a known document resume that document. Document confirmation does not authorize downstream development or deployment.
+
 ## Next steps
 
 - [Create and configure an agent](/agents-create) — start blank, or build with AI.

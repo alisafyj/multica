@@ -2856,6 +2856,26 @@ const TaskUsageSchema = z.object({
   cost_usd_ticks: z.number().optional(),
 }).loose();
 
+const TaskExecutionMetricsSchema = z.object({
+  schema_version: z.literal(1),
+  provider: z.string(),
+  requested_model: z.string(),
+  daemon_version: z.string(),
+  daemon_commit: z.string(),
+  community_base_version: z.string(),
+  direct_agent_mode: z.boolean(),
+  concise_mode: z.boolean(),
+  started_at: z.iso.datetime({ offset: true }),
+  finished_at: z.iso.datetime({ offset: true }).optional(),
+  phases: z.array(z.object({
+    name: z.enum(["prepare", "execute", "finalize"]),
+    started_at: z.iso.datetime({ offset: true }),
+    duration_ms: z.number().nonnegative(),
+    status: z.enum(["running", "completed", "failed", "cancelled"]),
+  })),
+  tool_calls: z.number().int().nonnegative().optional(),
+});
+
 export const AgentTaskSchema = z.object({
   id: z.string(),
   agent_id: z.string().default(""),
@@ -2896,6 +2916,8 @@ export const AgentTaskSchema = z.object({
   // `.catch(undefined)` collapses a bad array to "no usage recorded", which
   // the UI already renders as an em dash.
   usage: z.array(TaskUsageSchema).optional().catch(undefined),
+  // Optional telemetry must never erase a task or invent historical defaults.
+  execution_metrics: TaskExecutionMetricsSchema.optional().catch(undefined),
 }).loose();
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
