@@ -7,24 +7,23 @@ import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { designKeys } from "@multica/core/designs/keys";
 import {
-  designDocumentListByRepositoryOptions,
+  designDocumentListByWorkspaceRepositoryOptions,
   designDocumentListOptions,
   designDraftListOptions,
   designFileListOptions,
   designFolderListOptions,
   designRepositoryCatalogueOptions,
   designScenarioRecipeListOptions,
-  designSystemListOptions,
   designTemplateListOptions,
   projectDesignSystemByProjectOptions,
+  projectDesignSystemByWorkspaceRepositoryOptions,
   projectDesignSystemCatalogueOptions,
 } from "@multica/core/designs/queries";
 import { designDocumentToAssetItem } from "@multica/core/designs";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
-import { projectResourcesOptions } from "@multica/core/projects";
 import { agentListOptions } from "@multica/core/workspace/queries";
-import type { DesignCatalogTemplate, DesignDocument, DesignDraft, DesignFile, DesignFolder, GalleryJsonPatchOperation, Project } from "@multica/core/types";
+import type { DesignCatalogTemplate, DesignDocument, DesignDraft, DesignFile, DesignFolder, GalleryJsonPatchOperation, Project, ProjectDesignSystemCatalogueEntry } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@multica/ui/components/ui/dropdown-menu";
@@ -355,25 +354,23 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   const selectedRepository = viewMode === "repository"
     ? repositories.find((repository) => repository.id === activeObjectId)
     : undefined;
-  const selectedProjectId = viewMode === "project"
-    ? activeObjectId
-    : selectedRepository?.projectId ?? "";
+  const selectedProjectId = viewMode === "project" ? activeObjectId : "";
   const selectedRepositoryId = selectedRepository?.id ?? "";
-  const selectedAssetScope = selectedProjectId
-    ? selectedRepositoryId
-      ? { kind: "repository" as const, projectId: selectedProjectId, projectResourceId: selectedRepositoryId }
-      : { kind: "project" as const, projectId: selectedProjectId }
-    : undefined;
+  const selectedAssetScope = selectedRepositoryId
+    ? { kind: "workspace_repository" as const, workspaceRepositoryId: selectedRepositoryId }
+    : selectedProjectId
+      ? { kind: "project" as const, projectId: selectedProjectId }
+      : undefined;
   const { data: files = [], isLoading, error, refetch } = useQuery({
     ...designFileListOptions(wsId, selectedAssetScope),
     enabled: Boolean(selectedAssetScope),
   });
   const projectDocumentsQuery = useQuery({
     ...designDocumentListOptions(wsId, selectedProjectId),
-    enabled: Boolean(selectedProjectId && !selectedRepositoryId),
+    enabled: Boolean(selectedProjectId),
   });
   const repositoryDocumentsQuery = useQuery({
-    ...designDocumentListByRepositoryOptions(wsId, selectedProjectId, selectedRepositoryId),
+    ...designDocumentListByWorkspaceRepositoryOptions(wsId, selectedRepositoryId),
     enabled: Boolean(selectedRepositoryId),
   });
   const projectDocuments = selectedRepositoryId
@@ -382,27 +379,22 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
   const projectDocumentsLoading = selectedRepositoryId
     ? repositoryDocumentsQuery.isLoading
     : projectDocumentsQuery.isLoading;
-  const { data: designSystems = [], isLoading: designSystemsLoading } = useQuery({
-    ...designSystemListOptions(wsId, selectedProjectId || undefined),
-    enabled: Boolean(selectedRepositoryId),
-  });
-  const { data: projectResources = [] } = useQuery({
-    ...projectResourcesOptions(wsId, selectedProjectId),
-    enabled: Boolean(selectedRepositoryId),
-  });
-  const selectedProjectResource = projectResources.find(
-    (resource) => resource.id === selectedRepositoryId && resource.resource_type === "github_repo",
-  );
   const selectedRepositoryName = selectedRepository
     ? repositoryName(selectedRepository.label, selectedRepository.repositoryUrl, selectedRepository.projectTitle)
     : "";
-  const { data: projectDesignSystem, isLoading: projectDesignSystemLoading } = useQuery({
-    ...projectDesignSystemByProjectOptions(wsId, selectedProjectId, selectedRepositoryId),
+  const projectSystemQuery = useQuery({
+    ...projectDesignSystemByProjectOptions(wsId, selectedProjectId),
+    enabled: false,
+  });
+  const repositorySystemQuery = useQuery({
+    ...projectDesignSystemByWorkspaceRepositoryOptions(wsId, selectedRepositoryId),
     enabled: Boolean(selectedRepositoryId),
     refetchInterval: (query) => (
       query.state.data?.active_task || query.state.data?.status === "generating" ? 1000 : false
     ),
   });
+  const projectDesignSystem = selectedRepositoryId ? repositorySystemQuery.data : projectSystemQuery.data;
+  const projectDesignSystemLoading = selectedRepositoryId ? repositorySystemQuery.isLoading : projectSystemQuery.isLoading;
   // Counts on the home sub-tabs come from the same caches their panels read,
   // so a badge can never claim a number its panel does not show.
   const { data: scenarioRecipes = [] } = useQuery(designScenarioRecipeListOptions(wsId));
@@ -689,10 +681,6 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
     setOpenProjectIds((current) => current.includes(projectId) ? current : [...current, projectId]);
     setActiveWorkspaceTabId(projectId);
   };
-  const openProjectSystems = (projectId: string) => {
-    openProjectTab(projectId);
-    setActiveTab("designs");
-  };
   // "新建设计稿" starts where every design task starts — the home composer —
   // rather than opening a second creation path beside it.
   const openComposer = () => {
@@ -718,6 +706,22 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
     if (activeWorkspaceTabId === repositoryId) {
       setActiveWorkspaceTabId(next[Math.min(closingIndex, next.length - 1)] ?? DESIGN_HOME_TAB_ID);
     }
+  };
+  const openCatalogueSystem = (entry: ProjectDesignSystemCatalogueEntry) => {
+    if (entry.workspace_repository_id || entry.project_resource_id) {
+      const repositoryId = entry.workspace_repository_id || entry.project_resource_id;
+      setViewMode("repository");
+      openRepositoryTab(repositoryId);
+      setActiveTab("systems");
+      return;
+    }
+    if (entry.project_id) {
+      setViewMode("project");
+      openProjectTab(entry.project_id);
+      setActiveTab("designs");
+      return;
+    }
+    navigation.push(paths.projectDesignSystemDetail(entry.id));
   };
 
   return (
@@ -927,7 +931,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                     project and repository, and this library never introduces a
                     workspace default projects would inherit (DC-052). */}
                 <DesignSystemLibrary
-                  onOpenProject={openProjectSystems}
+                  onOpenSystem={openCatalogueSystem}
                   onCreate={() => navigation.push(paths.projectDesignSystemNew())}
                 />
               </TabsContent>
@@ -1105,29 +1109,26 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
             </TabsContent>
 
             <TabsContent value="systems" className="flex min-h-0 flex-1 overflow-hidden">
-              {selectedProject && selectedRepository ? (
+              {selectedRepository ? (
                 showRepositorySystemContent ? (
                   <ProjectDesignSystemContent
-                    project={selectedProject}
                     agents={agents}
                     designFiles={projectFiles}
-                    legacyProfiles={designSystems}
+                    legacyProfiles={[]}
                     system={projectDesignSystem}
-                    isLoading={projectDesignSystemLoading || designSystemsLoading}
-                    repositories={selectedProjectResource ? [selectedProjectResource] : []}
-                    selectedRepositoryId={selectedRepositoryId}
+                    isLoading={projectDesignSystemLoading}
+                    repositories={[]}
+                    selectedRepositoryId=""
                   />
                 ) : (
                   <WorkspaceDesignSystemCreate
                     key={selectedRepository.id}
                     embedded
                     initialScope="repository"
-                    initialProjectId={selectedProject.id}
                     initialRepositoryId={selectedRepository.id}
                     initialName={`${selectedRepositoryName} 设计体系`}
                     initialBrief={repositorySystemSnapshot?.brief?.trim()
-                      || selectedProject.description?.trim()
-                      || `为 ${selectedProject.title} 的 ${selectedRepositoryName} 仓库建立设计体系。`}
+                      || `为设置中的 ${selectedRepositoryName} 仓库建立设计体系。`}
                     initialAgentId={repositorySystemSnapshot?.agent_id
                       || (availableAgents.length === 1 ? defaultAgentId : "")}
                     initialPlatform={repositorySystemSnapshot?.platform || "web"}

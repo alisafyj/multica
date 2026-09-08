@@ -225,7 +225,8 @@ export interface GalleryNativeJson {
  */
 export type DesignAssetScope =
   | { kind: "project"; projectId: string }
-  | { kind: "repository"; projectId: string; projectResourceId: string };
+  | { kind: "repository"; projectId: string; projectResourceId: string }
+  | { kind: "workspace_repository"; workspaceRepositoryId: string };
 
 export type DesignAssetAssociationKind = "design_file" | "design_document";
 
@@ -237,6 +238,7 @@ export interface DesignFile {
   project_id?: string | null;
   /** Backend repository identity; null means the Design File is project-level. */
   project_resource_id?: string | null;
+  workspace_repository_id?: string | null;
   folder_id?: string | null;
   title: string;
   description: string | null;
@@ -441,6 +443,10 @@ export interface ProjectRepositoryDesignContext {
 export interface ProjectDesignSystemInputSnapshot {
   agent_id?: string;
   generation_mode?: "agent" | "programmatic_first";
+  workspace_repository_id?: string;
+  workspace_repository_url?: string;
+  workspace_repository_label?: string;
+  workspace_repository_ref?: string;
   platform?: ProjectDesignSystemPlatform | "";
   brief?: string;
   references?: ProjectDesignSystemReferenceSnapshot[];
@@ -452,7 +458,9 @@ export interface CreateProjectDesignSystemRequest {
   project_id: string;
   /** Empty creates the project-level system; a repository id creates that repository's own (DC-052). */
   project_resource_id?: string;
-  /** Name of a standalone system; ignored (and rejected) for a project system, which takes the project's title. */
+  /** Settings repository identity used by Design Center repository view. */
+  workspace_repository_id?: string;
+  /** Name of a standalone or settings-repository system; ignored (and rejected) for a project system, which takes the project's title. */
   name?: string;
   agent_id: string;
   generation_mode?: "agent" | "programmatic_first";
@@ -482,12 +490,16 @@ export interface ProjectDesignSystemCatalogueEntry {
   project_title: string;
   /** Empty is the project-level system; a repository id is that repository's own (DC-052). */
   project_resource_id: string;
+  /** Settings repository scope, independent of project resources. */
+  workspace_repository_id?: string;
   name: string;
   platform: ProjectDesignSystemPlatform | "";
   /** First line of the frozen creation brief — the row's OD-style summary. */
   summary: string;
   /** A draft package sits beside the saved one: the system is being adjusted. */
   has_draft_package: boolean;
+  /** Current requester created it, otherwise it belongs to another workspace member. */
+  ownership_scope?: "mine" | "team";
   saved_at: string;
 }
 
@@ -619,6 +631,7 @@ export interface ProjectDesignSystem {
    * requested" — it means the resolved system is the project-level one.
    */
   project_resource_id: string;
+  workspace_repository_id?: string;
   name: string;
   platform: ProjectDesignSystemPlatform | "";
   current_agent_id: string | null;
@@ -829,6 +842,8 @@ export interface DesignDocument {
   project_id: string;
   /** Empty when no repository was attached to this run. */
   project_resource_id: string;
+  /** Settings repository scope, independent of project resources. */
+  workspace_repository_id?: string;
   issue_id: string;
   title: string;
   platform: ProjectDesignSystemPlatform | "";
@@ -1504,6 +1519,7 @@ export interface DesignRepositoryListItem {
   project_id: string;
   project_title: string;
   label: string;
+  description: string;
   repository_url: string;
   default_branch_hint: string;
 }

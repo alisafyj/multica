@@ -7,8 +7,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   getProjectDesignSystem,
   getProjectDesignSystemForProject,
+  getProjectDesignSystemForWorkspaceRepository,
   listAgents,
   listDesignDocuments,
+  listDesignDocumentsForWorkspaceRepository,
   listDesignDrafts,
   listDesignFiles,
   listDesignFolders,
@@ -23,8 +25,10 @@ const {
 } = vi.hoisted(() => ({
   getProjectDesignSystem: vi.fn(),
   getProjectDesignSystemForProject: vi.fn(),
+  getProjectDesignSystemForWorkspaceRepository: vi.fn(),
   listAgents: vi.fn(),
   listDesignDocuments: vi.fn(),
+  listDesignDocumentsForWorkspaceRepository: vi.fn(),
   listDesignDrafts: vi.fn(),
   listDesignFiles: vi.fn(),
   listDesignFolders: vi.fn(),
@@ -46,8 +50,10 @@ vi.mock("@multica/core/api", () => ({
     createProjectDesignSystem: vi.fn(),
     getProjectDesignSystem,
     getProjectDesignSystemForProject,
+    getProjectDesignSystemForWorkspaceRepository,
     listAgents,
     listDesignDocuments,
+    listDesignDocumentsForWorkspaceRepository,
     listDesignDrafts,
     listDesignFiles,
     listDesignFolders,
@@ -177,8 +183,10 @@ describe("DesignsPage", () => {
   beforeEach(() => {
     getProjectDesignSystem.mockReset();
     getProjectDesignSystemForProject.mockReset();
+    getProjectDesignSystemForWorkspaceRepository.mockReset();
     listAgents.mockReset();
     listDesignDocuments.mockReset();
+    listDesignDocumentsForWorkspaceRepository.mockReset();
     listDesignDrafts.mockReset();
     listDesignFiles.mockReset();
     listDesignFolders.mockReset();
@@ -192,6 +200,7 @@ describe("DesignsPage", () => {
     navigate.mockReset();
     listAgents.mockResolvedValue([]);
     listDesignDocuments.mockResolvedValue({ documents: [] });
+    listDesignDocumentsForWorkspaceRepository.mockResolvedValue({ documents: [] });
     listDesignDrafts.mockResolvedValue({ drafts: [], total: 0 });
     listDesignFiles.mockResolvedValue({ design_files: [], total: 0 });
     listDesignFolders.mockResolvedValue({ folders: [], total: 0 });
@@ -220,6 +229,13 @@ describe("DesignsPage", () => {
       created_at: "",
       updated_at: "",
       saved_at: null,
+    });
+    getProjectDesignSystemForWorkspaceRepository.mockResolvedValue({
+      id: "", workspace_id: "ws-1", project_id: "", project_resource_id: "", workspace_repository_id: "resource-h5",
+      name: "", platform: "", current_agent_id: null, status: "unestablished", active_task: null,
+      input_snapshot: {}, content: { sections: [], token_groups: [], locators: [], preview_html: "", integrity_sha256: "" },
+      preview_validation: { status: "none", integrity_sha256: "", report: {}, verified_at: null },
+      has_unsaved_changes: false, last_error: null, activity: [], created_at: "", updated_at: "", saved_at: null,
     });
   });
 
@@ -438,9 +454,10 @@ describe("DesignsPage", () => {
     listDesignRepositories.mockResolvedValue({
       repositories: [{
         id: "resource-h5",
-        project_id: "project-1",
-        project_title: "CRM",
+        project_id: "",
+        project_title: "",
         label: "crm-h5",
+        description: "CRM H5",
         repository_url: "https://github.com/acme/crm-h5",
         default_branch_hint: "main",
       }],
@@ -469,17 +486,14 @@ describe("DesignsPage", () => {
     const systemEntry = screen.getByRole("tab", { name: /设计体系.*0/ });
     expect(screen.getByRole("tab", { name: /设计草稿.*0/ })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: /模版/ })).not.toBeInTheDocument();
-    expect(listDesignFiles).toHaveBeenCalledWith({
-      projectId: "project-1",
-      projectResourceId: "resource-h5",
-    });
-    expect(listDesignDocuments).toHaveBeenCalledWith("project-1", "resource-h5");
+    expect(listDesignFiles).toHaveBeenCalledWith({ workspaceRepositoryId: "resource-h5" });
+    expect(listDesignDocumentsForWorkspaceRepository).toHaveBeenCalledWith("resource-h5");
 
     await user.click(systemEntry);
     expect(screen.getByRole("tabpanel", { name: /设计体系/ })).toHaveClass("flex", "overflow-hidden");
     const create = await screen.findByRole("region", { name: "仓库设计体系新建" });
     expect(within(create).getByText("嵌入模式")).toBeInTheDocument();
-    expect(within(create).getByText("project-1")).toBeInTheDocument();
+    expect(within(create).queryByText("project-1")).not.toBeInTheDocument();
     expect(within(create).getByText("resource-h5")).toBeInTheDocument();
     expect(within(create).getByText("crm-h5 设计体系")).toBeInTheDocument();
     expect(within(create).getByText("https://github.com/acme/crm-h5")).toBeInTheDocument();
@@ -490,9 +504,10 @@ describe("DesignsPage", () => {
     listDesignRepositories.mockResolvedValue({
       repositories: [{
         id: "resource-h5",
-        project_id: "project-1",
-        project_title: "CRM",
+        project_id: "",
+        project_title: "",
         label: "crm-h5",
+        description: "CRM H5",
         repository_url: "https://github.com/acme/crm-h5",
         default_branch_hint: "main",
       }],
@@ -511,11 +526,12 @@ describe("DesignsPage", () => {
       }],
       total: 1,
     });
-    getProjectDesignSystemForProject.mockResolvedValue({
+    getProjectDesignSystemForWorkspaceRepository.mockResolvedValue({
       id: "system-1",
       workspace_id: "ws-1",
       project_id: "project-1",
-      project_resource_id: "resource-h5",
+      project_resource_id: "",
+      workspace_repository_id: "resource-h5",
       name: "CRM 设计体系",
       platform: "web",
       current_agent_id: "agent-1",
@@ -553,9 +569,10 @@ describe("DesignsPage", () => {
     listDesignRepositories.mockResolvedValue({
       repositories: [{
         id: "resource-h5",
-        project_id: "project-1",
-        project_title: "CRM",
+        project_id: "",
+        project_title: "",
         label: "crm-h5",
+        description: "CRM H5",
         repository_url: "https://github.com/acme/crm-h5",
         default_branch_hint: "main",
       }],
@@ -588,11 +605,12 @@ describe("DesignsPage", () => {
       ],
       total: 2,
     });
-    getProjectDesignSystemForProject.mockResolvedValue({
+    getProjectDesignSystemForWorkspaceRepository.mockResolvedValue({
       id: "system-failed",
       workspace_id: "ws-1",
-      project_id: "project-1",
-      project_resource_id: "resource-h5",
+      project_id: "",
+      project_resource_id: "",
+      workspace_repository_id: "resource-h5",
       name: "CRM web",
       platform: "mobile",
       current_agent_id: "agent-1",
@@ -620,9 +638,8 @@ describe("DesignsPage", () => {
     await user.click(screen.getByRole("menuitem", { name: /crm-h5/ }));
     await user.click(await screen.findByRole("tab", { name: /设计体系.*1/ }));
 
-    await waitFor(() => expect(getProjectDesignSystemForProject).toHaveBeenLastCalledWith("project-1", {
-      project_resource_id: "resource-h5",
-    }));
+    await waitFor(() => expect(getProjectDesignSystemForWorkspaceRepository).toHaveBeenLastCalledWith("resource-h5"));
+    expect(getProjectDesignSystemForProject).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "项目通用" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "设计体系范围" })).not.toBeInTheDocument();
     const retry = await screen.findByRole("region", { name: "仓库设计体系新建" });

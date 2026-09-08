@@ -10,11 +10,13 @@ export function designFileListOptions(wsId: string, scope?: DesignAssetScope) {
     queryFn: () =>
       api.listDesignFiles(
         scope
-          ? {
-              projectId: scope.projectId,
-              projectResourceId:
-                scope.kind === "repository" ? scope.projectResourceId : undefined,
-            }
+          ? scope.kind === "workspace_repository"
+            ? { workspaceRepositoryId: scope.workspaceRepositoryId }
+            : {
+                projectId: scope.projectId,
+                projectResourceId:
+                  scope.kind === "repository" ? scope.projectResourceId : undefined,
+              }
           : undefined,
       ),
     select: (data) => data.design_files,
@@ -184,6 +186,14 @@ export function projectDesignSystemCatalogueOptions(wsId: string) {
   });
 }
 
+export function projectDesignSystemByWorkspaceRepositoryOptions(wsId: string, repositoryId: string) {
+  return queryOptions({
+    queryKey: designKeys.projectDesignSystemByWorkspaceRepository(wsId, repositoryId),
+    queryFn: () => api.getProjectDesignSystemForWorkspaceRepository(repositoryId),
+    enabled: Boolean(wsId && repositoryId),
+  });
+}
+
 export function projectDesignSystemDetailOptions(wsId: string, id: string) {
   return queryOptions({
     queryKey: designKeys.projectDesignSystem(wsId, id),
@@ -211,6 +221,15 @@ export function designDocumentListOptions(wsId: string, projectId: string) {
  * this read is exact server filtering: no workspace fallback and no browser-side
  * repository inference.
  */
+export function designDocumentListByWorkspaceRepositoryOptions(wsId: string, repositoryId: string) {
+  return queryOptions({
+    queryKey: ["designs", wsId, "documents", "workspace-repository", repositoryId] as const,
+    queryFn: () => api.listDesignDocumentsForWorkspaceRepository(repositoryId),
+    select: (data) => data.documents,
+    enabled: Boolean(wsId && repositoryId),
+  });
+}
+
 export function designDocumentListByRepositoryOptions(
   wsId: string,
   projectId: string,

@@ -69,6 +69,21 @@ func TestGenerateProgrammaticFirstPackagePassesV2AuditAndIsDeterministic(t *test
 	if strings.Contains(string(mustReadProgrammaticFile(t, firstRoot, "tokens.css")), "#ff0000") {
 		t.Fatal("ignored node_modules source affected generated tokens")
 	}
+	uiKit := string(mustReadProgrammaticFile(t, firstRoot, "ui-kit/index.html"))
+	for _, expected := range []string{"按钮与标签状态", "服务者信息卡", "商品与内容卡", "导航与固定操作", "反馈与异常状态", "仓库来源映射"} {
+		if !strings.Contains(uiKit, expected) {
+			t.Fatalf("UI Kit is missing visual component section %q", expected)
+		}
+	}
+	if strings.Contains(uiKit, "来源仓库的共享组件模式") {
+		t.Fatal("UI Kit regressed to the generic component-name list")
+	}
+	patterns := string(mustReadProgrammaticFile(t, firstRoot, "preview/page-patterns.html"))
+	for _, expected := range []string{"服务者详情页", "内容列表页", "加载空失败状态页"} {
+		if !strings.Contains(patterns, expected) {
+			t.Fatalf("page preview is missing %q", expected)
+		}
+	}
 
 	secondRoot := t.TempDir()
 	second, err := GenerateProgrammaticFirstPackage(context.Background(), repository, secondRoot, input, nil)

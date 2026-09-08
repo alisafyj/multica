@@ -5263,7 +5263,7 @@ func TestBatchIssueGCCheckReadsNoCatalogForBuiltInStatuses(t *testing.T) {
 	}
 }
 
-func TestProjectDesignSystemNeedsLiveRepositoryOnlyForAnalysisAndProgrammaticFirst(t *testing.T) {
+func TestProjectDesignSystemNeedsLiveRepositoryForRepositoryGenerationAndRefresh(t *testing.T) {
 	if !projectDesignSystemNeedsLiveRepository(service.ProjectDesignSystemTaskContext{Operation: service.ProjectDesignSystemRepositoryAnalysis}) {
 		t.Fatal("repository analysis did not request live repository context")
 	}
@@ -5272,11 +5272,26 @@ func TestProjectDesignSystemNeedsLiveRepositoryOnlyForAnalysisAndProgrammaticFir
 	}) {
 		t.Fatal("programmatic first generation did not request live repository context")
 	}
-	for _, operation := range []service.ProjectDesignSystemOperation{
-		service.ProjectDesignSystemGenerate, service.ProjectDesignSystemAdjust, service.ProjectDesignSystemRegenerate,
+	for name, contextValue := range map[string]service.ProjectDesignSystemTaskContext{
+		"settings repository":   {Operation: service.ProjectDesignSystemGenerate, WorkspaceRepositoryID: "repository-1"},
+		"project repository":    {Operation: service.ProjectDesignSystemGenerate, ProjectResourceID: "resource-1"},
+		"repository refresh":    {Operation: service.ProjectDesignSystemRegenerate, WorkspaceRepositoryID: "repository-1"},
+		"repository adjustment": {Operation: service.ProjectDesignSystemAdjust, WorkspaceRepositoryID: "repository-1"},
+		"Open Design enrichment": {
+			Operation: service.ProjectDesignSystemAdjust, WorkspaceRepositoryID: "repository-1",
+			Instruction: openDesignProgrammaticEnrichmentInstruction,
+		},
 	} {
-		if projectDesignSystemNeedsLiveRepository(service.ProjectDesignSystemTaskContext{Operation: operation}) {
-			t.Fatalf("ordinary %s unexpectedly requested live repository context", operation)
+		if !projectDesignSystemNeedsLiveRepository(contextValue) {
+			t.Fatalf("%s Agent generation did not request live repository context", name)
+		}
+	}
+	for _, contextValue := range []service.ProjectDesignSystemTaskContext{
+		{Operation: service.ProjectDesignSystemGenerate},
+		{Operation: service.ProjectDesignSystemRegenerate},
+	} {
+		if projectDesignSystemNeedsLiveRepository(contextValue) {
+			t.Fatalf("%s unexpectedly requested live repository context", contextValue.Operation)
 		}
 	}
 }

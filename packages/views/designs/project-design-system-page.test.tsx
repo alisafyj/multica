@@ -333,7 +333,7 @@ describe("ProjectDesignSystemPage", () => {
 
     await screen.findByText("保持清晰、克制，并优先支持高频工作。");
     fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
-    await user.click(await screen.findByRole("menuitem", { name: "重新生成设计体系" }));
+    await user.click(await screen.findByRole("menuitem", { name: "重新生成" }));
     expect(apiMocks.regenerateProjectDesignSystem).not.toHaveBeenCalled();
     expect(screen.getByText("已保存内容会继续保留，新的结果将先成为草稿。")).toBeInTheDocument();
     expect(screen.getByText("保持清晰、克制，并优先支持高频工作。")).toBeInTheDocument();

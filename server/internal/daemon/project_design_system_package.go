@@ -462,7 +462,7 @@ func startLoopbackPreviewServer(archive []byte, manifest []byte, previewTargets 
 // for the pre-V2 collector — re-derived here because that helper expects
 // the legacy `ValidatedPackage` schema and cannot be invoked on V2
 // archives.
-const selectionBridgeScript = "(()=>{document.addEventListener(\"click\",event=>{const target=event.target;const node=target instanceof Element?target.closest(\"[data-design-node-id]\"):null;if(!node)return;event.preventDefault();parent.postMessage({type:\"multica:project-design-system-select\",id:node.dataset.designNodeId},\"*\")})})();"
+var selectionBridgeScript = projectdesignsystem.RuntimePreviewBridgeScript("")
 
 // sha256BridgeScriptHash returns the SHA-256 of the trusted bridge source,
 // base64-encoded so it slots directly into a CSP `script-src 'sha256-…'`
@@ -490,8 +490,7 @@ func sha256BridgeScriptHash() string {
 // into the package, even when those bytes happen to live inside a
 // validated HTML target.
 func buildPreviewCSP(bridgeScriptHash string) string {
-	return "default-src 'self' data:; script-src 'sha256-" + bridgeScriptHash +
-		"'; connect-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"
+	return projectdesignsystem.RuntimePreviewCSPFromHash(bridgeScriptHash)
 }
 
 // injectBridgeAndTokens inserts the tokens.css stylesheet link and the
@@ -509,28 +508,12 @@ func buildPreviewCSP(bridgeScriptHash string) string {
 // the agent left in the fragment will not execute — the verifier
 // receives a CSP-locked page that only runs the trusted bridge.
 //
-// The stylesheet href is absolute (/<prefix>/tokens.css), NOT relative.
-// Every preview target lives one directory down — classifyV2Artifact only
-// admits `ui-kit/index.html` and `preview/*.html` — so a bare `tokens.css`
-// href resolves to `<dir>/tokens.css` and 404s, and the verifier renders
-// and screenshots a page with no design tokens applied while both the
-// audit (a static token-reference check) and the preview (a visibility
-// check) still pass.
+// Every preview target lives exactly one directory below the package root.
+// The shared runtime helper injects ../tokens.css so both this loopback route
+// and the authenticated user-facing preview resolve the same Token file.
 func injectBridgeAndTokens(html []byte, prefix string) []byte {
-	linkTag := `<link rel="stylesheet" href="/` + prefix + `/tokens.css">`
-	scriptTag := "<script>" + selectionBridgeScript + "</script>"
-	body := string(html)
-	if idx := strings.Index(body, "</head>"); idx >= 0 {
-		body = body[:idx] + linkTag + body[idx:]
-	} else {
-		body = linkTag + body
-	}
-	if idx := strings.Index(body, "</body>"); idx >= 0 {
-		body = body[:idx] + scriptTag + body[idx:]
-	} else {
-		body = body + scriptTag
-	}
-	return []byte(body)
+	_ = prefix // retained for compatibility with focused tests and older callers
+	return projectdesignsystem.InjectRuntimePreviewHTML(html, selectionBridgeScript)
 }
 
 func contentTypeForPath(path string) string {

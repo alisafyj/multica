@@ -1783,22 +1783,26 @@ type ProjectDesignSystemTaskContext struct {
 	// Empty means the project-level system. When set, the agent is designing
 	// for one repository and should read the system as specific to that
 	// surface rather than the project's shared language (DC-052).
-	ProjectResourceID     string          `json:"project_resource_id,omitempty"`
-	ProjectDesignSystemID string          `json:"project_design_system_id"`
-	AgentID               string          `json:"agent_id"`
-	Project               json.RawMessage `json:"project"`
-	Platform              string          `json:"platform"`
-	Brief                 string          `json:"brief"`
-	References            json.RawMessage `json:"references"`
-	BasePackage           json.RawMessage `json:"base_package,omitempty"`
-	Instruction           string          `json:"instruction,omitempty"`
-	Scope                 json.RawMessage `json:"scope,omitempty"`
-	RepositoryAnalysis    json.RawMessage `json:"repository_analysis,omitempty"`
-	OpenDesignRun         json.RawMessage `json:"open_design_run,omitempty"`
-	OutputPolicy          json.RawMessage `json:"output_policy"`
-	PackageSchema         string          `json:"package_schema,omitempty"`
-	InputSnapshotSHA256   string          `json:"input_snapshot_sha256,omitempty"`
-	BasePackageSHA256     string          `json:"base_package_sha256,omitempty"`
+	ProjectResourceID        string          `json:"project_resource_id,omitempty"`
+	WorkspaceRepositoryID    string          `json:"workspace_repository_id,omitempty"`
+	WorkspaceRepositoryURL   string          `json:"workspace_repository_url,omitempty"`
+	WorkspaceRepositoryLabel string          `json:"workspace_repository_label,omitempty"`
+	WorkspaceRepositoryRef   string          `json:"workspace_repository_ref,omitempty"`
+	ProjectDesignSystemID    string          `json:"project_design_system_id"`
+	AgentID                  string          `json:"agent_id"`
+	Project                  json.RawMessage `json:"project"`
+	Platform                 string          `json:"platform"`
+	Brief                    string          `json:"brief"`
+	References               json.RawMessage `json:"references"`
+	BasePackage              json.RawMessage `json:"base_package,omitempty"`
+	Instruction              string          `json:"instruction,omitempty"`
+	Scope                    json.RawMessage `json:"scope,omitempty"`
+	RepositoryAnalysis       json.RawMessage `json:"repository_analysis,omitempty"`
+	OpenDesignRun            json.RawMessage `json:"open_design_run,omitempty"`
+	OutputPolicy             json.RawMessage `json:"output_policy"`
+	PackageSchema            string          `json:"package_schema,omitempty"`
+	InputSnapshotSHA256      string          `json:"input_snapshot_sha256,omitempty"`
+	BasePackageSHA256        string          `json:"base_package_sha256,omitempty"`
 }
 
 // EnqueueQuickCreateTask creates a queued task that has no issue / chat /
@@ -5629,9 +5633,12 @@ func (s *TaskService) markProjectDesignSystemTaskFailed(
 	if err != nil {
 		return fmt.Errorf("parse project design system workspace id: %w", err)
 	}
-	projectID, err := util.ParseUUID(taskContext.ProjectID)
-	if err != nil {
-		return fmt.Errorf("parse project design system project id: %w", err)
+	var projectID pgtype.UUID
+	if projectIDValue := strings.TrimSpace(taskContext.ProjectID); projectIDValue != "" {
+		projectID, err = util.ParseUUID(projectIDValue)
+		if err != nil {
+			return fmt.Errorf("parse project design system project id: %w", err)
+		}
 	}
 	systemID, err := util.ParseUUID(taskContext.ProjectDesignSystemID)
 	if err != nil {
@@ -5655,7 +5662,17 @@ func (s *TaskService) markProjectDesignSystemTaskFailed(
 	if err != nil {
 		return err
 	}
-	if util.UUIDToString(system.ProjectID) != util.UUIDToString(projectID) ||
+	workspaceRepositoryMatches := util.UUIDToString(system.WorkspaceRepositoryID) == strings.TrimSpace(taskContext.WorkspaceRepositoryID)
+	if !workspaceRepositoryMatches && system.WorkspaceRepositoryID.Valid && strings.TrimSpace(taskContext.WorkspaceRepositoryID) == "" {
+		// Compatibility for systems migrated from project_resource to Settings:
+		// an already-enqueued task may still carry only the preserved legacy
+		// project resource. It is safe only when that exact resource still matches.
+		workspaceRepositoryMatches = system.ProjectResourceID.Valid &&
+			util.UUIDToString(system.ProjectResourceID) == strings.TrimSpace(taskContext.ProjectResourceID)
+	}
+	if system.ProjectID.Valid != projectID.Valid ||
+		(projectID.Valid && util.UUIDToString(system.ProjectID) != util.UUIDToString(projectID)) ||
+		!workspaceRepositoryMatches ||
 		!system.CurrentAgentID.Valid || util.UUIDToString(system.CurrentAgentID) != util.UUIDToString(agentID) {
 		return errors.New("project design system task identity mismatch")
 	}

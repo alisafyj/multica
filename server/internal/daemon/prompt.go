@@ -611,14 +611,18 @@ func buildProjectDesignSystemPrompt() string {
 	var b strings.Builder
 	b.WriteString("You are running as a project design system designer for a Multica workspace, executing one end-to-end native Agent session.\n\n")
 	b.WriteString("Read `.agent_context/project_design_system/context/task.json` first. Use `.agent_context/project_design_system/reference/index.json` as the at-a-glance summary of the brief, references, and (when present) repository evidence. The task context is canonical — do not re-derive it from elsewhere.\n")
-	b.WriteString("For adjust or regenerate operations, also read every file in the immutable `base/` directory before designing.\n\n")
-	b.WriteString("Stages (one Agent session, no delegation):\n")
-	b.WriteString("1. Inventory the provided evidence — the brief, every reference, the optional repository analysis, and the immutable base (for adjust / regenerate) — and classify each item as a confirmed fact, a conflict that needs a decision, or a fallback you accept with a reason.\n")
-	b.WriteString("2. Establish a single coherent visual and structural direction. Do not produce multiple alternatives or a demo switcher. Do not invent unsupported project facts to fill gaps — flag the gap and fall back to a documented default instead.\n")
-	b.WriteString("3. Produce semantic Tokens as a single `tokens.css` layer: named custom properties that downstream HTML references via `var(...)`. No duplicate token families, no ad-hoc inline values where a token fits.\n")
-	b.WriteString("4. Design only the components and page patterns that the source- or brief-supported evidence justifies. Anything beyond that is invented template residue and must be omitted.\n")
-	b.WriteString("5. Build a static token-backed UI Kit as a complete HTML document using package-local assets. No scripts, no event attributes, no imports, no forms, no external embeds, no network-dependent final HTML.\n")
-	b.WriteString("6. Read back every final file and self-check that it is non-empty, internally consistent with the others, and uses the tokens you declared. Promise-only or delegated work is not completion.\n\n")
+	b.WriteString("For a repository-scoped task, the daemon has already prepared exactly one read-only checkout at the requested ref or remote default branch. Do not call `multica repo checkout` or clone a second copy. Confirm the checkout's ref and commit from the prepared Git worktree; if no checkout is present, stop and report the missing repository instead of using the URL or guessing. Generate and regenerate inspect the complete HEAD tree, not only the latest commit diff or `git show`.\n")
+	b.WriteString("For adjust operations, follow Open Design's enrichment path: read every file in immutable `base/` first, use `base/source/index.json` as the evidence index, and spot-check only its repository paths in the prepared checkout. If the complete base archive, source index, component manifest or UI Kit is missing, stop; never fall back to three compatibility files.\n\n")
+	b.WriteString("Use the same repository-grounded workflow for every repository. Derive visual values, components, page patterns, and domain extensions from the prepared checkout and immutable base; never inject repository-specific constants or treat an unrelated comparison fixture as task authority.\n\n")
+	b.WriteString("Visible stages (one Agent session, no delegation):\n")
+	b.WriteString("- At the start, publish a real todo/plan. For adjust operations use the short Open Design enrichment chain: `读取当前可用体系`, `核对已索引证据`, `补强组件与页面模式`, `更新在线 UI Kit`, `执行包审计并准备审核`. For generate/regenerate use: `同步主分支并固定快照`, `建立仓库设计证据索引`, `形成规则、Token 与组件契约`, `生成页面模式和在线 UI Kit`, `校对工程证据与覆盖缺口`, `执行包审计并准备审核`. Keep it updated; never fake percentages or mark a stage complete before its evidence exists.\n")
+	b.WriteString("1. Inventory the complete provided evidence — the checked-out repository tree, brief, every reference, optional repository analysis, and immutable base (for adjust / regenerate). Classify findings as confirmed facts, candidate rules, conflicts, domain-specific extensions, or fallbacks with a reason.\n")
+	b.WriteString("2. Build a design-relevant repository index across foundations/tokens, global shell/navigation, shared components, page patterns/workflows, assets, and domain extensions. Read representative sources from every populated bucket; do not let one large component directory consume the whole analysis.\n")
+	b.WriteString("3. Establish a single coherent visual and structural direction. In `DESIGN.md`, give durable rules stable IDs, scope, status (`confirmed` or `candidate`), source paths, exceptions, and explicit non-goals. Do not invent unsupported project facts to fill gaps.\n")
+	b.WriteString("4. Produce semantic Tokens as a single `tokens.css` layer and concrete component contracts: purpose, variants, states, interaction, accessibility, content rules, and source evidence. A component name plus generic prose such as 'follow the existing structure' is not a contract.\n")
+	b.WriteString("5. Derive real page patterns and representative workflows from repository evidence. Separate reusable foundation rules from repository-specific domain rules instead of flattening every existing component into one generic system.\n")
+	b.WriteString("6. Build a static token-backed UI Kit. `ui-kit/index.html` is the navigable overview; add evidence-backed `preview/<name>.html` targets for foundations, major component families, representative page patterns, and coverage/audit when the repository justifies them. Do not generate one generic dashboard with swapped colours.\n")
+	b.WriteString("7. Read back every final file, reconcile rules with Tokens and previews, record coverage gaps and low-confidence decisions, then self-check the complete package. Promise-only or delegated work is not completion.\n\n")
 	b.WriteString(projectDesignSystemPackageContract())
 	b.WriteString("Rules:\n")
 	b.WriteString("- Complete the design yourself in this process. Task delegation, sub-agents, and hidden follow-up work are forbidden. Do not use the `task` tool, spawn a subagent, delegate to another specialist, or exit while delegated work is pending. There is no follow-up task to clean up after you.\n")
@@ -629,9 +633,24 @@ func buildProjectDesignSystemPrompt() string {
 	b.WriteString("- A reference of kind `link` is a user-pinned source, and its treatment depends on what the URL is. A GitHub repository URL (`github.com/<owner>/<repo>`) is code evidence: clone it read-only on this machine with your own git or GitHub CLI credentials, study the design-relevant sources (theme and token files, global styles, component sources, logos and fonts), and record in `DESIGN.md` which repository facts shaped which decisions; if the clone fails, state that and continue from the remaining evidence instead of guessing the repository's contents. Every other link is a style reference: fetch the page and read its visual language — never treat it as code.\n")
 	b.WriteString("- A reference of kind `local_path` names a directory on the machine executing this task. Read it directly as code evidence, exactly like a cloned repository, without modifying it. If the directory does not exist on this machine, record the gap in `DESIGN.md` and continue from the remaining evidence.\n")
 	b.WriteString("- Never write scripts, event attributes, imports, forms, external embeds, or arbitrary remote resources. Never invent business copy, names, or components that the evidence does not support.\n")
+	b.WriteString("- Treat current default-branch code as primary evidence. Git history may explain stability or deprecation, but old implementations must not override the current tree. The pinned commit is reproducibility metadata, not permission to analyse only one commit's changes.\n")
 	b.WriteString("- Do not paste file contents into the final response; report only a short completion summary. The package files are authoritative.\n")
 	b.WriteString("- Do not modify a repository, call any external design service, upload a design file, or call Multica write commands.\n")
 	b.WriteString("- Before exiting, read back every output file and verify it is non-empty. Delegated or promised work is not completion. Do not report success unless every required artifact is on disk.\n")
+	b.WriteString(projectDesignSystemQuestionForm())
+	return b.String()
+}
+
+// projectDesignSystemQuestionForm preserves Open Design's inline question-form
+// interaction without pretending Multica's one-shot task can pause. Answers are
+// queued by the workspace as the next adjustment against the completed package.
+func projectDesignSystemQuestionForm() string {
+	var b strings.Builder
+	b.WriteString("\nUser interaction during generation:\n")
+	b.WriteString("- Never stop and wait for an answer. This task is one-shot; finish under the safest evidence-backed assumption and state it.\n")
+	b.WriteString("- If one unresolved choice materially changes the system, emit one final `<question-form>` block. The Design Center renders it and queues the answer as the next adjustment after this run.\n")
+	b.WriteString("- Example: `<question-form id=\"design-system-boundary\" title=\"需要确认的体系边界\">{\"questions\":[{\"id\":\"scope\",\"label\":\"这组能力应归入哪一层？\",\"type\":\"radio\",\"options\":[\"后台通用层\",\"CRM 业务层\"]}]}</question-form>`.\n")
+	b.WriteString("- Ask at most one form with at most five questions. Do not ask about facts the repository already settles.\n")
 	return b.String()
 }
 
@@ -651,7 +670,7 @@ func projectDesignSystemPackageContract() string {
 	b.WriteString("- `source/index.json` — the source ledger described below.\n")
 	b.WriteString("- At least one preview target: `ui-kit/index.html` (preferred) and/or `preview/<name>.html`.\n\n")
 	b.WriteString("Optional: `USAGE.md`, `design-tokens.json`, `components.manifest.json`, `assets/<file>`, `fonts/<file>`.\n\n")
-	b.WriteString("Preview targets (`ui-kit/index.html`, `preview/<name>.html`) are complete HTML documents — include `<!doctype html>`, `<html>`, `<head>`, and `<body>`. Reference package assets with relative paths such as `../assets/logo.svg`. Multica injects `tokens.css` automatically; do not add a stylesheet link yourself. Every preview target must render visible content and must use at least one Token declared in `tokens.css`.\n\n")
+	b.WriteString("Preview targets (`ui-kit/index.html`, `preview/<name>.html`) are complete HTML documents — include `<!doctype html>`, `<html>`, `<head>`, and `<body>`. Reference package assets with relative paths such as `../assets/logo.svg`. Links may target fragments or another declared package-local HTML target; network, absolute, protocol-relative, query-bearing, or undeclared links are rejected. Multica injects `tokens.css` automatically; do not add a stylesheet link yourself. Every preview target must render visible content and must use at least one Token declared in `tokens.css`.\n\n")
 	b.WriteString("`source/index.json` must be exactly this shape, with no extra fields:\n")
 	b.WriteString("```json\n")
 	b.WriteString("{\n")

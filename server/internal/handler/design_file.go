@@ -479,22 +479,23 @@ func (h *Handler) replaceDesignRestoreMappingsFromSummary(ctx context.Context, t
 }
 
 type DesignFileResponse struct {
-	ID                string          `json:"id"`
-	DesignRef         string          `json:"design_ref,omitempty"`
-	Source            string          `json:"source"`
-	WorkspaceID       string          `json:"workspace_id"`
-	ProjectID         *string         `json:"project_id,omitempty"`
-	FolderID          *string         `json:"folder_id,omitempty"`
-	Title             string          `json:"title"`
-	Description       *string         `json:"description"`
-	SourceType        string          `json:"source_type"`
-	SourceRef         json.RawMessage `json:"source_ref"`
-	ThumbnailURL      *string         `json:"thumbnail_url,omitempty"`
-	CurrentRevisionID *string         `json:"current_revision_id"`
-	ProjectResourceID *string         `json:"project_resource_id"`
-	CreatedBy         *string         `json:"created_by"`
-	CreatedAt         string          `json:"created_at"`
-	UpdatedAt         string          `json:"updated_at"`
+	ID                    string          `json:"id"`
+	DesignRef             string          `json:"design_ref,omitempty"`
+	Source                string          `json:"source"`
+	WorkspaceID           string          `json:"workspace_id"`
+	ProjectID             *string         `json:"project_id,omitempty"`
+	FolderID              *string         `json:"folder_id,omitempty"`
+	Title                 string          `json:"title"`
+	Description           *string         `json:"description"`
+	SourceType            string          `json:"source_type"`
+	SourceRef             json.RawMessage `json:"source_ref"`
+	ThumbnailURL          *string         `json:"thumbnail_url,omitempty"`
+	CurrentRevisionID     *string         `json:"current_revision_id"`
+	ProjectResourceID     *string         `json:"project_resource_id"`
+	WorkspaceRepositoryID *string         `json:"workspace_repository_id"`
+	CreatedBy             *string         `json:"created_by"`
+	CreatedAt             string          `json:"created_at"`
+	UpdatedAt             string          `json:"updated_at"`
 }
 
 type DesignRevisionResponse struct {
@@ -1030,20 +1031,21 @@ func generateFigmaImportCode() (string, error) {
 
 func designFileToResponse(file db.DesignFile) DesignFileResponse {
 	return DesignFileResponse{
-		ID:                uuidToString(file.ID),
-		Source:            "figma",
-		WorkspaceID:       uuidToString(file.WorkspaceID),
-		ProjectID:         uuidToPtr(file.ProjectID),
-		FolderID:          uuidToPtr(file.FolderID),
-		Title:             file.Title,
-		Description:       textToPtr(file.Description),
-		SourceType:        file.SourceType,
-		SourceRef:         json.RawMessage(file.SourceRef),
-		CurrentRevisionID: uuidToPtr(file.CurrentRevisionID),
-		ProjectResourceID: uuidToPtr(file.ProjectResourceID),
-		CreatedBy:         uuidToPtr(file.CreatedBy),
-		CreatedAt:         timestampToString(file.CreatedAt),
-		UpdatedAt:         timestampToString(file.UpdatedAt),
+		ID:                    uuidToString(file.ID),
+		Source:                "figma",
+		WorkspaceID:           uuidToString(file.WorkspaceID),
+		ProjectID:             uuidToPtr(file.ProjectID),
+		FolderID:              uuidToPtr(file.FolderID),
+		Title:                 file.Title,
+		Description:           textToPtr(file.Description),
+		SourceType:            file.SourceType,
+		SourceRef:             json.RawMessage(file.SourceRef),
+		CurrentRevisionID:     uuidToPtr(file.CurrentRevisionID),
+		ProjectResourceID:     uuidToPtr(file.ProjectResourceID),
+		WorkspaceRepositoryID: uuidToPtr(file.WorkspaceRepositoryID),
+		CreatedBy:             uuidToPtr(file.CreatedBy),
+		CreatedAt:             timestampToString(file.CreatedAt),
+		UpdatedAt:             timestampToString(file.UpdatedAt),
 	}
 }
 
@@ -2128,6 +2130,11 @@ func (h *Handler) ListDesignFiles(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	rawProjectID := strings.TrimSpace(query.Get("project_id"))
 	rawResourceID := strings.TrimSpace(query.Get("project_resource_id"))
+	rawWorkspaceRepositoryID := strings.TrimSpace(query.Get("workspace_repository_id"))
+	if rawWorkspaceRepositoryID != "" && (rawProjectID != "" || rawResourceID != "") {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "invalid_request", "settings repository scope cannot be combined with project scope")
+		return
+	}
 	if rawResourceID != "" && rawProjectID == "" {
 		writeProjectDesignSystemError(w, http.StatusBadRequest, "invalid_request", "project_id is required with project_resource_id")
 		return
@@ -2136,6 +2143,16 @@ func (h *Handler) ListDesignFiles(w http.ResponseWriter, r *http.Request) {
 	var files []db.DesignFile
 	var err error
 	switch {
+	case rawWorkspaceRepositoryID != "":
+		repositoryUUID, ok := parseUUIDOrBadRequest(w, rawWorkspaceRepositoryID, "workspace_repository_id")
+		if !ok {
+			return
+		}
+		if _, repositoryErr := loadWorkspaceRepository(r.Context(), h.Queries, wsUUID, repositoryUUID); repositoryErr != nil {
+			writeProjectDesignSystemError(w, http.StatusNotFound, "workspace_repository_not_found", "settings repository not found")
+			return
+		}
+		files, err = h.Queries.ListDesignFilesByWorkspaceRepository(r.Context(), db.ListDesignFilesByWorkspaceRepositoryParams{WorkspaceID: wsUUID, WorkspaceRepositoryID: repositoryUUID})
 	case rawProjectID == "":
 		files, err = h.Queries.ListDesignFiles(r.Context(), wsUUID)
 	case rawResourceID != "":

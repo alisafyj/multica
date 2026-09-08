@@ -4104,10 +4104,12 @@ export class ApiClient {
   async listDesignFiles(params?: {
     projectId?: string;
     projectResourceId?: string;
+    workspaceRepositoryId?: string;
   }): Promise<ListDesignFilesResponse> {
     const search = new URLSearchParams();
     if (params?.projectId) search.set("project_id", params.projectId);
     if (params?.projectResourceId) search.set("project_resource_id", params.projectResourceId);
+    if (params?.workspaceRepositoryId) search.set("workspace_repository_id", params.workspaceRepositoryId);
     const suffix = search.toString();
     return this.fetch(`/api/design-files${suffix ? `?${suffix}` : ""}`);
   }
@@ -4321,6 +4323,18 @@ export class ApiClient {
     );
   }
 
+  async getProjectDesignSystemForWorkspaceRepository(repositoryId: string): Promise<ProjectDesignSystem> {
+    const raw = await this.fetch<unknown>(
+      `/api/project-design-systems?workspace_repository_id=${encodeURIComponent(repositoryId)}`,
+    );
+    return parseWithFallback(
+      raw,
+      ProjectDesignSystemSchema,
+      { ...EMPTY_PROJECT_DESIGN_SYSTEM, workspace_repository_id: repositoryId },
+      { endpoint: "GET /api/project-design-systems?workspace_repository_id" },
+    );
+  }
+
   async getProjectDesignSystem(id: string): Promise<ProjectDesignSystem> {
     const raw = await this.fetch<unknown>(
       `/api/project-design-systems/${encodeURIComponent(id)}`,
@@ -4370,6 +4384,7 @@ export class ApiClient {
       {
         ...EMPTY_PROJECT_DESIGN_SYSTEM,
         project_id: data.project_id,
+        workspace_repository_id: data.workspace_repository_id ?? "",
         platform: data.platform,
         current_agent_id: data.agent_id,
       },
@@ -4405,7 +4420,7 @@ export class ApiClient {
       ProjectDesignSystemSchema,
       {
         ...EMPTY_PROJECT_DESIGN_SYSTEM,
-        project_id: data.project_id,
+        project_id: data.project_id ?? "",
         project_resource_id: data.project_resource_id ?? "",
         platform: data.platform,
         current_agent_id: data.agent_id,
@@ -4531,6 +4546,15 @@ export class ApiClient {
    * same shape as the project listing; the issue form is what lets a task card
    * show the design being made for it.
    */
+  async listDesignDocumentsForWorkspaceRepository(repositoryId: string): Promise<ListDesignDocumentsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/design-documents?workspace_repository_id=${encodeURIComponent(repositoryId)}`,
+    );
+    return parseWithFallback(raw, ListDesignDocumentsResponseSchema, EMPTY_LIST_DESIGN_DOCUMENTS_RESPONSE, {
+      endpoint: "GET /api/design-documents?workspace_repository_id",
+    });
+  }
+
   async listDesignDocumentsForIssue(issueId: string): Promise<ListDesignDocumentsResponse> {
     const raw = await this.fetch<unknown>(
       `/api/design-documents?issue_id=${encodeURIComponent(issueId)}`,

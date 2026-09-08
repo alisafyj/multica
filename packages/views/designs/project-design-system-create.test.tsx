@@ -303,7 +303,7 @@ describe("ProjectDesignSystemCreate", () => {
   it("renders the creation workbench directly and does not auto-create", () => {
     renderComponent();
 
-    expect(screen.getByRole("button", { name: "生成设计体系" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "立即生成" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "创建设计体系" })).not.toBeInTheDocument();
     expect(screen.queryByText("尚未建立设计体系")).not.toBeInTheDocument();
     expect(createProjectDesignSystem).not.toHaveBeenCalled();
@@ -319,7 +319,7 @@ describe("ProjectDesignSystemCreate", () => {
     const user = userEvent.setup();
     renderComponent();
 
-    const submit = screen.getByRole("button", { name: "生成设计体系" });
+    const submit = screen.getByRole("button", { name: "立即生成" });
     expect(submit).toBeDisabled();
 
     await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
@@ -378,7 +378,7 @@ describe("ProjectDesignSystemCreate", () => {
 
     await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
     await user.click(screen.getByRole("radio", { name: "Web" }));
-    await user.click(screen.getByRole("button", { name: "生成设计体系" }));
+    await user.click(screen.getByRole("button", { name: "立即生成" }));
 
     await waitFor(() => {
       expect(createProjectDesignSystem).toHaveBeenCalledWith({
@@ -504,7 +504,7 @@ describe("ProjectDesignSystemCreate", () => {
       }),
     });
 
-    const submit = screen.getByRole("button", { name: "生成设计体系" });
+    const submit = screen.getByRole("button", { name: "立即生成" });
     expect(submit).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: "重新选择参考资料" }));
@@ -580,7 +580,7 @@ describe("ProjectDesignSystemCreate", () => {
     // sent by slug, never as a copy.
     await user.type(screen.getByLabelText("搜索官方设计体系"), "stri");
     await user.click(await screen.findByLabelText("Stripe"));
-    await user.click(screen.getByRole("button", { name: "生成设计体系" }));
+    await user.click(screen.getByRole("button", { name: "立即生成" }));
 
     await waitFor(() => {
       expect(createProjectDesignSystem).toHaveBeenCalledWith({
@@ -648,8 +648,8 @@ describe("ProjectDesignSystemCreate", () => {
     const { rerender, queryClient } = renderComponent();
     await user.selectOptions(screen.getByLabelText("智能体"), "agent-1");
     await user.click(screen.getByRole("radio", { name: "Web" }));
-    await user.click(screen.getByRole("button", { name: "生成设计体系" }));
-    expect(await screen.findByRole("button", { name: "提交中…" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "立即生成" }));
+    expect(await screen.findByRole("button", { name: "正在生成…" })).toBeInTheDocument();
 
     const secondProject = makeProject({ id: "project-2", title: "工单中心" });
     rerender(
@@ -663,8 +663,8 @@ describe("ProjectDesignSystemCreate", () => {
         />
       </QueryClientProvider>,
     );
-    expect(screen.getByRole("button", { name: "生成设计体系" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "提交中…" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "立即生成" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "正在生成…" })).not.toBeInTheDocument();
   });
 
   it("restores the previous input and actionable error after generation fails", () => {
@@ -761,7 +761,7 @@ describe("ProjectDesignSystemCreate", () => {
       await waitFor(() => expect(listProjectDesignSystemCatalogue).toHaveBeenCalled());
       expect(screen.queryByRole("button", { name: "从现有设计体系复制" })).not.toBeInTheDocument();
       expect(screen.queryByRole("radiogroup", { name: "复制来源" })).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "生成设计体系" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "立即生成" })).toBeInTheDocument();
     });
 
     it("does not offer a copy source when the only saved system is the current scope", async () => {
@@ -1005,7 +1005,7 @@ describe("ProjectDesignSystemCreate", () => {
 
       await user.click(screen.getByRole("button", { name: "全新创建" }));
       expect(screen.getByLabelText("设计目标")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "生成设计体系" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "立即生成" })).toBeInTheDocument();
       expect(screen.queryByRole("radiogroup", { name: "复制来源" })).not.toBeInTheDocument();
     });
   });

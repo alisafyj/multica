@@ -255,7 +255,7 @@ describe("DesignMvpWorkspace", () => {
     expect(screen.getAllByTitle("https://github.com/example/web").length).toBeGreaterThan(0);
     expect(screen.getByText("尚未建立仓库专属设计体系；不会回落到项目通用体系。")).toBeInTheDocument();
     await waitFor(() => expect(getProjectDesignSystemForProject).toHaveBeenCalledWith("project-1", { project_resource_id: "repo-1" }));
-    expect(screen.getByRole("button", { name: "生成设计体系" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "立即生成" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "分析项目仓库" })).toBeInTheDocument();
     expect(screen.getByLabelText("所属项目")).toHaveValue("CRM");
     expect(screen.getByLabelText("所属仓库")).toHaveValue("Custom web repo");
@@ -280,7 +280,7 @@ describe("DesignMvpWorkspace", () => {
       brief: "为 CRM 建立清晰、克制的设计体系，重点覆盖 Custom web repo 仓库。",
       references: [],
     }));
-    await user.click(screen.getByRole("button", { name: "生成设计体系" }));
+    await user.click(screen.getByRole("button", { name: "立即生成" }));
     await waitFor(() => expect(createProjectDesignSystem).toHaveBeenCalledWith({
       project_id: "project-1",
       project_resource_id: "repo-1",
@@ -301,7 +301,7 @@ describe("DesignMvpWorkspace", () => {
     await user.click(screen.getByRole("radio", { name: "移动端" }));
     await user.clear(screen.getByLabelText("设计目标"));
     await user.type(screen.getByLabelText("设计目标"), "保留仓库专属目标");
-    await user.click(screen.getByRole("button", { name: "生成设计体系" }));
+    await user.click(screen.getByRole("button", { name: "立即生成" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("生成失败");
     expect(screen.getByLabelText("智能体")).toHaveValue("agent-1");
     expect(screen.getByRole("radio", { name: "移动端" })).toHaveAttribute("aria-checked", "true");

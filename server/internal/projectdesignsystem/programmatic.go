@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,6 +19,8 @@ const (
 	maxProgrammaticSourceFiles = 64
 	maxProgrammaticFileBytes   = 256 << 10
 	maxProgrammaticTotalBytes  = 6 << 20
+
+	programmaticProfileProduct = "product"
 )
 
 // ProgrammaticInput is the fixed input consumed by the fast repository adapter.
@@ -79,9 +80,14 @@ type programmaticObservation struct {
 	componentPaths   map[string][]string
 	pagePatterns     []string
 	pagePaths        map[string][]string
+	framework        string
+	webAdminSignals  map[string]struct{}
+	semanticPaths    map[string][]string
 }
 
 type programmaticTheme struct {
+	profile        string
+	framework      string
 	primary        string
 	primaryText    string
 	background     string
@@ -89,7 +95,11 @@ type programmaticTheme struct {
 	surfaceMuted   string
 	foreground     string
 	mutedText      string
+	subtleText     string
 	border         string
+	sidebar        string
+	tableHeader    string
+	info           string
 	success        string
 	warning        string
 	danger         string
@@ -98,14 +108,18 @@ type programmaticTheme struct {
 	baseSpace      int
 	borderRadius   string
 	controlHeight  int
+	sidebarWidth   int
+	topbarHeight   int
 	components     []string
 	componentPaths map[string][]string
 	pagePatterns   []string
 	pagePaths      map[string][]string
+	semanticPaths  map[string][]string
 }
 
 var (
 	programmaticCustomPropertyPattern = regexp.MustCompile(`(?mi)(--[a-z0-9_-]+)\s*:\s*([^;{}\n]+)`)
+	programmaticSassVariablePattern   = regexp.MustCompile(`(?mi)^\s*(\$[a-z0-9_-]+)\s*:\s*([^;{}\n]+)`)
 	programmaticHexColorPattern       = regexp.MustCompile(`(?i)#[0-9a-f]{8}\b|#[0-9a-f]{6}\b|#[0-9a-f]{3}\b`)
 	programmaticFontFamilyPattern     = regexp.MustCompile(`(?i)font-family\s*:\s*([^;}\n]+)`)
 	programmaticRadiusPattern         = regexp.MustCompile(`(?i)border-radius\s*:\s*([0-9]+(?:\.[0-9]+)?(?:px|rem))`)
@@ -282,7 +296,7 @@ func programmaticSourceKind(relative string) string {
 	case "package.json", "readme.md", "design.md", "ai_context.md", "tailwind.config.js", "tailwind.config.ts", "theme.ts", "theme.js", "tokens.css", "variables.css", "globals.css", "global.css":
 		return "foundation"
 	}
-	for _, term := range []string{"/theme/", "/themes/", "/tokens/", "/design-system/", "/design_system/"} {
+	for _, term := range []string{"/theme/", "/themes/", "/tokens/", "/design-system/", "/design_system/", "/layout/", "/layouts/", "/shell/"} {
 		if strings.Contains(lower, term) {
 			return "foundation"
 		}
@@ -359,9 +373,12 @@ func programmaticSourceScore(relative string) int {
 	score := 1
 	switch base {
 	case "package.json":
-		score += 120
+		// Framework and component-library detection is impossible without the
+		// root package contract. Keep it ahead of large layout directories whose
+		// child components would otherwise consume the foundation quota.
+		score += 1000
 	case "readme.md", "design.md", "ai_context.md":
-		score += 80
+		score += 300
 	case "tailwind.config.js", "tailwind.config.ts", "theme.ts", "theme.js", "tokens.css", "variables.css", "globals.css", "global.css":
 		score += 150
 	}
@@ -370,19 +387,43 @@ func programmaticSourceScore(relative string) int {
 			score += 100
 		}
 	}
+	normalizedPath := "/" + lower
 	for _, term := range []string{"/components/", "/ui/", "/widgets/"} {
-		if strings.Contains("/"+lower, term) {
+		if strings.Contains(normalizedPath, term) {
 			score += 65
 		}
 	}
+	if strings.Contains(normalizedPath, "/src/components/") || strings.Contains(normalizedPath, "/app/components/") {
+		score += 70
+	}
 	for _, term := range []string{"/pages/", "/app/", "/views/", "/screens/", "/routes/"} {
-		if strings.Contains("/"+lower, term) {
+		if strings.Contains(normalizedPath, term) {
 			score += 45
+		}
+	}
+	for _, term := range []string{"/src/layout/", "/app/layout/", "/layouts/", "/shell/"} {
+		if strings.Contains(normalizedPath, term) {
+			score += 150
+		}
+	}
+	for _, term := range []string{"pagination", "dialogstd", "drawer", "sidebar", "navbar", "appmain", "breadcrumb", "headersearch", "table", "form"} {
+		if strings.Contains(lower, term) {
+			score += 35
+		}
+	}
+	for _, term := range []string{"inventory", "management", "serviceflow", "customer", "consult", "order", "dashboard", "admin"} {
+		if strings.Contains(lower, term) {
+			score += 18
 		}
 	}
 	for _, term := range []string{"button", "input", "card", "nav", "header", "tab", "modal", "dialog", "list", "detail", "home", "index", "layout"} {
 		if strings.Contains(base, term) {
 			score += 15
+		}
+	}
+	for _, term := range []string{"/demo/", "/examples/", "/template/", "/theme/", "icon-picker", "pixijs", "mock."} {
+		if strings.Contains(normalizedPath, term) {
+			score -= 25
 		}
 	}
 	if strings.Contains(lower, ".test.") || strings.Contains(lower, ".spec.") {
@@ -409,6 +450,8 @@ func observeProgrammaticSources(sources []programmaticSource, analysis *Reposito
 		spacings:         make(map[int]int),
 		componentPaths:   make(map[string][]string),
 		pagePaths:        make(map[string][]string),
+		webAdminSignals:  make(map[string]struct{}),
+		semanticPaths:    make(map[string][]string),
 	}
 	componentSeen := make(map[string]struct{})
 	pageSeen := make(map[string]struct{})
@@ -422,6 +465,13 @@ func observeProgrammaticSources(sources []programmaticSource, analysis *Reposito
 			}
 			if color := normalizeProgrammaticHex(value); color != "" {
 				result.colors[color]++
+			}
+		}
+		for _, match := range programmaticSassVariablePattern.FindAllStringSubmatch(source.content, -1) {
+			name := strings.ToLower(strings.TrimSpace(match[1]))
+			value := strings.TrimSpace(match[2])
+			if _, exists := result.customProperties[name]; !exists && len(value) <= 160 {
+				result.customProperties[name] = value
 			}
 		}
 		for _, raw := range programmaticHexColorPattern.FindAllString(source.content, -1) {
@@ -443,6 +493,7 @@ func observeProgrammaticSources(sources []programmaticSource, analysis *Reposito
 				result.spacings[value]++
 			}
 		}
+		observeProgrammaticStructure(&result, source)
 
 		if component := componentNameFromPath(source.path); component != "" {
 			key := strings.ToLower(component)
@@ -499,15 +550,95 @@ func observeProgrammaticSources(sources []programmaticSource, analysis *Reposito
 	return result
 }
 
+func observeProgrammaticStructure(result *programmaticObservation, source programmaticSource) {
+	lowerPath := strings.ToLower("/" + filepath.ToSlash(source.path))
+	lowerContent := strings.ToLower(source.content)
+	base := strings.ToLower(filepath.Base(source.path))
+	mark := func(signal, semantic string) {
+		if signal != "" {
+			result.webAdminSignals[signal] = struct{}{}
+		}
+		if semantic != "" {
+			result.semanticPaths[semantic] = appendUniqueString(result.semanticPaths[semantic], source.path, 8)
+		}
+	}
+
+	if base == "package.json" {
+		switch {
+		case strings.Contains(lowerContent, `"element-ui"`):
+			result.framework = "Vue 2 + Element UI"
+			mark("admin-framework", "framework")
+		case strings.Contains(lowerContent, `"ant-design-vue"`):
+			result.framework = "Vue + Ant Design"
+			mark("admin-framework", "framework")
+		case strings.Contains(lowerContent, `"@mui/material"`):
+			result.framework = "React + Material UI"
+			mark("admin-framework", "framework")
+		case strings.Contains(lowerContent, `"antd"`):
+			result.framework = "React + Ant Design"
+			mark("admin-framework", "framework")
+		case strings.Contains(lowerContent, `"vue"`):
+			result.framework = "Vue"
+		case strings.Contains(lowerContent, `"react"`):
+			result.framework = "React"
+		}
+	}
+	if strings.Contains(lowerPath, "/layout/") || strings.Contains(lowerPath, "/layouts/") || strings.Contains(lowerPath, "/shell/") || strings.Contains(lowerContent, "main-container") {
+		mark("application-shell", "shell")
+	}
+	if strings.Contains(lowerPath, "sidebar") || strings.Contains(lowerContent, "sidebar-container") || strings.Contains(lowerContent, "aside-width") {
+		mark("sidebar", "sidebar")
+	}
+	if strings.Contains(lowerPath, "navbar") || strings.Contains(lowerContent, "breadcrumb-container") || strings.Contains(lowerContent, "header-search") {
+		mark("top-navigation", "navbar")
+	}
+	if strings.Contains(lowerContent, "<el-form") || strings.Contains(lowerContent, "<form") {
+		mark("filter-form", "filter")
+	}
+	if strings.Contains(lowerContent, "<el-button") || strings.Contains(lowerContent, "<button") {
+		mark("actions", "actions")
+	}
+	if strings.Contains(lowerContent, "<el-tabs") || strings.Contains(lowerContent, "__tabs") || strings.Contains(lowerContent, "tablist") {
+		mark("segmented-navigation", "tabs")
+	}
+	if strings.Contains(lowerContent, "<el-table") || strings.Contains(lowerContent, "<table") {
+		mark("data-table", "table")
+	}
+	if strings.Contains(lowerContent, `type="expand"`) || strings.Contains(lowerContent, "expanded-cell") {
+		mark("expanded-table", "expanded-table")
+	}
+	if strings.Contains(lowerPath, "pagination") || strings.Contains(lowerContent, "<el-pagination") || strings.Contains(lowerContent, "pagination-container") {
+		mark("pagination", "pagination")
+	}
+	if strings.Contains(lowerPath, "drawer") || strings.Contains(lowerContent, "<el-drawer") {
+		mark("overlay-detail", "drawer")
+	}
+	if strings.Contains(lowerPath, "dialogstd") || strings.Contains(lowerContent, "<el-dialog") || strings.Contains(lowerContent, "message-box") {
+		mark("overlay-dialog", "dialog")
+	}
+	if strings.Contains(lowerContent, "grid-template-columns") || strings.Contains(lowerContent, "basic-grid") || strings.Contains(lowerContent, "info-grid") {
+		mark("information-grid", "info-grid")
+	}
+	if strings.Contains(lowerContent, "<el-tag") || strings.Contains(lowerContent, "status-tag") || strings.Contains(lowerContent, "is-effective") {
+		mark("status-display", "status")
+	}
+	if strings.Contains(lowerContent, "v-loading") || strings.Contains(lowerContent, "empty-text") || strings.Contains(lowerContent, "暂无数据") {
+		mark("feedback-state", "feedback")
+	}
+	if strings.Contains(lowerPath, "/styles/") || strings.Contains(lowerPath, "/theme/") {
+		mark("", "style")
+	}
+}
+
 func deriveProgrammaticTheme(observation programmaticObservation) programmaticTheme {
-	primary := namedProgrammaticColor(observation.customProperties, []string{"primary", "brand", "accent"})
+	primary := namedProgrammaticColor(observation.customProperties, []string{"color-primary", "brand-primary", "primary", "accent"})
 	if primary == "" {
 		primary = mostFrequentProgrammaticColor(observation.colors, false)
 	}
 	if primary == "" {
 		primary = "#2563eb"
 	}
-	background := namedProgrammaticColor(observation.customProperties, []string{"background", "page-bg", "body-bg", "bg-base"})
+	background := namedProgrammaticColor(observation.customProperties, []string{"page-background", "color-background", "body-bg", "background"})
 	if background == "" {
 		background = "#ffffff"
 	}
@@ -527,9 +658,37 @@ func deriveProgrammaticTheme(observation programmaticObservation) programmaticTh
 	if mutedText == "" {
 		mutedText = "#667085"
 	}
-	border := namedProgrammaticColor(observation.customProperties, []string{"border", "divider", "line"})
+	subtleText := namedProgrammaticColor(observation.customProperties, []string{"text-tertiary", "text-subtle", "placeholder"})
+	if subtleText == "" {
+		subtleText = "#94a3b8"
+	}
+	border := namedProgrammaticColor(observation.customProperties, []string{"border", "border-default", "divider", "line"})
 	if border == "" {
 		border = "#dfe3e8"
+	}
+	sidebar := namedProgrammaticColor(observation.customProperties, []string{"sidebar-background", "aside-background", "menu-bg"})
+	if sidebar == "" {
+		sidebar = foreground
+	}
+	tableHeader := namedProgrammaticColor(observation.customProperties, []string{"table-header", "table-head", "fill-secondary"})
+	if tableHeader == "" {
+		tableHeader = surfaceMuted
+	}
+	info := namedProgrammaticColor(observation.customProperties, []string{"color-info", "info"})
+	if info == "" {
+		info = primary
+	}
+	success := namedProgrammaticColor(observation.customProperties, []string{"color-success", "success"})
+	if success == "" {
+		success = "#16a34a"
+	}
+	warning := namedProgrammaticColor(observation.customProperties, []string{"color-warning", "warning"})
+	if warning == "" {
+		warning = "#d97706"
+	}
+	danger := namedProgrammaticColor(observation.customProperties, []string{"color-danger", "danger", "error"})
+	if danger == "" {
+		danger = "#dc2626"
 	}
 	font := mostFrequentString(observation.fonts)
 	if font == "" {
@@ -539,24 +698,32 @@ func deriveProgrammaticTheme(observation programmaticObservation) programmaticTh
 	if radius == "" {
 		radius = "8px"
 	}
-	baseSpace := chooseProgrammaticBaseSpace(observation.spacings)
 	components := append([]string(nil), observation.components...)
-	if len(components) == 0 {
-		components = []string{"基础操作", "内容容器", "状态反馈"}
-	}
 	patterns := append([]string(nil), observation.pagePatterns...)
+	if len(components) == 0 {
+		components = []string{"Base actions", "Content containers", "Status feedback"}
+	}
 	if len(patterns) == 0 {
-		patterns = []string{"核心页面结构"}
+		patterns = []string{"Core page structure"}
+	}
+	framework := strings.TrimSpace(observation.framework)
+	if framework == "" {
+		framework = "Repository UI"
 	}
 	return programmaticTheme{
+		profile: programmaticProfileProduct, framework: framework,
 		primary: primary, primaryText: contrastProgrammaticText(primary),
 		background: background, surface: surface, surfaceMuted: surfaceMuted,
-		foreground: foreground, mutedText: mutedText, border: border,
-		success: "#16a34a", warning: "#d97706", danger: "#dc2626",
-		fontFamily: font, fontDisplay: font, baseSpace: baseSpace,
+		foreground: foreground, mutedText: mutedText, subtleText: subtleText, border: border,
+		sidebar: sidebar, tableHeader: tableHeader, info: info,
+		success: success, warning: warning, danger: danger,
+		fontFamily: font, fontDisplay: font, baseSpace: chooseProgrammaticBaseSpace(observation.spacings),
 		borderRadius: radius, controlHeight: 40,
-		components: components, componentPaths: observation.componentPaths,
+		sidebarWidth: namedProgrammaticPixels(observation.customProperties, []string{"sidebar-width", "aside-width"}),
+		topbarHeight: namedProgrammaticPixels(observation.customProperties, []string{"topbar-height", "header-height"}),
+		components:   components, componentPaths: observation.componentPaths,
 		pagePatterns: patterns, pagePaths: observation.pagePaths,
+		semanticPaths: observation.semanticPaths,
 	}
 }
 
@@ -708,7 +875,7 @@ func buildProgrammaticDesignMarkdown(input ProgrammaticInput, sources []programm
 
 func buildProgrammaticTokensCSS(theme programmaticTheme) string {
 	space := theme.baseSpace
-	return fmt.Sprintf(`:root {
+	css := fmt.Sprintf(`:root {
   --color-primary: %s;
   --color-primary-contrast: %s;
   --color-background: %s;
@@ -716,7 +883,11 @@ func buildProgrammaticTokensCSS(theme programmaticTheme) string {
   --color-surface-muted: %s;
   --color-text: %s;
   --color-text-muted: %s;
+  --color-text-subtle: %s;
   --color-border: %s;
+  --color-sidebar: %s;
+  --color-table-header: %s;
+  --color-info: %s;
   --color-success: %s;
   --color-warning: %s;
   --color-danger: %s;
@@ -739,11 +910,18 @@ func buildProgrammaticTokensCSS(theme programmaticTheme) string {
   --radius-lg: 16px;
   --control-height: %dpx;
   --shadow-card: 0 10px 30px rgba(15, 23, 42, 0.08);
-}
 `, theme.primary, theme.primaryText, theme.background, theme.surface, theme.surfaceMuted,
-		theme.foreground, theme.mutedText, theme.border, theme.success, theme.warning, theme.danger,
+		theme.foreground, theme.mutedText, theme.subtleText, theme.border, theme.sidebar, theme.tableHeader, theme.info,
+		theme.success, theme.warning, theme.danger,
 		theme.fontFamily, theme.fontDisplay, space, space*2, space*3, space*4, space*6, space*8,
 		theme.borderRadius, theme.controlHeight)
+	if theme.sidebarWidth > 0 {
+		css += fmt.Sprintf("  --sidebar-width: %dpx;\n", theme.sidebarWidth)
+	}
+	if theme.topbarHeight > 0 {
+		css += fmt.Sprintf("  --topbar-height: %dpx;\n", theme.topbarHeight)
+	}
+	return css + "}\n"
 }
 
 func buildProgrammaticSourceIndex(input ProgrammaticInput, sources []programmaticSource, observation programmaticObservation) (string, error) {
@@ -839,89 +1017,17 @@ func buildProgrammaticSourceIndex(input ProgrammaticInput, sources []programmati
 	return string(encoded) + "\n", nil
 }
 
-func buildProgrammaticUIKit(input ProgrammaticInput, theme programmaticTheme) string {
-	name := html.EscapeString(cleanProgrammaticText(firstNonEmpty(input.RepositoryName, input.ProjectName, "Repository"), 120))
-	commit := html.EscapeString(shortProgrammaticCommit(input.CommitSHA))
-	var components strings.Builder
-	for index, component := range theme.components {
-		fmt.Fprintf(&components, `<article class="specimen" data-design-node-id="kit-component-%d" data-design-node-kind="component" data-design-node-label="%s"><span class="component-index">%02d</span><div><strong>%s</strong><p>来源仓库的共享组件模式</p></div><span class="state">Default · Hover · Disabled</span></article>`, index+1, html.EscapeString(component), index+1, html.EscapeString(component))
-	}
-	var patterns strings.Builder
-	for index, pattern := range theme.pagePatterns {
-		fmt.Fprintf(&patterns, `<article class="pattern" data-design-node-id="kit-pattern-%d" data-design-node-kind="block" data-design-node-label="%s"><span>页面模式 %02d</span><strong>%s</strong><p>使用同一组 Tokens 组织导航、内容与状态反馈。</p></article>`, index+1, html.EscapeString(pattern), index+1, html.EscapeString(pattern))
-	}
-	return fmt.Sprintf(`<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>%s 设计体系</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { margin: 0; background: var(--color-background); color: var(--color-text); font-family: var(--font-family-body); }
-    main { min-height: 100vh; padding: var(--space-8); background: linear-gradient(180deg, var(--color-surface-muted), var(--color-background) 42%%); }
-    .shell { max-width: 1180px; margin: 0 auto; }
-    .eyebrow, .section-label, .pattern span { color: var(--color-text-muted); font-size: var(--font-size-caption); letter-spacing: .08em; text-transform: uppercase; }
-    h1, h2, p { margin: 0; }
-    h1 { margin-top: var(--space-2); font-family: var(--font-family-display); font-size: var(--font-size-display); line-height: var(--line-height-tight); }
-    h2 { font-size: var(--font-size-title); }
-    .hero { display: grid; gap: var(--space-6); padding: var(--space-8); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: var(--shadow-card); }
-    .hero-row { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: var(--space-4); }
-    .meta { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-    .chip, .state { border: 1px solid var(--color-border); border-radius: 999px; padding: var(--space-1) var(--space-2); color: var(--color-text-muted); font-size: var(--font-size-caption); }
-    section { margin-top: var(--space-8); }
-    .section-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-4); margin-bottom: var(--space-4); }
-    .palette { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); }
-    .swatch { min-height: 132px; display: flex; align-items: end; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
-    .swatch-primary { background: var(--color-primary); }
-    .swatch-background { background: var(--color-background); }
-    .swatch-muted { background: var(--color-surface-muted); }
-    .swatch-text { background: var(--color-text); }
-    .swatch div { width: 100%%; padding: var(--space-2); background: var(--color-surface); border-top: 1px solid var(--color-border); font-size: var(--font-size-caption); }
-    .type-card { display: grid; grid-template-columns: 1.4fr 1fr; gap: var(--space-4); padding: var(--space-6); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
-    .display { font-family: var(--font-family-display); font-size: var(--font-size-display); line-height: var(--line-height-tight); }
-    .body-copy { color: var(--color-text-muted); line-height: var(--line-height-body); }
-    .components { display: grid; gap: var(--space-2); }
-    .specimen { min-height: var(--control-height); display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
-    .component-index { color: var(--color-primary); font-weight: 700; }
-    .specimen p, .pattern p { margin-top: var(--space-1); color: var(--color-text-muted); font-size: var(--font-size-caption); }
-    .patterns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
-    .pattern { min-height: 170px; padding: var(--space-4); border-radius: var(--radius-md); background: var(--color-primary); color: var(--color-primary-contrast); }
-    .pattern span, .pattern p { color: inherit; opacity: .78; }
-    .pattern strong { display: block; margin-top: var(--space-6); font-size: var(--font-size-title); }
-    @media (max-width: 760px) { main { padding: var(--space-4); } .palette, .patterns, .type-card { grid-template-columns: 1fr; } .specimen { grid-template-columns: 36px 1fr; } .state { grid-column: 2; justify-self: start; } }
-  </style>
-</head>
-<body>
-  <main>
-    <div class="shell">
-      <header class="hero" data-design-node-id="kit-identity" data-design-node-kind="block" data-design-node-label="设计体系身份">
-        <div class="hero-row"><div><span class="eyebrow">Repository design system · Quick draft</span><h1>%s</h1></div><div class="meta"><span class="chip">Commit %s</span><span class="chip">程序化快速生成</span></div></div>
-        <p class="body-copy">基于固定仓库和高信号源码生成的第一份可查看结果。AI 深度优化可以在此基础上继续完善业务语义与设计质量。</p>
-      </header>
-      <section data-design-node-id="kit-palette" data-design-node-kind="block" data-design-node-label="色彩 Tokens"><div class="section-head"><div><span class="section-label">Foundation 01</span><h2>色彩 Tokens</h2></div><span class="chip">Source backed</span></div><div class="palette"><div class="swatch swatch-primary"><div>Primary<br>%s</div></div><div class="swatch swatch-background"><div>Background<br>%s</div></div><div class="swatch swatch-muted"><div>Muted surface<br>%s</div></div><div class="swatch swatch-text"><div>Text<br>%s</div></div></div></section>
-      <section data-design-node-id="kit-typography" data-design-node-kind="block" data-design-node-label="字体层级"><div class="section-head"><div><span class="section-label">Foundation 02</span><h2>字体与信息层级</h2></div></div><div class="type-card"><div class="display">清楚、稳定、可复用</div><p class="body-copy">界面正文保持舒适可读，标题建立明确层级。复杂信息通过结构与间距组织，而不是依赖装饰性噪音。</p></div></section>
-      <section data-design-node-id="kit-components" data-design-node-kind="block" data-design-node-label="组件状态"><div class="section-head"><div><span class="section-label">System 01</span><h2>仓库组件与状态</h2></div><span class="chip">%d patterns</span></div><div class="components">%s</div></section>
-      <section data-design-node-id="kit-patterns" data-design-node-kind="block" data-design-node-label="页面模式"><div class="section-head"><div><span class="section-label">System 02</span><h2>代表性页面模式</h2></div></div><div class="patterns">%s</div></section>
-    </div>
-  </main>
-</body>
-</html>
-`, name, name, commit, theme.primary, theme.background, theme.surfaceMuted, theme.foreground, len(theme.components), components.String(), patterns.String())
-}
-
-func buildProgrammaticPatternsPreview(input ProgrammaticInput, theme programmaticTheme) string {
-	name := html.EscapeString(cleanProgrammaticText(firstNonEmpty(input.RepositoryName, input.ProjectName, "Repository"), 120))
-	var patterns strings.Builder
-	for index, pattern := range theme.pagePatterns {
-		fmt.Fprintf(&patterns, `<article class="page" data-design-node-id="preview-pattern-%d" data-design-node-kind="block" data-design-node-label="%s"><div class="chrome"><span></span><span></span><span></span></div><div class="nav">%s</div><div class="content"><span class="kicker">Pattern %02d</span><h2>%s</h2><div class="rows"><i></i><i></i><i></i></div></div></article>`, index+1, html.EscapeString(pattern), name, index+1, html.EscapeString(pattern))
-	}
-	return fmt.Sprintf(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>%s 页面模式</title><style>*{box-sizing:border-box}body{margin:0;background:var(--color-background);color:var(--color-text);font-family:var(--font-family-body)}main{min-height:100vh;padding:var(--space-8)}header{max-width:1180px;margin:0 auto var(--space-6)}h1,h2,p{margin:0}h1{font-size:var(--font-size-display);font-family:var(--font-family-display)}p{margin-top:var(--space-2);color:var(--color-text-muted)}.grid{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-4)}.page{overflow:hidden;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface);box-shadow:var(--shadow-card)}.chrome{display:flex;gap:var(--space-1);padding:var(--space-2);border-bottom:1px solid var(--color-border);background:var(--color-surface-muted)}.chrome span{width:8px;height:8px;border-radius:50%%;background:var(--color-border)}.nav{padding:var(--space-3);background:var(--color-primary);color:var(--color-primary-contrast);font-weight:700}.content{padding:var(--space-6)}.kicker{font-size:var(--font-size-caption);color:var(--color-text-muted);text-transform:uppercase;letter-spacing:.08em}h2{margin-top:var(--space-2);font-size:var(--font-size-title)}.rows{display:grid;gap:var(--space-2);margin-top:var(--space-6)}.rows i{display:block;height:38px;border-radius:var(--radius-md);background:var(--color-surface-muted);border:1px solid var(--color-border)}@media(max-width:760px){main{padding:var(--space-4)}.grid{grid-template-columns:1fr}}</style></head><body><main data-design-node-id="preview-patterns-root" data-design-node-kind="block" data-design-node-label="页面模式预览"><header><h1>%s 页面模式</h1><p>快速草稿从仓库高信号页面中提炼的结构基线。</p></header><div class="grid">%s</div></main></body></html>`, name, name, patterns.String())
-}
-
 func buildProgrammaticTokensJSON(theme programmaticTheme) string {
 	value := map[string]any{
-		"color":      map[string]string{"primary": theme.primary, "background": theme.background, "surface": theme.surface, "text": theme.foreground, "mutedText": theme.mutedText, "border": theme.border},
+		"profile":   theme.profile,
+		"framework": theme.framework,
+		"color": map[string]string{
+			"primary": theme.primary, "background": theme.background, "surface": theme.surface,
+			"surfaceMuted": theme.surfaceMuted, "text": theme.foreground, "mutedText": theme.mutedText,
+			"subtleText": theme.subtleText, "border": theme.border, "sidebar": theme.sidebar,
+			"tableHeader": theme.tableHeader, "info": theme.info, "success": theme.success,
+			"warning": theme.warning, "danger": theme.danger,
+		},
 		"typography": map[string]any{"body": theme.fontFamily, "display": theme.fontDisplay},
 		"spacing":    map[string]int{"base": theme.baseSpace, "controlHeight": theme.controlHeight},
 		"radius":     map[string]string{"base": theme.borderRadius},
@@ -983,6 +1089,30 @@ func normalizeProgrammaticFont(value string) string {
 		}
 	}
 	return ""
+}
+
+func namedProgrammaticPixels(properties map[string]string, terms []string) int {
+	keys := make([]string, 0, len(properties))
+	for key := range properties {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, term := range terms {
+		for _, key := range keys {
+			if !strings.Contains(key, term) {
+				continue
+			}
+			value := strings.TrimSpace(strings.ToLower(properties[key]))
+			if !strings.HasSuffix(value, "px") {
+				continue
+			}
+			pixels, err := strconv.Atoi(strings.TrimSpace(strings.TrimSuffix(value, "px")))
+			if err == nil && pixels > 0 && pixels <= 2048 {
+				return pixels
+			}
+		}
+	}
+	return 0
 }
 
 func namedProgrammaticColor(properties map[string]string, terms []string) string {
@@ -1098,6 +1228,10 @@ func chooseProgrammaticBaseSpace(values map[int]int) int {
 }
 
 func componentNameFromPath(relative string) string {
+	ext := strings.ToLower(filepath.Ext(relative))
+	if ext == ".md" || ext == ".json" {
+		return ""
+	}
 	lower := strings.ToLower("/" + filepath.ToSlash(relative))
 	if !strings.Contains(lower, "/components/") && !strings.Contains(lower, "/ui/") && !strings.Contains(lower, "/widgets/") {
 		return ""

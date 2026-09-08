@@ -3146,9 +3146,9 @@ func (d *Daemon) registerTaskRepos(workspaceID, taskID string, repos []RepoData)
 
 	if d.repoCache != nil && len(toSync) > 0 {
 		// Sync in the background — same shape used at workspace registration.
-		// `ensureRepoReady` reports a meaningful error if the cache isn't ready
-		// yet, so the agent's first checkout will surface a sync failure
-		// without silently treating it as a config bug.
+		// A first checkout also synchronously joins this repo's cache lock through
+		// ensureRepoReady, so prewarming never forces the user to retry a cold
+		// project-only repository.
 		d.bgSyncs.Add(1)
 		go func() {
 			defer d.bgSyncs.Done()
@@ -3741,7 +3741,23 @@ func (d *Daemon) ensureRepoReady(ctx context.Context, workspaceID, repoURL strin
 		return nil
 	}
 
-	d.syncWorkspaceReposContext(ctx, workspaceID, resp.Repos)
+	syncRepos := resp.Repos
+	requestedRepoIncluded := false
+	for _, repo := range resp.Repos {
+		if strings.TrimSpace(repo.URL) == repoURL {
+			requestedRepoIncluded = true
+			break
+		}
+	}
+	if !requestedRepoIncluded {
+		// Project-scoped repositories are registered on the task allowlist and
+		// cloned in the background, but they are intentionally absent from the
+		// workspace repository response. Synchronize the requested repository
+		// here as well so a first checkout waits for that cold clone instead of
+		// failing once with "configured but not synced".
+		syncRepos = []RepoData{{URL: repoURL}}
+	}
+	d.syncWorkspaceReposContext(ctx, workspaceID, syncRepos)
 	if err := ctx.Err(); err != nil {
 		return context.Cause(ctx)
 	}
@@ -7945,6 +7961,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			}
 		}()
 	}
+	// A project-design-system adjustment uses the same complete immutable-base
+	// contract as Open Design and Design Document. Restore it before the Agent
+	// starts; an unavailable or invalid base fails closed instead of silently
+	// degrading to three compatibility files.
+	if err := d.restoreProjectDesignSystemBaseArchive(prepareCtx, task, env.RootDir, env.WorkDir); err != nil {
+		return TaskResult{}, fmt.Errorf("prepare project design system base archive: %w", err)
+	}
+
 	// A page-design adjustment runs against a base revision whose package is an
 	// archive, so execenv only reserved the directory — the bytes have to come
 	// over the wire. Done here, while the run is still in its prepare phase, so

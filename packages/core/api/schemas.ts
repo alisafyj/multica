@@ -1692,6 +1692,7 @@ export const DesignFileSchema = z.object({
   workspace_id: z.string(),
   project_id: z.string().nullable().optional(),
   project_resource_id: z.string().nullable().catch(null).default(null),
+  workspace_repository_id: z.string().nullable().catch(null).default(null),
   folder_id: z.string().nullable().optional(),
   title: z.string(),
   description: z.string().nullable().default(null),
@@ -2230,6 +2231,10 @@ const ProjectDesignSystemInputSnapshotSchema = z.preprocess(
   z.object({
     agent_id: z.string().catch("").optional(),
     generation_mode: z.enum(["agent", "programmatic_first"]).optional(),
+    workspace_repository_id: z.string().catch("").optional(),
+    workspace_repository_url: z.string().catch("").optional(),
+    workspace_repository_label: z.string().catch("").optional(),
+    workspace_repository_ref: z.string().catch("").optional(),
     platform: ProjectDesignSystemPlatformSchema.optional(),
     brief: z.string().catch("").optional(),
     references: z.preprocess(
@@ -2299,6 +2304,7 @@ export const ProjectDesignSystemSchema = z.object({
   // system, and older backends never send it, so an absent field defaults to
   // the project-level scope rather than failing the parse.
   project_resource_id: z.string().catch("").default(""),
+  workspace_repository_id: z.string().catch("").default(""),
   name: z.string().catch("").default(""),
   platform: ProjectDesignSystemPlatformSchema,
   current_agent_id: z.string().nullable().catch(null).default(null),
@@ -2326,6 +2332,7 @@ export const EMPTY_PROJECT_DESIGN_SYSTEM: ProjectDesignSystem = {
   workspace_id: "",
   project_id: "",
   project_resource_id: "",
+  workspace_repository_id: "",
   name: "",
   platform: "",
   current_agent_id: null,
@@ -2367,10 +2374,12 @@ export const ProjectDesignSystemCatalogueEntrySchema = z.object({
   project_title: z.string().catch("").default(""),
   // The server omits the field for a project-level system (DC-052).
   project_resource_id: z.string().catch("").default(""),
+  workspace_repository_id: z.string().catch("").default(""),
   name: z.string().catch("").default(""),
   platform: ProjectDesignSystemPlatformSchema,
   summary: z.string().catch("").default(""),
   has_draft_package: z.boolean().catch(false).default(false),
+  ownership_scope: z.enum(["mine", "team"]).catch("team").default("team"),
   saved_at: z.string().catch("").default(""),
 }).loose();
 
@@ -2414,6 +2423,7 @@ export const DesignDocumentSchema = z.object({
   workspace_id: z.string().catch("").default(""),
   project_id: z.string().catch("").default(""),
   project_resource_id: z.string().catch("").default(""),
+  workspace_repository_id: z.string().catch("").default(""),
   issue_id: z.string().catch("").default(""),
   title: z.string().catch("").default(""),
   platform: ProjectDesignSystemPlatformSchema,
@@ -2441,6 +2451,7 @@ export const EMPTY_DESIGN_DOCUMENT: DesignDocument = {
   workspace_id: "",
   project_id: "",
   project_resource_id: "",
+  workspace_repository_id: "",
   issue_id: "",
   title: "",
   platform: "",
@@ -2473,6 +2484,7 @@ export const DesignRepositoryListItemSchema = z.object({
   project_id: z.string(),
   project_title: z.string(),
   label: z.string(),
+  description: z.string().catch("").default(""),
   repository_url: z.string(),
   default_branch_hint: z.string(),
 });

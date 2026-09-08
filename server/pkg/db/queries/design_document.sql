@@ -79,6 +79,18 @@ WHERE workspace_id = sqlc.arg('workspace_id')
   AND project_resource_id = sqlc.arg('project_resource_id')
 ORDER BY updated_at DESC;
 
+-- Settings-repository documents are independent of projects and project_resource.
+-- name: ListDesignDocumentsByWorkspaceRepository :many
+SELECT * FROM design_document
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND workspace_repository_id = sqlc.arg('workspace_repository_id')
+ORDER BY updated_at DESC;
+
+-- name: CountDesignDocumentsByWorkspaceRepository :one
+SELECT count(*) FROM design_document
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND workspace_repository_id = sqlc.arg('workspace_repository_id');
+
 -- The workspace-wide list, most recently touched first. The project create
 -- modal's design picker is the one caller: it must offer documents from every
 -- project, because the project being created does not own any yet. Backed by

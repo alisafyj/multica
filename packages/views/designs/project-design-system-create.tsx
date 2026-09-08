@@ -1158,7 +1158,7 @@ export function ProjectDesignSystemCreate({
             }}
           >
             {isSubmittingCurrentProject ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            {isSubmittingCurrentProject ? "提交中…" : "生成设计体系"}
+            {isSubmittingCurrentProject ? "正在生成…" : "立即生成"}
           </Button>
         )}
       </div>

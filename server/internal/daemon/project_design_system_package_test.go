@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/chromedp"
 	"github.com/multica-ai/multica/server/internal/designpreview"
 	"github.com/multica-ai/multica/server/internal/opendesign"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
@@ -727,7 +728,7 @@ func TestLoopbackPreviewServerAppliesCSPAndInjectionToValidatedHTMLTargets(t *te
 			if !strings.Contains(csp, "'sha256-"+wantHash+"'") {
 				t.Fatalf("CSP script-src hash mismatch: want sha256-%s, got %q", wantHash, csp)
 			}
-			if !strings.Contains(body, `<link rel="stylesheet" href="/`+prefix+`/tokens.css">`) {
+			if !strings.Contains(body, `<link rel="stylesheet" href="../tokens.css">`) {
 				t.Fatalf("body missing tokens.css link: %q", body)
 			}
 			if !strings.Contains(body, selectionBridgeScript) {
@@ -762,13 +763,86 @@ func TestLoopbackPreviewServerAppliesCSPAndInjectionToValidatedHTMLTargets(t *te
 			if csp != "" {
 				t.Fatalf("non-HTML response carries CSP header: %q", csp)
 			}
-			if target.wantNoLink && strings.Contains(body, `<link rel="stylesheet" href="/`+prefix+`/tokens.css">`) {
+			if target.wantNoLink && strings.Contains(body, `<link rel="stylesheet" href="../tokens.css">`) {
 				t.Fatalf("non-HTML response carries tokens.css link injection: %q", body)
 			}
 			if target.wantNoBrdg && strings.Contains(body, selectionBridgeScript) {
 				t.Fatalf("non-HTML response carries bridge injection: %q", body)
 			}
 		})
+	}
+}
+
+func TestProgrammaticUIKitLoadsTokensAndComputedStylesInBrowser(t *testing.T) {
+	browserPath, err := designpreview.ResolveBrowserPath("")
+	if err != nil {
+		t.Skipf("real browser unavailable: %v", err)
+	}
+	repository := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repository, "components"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repository, "components", "DoctorCard.tsx"), []byte(`export function DoctorCard(){return <article>Doctor</article>}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repository, "styles"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repository, "styles", "globals.css"), []byte(`:root{--brand-primary:#00ab84;--page-background:#ffffff;--text-primary:#111827}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	envRoot := t.TempDir()
+	if _, err := projectdesignsystem.GenerateProgrammaticFirstPackage(
+		context.Background(), repository, filepath.Join(envRoot, "output", "project-design-system"),
+		projectdesignsystem.ProgrammaticInput{
+			ProjectName: "Clinic", RepositoryName: "clinic-web", CommitSHA: strings.Repeat("b", 40),
+			Platform: "mobile", Brief: "Visual UI Kit", InputSnapshotSHA256: "sha256:" + strings.Repeat("a", 64),
+		}, nil,
+	); err != nil {
+		t.Fatalf("generate programmatic package: %v", err)
+	}
+	collected, err := collectV2ForTest(t, envRoot)
+	if err != nil {
+		t.Fatalf("collect programmatic package: %v", err)
+	}
+	baseURL, prefix, cleanup := startLoopbackPreviewServerForTest(t, collected)
+	defer cleanup()
+
+	allocatorOptions := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
+	allocatorOptions = append(allocatorOptions, chromedp.ExecPath(browserPath), chromedp.Flag("headless", true))
+	allocatorCtx, cancelAllocator := chromedp.NewExecAllocator(context.Background(), allocatorOptions...)
+	defer cancelAllocator()
+	browserCtx, cancelBrowser := chromedp.NewContext(allocatorCtx)
+	defer cancelBrowser()
+	browserCtx, cancelTimeout := context.WithTimeout(browserCtx, 20*time.Second)
+	defer cancelTimeout()
+
+	var metrics struct {
+		Primary        string `json:"primary"`
+		HeroPadding    string `json:"heroPadding"`
+		ButtonColor    string `json:"buttonColor"`
+		StyleRuleCount int    `json:"styleRuleCount"`
+	}
+	expression := `(() => {
+		const count = Array.from(document.styleSheets).reduce((total, sheet) => {
+			try { return total + sheet.cssRules.length; } catch (_) { return total; }
+		}, 0);
+		return {
+			primary: getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim(),
+			heroPadding: getComputedStyle(document.querySelector('.hero')).paddingTop,
+			buttonColor: getComputedStyle(document.querySelector('.button-primary')).backgroundColor,
+			styleRuleCount: count,
+		};
+	})()`
+	if err := chromedp.Run(browserCtx,
+		chromedp.Navigate(baseURL+"/"+prefix+"/ui-kit/index.html"),
+		chromedp.WaitVisible(".button-primary", chromedp.ByQuery),
+		chromedp.Evaluate(expression, &metrics),
+	); err != nil {
+		t.Fatalf("render programmatic UI Kit: %v", err)
+	}
+	if metrics.Primary != "#00ab84" || metrics.HeroPadding == "0px" || metrics.ButtonColor == "rgba(0, 0, 0, 0)" || metrics.StyleRuleCount < 20 {
+		t.Fatalf("programmatic UI Kit styles did not apply: %+v", metrics)
 	}
 }
 
@@ -784,7 +858,7 @@ func TestLoopbackPreviewServerBridgeInjectionRespectsDocumentStructure(t *testin
 	injected := injectBridgeAndTokens([]byte(html), "testprefix")
 
 	got := string(injected)
-	linkIdx := strings.Index(got, `<link rel="stylesheet" href="/testprefix/tokens.css">`)
+	linkIdx := strings.Index(got, `<link rel="stylesheet" href="../tokens.css">`)
 	bodyOpenIdx := strings.Index(got, "<body>")
 	bodyCloseIdx := strings.Index(got, "</body>")
 	bridgeIdx := strings.Index(got, selectionBridgeScript)
@@ -822,13 +896,13 @@ func TestLoopbackPreviewServerBridgeInjectionWorksOnFragmentHTML(t *testing.T) {
 	injected := injectBridgeAndTokens([]byte(fragment), "testprefix")
 
 	got := string(injected)
-	if !strings.Contains(got, `<link rel="stylesheet" href="/testprefix/tokens.css">`) {
+	if !strings.Contains(got, `<link rel="stylesheet" href="../tokens.css">`) {
 		t.Fatalf("fragment missing tokens.css link: %q", got)
 	}
 	if !strings.Contains(got, selectionBridgeScript) {
 		t.Fatalf("fragment missing bridge: %q", got)
 	}
-	if !strings.HasPrefix(got, `<link rel="stylesheet" href="/testprefix/tokens.css">`) {
+	if !strings.HasPrefix(got, `<link rel="stylesheet" href="../tokens.css">`) {
 		t.Fatalf("fragment link not prepended: %q", got)
 	}
 	if !strings.HasSuffix(got, "</script>") {

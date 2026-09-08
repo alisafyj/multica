@@ -24,10 +24,10 @@ func isProgrammaticFirstProjectDesignSystemTask(task Task) bool {
 	var taskContext service.ProjectDesignSystemTaskContext
 	return json.Unmarshal(task.ProjectDesignSystemContext, &taskContext) == nil &&
 		taskContext.Type == service.ProjectDesignSystemTaskContextType &&
-		taskContext.Operation == service.ProjectDesignSystemGenerate &&
+		(taskContext.Operation == service.ProjectDesignSystemGenerate || taskContext.Operation == service.ProjectDesignSystemRegenerate) &&
 		taskContext.ExecutionMode == service.ProjectDesignSystemExecutionModeProgrammaticFirst &&
 		taskContext.PackageSchema == projectdesignsystem.PackageSchemaV2 &&
-		strings.TrimSpace(taskContext.ProjectResourceID) != ""
+		(strings.TrimSpace(taskContext.ProjectResourceID) != "" || strings.TrimSpace(taskContext.WorkspaceRepositoryID) != "")
 }
 
 // runProgrammaticFirstProjectDesignSystemTask executes the repository-scoped
@@ -91,7 +91,7 @@ func (d *Daemon) runProgrammaticFirstProjectDesignSystemTask(
 	}
 
 	repositoryRoot, repositoryURL, repositoryName, commitSHA, checkoutErr := d.prepareProgrammaticRepository(
-		ctx, task, taskContext.ProjectResourceID, env.WorkDir,
+		ctx, task, taskContext, env.WorkDir,
 	)
 	analysis := decodeProgrammaticRepositoryAnalysis(taskContext.RepositoryAnalysis)
 	if checkoutErr != nil && analysis == nil {
@@ -171,7 +171,7 @@ func programmaticTaskContextForEnv(task Task) execenv.TaskContextForEnv {
 func (d *Daemon) prepareProgrammaticRepository(
 	ctx context.Context,
 	task Task,
-	projectResourceID string,
+	taskContext service.ProjectDesignSystemTaskContext,
 	workDir string,
 ) (root, repositoryURL, repositoryName, commitSHA string, err error) {
 	repositoriesDir := filepath.Join(workDir, "repositories")
@@ -179,6 +179,36 @@ func (d *Daemon) prepareProgrammaticRepository(
 		return "", "", "", "", err
 	}
 
+	if strings.TrimSpace(taskContext.WorkspaceRepositoryID) != "" {
+		repositoryURL = strings.TrimSpace(taskContext.WorkspaceRepositoryURL)
+		repositoryName = strings.TrimSpace(taskContext.WorkspaceRepositoryLabel)
+		if repositoryURL == "" {
+			return "", "", repositoryName, "", errors.New("settings repository URL is missing from the task claim")
+		}
+		if err := d.ensureRepoReady(ctx, task.WorkspaceID, repositoryURL); err != nil {
+			return "", repositoryURL, repositoryName, "", err
+		}
+		params := repocache.WorktreeParams{WorkspaceID: task.WorkspaceID, RepoURL: repositoryURL, WorkDir: repositoriesDir, Ref: strings.TrimSpace(taskContext.WorkspaceRepositoryRef), AgentName: "programmatic-design-system", TaskID: task.ID, PeerURLs: []string{repositoryURL}, CoAuthoredByEnabled: false, IsolatedGitMetadata: true}
+		var checkout *repocache.WorktreeResult
+		var checkoutErr error
+		if contextCache, ok := d.repoCache.(interface {
+			CreateWorktreeContext(context.Context, repocache.WorktreeParams) (*repocache.WorktreeResult, error)
+		}); ok {
+			checkout, checkoutErr = contextCache.CreateWorktreeContext(ctx, params)
+		} else {
+			checkout, checkoutErr = d.repoCache.CreateWorktree(params)
+		}
+		if checkoutErr != nil {
+			return "", repositoryURL, repositoryName, "", checkoutErr
+		}
+		commit, commitErr := programmaticGitCommit(ctx, checkout.Path)
+		if commitErr != nil {
+			return "", repositoryURL, repositoryName, "", commitErr
+		}
+		return checkout.Path, repositoryURL, firstProgrammaticValue(repositoryName, repositoryNameFromURL(repositoryURL)), commit, nil
+	}
+
+	projectResourceID := taskContext.ProjectResourceID
 	selectedResources := make([]ProjectResourceData, 0, 1)
 	for _, resource := range task.ProjectResources {
 		if resource.ID == strings.TrimSpace(projectResourceID) {

@@ -27,12 +27,13 @@ import {
   designRepositoryCatalogueOptions,
   designSystemListOptions,
   projectDesignSystemByProjectOptions,
+  projectDesignSystemByWorkspaceRepositoryOptions,
   projectDesignSystemCatalogueOptions,
 } from "@multica/core/designs/queries";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { projectListOptions, projectResourcesOptions } from "@multica/core/projects";
+import { projectListOptions } from "@multica/core/projects";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type {
   Agent,
@@ -64,6 +65,7 @@ import {
 } from "./brand-references";
 import { PLATFORM_OPTIONS, isAgentAvailable } from "./project-design-system-create";
 import { ProjectDesignSystemContent } from "./project-design-system-workspace";
+import { OpenDesignSystemCreateHero } from "./open-design-system-create-hero";
 import { repositoryName } from "./project-repository";
 
 const MAX_LINKS = 8;
@@ -169,32 +171,37 @@ export function WorkspaceDesignSystemCreate({
   const selectedRepositoryName = selectedRepository
     ? repositoryName(selectedRepository.label, selectedRepository.repositoryUrl, selectedRepository.projectTitle)
     : "";
-  const scopedProjectId = scope === "repository"
-    ? selectedRepository?.projectId ?? projectId
-    : projectId;
-  const { data: projectResources = [] } = useQuery({
-    ...projectResourcesOptions(wsId, scopedProjectId),
-    enabled: scope !== "standalone" && Boolean(scopedProjectId),
-  });
+  const scopedProjectId = scope === "project" ? projectId : "";
   const scopedDesignFiles = useQuery({
-    ...designFileListOptions(wsId, scopedProjectId ? { kind: "project", projectId: scopedProjectId } : undefined),
-    enabled: scope !== "standalone" && Boolean(scopedProjectId),
+    ...designFileListOptions(
+      wsId,
+      scope === "repository" && repositoryId
+        ? { kind: "workspace_repository", workspaceRepositoryId: repositoryId }
+        : scopedProjectId
+          ? { kind: "project", projectId: scopedProjectId }
+          : undefined,
+    ),
+    enabled: scope === "repository" ? Boolean(repositoryId) : scope === "project" && Boolean(scopedProjectId),
   });
   const scopedProfiles = useQuery({
     ...designSystemListOptions(wsId, scopedProjectId || undefined),
-    enabled: scope !== "standalone" && Boolean(scopedProjectId),
+    enabled: scope === "project" && Boolean(scopedProjectId),
   });
-  const scopedSystem = useQuery({
-    ...projectDesignSystemByProjectOptions(
-      wsId,
-      scopedProjectId,
-      scope === "repository" ? selectedRepository?.id : undefined,
-    ),
-    enabled: scope !== "standalone" && Boolean(scopedProjectId) && (scope === "project" || Boolean(selectedRepository)),
+  const projectScopedSystem = useQuery({
+    ...projectDesignSystemByProjectOptions(wsId, scopedProjectId),
+    enabled: scope === "project" && Boolean(scopedProjectId),
     refetchInterval: (query) => (
       query.state.data?.active_task || query.state.data?.status === "generating" ? 1000 : false
     ),
   });
+  const repositoryScopedSystem = useQuery({
+    ...projectDesignSystemByWorkspaceRepositoryOptions(wsId, repositoryId),
+    enabled: scope === "repository" && Boolean(selectedRepository),
+    refetchInterval: (query) => (
+      query.state.data?.active_task || query.state.data?.status === "generating" ? 1000 : false
+    ),
+  });
+  const scopedSystem = scope === "repository" ? repositoryScopedSystem : projectScopedSystem;
   const { upload, uploadWithToast, uploading } = useFileUpload(api, (error, file) =>
     toast.error(`${file.name}：${error.message}`),
   );
@@ -226,15 +233,15 @@ export function WorkspaceDesignSystemCreate({
   const copyRequestRef = useRef(0);
   const autoPrefillScopeRef = useRef("");
 
-  const programmaticFirst = scope === "repository";
+  // Open Design v0.19.2 uses an entity-first, programmatic-first flow: create
+  // a usable design-system draft immediately, then let the selected Agent enrich
+  // that same system in place. Repository systems keep that exact lifecycle.
+  const repositoryProgrammaticFirst = scope === "repository";
   const availableAgents = useMemo(
     () => agents.filter((agent) => isAgentAvailable(agent)),
     [agents],
   );
-  const currentAgent = agents.find((agent) => agent.id === agentId);
-  const effectiveAgentId = programmaticFirst && !isAgentAvailable(currentAgent)
-    ? availableAgents[0]?.id ?? ""
-    : agentId;
+  const effectiveAgentId = agentId;
   const effectiveAgent = agents.find((agent) => agent.id === effectiveAgentId);
   const agentAvailable = isAgentAvailable(effectiveAgent);
   useEffect(() => {
@@ -279,9 +286,9 @@ export function WorkspaceDesignSystemCreate({
     : !brief.trim()
       ? "描述一下品牌或产品"
       : !effectiveAgentId
-        ? programmaticFirst ? "没有可用的本地运行环境" : "选择一个智能体"
+        ? "选择一个智能体"
         : !agentAvailable
-          ? programmaticFirst ? "本地运行环境暂不可用" : "当前智能体不可用，请选择其他智能体"
+          ? "当前智能体不可用，请选择其他智能体"
           : uploading
             ? "素材上传中"
             : "";
@@ -313,15 +320,10 @@ export function WorkspaceDesignSystemCreate({
   const updateScopedSystemCache = (system: ProjectDesignSystem) => {
     queryClient.invalidateQueries({ queryKey: designKeys.projectDesignSystemCatalogue(wsId) });
     queryClient.setQueryData(designKeys.projectDesignSystem(wsId, system.id), system);
-    if (scope !== "standalone") {
-      queryClient.setQueryData(
-        designKeys.projectDesignSystemByProject(
-          wsId,
-          scopedProjectId,
-          scope === "repository" ? repositoryId : undefined,
-        ),
-        system,
-      );
+    if (scope === "repository") {
+      queryClient.setQueryData(designKeys.projectDesignSystemByWorkspaceRepository(wsId, repositoryId), system);
+    } else if (scope === "project") {
+      queryClient.setQueryData(designKeys.projectDesignSystemByProject(wsId, scopedProjectId), system);
     }
   };
 
@@ -329,11 +331,11 @@ export function WorkspaceDesignSystemCreate({
     mutationFn: async () => {
       const { references, composedBrief } = await collectGenerationInput();
       return api.createProjectDesignSystem({
-        project_id: scope === "standalone" ? "" : scopedProjectId,
-        project_resource_id: scope === "repository" ? repositoryId : undefined,
-        name: scope === "standalone" ? name.trim() : undefined,
+        project_id: scope === "project" ? scopedProjectId : "",
+        workspace_repository_id: scope === "repository" ? repositoryId : undefined,
+        name: scope === "project" ? undefined : name.trim(),
         agent_id: effectiveAgentId,
-        generation_mode: programmaticFirst ? "programmatic_first" : "agent",
+        generation_mode: repositoryProgrammaticFirst ? "programmatic_first" : "agent",
         platform: platform as "web" | "mobile" | "cross_platform",
         brief: composedBrief,
         references,
@@ -479,13 +481,8 @@ export function WorkspaceDesignSystemCreate({
   };
 
   if (scope !== "standalone" && !embedded) {
-    const project = scope === "repository"
-      ? projects.find((candidate) => candidate.id === selectedRepository?.projectId)
-      : selectedProject;
-    const projectRepository = scope === "repository"
-      ? projectResources.find((resource) => resource.id === selectedRepository?.id)
-      : undefined;
-    if (!project || (scope === "repository" && !projectRepository)) {
+    const project = scope === "project" ? selectedProject : undefined;
+    if ((scope === "project" && !project) || (scope === "repository" && !selectedRepository)) {
       return (
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <ScopeChooser
@@ -541,8 +538,8 @@ export function WorkspaceDesignSystemCreate({
             legacyProfiles={scopedProfiles.data ?? []}
             system={existingSystem}
             isLoading={scopedSystem.isLoading}
-            repositories={projectRepository ? [projectRepository] : []}
-            selectedRepositoryId={projectRepository?.id ?? ""}
+            repositories={[]}
+            selectedRepositoryId=""
           />
         </div>
       );
@@ -594,7 +591,7 @@ export function WorkspaceDesignSystemCreate({
             onClick={() => createSystem.mutate()}
           >
             {createSystem.isPending ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
-            {createSystem.isPending ? "正在建立生成工作区…" : "生成设计体系"}
+            {createSystem.isPending ? "正在生成…" : "立即生成"}
             {createSystem.isPending ? null : <ChevronRight className="size-3.5" />}
           </Button>
         </div>
@@ -602,14 +599,14 @@ export function WorkspaceDesignSystemCreate({
 
       <main className="mx-auto grid w-full max-w-[1280px] gap-6 px-4 py-9 sm:px-7 lg:grid-cols-[minmax(320px,420px)_minmax(0,1fr)] lg:gap-12">
         <aside className="self-start lg:sticky lg:top-[84px]">
-          <CreateHero programmaticFirst={programmaticFirst} />
+          <OpenDesignSystemCreateHero />
         </aside>
 
         <div className="min-w-0">
           <section aria-label="从 GitHub、网站或源素材提取">
             <h2 className="text-title-lg font-bold leading-tight">从 GitHub、网站或源素材提取</h2>
             <p className="mt-2 text-body text-muted-foreground">
-              从 GitHub 仓库、网站、DESIGN.md 或能体现风格的文件开始。所选智能体会据此生成一套可用体系，之后可在库中继续调整。
+              从 GitHub 仓库、网站、DESIGN.md 或能体现风格的文件开始。仓库会先形成可用体系，所选智能体随后在同一体系上继续增强。
             </p>
 
             <div className="mt-3 overflow-hidden rounded-lg border bg-card shadow-sm">
@@ -1004,37 +1001,29 @@ export function WorkspaceDesignSystemCreate({
                 ) : null}
               </div>
 
-              {programmaticFirst ? (
-                <FormRow label="生成方式">
-                  <div className="flex max-w-xl items-start gap-3 rounded-lg border bg-muted/30 px-3 py-2.5">
-                    <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                      <Sparkles className="size-3.5" />
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-body font-medium">程序化快速生成</p>
-                      <p className="mt-0.5 text-caption leading-5 text-muted-foreground">首次草稿不启动 Agent。系统有界读取固定仓库并生成 Tokens、UI Kit 和页面模式；完成后可选择 AI 深度优化。</p>
-                    </div>
-                  </div>
-                </FormRow>
-              ) : (
-                <FormRow label="智能体" required>
-                  <select
-                    aria-label="智能体"
-                    value={agentId}
-                    onChange={(event) => setAgentId(event.target.value)}
-                    className="h-9 w-full max-w-sm rounded-md border bg-background px-3 text-body"
-                  >
-                    <option value="">选择智能体</option>
-                    {agents
-                      .filter((agent: Agent) => !agent.archived_at || agent.id === agentId)
-                      .map((agent: Agent) => (
-                        <option key={agent.id} value={agent.id} disabled={!isAgentAvailable(agent)}>
-                          {agent.name} · {isAgentAvailable(agent) ? agent.status : "不可用"}
-                        </option>
-                      ))}
-                  </select>
-                </FormRow>
-              )}
+              <FormRow
+                label="智能体"
+                required
+                hint={repositoryProgrammaticFirst
+                  ? "系统先立即形成可用 UI Kit；智能体随后基于同一份仓库证据原地增强，不再从零扫描。"
+                  : undefined}
+              >
+                <select
+                  aria-label="智能体"
+                  value={agentId}
+                  onChange={(event) => setAgentId(event.target.value)}
+                  className="h-9 w-full max-w-sm rounded-md border bg-background px-3 text-body"
+                >
+                  <option value="">选择智能体</option>
+                  {agents
+                    .filter((agent: Agent) => !agent.archived_at || agent.id === agentId)
+                    .map((agent: Agent) => (
+                      <option key={agent.id} value={agent.id} disabled={!isAgentAvailable(agent)}>
+                        {agent.name} · {isAgentAvailable(agent) ? agent.status : "不可用"}
+                      </option>
+                    ))}
+                </select>
+              </FormRow>
 
               <FormRow label="平台">
                 <div role="radiogroup" aria-label="平台" className="inline-flex max-w-full overflow-hidden rounded-md border bg-muted/30 p-0.5">
@@ -1198,92 +1187,9 @@ function FormRow({
  * lede, the three steps with the time estimate and deliverables, and the
  * brand-agnostic preview card of what a generated system holds.
  */
-function CreateHero({ programmaticFirst }: { programmaticFirst: boolean }) {
-  return (
-    <section className="flex flex-col gap-5">
-      <div>
-        <span className="inline-flex items-center gap-1.5 text-caption font-semibold text-primary">
-          <Sparkles className="size-3.5" />
-          设计体系
-        </span>
-        <h1 className="mt-2 font-serif text-display font-semibold leading-[1.04]">{programmaticFirst ? "一次点击，生成仓库设计体系" : "几分钟，生成一套设计体系"}</h1>
-        <p className="mt-3 text-body leading-6 text-muted-foreground">
-          {programmaticFirst
-            ? "系统固定仓库与 Commit，有界读取真实样式和组件，先生成可查看草稿；AI 只在之后按需深度优化。"
-            : "把一个网站或 DESIGN.md——连同你手头已有的上下文——变成一套完整、贴合品牌、马上可用的设计体系。"}
-        </p>
-        <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted-foreground">
-          <span><strong className="text-foreground">3</strong> 步</span>
-          <span aria-hidden="true" className="size-[3px] rounded-full bg-border" />
-          <span>{programmaticFirst ? "目标 30–60 秒出现快速草稿" : "约 3 分钟"}</span>
-          <span aria-hidden="true" className="size-[3px] rounded-full bg-border" />
-          <span>DESIGN.md · tokens · UI Kit · 预览</span>
-        </div>
-        <ol className="mt-4 flex flex-col gap-2.5">
-          {(programmaticFirst ? [
-            { n: 1, title: "固定仓库", desc: "锁定目标仓库和 Commit" },
-            { n: 2, title: "快速生成", desc: "提取 Seed 并生成 Tokens 与 UI Kit" },
-            { n: 3, title: "按需优化", desc: "验证通过后再选择 Agent 深化" },
-          ] : [
-            { n: 1, title: "网站或 DESIGN.md", desc: "粘贴链接、挑一个品牌，或直接贴入 token" },
-            { n: 2, title: "补充素材", desc: "图片、字体、参考链接——都可选" },
-            { n: 3, title: "生成", desc: "所选智能体生成草稿，之后可继续调整" },
-          ]).map((step) => (
-            <li key={step.n} className="flex items-start gap-2.5">
-              <span className="flex size-5 shrink-0 items-center justify-center rounded-full border bg-card text-micro font-semibold">{step.n}</span>
-              <span className="min-w-0 text-caption leading-5">
-                <strong className="font-semibold">{step.title}</strong>
-                <em className="ml-1.5 not-italic text-muted-foreground">{step.desc}</em>
-              </span>
-            </li>
-          ))}
-        </ol>
-      </div>
-
-      {/* Decorative: the outcome, made tangible. Brand-agnostic values only. */}
-      <div aria-hidden="true" className="rounded-xl border bg-card p-4 shadow-sm">
-        <div className="flex items-center gap-1.5 border-b pb-3">
-          <span className="size-2 rounded-full bg-border" />
-          <span className="size-2 rounded-full bg-border" />
-          <span className="size-2 rounded-full bg-border" />
-          <span className="ml-1 text-micro font-medium text-muted-foreground">你的设计体系</span>
-        </div>
-        <div className="mt-3">
-          <span className="text-micro uppercase tracking-wide text-muted-foreground">Palette</span>
-          <div className="mt-1.5 flex gap-1.5">
-            {["#4f46e5", "#0ea5e9", "#14b8a6", "#f59e0b", "#f43f5e"].map((color) => (
-              <span key={color} className="h-6 flex-1 rounded-md" style={{ background: color }} />
-            ))}
-          </div>
-        </div>
-        <div className="mt-3">
-          <span className="text-micro uppercase tracking-wide text-muted-foreground">Type scale</span>
-          <div className="mt-1 flex items-baseline gap-3">
-            <span className="text-display leading-none">Aa</span>
-            <span className="text-title leading-none">Aa</span>
-            <span className="text-body leading-none">Aa</span>
-          </div>
-        </div>
-        <div className="mt-3">
-          <span className="text-micro uppercase tracking-wide text-muted-foreground">Components</span>
-          <div className="mt-1.5 flex items-center gap-2">
-            <span className="rounded-full bg-primary px-3 py-1 text-caption font-medium text-primary-foreground">Primary</span>
-            <span className="rounded-full border px-3 py-1 text-caption text-muted-foreground">Ghost</span>
-            <span className="flex min-w-0 flex-1 flex-col gap-1 rounded-md border p-2">
-              <span className="h-1.5 w-3/4 rounded-full bg-muted" />
-              <span className="h-1.5 w-1/2 rounded-full bg-muted" />
-            </span>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 const BRAND_PAGE_SIZE = 24;
 const ALL_BRAND_CATEGORIES = "all";
 
-/** Favicon tile with a monogram fallback, as upstream's BrandFavicon. */
 function BrandFavicon({ domain, name, className }: { domain: string; name: string; className?: string }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => {

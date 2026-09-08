@@ -94,7 +94,7 @@ UPDATE project_design_system SET
 WHERE id = $1
   AND workspace_id = $2
   AND active_task_id = $3
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id, workspace_repository_id
 `
 
 type ClearProjectDesignSystemActiveTaskParams struct {
@@ -122,6 +122,7 @@ func (q *Queries) ClearProjectDesignSystemActiveTask(ctx context.Context, arg Cl
 		&i.UpdatedAt,
 		&i.SavedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
@@ -132,7 +133,7 @@ UPDATE project_design_system SET
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $2
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id, workspace_repository_id
 `
 
 type ClearProjectDesignSystemDraftStateParams struct {
@@ -159,6 +160,7 @@ func (q *Queries) ClearProjectDesignSystemDraftState(ctx context.Context, arg Cl
 		&i.UpdatedAt,
 		&i.SavedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
@@ -174,7 +176,7 @@ WHERE id = $2
   AND workspace_id = $3
   AND active_task_id = $4
   AND active_operation = 'repository_analysis'
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id, workspace_repository_id
 `
 
 type CompleteProjectDesignSystemRepositoryAnalysisParams struct {
@@ -208,6 +210,7 @@ func (q *Queries) CompleteProjectDesignSystemRepositoryAnalysis(ctx context.Cont
 		&i.UpdatedAt,
 		&i.SavedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
@@ -221,6 +224,42 @@ WHERE id = $1
 func (q *Queries) ConsumeDesignImportCode(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, consumeDesignImportCode, id)
 	return err
+}
+
+const countDesignFilesByWorkspaceRepository = `-- name: CountDesignFilesByWorkspaceRepository :one
+SELECT count(*) FROM design_file
+WHERE workspace_id = $1
+  AND workspace_repository_id = $2
+`
+
+type CountDesignFilesByWorkspaceRepositoryParams struct {
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	WorkspaceRepositoryID pgtype.UUID `json:"workspace_repository_id"`
+}
+
+func (q *Queries) CountDesignFilesByWorkspaceRepository(ctx context.Context, arg CountDesignFilesByWorkspaceRepositoryParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDesignFilesByWorkspaceRepository, arg.WorkspaceID, arg.WorkspaceRepositoryID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countProjectDesignSystemsByWorkspaceRepository = `-- name: CountProjectDesignSystemsByWorkspaceRepository :one
+SELECT count(*) FROM project_design_system
+WHERE workspace_id = $1
+  AND workspace_repository_id = $2
+`
+
+type CountProjectDesignSystemsByWorkspaceRepositoryParams struct {
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	WorkspaceRepositoryID pgtype.UUID `json:"workspace_repository_id"`
+}
+
+func (q *Queries) CountProjectDesignSystemsByWorkspaceRepository(ctx context.Context, arg CountProjectDesignSystemsByWorkspaceRepositoryParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countProjectDesignSystemsByWorkspaceRepository, arg.WorkspaceID, arg.WorkspaceRepositoryID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createDesignCatalogTemplate = `-- name: CreateDesignCatalogTemplate :one
@@ -486,7 +525,7 @@ func (q *Queries) CreateDesignDraft(ctx context.Context, arg CreateDesignDraftPa
 const createDesignFile = `-- name: CreateDesignFile :one
 INSERT INTO design_file (workspace_id, project_id, folder_id, title, description, source_type, source_ref, created_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id
+RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id, workspace_repository_id
 `
 
 type CreateDesignFileParams struct {
@@ -526,6 +565,7 @@ func (q *Queries) CreateDesignFile(ctx context.Context, arg CreateDesignFilePara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
@@ -1144,6 +1184,7 @@ INSERT INTO project_design_system (
     workspace_id,
     project_id,
     project_resource_id,
+    workspace_repository_id,
     name,
     platform,
     current_agent_id,
@@ -1157,6 +1198,7 @@ SELECT
     $1,
     $2,
     $3,
+    NULL,
     $4,
     $5,
     $6,
@@ -1168,7 +1210,7 @@ SELECT
 FROM project
 WHERE project.id = $2
   AND project.workspace_id = $1
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id, workspace_repository_id
 `
 
 type CreateProjectDesignSystemParams struct {
@@ -1216,6 +1258,7 @@ func (q *Queries) CreateProjectDesignSystem(ctx context.Context, arg CreateProje
 		&i.UpdatedAt,
 		&i.SavedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
@@ -1350,6 +1393,7 @@ INSERT INTO project_design_system (
     workspace_id,
     project_id,
     project_resource_id,
+    workspace_repository_id,
     name,
     platform,
     current_agent_id,
@@ -1370,20 +1414,22 @@ SELECT
     $6,
     $7,
     $8,
-    $9
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
+    $9,
+    $10
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id, workspace_repository_id
 `
 
 type CreateStandaloneDesignSystemParams struct {
-	WorkspaceID     pgtype.UUID `json:"workspace_id"`
-	Name            string      `json:"name"`
-	Platform        string      `json:"platform"`
-	CurrentAgentID  pgtype.UUID `json:"current_agent_id"`
-	ActiveTaskID    pgtype.UUID `json:"active_task_id"`
-	ActiveOperation pgtype.Text `json:"active_operation"`
-	InputSnapshot   []byte      `json:"input_snapshot"`
-	LastError       []byte      `json:"last_error"`
-	CreatedBy       pgtype.UUID `json:"created_by"`
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	WorkspaceRepositoryID pgtype.UUID `json:"workspace_repository_id"`
+	Name                  string      `json:"name"`
+	Platform              string      `json:"platform"`
+	CurrentAgentID        pgtype.UUID `json:"current_agent_id"`
+	ActiveTaskID          pgtype.UUID `json:"active_task_id"`
+	ActiveOperation       pgtype.Text `json:"active_operation"`
+	InputSnapshot         []byte      `json:"input_snapshot"`
+	LastError             []byte      `json:"last_error"`
+	CreatedBy             pgtype.UUID `json:"created_by"`
 }
 
 // The standalone twin of CreateProjectDesignSystem: the row belongs to the
@@ -1392,6 +1438,7 @@ type CreateStandaloneDesignSystemParams struct {
 func (q *Queries) CreateStandaloneDesignSystem(ctx context.Context, arg CreateStandaloneDesignSystemParams) (ProjectDesignSystem, error) {
 	row := q.db.QueryRow(ctx, createStandaloneDesignSystem,
 		arg.WorkspaceID,
+		arg.WorkspaceRepositoryID,
 		arg.Name,
 		arg.Platform,
 		arg.CurrentAgentID,
@@ -1418,6 +1465,7 @@ func (q *Queries) CreateStandaloneDesignSystem(ctx context.Context, arg CreateSt
 		&i.UpdatedAt,
 		&i.SavedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
@@ -2173,7 +2221,7 @@ func (q *Queries) GetDesignDraftInWorkspace(ctx context.Context, arg GetDesignDr
 }
 
 const getDesignFile = `-- name: GetDesignFile :one
-SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id FROM design_file
+SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id, workspace_repository_id FROM design_file
 WHERE id = $1
 `
 
@@ -2194,12 +2242,13 @@ func (q *Queries) GetDesignFile(ctx context.Context, id pgtype.UUID) (DesignFile
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
 
 const getDesignFileBySourceKeyForUpdate = `-- name: GetDesignFileBySourceKeyForUpdate :one
-SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id FROM design_file
+SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id, workspace_repository_id FROM design_file
 WHERE workspace_id = $1
   AND project_id = $2
   AND folder_id IS NOT DISTINCT FROM $4::uuid
@@ -2239,12 +2288,13 @@ func (q *Queries) GetDesignFileBySourceKeyForUpdate(ctx context.Context, arg Get
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
 
 const getDesignFileInWorkspace = `-- name: GetDesignFileInWorkspace :one
-SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id FROM design_file
+SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id, workspace_repository_id FROM design_file
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -2270,12 +2320,13 @@ func (q *Queries) GetDesignFileInWorkspace(ctx context.Context, arg GetDesignFil
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
 
 const getDesignFileInWorkspaceForUpdate = `-- name: GetDesignFileInWorkspaceForUpdate :one
-SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id FROM design_file
+SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id, workspace_repository_id FROM design_file
 WHERE id = $1 AND workspace_id = $2
 FOR UPDATE
 `
@@ -2302,6 +2353,7 @@ func (q *Queries) GetDesignFileInWorkspaceForUpdate(ctx context.Context, arg Get
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
@@ -2993,7 +3045,7 @@ func (q *Queries) GetNextSemanticDesignDraftVersion(ctx context.Context, arg Get
 
 const getProjectDesignSystemByProject = `-- name: GetProjectDesignSystemByProject :one
 
-SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id FROM project_design_system
+SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id, workspace_repository_id FROM project_design_system
 WHERE workspace_id = $1
   AND project_id = $2
   AND project_resource_id IS NULL
@@ -3026,12 +3078,13 @@ func (q *Queries) GetProjectDesignSystemByProject(ctx context.Context, arg GetPr
 		&i.UpdatedAt,
 		&i.SavedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
 
 const getProjectDesignSystemByResource = `-- name: GetProjectDesignSystemByResource :one
-SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id FROM project_design_system
+SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id, workspace_repository_id FROM project_design_system
 WHERE workspace_id = $1
   AND project_id = $2
   AND project_resource_id = $3
@@ -3064,12 +3117,49 @@ func (q *Queries) GetProjectDesignSystemByResource(ctx context.Context, arg GetP
 		&i.UpdatedAt,
 		&i.SavedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
+	)
+	return i, err
+}
+
+const getProjectDesignSystemByWorkspaceRepository = `-- name: GetProjectDesignSystemByWorkspaceRepository :one
+SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id, workspace_repository_id FROM project_design_system
+WHERE workspace_id = $1
+  AND workspace_repository_id = $2
+`
+
+type GetProjectDesignSystemByWorkspaceRepositoryParams struct {
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	WorkspaceRepositoryID pgtype.UUID `json:"workspace_repository_id"`
+}
+
+// The system owned by one Settings repository, independent of projects.
+func (q *Queries) GetProjectDesignSystemByWorkspaceRepository(ctx context.Context, arg GetProjectDesignSystemByWorkspaceRepositoryParams) (ProjectDesignSystem, error) {
+	row := q.db.QueryRow(ctx, getProjectDesignSystemByWorkspaceRepository, arg.WorkspaceID, arg.WorkspaceRepositoryID)
+	var i ProjectDesignSystem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Platform,
+		&i.CurrentAgentID,
+		&i.ActiveTaskID,
+		&i.ActiveOperation,
+		&i.InputSnapshot,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SavedAt,
+		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
 
 const getProjectDesignSystemInWorkspace = `-- name: GetProjectDesignSystemInWorkspace :one
-SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id FROM project_design_system
+SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id, workspace_repository_id FROM project_design_system
 WHERE id = $1
   AND workspace_id = $2
 `
@@ -3098,12 +3188,13 @@ func (q *Queries) GetProjectDesignSystemInWorkspace(ctx context.Context, arg Get
 		&i.UpdatedAt,
 		&i.SavedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
 
 const getProjectDesignSystemInWorkspaceForUpdate = `-- name: GetProjectDesignSystemInWorkspaceForUpdate :one
-SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id FROM project_design_system
+SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id, workspace_repository_id FROM project_design_system
 WHERE id = $1
   AND workspace_id = $2
 FOR UPDATE
@@ -3133,6 +3224,7 @@ func (q *Queries) GetProjectDesignSystemInWorkspaceForUpdate(ctx context.Context
 		&i.UpdatedAt,
 		&i.SavedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
@@ -3601,7 +3693,7 @@ func (q *Queries) ListDesignDrafts(ctx context.Context, workspaceID pgtype.UUID)
 }
 
 const listDesignFiles = `-- name: ListDesignFiles :many
-SELECT df.id, df.workspace_id, df.project_id, df.folder_id, df.title, df.description, df.source_type, df.source_ref, df.current_revision_id, df.created_by, df.created_at, df.updated_at, df.project_resource_id FROM design_file df
+SELECT df.id, df.workspace_id, df.project_id, df.folder_id, df.title, df.description, df.source_type, df.source_ref, df.current_revision_id, df.created_by, df.created_at, df.updated_at, df.project_resource_id, df.workspace_repository_id FROM design_file df
 WHERE df.workspace_id = $1
   AND COALESCE(df.source_ref->>'asset_type', '') NOT IN ('template', 'design_system')
   AND NOT EXISTS (
@@ -3646,6 +3738,7 @@ func (q *Queries) ListDesignFiles(ctx context.Context, workspaceID pgtype.UUID) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ProjectResourceID,
+			&i.WorkspaceRepositoryID,
 		); err != nil {
 			return nil, err
 		}
@@ -3658,7 +3751,7 @@ func (q *Queries) ListDesignFiles(ctx context.Context, workspaceID pgtype.UUID) 
 }
 
 const listDesignFilesByProject = `-- name: ListDesignFilesByProject :many
-SELECT df.id, df.workspace_id, df.project_id, df.folder_id, df.title, df.description, df.source_type, df.source_ref, df.current_revision_id, df.created_by, df.created_at, df.updated_at, df.project_resource_id FROM design_file df
+SELECT df.id, df.workspace_id, df.project_id, df.folder_id, df.title, df.description, df.source_type, df.source_ref, df.current_revision_id, df.created_by, df.created_at, df.updated_at, df.project_resource_id, df.workspace_repository_id FROM design_file df
 WHERE df.workspace_id = $1
   AND df.project_id = $2
   AND ($3::uuid IS NULL OR df.folder_id = $3)
@@ -3711,6 +3804,7 @@ func (q *Queries) ListDesignFilesByProject(ctx context.Context, arg ListDesignFi
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ProjectResourceID,
+			&i.WorkspaceRepositoryID,
 		); err != nil {
 			return nil, err
 		}
@@ -3723,7 +3817,7 @@ func (q *Queries) ListDesignFilesByProject(ctx context.Context, arg ListDesignFi
 }
 
 const listDesignFilesByRepository = `-- name: ListDesignFilesByRepository :many
-SELECT df.id, df.workspace_id, df.project_id, df.folder_id, df.title, df.description, df.source_type, df.source_ref, df.current_revision_id, df.created_by, df.created_at, df.updated_at, df.project_resource_id FROM design_file df
+SELECT df.id, df.workspace_id, df.project_id, df.folder_id, df.title, df.description, df.source_type, df.source_ref, df.current_revision_id, df.created_by, df.created_at, df.updated_at, df.project_resource_id, df.workspace_repository_id FROM design_file df
 WHERE df.workspace_id = $1
   AND df.project_id = $2
   AND df.project_resource_id = $3
@@ -3771,6 +3865,67 @@ func (q *Queries) ListDesignFilesByRepository(ctx context.Context, arg ListDesig
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ProjectResourceID,
+			&i.WorkspaceRepositoryID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDesignFilesByWorkspaceRepository = `-- name: ListDesignFilesByWorkspaceRepository :many
+SELECT df.id, df.workspace_id, df.project_id, df.folder_id, df.title, df.description, df.source_type, df.source_ref, df.current_revision_id, df.created_by, df.created_at, df.updated_at, df.project_resource_id, df.workspace_repository_id FROM design_file df
+WHERE df.workspace_id = $1
+  AND df.workspace_repository_id = $2
+  AND COALESCE(df.source_ref->>'asset_type', '') NOT IN ('template', 'design_system')
+  AND NOT EXISTS (
+    SELECT 1 FROM design_system_profile dsp
+    WHERE dsp.source_file_id = df.id AND dsp.status <> 'archived'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM design_template_revision dtr
+    WHERE EXISTS (
+      SELECT 1 FROM design_revision dr
+      WHERE dr.id = dtr.design_revision_id AND dr.file_id = df.id
+    )
+  )
+ORDER BY df.updated_at DESC, df.created_at DESC
+`
+
+type ListDesignFilesByWorkspaceRepositoryParams struct {
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	WorkspaceRepositoryID pgtype.UUID `json:"workspace_repository_id"`
+}
+
+// Settings-repository scope is independent of projects and project_resource.
+func (q *Queries) ListDesignFilesByWorkspaceRepository(ctx context.Context, arg ListDesignFilesByWorkspaceRepositoryParams) ([]DesignFile, error) {
+	rows, err := q.db.Query(ctx, listDesignFilesByWorkspaceRepository, arg.WorkspaceID, arg.WorkspaceRepositoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DesignFile{}
+	for rows.Next() {
+		var i DesignFile
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.FolderID,
+			&i.Title,
+			&i.Description,
+			&i.SourceType,
+			&i.SourceRef,
+			&i.CurrentRevisionID,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ProjectResourceID,
+			&i.WorkspaceRepositoryID,
 		); err != nil {
 			return nil, err
 		}
@@ -3783,7 +3938,7 @@ func (q *Queries) ListDesignFilesByRepository(ctx context.Context, arg ListDesig
 }
 
 const listDesignFilesInFolderForUpdate = `-- name: ListDesignFilesInFolderForUpdate :many
-SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id FROM design_file
+SELECT id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id, workspace_repository_id FROM design_file
 WHERE workspace_id = $1 AND folder_id = $2
 ORDER BY id
 FOR UPDATE
@@ -3817,6 +3972,7 @@ func (q *Queries) ListDesignFilesInFolderForUpdate(ctx context.Context, arg List
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ProjectResourceID,
+			&i.WorkspaceRepositoryID,
 		); err != nil {
 			return nil, err
 		}
@@ -4397,7 +4553,7 @@ func (q *Queries) ListProjectDesignSystemTasks(ctx context.Context, arg ListProj
 }
 
 const listProjectDesignSystemsByProject = `-- name: ListProjectDesignSystemsByProject :many
-SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id FROM project_design_system
+SELECT id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id, workspace_repository_id FROM project_design_system
 WHERE workspace_id = $1
   AND project_id = $2
 ORDER BY (project_resource_id IS NOT NULL), created_at
@@ -4435,6 +4591,7 @@ func (q *Queries) ListProjectDesignSystemsByProject(ctx context.Context, arg Lis
 			&i.UpdatedAt,
 			&i.SavedAt,
 			&i.ProjectResourceID,
+			&i.WorkspaceRepositoryID,
 		); err != nil {
 			return nil, err
 		}
@@ -4447,7 +4604,7 @@ func (q *Queries) ListProjectDesignSystemsByProject(ctx context.Context, arg Lis
 }
 
 const listSavedProjectDesignSystemsInWorkspace = `-- name: ListSavedProjectDesignSystemsInWorkspace :many
-SELECT project_design_system.id, project_design_system.workspace_id, project_design_system.project_id, project_design_system.name, project_design_system.platform, project_design_system.current_agent_id, project_design_system.active_task_id, project_design_system.active_operation, project_design_system.input_snapshot, project_design_system.last_error, project_design_system.created_by, project_design_system.created_at, project_design_system.updated_at, project_design_system.saved_at, project_design_system.project_resource_id, project.title AS project_title,
+SELECT project_design_system.id, project_design_system.workspace_id, project_design_system.project_id, project_design_system.name, project_design_system.platform, project_design_system.current_agent_id, project_design_system.active_task_id, project_design_system.active_operation, project_design_system.input_snapshot, project_design_system.last_error, project_design_system.created_by, project_design_system.created_at, project_design_system.updated_at, project_design_system.saved_at, project_design_system.project_resource_id, project_design_system.workspace_repository_id, project.title AS project_title,
        EXISTS (
            SELECT 1 FROM project_design_system_package
            WHERE project_design_system_package.design_system_id = project_design_system.id
@@ -4461,23 +4618,24 @@ ORDER BY project_design_system.saved_at DESC
 `
 
 type ListSavedProjectDesignSystemsInWorkspaceRow struct {
-	ID                pgtype.UUID        `json:"id"`
-	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
-	ProjectID         pgtype.UUID        `json:"project_id"`
-	Name              string             `json:"name"`
-	Platform          string             `json:"platform"`
-	CurrentAgentID    pgtype.UUID        `json:"current_agent_id"`
-	ActiveTaskID      pgtype.UUID        `json:"active_task_id"`
-	ActiveOperation   pgtype.Text        `json:"active_operation"`
-	InputSnapshot     []byte             `json:"input_snapshot"`
-	LastError         []byte             `json:"last_error"`
-	CreatedBy         pgtype.UUID        `json:"created_by"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
-	SavedAt           pgtype.Timestamptz `json:"saved_at"`
-	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
-	ProjectTitle      pgtype.Text        `json:"project_title"`
-	HasDraftPackage   bool               `json:"has_draft_package"`
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	ProjectID             pgtype.UUID        `json:"project_id"`
+	Name                  string             `json:"name"`
+	Platform              string             `json:"platform"`
+	CurrentAgentID        pgtype.UUID        `json:"current_agent_id"`
+	ActiveTaskID          pgtype.UUID        `json:"active_task_id"`
+	ActiveOperation       pgtype.Text        `json:"active_operation"`
+	InputSnapshot         []byte             `json:"input_snapshot"`
+	LastError             []byte             `json:"last_error"`
+	CreatedBy             pgtype.UUID        `json:"created_by"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	SavedAt               pgtype.Timestamptz `json:"saved_at"`
+	ProjectResourceID     pgtype.UUID        `json:"project_resource_id"`
+	WorkspaceRepositoryID pgtype.UUID        `json:"workspace_repository_id"`
+	ProjectTitle          pgtype.Text        `json:"project_title"`
+	HasDraftPackage       bool               `json:"has_draft_package"`
 }
 
 // The workspace-level catalogue (DC-054 / B1). Only systems that have
@@ -4513,6 +4671,7 @@ func (q *Queries) ListSavedProjectDesignSystemsInWorkspace(ctx context.Context, 
 			&i.UpdatedAt,
 			&i.SavedAt,
 			&i.ProjectResourceID,
+			&i.WorkspaceRepositoryID,
 			&i.ProjectTitle,
 			&i.HasDraftPackage,
 		); err != nil {
@@ -4576,7 +4735,7 @@ UPDATE project_design_system SET
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $2
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id, workspace_repository_id
 `
 
 type MarkProjectDesignSystemSavedParams struct {
@@ -4603,6 +4762,7 @@ func (q *Queries) MarkProjectDesignSystemSaved(ctx context.Context, arg MarkProj
 		&i.UpdatedAt,
 		&i.SavedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
@@ -4725,7 +4885,7 @@ UPDATE design_file SET
     current_revision_id = $3,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id
+RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id, workspace_repository_id
 `
 
 type SetDesignFileCurrentRevisionParams struct {
@@ -4751,6 +4911,7 @@ func (q *Queries) SetDesignFileCurrentRevision(ctx context.Context, arg SetDesig
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
@@ -4761,7 +4922,7 @@ UPDATE design_file SET
     updated_at = now()
 WHERE id = $2
   AND workspace_id = $3
-RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id
+RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id, workspace_repository_id
 `
 
 type SetDesignFileRepositoryParams struct {
@@ -4787,6 +4948,7 @@ func (q *Queries) SetDesignFileRepository(ctx context.Context, arg SetDesignFile
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
@@ -4839,7 +5001,7 @@ UPDATE project_design_system SET
 WHERE id = $2
   AND workspace_id = $3
   AND active_task_id = $4
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id, workspace_repository_id
 `
 
 type SetProjectDesignSystemFailureParams struct {
@@ -4873,6 +5035,7 @@ func (q *Queries) SetProjectDesignSystemFailure(ctx context.Context, arg SetProj
 		&i.UpdatedAt,
 		&i.SavedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
@@ -5053,7 +5216,7 @@ UPDATE design_file SET
     current_revision_id = $8,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id
+RETURNING id, workspace_id, project_id, folder_id, title, description, source_type, source_ref, current_revision_id, created_by, created_at, updated_at, project_resource_id, workspace_repository_id
 `
 
 type UpdateDesignFileParams struct {
@@ -5093,6 +5256,7 @@ func (q *Queries) UpdateDesignFile(ctx context.Context, arg UpdateDesignFilePara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }
@@ -5256,7 +5420,7 @@ UPDATE project_design_system SET
     updated_at = now()
 WHERE id = $6
   AND workspace_id = $7
-RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id
+RETURNING id, workspace_id, project_id, name, platform, current_agent_id, active_task_id, active_operation, input_snapshot, last_error, created_by, created_at, updated_at, saved_at, project_resource_id, workspace_repository_id
 `
 
 type UpdateProjectDesignSystemInputAndTaskParams struct {
@@ -5296,6 +5460,7 @@ func (q *Queries) UpdateProjectDesignSystemInputAndTask(ctx context.Context, arg
 		&i.UpdatedAt,
 		&i.SavedAt,
 		&i.ProjectResourceID,
+		&i.WorkspaceRepositoryID,
 	)
 	return i, err
 }

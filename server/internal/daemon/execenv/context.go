@@ -706,6 +706,20 @@ func buildV2ReferenceIndex(task map[string]json.RawMessage) ([]byte, error) {
 // SHA-256 carried in the base must match the base_package_sha256
 // stamped onto the task context, otherwise the task context and the
 // on-disk base disagree and we refuse the workspace.
+func normalizedV2SHA256(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "sha256:")
+	if len(value) != 64 {
+		return "", false
+	}
+	for _, character := range value {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') || (character >= 'A' && character <= 'F')) {
+			return "", false
+		}
+	}
+	return strings.ToLower(value), true
+}
+
 func writeV2BaseDirectory(root string, task map[string]json.RawMessage, manifest *sidecarManifest) error {
 	rawBase, ok := task["base_package"]
 	if !ok {
@@ -717,7 +731,30 @@ func writeV2BaseDirectory(root string, task map[string]json.RawMessage, manifest
 	}
 	if rawSchema, ok := base["schema"]; ok {
 		var schema string
-		if err := json.Unmarshal(rawSchema, &schema); err == nil && schema == opendesign.BasePackageReferenceSchema {
+		if err := json.Unmarshal(rawSchema, &schema); err != nil {
+			return fmt.Errorf("decode V2 base package schema: %w", err)
+		}
+		if schema == projectdesignsystem.BasePackageReferenceSchema {
+			var reference projectdesignsystem.BasePackageReference
+			if err := json.Unmarshal(rawBase, &reference); err != nil {
+				return fmt.Errorf("decode V2 base package reference: %w", err)
+			}
+			if err := projectdesignsystem.ValidateBasePackageReference(reference); err != nil {
+				return fmt.Errorf("validate V2 base package reference: %w", err)
+			}
+			if rawDeclared, ok := task["base_package_sha256"]; ok {
+				var declared string
+				if err := json.Unmarshal(rawDeclared, &declared); err != nil || declared != reference.ContentDigest {
+					return fmt.Errorf("V2 base package reference digest does not match task context")
+				}
+			}
+			baseDir := filepath.Join(root, "base")
+			if err := recordMkdirAll(baseDir, 0o755, manifest); err != nil {
+				return err
+			}
+			return nil
+		}
+		if schema == opendesign.BasePackageReferenceSchema {
 			return fmt.Errorf("V2 base package uses Open Design reference schema; V2 adjust / regenerate requires a native base package")
 		}
 	}
@@ -732,8 +769,12 @@ func writeV2BaseDirectory(root string, task map[string]json.RawMessage, manifest
 		if err := json.Unmarshal(rawDeclared, &declared); err != nil {
 			return fmt.Errorf("decode V2 base_package_sha256: %w", err)
 		}
-		if declared != "" && baseDigest != "" && declared != baseDigest {
-			return fmt.Errorf("V2 base package digest mismatch: task context claims %q, base integrity_sha256 is %q", declared, baseDigest)
+		if declared != "" && baseDigest != "" {
+			declaredHex, declaredOK := normalizedV2SHA256(declared)
+			baseHex, baseOK := normalizedV2SHA256(baseDigest)
+			if !declaredOK || !baseOK || declaredHex != baseHex {
+				return fmt.Errorf("V2 base package digest mismatch: task context claims %q, base integrity_sha256 is %q", declared, baseDigest)
+			}
 		}
 	}
 	if baseDigest == "" {

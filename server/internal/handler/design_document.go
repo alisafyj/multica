@@ -82,22 +82,23 @@ type CreateDesignDocumentRequest struct {
 }
 
 type DesignDocumentResponse struct {
-	ID                string                           `json:"id"`
-	DesignRef         string                           `json:"design_ref,omitempty"`
-	Source            string                           `json:"source"`
-	WorkspaceID       string                           `json:"workspace_id"`
-	ProjectID         string                           `json:"project_id"`
-	ProjectResourceID string                           `json:"project_resource_id,omitempty"`
-	IssueID           string                           `json:"issue_id,omitempty"`
-	Title             string                           `json:"title"`
-	Platform          string                           `json:"platform"`
-	Recipe            string                           `json:"recipe"`
-	Status            string                           `json:"status"`
-	DraftRevisionID   string                           `json:"draft_revision_id,omitempty"`
-	SavedRevisionID   string                           `json:"saved_revision_id,omitempty"`
-	ActiveTask        *ProjectDesignSystemTaskResponse `json:"active_task"`
-	InputSnapshot     json.RawMessage                  `json:"input_snapshot"`
-	LastError         json.RawMessage                  `json:"last_error"`
+	ID                    string                           `json:"id"`
+	DesignRef             string                           `json:"design_ref,omitempty"`
+	Source                string                           `json:"source"`
+	WorkspaceID           string                           `json:"workspace_id"`
+	ProjectID             string                           `json:"project_id"`
+	ProjectResourceID     string                           `json:"project_resource_id,omitempty"`
+	WorkspaceRepositoryID string                           `json:"workspace_repository_id,omitempty"`
+	IssueID               string                           `json:"issue_id,omitempty"`
+	Title                 string                           `json:"title"`
+	Platform              string                           `json:"platform"`
+	Recipe                string                           `json:"recipe"`
+	Status                string                           `json:"status"`
+	DraftRevisionID       string                           `json:"draft_revision_id,omitempty"`
+	SavedRevisionID       string                           `json:"saved_revision_id,omitempty"`
+	ActiveTask            *ProjectDesignSystemTaskResponse `json:"active_task"`
+	InputSnapshot         json.RawMessage                  `json:"input_snapshot"`
+	LastError             json.RawMessage                  `json:"last_error"`
 	// Whether this run had repository evidence. The UI must not let a user
 	// assume the agent read code when it did not.
 	RepositoryGrounded bool   `json:"repository_grounded"`
@@ -111,9 +112,10 @@ type DesignDocumentResponse struct {
 // belong here — server-side ids and timestamps would make the digest differ
 // between two identical requests.
 type designDocumentInputSnapshot struct {
-	AgentID           string `json:"agent_id"`
-	ProjectResourceID string `json:"project_resource_id,omitempty"`
-	IssueID           string `json:"issue_id,omitempty"`
+	AgentID               string `json:"agent_id"`
+	ProjectResourceID     string `json:"project_resource_id,omitempty"`
+	WorkspaceRepositoryID string `json:"workspace_repository_id,omitempty"`
+	IssueID               string `json:"issue_id,omitempty"`
 	// The design system the user named for this run, frozen with the rest of
 	// the inputs so a regeneration reruns under the same choice (DC-060).
 	DesignSystemID      string `json:"design_system_id,omitempty"`
@@ -462,6 +464,11 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 	rawProjectID := strings.TrimSpace(query.Get("project_id"))
 	rawIssueID := strings.TrimSpace(query.Get("issue_id"))
 	rawResourceID := strings.TrimSpace(query.Get("project_resource_id"))
+	rawWorkspaceRepositoryID := strings.TrimSpace(query.Get("workspace_repository_id"))
+	if rawWorkspaceRepositoryID != "" && (rawProjectID != "" || rawIssueID != "" || rawResourceID != "") {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "invalid_request", "settings repository scope cannot be combined with project or issue scope")
+		return
+	}
 	if rawResourceID != "" && (rawProjectID == "" || rawIssueID != "") {
 		writeProjectDesignSystemError(w, http.StatusBadRequest, "invalid_request", "project_resource_id requires project scope without issue scope")
 		return
@@ -469,6 +476,16 @@ func (h *Handler) ListDesignDocuments(w http.ResponseWriter, r *http.Request) {
 	var documents []db.DesignDocument
 	var err error
 	switch {
+	case rawWorkspaceRepositoryID != "":
+		repositoryUUID, ok := parseUUIDOrBadRequest(w, rawWorkspaceRepositoryID, "workspace_repository_id")
+		if !ok {
+			return
+		}
+		if _, repositoryErr := loadWorkspaceRepository(r.Context(), h.Queries, workspaceUUID, repositoryUUID); repositoryErr != nil {
+			writeProjectDesignSystemError(w, http.StatusNotFound, "workspace_repository_not_found", "settings repository not found")
+			return
+		}
+		documents, err = h.Queries.ListDesignDocumentsByWorkspaceRepository(r.Context(), db.ListDesignDocumentsByWorkspaceRepositoryParams{WorkspaceID: workspaceUUID, WorkspaceRepositoryID: repositoryUUID})
 	case rawIssueID != "":
 		issueUUID, ok := parseUUIDOrBadRequest(w, rawIssueID, "issue_id")
 		if !ok {
@@ -671,21 +688,22 @@ func (h *Handler) designDocumentRepositoryGrounded(ctx context.Context, document
 
 func designDocumentResponse(document db.DesignDocument, task *db.AgentTaskQueue, repositoryGrounded bool) DesignDocumentResponse {
 	response := DesignDocumentResponse{
-		ID:                 uuidToString(document.ID),
-		Source:             "multica",
-		WorkspaceID:        uuidToString(document.WorkspaceID),
-		ProjectID:          uuidToString(document.ProjectID),
-		ProjectResourceID:  uuidToString(document.ProjectResourceID),
-		IssueID:            uuidToString(document.IssueID),
-		Title:              document.Title,
-		Platform:           document.Platform,
-		Recipe:             document.Recipe,
-		Status:             designDocumentStatus(document, task),
-		DraftRevisionID:    uuidToString(document.DraftRevisionID),
-		SavedRevisionID:    uuidToString(document.SavedRevisionID),
-		InputSnapshot:      jsonOrDefault(document.InputSnapshot, `{}`),
-		LastError:          jsonOrDefault(document.LastError, `null`),
-		RepositoryGrounded: repositoryGrounded,
+		ID:                    uuidToString(document.ID),
+		Source:                "multica",
+		WorkspaceID:           uuidToString(document.WorkspaceID),
+		ProjectID:             uuidToString(document.ProjectID),
+		ProjectResourceID:     uuidToString(document.ProjectResourceID),
+		WorkspaceRepositoryID: uuidToString(document.WorkspaceRepositoryID),
+		IssueID:               uuidToString(document.IssueID),
+		Title:                 document.Title,
+		Platform:              document.Platform,
+		Recipe:                document.Recipe,
+		Status:                designDocumentStatus(document, task),
+		DraftRevisionID:       uuidToString(document.DraftRevisionID),
+		SavedRevisionID:       uuidToString(document.SavedRevisionID),
+		InputSnapshot:         jsonOrDefault(document.InputSnapshot, `{}`),
+		LastError:             jsonOrDefault(document.LastError, `null`),
+		RepositoryGrounded:    repositoryGrounded,
 	}
 	if document.CreatedAt.Valid {
 		response.CreatedAt = document.CreatedAt.Time.UTC().Format(time.RFC3339Nano)

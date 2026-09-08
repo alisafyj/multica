@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
@@ -123,6 +124,83 @@ func TestCreateProjectDesignSystemProgrammaticFirstPinsExactRepositoryAndMode(t 
 	}
 	if status != "working" {
 		t.Fatalf("ordinary task no longer marks Agent working: status = %q", status)
+	}
+}
+
+func TestOpenDesignProgrammaticCompletionQueuesSameSystemEnrichment(t *testing.T) {
+	fixture := createProjectDesignSystemCompletionFixture(t, service.ProjectDesignSystemGenerate)
+	ctx := context.Background()
+	queries := db.New(testPool)
+	pkg := validProjectDesignSystemPackageForTest(t)
+	upsertValidatedProjectDesignSystemPackageForTest(t, fixture.System.ID, "draft", pkg)
+
+	inputJSON, err := json.Marshal(projectDesignSystemInputSnapshot{
+		AgentID:        fixture.AgentID,
+		GenerationMode: service.ProjectDesignSystemExecutionModeProgrammaticFirst,
+		Platform:       "web",
+		Brief:          "Use the repository evidence to build the CRM design system.",
+		References:     []projectDesignSystemReferenceSnapshot{},
+	})
+	if err != nil {
+		t.Fatalf("marshal programmatic input: %v", err)
+	}
+
+	completedTask, err := queries.GetAgentTask(ctx, parseUUID(fixture.TaskID))
+	if err != nil {
+		t.Fatalf("load programmatic task: %v", err)
+	}
+	var taskContext service.ProjectDesignSystemTaskContext
+	if err := json.Unmarshal(completedTask.Context, &taskContext); err != nil {
+		t.Fatalf("decode programmatic task context: %v", err)
+	}
+	taskContext.ExecutionMode = service.ProjectDesignSystemExecutionModeProgrammaticFirst
+	contextJSON, err := json.Marshal(taskContext)
+	if err != nil {
+		t.Fatalf("marshal programmatic task context: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET status = 'completed', completed_at = now(), context = $2
+		WHERE id = $1
+	`, fixture.TaskID, contextJSON); err != nil {
+		t.Fatalf("complete programmatic task fixture: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE project_design_system
+		SET active_task_id = NULL, active_operation = NULL, input_snapshot = $2
+		WHERE id = $1
+	`, fixture.System.ID, inputJSON); err != nil {
+		t.Fatalf("clear programmatic task fixture: %v", err)
+	}
+
+	completedTask, err = queries.GetAgentTask(ctx, parseUUID(fixture.TaskID))
+	if err != nil {
+		t.Fatalf("reload completed programmatic task: %v", err)
+	}
+	system, err := queries.GetProjectDesignSystemInWorkspace(ctx, db.GetProjectDesignSystemInWorkspaceParams{
+		ID: fixture.System.ID, WorkspaceID: parseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatalf("reload programmatic system: %v", err)
+	}
+
+	updated, followUp, err := testHandler.enqueueOpenDesignProgrammaticEnrichment(ctx, completedTask, system)
+	if err != nil {
+		t.Fatalf("enqueue Open Design enrichment: %v", err)
+	}
+	if followUp == nil || !updated.ActiveTaskID.Valid || updated.ActiveTaskID != followUp.ID {
+		t.Fatalf("same-system enrichment was not activated: system=%+v task=%+v", updated, followUp)
+	}
+
+	var followUpContext service.ProjectDesignSystemTaskContext
+	if err := json.Unmarshal(followUp.Context, &followUpContext); err != nil {
+		t.Fatalf("decode enrichment context: %v", err)
+	}
+	if followUpContext.Operation != service.ProjectDesignSystemAdjust || followUpContext.ExecutionMode != "" {
+		t.Fatalf("enrichment operation = %q mode = %q", followUpContext.Operation, followUpContext.ExecutionMode)
+	}
+	if !strings.Contains(followUpContext.Instruction, "ALREADY been extracted programmatically") || len(followUpContext.BasePackage) == 0 {
+		t.Fatalf("enrichment did not receive the Open Design base-first contract: %+v", followUpContext)
 	}
 }
 
@@ -349,6 +427,55 @@ func TestCreateProjectDesignSystemStandalone(t *testing.T) {
 	}
 	if project["name"] != "品牌 A" {
 		t.Fatalf("embedded project name = %v, want the system name", project["name"])
+	}
+}
+
+func TestCreateProjectDesignSystemForSettingsRepository(t *testing.T) {
+	ctx := context.Background()
+	repositoryID := uuid.NewString()
+	var previous []byte
+	if err := testPool.QueryRow(ctx, `SELECT repos FROM workspace WHERE id=$1`, testWorkspaceID).Scan(&previous); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE workspace SET repos=$1::jsonb WHERE id=$2`, `[{"id":"`+repositoryID+`","url":"https://github.com/example/settings-repo.git","description":"Settings repo","default_branch_hint":"main"}]`, testWorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `UPDATE workspace SET repos=$1 WHERE id=$2`, previous, testWorkspaceID)
+	})
+	agentID, _ := createProjectDesignSystemAgent(t, "online")
+	response := performProjectDesignSystemRequest(t, testHandler.CreateProjectDesignSystem, http.MethodPost, "/api/project-design-systems", map[string]any{
+		"workspace_repository_id": repositoryID,
+		"name":                    "Settings repo design system", "agent_id": agentID,
+		"generation_mode": "programmatic_first", "platform": "web",
+		"brief":      "Extract the repository design language.",
+		"references": []map[string]any{{"kind": "link", "value": "https://github.com/example/settings-repo.git"}},
+	})
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var created ProjectDesignSystemResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.ProjectID != "" || created.ProjectResourceID != "" || created.WorkspaceRepositoryID != repositoryID {
+		t.Fatalf("settings repository scope = %+v", created)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id=(SELECT active_task_id FROM project_design_system WHERE id=$1)`, created.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM project_design_system_package WHERE design_system_id=$1`, created.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM project_design_system WHERE id=$1`, created.ID)
+	})
+	var taskContext service.ProjectDesignSystemTaskContext
+	var raw []byte
+	if err := testPool.QueryRow(ctx, `SELECT q.context FROM agent_task_queue q JOIN project_design_system s ON s.active_task_id=q.id WHERE s.id=$1`, created.ID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &taskContext); err != nil {
+		t.Fatal(err)
+	}
+	if taskContext.WorkspaceRepositoryID != repositoryID || taskContext.WorkspaceRepositoryURL != "https://github.com/example/settings-repo.git" || taskContext.ExecutionMode != "programmatic_first" {
+		t.Fatalf("task context = %+v", taskContext)
 	}
 }
 
