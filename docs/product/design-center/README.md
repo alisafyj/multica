@@ -30,6 +30,7 @@
 
 随后按需要读取：
 
+- [2026-09-08-design-system-interactions.md](./2026-09-08-design-system-interactions.md)：SY-323 已确认的设计体系入口、渐进查看、失败续接、主动调整和显式保存交互；是产品目标，不代表已实现或验收通过。
 - [design-center-issue-product-overview.md](./design-center-issue-product-overview.md)：设计中心与 Issue 设计模块的完整时间线、双主线、当前能力、待办和产品收益总览；
 - [decision-register.md](./decision-register.md)：确认当前哪些内容已经决定，哪些仍是提案；
 - [open-design-evidence.md](./open-design-evidence.md)：凡涉及 Open Design 的判断，必须回到对应版本和源码证据；
