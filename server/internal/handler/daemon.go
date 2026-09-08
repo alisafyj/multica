@@ -3135,9 +3135,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.WorkspaceID = projectDesignSystemCtx.WorkspaceID
 			resp.ProjectID = projectDesignSystemCtx.ProjectID
 			resp.ProjectDesignSystemContext = json.RawMessage(task.Context)
-			// Agent generation and adjustment use only the frozen repository
-			// analysis snapshot. Repository analysis and the programmatic-first
-			// quick draft need the selected live repository on this runtime.
+			// Every repository-scoped design-system operation receives only its
+			// selected repository. The daemon pins the default branch and builds
+			// immutable evidence before the Agent starts.
 			resp.Repos = nil
 			resp.ProjectResources = nil
 			if projectDesignSystemNeedsLiveRepository(projectDesignSystemCtx) &&
@@ -3173,11 +3173,16 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 								out = append(out, ProjectResourceData{ID: uuidToString(row.ID), ResourceType: row.ResourceType, ResourceRef: ref, Label: label})
 								if row.ResourceType == "github_repo" {
 									var payload struct {
-										URL string `json:"url"`
-										Ref string `json:"ref,omitempty"`
+										URL               string `json:"url"`
+										Ref               string `json:"ref,omitempty"`
+										DefaultBranchHint string `json:"default_branch_hint,omitempty"`
 									}
 									if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
-										projectRepos = append(projectRepos, RepoData{URL: payload.URL, Ref: strings.TrimSpace(payload.Ref)})
+										ref := strings.TrimSpace(payload.Ref)
+										if ref == "" {
+											ref = strings.TrimSpace(payload.DefaultBranchHint)
+										}
+										projectRepos = append(projectRepos, RepoData{URL: payload.URL, Ref: ref})
 									}
 								}
 							}
@@ -3186,7 +3191,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 						if len(projectRepos) > 0 {
 							resp.Repos = projectRepos
 						}
-						if projectDesignSystemCtx.ExecutionMode == service.ProjectDesignSystemExecutionModeProgrammaticFirst {
+						if strings.TrimSpace(projectDesignSystemCtx.ProjectResourceID) != "" {
 							scopeDesignDocumentRepositories(&resp, projectDesignSystemCtx.ProjectResourceID)
 						}
 					}
@@ -3531,8 +3536,7 @@ func (h *Handler) populateContextTaskProject(ctx context.Context, resp *AgentTas
 }
 
 func projectDesignSystemNeedsLiveRepository(taskContext service.ProjectDesignSystemTaskContext) bool {
-	if taskContext.Operation == service.ProjectDesignSystemRepositoryAnalysis ||
-		taskContext.ExecutionMode == service.ProjectDesignSystemExecutionModeProgrammaticFirst {
+	if taskContext.Operation == service.ProjectDesignSystemRepositoryAnalysis {
 		return true
 	}
 	repositoryScoped := strings.TrimSpace(taskContext.WorkspaceRepositoryID) != "" ||
@@ -4225,7 +4229,6 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	var analyzedBlueprint *db.DesignTemplateBlueprint
 	var profileOutput *designSystemProfileAnalyzeOutput
 	var completedProjectDesignSystem *db.ProjectDesignSystem
-	var projectDesignSystemEnrichmentTask *db.AgentTaskQueue
 	var preparedRepositoryAnalysis *preparedProjectDesignSystemRepositoryAnalysis
 	var preparedProjectDesignSystem *preparedProjectDesignSystemCompletion
 	var preparedDesignDocument *preparedDesignDocumentCompletion
@@ -4536,17 +4539,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if completedProjectDesignSystem != nil {
-		updatedSystem, followUp, followUpErr := h.enqueueOpenDesignProgrammaticEnrichment(r.Context(), *task, *completedProjectDesignSystem)
-		if followUpErr != nil {
-			// Match Open Design's best-effort enrichment boundary: the fast draft
-			// remains usable even when the Agent cannot be started.
-			slog.Warn("project design system: could not start background enrichment", "task_id", taskID, "error", followUpErr)
-		} else if followUp != nil {
-			completedProjectDesignSystem = &updatedSystem
-			projectDesignSystemEnrichmentTask = followUp
-		}
-	}
+	// A successful V2 completion is already the final single-Agent draft.
 
 	if pmoSnapshot != nil {
 		// Privacy: log task/run identity only, never snapshot content.
@@ -4593,9 +4586,6 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	// Wake the owning runtime now so queued work that was blocked by this
 	// task's agent capacity or serialization key is re-claimed immediately.
 	h.TaskService.NotifyTaskFinished(*task)
-	if projectDesignSystemEnrichmentTask != nil {
-		h.TaskService.NotifyTaskEnqueued(r.Context(), *projectDesignSystemEnrichmentTask)
-	}
 
 	// Best-effort revoke of any agent task token minted at claim time.
 	// The token would naturally expire at the 24h watermark and is also

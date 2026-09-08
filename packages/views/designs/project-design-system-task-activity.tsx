@@ -18,11 +18,10 @@ import { latestTodoRows, type TodoRow } from "./design-run-plan";
 const STALE_AFTER_MS = 3 * 60_000;
 const ACTIVE_TASK_STATUSES = new Set(["queued", "dispatched", "running", "waiting_local_directory"]);
 
-export function taskStatusLabel(status: string, executionMode?: string): string {
-  const programmatic = executionMode === "programmatic_first";
-  if (status === "queued") return programmatic ? "等待本地快速引擎" : "等待智能体接单";
-  if (status === "dispatched") return programmatic ? "已派发，正在准备仓库" : "已派发，等待执行";
-  if (status === "running") return programmatic ? "正在生成快速草稿" : "智能体执行中";
+export function taskStatusLabel(status: string): string {
+  if (status === "queued") return "等待智能体接单";
+  if (status === "dispatched") return "已派发，等待执行";
+  if (status === "running") return "智能体执行中";
   if (status === "waiting_local_directory") return "等待本地目录";
   if (status === "completed") return "执行已结束，正在校验产物";
   if (status === "failed") return "执行失败";
@@ -30,8 +29,7 @@ export function taskStatusLabel(status: string, executionMode?: string): string 
   return "任务状态待确认";
 }
 
-export function taskOperationLabel(operation: string, executionMode?: string): string {
-  if (executionMode === "programmatic_first") return "程序化快速生成";
+export function taskOperationLabel(operation: string): string {
   if (operation === "repository_analysis") return "仓库分析";
   if (operation === "adjust") return "调整";
   if (operation === "regenerate") return "重新生成";
@@ -264,10 +262,10 @@ export function DesignTaskActivity({
   const active = Boolean(task && ACTIVE_TASK_STATUSES.has(task.status));
   const { data: messages = [] } = useQuery({
     ...taskMessagesOptions(task?.id ?? ""),
-    // Programmatic design-system tasks are quick-create rows, so the server does
-    // not broadcast their transcript. Poll only while a design task is live;
-    // ordinary completed transcripts keep staleTime:Infinity behavior.
-    refetchInterval: active && task?.execution_mode === "programmatic_first" ? 1000 : false,
+    // Task message queries are otherwise effectively static. Keep every active
+    // design run polling so todo updates, questions and Agent messages do not
+    // freeze when a websocket event is delayed or unavailable.
+    refetchInterval: active ? 1000 : false,
   });
 
   useEffect(() => {
@@ -310,75 +308,49 @@ export function DesignTaskActivity({
   const agent = agents.find((candidate) => candidate.id === task.agent_id);
   const canStop = ACTIVE_TASK_STATUSES.has(task.status);
   const isRepositoryAnalysis = task.operation === "repository_analysis";
-  const isProgrammaticFirst = task.execution_mode === "programmatic_first";
   const planRows = latestTodoRows(messages);
-  const programmaticSteps = isProgrammaticFirst
-    ? messages
-      .filter((message) => message.type === "text" && message.content?.trim())
-      .map((message) => ({ seq: message.seq, content: message.content?.trim() ?? "" }))
-    : [];
 
   return (
-    <section aria-label={isProgrammaticFirst ? "程序化生成活动" : "智能体任务活动"} className={compact ? "border-t py-5" : "border-b py-5"}>
+    <section aria-label="智能体任务活动" className={compact ? "border-t py-5" : "border-b py-5"}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2 text-body font-medium">
           {canStop ? <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : null}
-          <span>{taskStatusLabel(task.status, task.execution_mode)}</span>
+          <span>{taskStatusLabel(task.status)}</span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <TranscriptButton
             task={transcriptTask(task)}
-            agentName={isProgrammaticFirst ? "程序化快速生成引擎" : agent?.name ?? "智能体"}
+            agentName={agent?.name ?? "智能体"}
             isLive={canStop}
             title="查看执行过程"
           />
-          <Badge variant="secondary">{taskOperationLabel(task.operation, task.execution_mode)}</Badge>
+          <Badge variant="secondary">{taskOperationLabel(task.operation)}</Badge>
         </div>
       </div>
       {/* The run itself, inline — Open Design keeps the agent's work in the
           column rather than behind a button. This replaces the single
           truncated ambient line: same messages, but readable in order. The
           transcript dialog above stays for the full, filterable record. */}
-      {showConversation && !isProgrammaticFirst ? (
-        <DesignSystemGenerationProgress
-          rows={planRows}
-          active={canStop}
-          failed={task.status === "failed" || task.status === "cancelled"}
-        />
-      ) : null}
-
-      {showConversation && isProgrammaticFirst ? (
-        <ol aria-label="快速生成步骤" className="mt-4 space-y-2">
-          {programmaticSteps.length === 0 ? (
-            <li className="flex items-start gap-2.5 rounded-lg border bg-muted/30 px-3 py-2.5 text-caption">
-              <LoaderCircle className="mt-0.5 size-3.5 shrink-0 animate-spin text-primary" />
-              <span>正在准备固定仓库和执行环境…</span>
-            </li>
-          ) : programmaticSteps.map((step, index) => {
-            const latest = index === programmaticSteps.length - 1 && canStop;
-            return (
-              <li key={step.seq} className="flex items-start gap-2.5 rounded-lg border bg-background px-3 py-2.5 text-caption leading-5">
-                <span className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full ${latest ? "bg-primary/10 text-primary" : "bg-emerald-500/10 text-emerald-600"}`}>
-                  {latest ? <LoaderCircle className="size-3 animate-spin" /> : <Check className="size-3" />}
-                </span>
-                <span>{step.content}</span>
-              </li>
-            );
-          })}
-        </ol>
-      ) : showConversation ? (
-        <DesignRunConversation
-          messages={messages}
-          live={canStop}
-          className="mt-3"
-          {...(onAnswerForm ? { onAnswerForm } : {})}
-        />
+      {showConversation ? (
+        <>
+          <DesignSystemGenerationProgress
+            rows={planRows}
+            active={canStop}
+            failed={task.status === "failed" || task.status === "cancelled"}
+          />
+          <DesignRunConversation
+            messages={messages}
+            live={canStop}
+            className="mt-3"
+            {...(onAnswerForm ? { onAnswerForm } : {})}
+          />
+        </>
       ) : null}
 
       <dl className={`mt-4 grid gap-4 ${compact ? "grid-cols-2" : "sm:grid-cols-4"}`}>
         <div className="min-w-0">
-          <dt className="text-caption text-muted-foreground">{isProgrammaticFirst ? "执行方式" : "智能体"}</dt>
-          <dd className="mt-1 truncate text-body font-medium">{isProgrammaticFirst ? "无模型程序化引擎" : agent?.name ?? "已选择智能体"}</dd>
+          <dt className="text-caption text-muted-foreground">智能体</dt>
+          <dd className="mt-1 truncate text-body font-medium">{agent?.name ?? "已选择智能体"}</dd>
         </div>
         <div>
           <dt className="text-caption text-muted-foreground">开始时间</dt>
@@ -422,8 +394,8 @@ export function DesignTaskActivity({
         >
           {stopTask.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
           {stopTask.isPending
-            ? (isRepositoryAnalysis ? "正在停止分析" : isProgrammaticFirst ? "正在停止生成" : "正在停止")
-            : (isRepositoryAnalysis ? "停止分析" : isProgrammaticFirst ? "停止生成" : "停止任务")}
+            ? (isRepositoryAnalysis ? "正在停止分析" : "正在停止")
+            : (isRepositoryAnalysis ? "停止分析" : "停止任务")}
         </Button>
       ) : null}
     </section>

@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -243,15 +242,14 @@ func (h *Handler) CreateProjectDesignSystem(w http.ResponseWriter, r *http.Reque
 		writeProjectDesignSystemError(w, http.StatusBadRequest, "brief_required", "brief is required")
 		return
 	}
-	if req.GenerationMode == "" {
+	// programmatic_first is accepted only as a compatibility alias for clients
+	// released before the Open Design single-Agent migration. New and retried
+	// tasks always persist and execute as Agent generation.
+	if req.GenerationMode == "" || req.GenerationMode == service.ProjectDesignSystemExecutionModeProgrammaticFirst {
 		req.GenerationMode = "agent"
 	}
-	if req.GenerationMode != "agent" && req.GenerationMode != service.ProjectDesignSystemExecutionModeProgrammaticFirst {
-		writeProjectDesignSystemError(w, http.StatusBadRequest, "generation_mode_invalid", "generation_mode must be agent or programmatic_first")
-		return
-	}
-	if req.GenerationMode == service.ProjectDesignSystemExecutionModeProgrammaticFirst && !workspaceRepositoryScoped && (standalone || req.ProjectResourceID == "") {
-		writeProjectDesignSystemError(w, http.StatusBadRequest, "generation_mode_scope_invalid", "programmatic_first requires a repository-scoped design system")
+	if req.GenerationMode != "agent" {
+		writeProjectDesignSystemError(w, http.StatusBadRequest, "generation_mode_invalid", "generation_mode must be agent")
 		return
 	}
 
@@ -617,12 +615,9 @@ func (h *Handler) RegenerateProjectDesignSystem(w http.ResponseWriter, r *http.R
 			return
 		}
 	}
-	// Open Design v0.19.2 restarts its deterministic pass against the same
-	// registered design system, then enriches that system in place. Repository
-	// regeneration follows the same lifecycle instead of launching a cold Agent.
-	if system.ProjectResourceID.Valid || system.WorkspaceRepositoryID.Valid {
-		input.GenerationMode = service.ProjectDesignSystemExecutionModeProgrammaticFirst
-	}
+	// Regeneration is the same single-Agent authoring flow as initial creation;
+	// the immutable base package and repository evidence provide continuity.
+	input.GenerationMode = "agent"
 	inputJSON, err := json.Marshal(input)
 	if err != nil || len(inputJSON) > maxProjectDesignSystemSnapshotBytes {
 		writeProjectDesignSystemError(w, http.StatusRequestEntityTooLarge, "input_snapshot_too_large", "design system inputs exceed the size limit")
@@ -900,8 +895,8 @@ func (h *Handler) createProjectDesignSystemTask(
 	if !verdict.Ready() {
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, &projectDesignSystemRequestError{status: http.StatusConflict, code: "agent_unavailable", message: verdict.Detail}
 	}
-	if input.GenerationMode == service.ProjectDesignSystemExecutionModeProgrammaticFirst {
-		if err := h.requireProgrammaticProjectDesignSystemResource(ctx, queries, projectID, scope.ProjectResourceID, agent); err != nil {
+	if scope.ProjectResourceID.Valid {
+		if err := h.requireProjectDesignSystemRepositoryResource(ctx, queries, projectID, scope.ProjectResourceID, agent); err != nil {
 			return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, err
 		}
 	}
@@ -1147,7 +1142,7 @@ func (h *Handler) createProjectDesignSystemRepositoryAnalysisTask(
 	return system, task, nil
 }
 
-func (h *Handler) requireProgrammaticProjectDesignSystemResource(
+func (h *Handler) requireProjectDesignSystemRepositoryResource(
 	ctx context.Context,
 	queries *db.Queries,
 	projectID pgtype.UUID,
@@ -1155,7 +1150,7 @@ func (h *Handler) requireProgrammaticProjectDesignSystemResource(
 	agent db.Agent,
 ) error {
 	if !projectResourceID.Valid {
-		return &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "project_resource_required", message: "programmatic generation requires a repository resource"}
+		return &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "project_resource_required", message: "repository design-system generation requires a repository resource"}
 	}
 	runtime, err := service.RuntimeLookup{
 		Queries: queries,
@@ -1313,63 +1308,6 @@ func (h *Handler) enqueueExistingProjectDesignSystemTask(
 		return db.ProjectDesignSystem{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("commit_failed", "failed to commit design system operation")
 	}
 	return system, task, nil
-}
-
-// openDesignProgrammaticEnrichmentInstruction is adapted directly from Open
-// Design v0.19.2's brandExtractionPrompt: the usable system already exists and
-// the Agent must sharpen that same system rather than create or inventory one
-// from scratch.
-const openDesignProgrammaticEnrichmentInstruction = `A usable design system has ALREADY been extracted programmatically, audited, previewed, and registered. The design-system page is already open and usable RIGHT NOW. Enrich this provisional system in place; do not create a duplicate and do not restart a whole-repository inventory.
-
-Read every file in the immutable base package first. Use base/source/index.json as the evidence index, then spot-check only its referenced repository paths when a rule needs confirmation. Refine the existing tokens, component contracts, representative page patterns, domain boundaries, and UI Kit module by module. Preserve strong evidence-backed decisions, replace weak fallbacks, and keep DESIGN.md, tokens.css, source/index.json, components.manifest.json, ui-kit/index.html, and preview pages coherent.
-
-This is an enrichment pass, not a cold generation pass. Spend Agent time on design judgment and repository-specific composition, not rediscovering file counts or rereading unrelated source trees.`
-
-func (h *Handler) enqueueOpenDesignProgrammaticEnrichment(
-	ctx context.Context,
-	completedTask db.AgentTaskQueue,
-	system db.ProjectDesignSystem,
-) (db.ProjectDesignSystem, *db.AgentTaskQueue, error) {
-	var taskContext service.ProjectDesignSystemTaskContext
-	if err := json.Unmarshal(completedTask.Context, &taskContext); err != nil ||
-		taskContext.Type != service.ProjectDesignSystemTaskContextType ||
-		taskContext.ExecutionMode != service.ProjectDesignSystemExecutionModeProgrammaticFirst ||
-		(taskContext.Operation != service.ProjectDesignSystemGenerate && taskContext.Operation != service.ProjectDesignSystemRegenerate) {
-		return system, nil, nil
-	}
-
-	input, inputJSON, err := decodeProjectDesignSystemInput(system.InputSnapshot)
-	if err != nil {
-		return system, nil, err
-	}
-	requesterID, err := util.ParseUUID(taskContext.RequesterID)
-	if err != nil {
-		return system, nil, fmt.Errorf("parse design system enrichment requester: %w", err)
-	}
-	agentID := completedTask.AgentID
-	if strings.TrimSpace(taskContext.AgentID) != "" {
-		agentID, err = util.ParseUUID(taskContext.AgentID)
-		if err != nil {
-			return system, nil, fmt.Errorf("parse design system enrichment agent: %w", err)
-		}
-	}
-	scopeJSON := json.RawMessage(`{"kind":"all"}`)
-	updated, followUp, err := h.enqueueExistingProjectDesignSystemTask(
-		ctx,
-		system.WorkspaceID,
-		requesterID,
-		system.ID,
-		agentID,
-		input,
-		inputJSON,
-		service.ProjectDesignSystemAdjust,
-		openDesignProgrammaticEnrichmentInstruction,
-		scopeJSON,
-	)
-	if err != nil {
-		return system, nil, err
-	}
-	return updated, &followUp, nil
 }
 
 var resumableProjectDesignSystemFinalizeFailures = map[string]struct{}{
@@ -1607,9 +1545,14 @@ func decodeProjectDesignSystemInput(raw []byte) (projectDesignSystemInputSnapsho
 	if len(raw) == 0 || json.Unmarshal(raw, &input) != nil || input.AgentID == "" || !validProjectDesignSystemPlatform(input.Platform) || strings.TrimSpace(input.Brief) == "" {
 		return projectDesignSystemInputSnapshot{}, nil, errors.New("invalid project design system input snapshot")
 	}
-	if input.References == nil {
-		input.References = []projectDesignSystemReferenceSnapshot{}
+	input.GenerationMode = "agent"
+	filteredReferences := make([]projectDesignSystemReferenceSnapshot, 0, len(input.References))
+	for _, reference := range input.References {
+		if reference.Kind != "design_system_profile" {
+			filteredReferences = append(filteredReferences, reference)
+		}
 	}
+	input.References = filteredReferences
 	normalized, err := json.Marshal(input)
 	if err != nil {
 		return projectDesignSystemInputSnapshot{}, nil, err
@@ -1673,7 +1616,7 @@ func marshalProjectDesignSystemTaskContext(
 		return nil, err
 	}
 	outputPolicyValue := map[string]any{
-		"required_artifacts":            []string{"DESIGN.md", "tokens.css", "components.html"},
+		"required_artifacts":            []string{"DESIGN.md", "tokens.css", "source/index.json", "ui-kit/index.html"},
 		"generation_mode":               "create_new_system",
 		"repository_grounding_required": false,
 		"reference_alignment_required":  true,
@@ -1690,7 +1633,7 @@ func marshalProjectDesignSystemTaskContext(
 		// Repository creation now follows Open Design's Agent-workspace shape:
 		// the selected Agent receives the live default-branch checkout and writes
 		// the first complete package from that evidence, rather than inheriting a
-		// generic programmatic admin template.
+		// generic fixed UI template.
 		outputPolicyValue["generation_mode"] = "extract_existing_product"
 		outputPolicyValue["repository_grounding_required"] = true
 		outputPolicyValue["source_priority"] = []string{"explicit_user_changes", "live_repository", "optional_references"}
@@ -1749,12 +1692,6 @@ func marshalProjectDesignSystemTaskContext(
 	// JSON contract and intentionally does not get any V2 markers, and
 	// the legacy Open Design flow is identified by openDesignRun alone
 	// (no package_schema) so historical already-queued tasks still parse.
-	if input.GenerationMode == service.ProjectDesignSystemExecutionModeProgrammaticFirst &&
-		(system.ProjectResourceID.Valid || system.WorkspaceRepositoryID.Valid) &&
-		((operation == service.ProjectDesignSystemGenerate && len(basePackage) == 0) ||
-			operation == service.ProjectDesignSystemRegenerate) {
-		taskContext.ExecutionMode = service.ProjectDesignSystemExecutionModeProgrammaticFirst
-	}
 	if operation != service.ProjectDesignSystemRepositoryAnalysis && len(openDesignRun) == 0 {
 		inputDigest, err := projectdesignsystem.SnapshotDigest(canonicalInput)
 		if err != nil {
@@ -1995,22 +1932,10 @@ func (h *Handler) resolveProjectDesignSystemReferences(
 				Frames:            frames,
 			})
 		case "design_system_profile":
-			profileID, err := util.ParseUUID(strings.TrimSpace(input.DesignSystemProfileID))
-			if err != nil {
-				return nil, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "reference_invalid", message: "design_system_profile_id is invalid"}
+			return nil, &projectDesignSystemRequestError{
+				status: http.StatusBadRequest, code: "reference_kind_invalid",
+				message: "UI specification references are not accepted for design-system generation",
 			}
-			profile, err := h.Queries.GetDesignSystemProfileInWorkspace(ctx, db.GetDesignSystemProfileInWorkspaceParams{ID: profileID, WorkspaceID: workspaceID})
-			if err != nil || !profile.ProjectID.Valid || profile.ProjectID != projectID {
-				return nil, &projectDesignSystemRequestError{status: http.StatusNotFound, code: "reference_not_found", message: "UI specification not found in this project"}
-			}
-			result = append(result, projectDesignSystemReferenceSnapshot{
-				Kind:             input.Kind,
-				ProfileID:        input.DesignSystemProfileID,
-				Label:            input.Label,
-				Title:            profile.Name,
-				SourceRevisionID: uuidToString(profile.SourceRevisionID),
-				Profile:          validJSONOr(profile.ProfileJson, json.RawMessage(`{}`)),
-			})
 		default:
 			return nil, &projectDesignSystemRequestError{status: http.StatusBadRequest, code: "reference_kind_invalid", message: "unsupported reference kind"}
 		}

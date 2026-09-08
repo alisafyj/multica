@@ -39,7 +39,7 @@ func auditV2Package(
 ) v2AuditResult {
 	result := v2AuditResult{}
 	diagnostics := make([]Diagnostic, 0)
-	for _, required := range []string{"DESIGN.md", "tokens.css", "source/index.json"} {
+	for _, required := range []string{"DESIGN.md", "tokens.css", "source/index.json", "ui-kit/index.html"} {
 		if len(bytes.TrimSpace(files[required])) == 0 {
 			diagnostics = append(diagnostics, errorDiagnostic("artifact_missing", required, required+" must be present and non-empty"))
 		}

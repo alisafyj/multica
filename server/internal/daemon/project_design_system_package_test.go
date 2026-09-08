@@ -65,8 +65,7 @@ func stageProjectDesignSystemV2Package(t *testing.T, envRoot string) string {
 	if err := os.WriteFile(filepath.Join(outputDir, "source", "index.json"), sourceJSON, 0o644); err != nil {
 		t.Fatalf("write source index: %v", err)
 	}
-	uiKit := `<main data-design-node-id="overview" data-design-node-kind="block" data-design-node-label="Overview"><button data-design-node-id="btn-primary" data-design-node-kind="component" data-design-node-label="Primary button">Go</button></main>
-<style>.root { color: var(--color-primary); font-family: var(--font-stack); }</style>`
+	uiKit := `<!doctype html><html><body><nav><a href="#components">Components</a></nav><main class="root" data-design-node-id="overview" data-design-node-kind="block" data-design-node-label="Overview"><section id="components" class="hero" data-design-node-id="components" data-design-node-kind="block" data-design-node-label="Components"><button class="button-primary" data-design-node-id="btn-primary" data-design-node-kind="component" data-design-node-label="Primary button">Go</button></section></main><style>.root { color: var(--color-primary); font-family: var(--font-stack); }.hero { padding-top: 24px; }.button-primary { background: var(--color-primary); }</style></body></html>`
 	if err := os.WriteFile(filepath.Join(outputDir, "ui-kit", "index.html"), []byte(uiKit), 0o644); err != nil {
 		t.Fatalf("write ui-kit: %v", err)
 	}
@@ -773,34 +772,13 @@ func TestLoopbackPreviewServerAppliesCSPAndInjectionToValidatedHTMLTargets(t *te
 	}
 }
 
-func TestProgrammaticUIKitLoadsTokensAndComputedStylesInBrowser(t *testing.T) {
+func TestProjectDesignSystemUIKitLoadsTokensAndComputedStylesInBrowser(t *testing.T) {
 	browserPath, err := designpreview.ResolveBrowserPath("")
 	if err != nil {
 		t.Skipf("real browser unavailable: %v", err)
 	}
-	repository := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repository, "components"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repository, "components", "DoctorCard.tsx"), []byte(`export function DoctorCard(){return <article>Doctor</article>}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(repository, "styles"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repository, "styles", "globals.css"), []byte(`:root{--brand-primary:#00ab84;--page-background:#ffffff;--text-primary:#111827}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	envRoot := t.TempDir()
-	if _, err := projectdesignsystem.GenerateProgrammaticFirstPackage(
-		context.Background(), repository, filepath.Join(envRoot, "output", "project-design-system"),
-		projectdesignsystem.ProgrammaticInput{
-			ProjectName: "Clinic", RepositoryName: "clinic-web", CommitSHA: strings.Repeat("b", 40),
-			Platform: "mobile", Brief: "Visual UI Kit", InputSnapshotSHA256: "sha256:" + strings.Repeat("a", 64),
-		}, nil,
-	); err != nil {
-		t.Fatalf("generate programmatic package: %v", err)
-	}
+	stageProjectDesignSystemV2Package(t, envRoot)
 	collected, err := collectV2ForTest(t, envRoot)
 	if err != nil {
 		t.Fatalf("collect programmatic package: %v", err)
@@ -818,20 +796,15 @@ func TestProgrammaticUIKitLoadsTokensAndComputedStylesInBrowser(t *testing.T) {
 	defer cancelTimeout()
 
 	var metrics struct {
-		Primary        string `json:"primary"`
-		HeroPadding    string `json:"heroPadding"`
-		ButtonColor    string `json:"buttonColor"`
-		StyleRuleCount int    `json:"styleRuleCount"`
+		Primary     string `json:"primary"`
+		HeroPadding string `json:"heroPadding"`
+		ButtonColor string `json:"buttonColor"`
 	}
 	expression := `(() => {
-		const count = Array.from(document.styleSheets).reduce((total, sheet) => {
-			try { return total + sheet.cssRules.length; } catch (_) { return total; }
-		}, 0);
 		return {
 			primary: getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim(),
 			heroPadding: getComputedStyle(document.querySelector('.hero')).paddingTop,
 			buttonColor: getComputedStyle(document.querySelector('.button-primary')).backgroundColor,
-			styleRuleCount: count,
 		};
 	})()`
 	if err := chromedp.Run(browserCtx,
@@ -839,10 +812,10 @@ func TestProgrammaticUIKitLoadsTokensAndComputedStylesInBrowser(t *testing.T) {
 		chromedp.WaitVisible(".button-primary", chromedp.ByQuery),
 		chromedp.Evaluate(expression, &metrics),
 	); err != nil {
-		t.Fatalf("render programmatic UI Kit: %v", err)
+		t.Fatalf("render UI Kit: %v", err)
 	}
-	if metrics.Primary != "#00ab84" || metrics.HeroPadding == "0px" || metrics.ButtonColor == "rgba(0, 0, 0, 0)" || metrics.StyleRuleCount < 20 {
-		t.Fatalf("programmatic UI Kit styles did not apply: %+v", metrics)
+	if metrics.Primary != "#1677ff" || metrics.HeroPadding == "0px" || metrics.ButtonColor == "rgba(0, 0, 0, 0)" {
+		t.Fatalf("UI Kit styles did not apply: %+v", metrics)
 	}
 }
 

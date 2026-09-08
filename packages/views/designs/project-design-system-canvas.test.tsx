@@ -669,6 +669,7 @@ describe("ProjectDesignSystemCanvas", () => {
       agent_id: "agent-1",
       status: "running",
       operation: "adjust",
+      execution_mode: "programmatic_first",
       error: null,
       failure_reason: null,
       wait_reason: null,
@@ -686,6 +687,8 @@ describe("ProjectDesignSystemCanvas", () => {
     expect(within(drawer).getByRole("button", { name: "停止任务" })).toBeInTheDocument();
     expect(within(drawer).getByRole("progressbar", { name: /设计体系生成进度/ })).toHaveAttribute("aria-valuetext", "正在准备执行计划");
     expect(within(drawer).getByText("准备中")).toBeInTheDocument();
+    expect(within(drawer).getAllByText("UI Designer").length).toBeGreaterThan(0);
+    expect(within(drawer).queryByText("无模型程序化引擎")).not.toBeInTheDocument();
   });
 
   it.each([

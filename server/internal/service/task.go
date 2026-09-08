@@ -1634,6 +1634,8 @@ const DesignTemplateBlueprintAnalyzeContextType = "design_template_blueprint_ana
 
 const ProjectDesignSystemTaskContextType = "project_design_system_task"
 
+// ProjectDesignSystemExecutionModeProgrammaticFirst is a legacy API input alias.
+// It no longer selects a model-free runtime path.
 const ProjectDesignSystemExecutionModeProgrammaticFirst = "programmatic_first"
 
 type ProjectDesignSystemOperation string

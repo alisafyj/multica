@@ -5267,20 +5267,11 @@ func TestProjectDesignSystemNeedsLiveRepositoryForRepositoryGenerationAndRefresh
 	if !projectDesignSystemNeedsLiveRepository(service.ProjectDesignSystemTaskContext{Operation: service.ProjectDesignSystemRepositoryAnalysis}) {
 		t.Fatal("repository analysis did not request live repository context")
 	}
-	if !projectDesignSystemNeedsLiveRepository(service.ProjectDesignSystemTaskContext{
-		Operation: service.ProjectDesignSystemGenerate, ExecutionMode: service.ProjectDesignSystemExecutionModeProgrammaticFirst,
-	}) {
-		t.Fatal("programmatic first generation did not request live repository context")
-	}
 	for name, contextValue := range map[string]service.ProjectDesignSystemTaskContext{
 		"settings repository":   {Operation: service.ProjectDesignSystemGenerate, WorkspaceRepositoryID: "repository-1"},
 		"project repository":    {Operation: service.ProjectDesignSystemGenerate, ProjectResourceID: "resource-1"},
 		"repository refresh":    {Operation: service.ProjectDesignSystemRegenerate, WorkspaceRepositoryID: "repository-1"},
 		"repository adjustment": {Operation: service.ProjectDesignSystemAdjust, WorkspaceRepositoryID: "repository-1"},
-		"Open Design enrichment": {
-			Operation: service.ProjectDesignSystemAdjust, WorkspaceRepositoryID: "repository-1",
-			Instruction: openDesignProgrammaticEnrichmentInstruction,
-		},
 	} {
 		if !projectDesignSystemNeedsLiveRepository(contextValue) {
 			t.Fatalf("%s Agent generation did not request live repository context", name)

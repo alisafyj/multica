@@ -340,7 +340,7 @@ describe("WorkspaceDesignSystemCreate", () => {
     expect(screen.getByLabelText("品牌描述")).toHaveValue("客户管理项目");
     expect(within(screen.getByLabelText("已添加的来源链接")).getByText("example/web")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("智能体")).toHaveValue("agent-1"));
-    expect(screen.getByText(/立即形成可用 UI Kit/)).toBeInTheDocument();
+    expect(screen.getByText(/完整仓库工作树证据分析并生成 UI Kit/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "立即生成" }));
 
@@ -349,7 +349,7 @@ describe("WorkspaceDesignSystemCreate", () => {
       workspace_repository_id: "repo-1",
       name: "web 设计体系",
       agent_id: "agent-1",
-      generation_mode: "programmatic_first",
+      generation_mode: "agent",
       platform: "web",
       brief: "客户管理项目",
       references: [{ kind: "link", value: "https://github.com/example/web", label: "来源链接" }],
@@ -386,7 +386,7 @@ describe("WorkspaceDesignSystemCreate", () => {
         workspace_repository_id: "repo-1",
         name: "web 设计体系",
         agent_id: "agent-1",
-        generation_mode: "programmatic_first",
+        generation_mode: "agent",
         platform: "mobile",
         brief: "保留上次失败前的输入",
         references: [{ kind: "link", value: "https://github.com/example/web", label: "来源链接" }],
@@ -395,7 +395,7 @@ describe("WorkspaceDesignSystemCreate", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it("starts the Open Design programmatic-first repository flow in one click", async () => {
+  it("starts the repository Agent generation flow in one click", async () => {
     const user = userEvent.setup();
     createProjectDesignSystem.mockResolvedValue({
       id: "system-quick",
@@ -422,7 +422,7 @@ describe("WorkspaceDesignSystemCreate", () => {
       workspace_repository_id: "repo-1",
       name: "web 设计体系",
       agent_id: "agent-1",
-      generation_mode: "programmatic_first",
+      generation_mode: "agent",
       platform: "mobile",
       brief: "一次点击读取并生成",
       references: [{ kind: "link", value: "https://github.com/example/web", label: "来源链接" }],
@@ -457,14 +457,14 @@ describe("WorkspaceDesignSystemCreate", () => {
     expect(screen.getByLabelText("设计体系名称")).toHaveAttribute("readonly");
     expect(await screen.findByLabelText("品牌描述")).toHaveValue("客户管理项目");
     expect(screen.getByLabelText("智能体")).toHaveValue("agent-1");
-    expect(screen.getByText(/立即形成可用 UI Kit/)).toBeInTheDocument();
+    expect(screen.getByText(/完整仓库工作树证据分析并生成 UI Kit/)).toBeInTheDocument();
     expect(screen.getByTitle("打开 example/web")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "立即生成" }));
     await vi.waitFor(() => expect(createProjectDesignSystem).toHaveBeenLastCalledWith(expect.objectContaining({
       project_id: "",
       workspace_repository_id: "repo-1",
       agent_id: "agent-1",
-      generation_mode: "programmatic_first",
+      generation_mode: "agent",
     })));
   });
 
@@ -484,7 +484,7 @@ describe("WorkspaceDesignSystemCreate", () => {
         agent_id: "agent-1",
         status: "running",
         operation: "generate",
-        execution_mode: "programmatic_first",
+        execution_mode: "",
         error: null,
         failure_reason: null,
         wait_reason: null,
@@ -503,21 +503,17 @@ describe("WorkspaceDesignSystemCreate", () => {
       updated_at: "",
       saved_at: null,
     });
-    listTaskMessages.mockResolvedValue([
-      { task_id: "11111111-1111-7111-8111-111111111111", issue_id: "", seq: 1, type: "text", content: "已固定仓库 web 和 Commit abcdef123456。" },
-      { task_id: "11111111-1111-7111-8111-111111111111", issue_id: "", seq: 2, type: "text", content: "已完成有界源码清单，共读取 24 个高信号文件。" },
-    ]);
     renderCreate();
 
     await user.click(await screen.findByRole("button", { name: "仓库绑定" }));
     await user.selectOptions(screen.getByLabelText("选择仓库"), "repo-1");
 
-    expect(await screen.findByRole("heading", { name: "正在生成仓库设计体系" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Agent 正在生成完整设计体系" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "生成中的设计体系预览" })).toBeInTheDocument();
-    expect(await screen.findByRole("list", { name: "快速生成步骤" })).toBeInTheDocument();
-    expect(screen.getByText("已固定仓库 web 和 Commit abcdef123456。")).toBeInTheDocument();
-    expect(screen.getByText("已完成有界源码清单，共读取 24 个高信号文件。")).toBeInTheDocument();
-    expect(screen.getByText("无模型程序化引擎")).toBeInTheDocument();
+    expect(await screen.findByRole("progressbar", { name: /设计体系生成进度/ })).toBeInTheDocument();
+    expect(screen.getAllByText("小设计").length).toBeGreaterThan(0);
+    expect(screen.queryByText("无模型程序化引擎")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "生成期间与智能体互动" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "立即生成" })).not.toBeInTheDocument();
     await vi.waitFor(() => expect(getProjectDesignSystemForWorkspaceRepository).toHaveBeenCalledWith("repo-1"));
     expect(listProjectResources).not.toHaveBeenCalled();

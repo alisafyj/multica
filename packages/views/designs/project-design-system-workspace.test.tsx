@@ -308,6 +308,21 @@ describe("ProjectDesignSystemWorkspace", () => {
     });
   });
 
+  it("keeps polling messages for an active Agent design task", async () => {
+    const activeTask = makeActiveTask("running");
+    renderWorkspace(makeSystem({
+      id: "system-1",
+      name: "CRM 设计体系",
+      platform: "web",
+      current_agent_id: "agent-1",
+      status: "generating",
+      active_task: activeTask,
+    }));
+
+    await waitFor(() => expect(apiMocks.listTaskMessages).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(apiMocks.listTaskMessages.mock.calls.length).toBeGreaterThan(1), { timeout: 2_500 });
+  });
+
   it("queues user feedback during generation and sends it as the next Agent adjustment", async () => {
     const activeTask = makeActiveTask("running");
     const runningSystem = makeSystem({

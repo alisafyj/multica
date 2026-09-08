@@ -366,13 +366,28 @@ func isV2ProjectDesignSystemTask(task map[string]json.RawMessage) bool {
 	return schema == projectdesignsystem.PackageSchemaV2
 }
 
+func v2ProjectDesignSystemHasRepository(task map[string]json.RawMessage) bool {
+	for _, field := range []string{"project_resource_id", "workspace_repository_id"} {
+		raw, ok := task[field]
+		if !ok {
+			continue
+		}
+		var value string
+		if json.Unmarshal(raw, &value) == nil && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // writeV2ProjectDesignSystemContext materializes the V2 native agent
 // workspace under {root}: a read-only context/task.json + optional
 // context/repository-analysis.json, a read-only reference/index.json
-// summarising the brief and references, and an optional read-only
-// base/ tree populated for adjust / regenerate tasks. All three
-// sub-directories are stamped 0o555; all files are stamped 0o444 so
-// the agent can read but not mutate the inputs. The output area
+// summarising the brief and references, a repository/ directory reserved for
+// the daemon's immutable Open Design evidence snapshot, and an optional
+// read-only base/ tree populated for adjust / regenerate tasks. Context and
+// reference are stamped here; repository and base are stamped after their
+// verified bytes arrive. The output area
 // (envRoot/output/project-design-system) is intentionally not touched
 // here — it stays writable for the agent's final package.
 func writeV2ProjectDesignSystemContext(root string, task map[string]json.RawMessage, operation string, manifest *sidecarManifest) error {
@@ -390,6 +405,15 @@ func writeV2ProjectDesignSystemContext(root string, task map[string]json.RawMess
 	referenceDir := filepath.Join(root, "reference")
 	if err := recordMkdirAll(referenceDir, 0o755, manifest); err != nil {
 		return err
+	}
+	// Repository-scoped tasks reserve a separate evidence tree. The daemon
+	// fills and stamps it read-only only after the exact default-branch checkout
+	// has been prepared, so execenv must not freeze this directory yet.
+	if v2ProjectDesignSystemHasRepository(task) {
+		repositoryDir := filepath.Join(root, "repository")
+		if err := recordMkdirAll(repositoryDir, 0o755, manifest); err != nil {
+			return err
+		}
 	}
 
 	taskJSON, err := json.MarshalIndent(task, "", "  ")
@@ -494,7 +518,7 @@ func stampV2ReadOnly(dirs ...string) error {
 // {workdir}/.agent_context/project_design_system/. Keep this in sync
 // with the directory names written by writeV2ProjectDesignSystemContext
 // and writeV2BaseDirectory.
-var v2SidecarDirNames = []string{"context", "reference", "base"}
+var v2SidecarDirNames = []string{"context", "reference", "repository", "base"}
 
 // v2SidecarRootNames are the read-only sidecar roots a native task can
 // materialize under .agent_context. A task has exactly one of them.

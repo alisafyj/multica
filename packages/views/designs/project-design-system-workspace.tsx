@@ -269,30 +269,6 @@ function ProjectDesignSystemTaskStatus({
   onCancelQueuedFeedback: () => void;
 }) {
   const isRepositoryAnalysis = system.active_task?.operation === "repository_analysis";
-  const isProgrammaticFirst = system.active_task?.execution_mode === "programmatic_first";
-  if (isProgrammaticFirst) {
-    return (
-      <div className="h-full overflow-auto p-4 lg:p-6">
-        <div className="mx-auto w-full max-w-[1600px] py-2">
-          <div className="mb-5 flex items-start gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-              <LoaderCircle className="h-4 w-4 animate-spin" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h2 className="text-title-sm font-semibold">正在生成仓库设计体系</h2>
-              <p className="mt-1 text-body text-muted-foreground">{project?.title || system.name || "仓库设计体系"} · 一次点击完成仓库读取、快速草稿和真实验证</p>
-            </div>
-          </div>
-          <div className="grid min-h-0 gap-6 lg:grid-cols-[minmax(300px,380px)_minmax(0,1fr)]">
-            <aside className="self-start rounded-xl border bg-background px-4">
-              <ProjectDesignSystemTaskActivity system={system} agents={agents} />
-            </aside>
-            <GenerationWorkspacePreview />
-          </div>
-        </div>
-      </div>
-    );
-  }
   return (
     <div className="h-full overflow-auto p-4 lg:p-6">
       <div className="mx-auto w-full max-w-[1600px] py-2">

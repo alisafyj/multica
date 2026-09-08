@@ -7252,14 +7252,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	d.registerTaskRepos(task.WorkspaceID, task.ID, task.Repos)
 	defer d.clearTaskRepoRefs(task.WorkspaceID, task.ID)
 
-	// Repository-scoped first generation uses the selected runtime only as a
-	// machine/checkout carrier. It must branch before provider discovery, skill
-	// hydration, MCP setup and prompt construction so no model process or Agent
-	// context participates in the quick draft.
-	if isProgrammaticFirstProjectDesignSystemTask(task) {
-		return d.runProgrammaticFirstProjectDesignSystemTask(prepareCtx, task, taskLog)
-	}
-
 	entry, ok := d.agents()[provider]
 	// A custom runtime profile (MUL-3284) overrides the executable path: the
 	// runtime's protocol_family is the provider (so agent.New still selects
@@ -7969,6 +7961,17 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, fmt.Errorf("prepare project design system base archive: %w", err)
 	}
 
+	// Open Design v0.19.2's repository intake is a deterministic evidence
+	// preflight, not a replacement author. Prepare the exact default-branch
+	// checkout and immutable bounded snapshots before the selected Agent starts.
+	var projectDesignSystemRepository *projectDesignSystemRepositoryState
+	var projectDesignSystemRepositoryErr error
+	if isRepositoryScopedProjectDesignSystemTask(task) {
+		projectDesignSystemRepository, projectDesignSystemRepositoryErr = d.prepareProjectDesignSystemRepositoryEvidence(
+			prepareCtx, task, env.RootDir, env.WorkDir, taskLog,
+		)
+	}
+
 	// A page-design adjustment runs against a base revision whose package is an
 	// archive, so execenv only reserved the directory — the bytes have to come
 	// over the wire. Done here, while the run is still in its prepare phase, so
@@ -8046,6 +8049,26 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	stopPrepareLease()
 	prepareComplete = true
 	cancelPrepare()
+	if projectDesignSystemRepositoryErr != nil {
+		return TaskResult{
+			Status: "blocked", Comment: "Project design system repository unavailable: " + projectDesignSystemRepositoryErr.Error(),
+			WorkDir: env.WorkDir, EnvRoot: env.RootDir, FailureReason: "project_design_system_repository_unavailable",
+		}, nil
+	}
+	if projectDesignSystemRepository != nil {
+		defer func() {
+			if returnErr != nil || taskResult.Status != "completed" {
+				return
+			}
+			verifyCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := projectDesignSystemRepository.verify(verifyCtx); err != nil {
+				taskResult.Status = "blocked"
+				taskResult.Comment = err.Error()
+				taskResult.FailureReason = "project_design_system_repository_modified"
+			}
+		}()
+	}
 	if designDocumentGroundingErr != nil {
 		failureReason := "design_document_repository_unavailable"
 		if strings.HasPrefix(designDocumentGroundingErr.Error(), "Design Document input unavailable:") {

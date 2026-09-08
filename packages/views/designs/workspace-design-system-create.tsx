@@ -233,10 +233,6 @@ export function WorkspaceDesignSystemCreate({
   const copyRequestRef = useRef(0);
   const autoPrefillScopeRef = useRef("");
 
-  // Open Design v0.19.2 uses an entity-first, programmatic-first flow: create
-  // a usable design-system draft immediately, then let the selected Agent enrich
-  // that same system in place. Repository systems keep that exact lifecycle.
-  const repositoryProgrammaticFirst = scope === "repository";
   const availableAgents = useMemo(
     () => agents.filter((agent) => isAgentAvailable(agent)),
     [agents],
@@ -335,7 +331,7 @@ export function WorkspaceDesignSystemCreate({
         workspace_repository_id: scope === "repository" ? repositoryId : undefined,
         name: scope === "project" ? undefined : name.trim(),
         agent_id: effectiveAgentId,
-        generation_mode: repositoryProgrammaticFirst ? "programmatic_first" : "agent",
+        generation_mode: "agent",
         platform: platform as "web" | "mobile" | "cross_platform",
         brief: composedBrief,
         references,
@@ -606,7 +602,7 @@ export function WorkspaceDesignSystemCreate({
           <section aria-label="从 GitHub、网站或源素材提取">
             <h2 className="text-title-lg font-bold leading-tight">从 GitHub、网站或源素材提取</h2>
             <p className="mt-2 text-body text-muted-foreground">
-              从 GitHub 仓库、网站、DESIGN.md 或能体现风格的文件开始。仓库会先形成可用体系，所选智能体随后在同一体系上继续增强。
+              从 GitHub 仓库、网站、DESIGN.md 或能体现风格的文件开始。仓库绑定任务会把完整仓库工作树作为证据交给所选单个 Agent，由它分析并生成 UI Kit；任务完成前只展示真实执行进度，不会预先声称已有产物。
             </p>
 
             <div className="mt-3 overflow-hidden rounded-lg border bg-card shadow-sm">
@@ -1004,8 +1000,8 @@ export function WorkspaceDesignSystemCreate({
               <FormRow
                 label="智能体"
                 required
-                hint={repositoryProgrammaticFirst
-                  ? "系统先立即形成可用 UI Kit；智能体随后基于同一份仓库证据原地增强，不再从零扫描。"
+                hint={scope === "repository"
+                  ? "所选单个 Agent 将基于完整仓库工作树证据分析并生成 UI Kit；任务完成前只展示真实 todo、消息和状态。"
                   : undefined}
               >
                 <select
