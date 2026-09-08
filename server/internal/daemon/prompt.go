@@ -83,10 +83,15 @@ type promptOpts struct {
 	sharedLocalDirectory    bool
 	outputDir               string
 	worktreeReplayConflicts []string
+	conciseOptimization     bool
 }
 
 // PromptOption tunes per-turn prompt copy with run-scoped context.
 type PromptOption func(*promptOpts)
+
+func withConciseOptimization() PromptOption {
+	return func(o *promptOpts) { o.conciseOptimization = true }
+}
 
 // WithSharedLocalDirectory marks a turn that runs inside the user's own
 // directory WITHOUT holding its path mutex — today, a chat turn on an in_place
@@ -296,9 +301,13 @@ func buildConcisePrompt(task Task, options ...PromptOption) string {
 	}
 	blocks := perTurnContextBlocks(task, opts)
 	contract := buildConciseExecutionContract(task, kind)
+	optimization := ""
+	if opts.conciseOptimization {
+		optimization = conciseOptimizationGuidance
+	}
 
 	var b strings.Builder
-	b.Grow(len(identity) + len(body) + len(blocks) + len(contract) + 4)
+	b.Grow(len(identity) + len(body) + len(blocks) + len(contract) + len(optimization) + 4)
 	if identity != "" {
 		b.WriteString(identity)
 	}
@@ -317,6 +326,7 @@ func buildConcisePrompt(task Task, options ...PromptOption) string {
 		b.WriteByte('\n')
 	}
 	b.WriteString(contract)
+	b.WriteString(optimization)
 	return b.String()
 }
 
@@ -403,6 +413,16 @@ func buildConciseExecutionContract(task Task, kind string) string {
 	}
 	return b.String()
 }
+
+const conciseOptimizationGuidance = `
+## Concise optimization
+
+- Handle known small scopes inline. Decompose only with at least two substantive independent slices; do not delegate trivial lookup, editing, or cleanup. Preserve explicitly requested plans/parallel work and all required tests and acceptance validation; focused verification is not a substitute for them.
+- Reuse supplied context and required initial reads. Fetch other issues or additional history only to close a concrete task-relevant gap.
+- Prepare only tools required by the task or repository instructions. For necessary GitNexus, run ` + "`multica repo tool-status gitnexus --path <checkout> --output json`" + ` once for that checkout. This read-only inspector never installs or indexes. Reuse a ready index only while checkout, revision, analyzer identity, and repository content remain unchanged; after a change, recheck readiness before relying on it.
+- If not ready, attempt at most one specifically authorized targeted repair, then recheck status once. Unsupported versions or unavailable required tools are constraints to report, not invitations to try repeated help/install/index commands. Never silently bypass mandatory repository tools; if readiness cannot be established, report the constraint and what is needed to proceed.
+- For other required tools, inspect preparation once and allow at most one specifically authorized targeted correction followed by one recheck, not a setup retry loop. These are execution guidelines, not additional daemon-enforced limits. Existing identity, privacy, repository instructions, safety boundaries, and complete delivery requirements still apply.
+`
 
 func buildDirectChatPrompt(task Task) string {
 	var b strings.Builder
