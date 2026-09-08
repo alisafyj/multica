@@ -212,26 +212,83 @@ func TestPairT3WritableRootsContainImplicitAndPrivateCacheGrants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{cwd, cache, filepath.Join(cache, "go-mod"), filepath.Join(cache, "pnpm-store"), filepath.Join(cache, "corepack"), goCache, "/tmp", probeTmp} {
+	expectedRoots := []string{cwd, cache, filepath.Join(cache, "go-mod"), filepath.Join(cache, "pnpm-store"), filepath.Join(cache, "corepack"), goCache, "/tmp"}
+	if _, err := os.Stat("/private/tmp"); err == nil {
+		expectedRoots = append(expectedRoots, "/private/tmp")
+	}
+	if tmpdir := os.Getenv("TMPDIR"); filepath.IsAbs(tmpdir) {
+		expectedRoots = append(expectedRoots, filepath.Clean(tmpdir))
+	}
+	for index, expected := range expectedRoots {
 		resolved, err := filepath.EvalSymlinks(expected)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Contains(roots, resolved) {
-			t.Fatalf("writable root missing: %s", expected)
-		}
+		expectedRoots[index] = resolved
 	}
-	outsideSentinel, cacheSentinel := filepath.Join(root, "outside", "sentinel"), filepath.Join(cache, "sentinel")
-	if err := os.MkdirAll(filepath.Dir(outsideSentinel), 0o700); err != nil {
+	slices.Sort(expectedRoots)
+	expectedRoots = slices.Compact(expectedRoots)
+	if !slices.Equal(roots, expectedRoots) {
+		t.Fatalf("writable roots = %q, want exact canonical roots %q", roots, expectedRoots)
+	}
+	implicitTmp, err := os.MkdirTemp("/tmp", "multica-pair-t3-containment-")
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, file := range []string{outsideSentinel, cacheSentinel} {
+	t.Cleanup(func() { _ = os.RemoveAll(implicitTmp) })
+	insideSentinels := []string{
+		filepath.Join(implicitTmp, "sentinel"),
+		filepath.Join(cwd, "sentinel"),
+		filepath.Join(cache, "sentinel"),
+		filepath.Join(goCache, "sentinel"),
+		filepath.Join(probeTmp, "sentinel"),
+	}
+	for _, file := range insideSentinels {
+		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte("sentinel\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if pairT3OutsideEveryRoot(file, roots) {
+			t.Fatalf("path inside writable root reported outside: %s", file)
+		}
+	}
+	realOutsideRoot, err := os.MkdirTemp("/var/tmp", "multica-pair-t3-outside-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(realOutsideRoot) })
+	realOutsideSentinel := filepath.Join(realOutsideRoot, "sentinel")
+	if err := os.WriteFile(realOutsideSentinel, []byte("sentinel\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !pairT3OutsideEveryRoot(realOutsideSentinel, roots) {
+		t.Fatal("path outside complete writable roots reported inside")
+	}
+
+	containmentRoot := t.TempDir()
+	grantedRoot := filepath.Join(containmentRoot, "granted")
+	grantedSentinel := filepath.Join(grantedRoot, "sentinel")
+	outsideSentinel := filepath.Join(containmentRoot, "outside", "sentinel")
+	for _, file := range []string{grantedSentinel, outsideSentinel} {
+		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(file, []byte("sentinel\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if !pairT3OutsideEveryRoot(outsideSentinel, roots) || pairT3OutsideEveryRoot(cacheSentinel, roots) {
-		t.Fatal("outside-root containment check is incorrect")
+	canonicalGrantedRoot, err := filepath.EvalSymlinks(grantedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	isolatedRoots := []string{canonicalGrantedRoot}
+	if pairT3OutsideEveryRoot(grantedSentinel, isolatedRoots) {
+		t.Fatal("path inside isolated writable root reported outside")
+	}
+	if !pairT3OutsideEveryRoot(outsideSentinel, isolatedRoots) {
+		t.Fatal("sibling outside isolated writable root reported inside")
 	}
 }
 

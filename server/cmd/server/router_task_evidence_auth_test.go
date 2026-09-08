@@ -21,6 +21,7 @@ type routerTaskEvidenceFixture struct {
 	rows        *testutil.Fixture
 	runtimeID   string
 	taskID      string
+	issueID     string
 	daemonID    string
 	daemonToken string
 	generation  int64
@@ -52,7 +53,7 @@ func newRouterTaskEvidenceFixture(t *testing.T) routerTaskEvidenceFixture {
 		"daemon_id": daemonID, "expires_at": time.Now().Add(time.Hour),
 	})
 	return routerTaskEvidenceFixture{
-		rows: rows, runtimeID: runtimeID, taskID: taskID, daemonID: daemonID,
+		rows: rows, runtimeID: runtimeID, taskID: taskID, issueID: issueID, daemonID: daemonID,
 		daemonToken: raw, generation: dispatchedAt.UnixMicro(),
 	}
 }
@@ -187,10 +188,28 @@ func TestRouterPendingInputAcceptsDaemonRead(t *testing.T) {
 func TestRouterPendingInputAcceptsDaemonAcknowledgment(t *testing.T) {
 	f := newRouterTaskEvidenceFixture(t)
 	id := f.registerPendingInput(t)
-	f.rows.Exec(t, `UPDATE task_pending_input SET state = 'answered', answers = '{"choice":{"answers":["First"]}}', answered_at = now() WHERE id = $1`, id)
-	status, _ := routerTaskEvidenceRequest(t, http.MethodPost, f.path("/pending-inputs/"+id+"/ack"), f.daemonToken, map[string]any{"claim_generation": f.generation})
+	answerPath := "/api/issues/" + f.issueID + "/pending-inputs/" + id + "/answer?workspace_id=" + testWorkspaceID
+	status, _ := routerTaskEvidenceRequest(t, http.MethodPost, answerPath, testToken, map[string]any{
+		"idempotency_key": uuid.NewString(),
+		"answers":         map[string]any{"choice": map[string]any{"answers": []string{"First"}}},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("member pending-input answer status = %d, want 200", status)
+	}
+	status, _ = routerTaskEvidenceRequest(t, http.MethodPost, f.path("/pending-inputs/"+id+"/ack"), f.daemonToken, map[string]any{"claim_generation": f.generation})
 	if status != http.StatusOK {
 		t.Fatalf("daemon pending-input ack status = %d, want 200", status)
+	}
+	var acked, delivered bool
+	f.rows.QueryRow(t, `
+		SELECT pending.acked_at IS NOT NULL,
+		       pending.answer_comment_id = ANY(task.delivered_comment_ids)
+		FROM task_pending_input AS pending
+		JOIN agent_task_queue AS task ON task.id = pending.task_id
+		WHERE pending.id = $1
+	`, id).Scan(&acked, &delivered)
+	if !acked || !delivered {
+		t.Fatalf("pending-input ack persisted ack=%t delivery=%t, want both true", acked, delivered)
 	}
 }
 
