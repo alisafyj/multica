@@ -725,9 +725,13 @@ func setFetchRefspecContext(ctx context.Context, barePath, refspec string) error
 
 // WorktreeParams holds inputs for creating a worktree from a cached bare clone.
 type WorktreeParams struct {
-	WorkspaceID         string // workspace that owns the repo
-	RepoURL             string // remote URL to look up in the cache
-	WorkDir             string // parent directory for the worktree (e.g. task workdir)
+	WorkspaceID string // workspace that owns the repo
+	RepoURL     string // remote URL to look up in the cache
+	WorkDir     string // parent directory for the worktree (e.g. task workdir)
+	// CheckoutAtWorkDir prepares the primary repository at WorkDir itself.
+	// Only the daemon's preparation path selects this; HTTP callers cannot
+	// use it to replace an arbitrary directory with a checkout.
+	CheckoutAtWorkDir   bool
 	Ref                 string // optional branch, tag, or commit to base the worktree on
 	AgentName           string // for branch naming
 	TaskID              string // for branch naming uniqueness
@@ -857,6 +861,15 @@ func (c *Cache) CreateWorktreeContext(ctx context.Context, params WorktreeParams
 	// qualified name for each so they land in distinct directories.
 	dirName := worktreeDirName(params.RepoURL, params.PeerURLs)
 	worktreePath := filepath.Join(params.WorkDir, dirName)
+	if params.CheckoutAtWorkDir {
+		worktreePath = params.WorkDir
+	}
+	excludePatterns := agentGitExcludePatterns
+	if params.CheckoutAtWorkDir {
+		// Primary checkouts exclude only the sidecars actually materialized by
+		// execenv; broad patterns would hide new repository-owned rule files.
+		excludePatterns = nil
+	}
 
 	// Once a workdir has moved to isolated metadata, keep using that safer
 	// shape even if a later task comes from an older CLI or a different runtime
@@ -875,7 +888,7 @@ func (c *Cache) CreateWorktreeContext(ctx context.Context, params WorktreeParams
 			return nil, fmt.Errorf("create isolated checkout: %w", err)
 		}
 
-		for _, pattern := range agentGitExcludePatterns {
+		for _, pattern := range excludePatterns {
 			_ = excludeFromGitContext(ctx, worktreePath, pattern)
 		}
 		c.applyCoAuthoredBySettingContext(ctx, worktreePath, params)
@@ -900,7 +913,7 @@ func (c *Cache) CreateWorktreeContext(ctx context.Context, params WorktreeParams
 			return nil, fmt.Errorf("update existing worktree: %w", err)
 		}
 
-		for _, pattern := range agentGitExcludePatterns {
+		for _, pattern := range excludePatterns {
 			_ = excludeFromGitContext(ctx, worktreePath, pattern)
 		}
 
@@ -935,7 +948,7 @@ func (c *Cache) CreateWorktreeContext(ctx context.Context, params WorktreeParams
 	}
 
 	// Exclude agent context files from git tracking.
-	for _, pattern := range agentGitExcludePatterns {
+	for _, pattern := range excludePatterns {
 		_ = excludeFromGitContext(ctx, worktreePath, pattern)
 	}
 

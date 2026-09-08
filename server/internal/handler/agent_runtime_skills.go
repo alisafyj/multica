@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	agentruntime "github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -121,7 +123,7 @@ func (h *Handler) SetAgentRuntimeSkillEnabled(w http.ResponseWriter, r *http.Req
 		return
 	}
 	root, key, plugin, valid := normalizeRuntimeSkillIdentity(req.Root, req.Key, req.Plugin)
-	if !valid || (root == "plugin" && rt.Provider != "claude") {
+	if !valid {
 		writeError(w, http.StatusBadRequest, "invalid runtime skill identity")
 		return
 	}
@@ -158,13 +160,27 @@ func (h *Handler) SetAgentRuntimeSkillEnabled(w http.ResponseWriter, r *http.Req
 	}
 	current := decodeDisabledRuntimeSkills(locked.DisabledRuntimeSkills)
 	next := make([]DisabledRuntimeSkill, 0, len(current)+1)
+	alreadyDisabled := false
 	for _, skill := range current {
 		if sameDisabledRuntimeSkill(skill, target) {
+			alreadyDisabled = true
 			continue
 		}
 		next = append(next, skill)
 	}
 	if !*req.Enabled {
+		if !alreadyDisabled && rt.Provider == "codex" && root == "plugin" {
+			selected := make(map[agentruntime.CodexPluginSkillSelection]struct{})
+			for _, skill := range next {
+				if skill.RuntimeID == target.RuntimeID && skill.Provider == target.Provider && skill.Root == "plugin" {
+					selected[agentruntime.CodexPluginSkillSelection{PluginID: skill.Plugin, Key: skill.Key}] = struct{}{}
+				}
+			}
+			if len(selected) >= agentruntime.MaxCodexPluginSkillSelections {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("at most %d Codex plugin skills may be disabled for one runtime; enable a saved skill before disabling another", agentruntime.MaxCodexPluginSkillSelections))
+				return
+			}
+		}
 		next = append(next, target)
 	}
 	payload, err := json.Marshal(next)

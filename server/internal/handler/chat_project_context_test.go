@@ -303,7 +303,7 @@ func TestClaimTaskByRuntime_ChatProjectContext(t *testing.T) {
 		t.Fatalf("create project resource: %v", err)
 	}
 
-	agentID := createHandlerTestAgent(t, "ChatProjectClaimAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatProjectClaimAgent", []byte("{}"))
 	runtimeID := handlerTestRuntimeID(t)
 	sessionID := createChatSessionWithProjectForTest(t, agentID, projectID)
 	if _, err := testPool.Exec(ctx, `

@@ -1152,7 +1152,7 @@ func taskErrorType(reason string) string {
 		return "runtime"
 	case "timeout", "codex_semantic_inactivity":
 		return "timeout"
-	case "iteration_limit", "agent_fallback_message":
+	case "iteration_limit", "execution_budget_exceeded", "agent_fallback_message":
 		return "agent_output"
 	case "cancelled", "user_cancelled":
 		return "cancelled"
@@ -4475,12 +4475,37 @@ func (s *TaskService) maybeLogClaimSlow(agentID pgtype.UUID, outcome string, sta
 	)
 }
 
-// StartTask transitions a dispatched task to running.
-// Issue status is NOT changed here — the agent manages it via the CLI.
+// StartTask transitions a dispatched task to running without changing its issue.
+// New daemons use StartTaskWithIssueStart for guarded ordinary issue starts.
 func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
-	task, err := s.Queries.StartAgentTask(ctx, taskID)
+	task, _, err := s.startTask(ctx, taskID, nil)
+	return task, err
+}
+
+func (s *TaskService) StartTaskWithIssueStart(ctx context.Context, taskID pgtype.UUID, start IssueStart) (*db.AgentTaskQueue, IssueStartState, error) {
+	return s.startTask(ctx, taskID, &start)
+}
+
+func (s *TaskService) startTask(ctx context.Context, taskID pgtype.UUID, issueStart *IssueStart) (*db.AgentTaskQueue, IssueStartState, error) {
+	var task db.AgentTaskQueue
+	var startState IssueStartState
+	err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		started, err := qtx.StartAgentTask(ctx, taskID)
+		if err != nil {
+			return err
+		}
+		task = started
+		if issueStart != nil {
+			state, err := applyIssueStart(ctx, qtx, started, *issueStart)
+			if err != nil {
+				return err
+			}
+			startState = state
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("start task: %w", err)
+		return nil, IssueStartState{}, fmt.Errorf("start task: %w", err)
 	}
 	s.forgetTaskReclaim(task)
 	s.cancelDeferredEscalationsForTask(ctx, task.ID)
@@ -4500,7 +4525,10 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	// on the transition users care about most.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskRunning, task)
 	s.startDesignDocumentCompanionIssue(ctx, task)
-	return &task, nil
+	if startState.Applied {
+		s.broadcastIssueUpdated(ctx, startState.Issue, issueStart.BaseStatus)
+	}
+	return &task, startState, nil
 }
 
 // startDesignDocumentCompanionIssue moves the design launcher's companion card
@@ -4702,16 +4730,17 @@ func startsWithAbsolutePath(s string) bool {
 // durableWorkDir is terminal delivery metadata, not a resume pointer: it is
 // populated only after the daemon confirms a disposable worktree is gone.
 func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir, branchName string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) (*db.AgentTaskQueue, error) {
-	return s.completeTask(ctx, taskID, result, sessionID, workDir, branchName, sessionRolloutMissing, retiredSessionID, durableWorkDir, nil)
+	return s.completeTask(ctx, taskID, result, sessionID, workDir, branchName, sessionRolloutMissing, retiredSessionID, durableWorkDir, nil, nil)
 }
 
-func (s *TaskService) completeTask(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir, branchName string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, mutate func(*db.Queries, db.AgentTaskQueue) error) (*db.AgentTaskQueue, error) {
+func (s *TaskService) completeTask(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir, branchName string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, issueCompletion *IssueCompletion, mutate func(*db.Queries, db.AgentTaskQueue) error) (*db.AgentTaskQueue, error) {
 	var task db.AgentTaskQueue
 	taskTransitioned := false
 	// chatAssistantMsg is the single assistant outcome row written for a chat
 	// task inside the completion transaction below. It is broadcast (chat:done)
 	// only after the transaction commits.
 	var chatAssistantMsg *db.ChatMessage
+	var committedIssueCompletion issueCompletionCommit
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
@@ -4731,6 +4760,9 @@ func (s *TaskService) completeTask(ctx context.Context, taskID pgtype.UUID, resu
 		}
 		task = t
 		taskTransitioned = true
+		if issueCompletion != nil && (!t.DispatchedAt.Valid || t.DispatchedAt.Time.UnixMicro() != issueCompletion.ClaimGeneration) {
+			return ErrStaleIssueCompletionClaim
+		}
 
 		// Atomic with the status flip: a crash between the two would leave a
 		// finished obligation looking pending forever.
@@ -4791,6 +4823,13 @@ func (s *TaskService) completeTask(ctx context.Context, taskID pgtype.UUID, resu
 				return err
 			}
 		}
+		if issueCompletion != nil {
+			committed, completionErr := s.applyIssueCompletion(ctx, qtx, t, *issueCompletion)
+			if completionErr != nil {
+				return completionErr
+			}
+			committedIssueCompletion = committed
+		}
 		return nil
 	}); err != nil {
 		// When parallel agents race, a task may already be completed,
@@ -4799,6 +4838,9 @@ func (s *TaskService) completeTask(ctx context.Context, taskID pgtype.UUID, resu
 		// Treat it as an idempotent success — same pattern as CancelTask.
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
 			if errors.Is(err, pgx.ErrNoRows) && !taskTransitioned {
+				if issueCompletion != nil && (!existing.DispatchedAt.Valid || existing.DispatchedAt.Time.UnixMicro() != issueCompletion.ClaimGeneration) {
+					return nil, ErrStaleIssueCompletionClaim
+				}
 				slog.Info("complete task: already finalized",
 					"task_id", util.UUIDToString(taskID),
 					"current_status", existing.Status,
@@ -4825,6 +4867,9 @@ func (s *TaskService) completeTask(ctx context.Context, taskID pgtype.UUID, resu
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCompleted(ctx, task)
+	if issueCompletion != nil {
+		s.publishIssueCompletion(ctx, task, committedIssueCompletion)
+	}
 
 	// Invariant: every completed issue task must have at least one agent
 	// comment on the issue, so the user always sees something when a run
@@ -4834,7 +4879,7 @@ func (s *TaskService) completeTask(ctx context.Context, taskID pgtype.UUID, resu
 	// tasks, TriggerCommentID threads the fallback under the original comment;
 	// for assignment-triggered tasks it is NULL and the fallback is top-level.
 	// Chat tasks have no IssueID and are handled separately below.
-	if task.IssueID.Valid {
+	if task.IssueID.Valid && issueCompletion == nil {
 		suppressNoActionComment, err := HasSquadLeaderNoActionEvaluationForTask(ctx, s.Queries, task)
 		if err != nil {
 			slog.Warn("checking squad leader no_action evaluation failed",
@@ -4919,11 +4964,15 @@ func (s *TaskService) completeTask(ctx context.Context, taskID pgtype.UUID, resu
 }
 
 func (s *TaskService) CompleteTaskWithMutation(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir string, mutate func(*db.Queries, db.AgentTaskQueue) error) (*db.AgentTaskQueue, error) {
-	return s.completeTask(ctx, taskID, result, sessionID, workDir, "", false, "", "", mutate)
+	return s.completeTask(ctx, taskID, result, sessionID, workDir, "", false, "", "", nil, mutate)
 }
 
 func (s *TaskService) CompleteTaskWithMutationAndSessionState(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir, branchName string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, mutate func(*db.Queries, db.AgentTaskQueue) error) (*db.AgentTaskQueue, error) {
-	return s.completeTask(ctx, taskID, result, sessionID, workDir, branchName, sessionRolloutMissing, retiredSessionID, durableWorkDir, mutate)
+	return s.completeTask(ctx, taskID, result, sessionID, workDir, branchName, sessionRolloutMissing, retiredSessionID, durableWorkDir, nil, mutate)
+}
+
+func (s *TaskService) CompleteTaskWithMutationAndSessionStateAndIssueCompletion(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir, branchName string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, completion *IssueCompletion, mutate func(*db.Queries, db.AgentTaskQueue) error) (*db.AgentTaskQueue, error) {
+	return s.completeTask(ctx, taskID, result, sessionID, workDir, branchName, sessionRolloutMissing, retiredSessionID, durableWorkDir, completion, mutate)
 }
 
 // chatNoResponseFallback is the non-empty English body stored on a no_response

@@ -29,6 +29,7 @@ const (
 	// hard ceiling for cost/resource control can set MULTICA_AGENT_TIMEOUT.
 	DefaultAgentTimeout                   = 0
 	DefaultCodexSemanticInactivityTimeout = 10 * time.Minute
+	DefaultCodexInFlightToolTimeout       = 2 * time.Hour
 	DefaultCodexHandshakeTimeout          = 30 * time.Second
 	DefaultCodexThreadHandshakeTimeout    = 60 * time.Second
 	// DefaultOpenCodeIdleWatchdog shortens the no-message budget for OpenCode
@@ -133,6 +134,7 @@ type Config struct {
 	HeartbeatInterval              time.Duration
 	AgentTimeout                   time.Duration
 	CodexSemanticInactivityTimeout time.Duration
+	CodexInFlightToolTimeout       time.Duration
 	// CodexFirstTurnNoProgressTimeout is an explicit override for the Codex
 	// first-turn no-progress ceiling (MULTICA_CODEX_FIRST_TURN_TIMEOUT). 0 means
 	// unset: the backend keeps its default ceiling, which CodexSemanticInactivityTimeout
@@ -362,38 +364,31 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 
-	// Codex runs a semantic-inactivity timer of its own inside the app-server
-	// protocol, and unlike the daemon's watchdog it is NOT tool-aware: a
-	// commandExecution that emits nothing for the whole window trips it even
-	// though a tool is plainly in flight. That one timer therefore stands in
-	// for BOTH daemon watchdogs on a Codex run, so it has to be sized like the
-	// larger of them — otherwise a quiet test suite or an output-buffering
-	// `docker build` dies at the Codex ceiling long before the daemon budget
-	// that was supposed to protect it, and "we raised the budget to 2h" is
-	// simply false for Codex users.
-	//
-	// A tool budget of 0 means "never force-stop while a tool is in flight",
-	// which this timer cannot express — it has no way to see the tool. It falls
-	// back to the idle budget rather than running unbounded, which is the
-	// conservative reading.
-	//
-	// When the whole watchdog suite is disabled (idle = 0), Codex keeps its own
-	// built-in default. Disabling the daemon's watchdogs has never disabled this
-	// timer, and quietly turning it into "unbounded" here would be a much larger
-	// change than this one.
-	codexSemanticDefault := agentIdleWatchdog
-	if agentToolWatchdog > codexSemanticDefault {
-		codexSemanticDefault = agentToolWatchdog
+	// Codex pauses semantic inactivity while a tool is in flight. Keep semantic
+	// inactivity independent and short, while transporting the previous
+	// effective long-tool ceiling separately to the backend.
+	legacyCodexSemanticDefault := agentIdleWatchdog
+	if agentToolWatchdog > legacyCodexSemanticDefault {
+		legacyCodexSemanticDefault = agentToolWatchdog
 	}
-	if codexSemanticDefault <= 0 {
-		codexSemanticDefault = DefaultCodexSemanticInactivityTimeout
+	if legacyCodexSemanticDefault <= 0 {
+		legacyCodexSemanticDefault = DefaultCodexSemanticInactivityTimeout
 	}
-	codexSemanticInactivityTimeout, err := durationFromEnv("MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", codexSemanticDefault)
+	legacyCodexSemanticTimeout, err := durationFromEnv("MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", legacyCodexSemanticDefault)
+	if err != nil {
+		return Config{}, err
+	}
+	codexSemanticInactivityTimeout, err := durationFromEnv("MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", DefaultCodexSemanticInactivityTimeout)
 	if err != nil {
 		return Config{}, err
 	}
 	if overrides.CodexSemanticInactivityTimeout > 0 {
 		codexSemanticInactivityTimeout = overrides.CodexSemanticInactivityTimeout
+		legacyCodexSemanticTimeout = overrides.CodexSemanticInactivityTimeout
+	}
+	codexInFlightToolTimeout := legacyCodexSemanticTimeout
+	if codexInFlightToolTimeout < DefaultCodexInFlightToolTimeout {
+		codexInFlightToolTimeout = DefaultCodexInFlightToolTimeout
 	}
 
 	// 0 = unset: the codex backend keeps its default first-turn ceiling. A
@@ -642,6 +637,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		HeartbeatInterval:               heartbeatInterval,
 		AgentTimeout:                    agentTimeout,
 		CodexSemanticInactivityTimeout:  codexSemanticInactivityTimeout,
+		CodexInFlightToolTimeout:        codexInFlightToolTimeout,
 		CodexFirstTurnNoProgressTimeout: codexFirstTurnNoProgressTimeout,
 		CodexHandshakeTimeout:           codexHandshakeTimeout,
 		CodexThreadHandshakeTimeout:     codexThreadHandshakeTimeout,

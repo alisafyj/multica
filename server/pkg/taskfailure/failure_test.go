@@ -25,6 +25,7 @@ func TestReasonStringWireValues(t *testing.T) {
 		{ReasonRuntimeRecovery, "runtime_recovery"},
 		{ReasonTimeout, "timeout"},
 		{ReasonIterationLimit, "iteration_limit"},
+		{ReasonExecutionBudgetExceeded, "execution_budget_exceeded"},
 		{ReasonAgentBlocked, "agent_blocked"},
 		{ReasonAPIInvalidRequest, "api_invalid_request"},
 		{ReasonSkillBundleUnavailable, "skill_bundle_unavailable"},
@@ -50,7 +51,7 @@ func TestReasonStringWireValues(t *testing.T) {
 		{ReasonAgentUnknown, "agent_error.unknown"},
 	}
 
-	if got, want := len(cases), 28; got != want {
+	if got, want := len(cases), 29; got != want {
 		t.Fatalf("constant count = %d, want %d (canonical taxonomy size)", got, want)
 	}
 
@@ -76,6 +77,7 @@ func TestIsAgentError(t *testing.T) {
 		ReasonRuntimeRecovery,
 		ReasonTimeout,
 		ReasonIterationLimit,
+		ReasonExecutionBudgetExceeded,
 		ReasonAgentBlocked,
 		ReasonAPIInvalidRequest,
 		ReasonSkillBundleUnavailable,
@@ -124,8 +126,8 @@ func TestAllReasonsContents(t *testing.T) {
 	t.Parallel()
 
 	got := AllReasons()
-	if len(got) != 28 {
-		t.Fatalf("AllReasons() returned %d entries, want 28", len(got))
+	if len(got) != 29 {
+		t.Fatalf("AllReasons() returned %d entries, want 29", len(got))
 	}
 
 	seen := make(map[Reason]bool, len(got))
@@ -142,8 +144,8 @@ func TestAllReasonsContents(t *testing.T) {
 		}
 	}
 
-	if platformCount != 14 {
-		t.Errorf("AllReasons(): platform-side count = %d, want 14", platformCount)
+	if platformCount != 15 {
+		t.Errorf("AllReasons(): platform-side count = %d, want 15", platformCount)
 	}
 	if agentCount != 14 {
 		t.Errorf("AllReasons(): agent-side count = %d, want 14", agentCount)
@@ -157,6 +159,7 @@ func TestAllReasonsContents(t *testing.T) {
 		ReasonQueuedExpired, ReasonRuntimeOffline, ReasonRuntimeReconnectTimeout,
 		ReasonRuntimeRecovery,
 		ReasonTimeout, ReasonIterationLimit, ReasonAgentBlocked,
+		ReasonExecutionBudgetExceeded,
 		ReasonAPIInvalidRequest, ReasonSkillBundleUnavailable,
 		ReasonAuthenticationExpired,
 		ReasonRuntimeCLITimeout, ReasonEnvironmentPrepareFailed,

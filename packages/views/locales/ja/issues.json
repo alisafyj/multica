@@ -444,6 +444,17 @@
   "timeline": {
     "loading": "読み込み中..."
   },
+  "pending_input": {
+    "title": "エージェントが入力を求めています",
+    "waiting": "回答待ち",
+    "answered": "回答済み",
+    "cancelled": "キャンセル済み",
+    "expired": "期限切れ",
+    "unsupported_version": "このリクエストに回答するにはアプリを更新してください",
+    "other_placeholder": "その他の回答",
+    "send": "回答を送信",
+    "answer_failed": "回答を送信できませんでした。もう一度お試しください。"
+  },
   "activity": {
     "created": "このタスクを作成しました",
     "self_assigned": "このタスクを自分に割り当てました",
@@ -601,6 +612,35 @@
     "status_completed": "完了",
     "status_failed": "失敗",
     "status_cancelled": "キャンセル済み",
+    "evidence": {
+      "toggle": "実行エビデンスを表示",
+      "loading": "実行エビデンスを読み込み中…",
+      "failed": "実行エビデンスを読み込めませんでした。",
+      "unavailable": "このサーバーでは実行エビデンスを利用できません。",
+      "empty": "実行エビデンスはまだ報告されていません。",
+      "unknown": "不明",
+      "attempt": "試行 {{attempt}}",
+      "revision": "リビジョン {{revision}}",
+      "stages": "ステージ所要時間",
+      "queue": "待機",
+      "preparation": "準備",
+      "first_tool": "最初のツール",
+      "execution": "実行",
+      "finalization": "完了処理",
+      "tokens": "トークン区分",
+      "input_uncached": "未キャッシュ入力",
+      "cache_read": "キャッシュ読み取り",
+      "cache_write": "キャッシュ書き込み",
+      "output": "出力",
+      "incomplete": "一部のみ",
+      "requested_model": "要求モデル",
+      "client_effective_model": "クライアント実効モデル",
+      "provider_reported_model": "プロバイダー報告モデル",
+      "runtime_version": "ランタイムバージョン",
+      "runtime_hash": "ランタイムハッシュ",
+      "provider_cost_not_invoice": "プロバイダー報告費用（請求額ではありません）",
+      "provider_cost_provenance": "ソース：{{source}} · 根拠：{{basis}}"
+    },
     "attribution": {
       "on_behalf_of": "{{name}} の代理として",
       "someone": "あるメンバー",
@@ -639,7 +679,9 @@
     "total": "合計",
     "note_unpriced_other": "{{count}} 回の実行は使用量が記録されておらず、合計に含まれません。",
     "note_unmapped": "{{models}} は価格が未登録です。トークンは集計されますが費用は含まれません。",
-    "note_estimate": "費用は公開モデル料金からの概算です（プロバイダーが独自の費用を返した分を除く）。"
+    "amount_unknown": "不明",
+    "amount_partial": "{{amount}}（一部）",
+    "note_estimate": "費用はプロバイダーの報告額または公開モデル料金に基づきます。最終的な請求額ではありません。"
   },
   "terminate_dialog": {
     "title": "この作業を停止しますか？",

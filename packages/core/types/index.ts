@@ -178,6 +178,9 @@ export type {
   ProjectResource,
   ProjectResourceType,
   ProjectResourceRef,
+  ProjectConfigurationPolicy,
+  RepositorySetup,
+  RepositorySetupStep,
   GithubRepoResourceRef,
   LocalDirectoryResourceRef,
   DocumentResourceRef,
@@ -408,3 +411,5 @@ export type {
 } from "./billing";
 export type * from "./design";
 export type * from "./pmo";
+export type * from "./task-run-evidence";
+export type * from "./pending-input";

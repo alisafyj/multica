@@ -100,6 +100,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 | `cancelled` | 被手动停止，或随归档、删除一并取消 | 无需处理 |
 | `timeout` | 超过守护进程配置的执行时长上限 | 缩小任务范围，或调整守护进程的 `agent_timeout` |
 | `iteration_limit` | 达到执行轮次上限 | 缩小任务范围 |
+| `execution_budget_exceeded` | 本次运行配置的支出预算已用尽；不是提供商账号额度不足 | 缩小任务范围后手动重试 |
 | `agent_blocked` | 智能体主动报告无法继续 | 按它在评论中的说明补充信息 |
 | `api_invalid_request` | 平台 API 拒绝了非法请求 | 重试；反复出现时报告问题 |
 | `codex_semantic_inactivity` | Codex 长时间无有效输出被判停滞 | 重试，或调整 Codex 停滞超时 |

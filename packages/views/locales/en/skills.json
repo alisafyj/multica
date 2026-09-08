@@ -334,6 +334,7 @@
     "importing": "Importing…",
     "skill_files_one": "{{count}} file",
     "skill_files_other": "{{count}} files",
+    "skill_files_unavailable": "Files unavailable",
     "skill_name_label": "Workspace skill name",
     "skill_description_label": "Description",
     "skill_description_placeholder": "Optional — describe when an agent should use this skill.",

@@ -1138,8 +1138,8 @@ func TestBuildPromptNonSquadLeaderNoRule(t *testing.T) {
 }
 
 // TestBuildPromptNewCommentsHint pins that a comment-triggered task whose agent
-// ran before on this issue (NewCommentsSince set, NewCommentCount > 0) gets the
-// since-delta hint with the ISSUE-WIDE new-comment count, but is steered to read
+// resumes its prior session with new comments gets the since-delta hint with
+// the ISSUE-WIDE new-comment count, but is steered to read
 // the triggering (parent) thread first rather than blindly pulling every new
 // comment.
 func TestBuildPromptNewCommentsHint(t *testing.T) {
@@ -1155,6 +1155,7 @@ func TestBuildPromptNewCommentsHint(t *testing.T) {
 		TriggerAuthorType:     "member",
 		NewCommentCount:       3,
 		NewCommentsSince:      since,
+		PriorSessionID:        "session-1",
 	}
 	out := BuildPrompt(task, "claude")
 
@@ -1894,7 +1895,7 @@ func TestBriefCarriesNoModeRouter(t *testing.T) {
 }
 
 func TestBuildTestGenerationPromptCarriesTheIncrementContract(t *testing.T) {
-	task := Task{TestGenerationContext: `{"type":"test_generation","job_id":"job-1","project_id":"p-1"}`}
+	task := Task{TestGenerationContext: json.RawMessage(`{"type":"test_generation","job_id":"job-1","project_id":"p-1"}`)}
 	prompt := BuildPrompt(task, "claude")
 
 	// The whole value of re-running generation is that it produces an
@@ -1915,13 +1916,13 @@ func TestBuildTestGenerationPromptCarriesTheIncrementContract(t *testing.T) {
 	if !strings.Contains(prompt, "Do NOT write, refactor, or commit product code") {
 		t.Error("prompt does not forbid product code changes")
 	}
-	if !strings.Contains(prompt, task.TestGenerationContext) {
+	if !strings.Contains(prompt, string(task.TestGenerationContext)) {
 		t.Error("prompt does not embed the context JSON")
 	}
 }
 
 func TestBuildTestRunPromptForbidsProbingTheHost(t *testing.T) {
-	task := Task{TestRunContext: `{"type":"test_run","run_id":"run-1"}`}
+	task := Task{TestRunContext: json.RawMessage(`{"type":"test_run","run_id":"run-1"}`)}
 	prompt := BuildPrompt(task, "claude")
 
 	for _, want := range []string{
@@ -1943,7 +1944,7 @@ func TestBuildTestRunPromptForbidsProbingTheHost(t *testing.T) {
 	if !strings.Contains(prompt, "It is NOT a synonym for failed") {
 		t.Error("prompt does not distinguish blocked from failed")
 	}
-	if !strings.Contains(prompt, task.TestRunContext) {
+	if !strings.Contains(prompt, string(task.TestRunContext)) {
 		t.Error("prompt does not embed the context JSON")
 	}
 }

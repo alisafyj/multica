@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/agentconfig"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -58,9 +59,16 @@ type AgentResponse struct {
 	// branch on this rather than on RuntimeID being falsy, and must not confuse
 	// it with a bound-but-offline runtime (a different user story: reconnect the
 	// machine vs. pick a new one).
-	RuntimeBound bool   `json:"runtime_bound"`
-	Name         string `json:"name"`
-	Description  string `json:"description"`
+	RuntimeBound bool `json:"runtime_bound"`
+	// QuickCreateSupported and QuickCreateFieldsSupported are coarse,
+	// server-attested capability projections for the bound runtime. They do
+	// not imply permission or online status and never expose runtime metadata.
+	// Nil means the runtime capability could not be read; false is an explicit
+	// unsupported verdict (including an unbound agent).
+	QuickCreateSupported       *bool  `json:"quick_create_supported,omitempty"`
+	QuickCreateFieldsSupported *bool  `json:"quick_create_fields_supported,omitempty"`
+	Name                       string `json:"name"`
+	Description                string `json:"description"`
 	// Instructions is what this agent's owner wrote. For a system agent it
 	// holds only the workspace's own notes — the product half lives in
 	// SystemInstructions and is never stored on the row.
@@ -197,42 +205,58 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 	// non-empty). We hand the slice through verbatim so the redaction +
 	// owner-only gate below can decide.
 	composioAllowlist := a.ComposioToolkitAllowlist
+	var quickCreateSupported, quickCreateFieldsSupported *bool
+	if !a.RuntimeID.Valid {
+		unsupported := false
+		quickCreateSupported = &unsupported
+		quickCreateFieldsSupported = &unsupported
+	}
 
 	return AgentResponse{
-		ID:                       uuidToString(a.ID),
-		WorkspaceID:              uuidToString(a.WorkspaceID),
-		RuntimeID:                uuidToString(a.RuntimeID),
-		RuntimeBound:             a.RuntimeID.Valid,
-		Name:                     a.Name,
-		Description:              a.Description,
-		Instructions:             a.Instructions,
-		ConversationStarters:     conversationStarters,
-		SystemKey:                a.SystemKey.String,
-		SystemInstructions:       systemInstructionsFor(a),
-		AvatarURL:                h.resolveAvatarURLPtr(textToPtr(a.AvatarUrl)),
-		RuntimeMode:              a.RuntimeMode,
-		RuntimeConfig:            rc,
-		CustomArgs:               customArgs,
-		McpConfig:                mcpConfig,
-		HasCustomEnv:             envKeyCount > 0,
-		CustomEnvKeyCount:        envKeyCount,
-		Visibility:               a.Visibility,
-		PermissionMode:           a.PermissionMode,
-		InvocationTargets:        []AgentInvocationTargetDTO{},
-		Status:                   a.Status,
-		MaxConcurrentTasks:       a.MaxConcurrentTasks,
-		Model:                    a.Model.String,
-		ThinkingLevel:            a.ThinkingLevel.String,
-		ServiceTier:              a.ServiceTier.String,
-		ComposioToolkitAllowlist: composioAllowlist,
-		OwnerID:                  uuidToPtr(a.OwnerID),
-		Skills:                   []AgentSkillSummary{},
-		DisabledRuntimeSkills:    decodeDisabledRuntimeSkills(a.DisabledRuntimeSkills),
-		CreatedAt:                timestampToString(a.CreatedAt),
-		UpdatedAt:                timestampToString(a.UpdatedAt),
-		ArchivedAt:               timestampToPtr(a.ArchivedAt),
-		ArchivedBy:               uuidToPtr(a.ArchivedBy),
+		ID:                         uuidToString(a.ID),
+		WorkspaceID:                uuidToString(a.WorkspaceID),
+		RuntimeID:                  uuidToString(a.RuntimeID),
+		RuntimeBound:               a.RuntimeID.Valid,
+		QuickCreateSupported:       quickCreateSupported,
+		QuickCreateFieldsSupported: quickCreateFieldsSupported,
+		Name:                       a.Name,
+		Description:                a.Description,
+		Instructions:               a.Instructions,
+		ConversationStarters:       conversationStarters,
+		SystemKey:                  a.SystemKey.String,
+		SystemInstructions:         systemInstructionsFor(a),
+		AvatarURL:                  h.resolveAvatarURLPtr(textToPtr(a.AvatarUrl)),
+		RuntimeMode:                a.RuntimeMode,
+		RuntimeConfig:              rc,
+		CustomArgs:                 customArgs,
+		McpConfig:                  mcpConfig,
+		HasCustomEnv:               envKeyCount > 0,
+		CustomEnvKeyCount:          envKeyCount,
+		Visibility:                 a.Visibility,
+		PermissionMode:             a.PermissionMode,
+		InvocationTargets:          []AgentInvocationTargetDTO{},
+		Status:                     a.Status,
+		MaxConcurrentTasks:         a.MaxConcurrentTasks,
+		Model:                      a.Model.String,
+		ThinkingLevel:              a.ThinkingLevel.String,
+		ServiceTier:                a.ServiceTier.String,
+		ComposioToolkitAllowlist:   composioAllowlist,
+		OwnerID:                    uuidToPtr(a.OwnerID),
+		Skills:                     []AgentSkillSummary{},
+		DisabledRuntimeSkills:      decodeDisabledRuntimeSkills(a.DisabledRuntimeSkills),
+		CreatedAt:                  timestampToString(a.CreatedAt),
+		UpdatedAt:                  timestampToString(a.UpdatedAt),
+		ArchivedAt:                 timestampToPtr(a.ArchivedAt),
+		ArchivedBy:                 uuidToPtr(a.ArchivedBy),
 	}
+}
+
+func applyQuickCreateCapabilities(resp *AgentResponse, metadata []byte) {
+	cliVersion := readRuntimeCLIVersion(metadata)
+	baseSupported := agent.CheckMinCLIVersionFor(cliVersion, agent.MinQuickCreateCLIVersion) == nil
+	fieldsSupported := agent.CheckMinCLIVersionFor(cliVersion, agent.MinQuickCreateFieldsCLIVersion) == nil
+	resp.QuickCreateSupported = &baseSupported
+	resp.QuickCreateFieldsSupported = &fieldsSupported
 }
 
 // maskGatewayToken replaces runtime_config.gateway.token with the public
@@ -361,6 +385,7 @@ type AgentTaskResponse struct {
 	WorkspaceID          string                 `json:"workspace_id"`
 	WorkspaceSlug        string                 `json:"workspace_slug,omitempty"`
 	IssueIdentifier      string                 `json:"issue_identifier,omitempty"`
+	IssueSnapshot        *IssueTaskSnapshot     `json:"issue_snapshot,omitempty"`
 	RemoteMCPConnections []remotemcp.Connection `json:"remote_mcp_connections,omitempty"`
 	// PluginHookTools are the workspace's agent-trigger plugin hooks, which the
 	// daemon renders as MCP tools for this task. Resolved at claim time so
@@ -368,7 +393,7 @@ type AgentTaskResponse struct {
 	// than whenever a daemon happens to restart.
 	PluginHookTools []service.PluginHookTool `json:"plugin_hook_tools,omitempty"`
 	// RemoteMCPDaemonToken is a short-lived, workspace-and-daemon scoped
-	// credential used only by the local daemon's write-only Remote MCP broker.
+	// credential used only by the local daemon's task control and Remote MCP broker.
 	// It is never injected into the agent process.
 	RemoteMCPDaemonToken string `json:"remote_mcp_daemon_token,omitempty"`
 	// WorkspaceContext is the workspace-level system prompt set in workspace
@@ -389,33 +414,39 @@ type AgentTaskResponse struct {
 	// IssueStatusesOmitted is how many active custom statuses were dropped by
 	// the cap, so the brief can say the list is incomplete instead of
 	// presenting a truncated catalog as the whole one.
-	IssueStatusesOmitted int                    `json:"issue_statuses_omitted,omitempty"`
-	ActiveSiblingRuns    []ActiveSiblingRunData `json:"active_sibling_runs,omitempty"`
-	ThreadName           string                 `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
-	Status               string                 `json:"status"`
-	Priority             int32                  `json:"priority"`
-	DispatchedAt         *string                `json:"dispatched_at"`
-	StartedAt            *string                `json:"started_at"`
-	CompletedAt          *string                `json:"completed_at"`
-	Result               any                    `json:"result"`
-	Error                *string                `json:"error"`
-	FailureReason        string                 `json:"failure_reason,omitempty"` // see TaskService.MaybeRetryFailedTask
-	Attempt              int32                  `json:"attempt"`
-	MaxAttempts          int32                  `json:"max_attempts"`
-	ParentTaskID         *string                `json:"parent_task_id,omitempty"`
-	IsLeaderTask         bool                   `json:"is_leader_task,omitempty"`
-	ConciseMode          bool                   `json:"concise_mode,omitempty"`
-	LeaderRoleResolved   bool                   `json:"leader_role_resolved,omitempty"` // claim-only capability, always true here: IsLeaderTask/SquadID authoritatively answer "is this a leader run", so the daemon must not infer the role from briefing text. Servers predating it make no such promise — before #4951 they sent no is_leader_task at all, after it they sent the flag without guaranteeing a briefing — so a daemon seeing no capability keeps the legacy inference. Never rendered into a prompt; see daemon.taskIsSquadLeader (MUL-5811). Mirror field: internal/daemon/types.go, same JSON name
-	Agent                *TaskAgentData         `json:"agent,omitempty"`
-	ConnectedApps        []ConnectedAppData     `json:"connected_apps,omitempty"` // daemon-claim only: per-run app capabilities mounted through runtime MCP overlays
-	Repos                []RepoData             `json:"repos,omitempty"`
-	ProjectID            string                 `json:"project_id,omitempty"`          // issue's project, when present
-	ProjectTitle         string                 `json:"project_title,omitempty"`       // for surfacing in agent context
-	ProjectDescription   string                 `json:"project_description,omitempty"` // durable project-level context injected into the brief
-	ProjectResources     []ProjectResourceData  `json:"project_resources,omitempty"`   // resources attached to the project
-	CreatedAt            string                 `json:"created_at"`
-	PriorSessionID       string                 `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
-	PriorWorkDir         string                 `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
+	IssueStatusesOmitted           int                    `json:"issue_statuses_omitted,omitempty"`
+	ActiveSiblingRuns              []ActiveSiblingRunData `json:"active_sibling_runs,omitempty"`
+	ThreadName                     string                 `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
+	Status                         string                 `json:"status"`
+	Priority                       int32                  `json:"priority"`
+	DispatchedAt                   *string                `json:"dispatched_at"`
+	StartedAt                      *string                `json:"started_at"`
+	CompletedAt                    *string                `json:"completed_at"`
+	Result                         any                    `json:"result"`
+	Error                          *string                `json:"error"`
+	FailureReason                  string                 `json:"failure_reason,omitempty"` // see TaskService.MaybeRetryFailedTask
+	Attempt                        int32                  `json:"attempt"`
+	MaxAttempts                    int32                  `json:"max_attempts"`
+	ClaimAttempt                   int                    `json:"claim_attempt,omitempty"`    // task retry counter used by per-attempt telemetry
+	ClaimGeneration                int64                  `json:"claim_generation,omitempty"` // lease generation derived from dispatched_at; changes on reclaim
+	TaskRunEvidenceModelUsageV1    bool                   `json:"task_run_evidence_model_usage_v1,omitempty"`
+	IssueStartContractVersion      int                    `json:"issue_start_contract_version,omitempty"`
+	IssueCompletionContractVersion int                    `json:"issue_completion_contract_version,omitempty"`
+	IssueStart                     *IssueStartResponse    `json:"issue_start,omitempty"`
+	ParentTaskID                   *string                `json:"parent_task_id,omitempty"`
+	IsLeaderTask                   bool                   `json:"is_leader_task,omitempty"`
+	ConciseMode                    bool                   `json:"concise_mode,omitempty"`
+	LeaderRoleResolved             bool                   `json:"leader_role_resolved,omitempty"` // claim-only capability, always true here: IsLeaderTask/SquadID authoritatively answer "is this a leader run", so the daemon must not infer the role from briefing text. Servers predating it make no such promise — before #4951 they sent no is_leader_task at all, after it they sent the flag without guaranteeing a briefing — so a daemon seeing no capability keeps the legacy inference. Never rendered into a prompt; see daemon.taskIsSquadLeader (MUL-5811). Mirror field: internal/daemon/types.go, same JSON name
+	Agent                          *TaskAgentData         `json:"agent,omitempty"`
+	ConnectedApps                  []ConnectedAppData     `json:"connected_apps,omitempty"` // daemon-claim only: per-run app capabilities mounted through runtime MCP overlays
+	Repos                          []RepoData             `json:"repos,omitempty"`
+	ProjectID                      string                 `json:"project_id,omitempty"`          // issue's project, when present
+	ProjectTitle                   string                 `json:"project_title,omitempty"`       // for surfacing in agent context
+	ProjectDescription             string                 `json:"project_description,omitempty"` // durable project-level context injected into the brief
+	ProjectResources               []ProjectResourceData  `json:"project_resources,omitempty"`   // resources attached to the project
+	CreatedAt                      string                 `json:"created_at"`
+	PriorSessionID                 string                 `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
+	PriorWorkDir                   string                 `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
 	// PriorSessionResumeUnavailable is set when a more recent Codex session was
 	// withheld because its rollout was missing (MUL-5305); PriorSessionID (if
 	// any) is then an older fallback. The daemon surfaces the continuity gap in
@@ -1062,15 +1093,45 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load agent invocation targets")
 		return
 	}
-	visible := make([]AgentResponse, 0, len(agents))
+	visibleAgents := make([]db.Agent, 0, len(agents))
 	for _, a := range agents {
 		targets := targetsByAgent[uuidToString(a.ID)]
-		if actorType == "member" {
-			if !memberAllowedToViewAgent(a, targets, actorID, member.Role) {
-				continue
+		if actorType == "member" && !memberAllowedToViewAgent(a, targets, actorID, member.Role) {
+			continue
+		}
+		visibleAgents = append(visibleAgents, a)
+	}
+	runtimesByID := make(map[string]db.AgentRuntime)
+	runtimeIDs := make([]pgtype.UUID, 0, len(visibleAgents))
+	seenRuntimeIDs := make(map[string]struct{}, len(visibleAgents))
+	for _, a := range visibleAgents {
+		if !a.RuntimeID.Valid {
+			continue
+		}
+		runtimeID := uuidToString(a.RuntimeID)
+		if _, seen := seenRuntimeIDs[runtimeID]; seen {
+			continue
+		}
+		seenRuntimeIDs[runtimeID] = struct{}{}
+		runtimeIDs = append(runtimeIDs, a.RuntimeID)
+	}
+	if len(runtimeIDs) > 0 {
+		runtimes, runtimeErr := h.Queries.GetAgentRuntimes(r.Context(), runtimeIDs)
+		if runtimeErr != nil {
+			slog.Warn("failed to load agent quick-create capabilities", "workspace_id", workspaceID, "error", runtimeErr)
+		} else {
+			for _, runtime := range runtimes {
+				runtimesByID[uuidToString(runtime.ID)] = runtime
 			}
 		}
+	}
+	visible := make([]AgentResponse, 0, len(visibleAgents))
+	for _, a := range visibleAgents {
+		targets := targetsByAgent[uuidToString(a.ID)]
 		resp := h.agentToResponse(a)
+		if runtime, found := runtimesByID[resp.RuntimeID]; found {
+			applyQuickCreateCapabilities(&resp, runtime.Metadata)
+		}
 		applyInvocationTargetsToResponse(&resp, targets)
 		if skills, ok := skillMap[resp.ID]; ok {
 			resp.Skills = skills
@@ -1120,6 +1181,14 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := h.agentToResponse(agent)
+	if agent.RuntimeID.Valid {
+		runtime, runtimeErr := h.getAgentRuntime(r.Context(), obsmetrics.RuntimeLookupSourceRuntimeAPI, agent.RuntimeID)
+		if runtimeErr != nil {
+			slog.Warn("failed to load agent quick-create capabilities", "agent_id", id, "error", runtimeErr)
+		} else {
+			applyQuickCreateCapabilities(&resp, runtime.Metadata)
+		}
+	}
 	if !h.enrichAgentResponseWithTargetsHTTP(w, r, &resp, agent.ID) {
 		return
 	}
@@ -1286,6 +1355,11 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	runtimeMCPSelection, err := agentconfig.ParseRuntimeMCPSelection(rawFields["mcp_config"])
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	runtimeUUID, ok := parseUUIDOrBadRequest(w, req.RuntimeID, "runtime_id")
 	if !ok {
@@ -1322,6 +1396,10 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if !canUseRuntimeForAgent(member, runtime) {
 		writeError(w, http.StatusForbidden, "this runtime is private; only its owner or a workspace admin can create agents on it")
+		return
+	}
+	if err := runtimeMCPSelection.ValidateProvider(runtime.Provider); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -1852,6 +1930,31 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		params.RuntimeMode = pgtype.Text{String: runtime.RuntimeMode, Valid: true}
 		targetRuntimeID = runtime.ID
 		targetProvider = runtime.Provider
+	}
+	if hasMcpConfig || req.RuntimeID != nil {
+		effectiveMCPConfig := json.RawMessage(existing.McpConfig)
+		if hasMcpConfig {
+			effectiveMCPConfig = rawMcpConfig
+		}
+		selection, err := agentconfig.ParseRuntimeMCPSelection(effectiveMCPConfig)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if selection.Mode != "inherit" {
+			if targetProvider == "" {
+				var ok bool
+				targetProvider, ok = h.resolveAgentProvider(r, existing.WorkspaceID, targetRuntimeID)
+				if !ok {
+					writeError(w, http.StatusInternalServerError, "failed to resolve runtime for MCP selection validation")
+					return
+				}
+			}
+			if err := selection.ValidateProvider(targetProvider); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
 	}
 	// Invocation permission (MUL-3963). OWNER-ONLY write: access is the one
 	// agent property a workspace admin may NOT change (only the owner decides

@@ -242,8 +242,10 @@ func TestTestCasesSkillCoversTheDataContract(t *testing.T) {
 		"business_flow",
 		"permission",
 		"data_consistency",
-		// Honesty about what does not exist yet.
-		"There is no `multica test` command group",
+		// Authoring and execution have separate skill owners.
+		"## Execution belongs to a separate skill",
+		"`multica-running-tests`",
+		"capability discovery",
 		"references/test-cases-source-map.md",
 		// Generation workflow: propose command and three kind values.
 		"testcase propose",
@@ -256,12 +258,22 @@ func TestTestCasesSkillCoversTheDataContract(t *testing.T) {
 			t.Errorf("multica-test-cases skill must state %q", want)
 		}
 	}
+	if !strings.Contains(fm["description"], "multica-running-tests") {
+		t.Error("test-case discovery summary must route execution to multica-running-tests")
+	}
+	for _, stale := range []string{"does not exist yet", "There is no `multica test`", "no run or result recording", "nothing consumes it"} {
+		if strings.Contains(skill.Content, stale) {
+			t.Errorf("test-case skill denies an existing execution capability: %q", stale)
+		}
+	}
 
 	// Owned by the runtime brief or by other skills — duplicating them here
 	// makes the two copies drift.
 	mustNotContain := []string{
 		"multica repo checkout <url> [--ref",
 		"multica issue create",
+		"multica test result set",
+		"multica test evidence add",
 	}
 	for _, unwanted := range mustNotContain {
 		if strings.Contains(body, unwanted) {

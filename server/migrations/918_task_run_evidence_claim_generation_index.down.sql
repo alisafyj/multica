@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_task_run_evidence_task_attempt_generation;

@@ -1,6 +1,6 @@
 ---
 name: multica-test-cases
-description: "Use when reading, writing, reviewing, or AI-generating Multica test cases — including finding which repositories, project, and issues a case relates to. Executing a case and recording results is not covered: that surface does not exist yet."
+description: "Read, write, review, or AI-generate Multica test cases and trace their repositories, project, and issues. For execution and result recording, use multica-running-tests."
 user-invocable: false
 allowed-tools: Bash(multica *)
 ---
@@ -226,8 +226,12 @@ case is queued in a round it was never added to.
 
 Deleting either side sweeps the links in the same transaction as the delete.
 
-## What does not exist yet
+## Execution belongs to a separate skill
 
-There is no `multica test` command group, no run or result recording. A case is
-a durable document you can read, write and review — nothing consumes it
-automatically yet. Do not invent commands for those.
+The `multica test` command group supports test runs and result recording.
+Before executing an assigned test run, read `multica-running-tests` for
+capability discovery, execution, evidence, and result semantics. This skill
+owns case authoring and review, not execution; creating or editing a case is
+not evidence that it ran or passed. If the execution skill or a required
+capability is unavailable, report that limitation rather than invent commands
+or claim execution succeeded.

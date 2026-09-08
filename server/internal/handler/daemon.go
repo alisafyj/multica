@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -19,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/agentconfig"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
@@ -1897,15 +1899,18 @@ func (h *Handler) rejectClaimOnWorkspaceMismatch(ctx context.Context, task *db.A
 }
 
 // remoteMCPDaemonTokenForClaim prepares the short-lived credential the daemon
-// uses to resolve write-only Remote MCP secrets for this task. The raw token is
+// uses for attested task control and write-only Remote MCP resolution. The raw token is
 // returned only in the claim response; its hash is committed atomically with
 // the task-scoped agent token by FinalizeTaskClaim.
 func remoteMCPDaemonTokenForClaim(resp AgentTaskResponse, runtime db.AgentRuntime) (string, []db.CreateDaemonTokenParams, error) {
-	if len(resp.RemoteMCPConnections) == 0 {
+	if resp.ClaimGeneration <= 0 && len(resp.RemoteMCPConnections) == 0 {
 		return "", nil, nil
 	}
 	if !runtime.DaemonID.Valid || strings.TrimSpace(runtime.DaemonID.String) == "" {
-		return "", nil, errors.New("runtime daemon_id is required for Remote MCP")
+		if len(resp.RemoteMCPConnections) == 0 {
+			return "", nil, nil
+		}
+		return "", nil, errors.New("runtime daemon_id is required for attested task control")
 	}
 	raw, err := auth.GenerateDaemonToken()
 	if err != nil {
@@ -1997,6 +2002,12 @@ func claimResponseAgentIdentityMatches(resp AgentTaskResponse) bool {
 func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
+	resp.ClaimAttempt = int(task.Attempt)
+	resp.ClaimGeneration = issueCompletionClaimGeneration(*task)
+	resp.TaskRunEvidenceModelUsageV1 = requestHasClientCapability(r, protocol.DaemonCapabilityTaskRunEvidenceModelUsageV1)
+	if ordinaryIssueCompletionSupported(*task) {
+		resp.IssueCompletionContractVersion = issueCompletionContractVersion
+	}
 	if task.IssueID.Valid {
 		if policy, enabled := h.issueWindowPolicy(r.Context(), runtime.WorkspaceID); enabled {
 			visible, visibilityErr := h.issueIDsWithinWindow(r.Context(), runtime.WorkspaceID, policy, []pgtype.UUID{task.IssueID})
@@ -2144,6 +2155,23 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	var mcpConfig json.RawMessage
 	if agent.McpConfig != nil {
 		mcpConfig = json.RawMessage(agent.McpConfig)
+	}
+	// Gate the saved runtime policy before overlays and token delivery. A
+	// registration capability cannot stand in for the actual claimant's header.
+	if reason := runtimeMCPSelectionClaimBlockReason(mcpConfig, runtime.Provider,
+		requestHasClientCapability(r, protocol.DaemonCapabilityRuntimeMCPSelectionV1)); reason != "" {
+		if _, cerr := h.TaskService.CancelTaskWithReason(r.Context(), task.ID, reason, "runtime_mcp_selection_unsupported"); cerr != nil {
+			if _, rerr := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); rerr != nil {
+				slog.Error("task claim: requeue after runtime MCP selection gate failed", "task_id", uuidToString(task.ID), "error", rerr)
+			}
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, &claimBuildFailure{
+				outcome: "error_runtime_mcp_selection_gate_cancel", status: http.StatusInternalServerError,
+				message: "failed to cancel a task blocked by runtime MCP selection; task requeued",
+			}
+		}
+		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, &claimBuildFailure{
+			outcome: "error_runtime_mcp_selection", status: http.StatusUnprocessableEntity, message: reason,
+		}
 	}
 	// Fold in the workspace MCP servers this agent has been explicitly
 	// given (GH #6062). Only bound AND enabled servers are read, so a
@@ -2643,6 +2671,10 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}); err == nil && missing {
 				resp.PriorSessionResumeUnavailable = true
 			}
+		}
+		resp.IssueSnapshot = newIssueTaskSnapshot(issue, resp, time.Now())
+		if ordinaryIssueCompletionSupported(*task) && resp.IssueSnapshot.Complete {
+			resp.IssueStartContractVersion = issueCompletionContractVersion
 		}
 	}
 
@@ -3428,6 +3460,20 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
 }
 
+func runtimeMCPSelectionClaimBlockReason(config json.RawMessage, provider string, hasCapability bool) string {
+	selection, err := agentconfig.ParseRuntimeMCPSelection(config)
+	if err != nil {
+		return "The agent's runtime MCP selection is invalid. Update its MCP selection before retrying."
+	}
+	if err := selection.ValidateProvider(provider); err != nil {
+		return "Non-default runtime MCP selection supports only Codex and Claude. Update the agent's runtime or MCP selection before retrying."
+	}
+	if selection.Mode != "inherit" && !hasCapability {
+		return "This machine's Multica runtime does not support runtime MCP selection. Update the Multica app on that machine before retrying."
+	}
+	return ""
+}
+
 func projectDesignSystemClaimBlockReason(hasProjectDesignSystem, hasCapability bool) string {
 	if !hasProjectDesignSystem || hasCapability {
 		return ""
@@ -3911,19 +3957,72 @@ func (h *Handler) ExtendTaskPrepareLease(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, taskToResponse(*updated, taskWorkspaceID))
 }
 
+type TaskStartRequest struct {
+	ClaimGeneration int64              `json:"claim_generation,omitempty"`
+	IssueStart      *IssueStartRequest `json:"issue_start,omitempty"`
+}
+
+type IssueStartRequest struct {
+	Version      int    `json:"version"`
+	BaseRevision int64  `json:"base_revision"`
+	BaseETag     string `json:"base_etag"`
+	BaseStatus   string `json:"base_status"`
+}
+
+type IssueStartResponse struct {
+	Version             int                                `json:"version"`
+	Applied             bool                               `json:"applied"`
+	BaselineAccepted    bool                               `json:"baseline_accepted"`
+	Status              string                             `json:"status"`
+	Revision            int64                              `json:"revision"`
+	ETag                string                             `json:"etag"`
+	UpdatedAt           string                             `json:"updated_at,omitempty"`
+	EmptyCommentHistory *protocol.EmptyIssueCommentHistory `json:"empty_comment_history,omitempty"`
+}
+
 // StartTask marks a dispatched task as running.
 func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
 	// Verify the caller owns this task's workspace.
-	_, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
+	existingTask, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
 	if !ok {
 		return
 	}
 
-	task, err := h.TaskService.StartTask(r.Context(), parseUUID(taskID))
+	var req TaskStartRequest
+	if r.Body != nil {
+		err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req)
+		if err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
+	var task *db.AgentTaskQueue
+	var startState service.IssueStartState
+	var err error
+	if req.IssueStart == nil {
+		task, err = h.TaskService.StartTask(r.Context(), parseUUID(taskID))
+	} else {
+		req.IssueStart.BaseETag = util.SanitizeTextForPostgres(req.IssueStart.BaseETag)
+		req.IssueStart.BaseStatus = util.SanitizeTextForPostgres(req.IssueStart.BaseStatus)
+		if !ordinaryIssueCompletionSupported(existingTask) || req.IssueStart.Version != issueCompletionContractVersion ||
+			req.ClaimGeneration <= 0 || req.IssueStart.BaseRevision <= 0 || req.IssueStart.BaseStatus == "" ||
+			req.IssueStart.BaseETag != issueTaskSnapshotETag(uuidToString(existingTask.IssueID), req.IssueStart.BaseRevision) {
+			writeError(w, http.StatusBadRequest, "invalid issue start contract")
+			return
+		}
+		task, startState, err = h.TaskService.StartTaskWithIssueStart(r.Context(), parseUUID(taskID), service.IssueStart{
+			Version: req.IssueStart.Version, ClaimGeneration: req.ClaimGeneration,
+			BaseRevision: req.IssueStart.BaseRevision, BaseStatus: req.IssueStart.BaseStatus,
+		})
+	}
 	if err != nil {
 		slog.Warn("start task failed", "task_id", taskID, "error", err)
+		if errors.Is(err, service.ErrStaleIssueStartClaim) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -3939,7 +4038,16 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("task started", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
-	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
+	resp := taskToResponse(*task, workspaceID)
+	if req.IssueStart != nil {
+		resp.IssueStart = &IssueStartResponse{
+			Version: issueCompletionContractVersion, Applied: startState.Applied, BaselineAccepted: startState.BaselineAccepted,
+			Status: startState.Issue.Status, Revision: startState.Issue.Revision,
+			ETag: issueTaskSnapshotETag(uuidToString(startState.Issue.ID), startState.Issue.Revision), UpdatedAt: timestampToString(startState.Issue.UpdatedAt),
+			EmptyCommentHistory: startState.EmptyCommentHistory,
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) markDesignRestoreTaskRunning(ctx context.Context, task db.AgentTaskQueue) error {
@@ -4065,7 +4173,9 @@ type TaskCompleteRequest struct {
 	// (GH #6066). Distinct from an empty SessionID, which only means "nothing
 	// to report" — this says "never hand this id to a later run". Older
 	// daemons omit it, which is exactly the pre-fix behaviour.
-	RetiredSessionID string `json:"retired_session_id,omitempty"`
+	RetiredSessionID string                  `json:"retired_session_id,omitempty"`
+	ClaimGeneration  int64                   `json:"claim_generation,omitempty"`
+	IssueCompletion  *IssueCompletionRequest `json:"issue_completion,omitempty"`
 }
 
 // ProjectDesignSystemPackageReceipt mirrors the daemon-side
@@ -4100,6 +4210,11 @@ func sanitizeTaskCompleteRequest(req *TaskCompleteRequest) {
 	req.DurableWorkDir = util.SanitizeTextForPostgres(req.DurableWorkDir)
 	req.BranchName = util.SanitizeTextForPostgres(req.BranchName)
 	req.RetiredSessionID = util.SanitizeTextForPostgres(req.RetiredSessionID)
+	if req.IssueCompletion != nil {
+		req.IssueCompletion.Comment = util.SanitizeTextForPostgres(req.IssueCompletion.Comment)
+		req.IssueCompletion.BaseETag = util.SanitizeTextForPostgres(req.IssueCompletion.BaseETag)
+		req.IssueCompletion.BaseStatus = util.SanitizeTextForPostgres(req.IssueCompletion.BaseStatus)
+	}
 }
 
 func sanitizeTaskFailRequest(req *TaskFailRequest) {
@@ -4141,6 +4256,11 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	// re-route below feeds req.Output into the failure classifier, and that
 	// classifier must see exactly the text we are going to persist.
 	sanitizeTaskCompleteRequest(&req)
+	issueCompletion, completionErr := validateIssueCompletionRequest(existingTask, req.ClaimGeneration, req.Output, req.IssueCompletion)
+	if completionErr != nil {
+		writeError(w, http.StatusBadRequest, completionErr.Error())
+		return
+	}
 
 	// GH #6402: a daemon whose backend does not (yet) read the provider's
 	// structured terminal reason reports a context-exhausted run as a clean
@@ -4362,7 +4482,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	var task *db.AgentTaskQueue
 	var err error
 	completeWithMutation := func(mutate func(*db.Queries, db.AgentTaskQueue) error) {
-		task, err = h.TaskService.CompleteTaskWithMutationAndSessionState(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.BranchName, req.SessionRolloutMissing, req.RetiredSessionID, req.DurableWorkDir, mutate)
+		task, err = h.TaskService.CompleteTaskWithMutationAndSessionStateAndIssueCompletion(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir, req.BranchName, req.SessionRolloutMissing, req.RetiredSessionID, req.DurableWorkDir, issueCompletion, mutate)
 	}
 	if preparedRepositoryAnalysis != nil {
 		completeWithMutation(func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
@@ -4477,6 +4597,10 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		completeWithMutation(nil)
 	}
 	if err != nil {
+		if errors.Is(err, service.ErrStaleIssueCompletionClaim) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		// A CompleteTask error is an infrastructure failure (transaction /
 		// assistant-outcome write), not a bad request: an already-finalized
 		// callback is treated as idempotent success and returns no error. Return

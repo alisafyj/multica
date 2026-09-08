@@ -3,12 +3,17 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strings"
+	"time"
 
+	"github.com/multica-ai/multica/server/internal/agentguard"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/designdocument"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 )
+
+const issueCodeVerificationPrompt = "## Code Verification\n\nWhen changing code, verify the requested behavior at the affected boundary, not just a new helper. For bug fixes, add a regression that fails before the fix and uses representative nonempty data. For UI changes, exercise the real component and relevant state transitions; for API changes, verify allowed and rejected requests when applicable. Run the smallest relevant tests and applicable typecheck/build. In your final response, list checks actually run with outcomes and any verification gaps. A successful command or passing helper tests alone do not prove the user-visible workflow works.\n\n"
 
 // sessionContinuityNoticeFor picks the notice matching what this surface
 // actually lost. See the constants in execenv for the full reasoning; the
@@ -68,6 +73,7 @@ func perTurnContextBlocks(task Task, opts promptOpts) string {
 	b.WriteString(buildActiveSiblingRunsBlock(task.IssueID, task.ActiveSiblingRuns))
 	b.WriteString(buildSharedLocalDirectoryBlock(opts.sharedLocalDirectory))
 	b.WriteString(buildWorktreeReplayConflictBlock(opts.worktreeReplayConflicts))
+	b.WriteString(buildPrimaryRepositoryBlock(opts.primaryRepository))
 	if task.PriorSessionResumeUnavailable {
 		b.WriteString(sessionContinuityNoticeFor(task))
 	}
@@ -83,6 +89,7 @@ type promptOpts struct {
 	sharedLocalDirectory    bool
 	outputDir               string
 	worktreeReplayConflicts []string
+	primaryRepository       *preparedPrimaryRepository
 }
 
 // PromptOption tunes per-turn prompt copy with run-scoped context.
@@ -231,24 +238,25 @@ func buildActiveSiblingRunsBlock(currentIssueID string, runs []ActiveSiblingRunD
 // complete a task without the normal Multica workflow brief. It keeps raw user
 // input intact while retaining only the identifiers and commands required for
 // delivery, issue updates, attachments, or exactly-once creation.
-func BuildDirectPrompt(task Task) string {
+func BuildDirectPrompt(task Task, options ...PromptOption) string {
+	var body string
 	switch {
 	case task.ChatSessionID != "":
-		return buildDirectChatPrompt(task)
+		body = buildDirectChatPrompt(task)
 	case task.TriggerCommentID != "":
-		return buildDirectCommentPrompt(task)
+		body = buildDirectCommentPrompt(task)
 	case task.AutopilotRunID != "":
-		return buildDirectAutopilotPrompt(task)
+		body = buildDirectAutopilotPrompt(task)
 	case task.QuickCreatePrompt != "":
-		return buildDirectQuickCreatePrompt(task)
+		body = buildDirectQuickCreatePrompt(task)
 	case len(task.UIDraftCreateContext) > 0:
 		return string(task.UIDraftCreateContext)
 	case len(task.DesignRestoreContext) > 0:
 		return string(task.DesignRestoreContext)
-	case task.TestGenerationContext != "":
-		return task.TestGenerationContext
-	case task.TestRunContext != "":
-		return task.TestRunContext
+	case testingContextPresent(task.TestGenerationContext):
+		return string(task.TestGenerationContext)
+	case testingContextPresent(task.TestRunContext):
+		return string(task.TestRunContext)
 	case len(task.DesignSystemProfileAnalyzeContext) > 0:
 		return string(task.DesignSystemProfileAnalyzeContext)
 	case len(task.TemplateBlueprintAnalyzeContext) > 0:
@@ -262,10 +270,80 @@ func BuildDirectPrompt(task Task) string {
 	case len(task.PMOSyncContext) > 0:
 		return string(task.PMOSyncContext)
 	case task.HandoffNote != "", task.IssueID != "":
-		return buildDirectAssignmentPrompt(task)
+		body = buildDirectAssignmentPrompt(task)
 	default:
 		return ""
 	}
+	if task.TriggerCommentID != "" {
+		body += buildAuthoritativeIssueSnapshotBlock(task)
+	}
+
+	var opts promptOpts
+	for _, apply := range options {
+		apply(&opts)
+	}
+	return appendDirectPromptContext(body, task, opts)
+}
+
+func appendDirectPromptContext(body string, task Task, opts promptOpts) string {
+	var b strings.Builder
+	b.WriteString(body)
+	if !strings.HasSuffix(body, "\n\n") {
+		b.WriteByte('\n')
+	}
+	b.WriteString("## Privacy Security Boundary\n\n")
+	b.WriteString(agentguard.PrivacyInstruction())
+	b.WriteString("\n\n")
+	if guidance := execenv.BuildMulticaCLIInvocationGuidance(runtime.GOOS); guidance != "" {
+		b.WriteString("## Multica CLI\n\n")
+		b.WriteString(guidance)
+	}
+	b.WriteString(buildDirectAgentWorkspaceContext(task))
+	b.WriteString(perTurnContextBlocks(task, opts))
+	return b.String()
+}
+
+func buildDirectAgentWorkspaceContext(task Task) string {
+	var b strings.Builder
+	if task.Agent != nil || task.AgentID != "" {
+		b.WriteString("## Agent Identity\n\n")
+		if task.Agent != nil && task.Agent.Name != "" {
+			fmt.Fprintf(&b, "Agent name: %q\n", task.Agent.Name)
+		}
+		agentID := task.AgentID
+		if task.Agent != nil && task.Agent.ID != "" {
+			agentID = task.Agent.ID
+		}
+		if agentID != "" {
+			fmt.Fprintf(&b, "Agent ID: %q\n", agentID)
+		}
+		if task.Agent != nil && (task.Agent.Name != "" || agentID != "") {
+			b.WriteByte('\n')
+		} else if task.AgentID != "" {
+			b.WriteByte('\n')
+		}
+		if task.Agent != nil && task.Agent.Instructions != "" {
+			b.WriteString(task.Agent.Instructions)
+			b.WriteString("\n\n")
+		}
+	}
+	if task.WorkspaceID != "" || task.WorkspaceSlug != "" || strings.TrimSpace(task.WorkspaceContext) != "" {
+		b.WriteString("## Workspace Context\n\n")
+		if task.WorkspaceID != "" {
+			fmt.Fprintf(&b, "Workspace ID: %q\n", task.WorkspaceID)
+		}
+		if task.WorkspaceSlug != "" {
+			fmt.Fprintf(&b, "Workspace slug: %q\n", task.WorkspaceSlug)
+		}
+		if task.WorkspaceID != "" || task.WorkspaceSlug != "" {
+			b.WriteByte('\n')
+		}
+		if context := strings.TrimRight(task.WorkspaceContext, " \t\r\n"); context != "" {
+			b.WriteString(context)
+			b.WriteString("\n\n")
+		}
+	}
+	return b.String()
 }
 
 func buildDirectChatPrompt(task Task) string {
@@ -351,16 +429,24 @@ func buildDirectCommentPrompt(task Task) string {
 	} else if len(task.CoalescedCommentIDs) > 0 {
 		fmt.Fprintf(&b, "\nAdditional comment IDs: %s\n", strings.Join(task.CoalescedCommentIDs, ", "))
 	}
+	b.WriteString("\n")
+	b.WriteString(buildRequiredCommentCatchUpPrompt(task))
+	b.WriteString(issueCodeVerificationPrompt)
 
-	b.WriteString("\nReply to each request when a reply is warranted. Write the final body to ./reply.md, post it, then remove the file:\n")
-	if targets := commentReplyThreads(task); len(targets) >= 2 {
-		for _, target := range targets {
-			fmt.Fprintf(&b, "multica issue comment add %s --parent %s --content-file ./reply.md\n", task.IssueID, target.ParentID)
-		}
+	if delivery := buildIssueCompletionDeliveryPrompt(task); delivery != "" {
+		b.WriteString("\n")
+		b.WriteString(delivery)
 	} else {
-		fmt.Fprintf(&b, "multica issue comment add %s --parent %s --content-file ./reply.md\n", task.IssueID, task.TriggerCommentID)
+		b.WriteString("\nReply to each request when a reply is warranted. Write the final body to ./reply.md, post it, then remove the file:\n")
+		if targets := commentReplyThreads(task); len(targets) >= 2 {
+			for _, target := range targets {
+				fmt.Fprintf(&b, "multica issue comment add %s --parent %s --content-file ./reply.md\n", task.IssueID, target.ParentID)
+			}
+		} else {
+			fmt.Fprintf(&b, "multica issue comment add %s --parent %s --content-file ./reply.md\n", task.IssueID, task.TriggerCommentID)
+		}
+		b.WriteString("rm ./reply.md\n")
 	}
-	b.WriteString("rm ./reply.md\n")
 	if taskIsSquadLeader(task) {
 		fmt.Fprintf(&b, "If no action is needed, run `multica squad activity %s no_action --reason \"...\"` and do not post a comment.\n", task.IssueID)
 	}
@@ -370,7 +456,24 @@ func buildDirectCommentPrompt(task Task) string {
 func buildDirectAssignmentPrompt(task Task) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Issue: %s\n", task.IssueID)
-	fmt.Fprintf(&b, "Read it with `multica issue get %s --output json`, perform the requested work, then post the final result with `multica issue comment add %s --content-file ./reply.md` and run `multica issue status %s in_review`. Write the comment body to ./reply.md first and remove the file afterward.\n", task.IssueID, task.IssueID, task.IssueID)
+	if snapshot := buildAuthoritativeIssueSnapshotBlock(task); snapshot == "" {
+		fmt.Fprintf(&b, "Read it with `multica issue get %s --output json`, perform the requested work, and verify the result.\n", task.IssueID)
+	} else {
+		b.WriteString("Use the claim-time issue-body snapshot below, perform the requested work, and verify the result.\n")
+		b.WriteString(snapshot)
+	}
+	b.WriteString(buildRequiredCommentCatchUpPrompt(task))
+	b.WriteString(issueCodeVerificationPrompt)
+	outcomeAvailable := taskSupportsIssueOutcomeArtifact(task)
+	if delivery := buildIssueCompletionDeliveryPromptWithOutcome(task, outcomeAvailable); delivery != "" {
+		b.WriteString(delivery)
+		if !outcomeAvailable {
+			fmt.Fprintf(&b, "Only after the requested work is complete and verification passes may you explicitly run `multica issue status %s in_review --no-start`. If required input cannot be obtained through the clarification channel above or verification cannot be completed, explain that in the final response and you may explicitly run `multica issue status %s blocked --no-start`; do not mark the issue in review.\n", task.IssueID, task.IssueID)
+		}
+	} else {
+		fmt.Fprintf(&b, "Only after the requested work is complete and verification passes, write the final result to ./reply.md, post it with `multica issue comment add %s --content-file ./reply.md`, remove the file, and run `multica issue status %s in_review --no-start`.\n", task.IssueID, task.IssueID)
+		fmt.Fprintf(&b, "If required input is missing or verification cannot be completed, write the blocker to ./reply.md, post a comment explaining the blocker with `multica issue comment add %s --content-file ./reply.md`, remove the file, and run `multica issue status %s blocked --no-start`; do not mark the issue in review.\n", task.IssueID, task.IssueID)
+	}
 	if task.HandoffNote != "" {
 		b.WriteString("\nHandoff:\n")
 		b.WriteString(task.HandoffNote)
@@ -492,10 +595,10 @@ func buildPromptBody(task Task, provider string, outputDir string) string {
 	if len(task.DesignRestoreContext) > 0 {
 		return buildDesignRestorePrompt(task)
 	}
-	if len(task.TestGenerationContext) > 0 {
+	if testingContextPresent(task.TestGenerationContext) {
 		return buildTestGenerationPrompt(task)
 	}
-	if len(task.TestRunContext) > 0 {
+	if testingContextPresent(task.TestRunContext) {
 		return buildTestRunPrompt(task)
 	}
 	if len(task.DesignSystemProfileAnalyzeContext) > 0 {
@@ -532,8 +635,19 @@ func buildPromptBody(task Task, provider string, outputDir string) string {
 		b.WriteString("You were handed this issue with a handoff note. Treat it as the assigner's scoping instruction for this run; follow it before doing anything broader, and do not reply to it as if it were a comment:\n\n")
 		fmt.Fprintf(&b, "> %s\n\n", task.HandoffNote)
 	}
-	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
-	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Scan the threads first with `multica issue comment list %s --roots-only --summary --compact --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. For `--since` incremental polling, pagination, and folding, see `multica issue comment list --help`.\n", task.IssueID)
+	if snapshot := buildAuthoritativeIssueSnapshotBlock(task); snapshot != "" {
+		b.WriteString(snapshot)
+		b.WriteString("Use this issue-body snapshot together with the bounded comment-history catch-up below, then complete the task.\n")
+	} else {
+		fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
+	}
+	b.WriteString(buildRequiredCommentCatchUpPrompt(task))
+	b.WriteString(issueCodeVerificationPrompt)
+	if delivery := buildIssueCompletionDeliveryPrompt(task); delivery != "" {
+		b.WriteString(delivery)
+	} else {
+		fmt.Fprintf(&b, "Write the final result to ./reply.md, post it with `multica issue comment add %s --content-file ./reply.md`, then remove the file.\n", task.IssueID)
+	}
 	return b.String()
 }
 
@@ -804,7 +918,7 @@ func buildTestRunPrompt(task Task) string {
 	b.WriteString("- Use the `multica` CLI for all Multica reads and writes; do not call the API with curl or wget.\n\n")
 
 	b.WriteString("Context JSON:\n")
-	b.WriteString(task.TestRunContext)
+	b.Write(task.TestRunContext)
 	b.WriteString("\n\n")
 
 	b.WriteString("End your final response with a machine-readable JSON block prefixed by exactly `TEST_RUN_RESULT_JSON:`:\n")
@@ -848,7 +962,7 @@ func buildTestGenerationPrompt(task Task) string {
 	b.WriteString("- Use the `multica` CLI for all Multica reads and writes; do not call the API with curl or wget.\n\n")
 
 	b.WriteString("Context JSON:\n")
-	b.WriteString(task.TestGenerationContext)
+	b.Write(task.TestGenerationContext)
 	b.WriteString("\n\n")
 
 	b.WriteString("When you are done, end your final response with a machine-readable JSON block prefixed by exactly `TEST_GENERATION_RESULT_JSON:` with this shape:\n")
@@ -1144,31 +1258,55 @@ func buildCommentPrompt(task Task, provider string) string {
 			fmt.Fprintf(&b, "⚠️ **Squad leader no_action rule:** If you decide no action is needed, call `multica squad activity %s no_action --reason \"...\"` and EXIT. DO NOT post any comment — not even one that says \"no action needed\" or \"exiting silently\". The squad activity call records your decision; a comment is redundant noise. The comment prohibition is conditional on that call SUCCEEDING: if it exits non-zero, your decision has no trace anywhere, so post exactly ONE short comment stating the outcome and the error instead of exiting silently. That failure comment is this turn's only comment — it does not license a second one.\n\n", task.IssueID)
 		}
 	}
-	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then decide how to proceed.\n\n", task.IssueID)
-	// Comment-reading pointer. Warm path with new comments: issue-wide
-	// since-delta count, but steer the agent to read the triggering thread
-	// first. Warm resumed path with no new comments: the trigger is already
-	// injected, so don't force a duplicate thread read. Cold path: read the
-	// triggering thread, not the flat timeline. Final fallback (no trigger id,
-	// shouldn't happen here): plain read.
-	if hint := execenv.BuildNewCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID, task.NewCommentsSince, task.NewCommentCount); hint != "" {
-		b.WriteString(hint)
-	} else if task.PriorSessionID != "" {
-		b.WriteString(execenv.BuildResumedCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID))
-	} else if cold := execenv.BuildColdCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID); cold != "" {
-		b.WriteString(cold)
+	if snapshot := buildAuthoritativeIssueSnapshotBlock(task); snapshot != "" {
+		b.WriteString(snapshot)
+		b.WriteString("Use this snapshot and the comment input above to decide how to proceed.\n\n")
 	} else {
-		fmt.Fprintf(&b, "Read the discussion: scan with `multica issue comment list %s --roots-only --summary --compact --output json`, then expand what matters with `--thread <thread-id> --tail 30`.\n\n", task.IssueID)
+		fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then decide how to proceed.\n\n", task.IssueID)
 	}
+	b.WriteString(buildRequiredCommentCatchUpPrompt(task))
+	b.WriteString(issueCodeVerificationPrompt)
 	// Reply routing. When this run coalesced comments spanning MORE THAN ONE
 	// root thread, answer each thread in its own thread instead of dumping one
 	// merged comment (MUL-4348). Same-thread follow-ups collapse to a single
 	// group upstream, so they keep the ordinary single-parent path below and can
 	// never be split into duplicate replies.
-	if targets := commentReplyThreads(task); len(targets) >= 2 {
+	if delivery := buildIssueCompletionDeliveryPrompt(task); delivery != "" {
+		b.WriteString(delivery)
+	} else if targets := commentReplyThreads(task); len(targets) >= 2 {
 		b.WriteString(execenv.BuildMultiThreadCommentReplyInstructions(task.IssueID, targets, taskIsSquadLeader(task)))
 	} else {
 		b.WriteString(execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID, taskIsSquadLeader(task)))
+	}
+	return b.String()
+}
+
+// buildRequiredCommentCatchUpPrompt keeps the comment-history contract
+// complete without repeating the roots scan on a validated resumed session.
+// A missing or known-broken continuation fails closed to the bounded roots
+// orientation read before any thread expansion.
+func buildRequiredCommentCatchUpPrompt(task Task) string {
+	if emptyHistory := buildVerifiedEmptyCommentHistoryPrompt(task, time.Now().UTC()); emptyHistory != "" {
+		return emptyHistory
+	}
+	if task.PriorSessionID != "" && !task.PriorSessionResumeUnavailable {
+		if hint := execenv.BuildNewCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID, task.NewCommentsSince, task.NewCommentCount); hint != "" {
+			return hint
+		}
+	}
+	if task.TriggerCommentID != "" && task.PriorSessionID != "" && !task.PriorSessionResumeUnavailable {
+		return execenv.BuildResumedCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Comment-history catch-up is mandatory for this fresh or non-resumable turn. Scan the threads first with `multica issue comment list %s --roots-only --summary --compact --output json`, then expand only what matters with `--thread <thread-id> --tail 30 --compact --output json`. ", task.IssueID)
+	if task.TriggerCommentID == "" {
+		b.WriteString("For `--since` incremental polling, pagination, and folding, see `multica issue comment list --help`.\n")
+	} else {
+		b.WriteString("For pagination and folding, see `multica issue comment list --help`.\n")
+	}
+	if cold := execenv.BuildColdCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID); cold != "" {
+		b.WriteString(cold)
 	}
 	return b.String()
 }

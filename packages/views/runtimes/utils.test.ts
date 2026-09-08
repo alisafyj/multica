@@ -512,8 +512,8 @@ describe("estimateCost", () => {
 
   it("reports provider-qualified keys for unmapped generic model ids", () => {
     const unmapped = collectUnmappedModels([
-      { ...zeroUsage, provider: "acme", model: "auto" },
-      { ...zeroUsage, provider: "cursor", model: "auto" },
+      { ...zeroUsage, provider: "acme", model: "auto", input_tokens: 1 },
+      { ...zeroUsage, provider: "cursor", model: "auto", input_tokens: 1 },
     ]);
     // Same bare id, two providers → two distinct, priceable-by-key entries.
     // `cursor/auto` is priced, so only the genuinely-unmapped one surfaces.
@@ -945,9 +945,9 @@ describe("isModelPriced", () => {
 describe("collectUnmappedModels", () => {
   it("only surfaces names that miss every pricing tier", () => {
     const rows = [
-      { ...zeroUsage, model: "claude-sonnet-4-6" },
-      { ...zeroUsage, model: "gpt-5-codex" },
-      { ...zeroUsage, model: "fictional-model-x" },
+      { ...zeroUsage, model: "claude-sonnet-4-6", input_tokens: 1 },
+      { ...zeroUsage, model: "gpt-5-codex", input_tokens: 1 },
+      { ...zeroUsage, model: "fictional-model-x", input_tokens: 1 },
     ];
     expect(collectUnmappedModels(rows)).toEqual(["fictional-model-x"]);
   });

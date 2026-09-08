@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
+	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
 // RepoContextForEnv describes a workspace repo available for checkout.
@@ -131,9 +132,10 @@ type PrepareParams struct {
 
 // TaskContextForEnv is the subset of task context used for writing context files.
 type TaskContextForEnv struct {
-	IssueID          string
-	TriggerCommentID string // comment that triggered this task (empty for on_assign)
-	TriggerThreadID  string // root comment ID for the triggering thread; falls back to TriggerCommentID when empty
+	IssueID                        string
+	IssueCompletionContractVersion int
+	TriggerCommentID               string // comment that triggered this task (empty for on_assign)
+	TriggerThreadID                string // root comment ID for the triggering thread; falls back to TriggerCommentID when empty
 	// CommentReplyTargets is set for a comment run that coalesced comments
 	// spanning MORE THAN ONE root thread (MUL-4348). When it has >=2 entries the
 	// workflow's reply step fans out — one reply per thread — instead of the
@@ -304,6 +306,8 @@ type Environment struct {
 	LocalWorktree *LocalWorktree
 	// CodexHome is the path to the per-task CODEX_HOME directory (set only for codex provider).
 	CodexHome string
+	// CodexPluginSkillBindings must survive preparation-helper JSON IPC.
+	CodexPluginSkillBindings []agent.CodexPluginSkillBinding
 	// ClaudeSettingsPath is a task-local --settings JSON file that applies
 	// disabled runtime-skill policy without mutating the user's Claude config.
 	ClaudeSettingsPath string
@@ -671,10 +675,12 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{CodexVersion: params.CodexVersion, IsLocalDirectory: params.LocalWorkDir != "" || params.LocalWorktree != nil, SessionStoreKey: codexSessionStoreKey(params.Profile, params.Task), CodexCustomArgs: params.CodexCustomArgs}, logger); err != nil {
 			return nil, fmt.Errorf("execenv: prepare codex-home: %w", err)
 		}
-		if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, params.Task.DisabledRuntimeSkills, logger); err != nil {
+		bindings, err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, params.Task.DisabledRuntimeSkills, logger)
+		if err != nil {
 			return nil, fmt.Errorf("execenv: hydrate codex skills: %w", err)
 		}
 		env.CodexHome = codexHome
+		env.CodexPluginSkillBindings = bindings
 	}
 
 	if params.Provider == "claude" {
@@ -978,10 +984,19 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		codexHome := filepath.Join(env.RootDir, codexHomeDirName)
 		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{CodexVersion: params.CodexVersion, ResumeSessionID: params.ResumeSessionID, IsLocalDirectory: params.LocalDirectory, SessionStoreKey: codexSessionStoreKey(params.Profile, params.Task), CodexCustomArgs: params.CodexCustomArgs}, logger); err != nil {
 			logger.Warn("execenv: refresh codex-home failed", "error", err)
+			if len(params.Task.DisabledRuntimeSkills) > 0 {
+				return nil
+			}
 		} else {
 			env.CodexHome = codexHome
-			if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, params.Task.DisabledRuntimeSkills, logger); err != nil {
+			bindings, err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, params.Task.DisabledRuntimeSkills, logger)
+			if err != nil {
 				logger.Warn("execenv: refresh codex skills failed", "error", err)
+				if len(params.Task.DisabledRuntimeSkills) > 0 {
+					return nil
+				}
+			} else {
+				env.CodexPluginSkillBindings = bindings
 			}
 		}
 	}
@@ -1115,17 +1130,17 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 // user's real ~/.codex/. Other runtimes leave HOME untouched and discover
 // user-level skills natively (see context.go for the workdir-local paths
 // they use for workspace skills).
-func hydrateCodexSkills(codexHome string, workspaceSkills []SkillContextForEnv, disabledRuntimeSkills []RuntimeSkillRefForEnv, logger *slog.Logger) error {
+func hydrateCodexSkills(codexHome string, workspaceSkills []SkillContextForEnv, disabledRuntimeSkills []RuntimeSkillRefForEnv, logger *slog.Logger) ([]agent.CodexPluginSkillBinding, error) {
 	skillsDir := filepath.Join(codexHome, "skills")
 	if err := os.RemoveAll(skillsDir); err != nil {
-		return fmt.Errorf("clear codex skills dir: %w", err)
+		return nil, fmt.Errorf("clear codex skills dir: %w", err)
 	}
 	if err := seedUserCodexSkills(codexHome, workspaceSkills, logger); err != nil {
 		logger.Warn("execenv: seed user codex skills failed", "error", err)
 	}
 	if len(workspaceSkills) > 0 {
 		if err := writeSkillFiles(skillsDir, workspaceSkills, nil); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	return ensureCodexDisabledSkillsConfig(filepath.Join(codexHome, "config.toml"), codexHome, disabledRuntimeSkills, workspaceSkills)

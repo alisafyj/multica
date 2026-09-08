@@ -151,7 +151,7 @@ func TestAutopilotCreateFirstCompletionPublishesRunStartBeforeRunDone(t *testing
 	}}
 	t.Cleanup(func() { testHandler.AutopilotService.TxStarter = originalStarter })
 
-	run, err := testHandler.AutopilotService.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
+	run, _, err := testHandler.AutopilotService.DispatchAutopilotManual(ctx, ap, pgtype.UUID{}, nil, parseUUID(testUserID))
 	if err != nil {
 		t.Fatalf("DispatchAutopilot: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestAutopilotCreateCommitFailurePublishesMatchingRunDone(t *testing.T) {
 	testHandler.AutopilotService.TxStarter = &rollbackOnCommitStarter{pool: testPool}
 	t.Cleanup(func() { testHandler.AutopilotService.TxStarter = originalStarter })
 
-	run, err := testHandler.AutopilotService.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
+	run, _, err := testHandler.AutopilotService.DispatchAutopilotManual(ctx, ap, pgtype.UUID{}, nil, parseUUID(testUserID))
 	if err == nil {
 		t.Fatal("DispatchAutopilot succeeded, want commit failure")
 	}

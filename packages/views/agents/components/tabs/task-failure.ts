@@ -14,6 +14,7 @@ export const FAILURE_REASON_I18N_KEYS = {
   runtime_recovery: "runtime_recovery",
   timeout: "timeout",
   iteration_limit: "iteration_limit",
+  execution_budget_exceeded: "execution_budget_exceeded",
   agent_blocked: "agent_blocked",
   api_invalid_request: "api_invalid_request",
   skill_bundle_unavailable: "skill_bundle_unavailable",

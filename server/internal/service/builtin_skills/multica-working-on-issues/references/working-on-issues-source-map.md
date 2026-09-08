@@ -1,21 +1,21 @@
 # working-on-issues source map
 
 Evidence layer for `SKILL.md`. Every contract the skill states is traced to a
-current `file:line` here. Lines were re-derived against `feat/builtin-skills`
-after the latest `main` merge; the prior skill cited pre-merge lines that have
-since moved (see the "drifted" column). Re-confirm with the verification command
-at the bottom before relying on an exact line.
+current `file:line` here. Lines were re-derived against the current checkout;
+the prior skill cited lines that have since moved (see the "drifted" column).
+Re-confirm with the verification command at the bottom before relying on an
+exact line.
 
 ## `multica issue pull-requests` — read PR links from Multica
 
 | Behavior | File:line | Drifted from |
 |---|---|---|
-| CLI command `pull-requests <id>` (alias `prs`) | `server/cmd/multica/cmd_issue.go:105` | `:104` |
-| `runIssuePullRequests` handler | `server/cmd/multica/cmd_issue.go:507` | new citation |
-| Calls `GET /api/issues/<id>/pull-requests` | `server/cmd/multica/cmd_issue.go:522` | `:522` (unchanged) |
-| API route registration | `server/cmd/server/router.go:480` | `:480` (unchanged) |
-| Handler `ListPullRequestsForIssue` → `Queries.ListPullRequestsByIssue` | `server/internal/handler/github.go:687,692` | `:466` |
-| Row → response mapper `issuePullRequestRowToResponse` | `server/internal/handler/github.go:205` | `:149` |
+| CLI command `pull-requests <id>` (alias `prs`) | `server/cmd/multica/cmd_issue.go:184-190` | `:104` |
+| `runIssuePullRequests` handler | `server/cmd/multica/cmd_issue.go:812` | new citation |
+| Calls `GET /api/issues/<id>/pull-requests` | `server/cmd/multica/cmd_issue.go:827` | `:522` |
+| API route registration | `server/cmd/server/router.go:2024` | `:480` |
+| Handler `ListPullRequestsForIssue` → `Queries.ListPullRequestsByIssue` | `server/internal/handler/github.go:963-968` | `:466` |
+| Row → response mapper `issuePullRequestRowToResponse` | `server/internal/handler/github.go:228` | `:149` |
 
 The CLI resolves the issue ref, GETs the endpoint, and (for `--output json`)
 prints the raw `{"pull_requests": [...]}` body. Only `--output` is accepted; the
@@ -23,33 +23,33 @@ default `table` shows `NUMBER STATE TITLE URL`.
 
 ## PR response shape
 
-`GitHubPullRequestResponse` struct: `server/internal/handler/github.go:58`. JSON
+`GitHubPullRequestResponse` struct: `server/internal/handler/github.go:64`. JSON
 fields the agent can read off each element of `pull_requests`:
 
-- `provider` (`json:"provider"`, line 63)
-- `number` (`json:"number"`, line 67)
-- `html_url` (`json:"html_url"`, line 70)
-- `title` (`json:"title"`, line 68)
-- `state` (`json:"state"`, line 69) — the folded lifecycle enum (see below)
-- `merged_at` (`json:"merged_at"`, line 74), `closed_at` (line 75)
-- `mergeable_state` (`json:"mergeable_state"`, line 80) — mirrors GitHub; UI only
+- `provider` (`json:"provider"`, line 69)
+- `number` (`json:"number"`, line 73)
+- `html_url` (`json:"html_url"`, line 76)
+- `title` (`json:"title"`, line 74)
+- `state` (`json:"state"`, line 75) — the folded lifecycle enum (see below)
+- `merged_at` (`json:"merged_at"`, line 80), `closed_at` (line 81)
+- `mergeable_state` (`json:"mergeable_state"`, line 86) — mirrors GitHub; UI only
   surfaces `clean`/`dirty`, other values round-trip as unknown
-- `snapshot_available` (`json:"snapshot_available"`, line 100) — for GitHub,
+- `snapshot_available` (`json:"snapshot_available"`, line 106) — for GitHub,
   true only when the App snapshot feature is enabled and the snapshot head
-  matches the current PR head (`currentGitHubSnapshotAvailable`, lines 258-265)
-- `mergeable` / `merge_state_status` (lines 90, 94) — conflict-only verdict vs
+  matches the current PR head (`currentGitHubSnapshotAvailable`, lines 281-287)
+- `mergeable` / `merge_state_status` (lines 96, 100) — conflict-only verdict vs
   the complete merge gate; "ready" requires `merge_state_status == "clean"`
-- `checks_rollup` (`json:"checks_rollup"`, line 105) and run-level
+- `checks_rollup` (`json:"checks_rollup"`, line 111) and run-level
   `checks_total` / `checks_passed` / `checks_failed` / `checks_running`
-  (lines 111-114), plus `failed_check_names` (line 118)
-- `checks_conclusion` (`json:"checks_conclusion"`, line 108) — coarse
+  (lines 117-120), plus `failed_check_names` (line 124)
+- `checks_conclusion` (`json:"checks_conclusion"`, line 114) — coarse
   `"passed"`/`"failed"`/`"pending"` or `null`; GitHub derives it only from an
-  available current-head snapshot (mapper lines 242-254), while self-hosted VCS
-  providers use `aggregateChecksConclusion` (line 275)
+  available current-head snapshot (mapper lines 265-277), while self-hosted VCS
+  providers use `aggregateChecksConclusion` (line 298)
 
 There is **no** standalone `draft` or `merged` boolean in the response. The
 PR lifecycle is encoded in the single `state` string by `derivePRState`
-(`server/internal/handler/github.go:1317`):
+(`server/internal/handler/github.go:1746`):
 
 ```
 merged   → if PullRequest.Merged
@@ -59,25 +59,25 @@ open     → otherwise
 ```
 
 `derivePRState` is called when the webhook upserts the row
-(`server/internal/handler/github.go:1115`), so `state` is what the list endpoint
+(`server/internal/handler/github.go:1535`), so `state` is what the list endpoint
 returns. "Is it merged?" = `state == "merged"` (or `merged_at != null`); "is it a
 draft?" = `state == "draft"`. Combine with `checks_conclusion` for CI status.
 
 ## Two distinct webhook paths: link vs close-intent
 
 Both run inside the `pull_request` webhook handler, gated by the workspace
-auto-link flag (`workspaceAutoLinkPRsEnabled`, `github.go:1074`).
+auto-link flag (`workspaceAutoLinkPRsEnabled`, `github.go:1579`).
 
 ### Path 1 — link (title OR body OR branch)
 
-- `extractIdentifiers` regex helper: `server/internal/handler/github.go:1028`
-- driving regex `identifierRe` (`\b([a-z][a-z0-9]{1,9})-(\d+)\b`, case-insensitive):
-  `server/internal/handler/github.go:490`
-- call site: `server/internal/handler/github.go:727` —
+- `extractIdentifiers` regex helper: `server/internal/handler/github.go:1780`
+- driving regex `identifierRe` (`\b([a-z][a-z0-9]{0,9})-(\d+)\b`, case-insensitive):
+  `server/internal/handler/github.go:1036`
+- call site: `server/internal/handler/github.go:1580` —
   `extractIdentifiers(p.PullRequest.Title, p.PullRequest.Body, p.PullRequest.Head.Ref)`
 
 Every `PREFIX-NUMBER` mention in **title, body, or branch** resolves to an issue
-in the workspace and writes a link row (`LinkIssueToPullRequest`, ~`github.go:762`).
+in the workspace and writes a link row (`LinkIssueToPullRequest`, `github.go:1640`).
 This is what `multica issue pull-requests` later reads back.
 
 **Reference-only flag (MUL-3739).** The link row carries a `reference_only`
@@ -98,18 +98,18 @@ call-site location for the link logic.
 
 ### Path 2 — close intent (title OR body only, keyword-adjacent)
 
-- `extractClosingIdentifiers` regex helper: `server/internal/handler/github.go:1051`
+- `extractClosingIdentifiers` regex helper: `server/internal/handler/github.go:1803`
 - driving regex `closingIdentifierRe`
-  (`\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[:\s]+([a-z][a-z0-9]{1,9})-(\d+)\b`):
-  `server/internal/handler/github.go:501`
-- call site: `server/internal/handler/github.go:736` —
+  (`\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[:\s]+([a-z][a-z0-9]{0,9})-(\d+)\b`):
+  `server/internal/handler/github.go:1047`
+- call site: `server/internal/handler/github.go:1589` —
   `extractClosingIdentifiers(p.PullRequest.Title, p.PullRequest.Body)` (no branch arg)
 
 Only a `PREFIX-NUMBER` immediately after a closing keyword
 (`Closes`/`Fixes`/`Resolves`, optional `:` then whitespace) sets the link row's
 `close_intent` flag — the gate that auto-advances the issue to `done` on merge.
 `Fix MUL-1` closes; `Fix login MUL-1` does not (adjacency). Branch names are
-deliberately excluded (function doc, `github.go:1044-1050`): a branch like
+deliberately excluded (function doc, `github.go:1796-1802`): a branch like
 `mul-1/fix-login` links but must never declare close intent.
 
 Drifted from the prior skill's `github.go:736` citation.
@@ -123,23 +123,23 @@ and is hidden from the PR list.
 
 | Behavior | File:line | Drifted from |
 |---|---|---|
-| Create-time: agent-assigned, non-backlog issue enqueues immediately | `server/internal/handler/issue.go:2263-2264` | new citation |
-| `shouldEnqueueAgentTask` returns false for `backlog` (parking lot) | `server/internal/handler/issue.go:2644-2648` | new citation |
-| Backlog → non-backlog (not done/cancelled) enqueues on update | `server/internal/handler/issue.go:2537-2540` | `:2523` |
-| Same contract in batch update | `server/internal/handler/issue.go:3021-3024` | new citation |
-| Child → `done` notifies + wakes the parent, gated by the stage barrier | `server/internal/handler/issue_child_done.go:66` (`notifyParentOfChildDone`; doc comment at `:15`; barrier gate at `:115`) | func def `:51` |
-| Status change (incl. → `cancelled`) does NOT cancel in-flight tasks; only issue deletion does (MUL-4465) | no-cancel note in `server/internal/handler/issue.go:2652-2658` (`UpdateIssue`) and `:3170-3171` (`BatchUpdateIssues`); deletion still cancels at `:2863` (`DeleteIssue`) / `:3239` (`BatchDeleteIssues`) via `CancelTasksForIssue` (`server/internal/service/task.go:1229`) | new citation |
-| `StartTask` / `CompleteTask` do not write issue status (agent CLI owns progress) | `server/internal/service/task.go` (`StartTask` / `CompleteTask` comments) | new citation |
+| Create-time: ready agent-assigned issue in a runnable project may enqueue; SQL blocks literal backlog/done/cancelled, not custom terminal keys | `server/internal/service/task.go:1183` (`EnqueueTaskForIssueCreateWithMode`); `server/migrations/892_runnable_issue_task_fence.up.sql:75`, `:86`, `:108`; invocation in `server/pkg/db/queries/agent.sql:363` | corrects predictor-only citation |
+| `WillEnqueueRun` returns false for `backlog` (parking lot) | `server/internal/service/issue_trigger.go:125-129` | new citation |
+| Backlog → non-backlog (not done/cancelled) enqueues on update | `server/internal/service/issue_trigger.go:131-139` | `:2523` |
+| Same contract in batch update | `server/internal/handler/issue.go:4589-4598` | new citation |
+| Child → terminal notifies + wakes the parent, gated by the stage barrier | `server/internal/handler/issue_child_done.go:70` (`notifyParentOfChildDone`; doc comment at `:18`; barrier gate at `:139`) | func def `:51` |
+| Status change (incl. → `cancelled`) does NOT cancel in-flight tasks; only issue deletion does (MUL-4465) | no-cancel note in `server/internal/handler/issue.go:3837-3848` (`UpdateIssue`) and `:4601-4602` (`BatchUpdateIssues`); deletion still cancels at `:4083` (`DeleteIssue`) / `:4698` (`BatchDeleteIssues`) via `CancelTasksForIssue` (`server/internal/service/task.go:2909`) | new citation |
+| Legacy runs use explicit CLI progress writes; completion-capable runs return their final answer normally and use the runtime brief's typed outcome for guarded final status | `server/internal/daemon/task_snapshot_prompt.go:97` (`buildIssueCompletionDeliveryPrompt`); `server/internal/service/issue_completion.go:50` (`applyIssueCompletion`) | distinguishes managed completion |
 | Runtime brief: status written whenever the work changes it, mid-turn included — starting the issue's own ask → `in_progress` immediately (workflow step 3); delivery → `in_review`, continuing → `in_progress`, stuck → `blocked`; a turn producing none of the issue's own deliverable → no write at any point; the activity kind never decides (research/design/planning/review count as work when they are the ask); no assignee gate; squad leader dispatch is not delivery (MUL-6417) | `server/internal/daemon/execenv/runtime_config_sections.go` (`writeWorkflowIssue`) | new citation |
-| Failed task may roll `in_progress` → `todo` when no active task remains | `server/internal/service/task.go` (`HandleFailedTasks`) | new citation |
-| Custom statuses inherit their category's behavior in full; enqueue/park contracts resolve the effective category via `issuestatus.Effective` / `Resolve` (MUL-6243) | `server/internal/issuestatus/issuestatus.go` (`Effective`, `Resolve`) | new citation |
+| Failed task may roll `in_progress` → `todo` when no active task or retry remains | `server/internal/service/task.go` (`HandleFailedTasks`) | new citation |
+| Updates resolve custom categories; create paths reject effective backlog but custom terminal creates can still enqueue | `server/internal/issuestatus/issuestatus.go` (`Effective`, `Resolve`); `server/internal/service/issue.go:950` and `:1033`; migration 892 literal-key fence above | records create-time exception |
 | Runtime brief lists the workspace's active custom statuses grouped by category; catalog rides the claim payload (MUL-6460) | `server/internal/daemon/execenv/runtime_config_sections.go` (`writeIssueStatusCommand`); claim injection in `server/internal/handler/daemon.go` (`buildClaimedTaskResponse`, status catalog block) | new citation |
 | Literal-key exceptions to category rules: failed-task rollback writes the `todo` key; merged close-intent PR writes the `done` key | `server/internal/service/task.go` (`HandleFailedTasks`); `server/internal/handler/github.go` (merge close-intent path) | new citation |
 
-Creation with `--status todo` (or any non-backlog status) on an agent-assigned
+Creation with `--status todo` (or another runnable built-in status) on an agent-assigned
 issue fires the agent immediately; `--status backlog` parks it with the assignee
 set but no trigger. Promoting `backlog → todo` later fires it then (update path,
-line 2537).
+`WillEnqueueRun`, lines 125-139).
 
 Moving an issue to `cancelled` used to call `CancelTasksForIssue` and stop every
 active task on it (the old #940 behavior). MUL-4465 removed that from both
@@ -174,10 +174,10 @@ on those assignments creating their normal queued runs.
 | Behavior | File:line |
 |---|---|
 | `issue.stage` column (nullable, `>= 1`) | `server/migrations/123_issue_stage.up.sql` |
-| Stage barrier: notify+wake fire only when the lowest unfinished stage is all-terminal; unstaged set = one implicit stage | `server/internal/handler/issue_child_done.go:231` (`stageBarrierClosed`) |
-| Per-stage summary + next stage for the wake comment | `server/internal/handler/issue_child_done.go:254` (`stageProgressSummary`) |
-| `--stage` on `issue create` / `issue update` | `server/cmd/multica/cmd_issue.go:328,350` |
-| `multica issue children <id>` (sub-issues grouped by stage) | `server/cmd/multica/cmd_issue.go:114,678`; stage `done` counting via `isTerminalChildIssue` (reads `status_category`, MUL-6243); route `GET /api/issues/{id}/children` → `ListChildIssues` |
+| Stage barrier: notify+wake fire only when the lowest unfinished stage is all-terminal; unstaged set = one implicit stage | `server/internal/handler/issue_child_done.go:492` (`stageBarrierClosed`) |
+| Per-stage summary + next stage for the wake comment | `server/internal/handler/issue_child_done.go:524` (`stageProgressSummary`) |
+| `--stage` on `issue create` / `issue update` | `server/cmd/multica/cmd_issue.go:523,546` |
+| `multica issue children <id>` (sub-issues grouped by stage) | `server/cmd/multica/cmd_issue.go:192-198,945`; stage `done` counting via `isTerminalChildIssue` at `:1045` (reads `status_category`, MUL-6243); route `server/cmd/server/router.go:2012` → `ListChildIssues` at `server/internal/handler/issue.go:2320` |
 
 Advancement is agent-driven: the server only detects the closed barrier and
 wakes the parent assignee. Promoting the next stage's `backlog` sub-issues to
@@ -191,9 +191,9 @@ about the issue — there is no assignee gate (MUL-6417).
 
 | Behavior | File:line |
 |---|---|
-| `multica issue metadata set <issue-id> --key --value [--type]` | `server/cmd/multica/cmd_issue_metadata.go:80,109-111` |
-| `multica issue metadata delete <issue-id> --key` | `server/cmd/multica/cmd_issue_metadata.go:93,113` |
-| API routes (PUT/DELETE `/metadata/{key}`) | `server/cmd/server/router.go:478-479` |
+| `multica issue metadata set <issue-id> --key --value [--type]` | `server/cmd/multica/cmd_issue_metadata.go:80-90,109-112` |
+| `multica issue metadata delete <issue-id> --key` | `server/cmd/multica/cmd_issue_metadata.go:93-97,113-114` |
+| API routes (PUT/DELETE `/metadata/{key}`) | `server/cmd/server/router.go:2020-2021` |
 
 `--value` is JSON-parsed by default (bool/number sniff); `--type` forces
 `string`/`number`/`bool`.
@@ -223,11 +223,10 @@ Re-derive any line above before depending on it:
 
 ```bash
 cd server
-grep -n 'pull-requests <id>'                 cmd/multica/cmd_issue.go
-grep -n 'ListPullRequestsForIssue'           cmd/server/router.go internal/handler/github.go
-grep -n 'func issuePullRequestRowToResponse\|type GitHubPullRequestResponse struct\|func derivePRState\|func extractIdentifiers\|func extractClosingIdentifiers\|closingIdentifierRe' internal/handler/github.go
-grep -n 'extractIdentifiers(\|extractClosingIdentifiers(\|derivePRState(' internal/handler/github.go
-grep -n 'qualifyingIdents\|reference_only\|ReferenceOnly' internal/handler/github.go pkg/db/queries/github.sql
-grep -n 'prevIssue.Status == "backlog"\|func (h \*Handler) shouldEnqueueAgentTask' internal/handler/issue.go
-grep -n 'func notifyParentOfChildDone'       internal/handler/issue_child_done.go
+rg -n 'pull-requests <id>|runIssuePullRequests|runIssueChildren|isTerminalChildIssue' cmd/multica/cmd_issue.go
+rg -n 'ListPullRequestsForIssue|/pull-requests|/metadata/\{key\}|/children' cmd/server/router.go internal/handler/github.go
+rg -n 'func issuePullRequestRowToResponse|type GitHubPullRequestResponse struct|func derivePRState|func extractIdentifiers|func extractClosingIdentifiers|closingIdentifierRe' internal/handler/github.go
+rg -n 'extractIdentifiers\(|extractClosingIdentifiers\(|derivePRState\(|qualifyingIdents|reference_only|ReferenceOnly' internal/handler/github.go pkg/db/queries/github.sql
+rg -n 'WillEnqueueRun|No status change|CancelTasksForIssue' internal/service/issue_trigger.go internal/handler/issue.go internal/service/task.go
+rg -n 'func \(h \*Handler\) notifyParentOfChildDone|func stageBarrierClosed|func stageProgressSummary' internal/handler/issue_child_done.go
 ```

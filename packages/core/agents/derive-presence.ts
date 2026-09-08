@@ -13,6 +13,7 @@
 
 import { deriveRuntimeHealth } from "../runtimes/derive-health";
 import type { Agent, AgentRuntime, AgentTask } from "../types";
+import { isAgentRuntimeBound } from "./runtime-binding";
 import type {
   AgentAvailability,
   AgentPresenceDetail,
@@ -20,14 +21,15 @@ import type {
 } from "./types";
 
 // AgentAvailability mirrors RuntimeHealth's reachability buckets but folds
-// `long_offline` into `offline` — both mean "unreachable" from the agent
-// availability standpoint; the duration detail belongs to the runtime card,
-// not the agent dot.
+// `long_offline` into `offline`. A missing runtime row is `unknown` only when
+// the agent still has an authoritative binding: shared agents can expose the
+// binding while correctly hiding their owner's private runtime health.
 export function deriveAgentAvailability(
   runtime: AgentRuntime | null,
   now: number,
+  runtimeBound = false,
 ): AgentAvailability {
-  if (!runtime) return "offline";
+  if (!runtime) return runtimeBound ? "unknown" : "offline";
   const health = deriveRuntimeHealth(runtime, now);
   if (health === "online") return "online";
   if (health === "recently_lost") return "unstable";
@@ -108,7 +110,11 @@ export function deriveAgentPresenceDetail(input: DerivePresenceInput): AgentPres
     };
   }
 
-  const availability = deriveAgentAvailability(input.runtime, input.now);
+  const availability = deriveAgentAvailability(
+    input.runtime,
+    input.now,
+    isAgentRuntimeBound(input.agent),
+  );
   const detail = deriveWorkloadDetail(input.tasks);
 
   return {

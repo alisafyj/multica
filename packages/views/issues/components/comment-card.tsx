@@ -36,7 +36,7 @@ import { api, dispatchReasonCode, errorCode } from "@multica/core/api";
 import { ReplyInput } from "./reply-input";
 import { CommentTriggerChips } from "./comment-trigger-chips";
 import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
-import type { TimelineEntry, Attachment } from "@multica/core/types";
+import type { TimelineEntry, Attachment, PendingInput, PendingInputAnswer } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import { selectStandaloneAttachments } from "@multica/core/attachments/image-sequence";
 import { useCommentCollapseStore, useCommentDraftStore } from "@multica/core/issues/stores";
@@ -44,6 +44,7 @@ import { useT } from "../../i18n";
 import { CommentsFoldBar } from "./resolved-thread-bar";
 import { deriveThreadResolution } from "./thread-utils";
 import { RevisionConflictCompare } from "./revision-conflict-compare";
+import { PendingInputForm } from "./pending-input-form";
 
 const highlightedCommentBackgroundClass =
   "bg-[color-mix(in_srgb,var(--card)_95%,var(--brand)_5%)]";
@@ -130,6 +131,11 @@ interface CommentCardProps {
   onResolvedExpandChange?: (rootId: string, expand: boolean) => void;
   /** ID of the comment to highlight (flash animation). */
   highlightedCommentId?: string | null;
+  pendingInput?: PendingInput;
+  onAnswerPendingInput?: (
+    pendingInputId: string,
+    answers: Record<string, PendingInputAnswer>,
+  ) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -874,6 +880,8 @@ function CommentCardImpl({
   expandedResolvedIds,
   onResolvedExpandChange,
   highlightedCommentId,
+  pendingInput,
+  onAnswerPendingInput,
 }: CommentCardProps) {
   const { t } = useT("issues");
   const locale = useLocale();
@@ -1174,6 +1182,13 @@ function CommentCardImpl({
                   <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
                 </div>
                 <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-10 max-md:pl-0" />
+                {pendingInput && onAnswerPendingInput && (
+                  <PendingInputForm
+                    key={pendingInput.id}
+                    pendingInput={pendingInput}
+                    onAnswer={(answers) => onAnswerPendingInput(pendingInput.id, answers)}
+                  />
+                )}
                 {retryableAgentFailureComment(entry) && (
                   <TaskCommentRetryButton
                     issueId={issueId}

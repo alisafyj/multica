@@ -80,6 +80,7 @@ describe("AgentStatusDot accessible name", () => {
     for (const [availability, expected] of [
       ["online", "状态：在线"],
       ["unstable", "状态：不稳定"],
+      ["unknown", "状态：不可见"],
       ["offline", "状态：离线"],
       ["archived", "状态：已归档"],
     ] as const) {

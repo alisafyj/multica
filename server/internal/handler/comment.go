@@ -1859,7 +1859,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	created, err := h.Queries.CreateComment(r.Context(), db.CreateCommentParams{
+	params := db.CreateCommentParams{
 		ID:           dbid.NewV7(),
 		IssueID:      issue.ID,
 		WorkspaceID:  issue.WorkspaceID,
@@ -1869,23 +1869,45 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		Type:         req.Type,
 		ParentID:     parentID,
 		SourceTaskID: sourceTaskID,
-	})
+	}
+	var comment db.Comment
+	var issueRevision int64
+	var reusedManagedFinal bool
+	var err error
+	if authorType == "agent" && sourceTaskID.Valid {
+		managed, createErr := h.createManagedTaskComment(r.Context(), params, len(attachmentIDs) > 0)
+		err = createErr
+		comment = managed.comment
+		issueRevision = managed.issueRevision
+		reusedManagedFinal = managed.reused
+	} else {
+		var created db.CreateCommentRow
+		created, err = h.Queries.CreateComment(r.Context(), params)
+		comment = created.Comment()
+		issueRevision = created.IssueRevision
+	}
 	if err != nil {
+		if errors.Is(err, errManagedTaskAlreadyCompleted) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		slog.Warn("create comment failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
 		writeError(w, http.StatusInternalServerError, "failed to create comment: "+err.Error())
 		return
 	}
-	comment := created.Comment()
-
 	// Link uploaded attachments to this comment.
-	if len(attachmentIDs) > 0 {
+	if !reusedManagedFinal && len(attachmentIDs) > 0 {
 		h.linkAttachmentsByIDs(r.Context(), comment.ID, issue.ID, attachmentIDs)
 	}
 
 	// Fetch linked attachments so the response includes them.
 	groupedAtt := h.groupAttachments(r, []pgtype.UUID{comment.ID})
 	resp := commentToResponse(comment, nil, groupedAtt[uuidToString(comment.ID)])
-	resp.IssueRevision = created.IssueRevision
+	resp.IssueRevision = issueRevision
+	if reusedManagedFinal {
+		writeJSON(w, http.StatusCreated, resp)
+		return
+	}
 	slog.Info("comment created", append(logger.RequestAttrs(r), "comment_id", uuidToString(comment.ID), "issue_id", issueID)...)
 	h.publish(protocol.EventCommentCreated, uuidToString(issue.WorkspaceID), authorType, authorID, map[string]any{
 		"comment":             resp,
@@ -1893,7 +1915,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		"issue_assignee_type": textToPtr(issue.AssigneeType),
 		"issue_assignee_id":   uuidToPtr(issue.AssigneeID),
 		"issue_status":        issue.Status,
-		"issue_revision":      created.IssueRevision,
+		"issue_revision":      issueRevision,
 	})
 
 	// A reply in a resolved thread re-opens it. Done after CreateComment commits

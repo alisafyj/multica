@@ -16,18 +16,19 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-func testDatabaseURL() string {
+func testDatabaseURL(t *testing.T) string {
+	t.Helper()
 	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
 		return dbURL
 	}
-	return "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
+	t.Skip("DATABASE_URL is not set; skipping database integration test")
+	return ""
 }
 
-// issueServiceTestPool connects to the worktree test database. Tests skip
-// cleanly when the database is unavailable (matches the handler suite).
+// issueServiceTestPool connects only to an explicitly configured test database.
 func issueServiceTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dbURL := testDatabaseURL()
+	dbURL := testDatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dbURL)

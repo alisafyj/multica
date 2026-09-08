@@ -24,7 +24,7 @@
 //     anything the agent process did:
 //
 //     queued_expired, runtime_offline, runtime_reconnect_timeout,
-//     runtime_recovery, timeout, iteration_limit, agent_blocked,
+//     runtime_recovery, timeout, iteration_limit, execution_budget_exceeded, agent_blocked,
 //     api_invalid_request, skill_bundle_unavailable,
 //     authentication_expired, runtime_cli_timeout,
 //     environment_prepare_failed, invalid_task_identity,
@@ -95,6 +95,10 @@ const (
 	// message. Treated as platform-side because it is a Multica-imposed
 	// budget rather than an external API rejection.
 	ReasonIterationLimit Reason = "iteration_limit"
+
+	// ReasonExecutionBudgetExceeded: structured evidence that the run reached
+	// its configured spending cap. This is not provider account quota exhaustion.
+	ReasonExecutionBudgetExceeded Reason = "execution_budget_exceeded"
 
 	// ReasonAgentBlocked: the agent intentionally entered the
 	// 'blocked' workflow state (e.g. requesting human input). Not a
@@ -277,6 +281,7 @@ var allReasons = []Reason{
 	ReasonRuntimeRecovery,
 	ReasonTimeout,
 	ReasonIterationLimit,
+	ReasonExecutionBudgetExceeded,
 	ReasonAgentBlocked,
 	ReasonAPIInvalidRequest,
 	ReasonSkillBundleUnavailable,

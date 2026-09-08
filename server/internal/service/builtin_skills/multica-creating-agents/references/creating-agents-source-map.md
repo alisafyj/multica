@@ -67,6 +67,7 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | `max_concurrent_tasks` update validation | 1660–1666 | Omission preserves the existing value; a supplied value outside 1–50 returns 400 before persistence |
 | `mcp_config` null-skip on create | 704–705 | raw JSON copied through unless the body value is the literal `null` |
 | `mcp_config` redacted on read | 54, 848–851 | `redactMcpConfig` sets `McpConfigRedacted=true`; a private agent read by a member also redacts (494, 509) |
+| Runtime-local MCP policy validation | `internal/agentconfig/runtime_mcp.go` 22–92 | Missing policy defaults to `inherit`; `deny_all`/`allowlist` are Codex-or-Claude only; allowlist names are exact and validated fail-closed |
 | Qwen Code managed-MCP injection | `pkg/agent/qwen.go` | Non-null `mcp_config` is written to a daemon-owned 0600 temporary JSON file and passed with `--mcp-config`; the file is removed after the process exits, while `null` preserves native inheritance. |
 | Assigned workspace MCP servers folded into the agent's | `internal/handler/workspace_mcp.go` `ResolveAgentMcpConfig`; applied in `internal/handler/daemon.go` `buildClaimedTaskResponse` | Only servers bound to this agent AND enabled are folded in; union by name with the agent's own winning; both containers normalized onto `mcpServers`; read on every claim, so an assignment or toggle lands on the agent's next task |
 | Workspace MCP library + assignment API | `internal/handler/workspace_mcp_api.go` | `GET /api/workspaces/{id}/mcp-servers` returns name / transport only, never the entry, for any role; `POST`/`PUT`/`DELETE` on the library are owner/admin; `GET`/`POST`/`PUT .../enabled`/`DELETE /api/agents/{id}/mcp-servers` manage one agent's assignments and admit the agent owner or a workspace owner/admin. Every write refuses agent actors. Deleting a library entry sweeps its bindings in the same transaction (no FK) |
@@ -122,6 +123,10 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | Workspace skills FIRST | 1115 | `skills := h.TaskService.LoadAgentSkills(...)` |
 | Built-ins appended | 1116 | `skills = append(skills, h.TaskService.BuiltinSkills()...)` |
 | Runtime payload | `daemon.go` `TaskAgentData` | Carries `Instructions`, `Skills`, `CustomEnv`, `CustomArgs`, `Model`, `ThinkingLevel`, `ServiceTier`, and `McpConfig`; metadata-only fields remain absent |
+| Runtime-local MCP selection gate | 2154–2210, 3462–3473 | Non-default selection is checked before overlays and requires Codex/Claude plus `runtime-mcp-selection-v1` from the actual HTTP/WS claimant; workspace and task overlays are then layered normally |
+| Runtime-local MCP merge | `internal/daemon/runtime_mcp.go` 28–146 | Runtime servers form the base; `deny_all` removes only that base, while explicit overlays remain; allowlist lookup is exact and any missing, invalid, disabled, or privacy-blocked requested entry rejects the launch |
+| Codex plugin MCP isolation | `pkg/agent/codex_plugin_mcp.go` `preparePluginMCP`, `discoverCodexPluginMCP`, `verifyCodexPluginMCPPolicy`; `pkg/agent/codex.go` | Non-inherited selection requires built-in 0.153.4; names-only discovery precedes thread startup; all plugin MCP entries are explicitly disabled while skills remain available. Plugin-only allowlist selection is unsupported. Ordinary overlays retain their own authorization and privacy checks. |
+| Capability advertisement | `internal/daemon/client.go` 204–221; `pkg/protocol/runtime_mcp.go` 3–5 | Current daemon advertises `runtime-mcp-selection-v1` on HTTP control requests and the WS handshake |
 | `custom_args` argv and safe launch log | `internal/daemon/daemon.go` `ExecOptions.CustomArgs`; `pkg/agent/launch.go` `Config.logAgentCommand` | Custom args normally reach the provider process argv. Launch logs preserve flag names but redact inline values and positional/value tokens; OS process-list exposure remains, so credentials belong in `custom_env`. |
 | ZeroClaw agent alias pseudo-args | `pkg/agent/zeroclaw.go` `takeZeroclawAgentAlias` / `zeroclawBlockedArgs` | `--agent` and `--agent-alias` (separate or `=value`) are consumed from `custom_args` and sent as `session/new.agentAlias`; neither token reaches argv because `zeroclaw acp` rejects those CLI flags. Omit the selector for sole-agent auto-selection; use it when multiple agents exist without `[acp].default_agent`. |
 
@@ -130,6 +135,14 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | Contract | Line | Behavior |
 |---|---|---|
 | `LoadAgentSkills` | 1685 | `ListAgentSkills` + per-skill `ListSkillFiles` → content + supporting files for execution |
+
+Runtime-local overrides are persisted by
+`internal/handler/agent_runtime_skills.go: SetAgentRuntimeSkillEnabled`.
+The row-locked limit check shares `pkg/agent/codex_plugin_skill_policy.go:
+MaxCodexPluginSkillSelections` with execution. `prepareCodexPluginSkillPolicy`
+and `applyCodexPluginSkillPolicy` verify selected installation bindings and
+thread overrides. `internal/daemon/local_skills.go` discovers plugin paths;
+`handleLocalSkillList` gates controls using the actual builtin launch version.
 
 ## Built-in skills — `server/internal/service/builtin_skills.go`
 

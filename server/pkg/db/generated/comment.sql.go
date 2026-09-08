@@ -522,6 +522,65 @@ func (q *Queries) GetDelegatedFailureRecoveryExhaustionComment(ctx context.Conte
 	return i, err
 }
 
+const getExactAgentTaskFinalComment = `-- name: GetExactAgentTaskFinalComment :one
+SELECT id, issue_id, author_type, author_id, content, type, created_at, updated_at, parent_id, workspace_id, resolved_at, resolved_by_type, resolved_by_id, source_task_id, quick_action_id, via_plugin_id, revision, recovery_settled_at FROM comment
+WHERE issue_id = $1
+  AND workspace_id = $2
+  AND author_type = 'agent'
+  AND author_id = $3
+  AND type = 'comment'
+  AND source_task_id = $4
+  AND parent_id IS NOT DISTINCT FROM $5::uuid
+  AND content = $6
+ORDER BY created_at ASC, id ASC
+LIMIT 1
+`
+
+type GetExactAgentTaskFinalCommentParams struct {
+	IssueID      pgtype.UUID `json:"issue_id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	AuthorID     pgtype.UUID `json:"author_id"`
+	SourceTaskID pgtype.UUID `json:"source_task_id"`
+	ParentID     pgtype.UUID `json:"parent_id"`
+	Content      string      `json:"content"`
+}
+
+// A typed task completion uses the task UUID as its durable source key. Parent
+// is part of the identity because one coalesced run can owe the same final body
+// to several distinct threads. Progress rows never satisfy this lookup.
+func (q *Queries) GetExactAgentTaskFinalComment(ctx context.Context, arg GetExactAgentTaskFinalCommentParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, getExactAgentTaskFinalComment,
+		arg.IssueID,
+		arg.WorkspaceID,
+		arg.AuthorID,
+		arg.SourceTaskID,
+		arg.ParentID,
+		arg.Content,
+	)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.IssueID,
+		&i.AuthorType,
+		&i.AuthorID,
+		&i.Content,
+		&i.Type,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ParentID,
+		&i.WorkspaceID,
+		&i.ResolvedAt,
+		&i.ResolvedByType,
+		&i.ResolvedByID,
+		&i.SourceTaskID,
+		&i.QuickActionID,
+		&i.ViaPluginID,
+		&i.Revision,
+		&i.RecoverySettledAt,
+	)
+	return i, err
+}
+
 const getLatestMemberCommentForIssueSince = `-- name: GetLatestMemberCommentForIssueSince :one
 SELECT id, issue_id, author_type, author_id, content, type, created_at, updated_at, parent_id, workspace_id, resolved_at, resolved_by_type, resolved_by_id, source_task_id, quick_action_id, via_plugin_id, revision, recovery_settled_at FROM comment
 WHERE issue_id = $1
@@ -662,6 +721,74 @@ func (q *Queries) HasAgentRepliedInThread(ctx context.Context, arg HasAgentRepli
 	var has_replied bool
 	err := row.Scan(&has_replied)
 	return has_replied, err
+}
+
+const listAgentTaskFinalCommentsForParent = `-- name: ListAgentTaskFinalCommentsForParent :many
+SELECT id, issue_id, author_type, author_id, content, type, created_at, updated_at, parent_id, workspace_id, resolved_at, resolved_by_type, resolved_by_id, source_task_id, quick_action_id, via_plugin_id, revision, recovery_settled_at FROM comment
+WHERE issue_id = $1
+  AND workspace_id = $2
+  AND author_type = 'agent'
+  AND author_id = $3
+  AND type = 'comment'
+  AND source_task_id = $4
+  AND parent_id IS NOT DISTINCT FROM $5::uuid
+ORDER BY created_at ASC, id ASC
+`
+
+type ListAgentTaskFinalCommentsForParentParams struct {
+	IssueID      pgtype.UUID `json:"issue_id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	AuthorID     pgtype.UUID `json:"author_id"`
+	SourceTaskID pgtype.UUID `json:"source_task_id"`
+	ParentID     pgtype.UUID `json:"parent_id"`
+}
+
+// Bounded logical-dedupe candidates for one managed task delivery target.
+// The caller applies the same redaction/unescape/truncation transform as typed
+// completion, while ordinary comment rows remain stored exactly as authored.
+func (q *Queries) ListAgentTaskFinalCommentsForParent(ctx context.Context, arg ListAgentTaskFinalCommentsForParentParams) ([]Comment, error) {
+	rows, err := q.db.Query(ctx, listAgentTaskFinalCommentsForParent,
+		arg.IssueID,
+		arg.WorkspaceID,
+		arg.AuthorID,
+		arg.SourceTaskID,
+		arg.ParentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Comment{}
+	for rows.Next() {
+		var i Comment
+		if err := rows.Scan(
+			&i.ID,
+			&i.IssueID,
+			&i.AuthorType,
+			&i.AuthorID,
+			&i.Content,
+			&i.Type,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ParentID,
+			&i.WorkspaceID,
+			&i.ResolvedAt,
+			&i.ResolvedByType,
+			&i.ResolvedByID,
+			&i.SourceTaskID,
+			&i.QuickActionID,
+			&i.ViaPluginID,
+			&i.Revision,
+			&i.RecoverySettledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listChildCommentsForParents = `-- name: ListChildCommentsForParents :many
@@ -1769,6 +1896,80 @@ func (q *Queries) ListThreadCommentsForIssuePaged(ctx context.Context, arg ListT
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAgentTaskForManagedComment = `-- name: LockAgentTaskForManagedComment :one
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, concise_mode, queue_started_at FROM agent_task_queue
+WHERE id = $1
+FOR UPDATE
+`
+
+// HTTP agent comments carrying a trusted source_task_id take this lock before
+// CreateComment touches the issue row. Typed completion takes the same task
+// lock first, so CLI-first and completion-first final delivery serialize with
+// one lock order: task, then issue.
+func (q *Queries) LockAgentTaskForManagedComment(ctx context.Context, taskID pgtype.UUID) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, lockAgentTaskForManagedComment, taskID)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.BranchName,
+		&i.DurableWorkDir,
+		&i.ChannelContextRevision,
+		&i.ConciseMode,
+		&i.QueueStartedAt,
+	)
+	return i, err
 }
 
 const lockCommentAncestorPath = `-- name: LockCommentAncestorPath :many

@@ -109,11 +109,12 @@ type repoCheckoutRequest struct {
 }
 
 type activeRepoCheckoutTask struct {
-	WorkspaceID string
-	TaskID      string
-	AgentID     string
-	AgentName   string
-	WorkDir     string
+	WorkspaceID       string
+	TaskID            string
+	AgentID           string
+	AgentName         string
+	WorkDir           string
+	PrimaryRepository *preparedPrimaryRepository
 }
 
 // registerActiveRepoCheckoutTask binds checkout identity to the active task.
@@ -447,6 +448,26 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 		req.TaskID = activeTask.TaskID
 		req.AgentName = activeTask.AgentName
 		req.WorkDir = authorizedWorkDir
+		if primary := activeTask.PrimaryRepository; primary != nil && req.URL == primary.URL {
+			if !d.workspaceRepoAllowed(req.WorkspaceID, req.URL) {
+				http.Error(w, "primary repository is no longer authorized", http.StatusForbidden)
+				return
+			}
+			if ref := strings.TrimSpace(req.Ref); ref != "" && ref != primary.Ref {
+				http.Error(w, "primary repository is already prepared; use explicit Git operations in the existing checkout to change revision without replacing prior work", http.StatusConflict)
+				return
+			}
+			identity, err := inspectPrimaryRepositoryGit(r.Context(), primary.WorkDir, primary.URL)
+			if err != nil {
+				http.Error(w, "primary repository checkout identity is invalid; existing work was not changed: "+err.Error(), http.StatusConflict)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(repocache.WorktreeResult{Path: identity.WorkDir, BranchName: identity.BranchName}); err != nil {
+				d.logger.Debug("write primary repository checkout response", "error", err)
+			}
+			return
+		}
 
 		if d.repoCache == nil {
 			http.Error(w, "repo cache not initialized", http.StatusInternalServerError)

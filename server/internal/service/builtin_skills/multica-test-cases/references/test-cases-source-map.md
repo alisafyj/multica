@@ -105,6 +105,14 @@ a pointer.
 | Accept writes a revision snapshot, then applies the payload or sets `deprecated` | `server/internal/handler/test_generation_propose.go:586` (`reviewTestCaseProposal`) |
 | Accept and reject only work on `pending` proposals — 409 otherwise | `server/internal/handler/test_generation_propose.go:572` |
 
+## Execution handoff
+
+| Behavior | Source |
+| --- | --- |
+| `multica test` exposes test-run reads, capability discovery, and result recording | `server/cmd/multica/cmd_testrun.go` (`testRunGroupCmd`, `runTestRunGet`, `runTestCapList`, `runTestResultSet`) |
+| Test execution begins with run and bound-capability discovery; it is separate from case authoring | `server/internal/daemon/prompt.go` (`buildTestRunPrompt`), `server/internal/service/builtin_skills/multica-running-tests/SKILL.md` |
+| Execution evidence and passed/failed/blocked/skipped semantics belong to the execution skill | `server/internal/service/builtin_skills/multica-running-tests/references/running-tests-source-map.md` |
+
 ## Verification command
 
 ```bash

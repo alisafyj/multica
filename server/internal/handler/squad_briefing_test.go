@@ -497,7 +497,7 @@ func TestClaimTask_NonLeaderGetsNoBriefing(t *testing.T) {
 
 	// Create a second agent (NOT the leader) with its own runtime so the
 	// claim path picks its task without ambiguity.
-	helperID := createHandlerTestAgent(t, "Non Leader Helper", []byte("[]"))
+	helperID := createHandlerTestAgent(t, "Non Leader Helper", []byte("{}"))
 	addAgentMember(t, squad.ID, helperID, "")
 	var helperRuntime string
 	if err := testPool.QueryRow(ctx,

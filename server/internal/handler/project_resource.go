@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"reflect"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -102,9 +104,66 @@ func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (
 }
 
 type githubRepoRef struct {
-	URL               string `json:"url"`
-	DefaultBranchHint string `json:"default_branch_hint,omitempty"`
-	Ref               string `json:"ref,omitempty"`
+	URL                 string              `json:"url"`
+	DefaultBranchHint   string              `json:"default_branch_hint,omitempty"`
+	Ref                 string              `json:"ref,omitempty"`
+	ConfigurationPolicy string              `json:"configuration_policy,omitempty"`
+	MCPServers          []string            `json:"mcp_servers,omitempty"`
+	Setup               *repositorySetupRef `json:"setup,omitempty"`
+}
+
+type repositorySetupRef struct {
+	Steps           []string          `json:"steps"`
+	TimeoutSeconds  int               `json:"timeout_seconds"`
+	StepDirectories map[string]string `json:"step_directories,omitempty"`
+}
+
+func (s *repositorySetupRef) UnmarshalJSON(data []byte) error {
+	type setupWire struct {
+		Steps           []string        `json:"steps"`
+		TimeoutSeconds  int             `json:"timeout_seconds"`
+		StepDirectories json.RawMessage `json:"step_directories,omitempty"`
+	}
+	var wire setupWire
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		return err
+	}
+
+	s.Steps = wire.Steps
+	s.TimeoutSeconds = wire.TimeoutSeconds
+	if wire.StepDirectories == nil {
+		return nil
+	}
+	if bytes.Equal(bytes.TrimSpace(wire.StepDirectories), []byte("null")) {
+		return errors.New("step_directories must be an object")
+	}
+	if err := json.Unmarshal(wire.StepDirectories, &s.StepDirectories); err != nil {
+		return fmt.Errorf("step_directories must map steps to strings: %w", err)
+	}
+	if len(s.StepDirectories) == 0 {
+		return errors.New("step_directories must not be empty")
+	}
+	return nil
+}
+
+func isCanonicalRepositorySetupDirectory(value string) bool {
+	if value == "" || len(value) > 512 || !utf8.ValidString(value) || strings.TrimSpace(value) != value || strings.HasPrefix(value, "/") || strings.ContainsAny(value, `\:`) {
+		return false
+	}
+	for _, r := range value {
+		if r < 32 || r == 127 {
+			return false
+		}
+	}
+	for _, segment := range strings.Split(value, "/") {
+		lowerSegment := strings.ToLower(segment)
+		if segment == "" || segment != strings.TrimSpace(segment) || strings.HasSuffix(segment, ".") || lowerSegment == ".git" || lowerSegment == ".multica" {
+			return false
+		}
+	}
+	return true
 }
 
 func validateGithubRepoRef(ref json.RawMessage) (json.RawMessage, error) {
@@ -121,6 +180,60 @@ func validateGithubRepoRef(ref json.RawMessage) (json.RawMessage, error) {
 	}
 	payload.DefaultBranchHint = strings.TrimSpace(payload.DefaultBranchHint)
 	payload.Ref = strings.TrimSpace(payload.Ref)
+	payload.ConfigurationPolicy = strings.TrimSpace(payload.ConfigurationPolicy)
+	if payload.ConfigurationPolicy != "" && payload.ConfigurationPolicy != "restricted" && payload.ConfigurationPolicy != "trusted" {
+		return nil, errors.New("github_repo: configuration_policy must be restricted or trusted")
+	}
+	if len(payload.MCPServers) > 64 {
+		return nil, errors.New("github_repo: mcp_servers must contain at most 64 names")
+	}
+	seenMCPServers := make(map[string]struct{}, len(payload.MCPServers))
+	for i, name := range payload.MCPServers {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return nil, errors.New("github_repo: mcp_servers names cannot be blank")
+		}
+		if len(name) > 128 {
+			return nil, errors.New("github_repo: mcp_servers names must be at most 128 bytes")
+		}
+		if _, exists := seenMCPServers[name]; exists {
+			return nil, errors.New("github_repo: mcp_servers names must be unique")
+		}
+		seenMCPServers[name] = struct{}{}
+		payload.MCPServers[i] = name
+	}
+	if payload.Setup != nil {
+		if payload.ConfigurationPolicy != "trusted" {
+			return nil, errors.New("github_repo: setup requires configuration_policy trusted")
+		}
+		if len(payload.Setup.Steps) == 0 || len(payload.Setup.Steps) > 2 {
+			return nil, errors.New("github_repo: setup steps must contain one or two named steps")
+		}
+		if payload.Setup.TimeoutSeconds < 1 || payload.Setup.TimeoutSeconds > 900 {
+			return nil, errors.New("github_repo: setup timeout_seconds must be between 1 and 900")
+		}
+		seenSteps := make(map[string]struct{}, len(payload.Setup.Steps))
+		for _, step := range payload.Setup.Steps {
+			if step != "go_mod_download" && step != "pnpm_install" {
+				return nil, errors.New("github_repo: setup contains an unsupported step")
+			}
+			if _, exists := seenSteps[step]; exists {
+				return nil, errors.New("github_repo: setup steps must be unique")
+			}
+			seenSteps[step] = struct{}{}
+		}
+		for step, directory := range payload.Setup.StepDirectories {
+			if step != "go_mod_download" && step != "pnpm_install" {
+				return nil, errors.New("github_repo: setup step_directories contains an unsupported step")
+			}
+			if _, declared := seenSteps[step]; !declared {
+				return nil, errors.New("github_repo: setup step_directories references an undeclared step")
+			}
+			if !isCanonicalRepositorySetupDirectory(directory) {
+				return nil, errors.New("github_repo: setup step_directories contains an invalid repository-relative directory")
+			}
+		}
+	}
 	out, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -533,6 +646,14 @@ func isDriveLetter(b byte) bool {
 // the user gets a clearer error from git than from us.
 func isValidGitRepoURL(s string) bool {
 	if u, err := url.Parse(s); err == nil && u.Host != "" {
+		if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+			return false
+		}
+		if u.User != nil {
+			if _, hasPassword := u.User.Password(); u.Scheme != "ssh" || hasPassword {
+				return false
+			}
+		}
 		switch u.Scheme {
 		case "http", "https", "ssh", "git":
 			return true

@@ -172,10 +172,11 @@ function SkillItem({
     >
       <div
         role="button"
+        aria-disabled={disabled || undefined}
         tabIndex={disabled ? -1 : 0}
-        onClick={onToggle}
+        onClick={disabled ? undefined : onToggle}
         onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
+          if (!disabled && (e.key === "Enter" || e.key === " ")) {
             e.preventDefault();
             onToggle();
           }
@@ -213,7 +214,9 @@ function SkillItem({
           </p>
         </div>
         <Badge variant="outline" className="shrink-0">
-          {t(($) => $.runtime_import.skill_files, { count: skill.file_count })}
+          {skill.can_import === false
+            ? t(($) => $.runtime_import.skill_files_unavailable)
+            : t(($) => $.runtime_import.skill_files, { count: skill.file_count })}
         </Badge>
       </div>
 
@@ -594,6 +597,22 @@ export function RuntimeLocalSkillImportPanel({
       ),
     );
   }, [runtimeSkills, skillSearchQuery]);
+  const filteredImportableSkills = useMemo(
+    () => filteredRuntimeSkills.filter((skill) => skill.can_import !== false),
+    [filteredRuntimeSkills],
+  );
+
+  useEffect(() => {
+    const importableKeys = new Set(
+      runtimeSkills
+        .filter((skill) => skill.can_import !== false)
+        .map((skill) => skill.key),
+    );
+    setSelectedKeys((prev) => {
+      const next = new Set([...prev].filter((key) => importableKeys.has(key)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [runtimeSkills]);
 
   // The single selected skill (for inline editing). Only valid when exactly 1.
   const singleSelectedSkill =
@@ -604,6 +623,9 @@ export function RuntimeLocalSkillImportPanel({
   // -- Selection helpers --
 
   const toggleSkill = (key: string) => {
+    if (runtimeSkills.find((skill) => skill.key === key)?.can_import === false) {
+      return;
+    }
     setSelectedKeys((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -621,10 +643,10 @@ export function RuntimeLocalSkillImportPanel({
   };
 
   const toggleAll = () => {
-    const visibleKeys = new Set(filteredRuntimeSkills.map((s) => s.key));
+    const visibleKeys = new Set(filteredImportableSkills.map((s) => s.key));
     const visibleSelected =
       visibleKeys.size > 0 &&
-      filteredRuntimeSkills.every((s) => selectedKeys.has(s.key));
+      filteredImportableSkills.every((s) => selectedKeys.has(s.key));
 
     setSelectedKeys((prev) => {
       const next = new Set(prev);
@@ -645,10 +667,10 @@ export function RuntimeLocalSkillImportPanel({
   };
 
   const allSelected =
-    filteredRuntimeSkills.length > 0 &&
-    filteredRuntimeSkills.every((s) => selectedKeys.has(s.key));
+    filteredImportableSkills.length > 0 &&
+    filteredImportableSkills.every((s) => selectedKeys.has(s.key));
   const someSelected =
-    filteredRuntimeSkills.some((s) => selectedKeys.has(s.key)) && !allSelected;
+    filteredImportableSkills.some((s) => selectedKeys.has(s.key)) && !allSelected;
   const pendingConflicts = bulkState.results.filter(
     (r) => r.status === "conflict" && r.conflict,
   );
@@ -705,7 +727,10 @@ export function RuntimeLocalSkillImportPanel({
   const handleBulkImport = async () => {
     if (!selectedRuntimeId || selectedKeys.size === 0) return;
 
-    const skillsToImport = runtimeSkills.filter((s) => selectedKeys.has(s.key));
+    const skillsToImport = runtimeSkills.filter(
+      (s) => selectedKeys.has(s.key) && s.can_import !== false,
+    );
+    if (skillsToImport.length === 0) return;
     const total = skillsToImport.length;
 
     cancelRef.current = false;
@@ -916,6 +941,9 @@ export function RuntimeLocalSkillImportPanel({
     !!selectedRuntime &&
     selectedRuntime.status === "online" &&
     selectedKeys.size > 0 &&
+    runtimeSkills.every(
+      (skill) => !selectedKeys.has(skill.key) || skill.can_import !== false,
+    ) &&
     // Single-select requires a non-empty name (user may be renaming)
     (selectedKeys.size > 1 || !!editName.trim()) &&
     !busy;
@@ -1119,7 +1147,7 @@ export function RuntimeLocalSkillImportPanel({
               />
               <span className="text-caption text-muted-foreground">
                 {t(($) => $.runtime_import.select_all, {
-                  count: filteredRuntimeSkills.length,
+                  count: filteredImportableSkills.length,
                 })}
               </span>
             </label>
@@ -1130,7 +1158,7 @@ export function RuntimeLocalSkillImportPanel({
                 skill={s}
                 checked={selectedKeys.has(s.key)}
                 onToggle={() => toggleSkill(s.key)}
-                disabled={importing}
+                disabled={importing || s.can_import === false}
                 expanded={singleSelectedSkill?.key === s.key}
                 editName={
                   singleSelectedSkill?.key === s.key ? editName : undefined

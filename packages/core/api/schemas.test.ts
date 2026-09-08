@@ -84,6 +84,8 @@ import {
   EMPTY_LIST_PROJECT_DESIGN_SYSTEM_CATALOGUE_RESPONSE,
   ListPropertiesResponseSchema,
   MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
+  MALFORMED_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
+  RuntimeLocalSkillListRequestSchema,
   RuntimeModelListRequestSchema,
   SearchProjectsResponseSchema,
   RuntimeHourlyActivityListSchema,
@@ -140,6 +142,8 @@ import {
   PluginPreviewSchema,
   EMPTY_PLUGIN_INSTALLATION_LIST,
   EMPTY_PLUGIN_PREVIEW,
+  GithubRepoResourceRefSchema,
+  ListProjectResourcesResponseSchema,
 } from "./schemas";
 import { IssueViewSchema, IssueViewListSchema } from "./schemas";
 import {
@@ -204,6 +208,227 @@ describe("Design Document revision schemas", () => {
       revisions: [revision, "garbage", { ...revision, id: "revision-2", revision_number: 1 }],
     });
     expect(parsed.revisions.map((row) => row.id)).toEqual(["revision-1", "revision-2"]);
+  });
+});
+
+describe("project resource schemas", () => {
+  it("preserves optional repository configuration fields", () => {
+    expect(
+      GithubRepoResourceRefSchema.parse({
+        url: "https://github.com/acme/app.git",
+        ref: "release",
+        default_branch_hint: "main",
+        configuration_policy: "trusted",
+        mcp_servers: ["docs", "build"],
+        setup: {
+          steps: ["go_mod_download", "pnpm_install"],
+          timeout_seconds: 300,
+          step_directories: {
+            go_mod_download: "server",
+            pnpm_install: "apps/web",
+          },
+        },
+      }),
+    ).toEqual({
+      url: "https://github.com/acme/app.git",
+      ref: "release",
+      default_branch_hint: "main",
+      configuration_policy: "trusted",
+      mcp_servers: ["docs", "build"],
+      setup: {
+        steps: ["go_mod_download", "pnpm_install"],
+        timeout_seconds: 300,
+        step_directories: {
+          go_mod_download: "server",
+          pnpm_install: "apps/web",
+        },
+      },
+    });
+  });
+
+  it("rejects duplicate or blank MCP server names", () => {
+    for (const mcp_servers of [["docs", "docs"], [""]]) {
+      expect(
+        GithubRepoResourceRefSchema.safeParse({
+          url: "https://github.com/acme/app.git",
+          mcp_servers,
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("requires explicit trust and fixed bounded repository setup steps", () => {
+    const base = { url: "https://github.com/acme/app.git" };
+    expect(
+      GithubRepoResourceRefSchema.safeParse({
+        ...base,
+        configuration_policy: "trusted",
+        setup: { steps: ["go_mod_download", "pnpm_install"], timeout_seconds: 900 },
+      }).success,
+    ).toBe(true);
+    for (const value of [
+      { ...base, setup: { steps: ["go_mod_download"], timeout_seconds: 60 } },
+      { ...base, configuration_policy: "restricted", setup: { steps: ["pnpm_install"], timeout_seconds: 60 } },
+      { ...base, configuration_policy: "trusted", setup: { steps: ["npm_install"], timeout_seconds: 60 } },
+      { ...base, configuration_policy: "trusted", setup: { steps: ["pnpm_install", "pnpm_install"], timeout_seconds: 60 } },
+      { ...base, configuration_policy: "trusted", setup: { steps: [], timeout_seconds: 60 } },
+      { ...base, configuration_policy: "trusted", setup: { steps: ["pnpm_install"], timeout_seconds: 901 } },
+      { ...base, configuration_policy: "trusted", setup: { steps: ["pnpm_install"], timeout_seconds: 60, command: "curl example.invalid" } },
+    ]) {
+      expect(GithubRepoResourceRefSchema.safeParse(value).success).toBe(false);
+    }
+  });
+
+  it("accepts only canonical directories for declared setup steps", () => {
+    const base = {
+      url: "https://github.com/acme/app.git",
+      configuration_policy: "trusted",
+      setup: {
+        steps: ["pnpm_install"],
+        timeout_seconds: 60,
+      },
+    };
+    expect(
+      GithubRepoResourceRefSchema.parse({
+        ...base,
+        setup: {
+          ...base.setup,
+          step_directories: { pnpm_install: "apps/web" },
+        },
+      }).setup?.step_directories,
+    ).toEqual({ pnpm_install: "apps/web" });
+    for (const pnpm_install of ["前端/应用", "a".repeat(512)]) {
+      expect(
+        GithubRepoResourceRefSchema.safeParse({
+          ...base,
+          setup: { ...base.setup, step_directories: { pnpm_install } },
+        }).success,
+      ).toBe(true);
+    }
+
+    for (const step_directories of [
+      { go_mod_download: "server" },
+      { npm_install: "web" },
+      null,
+      { pnpm_install: null },
+      { pnpm_install: 42 },
+      { pnpm_install: "" },
+      { pnpm_install: " apps/web " },
+      { pnpm_install: "/web" },
+      { pnpm_install: "apps\\web" },
+      { pnpm_install: "apps\u0000web" },
+      { pnpm_install: "apps:web" },
+      { pnpm_install: "apps//web" },
+      { pnpm_install: "apps/ web" },
+      { pnpm_install: "apps/./web" },
+      { pnpm_install: "apps/../web" },
+      { pnpm_install: "apps/web." },
+      { pnpm_install: "apps/.GIT/hooks" },
+      { pnpm_install: ".MULTICA/cache" },
+      { pnpm_install: "界".repeat(171) },
+    ]) {
+      expect(
+        GithubRepoResourceRefSchema.safeParse({
+          ...base,
+          setup: { ...base.setup, step_directories },
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("keeps missing setup directories absent and rejects an empty map", () => {
+    expect(
+      GithubRepoResourceRefSchema.parse({
+        url: "https://github.com/acme/app.git",
+        configuration_policy: "trusted",
+        setup: { steps: ["pnpm_install"], timeout_seconds: 60 },
+      }).setup,
+    ).toEqual({ steps: ["pnpm_install"], timeout_seconds: 60 });
+    expect(
+      GithubRepoResourceRefSchema.safeParse({
+        url: "https://github.com/acme/app.git",
+        configuration_policy: "trusted",
+        setup: { steps: ["pnpm_install"], timeout_seconds: 60, step_directories: {} },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("defaults a missing list and rejects malformed resource rows", () => {
+    expect(ListProjectResourcesResponseSchema.parse({})).toEqual({
+      resources: [],
+      total: 0,
+    });
+    expect(
+      ListProjectResourcesResponseSchema.safeParse({
+        resources: [{ id: 42, resource_type: "github_repo", resource_ref: {} }],
+        total: 1,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("enforces GitHub repository refs at the project resource API boundary", () => {
+    const resource = {
+      id: "resource-1",
+      project_id: "project-1",
+      workspace_id: "workspace-1",
+      resource_type: "github_repo",
+      resource_ref: {
+        url: "https://github.com/acme/app.git",
+        configuration_policy: "trusted",
+        setup: {
+          steps: ["pnpm_install"],
+          timeout_seconds: 60,
+          step_directories: { pnpm_install: "apps/web" },
+        },
+      },
+      label: null,
+      position: 0,
+      created_at: "2026-09-06T00:00:00Z",
+      created_by: null,
+    };
+
+    expect(ListProjectResourcesResponseSchema.safeParse({ resources: [resource], total: 1 }).success).toBe(true);
+    for (const setup of [
+      { steps: ["pnpm_install"], timeout_seconds: 60, step_directories: { pnpm_install: "/apps/web" } },
+      { steps: ["go_mod_download"], timeout_seconds: 60, step_directories: { pnpm_install: "apps/web" } },
+    ]) {
+      expect(
+        ListProjectResourcesResponseSchema.safeParse({
+          resources: [{ ...resource, resource_ref: { ...resource.resource_ref, setup } }],
+          total: 1,
+        }).success,
+      ).toBe(false);
+    }
+
+    const emptyDirectories = ListProjectResourcesResponseSchema.safeParse({
+      resources: [
+        {
+          ...resource,
+          resource_ref: {
+            ...resource.resource_ref,
+            setup: { steps: ["pnpm_install"], timeout_seconds: 60, step_directories: {} },
+          },
+        },
+      ],
+      total: 1,
+    });
+    expect(emptyDirectories.success).toBe(false);
+    if (!emptyDirectories.success) {
+      expect(emptyDirectories.error.issues.map((issue) => issue.path)).toContainEqual([
+        "resources",
+        0,
+        "resource_ref",
+        "setup",
+        "step_directories",
+      ]);
+    }
+
+    expect(
+      ListProjectResourcesResponseSchema.safeParse({
+        resources: [{ ...resource, resource_type: "future_repository", resource_ref: { setup: { step_directories: {} } } }],
+        total: 1,
+      }).success,
+    ).toBe(true);
   });
 });
 
@@ -2575,6 +2800,69 @@ describe("RuntimeModelListRequestSchema", () => {
     expect((parsed as unknown as { future_field?: string }).future_field).toBe(
       "keep me",
     );
+  });
+});
+
+describe("RuntimeLocalSkillListRequestSchema", () => {
+  const completed = {
+    id: "req-1",
+    runtime_id: "rt-1",
+    status: "completed",
+    supported: true,
+    created_at: "2026-09-07T00:00:00Z",
+    updated_at: "2026-09-07T00:00:01Z",
+    skills: [
+      {
+        key: "review-helper",
+        name: "Review Helper",
+        source_path: "~/.claude/skills/review-helper",
+        provider: "claude",
+        file_count: 0,
+      },
+    ],
+  };
+
+  it("preserves explicit import unavailability", () => {
+    const parsed = parseWithFallback(
+      {
+        ...completed,
+        skills: [{ ...completed.skills[0], can_import: false }],
+      },
+      RuntimeLocalSkillListRequestSchema,
+      MALFORMED_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
+      { endpoint: "test" },
+    );
+
+    expect(parsed.skills?.[0]?.can_import).toBe(false);
+    expect(parsed.skills?.[0]?.file_count).toBe(0);
+  });
+
+  it("keeps skills from older daemons importable when can_import is absent", () => {
+    const parsed = parseWithFallback(
+      completed,
+      RuntimeLocalSkillListRequestSchema,
+      MALFORMED_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
+      { endpoint: "test" },
+    );
+
+    expect(parsed.status).toBe("completed");
+    expect(parsed.skills?.[0]?.can_import).toBeUndefined();
+  });
+
+  it("fails closed when can_import is malformed", () => {
+    const parsed = parseWithFallback(
+      {
+        ...completed,
+        skills: [{ ...completed.skills[0], can_import: "yes" }],
+      },
+      RuntimeLocalSkillListRequestSchema,
+      MALFORMED_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
+      { endpoint: "test" },
+    );
+
+    expect(parsed.status).toBe("failed");
+    expect(parsed.skills).toBeUndefined();
+    expect(parsed.error).toBe("invalid local skill discovery response");
   });
 });
 

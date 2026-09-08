@@ -24,6 +24,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/multica-ai/multica/server/internal/agentconfig"
 	"github.com/multica-ai/multica/server/internal/agentguard"
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
@@ -234,6 +235,8 @@ type terminalTaskReport struct {
 	designDocumentGrounding      *designdocument.RepositoryGrounding
 	designDocumentPackage        *DesignDocumentPackageReceipt
 	durableWorkDir               string
+	claimGeneration              int64
+	issueCompletion              *IssueCompletionIntent
 	// sessionRolloutMissing is true when the daemon withheld this task's Codex
 	// session because its rollout was not in the store (MUL-5305). The server
 	// clears the resume pointer and flags the continuity gap for the next claim.
@@ -4605,6 +4608,24 @@ func (d *Daemon) handleLocalSkillList(ctx context.Context, rt Runtime, requestID
 		})
 		return
 	}
+	pluginCapabilityChecked, pluginControlsSupported := false, false
+	for i := range skills {
+		if rt.Provider != "codex" || skills[i].Root != localSkillRootPlugin {
+			continue
+		}
+		if !pluginCapabilityChecked {
+			pluginCapabilityChecked = true
+			if _, custom := d.customProfileLaunchForRuntime(rt.ID); rt.ProfileID == "" && !custom {
+				if entry, ok := d.agents()[rt.Provider]; ok {
+					// Use the same path/version pair as launch, not a separate cache lookup.
+					resolved, version, resolveErr := d.resolveAgentEntryForLaunch(ctx, rt.Provider, entry)
+					pluginControlsSupported = resolveErr == nil && agentExecutablePresent(resolved.Path) &&
+						agent.CodexPluginSkillsSupported(version, true)
+				}
+			}
+		}
+		skills[i].CanDisable = skills[i].CanDisable && pluginControlsSupported
+	}
 	mcpServers, mcpSupported, err := listRuntimeLocalMcpServers(rt.Provider)
 	if err != nil {
 		d.logger.Warn("runtime local MCP discovery failed", "runtime_id", rt.ID, "provider", rt.Provider, "error", err)
@@ -5416,6 +5437,13 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		d.activeTaskMu.Unlock()
 	}()
 	ctx = taskCtx
+	var evidenceClient taskRunEvidenceClient
+	if task.RemoteMCPDaemonToken != "" {
+		evidenceClient = d.client.withDaemonToken(task.RemoteMCPDaemonToken)
+	}
+	evidenceRecorder := newTaskRunEvidenceRecorder(evidenceClient, task, d.logger.With("task", task.ID))
+	defer evidenceRecorder.close()
+	ctx = withTaskRunEvidenceRecorder(ctx, evidenceRecorder)
 
 	d.mu.Lock()
 	rt, tracked := d.runtimeIndex[task.RuntimeID]
@@ -5545,6 +5573,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 
 	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
 	if errors.Is(context.Cause(ctx), errAuthenticationExpired) {
+		evidenceRecorder.finishFinalization(time.Now())
 		d.reportAuthenticationExpired(task.ID, result, taskLog)
 		return
 	}
@@ -5560,6 +5589,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		}
 	}
 	if errors.Is(context.Cause(ctx), errAuthenticationExpired) {
+		evidenceRecorder.finishFinalization(time.Now())
 		d.reportAuthenticationExpired(task.ID, result, taskLog)
 		return
 	}
@@ -5567,6 +5597,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// Check if we were cancelled by the polling goroutine.
 	select {
 	case <-cancelledByPoll:
+		evidenceRecorder.finishFinalization(time.Now())
 		taskLog.Info("task cancelled during execution, discarding result",
 			"branch_name", result.BranchName, "error", err)
 		// runner.run has returned, so the transcript flush is complete —
@@ -5653,6 +5684,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// anyway. Reuse shouldInterruptAgent so this guard honors the same
 	// signals as the in-flight watcher.
 	if status, err := d.client.GetTaskStatus(ctx, task.ID); shouldInterruptAgent(status, err) {
+		evidenceRecorder.finishFinalization(time.Now())
 		taskLog.Info("task cancelled during execution, discarding result",
 			"status", status, "error", err, "branch_name", result.BranchName)
 		// Same contract as the poll-cancelled path above: the transcript is
@@ -5670,6 +5702,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 
+	evidenceRecorder.finishFinalization(time.Now())
 	d.reportTaskResult(ctx, task.ID, result, taskLog)
 
 	// Write GC metadata after the task finishes so the periodic GC loop
@@ -6007,6 +6040,14 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 	switch result.Status {
 	case "completed":
 		taskLog.Info("task completed", "status", result.Status)
+		issueCompletion := result.IssueCompletion
+		if result.IssueCompletionContractVersion == 1 && issueCompletion == nil && strings.TrimSpace(result.Comment) != "" {
+			issueCompletion = &IssueCompletionIntent{
+				Version: 1,
+				Outcome: IssueCompletionOutcomeDelivered,
+				Comment: result.Comment,
+			}
+		}
 		err := d.reportTerminalTask(ctx, terminalTaskReport{
 			kind:                         terminalTaskReportComplete,
 			taskID:                       taskID,
@@ -6021,6 +6062,8 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			sessionRolloutMissing:        result.SessionRolloutMissing,
 			retiredSessionID:             result.RetiredSessionID,
 			durableWorkDir:               result.DurableWorkDir,
+			claimGeneration:              result.ClaimGeneration,
+			issueCompletion:              issueCompletion,
 		})
 		if err == nil {
 			return
@@ -6127,7 +6170,7 @@ func (d *Daemon) reportTerminalTask(parentCtx context.Context, report terminalTa
 
 	switch report.kind {
 	case terminalTaskReportComplete:
-		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.projectDesignSystemArtifacts, report.projectDesignSystemPackage, report.designDocumentGrounding, report.designDocumentPackage)
+		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.projectDesignSystemArtifacts, report.projectDesignSystemPackage, report.designDocumentGrounding, report.designDocumentPackage, IssueCompletionReport{ClaimGeneration: report.claimGeneration, Intent: report.issueCompletion})
 	case terminalTaskReportFail:
 		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir)
 	default:
@@ -7256,6 +7299,14 @@ func taskUsesDirectAgentMode(task Task, configuredDefault bool) bool {
 }
 
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (taskResult TaskResult, returnErr error) {
+	defer func() {
+		taskResult.ClaimAttempt = task.ClaimAttempt
+		taskResult.ClaimGeneration = task.ClaimGeneration
+		taskResult.IssueCompletionContractVersion = task.IssueCompletionContractVersion
+	}()
+	evidenceRecorder := taskRunEvidenceRecorderFromContext(ctx)
+	evidenceRecorder.beginPreparation(time.Now())
+	defer func() { evidenceRecorder.finishRunTask(time.Now()) }()
 	// A claim carries the task-row agent id both at the top level and inside
 	// the expanded agent configuration. The top-level id is authoritative
 	// because it is also bound into the task-scoped token. Never prepare or
@@ -7374,13 +7425,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Repos are passed as metadata only — the agent checks them out on demand
 	// via `multica repo checkout <url>`.
 	taskCtx := execenv.TaskContextForEnv{
-		IssueID:             task.IssueID,
-		TriggerCommentID:    task.TriggerCommentID,
-		TriggerThreadID:     task.TriggerThreadID,
-		CommentReplyTargets: commentReplyThreads(task),
-		NewCommentCount:     task.NewCommentCount,
-		NewCommentsSince:    task.NewCommentsSince,
-		PriorSessionResumed: task.PriorSessionID != "",
+		IssueID:                        task.IssueID,
+		IssueCompletionContractVersion: task.IssueCompletionContractVersion,
+		TriggerCommentID:               task.TriggerCommentID,
+		TriggerThreadID:                task.TriggerThreadID,
+		CommentReplyTargets:            commentReplyThreads(task),
+		NewCommentCount:                task.NewCommentCount,
+		NewCommentsSince:               task.NewCommentsSince,
+		PriorSessionResumed:            task.PriorSessionID != "",
 		// MUL-5305: the server sets this when a more recent Codex session was
 		// withheld (rollout missing) and PriorSessionID is an older fallback (or
 		// absent). Seed the brief's continuity disclosure from it; the local
@@ -7472,6 +7524,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if provider == "codex" && resolvedVersion != "" {
 		codexVersion = resolvedVersion
 	}
+	responseMetadata, err := taskCodexResponseMetadata(task.Agent, provider, resolvedVersion, !usesCustomProfileCommand)
+	if err != nil {
+		return TaskResult{}, err
+	}
 	openclawBin := ""
 	if provider == "openclaw" {
 		openclawBin = entry.Path
@@ -7498,6 +7554,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// to inherit its active user config; every explicit managed config still
 	// flows through mergeRuntimeAndAgentMcpConfig → agentguard.FilterMCPConfig.
 	effectiveMcpConfig := json.RawMessage(`{"mcpServers":{}}`)
+	var runtimeMcpMergeErr error
 	var cursorMcpAuthSource string
 	remoteMCPConfig, remoteMCPDiagnostics, remoteMCPBrokers, remoteMCPErr := startTaskRemoteMCPBrokers(
 		prepareCtx, ctx, task.ID, provider, task.RemoteMCPConnections,
@@ -7545,7 +7602,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.Agent != nil {
 		agentMcpConfig = task.Agent.McpConfig
 	}
+	runtimeMCPSelection, selectionErr := agentconfig.ParseRuntimeMCPSelection(agentMcpConfig)
+	if selectionErr != nil {
+		return TaskResult{}, asEnvironmentSetupFailure(fmt.Errorf("%w: repair the agent selection or local runtime configuration before retrying", agentconfig.ErrRuntimeMCPSelection))
+	}
 	if merged, mergeErr := mergeRuntimeAndAgentMcpConfig(provider, agentMcpConfig); mergeErr != nil {
+		if errors.Is(mergeErr, agentconfig.ErrRuntimeMCPSelection) {
+			return TaskResult{}, asEnvironmentSetupFailure(fmt.Errorf("%w: repair the agent selection or local runtime configuration before retrying", agentconfig.ErrRuntimeMCPSelection))
+		}
+		runtimeMcpMergeErr = mergeErr
 		taskLog.Warn("mcp_config: runtime merge failed; MCP disabled",
 			"provider", provider,
 			"error", mergeErr,
@@ -7697,6 +7762,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 	}
 	envReused := false
+	var primaryRepository *preparedPrimaryRepository
 	priorClaim, priorWorkDir, lockedPriorInfo, reusable, reuseErr := d.lockReusablePriorEnvRoot(ctx, task, localAssignment, envClaim.RootDir())
 	if reuseErr != nil {
 		// Cancelled while waiting for the previous run to let go of its
@@ -7707,6 +7773,18 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if reusable {
 		defer priorClaim.Release()
+		if localAssignment == nil {
+			var err error
+			primaryRepository, err = resumePrimaryRepository(task, priorWorkDir)
+			if err != nil {
+				return TaskResult{}, asEnvironmentSetupFailure(fmt.Errorf("resume primary repository: %w", err))
+			}
+			if primaryRepository != nil {
+				if err := execenv.ValidatePrimaryRepositoryContext(priorWorkDir, provider); err != nil {
+					return TaskResult{}, asEnvironmentSetupFailure(err)
+				}
+			}
+		}
 		// Deterministic seam for the last-window regression: tests swap the
 		// directory here, after the claim is settled and before Reuse resolves
 		// the path by name.
@@ -7762,6 +7840,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if env == nil {
 		var err error
+		primaryRepository = nil
+		if localAssignment == nil {
+			primaryRepository, err = d.preparePrimaryRepository(prepareCtx, task, provider, agentName, envClaim.RootDir())
+			if err != nil {
+				return TaskResult{}, asEnvironmentSetupFailure(err)
+			}
+		}
 		prepParams := execenv.PrepareParams{
 			WorkspacesRoot:  d.cfg.WorkspacesRoot,
 			Profile:         d.cfg.Profile,
@@ -7864,6 +7949,39 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			if err != nil {
 				return TaskResult{}, asEnvironmentSetupFailure(fmt.Errorf("prepare execution environment: %w", err))
 			}
+		}
+	}
+	if primaryRepository != nil {
+		if err := execenv.ExcludePrimaryRepositorySidecars(env.RootDir, env.WorkDir); err != nil {
+			return TaskResult{}, asEnvironmentSetupFailure(fmt.Errorf("exclude primary repository sidecars: %w", err))
+		}
+	}
+	var projectPolicy projectRuntimePolicy
+	var repositorySetup repositorySetupResult
+	if primaryRepository != nil {
+		if runtimeMcpMergeErr != nil {
+			return TaskResult{}, asEnvironmentSetupFailure(fmt.Errorf("runtime MCP configuration could not be loaded; repair the runtime configuration before retrying"))
+		}
+		var err error
+		projectPolicy, err = deriveProjectRuntimePolicy(task, provider, env.WorkDir)
+		if err != nil {
+			return TaskResult{}, asEnvironmentSetupFailure(err)
+		}
+		if err := requireSelectedProjectMCP(projectPolicy); err != nil {
+			return TaskResult{}, asEnvironmentSetupFailure(err)
+		}
+		effectiveMcpConfig, err = mergeSelectedProjectMCP(effectiveMcpConfig, projectPolicy.MCPConfig, agentMcpConfig, remoteMCPConfig)
+		if err != nil {
+			return TaskResult{}, asEnvironmentSetupFailure(err)
+		}
+		taskLog.Info("project runtime policy applied", "configuration_policy", projectPolicy.ConfigurationPolicy, "mcp_selection", projectPolicy.MCPDiagnostics)
+		repositorySetup, err = prepareRepositorySetupWithSharedCache(prepareCtx, task, provider, env.WorkDir, env.RootDir, d.cfg.WorkspacesRoot)
+		if err != nil {
+			return TaskResult{WorkDir: env.WorkDir, EnvRoot: env.RootDir}, asEnvironmentSetupFailure(err)
+		}
+		if len(repositorySetup.Steps) > 0 {
+			taskLog.Info("repository setup completed", "steps", repositorySetup.Steps, "cache_hit", repositorySetup.CacheHit, "shared_cache_status", repositorySetup.SharedCacheStatus)
+			logRepositorySetupEvidence(prepareCtx, taskLog, task, provider, env.WorkDir, repositorySetup)
 		}
 	}
 	// Belt-and-suspenders: also mark whatever root we ended up with, in case
@@ -8061,7 +8179,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// taskfailure.Classify path records the failure with the same
 	// "start task failed: <…>" string and the same failure_reason
 	// taxonomy as before — see MUL-2946 for the classifier contract.
-	if err := d.client.StartTask(prepareCtx, task.ID); err != nil {
+	if issueStart, ok := issueStartReportForTask(task); ok {
+		state, err := d.client.StartTaskWithIssueStart(prepareCtx, task.ID, issueStart)
+		if err != nil {
+			stopPrepareLease()
+			return TaskResult{}, fmt.Errorf("start task failed: %w", err)
+		}
+		applyIssueStartState(&task, state)
+	} else if err := d.client.StartTask(prepareCtx, task.ID); err != nil {
 		stopPrepareLease()
 		return TaskResult{}, fmt.Errorf("start task failed: %w", err)
 	}
@@ -8142,7 +8267,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// file / inline system prompt. Remove a marker left by a previous normal
 	// run when a persistent or reused workdir is selected.
 	runtimeBrief := ""
-	if directAgentMode {
+	if primaryRepository != nil {
+		if !directAgentMode {
+			runtimeBrief = execenv.RenderRuntimeBrief(provider, taskCtx)
+		}
+	} else if directAgentMode {
 		if cerr := execenv.CleanupRuntimeConfig(env.WorkDir, provider); cerr != nil {
 			return TaskResult{}, fmt.Errorf("cleanup runtime config for direct mode: %w", cerr)
 		}
@@ -8158,6 +8287,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// is the one thing it cannot work out from its own context — tell it.
 	// Worktree mode is excluded: there the tree is this task's private checkout.
 	var promptOptions []PromptOption
+	if primaryRepository != nil {
+		promptOptions = append(promptOptions, WithPrimaryRepository(primaryRepository))
+	}
 	if localAssignment != nil && !localAssignment.UsesWorktree() && localDirectoryLockExempt(task) {
 		promptOptions = append(promptOptions, WithSharedLocalDirectory())
 	}
@@ -8175,10 +8307,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	var prompt string
 	if directAgentMode {
-		prompt = BuildDirectPrompt(task)
+		prompt = BuildDirectPrompt(task, promptOptions...)
 	} else {
 		prompt = BuildPrompt(task, provider, promptOptions...)
 	}
+	prompt = primaryRepositoryPrompt(runtimeBrief, prompt, primaryRepository)
 
 	// Pass task-scoped auth credentials and context so the spawned agent CLI
 	// can call the Multica API and the local daemon (e.g. `multica repo checkout`).
@@ -8194,6 +8327,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, err
 	}
 	agentEnv := taskMulticaEnvironment(task, agentName, agentToken, env.MulticaConfigRoot, d.cfg.WorkspacesRoot, d.cfg.ServerBaseURL, d.cfg.HealthPort, slot, taskTempDir)
+	issueOutcomePath := ""
+	if taskSupportsIssueOutcomeArtifact(task) {
+		issueOutcomePath = filepath.Join(taskTempDir, "issue-outcome.json")
+		if err := resetIssueOutcomeArtifact(issueOutcomePath); err != nil {
+			return TaskResult{}, err
+		}
+		agentEnv[IssueOutcomeFileEnv] = issueOutcomePath
+	}
 	if checkoutMode := repoCheckoutModeFor(provider, runtime.GOOS); checkoutMode != "" {
 		agentEnv[repoCheckoutModeEnv] = checkoutMode
 	}
@@ -8282,6 +8423,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		agentCustomEnv = task.Agent.CustomEnv
 	}
 	layerCustomEnvAndHermesHome(agentEnv, agentCustomEnv, env.HermesHome, d.logger)
+	for key, value := range repositorySetup.Env {
+		agentEnv[key] = value
+	}
+	environmentDiagnostics := agentEnvironmentDiagnostics(provider, os.Environ(), agentCustomEnv)
+	if len(environmentDiagnostics) > 0 {
+		taskLog.Info("agent environment configuration sources", "configuration", environmentDiagnostics,
+			"native_configuration", "not_inspected")
+	}
 	if provider == "reasonix" {
 		reasonixStateHome, err := prepareReasonixTaskStateHome(d.cfg.Profile, task.RuntimeID, task.AgentID)
 		if err != nil {
@@ -8299,6 +8448,37 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if err := configureCodexTaskShellEnvironment(provider, env.CodexHome, os.Environ(), agentEnv, agentCustomEnv, d.logger); err != nil {
 		return TaskResult{}, err
+	}
+	setupWritableRoots, err := repositorySetupWritableRoots(provider, task, env.RootDir, repositorySetup)
+	if err != nil {
+		return TaskResult{WorkDir: env.WorkDir, EnvRoot: env.RootDir}, asEnvironmentSetupFailure(err)
+	}
+	claudeOutcomeGrantPath := ""
+	if provider == "claude" && issueOutcomePath != "" {
+		// Resolve the existing parent: Claude cannot canonicalize a not-yet-created file under /tmp on macOS.
+		outcomeDir, err := filepath.EvalSymlinks(filepath.Dir(issueOutcomePath))
+		if err != nil {
+			return TaskResult{WorkDir: env.WorkDir, EnvRoot: env.RootDir}, asEnvironmentSetupFailure(err)
+		}
+		claudeOutcomeGrantPath = filepath.Join(outcomeDir, filepath.Base(issueOutcomePath))
+		setupWritableRoots = append(setupWritableRoots, claudeOutcomeGrantPath)
+	}
+	if provider == "claude" && len(setupWritableRoots) > 0 {
+		settingsPath, err := prepareClaudeSetupSettings(env.RootDir, env.ClaudeSettingsPath, setupWritableRoots)
+		if err != nil {
+			return TaskResult{WorkDir: env.WorkDir, EnvRoot: env.RootDir}, asEnvironmentSetupFailure(err)
+		}
+		env.ClaudeSettingsPath = settingsPath
+		if claudeOutcomeGrantPath != "" {
+			taskLog.Info("claude issue outcome settings authority", "task_id", task.ID, "runtime_id", task.RuntimeID,
+				"claim_attempt", task.ClaimAttempt, "claim_generation", task.ClaimGeneration,
+				"provider", provider, "cwd", env.WorkDir, "authority", map[string]string{
+					"schema":                     "claude_issue_outcome_settings_authority/v1",
+					"source":                     "daemon_guarded_issue_outcome",
+					"environment_variable":       IssueOutcomeFileEnv,
+					"canonical_allow_write_path": claudeOutcomeGrantPath,
+				})
+		}
 	}
 	// The overlay is authoritative once built, so nothing on the command line
 	// may re-point HERMES_HOME out of it. Both argv regions are stripped
@@ -8321,17 +8501,18 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// daemon never calls agent.New or agent.NewRuntime directly, so the two
 	// factories stay meaning exactly one thing each.
 	backend, err := agent.ResolveBackend(provider, agent.Config{
-		ExecutablePath: entry.Path,
-		LaunchPrefix:   profileFixedArgs,
-		CLIVersion:     resolvedVersion,
-		Env:            agentEnv,
-		Logger:         d.logger,
-		TaskID:         task.ID,
-		RuntimeID:      task.RuntimeID,
-		DaemonVersion:  d.cfg.CLIVersion,
-		CodexVersion:   codexVersion,
-		WorkDir:        env.WorkDir,
-		BuiltinRuntime: !usesCustomProfileCommand,
+		ExecutablePath:        entry.Path,
+		LaunchPrefix:          profileFixedArgs,
+		CLIVersion:            resolvedVersion,
+		Env:                   agentEnv,
+		Logger:                taskLog,
+		TaskID:                task.ID,
+		RuntimeID:             task.RuntimeID,
+		DaemonVersion:         d.cfg.CLIVersion,
+		CodexVersion:          codexVersion,
+		WorkDir:               env.WorkDir,
+		BuiltinRuntime:        !usesCustomProfileCommand,
+		CodexResponseMetadata: responseMetadata,
 	})
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("create agent backend: %w", err)
@@ -8396,9 +8577,26 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		thinkingLevel = task.Agent.ThinkingLevel
 		serviceTier = task.Agent.ServiceTier
 	}
-	selection := resolveTaskModelSelection(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs),
+	selectionResolution, selectionErr := resolveTaskModelSelectionForTask(ctx, task, provider,
+		agent.NewCommand(entry.Path, profileFixedArgs),
 		taskModelSelection{Model: model, ThinkingLevel: thinkingLevel, ServiceTier: serviceTier}, taskLog)
+	if selectionErr != nil {
+		return TaskResult{
+			Status:        "blocked",
+			Comment:       selectionErr.Error(),
+			WorkDir:       env.WorkDir,
+			EnvRoot:       env.RootDir,
+			FailureReason: taskfailure.ReasonAgentModelNotFoundOrUnavailable.String(),
+		}, nil
+	}
+	selection := selectionResolution.Launch
 	model, thinkingLevel, serviceTier = selection.Model, selection.ThinkingLevel, selection.ServiceTier
+	if selectionResolution.ValidateResolvedModelSelection != nil {
+		taskLog.Info("model selection validation deferred until Codex startup resolves the configured model",
+			"thinking_level", thinkingLevel,
+			"service_tier", serviceTier,
+		)
+	}
 
 	var idleWatchdogTimeout time.Duration
 	if provider == "opencode" || provider == "codearts" {
@@ -8410,6 +8608,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ThreadName:                 deriveTaskThreadName(task),
 		Timeout:                    d.cfg.AgentTimeout,
 		SemanticInactivityTimeout:  d.cfg.CodexSemanticInactivityTimeout,
+		InFlightToolTimeout:        d.cfg.CodexInFlightToolTimeout,
 		FirstTurnNoProgressTimeout: d.cfg.CodexFirstTurnNoProgressTimeout,
 		IdleWatchdogTimeout:        idleWatchdogTimeout,
 		HandshakeTimeout:           d.cfg.CodexHandshakeTimeout,
@@ -8426,16 +8625,34 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// only the daemon knows — hence handing the backend finished text rather
 		// than a flag. Empty when the prompt already carries the notice, so a turn
 		// can never pay for it twice (MUL-5722).
-		ResumeExpected:         task.PriorSessionID != "",
-		ResumeContinuityNotice: backendResumeContinuityNotice(task),
-		ExtraArgs:              extraArgs,
-		CustomArgs:             customArgs,
-		McpConfig:              mcpConfig,
-		ThinkingLevel:          thinkingLevel,
-		ServiceTier:            serviceTier,
-		OpenclawMode:           openclawMode,
-		ClaudeSettingsPath:     env.ClaudeSettingsPath,
-		QwenpawWorkspace:       env.QwenpawWorkspace,
+		ResumeExpected:                 task.PriorSessionID != "",
+		ResumeContinuityNotice:         backendResumeContinuityNotice(task),
+		ExtraArgs:                      extraArgs,
+		CustomArgs:                     customArgs,
+		CodexTaskWritableRoots:         setupWritableRoots,
+		McpConfig:                      mcpConfig,
+		RuntimeMCPSelection:            &runtimeMCPSelection,
+		ThinkingLevel:                  thinkingLevel,
+		ServiceTier:                    serviceTier,
+		OpenclawMode:                   openclawMode,
+		ClaudeSettingsPath:             env.ClaudeSettingsPath,
+		ProjectConfigurationPolicy:     projectPolicy.ConfigurationPolicy,
+		ValidateResolvedModelSelection: selectionResolution.ValidateResolvedModelSelection,
+		QwenpawWorkspace:               env.QwenpawWorkspace,
+	}
+	if provider == "codex" {
+		execOpts.CodexPluginSkillBindings = env.CodexPluginSkillBindings
+		for _, skill := range taskCtx.DisabledRuntimeSkills {
+			if skill.Root == "plugin" {
+				execOpts.CodexPluginSkillSelections = append(execOpts.CodexPluginSkillSelections, agent.CodexPluginSkillSelection{
+					PluginID: skill.Plugin, Key: skill.Key,
+				})
+			}
+		}
+	}
+	if taskSupportsPendingInput(task, provider) {
+		pendingInput := newPendingInputBroker(d.client.withDaemonToken(task.RemoteMCPDaemonToken), task.RuntimeID, task.ID, task.ClaimGeneration, pendingInputAnswerPollInterval)
+		execOpts.RequestUserInput = pendingInput.Request
 	}
 	// Some providers do not reliably load the per-task runtime config files we
 	// write into the task workdir:
@@ -8459,7 +8676,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// as always included, and a real kiro-cli 2.13.0 ACP smoke confirms it.
 	// Prepending the full runtime brief into the ACP user prompt duplicates that
 	// context and bloats every turn.
-	if !directAgentMode && providerNeedsInlineSystemPrompt(provider) {
+	if !directAgentMode && primaryRepository == nil && providerNeedsInlineSystemPrompt(provider) {
 		execOpts.SystemPrompt = runtimeBrief
 	}
 
@@ -8484,11 +8701,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// fields or ambient process environment. Register only for the provider
 	// execution window and always remove the credential afterwards.
 	d.registerActiveRepoCheckoutTask(agentToken, activeRepoCheckoutTask{
-		WorkspaceID: task.WorkspaceID,
-		TaskID:      task.ID,
-		AgentID:     task.AgentID,
-		AgentName:   task.Agent.Name,
-		WorkDir:     env.WorkDir,
+		WorkspaceID:       task.WorkspaceID,
+		TaskID:            task.ID,
+		AgentID:           task.AgentID,
+		AgentName:         task.Agent.Name,
+		WorkDir:           env.WorkDir,
+		PrimaryRepository: primaryRepository,
 	})
 	defer d.clearActiveRepoCheckoutTask(agentToken)
 
@@ -8508,9 +8726,17 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Shared across the resume-retry below so the retry's transcript rows
 	// keep ascending seq values for the same task.
 	var msgSeq atomic.Int32
+	evidenceRecorder.setExecutionIdentity(task.Agent.Model, task.Agent.ThinkingLevel, execOpts.Model, execOpts.ThinkingLevel, resolvedVersion, entry.Path)
+	evidenceRecorder.beginExecution(time.Now())
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
 	if err != nil {
+		if errors.Is(err, agentconfig.ErrRuntimeMCPSelection) {
+			return TaskResult{}, asEnvironmentSetupFailure(err)
+		}
 		return TaskResult{}, err
+	}
+	if result.RuntimeMCPSelectionFailed {
+		return TaskResult{WorkDir: env.WorkDir, EnvRoot: env.RootDir}, asEnvironmentSetupFailure(fmt.Errorf("%w: task-private runtime configuration could not be enforced", agentconfig.ErrRuntimeMCPSelection))
 	}
 
 	// retiredSessionID is the session this run was told to resume and then
@@ -8530,6 +8756,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			retiredSessionID = task.PriorSessionID
 		}
 		taskLog.Warn("session resume failed, retrying with fresh session", "error", result.Error)
+		if err := resetIssueOutcomeArtifact(issueOutcomePath); err != nil {
+			return TaskResult{}, err
+		}
 
 		// Rebuild cold-session context before the single retry. The prior
 		// provider transcript is gone (missing, account-mismatched, or —
@@ -8554,7 +8783,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		task.PriorSessionResumeUnavailable = true
 		execOpts.ResumeContinuityNotice = ""
 		taskCtx.PriorSessionResumed = false
-		if !directAgentMode {
+		if primaryRepository != nil {
+			if !directAgentMode {
+				runtimeBrief = execenv.RenderRuntimeBrief(provider, taskCtx)
+			}
+		} else if !directAgentMode {
 			if freshBrief, briefErr := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx); briefErr != nil {
 				taskLog.Warn("execenv: re-inject cold runtime config for fresh retry failed (non-fatal)", "error", briefErr)
 			} else {
@@ -8571,10 +8804,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 		var freshPrompt string
 		if directAgentMode {
-			freshPrompt = BuildDirectPrompt(task)
+			freshPrompt = BuildDirectPrompt(task, promptOptions...)
 		} else {
 			freshPrompt = BuildPrompt(task, provider, promptOptions...)
 		}
+		freshPrompt = primaryRepositoryPrompt(runtimeBrief, freshPrompt, primaryRepository)
 
 		retryResult, retryTools, retryErr := d.executeAndDrain(ctx, backend, freshPrompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
 		if retryErr != nil {
@@ -8593,6 +8827,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// than being relabeled resumable by a benign-looking second error.
 		result, tools = reconcileFreshRetryResult(firstResult, firstUsage, firstTools, retryResult, retryTools, retryErr)
 	}
+	evidenceRecorder.finishExecution(time.Now(), result.ExecutionEvidence)
 
 	elapsed := time.Since(taskStart).Round(time.Second)
 	taskLog.Info("agent finished",
@@ -8650,6 +8885,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	switch result.Status {
 	case "completed":
 		if result.Output == "" {
+			if issueOutcomePath != "" {
+				if _, err := readIssueOutcomeArtifact(issueOutcomePath, task, result.Output); err != nil {
+					return TaskResult{}, err
+				}
+			}
 			// The agent completed successfully but produced no text output.
 			// This is valid — the agent may have done all its work via tool
 			// calls (e.g. posting comments via CLI, pushing code). Treat as
@@ -8685,13 +8925,18 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				FailureReason: reason,
 			}, nil
 		}
+		issueCompletion, err := readIssueOutcomeArtifact(issueOutcomePath, task, result.Output)
+		if err != nil {
+			return TaskResult{}, err
+		}
 		taskResult = TaskResult{
-			Status:    "completed",
-			Comment:   result.Output,
-			SessionID: result.SessionID,
-			WorkDir:   env.WorkDir,
-			EnvRoot:   env.RootDir,
-			Usage:     usageEntries,
+			Status:          "completed",
+			Comment:         result.Output,
+			SessionID:       result.SessionID,
+			WorkDir:         env.WorkDir,
+			EnvRoot:         env.RootDir,
+			Usage:           usageEntries,
+			IssueCompletion: issueCompletion,
 		}
 		return taskResult, nil
 	case "timeout":
@@ -8801,6 +9046,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			taskLog.Warn("agent failed with a resume-unsafe error, retiring the session",
 				"failure_reason", failureReason,
 			)
+		} else if result.Status == "failed" && result.ExecutionBudgetExceeded {
+			failureReason = taskfailure.ReasonExecutionBudgetExceeded.String()
 		} else {
 			// MUL-2946: classifyPoisonedError only matches the
 			// session-poisoning Anthropic 400 shape. Everything else
@@ -8821,6 +9068,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// annotation on the outside where a future edit is visibly a change to
 		// human-facing text rather than to classifier input.
 		errMsg = annotateHermesProviderUnconfigured(errMsg, provider, env.HermesHome != "")
+		errMsg = annotateAgentEnvironmentFailure(errMsg, failureReason, environmentDiagnostics)
 		return TaskResult{
 			Status:        "blocked",
 			Comment:       errMsg,
@@ -8872,7 +9120,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 //     attempts, so a retry after real work re-plans on top of its own
 //     half-finished commits.
 func shouldRetryWithFreshSession(result agent.Result, priorSessionID string, tools int32, provider string) bool {
-	if result.Status != "failed" || priorSessionID == "" || tools > 0 {
+	if result.Status != "failed" || result.ExecutionBudgetExceeded || priorSessionID == "" || tools > 0 {
 		return false
 	}
 	// Positive evidence: the backend proved the resume was refused.
@@ -8977,15 +9225,19 @@ func reconcileFreshRetryResult(first agent.Result, firstUsage map[string]agent.T
 	switch {
 	case retryErr != nil:
 		first.Usage = firstUsage
+		first.ExecutionEvidence = agent.MergeExecutionEvidence(first.ExecutionEvidence, nil)
 		return first, firstTools
 	case retry.SessionID != "":
 		retry.Usage = mergeUsage(firstUsage, retry.Usage)
+		retry.ExecutionEvidence = agent.MergeExecutionEvidence(first.ExecutionEvidence, retry.ExecutionEvidence)
 		return retry, retryTools
 	case retry.Status == "completed":
 		retry.Usage = mergeUsage(firstUsage, retry.Usage)
+		retry.ExecutionEvidence = agent.MergeExecutionEvidence(first.ExecutionEvidence, retry.ExecutionEvidence)
 		return retry, retryTools
 	default:
 		first.Usage = mergeUsage(firstUsage, retry.Usage)
+		first.ExecutionEvidence = agent.MergeExecutionEvidence(first.ExecutionEvidence, retry.ExecutionEvidence)
 		return first, firstTools
 	}
 }
@@ -9218,6 +9470,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 						}()
 					}
 				case agent.MessageToolUse:
+					taskRunEvidenceRecorderFromContext(ctx).firstTool(time.Now())
 					n := toolCount.Add(1)
 					inFlightTools.Add(1)
 					taskLog.Info(fmt.Sprintf("tool #%d: %s", n, msg.Tool))

@@ -444,6 +444,17 @@
   "timeline": {
     "loading": "불러오는 중..."
   },
+  "pending_input": {
+    "title": "에이전트가 입력을 요청했습니다",
+    "waiting": "답변 대기 중",
+    "answered": "답변 완료",
+    "cancelled": "취소됨",
+    "expired": "만료됨",
+    "unsupported_version": "이 요청에 답하려면 앱을 업데이트하세요",
+    "other_placeholder": "기타 답변",
+    "send": "답변 보내기",
+    "answer_failed": "답변을 보내지 못했습니다. 다시 시도하세요."
+  },
   "activity": {
     "created": "이 태스크를 만들었습니다",
     "self_assigned": "이 태스크를 본인에게 할당했습니다",
@@ -601,6 +612,35 @@
     "status_completed": "완료됨",
     "status_failed": "실패함",
     "status_cancelled": "취소됨",
+    "evidence": {
+      "toggle": "실행 근거 보기",
+      "loading": "실행 근거 불러오는 중…",
+      "failed": "실행 근거를 불러오지 못했습니다.",
+      "unavailable": "이 서버에서는 실행 근거를 사용할 수 없습니다.",
+      "empty": "보고된 실행 근거가 없습니다.",
+      "unknown": "알 수 없음",
+      "attempt": "시도 {{attempt}}",
+      "revision": "리비전 {{revision}}",
+      "stages": "단계별 소요 시간",
+      "queue": "대기",
+      "preparation": "준비",
+      "first_tool": "첫 도구",
+      "execution": "실행",
+      "finalization": "마무리",
+      "tokens": "토큰 버킷",
+      "input_uncached": "캐시되지 않은 입력",
+      "cache_read": "캐시 읽기",
+      "cache_write": "캐시 쓰기",
+      "output": "출력",
+      "incomplete": "일부만 보고됨",
+      "requested_model": "요청 모델",
+      "client_effective_model": "클라이언트 적용 모델",
+      "provider_reported_model": "제공자 보고 모델",
+      "runtime_version": "런타임 버전",
+      "runtime_hash": "런타임 해시",
+      "provider_cost_not_invoice": "제공자 보고 비용(청구 금액 아님)",
+      "provider_cost_provenance": "출처: {{source}} · 기준: {{basis}}"
+    },
     "attribution": {
       "on_behalf_of": "{{name}} 님을 대신하여",
       "someone": "어떤 멤버",
@@ -639,7 +679,9 @@
     "total": "합계",
     "note_unpriced_other": "실행 {{count}}회는 사용량 기록이 없어 합계에 포함되지 않습니다.",
     "note_unmapped": "{{models}}의 가격 정보가 없어 토큰은 집계되지만 비용은 포함되지 않습니다.",
-    "note_estimate": "비용은 공개된 모델 요금 기준 추정치이며, 제공자가 자체 비용을 보고한 경우는 그 값을 사용합니다."
+    "amount_unknown": "알 수 없음",
+    "amount_partial": "{{amount}} (일부)",
+    "note_estimate": "비용은 제공자가 보고한 금액 또는 공개 모델 요금 기준이며, 최종 청구액이 아닙니다."
   },
   "terminate_dialog": {
     "title": "이 작업을 중지할까요?",

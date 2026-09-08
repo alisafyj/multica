@@ -58,6 +58,11 @@ export const availabilityConfig: Record<AgentAvailability, AvailabilityVisual> =
     textClass: "text-warning",
     icon: PlugZap,
   },
+  unknown: {
+    dotClass: "bg-muted-foreground/40",
+    textClass: "text-muted-foreground",
+    icon: CircleSlash,
+  },
   offline: {
     dotClass: "bg-muted-foreground/40",
     textClass: "text-muted-foreground",
@@ -79,6 +84,7 @@ export const availabilityConfig: Record<AgentAvailability, AvailabilityVisual> =
 export const availabilityOrder: AgentAvailability[] = [
   "online",
   "unstable",
+  "unknown",
   "offline",
 ];
 

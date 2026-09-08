@@ -84,9 +84,12 @@ import type {
   PluginPreview,
   PluginSurfaceLaunch,
   ResourceLabelsResponse,
+  RuntimeLocalSkillListRequest,
   RuntimeModelListRequest,
   SearchIssuesResponse,
   SearchProjectsResponse,
+  ProjectResource,
+  ListProjectResourcesResponse,
   ShareLink,
   ShareLinkInfo,
   Skill,
@@ -1076,6 +1079,40 @@ export const CommentSchema = z.object({
 
 export const CommentsListSchema = z.array(CommentSchema);
 
+const PendingInputAnswerSchema = z.object({
+  answers: z.array(z.string()).max(8),
+}).loose();
+
+const PendingInputQuestionSchema = z.object({
+  id: z.string(),
+  header: z.string(),
+  question: z.string(),
+  options: z.array(z.object({
+    label: z.string(),
+    description: z.string(),
+  }).loose()).max(8),
+  allow_other: z.boolean(),
+  multi_select: z.boolean(),
+}).loose();
+
+export const PendingInputSchema = z.object({
+  id: z.string(),
+  task_id: z.string(),
+  issue_id: z.string(),
+  question_comment_id: z.string(),
+  state: z.enum(["open", "answered", "cancelled", "expired"]),
+  version: z.number().int().positive(),
+  questions: z.array(PendingInputQuestionSchema).min(1).max(3),
+  answers: z.record(z.string(), PendingInputAnswerSchema).nullable(),
+  created_at: z.string(),
+  answered_at: z.string().nullable(),
+  acked_at: z.string().nullable(),
+}).loose();
+
+export const ListPendingInputsResponseSchema = z.object({
+  data: z.array(PendingInputSchema),
+}).loose();
+
 // Degraded placeholder for a comment response that failed schema validation.
 // The empty id is the caller's signal that nothing usable came back — the run
 // UI treats it as "could not read the result" rather than a successful run.
@@ -1381,6 +1418,147 @@ const ProjectSchema = z.object({
   done_count: z.number().default(0),
   resource_count: z.number().default(0),
 }).loose();
+
+const ProjectMCPServerNameSchema = z.string().refine(
+  (name) => name.length > 0 && name.trim() === name && new TextEncoder().encode(name).length <= 128,
+  "MCP server names must be non-empty, trimmed, and at most 128 bytes",
+);
+
+const RepositorySetupStepSchema = z.enum(["go_mod_download", "pnpm_install"]);
+const RepositorySetupDirectorySchema = z.string().refine(
+  (directory) => {
+    if (
+      directory.length === 0 ||
+      new TextEncoder().encode(directory).length > 512 ||
+      directory.trim() !== directory ||
+      directory.startsWith("/") ||
+      directory.includes("\\") ||
+      directory.includes(":")
+    ) {
+      return false;
+    }
+    for (const character of directory) {
+      const codePoint = character.charCodeAt(0);
+      if (codePoint < 32 || codePoint === 127) {
+        return false;
+      }
+    }
+    return directory.split("/").every((segment) => {
+      const lowerSegment = segment.toLowerCase();
+      return (
+        segment !== "" &&
+        segment.trim() === segment &&
+        !segment.endsWith(".") &&
+        lowerSegment !== ".git" &&
+        lowerSegment !== ".multica"
+      );
+    });
+  },
+  "Setup directories must be canonical repository-relative paths of at most 512 bytes",
+);
+const RepositorySetupSchema = z
+  .object({
+    steps: z.array(RepositorySetupStepSchema).min(1).max(2),
+    timeout_seconds: z.number().int().min(1).max(900),
+    step_directories: z
+      .object({
+        go_mod_download: RepositorySetupDirectorySchema.optional(),
+        pnpm_install: RepositorySetupDirectorySchema.optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (new Set(value.steps).size !== value.steps.length) {
+      context.addIssue({ code: "custom", path: ["steps"], message: "Repository setup steps must be unique" });
+    }
+    if (value.step_directories && Object.keys(value.step_directories).length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["step_directories"],
+        message: "Setup directories must not be empty when provided",
+      });
+    }
+    for (const step of Object.keys(value.step_directories ?? {})) {
+      if (!value.steps.includes(step as z.infer<typeof RepositorySetupStepSchema>)) {
+        context.addIssue({
+          code: "custom",
+          path: ["step_directories", step],
+          message: "Setup directories may only reference declared steps",
+        });
+      }
+    }
+  });
+
+export const GithubRepoResourceRefSchema = z.object({
+  url: z.string(),
+  ref: z.string().optional(),
+  default_branch_hint: z.string().optional(),
+  configuration_policy: z.enum(["restricted", "trusted"]).optional(),
+  mcp_servers: z.array(ProjectMCPServerNameSchema).max(64).optional(),
+  setup: RepositorySetupSchema.optional(),
+}).loose().superRefine((value, context) => {
+  if (value.mcp_servers && new Set(value.mcp_servers).size !== value.mcp_servers.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["mcp_servers"],
+      message: "MCP server names must be unique",
+    });
+  }
+  if (value.setup && value.configuration_policy !== "trusted") {
+    context.addIssue({
+      code: "custom",
+      path: ["setup"],
+      message: "Repository setup requires explicit trusted configuration",
+    });
+  }
+});
+
+export const ProjectResourceSchema = z.object({
+  id: z.string(),
+  project_id: z.string(),
+  workspace_id: z.string(),
+  resource_type: z.string(),
+  resource_ref: z.record(z.string(), z.unknown()),
+  label: z.string().nullable().default(null),
+  position: z.number().default(0),
+  created_at: z.string(),
+  created_by: z.string().nullable().default(null),
+}).loose().superRefine((value, context) => {
+  if (value.resource_type !== "github_repo") return;
+
+  const result = GithubRepoResourceRefSchema.safeParse(value.resource_ref);
+  if (result.success) return;
+  for (const issue of result.error.issues) {
+    context.addIssue({
+      ...issue,
+      path: ["resource_ref", ...issue.path],
+    });
+  }
+});
+
+export const ListProjectResourcesResponseSchema = z.object({
+  resources: z.array(ProjectResourceSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_PROJECT_RESOURCE: ProjectResource = {
+  id: "",
+  project_id: "",
+  workspace_id: "",
+  resource_type: "github_repo",
+  resource_ref: {},
+  label: null,
+  position: 0,
+  created_at: "",
+  created_by: null,
+};
+
+export const EMPTY_LIST_PROJECT_RESOURCES_RESPONSE: ListProjectResourcesResponse = {
+  resources: [],
+  total: 0,
+};
 
 const SearchProjectResultSchema = ProjectSchema.extend({
   match_source: z.string(),
@@ -2900,6 +3078,92 @@ export const AgentTaskSchema = z.object({
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
 
+const TaskRunEvidenceTimingSchema = z
+  .object({
+    known: z.boolean(),
+    duration_ms: z.number().int().nonnegative().nullable(),
+  })
+  .loose();
+
+const TaskRunEvidenceModelConfigSchema = z
+  .object({
+    model: z.string().nullable(),
+    effort: z.string().nullable(),
+  })
+  .loose();
+
+const TaskRunEvidenceUsageSchema = z.object({
+  input_uncached_tokens: z.number().int().nonnegative().nullable(),
+  input_cache_read_tokens: z.number().int().nonnegative().nullable(),
+  input_cache_write_tokens: z.number().int().nonnegative().nullable(),
+  output_tokens: z.number().int().nonnegative().nullable(),
+  complete: z.boolean(),
+  source: z.string(),
+}).loose();
+
+const TaskRunEvidenceProviderCostSchema = z.object({
+  amount_usd_ticks: z.number().int().nonnegative().nullable(),
+  complete: z.boolean(),
+  authority: z.string(),
+  basis: z.string(),
+  source: z.string(),
+}).loose();
+
+const TaskRunEvidenceAttemptSchema = z.object({
+  schema_version: z.string(),
+  task_id: z.string(),
+  attempt: z.number().int().positive(),
+  evidence_id: z.string().nullable().optional(),
+  claim_identity_source: z.enum(["claim_generation", "missing"]).optional(),
+  revision: z.number().int().positive(),
+  timings: z
+    .object({
+      queue: TaskRunEvidenceTimingSchema,
+      preparation: TaskRunEvidenceTimingSchema,
+      first_tool: TaskRunEvidenceTimingSchema,
+      execution: TaskRunEvidenceTimingSchema,
+      finalization: TaskRunEvidenceTimingSchema,
+    })
+    .loose(),
+  requested: TaskRunEvidenceModelConfigSchema,
+  client_effective: TaskRunEvidenceModelConfigSchema,
+  provider_reported: z
+    .object({
+      model: z.string().nullable(),
+      source: z.string(),
+    })
+    .loose(),
+  runtime: z
+    .object({
+      version: z.string().nullable(),
+      content_sha256: z.string().nullable(),
+    })
+    .loose(),
+  usage: TaskRunEvidenceUsageSchema,
+  provider_cost: TaskRunEvidenceProviderCostSchema,
+  model_usage: z.object({
+    entries: z.array(z.object({
+      model: z.string().min(1).max(255),
+      usage: TaskRunEvidenceUsageSchema,
+      provider_cost: TaskRunEvidenceProviderCostSchema,
+    }).loose()).max(12),
+    complete: z.boolean(),
+    truncated: z.boolean(),
+    source: z.string(),
+  // An invalid optional extension must not discard the valid aggregate or other attempts.
+  }).loose().optional().catch(undefined),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const TaskRunEvidenceListResponseSchema = z
+  .object({
+    schema_version: z.string(),
+    task_id: z.string(),
+    attempts: z.array(TaskRunEvidenceAttemptSchema),
+  })
+  .loose();
+
 // Task cancellation (`POST /api/tasks/:id/cancel`) is consumed directly by
 // chat recovery. Its optional message payload must be well-formed before the
 // UI deletes a message from cache or restores text into the input.
@@ -4100,6 +4364,47 @@ export const MALFORMED_RUNTIME_MODEL_LIST_REQUEST: RuntimeModelListRequest = {
   status: "failed",
   supported: true,
   error: "invalid model discovery response",
+  created_at: "",
+  updated_at: "",
+};
+
+// ---------------------------------------------------------------------------
+// Runtime local skill discovery (`POST /api/runtimes/:id/local-skills`,
+// `GET /api/runtimes/:id/local-skills/:requestId`). Older daemons omit
+// `can_import`, which preserves their existing import behavior. A wrong-typed
+// value invalidates the response so it cannot silently enable an import.
+// ---------------------------------------------------------------------------
+
+const RuntimeLocalSkillSummarySchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+  source_path: z.string(),
+  provider: z.string(),
+  root: z.enum(["provider", "universal", "plugin"]).optional(),
+  plugin: z.string().optional(),
+  can_disable: z.boolean().optional(),
+  can_import: z.boolean().optional(),
+  file_count: z.number().int().nonnegative(),
+}).loose();
+
+export const RuntimeLocalSkillListRequestSchema = z.object({
+  id: z.string().default(""),
+  runtime_id: z.string().default(""),
+  status: z.string(),
+  skills: z.array(RuntimeLocalSkillSummarySchema).optional(),
+  supported: z.boolean().default(true),
+  error: z.string().optional(),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const MALFORMED_RUNTIME_LOCAL_SKILL_LIST_REQUEST: RuntimeLocalSkillListRequest = {
+  id: "",
+  runtime_id: "",
+  status: "failed",
+  supported: true,
+  error: "invalid local skill discovery response",
   created_at: "",
   updated_at: "",
 };

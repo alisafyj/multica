@@ -113,6 +113,25 @@ describe("failureReasonLabel", () => {
     );
   });
 
+  it("distinguishes the configured run budget from provider account quota", () => {
+    const expected: Record<SupportedLocale, string> = {
+      en: "Configured run budget exhausted",
+      "zh-Hans": "本次运行配置的预算已用尽",
+      ja: "設定された実行予算を使い切りました",
+      ko: "설정된 실행 예산을 모두 사용함",
+    };
+
+    for (const locale of Object.keys(expected) as SupportedLocale[]) {
+      const t = fixedT(locale);
+      expect(failureReasonLabel("execution_budget_exceeded", t)).toBe(
+        expected[locale],
+      );
+      expect(failureReasonLabel("execution_budget_exceeded", t)).not.toBe(
+        failureReasonLabel("agent_error.provider_quota_limit", t),
+      );
+    }
+  });
+
   it("covers operational reasons emitted outside the canonical taxonomy", () => {
     expect(failureReasonLabel("agent_fallback_message", enT)).toBe(
       "Agent returned a fallback message",

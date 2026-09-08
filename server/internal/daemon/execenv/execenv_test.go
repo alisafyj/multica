@@ -4785,12 +4785,17 @@ func TestPrepareCodexHomeFailsClosedWhenSandboxWriteFails(t *testing.T) {
 		_ = os.Chmod(configPath, 0o644)
 	})
 
+	// Keep the sandbox writer covered even though preparation now stops at sync.
+	policy := codexSandboxPolicyForWindows(windowsSandboxNative)
+	if writeErr := ensureCodexSandboxConfig(configPath, policy, "0.144.5", testLogger()); writeErr == nil || !strings.Contains(writeErr.Error(), "write config.toml") {
+		t.Fatalf("expected the sandbox config write to fail, got: %v", writeErr)
+	}
 	err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "windows", CodexVersion: "0.144.5"}, testLogger())
 	if err == nil {
 		t.Fatal("expected prepareCodexHomeWithOpts to fail closed when the sandbox block cannot be written, got nil")
 	}
-	if !strings.Contains(err.Error(), "sandbox config") {
-		t.Errorf("expected a sandbox-config error, got: %v", err)
+	if !strings.Contains(err.Error(), "sync task-private Codex config.toml failed") {
+		t.Errorf("expected preparation to reject the stale config at sync, got: %v", err)
 	}
 	// The stale danger-full-access is still on disk — proving the task would
 	// have launched unsandboxed had prepare reported success.

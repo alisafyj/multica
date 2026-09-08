@@ -97,8 +97,9 @@ export function useWorkspacePresenceMap(wsId: string | undefined): {
 /**
  * Single-agent presence detail: availability + last task state + counts +
  * (when failed) failure reason and timestamp. Returns "loading" only while
- * the underlying queries haven't resolved yet — a missing runtime is a
- * real state (offline) and resolves into a non-loading detail.
+ * the underlying queries haven't resolved yet. A missing runtime row resolves
+ * to `unknown` for a bound agent (health may be private), while an authoritative
+ * unbound signal resolves to `offline`.
  *
  * For surfaces that already have a list of agents in hand (Agents page,
  * Runtime detail), prefer `useWorkspacePresenceMap` to avoid forest of
@@ -151,8 +152,8 @@ export function useAgentPresenceDetail(
     // archived assignee on an old issue). Render a gray-offline fallback
     // instead of looping in "loading".
     if (!agent) return MISSING_AGENT_DETAIL;
-    // Missing runtime is a legitimate state (offline) — pass null and let
-    // derive handle it.
+    // A missing row may mean private health rather than no binding. Pass null;
+    // derive combines it with the agent's authoritative binding signal.
     const runtime = safeRuntimes.find((r) => r.id === agent.runtime_id) ?? null;
 
     const tasks = safeSnapshot.filter((t) => t.agent_id === agentId);

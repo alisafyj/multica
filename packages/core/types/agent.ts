@@ -477,6 +477,10 @@ export interface Agent {
   runtime_id: string;
   /** False exactly when the agent has no runtime. Older backends omit it. */
   runtime_bound?: boolean;
+  /** Server-attested bound-runtime capability. Does not imply permission or online status. */
+  quick_create_supported?: boolean;
+  /** Server-attested capability for explicit quick-create priority and due date fields. */
+  quick_create_fields_supported?: boolean;
   name: string;
   description: string;
   /** What this agent's owner wrote. For a system agent this holds only the
@@ -1248,6 +1252,8 @@ export interface RuntimeLocalSkillSummary {
   plugin?: string;
   /** New daemons set this only when they can enforce per-agent disablement. */
   can_disable?: boolean;
+  /** False when the runtime discovered the skill but could not collect its import bundle. */
+  can_import?: boolean;
   file_count: number;
 }
 
