@@ -22,10 +22,10 @@ func sessionContinuityNoticeFor(task Task) string {
 	if task.ChatChannelType == execenv.ChannelTypeSlack {
 		return execenv.SessionContinuityNoticeChannelHistory
 	}
-	// Every other chat session that persists a transcript (web chat, Feishu,
-	// WeCom, DingTalk) reads it back via `multica chat history`; Slack alone
-	// reads the live channel. Only a surface that never stored a transcript
-	// falls through to Unrecoverable — see SurfacePersistsTranscript.
+	// Transcript-backed sessions remain recoverable via `multica chat history`.
+	// Feishu topic tasks additionally learn their native bound-topic reader in
+	// the chat prompt. Only a surface without a stored transcript falls through
+	// to Unrecoverable — see SurfacePersistsTranscript.
 	if execenv.SurfacePersistsTranscript(task.ChatChannelType) {
 		return execenv.SessionContinuityNoticeChatTranscript
 	}
@@ -416,9 +416,21 @@ func buildDirectChatPrompt(task Task) string {
 		fmt.Fprintf(&b, ", %s", task.ChatType)
 	}
 	if task.ChatInThread {
-		b.WriteString(", thread reply")
+		if task.ChatChannelType == execenv.ChannelTypeFeishu {
+			b.WriteString(", bound topic")
+		} else {
+			b.WriteString(", thread reply")
+		}
 	}
-	b.WriteString("\n\nUser message:\n")
+	b.WriteString("\n\n")
+	if task.ChatChannelType == execenv.ChannelTypeFeishu {
+		if task.ChatInThread {
+			b.WriteString("Read this task's bound Feishu topic with `multica chat thread --output json` when you need source messages or earlier context. It returns native `om_` message IDs; use those IDs, not transcript IDs. Do not pass another topic ID or look up sibling topics.\n\n")
+		} else {
+			b.WriteString("Read earlier conversation context with `multica chat history --output json`; this task has no bound Feishu topic.\n\n")
+		}
+	}
+	b.WriteString("User message:\n")
 	b.WriteString(task.ChatMessage)
 	b.WriteByte('\n')
 	if len(task.ChatMessageAttachments) > 0 {
@@ -1518,10 +1530,9 @@ func buildChatPrompt(task Task) string {
 	// The history half: `multica chat history` is served by handler/chat_history.go,
 	// which reads the live channel for Slack and falls back to the stored
 	// chat_message transcript for every other surface — so Slack, Feishu, WeCom
-	// and DingTalk can all read the conversation back. Slack additionally has
-	// `multica chat thread` (thread expansion); the transcript surfaces have no
-	// thread reader, so they get the transcript command without the thread
-	// drill-down (MUL-4899).
+	// and DingTalk can all read the conversation back. `multica chat thread`
+	// expands Slack threads and reads a Feishu task's immutable bound topic
+	// with native message IDs. Other transcript surfaces have no thread reader.
 	//
 	// WHERE the conversation lives is therefore per-branch, not shared: only the
 	// unconditional "don't go looking in issues/comments" survives up top. Saying
@@ -1551,6 +1562,8 @@ func buildChatPrompt(task Task) string {
 			// into a chat reply reads as noise (the user reported every reply being
 			// prefixed with "我先读取…"). Tell the agent to keep them out of its answer.
 			b.WriteString("Do these reads SILENTLY as an internal step — they are how you gather context, not part of your answer.\n")
+		} else if task.ChatChannelType == execenv.ChannelTypeFeishu && task.ChatInThread {
+			b.WriteString("This task is bound to a Feishu topic, including when the trigger is its root message. Read source messages and earlier topic context with `multica chat thread --output json`. The reader returns native `om_` message IDs; use those IDs for source-message references, not Multica transcript IDs. It reads only this task's bound topic: do not pass another topic ID or look up sibling topics. Gather this context silently.\n")
 		} else if execenv.SurfacePersistsTranscript(task.ChatChannelType) {
 			fmt.Fprintf(&b, "The conversation happens in %s, and Multica stores a transcript of it. The message below may be only what triggered you — read it back with `multica chat history` when you need earlier context that is not below.\n", platform)
 		} else {
@@ -1620,7 +1633,7 @@ func buildChatPrompt(task Task) string {
 	// nobody and the agent must say so in words. The answer arrives on the
 	// claim; do not re-derive it from the channel type, do not collapse it back
 	// into "is there a channel at all", and do not collapse it into the HISTORY
-	// layer above, which is Slack-only and asks a different question.
+	// layer above, which asks a different question.
 	//
 	// This is the ONLY place the verdict is stated. The brief's `## Output`
 	// section carries the web/mobile answer, which is fixed, and for a

@@ -55,6 +55,7 @@ type chatPRDScope struct {
 	threadID       string
 	triggerID      string
 	botOpenID      string
+	botUnionID     string
 	credentials    lark.InstallationCredentials
 }
 
@@ -129,6 +130,7 @@ func (h *Handler) chatPRDScope(w http.ResponseWriter, r *http.Request) (chatPRDS
 		workspaceID: session.WorkspaceID, installationID: inst.ID, sessionID: session.ID,
 		chatID: route.ChatID, threadID: delivery.ChannelThreadID.String, triggerID: delivery.ChannelMessageID.String,
 		botOpenID:   inst.BotOpenID,
+		botUnionID:  inst.BotUnionID.String,
 		credentials: lark.InstallationCredentials{AppID: inst.AppID, AppSecret: secret, TenantKey: inst.TenantKey.String, Region: lark.RegionOrDefault(inst.Region)},
 	}, true
 }
@@ -264,26 +266,42 @@ func (h *Handler) chatPRDMessage(ctx context.Context, scope chatPRDScope, id str
 }
 
 var chatPRDRequestVerb = regexp.MustCompile(`(?i)(写|创建|生成|整理|产出|做|输出|create|draft|write|generate)`)
+var chatPRDMentionKey = regexp.MustCompile(`@_user_[0-9]+`)
 
-func chatPRDPlainText(message lark.LarkMessage) (string, error) {
+func chatPRDPlainText(message lark.LarkMessage, scope chatPRDScope) (string, bool, error) {
 	if message.MessageType != "text" {
-		return "", errors.New("PRD authorization requires a plain text message")
+		return "", false, errors.New("PRD authorization requires a plain text message")
 	}
 	var content struct {
 		Text string `json:"text"`
 	}
 	if err := json.Unmarshal([]byte(message.Content), &content); err != nil {
-		return "", errors.New("invalid message content")
+		return "", false, errors.New("invalid message content")
 	}
-	text := content.Text
-	for _, mention := range message.Mentions {
-		// Only REST mention metadata authorizes removal. Never strip arbitrary
-		// @text, quoted HTML or names that merely resemble mentions.
-		if mention.ID != "" && strings.HasPrefix(mention.Key, "@_user_") {
-			text = strings.ReplaceAll(text, mention.Key, "")
+	mentioned := false
+	text := chatPRDMentionKey.ReplaceAllStringFunc(content.Text, func(key string) string {
+		// Match whole native tokens, not prefixes or arbitrary metadata keys.
+		// A metadata-only or ambiguously assigned mention cannot authorize.
+		var matched *lark.LarkMessageMention
+		for i := range message.Mentions {
+			mention := &message.Mentions[i]
+			if mention.Key != key {
+				continue
+			}
+			if matched != nil {
+				return key
+			}
+			matched = mention
 		}
-	}
-	return strings.TrimSpace(text), nil
+		if matched == nil || matched.ID == "" {
+			return key
+		}
+		if matched.IsBotMention(scope.credentials.AppID, scope.botOpenID, scope.botUnionID) {
+			mentioned = true
+		}
+		return ""
+	})
+	return strings.TrimSpace(text), mentioned, nil
 }
 
 func validateChatPRDSource(source lark.LarkMessage, scope chatPRDScope) error {
@@ -291,19 +309,17 @@ func validateChatPRDSource(source lark.LarkMessage, scope chatPRDScope) error {
 		(source.RootID != "" && source.RootID != source.MessageID) {
 		return errors.New("PRD source must be the topic's original human request, not a reply or bot relay")
 	}
-	text, err := chatPRDPlainText(source)
+	text, mentioned, err := chatPRDPlainText(source, scope)
 	if err != nil {
 		return err
 	}
 	if (!strings.Contains(strings.ToLower(text), "prd") && !strings.Contains(text, "需求文档")) || !chatPRDRequestVerb.MatchString(text) {
 		return errors.New("topic root must explicitly request creating a PRD or requirement document")
 	}
-	for _, mention := range source.Mentions {
-		if mention.ID != "" && mention.ID == scope.botOpenID {
-			return nil
-		}
+	if !mentioned {
+		return errors.New("the original PRD request must mention this app")
 	}
-	return errors.New("the original PRD request must mention this app")
+	return nil
 }
 
 func validateChatPRDConfirmation(message lark.LarkMessage, draft ChatPRDDraft, scope chatPRDScope) error {
@@ -315,19 +331,12 @@ func validateChatPRDConfirmation(message lark.LarkMessage, draft ChatPRDDraft, s
 	if err != nil || !time.UnixMilli(created).After(draft.VersionCreatedAt) {
 		return errors.New("confirmation must be newer than this draft version")
 	}
-	mentioned := false
-	for _, mention := range message.Mentions {
-		if mention.ID != "" && mention.ID == scope.botOpenID {
-			mentioned = true
-			break
-		}
+	text, mentioned, err := chatPRDPlainText(message, scope)
+	if err != nil {
+		return err
 	}
 	if !mentioned {
 		return errors.New("confirmation must genuinely mention this app")
-	}
-	text, err := chatPRDPlainText(message)
-	if err != nil {
-		return err
 	}
 	if text != chatPRDConfirmation(draft.ID, draft.Version) {
 		return errors.New("confirmation must exactly match the current draft's confirmation phrase")

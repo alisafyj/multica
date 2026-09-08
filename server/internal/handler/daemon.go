@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/designpreview"
 	"github.com/multica-ai/multica/server/internal/entitlement"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -2832,10 +2833,17 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.ChatChannelType = delivery.ChannelType
 			resp.ChatType = delivery.ChatType
 			resp.ChatChannelDeliversFiles = h.channelDeliversFiles(delivery.ChannelType)
-			if delivery.ChannelType == string(slack.TypeSlack) {
+			switch delivery.ChannelType {
+			case string(slack.TypeSlack):
 				resp.ChatInThread = delivery.ChannelThreadID.Valid &&
 					delivery.ChannelThreadID.String != "" &&
 					delivery.ChannelThreadID.String != delivery.ChannelMessageID.String
+			case string(channel.TypeFeishu):
+				// The topic ID is present on both roots and replies, not the
+				// root message ID. Use the immutable task delivery, never the
+				// binding's latest reply target.
+				resp.ChatInThread = delivery.ChatType == string(channel.ChatTypeGroup) &&
+					delivery.ChannelThreadID.Valid && delivery.ChannelThreadID.String != ""
 			}
 		} else if !errors.Is(deliveryErr, pgx.ErrNoRows) {
 			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount,

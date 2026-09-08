@@ -655,9 +655,9 @@ func TestBuildChatPromptNoNarrationOnEveryChannel(t *testing.T) {
 //     (integrations/wecom/outbound_media.go, cmd/server/router.go).
 //   - history: `multica chat history` is injected for Slack (live channel) and
 //     for every surface that persists a transcript (Feishu, WeCom, DingTalk);
-//     `multica chat thread` is Slack-only. handler/chat_history.go reads the
-//     live channel for Slack and falls back to the stored chat_message
-//     transcript for every other session.
+//     `multica chat thread` reads Slack threads and bound Feishu topics.
+//     handler/chat_history.go reads native message IDs for those thread reads;
+//     the other channel history reads use stored chat_message transcripts.
 //
 // Three cases prove the axes are separate. Feishu has no upload AND has
 // transcript history, so a single gate cannot express it. WeCom on a deployment
@@ -799,18 +799,36 @@ func TestBuildChatPromptTwoLayerChannelPolicy(t *testing.T) {
 	}
 }
 
-// ChatInThread only ever selects between `chat history` and `chat thread`. Feishu
-// has a transcript reader (`chat history`) but no thread expansion, so the flag
-// must not leak `chat thread` into a Feishu prompt even if the server sets it.
-func TestBuildChatPromptFeishuIgnoresChatInThread(t *testing.T) {
-	out := buildChatPrompt(Task{
-		ChatSessionID:   "sess-1",
-		ChatChannelType: execenv.ChannelTypeFeishu,
-		ChatInThread:    true,
-		ChatMessage:     "hi",
-	})
-	if strings.Contains(out, "multica chat thread") {
-		t.Errorf("feishu prompt must not teach `multica chat thread` (no thread reader)\n--- output ---\n%s", out)
+func TestBuildTaskPromptFeishuHistoryCapabilities(t *testing.T) {
+	for _, concise := range []bool{false, true} {
+		for _, inTopic := range []bool{false, true} {
+			task := Task{
+				ChatSessionID:   "sess-1",
+				ChatChannelType: execenv.ChannelTypeFeishu,
+				ChatInThread:    inTopic,
+				ChatMessage:     "hi",
+				ConciseMode:     concise,
+			}
+			out := buildTaskPrompt(task, "claude", false)
+			if got := strings.Contains(out, "multica chat thread --output json"); got != inTopic {
+				t.Errorf("concise=%v topic=%v: native thread command present=%v\n%s", concise, inTopic, got, out)
+			}
+			if !inTopic && !strings.Contains(out, "multica chat history") {
+				t.Errorf("concise=%v: non-topic task lost transcript reader\n%s", concise, out)
+			}
+			if inTopic && !strings.Contains(out, "`om_`") {
+				t.Errorf("concise=%v: topic reader must identify native source IDs\n%s", concise, out)
+			}
+			if strings.Contains(out, "chat thread <") || strings.Contains(out, "chat thread [") {
+				t.Errorf("concise=%v: Feishu task was taught arbitrary thread lookup\n%s", concise, out)
+			}
+		}
+	}
+	for _, channelType := range []string{execenv.ChannelTypeWecom, execenv.ChannelTypeDingtalk, "future-channel"} {
+		out := buildChatPrompt(Task{ChatSessionID: "s", ChatChannelType: channelType, ChatInThread: true})
+		if strings.Contains(out, "multica chat thread") {
+			t.Errorf("%s was taught an unsupported thread reader\n%s", channelType, out)
+		}
 	}
 }
 
