@@ -32,6 +32,7 @@ multica runtime update <runtime-id> --target-version <version> --output json
 multica runtime delete <runtime-id>
 multica repo checkout <url>
 multica repo checkout <url> --ref <branch-or-sha>
+multica repo tool-status gitnexus --path <checkout> --output json
 ```
 
 Runtime and repo commands affect active agent execution. Do not restart daemons,
@@ -159,3 +160,29 @@ Workspace repos and project resources are not the same thing:
 Do not add a project resource just because `repo checkout` failed. First
 determine whether the user asked for durable project context or just a task
 checkout.
+
+### Concise tool preparation
+
+The operator can enable `MULTICA_CONCISE_OPTIMIZATION=true` on the daemon and
+restart it when safe. It defaults to false and affects only operational runs
+that also select concise mode. It does not change normal runs, specialized raw
+payloads, the legacy daemon-wide direct-mode escape hatch, or hard budgets.
+An agent subprocess variable cannot configure the parent daemon. Do not change
+the operator's configuration or restart a daemon without authorization.
+
+When GitNexus is required by the task or repository, use
+`multica repo tool-status gitnexus --path <checkout> --output json` once before
+preparing it. The inspector runs only an installed tool's structured status
+command, with bounded time/output; it never installs or indexes. The tool may
+maintain its own runtime cache. Read `status`, not just the exit code: `ready`,
+`stale`, `not_indexed`, `unavailable`, `unsupported`, and `failed` all return
+JSON with exit 0. Invalid arguments or checkout paths fail the CLI command.
+
+Only `ready` permits index reuse; it requires matching checkout/revision,
+current analyzer identity, complete indexing, and measured current content.
+Recheck after relevant changes. Missing or legacy evidence is not readiness.
+At most one specifically authorized targeted correction and recheck should
+follow an unsuccessful inspection; do not loop through install/help/index
+attempts or bypass mandatory repository checks. Report the remaining constraint.
+These are execution guidelines, not additional daemon-enforced limits. Preserve
+explicit planning/parallel-work requests and all required acceptance validation.

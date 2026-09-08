@@ -8448,6 +8448,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// is the one thing it cannot work out from its own context — tell it.
 	// Worktree mode is excluded: there the tree is this task's private checkout.
 	var promptOptions []PromptOption
+	if d.cfg.ConciseOptimization && task.ConciseMode && !d.cfg.DirectAgentMode {
+		promptOptions = append(promptOptions, withConciseOptimization())
+	}
 	if localAssignment != nil && !localAssignment.UsesWorktree() && localDirectoryLockExempt(task) {
 		promptOptions = append(promptOptions, WithSharedLocalDirectory())
 	}

@@ -252,6 +252,7 @@ Daemon behavior is configured via flags or environment variables:
 | Agent timeout | `--agent-timeout` | `MULTICA_AGENT_TIMEOUT` | `0` (no cap; bounded by the watchdogs) |
 | Agent idle watchdog | — | `MULTICA_AGENT_IDLE_WATCHDOG` | `2h` (`0` disables the whole watchdog suite) |
 | Agent tool watchdog | — | `MULTICA_AGENT_TOOL_WATCHDOG` | same as the idle watchdog (`0` = never force-stop during a tool call) |
+| Concise execution optimization | — | `MULTICA_CONCISE_OPTIMIZATION` | `false` (opt-in guidance for task-level concise operational runs only) |
 | Codex semantic inactivity timeout | `--codex-semantic-inactivity-timeout` | `MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT` | same as the idle watchdog (Codex's timer is not tool-aware, so it tracks the larger of the idle / tool budgets) |
 | Codex first-turn no-progress timeout | — | `MULTICA_CODEX_FIRST_TURN_TIMEOUT` | `0` (keeps the built-in `60s` ceiling) |
 | Codex handshake timeout | `--codex-handshake-timeout` | `MULTICA_CODEX_HANDSHAKE_TIMEOUT` | `30s`; `thread/start` and `thread/resume`: `60s` (an explicit value overrides both budgets globally) |
@@ -273,6 +274,24 @@ Daemon behavior is configured via flags or environment variables:
 | GC Hermes memory TTL (per-agent `memories/`) | — | `MULTICA_GC_HERMES_MEMORY_TTL` | `2160h` (90d; set `0` to disable) |
 | GC Hermes session TTL (per-conversation `state.db`) | — | `MULTICA_GC_HERMES_SESSION_TTL` | `336h` (14d; set `0` to disable) |
 | GC task temp legacy TTL (pre-lock `multica-task-*`) | — | `MULTICA_GC_TASK_TEMP_LEGACY_TTL` | `0` (disabled; set a duration to opt in) |
+
+#### Concise execution optimization
+
+Set `MULTICA_CONCISE_OPTIMIZATION=true` in the **daemon process environment**, then restart the daemon when safe. The existing task-level **Concise agent mode** checkbox selects which runs receive the optimization. Setting a variable only on an agent subprocess does not configure its parent daemon. Set `false` (the default) and restart to disable it for subsequent runs. This is an operator switch, not a second UI checkbox; changing it does not rewrite an already-running session.
+
+The optimization adds complexity-aware execution guidance: handle small known scopes inline, delegate only substantive independent slices, read related history only for a concrete gap, and bound tool preparation to one inspection plus at most one specifically authorized correction/recheck. Explicitly requested planning, parallelism, repository checks, privacy boundaries, and acceptance tests still apply. These are agent instructions, not hard enforcement or a promised reduction in latency. Existing turn/tool-call caps are unchanged.
+
+Normal runs, specialized raw task payloads, and the legacy daemon-wide `MULTICA_DIRECT_AGENT_MODE` escape hatch keep their existing prompts. The latter takes precedence even if the task selected concise mode. Initial execution and fresh-session fallback both receive the same optimization setting. Existing comparison telemetry does not record this new switch, so record its value separately when evaluating paired runs; do not mix unknown configurations into a controlled comparison.
+
+When GitNexus is actually required, the optimized prompt names a local readiness inspector:
+
+```bash
+multica repo tool-status gitnexus --path ./checkout --output json
+```
+
+It resolves the requested checkout and runs the installed `gitnexus status --json` once, with a 10-second execution deadline and a 64 KiB stdout limit (bounded process-tree cleanup can take additional time). It never downloads tools, runs analysis, initializes indexes, or creates a Multica index cache. GitNexus may maintain its own runtime identity cache. Its existing index is reusable only when its supported structured receipt confirms matching repository/revision, current analyzer identity, complete indexing, and measured current content. A same-commit working-tree edit invalidates readiness through the content-drift verdict; this is not a cache keyed only by HEAD.
+
+The JSON result contains `schema_version`, `tool`, `repository`, `status`, and a stable `reason`. Status is `ready`, `stale`, `not_indexed`, `unavailable`, `unsupported`, or `failed`. All are successful inspection responses (exit 0); automation must check `status == "ready"`, not just the exit code. Invalid arguments or an invalid checkout exit nonzero. Unsupported/older GitNexus versions, missing evidence, output overflow, and timeouts never imply readiness. Arbitrary subprocess output and foreign repository paths are not forwarded. Repair remains a separate task-authorized action; unavailable mandatory checks must be reported, not silently bypassed.
 
 #### Workspace garbage collection
 

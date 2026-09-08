@@ -262,47 +262,69 @@ func TestBuildConcisePromptLeavesRawContextsUnchanged(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			task := Task{ConciseMode: true, IssueID: "issue-1"}
 			tt.set(&task)
-			if got := buildConcisePrompt(task); got != string(raw) {
-				t.Fatalf("buildConcisePrompt() = %q, want raw context %q", got, raw)
+			for _, options := range [][]PromptOption{nil, {withConciseOptimization()}} {
+				if got := buildTaskPrompt(task, "claude", false, options...); got != string(raw) {
+					t.Fatalf("buildTaskPrompt() = %q, want raw context %q", got, raw)
+				}
 			}
 		})
 	}
 }
 
 func TestBuildTaskPromptModePrecedence(t *testing.T) {
-	tests := []struct {
+	for _, tc := range []struct {
 		name             string
 		task             Task
 		configuredDirect bool
-		wantConcise      bool
-		wantFull         bool
 	}{
-		{name: "normal", task: Task{IssueID: "issue-1"}, wantFull: true},
-		{name: "task concise", task: Task{IssueID: "issue-1", ConciseMode: true}, wantConcise: true},
+		{name: "normal", task: Task{IssueID: "issue-1"}},
+		{name: "task concise", task: Task{IssueID: "issue-1", ConciseMode: true}},
 		{name: "configured direct", task: Task{IssueID: "issue-1"}, configuredDirect: true},
 		{name: "configured direct wins", task: Task{IssueID: "issue-1", ConciseMode: true}, configuredDirect: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := buildTaskPrompt(tt.task, "claude", tt.configuredDirect)
-			if tt.wantConcise && !strings.Contains(got, "## Concise execution") {
-				t.Fatalf("concise task did not use compact prompt:\n%s", got)
-			}
-			if !tt.wantConcise && strings.Contains(got, "## Concise execution") {
-				t.Fatalf("non-concise prompt unexpectedly contains compact contract:\n%s", got)
-			}
-			if tt.wantFull && !strings.Contains(got, "You are running as a local coding agent") {
-				t.Fatalf("normal task lost the full workflow prompt:\n%s", got)
-			}
-			if !tt.configuredDirect && !tt.task.ConciseMode {
-				want := BuildPrompt(tt.task, "claude")
-				if got != want {
-					t.Fatalf("normal prompt changed through helper:\n got: %q\nwant: %q", got, want)
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, options := range [][]PromptOption{nil, {withConciseOptimization()}} {
+				var want string
+				switch {
+				case tc.configuredDirect:
+					want = BuildDirectPrompt(tc.task)
+				case tc.task.ConciseMode:
+					want = buildConcisePrompt(tc.task, options...)
+				default:
+					want = BuildPrompt(tc.task, "claude")
+				}
+				if got := buildTaskPrompt(tc.task, "claude", tc.configuredDirect, options...); got != want {
+					t.Fatalf("prompt mode precedence changed:\n got: %q\nwant: %q", got, want)
 				}
 			}
-			if tt.configuredDirect && got != BuildDirectPrompt(tt.task) {
-				t.Fatalf("configured direct mode changed:\n got: %q\nwant: %q", got, BuildDirectPrompt(tt.task))
+		})
+	}
+}
+
+func TestConciseOptimizationPreservesOperationalPrompt(t *testing.T) {
+	for _, task := range []Task{
+		{IssueID: "issue-1", HandoffNote: "Investigate the parser without accessing private data."},
+		{ChatSessionID: "chat-1", ChatMessage: "Plan first, then parallelize the two independent changes.", UIDraftCreateContext: []byte(`{"ignored":"lower precedence"}`)},
+		{IssueID: "issue-1", TriggerCommentID: "comment-1", TriggerCommentContent: "Run all acceptance tests."},
+		{AutopilotRunID: "run-1", AutopilotDescription: "Check release status.", AutopilotTriggerPayload: []byte(`{"ref":"main"}`)},
+		{QuickCreatePrompt: "Create exactly one issue.", QuickCreateAttachmentIDs: []string{"attachment-1"}},
+	} {
+		t.Run(concisePromptKind(task), func(t *testing.T) {
+			task.ConciseMode = true
+			task.Agent = &AgentData{ID: "agent-1", Name: "Reviewer", Instructions: "Read-only access; never read credentials."}
+			task.PriorSessionResumeUnavailable = true
+			options := []PromptOption{WithSharedLocalDirectory(), WithOutputDir("./output"), WithWorktreeReplayConflicts([]string{"parser.go"})}
+			baseline := buildTaskPrompt(task, "claude", false, options...)
+			optimized := buildTaskPrompt(task, "claude", false, append(options, withConciseOptimization())...)
+			if !strings.HasPrefix(optimized, baseline) {
+				t.Fatal("optimization must preserve the complete task, identity, privacy, repository safety, and delivery prompt")
+			}
+			suffix := strings.TrimPrefix(optimized, baseline)
+			if !strings.Contains(suffix, "multica repo tool-status gitnexus --path <checkout> --output json") {
+				t.Fatal("optimized operational prompt must expose the readiness inspector command")
+			}
+			if len(suffix) > 2200 {
+				t.Fatalf("optimization adds %d bytes, budget 2200 independent of task input", len(suffix))
 			}
 		})
 	}
